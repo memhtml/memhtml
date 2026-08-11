@@ -1,0 +1,4 @@
+# eve build artifacts. `eve build` writes ~17 MB of host output plus scratch dirs; both are
+# reproducible from `agent/` by `pnpm build:agent` and neither belongs in the tree.
+.eve/
+.output/

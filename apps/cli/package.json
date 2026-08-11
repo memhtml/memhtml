@@ -1,0 +1,46 @@
+{
+  "name": "@memhtml/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The `memhtml` binary.",
+  "bin": {
+    "memhtml": "./dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc -b --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
+    "lint": "biome check src tests",
+    "test": "vitest run",
+    "start": "node dist/bin.js"
+  },
+  "dependencies": {
+    "@memhtml/consolidator": "workspace:*",
+    "@memhtml/contracts": "workspace:*",
+    "@memhtml/domain": "workspace:*",
+    "@memhtml/eval": "workspace:*",
+    "@memhtml/html": "workspace:*",
+    "@memhtml/index": "workspace:*",
+    "@memhtml/llm": "workspace:*",
+    "@memhtml/sleep": "workspace:*",
+    "@memhtml/store": "workspace:*",
+    "@memhtml/traces": "workspace:*",
+    "effect": "catalog:",
+    "just-bash": "3.2.0",
+    "node-html-parser": "9.0.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.6",
+    "@effect/vitest": "catalog:",
+    "@types/node": "24.10.2",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

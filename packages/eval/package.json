@@ -1,0 +1,36 @@
+{
+  "name": "@memhtml/eval",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fixture corpus generator and the refusable discrimination gate.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
+    "lint": "biome check src tests eval",
+    "test": "vitest run",
+    "test:eval": "vitest run --config vitest.eval.config.ts"
+  },
+  "dependencies": {
+    "@memhtml/contracts": "workspace:*",
+    "@memhtml/domain": "workspace:*",
+    "@memhtml/html": "workspace:*",
+    "@memhtml/index": "workspace:*",
+    "@memhtml/llm": "workspace:*",
+    "@memhtml/store": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.6",
+    "@effect/vitest": "catalog:",
+    "@types/node": "24.10.2",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

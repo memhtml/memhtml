@@ -1,0 +1,3 @@
+An intentionally empty migrations directory. `database.test.ts` points at it to exercise the
+migration runner's ledger with nothing to apply — pointing it at ../../migrations would couple
+the runner's tests to whatever the shipped schema happens to contain.

@@ -1,0 +1,47 @@
+import { Context, type Effect, Layer } from "effect"
+
+import type { MergeReport, ReviewReport, RunReport } from "./contract.js"
+import type { SleepDeps } from "./env.js"
+import type { MergeOptions } from "./review.js"
+import { merge, review } from "./review.js"
+import { type RunOptions, resume, run } from "./run.js"
+
+/**
+ * The sleep service: the four operations the CLI and MCP surfaces call.
+ *
+ * Every method's error channel is `never`. A sleep run's failures are its own DATA — a failed phase is
+ * a normal terminal state with a row and a report line — and a run whose error channel could fire would
+ * hand a caller a run that both happened and errored, with no way to say which phases landed. The two
+ * refusals `merge` can make are likewise values on `MergeReport`, so a caller reads why rather than
+ * catching what.
+ */
+export interface SleepShape {
+  readonly run: (options: RunOptions) => Effect.Effect<RunReport>
+  readonly resume: (
+    runId: string,
+    options?: { readonly date?: string | undefined }
+  ) => Effect.Effect<RunReport>
+  readonly review: (runId?: string) => Effect.Effect<ReviewReport>
+  readonly merge: (runId: string | undefined, options?: MergeOptions) => Effect.Effect<MergeReport>
+}
+
+export const Sleep = Context.Service<SleepShape>("memhtml/Sleep")
+
+/** The service over supplied dependencies. Nothing is constructed here; every port is the caller's. */
+export const makeSleep = (deps: SleepDeps): SleepShape => ({
+  run: (options) => run(deps, options),
+  resume: (runId, options = {}) => resume(deps, runId, options),
+  review: (runId) => review(deps, runId),
+  merge: (runId, options = {}) => merge(deps, runId, options)
+})
+
+/**
+ * A layer over already-built dependencies.
+ *
+ * There is deliberately no `SleepLive` that resolves its own git, database, and model: the composition
+ * root is the CLI, which builds one `AppLive` bottom-up and hands the same services to sleep, to the
+ * indexer, and to retrieval. A layer here that built its own would open a second database connection to
+ * the same file and a second git wrapper on the same root.
+ */
+export const layerSleep = (deps: SleepDeps): Layer.Layer<SleepShape> =>
+  Layer.succeed(Sleep)(makeSleep(deps))

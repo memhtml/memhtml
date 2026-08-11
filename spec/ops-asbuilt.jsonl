@@ -1,0 +1,67 @@
+# memhtml symspec v5 model — PART 1: the as-built system (post Horizon 1, main @ 7c22c69)
+# Authored 2026-08-07 from session-729e89's explore packets + shipped code. status=implemented
+# on everything in this file; the pnpm-check suite is the verification evidence.
+
+# ── state model ────────────────────────────────────────────────────────────────
+{"op":"state","name":"memory_state","type":"enum","domain":["active","archived"],"initial":"active"}
+{"op":"state","name":"batch_committed","type":"bool","initial":"false"}
+{"op":"state","name":"index_consistent","type":"bool","initial":"true"}
+{"op":"state-initial","predicate":"memory_state = active and not batch_committed and index_consistent"}
+
+# ── store: the git write plane ────────────────────────────────────────────────
+{"op":"add","key":"STORE-1","patternType":"event-driven","systemName":"store","trigger":"a write op passes the render gate","systemResponse":"commit the memory file in exactly one git commit","priority":"critical","status":"implemented","verificationMethod":"test","verificationNote":"tests-integration spawned.ts one-commit lock; commit-per-file mutant killed"}
+{"op":"add","key":"STORE-2","patternType":"event-driven","systemName":"store","trigger":"a batch op fails validation before the write phase","systemResponse":"leave the working tree byte-identical","priority":"critical","status":"implemented","verificationMethod":"test","verificationNote":"treeDigest assertion, spawned.ts:275"}
+{"op":"add","key":"STORE-3","patternType":"event-driven","systemName":"store","trigger":"a write op's content hash matches an active non-task memory","systemResponse":"report the existing path as a dedupe","status":"implemented","verificationMethod":"test"}
+{"op":"add","key":"STORE-4","patternType":"unwanted-behavior","systemName":"store","trigger":"a dedupe is reported","systemResponse":"write a duplicate file","negated":true,"status":"implemented","verificationMethod":"test"}
+{"op":"add","key":"STORE-5","patternType":"state-driven","systemName":"store","preCondition":"a memory is archived","systemResponse":"exclude its content hash from dedupe matching","status":"implemented","verificationMethod":"test","verificationNote":"partial unique index WHERE archived=0; contracts.test.ts:73"}
+{"op":"add","key":"STORE-6","patternType":"event-driven","systemName":"store","trigger":"memory_correct names an existing target path","systemResponse":"archive the target and write the correction in one commit","status":"implemented","verificationMethod":"test"}
+
+# ── index: rebuildable projection plane ───────────────────────────────────────
+{"op":"add","key":"IDX-1","patternType":"ubiquitous","systemName":"indexer","systemResponse":"derive every index row from the git tree alone","priority":"critical","status":"implemented","verificationMethod":"test","verificationNote":"rebuild determinism suite; rm index.db && rebuild is a pure function of the tree"}
+{"op":"add","key":"IDX-2","patternType":"event-driven","systemName":"indexer","trigger":"a batch write lands","systemResponse":"reindex exactly once for the batch","status":"implemented","verificationMethod":"test"}
+{"op":"add","key":"IDX-3","patternType":"event-driven","systemName":"indexer","trigger":"update runs with embeddings on","systemResponse":"scan only the batch's own chunk ids for pending embeddings","status":"implemented","verificationMethod":"test","verificationNote":"probe-embed-cost.mjs: 56ms@10k -> 4ms flat; shape-asserted SQL"}
+{"op":"add","key":"IDX-4","patternType":"event-driven","systemName":"indexer","trigger":"rebuild runs with embeddings on","systemResponse":"scan the whole chunks table for pending embeddings","status":"implemented","verificationMethod":"test","verificationNote":"model-migration path keeps the full scan"}
+{"op":"add","key":"IDX-5","patternType":"event-driven","systemName":"indexer","trigger":"an embedding call fails","systemResponse":"keep the lexical index serving","status":"implemented","verificationMethod":"test","verificationNote":"embed failures non-fatal; lexical floor"}
+{"op":"add","key":"IDX-6","patternType":"ubiquitous","systemName":"projection","systemResponse":"derive the frame_key column from the gist via the pure ported frame function","status":"implemented","verificationMethod":"test","verificationNote":"differential vs eval reference over 20,060 inputs, 0 mismatches; migration 0009"}
+
+# ── retrieval: four-arm RRF ───────────────────────────────────────────────────
+{"op":"add","key":"RET-1","patternType":"ubiquitous","systemName":"retrieval","systemResponse":"fuse the fts, vector, recency, and salience arms with reciprocal rank fusion","status":"implemented","verificationMethod":"test"}
+{"op":"add","key":"RET-2","patternType":"state-driven","systemName":"retrieval","preCondition":"the state plane is absent","systemResponse":"drop the salience arm structurally","status":"implemented","verificationMethod":"test"}
+{"op":"add","key":"RET-3","patternType":"ubiquitous","systemName":"retrieval","systemResponse":"exclude task memories from unscoped search by default","status":"implemented","verificationMethod":"test","verificationNote":"scope.ts EXCLUDED_BY_DEFAULT"}
+
+# ── salience: the T2 decided rule ─────────────────────────────────────────────
+{"op":"add","key":"SAL-1","patternType":"event-driven","systemName":"salience plane","trigger":"memory_read opens a specific path","systemResponse":"bump the path's access count","priority":"high","status":"implemented","verificationMethod":"test","verificationNote":"guard 1, mutation-proven (remove bump -> 3 failures)"}
+{"op":"add","key":"SAL-2","patternType":"unwanted-behavior","systemName":"salience plane","trigger":"search or recall merely returns a path","systemResponse":"bump that path's access count","negated":true,"priority":"high","status":"implemented","verificationMethod":"test","verificationNote":"guard 2, mutation-proven (re-add bump -> 2 failures)"}
+{"op":"add","key":"SAL-3","patternType":"ubiquitous","systemName":"salience arm","systemResponse":"exclude task rows and person-reference records from ranking contribution","status":"implemented","verificationMethod":"test","verificationNote":"guard 3 asserts the assembled SUM(s), not hit.score (MMR proxy trap)"}
+{"op":"add","key":"SAL-4","patternType":"event-driven","systemName":"salience plane","trigger":"a second bump arrives for a path inside the 900 second cooldown","systemResponse":"report the path as cooled down without moving the access row","status":"implemented","verificationMethod":"test","verificationNote":"SQL guard + pure twin pinned to agree at the boundary by property test"}
+{"op":"add","key":"SAL-5","patternType":"ubiquitous","systemName":"reinforce writer","systemResponse":"remain the only writer of the access table","priority":"high","status":"implemented","verificationMethod":"inspection","verificationNote":"one-SQL-writer rule; swap moved callers, never added a writer"}
+
+# ── fence detection: the measured port ────────────────────────────────────────
+{"op":"add","key":"DET-1","patternType":"event-driven","systemName":"write path","trigger":"an unlabeled fence is written through either door","systemResponse":"run the pinned language detector at threshold 0.30","status":"implemented","verificationMethod":"test","verificationNote":"hljs 11.11.1 exact; port-fidelity vs all 332 eval corpus rows"}
+{"op":"add","key":"DET-2","patternType":"state-driven","systemName":"write path","preCondition":"a detection is below threshold or outside the canonical vocabulary","systemResponse":"omit the data-lang attribute","status":"implemented","verificationMethod":"test"}
+{"op":"add","key":"DET-3","patternType":"state-driven","systemName":"write path","preCondition":"the author's info string names a language","systemResponse":"keep the author's token without running the detector","status":"implemented","verificationMethod":"test","verificationNote":"author precedence structural via short-circuit; blast radius exactly 1 test"}
+{"op":"add","key":"DET-4","patternType":"unwanted-behavior","systemName":"index rebuild","trigger":"a stamped fence is reprojected","systemResponse":"re-run language detection","negated":true,"priority":"critical","status":"implemented","verificationMethod":"test","verificationNote":"grep+resolve locks; rebuild reads the attribute back"}
+{"op":"add","key":"DET-5","patternType":"event-driven","systemName":"detector","trigger":"a fence exceeds 4096 characters","systemResponse":"abstain before invoking the highlighter","priority":"high","status":"implemented","verificationMethod":"test","verificationNote":"DETECT_MAX_CHARS; measured 40KB ~ 20s blocking CPU without it; guard proven to fire"}
+{"op":"add","key":"DET-6","patternType":"ubiquitous","systemName":"detector module","systemResponse":"load the highlighter lazily on first detection","status":"implemented","verificationMethod":"test","verificationNote":"createRequire; read path stops paying ~100ms/~30MB"}
+
+# ── conflict assist: the H4 capability ────────────────────────────────────────
+{"op":"add","key":"CONF-1","patternType":"event-driven","systemName":"batch door","trigger":"detect_conflicts is on and an op's claim frame-matches an active memory","systemResponse":"attach the match to the op's conflict field","priority":"high","status":"implemented","verificationMethod":"test"}
+{"op":"add","key":"CONF-2","patternType":"event-driven","systemName":"batch door","trigger":"detect_conflicts is on and an op's claim frame-matches an earlier op in the same batch","systemResponse":"attach the earlier op's caller-space index to the conflict field","status":"implemented","verificationMethod":"test","verificationNote":"survivor-space bug caught by mutation; originOf translation locked"}
+{"op":"add","key":"CONF-3","patternType":"unwanted-behavior","systemName":"conflict assist","trigger":"a conflict is detected","systemResponse":"alter, block, or archive any write","negated":true,"priority":"critical","status":"implemented","verificationMethod":"test","verificationNote":"propose-only: removal mutation fires 14 tests across three layers. BEAM: the gold IS the contradiction"}
+{"op":"add","key":"CONF-4","patternType":"event-driven","systemName":"conflict assist","trigger":"the frame lookup fails","systemResponse":"degrade to a null conflict with a logged warning","status":"implemented","verificationMethod":"test","verificationNote":"error channel structurally never; write never blocked by assist plumbing"}
+{"op":"add","key":"CONF-5","patternType":"ubiquitous","systemName":"conflict assist","systemResponse":"resolve all of a batch's frame keys in one lookup query","status":"implemented","verificationMethod":"test","verificationNote":"quadratic-write-cost lesson; per-op-lookup mutation fires exactly 1 shape test"}
+
+# ── doors: CLI + MCP wire discipline ──────────────────────────────────────────
+{"op":"add","key":"WIRE-1","patternType":"ubiquitous","systemName":"batch result envelope","systemResponse":"carry every field present and nullable rather than optional","status":"implemented","verificationMethod":"test","verificationNote":"NullOr discipline, tools.test.ts key-set locks"}
+{"op":"add","key":"WIRE-2","patternType":"ubiquitous","systemName":"mcp server","systemResponse":"declare a failure schema on every tool","priority":"high","status":"implemented","verificationMethod":"test","verificationNote":"effect masks undeclared failures as internal server error; wire tests lock"}
+{"op":"add","key":"WIRE-3","patternType":"ubiquitous","systemName":"cli","systemResponse":"derive the manifest, help, and agent guide from the one commands table","status":"implemented","verificationMethod":"test","verificationNote":"AGENTS.md byte-lock; suggestion strings validated through parseArgv since T3"}
+{"op":"add","key":"WIRE-4","patternType":"ubiquitous","systemName":"cli manifest","systemResponse":"disclose every real configuration variable","status":"implemented","verificationMethod":"test","verificationNote":"MEMHTML_MCP_BIN joined CONFIG_VARS (T3)"}
+
+# ── sleep + CI ────────────────────────────────────────────────────────────────
+{"op":"add","key":"SLEEP-1","patternType":"ubiquitous","systemName":"sleep conflict-detection phase","systemResponse":"report conflicts without resolving them","status":"implemented","verificationMethod":"inspection","verificationNote":"detection-only by design; choosing a winner is a one-way door"}
+{"op":"add","key":"SLEEP-2","patternType":"unwanted-behavior","systemName":"sleep cycle","trigger":"a nightly phase reads the corpus","systemResponse":"bump salience access counts","negated":true,"status":"implemented","verificationMethod":"inspection","verificationNote":"sleep bypasses the tool path"}
+{"op":"add","key":"CI-1","patternType":"event-driven","systemName":"ci pipeline","trigger":"a merge request or default-branch push lands","systemResponse":"run the full check gate without credentials","status":"implemented","verificationMethod":"demonstration","verificationNote":".github/workflows/check.yml; eval defaults to fake mode, integration tests set MEMHTML_EMBED=off themselves"}
+
+# ── glossary: vocabulary the corpus uses interchangeably ─────────────────────
+{"op":"glossary","canonical":"bump the path's access count","alias":"reinforce the path with a neutral signal"}
+{"op":"glossary","canonical":"commit the memory file in exactly one git commit","alias":"write the memory atomically"}

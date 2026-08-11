@@ -1,0 +1,23 @@
+# One job: the definition of done. `pnpm check` = turbo run lint typecheck
+# test test:integration test:eval — credential-free by construction (eval
+# defaults to --mode fake; integration tests set MEMHTML_EMBED=off /
+# MEMHTML_LLM=off themselves), so this pipeline needs no secrets.
+name: check
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      # No version argument: corepack honors the packageManager pin
+      # (pnpm@11.16.0) in package.json, so CI and local can never drift.
+      - run: corepack prepare --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check

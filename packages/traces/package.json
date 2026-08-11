@@ -1,0 +1,31 @@
+{
+  "name": "@memhtml/traces",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Streaming JSONL parser and trace indexer.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
+    "lint": "biome check src tests",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@memhtml/contracts": "workspace:*",
+    "@memhtml/index": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.6",
+    "@effect/vitest": "catalog:",
+    "@types/node": "24.10.2",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

@@ -1,0 +1,12 @@
+-- The lexical index. Requires the `index_method` experimental flag on EVERY connect once it
+-- exists — including plain SELECTs from `files` that never mention MATCH — so `TURSO_OPTS` is
+-- passed by every call site or the whole database becomes unopenable.
+--
+-- ONE column, deliberately. Probed 2026-08-02 on @tursodatabase/database 0.7.2: under a
+-- multi-column `USING fts(title, gist, body_text)` index, `WHERE body_text MATCH ?` returns
+-- matching rows in ROWID order rather than relevance order, and the MATCH is scoped to the named
+-- column alone — a term living in `title` is not found by a `body_text MATCH`. This driver exposes
+-- no `rank` column and no `bm25()`, so MATCH's own row order is the only relevance signal there
+-- is; a single-column index preserves it (term-frequency-dense rows first, verified against a
+-- seeded corpus). The indexer maintains `files.fts_text` as title + gist + body_text.
+CREATE INDEX files_fts ON files USING fts(fts_text);

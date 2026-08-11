@@ -1,0 +1,29 @@
+packages:
+  - apps/*
+  - packages/*
+  - tests-integration
+
+minimumReleaseAge: 1440
+
+# Effect v4 is beta: every Effect package moves as one pinned, tested set.
+catalog:
+  effect: 4.0.0-beta.102
+  "@effect/platform-node": 4.0.0-beta.102
+  "@effect/vitest": 4.0.0-beta.102
+  fast-check: 4.9.0
+
+allowBuilds:
+  # Every entry here is an optional NATIVE accelerator behind a pure-JS fallback that is
+  # sufficient for this repo, so each is denied. pnpm refuses to install while any of them
+  # is undecided, which is why absent packages must be answered rather than ignored.
+  #
+  # msgpackr-extract: reached through effect -> msgpackr.
+  #
+  # @mongodb-js/zstd and node-liblzma: optional deps of just-bash, the pure-JS sandbox
+  # backend @memhtml/consolidator runs its eve agent in. They accelerate zstd/xz decompression
+  # inside that sandbox's virtual filesystem. The consolidator puts only plain-text JSONL
+  # transcripts in there and never decompresses anything, so neither is on any path it
+  # takes; both also want node-gyp, which no CI image here provides.
+  "@mongodb-js/zstd": false
+  msgpackr-extract: false
+  node-liblzma: false

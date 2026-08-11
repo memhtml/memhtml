@@ -1,0 +1,26 @@
+{
+  "name": "memhtml",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.16.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "format": "biome check --write .",
+    "test": "turbo run test",
+    "test:integration": "turbo run test:integration",
+    "test:eval": "turbo run test:eval",
+    "gen:fixture": "turbo run build --filter=@memhtml/eval && node packages/eval/dist/gen-fixture.js",
+    "check": "turbo run lint typecheck test test:integration test:eval"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.6",
+    "turbo": "2.10.7",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,99 @@
+import { homedir } from "node:os"
+import { join } from "node:path"
+
+import { expandRoot } from "@memhtml/store"
+import { Config } from "effect"
+
+import { MCP_BIN_VAR } from "./serve.js"
+
+/**
+ * The whole environment surface, in one place, so `memhtml manifest` can describe it and a reader
+ * does not have to grep for `process.env`.
+ *
+ * Every variable is read through `effect/Config` rather than `process.env` directly: a missing
+ * required value becomes a typed failure with the variable's name in it, and a default is
+ * declared next to the name it defaults for.
+ */
+
+/** One documented environment variable, for the manifest and the generated agent doc. */
+export interface ConfigVar {
+  readonly name: string
+  readonly description: string
+  /** The value used when the variable is absent, or `null` when absence is meaningful. */
+  readonly fallback: string | null
+}
+
+export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
+  {
+    name: "MEMHTML_ROOT",
+    description: "The memory repo's root: a git repository holding the corpus and `.memhtml/`.",
+    fallback: join("~", "memhtml")
+  },
+  {
+    name: "MEMHTML_TRACE_ROOT",
+    description:
+      "Where `memhtml trace index` reads Claude Code transcripts from. Read-only; never written.",
+    fallback: join("~", ".claude")
+  },
+  {
+    name: "MEMHTML_AWS_REGION",
+    description: "The Bedrock region for embeddings and the sleep cycle's four LLM phases.",
+    fallback: "us-east-1"
+  },
+  {
+    name: "AWS_BEARER_TOKEN_BEDROCK",
+    description:
+      "Bedrock bearer token, read by the AWS SDK itself. Absent means the default credential chain; retrieval then degrades to the lexical floor rather than failing.",
+    fallback: null
+  },
+  {
+    name: "MEMHTML_EMBED",
+    description:
+      "`off` disables the embedder entirely. An explicit opt-out, distinct from a missing credential: a missing credential degrades one search at call time, `off` degrades every search, and an operator reading this manifest needs those to be different states.",
+    fallback: "on"
+  },
+  {
+    name: "MEMHTML_LLM",
+    description:
+      "`off` makes the four LLM sleep phases report `no model bound` and stay `ok`, so a credential-free run is honest rather than red.",
+    fallback: "on"
+  },
+  {
+    name: "MEMHTML_EXTRACT_ENTITIES",
+    description:
+      "`on` adds one GPT-5.6 Luna call per write batch that extracts `memhtml-entity` metas the ops did not declare. Opt-in, unlike MEMHTML_EMBED, because it changes what a write STORES: extracted entities land in the files as if authored, and the write itself never waits on or fails with the model — a failed extraction is a logged warning and an unextracted batch.",
+    fallback: "off"
+  },
+  {
+    /**
+     * The name is imported rather than retyped: this row and the `process.env` read at serve.ts:50
+     * must name the same string, and a literal here would let a rename disclose a variable nothing
+     * reads.
+     */
+    name: MCP_BIN_VAR,
+    description:
+      "An explicit path to the `memhtml-mcp` entry point, read only by the `memhtml serve mcp` supervisor. Absent means the sibling-path default — the two apps ship as one build, so `apps/cli/dist/serve.js` finds `apps/mcp/dist/bin.js` two directories over. An operator sets it for a split deployment that does not keep the apps side by side; it locates the server rather than configuring the store, so it changes no retrieval behaviour.",
+    fallback: null
+  }
+]
+
+/**
+ * `MEMHTML_ROOT`. Re-exported from `@memhtml/store`'s own config rather than redeclared, because the
+ * store's `~` expansion is the behaviour that matters: this value arrives from a shell profile,
+ * an MCP client config, and a cron line, and only the shell expands tildes.
+ */
+export const MemhtmlRoot = Config.string("MEMHTML_ROOT").pipe(
+  Config.withDefault(join("~", "memhtml")),
+  Config.map(expandRoot)
+)
+
+/**
+ * `MEMHTML_TRACE_ROOT`, defaulting to `~/.claude`.
+ *
+ * A parameter rather than a constant so the trace indexer is drivable against a fixture tree and
+ * against an archived copy — which is also what keeps real transcripts out of the test suite.
+ */
+export const TraceRoot = Config.string("MEMHTML_TRACE_ROOT").pipe(
+  Config.withDefault(join(homedir(), ".claude")),
+  Config.map(expandRoot)
+)

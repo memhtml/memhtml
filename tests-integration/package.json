@@ -1,0 +1,32 @@
+{
+  "name": "@memhtml/integration",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cross-package integration contracts: the plan's end-to-end verification items.",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
+    "lint": "biome check tests",
+    "test:integration": "vitest run"
+  },
+  "dependencies": {
+    "@memhtml/cli": "workspace:*",
+    "@memhtml/contracts": "workspace:*",
+    "@memhtml/domain": "workspace:*",
+    "@memhtml/eval": "workspace:*",
+    "@memhtml/html": "workspace:*",
+    "@memhtml/index": "workspace:*",
+    "@memhtml/llm": "workspace:*",
+    "@memhtml/sleep": "workspace:*",
+    "@memhtml/store": "workspace:*",
+    "@memhtml/traces": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.6",
+    "@effect/vitest": "catalog:",
+    "@types/node": "24.10.2",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

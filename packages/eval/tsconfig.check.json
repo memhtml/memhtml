@@ -1,0 +1,39 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "rootDir": ".",
+    "outDir": "dist-check",
+    "types": ["node"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "eval/**/*.ts",
+    "vitest.config.ts",
+    "vitest.eval.config.ts"
+  ],
+  "references": [
+    {
+      "path": "../contracts"
+    },
+    {
+      "path": "../domain"
+    },
+    {
+      "path": "../html"
+    },
+    {
+      "path": "../store"
+    },
+    {
+      "path": "../index"
+    },
+    {
+      "path": "../llm"
+    }
+  ]
+}

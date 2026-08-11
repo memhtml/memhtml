@@ -1,0 +1,54 @@
+-- `files` gains `frame_key`: the claim's SLOT, derived from its gist at projection time by
+-- `@memhtml/domain`'s `frameKeyOf`. Two active memories sharing a frame key state the same relation with
+-- (possibly) different values, which is what makes a contradiction findable by one indexed lookup
+-- instead of an O(corpus) scan or an LLM pass over every pair.
+--
+-- ── ADDITIVE, unlike 0008 ────────────────────────────────────────────────────────────────────────
+--
+-- `ALTER TABLE … ADD COLUMN` plus one index, and deliberately NOT the recreate-and-copy 0008 used.
+-- That pattern was forced by a CHECK-constraint edit — SQLite cannot ALTER a CHECK — and it carried
+-- real risk: `DROP TABLE files` cascades to every child down to `embeddings`, so 0008 had to snapshot
+-- and restore six tables to avoid re-paying Bedrock for the whole corpus. A nullable column with no
+-- constraint needs none of that. Copying 0008's shape here would take on all of its danger to buy
+-- nothing, and this file must not be read as evidence that recreate-and-copy is the house style.
+--
+-- ── NOT UNIQUE, and that is the design, not an omission ──────────────────────────────────────────
+--
+-- Multiple ACTIVE rows may share a frame key, today and permanently. Two memories claiming different
+-- values for one slot are exactly what the conflict assist exists to REPORT, so a unique index would
+-- refuse the write that produces the signal — the corpus would stay clean by never recording the
+-- disagreement, and the assist would have nothing to find. The eval's gold on MAB Conflict_Resolution
+-- IS the contradiction pair. The assist reports; it never blocks.
+--
+-- ── The index predicate mirrors the lookup's ─────────────────────────────────────────────────────
+--
+-- `archived = 0 AND memory_type <> 'task' AND frame_key IS NOT NULL`, matching `activeFramesFor`
+-- (`traces-persist.ts`) clause for clause, on the same reasoning `files_content_hash_active` and
+-- `activePathForHash` share: the query is the question and the index is the answer, so a predicate on
+-- one and not the other is a lookup that scans instead of seeks, silently and only under load.
+--
+--   * `archived = 0` — an evicted memory is not a live claim, so it cannot contradict one.
+--   * `memory_type <> 'task'` — the same carve-out `files_content_hash_active` carries. Two open
+--     tasks phrased alike are two real work items ("the owner of the deploy runbook is Priya" as a
+--     to-do, twice), not a contradiction to report.
+--   * `frame_key IS NOT NULL` — most gists have no frame shape (the guards fail closed), so this
+--     keeps the index the size of the KEYED rows rather than of the corpus.
+--
+-- ── Existing rows arrive NULL, and self-heal ─────────────────────────────────────────────────────
+--
+-- `ADD COLUMN` gives every existing row NULL, and this migration does NOT backfill. It cannot: the
+-- key derives from the gist through TypeScript, and SQL cannot call `frameKeyOf` — a SQL
+-- reimplementation of the regex would be a second copy of a measured heuristic, free to drift from
+-- the one the eval validated.
+--
+-- No backfill is needed, because `index.db` is a disposable projection of the git tree. `memhtml index
+-- rebuild` recomputes every row from the files and every `frame_key` lands populated; short of that,
+-- each file's next update rewrites its own row through the projection's upsert. So the column fills
+-- in on the next rebuild or the next touch, and until then a NULL simply means "not yet keyed" — the
+-- assist finds fewer conflicts, never wrong ones, because the lookup requires a non-NULL match on
+-- both sides.
+
+ALTER TABLE files ADD COLUMN frame_key TEXT;
+
+CREATE INDEX files_frame_key_active ON files (frame_key)
+  WHERE archived = 0 AND memory_type <> 'task' AND frame_key IS NOT NULL;

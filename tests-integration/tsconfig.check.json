@@ -1,0 +1,45 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "rootDir": ".",
+    "outDir": "dist-check",
+    "types": ["node"]
+  },
+  "include": ["tests/**/*.ts", "vitest.config.ts"],
+  "references": [
+    {
+      "path": "../packages/contracts"
+    },
+    {
+      "path": "../packages/domain"
+    },
+    {
+      "path": "../packages/html"
+    },
+    {
+      "path": "../packages/store"
+    },
+    {
+      "path": "../packages/index"
+    },
+    {
+      "path": "../packages/traces"
+    },
+    {
+      "path": "../packages/sleep"
+    },
+    {
+      "path": "../packages/llm"
+    },
+    {
+      "path": "../packages/eval"
+    },
+    {
+      "path": "../apps/cli"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist-check/
+coverage/
+.turbo/
+*.tsbuildinfo
+.env
+.env.local
+.erpaval/sessions/
+.codegraph/
+docs/.repomix/

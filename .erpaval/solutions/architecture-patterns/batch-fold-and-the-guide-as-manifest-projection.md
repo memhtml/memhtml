@@ -1,0 +1,42 @@
+# Batch fold over a git store, and agent guidance as a manifest projection
+
+**Tags**: batch, jsonl, atomic-commit, fold, dedup, agent-guide, manifest, discoverability, mcp
+**Modules**: packages/store, apps/cli, apps/mcp
+
+## The rules
+
+1. **Fold the singular yourself; validate everything before writing anything.** The batch runs
+   render-gate + dedup + slug-claim for EVERY op before the first `writeFileAt`. Two facts only
+   the fold sees: `freePathFor` consults disk, so two same-title ops in one batch collide unless
+   the fold threads a `claimed` set; the task dedup exemption lives in the INDEX hook
+   (`traces-persist.ts`), not the store, so the batch's own hash map must carve tasks out in both
+   directions itself.
+2. **An aborted batch's cleanliness needs a tree digest, not `git status`.** `--porcelain` empty
+   proves nothing about a file written and never staged. `treeDigest` (path+contents, excluding
+   `.git`/`.memhtml`) is the assertion that caught the write-during-validation mutant
+   (`tests-integration/tests/spawned.ts:275`).
+3. **Isolate the one-commit lock before trusting it.** The commit-per-file mutant must preserve
+   the commit SUBJECT and report a real HEAD sha, or the mutation dies on a weaker assertion and
+   the commit-count lock stays unproven (first cut of M6/M-1C died on `commit_sha`; the re-cut
+   died on `expected 18 to be 1`, which is the lock).
+4. **A handler-composed ToolFailure must survive its own mapping.** `handled` =
+   `Effect.mapError(toToolFailure)` re-mapped a pre-composed failure to
+   `ERR_UNKNOWN: unexpected failure: ToolFailure` — the masking coming back from the inside.
+   `toToolFailure` needs an identity branch (`failure.ts:163`). Same class of bug: an atomic
+   abort surfacing as a SUCCESS payload from one refusal path (render gate) and an ERROR from
+   another (XOR) — unify at one seam (`firstFailure` + `batchAbortFailure`).
+5. **The render gate accepts `claim: ""` with a non-empty body** — a committed, indexed file with
+   an empty `files.gist`. Constraint 1 checks `<mark>` COUNT, not content. Any new write door
+   that doesn't run `claimOf` must derive the claim itself (`apps/cli/src/apply.ts`); the gate
+   will not save it. Candidate real fix: a violation for an empty `<mark>`.
+6. **Agent guidance is a manifest projection, and it must be executable.** The `guide` blocks
+   live beside COMMANDS, ride `buildManifest()` into bare `memhtml`/`help`/`--help`/`manifest`, and
+   render into AGENTS.md by the same generator — one source, no drift. The lock that makes the
+   prose honest: a test EXTRACTS the example JSONL line from the live manifest and APPLIES it.
+   On MCP the equivalent channel is tool descriptions only — effect 4.0.0-beta.102 declares the
+   `instructions` initialize field (`McpSchema.ts:701`) but never emits it
+   (`McpServer.ts:1497-1501`); recorded at `apps/mcp/src/server.ts`.
+7. **Out-of-process assertions need their own shared client.** The bare-binary guide test and the
+   NDJSON stdio client can't live in unit suites (they test the BUILT artifact); one shared
+   `spawned.ts` transport keeps two framers from disagreeing about where the supervisor's
+   `serve.exit` envelope starts.
