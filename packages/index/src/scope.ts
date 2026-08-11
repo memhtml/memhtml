@@ -62,6 +62,19 @@ export interface SearchScope {
   readonly entity?: string | undefined
   /** Archived files are excluded unless asked for. Eviction is a `git mv`, so they still exist. */
   readonly includeArchived?: boolean | undefined
+  /**
+   * Point-in-time view: an ISO instant, and the candidate set becomes "what was believed valid at
+   * this moment" — archived files INCLUDED, filtered by the validity window
+   * `coalesce(valid_from, event_at, created_at) <= asOf AND (valid_until IS NULL OR valid_until > asOf)`.
+   *
+   * The coalesce order is the stamping rule's own (`@memhtml/store`'s `validFromOf`): an explicit
+   * valid-from beats the event time, which beats the write time. All three columns compare
+   * lexicographically as strings by design (0008_tasks.sql), so the predicate is string comparison,
+   * never a per-row parse. Applied HERE, at the one filter every arm receives, so the temporal lens
+   * cannot hold for three arms and leak in the fourth. When absent the assembled filter is
+   * byte-identical to today's — a pin test enforces that.
+   */
+  readonly asOf?: string | undefined
 }
 
 /**
@@ -99,7 +112,21 @@ export const assembleScope = (scope: SearchScope = {}): AssembledScope => {
     return `?${next++}`
   }
 
-  if (scope.includeArchived !== true) conditions.push("{alias}.archived = 0")
+  if (scope.asOf !== undefined && scope.asOf !== "") {
+    /**
+     * The as-of lens REPLACES the archived filter rather than composing with it: a superseded
+     * memory that was valid at the asked moment is archived NOW, and excluding it would make the
+     * point-in-time view show only the survivors of every later decision — which is the present,
+     * not the past. Both bounds bind as parameters like every other caller value; the same
+     * placeholder binds twice because the window has two ends and one instant.
+     */
+    conditions.push(
+      `coalesce({alias}.valid_from, {alias}.event_at, {alias}.created_at) <= ${placeholder(scope.asOf)}`
+    )
+    conditions.push(
+      `({alias}.valid_until IS NULL OR {alias}.valid_until > ${placeholder(scope.asOf)})`
+    )
+  } else if (scope.includeArchived !== true) conditions.push("{alias}.archived = 0")
 
   const types = (scope.memoryTypes ?? []).filter((type) =>
     (MEMORY_TYPES as ReadonlyArray<string>).includes(type)

@@ -75,6 +75,7 @@ export type {
   StoreError,
   StoreHooks,
   StoreShape,
+  SupersedeResult,
   WriteInput,
   WriteProvenance,
   WriteResult

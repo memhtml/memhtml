@@ -89,6 +89,12 @@ const SCOPE_FLAGS: ReadonlyArray<FlagSpec> = [
     type: "boolean",
     description: "Include archived memories. Eviction is a `git mv`, so they still exist.",
     default: false
+  },
+  {
+    name: "as-of",
+    type: "string",
+    description:
+      "Point-in-time view: returns what was believed valid at this ISO instant, including since-superseded memories (marked superseded_by). The validity window is coalesce(valid_from, event_at, created_at) <= as-of < valid_until."
   }
 ]
 
@@ -211,6 +217,13 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         description:
           "Report each op's frame-matches as a per-op `conflict`: the ACTIVE memory (or the earlier op) whose claim occupies the same subject-and-relation slot. PROPOSE-ONLY — every op still writes exactly as it would have, because sometimes the contradiction is the answer. You decide: write anyway, `memhtml correct` the match, or drop the line.",
         default: false
+      },
+      {
+        name: "consolidate",
+        type: "string",
+        values: ["last-wins"],
+        description:
+          "Resolve frame-key matches instead of only reporting them: `--consolidate last-wins` makes the LATER op's value win a shared claim slot — one file, written at the FIRST index that claimed the slot, with each later restatement reporting `consolidated_into` naming that slot — and archives a stored ACTIVE memory a surviving slot displaces, reported as `superseded_path`. Off by default; claims with no frame shape are never consolidated."
       },
       {
         name: "session-id",
@@ -913,7 +926,30 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "You decide per conflict: keep both (they are about different things, or both are true), " +
       "`memhtml correct <path>` instead (the new claim supersedes the old one, and the old one stays readable " +
       "under archive/), or drop the line (you were about to restate something already stored). " +
-      "Archived memories never match, so a superseded claim stops contradicting the claim that superseded it."
+      "Archived memories never match, so a superseded claim stops contradicting the claim that superseded it.\n" +
+      "When you have already decided that later wins — a re-scrape, a settings sync, any stream where " +
+      "each line is the newest statement of its slot — pass `--consolidate last-wins` (the batch tool's " +
+      '`consolidate: "last-wins"`) and the batch RESOLVES those matches instead of reporting them. ' +
+      "Ops sharing a frame key write ONE file carrying the LATER value at the FIRST index that claimed " +
+      "the slot; each later restatement reports `consolidated_into` naming that slot and the summary " +
+      "counts it under `consolidated`, neither written nor failed. A stored ACTIVE memory occupying a " +
+      "surviving slot is archived with a supersedes link from the new file, its archive path reported " +
+      "as `superseded_path` — the same chain `memhtml correct` leaves, so ancestry reads identically. " +
+      "OFF by default, and the key is the conflict rule's own: the frame split is a rule measured in " +
+      "the eval harness before it was believed and ported verbatim into `@memhtml/domain`'s frame.ts, " +
+      "which detection and consolidation share — so anything the rule refuses to key (short frames, " +
+      "clause values) is never consolidated, and what you saw reported with `--detect-conflicts` is " +
+      "exactly what this flag would have acted on.\n" +
+      "Every supersede — `memhtml correct` and `--consolidate last-wins` alike — also stamps a VALIDITY " +
+      "WINDOW, in the same one commit. The superseded memory gains `memhtml-valid-until` set to the " +
+      "moment the new fact became true (the winner's own `memhtml-valid-from`, else its first " +
+      "`<time datetime>`, else the operation's instant), and the winner gains `memhtml-valid-from` at " +
+      "that same moment — so one window closes exactly where the next opens. Min-wins: a memory " +
+      "already stating an EARLIER `memhtml-valid-until` keeps it, because a fact cannot outlive its " +
+      "earliest stated bound. That is what `--as-of` on `memhtml search` reads: pass an ISO instant and " +
+      "the result is what was believed valid AT THAT MOMENT — since-superseded memories return, each " +
+      "marked `superseded_by` naming what replaced it, and facts not yet valid then are absent. " +
+      "History is read from the files, not replayed from git, so it survives a full index rebuild."
   },
   {
     topic: "authoring",

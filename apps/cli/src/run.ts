@@ -152,7 +152,8 @@ const scopeOf = (parsed: Parsed) => ({
   workspace: str(parsed, "workspace"),
   tags: list(parsed, "tag"),
   entity: str(parsed, "entity"),
-  includeArchived: bool(parsed, "include-archived", false)
+  includeArchived: bool(parsed, "include-archived", false),
+  asOf: str(parsed, "as-of")
 })
 
 /** Session provenance, from the three flags every write-path command accepts. */
@@ -231,6 +232,11 @@ const dispatch = (
           ops: applyOps,
           continueOnError: bool(parsed, "continue-on-error", false),
           detectConflicts: bool(parsed, "detect-conflicts", false),
+          // `validate` has already refused any value outside the flag's closed vocabulary, so the
+          // narrowing here cannot silently drop a caller's ask.
+          ...(str(parsed, "consolidate") === "last-wins"
+            ? { consolidate: "last-wins" as const }
+            : {}),
           ...provenanceOf(parsed)
         })
         return ["batch.applied", applyPayload(result)] as const

@@ -337,6 +337,21 @@ export interface BatchOpReport {
    * PROPOSE-ONLY: the presence of this field never changed what was written. See {@link batchWrite}.
    */
   readonly conflict?: FrameConflict | undefined
+  /**
+   * Set on a batch-internal LOSER under `consolidate: "last-wins"`: a later restatement of a slot
+   * an earlier op already occupied. Its value won the slot — last wins — but the write landed at
+   * the EARLIEST index with that frame key, so this op never got its own file and has no `path`.
+   * The number is that slot: the caller-space index whose report carries the surviving write (its
+   * path, and any `supersededPath`).
+   */
+  readonly consolidatedInto?: number | undefined
+  /**
+   * Set on a WINNER whose write superseded a live stored memory under `consolidate: "last-wins"`:
+   * the loser's ARCHIVE path, where its bytes now live. Absent when nothing stored occupied the
+   * slot, and also when the supersede itself degraded — the corpus is then merely unconsolidated,
+   * which is what every batch produced before this flag existed.
+   */
+  readonly supersededPath?: string | undefined
 }
 
 export interface BatchWriteResult {
@@ -347,6 +362,8 @@ export interface BatchWriteResult {
     readonly deduped: number
     readonly failed: number
     readonly skipped: number
+    /** Batch-internal losers under `consolidate: "last-wins"`: ops whose value a later op replaced. */
+    readonly consolidated: number
   }
   readonly commitSha: string | null
 }
@@ -363,6 +380,19 @@ export interface BatchWriteParams extends Provenance {
    * does not read.
    */
   readonly detectConflicts?: boolean | undefined
+  /**
+   * Opt-in write-time consolidation: deterministic frame-key (`frameKeyOf`) last-wins.
+   *
+   * Where `detectConflicts` reports and refuses to act, this ACTS — on the caller's explicit ask.
+   * A later op whose claim occupies the same frame slot as an earlier one replaces it before
+   * anything is written, so a batch-internal loser never reaches disk; a surviving op whose slot a
+   * LIVE stored memory occupies supersedes it after the commit, archiving the old file with a
+   * `supersedes` chain back from the winner. Fail-closed on the rule's own terms: a claim with no
+   * frame shape (null key) is never touched, and a failed store lookup degrades to
+   * batch-internal-only consolidation through the same `Effect.catch` → `logWarning` → neutral
+   * shape {@link detectFrameConflicts} takes — the flag must never become a new way to lose writes.
+   */
+  readonly consolidate?: "last-wins" | undefined
 }
 
 /**
@@ -471,6 +501,121 @@ const detectFrameConflicts = (
   })
 
 /**
+ * The `consolidate: "last-wins"` plan: which slots survive, which ops lost to a later restatement,
+ * and which stored memories a surviving slot supersedes. Everything is in the CALLER's index space.
+ */
+interface LastWinsPlan {
+  /** The ops the pipeline runs, each at its original slot index. Losers are absent. */
+  readonly ops: ReadonlyArray<{ readonly index: number; readonly op: WriteParams }>
+  /** Batch-internal loser index → the slot whose position carries the surviving value. */
+  readonly losers: ReadonlyMap<number, number>
+  /** Surviving slot index → the LIVE stored memory occupying that slot's frame key. */
+  readonly pendingSupersede: ReadonlyMap<number, string>
+}
+
+/**
+ * Fold last-wins over the caller's op array, BEFORE the decode fold, so a batch-internal loser
+ * never reaches disk — the surviving value simply occupies the earliest slot with that key.
+ *
+ * NOT derived from {@link detectFrameConflicts}' output, although the walk mirrors it: a store
+ * match WINS there, masking the batch-internal pair the plan needs, and the plan needs BOTH — the
+ * batch collision decides which value writes, the store match decides what that write supersedes.
+ *
+ * The slot rule: the FIRST occupant of a key keeps its position and later ops with the same key
+ * replace its CONTENT (`plannedOps[slot] = laterOp`, provenance and all, since the surviving value
+ * is the later op's own statement). The occupant-tracking never moves, so a third restatement
+ * replaces the slot again — last wins, at a stable position a caller can index by.
+ *
+ * Fail-closed on both of the rule's own guards: a null frame key is never consolidated, and a
+ * failed store lookup degrades to batch-internal consolidation only — the same
+ * `Effect.catch` → `logWarning` → neutral-shape path the conflict assist takes, because an opt-in
+ * consolidation must never become a new way to lose writes.
+ */
+const planLastWins = (
+  ops: ReadonlyArray<WriteParams>
+): Effect.Effect<LastWinsPlan, never, IndexRecorderShape> =>
+  Effect.gen(function* () {
+    /** frame key → the slot (earliest occupant's index) that carries this key's surviving value. */
+    const slotOf = new Map<string, number>()
+    /** slot index → the op whose value currently occupies it. */
+    const content = new Map<number, WriteParams>()
+    const losers = new Map<number, number>()
+    /** Slot indices in caller order, keyed and keyless alike. */
+    const order: Array<number> = []
+
+    for (const [index, op] of ops.entries()) {
+      const key = frameKeyOf(op.claim)
+      if (key === null) {
+        // No frame shape, no slot: the rule's guards fail CLOSED, so this op is never touched.
+        order.push(index)
+        content.set(index, op)
+        continue
+      }
+      const slot = slotOf.get(key)
+      if (slot === undefined) {
+        slotOf.set(key, index)
+        order.push(index)
+        content.set(index, op)
+        continue
+      }
+      content.set(slot, op)
+      losers.set(index, slot)
+    }
+
+    const pendingSupersede = new Map<number, string>()
+    if (slotOf.size > 0) {
+      const recorder = yield* IndexRecorder
+      // ONE query for every surviving key, for detectFrameConflicts' reason: a per-slot lookup is
+      // the quadratic-write-cost shape this codebase has already paid for once.
+      const live = yield* recorder
+        .activeFramesFor([...slotOf.keys()])
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning(`consolidation store lookup skipped: ${error.operation}`).pipe(
+              Effect.as(new Map<string, ReadonlyArray<FrameMatch>>())
+            )
+          )
+        )
+      for (const [key, slot] of slotOf) {
+        const [stored] = live.get(key) ?? []
+        if (stored !== undefined) pendingSupersede.set(slot, stored.path)
+      }
+    }
+
+    return {
+      ops: order.flatMap((index) => {
+        const op = content.get(index)
+        return op === undefined ? [] : [{ index, op }]
+      }),
+      losers,
+      pendingSupersede
+    }
+  })
+
+/**
+ * Loser reports for a last-wins plan, derived from the WINNER slots' own final reports.
+ *
+ * A loser reports `ok` with `consolidatedInto` only when its slot's write landed — the surviving
+ * value is on disk and the pointer names where. A slot that was skipped or refused took the
+ * loser's value down with it, so the loser reports `skipped`, which is the retryable outcome and
+ * the one an atomic abort already means: nothing of this op reached disk.
+ */
+const withConsolidation = (
+  results: ReadonlyArray<BatchOpReport>,
+  plan: LastWinsPlan | null
+): ReadonlyArray<BatchOpReport> => {
+  if (plan === null || plan.losers.size === 0) return results
+  return results.map((report, index) => {
+    const slot = plan.losers.get(index)
+    if (slot === undefined) return report
+    const winner = results[slot]
+    return winner?.ok === true && winner.skipped !== true
+      ? ({ index, ok: true, consolidatedInto: slot } satisfies BatchOpReport)
+      : ({ index, ok: false, skipped: true } satisfies BatchOpReport)
+  })
+}
+
+/**
  * Write N memories: ONE commit, ONE reindex, per-op results in input order.
  *
  * **Two folds, not one.** Decode is the operations layer's job and the store never sees it, so a
@@ -515,6 +660,16 @@ export const batchWrite = (params: BatchWriteParams) =>
         : new Map<number, FrameConflict>()
 
     /**
+     * The consolidation plan, BEFORE the decode fold and in the caller's index space. A
+     * batch-internal loser is excluded from everything downstream — its value never earns a file —
+     * and the surviving value sits at the earliest slot with its key, so every later report and
+     * conflict finding stays at the index the caller sent.
+     */
+    const plan = params.consolidate === "last-wins" ? yield* planLastWins(params.ops) : null
+    const planned =
+      plan === null ? [...params.ops.entries()].map(([index, op]) => ({ index, op })) : plan.ops
+
+    /**
      * Fold 1 — decode. `Effect.result` rather than letting the failure escape, because a decode
      * refusal is this op's result and not the batch's.
      */
@@ -524,7 +679,7 @@ export const batchWrite = (params: BatchWriteParams) =>
     const originOf: Array<number> = []
     let decodeAborted = false
 
-    for (const [index, op] of params.ops.entries()) {
+    for (const { index, op } of planned) {
       const decoded = yield* Effect.result(toWriteInput({ ...op, ...provenanceOf(params, op) }, at))
       if (decoded._tag === "Failure") {
         reports[index] = reportFailure(index, decoded.failure)
@@ -544,7 +699,7 @@ export const batchWrite = (params: BatchWriteParams) =>
      * exactly rather than inventing a second one.
      */
     if (decodeAborted) {
-      const results = merged(reports, conflicts)
+      const results = withConsolidation(merged(reports, conflicts), plan)
       return { results, summary: summarize(results), commitSha: null } satisfies BatchWriteResult
     }
 
@@ -605,15 +760,61 @@ export const batchWrite = (params: BatchWriteParams) =>
           : reportFailure(index, entry.error)
     }
 
-    /**
-     * An op the store aborted before reaching has no result of its own, and neither does one whose
-     * decode succeeded in a batch the store then aborted — both are `skipped`.
-     */
-    const results = merged(reports, conflicts)
-
     // ONE reindex, after the commit, only when a file was actually written.
     if (batch.writtenPaths.length > 0) yield* reindex()
     for (const path of batch.writtenPaths) yield* recordLink(path, "wrote", params, at)
+
+    /**
+     * The store-supersede pass, AFTER a successful batch commit: every surviving slot whose frame
+     * key a live memory occupied archives that memory, in ONE `supersedeMemories` call.
+     *
+     * A slot qualifies when its report is `ok` with a path — including a DEDUPE, where the path is
+     * the pre-existing file that already carries this slot's value: the stored occupant still
+     * states the losing value, so superseding it is still correct. A slot that failed or was
+     * skipped wrote nothing, so there is nothing for its occupant to lose to.
+     *
+     * `Effect.result`, not a bare yield: a failed supersede must not fail a batch whose memories
+     * already landed. The degradation is annotate-only — `supersededPath` is omitted, the warning
+     * says why, and the corpus is merely unconsolidated, which is what every batch produced before
+     * this flag existed. On success ONE extra reindex, because archive paths moved.
+     */
+    if (plan !== null && plan.pendingSupersede.size > 0) {
+      const pairs: Array<{ readonly winnerPath: string; readonly loserPath: string }> = []
+      const winnerOf = new Map<string, number>()
+      for (const [slot, storedPath] of plan.pendingSupersede) {
+        const report = reports[slot]
+        if (report === undefined || !report.ok || report.skipped === true) continue
+        if (report.path === undefined) continue
+        // A slot whose content DEDUPED onto the occupant itself is a restatement, not a
+        // supersession: winner and loser are one file, and archiving it would lose the value.
+        if (report.path === storedPath) continue
+        pairs.push({ winnerPath: report.path, loserPath: storedPath })
+        winnerOf.set(storedPath, slot)
+      }
+      if (pairs.length > 0) {
+        const outcome = yield* Effect.result(store.supersedeMemories(pairs))
+        if (outcome._tag === "Failure") {
+          yield* Effect.logWarning(
+            `consolidation supersede skipped: ${messageFor(outcome.failure)}`
+          )
+        } else {
+          for (const entry of outcome.success.archived) {
+            const slot = winnerOf.get(entry.loserPath)
+            const report = slot === undefined ? undefined : reports[slot]
+            if (slot === undefined || report === undefined) continue
+            reports[slot] = { ...report, supersededPath: entry.archivePath }
+          }
+          if (outcome.success.archived.length > 0) yield* reindex()
+        }
+      }
+    }
+
+    /**
+     * An op the store aborted before reaching has no result of its own, and neither does one whose
+     * decode succeeded in a batch the store then aborted — both are `skipped`. Losers pick up their
+     * `consolidatedInto` pointer last, from their winner slot's own final report.
+     */
+    const results = withConsolidation(merged(reports, conflicts), plan)
 
     return {
       results,
@@ -667,13 +868,17 @@ const summarize = (results: ReadonlyArray<BatchOpReport>): BatchWriteResult["sum
   let deduped = 0
   let failed = 0
   let skipped = 0
+  let consolidated = 0
   for (const result of results) {
-    if (result.skipped === true) skipped += 1
+    // A batch-internal loser is neither written nor failed: its VALUE survived at another slot,
+    // and no file of its own was ever attempted — so it partitions into its own count.
+    if (result.consolidatedInto !== undefined) consolidated += 1
+    else if (result.skipped === true) skipped += 1
     else if (!result.ok) failed += 1
     else if (result.deduped === true) deduped += 1
     else written += 1
   }
-  return { total: results.length, written, deduped, failed, skipped }
+  return { total: results.length, written, deduped, failed, skipped, consolidated }
 }
 
 /**

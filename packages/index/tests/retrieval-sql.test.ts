@@ -259,6 +259,62 @@ describe("trace firewall", () => {
   })
 })
 
+describe("the as-of temporal lens", () => {
+  it("assembles the exact pre-change filter when asOf is absent — the byte-identical pin", () => {
+    /**
+     * The load-bearing pin: a caller that names no `asOf` must get TODAY's SQL, byte for byte.
+     * Asserted as the literal string rather than as properties, because the property form would
+     * pass a filter that reordered or reworded the conditions — and the claim is bytes.
+     */
+    const expected =
+      "\n         AND {alias}.archived = 0\n         AND {alias}.memory_type <> 'task'"
+    expect(assembleScope().holes.fileFilter).toBe(expected)
+    expect(assembleScope({}).holes.fileFilter).toBe(expected)
+    // An explicit undefined and an empty string are both "not asked", never a lens over nothing.
+    expect(assembleScope({ asOf: undefined }).holes.fileFilter).toBe(expected)
+    expect(assembleScope({ asOf: "" }).holes.fileFilter).toBe(expected)
+    expect(assembleScope().params).toEqual([])
+  })
+
+  it("replaces the archived filter with the validity window when asOf is present", () => {
+    const scoped = assembleScope({ asOf: "2024-01-01T00:00:00Z" })
+    // Archived rows ENTER the candidate set: a superseded memory that was valid then is archived
+    // now, and excluding it would make the point-in-time view show the present.
+    expect(scoped.holes.fileFilter).not.toContain("archived = 0")
+    // The window predicate, with the stamping rule's own coalesce order.
+    expect(scoped.holes.fileFilter).toContain(
+      "coalesce({alias}.valid_from, {alias}.event_at, {alias}.created_at) <= ?5"
+    )
+    expect(scoped.holes.fileFilter).toContain(
+      "({alias}.valid_until IS NULL OR {alias}.valid_until > ?6)"
+    )
+    // One instant, two ends of the window: the value binds twice.
+    expect(scoped.params).toEqual(["2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"])
+  })
+
+  it("reaches every arm through the shared filter, with no {alias} left behind", () => {
+    /**
+     * The lens is a SCOPE, so it must narrow every arm's candidate set — a lens that applied to
+     * three arms and not the fourth would let a not-yet-valid memory earn a rank in the arm it
+     * leaked from.
+     */
+    const scoped = assembleScope({ asOf: "2024-01-01T00:00:00Z" })
+    for (const arm of RANK_ARMS) {
+      const sql = arm.sql(scoped.holes)
+      expect(sql, arm.name).toContain("valid_until")
+      expect(sql, arm.name).not.toContain("{alias}")
+    }
+  })
+
+  it("keeps the later scope placeholders numbered after the window's two", () => {
+    // The window consumes ?5 and ?6, so a workspace scope must land at ?7 — a shifted number
+    // would silently bind the wrong value, the exact failure the ?5-upward contract exists for.
+    const scoped = assembleScope({ asOf: "2024-01-01T00:00:00Z", workspace: "memhtml" })
+    expect(scoped.holes.fileFilter).toContain("{alias}.workspace = ?7")
+    expect(scoped.params).toEqual(["2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z", "memhtml"])
+  })
+})
+
 describe("buildSnippetSql", () => {
   it("returns undefined for zero paths rather than assembling IN ()", () => {
     expect(buildSnippetSql({ hasQueryVector: true, pathCount: 0 })).toBeUndefined()

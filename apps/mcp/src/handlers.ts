@@ -262,7 +262,9 @@ const wireReport = (report: BatchOpReport) => ({
           path: report.conflict.path,
           batch_index: report.conflict.batchIndex,
           claim: report.conflict.claim
-        }
+        },
+  consolidated_into: report.consolidatedInto ?? null,
+  superseded_path: report.supersededPath ?? null
 })
 
 /**
@@ -281,13 +283,17 @@ const summarize = (
   let deduped = 0
   let failed = 0
   let skipped = 0
+  let consolidated = 0
   for (const result of results) {
-    if (result.skipped === true) skipped += 1
+    // The same partition `operations.ts` makes: a batch-internal loser's value survived at
+    // another slot and no file of its own was attempted, so it is neither written nor failed.
+    if (result.consolidatedInto !== undefined) consolidated += 1
+    else if (result.skipped === true) skipped += 1
     else if (!result.ok) failed += 1
     else if (result.deduped === true) deduped += 1
     else written += 1
   }
-  return { total: results.length, written, deduped, failed, skipped }
+  return { total: results.length, written, deduped, failed, skipped, consolidated }
 }
 
 /**
@@ -411,6 +417,12 @@ export const ToolHandlers: Layer.Layer<
            * for such an op would name a slot the caller never asserted.
            */
           detectConflicts: params.detect_conflicts === true,
+          // Threaded unchanged for the same reason the flag above is: `memhtml apply --consolidate`
+          // resolves the same slots from the same code, so the two doors cannot disagree about
+          // which value won.
+          ...(params.consolidate !== undefined && params.consolidate !== null
+            ? { consolidate: params.consolidate }
+            : {}),
           sessionId: opt(params.session_id),
           promptId: opt(params.prompt_id),
           turnUuid: opt(params.turn_uuid)
@@ -451,7 +463,7 @@ export const ToolHandlers: Layer.Layer<
           const index = originOf[report.index]
           if (index === undefined) continue
           const conflict = report.conflict
-          reports[index] =
+          const translated =
             conflict === undefined || conflict.batchIndex === null
               ? { ...report, index }
               : {
@@ -461,6 +473,17 @@ export const ToolHandlers: Layer.Layer<
                     ...conflict,
                     batchIndex: originOf[conflict.batchIndex] ?? conflict.batchIndex
                   }
+                }
+          // `consolidatedInto` is a second index in `batchWrite`'s survivor space and takes the
+          // same translation the conflict's `batchIndex` does, for the same reason: an XOR-refused
+          // op before the consolidated pair would otherwise make the pointer name the wrong op.
+          reports[index] =
+            translated.consolidatedInto === undefined
+              ? translated
+              : {
+                  ...translated,
+                  consolidatedInto:
+                    originOf[translated.consolidatedInto] ?? translated.consolidatedInto
                 }
         }
 
@@ -508,7 +531,8 @@ export const ToolHandlers: Layer.Layer<
           workspace: opt(params.workspace),
           tags: opt(params.tags),
           entity: opt(params.entity),
-          includeArchived: opt(params.include_archived)
+          includeArchived: opt(params.include_archived),
+          asOf: opt(params.as_of)
         })
         return {
           hits: result.hits.map((hit) => ({
@@ -520,7 +544,8 @@ export const ToolHandlers: Layer.Layer<
             confidence: hit.confidence,
             updated_at: hit.updatedAt,
             snippet: hit.snippet,
-            entities: hit.entities
+            entities: hit.entities,
+            superseded_by: hit.supersededBy
           })),
           degraded: result.degraded,
           arms: result.arms,

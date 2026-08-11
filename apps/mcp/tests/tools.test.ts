@@ -356,7 +356,11 @@ describe("the derived JSON Schema", () => {
        * decisions about whether to go looking. Its own INNER `path`/`batch_index` are nullable rather
        * than optional for the same reason, asserted below.
        */
-      "conflict"
+      "conflict",
+      // The two consolidation outcomes follow the same present-and-nullable rule: "not
+      // consolidated" and "this build does not consolidate" are different facts.
+      "consolidated_into",
+      "superseded_path"
     ])
 
     /**
@@ -375,7 +379,14 @@ describe("the derived JSON Schema", () => {
     expect(struct?.required).toEqual(["path", "batch_index", "claim"])
 
     const summary = (success.properties ?? {}).summary as JsonSchemaObject
-    expect(summary.required).toEqual(["total", "written", "deduped", "failed", "skipped"])
+    expect(summary.required).toEqual([
+      "total",
+      "written",
+      "deduped",
+      "failed",
+      "skipped",
+      "consolidated"
+    ])
   })
 
   it("accepts an op that blanks or nulls the authoring field it did not use", () => {
@@ -653,6 +664,35 @@ describe("the derived JSON Schema", () => {
     const entityScope = properties.entity_scope as JsonSchemaObject
     expect(entityScope.anyOf).toEqual([{ type: "string" }, { type: "null" }])
     expect(success.required ?? []).toContain("entity_scope")
+  })
+
+  it("publishes as_of as an optional null-union param and superseded_by on every hit", () => {
+    /**
+     * The bi-temporal surface, pinned as the consolidation fields were: `as_of` follows `entity`'s
+     * `Optional` contract (flat null union, never required — adding a lens must not break a client
+     * already calling this tool), and `superseded_by` is present-and-nullable on every hit so a
+     * client can tell "not superseded" from "this build does not report supersession".
+     */
+    const asOf = (schemaFor("memory_search").properties ?? {}).as_of as JsonSchemaObject
+    expect(asOf.anyOf).toEqual([{ type: "string" }, { type: "null" }])
+    expect(schemaFor("memory_search").required ?? []).not.toContain("as_of")
+
+    const success = Tool.getJsonSchemaFromSchema(
+      MemhtmlToolkit.tools.memory_search.successSchema
+    ) as unknown as JsonSchemaObject
+    const hits = (success.properties ?? {}).hits as { readonly items?: JsonSchemaObject }
+    const hit = hits.items ?? {}
+    const supersededBy = (hit.properties ?? {}).superseded_by as JsonSchemaObject
+    expect(supersededBy.anyOf).toEqual([{ type: "string" }, { type: "null" }])
+    expect(hit.required ?? []).toContain("superseded_by")
+  })
+
+  it("states the point-in-time contract in memory_search's description", () => {
+    // The lens is chosen from the description, like the hop chain: an agent cannot infer from two
+    // unrelated fields that as_of returns superseded memories marked with what replaced them.
+    const description = MemhtmlToolkit.tools.memory_search.description ?? ""
+    expect(description).toContain("as_of")
+    expect(description).toContain("superseded_by")
   })
 
   it("states the hop and the no-widen rule in memory_search's description", () => {

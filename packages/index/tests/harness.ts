@@ -214,6 +214,9 @@ export interface MemoryFixture {
   readonly status?: "active" | "archived" | undefined
   readonly archivedAt?: string | undefined
   readonly eventAt?: string | undefined
+  /** The bi-temporal validity window, `memhtml-valid-from`/`memhtml-valid-until`. */
+  readonly validFrom?: string | undefined
+  readonly validUntil?: string | undefined
   readonly facets?:
     | ReadonlyArray<{ readonly name: string; readonly value: string; readonly dataValue?: string }>
     | undefined
@@ -252,6 +255,12 @@ export const memoryHtml = (fixture: MemoryFixture): string => {
     ...(fixture.archivedAt === undefined
       ? []
       : [`<meta name="memhtml-archived" content="${fixture.archivedAt}">`]),
+    ...(fixture.validFrom === undefined
+      ? []
+      : [`<meta name="memhtml-valid-from" content="${fixture.validFrom}">`]),
+    ...(fixture.validUntil === undefined
+      ? []
+      : [`<meta name="memhtml-valid-until" content="${fixture.validUntil}">`]),
     ...(fixture.sessionId === undefined
       ? []
       : [`<meta name="memhtml-session" content="${fixture.sessionId}">`]),

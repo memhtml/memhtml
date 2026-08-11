@@ -71,6 +71,18 @@ export interface SearchHit {
    * tell "no entities" from "this server does not report them".
    */
   readonly entities: ReadonlyArray<string>
+  /**
+   * The path of the memory that superseded this one, or `null` when nothing has. Non-null only for
+   * an archived hit — which reaches a result set through `asOf` or `includeArchived` — so a
+   * point-in-time answer is legible as history: the hit was believed then, and THIS is what
+   * replaced it. Present-and-nullable in every result, so a caller can tell "not superseded" from
+   * "this build does not report supersession".
+   *
+   * Derived from the `edges` table rather than the `memhtml-superseded-by` head meta: the loser is
+   * the `dst_path` of the winner's authored `supersedes` edge, which `edges_dst` indexes — while
+   * the meta reaches no SQL column at all, so reading it would cost a file open per hit.
+   */
+  readonly supersededBy: string | null
 }
 
 /** A search's outcome. */
@@ -150,6 +162,7 @@ interface HitRow {
   readonly disclosure_text: string
   readonly entity_names: string | null
   readonly entity_refs: string | null
+  readonly superseded_by: string | null
   readonly vec: Uint8Array | null
 }
 
@@ -261,6 +274,9 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
                 (SELECT group_concat(e.entity_name, char(10)) FROM file_entities e WHERE e.path = f.path) AS entity_names,
                 (SELECT group_concat(e.entity_type || ':' || e.entity_name, char(10))
                    FROM file_entities e WHERE e.path = f.path) AS entity_refs,
+                (SELECT g.src_path FROM edges g
+                  WHERE g.dst_path = f.path AND g.rel = 'supersedes' AND g.derived = 0
+                  ORDER BY g.created_at DESC, g.src_path ASC LIMIT 1) AS superseded_by,
                 (SELECT em.vec FROM chunks c JOIN embeddings em ON em.chunk_id = c.chunk_id
                   WHERE c.path = f.path ORDER BY c.ordinal LIMIT 1) AS vec
          FROM files f WHERE f.path IN (${holes})`,
@@ -366,7 +382,8 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
                    * `group_concat` has no defined order of its own, and an agent diffing two hops
                    * would read a reshuffle as a change in the corpus.
                    */
-                  entities: entityRefsOf(row)
+                  entities: entityRefsOf(row),
+                  supersededBy: row.superseded_by
                 }
               ]
         }),

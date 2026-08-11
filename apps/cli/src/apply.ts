@@ -382,7 +382,14 @@ const opPayload = (report: BatchOpReport) => ({
           path: report.conflict.path,
           batch_index: report.conflict.batchIndex,
           claim: report.conflict.claim
-        }
+        },
+  /**
+   * The two `--consolidate last-wins` outcomes, null everywhere else — including when the flag was
+   * off, which is the same "absent is null" rule every field above follows, and the same shape
+   * `memory_write_batch` publishes.
+   */
+  consolidated_into: report.consolidatedInto ?? null,
+  superseded_path: report.supersededPath ?? null
 })
 
 export const applyPayload = (result: BatchWriteResult) => ({

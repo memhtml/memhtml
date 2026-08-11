@@ -463,6 +463,153 @@ describe("search", () => {
     expect(paths).toContain("areas/oncall/vip-drain-before-rollback.html")
   })
 
+  it("answers an as-of query with what was believed THEN, marked superseded, and today's answer otherwise", async () => {
+    /**
+     * The bi-temporal end-to-end: fact A (event time 2023-06-01) superseded by fact B (valid from
+     * 2025-02-01), seeded as the exact tree a supersede leaves — the loser archived with
+     * `memhtml-valid-until` == the winner's valid-from, the winner carrying `memhtml-valid-from`
+     * and a `supersedes` link toward the loser's ARCHIVE path. A's window is read through the
+     * coalesce's MIDDLE rung (its `<time datetime>`, no explicit valid-from), which is the rung a
+     * memory written before this feature existed would use.
+     */
+    const aArchive = "archive/2026/areas/limits/pool-ceiling.html"
+    await repo.commit(
+      [
+        {
+          path: aArchive,
+          html: memoryHtml({
+            title: "The pool ceiling",
+            claim: "The connection pool ceiling for the checkout database is 64 sockets.",
+            memoryType: "semantic",
+            status: "archived",
+            createdAt: "2023-06-02T00:00:00Z",
+            eventAt: "2023-06-01T00:00:00Z",
+            validUntil: "2025-02-01T00:00:00Z",
+            archivedAt: "2025-02-01T00:00:00Z",
+            updatedAt: "2025-02-01T00:00:00Z"
+          })
+        },
+        {
+          path: "areas/limits/pool-ceiling-raised.html",
+          html: memoryHtml({
+            title: "The pool ceiling, raised",
+            claim: "The connection pool ceiling for the checkout database is 128 sockets.",
+            memoryType: "semantic",
+            createdAt: "2025-02-01T00:00:00Z",
+            validFrom: "2025-02-01T00:00:00Z",
+            links: [{ rel: "memhtml-supersedes", href: `/${aArchive}` }]
+          })
+        }
+      ],
+      "seed the superseded pair"
+    )
+
+    const outcome = await withIndexed(repo, ({ retrieval }) =>
+      Effect.gen(function* () {
+        const query = "checkout database connection pool ceiling sockets"
+        const then = yield* retrieval.search({ query, asOf: "2024-01-01T00:00:00Z", limit: 20 })
+        const now = yield* retrieval.search({ query, limit: 20 })
+        const later = yield* retrieval.search({ query, asOf: "2026-01-01T00:00:00Z", limit: 20 })
+        return { then, now, later }
+      })
+    )
+
+    const thenPaths = outcome.then.hits.map((hit) => hit.path)
+    // As of 2024: A was the belief — B's window has not opened, so B must be ABSENT, not merely
+    // ranked lower; a not-yet-valid fact leaking into the past is the defect the lens exists for.
+    expect(thenPaths).toContain(aArchive)
+    expect(thenPaths).not.toContain("areas/limits/pool-ceiling-raised.html")
+    // The superseded marker: the hit says what replaced it, so the answer is legible as history.
+    const aHit = outcome.then.hits.find((hit) => hit.path === aArchive)
+    expect(aHit?.supersededBy).toBe("areas/limits/pool-ceiling-raised.html")
+
+    // No as_of: the present. B active, A archived and invisible, marker null on live hits.
+    const nowPaths = outcome.now.hits.map((hit) => hit.path)
+    expect(nowPaths).toContain("areas/limits/pool-ceiling-raised.html")
+    expect(nowPaths).not.toContain(aArchive)
+    for (const hit of outcome.now.hits) expect(hit.supersededBy).toBeNull()
+
+    // As of 2026: B's window is open and A's is closed — same answer as the present, reached
+    // through the window predicate rather than the archived flag.
+    const laterPaths = outcome.later.hits.map((hit) => hit.path)
+    expect(laterPaths).toContain("areas/limits/pool-ceiling-raised.html")
+    expect(laterPaths).not.toContain(aArchive)
+  })
+
+  it("probes each window of an A→B→C supersede chain", async () => {
+    // Three statements of one slot, each window closing where the next opens. One probe per
+    // window proves the lens picks exactly one link of the chain at any instant.
+    const aArchive = "archive/2026/areas/limits/quota-v1.html"
+    const bArchive = "archive/2026/areas/limits/quota-v2.html"
+    await repo.commit(
+      [
+        {
+          path: aArchive,
+          html: memoryHtml({
+            title: "The tenant quota",
+            claim: "The tenant quota for burst traffic is 10 requests per second.",
+            memoryType: "semantic",
+            status: "archived",
+            createdAt: "2023-01-01T00:00:00Z",
+            validFrom: "2023-01-01T00:00:00Z",
+            validUntil: "2024-06-01T00:00:00Z",
+            archivedAt: "2024-06-01T00:00:00Z"
+          })
+        },
+        {
+          path: bArchive,
+          html: memoryHtml({
+            title: "The tenant quota, revised",
+            claim: "The tenant quota for burst traffic is 50 requests per second.",
+            memoryType: "semantic",
+            status: "archived",
+            createdAt: "2024-06-01T00:00:00Z",
+            validFrom: "2024-06-01T00:00:00Z",
+            validUntil: "2026-02-01T00:00:00Z",
+            archivedAt: "2026-02-01T00:00:00Z",
+            links: [{ rel: "memhtml-supersedes", href: `/${aArchive}` }]
+          })
+        },
+        {
+          path: "areas/limits/quota-v3.html",
+          html: memoryHtml({
+            title: "The tenant quota, current",
+            claim: "The tenant quota for burst traffic is 200 requests per second.",
+            memoryType: "semantic",
+            createdAt: "2026-02-01T00:00:00Z",
+            validFrom: "2026-02-01T00:00:00Z",
+            links: [{ rel: "memhtml-supersedes", href: `/${bArchive}` }]
+          })
+        }
+      ],
+      "seed the chain"
+    )
+
+    const windows = await withIndexed(repo, ({ retrieval }) =>
+      Effect.gen(function* () {
+        const query = "tenant quota burst traffic requests per second"
+        const probe = (asOf: string) =>
+          Effect.map(retrieval.search({ query, asOf, limit: 20 }), (result) =>
+            result.hits.flatMap((hit) =>
+              hit.path.includes("quota") ? [{ path: hit.path, supersededBy: hit.supersededBy }] : []
+            )
+          )
+        return {
+          a: yield* probe("2023-07-01T00:00:00Z"),
+          b: yield* probe("2025-01-01T00:00:00Z"),
+          c: yield* probe("2026-06-01T00:00:00Z")
+        }
+      })
+    )
+
+    expect(windows.a.map((hit) => hit.path)).toEqual([aArchive])
+    expect(windows.a[0]?.supersededBy).toBe(bArchive)
+    expect(windows.b.map((hit) => hit.path)).toEqual([bArchive])
+    expect(windows.b[0]?.supersededBy).toBe("areas/limits/quota-v3.html")
+    expect(windows.c.map((hit) => hit.path)).toEqual(["areas/limits/quota-v3.html"])
+    expect(windows.c[0]?.supersededBy).toBeNull()
+  })
+
   it("restricts to the named memory types", async () => {
     const paths = await withIndexed(repo, ({ retrieval }) =>
       Effect.gen(function* () {

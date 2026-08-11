@@ -89,6 +89,7 @@ interface Applied {
     readonly deduped: number
     readonly failed: number
     readonly skipped: number
+    readonly consolidated: number
   }
   readonly commit_sha: string | null
 }
@@ -134,7 +135,14 @@ describe("memhtml apply: the JSONL door", () => {
     const data = applied(result.stdout)
 
     expect(data.results.map((op) => op.index)).toEqual([0, 1, 2])
-    expect(data.summary).toEqual({ total: 3, written: 3, deduped: 0, failed: 0, skipped: 0 })
+    expect(data.summary).toEqual({
+      total: 3,
+      written: 3,
+      deduped: 0,
+      failed: 0,
+      skipped: 0,
+      consolidated: 0
+    })
     expect(data.commit_sha).not.toBeNull()
     // The whole point of the door: three memories, ONE commit. Three `memhtml write` calls make three.
     expect(await Effect.runPromise(Effect.provide(commitCount, cli.layer))).toBe(before + 1)
@@ -167,13 +175,15 @@ describe("memhtml apply: the JSONL door", () => {
     expect(Object.keys(op as object).sort()).toEqual([
       "code",
       "conflict",
+      "consolidated_into",
       "deduped",
       "error",
       "existing_path",
       "index",
       "ok",
       "path",
-      "skipped"
+      "skipped",
+      "superseded_path"
     ])
     expect(op?.code).toBeNull()
     expect(op?.error).toBeNull()
@@ -239,7 +249,14 @@ describe("memhtml apply: the JSONL door", () => {
     expect(data.results[0]?.code).toBe("ERR_INVALID_MEMORY")
     expect(data.results[0]?.error).toContain("no <mark>")
     expect(data.results[1]?.ok).toBe(true)
-    expect(data.summary).toEqual({ total: 2, written: 1, deduped: 0, failed: 1, skipped: 0 })
+    expect(data.summary).toEqual({
+      total: 2,
+      written: 1,
+      deduped: 0,
+      failed: 1,
+      skipped: 0,
+      consolidated: 0
+    })
   })
 
   it("aborts atomically by default, reporting the survivor as skipped and writing nothing", async () => {
@@ -251,7 +268,14 @@ describe("memhtml apply: the JSONL door", () => {
     // Exit 0: the CALL succeeded and its report is the answer. A refused op is data, not a crash.
     expect(result.exitCode).toBe(EXIT_OK)
     const data = applied(result.stdout)
-    expect(data.summary).toEqual({ total: 2, written: 0, deduped: 0, failed: 1, skipped: 1 })
+    expect(data.summary).toEqual({
+      total: 2,
+      written: 0,
+      deduped: 0,
+      failed: 1,
+      skipped: 1,
+      consolidated: 0
+    })
     expect(data.commit_sha).toBeNull()
     expect(await htmlOnDisk(cli.root)).toEqual([])
   })
@@ -305,7 +329,14 @@ describe("memhtml apply --detect-conflicts (AC-1-2)", () => {
      * script that treats a non-zero exit as "the write did not happen", when it did.
      */
     expect(data.results[0]?.ok).toBe(true)
-    expect(data.summary).toEqual({ total: 1, written: 1, deduped: 0, failed: 0, skipped: 0 })
+    expect(data.summary).toEqual({
+      total: 1,
+      written: 1,
+      deduped: 0,
+      failed: 0,
+      skipped: 0,
+      consolidated: 0
+    })
     expect(data.commit_sha).not.toBeNull()
     expect((await htmlOnDisk(cli.root)).length).toBe(2)
   })
@@ -638,7 +669,14 @@ describe("claim derivation: prose becomes a claim and a tail", () => {
     ])
     expect(result.exitCode).toBe(EXIT_OK)
     const data = applied(result.stdout)
-    expect(data.summary).toEqual({ total: 1, written: 1, deduped: 0, failed: 0, skipped: 0 })
+    expect(data.summary).toEqual({
+      total: 1,
+      written: 1,
+      deduped: 0,
+      failed: 0,
+      skipped: 0,
+      consolidated: 0
+    })
     const { readMemory } = await import("../src/operations.js")
     const read = await Effect.runPromise(
       Effect.provide(readMemory(data.results[0]?.path ?? ""), cli.layer)
@@ -791,6 +829,7 @@ describe("the manifest guide (AC-6-6)", () => {
       "file",
       "continue-on-error",
       "detect-conflicts",
+      "consolidate",
       "session-id",
       "prompt-id",
       "turn-uuid"

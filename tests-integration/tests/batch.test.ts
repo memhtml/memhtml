@@ -124,7 +124,14 @@ const DUPLICATES = [
 ] as const
 
 /** The arithmetic both doors must produce, stated once. */
-const SUMMARY = { total: 20, written: 18, deduped: 2, failed: 0, skipped: 0 } as const
+const SUMMARY = {
+  total: 20,
+  written: 18,
+  deduped: 2,
+  failed: 0,
+  skipped: 0,
+  consolidated: 0
+} as const
 
 /** The fixture as the CLI door's JSONL: snake_case, one complete object per line. */
 const jsonlOf = (ops: ReadonlyArray<Op>): string =>
@@ -176,6 +183,9 @@ interface OpResult {
   readonly skipped: boolean
   /** Always PRESENT on both doors, null when nothing matched or the assist was not asked for. */
   readonly conflict: ConflictWire | null
+  /** The two `consolidate: "last-wins"` outcomes: present-and-null on both doors, like `conflict`. */
+  readonly consolidated_into: number | null
+  readonly superseded_path: string | null
 }
 
 /** The batch payload, in the shape BOTH doors publish. */
@@ -648,7 +658,7 @@ const keyShapeOf = (value: unknown): unknown => {
  */
 describe("`memhtml apply` and `memory_write_batch` publish ONE per-op wire shape, conflicts included", () => {
   /**
-   * The nine keys a per-op result carries, sorted, on BOTH doors.
+   * The eleven keys a per-op result carries, sorted, on BOTH doors.
    *
    * Spelled out rather than derived from one door's output, which would make the assertion "this door
    * agrees with itself". `conflict` is in the list because it is present-and-null rather than optional —
@@ -658,13 +668,15 @@ describe("`memhtml apply` and `memory_write_batch` publish ONE per-op wire shape
   const OP_KEYS = [
     "code",
     "conflict",
+    "consolidated_into",
     "deduped",
     "error",
     "existing_path",
     "index",
     "ok",
     "path",
-    "skipped"
+    "skipped",
+    "superseded_path"
   ] as const
 
   /** The conflict struct's three keys, sorted. `batch_index` is the renamed `batchIndex`. */
@@ -784,7 +796,8 @@ describe("`memhtml apply` and `memory_write_batch` publish ONE per-op wire shape
         written: 4,
         deduped: 0,
         failed: 0,
-        skipped: 0
+        skipped: 0,
+        consolidated: 0
       })
       // Op 0 matched the SEEDED memory: a path, and no batch index because that memory predates the call.
       expect(payload.results[0]?.conflict?.path, label).toMatch(/\.html$/)
@@ -804,7 +817,7 @@ describe("`memhtml apply` and `memory_write_batch` publish ONE per-op wire shape
     }
   })
 
-  it("emits the same nine per-op keys on both doors, and the same three inside a conflict", () => {
+  it("emits the same eleven per-op keys on both doors, and the same three inside a conflict", () => {
     for (const [label, payload] of [
       ["memhtml apply", applied],
       ["memory_write_batch", called]

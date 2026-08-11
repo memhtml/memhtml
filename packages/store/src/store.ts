@@ -146,6 +146,19 @@ export interface ArchiveResult {
 }
 
 /**
+ * What a supersede produced. `commitSha` is `null` exactly when the pair list was empty — a
+ * consolidation with nothing to consolidate touches neither disk nor git, so there is no commit
+ * to name. `archived` maps each loser to where it now lives, in input order.
+ */
+export interface SupersedeResult {
+  readonly commitSha: string | null
+  readonly archived: ReadonlyArray<{
+    readonly loserPath: string
+    readonly archivePath: string
+  }>
+}
+
+/**
  * Asks whether an active file already holds this content hash, answering its path or `null`.
  *
  * An injected function rather than a repository method, because the answer lives in SQL and
@@ -221,6 +234,25 @@ export interface StoreShape {
     input: WriteInput & { readonly reason?: string | undefined }
   ) => Effect.Effect<CorrectResult, StoreError>
   readonly archiveMemory: (path: string, reason: string) => Effect.Effect<ArchiveResult, StoreError>
+  /**
+   * Consolidate N winner/loser pairs of EXISTING files: each loser is archived with
+   * `memhtml-superseded-by` pointing at its winner, each winner gains a `supersedes` link pointing
+   * at the loser's ARCHIVE path, ONE commit for all pairs.
+   *
+   * `correctMemory`'s mechanics without the write: a correction creates the winner, while here
+   * both files are already in the tree — write-time consolidation decided the winner AFTER its
+   * batch committed, so the supersedence is a second fact about the corpus and gets its own
+   * commit. One commit for ALL pairs because the pairs came from one consolidation decision;
+   * split, an interrupted run would leave some slots consolidated and some not with nothing in
+   * the history saying which pass produced which.
+   *
+   * Both files are read BEFORE any staging, so a pair naming a missing path fails typed
+   * (`PathNotFound`) with the tree byte-identical — the same refusal-first order every other
+   * operation here follows.
+   */
+  readonly supersedeMemories: (
+    pairs: ReadonlyArray<{ readonly winnerPath: string; readonly loserPath: string }>
+  ) => Effect.Effect<SupersedeResult, StoreError>
   /**
    * Add a `<link rel="memhtml-…">` edge to the source file and commit it. Idempotent.
    *
@@ -427,6 +459,40 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
 
   /** The `<link href>` document-reference form of a git-tree path. */
   const hrefFor = (path: string): string => `/${normalizePath(path)}`
+
+  /**
+   * A winner's valid-from moment: its explicit `memhtml-valid-from`, else its first
+   * `<time datetime>` event time, else the operation's own instant. The coalesce order mirrors
+   * the recency arm's `coalesce(event_at, updated_at)`: an explicit statement of validity beats
+   * an event time, and an event time beats "whenever the supersede happened to run".
+   *
+   * The parse runs on bytes already read — before any staging — so a winner the format refuses
+   * fails the whole operation typed, with the tree byte-identical. Validity stamping rides inside
+   * the supersede's one commit and shares its all-or-nothing refusal; there is no degraded path
+   * where the archive lands and the window does not.
+   */
+  const validFromOf = (html: string, fallback: string): Effect.Effect<string, InvalidMemory> =>
+    Effect.gen(function* () {
+      const explicit = readMeta(html, "memhtml-valid-from")
+      if (explicit !== undefined) return explicit
+      const doc = yield* parseMemory(html)
+      return doc.article.eventAt ?? fallback
+    })
+
+  /**
+   * The loser's `memhtml-valid-until` stamp, min-wins: the fact stopped being true at the EARLIER
+   * of its own stated bound and the winner's valid-from — a fact cannot outlive its earliest
+   * stated bound, so a pre-existing earlier value is kept and no stamp is emitted. These columns
+   * compare lexicographically as strings by design (0008_tasks.sql), so `<` is the comparison.
+   */
+  const validUntilStampFor = (
+    loserHtml: string,
+    winnerValidFrom: string
+  ): ReadonlyArray<readonly [string, string]> => {
+    const existing = readMeta(loserHtml, "memhtml-valid-until")
+    if (existing !== undefined && existing !== "" && existing < winnerValidFrom) return []
+    return [["memhtml-valid-until", winnerValidFrom]]
+  }
 
   /**
    * Render a file's bytes from a write input, with provenance in the head and the content hash
@@ -771,11 +837,18 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       const normalizedTarget = normalizePath(target)
       // Read first: a correction of a path with no file behind it must fail before anything is
       // written, or the tree gains an orphan superseding file with nothing to supersede.
-      yield* readRaw(normalizedTarget)
+      const targetHtml = yield* readRaw(normalizedTarget)
 
       const archivePath = archivePathFor(normalizedTarget, yearOf(millis))
       const html = yield* renderChecked(input, at)
       const hash = contentHash(html)
+      /**
+       * The validity hand-off, `supersedeMemories`' exact rule: the correction's valid-from is its
+       * explicit meta, else its first `<time datetime>`, else now — the target was valid over
+       * [its own valid-from|created, that moment), min-wins against any earlier bound it already
+       * states. Stamped inside this one commit, so it shares the correction's refusal.
+       */
+      const validFrom = yield* validFromOf(html, at)
 
       const path = yield* freePathFor({
         title: input.title,
@@ -789,14 +862,21 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       // The supersedes link points at the target's ARCHIVE path, which is where the file will
       // be once this commit lands. Pointing at the pre-archive path would create a dangling
       // href in the same commit that made it dangle.
-      yield* writeFileAt(path, addLink(html, "supersedes", hrefFor(archivePath)))
+      const linked = addLink(html, "supersedes", hrefFor(archivePath))
+      yield* writeFileAt(
+        path,
+        readMeta(linked, "memhtml-valid-from") === undefined
+          ? setMeta(linked, "memhtml-valid-from", validFrom)
+          : linked
+      )
       yield* git.add([path])
 
       const archivedPath = yield* stageArchive(normalizedTarget, millis, [
         ["memhtml-status", "archived"],
         ["memhtml-updated", at],
         ["memhtml-archived", at],
-        ["memhtml-superseded-by", hrefFor(path)]
+        ["memhtml-superseded-by", hrefFor(path)],
+        ...validUntilStampFor(targetHtml, validFrom)
       ])
 
       const commit = yield* git.commit(commitSubject("correct", input.title), {
@@ -818,6 +898,81 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       const commit = yield* git.commit(commitSubject("archive", `${normalized} — ${reason}`))
       return { path: normalized, archivePath, commitSha: commit.sha }
     }).pipe(Effect.withSpan("store.archiveMemory"))
+
+  const supersedeMemories = (
+    pairs: ReadonlyArray<{ readonly winnerPath: string; readonly loserPath: string }>
+  ): Effect.Effect<SupersedeResult, StoreError> =>
+    Effect.gen(function* () {
+      // No pairs, no commit: touching git for an empty consolidation would put a commit in the
+      // history that changed nothing, and `commitSha: null` already means "nothing happened".
+      if (pairs.length === 0) return { commitSha: null, archived: [] }
+
+      const millis = yield* now
+      const at = isoSecond(millis)
+      const normalized = pairs.map((pair) => ({
+        winner: normalizePath(pair.winnerPath),
+        loser: normalizePath(pair.loserPath)
+      }))
+
+      // EVERY endpoint is read before ANY staging, so one missing path refuses the whole call
+      // with the tree byte-identical — the same order correctMemory reads its target first, and
+      // the winners' bytes are what the link edits below splice into, so the reads are also the
+      // inputs. Winners are read into a map because two pairs may share one winner. The winners'
+      // valid-from moments are computed here too — the parse can refuse, and a refusal must land
+      // before any staging for the same byte-identical reason.
+      const winnerHtml = new Map<string, string>()
+      const winnerValidFrom = new Map<string, string>()
+      const loserHtml = new Map<string, string>()
+      for (const pair of normalized) {
+        if (!winnerHtml.has(pair.winner)) {
+          const html = yield* readRaw(pair.winner)
+          winnerHtml.set(pair.winner, html)
+          winnerValidFrom.set(pair.winner, yield* validFromOf(html, at))
+        }
+        loserHtml.set(pair.loser, yield* readRaw(pair.loser))
+      }
+
+      const archived: Array<{ readonly loserPath: string; readonly archivePath: string }> = []
+      for (const pair of normalized) {
+        /**
+         * The validity window this supersede closes: the loser was valid over
+         * [its own valid-from|created, the winner's valid-from). Min-wins on a pre-existing
+         * bound — a fact cannot outlive its earliest stated `memhtml-valid-until` — and the
+         * winner's own valid-from is stamped below so an as-of query reads both ends of the
+         * hand-off from the files rather than inferring one from the commit.
+         */
+        const validFrom = winnerValidFrom.get(pair.winner) ?? at
+        const archivePath = yield* stageArchive(pair.loser, millis, [
+          ["memhtml-status", "archived"],
+          ["memhtml-updated", at],
+          ["memhtml-archived", at],
+          ["memhtml-superseded-by", hrefFor(pair.winner)],
+          ...validUntilStampFor(loserHtml.get(pair.loser) ?? "", validFrom)
+        ])
+        // The supersedes link points at the loser's ARCHIVE path — where the file is once this
+        // commit lands. Pointing at the pre-archive path would create a dangling href in the
+        // same commit that made it dangle, correctMemory's exact rule.
+        const html = winnerHtml.get(pair.winner) ?? (yield* readRaw(pair.winner))
+        const linked = addLink(html, "supersedes", hrefFor(archivePath))
+        const stamped =
+          readMeta(linked, "memhtml-valid-from") === undefined
+            ? setMeta(linked, "memhtml-valid-from", validFrom)
+            : linked
+        if (stamped !== html) {
+          winnerHtml.set(pair.winner, stamped)
+          yield* writeFileAt(pair.winner, stamped)
+          yield* git.add([pair.winner])
+        }
+        archived.push({ loserPath: pair.loser, archivePath })
+      }
+
+      const subject =
+        normalized.length === 1 && normalized[0] !== undefined
+          ? `${normalized[0].winner} supersedes ${normalized[0].loser}`
+          : `${normalized.length} memories superseded`
+      const commit = yield* git.commit(commitSubject("consolidate", subject))
+      return { commitSha: commit.sha, archived }
+    }).pipe(Effect.withSpan("store.supersedeMemories"))
 
   /**
    * Refuse an edge whose class disagrees with its endpoints' types.
@@ -951,6 +1106,7 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
     readMemory,
     correctMemory,
     archiveMemory,
+    supersedeMemories,
     linkMemories,
     dirtyPaths,
     requireCleanTree,

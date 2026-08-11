@@ -359,6 +359,7 @@ export type MemhtmlOperation =
   | "write"
   | "correct"
   | "archive"
+  | "consolidate"
   | "link"
   | "init"
   | "publish"

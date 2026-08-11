@@ -430,6 +430,45 @@ describe("correctMemory", () => {
     )
     expect(recorder.moves).toEqual([[original.path, corrected.archivedPath]])
   })
+
+  it("stamps the validity hand-off: target's valid-until == correction's valid-from, min-wins", async () => {
+    const repo = await fixture()
+    const original = await run(
+      repo.store.writeMemory(writeInput({ title: "Old fact", claim: "The old order." }))
+    )
+    const corrected = await run(
+      repo.store.correctMemory(original.path, {
+        ...writeInput({ title: "New fact", claim: "The new order." }),
+        validFrom: "2025-02-01T00:00:00Z"
+      })
+    )
+
+    // supersedeMemories' exact semantics on the single-pair correction path: the window closes
+    // where the replacement's opens, both stamped in the correction's ONE commit.
+    const archived = await run(repo.store.readMemory(corrected.archivedPath))
+    expect(archived.doc.metas.validUntil).toBe("2025-02-01T00:00:00Z")
+    const fresh = await run(repo.store.readMemory(corrected.path))
+    expect(fresh.doc.metas.validFrom).toBe("2025-02-01T00:00:00Z")
+
+    // Min-wins: a target already bounded EARLIER keeps its own bound.
+    const bounded = await run(
+      repo.store.writeMemory(
+        writeInput({
+          title: "Bounded fact",
+          claim: "A bounded claim.",
+          validUntil: "2024-01-01T00:00:00Z"
+        })
+      )
+    )
+    const rebound = await run(
+      repo.store.correctMemory(bounded.path, {
+        ...writeInput({ title: "Bounded fact, corrected", claim: "The re-stated claim." }),
+        validFrom: "2025-06-01T00:00:00Z"
+      })
+    )
+    const keptBound = await run(repo.store.readMemory(rebound.archivedPath))
+    expect(keptBound.doc.metas.validUntil).toBe("2024-01-01T00:00:00Z")
+  })
 })
 
 /**
@@ -561,6 +600,182 @@ describe("archiveMemory", () => {
     expect(await runErr(repo.store.archiveMemory("areas/x/absent.html", "why"))).toBeInstanceOf(
       PathNotFound
     )
+  })
+})
+
+describe("supersedeMemories", () => {
+  it("returns a null sha and commits nothing for an empty pair list", async () => {
+    // The write path calls this unconditionally shaped — the guard that nothing consolidated
+    // means nothing committed lives HERE, not at every caller.
+    const repo = await fixture()
+    const before = await commitCount(repo)
+    const result = await run(repo.store.supersedeMemories([]))
+    expect(result).toEqual({ commitSha: null, archived: [] })
+    expect(await commitCount(repo)).toBe(before)
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+  })
+
+  it("archives the loser toward the winner and links the winner toward the ARCHIVE path, one commit", async () => {
+    const repo = await fixture()
+    const loser = await run(
+      repo.store.writeMemory(writeInput({ title: "Old ceiling", claim: "The pool ceiling is 64." }))
+    )
+    const winner = await run(
+      repo.store.writeMemory(
+        writeInput({ title: "New ceiling", claim: "The pool ceiling is 128." })
+      )
+    )
+    const before = await commitCount(repo)
+
+    const result = await run(
+      repo.store.supersedeMemories([{ winnerPath: winner.path, loserPath: loser.path }])
+    )
+
+    // ONE commit for the pair: the archive move, its stamps, and the winner's link together.
+    expect(await commitCount(repo)).toBe(before + 1)
+    expect(result.commitSha).not.toBeNull()
+    expect(await lastSubject(repo)).toContain("memhtml(consolidate):")
+    expect(result.archived).toEqual([
+      { loserPath: loser.path, archivePath: archivePathFor(loser.path, 2026) }
+    ])
+
+    // The loser is archived, stamped, and points at the WINNER's live path.
+    const archived = await run(repo.store.readMemory(archivePathFor(loser.path, 2026)))
+    expect(archived.doc.metas.status).toBe("archived")
+    expect(archived.doc.metas.supersededBy).toBe(`/${winner.path}`)
+    expect(await runErr(repo.store.readMemory(loser.path))).toBeInstanceOf(PathNotFound)
+
+    // The winner's link points at the loser's ARCHIVE path — where the file is once this commit
+    // lands — so no commit ever contains the dangling pre-archive href.
+    const fresh = await run(repo.store.readMemory(winner.path))
+    expect(fresh.doc.links).toEqual([
+      { rel: "supersedes", href: `/${archivePathFor(loser.path, 2026)}` }
+    ])
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+  })
+
+  it("fails with PathNotFound for a missing loser BEFORE any staging", async () => {
+    const repo = await fixture()
+    const winner = await run(repo.store.writeMemory(writeInput()))
+    const before = await commitCount(repo)
+
+    const failure = await runErr(
+      repo.store.supersedeMemories([{ winnerPath: winner.path, loserPath: "areas/x/absent.html" }])
+    )
+
+    expect(failure).toBeInstanceOf(PathNotFound)
+    // Nothing was staged and nothing committed: the tree is byte-identical.
+    expect(await commitCount(repo)).toBe(before)
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+  })
+
+  it("closes the loser's validity window at the winner's valid-from and opens the winner's", async () => {
+    const repo = await fixture()
+    const loser = await run(
+      repo.store.writeMemory(writeInput({ title: "Old ceiling", claim: "The pool ceiling is 64." }))
+    )
+    // The winner's article carries an EVENT time, which is the middle rung of the coalesce:
+    // no explicit memhtml-valid-from, so the <time datetime> is the winner's valid-from moment.
+    const winner = await run(
+      repo.store.writeMemory(
+        writeInput({
+          title: "New ceiling",
+          claim: "",
+          articleHtml:
+            '<p><mark>The pool ceiling is 128.</mark> Raised on <time datetime="2025-02-01T00:00:00Z">that day</time>.</p>'
+        })
+      )
+    )
+
+    await run(repo.store.supersedeMemories([{ winnerPath: winner.path, loserPath: loser.path }]))
+
+    // The loser's window closes exactly where the winner's opens: one moment, both ends stamped,
+    // so an as-of query never finds both valid and never finds neither.
+    const archived = await run(repo.store.readMemory(archivePathFor(loser.path, 2026)))
+    expect(archived.doc.metas.validUntil).toBe("2025-02-01T00:00:00Z")
+    const fresh = await run(repo.store.readMemory(winner.path))
+    expect(fresh.doc.metas.validFrom).toBe("2025-02-01T00:00:00Z")
+    // The stamps are head-plane splices: the winner's article bytes — and its dedupe key — held.
+    expect(fresh.doc.metas.contentHash).toBe(winner.contentHash)
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+  })
+
+  it("falls back to the operation's own instant when the winner states no time at all", async () => {
+    const repo = await fixture()
+    const loser = await run(repo.store.writeMemory(writeInput({ title: "Old fact" })))
+    const winner = await run(
+      repo.store.writeMemory(writeInput({ title: "New fact", claim: "A newer claim." }))
+    )
+
+    await run(repo.store.supersedeMemories([{ winnerPath: winner.path, loserPath: loser.path }]))
+
+    const archived = await run(repo.store.readMemory(archivePathFor(loser.path, 2026)))
+    const fresh = await run(repo.store.readMemory(winner.path))
+    // The bottom rung: no explicit valid-from, no <time datetime>, so both ends carry the
+    // supersede's own instant — the archive stamp already records the same moment.
+    expect(fresh.doc.metas.validFrom).toBe(archived.doc.metas.archivedAt)
+    expect(archived.doc.metas.validUntil).toBe(fresh.doc.metas.validFrom)
+  })
+
+  it("keeps a loser's EARLIER stated bound — min-wins — and a winner's own valid-from", async () => {
+    const repo = await fixture()
+    // The loser already states its fact stopped being true in 2024; the winner's valid-from is
+    // 2025. A fact cannot outlive its earliest stated bound, so the 2024 value survives.
+    const loser = await run(
+      repo.store.writeMemory(
+        writeInput({
+          title: "Old ceiling",
+          claim: "The pool ceiling is 64.",
+          validUntil: "2024-06-01T00:00:00Z"
+        })
+      )
+    )
+    const winner = await run(
+      repo.store.writeMemory(
+        writeInput({
+          title: "New ceiling",
+          claim: "The pool ceiling is 128.",
+          validFrom: "2025-02-01T00:00:00Z"
+        })
+      )
+    )
+
+    await run(repo.store.supersedeMemories([{ winnerPath: winner.path, loserPath: loser.path }]))
+
+    const archived = await run(repo.store.readMemory(archivePathFor(loser.path, 2026)))
+    expect(archived.doc.metas.validUntil).toBe("2024-06-01T00:00:00Z")
+    // The winner's explicit valid-from is the top rung of the coalesce and is never rewritten.
+    const fresh = await run(repo.store.readMemory(winner.path))
+    expect(fresh.doc.metas.validFrom).toBe("2025-02-01T00:00:00Z")
+  })
+
+  it("overwrites a loser's LATER stated bound with the winner's earlier valid-from", async () => {
+    const repo = await fixture()
+    // Min-wins in the other direction: the loser claimed validity until 2027, but the corpus now
+    // says a newer fact took over in 2025 — the supersede is the earlier bound and it wins.
+    const loser = await run(
+      repo.store.writeMemory(
+        writeInput({
+          title: "Old ceiling",
+          claim: "The pool ceiling is 64.",
+          validUntil: "2027-01-01T00:00:00Z"
+        })
+      )
+    )
+    const winner = await run(
+      repo.store.writeMemory(
+        writeInput({
+          title: "New ceiling",
+          claim: "The pool ceiling is 128.",
+          validFrom: "2025-02-01T00:00:00Z"
+        })
+      )
+    )
+
+    await run(repo.store.supersedeMemories([{ winnerPath: winner.path, loserPath: loser.path }]))
+
+    const archived = await run(repo.store.readMemory(archivePathFor(loser.path, 2026)))
+    expect(archived.doc.metas.validUntil).toBe("2025-02-01T00:00:00Z")
   })
 })
 

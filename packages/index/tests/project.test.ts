@@ -327,6 +327,34 @@ describe("projectFile", () => {
     expect(insert?.params[FILE_COLUMNS.indexOf("origin_path")]).toBeNull()
   })
 
+  it("binds the validity window metas into valid_from/valid_until, on archived files too", () => {
+    /**
+     * The round-trip pin for the bi-temporal columns: the supersede path stamps
+     * `memhtml-valid-until` onto files it ARCHIVES, so the projection must carry the window for an
+     * archived file or every as-of query would read NULL exactly where the window matters.
+     */
+    const archived = project(
+      "archive/2026/areas/a.html",
+      memoryHtml({
+        title: "T",
+        claim: "C.",
+        status: "archived",
+        validFrom: "2023-06-01T00:00:00Z",
+        validUntil: "2025-02-01T00:00:00Z"
+      })
+    )
+    const insert = archived.writes.find((write) => write.sql.includes("INSERT INTO files"))
+    expect(insert?.params[FILE_COLUMNS.indexOf("valid_from")]).toBe("2023-06-01T00:00:00Z")
+    expect(insert?.params[FILE_COLUMNS.indexOf("valid_until")]).toBe("2025-02-01T00:00:00Z")
+    expect(insert?.params[FILE_COLUMNS.indexOf("archived")]).toBe(1)
+
+    const unstated = project("areas/a.html", memoryHtml({ title: "T", claim: "C." }))
+    const plain = unstated.writes.find((write) => write.sql.includes("INSERT INTO files"))
+    // Absent metas bind NULL, which the as-of predicate coalesces — never empty string.
+    expect(plain?.params[FILE_COLUMNS.indexOf("valid_from")]).toBeNull()
+    expect(plain?.params[FILE_COLUMNS.indexOf("valid_until")]).toBeNull()
+  })
+
   it("binds a task's status and due date, and nulls both on every other type", () => {
     const task = project(
       "areas/inbox/tasks/t.html",

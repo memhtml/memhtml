@@ -198,6 +198,19 @@ const CONFLICT_GUIDANCE =
   "Archived memories never match, so a superseded claim stops contradicting the claim that superseded it."
 
 /**
+ * The `consolidate` opt-in, stated in `memory_write_batch`'s description.
+ *
+ * A third constant beside the two above and AFTER `CONFLICT_GUIDANCE` in the description, because it
+ * is the acting counterpart of the assist: an agent has to know what a conflict IS before "resolve it
+ * last-wins" means anything, and stating the flag first would make the propose-only contract above
+ * read as contradicted two paragraphs later.
+ */
+const CONSOLIDATE_GUIDANCE =
+  'Set consolidate to "last-wins" and the batch RESOLVES frame-key matches instead of only reporting them: for ops sharing a claim slot (the same deterministic frame key the conflict rule uses), the LATER value wins — exactly one file is written, at the FIRST index that claimed the slot, and every later restatement reports consolidated_into naming that slot instead of a path of its own. ' +
+  "A stored ACTIVE memory occupying a surviving slot is archived with a supersedes link from the new file, its archive path reported on the winner as superseded_path. " +
+  "Off by default, and claims with no frame shape are never consolidated — the guards fail closed, so this only ever acts on claims the conflict rule would have matched."
+
+/**
  * The fields that author ONE memory, shared by `memory_write`'s parameters and `memory_write_batch`'s
  * op struct.
  *
@@ -310,7 +323,21 @@ const BatchOpResult = Schema.Struct({
       /** The other claim's own text. */
       claim: Schema.String
     })
-  )
+  ),
+  /**
+   * Set on a batch-internal LOSER under `consolidate: "last-wins"`: a later op with the same frame
+   * key replaced this op's value before anything was written, and the number is the caller-space
+   * index of the op whose position carries the surviving value. Null everywhere else, present like
+   * every field above so a client can tell "not consolidated" from "not reported".
+   */
+  consolidated_into: Schema.NullOr(Count),
+  /**
+   * Set on a WINNER whose write superseded a live stored memory under `consolidate: "last-wins"`:
+   * the loser's ARCHIVE path, where its bytes now live. Null when nothing stored occupied the
+   * slot, and when the supersede degraded (the batch still wrote; the corpus is merely
+   * unconsolidated).
+   */
+  superseded_path: Schema.NullOr(Schema.String)
 })
 
 const MemoryWriteBatch = Tool.make("memory_write_batch", {
@@ -327,12 +354,15 @@ const MemoryWriteBatch = Tool.make("memory_write_batch", {
     " " +
     BATCH_GUIDANCE +
     /**
-     * LAST, after the workflow. The guidance states what a batch IS and an agent needs that before an
-     * optional assist over it means anything; leading with the conflict rule would explain a field on a
-     * result shape the reader has not been told about yet.
+     * LAST, after the workflow, and consolidation after the conflict rule it acts on. The guidance
+     * states what a batch IS and an agent needs that before an optional assist over it means anything;
+     * leading with the conflict rule would explain a field on a result shape the reader has not been
+     * told about yet.
      */
     " " +
-    CONFLICT_GUIDANCE,
+    CONFLICT_GUIDANCE +
+    " " +
+    CONSOLIDATE_GUIDANCE,
   dependencies: WRITES(),
   parameters: Schema.Struct({
     ops: Schema.Array(BatchOp),
@@ -344,6 +374,12 @@ const MemoryWriteBatch = Tool.make("memory_write_batch", {
      * batch, and a caller that did not ask for the field would be paying for an answer it does not read.
      */
     detect_conflicts: Optional(Schema.Boolean),
+    /**
+     * Opt-in deterministic last-wins consolidation over the conflict rule's own frame keys. A
+     * `Literals` of one value rather than a boolean, so the vocabulary can widen (a `first-wins`, a
+     * semantic mode) without a shipped `true` changing meaning under a caller.
+     */
+    consolidate: Optional(Schema.Literals(["last-wins"])),
     /**
      * Batch-level provenance: the session this call is being made in. An op that names its own wins,
      * because it is the more specific statement about where that one memory came from — which is what
@@ -362,7 +398,9 @@ const MemoryWriteBatch = Tool.make("memory_write_batch", {
       written: Count,
       deduped: Count,
       failed: Count,
-      skipped: Count
+      skipped: Count,
+      /** Batch-internal losers under `consolidate: "last-wins"`: neither written nor failed. */
+      consolidated: Count
     }),
     commit_sha: Schema.NullOr(Schema.String)
   })
@@ -398,7 +436,7 @@ const MemoryRead = Tool.make("memory_read", {
 
 const MemorySearch = Tool.make("memory_search", {
   description:
-    "Ranked search over the corpus: lexical, vector, recency, and salience arms fused with RRF, then diversified. Each hit carries a `snippet` — the text of the file's best-matching chunk for this query (its opening chunk when the vector arm did not fire), truncated with a trailing `…` when cut. `degraded` is true when the vector arm did not fire, so the result came from fewer signals. Each hit also carries `entities` in `type:name` form; pass one of those values back as `entity` to make the next call the second hop of a chain — that is two calls, not a guess about spelling. An `entity` scope that matches nothing returns NO hits and says so through `scope_empty`: this tool never widens a scope it could not satisfy. Returning a path changes nothing: a hit is this ranker's guess, so it never bumps salience — call memory_read to open the one you chose, and memory_reinforce to record whether it was right.",
+    "Ranked search over the corpus: lexical, vector, recency, and salience arms fused with RRF, then diversified. Each hit carries a `snippet` — the text of the file's best-matching chunk for this query (its opening chunk when the vector arm did not fire), truncated with a trailing `…` when cut. `degraded` is true when the vector arm did not fire, so the result came from fewer signals. Each hit also carries `entities` in `type:name` form; pass one of those values back as `entity` to make the next call the second hop of a chain — that is two calls, not a guess about spelling. An `entity` scope that matches nothing returns NO hits and says so through `scope_empty`: this tool never widens a scope it could not satisfy. `as_of` is a point-in-time view: pass an ISO instant and the result is what was believed valid at that moment, including since-superseded memories (marked superseded_by). Returning a path changes nothing: a hit is this ranker's guess, so it never bumps salience — call memory_read to open the one you chose, and memory_reinforce to record whether it was right.",
   dependencies: RETRIEVES(),
   parameters: Schema.Struct({
     query: Schema.String,
@@ -411,7 +449,14 @@ const MemorySearch = Tool.make("memory_search", {
      * spelling a hit's `entities` publishes — so a value read off a hit is a valid scope verbatim.
      */
     entity: Optional(Schema.String),
-    include_archived: Optional(Schema.Boolean)
+    include_archived: Optional(Schema.Boolean),
+    /**
+     * Point-in-time view: returns what was believed valid at this moment, including
+     * since-superseded memories (marked superseded_by). The window is
+     * `coalesce(valid_from, event_at, created_at) <= as_of < valid_until` — the supersede path
+     * stamps both ends, so history is read from the files rather than replayed from git.
+     */
+    as_of: Optional(Schema.String)
   }),
   failure: ToolFailure,
   success: Schema.Struct({
@@ -436,7 +481,15 @@ const MemorySearch = Tool.make("memory_search", {
          * The next hop's `entity` parameter, published in the form that parameter accepts: the whole
          * point is that a caller chains by COPYING a value rather than by reconstructing one.
          */
-        entities: Schema.Array(Schema.String)
+        entities: Schema.Array(Schema.String),
+        /**
+         * The path of the memory that superseded this one, or `null` when nothing has. Non-null
+         * only for an archived hit — which reaches a result through `as_of` or
+         * `include_archived` — so a point-in-time answer is legible as history. Present and
+         * nullable like `consolidated_into`: a client must be able to tell "not superseded" from
+         * "this build does not report supersession".
+         */
+        superseded_by: Schema.NullOr(Schema.String)
       })
     ),
     degraded: Schema.Boolean,

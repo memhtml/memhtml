@@ -680,6 +680,66 @@ describe("a tool call through the toolkit layer", () => {
     expect(read.archived).toBe(false)
   })
 
+  it("answers as_of with the superseded belief marked superseded_by, THROUGH THE WIRE", async () => {
+    /**
+     * The bi-temporal round trip over the real store: a correction closes the old fact's validity
+     * window at the new fact's `<time datetime>` and opens the new one's, and `as_of` then reads
+     * each side of that moment. Both codecs run — `as_of` survives the parameter DECODE and
+     * `superseded_by` survives the success ENCODE — which is the half the retrieval-level test
+     * cannot see.
+     */
+    const original = await call("memory_write", {
+      title: "The batch window",
+      article_html:
+        '<p><mark>The nightly batch window opens at 02:00 UTC.</mark> Set on <time datetime="2023-06-01T00:00:00Z">that date</time>.</p>',
+      memory_type: "semantic",
+      workspace: "corrections"
+    })
+    expect(original.created).toBe(true)
+
+    const corrected = await call("memory_correct", {
+      target_path: original.path,
+      title: "The batch window, moved",
+      article_html:
+        '<p><mark>The nightly batch window opens at 03:30 UTC.</mark> Moved on <time datetime="2025-02-01T00:00:00Z">that date</time>.</p>',
+      reason: "the window moved"
+    })
+    const archivedPath = (corrected.archived as ReadonlyArray<string>)[0]
+
+    // As of 2024: the ORIGINAL was the belief. It comes back although archived, marked with what
+    // replaced it; the correction's window has not opened yet, so it must be absent.
+    const then = await call("memory_search", {
+      query: "nightly batch window opens UTC",
+      as_of: "2024-01-01T00:00:00Z",
+      limit: 20
+    })
+    const thenHits = then.hits as ReadonlyArray<{ path: string; superseded_by: string | null }>
+    const thenPaths = thenHits.map((hit) => hit.path)
+    expect(thenPaths).toContain(archivedPath)
+    expect(thenPaths).not.toContain(corrected.path)
+    expect(thenHits.find((hit) => hit.path === archivedPath)?.superseded_by).toBe(corrected.path)
+
+    // No as_of: the present, byte-for-byte today's behavior — the correction, marker null.
+    const now = await call("memory_search", {
+      query: "nightly batch window opens UTC",
+      limit: 20
+    })
+    const nowHits = now.hits as ReadonlyArray<{ path: string; superseded_by: string | null }>
+    expect(nowHits.map((hit) => hit.path)).toContain(corrected.path)
+    expect(nowHits.map((hit) => hit.path)).not.toContain(archivedPath)
+    for (const hit of nowHits) expect(hit.superseded_by).toBeNull()
+
+    // As of after the hand-off: the correction's window is open.
+    const later = await call("memory_search", {
+      query: "nightly batch window opens UTC",
+      as_of: "2026-06-01T00:00:00Z",
+      limit: 20
+    })
+    const laterPaths = (later.hits as ReadonlyArray<{ path: string }>).map((hit) => hit.path)
+    expect(laterPaths).toContain(corrected.path)
+    expect(laterPaths).not.toContain(archivedPath)
+  })
+
   /**
    * The batch door, through the same `kit.handle` every test above uses — so the ops array survives
    * DECODE as a nested struct array and the per-op results survive ENCODE, which is the half a handler
@@ -767,7 +827,14 @@ describe("a tool call through the toolkit layer", () => {
       expect(results.every((result) => "conflict" in result)).toBe(true)
       expect(results.every((result) => result.conflict === null)).toBe(true)
 
-      expect(batch.summary).toEqual({ total: 3, written: 3, deduped: 0, failed: 0, skipped: 0 })
+      expect(batch.summary).toEqual({
+        total: 3,
+        written: 3,
+        deduped: 0,
+        failed: 0,
+        skipped: 0,
+        consolidated: 0
+      })
 
       const after = (await call("memory_status", {})).head_sha as string
       expect(after).not.toBe(before)
@@ -827,7 +894,14 @@ describe("a tool call through the toolkit layer", () => {
         expect(result.path).toBe(result.existing_path)
         expect(result.code).toBeNull()
       }
-      expect(batch.summary).toEqual({ total: 2, written: 0, deduped: 2, failed: 0, skipped: 0 })
+      expect(batch.summary).toEqual({
+        total: 2,
+        written: 0,
+        deduped: 2,
+        failed: 0,
+        skipped: 0,
+        consolidated: 0
+      })
       // An all-deduped batch wrote no file, so it made NO commit — and says so with a null sha rather
       // than by reporting the previous HEAD, which would look like it had committed.
       expect(batch.commit_sha).toBeNull()
@@ -1001,7 +1075,14 @@ describe("a tool call through the toolkit layer", () => {
         expect(results[at]?.code).toBeNull()
       }
 
-      expect(batch.summary).toEqual({ total: 3, written: 2, deduped: 0, failed: 1, skipped: 0 })
+      expect(batch.summary).toEqual({
+        total: 3,
+        written: 2,
+        deduped: 0,
+        failed: 1,
+        skipped: 0,
+        consolidated: 0
+      })
       // `total` counts the ops the CALLER sent, not the ones `batchWrite` saw — a summary a client
       // could not reconcile with `results.length` is one it cannot use.
       expect(batch.summary).toMatchObject({ total: results.length })
@@ -1093,7 +1174,14 @@ describe("a tool call through the toolkit layer", () => {
       expect(results[0]?.error).toMatch(/no <mark>/)
       expect(results[1]?.ok).toBe(true)
       expect(results[1]?.path).not.toBeNull()
-      expect(batch.summary).toEqual({ total: 2, written: 1, deduped: 0, failed: 1, skipped: 0 })
+      expect(batch.summary).toEqual({
+        total: 2,
+        written: 1,
+        deduped: 0,
+        failed: 1,
+        skipped: 0,
+        consolidated: 0
+      })
       expect(await commitCount()).toBe(commitsBefore + 1)
     })
 
@@ -1104,7 +1192,14 @@ describe("a tool call through the toolkit layer", () => {
       const before = (await call("memory_status", {})).head_sha as string
       const batch = await call("memory_write_batch", { ops: [] })
       expect(resultsOf(batch)).toEqual([])
-      expect(batch.summary).toEqual({ total: 0, written: 0, deduped: 0, failed: 0, skipped: 0 })
+      expect(batch.summary).toEqual({
+        total: 0,
+        written: 0,
+        deduped: 0,
+        failed: 0,
+        skipped: 0,
+        consolidated: 0
+      })
       expect(batch.commit_sha).toBeNull()
       expect((await call("memory_status", {})).head_sha).toBe(before)
     })
@@ -1207,7 +1302,14 @@ describe("a tool call through the toolkit layer", () => {
          * archived would pass every assertion above this line.
          */
         expect(resultsOf(second)[0]?.ok).toBe(true)
-        expect(second.summary).toEqual({ total: 1, written: 1, deduped: 0, failed: 0, skipped: 0 })
+        expect(second.summary).toEqual({
+          total: 1,
+          written: 1,
+          deduped: 0,
+          failed: 0,
+          skipped: 0,
+          consolidated: 0
+        })
         expect(second.commit_sha).not.toBeNull()
         expect(await commitCount()).toBe(commitsBefore + 1)
         const listed = await call("memory_list", { workspace: "batch-conflict" })
@@ -1242,7 +1344,14 @@ describe("a tool call through the toolkit layer", () => {
         })
         const results = resultsOf(batch)
         expect(results.every((result) => result.conflict === null)).toBe(true)
-        expect(batch.summary).toEqual({ total: 2, written: 2, deduped: 0, failed: 0, skipped: 0 })
+        expect(batch.summary).toEqual({
+          total: 2,
+          written: 2,
+          deduped: 0,
+          failed: 0,
+          skipped: 0,
+          consolidated: 0
+        })
       })
 
       it("carries an intra-batch match as batch_index with a null path", async () => {
@@ -1270,7 +1379,14 @@ describe("a tool call through the toolkit layer", () => {
         expect(results[1]?.conflict?.path).toBeNull()
         expect(results[1]?.conflict?.claim).toBe("The shard rebalance interval is 30 minutes.")
         // Both wrote, in the one commit.
-        expect(batch.summary).toEqual({ total: 2, written: 2, deduped: 0, failed: 0, skipped: 0 })
+        expect(batch.summary).toEqual({
+          total: 2,
+          written: 2,
+          deduped: 0,
+          failed: 0,
+          skipped: 0,
+          consolidated: 0
+        })
         const listed = await call("memory_list", { workspace: "batch-conflict-intra" })
         expect(listed.files as ReadonlyArray<unknown>).toHaveLength(2)
       })
@@ -1320,7 +1436,14 @@ describe("a tool call through the toolkit layer", () => {
         // THE ASSERTION: op 2 names op ONE, in the caller's own numbering.
         expect(results[2]?.conflict?.batch_index).toBe(1)
         expect(results[2]?.conflict?.claim).toBe("The deploy window is Tuesday.")
-        expect(batch.summary).toEqual({ total: 3, written: 2, deduped: 0, failed: 1, skipped: 0 })
+        expect(batch.summary).toEqual({
+          total: 3,
+          written: 2,
+          deduped: 0,
+          failed: 1,
+          skipped: 0,
+          consolidated: 0
+        })
       })
 
       it("reports null for a claim with no frame shape and for an article_html op", async () => {
