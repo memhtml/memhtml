@@ -10,7 +10,7 @@
       "persistent": true
     },
     "typecheck": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["build", "^build"],
       "outputs": []
     },
     "lint": {
@@ -18,6 +18,14 @@
     },
     "test": {
       "dependsOn": ["build"],
+      "outputs": []
+    },
+    "@memhtml/html#test": {
+      "dependsOn": ["build", "@memhtml/index#build"],
+      "outputs": []
+    },
+    "@memhtml/cli#test": {
+      "dependsOn": ["build", "@memhtml/mcp#build"],
       "outputs": []
     },
     "test:integration": {
