@@ -1,7 +1,14 @@
-# One job: the definition of done. `pnpm check` = turbo run lint typecheck
-# test test:integration test:eval — credential-free by construction (eval
-# defaults to --mode fake; integration tests set MEMHTML_EMBED=off /
-# MEMHTML_LLM=off themselves), so this pipeline needs no secrets.
+# One job: the definition of done. `mise run check` = `pnpm check` = turbo run lint
+# typecheck test test:integration test:eval — credential-free by construction (eval
+# defaults to --mode fake; integration tests set MEMHTML_EMBED=off / MEMHTML_LLM=off
+# themselves), so this pipeline needs no secrets.
+#
+# The toolchain is declared once, in mise.toml, and pinned by checksum in mise.lock.
+# There is deliberately no node-version here and no corepack: mise-action installs node
+# and pnpm from those two files — and because a mise.lock is present it installs
+# `--locked`, so CI resolves the same binaries a developer resolved. The command is the
+# same task definition too, which is the whole point: nothing about this job can drift
+# from `mise run check` on a laptop.
 name: check
 on:
   push:
@@ -12,12 +19,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: jdx/mise-action@v4
+      # Ask pnpm where its store is rather than hardcoding a path — a path that is wrong
+      # caches nothing and says nothing about it. Runs after mise-action because that is
+      # what puts pnpm on PATH.
+      - run: echo "PNPM_STORE=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+      # pnpm's content-addressable store, keyed on the lockfile. mise-action caches
+      # mise's own tools; the store is separate, and without this every run re-downloads
+      # every dependency.
+      - uses: actions/cache@v4
         with:
-          node-version: 24
-      - run: corepack enable
-      # No version argument: corepack honors the packageManager pin
-      # (pnpm@11.16.0) in package.json, so CI and local can never drift.
-      - run: corepack prepare --activate
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm check
+          path: ${{ env.PNPM_STORE }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+      - run: mise run install:ci
+      - run: mise run check

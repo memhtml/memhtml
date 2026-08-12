@@ -1,0 +1,198 @@
+# mise is the stable command surface for humans, agents, and CI. `mise run check` is
+# the definition of done, and CI runs that same task against the binaries mise.lock
+# pins — one toolchain declaration, one command definition.
+#
+# Every task DELEGATES to the pnpm script that drives turbo. turbo.json stays
+# authoritative for the task graph: dependsOn, outputs, the content cache, and the two
+# backwards #test edges (@memhtml/html#test needs @memhtml/index#build,
+# @memhtml/cli#test needs @memhtml/mcp#build). No task here carries sources/outputs/
+# cache, because mise's freshness oracle is mtime and turbo's is a content hash — a
+# mise-level skip would preempt turbo's per-package hashing and, after a checkout or
+# cache restore that rewrites mtimes, skip work turbo would rebuild. `depends` is used
+# only where the members are genuinely independent (security), never to re-express a
+# tier ordering turbo already owns.
+#
+# There is deliberately no value-bearing [env] var. A credential-presence test deletes
+# the AWS vars and then asserts the ambient environment is credential-free
+# (apps/cli/tests/consolidator-wiring.test.ts), effect/Config snapshots process.env at
+# module load, and the sandbox backend switches on VERCEL. The integration tier sets
+# MEMHTML_EMBED=off / MEMHTML_LLM=off itself, which is what keeps the gate secret-free.
+min_version = "2026.4.16" # raw_args
+
+[settings]
+lockfile = true
+lockfile_platforms = ["linux-x64", "macos-arm64"]
+
+[tools]
+# pnpm is declared ABOVE node, and the order is load-bearing. mise prepends each tool's
+# directory to PATH in declaration order, and node's own bin holds a `pnpm` symlink to
+# corepack/dist/pnpm.js wherever `corepack enable` has run — so with node first, every
+# pnpm call goes through corepack and this pin is inert. Measured: pnpm below node
+# resolves to installs/node/24/bin/pnpm, pnpm above it resolves to
+# installs/pnpm/11.16.0/pnpm. Keeping corepack out of the path matters beyond tidiness:
+# the Node TSC voted to stop distributing it (nodejs/TSC#1697), Node 25+ does not bundle
+# it, and pnpm 11 no longer reads COREPACK_ENABLE_STRICT.
+#
+# This version and package.json's `packageManager` must agree, and `mise run tools:verify`
+# is what makes that a checked invariant rather than a convention.
+# A `latest` here is not "whatever today brings": mise.lock pins the concrete version,
+# checksum, URL, and provenance, and `mise run tools:bump` is the only thing that moves
+# them. So a clone resolves what the lock says, and refreshing a scanner is a reviewable
+# diff rather than a silent change between two runs.
+pnpm = "11.16.0"
+node = "24"                              # the only node declaration; engines says >=24
+lefthook = "latest"                      # git hooks; wired by `mise run install`
+"aqua:betterleaks/betterleaks" = "1.7.4" # secret scanner
+osv-scanner = "latest"                   # vulnerability scan over pnpm-lock.yaml
+semgrep = "latest"                       # SAST
+
+[env]
+# Puts the workspace's own binaries on PATH so a lefthook job reaching for `biome` gets
+# the pinned 2.5.6 from devDependencies rather than needing a fifteenth declaration
+# under [tools]. PATH only — see the header on why no value-bearing var is set.
+_.path = ["{{config_root}}/node_modules/.bin"]
+
+# --- install ------------------------------------------------------------------------
+
+[tasks."tools:verify"]
+description = "Fail if mise.toml's pnpm pin and package.json's packageManager disagree"
+# Plain node, no dependency: this has to be able to run before an install.
+run = "node scripts/verify-pnpm-pin.mjs"
+
+[tasks."tools:bump"]
+description = "Re-resolve every `latest` tool in mise.lock, leaving mise.toml alone"
+# Review the mise.lock diff — it is the record of which binaries the fleet now runs.
+run = "mise lock --bump"
+
+[tasks.install]
+description = "Install dependencies from the lockfile + wire the git hooks"
+depends = ["tools:verify"]
+run = ["pnpm install --frozen-lockfile", "lefthook install"]
+
+[tasks."install:ci"]
+description = "Reproducible install for CI — fails on lockfile drift, installs no hooks"
+depends = ["tools:verify"]
+run = "pnpm install --frozen-lockfile"
+
+# --- the gate -----------------------------------------------------------------------
+
+[tasks.check]
+description = "The definition of done: lint + typecheck + test + test:integration + test:eval"
+raw_args = true
+run = "pnpm check"
+
+[tasks.build]
+description = "tsc -b across the project-reference graph"
+raw_args = true
+run = "pnpm build"
+
+[tasks.lint]
+description = "biome, per package"
+raw_args = true
+run = "pnpm lint"
+
+[tasks.format]
+description = "Apply biome formatting across the repo"
+# No `dir`: mise runs tasks from config_root, and the `.` in `biome check --write .` IS
+# the write set — a dir would silently narrow or widen it.
+raw_args = true
+run = "pnpm format"
+
+[tasks.typecheck]
+description = "Strict tsc --noEmit per package, tests included"
+raw_args = true
+run = "pnpm typecheck"
+
+[tasks.test]
+description = "Every package's unit and property suites (turbo builds first)"
+raw_args = true
+run = "pnpm test"
+
+[tasks."test:integration"]
+description = "Cross-package contracts over a real repo and a real database"
+raw_args = true
+run = "pnpm test:integration"
+
+[tasks."test:eval"]
+description = "The refusable discrimination gate, fake embedder"
+raw_args = true
+run = "pnpm test:eval"
+
+[tasks."gen:fixture"]
+description = "Write a browsable fixture corpus: mise run gen:fixture --out DIR [--seed N]"
+# Trailing args land at the end of the `&&` chain, which is the gen-fixture.js that
+# parses --out / --seed / --size / --probes / --dry-run.
+raw_args = true
+run = "pnpm gen:fixture"
+
+[tasks.agents-doc]
+description = "Regenerate AGENTS.md from the BUILT CLI's own command table"
+# The build must precede the invocation: agents-doc reads the compiled COMMANDS array,
+# so regenerating against stale dist reproduces the old doc and hides the drift.
+run = "pnpm --filter @memhtml/cli build && node apps/cli/dist/bin.js agents-doc"
+
+# --- git hooks ----------------------------------------------------------------------
+
+[tasks."hooks:install"]
+description = "Install the lefthook git hooks (commit-msg / pre-commit / pre-push)"
+run = "lefthook install"
+
+[tasks."hooks:uninstall"]
+description = "Remove the lefthook git hooks"
+run = "lefthook uninstall"
+
+# --- security -----------------------------------------------------------------------
+# Report-only by design: each scanner always emits SARIF and always exits 0, and the
+# gating happens through GitHub code scanning. A scanner that exits non-zero kills the
+# workflow step before the SARIF uploads, which loses the finding detail that made the
+# scan worth running. The one place a scanner DOES gate is lefthook's pre-commit leak
+# job, because a staged secret must never become a commit.
+
+[tasks."security:osv"]
+description = "Vulnerability scan of pnpm-lock.yaml via osv-scanner (SARIF, report-only)"
+run = """
+mkdir -p .sarif
+osv-scanner scan source --lockfile=pnpm-lock.yaml \
+  --format=sarif --output=.sarif/osv.sarif || true
+"""
+
+[tasks."security:semgrep"]
+description = "SAST via semgrep p/auto + p/owasp-top-ten (SARIF, report-only)"
+run = """
+mkdir -p .sarif
+semgrep scan \
+  --config p/auto \
+  --config p/owasp-top-ten \
+  --sarif --output=.sarif/semgrep.sarif \
+  --metrics=off || true
+"""
+
+[tasks."security:leaks"]
+description = "Secrets sweep over git history via betterleaks (SARIF, report-only)"
+run = """
+mkdir -p .sarif
+betterleaks git . -f sarif -r .sarif/betterleaks.sarif --exit-code=0
+"""
+
+[tasks.security]
+description = "All scanners in parallel: osv + semgrep + leaks (SARIF under .sarif/)"
+# Genuinely independent — none of the three builds anything or reads another's output.
+depends = ["security:osv", "security:semgrep", "security:leaks"]
+
+# --- the binary ---------------------------------------------------------------------
+# `raw = true` on both: every command writes exactly ONE JSON envelope to stdout and
+# nothing else, `memhtml apply -` and `memhtml exec` read stdin, and `serve mcp` uses
+# stdout as the JSON-RPC stream. mise's default line-buffered, task-prefixed output
+# would corrupt all three.
+
+[tasks.cli]
+description = "Run the memhtml CLI from dist: mise run cli search 'query'"
+hide = true
+raw = true
+raw_args = true
+run = "node apps/cli/dist/bin.js"
+
+[tasks.serve]
+description = "Run the memhtml-mcp stdio server over this repo"
+raw = true
+run = "node apps/cli/dist/bin.js serve mcp"

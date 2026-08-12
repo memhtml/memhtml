@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#MISE description="One package's tests: mise run test-pkg domain rrf -t 'strictly'"
+#
+# A file task rather than a TOML one for two reasons. mise appends a task's trailing
+# args to the END of an inline `run` string, so an inline task can neither consume the
+# package name nor place the rest mid-command; a file task gets real argv. And the
+# narrowing cannot go through the root script at all: `pnpm test` is `turbo run test`,
+# so `mise run test rrf` would resolve to `turbo run test rrf` and turbo would read
+# `rrf` as a second task name.
+#
+# This goes straight to the package's own vitest, which means it SKIPS TURBO and does
+# NOT build first. Every @memhtml/* package's exports resolve only to ./dist, so after
+# editing another package's src/ run `mise run build` before trusting a result here.
+#
+# The package argument takes either spelling — `domain` or `@memhtml/domain`. Everything
+# after it is vitest's: a bare word is a filename substring, `-t` matches a test name.
+set -euo pipefail
+
+if [[ $# -eq 0 ]]; then
+  echo "usage: mise run test-pkg <package> [vitest args...]" >&2
+  echo "  e.g. mise run test-pkg domain rrf -t 'strictly'" >&2
+  exit 2
+fi
+
+pkg="$1"
+shift
+case "$pkg" in
+  @memhtml/*) ;;
+  *) pkg="@memhtml/$pkg" ;;
+esac
+
+# tests-integration is @memhtml/integration and its suite is `test:integration`; it has
+# no `test` script, so name the script that exists rather than failing on a missing one.
+script="test"
+if [[ "$pkg" == "@memhtml/integration" ]]; then
+  script="test:integration"
+fi
+
+exec pnpm --filter "$pkg" "$script" "$@"

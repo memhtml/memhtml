@@ -5,6 +5,13 @@ packages:
 
 minimumReleaseAge: 1440
 
+# The `packageManager` field in package.json is the ONE pnpm pin, and mise installs from
+# it (mise.toml's `idiomatic_version_file_enable_tools`). pnpm 11 defaults `pmOnFail` to
+# `download`, which means a pnpm whose own version disagrees with that field silently
+# downloads and execs the other one — so the version that ran is not the version anything
+# declared. `ignore` closes that path rather than trusting the two to agree.
+pmOnFail: ignore
+
 # Effect v4 is beta: every Effect package moves as one pinned, tested set.
 catalog:
   effect: 4.0.0-beta.102

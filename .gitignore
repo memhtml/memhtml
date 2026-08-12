@@ -9,3 +9,8 @@ coverage/
 .erpaval/sessions/
 .codegraph/
 docs/.repomix/
+# mise.toml and mise.lock are committed — these two are the per-machine overrides.
+mise.local.toml
+mise.local.lock
+# Scanner output. The durable copy is the SARIF uploaded to code scanning.
+.sarif/

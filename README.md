@@ -325,26 +325,57 @@ nothing but `effect`, and a test asserts that `domain`'s own `dist` names no dri
 
 ## Development
 
+[`mise`](https://mise.jdx.dev) is the command surface. It installs the toolchain — node, pnpm,
+lefthook, the scanners — from `mise.toml`, pinned by checksum and provenance in the committed
+`mise.lock`, so a clone resolves the same binaries CI does:
+
 ```bash
-pnpm install
-pnpm check      # lint + typecheck + test + test:integration + test:eval — the definition of done
+mise install    # node 24, pnpm 11.16.0, lefthook, scanners — from mise.lock
+mise run install    # dependencies from the lockfile + the git hooks
+mise run check      # lint + typecheck + test + test:integration + test:eval — the definition of done
 ```
 
-`pnpm check` includes the discrimination gate in fake mode, so a change that degrades retrieval
+CI runs that same `mise run check`, so the gate cannot drift from the one you run locally. Every task
+delegates to the pnpm script underneath it; **turbo still owns the task graph and the cache**, and no
+mise task declares `sources`/`outputs`, because mise decides freshness by mtime and turbo by content
+hash — a mise-level skip would preempt turbo's per-package hashing.
+
+`check` includes the discrimination gate in fake mode, so a change that degrades retrieval
 fails the build rather than shipping. Tests use a real temp-dir git repo and a real SQLite database with
 the shipped migrations; fakes are limited to the two edges that reach the network — the embedder and the
 model — because a stateless fake verifies the shape of a call and misses the state semantics behind
 it, which is where the defects in this system have actually lived.
 
-| Command | What it runs |
-|---|---|
-| `pnpm build` | `tsc -b` across the project graph |
-| `pnpm lint` | biome |
-| `pnpm typecheck` | strict `tsc --noEmit`, tests included |
-| `pnpm test` | every package's unit and property suites |
-| `pnpm test:integration` | the cross-package contracts over a real repo and a real database |
-| `pnpm test:eval` | the discrimination gate (fake mode) |
-| `pnpm gen:fixture` | write a browsable fixture corpus (pure function of a seed) |
+| Command | Delegates to | What it runs |
+|---|---|---|
+| `mise run build` | `pnpm build` | `tsc -b` across the project graph |
+| `mise run lint` | `pnpm lint` | biome |
+| `mise run typecheck` | `pnpm typecheck` | strict `tsc --noEmit`, tests included |
+| `mise run test` | `pnpm test` | every package's unit and property suites |
+| `mise run test:integration` | `pnpm test:integration` | the cross-package contracts over a real repo and a real database |
+| `mise run test:eval` | `pnpm test:eval` | the discrimination gate (fake mode) |
+| `mise run gen:fixture` | `pnpm gen:fixture` | write a browsable fixture corpus (pure function of a seed) |
+| `mise run agents-doc` | — | regenerate `AGENTS.md` from the built CLI's own table |
+| `mise run security` | — | osv-scanner + semgrep + betterleaks, SARIF into `.sarif/` |
+| `mise run tools:bump` | — | re-resolve every `latest` tool in `mise.lock` |
+
+To narrow a run to one package, `mise run test-pkg <package> [vitest args]` — the package name takes
+either spelling and everything after it is vitest's:
+
+```bash
+mise run test-pkg domain rrf -t "strictly"    # one test
+mise run test-pkg index retrieval             # one file
+```
+
+That path goes straight to the package's vitest, so it **skips turbo and does not build first**. Every
+`@memhtml/*` package's exports resolve only to `./dist`, so run `mise run build` after editing another
+package's `src/`.
+
+`mise.toml`'s `[tools] pnpm` and `package.json`'s `packageManager` both declare the pnpm that runs, and
+neither can be derived from the other. `mise run tools:verify` fails when they disagree; `mise run
+install` depends on it, so the check is not optional. The order matters too — `pnpm` is declared above
+`node` because node's own bin holds a `pnpm` symlink into corepack wherever `corepack enable` has run,
+and with node first every pnpm call would go through corepack instead of the pinned binary.
 
 ## Docs
 

@@ -1,0 +1,50 @@
+# Git hooks via lefthook, installed by `mise run install` (or `mise run hooks:install`).
+#
+# Every job goes through `mise exec` / `mise run`, so the tool that runs is the version
+# this repo pins — biome 2.5.6 from node_modules/.bin (reached via mise.toml's `_.path`),
+# betterleaks 1.7.4 from mise. Never a bare `biome`, whose resolution depends on the
+# committer's shell.
+#
+# The split: pre-commit is the fast, file-scoped pass; pre-push is the two whole-repo
+# gates that catch what a per-file pass cannot. The test tiers are deliberately absent —
+# ~1850 unit tests across 13 packages, and the integration tier runs one file at a time
+# with 180-second timeouts. `mise run check` is CI's job, and CI is where it gates.
+#
+# Bypass with `--no-verify` in a genuine emergency; CI still refuses.
+
+commit-msg:
+  jobs:
+    - name: conventional-commit
+      # Conventional Commits, plus the two prefixes this repo actually uses beyond the
+      # standard set: `spec` (the spec/memhtml.symspec.json requirements ledger gets its
+      # own commits) and `merge`.
+      run: |
+        head -1 {1} | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert|spec|merge)(\(.+\))?!?: .+' \
+          || { echo "commit message must follow Conventional Commits: <type>(<scope>): <subject>"; exit 1; }
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: biome
+      glob: "*.{ts,json}"
+      # --no-errors-on-unmatched because biome.json excludes spec/*.symspec.json and
+      # every dist/, so a staged set can legitimately contain nothing biome handles —
+      # which is not an error worth blocking a commit over.
+      run: mise exec -- biome check --write --no-errors-on-unmatched {staged_files}
+      stage_fixed: true
+    - name: leak-staged
+      # Scans only the staged diff, which is what makes it fast enough for every commit;
+      # the full-history sweep is pre-push and CI. This is the ONE scanner that gates
+      # rather than reports: a staged secret must never become a commit, and unlike the
+      # CI scans there is no SARIF upload here to protect from a non-zero exit.
+      run: mise exec -- betterleaks git --staged --no-banner --redact
+
+pre-push:
+  parallel: true
+  jobs:
+    - name: lint
+      run: mise run lint
+    - name: typecheck
+      # Typecheck depends on build in turbo, so this is also the cheapest proof that the
+      # project-reference graph still compiles before anything reaches origin.
+      run: mise run typecheck

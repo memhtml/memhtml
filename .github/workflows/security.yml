@@ -1,0 +1,43 @@
+# Dependency, SAST, and secret scanning — kept out of check.yml so the gate stays one
+# job with one meaning.
+#
+# Every scanner here REPORTS: each exits 0 and writes SARIF, and the gating happens
+# through GitHub code scanning alerts and branch protection. A scanner that exits
+# non-zero kills the step before the upload runs, which throws away the finding detail
+# that was the reason to scan. The scanner that does gate is lefthook's pre-commit leak
+# job, where blocking is the only useful outcome and there is no report to lose.
+#
+# Weekly schedule as well as per-push: a lockfile that was clean when it merged does not
+# stay clean, because the vulnerability database moves and the code does not.
+name: security
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "31 6 * * 2"
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      # Full history: betterleaks sweeps every commit, and a shallow clone would scan a
+      # single revision while reporting success.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: jdx/mise-action@v4
+      - run: mise run security
+      # One upload for the whole directory — each SARIF names its own tool, so code
+      # scanning separates them without a step per scanner.
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: .sarif
