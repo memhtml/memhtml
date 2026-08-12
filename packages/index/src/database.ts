@@ -363,9 +363,9 @@ export const makeDatabase = (
         }),
       /**
        * Rows come back as null-prototype records of `SQLOutputValue`, and the caller names the
-       * shape it expects. The cast is the seam where an untyped driver row becomes a typed row,
-       * exactly as it was with the previous driver: the SQL and the type parameter are written
-       * together, and no runtime check here could tell a wrong column name from a right one.
+       * shape it expects. The cast is the seam where an untyped driver row becomes a typed row: the
+       * SQL and the type parameter are written together, and no runtime check here could tell a
+       * wrong column name from a right one.
        */
       get: <A>(sql: string, params: ReadonlyArray<SqlValue> = []) =>
         attemptSync("get", () => db.prepare(sql).get(...params) as A | undefined),

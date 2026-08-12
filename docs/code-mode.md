@@ -238,12 +238,11 @@ should always prefer `bun -e` or a script file.
 - Not retrieval. The discrimination gate's whole point is that lexical/structural reads
   cannot distinguish a claim from its negation-flip at a distance — ranked search stays
   with the four-arm RRF stack.
-- Not an index handle. `memhtml exec` (item 7b) SHIPPED without one, deliberately: the ranked
-  planes stay behind `memhtml search`, which a script reaches by shelling out. The earlier plan
-  named a read-only `index.db` handle here; that was dropped on scope, not on feasibility
-  (`.erpaval/solutions/architecture-patterns/turso-second-opener-and-the-readonly-flag.md`
-  records what a second opener can actually do). A `memory_eval` MCP tool (item 7c) is still
-  demand-pulled; ROADMAP.md carries the sequencing.
+- Not an index handle. `memhtml exec` (item 7b) ships without one, deliberately: the ranked
+  planes stay behind `memhtml search`, which a script reaches by shelling out. A read-only
+  `index.db` handle here is a scope decision and not a feasibility one — a second process can open
+  a live store and read it, which `node scripts/probe-sqlite-concurrency.mjs` measures. A
+  `memory_eval` MCP tool (item 7c) is still demand-pulled; ROADMAP.md carries the sequencing.
 
 ## `memhtml exec` — the shipped runtime
 

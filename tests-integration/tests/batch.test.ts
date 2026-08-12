@@ -353,7 +353,7 @@ describe("spec 004 success metric — the 20-op Alice fixture through memory_wri
     commitsAfterAbort = await commitCount(cli)
     statusAfterAbort = (await cli.git("status", "--porcelain")).trim()
 
-    // Every row assertion below needs the Turso lock back, so the shutdown is part of the setup.
+    // Every row assertion below reads a settled store, so the shutdown is part of the setup.
     exit = await client.shutdown()
     rows = await fileRows(cli)
   })

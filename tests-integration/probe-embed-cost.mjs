@@ -15,7 +15,8 @@
  * after `pnpm build`:
  *   node tests-integration/probe-embed-cost.mjs [--sizes 1000,5000,10000] [--batch 256] [--rounds 2]
  *
- * Never run against a store `memhtml serve mcp` is serving — this opens its own Turso handle.
+ * Safe to run beside a live `memhtml serve mcp`: it builds its own temp store and never touches
+ * yours. What it must not share is a store, since its numbers are of an uncontended writer.
  */
 import { createHash } from "node:crypto"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
@@ -179,12 +180,11 @@ const runSize = (storeSize, batchSize, rounds) =>
 
       const before = snapshot()
       const updateT0 = process.hrtime.bigint()
-      // --fts-bracket: drop the FTS index around the update and rebuild it after, the
-      // same trick rebuild() uses. If per-round growth vanishes under this bracket, the
-      // growing term is the live FTS insert path, not anything embedMissing does.
-      if (ftsBracket) yield* db.run("DROP INDEX IF EXISTS files_fts")
+      // What this rig measures is the pending-scan term. The lexical index is not a variable here:
+      // FTS5 is maintained by triggers and its insert cost is linear in the batch rather than in
+      // the store, measured flat at 6/5/6/5/5/5 ms over six consecutive 256-op batches against a
+      // 10k-file store (2026-08-12), so there is nothing to A/B against it.
       const report = yield* indexer.update({ embed: true })
-      if (ftsBracket) yield* db.run("CREATE INDEX files_fts ON files USING fts(fts_text)")
       const updateMs = ms(process.hrtime.bigint() - updateT0)
       const delta = diffSince(before)
 
@@ -227,7 +227,6 @@ const arg = (name, fallback) => {
 const sizes = arg("sizes", "1000,5000,10000").split(",").map(Number)
 const batch = Number(arg("batch", "256"))
 const rounds = Number(arg("rounds", "2"))
-const ftsBracket = process.argv.includes("--fts-bracket")
 
 const program = Effect.gen(function* () {
   const all = []

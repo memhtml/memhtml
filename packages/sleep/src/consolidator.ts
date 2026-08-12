@@ -7,7 +7,7 @@ import type { Effect } from "effect"
  * `apps/consolidator` — an eve agent over the AI SDK Bedrock provider, `just-bash` sandbox and all —
  * and a `@memhtml/sleep` that imported it would drag a 17 MB agent build and a network client into the
  * dependency closure of a package whose entire test tier is a temp-dir git repo and an in-memory
- * Turso. So sleep declares the SHAPE it consumes and `apps/cli`, the composition root, is the one
+ * SQLite database. So sleep declares the SHAPE it consumes and `apps/cli`, the composition root, is the one
  * module that knows both halves exist. Exactly the posture `env.ts` already takes for git, the
  * database, and the model.
  *

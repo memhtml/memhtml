@@ -854,12 +854,13 @@ export const run = async (
   }
 
   /**
-   * `serve mcp` must not build the app layer either, and here the reason is a LOCK.
+   * `serve mcp` must not build the app layer either, and here the reason is the DATABASE.
    *
    * The supervisor's only job is to spawn the server and wait. Building `layerApp` first would open
-   * `$MEMHTML_ROOT/.memhtml/index.db` in the parent, and Turso's lock excludes a second WRITABLE opener — so
-   * would fail to open the very database it exists to serve, with "File is locked by another
-   * process". The parent needs the resolved repo ROOT, which is config, not a service.
+   * `$MEMHTML_ROOT/.memhtml/index.db` and run its migrations in the parent — a second writer against
+   * the very store the child exists to serve, held open for as long as the child lives, by a process
+   * that never issues a query. The parent needs the resolved repo ROOT, which is config, not a
+   * service.
    *
    * Nothing is emitted until the child exits, because stdout belongs to the child from the moment it
    * is spawned. The `serve.exit` envelope describes how the server ended, and it is written after
@@ -887,12 +888,11 @@ export const run = async (
   }
 
   /**
-   * `eval discriminate` does not build the app layer either, and the reason is finding #37's lesson
-   * one command over: the gate measures the ranking stack against its own GENERATED fixture corpus in
-   * a temp directory with an in-memory database, and reads the operator's `index.db` not at all.
-   * Building `layerApp` would take Turso's writer lock on a database this command never queries —
-   * so `memhtml eval discriminate` would refuse to run while `memhtml-mcp` is serving the repo, which is
-   * exactly when an operator wants to check the gate.
+   * `eval discriminate` does not build the app layer either, for the reason the command above gives:
+   * the gate measures the ranking stack against its own GENERATED fixture corpus in a temp directory
+   * with an in-memory database, and reads the operator's `index.db` not at all. Building `layerApp`
+   * would open and migrate a store this command never queries — and an operator checking the gate is
+   * typically doing it while `memhtml-mcp` serves that store.
    *
    * **Exit 1 on a failed gate**, with `ERR_DISCRIMINATION_FAILED`. A refusable gate that exited 0 and
    * left the verdict inside the payload would be a gate every shell caller forgets to read — the
@@ -927,13 +927,13 @@ export const run = async (
   }
 
   /**
-   * `memhtml exec` does not build the app layer either, for the lock reason two commands over.
+   * `memhtml exec` does not build the app layer either, for the reason two commands over.
    *
    * The command reads a git TREE and nothing else: it materializes a commit as a detached worktree and
-   * mounts that directory read-only. It never queries `index.db`, so building `layerApp` would take
-   * Turso's writer lock on a database it does not use — and `memhtml exec` would refuse to run while
-   * `memhtml serve mcp` is serving the repo, which is exactly when an agent wants a traversal. Nothing
-   * here can be reached through `dispatch`, because `dispatch`'s service set IS the app layer's.
+   * mounts that directory read-only. It never queries `index.db`, so building `layerApp` would open and
+   * migrate a database it does not use, on the path an agent reaches for while `memhtml serve mcp` is
+   * serving the repo. Nothing here can be reached through `dispatch`, because `dispatch`'s service set
+   * IS the app layer's.
    *
    * **Non-zero `exitCode` in the payload is still exit 0 for the process**, and that split is the
    * contract. A failing script is a REPORT with `stderr` an agent reads and fixes; the CLI's exit 1 is

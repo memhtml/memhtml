@@ -22,8 +22,8 @@ import { type Failure, fail } from "./envelope.js"
  * **Structural and lexical planes only. No index handle.** That is the division item 7 itself draws:
  * `memhtml search` finds entry points, code traverses from there, and a script needing ranked retrieval
  * shells out to `memhtml search` and consumes its envelope. Nothing here opens `index.db`, so CODE-2's
- * index half is satisfied by there being no handle to guard rather than by a guard
- * (`.erpaval/solutions/architecture-patterns/turso-second-opener-and-the-readonly-flag.md`).
+ * index half is satisfied by there being no handle to guard rather than by a guard — and if one is ever
+ * added, `scripts/probe-sqlite-concurrency.mjs` measures what a second process can do to a live store.
  *
  * **READ-ONLY BY CONTRACT.** Every write still goes through `memhtml apply` / `memory_write*`, so the
  * one-commit-per-op, dedup, and conflict machinery cannot be bypassed. The mount enforces it —

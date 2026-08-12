@@ -121,9 +121,9 @@ export interface Client {
   /**
    * Close stdin, wait for the supervisor to exit, and return its `serve.exit` envelope.
    *
-   * Returning the envelope rather than discarding it is what makes the exit ASSERTABLE, and the exit
-   * is load bearing: Turso's writer lock is held on `.memhtml/index.db` for as long as the child is
-   * alive, so every row assertion has to happen after this resolves.
+   * Returning the envelope rather than discarding it is what makes the exit ASSERTABLE, and the
+   * ordering is deliberate: a row read after this resolves describes a settled corpus, where the same
+   * read taken while the child is alive could catch a write the server still has in flight.
    */
   readonly shutdown: () => Promise<{
     readonly exitCode: number
@@ -136,7 +136,8 @@ export interface Client {
  *
  * `memhtml serve mcp` rather than `apps/mcp/dist/bin.js` directly, because that is the command an operator
  * and a client config name — and it exercises the supervisor's one job (spawn the child, keep its own
- * hands off the database), whose clean exit is what RELEASES the lock a row assertion then needs.
+ * hands off the database), whose clean exit is what leaves the store with no live writer for a row
+ * assertion to read.
  */
 export const connect = (root: string): Client => {
   const child = spawn(process.execPath, [cliEntryPoint, "serve", "mcp", "--repo", root], {

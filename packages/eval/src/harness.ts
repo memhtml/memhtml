@@ -32,9 +32,9 @@ import { type FixtureCorpus, type FixtureOptions, makeFixtureCorpus } from "./fi
  * vector space.
  *
  * The database is `":memory:"` deliberately. The eval reads its own throwaway corpus and never the
- * operator's `index.db`, so opening a file would take Turso's writer lock on a database the gate
- * does not query — and `memhtml eval discriminate` would then refuse to run while `memhtml-mcp` is serving
- * the repo, which is exactly when an operator wants to check the gate.
+ * operator's `index.db`, so a file would be a store the gate opens, migrates, and never queries —
+ * and `memhtml eval discriminate` is typically run while `memhtml-mcp` is serving that store, which
+ * is exactly when an operator wants to check the gate.
  */
 
 /** The vector width the fake produces: the real one, so a width check cannot pass by accident. */
@@ -134,7 +134,7 @@ export interface StackOptions extends FixtureOptions {
  *
  * `Effect.acquireRelease` owns the database, so the caller's `Effect.scoped` closes the connection —
  * and the fixture's own `cleanup` removes the temp tree. Both matter in a CLI: a command that leaked
- * a Turso handle would keep a WAL file alive under `/tmp` for the life of the process.
+ * a database handle would keep a WAL file alive under `/tmp` for the life of the process.
  */
 export const buildStack = (
   options: StackOptions = {}

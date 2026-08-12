@@ -821,7 +821,7 @@ export interface GuideBlock {
  * same bytes. A prose-only example drifts silently the first time a field is renamed.
  */
 export const GUIDE_OP_EXAMPLE =
-  '{"op":"write","title":"Turso holds an exclusive lock","type":"semantic","body":"The index database is locked while `memhtml serve mcp` runs. A second process opening it fails rather than waiting.","tag":"infra"}'
+  '{"op":"write","title":"One writer and many readers share the index","type":"semantic","body":"WAL admits a single writer at a time and any number of concurrent readers, so a CLI command and a running `memhtml serve mcp` can work against one store.","tag":"infra"}'
 
 /**
  * The guide: what an agent reads on its FIRST call, before it has written anything.
@@ -868,11 +868,12 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "warnings), you own choosing a path that does not collide, you own noticing that the content " +
       "already exists somewhere else, and you own the commit — the nightly `memhtml sleep run` refuses to " +
       "start on a dirty tree, so an uncommitted edit blocks curation until it is committed or stashed. " +
-      "One hard rule across all three: never run a CLI command against a repo while `memhtml serve mcp` is " +
-      "serving it. The index database's lock excludes a second WRITABLE opener, every CLI command " +
-      "builds a writable layer, and so the second process fails to open it rather than waiting. A " +
-      "read-only consumer is unaffected: opening with `readonly: true` succeeds beside the server and " +
-      "reads a snapshot pinned at open."
+      "A CLI command and a running `memhtml serve mcp` may share one store: the index is WAL SQLite, " +
+      "which admits one writer at a time and any number of concurrent readers, so a second writer " +
+      "waits its turn rather than failing. The one thing to keep clear of is `memhtml sleep run`, and " +
+      "for a git reason rather than a database one — a run holds a checked-out `sleep/<date>` branch, " +
+      "so a write landing during it commits onto that branch and is merged as if it were curation or " +
+      "lost when the branch is dropped."
   },
   {
     topic: "when-to-batch",

@@ -21,7 +21,7 @@ Two properties hold the design together:
 | `domain` | Pure math: retention, decay, RRF, MMR, graph, merge guards. |
 | `html` | Parse, serialize, hash, and byte-splice the memory file format. |
 | `store` | Git-backed file store: write, read, correct, archive, link, commit. |
-| `index` | Turso service, migrations, indexer, projection, retrieval. |
+| `index` | SQLite service, migrations, indexer, projection, retrieval. |
 | `traces` | Streaming session-JSONL parser and scanner. |
 | `sleep` | The fifteen curation phases, each a git commit. |
 | `llm` | Bedrock embeddings and forced-tool structured output. |
@@ -34,7 +34,7 @@ depends on `@memhtml/cli` rather than re-composing the service graph, so there i
 database, which git root, which vector space (`apps/mcp/src/server.ts:13-18`).
 
 `@memhtml/domain`'s purity is enforced, not documented: `packages/domain/tests/layering.test.ts` greps the
-emitted `dist/*.js` for a runtime import of `@tursodatabase`, `@aws-sdk`, or `node:fs`. Math that needed
+emitted `dist/*.js` for a runtime import of `node:sqlite`, `@aws-sdk`, or `node:fs`. Math that needed
 infrastructure to test would let a caller's I/O failure surface as a scoring bug.
 
 `AppLive` (`apps/cli/src/api-layer.ts:67-90`) wires every service. The design's one cycle is broken
@@ -254,19 +254,21 @@ rebuild; the row is queryable both directions.
 ## 6. The index
 
 Two databases on one connection. `.memhtml/state.db` is ATTACHed as `state`
-(`packages/index/src/database.ts:247`) so the salience arm can `LEFT JOIN state.access` in the same
+(`packages/index/src/database.ts:294`) so the salience arm can `LEFT JOIN state.access` in the same
 statement as `main.files` with no application-side join; attaching is not idempotent, so it happens once
-per connection in `makeDatabase` (`packages/index/src/database.ts:272`). Each plane keeps its own
-migration ledger (`packages/index/src/database.ts:122`, `packages/index/src/schema-const.ts:10-15`),
+per connection in `makeDatabase` (`packages/index/src/database.ts:319`). Each plane keeps its own
+migration ledger (`packages/index/src/database.ts:195`, `packages/index/src/schema-const.ts:10-15`),
 because rebuilding `index.db` must not mark the state plane's migrations unapplied.
 
-Connect options are one constant used by every `connect` (`packages/index/src/database.ts:22`).
-`index_method` makes `CREATE INDEX ... USING fts(...)` available, and once such an index exists *every*
-statement touching that table needs the flag — a plain `SELECT` from `files` fails without it. The
-constant is declared `satisfies` the driver's own feature union, so a renamed flag is a compile error here
-rather than an unopenable database at runtime. Migrations apply in filename order through a comment- and
-quote-aware splitter (`packages/index/src/database.ts:172`), each committing with its ledger row so a
-crash never leaves one half-applied.
+Both planes are plain SQLite through node's built-in `node:sqlite`, so there is no third-party database
+dependency and no driver feature flags to keep in step — `sqlite3` or a GUI browser opens either file
+directly. Every connection sets `journal_mode = WAL`, `busy_timeout = 5000`, `synchronous = NORMAL`, and
+`foreign_keys = ON`, and registers one SQL function, `vector_distance_cos`
+(`packages/index/src/database.ts:342-354`). That function is `@memhtml/domain`'s `cosineDistance` rather
+than a second implementation, so the vector arm's SQL and the MMR pass cannot disagree about a clamp or a
+zero-magnitude vector. Migrations apply in filename order, each file's statements and its ledger row
+committing in ONE transaction (`packages/index/src/database.ts:215`), so a crash never leaves one
+half-applied.
 
 ### 6.1 Schema
 
@@ -386,13 +388,13 @@ explicitly because it holds no foreign key. This is the whole reason `chunks` ke
 delete-and-re-add would cascade the source's chunks away with their embeddings, and the next embed pass
 would pay Bedrock again for text that did not change.
 
-An incremental pass **brackets its writes with a DROP/CREATE of the FTS index when the pass is bulk**
-(`packages/index/src/indexer.ts:197-207`). Inserting through the live index degrades with every row
-inserted since the index was last created, not merely with table size, so a long ingest's per-batch wall
-grows without bound; rebuilding also resets that accumulated degradation, which the live path never does.
-The threshold keeps the interactive path on the live insert, since one file pays about 8 ms and bracketing
-it would charge the whole table's rebuild for one row. Break-even is roughly one written row per 1,000
-table rows, floored at 16 files (`packages/index/src/schema-const.ts:80-93`).
+Every pass writes through the live lexical index, bulk or interactive alike
+(`packages/index/src/indexer.ts:171-181`). `files_fts` is an external-content FTS5 table maintained by
+three triggers on `files`, and its write cost is linear rather than accumulating: probed 2026-08-12 on
+node 24.19.0, six consecutive 256-op batches against a constant 10k-file store cost 6, 5, 6, 5, 5, 5 ms,
+and inserting a whole store costs 20 ms at 800 files, 101 ms at 5k, and 234 ms at 10k. Beside the
+thousands of Bedrock embedding calls a bulk pass makes, that is not a number worth a drop/recreate bracket
+— and a bracket would open a window where a crash leaves the store with no lexical index at all.
 
 ### 6.4 Chunking and embeddings
 

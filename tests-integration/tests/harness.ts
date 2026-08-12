@@ -11,8 +11,8 @@ import { configureIdentity } from "@memhtml/store/testing"
 import { Effect, type Layer } from "effect"
 
 /**
- * The cross-package harness: a real temp git repo, real migrations on an on-disk Turso, the real layer
- * graph, and a deterministic embedder.
+ * The cross-package harness: a real temp git repo, real migrations on an on-disk SQLite database, the
+ * real layer graph, and a deterministic embedder.
  *
  * `layerAppWith` is the SAME `layerCore` production builds, with only the two network edges
  * substituted. That is the point of this tier: a stateless fake verifies the shape of a call and

@@ -50,17 +50,17 @@ describe("resolving the mcp server", () => {
 })
 
 describe("the supervisor's own restraint", () => {
-  it("does not reach for a service, so it cannot lock the database the child must open", async () => {
+  it("does not reach for a service, so it opens no handle on the store the child serves", async () => {
     /**
-     * The second regression, and the one a shape test could never catch. `serve mcp` began as an
-     * ordinary dispatch arm, which meant `run` built `layerApp` before spawning — that opens
-     * `$MEMHTML_ROOT/.memhtml/index.db`, and Turso takes an EXCLUSIVE file lock. The child then failed to
-     * open the very database it exists to serve: "File is locked by another process". A working
-     * `memhtml-mcp` and a broken `memhtml serve mcp`, from one extra layer build.
+     * The regression a shape test could never catch. An ordinary dispatch arm has `run` build
+     * `layerApp` before spawning, and that opens and migrates `$MEMHTML_ROOT/.memhtml/index.db` in the
+     * supervisor — a second writer against the store its own child exists to serve, held for the life
+     * of the child by a process that issues no query. One extra layer build, paid on every `serve mcp`.
      *
      * The property is asserted structurally: `serve.ts` may import the error class and the config, and
-     * nothing that yields a service. A source assertion rather than a behavioural one because the
-     * failure needs two processes and a real database to reproduce, while the CAUSE is one import.
+     * nothing that yields a service. A source assertion rather than a behavioural one because an
+     * unused handle is invisible from outside — two processes and a real store to observe it at all,
+     * while the CAUSE is one import.
      */
     const source = await Effect.runPromise(
       Effect.promise(async () => {

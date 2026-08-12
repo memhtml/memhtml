@@ -41,8 +41,7 @@ markup is.
 
 ## Related
 
-[[turso-second-opener-and-the-readonly-flag]] and
-[[sandbox-egress-is-set-by-the-constructor]] are the same discipline in a different register: there
+[[sandbox-egress-is-set-by-the-constructor]] is the same discipline in a different register: there
 the probe ran, printed output, and measured the wrong boundary. Here the probe ran, printed output,
 and measured the wrong thing about the right boundary. In both cases the output's existence was
 mistaken for its validity.

@@ -105,7 +105,7 @@ const Optional = <S extends Schema.Top>(schema: S) => Schema.optionalKey(Schema.
  *
  * A FUNCTION per set, not a shared constant: the option's type is a mutable array, so handing the
  * same array to fourteen tools would let one tool's construction mutate the dependency list of the
- * other thirteen. Same reason `@memhtml/index`'s `TURSO_OPTS` is copied per connection.
+ * other thirteen.
  */
 const READS = () => [DatabaseService]
 // ExtractorPort is in the write set because `batchWrite` reads it (the write-time entity assist);

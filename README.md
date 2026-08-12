@@ -6,9 +6,9 @@ that commits its work to a reviewable branch.
 
 ```bash
 memhtml init                                  # scaffold $MEMHTML_ROOT: git init, PARA dirs, merge driver
-memhtml write --title "Turso holds an exclusive lock" --type semantic \
-  --claim "The index database is locked while memhtml serve mcp runs."
-memhtml search "index lock"                   # FTS + vector + recency + salience, fused with RRF
+memhtml write --title "WAL admits one writer and many readers" --type semantic \
+  --claim "A CLI command and a running memhtml serve mcp share one index.db."
+memhtml search "one writer many readers"      # FTS + vector + recency + salience, fused with RRF
 memhtml serve mcp                             # the same store over stdio: 14 tools, 2 resources
 ```
 
@@ -152,9 +152,9 @@ Three doors, all legitimate, all landing in the same tree:
    anything is written). `memhtml apply` for many: one JSONL op per line, validated for shape before any
    op executes, one commit, one index pass.
 2. **The MCP server** — `memhtml serve mcp`, stdio, 14 tools and 2 resources over the same repo:
-   write/read/search/recall/correct/link/archive, batch writes, trace search. Never run CLI commands
-   against a repo while the server holds it — the index's lock excludes a second writable opener, and
-   every CLI command wants one. A `readonly: true` opener gets in (see `RUNBOOK.md`, section 4).
+   write/read/search/recall/correct/link/archive, batch writes, trace search. A CLI command and a
+   running server share one store: WAL admits one writer and any number of readers, and a contended
+   write retries on `SQLITE_BUSY` (see `RUNBOOK.md`, section 4).
 3. **Your file tools** — the tree is the system of record, so a hand-written file is as real as one
    the CLI wrote. You take on what the write path would have done: format validity (`memhtml doctor`),
    path choice, dedup, and the commit. Sleep refuses to start on a dirty tree.
@@ -315,7 +315,7 @@ nothing but `effect`, and a test asserts that `domain`'s own `dist` names no dri
 | `@memhtml/domain` | Pure math: retention, decay, RRF, MMR, PageRank, the anti-merge guards. |
 | `@memhtml/html` | The memory file format — parse, serialize, hash, surgical head editors. |
 | `@memhtml/store` | The git-backed file store. One commit per operation, typed conflicts. |
-| `@memhtml/index` | Turso schema, the git-driven indexer, four-arm RRF retrieval, the state plane. |
+| `@memhtml/index` | SQLite schema, the git-driven indexer, four-arm RRF retrieval, the state plane. |
 | `@memhtml/traces` | Streaming JSONL parser over `~/.claude`, with a size+mtime+offset watermark. |
 | `@memhtml/sleep` | The fifteen curation phases, each an isolated commit. |
 | `@memhtml/llm` | Bedrock: Cohere embeddings and forced-tool structured output. |
@@ -331,8 +331,8 @@ pnpm check      # lint + typecheck + test + test:integration + test:eval — the
 ```
 
 `pnpm check` includes the discrimination gate in fake mode, so a change that degrades retrieval
-fails the build rather than shipping. Tests use a real temp-dir git repo and a real Turso with the
-shipped migrations; fakes are limited to the two edges that reach the network — the embedder and the
+fails the build rather than shipping. Tests use a real temp-dir git repo and a real SQLite database with
+the shipped migrations; fakes are limited to the two edges that reach the network — the embedder and the
 model — because a stateless fake verifies the shape of a call and misses the state semantics behind
 it, which is where the defects in this system have actually lived.
 

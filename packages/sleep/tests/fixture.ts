@@ -26,7 +26,7 @@ import type { SleepDeps } from "../src/env.js"
 import { makeFakeEmbedder, type ScriptedModel } from "../src/testing.js"
 
 /**
- * The sleep test fixture: a real temp-dir git repo, a real in-memory Turso with the shipped
+ * The sleep test fixture: a real temp-dir git repo, a real in-memory SQLite database with the shipped
  * migrations, and the deterministic embedder — plus the corpus every phase test reads.
  *
  * Everything here is real except the model and the embedder. Sleep's subject is what a `git mv` plus a

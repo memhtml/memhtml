@@ -173,15 +173,17 @@ export const makeIndexRecorder = (db: DatabaseShape): IndexRecorderShape => ({
    * which is the quadratic-write-cost pattern this codebase has already been bitten by. The shape is
    * the guarantee: the signature takes an array, so a caller CANNOT accidentally loop.
    *
-   * The predicate mirrors `files_frame_key_active` (0009) clause for clause, and the seemingly
-   * redundant `frame_key IS NOT NULL` is the load-bearing part of that. `frame_key IN (…)` already
-   * cannot match NULL, so the clause changes no result — but a partial index is only usable when the
-   * query's WHERE clause IMPLIES the index's predicate, and this planner does not derive
-   * "not null" from the `IN` (probed 2026-08-07 on @tursodatabase/database 0.7.2 over 400 rows after
-   * `ANALYZE`: without the clause `EXPLAIN QUERY PLAN` reports `SCAN files`, with it
-   * `SEARCH files USING INDEX files_frame_key_active (frame_key=?)`). Dropping it as dead code
-   * therefore turns every conflict lookup into a full table scan while returning identical rows —
-   * invisible to every correctness test and visible only as latency at corpus scale.
+   * The predicate mirrors `files_frame_key_active` (0009) clause for clause, because a partial index
+   * is usable only when the query's WHERE clause IMPLIES the index's predicate. A query that drops one
+   * of the three returns identical rows and is planned as `SCAN files` — invisible to every
+   * correctness test and visible only as latency at corpus scale.
+   *
+   * `frame_key IS NOT NULL` is the one clause the planner supplies for itself, since `frame_key IN (…)`
+   * cannot match NULL: probed 2026-08-12 on node 24.19.0 (SQLite 3.53.3) at 200, 400, and 800 rows
+   * after `ANALYZE`, the plan is `SEARCH files USING INDEX files_frame_key_active (frame_key=?)` with
+   * the clause and without it, while dropping `archived = 0` reports `SCAN files`. It is written anyway
+   * so that the mirroring is COMPLETE and a reader checks the two predicates against each other line
+   * for line, rather than having to know which implications this planner version derives.
    *
    * `memory_type <> 'task'` also carries meaning beyond the index. A task is intermediate working
    * state, so an open to-do phrased as a claim is not a competing assertion about the world — folding
@@ -190,9 +192,9 @@ export const makeIndexRecorder = (db: DatabaseShape): IndexRecorderShape => ({
    *
    * Keys with no live occupant are ABSENT from the map rather than present-and-empty: a caller asks
    * `map.get(key)` and `undefined` already means "nothing holds this slot", so an empty array would be
-   * a second encoding of one fact. An empty input short-circuits without touching the database — a
-   * zero-length `IN ()` is a syntax error on this driver, and a query with nothing to ask is not a
-   * query.
+   * a second encoding of one fact. An empty input short-circuits without touching the database: a
+   * query with nothing to ask is not a query, and a zero-length `IN ()` — which this driver accepts,
+   * probed 2026-08-12 — would prepare and run a statement that cannot match a row.
    */
   activeFramesFor: (keys) =>
     Effect.gen(function* () {

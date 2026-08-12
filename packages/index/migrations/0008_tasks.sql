@@ -4,16 +4,17 @@
 --
 -- ── The children are snapshotted, and that is the load-bearing part of this file ──────────────────
 --
--- Probed live 2026-08-02 on @tursodatabase/database 0.7.2: `DROP TABLE files` DELETES every row of
--- every child table (`file_tags`, `file_entities`, `file_facets`, `file_citations`, `chunks`, and
--- `embeddings` behind `chunks`) via `ON DELETE CASCADE` — including inside the one `immediate`
--- transaction the migration runner wraps this file in, which does NOT protect them. A migration that
--- merely copied `files` would therefore report success and silently destroy every embedding in the
--- database: thousands of Bedrock calls for text that never changed, plus the whole edge set.
+-- Probed 2026-08-12 on node 24.19.0: `DROP TABLE files` DELETES every row of every child table
+-- (`file_tags`, `file_entities`, `file_facets`, `file_citations`, `chunks`, and `embeddings` behind
+-- `chunks`) via `ON DELETE CASCADE` — including inside the one `immediate` transaction the migration
+-- runner wraps this file in, which does NOT protect them. A migration that merely copied `files` would
+-- therefore report success and silently destroy every embedding in the database: thousands of Bedrock
+-- calls for text that never changed, plus the whole edge set.
 --
--- `PRAGMA foreign_keys = OFF` around the drop was probed and does suppress the cascade here, but real
--- SQLite documents that pragma as a NO-OP inside a transaction — so a driver release that aligned
--- with the documented behaviour would turn this file into silent data loss with no error anywhere.
+-- `PRAGMA foreign_keys = OFF` around the drop is no escape, and the probe above measured that too: the
+-- pragma is a NO-OP inside a transaction, exactly as SQLite documents it, so the cascade fires anyway
+-- and a file that relied on the pragma would be silent data loss with no error anywhere. (Outside a
+-- transaction the pragma does suppress the cascade — which is not where a migration runs.)
 -- The snapshot does not depend on foreign-key state at all: each child's rows are copied out, the
 -- cascade fires against an empty-of-consequence table, and the rows are copied back under the new
 -- parent. Verified after the fact: `PRAGMA foreign_key_check` is empty, `foreign_keys` is still ON,

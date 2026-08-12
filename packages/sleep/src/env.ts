@@ -12,7 +12,7 @@ import type { PhaseCounts, SleepPhase } from "./contract.js"
  * Every dependency is a shape supplied by the caller. The sleep package builds none of its own
  * services: a runner that constructed a database connection or a Bedrock client could not be
  * pointed at a fixture repo, and the whole test tier for this package is a real temp-dir git repo
- * plus an in-memory Turso plus a scripted model.
+ * plus an in-memory SQLite database plus a scripted model.
  */
 
 /** Everything a run needs. Both optional members degrade a phase rather than failing the run. */

@@ -21,9 +21,9 @@ CREATE TABLE files (
   title           TEXT NOT NULL,
   body_text       TEXT NOT NULL,
   gist            TEXT NOT NULL DEFAULT '',
-  -- title, gist, and body joined by newlines: the ONE column the FTS index covers. A
-  -- multi-column FTS index returns rowid order rather than relevance order on this driver and
-  -- scopes MATCH to the named column alone, so denormalizing is what makes the lexical arm rank.
+  -- title, gist, and body joined by newlines: the ONE column `files_fts` covers, so that a single
+  -- MATCH finds a term wherever it lives. A multi-column FTS5 table would make `bm25()` weight the
+  -- columns against each other, which is a ranking decision the RRF fusion already owns.
   fts_text        TEXT NOT NULL DEFAULT '',
   -- What memory_recall may QUOTE, which is narrower than what it may search: the <mark> claim,
   -- the <summary> headlines, the <dl> facets, the citations. <details> bodies are excluded (Tier 3,

@@ -11,7 +11,7 @@ export default defineConfig({
     testTimeout: 180_000,
     hookTimeout: 180_000,
     /**
-     * One file at a time. These suites each `git init` a temp repo and open a Turso database on disk,
+     * One file at a time. These suites each `git init` a temp repo and open a SQLite database on disk,
      * and running them concurrently on one machine makes the timings — not the assertions — decide
      * whether they pass.
      */

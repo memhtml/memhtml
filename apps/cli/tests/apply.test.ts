@@ -742,14 +742,15 @@ describe("the manifest guide (AC-6-6)", () => {
     expect(body).toContain("$MEMHTML_ROOT")
     expect(body).toContain("system of record")
     expect(body).toContain("you own the commit")
-    // And the lock, which is the one way to break the repo by using two doors at once. The
-    // WRITABLE qualifier is asserted because dropping it is what made this rule decay into a
-    // wrong one twice: a read-only opener is not blocked, and a guide that says "locked" flatly
-    // would have an agent believe otherwise.
-    expect(body).toContain(
-      "never run a CLI command against a repo while `memhtml serve mcp` is serving it"
-    )
-    expect(body).toContain("WRITABLE opener")
+    /**
+     * And the concurrency rule, which is the one an agent most needs to have right: it decides
+     * whether writing while a server runs is safe. Both halves are asserted because each is
+     * separately load-bearing — that concurrent use IS allowed, and that `sleep run` is the
+     * exception. A guide carrying only the permission would have an agent write onto a sleep
+     * branch; a guide carrying only the exception would have it refuse ordinary concurrent work.
+     */
+    expect(body).toContain("may share one store")
+    expect(body).toContain("`sleep/<date>` branch")
   })
 
   it("teaches when to batch, with an example line the test PARSES", async () => {

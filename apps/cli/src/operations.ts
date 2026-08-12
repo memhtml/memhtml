@@ -1432,9 +1432,9 @@ export interface TaskRow {
  * memory-graph query filters on, and a reader who saw this one query trust the rel alone would learn
  * the wrong rule about how the firewall is enforced.
  *
- * `group_concat` over an ordered subselect, probed live 2026-08-02 on @tursodatabase/database 0.7.2 —
- * the driver preserves the inner `ORDER BY`, and `char(10)` is the separator because a path cannot
- * contain a newline while it can contain a comma.
+ * `group_concat` over an ordered subselect, probed 2026-08-12 on node 24.19.0 — the inner `ORDER BY`
+ * is preserved, and `char(10)` is the separator because a path cannot contain a newline while it can
+ * contain a comma.
  *
  * The join is deliberately NOT an inner join onto `files`: a blocker whose file left the tree still
  * blocks, and hiding it here would make a permanently-blocked task look ready. `memhtml doctor` reports

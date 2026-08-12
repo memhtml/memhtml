@@ -15,7 +15,7 @@ import type {
  * smoke and T10's integration tier build a sleep run the same way.
  *
  * **Nothing here fakes git or the database.** Both are real in every sleep test — a temp-dir repo
- * driven by the store's own subprocess wrapper, and an in-memory Turso carrying the shipped
+ * driven by the store's own subprocess wrapper, and an in-memory SQLite database carrying the shipped
  * migrations. Sleep's whole subject is state transitions across those two planes (a `git mv` plus a
  * head stamp in one commit, an upsert whose `RETURNING` decides a promotion), and the fleet has
  * six times paid for a fake that verified the shape of a call and missed the semantics behind it.

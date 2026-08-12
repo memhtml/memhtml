@@ -1,8 +1,5 @@
 # ERPAVal lessons index
 
-## turso
-- [turso-072-fts-and-vector-reality](solutions/turso/turso-072-fts-and-vector-reality.md) — single-column FTS only (multi-column returns rowid order); sanitize before MATCH; viral index_method flag; bulk-load index drop; GROUP BY path on the vector arm.
-
 ## effect-v4
 - [effect-4-beta-102-api-reality](solutions/effect-v4/effect-4-beta-102-api-reality.md) — Effect.result not either; onExcessProperty:"error" on LLM decodes; Schema.Finite; provideMerge direction; NullOr on the MCP wire; Config snapshots env; LogToStderr in stdio servers.
 
@@ -12,13 +9,12 @@
 - [result-identical-but-wrong](solutions/test-failures/result-identical-but-wrong.md) — assert SHAPE when correctness and cost diverge: AND/OR precedence in appended predicates; planner skips partial index without redundant IS NOT NULL (EXPLAIN captured SQL); flag-off tests need input that would light up; hit.score is MMR's proxy not the RRF sum.
 
 ## architecture-patterns
-- [turso-second-opener-and-the-readonly-flag](solutions/architecture-patterns/turso-second-opener-and-the-readonly-flag.md) — the index lock excludes a second WRITABLE opener only: readonly:true opens cross-process and refuses writes, PRAGMA query_only can't help (the open is what fails), snapshots pin at open; same-process probes prove nothing about it, and this question got answered wrongly twice before `scripts/probe-turso-locking.mjs` existed.
 - [sandbox-egress-is-set-by-the-constructor](solutions/architecture-patterns/sandbox-egress-is-set-by-the-constructor.md) — just-bash registers curl/wget ONLY when a network option is passed, so egress belongs to whoever calls `new Bash()`: eve hardcodes full access (IMDSv2 token + instance-role name reachable), a caller that omits it gets curl unregistered and the guest's fetch refused on call; `typeof fetch` is a function under both, so the capability check enforces nothing. Also: just-bash's CJS build has a broken js-exec, and js-exec is not re-entrant.
-- [put-the-qualifier-in-the-claim](solutions/architecture-patterns/put-the-qualifier-in-the-claim.md) — "Turso's lock is exclusive" kept its mechanism and lost the WRITABLE qualifier that carried the meaning, and got re-derived wrongly twice; write the claim so it survives as the only sentence left, then gate it with a test that fails when the qualifier is deleted.
-- [git-as-the-memory-plane](solutions/architecture-patterns/git-as-the-memory-plane.md) — disposability test decides file-vs-DB; R100 impossible with head stamps; merge=ours needs the driver config; mtimeMs float vs text; embedded-DB lock vs child process; upstream debts (predecessor merge guard, negation guard, parse5 pre-newline).
+- [put-the-qualifier-in-the-claim](solutions/architecture-patterns/put-the-qualifier-in-the-claim.md) — "the index's lock is exclusive" kept its mechanism and lost the WRITABLE qualifier that carried the meaning, and got re-derived wrongly twice; write the claim so it survives as the only sentence left, then gate it with a test that fails when the qualifier is deleted.
+- [git-as-the-memory-plane](solutions/architecture-patterns/git-as-the-memory-plane.md) — disposability test decides file-vs-DB; R100 impossible with head stamps; merge=ours needs the driver config; mtimeMs float vs text; a parent must not open the DB its child serves; upstream debts (predecessor merge guard, negation guard, parse5 pre-newline).
 
 ## build-errors
-- [dist-only-exports-and-the-rebuild-discipline](solutions/build-errors/dist-only-exports-and-the-rebuild-discipline.md) — @memhtml/* exports resolve only to dist: rebuild between mutate and run or mutants survive vacuously; AGENTS.md drift gate is a vitest case not a pipeline step; turso's WRITER lock forces index reads after server shutdown (a readonly:true opener is not blocked).
+- [dist-only-exports-and-the-rebuild-discipline](solutions/build-errors/dist-only-exports-and-the-rebuild-discipline.md) — @memhtml/* exports resolve only to dist: rebuild between mutate and run or mutants survive vacuously; AGENTS.md drift gate is a vitest case not a pipeline step; a test asserting index rows reads them after the server exits, so the read describes a settled store.
 
 ## api-patterns
 - [xor-params-and-mcp-error-masking](solutions/api-patterns/xor-params-and-mcp-error-masking.md) — XOR params can't be schema-required; blank-as-absent needs the asymmetric one-side-blanked SUCCESS test to discriminate; effect McpServer masks tool failures as "internal server error" on the wire; CLI exit-2 rules must live in validate() not dispatch.

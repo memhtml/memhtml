@@ -899,17 +899,17 @@
       "key": "FTS-1",
       "negated": false,
       "patternType": "state-driven",
-      "preCondition": "a turso driver bump renames or re-gates the fts index_method flag",
+      "preCondition": "the lexical index depends on a single vendor's experimental flag",
       "priority": "low",
       "refines": [],
       "satisfies": [],
-      "sentence": "While a turso driver bump renames or re-gates the fts index_method flag, the retrieval shall serve lexical search through the fallback arm at its known quality cost.",
+      "sentence": "While the lexical index depends on a single vendor's experimental flag, the retrieval shall serve lexical search through the fallback arm at its known quality cost.",
       "status": "draft",
       "systemName": "retrieval",
       "systemResponse": "serve lexical search through the fallback arm at its known quality cost",
       "updatedAt": "2026-08-08T02:00:00.328Z",
       "verificationMethod": "test",
-      "verificationNote": "survivable either way (db rebuildable); the fallback removes the single-vendor-flag dependency",
+      "verificationNote": "the precondition cannot arise: the lexical arm is an FTS5 virtual table in node's own SQLite, with no driver flag to rename or re-gate (ROADMAP item 10, closed by removal 2026-08-12). Status pending a retire-or-implemented decision.",
       "verifies": []
     },
     "b6b3b4c1-e439-439b-8f56-5cda271e7c63": {
@@ -989,7 +989,7 @@
       "systemResponse": "attribute and reduce the residual embeddings-on per-batch cost",
       "updatedAt": "2026-08-08T02:00:00.328Z",
       "verificationMethod": "analysis",
-      "verificationNote": "probe rig probe-embed-cost.mjs --fts-bracket is the instrument",
+      "verificationNote": "probe rig probe-embed-cost.mjs is the instrument",
       "verifies": []
     },
     "bd3de751-e2f2-410b-b5e5-fa7ada9b9562": {
@@ -1247,7 +1247,7 @@
       "systemResponse": "serve vector search through an approximate nearest neighbor index",
       "updatedAt": "2026-08-08T02:00:00.328Z",
       "verificationMethod": "analysis",
-      "verificationNote": "data-triggered, not calendar-triggered; record corpus size at sleep time; Turso native index vs sidecar decided then",
+      "verificationNote": "data-triggered, not calendar-triggered; record corpus size at sleep time; a SQLite vector-index extension vs an external sidecar decided then",
       "verifies": []
     }
   },

@@ -86,9 +86,10 @@ export interface PairRow {
  * would make `(a, b)` a candidate while `(b, a)` is not, so which of two files was read first
  * would decide whether they merge.
  *
- * `ROW_NUMBER() OVER (PARTITION BY src ...)` is the per-source cap (probed live 2026-08-02 on
- * @tursodatabase/database 0.7.2: partitioned window functions work, and `vector_distance_cos` takes
- * two stored blobs, not only a blob and a bound parameter).
+ * `ROW_NUMBER() OVER (PARTITION BY src ...)` is the per-source cap. `vector_distance_cos` takes two
+ * STORED blobs here rather than a blob and a bound parameter, which it can because it is a registered
+ * SQL function over two `Uint8Array` arguments (`packages/index/src/database.ts`) and not a driver
+ * builtin with a fixed calling shape.
  */
 export const neighbourPairs = (
   db: DatabaseShape,
@@ -465,7 +466,7 @@ export interface SessionManifestRow {
  * session's linked memories are in a fixed order — which is what makes a generated manifest a pure
  * function of the plane and therefore assertable byte-for-byte.
  *
- * Measured plan (2026-08-09, @tursodatabase/database against the shipped migrations):
+ * Measured plan (2026-08-12, node 24.19.0 against the shipped migrations):
  * `SEARCH t USING INDEX sqlite_autoindex_traces_1 (session_id=?)` then
  * `SEARCH l USING INDEX msl_session (session_id=?) LEFT-JOIN`. Both sides seek — `traces` by its
  * primary key and the links by `msl_session` (`packages/index/migrations/0005_traces.sql`) — so the

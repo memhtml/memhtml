@@ -53,7 +53,7 @@ The file that reaches `areas/inbox/` holds the markup entity-escaped inside the 
 <p><mark>&lt;p&gt;&lt;time datetime="2023-05-20T02:21:00Z"&gt;2023-05-20T02:21:00Z&lt;/time&gt; Alice moved to Paris.&lt;/p&gt;</mark></p>
 ```
 
-The indexed row (queried through `@tursodatabase/database` against `.memhtml/index.db`):
+The indexed row (queried against `.memhtml/index.db`):
 
 ```json
 {

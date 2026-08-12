@@ -3,8 +3,8 @@ import { defineConfig } from "vitest/config"
 /**
  * `testTimeout: 30_000`, matching `@memhtml/index`.
  *
- * Every test here drives a REAL temp-dir git repository and a real in-memory Turso with the shipped
- * migrations, and several run the whole fifteen-phase cycle — the fixed-point test runs it three times
+ * Every test here drives a REAL temp-dir git repository and a real in-memory SQLite database with the
+ * shipped migrations, and several run the whole fifteen-phase cycle — the fixed-point test runs it three times
  * over. Vitest's 5-second default is a limit on the WORK rather than on a defect: measured, that test
  * times out at 5s under a parallel `turbo run test` across twelve packages while passing in ~5s when the
  * package runs alone, so the failure reported machine load and not a regression.

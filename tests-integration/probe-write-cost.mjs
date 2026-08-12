@@ -13,7 +13,8 @@
  * Run from repo root after `pnpm build`:
  *   node tests-integration/probe-write-cost.mjs [--sizes 1000,5000,10000] [--batch 256]
  *
- * Never run against a store `memhtml serve mcp` is serving — this opens its own Turso handle.
+ * Safe to run beside a live `memhtml serve mcp`: it builds its own temp store and never touches
+ * yours. What it must not share is a store, since its numbers are of an uncontended writer.
  */
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { readFile } from "node:fs/promises"

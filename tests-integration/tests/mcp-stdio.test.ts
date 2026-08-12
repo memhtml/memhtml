@@ -310,11 +310,11 @@ describe("the event_at bug report, inverted: article_html over real MCP stdio", 
     expect(notFoundText).not.toContain("memhtml list")
   })
 
-  it("shuts the supervisor down cleanly, which is what released the database", () => {
+  it("shuts the supervisor down cleanly, so the row reads above see a settled store", () => {
     /**
-     * Asserted because the row reads above DEPEND on it. Turso's lock excludes a second writable
-     * opener of `.memhtml/index.db`, so a supervisor that leaked the child would make `temporalRow` fail with
-     * "File is locked by another process" — a confusing failure in a test whose subject is an event
+     * Asserted because the row reads above DEPEND on it: a supervisor that leaked its child leaves an
+     * orphaned server holding `.memhtml/index.db` open, so `temporalRow` would be racing a live writer
+     * instead of reading a settled corpus — a confusing failure in a test whose subject is an event
      * date. The `serve.exit` envelope is also the CLI's one-envelope contract holding on a command
      * whose stdout belonged to someone else for most of its life.
      */

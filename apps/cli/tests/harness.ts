@@ -14,8 +14,8 @@ import { makeFixtureRepo } from "@memhtml/store/testing"
 import { Effect, type Layer } from "effect"
 
 /**
- * The end-to-end harness: a real temp-dir git repo, real migrations against an on-disk Turso, the
- * real layer graph, and a deterministic embedder.
+ * The end-to-end harness: a real temp-dir git repo, real migrations against an on-disk SQLite
+ * database, the real layer graph, and a deterministic embedder.
  *
  * Nothing here is a fake of the composition. `layerAppWith` is the SAME `layerCore` production
  * builds, with only the two network edges substituted — so a test that passes proves the wiring

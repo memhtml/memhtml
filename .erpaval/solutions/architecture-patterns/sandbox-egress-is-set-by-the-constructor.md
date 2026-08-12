@@ -43,9 +43,9 @@ what can be PULLED from inside. Those are different questions and only one of th
 
 `typeof fetch === "function"` in the QuickJS guest under **both** constructions. The refusal happens
 on CALL, not on the global. So a guard written as "is `fetch` absent?" passes review, typechecks,
-reads as a security assertion, and distinguishes nothing — the same shape as the `readonly` flag in
-[[turso-second-opener-and-the-readonly-flag]], where an accepted option was silently ignored. When a
-safety property rests on a capability being unavailable, **call the thing** and assert the refusal.
+reads as a security assertion, and distinguishes nothing — the same shape as a driver option that is
+accepted by the constructor's types and then ignored at runtime. When a safety property rests on a
+capability being unavailable, **call the thing** and assert the refusal.
 
 ## Two incidental facts that cost debugging time
 

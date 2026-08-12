@@ -23,11 +23,12 @@
 - **`Stats.mtimeMs` is a float**; storing it at ms-text resolution silently defeats every
   watermark equality check — the incremental design re-read 3.67 GB per run until fixed at the
   producer. Semantic-contracts failure: agreed on `mtimeMs: number`, disagreed on resolution.
-- A parent process must not build the DB layer before spawning a child that opens the same
-  embedded database — Turso's lock excludes a second **writable** opener (`memhtml serve mcp` deadlocked
-  its own child). A second process opening with `readonly: true` gets in and reads a snapshot pinned
-  at open; `PRAGMA query_only` cannot help, because the open is what fails. Measured, with the trap
-  that made this wrong twice: `turso-second-opener-and-the-readonly-flag.md`.
+- A parent process must not build the DB layer before spawning a child that opens the same embedded
+  database: the parent then holds a writer handle, on a store it never queries, for as long as the
+  child lives. Under WAL that costs a redundant handle; under a driver whose lock excludes a second
+  **writable** opener it deadlocks the child outright (`memhtml serve mcp` did exactly that to its own
+  child). What a second process can do to a live store is measured, never remembered:
+  `scripts/probe-sqlite-concurrency.mjs`.
 - Closing a git child's stdin when the command reads none raises an **uncatchable async EPIPE** —
   handle at the spawn wrapper (`packages/store/src/git.ts`).
 

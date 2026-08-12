@@ -1,6 +1,6 @@
 # RUNBOOK — operating `memhtml`
 
-Environment, daily operation, the writer-lock rule, and recovery.
+Environment, daily operation, the concurrency rules, and recovery.
 
 Every command writes exactly ONE JSON envelope to stdout and logs to stderr, so every line below is safe to pipe into `jq` and safe to run from cron. Exit 0 success, 2 usage, 1 runtime (`apps/cli/src/envelope.ts:87`). `memhtml manifest` is the authoritative command surface and answers on a machine with no repo, no database, and no credentials.
 
@@ -47,11 +47,11 @@ memhtml index rebuild --embed
 ## 3. Daily operation
 
 ```bash
-memhtml write --title "Turso's lock excludes a second writer" --type semantic \
-  --claim "A writable open of index.db fails while memhtml serve mcp runs; readonly:true gets in."
+memhtml write --title "One writer and many readers share the index" --type semantic \
+  --claim "WAL admits a single writer at a time and any number of concurrent readers."
 memhtml apply --file ops.jsonl        # many memories, ONE commit, ONE index pass
-memhtml search "index lock"
-memhtml recall "index lock" --budget 16000
+memhtml search "one writer many readers"
+memhtml recall "one writer many readers" --budget 16000
 memhtml read areas/inbox/some-memory.html
 memhtml list --type semantic --limit 50
 ```
@@ -76,7 +76,7 @@ Each is idempotent: an unchanged HEAD and a clean tree touch nothing. `memhtml s
 
 ---
 
-## 4. The MCP server, and the writer-lock rule
+## 4. The MCP server, and sharing a store
 
 ```bash
 memhtml serve mcp

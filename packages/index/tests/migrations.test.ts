@@ -85,8 +85,8 @@ describe("migrations", () => {
       db.get<{ sql: string }>("SELECT sql FROM sqlite_schema WHERE name = ?", [FTS_INDEX_NAME])
     )
     expect(row?.sql).toContain(FTS_COLUMN)
-    // A second column would silently cost relevance ordering: probed 2026-08-02, a multi-column FTS
-    // index returns MATCH results in rowid order and scopes MATCH to the named column alone.
+    // A second column would put a field-weighting decision inside `bm25()`, where the RRF fusion —
+    // not the lexical arm — is what owns the blend of relevance signals.
     expect(row?.sql).not.toContain("body_text,")
     expect(row?.sql).not.toContain("title,")
   })
@@ -94,8 +94,8 @@ describe("migrations", () => {
 
 /**
  * 0008 is recreate-and-copy over a POPULATED database, and `DROP TABLE files` cascades to every
- * child (probed live 2026-08-02 on @tursodatabase/database 0.7.2 — including inside the one
- * `immediate` transaction the runner wraps a migration file in). So the upgrade is tested against
+ * child (probed 2026-08-12 on node 24.19.0 — including inside the one `immediate` transaction the
+ * runner wraps a migration file in). So the upgrade is tested against
  * rows, and the assertion is that the row set is identical rather than merely present: a migration
  * that dropped the embeddings would re-pay Bedrock for every unchanged memory in the corpus, and
  * would report success either way.
@@ -398,11 +398,11 @@ describe("0009 over a populated 0008 database", () => {
     // Each clause asserted separately, because a predicate that agrees with `activeFramesFor` on two
     // of three still turns a seek into a scan on the rows where it differs.
     expect(row?.sql).toContain("archived = 0")
-    // `<>` or `!=`: the driver stores this predicate NORMALIZED — 0009 writes `memory_type <> 'task'`
-    // and `sqlite_schema` reports `memory_type != 'task'` (probed 2026-08-07 on
-    // @tursodatabase/database 0.7.2). They are the same operator, so the assertion admits both rather
-    // than pinning a driver's spelling; matching only the literal source form would fail this test on
-    // a correct migration.
+    // `<>` or `!=`: `sqlite_schema` reports whatever the migration wrote, and 0009 writes
+    // `memory_type <> 'task'` (probed 2026-08-12 on node 24.19.0, which stores the DDL verbatim). They
+    // are the same operator, so the assertion admits both rather than pinning one spelling — the
+    // property under test is the predicate's MEANING, and a driver free to normalize it would fail a
+    // correct migration.
     expect(row?.sql).toMatch(/memory_type (?:<>|!=) 'task'/)
     expect(row?.sql).toContain("frame_key IS NOT NULL")
     // UNIQUE here would refuse the second half of every conflict pair — the assist's whole input.

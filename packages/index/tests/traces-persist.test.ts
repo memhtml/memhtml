@@ -738,33 +738,30 @@ describe("activeFramesFor", () => {
      * O(corpus), and the entire mechanism is `files_frame_key_active` being CHOSEN — a query returning
      * the right rows by scanning would pass every other test in this file forever.
      *
-     * The clause under test is the apparently redundant `AND frame_key IS NOT NULL`. `frame_key IN (…)`
-     * already cannot match NULL, so it changes no result — but a partial index is usable only when the
-     * WHERE clause IMPLIES the index's predicate, and this planner does not derive that from the `IN`.
-     *
-     * (Probed and FIXED here 2026-08-07 on @tursodatabase/database 0.7.2: the first version of
-     * `activeFramesFor` omitted the clause and `EXPLAIN QUERY PLAN` reported `SCAN files` while every
-     * correctness test in this file passed.)
+     * What it locks is the PLAN, and not any one clause of the query. `activeFramesFor` mirrors the
+     * index predicate clause for clause, and the clause the planner needs from it is `archived = 0`:
+     * probed 2026-08-12 on node 24.19.0 (SQLite 3.53.3), dropping `archived = 0` reports `SCAN files`,
+     * while `AND frame_key IS NOT NULL` can be deleted and the seek survives, because `frame_key IN (…)`
+     * cannot match NULL and the planner derives that for itself. So a mutation of that one clause passes
+     * here — the seek is what this case defends.
      *
      * The plan is taken of the SQL `activeFramesFor` ITSELF issues — captured off the `db` shape and
      * prefixed with `EXPLAIN QUERY PLAN` — rather than of a copy pasted into this test. A pasted copy
-     * is what made the first version of this test useless: it kept passing when the clause was deleted
-     * from `traces-persist.ts`, because it was explaining its own string and not the production one.
+     * explains its own string: it reports the seek it was written with, whatever the production query
+     * has since become.
      *
-     * Rows and `ANALYZE` are both required, and the ROW COUNT is load-bearing: the choice is
-     * cost-based, so a table too small for the index to be worth it is planned as a scan no matter how
-     * the query is written. Measured on this driver with one third of rows keyed — 200 rows: `SCAN`
-     * (`sqlite_stat1` "67 1"); 400 rows: `SEARCH … USING INDEX files_frame_key_active` ("134 1"); 800
-     * rows: `SEARCH` ("267 1"). 400 is used here for that reason, and the threshold is written down
-     * rather than left as a magic number.
+     * The 400-row seed and the `ANALYZE` buy nothing from this planner. Probed 2026-08-12 on node
+     * 24.19.0 (SQLite 3.53.3) with one third of rows keyed, the plan is `SEARCH … USING INDEX
+     * files_frame_key_active` at 0, 10, 200, 400, and 800 rows, with `ANALYZE` and without it
+     * (`sqlite_stat1` reads "67 1" / "134 1" / "267 1" at 200 / 400 / 800). The choice is cost-based in
+     * principle, so a future planner could want the rows back — but nothing here depends on them today.
      *
      * **Its own 120s timeout, and the 400-row seed is why.** Seeding 400 rows one statement at a time
      * plus `ANALYZE` measured 35-38 s wall on a loaded box (2026-08-08, load average ~30) against the
      * suite's 30 s default — so this case flakes under a parallel `turbo run test` while passing in
-     * ~8 s on an idle one. The row count cannot be lowered without losing the property: at 200 rows the
-     * planner correctly chooses `SCAN` and the test would assert the opposite of the truth. Raising the
-     * whole suite's timeout would hide a real hang in the other 26 cases, so the allowance is here,
-     * where the work is. The same load-sensitivity `packages/sleep/vitest.config.ts` records.
+     * ~8 s on an idle one. Raising the whole suite's timeout would hide a real hang in the other 26
+     * cases, so the allowance is here, where the work is. The same load-sensitivity
+     * `packages/sleep/vitest.config.ts` records.
      */
     const outcome = await withDb((db) =>
       Effect.gen(function* () {

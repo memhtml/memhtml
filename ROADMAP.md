@@ -207,7 +207,7 @@ default:
 | item | trigger, unfired |
 |---|---|
 | 4. ANN for vector search | a real corpus approaching ~100k chunks |
-| 5. the post-fix write wall | stores passing ~50k files |
+| 5. the embeddings-on write wall | stores passing ~50k files |
 | 6b. embedding-proximity conflicts | the lived-in-corpus gym that salience and RRF tuning also wait on |
 | 9. committed embedding cache | a CI stage that needs live search |
 
@@ -230,19 +230,20 @@ default:
 Retrieval is brute-force KNN via `vector_distance_cos` — correct and fast
 at benchmark scale (18k memories), a query-time wall at 100k+ chunks.
 No action until a real corpus approaches that size; when it does, the
-options are Turso's native vector index (if the driver exposes it by then)
-or an external ANN sidecar. Keep the decision open; record corpus size at
+options are a vector-index extension loaded into SQLite or an external ANN
+sidecar. Keep the decision open; record corpus size at
 sleep time so the approach is data-triggered, not calendar-triggered.
 Evidence: retrieval-sql.ts reading, noted 2026-08-05.
 
-### 5. Post-fix write wall is ~2× the embeddings-off baseline
+### 5. The embeddings-on write wall is unattributed
 
-After the FTS bracket fix (fb55904) four 256-op rounds at 10k files hold
-flat at ~2.5–3.4s wall, but the embeddings-on path still carries ~1.5s of
-unattributed per-batch cost (lanes measured: projection ~0.7s, embeddings
-~0.2s, pending scan ~0.1s). Likely the FTS rebuild itself plus Effect
-overhead. Fine until stores pass ~50k files; the probe rig
-(probe-embed-cost.mjs, --fts-bracket) is the tool when it matters.
+The projection lane is flat: six consecutive 256-op batches against a
+constant 10k-file store cost 6/5/6/5/5/5 ms in `db.writeAll` (2026-08-12,
+node 24.19.0). What no probe attributes is the REST of an embeddings-on
+batch's wall — the embed calls, the pending scan, and per-op overhead
+across a 256-op round. Fine until stores pass ~50k files;
+probe-embed-cost.mjs is the rig, lane-split and with a deterministic
+embedder, when it matters.
 
 ### ~~6. Multi-hop assist — the reasoning half of the H4 finding~~ — DONE (2026-08-08)
 **SHIPPED** (2026-08-08; `82c2600`..`133408a`)
@@ -339,10 +340,10 @@ planes only, which is the division this entry itself draws.
 no index handle is exposed, so there is nothing to refuse. The store half is
 real and mutation-verified: dropping `readOnly: true` makes the EROFS assertion
 fail. If an index handle is ever added it is a SECOND PROCESS, and the measured
-rules are `readonly: true` plus a reopen per query
-(`node scripts/probe-turso-locking.mjs`; a default open fails, `PRAGMA
-query_only` cannot help because the open is what fails, and a handle is pinned at
-open).
+rules are WAL's (`node scripts/probe-sqlite-concurrency.mjs`): a second process
+opens a live store, each statement reads the latest COMMITTED state, `readOnly:
+true` refuses it every write, and a write contending with the live writer past
+`busy_timeout` reports `SQLITE_BUSY`.
 
 Egress is decided by whoever calls `new Bash()`. `memhtml exec` passes no `network`
 and no `fetch`, so `curl` is not a command in its sandbox and the guest's `fetch`
@@ -598,21 +599,23 @@ These are constraints on HOW future work here is done, not features:
   retrieval at scale (MAB round 2, H1). Any future bulk-import surface
   should split to fact grain or say loudly that it does not.
 - **A new guard test must be shown to fail** (break the invariant
-  deliberately, watch it fire, restore) — applied to the FTS bracket and
-  the eval's consolidation test; keep applying it.
-- **A probe must cross the exact boundary the constraint is about** — "can a
-  second process read the index" was answered wrongly twice in one session, in
-  opposite directions, each time by a probe that ran and printed output. A probe
-  that crosses a SIMILAR boundary is not weaker evidence, it is evidence about
-  something else. architecture-patterns/
-  turso-second-opener-and-the-readonly-flag.md, and
-  `scripts/probe-turso-locking.mjs` so the next reader measures instead of citing.
-- **An accepted option is not an enforced option** — `readonly: true` is declared
-  on Turso's `DatabaseOpts` and silently ignored in the writer's own process; a
-  guard built on it passes review, typecheck, and every functional test while
-  enforcing nothing. When a safety property rests on a library flag, prove the
-  flag by attempting the thing it forbids. Same shape as `typeof fetch` being a
-  function in a sandbox with no network.
+  deliberately, watch it fire, restore) — applied to the bm25 sort
+  direction, which fails the gate as DESC, and to the eval's consolidation
+  test; keep applying it.
+- **A probe must cross the exact boundary the constraint is about, and vary the
+  thing under test** — "can a second process read the index" was answered wrongly
+  twice in one session, in opposite directions, each time by a probe that ran and
+  printed output. A probe that crosses a SIMILAR boundary is not weaker evidence,
+  it is evidence about something else, and a probe holding the configuration fixed
+  cannot discover that the configuration is the answer.
+  `scripts/probe-sqlite-concurrency.mjs` obeys both rules, so the next reader
+  measures instead of citing.
+- **An accepted option is not an enforced option** — a driver that types an
+  option in its constructor signature may still ignore it, and a guard built on
+  it passes review, typecheck, and every functional test while enforcing nothing.
+  When a safety property rests on a library flag, prove the flag by attempting
+  the thing it forbids. Same shape as `typeof fetch` being a function in a
+  sandbox with no network.
 - **A capability check beats a capability assumption** — cheerio and linkedom
   cannot load in QuickJS, so two of the four parsers item 7 called
   interchangeable are unusable there. The doc's choice was tied to bun and nobody
@@ -621,9 +624,9 @@ These are constraints on HOW future work here is done, not features:
   `withClaim: 0` were both probe bugs that looked like facts about the corpus.
   Census probes assert against an independently-derived total; they never report a
   count.
-- **Put the qualifier in the claim, not the surrounding prose** — "Turso's lock is
-  exclusive" kept its mechanism and lost the WRITABLE that carried its meaning,
-  and got re-derived wrongly two sessions later. Write the claim so it is still
+- **Put the qualifier in the claim, not the surrounding prose** — "the index's
+  lock is exclusive" kept its mechanism and lost the WRITABLE that carried its
+  meaning, and got re-derived wrongly two sessions later. Write the claim so it is still
   true when it is the only sentence left, then gate it with a test that fails when
   the qualifier is deleted. architecture-patterns/put-the-qualifier-in-the-claim.md.
 - **Ask who called the constructor before recording a boundary** — sandbox egress
