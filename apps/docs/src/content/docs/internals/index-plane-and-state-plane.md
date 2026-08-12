@@ -21,6 +21,18 @@ Two planes, two properties:
 | index | `.memhtml/index.db` | no | yes, from `git ls-tree` |
 | state | `.memhtml/state.db` | no | only from the committed sidecar |
 
+Figure 1 is that table as a circuit, which is what the table cannot be: it puts the two recovery paths
+side by side and shows how narrow the state plane's is.
+
+```d2 pad=20 src="_figures/two-planes.d2" title="The git tree and the committed sidecar state/access.jsonl are the two things that arrive with a fresh clone. From the clone, index rebuild reconstructs index.db from ls-tree, and state import reconstructs state.db from the sidecar only. state.db is exported back to the sidecar nightly by phase fourteen, byte-stable or committing nothing. Nothing else reaches state.db, so the sidecar is the only path by which the plane survives."
+```
+
+**Figure 1: two planes, two recovery paths, and only one of them is free.** `index.db` comes back from
+the tree, which every clone carries. `state.db` has exactly one inbound arrow — from the sidecar — so if
+the nightly export has not run, the plane's history ends at the last one that did. That is why the export
+is byte-stable: an unchanged plane must produce an identical file whose commit is empty, or the sidecar
+churns a commit every night and nobody reviews it.
+
 ## 2. The sidecar is byte-stable or it commits nothing
 
 Rows arrive path-ordered from SQL, floats round to four decimals, keys are written in fixed order, and an

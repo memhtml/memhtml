@@ -28,6 +28,10 @@
       "dependsOn": ["build", "@memhtml/mcp#build"],
       "outputs": []
     },
+    "@memhtml/docs#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", "public/d2/**"]
+    },
     "@memhtml/docs#test": {
       "dependsOn": ["build", "typecheck"],
       "outputs": []

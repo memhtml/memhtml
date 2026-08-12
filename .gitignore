@@ -19,3 +19,7 @@ mise.local.lock
 .sarif/
 # The typecheck-gate test builds here so a run never leaves dist/ describing its broken probe.
 dist-typecheck-probe/
+# astro-d2 renders each figure into public/ during `astro build`, from the committed `.d2` sources under
+# apps/docs/src/content/docs/internals/_figures/. The source is the .d2 file; the SVG is a build output,
+# declared as one in turbo.json so a cache hit restores it.
+apps/docs/public/d2/

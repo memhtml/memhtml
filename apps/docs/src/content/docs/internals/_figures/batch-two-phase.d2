@@ -1,0 +1,24 @@
+# SVG only — no README rendering, so the full shape vocabulary is available.
+#
+# Labels are kept short because the site's 30em measure caps a figure at its own width: past about
+# 700px natural width the drawing arrives shrunk far enough to be unreadable.
+...@_register
+
+direction: down
+
+ops: N ops, in order {class: terminal}
+validate: "phase 1: validate all" {class: step}
+abort: "abort: all skipped" {class: step}
+write: "phase 2: ONE commit" {class: step}
+rollback: "git reset -- paths" {class: step}
+reindex: ONE index pass {class: step}
+done: per-op results {class: terminal}
+
+ops -> validate
+validate -> abort: any invalid
+validate -> write: all valid
+write -> rollback: commit fails
+write -> reindex: committed
+reindex -> done
+abort -> done
+rollback -> done

@@ -126,7 +126,16 @@ fail the primary key and roll back every other row, taking the whole rebuild dow
 ## 4. Rebuild
 
 Both the rebuild and the update path call `projectFile`, which is the reproducibility contract
-(`packages/index/src/indexer.ts:20-27`).
+(`packages/index/src/indexer.ts:20-27`). Figure 1 is that contract drawn: two entry points, four
+different ways of getting at the bytes, and one projection function they all end at.
+
+```d2 pad=20 src="_figures/rebuild-and-update.d2" title="Two entry points. Index update reads the watermark index_state.head_sha first: an absent watermark routes to index rebuild, and a present one routes to git diff for committed changes and git status porcelain for uncommitted ones. Index rebuild reads the whole corpus through ls-tree and cat-file. All four of those readers converge on projectFile, marked pure, which produces the row set."
+```
+
+**Figure 1: two entry points, one projection function.** Nothing about the row set depends on which
+entry point produced it, which is what makes "a fresh rebuild reproduces the incremental row set" true by
+construction rather than by two implementations happening to agree. The watermark's absent branch is the
+reason an update can never diff against nothing.
 
 **Rebuild** (`packages/index/src/indexer.ts:389`) runs `rev-parse HEAD`, one `ls-tree -r` over the four
 PARA prefixes, and one `cat-file --batch` for the whole corpus — one subprocess for the tree instead of

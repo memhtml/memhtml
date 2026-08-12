@@ -1,0 +1,39 @@
+# SVG only — no README rendering, so the full shape vocabulary is available.
+#
+# Labels are kept short for a typographic reason rather than a renderer one: the site sets a 30em
+# measure and Starlight caps a figure at 100% of it, so natural width is what the labels render at. A
+# figure past about 700px arrives shrunk far enough to be unreadable.
+...@_register
+
+direction: down
+
+query: query text {class: terminal}
+
+fts: "fts 1.0" {class: step}
+vector: "vector 1.0" {class: step}
+recency: "recency 0.5" {class: step}
+salience: "salience 0.4" {class: step}
+
+union: "UNION ALL of w/(rank+60)" {class: step}
+sum: SUM per path {class: step}
+mmr: "MMR, lambda 0.5" {class: step}
+snippet: snippet statement {class: step}
+hits: ranked hits {class: terminal}
+
+state: state.access {class: plane}
+
+query -> fts: terms
+query -> vector: vector
+query -> recency
+query -> salience
+
+fts -> union
+vector -> union
+recency -> union
+salience -> union
+state -> salience: ATTACH {class: derives}
+
+union -> sum
+sum -> mmr: "limit x 3"
+mmr -> snippet: final paths
+snippet -> hits

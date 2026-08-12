@@ -12,6 +12,17 @@ description: An arm registry folded into one SQL statement, weighted RRF, degrad
 `packages/index/src/retrieval-sql.ts:237`) — so adding a fifth is a table entry and dropping one is a
 filter. Each arm returns exactly `(path, rank)`, 1-based.
 
+Figure 1 is the whole path. The boundary worth reading off it is where SQL stops: everything down to the
+per-path sum is one statement, and MMR is TypeScript over what that statement returned.
+
+```d2 pad=20 src="_figures/rrf-and-mmr.d2" title="Query text fans out to four arms - fts at weight 1.0, vector at weight 1.0, recency at weight 0.5, and salience at weight 0.4 - each returning a path and a rank. The salience arm additionally reads state.access, attached in the same statement. All four arms feed a UNION ALL of weight over rank plus sixty, then a SUM per path with ties broken on path ascending. That feeds MMR at lambda one half over three times the limit, then one snippet statement over the final paths, then ranked hits."
+```
+
+**Figure 1: one SQL statement down to the sum, then TypeScript.** Each arm is a CTE returning `(path,
+rank)` and nothing else, so a weight change touches one number and a dropped arm is a filter over the
+registry. The snippet statement sits *after* MMR rather than after fusion, which is what keeps the fused
+CTE's shape independent of how many hits survive diversification.
+
 ## 2. The four arms
 
 `RANK_ARMS` (`packages/index/src/retrieval-sql.ts:243`) holds four members, in fold order. Order is

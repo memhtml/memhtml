@@ -1,0 +1,30 @@
+# Rendered twice from this one source: to SVG by astro-d2 for the site, and to a monospace figure by
+# `mise run figures:readme` for the README, which GitHub can display and cannot display D2. Labels are
+# short and ASCII-only for the second renderer's sake — the caption carries what they leave out.
+...@_register
+
+direction: down
+
+cli: the CLI {class: door}
+mcp: the MCP server {class: door}
+own: your file tools {class: door}
+
+tree: the git tree {class: record}
+archive: "archive/YYYY/" {class: record}
+
+index: "index.db" {class: derived}
+state: "state.db" {class: plane}
+
+rank: RRF then MMR {class: step}
+hits: ranked hits {class: step}
+
+cli -> tree: commit
+mcp -> tree: commit
+own -> tree: yours
+
+tree -> archive: git mv
+tree -> index: indexer {class: derives}
+
+index -> rank: 3 arms {class: derives}
+state -> rank: salience {class: derives}
+rank -> hits

@@ -1,0 +1,25 @@
+# SVG only — no README rendering, so the full shape vocabulary is available.
+#
+# The page's own table lists all fifteen phases in execution order; a figure restating that would be a
+# table with worse ergonomics. What only a figure can show is the DEPENDENCY subset the order exists to
+# satisfy, so those four edges are all it draws. Every phase not named here is order-independent of
+# every other, which is why it is absent rather than floating.
+#
+# `direction: right` puts the six phases in two columns rather than three, which is the narrower of the
+# two measured (800px against 953px at pad 20) — and the site's 30em measure caps a figure at its own
+# width, so natural width is what the labels end up rendering at.
+...@_register
+
+direction: right
+
+dedup: "2. dedup-merge" {class: step}
+entity: "3. entity-resolution" {class: step}
+person: "4. person-links" {class: step}
+decay: "7. confidence-decay" {class: step}
+retention: "9. retention-triage" {class: step}
+compress: "10. compress" {class: model}
+
+dedup -> compress: post-merge
+dedup -> retention: post-merge
+entity -> person: aliases first
+decay -> retention: decayed value

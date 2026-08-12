@@ -27,45 +27,68 @@ edges) live only in the index. Nothing is ever deleted: eviction is a `git mv` i
 with the original path mirrored beneath, so `git log --follow` reads straight through a memory's whole
 life.
 
-```mermaid
-graph LR
-    subgraph doors["Three write doors"]
-        CLI["memhtml write / memhtml apply"]
-        MCP["memhtml serve mcp<br/>14 tools"]
-        FILES["your file tools"]
-    end
+Figure 1 draws that. It is a monospace figure, so a screen reader will read the box characters as noise —
+skip past it to the paragraph beneath, which is the figure in words.
 
-    subgraph tree["$MEMHTML_ROOT — git tree (system of record)"]
-        HTML["semantic HTML files<br/>one fact per file"]
-        ARCHIVE["archive/YYYY/<br/>soft eviction"]
-    end
-
-    subgraph proj["Projections (rebuildable)"]
-        IDX[("index.db<br/>FTS + vectors + edges")]
-    end
-
-    STATE[("state.db + access.jsonl<br/>salience plane")]
-
-    CLI -->|"one commit per op"| HTML
-    MCP -->|"one commit per batch"| HTML
-    FILES -->|"you own the commit"| HTML
-    HTML -->|"git mv, never delete"| ARCHIVE
-    HTML -->|"git-driven indexer"| IDX
-
-    Q["query"] --> RRF["4-arm RRF + MMR<br/>fts · vector · recency · salience"]
-    IDX --> RRF
-    STATE --> RRF
-    RRF --> HITS["ranked hits"]
-
-    classDef door fill:#FFE4B5,stroke:#FF8C00,stroke-width:2px,color:black
-    classDef record fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
-    classDef derived fill:#87CEEB,stroke:#4682B4,stroke-width:2px,color:darkblue
-    classDef state fill:#E6E6FA,stroke:#8A2BE2,stroke-width:2px,color:darkblue
-    class CLI,MCP,FILES door
-    class HTML,ARCHIVE record
-    class IDX,RRF,Q,HITS derived
-    class STATE state
+<!-- figure:system-topology -->
+```text
+ +--------+  +---------------+ +----------------+
+ |the CLI |  |the MCP server | |your file tools |
+ |        |  |               | |                |
+ +--------+  +---------------+ +----------------+
+      |              |                |
+      |           commit              |
+      |              |                |
+      +--commit---+  |  +----yours----+
+                  |  |  |
+                  v  v  v
+              +-------------+
+              |the git tree |
+              |             |
+              +-------------+
+                   |     |
+          +--------+     |
+          |              |
+       git mv         indexer
+          |              |
+          v              |        .------.
+   +--------------+      v       |\-____-/|
+   |archive/YYYY/ | +---------+  |        |
+   |              | |index.db |  |        |
+   +--------------+ |         |  |state.db|
+                    +---------+  |        |
+                         |        \-____-/
+                         |
+                         |           |
+                      3 arms         |
+                         |           |
+                         |       salience
+                         |           |
+                         +------+    |
+                                |    |
+                                v    v
+                           +-------------+
+                           |RRF then MMR |
+                           |             |
+                           +-------------+
+                                   |
+                                   v
+                            +------------+
+                            |ranked hits |
+                            |            |
+                            +------------+
 ```
+<!-- /figure:system-topology -->
+
+**Figure 1: every write door lands in the git tree, and every read is served from projections of it.**
+Three doors reach in from outside — `memhtml write`/`apply`, the MCP server's 14 tools, and your own
+file tools — and all three commit into one git tree, differing only in who owns the commit. Eviction
+moves a file to `archive/YYYY/` and never deletes it. From the tree, a git-driven indexer derives
+`index.db`, which supplies three of the four ranking arms; the fourth, salience, comes from `state.db`,
+the one plane git cannot reproduce. A query enters the ranker at the bottom, RRF fuses the four arms and
+MMR diversifies, and ranked hits come out. In the SVG the border carries the distinction a caption has
+to spell out here: a heavy border is a door, a double border is the system of record, a dashed border is
+a projection that can be deleted and rebuilt, and a cylinder is a database on disk.
 
 ## Why files
 
@@ -87,39 +110,62 @@ Three actors, one tree. The agent writes facts and resolves only the conflicts i
 sleep curates nightly on a branch and detects conflicts without resolving them; the human owns the
 gate and the one-way doors.
 
-```mermaid
-graph LR
-    subgraph agent["Agent does (any hour)"]
-        A1["write / apply<br/>one fact per file"]
-        A2["search / recall<br/>no writes to the tree"]
-        A3["correct<br/>resolve a conflict it FOUND"]
-        A4["code-mode traversals<br/>read-only"]
-    end
+Figure 2 is the cycle they form. The paragraph beneath it is the figure in words, for a reader whose
+screen reader is about to read the box characters as noise.
 
-    subgraph sleep["Sleep does (nightly, on a branch)"]
-        S1["dedup, entity resolution,<br/>confidence decay"]
-        S2["detect conflicts<br/>never resolves them"]
-        S3["compress N members<br/>into one canonical"]
-        S4["synthesize arcs<br/>the one type agents cannot write"]
-    end
-
-    subgraph human["Human does (review gate)"]
-        H1["memhtml sleep review<br/>read fifteen commits"]
-        H2["memhtml sleep merge<br/>gate can refuse"]
-        H3["settle contested conflicts<br/>the one-way doors"]
-    end
-
-    agent -->|"commits to main"| sleep
-    sleep -->|"sleep/date branch"| human
-    human -->|"fast-forward main"| agent
-
-    classDef ag fill:#87CEEB,stroke:#4682B4,stroke-width:2px,color:darkblue
-    classDef sl fill:#E6E6FA,stroke:#8A2BE2,stroke-width:2px,color:darkblue
-    classDef hu fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
-    class A1,A2,A3,A4 ag
-    class S1,S2,S3,S4 sl
-    class H1,H2,H3 hu
+<!-- figure:three-actors -->
+```text
+        +----------+
+        |the agent |
+        |          |
+        +----------+
+              |
+           writes
+              |
+              v
+          +-------+
+          | main  |
+          |       |
+          +-------+
+             |  ^
+             |  +---+
+             |      |
+           reads    |
+             |      |
+             v      |
+ +---------------+  |
+ |sleep, nightly |  |
+ |               |  |
+ +---------------+  |
+         |          |
+         |        merge
+    15 commits      |
+         |          |
+         v          |
+ +-------------+    |
+ |sleep/<date> |    |
+ |             |    |
+ +-------------+    |
+            |       |
+         review     |
+            |       |
+            |   +---+
+            |   |
+            v   |
+        +------------+
+        | the human  |
+        |            |
+        +------------+
 ```
+<!-- /figure:three-actors -->
+
+**Figure 2: the three actors form a cycle through `main`, and only one of them may settle a
+contradiction.** Reading top to bottom: the agent writes to `main` at any hour, one fact per file.
+Sleep reads `main` nightly and puts its fifteen commits on a `sleep/<date>` branch, never on `main`
+itself — it deduplicates, resolves entities, decays confidence, compresses, and synthesizes arcs, and
+it detects conflicts without ever choosing a winner. The human reviews that branch and merges, which
+returns the cycle to `main` and to the agent. The two heavy-bordered boxes are the actors outside the
+system; `main` and the branch are double-bordered because they are the system of record.
 
 ## The file format
 
@@ -164,22 +210,45 @@ Content-hash dedup is structural: a partial unique index over active files means
 
 A memory's whole life is commits in one tree:
 
-```mermaid
-stateDiagram-v2
-    [*] --> active : write (one commit, dedup-checked)
-    active --> active : sleep reinforces / decays confidence
-    active --> superseded : memhtml correct — new file + archive, ONE commit
-    active --> archived : retention triage (EVICT band)
-    active --> compressed : compress — canonical synthesized,<br/>members archived with supersedes
-    superseded --> [*]
-    archived --> [*]
-    compressed --> [*]
+Figure 3 is that life. The paragraph beneath it states the same four transitions in words, which is the
+form to read if a screen reader is about to sound out the box characters.
 
-    note right of archived
-        archive/YYYY/ mirrors the original path —
-        git log --follow reads straight through
-    end note
+<!-- figure:memory-lifecycle -->
+```text
+                  +--------+
+                  | write  |
+                  |        |
+                  +--------+
+                      |
+                   commit
+                      |
+                      v
+                +-----------+
+                |  active   |
+                |           |
+                +-----------+
+                   |  |  |
+        +----------+  |  +----------+
+        |             |             |
+        |           evict           |
+     correct          |         compress
+        |             |             |
+        v             v             v
+ +-----------+  +---------+  +-----------+
+ |superseded |  |archived |  |compressed |
+ |           |  |         |  |           |
+ +-----------+  +---------+  +-----------+
 ```
+<!-- /figure:memory-lifecycle -->
+
+**Figure 3: a memory has one entry and three exits, and every one of them is a commit.** A write enters
+the corpus as a single dedup-checked commit and the file is *active*. From there it stays active — sleep
+reinforces or decays its confidence in place — until one of three things happens: `memhtml correct`
+writes a replacement and archives the original in ONE commit, making it *superseded*; retention triage
+scores it into the EVICT band and archives it, making it *archived*; or compress folds it into a
+synthesized canonical memory and archives it with a `supersedes` link, making it *compressed*. None of
+the three exits deletes anything — each is a `git mv` into `archive/YYYY/` mirroring the original path,
+so `git log --follow` reads straight through the whole life.
 
 ## Retrieval
 
@@ -236,22 +305,56 @@ back its predecessors.
 and refuses to move `main` on regression. Conflict *detection* is nightly and automatic; conflict
 *resolution* stays with the writer or a human — choosing a winner is a one-way door.
 
-```mermaid
-gitGraph
-    commit id: "agent writes"
-    commit id: "memhtml correct"
-    branch sleep/2026-08-06
-    commit id: "dedup-merge"
-    commit id: "entity-resolution"
-    commit id: "confidence-decay"
-    commit id: "arc-synthesis"
-    commit id: "retention-triage"
-    commit id: "compress"
-    commit id: "integrity + report"
-    checkout main
-    merge sleep/2026-08-06 id: "discrimination gate, then merge"
-    commit id: "next day's writes"
+Figure 4 is the branch and the gate. The paragraph beneath it is the figure in words, which is the form
+to read rather than letting a screen reader sound out the box characters.
+
+<!-- figure:sleep-branch -->
+```text
+            +-------+
+            | main  |
+            |       |
+            +-------+
+                |
+             branch
+                |
+                v
+         +-------------+
+         |sleep/<date> |
+         |             |
+         +-------------+
+                |
+                v
+         +---------------+
+         |fifteen phases |
+         |               |
+         +---------------+
+                |
+             review
+                |
+                v
+           +---------+
+           |the gate |
+           |         |
+           +---------+
+              |   |
+        +-----+   +-----+
+        |               |
+     passes          refuses
+        |               |
+        v               v
+ +-----------+   +-------------+
+ |main moves |   |main unmoved |
+ |           |   |             |
+ +-----------+   +-------------+
 ```
+<!-- /figure:sleep-branch -->
+
+**Figure 4: `main` is never touched until a gate that can refuse says so.** A run branches `main` into
+`sleep/<date>` before any phase executes, walks its fifteen phases there — thirteen of them committing,
+each on its own, `preflight` and `relationship-mining` by design committing nothing — and then submits
+the branch for review. The gate re-runs the discrimination gate and has two outcomes, both drawn: it
+passes and `main` moves, or it refuses and `main` stays exactly where it was. There is no third outcome
+and no rollback, because nothing on `main` ever moved: the abort is `git branch -D`.
 
 ## Code-mode
 

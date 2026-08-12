@@ -12,6 +12,17 @@ A CLI command and a running MCP server share one `index.db`. WAL admits one writ
 readers, `busy_timeout = 5000` is set on every connection
 (`packages/index/src/database.ts:342-354`), and a contended write retries.
 
+Three actors share that tree, and Figure 1 shows the cycle they form through `main`. Which of them may
+settle a contradiction is the subject of the rest of this page.
+
+```d2 pad=20 src="_figures/three-actors.d2" title="A cycle of five boxes. The agent writes to main. Sleep reads main and puts fifteen commits on a sleep/date branch. The human reviews that branch and merges it back into main, closing the cycle. Sleep never writes to main directly and the branch never reaches main without passing through the human."
+```
+
+**Figure 1: the three actors form a cycle through `main`, and sleep is never on it.** The agent commits
+to `main` at any hour. Sleep reads `main` and writes only to `sleep/<date>`, so a curation run cannot
+move `main` even by accident. The human closes the cycle. The two heavy-bordered boxes are the actors
+outside the system; `main` and the branch are double-bordered because they are the system of record.
+
 ## 2. A same-file collision is a typed error carrying both shas
 
 `mergeBranch` (`packages/store/src/store.ts:924`) reads both competing blob shas out of the unmerged

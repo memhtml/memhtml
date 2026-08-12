@@ -1,0 +1,18 @@
+# Also rendered to a monospace figure for the README — short ASCII-only labels are for that renderer,
+# which draws a diamond in asterisks, so the refusable gate is a plain box with TWO exits instead.
+...@_register
+
+direction: down
+
+main: main {class: record}
+cut: "sleep/<date>" {class: record}
+phases: fifteen phases {class: step}
+gate: the gate {class: step}
+moved: main moves {class: record}
+unmoved: main unmoved {class: record}
+
+main -> cut: branch
+cut -> phases
+phases -> gate: review
+gate -> moved: passes
+gate -> unmoved: refuses

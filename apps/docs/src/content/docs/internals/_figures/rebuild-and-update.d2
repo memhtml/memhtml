@@ -1,0 +1,30 @@
+# SVG only — no README rendering, so the full shape vocabulary is available.
+#
+# Labels are kept short because the site's 30em measure caps a figure at its own width: past about
+# 700px natural width the drawing arrives shrunk far enough to be unreadable.
+...@_register
+
+direction: down
+
+rebuild: index rebuild {class: terminal}
+update: index update {class: terminal}
+
+watermark: head_sha watermark {class: derived}
+tree: "ls-tree + cat-file" {class: step}
+diff: "git diff -M" {class: step}
+porcelain: "git status -v2" {class: step}
+
+project: projectFile, pure {class: step}
+rows: the row set {class: derived}
+
+update -> watermark: read
+watermark -> rebuild: absent
+watermark -> diff: present
+watermark -> porcelain: present
+
+rebuild -> tree: whole corpus
+tree -> project
+diff -> project: committed first
+porcelain -> project: tree second
+
+project -> rows: determined

@@ -1,0 +1,15 @@
+# Also rendered to a monospace figure for the README — short ASCII-only labels are for that renderer.
+...@_register
+
+direction: down
+
+write: write {class: door}
+active: active {class: record}
+superseded: superseded {class: record}
+archived: archived {class: record}
+compressed: compressed {class: record}
+
+write -> active: commit
+active -> superseded: correct
+active -> archived: evict
+active -> compressed: compress

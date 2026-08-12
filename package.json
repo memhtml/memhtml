@@ -15,6 +15,7 @@
     "test": "turbo run test",
     "test:integration": "turbo run test:integration",
     "test:eval": "turbo run test:eval",
+    "figures:readme": "node scripts/readme-figures.mjs",
     "gen:fixture": "turbo run build --filter=@memhtml/eval && node packages/eval/dist/gen-fixture.js",
     "check": "turbo run lint typecheck test test:integration test:eval"
   },

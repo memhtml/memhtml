@@ -1,0 +1,16 @@
+# Also rendered to a monospace figure for the README — short ASCII-only labels are for that renderer.
+...@_register
+
+direction: down
+
+agent: the agent {class: door}
+main: main {class: record}
+sleep: sleep, nightly {class: step}
+branch: "sleep/<date>" {class: record}
+review: the human {class: door}
+
+agent -> main: writes
+main -> sleep: reads
+sleep -> branch: 15 commits
+branch -> review: review
+review -> main: merge

@@ -1,0 +1,177 @@
+# The line-art register every figure on this site imports with `...@_register`.
+#
+# The site reads as an IETF specification, so a figure is monochrome line art: square corners, no
+# shadow, no texture, and no hue anywhere. Meaning is carried by SHAPE, STROKE, and ADJACENCY, never
+# by colour, and the vocabulary is fixed here so it means one thing across every page:
+#
+#   door     heavy border   a write entry point: something outside the system reaching in
+#   record   double border  the system of record — a fact that survives `rm index.db`
+#   derived  dashed border  a rebuildable projection: delete it and it comes back
+#   plane    cylinder       a database on disk
+#   sidecar  page           a committed file that is some plane's only durable copy
+#   step     plain border   a deterministic step, no model call
+#   model    hexagon        a step that calls a model, so its output is judged and not computed
+#   gate     diamond        a decision that can refuse
+#   commit   circle         one git commit
+#   terminal oval           where a path starts or ends
+#   note     borderless     an annotation, not a participant
+#
+# A dashed CONNECTION carries the same sense a dashed border does: the edge derives something rather
+# than asserting it.
+#
+# Three properties of D2 0.7.1 under theme 301, probed live 2026-08-12, shape everything below:
+#
+# - `theme-overrides` is what makes monochrome literal rather than approximate. Theme 301 is
+#   "Terminal Grayscale", but its palette is cool-tinted neutral — `#000410`, `#6D7284`, `#9499AB` —
+#   so every value here is restated as R=G=B. Square corners come from D2 itself and not from this
+#   theme; every theme measured emits `rx="0"`.
+# - NO FIGURE USES A CONTAINER. Themes 300 and 301 apply `class="dots-overlay"` to a container's
+#   rect, a `#0A0F25` dotted texture that no fill value displaces, and `fill-pattern: none` is worse
+#   than the texture: D2 emits an unterminated `<![CDATA[` section for it, so the whole document
+#   fails an XML parse. Grouping is therefore carried by adjacency and by labelled edges. That is
+#   also the better drawing — `d2 --ascii-mode=standard` collides a container's label with its
+#   children, and the README renders these same sources through it.
+# - Labels stay ASCII-only and hold no `\n`. The ASCII renderer writes an escape through literally
+#   and shatters the row it sits on.
+
+vars: {
+  d2-config: {
+    theme-overrides: {
+      N1: "#000000"
+      N2: "#000000"
+      N3: "#333333"
+      N4: "#767676"
+      N5: "#a6a6a6"
+      N6: "#e8e8e8"
+      N7: "#ffffff"
+      B1: "#000000"
+      B2: "#000000"
+      B3: "#ffffff"
+      B4: "#f2f2f2"
+      B5: "#e8e8e8"
+      B6: "#dddddd"
+      AA2: "#000000"
+      AA4: "#e8e8e8"
+      AA5: "#f2f2f2"
+      AB4: "#e8e8e8"
+      AB5: "#f2f2f2"
+    }
+  }
+}
+
+classes: {
+  door: {
+    style: {
+      fill: "#ffffff"
+      stroke: "#000000"
+      stroke-width: 3
+      border-radius: 0
+      font-color: "#000000"
+    }
+  }
+  record: {
+    style: {
+      fill: "#ffffff"
+      stroke: "#000000"
+      stroke-width: 2
+      double-border: true
+      border-radius: 0
+      font-color: "#000000"
+    }
+  }
+  derived: {
+    style: {
+      fill: "#ffffff"
+      stroke: "#000000"
+      stroke-width: 2
+      stroke-dash: 4
+      border-radius: 0
+      font-color: "#000000"
+    }
+  }
+  plane: {
+    shape: cylinder
+    style: {
+      fill: "#ffffff"
+      stroke: "#000000"
+      stroke-width: 2
+      font-color: "#000000"
+    }
+  }
+  sidecar: {
+    shape: page
+    style: {
+      fill: "#ffffff"
+      stroke: "#000000"
+      stroke-width: 2
+      font-color: "#000000"
+    }
+  }
+  step: {
+    style: {
+      fill: "#ffffff"
+      stroke: "#000000"
+      stroke-width: 1
+      border-radius: 0
+      font-color: "#000000"
+    }
+  }
+  model: {
+    shape: hexagon
+    style: {
+      fill: "#ffffff"
+      stroke: "#000000"
+      stroke-width: 1
+      font-color: "#000000"
+    }
+  }
+  gate: {
+    shape: diamond
+    style: {
+      fill: "#ffffff"
+      stroke: "#000000"
+      stroke-width: 2
+      font-color: "#000000"
+    }
+  }
+  commit: {
+    shape: circle
+    style: {
+      fill: "#ffffff"
+      stroke: "#000000"
+      stroke-width: 2
+      font-color: "#000000"
+    }
+  }
+  terminal: {
+    shape: oval
+    style: {
+      fill: "#ffffff"
+      stroke: "#000000"
+      stroke-width: 1
+      font-color: "#000000"
+    }
+  }
+  note: {
+    shape: text
+    style: {
+      font-color: "#333333"
+      italic: true
+    }
+  }
+  derives: {
+    style: {
+      stroke: "#000000"
+      stroke-width: 1
+      stroke-dash: 4
+      font-color: "#000000"
+    }
+  }
+  flow: {
+    style: {
+      stroke: "#000000"
+      stroke-width: 1
+      font-color: "#000000"
+    }
+  }
+}
