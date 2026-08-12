@@ -9,6 +9,7 @@
     "preview": "astro preview",
     "typecheck": "astro check",
     "test": "vitest run",
+    "gen:icons": "node src/branding/write-icons.ts",
     "lint": "biome check src tests astro.config.ts --no-errors-on-unmatched"
   },
   "dependencies": {
@@ -21,6 +22,7 @@
     "astro": "^7.2.1",
     "astro-d2": "^0.13.1",
     "astro-og-canvas": "^0.13.0",
+    "canvaskit-wasm": "^0.41.1",
     "starlight-base-path": "^0.2.1",
     "starlight-heading-badges": "^0.8.0",
     "starlight-links-validator": "^0.25.2",
@@ -32,6 +34,7 @@
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
     "@biomejs/biome": "2.5.8",
+    "@expo-google-fonts/tinos": "^0.4.2",
     "@types/node": "24.13.3",
     "cspell": "^10.0.1",
     "typescript": "6.0.3",
