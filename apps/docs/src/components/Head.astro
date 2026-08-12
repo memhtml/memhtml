@@ -1,18 +1,27 @@
 ---
 /**
- * Starlight's `<head>`, plus the block that points a machine reader at this page's raw route and at
- * the site's machine surfaces.
+ * Starlight's `<head>`, extended with three things it does not emit: the raster icons, this page's
+ * social card, and the block that points a machine reader at the page's raw Markdown route and at the
+ * site's machine surfaces.
  *
- * Starlight already emits base-correct `rel="canonical"` and `rel="sitemap"`, so this adds only the
- * delta. Each relation carries its warrant in `discoveryLinks` — two follow a convention several
- * vendors ship, one is this site's own invention and says so.
+ * Starlight already emits base-correct `rel="canonical"` and `rel="sitemap"`, so the discovery block
+ * adds only the delta. Each relation carries its warrant in `discoveryLinks` — two follow a convention
+ * several vendors ship, one is this site's own invention and says so.
  *
  * Deliberately absent: `rel="describedby"`, which is the wrong relationship and has no adopters — not
  * even llmstxt.org itself; and any visually-hidden agent-directed block, which is content served to
  * machines and hidden from every human. That is cloaking wearing an accessibility class name.
+ *
+ * Every URL is built with `new URL()`, never by concatenating strings. `Astro.site` EXCLUDES the base
+ * — it is `https://memhtml.github.io` — so resolving a path against it directly drops the `/memhtml`
+ * segment and yields a 404 that only appears in production. `import.meta.env.BASE_URL` is the accessor
+ * that includes it, and the trailing slash is normalised because `new URL("og/x", ".../memhtml")` would
+ * otherwise resolve the base segment away.
  */
 import Default from "@astrojs/starlight/components/Head.astro"
 
+import { APPLE_TOUCH_SIZE, ICO_SIZES, ICON_PNG_SIZE } from "../branding/mark.js"
+import { OG_HEIGHT, OG_WIDTH, ogAlt, ogSlug } from "../branding/og-card.js"
 import { discoveryLinks } from "../lib/agent-surface.js"
 
 const { site } = Astro
@@ -20,13 +29,52 @@ if (site === undefined) {
   throw new Error("`site` is unset in astro.config.ts, so no absolute machine-surface URL can be built")
 }
 
-const links = discoveryLinks(Astro.locals.starlightRoute.entry.id, {
-  site,
-  base: import.meta.env.BASE_URL
-})
+const base = import.meta.env.BASE_URL
+const baseSegment = base.endsWith("/") ? base : `${base}/`
+
+/*
+ * An icon is a same-site asset and stays root-relative, so a preview build served from another host
+ * does not fetch its icons from production. `new URL` needs some origin to resolve against and only
+ * the pathname is read back out — still a URL resolution rather than a concatenation, so the base
+ * segment can be neither doubled nor dropped.
+ */
+const asset = (file: string): string =>
+  new URL(file, new URL(baseSegment, "https://assets.invalid")).pathname
+
+/* `og:image` is the one URL that must be absolute: a crawler resolves it against nothing. */
+const { entry } = Astro.locals.starlightRoute
+const card = new URL(ogSlug(entry.id), new URL("og/", new URL(baseSegment, site)))
+
+const icoSizes = ICO_SIZES.map((size) => `${size}x${size}`).join(" ")
+const appleTouch = `${APPLE_TOUCH_SIZE}x${APPLE_TOUCH_SIZE}`
+
+const links = discoveryLinks(entry.id, { site, base })
 ---
 
+{/*
+  The raster icons come BEFORE the default head on purpose. Starlight sorts its own
+  `<link rel="shortcut icon">` to the end so a browser choosing between equally applicable icons takes
+  the SVG, which stays sharp at any scale; a PNG declared after it would win that choice instead.
+*/}
+<link rel="icon" href={asset("favicon.ico")} sizes={icoSizes} />
+<link
+  rel="icon"
+  type="image/png"
+  href={asset(`icon-${ICON_PNG_SIZE}.png`)}
+  sizes={`${ICON_PNG_SIZE}x${ICON_PNG_SIZE}`}
+/>
+<link rel="apple-touch-icon" href={asset("apple-touch-icon.png")} sizes={appleTouch} />
+
 <Default {...Astro.props}><slot /></Default>
+
+<meta property="og:image" content={card} />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content={String(OG_WIDTH)} />
+<meta property="og:image:height" content={String(OG_HEIGHT)} />
+<meta property="og:image:alt" content={ogAlt(entry.data.title)} />
+<meta name="twitter:image" content={card} />
+<meta name="twitter:image:alt" content={ogAlt(entry.data.title)} />
+
 {
   links.map((link) => (
     <link rel={link.rel} type={link.type} href={link.href} title={link.title} />

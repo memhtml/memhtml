@@ -1,14 +1,116 @@
 ---
 title: memhtml
-description: Memory for agents, in HTML.
+description: Memory for agents, in HTML — a git repository of semantic HTML files, a rebuildable SQLite index, four-arm retrieval, and a nightly curation pipeline.
 ---
 
-memhtml is an agent's long-term memory store: a git repository of semantic HTML files, one fact per
-file, with a rebuildable SQLite index, four-arm retrieval, and a nightly curation pipeline.
+{/*
+  The cover page of a specification.
 
-The git tree is the system of record. The index is a projection, and deleting it costs nothing but
-the time to rebuild.
+  Every section below the title block is FRONT MATTER and carries no section number, where every
+  heading elsewhere on this site does carry one. That is the convention a specification follows, and
+  here it is load-bearing: front matter is unnumbered so the numbers in the table of contents belong
+  to the document being indexed. Numbering "Abstract" as §2 would put two incompatible numbering
+  schemes on one page, and the contents would be citing its own position on it.
 
-## Status of this document
+  Every link is an authored Markdown link, so `starlight-base-path` prefixes the site base onto it.
+  A hand-built href would need `import.meta.env.BASE_URL` and would leave a JSX expression in the
+  raw Markdown this page also serves.
+*/}
 
-This site is under construction. The specification it is being built against is `006-docs-site`.
+<div class="rfc-masthead rfc-doc-header">
+<div>
+
+memhtml Project
+
+Category: Agent Memory Store
+
+Status: Working draft
+
+</div>
+<div>
+
+Version 0.1.0
+
+August 2026
+
+Node 24 · Effect v4
+
+</div>
+</div>
+
+<div class="rfc-title-block">
+
+<p class="rfc-brand">MEANING · MEMORY · MARKUP</p>
+
+<p class="rfc-memo-title">Memory for Agents, in HTML</p>
+
+</div>
+
+## Status of This Memo
+
+This document is the reference documentation for the `memhtml` implementation. It is not an Internet
+Standard of any kind, and the form it takes is a claim about how the material is organised rather than
+about where it came from: every architectural statement here names the file and line that implements
+it, every measurement carries the date it was taken, and all fifty-seven pages of the Reference tier
+are generated from the binary's own registries instead of written beside them. Where this site and the
+binary disagree, the binary is right and a test is missing.
+
+Distribution of this document is unlimited.
+
+## Abstract
+
+`memhtml` stores an agent's long-term memory as a git repository of semantic HTML5 files — one fact
+per file — and treats that tree as the system of record. The SQLite index over it is a projection:
+delete it and the cost is the time to rebuild, not a memory. Retrieval fuses four independently ranked
+arms with reciprocal rank fusion, and a fifteen-phase nightly pipeline curates the corpus on a branch,
+one commit per change, so a night of consolidation is a diff a person can read. Nothing is ever
+deleted — eviction is a `git mv` into an archive that mirrors the original path, so `git log --follow`
+reads straight through a memory's whole life.
+
+## Table of Contents
+
+<div class="rfc-toc">
+
+- **1. [Learn](/learn/)** — from a clone to a working store, then twelve task-shaped how-tos
+  - 1.1. [Install memhtml and initialize a store](/learn/tutorial/install/)
+  - 1.2. [Write your first memory](/learn/tutorial/first-memory/)
+  - 1.3. [Retrieve it](/learn/tutorial/first-retrieval/)
+  - 1.4. [Wire up the MCP server](/learn/tutorial/mcp-server/)
+  - 1.5. [Run the store day to day](/learn/operations/run-the-store-day-to-day/)
+- **2. [Reference](/reference/)** — generated from the registries the binary parses its own arguments with
+  - 2.1. [Global flags](/reference/global-flags/) and [configuration](/reference/config/)
+  - 2.2. [Response types](/reference/response-types/) and [error codes](/reference/error-codes/)
+  - 2.3. [MCP tools](/reference/mcp-tools/) and [resources](/reference/mcp-resources/)
+  - 2.4. [Vocabularies](/reference/vocabulary/), [sleep phases](/reference/sleep-phases/), [RRF arms](/reference/rrf-arms/)
+  - 2.5. [Index schema](/reference/schema/) and the [requirements ledger](/reference/requirements/)
+- **3. [Internals](/internals/)** — why the system is shaped this way, and what each decision refuses
+  - 3.1. [Packages and dependency direction](/internals/packages-and-dependency-direction/)
+  - 3.2. [The memory file format](/internals/the-memory-file-format/)
+  - 3.3. [The write path](/internals/the-write-path/)
+  - 3.4. [Four-arm retrieval](/internals/four-arm-retrieval/)
+  - 3.5. [The sleep pipeline](/internals/the-sleep-pipeline/)
+  - 3.6. [Testing posture](/internals/testing-posture/)
+- **Appendix A. [Glossary](/glossary/)** — the domain vocabulary, each term linked to the chapter that develops it
+
+</div>
+
+## Conventions Used in This Document
+
+The key words <span class="rfc-keyword">MUST</span>, <span class="rfc-keyword">MUST NOT</span>,
+<span class="rfc-keyword">SHOULD</span> and <span class="rfc-keyword">MAY</span> are to be read as in
+BCP 14 wherever they appear in upper case: they mark a requirement of the implementation, never an
+emphasis. They are authored in capitals, not lowered into small caps by the stylesheet, so the
+Markdown this page serves to an agent carries the same normative force the page shows a reader.
+
+Sections are numbered in the heading text itself — `## 3.2. Edge encoding` — so that the page, the
+table of contents, the search index, and the Markdown this site serves to agents all agree on which
+section §3.2 is. Anchors stay unnumbered, so inserting a section does not churn an inbound link.
+
+Architectural claims cite the code in repo-relative `path:line` form. Line numbers point into the
+commit the site was built from and are not permanent addresses.
+
+Every page on this site also serves its own Markdown source at the same path with a `.md` suffix, and
+`llms.txt` at the site root indexes the whole corpus for an agent that would rather read the document
+than the page. `memhtml manifest` answers with every command, flag, response type, error code and
+environment variable the binary accepts, on a machine with no repository, no database and no
+credentials.

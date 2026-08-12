@@ -36,13 +36,21 @@ const base = process.env.DOCS_BASE ?? "/memhtml"
 const agentPageMarkdown = siteUrl("agents.md", { site: new URL(origin), base }).href
 
 /**
- * The Reference tier's path, base segment included.
+ * Every link into the Reference tier, as the link validator sees it once the base is prefixed on.
  *
- * `starlight-links-validator` matches its `exclude` patterns against the link as authored, and
- * `starlight-base-path` has already prefixed the base by then — so the pattern carries the base too,
- * and derives it rather than repeating it.
+ * The validator cannot check these and it is not a bug in the validator: it accepts a link only when
+ * the target page is BOTH a built page and one whose headings it collected through its own remark
+ * plugin. A Reference page's Markdown is rendered by the loader through `renderMarkdown`, which never
+ * enters that pipeline, so all 57 of them are built pages with no headings on record and every link
+ * to one is reported invalid.
+ *
+ * Excluding them here would leave a typo in an authored Reference link unnoticed, so
+ * `tests/authored-links.test.ts` resolves every authored internal link against the registry that
+ * generates those pages. That check is stronger than the one being skipped — it runs without a build.
  */
-const referenceTierPath = siteUrl("reference/", { site: new URL(origin), base }).pathname
+const referenceLinks = ((prefix: string) => [`${prefix}/reference/`, `${prefix}/reference/**`])(
+  base.replace(/\/$/, "")
+)
 
 export default defineConfig({
   site: origin,
@@ -74,6 +82,15 @@ export default defineConfig({
   // Astro's default image service exits 1 with MissingSharp on the first raster image — a latent
   // failure that a build with no images does not reveal. This site optimises no images.
   image: { service: passthroughImageService() },
+  /*
+   * `canvaskit-wasm` stays out of the SSR bundle, and it is a DIRECT dependency of this package for
+   * the same reason. It ships as UMD and reads `__dirname`, which is not defined in the ESM chunk
+   * Vite would otherwise inline it into — the social-card route then fails at render with a
+   * `ReferenceError` that names neither the package nor the cause. Left external it is required at
+   * run time as CommonJS, where `__dirname` exists, and its own `createRequire` locates the wasm
+   * binary beside it.
+   */
+  vite: { ssr: { external: ["canvaskit-wasm"] } },
   integrations: [
     /*
      * Figures render to static SVG at build time through the pinned `d2` binary, so no diagram
@@ -101,15 +118,43 @@ export default defineConfig({
       editLink: { baseUrl: "https://github.com/memhtml/memhtml/edit/main/apps/docs/" },
       lastUpdated: true,
       customCss: ["./src/styles/rfc.css"],
-      expressiveCode: { plugins: [pluginLineNumbers(), pluginCollapsibleSections()] },
       /*
        * Two local overrides, both of which render the default and add to it rather than replacing it.
-       * `PageTitle` gains the page-action controls; `Head` gains the machine-reader discovery block.
-       * Neither is a plugin: see the note in each component for why the candidate plugin was declined.
+       * `PageTitle` gains the page-action controls; `Head` gains the icons, this page's social card,
+       * and the machine-reader discovery block. Neither is a plugin: see the note in each component
+       * for why the candidate plugin was declined.
        */
       components: {
         Head: "./src/components/Head.astro",
         PageTitle: "./src/components/PageTitle.astro"
+      },
+      /*
+       * A code block is the one place on this site where a second typeface appears, so it is framed
+       * rather than tinted: square corners and a hairline rule in the same value the tables and the
+       * masthead use, which is what keeps it reading as a figure inside a specification instead of a
+       * widget dropped onto the page. Expressive Code's defaults are a 0.3rem radius and a drop
+       * shadow, and both are wrong against Times.
+       *
+       * `codeFontSize` is 0.85em rather than 1em because the mono stack's x-height runs ahead of
+       * Times' at equal size; the two only look like one document at this ratio.
+       */
+      expressiveCode: {
+        plugins: [pluginLineNumbers(), pluginCollapsibleSections()],
+        styleOverrides: {
+          borderRadius: "0",
+          borderColor: "var(--memhtml-rule)",
+          borderWidth: "1px",
+          // The same tint an inline code span already sits on, so a block and a span are one material.
+          // The bundled themes ship a violet-cast ground that belongs to no value in this palette.
+          codeBackground: "var(--sl-color-bg-inline-code)",
+          codeFontFamily: "var(--sl-font-mono)",
+          codeFontSize: "0.85em",
+          frames: {
+            shadowColor: "transparent",
+            editorTabBorderRadius: "0",
+            frameBoxShadowCssValue: "none"
+          }
+        }
       },
       plugins: [
         /*
@@ -172,11 +217,7 @@ export default defineConfig({
          * files actually present in `dist/`, and `tests/census.test.ts` derives the tier's contents
          * from the registries. Both check the built output; the validator checks a side table.
          */
-        starlightLinksValidator({
-          // Glob patterns, not URLs: the `**` suffix is a picomatch wildcard joined onto a path that
-          // `new URL()` already resolved.
-          exclude: [referenceTierPath, `${referenceTierPath}**`]
-        }),
+        starlightLinksValidator({ exclude: referenceLinks }),
         starlightHeadingBadges(),
         starlightScrollToTop()
       ],
