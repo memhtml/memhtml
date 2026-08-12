@@ -37,5 +37,6 @@ Both callouts were wrong, in instructive ways:
   crash window — on another. Measure the round-over-round trend against the
   driver in hand before importing either conclusion.
 - Probe rig: tests-integration/probe-embed-cost.mjs (deterministic embedder,
-  lane-split writeAll). Its --fts-bracket arm writes `CREATE INDEX … USING
-  fts(…)`, which the shipped schema has no answer for.
+  lane-split writeAll). It measures the pending-scan term; the lexical index is
+  not a variable in it, since FTS5's insert cost is linear in the batch rather
+  than in the store, so there is nothing to A/B a bracket against.

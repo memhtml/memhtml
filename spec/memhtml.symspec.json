@@ -892,26 +892,6 @@
       "verificationNote": "backlog 7 decision 5; mechanical now the threshold is measured; same detector, same 0.30",
       "verifies": []
     },
-    "acdf5553-b1ef-4e7a-9b52-1275961eec8d": {
-      "createdAt": "2026-08-08T02:00:00.328Z",
-      "derives": [],
-      "id": "acdf5553-b1ef-4e7a-9b52-1275961eec8d",
-      "key": "FTS-1",
-      "negated": false,
-      "patternType": "state-driven",
-      "preCondition": "the lexical index depends on a single vendor's experimental flag",
-      "priority": "low",
-      "refines": [],
-      "satisfies": [],
-      "sentence": "While the lexical index depends on a single vendor's experimental flag, the retrieval shall serve lexical search through the fallback arm at its known quality cost.",
-      "status": "draft",
-      "systemName": "retrieval",
-      "systemResponse": "serve lexical search through the fallback arm at its known quality cost",
-      "updatedAt": "2026-08-08T02:00:00.328Z",
-      "verificationMethod": "test",
-      "verificationNote": "the precondition cannot arise: the lexical arm is an FTS5 virtual table in node's own SQLite, with no driver flag to rename or re-gate (ROADMAP item 10, closed by removal 2026-08-12). Status pending a retire-or-implemented decision.",
-      "verifies": []
-    },
     "b6b3b4c1-e439-439b-8f56-5cda271e7c63": {
       "createdAt": "2026-08-08T01:57:30.129Z",
       "derives": [],
