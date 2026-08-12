@@ -750,22 +750,17 @@ describe("activeFramesFor", () => {
      * explains its own string: it reports the seek it was written with, whatever the production query
      * has since become.
      *
-     * The 400-row seed and the `ANALYZE` buy nothing from this planner. Probed 2026-08-12 on node
-     * 24.19.0 (SQLite 3.53.3) with one third of rows keyed, the plan is `SEARCH … USING INDEX
-     * files_frame_key_active` at 0, 10, 200, 400, and 800 rows, with `ANALYZE` and without it
-     * (`sqlite_stat1` reads "67 1" / "134 1" / "267 1" at 200 / 400 / 800). The choice is cost-based in
-     * principle, so a future planner could want the rows back — but nothing here depends on them today.
-     *
-     * **Its own 120s timeout, and the 400-row seed is why.** Seeding 400 rows one statement at a time
-     * plus `ANALYZE` measured 35-38 s wall on a loaded box (2026-08-08, load average ~30) against the
-     * suite's 30 s default — so this case flakes under a parallel `turbo run test` while passing in
-     * ~8 s on an idle one. Raising the whole suite's timeout would hide a real hang in the other 26
-     * cases, so the allowance is here, where the work is. The same load-sensitivity
-     * `packages/sleep/vitest.config.ts` records.
+     * `ANALYZE` is deliberately NOT run, matching the sibling plan lock in `retrieval.test.ts`:
+     * production never runs it — this suite's own line was the only `ANALYZE` that executed anywhere in
+     * the repo — so the statistics-free plan is the one that ships. Nor does the seed need to be large.
+     * Probed 2026-08-12 on node 24.19.0 (SQLite 3.53.3) with one third of rows keyed, the plan is
+     * `SEARCH … USING INDEX files_frame_key_active` at 0, 10, 200, 400 and 800 rows, with `ANALYZE` and
+     * without it. Ten rows is enough to populate the index and leave the `IN (…)` selective, and cheap
+     * enough that the case runs inside the suite's default timeout.
      */
     const outcome = await withDb((db) =>
       Effect.gen(function* () {
-        for (let at = 0; at < 400; at += 1) {
+        for (let at = 0; at < 10; at += 1) {
           yield* seedFramed(
             db,
             `areas/facts/bulk-${at}.html`,
@@ -773,7 +768,6 @@ describe("activeFramesFor", () => {
             "The capital of India is New Delhi."
           )
         }
-        yield* db.run("ANALYZE")
 
         // Capture the real query, then explain exactly that string with exactly those binds.
         let issued: { sql: string; params: ReadonlyArray<unknown> } | null = null
@@ -808,7 +802,7 @@ describe("activeFramesFor", () => {
     expect(outcome.detail).toContain("files_frame_key_active")
     expect(outcome.detail).toContain("SEARCH")
     expect(outcome.detail).not.toContain("SCAN files")
-  }, 120_000)
+  })
 
   it("never queries a NULL frame_key row, because an IN list cannot match NULL", async () => {
     // Most rows have no frame shape. They must be invisible to this lookup even when a caller passes
