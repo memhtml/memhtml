@@ -13,67 +13,70 @@ memhtml read areas/inbox/some-memory.html
 memhtml list --type semantic --limit 50
 ```
 
-Reach for `memhtml apply` past about three memories in one task. A batch stages every file, makes one
-commit, and reindexes once, where N writes make N commits and pay N index passes. It is atomic by
-default; `--continue-on-error` is best-effort. Both `apply` and `exec` read stdin when `--file` is
-omitted or is `-`.
+Reach for `memhtml apply` once a task writes more than about three memories. A batch stages every
+file, makes one commit, and reindexes once, where the same memories written one at a time make one
+commit and one index pass each. `apply` is atomic by default, and `--continue-on-error` makes it
+best-effort. Both `apply` and `exec` read stdin when you omit `--file` or pass `-`.
 
 ## Nothing is deleted
 
-- `memhtml correct <target>` writes the superseding file and archives the target in **one** commit, so an
+- `memhtml correct <target>` writes the superseding file and archives the target in one commit, so an
   interrupted run can never leave two live memories contradicting each other.
-- `memhtml archive <path> --reason ...` is a `git mv` into `archive/<YYYY>/` with the original path
+- `memhtml archive <path> --reason ...` is a `git mv` into `archive/<YYYY>/`, with the original path
   mirrored beneath.
-- `--include-archived` on `search`, `recall`, `list`, and `task list` brings evicted memories back into
-  view. They still exist; eviction moved them.
+- `--include-archived` on `search`, `recall`, `list`, and `task list` brings evicted memories back
+  into view. They still exist; eviction moved them.
 
 `git log --follow` therefore reads straight through a memory's whole life, including the eviction.
 
 ## Reinforcement has a cooldown
 
-`memhtml reinforce <path>` bumps access bookkeeping under a **900-second per-path cooldown**
+`memhtml reinforce <path>` bumps the access bookkeeping for a path at most once every 900 seconds
 (`packages/domain/src/ranking.ts:17`), so a loop reinforcing one path records one bump. That number is
-stated once in the domain layer and once in the salience arm's SQL, and a property test pins the two to
-agree at the boundary.
+written once in the domain layer and once in the salience arm's SQL, and a property test pins the two
+to agree at the boundary.
 
 ```bash
 memhtml reinforce areas/inbox/some-memory.html --signal positive
 ```
 
-`--signal` is `positive`, `negative`, or `neutral` (the default). `neutral` bumps access without claiming
-the memory was right; `positive` and `negative` are the only things that move the outcome EWMA.
+`--signal` takes `positive`, `negative`, or `neutral`, and `neutral` is the default. A `neutral`
+signal bumps the access count without claiming the memory was right. `positive` and `negative` are the
+two values that move the outcome EWMA, a running average of how well a memory has served.
 
 ## What moves the access plane
 
-Worth knowing precisely, because it is the first thing to check when a salience number surprises you.
+Read this section when a salience number surprises you. Salience is one of retrieval's four ranking
+arms, alongside full-text search, vector similarity, and recency, and it favours memories you have
+opened before by reading the access plane.
 
-**Bumps it:**
+Three things bump a memory's access count:
 
-- `memhtml read <path>` and the `memory_read` tool — an explicit open is a chosen memory.
+- `memhtml read <path>` and the `memory_read` tool, because an explicit open is a chosen memory.
 - The `memhtml://file/{path}` MCP resource, which funnels through the same use case.
 - `memhtml reinforce`, which is the explicit channel.
 
-**Does not bump it:**
+Two things leave the count alone:
 
 - `memhtml search` and `memhtml recall`, however many paths they return.
-- Any sleep phase.
+- Every sleep phase.
 
-Those two are the ranker's guess and the schedule's sweep, and counting either makes the ranking teach
-itself: today's top five would rank higher tomorrow purely for having been listed, while the memory that
-should displace them never appears to earn a first bump.
+Those two are the ranker's guess and the schedule's sweep, and counting either would let the ranking
+teach itself. Today's top five would rank higher tomorrow purely for having been listed, while the
+memory that should displace them would never get a first bump.
 
-So **a corpus that has been searched all day and never read has an empty `state.access`, and that is
-correct rather than a bug.**
+So a corpus that has been searched all day and never read has an empty `state.access`. That is the
+expected state.
 
-The salience arm additionally ignores `task` rows and everything under `resources/people/` entirely.
-Their access counts exist but never affect a rank — those are reached by predicate and by key, and
-salience there would reward a stale task and decay a person's identity.
+The salience arm also ignores `task` rows and everything under `resources/people/`. Their access
+counts exist and never affect a rank, because you reach a task by predicate and a person by key.
+Salience there would reward a stale task and decay a person's identity.
 
 ## Working-tree edits are legitimate
 
-`memhtml index update` projects uncommitted changes as well as committed ones, so a hand-edited file is
-searchable before you commit it. You own the commit, though, and `memhtml sleep run` refuses on a dirty
-tree.
+`memhtml index update` projects uncommitted changes as well as committed ones, so a file you edited by
+hand is searchable before you commit it. You own the commit, though, and `memhtml sleep run` refuses
+to run on a dirty tree.
 
 ## The cron schedule
 
@@ -85,8 +88,8 @@ tree.
 0 7 * * *     cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml doctor          >> /var/log/memhtml/doctor.log 2>&1
 ```
 
-Each line is idempotent: an unchanged HEAD and a clean tree touch nothing. `index update` on a converged
-store answers `unchanged: true` and writes nothing:
+Each line is safe to repeat. An unchanged HEAD and a clean tree touch nothing, and `index update` on a
+converged store answers `unchanged: true` and writes nothing:
 
 ```json
 {
@@ -110,17 +113,17 @@ store answers `unchanged: true` and writes nothing:
 `memhtml publish` is deterministic to the byte, so two runs over an unchanged corpus write nothing and
 commit nothing.
 
-**`memhtml sleep merge` is deliberately not on the cron.** A run rewrites confidence across the corpus
-and archives memories, so the branch exists for a human to read `memhtml sleep review` first. The nightly
-`sleep run` produces the branch; landing it is a decision. See [run and review a sleep
-cycle](/learn/operations/run-and-review-a-sleep-cycle/).
+`memhtml sleep merge` stays off the cron deliberately. A curation run rewrites confidence across the
+corpus and archives memories, so the branch waits for a person to read `memhtml sleep review` first.
+The nightly `sleep run` produces the branch, and landing it is a decision. See
+[run and review a sleep cycle](/learn/operations/run-and-review-a-sleep-cycle/).
 
 ## Reading the log files
 
-The cron lines above send both streams to one file, which is fine for a human but not for a parser:
-the envelope is pretty-printed across many lines by default, and stderr's progress and warning lines
-interleave with it. Split the streams and add `--dense` when you want the log to be machine-readable —
-`--dense` minifies the JSON and drops null fields, so each run contributes exactly one line:
+The cron lines above send both streams to one file, which suits a human reader and defeats a parser.
+The envelope is pretty-printed across many lines by default, and the progress and warning lines on
+stderr interleave with it. Split the streams and add `--dense`, which minifies the JSON and drops null
+fields, so each run contributes exactly one line:
 
 ```cron
 */10 * * * *  cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml index update --embed --dense >> /var/log/memhtml/index.jsonl 2>> /var/log/memhtml/index.err

@@ -9,12 +9,16 @@ memhtml index rebuild --embed    # the whole tree at HEAD
 memhtml index status             # watermark, vector space, per-table row counts
 ```
 
-`--no-embed` turns embedding off on either and makes the pass instant.
+`--no-embed` turns embedding off on either command and makes the pass finish instantly.
 
-## update is the daily verb
+The index is a SQLite database built from the HTML files in the git tree, so losing it costs only the
+time to build it again. It records the commit it was last built from, and that recorded commit is
+what the reports below call the watermark.
 
-`update` reads only what moved since the recorded watermark, and it also projects the **dirty working
-tree** — so a hand-edited file is searchable before you commit it.
+## update is the daily command
+
+`memhtml index update` reads only the files that moved since the watermark, and it reads the working
+tree as well, so a file you edited by hand is searchable before you commit it.
 
 ```json
 {
@@ -35,43 +39,45 @@ tree** — so a hand-edited file is searchable before you commit it.
 }
 ```
 
-`unchanged: true` means the watermark and the tree already agreed and nothing was written. `skipped` lists
-files git offered that failed to parse, each with a reason — counted, never fatal, because one bad file is
-not a bad tree. A non-empty `skipped` is the input to `memhtml doctor`'s `unparseable` finding.
+`unchanged: true` means the watermark and the tree already agreed, so nothing was written. `skipped`
+lists the files git offered that the parser refused, each with a reason. A skipped file is counted and
+never fatal, because one bad file does not make a bad tree, and a non-empty `skipped` is what
+`memhtml doctor` reports as its `unparseable` finding.
 
-`update --embed` embeds only its own batch's chunks: the pending scan is scoped to them, which is what
-keeps its cost independent of store size. So it will **not** close a store-wide embedding gap. That is
-`rebuild --embed`'s job, whose scan is unscoped precisely because a model migration is a whole-store
-question.
+`update --embed` embeds the chunks in its own batch and looks for missing vectors only inside that
+batch, which keeps its cost independent of how large the store is. It therefore leaves a store-wide
+embedding gap in place. Closing that gap is `rebuild --embed`'s job, and its scan covers the whole
+store because changing embedding models is a whole-store question.
 
-Vectors key on content hash either way, so a `git mv` — which is every archive and every eviction —
+Vectors are keyed on content hash, so a `git mv`, which is what every archive and every eviction is,
 issues zero Bedrock calls.
 
 ## Reach for rebuild when
 
 - the database file is gone or unopenable;
-- a migration adds a column the projection must recompute;
+- a migration adds a column the index has to recompute from the files;
 - you have just fixed files that `memhtml doctor` reported as `unparseable`;
 - you need to close a store-wide embedding gap.
 
-`update` with no recorded watermark falls through to a rebuild on its own
-(`packages/index/src/indexer.ts:565`), so a deleted database mostly handles itself — the cron line keeps
-working and the next pass is simply slower.
+`memhtml index update` with no recorded watermark falls through to a rebuild on its own
+(`packages/index/src/indexer.ts:565`). A deleted database therefore mostly heals itself: the cron line
+keeps working and the next pass takes longer than usual.
 
-A rebuild drops the FTS index, deletes every memory table, reprojects, and recreates the index
-(`packages/index/src/indexer.ts:389`). What it destroys is bounded: nothing outside `.memhtml/`, and
-within it neither the trace tables nor the attached state plane. So a rebuild costs no re-walk of
-`$MEMHTML_TRACE_ROOT` and loses no access counts.
+A rebuild drops the full-text search index, deletes every memory table, reads the tree again, and
+recreates the search index (`packages/index/src/indexer.ts:389`). What it destroys is bounded. It
+touches nothing outside `.memhtml/`, and inside `.memhtml/` it leaves the trace tables and the
+attached state plane alone. So a rebuild costs no re-walk of `$MEMHTML_TRACE_ROOT` and loses no
+access counts.
 
-## A vector-space mismatch is a hard refusal
+## A mismatched embedding model is a hard refusal
 
-Both `rebuild` and `update` call `guardEmbedModel()` before any write
+Both `rebuild` and `update` call `guardEmbedModel()` before they write anything
 (`packages/index/src/indexer.ts:241`). An index built under one embedding model can therefore never
-accumulate rows under another: you get `ERR_EMBED_MODEL_MISMATCH` naming the stored space and the
-configured one.
+accumulate rows under another. You get `ERR_EMBED_MODEL_MISMATCH`, naming the model the stored
+vectors came from and the model this process is configured to use.
 
-**A rebuild alone does not clear it** — the guard fires before the rebuild writes. Delete the database and
-rebuild into the configured space:
+A rebuild alone leaves the refusal in place, because the guard fires before the rebuild writes.
+Delete the database and rebuild into the configured space:
 
 ```bash
 memhtml status                                     # read embedModel and embedderUp
@@ -79,11 +85,12 @@ rm "$MEMHTML_ROOT"/.memhtml/index.db "$MEMHTML_ROOT"/.memhtml/index.db-*
 memhtml index rebuild --embed
 ```
 
-The `index.db-*` glob matters: it takes the WAL and shared-memory files with it. Nothing in the tree is at
-risk, and `state.db` is a separate file this does not touch.
+The `index.db-*` glob matters: it takes the write-ahead log and shared-memory files with it. Nothing
+in the tree is at risk, and `state.db` is a separate file this command leaves untouched.
 
-The refusal is the design working. A half-migrated index — some vectors in one space, some in another —
-would return cosines computed against two different geometries and never announce it.
+The guard is doing its job here. A half-migrated index, holding some vectors from one model and some
+from another, would return similarity scores computed against two different geometries and would
+never say so.
 
 ## Reading index status
 
@@ -118,14 +125,18 @@ memhtml index status
 }
 ```
 
-- `embedModel` is the space the **stored** vectors are in; `configuredEmbedModel` is the space this
-  process would write. `embedModelMatches` compares them, and the two values are reported separately so
-  you can see which side to change.
-- `embeddings: 0` with `chunks` non-zero is an embedding gap: run `memhtml index rebuild --embed`.
-- `derivedEdges` counts edges that sleep's relationship-mining phase mined into the index rather than into
-  files. They are re-derivable, which is why they live only here.
-- `hasState: false` means no state plane is attached, so the salience arm cannot fire.
-- `headSha` is the watermark. Compare it to `git rev-parse HEAD`; `memhtml status` does that for you and
-  reports `indexFresh`.
+- `embedModel` is the model the stored vectors came from, and `configuredEmbedModel` is the model
+  this process would write with. `embedModelMatches` compares the two, and both values are reported
+  so you can see which side to change.
+- `embeddings: 0` with `chunks` above zero is an embedding gap: run `memhtml index rebuild --embed`.
+- `derivedEdges` counts the links the nightly sleep cycle's relationship-mining phase inferred and
+  wrote into the index rather than into files. The system can derive them again, which is why they
+  live only here.
+- `hasState: false` means no state plane is attached, so the salience arm cannot fire. Retrieval
+  ranks with four arms: full-text search, vector similarity, recency, and salience, which favours
+  memories you have opened before. The first three keep working with no state plane; salience drops
+  out.
+- `headSha` is the watermark. Compare it against `git rev-parse HEAD`, or let `memhtml status` do
+  that for you and report `indexFresh`.
 
-[The index](/internals/the-index/) develops the projection and the watermark.
+[The index](/internals/the-index/) covers how the index is built and what the watermark records.

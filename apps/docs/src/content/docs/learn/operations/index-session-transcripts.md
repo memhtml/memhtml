@@ -10,8 +10,8 @@ memhtml trace links --session-id <id>
 memhtml trace links --path areas/inbox/some-memory.html
 ```
 
-The trace plane answers provenance questions: which session produced this memory, and which memories came
-out of that session. It is a separate plane from memory retrieval, deliberately.
+The trace plane answers provenance questions: which session produced this memory, and which memories
+came out of that session. It is a separate set of tables from memory retrieval, deliberately.
 
 ## Scanning
 
@@ -33,16 +33,18 @@ out of that session. It is a separate plane from memory retrieval, deliberately.
 }
 ```
 
-The scan reads only what changed, against a **size + mtime + byte-offset watermark**
-(`packages/traces/src/watermark.ts:66`), so an unchanged corpus reads zero bytes rather than re-walking the
-tree. That is what `bytesRead: 0` on a converged run means, and it is why the hourly cron line costs
-nothing.
+The scan reads only what changed. It compares each transcript against a watermark holding that file's
+size, its modification time, and the byte offset the last scan stopped at
+(`packages/traces/src/watermark.ts:66`), so an unchanged corpus reads zero bytes instead of re-walking
+the tree. That is what `bytesRead: 0` on a converged run means, and it is why the hourly cron line
+costs nothing.
 
-Both size **and** mtime must match to skip. Size alone would miss an in-place rewrite of the same length.
-`tailed` counts files read from their recorded offset forward; `rescanned` counts files read from the start
-because the watermark no longer described them.
+Both the size and the modification time have to match before the scan skips a file, because size alone
+would miss an in-place rewrite of the same length. `tailed` counts files read from their recorded offset
+forward, and `rescanned` counts files read from the start because the watermark no longer described
+them.
 
-`$MEMHTML_TRACE_ROOT` is **read-only and never written**. Nothing in this system modifies a transcript.
+`$MEMHTML_TRACE_ROOT` is read-only. Nothing in this system modifies a transcript.
 
 ## Searching
 
@@ -62,9 +64,10 @@ memhtml trace search "pool ceiling" --cwd /home/you/work/checkout-api
 }
 ```
 
-`memhtml trace search` is FTS over **session first-prompts and AI titles**, and it never enters memory
-retrieval. It is for finding the session, not the fact. `--cwd` restricts to sessions started from one
-directory, and `--since` is an ISO-8601 lower bound on `started_at`.
+`memhtml trace search` runs full-text search over session first-prompts and AI-written titles, and it
+never enters memory retrieval. Use it to find the session rather than the fact. `--cwd` restricts the
+results to sessions started from one directory, and `--since` is an ISO-8601 lower bound on
+`started_at`.
 
 ## Joining traces to memories
 
@@ -73,13 +76,13 @@ memhtml trace links --session-id 0d8f…      # every memory this session touche
 memhtml trace links --path resources/infra/one-writer.html   # every session that touched this memory
 ```
 
-Both directions, one command. A link carries its `link_kind`, so you can tell a memory a session *wrote*
-from one it merely *read* — provenance is queryable both ways because `memhtml write --session-id` stamps
-the session into the head **and** indexes it as a link, and `memhtml read --session-id` records a `read`
-link.
+Both directions come from one command. A link carries its `link_kind`, so you can tell a memory a
+session wrote from one it only read. Provenance reads both ways because `memhtml write --session-id`
+stamps the session into the file's head and also indexes it as a link, and `memhtml read --session-id`
+records a `read` link.
 
-Calling it with neither `--session-id` nor `--path` is a refusal, not a scan of the whole table
-(`apps/cli/src/operations.ts:1415`):
+Calling `trace links` with neither `--session-id` nor `--path` is a refusal rather than a scan of the
+whole table (`apps/cli/src/operations.ts:1415`):
 
 ```json
 {
@@ -92,30 +95,30 @@ Calling it with neither `--session-id` nor `--path` is a refusal, not a scan of 
 
 ## The firewall
 
-Two properties keep the trace plane from leaking into memory:
+Two properties keep the trace plane out of memory retrieval.
 
-**Traces never enter memory retrieval.** `memhtml search` and `memhtml recall` rank memories. `memhtml
-trace search` ranks sessions. There is no query that returns both, and no arm of the four-arm fold reads a
-trace row.
+Traces stay out of the ranked path. `memhtml search` and `memhtml recall` rank memories, `memhtml trace
+search` ranks sessions, no query returns both, and none of retrieval's four ranking arms, which are
+full-text search, vector similarity, recency, and salience, reads a trace row.
 
-**A memory rebuild never touches the trace tables** (`packages/index/src/schema-const.ts:59`). So
-`memhtml index rebuild` — which drops the FTS index and deletes every memory table — costs no re-walk of
-`$MEMHTML_TRACE_ROOT`. The trace plane and the memory projection are rebuilt by different commands because
-they are recovered from different sources: the tree for one, the transcripts for the other.
+A memory rebuild leaves the trace tables alone (`packages/index/src/schema-const.ts:59`). So `memhtml
+index rebuild`, which drops the full-text search index and deletes every memory table, costs no re-walk
+of `$MEMHTML_TRACE_ROOT`. The trace plane and the memory index are rebuilt by different commands
+because they are recovered from different sources: the tree for one, the transcripts for the other.
 
-The recovery for the trace tables is therefore to re-run `memhtml trace index` from a zero watermark, which
-re-walks `$MEMHTML_TRACE_ROOT` in full: slow, not lossy.
+Recovering the trace tables therefore means re-running `memhtml trace index` from a zero watermark,
+which re-walks `$MEMHTML_TRACE_ROOT` in full: slow, and it loses nothing.
 
 ## How transcripts become memories
 
-The scan indexes transcripts; it does not distil them. Turning a session into a memory is the
-`trace-consolidation` phase of the nightly cycle, which hands unread transcripts to an agent and commits
-one memory per candidate that clears the bar. Its batch is at most ten sessions a night, so the two
-commands pair naturally: index hourly, consolidate nightly.
+The scan indexes transcripts and leaves them as transcripts. Turning a session into a memory is the
+`trace-consolidation` phase of the nightly cycle, which hands unread transcripts to an agent and
+commits one memory per candidate that clears the bar. Its batch is at most ten sessions a night, so the
+two commands pair naturally: index hourly, consolidate nightly.
 
-`memhtml trace index` on the cron is therefore the prerequisite for that phase having anything to read. See
-[run and review a sleep cycle](/learn/operations/run-and-review-a-sleep-cycle/) for what the phase reports
-when it distils nothing.
+`memhtml trace index` on the cron is therefore the prerequisite for that phase having anything to read.
+See [run and review a sleep cycle](/learn/operations/run-and-review-a-sleep-cycle/) for what the phase
+reports when it distils nothing.
 
-[The trace indexer and its firewall](/internals/the-trace-indexer/) develops the streaming
-parser and the watermark.
+[The trace indexer and its firewall](/internals/the-trace-indexer/) covers the streaming parser and the
+watermark.

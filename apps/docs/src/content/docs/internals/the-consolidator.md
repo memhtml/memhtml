@@ -5,42 +5,42 @@ description: The live system prompt of the agent that distils candidate memories
 
 ## 1. What this page is
 
-`apps/consolidator/agent/instructions.md` is the system prompt of the eve agent that phase 12 of
-[the sleep pipeline](/internals/the-sleep-pipeline/) runs. It is reproduced below **verbatim, as a live
-system prompt** — not as prose written for documentation. It is addressed to the agent, in the second
-person, and it is the file the running system reads; the mounts, limits, and refusal rules it names are the
-ones in force.
+`apps/consolidator/agent/instructions.md` is the system prompt of the agent that phase 12 of
+[the sleep pipeline](/internals/the-sleep-pipeline/) runs. Section 4 reproduces it verbatim, as a live
+system prompt rather than as prose written for documentation. It addresses the agent in the second person,
+it is the file the running system reads, and the mounts, limits, and refusal rules it names are the ones in
+force.
 
-It is published here because it is the only place the *editorial* policy of the corpus is written down.
-Every other page in this topic describes a mechanism; this one is the bar a candidate memory has to clear
-before a mechanism ever sees it.
+It is published here because it is the only place the editorial policy of the corpus is written down. Every
+other page in this topic describes a mechanism. This one is the bar a candidate memory has to clear before
+a mechanism ever sees it.
 
 ## 2. Why the bar is where it is
 
-The phase exists because anything an agent learned mid-session and did not explicitly write is otherwise
-lost: the transcripts hold it, the corpus does not. That makes the failure mode obvious in hindsight and
-easy to walk into — a plausible, well-written candidate that restates one line of one transcript passes
-every schema check and adds nothing to the corpus, while costing a reviewer a commit to read and the
-retrieval stack a near-duplicate to rank.
+The phase exists because anything an agent learned mid-session and did not explicitly write down is
+otherwise lost: the transcripts hold it and the corpus does not. The failure mode is easy to walk into. A
+plausible, well-written candidate that restates one line of one transcript passes every schema check and
+adds nothing to the corpus, while costing a reviewer a commit to read and the retrieval stack a
+near-duplicate to rank.
 
-So the prompt's central rule is stated as something checkable rather than as an exhortation: a candidate
-must name a pattern *across* lines or sessions, and it must carry at least two verbatim evidence quotes.
-The quote requirement is the bar restated — a cross-session pattern has two lines behind it by definition,
-so a candidate that cannot find a second quote is one line dressed up.
+So the prompt's central rule is stated as something checkable. A candidate must name a pattern across
+lines or sessions, and it must carry at least two verbatim evidence quotes. The quote requirement restates
+the bar: a cross-session pattern has two lines behind it by definition, so a candidate that cannot find a
+second quote is one line dressed up.
 
 Both halves are enforced outside the prompt as well, because a prompt is guidance and a schema is a
-refusal. Fewer than two quotes fails the whole answer (`apps/consolidator/src/contract.ts:93`), a quote is
-capped at 600 characters so it cannot smuggle a transcript, and every cited `sessionId` is checked for
-membership in the batch actually seeded, so an invented citation fails the turn rather than landing
-unfalsifiable (`apps/consolidator/src/contract.ts:133`).
+refusal. Fewer than two quotes fails the whole answer (`apps/consolidator/src/contract.ts:93`). A quote is
+capped at 600 characters so that it cannot smuggle in a transcript. Every cited `sessionId` is checked for
+membership in the batch that was actually seeded, so an invented citation fails the turn rather than
+landing where nobody can check it (`apps/consolidator/src/contract.ts:133`).
 
-## 3. Transcript content is data, not instruction
+## 3. Transcript content is data rather than instruction
 
 Transcripts are recordings of other agent sessions, so they are full of instruction-shaped text: system
 prompts, user commands, tool definitions, and earlier agents' rules. The prompt therefore states the
-injection boundary explicitly, and it is worth reading as a design decision rather than as boilerplate — a
-line in a transcript saying "ignore previous instructions" is a *finding the agent may cite as evidence*,
-never a directive it follows.
+injection boundary explicitly, and it is a design decision rather than boilerplate. A line in a transcript
+saying "ignore previous instructions" is a finding the agent may cite as evidence, and never a directive it
+follows.
 
 ## 4. The prompt, verbatim
 
@@ -188,14 +188,14 @@ checked in the gist when the claim turns on an absence.
 Return the structured object you were asked for and nothing else. No prose wrapper, no markdown
 fence, no commentary before or after it.
 ```
-
 ## 5. How its output reaches the corpus
 
 The candidates come back as a structured object, and the phase writes each accepted one as an ordinary
-memory through the store — same render gate, same dedup, same path algebra as any agent write. One commit
-per distilled memory, so a reviewer reads one claim at a time.
+memory through the store, with the same render gate, the same duplicate detection, and the same path
+algebra as any agent write. There is one commit per distilled memory, so a reviewer reads one claim at a
+time.
 
 The evidence quotes go into the commit message and nowhere else
-(`packages/sleep/src/phases/trace-consolidation.ts:158-165`): a commit message is not indexed, not
-chunked, not embedded, and not retrievable, so the memory body carries the claim while the commit carries
-the receipt.
+(`packages/sleep/src/phases/trace-consolidation.ts:158-165`). A commit message is not indexed, not
+chunked, not embedded, and not retrievable, so the memory body carries the claim and the commit carries the
+receipt.

@@ -154,6 +154,15 @@ export default defineConfig({
        */
       expressiveCode: {
         plugins: [pluginLineNumbers(), pluginCollapsibleSections()],
+        /*
+         * A ```d2 fence is a figure source, not a code sample: `astro-d2` renders it to an SVG and
+         * replaces the block. Expressive Code still sees the fence first, finds no highlighter for
+         * `d2`, and warns once per figure. Eight chapters carry figures, so the warning drowned
+         * `astro check`'s output and broke a test that searches that output for a filename.
+         *
+         * Aliasing it to plain text says what is true: nothing here needs highlighting.
+         */
+        shiki: { langAlias: { cron: "txt", d2: "txt" } },
         styleOverrides: {
           borderRadius: "0",
           borderColor: "var(--memhtml-rule)",

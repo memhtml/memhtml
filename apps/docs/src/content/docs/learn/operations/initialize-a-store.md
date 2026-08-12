@@ -9,10 +9,10 @@ memhtml init
 memhtml index rebuild --embed
 ```
 
-`memhtml init` is **convergent**: each step asks the repository what is already true and supplies only
-what is missing (`packages/store/src/layout.ts:183`). It reaches the same end state from an empty
-directory, from a fully scaffolded repository, and from one left half-initialized by an interrupted run.
-Re-running it is always safe, and on a converged store it writes nothing:
+`memhtml init` asks the repository what is already there and writes only what is missing
+(`packages/store/src/layout.ts:183`). It reaches the same end state from an empty directory, from a
+fully scaffolded repository, and from one an interrupted run left half-finished. Re-running it is
+always safe, and on a store that already has everything it writes nothing:
 
 ```json
 {
@@ -27,16 +27,19 @@ Re-running it is always safe, and on a converged store it writes nothing:
 }
 ```
 
-## memhtml init is required on a fresh clone
+## Run memhtml init in every clone
 
-This is the part that bites, and it has nothing to do with the database.
+Run it even when you cloned a store someone else already initialized. The scaffolded files travel
+with the clone; the git config one of them depends on does not.
 
-`.gitattributes` marks `index.html` and `sitemap.xml` `merge=ours`. That attribute is **inert** without
-the matching `merge.ours.driver` git config (`packages/store/src/layout.ts:76`) — and git config is
-per-clone and is not cloned. So a clone that skips `memhtml init` gets conflict markers written into a
+`.gitattributes` marks `index.html` and `sitemap.xml` with `merge=ours`, which tells git to keep the
+local version of those two files instead of merging them line by line. The attribute does nothing on
+its own: git only honours it when the clone's own config also names the driver as
+`merge.ours.driver` (`packages/store/src/layout.ts:76`), and git config is per clone and never
+travels with a clone. So a clone that skips `memhtml init` gets conflict markers written into a
 generated file the first time a merge touches one.
 
-Verify it:
+Check the config directly:
 
 ```bash
 git -C "$MEMHTML_ROOT" config --get merge.ours.driver
@@ -46,8 +49,9 @@ git -C "$MEMHTML_ROOT" config --get merge.ours.driver
 true
 ```
 
-Anything other than `true` means run `memhtml init`. If a conflict has already landed in a generated
-artifact, the resolution is `memhtml publish` — regenerate rather than hand-edit.
+Anything other than `true` means you still need to run `memhtml init`. If a merge has already
+written conflict markers into a generated file, run `memhtml publish` and let it regenerate the file
+rather than editing it by hand.
 
 The scaffolded `.gitattributes` is three lines:
 
@@ -57,10 +61,11 @@ sitemap.xml merge=ours
 *.html diff=html
 ```
 
-## A clone carries the tree and the sidecar, not the databases
+## What a clone gives you
 
-`.memhtml/index.db` and `.memhtml/state.db` are both gitignored (`packages/store/src/layout.ts:55`),
-along with their WAL and shared-memory companions:
+`.memhtml/index.db` and `.memhtml/state.db` are both gitignored
+(`packages/store/src/layout.ts:55`), along with the write-ahead log and shared-memory files SQLite
+keeps beside them:
 
 ```
 .memhtml/index.db
@@ -69,13 +74,17 @@ along with their WAL and shared-memory companions:
 .memhtml/state.db-*
 ```
 
-So what a clone gives you is the tree plus `.memhtml/state/access.jsonl`. That is why `memhtml state
-import` is a step in [recovery](/learn/operations/recover-from-a-lost-index/) and not an optimization:
-without it the salience retrieval arm has no signal, and ranking is silently poorer rather than broken.
+A clone therefore hands you the tree and the committed sidecar `.memhtml/state/access.jsonl`, and no
+databases at all. That sidecar is why `memhtml state import` is a step in
+[recovery](/learn/operations/recover-from-a-lost-index/). Retrieval ranks a
+query with four arms: full-text search, vector similarity, recency, and salience, which favours
+memories you have opened and reinforced before. Skip the import and the salience arm has no signal to
+work with, so ranking gets quietly worse instead of failing.
 
 ## What the scaffold contains
 
-`memhtml init` creates the four PARA buckets and the directories the system writes into on its own:
+`memhtml init` creates four top-level buckets, following the PARA convention, plus the directories
+the system writes into on its own:
 
 ```
 projects/       areas/          resources/      archive/
@@ -84,24 +93,26 @@ areas/arcs/     areas/inbox/    resources/people/
 .gitignore      .gitattributes  README.html
 ```
 
-`areas/arcs/` holds behavioural arcs, which only sleep writes. `resources/people/` is the person plane.
-`areas/inbox/` is where an unplaceable memory lands, and [`memhtml
-doctor`](/learn/operations/audit-and-publish-the-corpus/) warns when it gets crowded, because a full
-inbox means the placement rules stopped matching what agents write.
+Only the nightly sleep cycle writes into `areas/arcs/`, which holds behavioural arcs: memories that
+summarize a pattern running across many other memories. `resources/people/` is the person plane. A
+memory the placement rules cannot place lands in `areas/inbox/`, and
+[`memhtml doctor`](/learn/operations/audit-and-publish-the-corpus/) warns you when that directory
+gets crowded, because a full inbox means the placement rules stopped matching what agents write.
 
-`memhtml init` also applies the migrations, so `.memhtml/index.db` exists and holds nothing until
-`memhtml index rebuild` projects the tree into it.
+`memhtml init` also applies the database migrations, so `.memhtml/index.db` exists from the start and
+holds nothing until `memhtml index rebuild` projects the tree into it.
 
-Every scaffold file is written **only when absent**, so a re-run never overwrites an edited one — the
+Every scaffold file is written only when it is absent, so a re-run leaves an edited one alone. The
 `README.html` you rewrote stays rewritten.
 
-## Then build the projection
+## Then build the index
 
 ```bash
 memhtml index rebuild --embed
 ```
 
-`--embed` fills vectors from Bedrock and is the only step here that costs anything. `--no-embed` makes it
-instant, leaves retrieval on its lexical floor, and a later `memhtml index rebuild --embed` closes the
-gap. [Rebuild the index](/learn/operations/rebuild-the-index/) covers the difference between `rebuild`
-and `update`, and the one refusal a rebuild alone cannot clear.
+`--embed` fills in the vectors by calling Bedrock, and it is the only step here that costs money.
+`--no-embed` finishes instantly and leaves retrieval running on full-text search, recency, and
+salience; a later `memhtml index rebuild --embed` fills the vectors in and closes the gap.
+[Rebuild the index](/learn/operations/rebuild-the-index/) covers when `update` is enough instead of
+`rebuild`, and the one refusal a rebuild alone cannot clear.

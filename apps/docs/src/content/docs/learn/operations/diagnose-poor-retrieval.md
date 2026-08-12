@@ -1,6 +1,6 @@
 ---
 title: Diagnose poor retrieval
-description: Where to look when search returns the wrong thing, nothing errors, and the store looks fine — plus the full error-code table.
+description: Where to look when search returns the wrong thing, nothing errors, and the store looks fine, plus the full error-code table.
 ---
 
 Three commands cover almost every case:
@@ -13,51 +13,48 @@ memhtml doctor
 
 ## The four symptoms, and what each one means
 
-**`indexFresh: false`** → `memhtml index update --embed`.
+`indexFresh: false` calls for `memhtml index update --embed`. The index describes one commit, and
+"fresh" means that commit is HEAD (`apps/cli/src/operations.ts:1524`). A stale index returns old
+answers rather than wrong ones, and the memory you wrote an hour ago is absent from them.
 
-The index describes a commit; "fresh" means that commit is HEAD (`apps/cli/src/operations.ts:1524`). A
-stale index does not return wrong answers so much as *old* ones, and the memory you wrote an hour ago is
-simply absent.
+`embedderUp: false` means one of two things: the stored vectors came from a different embedding model
+than the configured one, or the index holds no vectors at all
+(`apps/cli/src/operations.ts:1530`). The field is read off the stored watermark rather than by calling
+Bedrock, so it never fails for a reason unrelated to the corpus. Compare `embedModel` against
+`configuredEmbedModel` on `memhtml index status`. If they differ, the fix is in
+[rebuild the index](/learn/operations/rebuild-the-index/). If they agree and `embeddings` is 0, run
+`memhtml index rebuild --embed`.
 
-**`embedderUp: false`** → the stored watermark disagrees with the configured model, or there are zero
-vectors (`apps/cli/src/operations.ts:1530`).
+`degraded: true` on a search response means the query embedder returned nothing. Search still works:
+it ranked with three of its four arms, using full-text search, recency, and salience while vector
+similarity sat out. Check `MEMHTML_AWS_REGION` and the Bedrock credential. If `MEMHTML_EMBED=off` is
+set, that is your answer and someone chose it.
 
-It is read off the stored watermark rather than by probing Bedrock, so it never fails for a reason
-unrelated to the corpus. Compare `embedModel` against `configuredEmbedModel` on `memhtml index status`: if
-they differ, the fix is in [rebuild the index](/learn/operations/rebuild-the-index/). If they agree and
-`embeddings` is 0, run `memhtml index rebuild --embed`.
+Quality feels wrong while nothing errors, so run `memhtml eval discriminate`. That command is the
+discrimination gate: it checks that each probe query ranks its target fact above deliberately wrong
+versions of the same fact. It tells you whether the ranking stack is broken or the corpus never held
+the answer, which reading search output cannot. See
+[check the discrimination gate](/learn/operations/check-the-discrimination-gate/).
 
-**`degraded: true` on a search response** → the query embedder returned nothing.
-
-Search still works on the lexical floor; the fold ran with three arms instead of four. Check
-`MEMHTML_AWS_REGION` and the Bedrock credential. If `MEMHTML_EMBED=off` is set, that is the answer and it
-was a decision.
-
-**Quality feels wrong but nothing errors** → `memhtml eval discriminate`.
-
-That is what it is for. It separates a broken ranking stack from a corpus that does not hold the answer,
-and no amount of reading search output will do that. See [check the discrimination
-gate](/learn/operations/check-the-discrimination-gate/).
-
-## A search should never error instead of returning nothing
+## A search returns an empty result, never a driver error
 
 Query text goes through `sanitizeFtsQuery` before it reaches `MATCH`
-(`packages/index/src/fts-query.ts:35`), because several forms common in prose are hard driver errors rather
-than empty results:
+(`packages/index/src/fts-query.ts:35`), because several forms common in prose are hard driver errors in
+SQLite's full-text search rather than empty results:
 
-- an apostrophe — `don't`;
-- a `type:name` entity reference — `service:checkout-api`, which is exactly the form a hit's `entities`
-  publishes;
-- a leading hyphen, which FTS reads as negation.
+- an apostrophe, as in `don't`;
+- a `type:name` entity reference such as `service:checkout-api`, which is exactly the form a hit's
+  `entities` publishes;
+- a leading hyphen, which the full-text search engine reads as negation.
 
-**A query that errors means the sanitizer was bypassed.** That is a bug to report, not a configuration
-problem to work around, and you should not sanitize on your side.
+A query that errors means something bypassed the sanitizer. Report that as a bug, and leave your own
+side unsanitized.
 
 ## The tree is dirty and sleep refuses
 
 Preflight calls `requireCleanTree()` (`packages/sleep/src/phases/preflight.ts:22`) and fails with
-`ERR_DIRTY_TREE` listing the paths. A phase reading the index while the tree holds uncommitted edits would
-curate a corpus nobody has. The refusal lands in phase one, so it costs nothing.
+`ERR_DIRTY_TREE`, listing the paths. A phase that read the index while the tree held uncommitted edits
+would curate a corpus nobody else has. The refusal lands in phase one, so it costs nothing.
 
 ```bash
 git -C "$MEMHTML_ROOT" status --porcelain
@@ -65,22 +62,22 @@ memhtml index update --embed      # the indexer DOES read dirty paths
 # then commit or stash, and re-run
 ```
 
-Those two facts sit together on purpose: the indexer reads the dirty tree so your edit is searchable
-immediately, and sleep refuses it so curation never runs against a tree only you can see.
+The indexer reads the dirty tree so your edit is searchable immediately, and sleep refuses the same
+tree so curation never runs against a state only you can see.
 
-## Empty results that are not a retrieval problem
+## Empty results with a cause outside the ranker
 
-Before assuming the ranker, read three fields off the search envelope:
+Before you suspect the ranker, read three fields off the search envelope:
 
-- **`scopeEmpty: true`** — a scope was named, it narrowed the query, and nothing survived. That is a typo
-  in a `--workspace` or an `--entity`, not a missing memory. It is never true for an unscoped empty result.
-- **`entityScope`** — echoed back so an empty result is attributable. An `--entity` scope that matches
-  nothing returns no hits and says so; it never widens.
-- **`hits: []` with `degraded: false`** — the corpus does not contain it. Try `--include-archived`:
-  eviction is a `git mv`, so an archived memory still exists and is excluded by default.
+- `scopeEmpty: true` means a scope was named, it narrowed the query, and nothing survived. Look for a
+  typo in a `--workspace` or an `--entity` value. The field is never true for an unscoped empty result.
+- `entityScope` echoes the scope back, so you can attribute an empty result. An `--entity` scope that
+  matches nothing returns no hits and says so, and it never widens on its own.
+- `hits: []` with `degraded: false` means the corpus does not contain it. Try `--include-archived`:
+  eviction is a `git mv`, so an archived memory still exists and search excludes it by default.
 
-Also remember that a `task` memory is **default-excluded from search**. Use `memhtml task list` for the
-task working set — it is a direct indexed scan with blockers, never ranked retrieval.
+Also remember that search excludes `task` memories by default. Use `memhtml task list` for the task
+working set, which is a direct indexed scan with blockers rather than ranked retrieval.
 
 ## Error codes
 
@@ -91,11 +88,11 @@ ERR_INDEX_STALE       ERR_EMBED_MODEL_MISMATCH  ERR_MODEL_UNAVAILABLE   ERR_STOR
 ERR_GIT               ERR_DISCRIMINATION_FAILED ERR_UNKNOWN
 ```
 
-Fifteen codes (`apps/cli/src/envelope.ts:66`), append-only: a shipped code never changes meaning and is
-never removed.
+Fifteen codes (`apps/cli/src/envelope.ts:66`), append-only: a shipped code keeps its meaning forever
+and is never removed.
 
-**Branch on `code`, never on the `error` prose**, which changes freely as wording improves. Most failures
-carry `suggestions`, and those are commands you can run (`apps/cli/src/errors.ts:128`):
+Branch on `code` and never on the `error` prose, which changes freely as the wording improves. Most
+failures carry `suggestions`, and those are commands you can run (`apps/cli/src/errors.ts:128`):
 
 ```json
 {
@@ -109,9 +106,9 @@ carry `suggestions`, and those are commands you can run (`apps/cli/src/errors.ts
 }
 ```
 
-Every `memhtml …` suggestion is checked against the command table by the suite
-(`apps/cli/tests/cli.test.ts:392`), so a renamed command cannot leave a suggestion naming a command that no
-longer exists. A typo gets a candidate rather than a dead end:
+The suite checks every `memhtml …` suggestion against the command table
+(`apps/cli/tests/cli.test.ts:392`), so a renamed command cannot leave a suggestion naming a command
+that no longer exists. A typo gets a candidate back rather than a dead end:
 
 ```json
 {
@@ -122,9 +119,9 @@ longer exists. A typo gets a candidate rather than a dead end:
 }
 ```
 
-That one exits **2** — a usage error you fix by changing the call — where `ERR_PATH_NOT_FOUND` exits **1**,
-a runtime failure you fix by changing the repo or the environment.
+That one exits 2, which marks a usage error you fix by changing the call. `ERR_PATH_NOT_FOUND` exits 1,
+which marks a runtime failure you fix by changing the repo or the environment.
 
-For an AI agent that distinction is the whole triage: exit 2 means re-read `memhtml manifest` and re-issue a
-corrected call, exit 1 means re-issuing the same call will fail identically until something outside the call
-changes.
+For an AI agent that distinction is the whole triage. Exit 2 means re-read `memhtml manifest` and
+re-issue a corrected call. Exit 1 means the same call will fail identically until something outside the
+call changes.

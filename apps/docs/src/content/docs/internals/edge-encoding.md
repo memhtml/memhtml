@@ -1,32 +1,35 @@
 ---
 title: Edge encoding
-description: Authored edges live in the HTML, derived edges live only in the index, and four non-mixing classes keep a to-do list out of the knowledge graph.
+description: Authored edges live in the HTML, mined edges live only in the index, and four classes that never mix keep a to-do list out of the knowledge graph.
 ---
 
 ## 1. Authored in the HTML, derived in the index
 
-An agent asserting "this supersedes that" is authorship — small, reviewable in a diff, and exactly
-what git is for. A sleep-mined `relates_to` at cosine 0.87 is a re-derivable function of the corpus
-and the embedder; committing thousands would bury every real diff in machine noise for zero
-recoverable information (`packages/sleep/src/phases/relationship-mining.ts:6-19`).
+An agent asserting that one memory supersedes another is authorship. It is small, it reads well in a
+diff, and git is built for it. A `relates_to` edge mined at cosine 0.87 by the nightly pipeline is a
+function of the corpus and the embedding model, computable again at any time, and committing thousands of
+them would bury every human diff in machine output while recovering nothing
+(`packages/sleep/src/phases/relationship-mining.ts:6-19`).
 
 So authored edges are `<link rel="memhtml-*">` elements in the file, and derived edges exist only as
 `edges` rows in the index. Deleting the index costs the derived set and nothing else.
 
 ## 2. The `derived` column is the firewall
 
-The retention `contestedStatus` signal counts only authored (`derived = 0`) contradictions
-(`packages/contracts/src/edges.ts:122-128`, `packages/domain/src/retention.ts:164-166`), so an
-uncorroborated machine suspicion can never evict a memory.
+The retention scorer's `contestedStatus` signal counts authored contradictions only, meaning rows with
+`derived = 0` (`packages/contracts/src/edges.ts:122-128`,
+`packages/domain/src/retention.ts:164-166`). An uncorroborated machine suspicion therefore cannot evict a
+memory.
 
-The one fact that does not survive a rebuild — the corroboration counter — lives in the state plane,
-and the conflict phase promotes a corroborated contradiction into both files, after which the counter
-is decoration and the fact is file-borne. `derived = 1` outside `provenance = 'sleep'` is refused by a
-SQL CHECK (`packages/index/migrations/0008_tasks.sql:147`), and the same condition is stated once in
-`isWellFormedEdge` (`packages/contracts/src/edges.ts:146-149`) so a caller can refuse a bad edge
-before the driver does.
+One fact in this area does not survive a rebuild: the counter recording how many times a contradiction
+has been detected. It lives in the state plane. The nightly conflict phase promotes a corroborated
+contradiction into both files, after which the counter is decoration and the fact is carried by the files
+themselves. A SQL CHECK refuses `derived = 1` outside `provenance = 'sleep'`
+(`packages/index/migrations/0008_tasks.sql:147`), and `isWellFormedEdge` states the same condition once
+in TypeScript (`packages/contracts/src/edges.ts:146-149`) so a caller can refuse a bad edge before the
+driver does.
 
-## 3. Four non-mixing classes
+## 3. Four classes that never mix
 
 `EDGE_CLASSES` (`packages/contracts/src/edges.ts:9`) is `memory`, `person`, `provenance`, `task`.
 
@@ -37,43 +40,46 @@ before the driver does.
 | `provenance` | `from_session` | `packages/contracts/src/edges.ts:41` |
 | `task` | `blocks`, `subtask_of` | `packages/contracts/src/edges.ts:54` |
 
-The class is **derived** from the rel (`packages/contracts/src/edges.ts:70`) rather than carried
-alongside it, so the two cannot disagree. `relClassFor` is total over `ALL_RELS` and injective per
-class — a rel name appears in exactly one class.
+The class is derived from the rel (`packages/contracts/src/edges.ts:70`) rather than stored beside it, so
+the two cannot disagree. `relClassFor` is total over `ALL_RELS`, and each rel name appears in exactly one
+class.
 
-SQL CHECKs pair each class with its vocabulary (`packages/index/migrations/0008_tasks.sql:168-174`)
-and every memory-graph query filters `edge_class = 'memory'`, so a person or task edge is structurally
-incapable of entering PageRank, MMR, or the retention bridge count.
+SQL CHECK constraints pair each class with its vocabulary
+(`packages/index/migrations/0008_tasks.sql:168-174`), and every memory-graph query filters on
+`edge_class = 'memory'`. A person edge or a task edge therefore cannot enter PageRank, the
+diversification pass, or the retention scorer's bridge count.
 
-The HTML `rel` token is the rel with the `memhtml-` prefix and its underscores hyphenated
-(`packages/contracts/src/edges.ts:106-110`), so `laterally_related` is `memhtml-laterally-related`.
-`relForToken` is the inverse on that image (`packages/contracts/src/edges.ts:116`).
+The HTML `rel` token is the rel with a `memhtml-` prefix and its underscores turned into hyphens
+(`packages/contracts/src/edges.ts:106-110`), so `laterally_related` becomes
+`memhtml-laterally-related`. `relForToken` inverts that mapping (`packages/contracts/src/edges.ts:116`).
 
 ## 4. What SQL cannot enforce, the store refuses
 
-SQL cannot enforce the *type* of the files at either end, so the store refuses an edge whose class
-disagrees with its endpoints (`packages/store/src/store.ts:838-870`). Both directions are refusals
-with distinct failure modes:
+SQL cannot check the type of the files at either end of an edge, so the store refuses an edge whose class
+disagrees with its endpoints (`packages/store/src/store.ts:838-870`). Both directions are refusals, with
+a distinct failure behind each:
 
 - a memory rel with a task endpoint would let a to-do list reweight the retention of knowledge;
-- a task rel with a memory endpoint claims a memory `blocks` something nothing can close.
+- a task rel with a memory endpoint claims a memory `blocks` something that nothing can close.
 
-`memhtml link` accepts the task rels; the MCP `memory_link` tool does not, refusing one at decode.
+`memhtml link` accepts the task rels. The MCP `memory_link` tool refuses one while decoding its
+arguments.
 
 ## 5. Href form
 
-`href` values are repo-root-relative with a leading slash — a document-reference form converted at the
-HTML boundary and never stored (`packages/index/src/project.ts:336-344`). Root-relative survives a
-`git mv` of the source, is greppable as a fixed string, and resolves without knowing the referrer's
-depth. A self-loop is dropped at projection time.
+An `href` value is repository-root-relative with a leading slash. That leading slash is a
+document-reference form, converted at the HTML boundary and never stored
+(`packages/index/src/project.ts:336-344`). A root-relative href survives a `git mv` of the source file,
+greps as a fixed string, and resolves without knowing how deep the referring file sits. A self-loop is
+dropped when the file is projected.
 
 ## 6. No foreign key on the endpoints
 
-There is deliberately no foreign key on `edges.src_path`/`dst_path`: a `<link>` may name a file the
-indexer has not reached, or an archived path, and a hard FK would make indexing order-dependent
-(`packages/index/src/indexer.ts:470-473`).
+`edges.src_path` and `edges.dst_path` carry no foreign key, on purpose. A `<link>` may name a file the
+indexer has not reached yet, or an archived path, and a hard foreign key would make indexing depend on
+the order files arrive in (`packages/index/src/indexer.ts:470-473`).
 
-Dangling hrefs are therefore found rather than prevented — by a LEFT JOIN
-(`packages/sleep/src/sql.ts:524`) — and repaired in a commit by the sleep pipeline's integrity phase,
-which distinguishes an archived target (rewrite the href to the derived archive path) from a target
-that is simply gone (drop the edge with a warning).
+Dangling hrefs are therefore found rather than prevented. A LEFT JOIN finds them
+(`packages/sleep/src/sql.ts:524`) and the sleep pipeline's integrity phase repairs them in a commit,
+distinguishing an archived target, where it rewrites the href to the derived archive path, from a target
+that is simply gone, where it drops the edge with a warning.
