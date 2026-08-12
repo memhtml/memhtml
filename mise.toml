@@ -196,3 +196,17 @@ run = "node apps/cli/dist/bin.js"
 description = "Run the memhtml-mcp stdio server over this repo"
 raw = true
 run = "node apps/cli/dist/bin.js serve mcp"
+
+# The docs site. Both delegate to the package's own scripts, so turbo keeps ownership of the task
+# graph: `docs:build` through turbo builds @memhtml/cli first (build.dependsOn = ["^build"]), which
+# the generated reference needs because @memhtml/* exports resolve only to ./dist.
+[tasks."docs:dev"]
+description = "Run the docs site dev server"
+raw = true
+raw_args = true
+run = "pnpm --filter @memhtml/docs dev"
+
+[tasks."docs:build"]
+description = "Build the docs site into apps/docs/dist"
+raw_args = true
+run = "pnpm turbo run build --filter=@memhtml/docs"

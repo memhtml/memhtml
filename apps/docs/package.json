@@ -1,0 +1,24 @@
+{
+  "name": "@memhtml/docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "astro build",
+    "dev": "astro dev",
+    "preview": "astro preview",
+    "typecheck": "astro check",
+    "lint": "biome check src astro.config.ts --no-errors-on-unmatched"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.41.7",
+    "@memhtml/cli": "workspace:*",
+    "astro": "^7.2.1"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "@biomejs/biome": "2.5.8",
+    "@types/node": "24.13.3",
+    "typescript": "6.0.3"
+  }
+}

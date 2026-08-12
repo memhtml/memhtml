@@ -44,6 +44,13 @@ allowBuilds:
   # inside that sandbox's virtual filesystem. The consolidator puts only plain-text JSONL
   # transcripts in there and never decompresses anything, so neither is on any path it
   # takes; both also want node-gyp, which no CI image here provides.
+  #
+  # esbuild: reached through astro -> vite. Its install script only validates the platform binary
+  # and swaps the JS launcher in node_modules/esbuild/bin for the native one. The JS API resolves
+  # @esbuild/<platform>-<arch> itself at call time, and that is the only path Astro and Vite take,
+  # so denying the script leaves esbuild.transform() and `astro build` working — measured, both
+  # exit 0. Denied like every other native accelerator here.
   "@mongodb-js/zstd": false
   msgpackr-extract: false
   node-liblzma: false
+  esbuild: false

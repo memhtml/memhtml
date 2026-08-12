@@ -3,6 +3,9 @@ dist/
 dist-check/
 coverage/
 .turbo/
+# Astro's generated types and dev cache. It holds a dev.json carrying a live PID, which is also
+# why it is not a turbo output: a restored cache makes `astro dev` refuse to start.
+.astro/
 *.tsbuildinfo
 .env
 .env.local
