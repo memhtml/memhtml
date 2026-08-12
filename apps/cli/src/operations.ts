@@ -21,6 +21,7 @@ import {
   type LinkKind,
   persistScanned,
   Retrieval,
+  readIndexState,
   readWatermark,
   reinforce,
   type SearchScope,
@@ -1741,11 +1742,7 @@ export const statusReport = () =>
     const headSha = yield* store.git.revParseHead()
     const dirty = yield* store.dirtyPaths()
 
-    const state = yield* db
-      .get<{ head_sha: string | null; embed_model: string; embed_dim: number }>(
-        "SELECT head_sha, embed_model, embed_dim FROM index_state WHERE id = 1"
-      )
-      .pipe(Effect.orElseSucceed(() => undefined))
+    const state = yield* readIndexState(db).pipe(Effect.orElseSucceed(() => undefined))
 
     const byType = yield* countRows(
       db,

@@ -1,5 +1,5 @@
 import { InvalidMemory } from "@memhtml/contracts/errors"
-import { DatabaseService, type DatabaseShape } from "@memhtml/index"
+import { DatabaseService, type DatabaseShape, readIndexState } from "@memhtml/index"
 import { EMBED_WATERMARK } from "@memhtml/llm"
 import { isSleepPhase, type RunReport, SLEEP_PHASES, type SleepPhase } from "@memhtml/sleep"
 import { Effect } from "effect"
@@ -22,17 +22,7 @@ import { Effect } from "effect"
 export const indexReport = () =>
   Effect.gen(function* () {
     const db = yield* DatabaseService
-    const state = yield* db
-      .get<{
-        head_sha: string | null
-        embed_model: string
-        embed_dim: number
-        rebuilt_at: string
-        updated_at: string
-      }>(
-        "SELECT head_sha, embed_model, embed_dim, rebuilt_at, updated_at FROM index_state WHERE id = 1"
-      )
-      .pipe(Effect.orElseSucceed(() => undefined))
+    const state = yield* readIndexState(db).pipe(Effect.orElseSucceed(() => undefined))
 
     return {
       mode: "status",

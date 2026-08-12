@@ -40,6 +40,7 @@ export {
   type StatusEntry,
   type TreeEntry
 } from "./git-port.js"
+export { IndexStateRow, readIndexState } from "./index-state.js"
 export {
   EmbedModelMismatch,
   type EmbedPort,

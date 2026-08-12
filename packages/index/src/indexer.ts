@@ -10,6 +10,7 @@ import { Context, Effect } from "effect"
 
 import type { DatabaseShape, Write } from "./database.js"
 import type { GitPort } from "./git-port.js"
+import { readIndexState } from "./index-state.js"
 import { type FileProjection, projectFile } from "./project.js"
 import { INDEX_STATE_ID, MEMORY_TABLES, WRITE_BATCH_SIZE } from "./schema-const.js"
 
@@ -200,11 +201,7 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
     )
 
   /** Read the recorded watermark row, or `undefined` before the first rebuild. */
-  const readState = () =>
-    db.get<{ head_sha: string | null; embed_model: string; embed_dim: number }>(
-      "SELECT head_sha, embed_model, embed_dim FROM index_state WHERE id = ?",
-      [INDEX_STATE_ID]
-    )
+  const readState = () => readIndexState(db)
 
   /**
    * Refuse when the stored vector space is not the configured one.
