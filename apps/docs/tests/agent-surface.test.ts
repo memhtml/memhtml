@@ -45,6 +45,17 @@ const readDist = (relative: string): string => {
   return readFileSync(path, "utf8")
 }
 
+/**
+ * The base segment the built site was produced with, following `astro.config.ts`'s own default.
+ *
+ * A fixture elsewhere in this file deliberately uses a NON-root base: base handling asserted at `/` is
+ * vacuous, because every consumer of the base is a no-op there. This constant is only for reading the
+ * output that was actually built.
+ */
+const BUILT_BASE = ((base: string) => (base.endsWith("/") ? base : `${base}/`))(
+  process.env.DOCS_BASE ?? "/"
+)
+
 const CONTEXT = { site: new URL("https://memhtml.github.io"), base: "/memhtml" }
 
 /** Every page directory Astro emitted, as the site-absolute paths a browser would request. */
@@ -55,7 +66,7 @@ const builtPages = (): ReadonlyArray<string> => {
       if (entry.isDirectory()) return walk(join(directory, entry.name), `${prefix}${entry.name}/`)
       return entry.name === "index.html" ? [prefix] : []
     })
-  return walk(dist, "/memhtml/")
+  return walk(dist, BUILT_BASE)
 }
 
 /** Every `href` in a built HTML document. */
@@ -190,7 +201,7 @@ describe("every shipped href in dist", () => {
 
   it("emits no protocol-relative href anywhere", () => {
     for (const path of builtPages()) {
-      const document = readDist(join(path.replace("/memhtml/", ""), "index.html"))
+      const document = readDist(join(path.replace(BUILT_BASE, ""), "index.html"))
       for (const href of hrefs(document)) {
         expect(href.startsWith("//"), `${path} emits a protocol-relative href`).toBe(false)
       }
@@ -222,7 +233,7 @@ describe("the head discovery block", () => {
 
   it("is present on every built page, with a resolving target", () => {
     for (const path of builtPages()) {
-      const document = readDist(join(path.replace("/memhtml/", ""), "index.html"))
+      const document = readDist(join(path.replace(BUILT_BASE, ""), "index.html"))
       for (const rel of ["alternate", "index", "llms-full-txt"]) {
         const match = new RegExp(`<link rel="${rel}"[^>]*href="([^"]+)"`).exec(document)
         expect(match, `${path} has no rel="${rel}"`).not.toBeNull()
@@ -354,13 +365,15 @@ describe("the agent page's own entry points", () => {
       (match) => match[1] ?? ""
     )
     expect(listed.length).toBeGreaterThan(1)
-    expect(listed[0]).toBe("https://memhtml.github.io/memhtml/agents.md")
+    expect(listed[0]).toBe(`https://memhtml.github.io${BUILT_BASE}agents.md`)
   })
 
   it("is reachable from the site navigation on every page", () => {
     for (const path of builtPages()) {
-      const document = readDist(join(path.replace("/memhtml/", ""), "index.html"))
-      expect(hrefs(document), `${path} cannot reach the agent page`).toContain("/memhtml/agents/")
+      const document = readDist(join(path.replace(BUILT_BASE, ""), "index.html"))
+      expect(hrefs(document), `${path} cannot reach the agent page`).toContain(
+        `${BUILT_BASE}agents/`
+      )
     }
   })
 
@@ -373,16 +386,16 @@ describe("the agent page's own entry points", () => {
      */
     const document = readDist(join("agents", "index.html"))
     /*
-     * Scoped to the body: a link a reader or an agent can follow. The `<head>` is excluded because
-     * Starlight emits a default `shortcut icon` pointing at a `favicon.svg` this site does not ship,
-     * which is a real 404 on every page and is not this page's to fix — it is reported rather than
-     * silently absorbed by loosening the assertion.
+     * Scoped to the body: a link a reader or an agent can follow. The `<head>` carries icons and
+     * machine-surface relations, which other tests in this file cover on their own terms.
      */
     const body = document.slice(document.indexOf("<body"))
-    const internal = hrefs(body).filter((href) => href.startsWith("/memhtml/"))
+    const internal = hrefs(body).filter(
+      (href) => href.startsWith(BUILT_BASE) && !href.startsWith("//")
+    )
     expect(internal.length).toBeGreaterThan(10)
     for (const href of internal) {
-      const served = href.replace("/memhtml/", "").split("#")[0] ?? ""
+      const served = href.slice(BUILT_BASE.length).split("#")[0] ?? ""
       const candidates = [served, join(served, "index.html")]
       expect(
         candidates.some((candidate) => existsSync(join(dist, candidate))),

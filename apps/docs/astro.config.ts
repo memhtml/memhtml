@@ -17,15 +17,23 @@ import { baseRawLinks } from "./src/lib/base-raw-links.js"
 
 /**
  * The origin and the base segment are configuration carrying the production values as defaults, so a
- * local build equals what GitHub Pages serves. `memhtml/memhtml` is a project repository, so its site
- * is mounted under a path segment; a custom domain would set the base to "/" and change nothing else.
+ * local build equals what GitHub Pages serves.
+ *
+ * The base is the origin root: the site is published by `memhtml/memhtml.github.io`, which is an ORG
+ * site, and an org site serves from `/`. The source lives here, in the project repository, and that
+ * publisher builds it — so the docs still ship in the same commit as the code they describe while the
+ * URL carries no path segment.
+ *
+ * The base stays a variable rather than becoming a constant, and the machinery that consumes it stays
+ * in place, because a root base makes each consumer a no-op rather than removing the need for it: a
+ * move to a project path or a subdirectory would restore every one of them at once.
  *
  * Astro prefixes the base onto its own routing and asset URLs, but not onto hrefs written by hand or
  * onto `new URL(x, Astro.site)` — `Astro.site` excludes the base. `import.meta.env.BASE_URL` is the
  * accessor that includes it.
  */
 const origin = process.env.DOCS_ORIGIN ?? "https://memhtml.github.io"
-const base = process.env.DOCS_BASE ?? "/memhtml"
+const base = process.env.DOCS_BASE ?? "/"
 
 /**
  * The agent page's raw-Markdown URL, for the one link that has to be written outside a component.

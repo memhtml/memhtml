@@ -101,6 +101,17 @@ const nonAchromatic = (svg: string): ReadonlyArray<string> =>
     return channels.some(([, r, g, b]) => !(r === g && g === b))
   })
 
+/**
+ * The base segment the built site was produced with, following `astro.config.ts`'s own default.
+ *
+ * A fixture elsewhere in this file deliberately uses a NON-root base: base handling asserted at `/` is
+ * vacuous, because every consumer of the base is a no-op there. This constant is only for reading the
+ * output that was actually built.
+ */
+const BUILT_BASE = ((base: string) => (base.endsWith("/") ? base : `${base}/`))(
+  process.env.DOCS_BASE ?? "/"
+)
+
 describe("every figure source reaches exactly one page", () => {
   it("mounts each `.d2` file in exactly one fence", () => {
     const mounted = fences.map((fence) => basename(fence.src)).sort()
@@ -250,7 +261,7 @@ describe("the built figures are static monochrome SVG", () => {
       const html = readFileSync(htmlPathFor(fence), "utf8")
       expect(html, `${fence.page} img`).toContain(`alt="${fence.title}"`)
       expect(html, `${fence.page} src`).toContain(
-        `src="/memhtml/d2/docs/internals/${slugOf(fence)}-${fence.offset}.svg"`
+        `src="${BUILT_BASE}d2/docs/internals/${slugOf(fence)}-${fence.offset}.svg"`
       )
     }
   })
