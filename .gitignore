@@ -17,5 +17,10 @@ mise.local.toml
 mise.local.lock
 # Scanner output. The durable copy is the SARIF uploaded to code scanning.
 .sarif/
+# Lighthouse CI's reports, and the directory that exists only to expose `dist/` at the base segment
+# the site is built with — `staticDistDir` serves its argument at the root, and the site's own asset
+# URLs are `/memhtml/…`, so the served tree needs that one directory above the output.
+.lighthouseci/
+.lhci-site/
 # The typecheck-gate test builds here so a run never leaves dist/ describing its broken probe.
 dist-typecheck-probe/

@@ -15,8 +15,14 @@ decision with the file:line that implements it), `.erpaval/INDEX.md` (prior-sess
 
 `mise` is the command surface — `mise run check` is the definition of done, and it is exactly what CI
 runs, so the gate cannot drift from the local one. It resolves to `pnpm check` →
-`turbo run lint typecheck test test:integration test:eval`, and it is credential-free by construction
-(eval defaults to `--mode fake`; integration sets `MEMHTML_EMBED=off` / `MEMHTML_LLM=off` itself).
+`turbo run lint typecheck test test:integration test:eval test:a11y test:budget`, and it is
+credential-free by construction (eval defaults to `--mode fake`; integration sets `MEMHTML_EMBED=off` /
+`MEMHTML_LLM=off` itself; the two browser tiers read `apps/docs/dist` over a loopback static server).
+
+The two browser tiers need a Chromium, which nothing fetches implicitly — Playwright 1.62 ships no
+install script. `mise run install` ends with `mise run browsers`, and CI runs that step behind a cache
+of `~/.cache/ms-playwright`. One binary (Chrome for Testing) serves both: axe drives it through
+Playwright, Lighthouse through `CHROME_PATH`.
 
 Every mise task is a thin delegation to the pnpm script under it. **turbo owns the task graph and the
 cache**; no mise task carries `sources`/`outputs`, because mise judges freshness by mtime and turbo by
@@ -32,6 +38,11 @@ build-before-integration ordering.
 | `mise run test` | every package's unit + property suites |
 | `mise run test:integration` | `tests-integration/` — real git repo, real database, whole stack |
 | `mise run test:eval` | the discrimination gate (fake embedder) |
+| `mise run test:a11y` | WCAG 2.2 AA over four pages of `apps/docs/dist`, plus the probes axe lacks |
+| `mise run test:budget` | Lighthouse category floors + the byte budget over `apps/docs/dist` |
+| `mise run spell` | cspell over `apps/docs/src/content/**` (also the tail of `mise run lint`) |
+| `mise run browsers` | fetch the pinned Chromium the two browser tiers drive |
+| `mise run docs:links` | external links in the built site — reports, never gates |
 | `mise run gen:fixture` | write a browsable fixture corpus (pure function of a seed) |
 | `mise run agents-doc` | regenerate `AGENTS.md` from the built CLI's table |
 | `mise run security` | osv-scanner + semgrep + betterleaks → SARIF in `.sarif/` (report-only) |
@@ -168,6 +179,17 @@ Standing hazards to write tests against, learned here:
   `<article><p><mark>`). A census probe asserts an independently-derived total; it never just reports.
 - **Assert shape when correctness and cost diverge** — e.g. capture `EXPLAIN` output to prove the
   planner uses a partial index, since the rows come back either way.
+- **A third-party rule can be nondeterministic, and a blocking gate cannot hold one.** Measured
+  2026-08-12: axe's `scrollable-region-focusable` reported a violation on one of five runs over an
+  unchanged page whose geometry was identical throughout. The rule is disabled and the criterion is
+  covered by a probe in `apps/docs/tests/a11y.test.ts` that reads the geometry itself. Measure the flake
+  before trusting or before suppressing.
+
+The docs site's accessibility gate carries a **declared baseline** — `KNOWN_A11Y_FAILURES` in
+`apps/docs/src/gates.ts`, three violations owned by `src/styles/rfc.css`, Expressive Code and Starlight.
+It is a ratchet, not an exemption: a violation outside it fails, and an entry that stops firing fails
+too, so a fix cannot leave its suppression behind. Each entry's `signature` must match every offending
+node, so the same rule failing for a new reason is still a failure.
 
 ## Conventions
 

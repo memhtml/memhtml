@@ -32,5 +32,20 @@ jobs:
           path: ${{ env.PNPM_STORE }}
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: pnpm-store-${{ runner.os }}-
+      # The Chromium the accessibility and performance gates drive. It lives in a per-user cache rather
+      # than in node_modules, so the pnpm store cache above cannot hold it, and Playwright 1.62 ships
+      # no install script, so nothing fetches it implicitly. Restored before `mise run browsers` so
+      # that step is a no-op on a hit rather than a ~130 MB download per run.
+      #
+      # Keyed on the lockfile, which is the only file that can move the Playwright version, with no
+      # `restore-keys`: a partial hit would seed the directory with some OTHER build number, and
+      # Playwright would download the right one anyway while the stale one stayed on disk for good.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
       - run: mise run install:ci
+      # Only this workflow needs it, which is why it is a step here rather than part of `install:ci` —
+      # the pages and links jobs install the same dependencies and drive no browser.
+      - run: mise run browsers
       - run: mise run check

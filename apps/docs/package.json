@@ -9,7 +9,10 @@
     "preview": "astro preview",
     "typecheck": "astro check",
     "test": "vitest run",
-    "lint": "biome check src tests astro.config.ts --no-errors-on-unmatched"
+    "test:a11y": "vitest run --config vitest.a11y.config.ts",
+    "test:budget": "mkdir -p .lhci-site && ln -sfn ../dist .lhci-site/memhtml && CHROME_PATH=$(node -p 'require(\"playwright\").chromium.executablePath()') lhci autorun",
+    "spellcheck": "cspell --no-progress \"src/content/**\"",
+    "lint": "biome check src tests astro.config.ts vitest.config.ts vitest.a11y.config.ts cspell.json lighthouserc.json --no-errors-on-unmatched && pnpm run spellcheck"
   },
   "dependencies": {
     "@astrojs/markdown-satteri": "^0.3.5",
@@ -31,9 +34,12 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
+    "@axe-core/playwright": "^4.13.0",
     "@biomejs/biome": "2.5.8",
+    "@lhci/cli": "^0.15.1",
     "@types/node": "24.13.3",
     "cspell": "^10.0.1",
+    "playwright": "^1.62.1",
     "typescript": "6.0.3",
     "vitest": "4.1.10"
   }
