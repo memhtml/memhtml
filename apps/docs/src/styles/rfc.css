@@ -107,12 +107,53 @@ body {
 }
 
 /*
- * Measure is 30em ≈ 75 characters. NOT 70ch: 1ch is 0.500em in this face while prose advance is
- * 0.398em, so a ch-based measure overstates by 1.256× and 70ch sets ≈88 characters — past the
- * comfortable ceiling for continuous reading.
+ * A wider column than Starlight's 45rem, because a specification carries tables and code samples and
+ * both need the room.
+ *
+ * `:root:root` and not `:root`. Starlight declares this on a bare `:root` too and its stylesheet is
+ * bundled AFTER this one, so an equal-specificity declaration here loses on order and silently does
+ * nothing. Measured: with a single `:root`, Starlight's 45rem sat 9,500 bytes later in the same file
+ * and won. Repeating the selector raises specificity to 0,0,2 without reaching for !important.
+ */
+:root:root {
+  --sl-content-width: 50rem;
+}
+
+/*
+ * Body text is larger than Starlight's default because this site sets it in Times, whose x-height is
+ * small: 16px Times reads about a size smaller than 16px in a sans face, so the page looks undersized
+ * on a large display before anything else is wrong.
+ *
+ * The size goes here rather than on `--sl-text-body`, which Starlight defines and never applies as a
+ * font-size, so overriding that token changes nothing. Measured in a browser at 1728x1080: the token
+ * override left the content at 16px.
+ *
+ * Raising it also widens the prose measure in pixels while holding the character count, because the
+ * measure below is in em.
  */
 .sl-markdown-content {
-  max-width: 30em;
+  font-size: 1.125rem;
+}
+
+/*
+ * The measure applies to PROSE, and only to prose.
+ *
+ * Character count follows the em measure and not the pixel width: prose advance is 0.398em per
+ * character in this face, so 32em is about 80 characters. A `ch` unit would mislead here, since 1ch is
+ * 0.500em and 70ch would set about 88 characters.
+ *
+ * Clamping `.sl-markdown-content` itself is the mistake this replaces. It held the whole column to
+ * 30em, which at Starlight's 16px base is 480 pixels, so a table, a code block and a figure were all
+ * capped at 480px inside a 720px column: a wide flag table scrolled sideways for no reason, and a
+ * figure whose natural width is 1164px rendered at 0.41 scale, putting its labels at under 7 pixels.
+ * Elements that carry their own structure get the full column.
+ */
+.sl-markdown-content :is(p, ul, ol, blockquote, dl, .rfc-toc) {
+  max-width: 32em;
+}
+
+.sl-markdown-content :is(table, pre, figure, img, .expressive-code, .rfc-verbatim) {
+  max-width: 100%;
 }
 
 /* Links are underlined, so colour is never the only signal that something is a link (SC 1.4.1). */
