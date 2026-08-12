@@ -29,7 +29,7 @@ gpt-4o / gpt-4.1-mini. Stated in every result header.
 What the campaign proved about the ARCHITECTURE, as opposed to any one fix:
 git-tree-as-source-of-truth plus a rebuildable index survives contact with
 adversarial-scale ingest (18k memories in minutes post-fix), and the
-retrieval stack (FTS + vector + recency + entity arms) finds one-fact
+retrieval stack (FTS + vector + recency + salience arms) finds one-fact
 memories reliably at every store size tested. The two structural findings
 that remain are consolidation ownership and hop chaining — both below.
 
