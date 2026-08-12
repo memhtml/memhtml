@@ -38,7 +38,19 @@ export const loadReference = async (
   context: LoaderContext,
   registry: Registry = collectRegistry()
 ): Promise<ReadonlyArray<ReferencePage>> => {
-  const pages = referencePages(registry, { base: context.config.base })
+  /*
+   * Root-relative, base EXCLUDED — `starlight-base-path` is what prefixes it, once, on the rendered
+   * tree, exactly as it does for every authored page.
+   *
+   * Passing `context.config.base` here instead produced `/memhtml/memhtml/reference/…` across 88
+   * built pages: the loader prefixed the base into the body and the plugin prefixed the result. Every
+   * link into the Reference tier was a 404, and the build reported all internal links valid, because
+   * the tier is excluded from `starlight-links-validator` — that plugin can only validate a target
+   * whose headings it recorded during its own remark pass, and an injected page has no file for that
+   * pass. The exclusion that works around the limitation is also what hid this, which is why the
+   * dist-resolution test rather than the validator is the real gate on these links.
+   */
+  const pages = referencePages(registry, { base: "" })
   for (const page of pages) {
     const data = await context.parseData({
       id: page.id,

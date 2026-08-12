@@ -13,6 +13,7 @@ import starlightScrollToTop from "starlight-scroll-to-top"
 
 import { agentNotePlugin } from "./src/lib/agent-note.js"
 import { siteUrl } from "./src/lib/agent-surface.js"
+import { baseRawLinks } from "./src/lib/base-raw-links.js"
 
 /**
  * The origin and the base segment are configuration carrying the production values as defaults, so a
@@ -86,6 +87,13 @@ export default defineConfig({
      * diagram is simpler than overriding a second.
      */
     astroD2({ theme: { default: "301", dark: false } }),
+    /*
+     * Runs on `astro:build:done`, after the raw `.md` routes are emitted. The base segment has to
+     * be prefixed there separately because those routes are built from each page's Markdown source
+     * while `starlight-base-path` rewrites the rendered tree — so a link is correct on whichever
+     * surface its producer touched, and 450 links were wrong on the one agents read.
+     */
+    baseRawLinks(base),
     starlight({
       title: "memhtml",
       description: "Memory for agents, in HTML.",
