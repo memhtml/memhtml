@@ -503,6 +503,9 @@ importers:
       '@memhtml/llm':
         specifier: workspace:*
         version: link:../packages/llm
+      '@memhtml/mcp':
+        specifier: workspace:*
+        version: link:../apps/mcp
       '@memhtml/sleep':
         specifier: workspace:*
         version: link:../packages/sleep

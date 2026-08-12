@@ -17,6 +17,7 @@
     "@memhtml/html": "workspace:*",
     "@memhtml/index": "workspace:*",
     "@memhtml/llm": "workspace:*",
+    "@memhtml/mcp": "workspace:*",
     "@memhtml/sleep": "workspace:*",
     "@memhtml/store": "workspace:*",
     "@memhtml/traces": "workspace:*",

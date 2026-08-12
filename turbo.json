@@ -29,7 +29,7 @@
       "outputs": []
     },
     "test:integration": {
-      "dependsOn": ["build"],
+      "dependsOn": ["^build", "@memhtml/mcp#build"],
       "cache": false
     },
     "test:eval": {

@@ -139,6 +139,15 @@ export interface Client {
  * hands off the database), whose clean exit is what leaves the store with no live writer for a row
  * assertion to read.
  */
+/** One NDJSON frame, or `undefined` when the line is not JSON-RPC at all. */
+const parseFrame = (line: string): Record<string, unknown> | undefined => {
+  try {
+    return JSON.parse(line) as Record<string, unknown>
+  } catch {
+    return undefined
+  }
+}
+
 export const connect = (root: string): Client => {
   const child = spawn(process.execPath, [cliEntryPoint, "serve", "mcp", "--repo", root], {
     env: childEnv(root),
@@ -161,6 +170,17 @@ export const connect = (root: string): Client => {
    * The flag is the seam between the two writers of one file descriptor.
    */
   let framing = true
+  /**
+   * Stdout the framing reader could not read as NDJSON, kept rather than thrown.
+   *
+   * When the session never opens — the child dies before `initialize`, so the supervisor writes its
+   * `serve.exit` envelope while framing is still on — every line of that pretty-printed envelope
+   * reaches `JSON.parse`, and its first line is the single character `{`. Throwing there raises an
+   * uncaught exception inside a stream handler, which surfaces as `SyntaxError: Expected property
+   * name or '}' at position 1` and DISCARDS the envelope that says why the child died. Collecting
+   * the lines instead lets {@link rpc} reassemble the diagnostic into its rejection.
+   */
+  const unframed: Array<string> = []
   const pending = new Map<number, (message: Record<string, unknown>) => void>()
 
   child.stdout.on("data", (chunk: Buffer) => {
@@ -171,11 +191,14 @@ export const connect = (root: string): Client => {
       const line = buffer.slice(0, newline).trim()
       buffer = buffer.slice(newline + 1)
       if (line !== "") {
-        const message = JSON.parse(line) as Record<string, unknown>
-        const resolve = pending.get(message.id as number)
-        if (resolve !== undefined) {
-          pending.delete(message.id as number)
-          resolve(message)
+        const message = parseFrame(line)
+        if (message === undefined) unframed.push(line)
+        else {
+          const resolve = pending.get(message.id as number)
+          if (resolve !== undefined) {
+            pending.delete(message.id as number)
+            resolve(message)
+          }
         }
       }
       newline = buffer.indexOf("\n")
@@ -188,8 +211,20 @@ export const connect = (root: string): Client => {
       nextId += 1
       const id = nextId
       pending.set(id, resolve)
-      child.once("exit", () => {
-        if (pending.delete(id)) reject(new Error(`server exited before answering ${method}`))
+      // `close`, not `exit`: stdout is delivered independently of process teardown, so on `exit`
+      // the supervisor's envelope is typically one unterminated `{`. `close` fires once every stdio
+      // stream has drained, which is the first moment the diagnostic below is whole.
+      child.once("close", (code) => {
+        if (!pending.delete(id)) return
+        // The unparsed lines plus whatever tail has no newline yet: a pretty-printed envelope's
+        // closing brace is unterminated, so the diagnostic is only whole when both are joined.
+        const diagnostic = [...unframed, buffer].join("\n").trim()
+        reject(
+          new Error(
+            `server exited (code ${String(code)}) before answering ${method}` +
+              (diagnostic === "" ? "" : `; its stdout said: ${diagnostic}`)
+          )
+        )
       })
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`)
     })
@@ -203,8 +238,10 @@ export const connect = (root: string): Client => {
       framing = false
       buffer = ""
       child.stdin.end()
+      // `close` rather than `exit` for the same reason the rejection path uses it: the envelope
+      // parsed below is written to stdout, and on `exit` it may not have arrived yet.
       const exitCode = await new Promise<number>((resolve) => {
-        child.once("exit", (code) => resolve(code ?? 0))
+        child.once("close", (code) => resolve(code ?? 0))
       })
       return { exitCode, envelope: JSON.parse(buffer) as Record<string, unknown> }
     }
