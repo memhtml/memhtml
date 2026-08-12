@@ -46,6 +46,18 @@ avoids.
 
 ## 4. Atomicity is a two-phase fold
 
+Figure 1 is the fold and its four exits. Every one of them reaches the same envelope: a per-op result
+list in input order, whatever happened.
+
+```d2 pad=20 src="_figures/batch-two-phase.d2" title="N ops in input order enter phase one, which validates every op and writes nothing. An invalid op routes to an abort that marks every op skipped. All-valid routes to phase two, which stages and makes one commit. Phase two has two exits: a failed commit routes to git reset of the staged paths, and a successful commit routes to one index pass. All three of those exits converge on a single per-op result list, still in input order."
+```
+
+**Figure 1: two phases, four exits, one envelope.** Phase 1 is what makes an atomic abort free — there
+is nothing written to undo. The `git reset -- <paths>` exit exists because `git rm --cached` exits 128 as
+soon as one listed path was never staged, which is exactly the state a partly-failed `git.add` leaves.
+The single index pass on the success exit is the whole reason the batch primitive exists: N singular
+writes would be N commits and, because the indexer diffs per commit, N index passes.
+
 Phase 1 validates every op and writes nothing (`packages/store/src/store.ts:662-685`), so an atomic
 abort has nothing to roll back. The failed op is reported with its own code and every other op reports
 `skipped: true`, **including ones that already validated**

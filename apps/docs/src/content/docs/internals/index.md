@@ -21,11 +21,33 @@ authored links are `<link>` elements, metadata is `<meta>` elements. Re-derivabl
 embeddings, mined edges — live only in the index. The one exception is the state plane, which is not
 rebuildable from git and therefore carries a committed sidecar.
 
+Figure 1 is that invariant drawn: three write doors, one tree, and two projections downstream of it.
+
+```d2 pad=20 src="_figures/system-topology.d2" title="Three write doors - the CLI, the MCP server, and your own file tools - each commit into a single git tree. The tree moves evicted files to archive/YYYY/ and a git-driven indexer derives index.db from it. index.db supplies three ranking arms and state.db supplies the fourth, salience; both feed one RRF-then-MMR step that produces ranked hits."
+```
+
+**Figure 1: every write door lands in the git tree, and every read is served from projections of it.**
+The three doors differ only in who owns the commit, never in where the fact lands. `index.db` is drawn
+with a dashed border because deleting it loses nothing; `state.db` is drawn as a database on disk
+because it is the one plane a rebuild cannot reproduce.
+
 **Every corpus change is exactly one git commit.** `git log` is the history of what the agent
 learned and `diff base..HEAD` is a reviewable curation run (`packages/store/src/store.ts:37-44`).
 The store owns staging, because a caller that staged its own files could bundle two unrelated writes
 into one commit. Nothing is ever deleted: eviction is a `git mv` into `archive/<YYYY>/` mirroring the
 original path, so `git log --follow` reads through a memory's whole life.
+
+Figure 2 follows one memory through that rule. It has one entry and three exits, and every one of the
+four is a commit.
+
+```d2 pad=20 src="_figures/memory-lifecycle.d2" title="A write enters as one commit and the memory becomes active. Three arrows leave the active state: correct makes it superseded, evict makes it archived, and compress makes it compressed. No arrow leaves the corpus, because each of the three is a git mv into the archive rather than a deletion."
+```
+
+**Figure 2: a memory has one entry and three exits, and none of them deletes anything.** `memhtml
+correct` writes the replacement and archives the original in ONE commit; retention triage archives an
+EVICT-band file; compress archives a member under a synthesized canonical. All three land under
+`archive/<YYYY>/` with the original path mirrored beneath, which is what lets `git log --follow` read
+straight through.
 
 ## 2. The chapters
 

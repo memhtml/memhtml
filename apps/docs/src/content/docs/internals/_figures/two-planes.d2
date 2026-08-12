@@ -1,0 +1,29 @@
+# SVG only — no README rendering, so the full shape vocabulary is available.
+#
+# Labels are kept short because the site's 30em measure caps a figure at its own width: past about
+# 700px natural width the drawing arrives shrunk far enough to be unreadable.
+...@_register
+
+direction: down
+
+tree: the git tree {class: record}
+sidecar: "state/access.jsonl" {class: sidecar}
+
+clone: a fresh clone {class: step}
+rebuild: index rebuild {class: step}
+import: state import {class: step}
+export: "state-export, 14" {class: step}
+
+index: "index.db" {class: derived}
+state: "state.db" {class: plane}
+
+tree -> clone: cloned
+sidecar -> clone: cloned
+clone -> rebuild
+clone -> import
+
+rebuild -> index: from ls-tree {class: derives}
+import -> state: sidecar only {class: derives}
+
+state -> export: nightly
+export -> sidecar: byte-stable

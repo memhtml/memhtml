@@ -55,6 +55,19 @@ The property is pinned by a test: `originalPathFor(archivePathFor(p, y)) === p` 
 path. Invertibility is what lets the sleep pipeline's integrity phase *derive* an archived target's
 new href rather than searching for it — no rename-similarity score is consulted anywhere.
 
+Figure 1 draws the mapping as a ladder rather than as a round trip, which is what "exactly one prefix"
+means: from the twice-evicted path the inverse climbs one rung, to the once-evicted path, not to the
+live one.
+
+```d2 pad=20 src="_figures/archive-mapping.d2" title="Three paths stacked vertically as the rungs of a ladder: notes/x.html, then archive/2026/notes/x.html, then archive/2027/archive/2026/notes/x.html. A solid arrow labelled archivePathFor descends one rung at a time. A dashed arrow labelled originalPathFor ascends one rung at a time and never more than one, so from the bottom rung it reaches the middle one rather than the top."
+```
+
+**Figure 1: `archivePathFor` descends one rung and `originalPathFor` climbs exactly one.** Down is a
+`git mv` inside a commit, which `diff -M` reports as `R100`; up is a pure function of the path, which is
+why the ascending edges are dashed. Because each application moves one rung, the inverse stays a left
+inverse for a memory evicted twice — the property a single return edge to the live path would
+misdescribe.
+
 ## 4. A path is an id
 
 Path validation refuses `.` and `..` segments (`packages/contracts/src/paths.ts:63`), keeping a

@@ -1,0 +1,21 @@
+# SVG only — no README rendering, so the full shape vocabulary is available.
+#
+# A ladder rather than a cycle, because `originalPathFor` strips EXACTLY ONE prefix: from the
+# twice-evicted path it climbs to the once-evicted one, not to the live one. Drawing a single return
+# edge to the live path would assert the opposite. Down is a git mv inside a commit; up is a pure
+# function of the path, which is why the up edges are dashed.
+#
+# The example path is short because the site's 30em measure caps a figure at its own width, and the
+# twice-evicted label is the widest thing in this drawing.
+...@_register
+
+direction: down
+
+live: "notes/x.html" {class: record}
+once: "archive/2026/notes/x.html" {class: record}
+twice: "archive/2027/archive/2026/notes/x.html" {class: record}
+
+live -> once: archivePathFor
+once -> twice: archivePathFor
+twice -> once: originalPathFor {class: derives}
+once -> live: originalPathFor {class: derives}

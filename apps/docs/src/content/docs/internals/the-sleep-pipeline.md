@@ -10,6 +10,16 @@ Fifteen phases in a fixed order (`packages/sleep/src/contract.ts:17`), each an i
 created before any phase runs, so `main` is never touched (`packages/sleep/src/run.ts:95-97`). A dry run
 creates no branch, safe precisely because no phase in dry mode writes a file.
 
+Figure 1 is the shape of a run. Both of the gate's outcomes are drawn, because the refusal is the
+property worth seeing: there is no third outcome and no rollback.
+
+```d2 pad=20 src="_figures/sleep-branch.d2" title="Main branches into sleep/date. The fifteen phases run on that branch and are submitted for review to a gate. The gate has exactly two outgoing arrows: passes, leading to main moves, and refuses, leading to main unmoved. No arrow returns from the branch to main except through the gate."
+```
+
+**Figure 1: `main` moves only when a gate that can refuse says so.** The branch is cut before any phase
+executes, so a failed run needs no compensating writes — the abort is `git branch -D` and `main` was
+never touched. The two boxes leaving the gate are the only two outcomes.
+
 | # | Phase | Model | Git effect |
 |---|---|---|---|
 | 1 | `preflight` | no | none — `index update`, snapshot counts |
@@ -31,6 +41,17 @@ creates no branch, safe precisely because no phase in dry mode writes a file.
 The order encodes the dependencies: entity resolution precedes person links so aliases have already
 merged, confidence decay precedes retention triage so triage scores the decayed value, and dedup-merge
 precedes compress and retention because both operate on the post-merge set.
+
+Those four constraints are the whole of what the order is *for*, and Figure 2 draws only them. Every
+phase absent from it is order-independent of every other phase, which the table above cannot show.
+
+```d2 pad=20 src="_figures/phase-order.d2" title="Four dependency edges among six phases. Phase 2 dedup-merge points at phase 10 compress and at phase 9 retention-triage, both labelled post-merge set. Phase 3 entity-resolution points at phase 4 person-links, labelled aliases merged first. Phase 7 confidence-decay points at phase 9 retention-triage, labelled scores the decayed value. Compress is drawn as a hexagon because it calls a model; the other five are deterministic."
+```
+
+**Figure 2: the fixed order exists to satisfy four edges.** Nine of the fifteen phases appear nowhere in
+this graph, and their absence is the finding: the order among them is arbitrary and could change without
+consequence. The hexagon marks the one phase here that calls a model, which is also why `compress`
+archives a member only when the model names it as absorbed.
 
 Four phases call a model (`packages/sleep/src/contract.ts:71`); every other phase is deterministic and
 costs no model call.

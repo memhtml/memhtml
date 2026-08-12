@@ -216,3 +216,14 @@ run = "pnpm --filter @memhtml/docs dev"
 description = "Build the docs site into apps/docs/dist"
 raw_args = true
 run = "pnpm turbo run build --filter=@memhtml/docs"
+
+# Four of the site's figures are also the README's. This renders those `.d2` sources through d2's ASCII
+# renderer and rewrites the fenced blocks between the README's `<!-- figure:NAME -->` markers, because
+# GitHub renders Mermaid natively and D2 not at all — a `.d2` fence there would show raw source. The
+# output is committed and `apps/docs/tests/figures.test.ts` runs the same script with `--check`, so the
+# drift gate is a test rather than a pipeline step, exactly as it is for AGENTS.md. Not a turbo task:
+# it reads no package's dist and writes a repo-root file that no package owns.
+[tasks."figures:readme"]
+description = "Regenerate the README's ASCII figures from the site's own .d2 sources"
+raw_args = true
+run = "pnpm figures:readme"
