@@ -42,6 +42,24 @@
 }
 
 :root[data-theme="light"] {
+  /*
+   * These three are RESTATED here, and the restatement is the whole point.
+   *
+   * `:root` above declares the light values and the dark block below declares its own on a
+   * `:root, :root[data-theme="dark"]` selector list. A selector list takes each selector's specificity
+   * separately, so that bare `:root` ties with the one above it and wins on order alone — which means
+   * every reference to `var(--memhtml-link)` in THIS block resolved to the dark accent. Measured
+   * before the fix: #8da9ff on warm paper is 2.19:1, so the site title, the table of contents and
+   * every in-content link failed WCAG AA in light mode while the declarations metres above said
+   * 9.08:1. The comment was right about the colour and silent about the cascade.
+   *
+   * An attribute selector outranks a bare `:root`, so declaring them here settles it by specificity
+   * rather than by ordering. `tests/a11y.test.ts` is what keeps the claim honest from now on.
+   */
+  --memhtml-link: #0000ee; /* 9.08:1 on --memhtml-paper */
+  --memhtml-visited: #551a8b; /* 10.64:1 */
+  --memhtml-normative: #b00018; /* 7.09:1 */
+
   --sl-color-bg: var(--memhtml-paper);
   --sl-color-bg-nav: var(--memhtml-paper);
   --sl-color-bg-sidebar: var(--memhtml-paper);

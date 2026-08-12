@@ -1,0 +1,71 @@
+# The vocabulary this project writes in, and nothing else. A word belongs here when it is a
+# term of art, an identifier quoted from source, or a dependency's name — never because a
+# spelling was inconvenient to fix. British spellings are not in this list: `cspell.json`
+# enables the `en-GB` dictionary, so `behaviour` and `neighbour` are correct rather than
+# excused.
+#
+# cspell splits on case and on `-`/`_`/`.`, so a compound like `rrfWeight` needs only `rrf`.
+
+# --- the system's own nouns ---------------------------------------------------------------
+memhtml
+Memhtml
+MEMHTML
+rebuildable
+Rebuildable
+Rebuildability
+refusable
+greppable
+browsable
+inspectable
+unopenable
+unparseable
+unplaceable
+unsuffixed
+vectorless
+unitless
+Unitless
+Invertibility
+injective
+bitemporal
+superlinearly
+formedness
+
+# --- retrieval and index vocabulary -------------------------------------------------------
+embedder
+dedup
+Dedup
+rels
+Rels
+RELS
+metas
+hrefs
+pagerank
+reproject
+reprojects
+reweight
+rescan
+rescans
+rescanned
+upserts
+EWMA
+
+# --- pipeline and operations vocabulary ---------------------------------------------------
+distil
+oneline
+sandboxed
+unentitled
+oncall
+pgsql
+
+# --- quoted from something outside this repo ----------------------------------------------
+# `smali` is a language id the code-fence detector can return: `internals/the-memory-file-format`
+# names it as the wrong answer a confidence score cannot rule out.
+smali
+# `déployé` is the French token `internals/four-arm-retrieval` uses to show that the tokenizer
+# keeps a combining-accent word whole.
+déployé
+# `serch` is a deliberate misspelling: `learn/operations/diagnose-poor-retrieval` prints the
+# `unknown command: serch x` envelope a mistyped invocation returns.
+serch
+llms
+Grayscale

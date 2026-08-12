@@ -14,6 +14,7 @@ import starlightScrollToTop from "starlight-scroll-to-top"
 import { agentNotePlugin } from "./src/lib/agent-note.js"
 import { siteUrl } from "./src/lib/agent-surface.js"
 import { baseRawLinks } from "./src/lib/base-raw-links.js"
+import { focusableScrollers } from "./src/lib/focusable-scrollers.js"
 
 /**
  * The origin and the base segment are configuration carrying the production values as defaults, so a
@@ -83,7 +84,12 @@ export default defineConfig({
   markdown: {
     processor: satteri({
       features: { headingAttributes: true },
-      mdastPlugins: [agentNotePlugin()]
+      mdastPlugins: [agentNotePlugin()],
+      /*
+       * Starlight PUSHES its own hast plugins after these, so this runs first and its `tabindex`
+       * survives whatever Starlight adds afterwards.
+       */
+      hastPlugins: [focusableScrollers()]
     })
   },
   // pnpm's isolated node_modules puts sharp out of reach of a resolve from this app's root, so
@@ -157,6 +163,13 @@ export default defineConfig({
           codeBackground: "var(--sl-color-bg-inline-code)",
           codeFontFamily: "var(--sl-font-mono)",
           codeFontSize: "0.85em",
+          /*
+           * The gutter's own foreground, darkened from Expressive Code's light-theme default.
+           * Measured: #788b94 on the block's #f6f7f9 is 3.3:1, and a line number is body-size text, so
+           * SC 1.4.3 wants 4.5:1. #4a5560 measures 7.0:1 on that ground. Fifty nodes on one tutorial
+           * page came from this single value.
+           */
+          lineNumbers: { foreground: "#4a5560" },
           frames: {
             shadowColor: "transparent",
             editorTabBorderRadius: "0",

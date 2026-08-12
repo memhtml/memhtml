@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json",
+  "version": "0.2",
+  "language": "en,en-GB",
+  "dictionaryDefinitions": [
+    {
+      "name": "memhtml",
+      "path": "./cspell-words.txt",
+      "description": "This project's own vocabulary. One term per line; sections carry their reason.",
+      "addWords": false
+    }
+  ],
+  "dictionaries": ["memhtml"],
+  "ignoreRegExpList": ["HexDigitsPrefix", "SHA", "Base64MultiLine"],
+  "useGitignore": true
+}

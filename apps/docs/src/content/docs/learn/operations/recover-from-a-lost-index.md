@@ -47,7 +47,7 @@ history of every eviction via `git log --follow`. `.memhtml/state/access.jsonl` 
 
 :::agent
 **For an agent.** A missing path is not a missing memory. A lost or stale index makes a memory
-unretrievable while the file is still in the tree, and eviction is a `git mv` into `archive/<YYYY>/`
+impossible to retrieve while the file is still in the tree, and eviction is a `git mv` into `archive/<YYYY>/`
 rather than a delete — so retry with `--include-archived`, and check `memhtml status` for a stale index,
 before reporting anything as gone. Treating absence as deletion here writes a false fact into the corpus.
 :::

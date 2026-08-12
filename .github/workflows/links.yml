@@ -1,0 +1,61 @@
+# External link checking for the docs site. Deliberately NOT part of `check`, and not because it is
+# unimportant: an outbound link breaks when somebody else edits their own site, so a gate would fail
+# whichever commit happened to be pushed that morning and would teach everyone to ignore it. Internal
+# links are the opposite case and they do gate — `starlight-links-validator` fails the docs build on a
+# broken one, on every pull request.
+#
+# So this reports. It runs weekly, it can be run by hand, and its findings arrive as a job summary and
+# an artifact rather than as a red mark on an unrelated change. `continue-on-error` on the check step
+# is the whole mechanism: lychee exits non-zero on a dead link, the step records that, and the job
+# still succeeds.
+name: links
+on:
+  schedule:
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  external:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v4
+      - run: echo "PNPM_STORE=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.PNPM_STORE }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+      - run: mise run install:ci
+      # `docs:links` builds the site first, through turbo, because the links to check are the ones the
+      # output contains rather than the ones the sources mention: the reference tier is generated, and
+      # its links exist only after a build.
+      - id: lychee
+        continue-on-error: true
+        run: mise run docs:links 2>&1 | tee lychee.log
+      - if: always()
+        run: |
+          {
+            echo "## External links"
+            echo
+            if [ "${{ steps.lychee.outcome }}" = "success" ]; then
+              echo "Every external link resolved."
+            else
+              echo "Dead or unreachable links below. Each one is somebody's site changing, not a"
+              echo "defect in a commit — fix the link, or add it to \`lychee.toml\`'s exclusions with"
+              echo "the reason."
+            fi
+            echo
+            echo '```'
+            tail -80 lychee.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: lychee-log
+          path: lychee.log

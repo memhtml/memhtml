@@ -36,6 +36,14 @@
       "dependsOn": ["build", "typecheck"],
       "outputs": []
     },
+    "test:a11y": {
+      "dependsOn": ["build"],
+      "outputs": []
+    },
+    "test:budget": {
+      "dependsOn": ["build"],
+      "outputs": []
+    },
     "test:integration": {
       "dependsOn": ["^build", "@memhtml/mcp#build"],
       "cache": false

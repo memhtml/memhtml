@@ -10,7 +10,10 @@
     "typecheck": "astro check",
     "test": "vitest run",
     "gen:icons": "node src/branding/write-icons.ts",
-    "lint": "biome check src tests astro.config.ts --no-errors-on-unmatched"
+    "test:a11y": "vitest run --config vitest.a11y.config.ts",
+    "test:budget": "CHROME_PATH=$(node -p 'require(\"playwright\").chromium.executablePath()') lhci autorun",
+    "spellcheck": "cspell --no-progress \"src/content/**\"",
+    "lint": "biome check src tests astro.config.ts vitest.config.ts vitest.a11y.config.ts cspell.json lighthouserc.json --no-errors-on-unmatched && pnpm run spellcheck"
   },
   "dependencies": {
     "@astrojs/markdown-satteri": "^0.3.5",
@@ -23,6 +26,7 @@
     "astro-d2": "^0.13.1",
     "astro-og-canvas": "^0.13.0",
     "canvaskit-wasm": "^0.41.1",
+    "satteri": "^0.9.5",
     "starlight-base-path": "^0.2.1",
     "starlight-heading-badges": "^0.8.0",
     "starlight-links-validator": "^0.25.2",
@@ -33,10 +37,14 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
+    "@axe-core/playwright": "^4.13.0",
     "@biomejs/biome": "2.5.8",
     "@expo-google-fonts/tinos": "^0.4.2",
+    "@lhci/cli": "^0.15.1",
+    "@types/hast": "^3.0.5",
     "@types/node": "24.13.3",
     "cspell": "^10.0.1",
+    "playwright": "^1.62.1",
     "typescript": "6.0.3",
     "vitest": "4.1.10"
   }

@@ -1,0 +1,41 @@
+# External link checking for the built docs site. Reached through `mise run docs:links` and the
+# scheduled `links` workflow — never through `mise run check`, because a link that rotted overnight is
+# not a defect in whichever commit is being pushed this morning.
+#
+# INTERNAL links are somebody else's job and they DO gate: `starlight-links-validator` fails the
+# build on a broken internal link, so this config excludes them rather than checking them twice with
+# two different answers.
+
+# Every internal href in the output is site-absolute and host-less (`/memhtml/…`), and lychee cannot
+# turn that into a URL without an origin — it warns on each one and checks none of them. So the
+# production origin is supplied here purely so the links resolve, and then excluded: internal links
+# already gate at build time through starlight-links-validator, and checking them twice with two
+# different mechanisms is how two answers to one question get shipped.
+base_url = "https://memhtml.github.io"
+exclude_path = ["apps/docs/dist/pagefind"]
+include_verbatim = false
+exclude_all_private = true
+
+exclude = [
+  "^https://memhtml\\.github\\.io/",
+  # Every page carries an edit link into this repository's tree on GitHub. Ninety-three requests to
+  # one host inside a few seconds is what rate limiting exists for, and the answer says nothing about
+  # the docs.
+  "^https://github\\.com/memhtml/memhtml/edit/"
+]
+
+# One retry, then believe it. A checker that retries five times over a 93-page corpus turns a
+# scheduled report into a twenty-minute job.
+max_retries = 1
+retry_wait_time = 2
+timeout = 20
+max_concurrency = 8
+
+# A 429 or a 403 from a site that dislikes robots is not a broken link.
+accept = ["200..=299", "403", "429"]
+
+# Follow `#anchor` into the fetched page: a link to a section somebody else renamed is the most common
+# way documentation goes quietly wrong, and the status code alone never reveals it.
+include_fragments = "anchor-only"
+
+user_agent = "memhtml-docs-link-check"

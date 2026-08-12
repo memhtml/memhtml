@@ -16,8 +16,10 @@
     "test:integration": "turbo run test:integration",
     "test:eval": "turbo run test:eval",
     "figures:readme": "node scripts/readme-figures.mjs",
+    "test:a11y": "turbo run test:a11y",
+    "test:budget": "turbo run test:budget",
     "gen:fixture": "turbo run build --filter=@memhtml/eval && node packages/eval/dist/gen-fixture.js",
-    "check": "turbo run lint typecheck test test:integration test:eval"
+    "check": "turbo run lint typecheck test test:integration test:eval test:a11y test:budget"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.8",

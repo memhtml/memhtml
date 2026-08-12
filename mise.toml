@@ -51,6 +51,10 @@ semgrep = "latest"                       # SAST
 # renderer, and the same .d2 source has to emit both the site's SVG and the monospace figure
 # GitHub can display, since GitHub renders Mermaid and does not render D2 at all.
 "aqua:terrastruct/d2" = "0.7.1"          # diagram renderer for apps/docs
+# External-link checker for the built docs site, used ONLY by the scheduled `links` workflow. It is
+# not in `check` and must not be: an outbound 404 appears when somebody else edits their site, so
+# gating on it would fail whichever commit happened to be pushed that day.
+lychee = "latest"
 
 [env]
 # Puts the workspace's own binaries on PATH so a lefthook job reaching for `biome` gets
@@ -70,20 +74,36 @@ description = "Re-resolve every `latest` tool in mise.lock, leaving mise.toml al
 # Review the mise.lock diff — it is the record of which binaries the fleet now runs.
 run = "mise lock --bump"
 
+[tasks.browsers]
+description = "Fetch the pinned Chromium the accessibility and budget gates drive"
+# Playwright 1.62 ships NO install script, so `pnpm install` never fetches a browser — measured, and
+# it is why `allowBuilds` needed no new entry for it. Acquiring it is therefore an explicit step, and
+# it belongs in `install`: `mise run check` runs both browser gates, so a clone that installed
+# without this would fail the gate for want of a binary rather than for a defect.
+#
+# The download lands in a per-user cache (~/.cache/ms-playwright on Linux) keyed by Playwright's
+# build number, so this is a no-op once the version is present, and CI restores that path from a
+# cache before installing. `chromium` is Chrome for Testing: one binary serves axe through Playwright
+# and Lighthouse through CHROME_PATH, so both gates measure the same engine as each other and as CI.
+run = "pnpm --filter @memhtml/docs exec playwright install chromium"
+
 [tasks.install]
-description = "Install dependencies from the lockfile + wire the git hooks"
+description = "Install dependencies from the lockfile + wire the git hooks + fetch the browser"
 depends = ["tools:verify"]
-run = ["pnpm install --frozen-lockfile", "lefthook install"]
+run = ["pnpm install --frozen-lockfile", "lefthook install", "mise run browsers"]
 
 [tasks."install:ci"]
 description = "Reproducible install for CI — fails on lockfile drift, installs no hooks"
+# No `browsers` here, unlike `install`: three workflows call this and only `check` drives a browser,
+# so folding the download in would cost the pages and links jobs ~130 MB for nothing. `check.yml`
+# runs `browsers` as its own step, behind the cache that makes it a no-op.
 depends = ["tools:verify"]
 run = "pnpm install --frozen-lockfile"
 
 # --- the gate -----------------------------------------------------------------------
 
 [tasks.check]
-description = "The definition of done: lint + typecheck + test + test:integration + test:eval"
+description = "The definition of done: lint, typecheck, tests, integration, eval, a11y, budget"
 raw_args = true
 run = "pnpm check"
 
@@ -123,6 +143,23 @@ run = "pnpm test:integration"
 description = "The refusable discrimination gate, fake embedder"
 raw_args = true
 run = "pnpm test:eval"
+
+[tasks."test:a11y"]
+description = "WCAG 2.2 AA over four pages of the built docs site, plus the probes axe lacks"
+raw_args = true
+run = "pnpm test:a11y"
+
+[tasks."test:budget"]
+description = "Lighthouse category floors and the byte budget over the built docs site"
+raw_args = true
+run = "pnpm test:budget"
+
+[tasks.spell]
+description = "Spell-check the docs site's authored prose against the project dictionary"
+# Also reached by `mise run lint`: @memhtml/docs's own lint script ends with this, so the gate needs
+# no separate tier. This task exists to run it alone while editing prose.
+raw_args = true
+run = "pnpm --filter @memhtml/docs spellcheck"
 
 [tasks."gen:fixture"]
 description = "Write a browsable fixture corpus: mise run gen:fixture --out DIR [--seed N]"
@@ -227,3 +264,17 @@ run = "pnpm turbo run build --filter=@memhtml/docs"
 description = "Regenerate the README's ASCII figures from the site's own .d2 sources"
 raw_args = true
 run = "pnpm figures:readme"
+[tasks."docs:links"]
+description = "Check every EXTERNAL link in the built docs site (reports, never gates)"
+# Not part of `check`, and the workflow that runs it on a schedule says why: an outbound link rots
+# when its owner changes their site, which is not a property of the commit being pushed. Internal
+# links are a different question and DO gate — starlight-links-validator fails the build on one.
+#
+# `--offline` is absent on purpose: the whole point is the network. `--include-fragments` follows
+# `#anchor` into the fetched page, which is where a link to a renamed section on someone else's docs
+# shows up. The exit code is deliberately preserved here so a human running it sees the failure; the
+# workflow is what declines to gate.
+run = """
+mise run docs:build
+lychee --config lychee.toml 'apps/docs/dist/**/*.html'
+"""
