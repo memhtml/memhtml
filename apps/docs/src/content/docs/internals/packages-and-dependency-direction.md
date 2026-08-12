@@ -3,7 +3,7 @@ title: Packages and dependency direction
 description: The layering, the enforced purity of the pure packages, and the single composition root.
 ---
 
-## 1. The packages { #the-packages }
+## 1. The packages
 
 | Package | Role |
 |---|---|
@@ -18,7 +18,7 @@ description: The layering, the enforced purity of the pure packages, and the sin
 | `eval` | The discrimination gate and its generated fixture corpus. |
 | `apps/cli`, `apps/mcp` | The `memhtml` binary and the `memhtml-mcp` stdio server. |
 
-## 2. Direction { #direction }
+## 2. Direction
 
 Arrows point inward. `contracts` imports only `effect`; `domain` and `html` import `contracts`;
 `store` adds `html`; `index` adds `domain` and `llm`; `traces`, `sleep`, and `eval` sit above
@@ -35,7 +35,7 @@ checked with tests included through a second, test-inclusive typecheck configura
 answer to which database, which git root, which vector space
 (`apps/mcp/src/server.ts:13-18`).
 
-## 3. Purity is a test, not a convention { #purity-is-a-test-not-a-convention }
+## 3. Purity is a test, not a convention
 
 `@memhtml/domain`'s purity is enforced: `packages/domain/tests/layering.test.ts` greps the emitted
 `dist/*.js` for a runtime import of `node:sqlite`, `@aws-sdk`, or `node:fs`. Math that needed
@@ -44,7 +44,7 @@ infrastructure to test would let a caller's I/O failure surface as a scoring bug
 The same grep is what pins the storage engine: both planes are plain SQLite reached through node's
 built-in `node:sqlite`, and a package that is supposed to be pure cannot name a driver at all.
 
-## 4. One composition root, and the one cycle it breaks { #one-composition-root-and-the-one-cycle-it-breaks }
+## 4. One composition root, and the one cycle it breaks
 
 `AppLive` (`apps/cli/src/api-layer.ts:67-90`) wires every service. The design's one dependency cycle
 is broken there: the store needs a SQL lookup to answer "does this content already exist" and
@@ -56,7 +56,7 @@ Two other injected functions arrive by the same route and for the same reason â€
 recorder. Each keeps a layer's dependency direction intact while letting the composition root state
 the wiring in one visible place.
 
-## 5. The consolidator sits outside the graph { #the-consolidator-sits-outside-the-graph }
+## 5. The consolidator sits outside the graph
 
 `apps/consolidator` is the agent that distils candidate memories from raw transcripts, and it is the
 one package outside the service graph described above: it composes a sandboxed agent rather than a

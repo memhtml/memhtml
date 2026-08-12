@@ -3,19 +3,19 @@ title: The trace indexer
 description: A read-only index over session transcripts that stores pointers rather than content, with a table-name firewall keeping it out of retrieval.
 ---
 
-## 1. The store never holds session content { #the-store-never-holds-session-content }
+## 1. The store never holds session content
 
 `.memhtml` never holds session content. The trace tables are a read-only index over the agent runtime's
 transcript directory, and the root is a parameter rather than a constant so the scan is drivable against a
 fixture tree (`packages/traces/src/scan.ts:48-57`).
 
-## 2. The watermark is size, mtime, and a byte offset { #the-watermark-is-size-mtime-and-a-byte-offset }
+## 2. The watermark is size, mtime, and a byte offset
 
 `packages/traces/src/watermark.ts:66`. Matching size and mtime skips the file unopened; growth *tails*
 from the stored offset; a shrink, a backward mtime, or an offset past the current size rescans from 0,
 because a rewrite invalidates the offset's meaning.
 
-## 3. Streaming parse { #streaming-parse }
+## 3. Streaming parse
 
 `packages/traces/src/parse.ts:117` splits lines on the raw buffer rather than handing the stream to
 `readline`, and the reason is the byte count: `readline` strips the terminator without saying whether the
@@ -28,7 +28,7 @@ memory is one chunk plus one line whatever the file's size.
 The parse cannot fail: a missing file, a permission rejection, a truncated line, and binary garbage all
 degrade to counters (`packages/traces/src/parse.ts:56-67`).
 
-## 4. A type allowlist applied before any field access { #a-type-allowlist-applied-before-any-field-access }
+## 4. A type allowlist applied before any field access
 
 `packages/traces/src/extract.ts:11-38`. Seven types are read; six are counted and skipped, and two of
 those carry **no envelope and no `sessionId` at all** — so reaching for `record.cwd` on one would be
@@ -42,7 +42,7 @@ Timestamps are canonicalized to ISO-8601 UTC (`packages/traces/src/extract.ts:14
 `traces.started_at` is `TEXT` under an index, so ordering is lexicographic and an offset timestamp would
 sort as later than a `Z` instant hours after it.
 
-## 5. Merging a tail is producer-owned reading semantics { #merging-a-tail-is-producer-owned-reading-semantics }
+## 5. Merging a tail is producer-owned reading semantics
 
 A tail's extract describes the appended slice, not the session, so merging it lives in `@memhtml/traces`
 (`packages/traces/src/scan.ts:109-152`): identity fields take the older side, current-state fields the
@@ -56,14 +56,14 @@ outright.
 `text_head` caps at 200 characters and `first_prompt` at 500
 (`packages/traces/src/extract.ts:48-51`): this is an index, not a copy.
 
-## 6. The firewall is a table-name firewall, and its enforcement is a test { #the-firewall-is-a-table-name-firewall-and-its-enforcement-is-a-test }
+## 6. The firewall is a table-name firewall, and its enforcement is a test
 
 Nothing in the retrieval SQL assembler names `traces` or `trace_prompts` — asserted by grepping every
 statement the module can assemble, in both the default and the scoped form, because a firewall that holds
 for one and leaks for the other is not a firewall
 (`packages/index/tests/retrieval-sql.test.ts:204-211`).
 
-## 7. What the plane is for, and who consumes it { #what-the-plane-is-for-and-who-consumes-it }
+## 7. What the plane is for, and who consumes it
 
 The sections above describe how the plane is built. This one says why it exists, because the three tables
 divide a question that reads as one.
@@ -92,7 +92,7 @@ to misread:
   transcript has not been scanned yet, and refusing the link would discard provenance the file already
   carries.
 
-### 7.1. Consumers, and the shape of each { #consumers-and-the-shape-of-each }
+### 7.1. Consumers, and the shape of each
 
 `memhtml trace index` (hourly cron) is the producer. `memhtml trace search` and `memhtml trace links` are
 the read surfaces, mirrored over MCP as `trace_search` and `trace_links`
@@ -102,7 +102,7 @@ The firewall means these are a **separate query surface** rather than another re
 is structurally incapable of entering RRF, so "search my memories" and "search my sessions" cannot be
 conflated by accident.
 
-## 8. The consumer that motivates the plane { #the-consumer-that-motivates-the-plane }
+## 8. The consumer that motivates the plane
 
 Trace consolidation, phase 12 of [the sleep pipeline](/internals/the-sleep-pipeline/). Anything an agent
 learned mid-session and did not explicitly write is otherwise lost: the transcripts hold it, the corpus

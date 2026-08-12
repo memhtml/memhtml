@@ -45,6 +45,12 @@ lefthook = "latest"                      # git hooks; wired by `mise run install
 "aqua:betterleaks/betterleaks" = "1.7.4" # secret scanner
 osv-scanner = "latest"                   # vulnerability scan over pnpm-lock.yaml
 semgrep = "latest"                       # SAST
+# The docs site renders its figures at build time through astro-d2, which shells out to this
+# binary — so a docs build on a machine without it produces a page with a missing figure rather
+# than an error. Pinned exactly, not `latest`: 0.7.1 is the release that added the ASCII
+# renderer, and the same .d2 source has to emit both the site's SVG and the monospace figure
+# GitHub can display, since GitHub renders Mermaid and does not render D2 at all.
+"aqua:terrastruct/d2" = "0.7.1"          # diagram renderer for apps/docs
 
 [env]
 # Puts the workspace's own binaries on PATH so a lefthook job reaching for `biome` gets

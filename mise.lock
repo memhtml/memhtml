@@ -16,6 +16,20 @@ url = "https://github.com/betterleaks/betterleaks/releases/download/v1.7.4/bette
 url_api = "https://api.github.com/repos/betterleaks/betterleaks/releases/assets/508893148"
 provenance = "cosign"
 
+[[tools."aqua:terrastruct/d2"]]
+version = "0.7.1"
+backend = "aqua:terrastruct/d2"
+
+[tools."aqua:terrastruct/d2"."platforms.linux-x64"]
+checksum = "sha256:eb172adf59f38d1e5a70ab177591356754ffaf9bebb84e0ca8b767dfb421dad7"
+url = "https://github.com/d2lang/d2/releases/download/v0.7.1/d2-v0.7.1-linux-amd64.tar.gz"
+url_api = "https://api.github.com/repos/d2lang/d2/releases/assets/284023615"
+
+[tools."aqua:terrastruct/d2"."platforms.macos-arm64"]
+checksum = "sha256:80de85f3b0ac7d9569acac0780ed65dd994ea78969b6b230c58bbb2c6113465b"
+url = "https://github.com/d2lang/d2/releases/download/v0.7.1/d2-v0.7.1-macos-arm64.tar.gz"
+url_api = "https://api.github.com/repos/d2lang/d2/releases/assets/284023623"
+
 [[tools.lefthook]]
 version = "2.1.10"
 backend = "aqua:evilmartians/lefthook"

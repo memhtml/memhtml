@@ -3,7 +3,7 @@ title: Measured standing
 description: The benchmark numbers this system has actually measured, with the judge caveat that governs how they may be read.
 ---
 
-## 1. Where the system stands { #where-the-system-stands }
+## 1. Where the system stands
 
 Measured 2026-08-06; the LongMemEval-S row judged 2026-08-07. These are self-run numbers, not published
 results, and the right-hand column is a reference point rather than a leaderboard position — read section
@@ -16,7 +16,7 @@ results, and the right-hand column is a reference point rather than a leaderboar
 | BEAM Contradiction Resolution (100K split, 40 probes) | 43.8% mean | 0–5% all systems |
 | LongMemEval-S (full 500, judged 2026-08-07) | 67.0% | mid-50s–low-60s memory-system baselines |
 
-## 2. The judge caveat { #the-judge-caveat }
+## 2. The judge caveat
 
 **Cross-judge numbers are reference points, not rankings.** The judges behind the left-hand column are
 verbatim prompt ports running haiku-4.5, where the papers behind the right-hand column used gpt-4o and
@@ -30,7 +30,7 @@ What the columns *can* support is a claim about order of magnitude within a row 
 multi-hop consolidation rate of 37–49% against a published ceiling of 7%, or a contradiction-resolution
 mean of 43.8% against 0–5%, is a difference no plausible judge disagreement closes.
 
-## 3. What the campaign established about the architecture { #what-the-campaign-established-about-the-architecture }
+## 3. What the campaign established about the architecture
 
 As distinct from any one fix:
 
@@ -43,7 +43,7 @@ Both are properties of the shape described in [Packages and dependency
 direction](/internals/packages-and-dependency-direction/) and [The index](/internals/the-index/) rather
 than of a tuning pass, which is why they are recorded here instead of in a changelog.
 
-## 4. What these numbers are not { #what-these-numbers-are-not }
+## 4. What these numbers are not
 
 They are not the gate. The number that decides whether a change ships is the discrimination gate
 (`packages/eval/src/discriminate.ts:224`), which runs on every check and inside `memhtml sleep merge`, and

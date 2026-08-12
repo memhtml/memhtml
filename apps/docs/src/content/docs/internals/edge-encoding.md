@@ -3,7 +3,7 @@ title: Edge encoding
 description: Authored edges live in the HTML, derived edges live only in the index, and four non-mixing classes keep a to-do list out of the knowledge graph.
 ---
 
-## 1. Authored in the HTML, derived in the index { #authored-in-the-html-derived-in-the-index }
+## 1. Authored in the HTML, derived in the index
 
 An agent asserting "this supersedes that" is authorship — small, reviewable in a diff, and exactly
 what git is for. A sleep-mined `relates_to` at cosine 0.87 is a re-derivable function of the corpus
@@ -13,7 +13,7 @@ recoverable information (`packages/sleep/src/phases/relationship-mining.ts:6-19`
 So authored edges are `<link rel="memhtml-*">` elements in the file, and derived edges exist only as
 `edges` rows in the index. Deleting the index costs the derived set and nothing else.
 
-## 2. The `derived` column is the firewall { #the-derived-column-is-the-firewall }
+## 2. The `derived` column is the firewall
 
 The retention `contestedStatus` signal counts only authored (`derived = 0`) contradictions
 (`packages/contracts/src/edges.ts:122-128`, `packages/domain/src/retention.ts:164-166`), so an
@@ -26,7 +26,7 @@ SQL CHECK (`packages/index/migrations/0008_tasks.sql:147`), and the same conditi
 `isWellFormedEdge` (`packages/contracts/src/edges.ts:146-149`) so a caller can refuse a bad edge
 before the driver does.
 
-## 3. Four non-mixing classes { #four-non-mixing-classes }
+## 3. Four non-mixing classes
 
 `EDGE_CLASSES` (`packages/contracts/src/edges.ts:9`) is `memory`, `person`, `provenance`, `task`.
 
@@ -49,7 +49,7 @@ The HTML `rel` token is the rel with the `memhtml-` prefix and its underscores h
 (`packages/contracts/src/edges.ts:106-110`), so `laterally_related` is `memhtml-laterally-related`.
 `relForToken` is the inverse on that image (`packages/contracts/src/edges.ts:116`).
 
-## 4. What SQL cannot enforce, the store refuses { #what-sql-cannot-enforce-the-store-refuses }
+## 4. What SQL cannot enforce, the store refuses
 
 SQL cannot enforce the *type* of the files at either end, so the store refuses an edge whose class
 disagrees with its endpoints (`packages/store/src/store.ts:838-870`). Both directions are refusals
@@ -60,14 +60,14 @@ with distinct failure modes:
 
 `memhtml link` accepts the task rels; the MCP `memory_link` tool does not, refusing one at decode.
 
-## 5. Href form { #href-form }
+## 5. Href form
 
 `href` values are repo-root-relative with a leading slash — a document-reference form converted at the
 HTML boundary and never stored (`packages/index/src/project.ts:336-344`). Root-relative survives a
 `git mv` of the source, is greppable as a fixed string, and resolves without knowing the referrer's
 depth. A self-loop is dropped at projection time.
 
-## 6. No foreign key on the endpoints { #no-foreign-key-on-the-endpoints }
+## 6. No foreign key on the endpoints
 
 There is deliberately no foreign key on `edges.src_path`/`dst_path`: a `<link>` may name a file the
 indexer has not reached, or an archived path, and a hard FK would make indexing order-dependent

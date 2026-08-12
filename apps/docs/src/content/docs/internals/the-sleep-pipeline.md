@@ -3,7 +3,7 @@ title: The sleep pipeline
 description: Fifteen phases in a fixed order, each an isolated commit on a branch, with commit trailers as the resume mechanism and a refusable quality gate at the merge.
 ---
 
-## 1. Fifteen phases on a branch { #fifteen-phases-on-a-branch }
+## 1. Fifteen phases on a branch
 
 Fifteen phases in a fixed order (`packages/sleep/src/contract.ts:17`), each an isolated commit on
 `sleep/<YYYY-MM-DD>`, suffixed `-2` on a same-day rerun (`packages/sleep/src/run.ts:45`). The branch is
@@ -38,7 +38,7 @@ costs no model call.
 `PHASE_BODIES` is a total `Record<SleepPhase, PhaseBody>` (`packages/sleep/src/phases/index.ts:27`), so a
 name added to `SLEEP_PHASES` without a body is a compile error rather than a run that silently skips it.
 
-## 2. Per-phase isolation is the whole design { #per-phase-isolation-is-the-whole-design }
+## 2. Per-phase isolation is the whole design
 
 A phase that throws is caught with `Effect.result`, recorded as a value, and the phases after it still run
 (`packages/sleep/src/run.ts:231`, `packages/sleep/src/run.ts:258`) — thirteen phases inside one transaction
@@ -55,7 +55,7 @@ failed phase's half-finished work.
 **Nothing is ever rolled back** — `git branch -D` is the abort and `main` never moved
 (`packages/sleep/src/run.ts:29-31`).
 
-## 3. Commit trailers are the resume mechanism { #commit-trailers-are-the-resume-mechanism }
+## 3. Commit trailers are the resume mechanism
 
 Every phase commit carries `Memhtml-Run`, `Memhtml-Phase`, and `Memhtml-Counts`
 (`packages/sleep/src/contract.ts:67-69`, `packages/sleep/src/commit.ts:22-30`), and `resume` reads the
@@ -70,7 +70,7 @@ the fact; the row is a convenience the history can regenerate, and a reporting w
 A resume reports already-done phases explicitly as `skipped`, so its report accounts for all fifteen
 (`packages/sleep/src/run.ts:176-191`).
 
-## 4. Tasks are excluded from every phase { #tasks-are-excluded-from-every-phase }
+## 4. Tasks are excluded from every phase
 
 `packages/sleep/src/sql.ts:33`, for different reasons per phase.
 
@@ -84,7 +84,7 @@ a month scores at the *floor* — exactly the task most likely to still be owed,
 would archive the neglected work first and leave the busy work behind
 (`packages/sleep/src/phases/retention-triage.ts:24-28`).
 
-## 5. Thresholds and caps { #thresholds-and-caps }
+## 5. Thresholds and caps
 
 | Constant | Value | Location |
 |---|---|---|
@@ -97,7 +97,7 @@ would archive the neglected work first and leave the busy work behind
 | Retention bands | keep > 0.7, evict ≤ 0.3 | `packages/domain/src/retention.ts:144-145` |
 | Reprieve floor / days / max | 0.5 / 14 / 3 | `packages/domain/src/retention.ts:277-287` |
 
-## 6. The retention scorer { #the-retention-scorer }
+## 6. The retention scorer
 
 `packages/domain/src/retention.ts:267` is eight normalized signals under a per-type weight profile.
 
@@ -111,7 +111,7 @@ asserts an equality instead of a tolerance (`packages/domain/src/retention.ts:13
 type, with `procedural` and `task` set to `null` — a working procedure does not stale, and age is actively
 misleading about intended work (`packages/domain/src/retention.ts:110-126`).
 
-## 7. The merge veto { #the-merge-veto }
+## 7. The merge veto
 
 `packages/domain/src/merge.ts:169` is the disjunction of three symmetric divergence predicates: negation
 flip, numeric-token flip, variant-qualifier flip.
@@ -127,7 +127,7 @@ keeper cannot later be dropped, and vice versa. Both directions are required —
 leaves the surviving corruption, where given `(gf, a)` then `(b, gf)` both decisions commit, `gf` absorbs
 `a` and is then archived into `b`, so `a`'s content is superseded into a file the same batch destroyed.
 
-## 8. Conflict detection is three stages, and the separation is the safety property { #conflict-detection-is-three-stages-and-the-separation-is-the-safety-property }
+## 8. Conflict detection is three stages, and the separation is the safety property
 
 `packages/sleep/src/phases/conflict-detection.ts:21-40`: an SQL scan with no model, one isolated model call
 per pair, then a deterministic assertion the model never makes.
@@ -144,7 +144,7 @@ pair, so a re-promotion writes nothing.
 The phase **detects and stops** — choosing the winner of a contradiction is a one-way door on stored belief
 and belongs to an agent or a human, not to a nightly job.
 
-## 9. Graph analysis runs in TypeScript { #graph-analysis-runs-in-typescript }
+## 9. Graph analysis runs in TypeScript
 
 `packages/domain/src/graph.ts:76`, `packages/domain/src/graph.ts:164`: PageRank by power iteration,
 communities by label propagation.
@@ -163,7 +163,7 @@ passed off as a community would make every cross-pair edge look like a bridge �
 node in no community a count of 0 rather than its full degree
 (`packages/domain/src/graph.ts:236-247`).
 
-## 10. The model phases { #the-model-phases }
+## 10. The model phases
 
 One call shape: the native Messages API with a forced tool (`packages/llm/src/wire.ts:9-12`,
 `packages/llm/src/constants.ts:24`), decoded against its schema and failing typed on any violation rather
@@ -184,7 +184,7 @@ content for arcs it should have skipped and the writing is the expensive half
 names it as absorbed; an omitted member stays active, which is the safe outcome
 (`packages/sleep/src/phases/compress.ts:24-27`).
 
-## 11. Generated artifacts are the one merge-conflict source { #generated-artifacts-are-the-one-merge-conflict-source }
+## 11. Generated artifacts are the one merge-conflict source
 
 Per-directory `index.html` and root `sitemap.xml` are deterministic given the row set and regenerated only
 by `memhtml publish` and the integrity phase, never on an ordinary write
@@ -193,7 +193,7 @@ by `memhtml publish` and the integrity phase, never on an ordinary write
 `.gitattributes` marks them `merge=ours` (`packages/store/src/layout.ts:70`), inert without the
 `merge.ours.driver` config `memhtml init` sets — so a conflict is resolved by regeneration, never by hand.
 
-## 12. The integrity phase distinguishes two kinds of dangling href { #the-integrity-phase-distinguishes-two-kinds-of-dangling-href }
+## 12. The integrity phase distinguishes two kinds of dangling href
 
 `packages/sleep/src/phases/integrity.ts:20-34`. An archived target still exists and the edge still says
 something true, so the href is rewritten to the archive path — *derived* with `archivePathFor` rather than
@@ -204,7 +204,7 @@ warning; leaving it would produce a dangling row on every rebuild forever. Years
 over a ten-year window (`packages/sleep/src/phases/integrity.ts:127`), so the most recent archiving of a
 twice-archived path wins.
 
-## 13. Review and the merge gate { #review-and-the-merge-gate }
+## 13. Review and the merge gate
 
 `review` (`packages/sleep/src/review.ts:19`) reports per-phase counts, the commit list with their trailers,
 `git diff --stat base..HEAD`, and a per-file classification — `meta-only`, `body-changed`, `archived`,

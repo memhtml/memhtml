@@ -8,7 +8,7 @@ a `<figure>`. The vocabulary is closed (`packages/html/src/vocabulary.ts:145`): 
 is a warning, not a refusal. There is no sanitizer — the vocabulary *is* the policy, and
 `checkDocument` neither throws nor repairs (`packages/html/src/constraints.ts:351`).
 
-## 1. The machine plane { #the-machine-plane }
+## 1. The machine plane
 
 The head is a flat `memhtml-*` token space, hyphenated rather than colon-prefixed, because `rel`
 tokens cannot hold a colon and the same convention has to carry to
@@ -43,7 +43,7 @@ new scalar meta is appended at the end of the scalar block, because inserting on
 following line in every file the next edit touches. The surgical head editors insert in the same
 order (`packages/html/src/editors.ts:79`).
 
-## 2. The human plane with machine hooks { #the-human-plane-with-machine-hooks }
+## 2. The human plane with machine hooks
 
 Every element in the vocabulary earns its place by carrying indexer semantics — structure Markdown
 cannot express and the index consumes mechanically.
@@ -63,7 +63,7 @@ cannot express and the index consumes mechanically.
 | `<pre>`, `<code>`, `<kbd>`, `<samp>`, `<var>` | technical content | all text in `body_text`; `<pre>`/`<code>` excluded from `gist`; only `<pre>` preserves whitespace in the hash |
 | `<div>`, `<span>` | containers a pasted sample carries | permitted only under a `<figure>`; outside one they warn (`packages/html/src/vocabulary.ts:142`) |
 
-## 3. Two hashes, two jobs { #two-hashes-two-jobs }
+## 3. Two hashes, two jobs
 
 `memhtml-content-hash` is `sha256` over the whitespace-normalized text of `<article>` alone, `<pre>`
 verbatim (`packages/html/src/hash.ts:7-19`, `packages/html/src/hash.ts:115`). It is the dedup key and
@@ -83,14 +83,14 @@ The git blob sha of the whole file is the indexer's change key. It is a separate
 are never substituted for one another: a head-only edit moves the blob sha and not the content hash,
 which is exactly the case the index's narrow write rules are built around.
 
-## 4. Head edits go through byte-splice editors { #head-edits-go-through-byte-splice-editors }
+## 4. Head edits go through byte-splice editors
 
 `setMeta` (`packages/html/src/editors.ts:154`), `addLink` (`packages/html/src/editors.ts:216`), and
 `readMeta` (`packages/html/src/editors.ts:261`) edit bytes rather than parsing and re-serializing. A
 serializer round trip drops a `<pre>` newline, moving the content hash of every file a bookkeeping
 pass touched (`packages/store/src/store.ts:417-419`).
 
-## 5. Constraints, collected rather than short-circuited { #constraints-collected-rather-than-short-circuited }
+## 5. Constraints, collected rather than short-circuited
 
 Six numbered constraints run over the parsed tree (`packages/html/src/constraints.ts:29`), plus head
 well-formedness and the meta-value rules. Violations are collected, never short-circuited, so one
@@ -124,7 +124,7 @@ the omission and the `files` default are the graceful reading, and `memhtml doct
 A duplicate `memhtml-type`, by contrast, is a violation rather than a last-wins pick: two writers
 disagreeing about a memory's type should stop a write.
 
-## 6. The render gate { #the-render-gate }
+## 6. The render gate
 
 `renderTemplate` (`packages/html/src/template.ts:203`) places the `<mark>` claim itself, so the
 ordinary prose write path cannot violate the claim-leads-the-article constraint. But `articleHtml`
@@ -141,7 +141,7 @@ A batch does not soften this. Every op goes through the same render-then-reparse
 so one bad op in twenty is refused with its own violation list, and in the default atomic mode the
 whole batch is refused before any file exists.
 
-## 7. Fences and `data-lang` { #fences-and-data-lang }
+## 7. Fences and `data-lang`
 
 A body paragraph that is a whole backtick fence becomes `<figure><pre><code>`
 (`packages/html/src/fences.ts` owns the grammar; `packages/html/src/template.ts:102` renders it). An
@@ -179,7 +179,7 @@ back (`packages/html/src/parse.ts:301`) and never re-detects, so `rm index.db &&
 function of the tree rather than of the installed highlight.js version. A grep lock over
 `@memhtml/index`'s emitted bytes keeps it that way.
 
-## 8. Task files { #task-files }
+## 8. Task files
 
 A task is one of the ten `memory_type` values (`packages/contracts/src/types.ts:18`) and an ordinary
 memory file: one `<article>`, one `<mark>`, the same closed vocabulary, the same hash rules. It carries

@@ -3,7 +3,7 @@ title: The write path
 description: Ordering is the dedup mechanism, a batch is one commit and one reindex, and the conflict assist proposes without ever blocking a write.
 ---
 
-## 1. Singular write { #singular-write }
+## 1. Singular write
 
 `writeMemory` (`packages/store/src/store.ts:464`) renders through the gate, hashes, asks the dedupe
 question, claims a free path, writes, stages, and commits.
@@ -12,7 +12,7 @@ The order *is* the mechanism. A duplicate leaves the tree byte-identical with no
 `git status` to report, whereas a write-then-check order would need a rollback — and rolling back a git
 operation is a second failure mode.
 
-## 2. Content-hash dedup is enforced twice { #content-hash-dedup-is-enforced-twice }
+## 2. Content-hash dedup is enforced twice
 
 The write path asks an injected `dedupeLookup` (`packages/store/src/store.ts:156`, wired to
 `activePathForHash` at `packages/index/src/traces-persist.ts:162`) and returns the existing path with
@@ -33,7 +33,7 @@ not be deduped onto that task, or the caller is handed a task's path as the home
 predicate, not a `memoryType !== "task"` test at each of the three places the batch touches its hash
 map.
 
-## 3. Batch write is one commit and one reindex { #batch-write-is-one-commit-and-one-reindex }
+## 3. Batch write is one commit and one reindex
 
 `writeBatch` (`packages/store/src/store.ts:633`, `apps/cli/src/operations.ts:494`) is the whole reason
 the primitive exists rather than being a loop at the caller: N singular writes are N commits and,
@@ -44,7 +44,7 @@ because `indexPaths` cannot express a rename and never records the watermark. It
 having been written — moving the watermark for a commit that never happened is the bug that guard
 avoids.
 
-## 4. Atomicity is a two-phase fold { #atomicity-is-a-two-phase-fold }
+## 4. Atomicity is a two-phase fold
 
 Phase 1 validates every op and writes nothing (`packages/store/src/store.ts:662-685`), so an atomic
 abort has nothing to roll back. The failed op is reported with its own code and every other op reports
@@ -69,7 +69,7 @@ Three more properties of the fold:
   written either side of midnight would get different date prefixes and one indivisible operation's
   stamps would disagree about when it happened.
 
-## 5. The conflict assist is propose-only { #the-conflict-assist-is-propose-only }
+## 5. The conflict assist is propose-only
 
 With `detect_conflicts` on, each op's claim is keyed by `frameKeyOf` (`packages/domain/src/frame.ts`)
 and matched against ACTIVE non-task memories plus the batch's own earlier ops; a match surfaces as a
@@ -92,7 +92,7 @@ Three properties fall out of that, each load-bearing.
   cannot loop (`packages/index/src/traces-persist.ts:197`) — the quadratic-write-cost lesson expressed
   as a signature.
 
-### 5.1. Two deliberate asymmetries { #two-deliberate-asymmetries }
+### 5.1. Two deliberate asymmetries
 
 A store match **outranks** an earlier op in the same batch, because a stored memory is a fact already
 in the corpus while the earlier op is one this call is about to create — and `memory_correct`, the
@@ -104,7 +104,7 @@ did not exist when op 1 was written and would double one finding into two. The m
 claimant of a slot, so a chain of restatements all point at the claim that has to be reconciled rather
 than each one step back.
 
-### 5.2. Where the assist stops { #where-the-assist-stops }
+### 5.2. Where the assist stops
 
 The `article_html` path reports nothing, and the boundary is stated in the tool description and the
 guide rather than hidden. On that path `claim` is `""` by construction — the `<mark>` inside the
@@ -117,7 +117,7 @@ parser.
 conflict is not an outcome — the op wrote. A later field is possible; a sixth number a client cannot
 reconcile with the other five is not.
 
-## 6. Correction and archive { #correction-and-archive }
+## 6. Correction and archive
 
 **Correction** (`packages/store/src/store.ts:764`) reads the target first, or the tree gains an orphan
 superseding file with nothing to supersede. Its `memhtml-supersedes` points at the target's *archive*
@@ -128,7 +128,7 @@ a dangling href in the same commit that made it dangle. Both files land in one c
 (`packages/store/src/store.ts:397`) creates the destination's parent first, because `git mv` refuses a
 destination whose parent does not exist and the year partition is new every January.
 
-## 7. Provenance is recorded in both planes { #provenance-is-recorded-in-both-planes }
+## 7. Provenance is recorded in both planes
 
 The writer stamps `memhtml-session`/`memhtml-prompt`/`memhtml-turn` into the head and attaches
 `Memhtml-Session`/`Memhtml-Prompt` commit trailers (`packages/store/src/plumbing.ts:367-389`); the

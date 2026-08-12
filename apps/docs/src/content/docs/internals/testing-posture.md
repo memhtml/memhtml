@@ -3,7 +3,7 @@ title: Testing posture
 description: A real driver and a real git binary, fakes at the two network edges only, property tests over the pure packages, and a discrimination gate that refuses on one inversion.
 ---
 
-## 1. Real driver, real git { #real-driver-real-git }
+## 1. Real driver, real git
 
 Integration tests drive the **real** driver against `":memory:"` with the real migrations
 (`packages/index/src/database.ts:262-266`) and the **real git binary** against a temp-dir repo
@@ -17,7 +17,7 @@ deterministic hash-seeded embedder whose cosine relations are a pure function of
 (`packages/eval/src/harness.ts:52`), a failing embedder for the degraded path
 (`packages/eval/src/harness.ts:99`), and a scripted model.
 
-## 2. Property tests over the pure packages { #property-tests-over-the-pure-packages }
+## 2. Property tests over the pure packages
 
 `fast-check` covers `@memhtml/domain` and `@memhtml/html`. The load-bearing properties:
 
@@ -32,7 +32,7 @@ deterministic hash-seeded embedder whose cosine relations are a pure function of
 - label propagation yields the same partition for the same edge list;
 - the pure cooldown twin agrees with the SQL at the boundary.
 
-## 3. The discrimination gate { #the-discrimination-gate }
+## 3. The discrimination gate
 
 `packages/eval/src/discriminate.ts:224` asks whether the retrieval stack ranks a memory above its own
 high-similarity *wrong* twin.
@@ -43,7 +43,7 @@ failed to diverge is discarded rather than scored (`packages/eval/src/controls.t
 `packages/eval/src/controls.ts:163`). Mechanical derivation is what makes them high-cosine wrong-fact
 adversaries by construction rather than by an author's imagination.
 
-### 3.1. Two numbers, and the strict one is the gate { #two-numbers-and-the-strict-one-is-the-gate }
+### 3.1. Two numbers, and the strict one is the gate
 
 `packages/eval/src/discriminate.ts:18-21`.
 
@@ -59,20 +59,20 @@ on a fixture holding many near-identical memories, and reading it as a retrieval
 two coordinate spaces the two field names exist to keep apart
 (`packages/eval/src/discriminate.ts:76-88`).
 
-### 3.2. A skipped gate never looks like a passing one { #a-skipped-gate-never-looks-like-a-passing-one }
+### 3.2. A skipped gate never looks like a passing one
 
 `packages/eval/src/run.ts:15-23`. `fake` mode runs everywhere and is what CI measures; `live` mode without
 credentials reports `skipped: true` and `passed: false` with a loud stderr line, never a green report — a
 caller asking for live and getting a silent fake would be told the real vector space discriminates when
 nothing measured it.
 
-### 3.3. Where the gate is wired { #where-the-gate-is-wired }
+### 3.3. Where the gate is wired
 
 Three places: `memhtml eval discriminate` exits non-zero on any inversion, the repository-wide check runs
 it as a `test:eval` task, and `memhtml sleep merge` re-runs it and refuses the merge on failure. The
 refusal is the point — a sleep run that degrades retrieval quality does not land.
 
-## 4. Standing hazards this suite is written against { #standing-hazards-this-suite-is-written-against }
+## 4. Standing hazards this suite is written against
 
 Four failure modes have each cost real debugging time here, and each is now a rule for writing a test.
 
@@ -87,7 +87,7 @@ Four failure modes have each cost real debugging time here, and each is now a ru
 - **Assert shape when correctness and cost diverge.** Capture `EXPLAIN` output to prove the planner uses a
   partial index, since the rows come back either way.
 
-## 5. What integration tests are for { #what-integration-tests-are-for }
+## 5. What integration tests are for
 
 `tests-integration` runs with file parallelism off and a long timeout, because each suite `git init`s a
 repo and opens a database on disk. That cost buys the one thing a fake cannot give: state semantics across

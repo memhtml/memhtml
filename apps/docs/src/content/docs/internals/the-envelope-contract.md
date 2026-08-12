@@ -3,7 +3,7 @@ title: The envelope contract
 description: One JSON envelope per command, append-only response types and error codes, and a tool surface whose two hard constraints come from the transport rather than from taste.
 ---
 
-## 1. One envelope, three exit codes { #one-envelope-three-exit-codes }
+## 1. One envelope, three exit codes
 
 Every command writes one JSON envelope to stdout and nothing else; logs go to stderr. Exit codes are
 0 / 2 / 1 for success / usage / runtime (`apps/cli/src/envelope.ts:87-89`).
@@ -12,7 +12,7 @@ Every command writes one JSON envelope to stdout and nothing else; logs go to st
 (`apps/cli/src/agents-doc.ts:24`), so it is the reference for the command list and cannot drift from the
 live answer. Adding a command means editing that one array.
 
-## 2. `apiVersion` and `type` { #apiversion-and-type }
+## 2. `apiVersion` and `type`
 
 `apiVersion` lets the envelope evolve without silently breaking parsers, and `type` is a discriminator an
 agent reads to know the shape of `data` before parsing it (`apps/cli/src/envelope.ts:1-6`).
@@ -25,7 +25,7 @@ changes freely as wording improves.
 `--dense` strips nulls and indentation (`apps/cli/src/envelope.ts:143`), and an unknown argument comes
 back with Levenshtein-nearest candidates (`apps/cli/src/envelope.ts:124`) rather than a dead end.
 
-## 3. One translation from a typed failure to a code { #one-translation-from-a-typed-failure-to-a-code }
+## 3. One translation from a typed failure to a code
 
 `failureFor` (`apps/cli/src/errors.ts:154`) is the only translation, total by construction: an
 unrecognized `_tag` becomes `ERR_UNKNOWN` rather than an empty response
@@ -45,7 +45,7 @@ Per-op batch codes are mapped **once**, in the operations layer
 (`apps/cli/src/operations.ts:367-381`), so `memhtml apply` and `memory_write_batch` cannot report
 different codes for one refused op.
 
-## 4. The tool surface { #the-tool-surface }
+## 4. The tool surface
 
 Fourteen MCP tools are built with `Tool.make` and collected by `Toolkit.make`
 (`apps/mcp/src/tools.ts:712`), plus two resources — `memhtml://file/{path}` for citation-grade drill-down
@@ -65,7 +65,7 @@ Two things about the server are forced by the transport and the SDK rather than 
   `apps/mcp/src/tools.ts:155`) — which is why they read as prose to an agent rather than as notes to a
   maintainer.
 
-## 5. A declared failure schema is what lets prose through { #a-declared-failure-schema-is-what-lets-prose-through }
+## 5. A declared failure schema is what lets prose through
 
 Tool failures are a declared `Schema.ErrorClass` (`apps/mcp/src/failure.ts:31`), and that is
 load-bearing: of the SDK's three catch branches for a failed `tools/call`, only the one reached by a value
@@ -76,7 +76,7 @@ that reads a sentence with no content in it.
 Code, message, and suggestions fold into `.message` at construction because MCP's tool-error channel is
 one text block, with the `ERR_*` code first so a consumer can read it back off the prefix.
 
-## 6. Guidance and the sugar commands { #guidance-and-the-sugar-commands }
+## 6. Guidance and the sugar commands
 
 The CLI's own guidance lives in the manifest's `guide` blocks (`apps/cli/src/commands.ts:762`), rendered
 into `AGENTS.md` by the same generator (`apps/cli/src/agents-doc.ts:52`), so the doc and the live answer

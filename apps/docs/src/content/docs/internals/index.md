@@ -9,7 +9,7 @@ decision is implemented. It is not a tutorial and not a command reference. A rea
 install the store, write a memory, or operate a nightly run is served by [Learn](/learn/); a reader who
 wants the exact spelling of a flag or an error code is served by Reference.
 
-## 1. Two invariants { #two-invariants }
+## 1. Two invariants
 
 Almost every design decision below is a consequence of one of two invariants, and almost every bug
 this system has had was a violation of one of them.
@@ -27,7 +27,7 @@ The store owns staging, because a caller that staged its own files could bundle 
 into one commit. Nothing is ever deleted: eviction is a `git mv` into `archive/<YYYY>/` mirroring the
 original path, so `git log --follow` reads through a memory's whole life.
 
-## 2. The chapters { #the-chapters }
+## 2. The chapters
 
 Each page is one chapter of the architecture, in dependency order — the layers first, then the
 paths through them, then the pipelines and the contract surface.
@@ -54,7 +54,7 @@ live system prompt of the agent that distils memories out of transcripts.
 governs how they may be read. The [glossary](/glossary/) defines the domain vocabulary these pages
 use and links each term to the chapter that develops it.
 
-## 3. How to read a citation { #how-to-read-a-citation }
+## 3. How to read a citation
 
 Every architectural claim on these pages names the code that implements it, in repo-relative
 `path:line` form — `packages/index/src/retrieval-sql.ts:246-248`. Line numbers are a pointer into the

@@ -137,7 +137,6 @@ const furtherReadingSection = (registry: Registry, command: CommandSpec, base: s
   const topics = topicsCovering(registry, command.name)
   return {
     title: "Further reading",
-    anchor: "further-reading",
     body:
       topics.length === 0
         ? `No guide block names this command. The ${pageLink(base, `${TIER}/guide`, "guide")} is the workflow prose an agent reads before the command table means anything.`
@@ -208,7 +207,6 @@ const overviewPage = (registry: Registry, base: string): ReferencePage => {
     body: sections([
       {
         title: "What this tier is",
-        anchor: "what-this-tier-is",
         body: [
           "Every page here is generated at build time from the registry that defines the thing it documents, and no page exists as a file in the repository. A count on one of these pages is the length of an array in the source, so a page cannot claim a surface the binary does not have.",
           "The registries and their sizes:",
@@ -242,7 +240,6 @@ const overviewPage = (registry: Registry, base: string): ReferencePage => {
       },
       {
         title: "How a command surface is described",
-        anchor: "how-a-command-is-described",
         body: paragraphs(registry.prose.commands ?? "")
       },
       provenance(
@@ -500,7 +497,6 @@ const errorCodesPage = (registry: Registry, base: string): ReferencePage => {
       },
       {
         title: "How a failure reaches a caller",
-        anchor: "how-a-failure-reaches-a-caller",
         body: `Every typed domain failure passes through one translation in ${code("apps/cli/src/errors.ts")}, which is total: an unrecognised failure becomes ${code("ERR_UNKNOWN")} rather than an empty response. The envelope's shape is on ${pageLink(base, `${TIER}/envelope`, "the JSON envelope")}.`
       },
       provenance(
@@ -627,7 +623,6 @@ const vocabularyPage = (registry: Registry): ReferencePage => ({
     },
     ...registry.vocabularies.map((vocabulary) => ({
       title: vocabulary.name,
-      anchor: vocabulary.name.toLowerCase().replaceAll("_", "-"),
       body: [
         `${vocabulary.values.length} values, from ${code(vocabulary.source)}: ${codeList(vocabulary.values)}`,
         paragraphs(vocabulary.doc ?? "")
@@ -729,7 +724,6 @@ const schemaPage = (registry: Registry, base: string): ReferencePage => {
     ].join("\n\n"),
     children: plane(which).map((migration) => ({
       title: migration.file,
-      anchor: migration.file.replace(/\.sql$/, "").toLowerCase(),
       body: [codeList(migration.creates), paragraphs(migration.rationale)]
         .filter((part) => part !== "")
         .join("\n\n")
@@ -816,7 +810,6 @@ const requirementsPage = (registry: Registry): ReferencePage => {
         ].join("\n\n"),
         children: prefixes.map(([prefix]) => ({
           title: prefix,
-          anchor: prefix.toLowerCase(),
           body: table(
             ["Key", "Requirement", "Status", "Verification", "Satisfied by"],
             ofPrefix(prefix).map((requirement) => [

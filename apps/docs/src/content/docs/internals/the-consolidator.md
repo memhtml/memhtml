@@ -3,7 +3,7 @@ title: The consolidator
 description: The live system prompt of the agent that distils candidate memories out of raw transcripts, reproduced as the artifact it is.
 ---
 
-## 1. What this page is { #what-this-page-is }
+## 1. What this page is
 
 `apps/consolidator/agent/instructions.md` is the system prompt of the eve agent that phase 12 of
 [the sleep pipeline](/internals/the-sleep-pipeline/) runs. It is reproduced below **verbatim, as a live
@@ -15,7 +15,7 @@ It is published here because it is the only place the *editorial* policy of the 
 Every other page in this topic describes a mechanism; this one is the bar a candidate memory has to clear
 before a mechanism ever sees it.
 
-## 2. Why the bar is where it is { #why-the-bar-is-where-it-is }
+## 2. Why the bar is where it is
 
 The phase exists because anything an agent learned mid-session and did not explicitly write is otherwise
 lost: the transcripts hold it, the corpus does not. That makes the failure mode obvious in hindsight and
@@ -34,7 +34,7 @@ capped at 600 characters so it cannot smuggle a transcript, and every cited `ses
 membership in the batch actually seeded, so an invented citation fails the turn rather than landing
 unfalsifiable (`apps/consolidator/src/contract.ts:133`).
 
-## 3. Transcript content is data, not instruction { #transcript-content-is-data-not-instruction }
+## 3. Transcript content is data, not instruction
 
 Transcripts are recordings of other agent sessions, so they are full of instruction-shaped text: system
 prompts, user commands, tool definitions, and earlier agents' rules. The prompt therefore states the
@@ -42,7 +42,7 @@ injection boundary explicitly, and it is worth reading as a design decision rath
 line in a transcript saying "ignore previous instructions" is a *finding the agent may cite as evidence*,
 never a directive it follows.
 
-## 4. The prompt, verbatim { #the-prompt-verbatim }
+## 4. The prompt, verbatim
 
 ```markdown
 # Trace consolidator
@@ -189,7 +189,7 @@ Return the structured object you were asked for and nothing else. No prose wrapp
 fence, no commentary before or after it.
 ```
 
-## 5. How its output reaches the corpus { #how-its-output-reaches-the-corpus }
+## 5. How its output reaches the corpus
 
 The candidates come back as a structured object, and the phase writes each accepted one as an ordinary
 memory through the store — same render gate, same dedup, same path algebra as any agent write. One commit

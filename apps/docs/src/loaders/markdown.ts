@@ -8,10 +8,9 @@
  * for us, and an `&lt;` written into a code span renders as those five characters. Second, a table
  * cell ends at the first unescaped pipe, including one inside a code span.
  *
- * Headings carry their number in the TEXT and an explicit anchor. The number is text because this
- * site serves raw Markdown to agents and a CSS counter is absent there; the anchor is explicit
- * because a generated number would otherwise land in the id and every inserted section would churn
- * the inbound links of the ones after it.
+ * Headings carry their number in the TEXT, because this site serves raw Markdown to agents and a
+ * number injected by CSS or by an AST plugin is absent there — a human citing a section and an agent
+ * reading the Markdown would name different things.
  */
 
 const CODE_SPAN = /(`+[^`]*`+)/
@@ -74,21 +73,21 @@ export const bullets = (items: ReadonlyArray<string>): string =>
 /** One numbered section of a page. */
 export interface Section {
   readonly title: string
-  /** The stable anchor. Defaults to the title's slug, and never carries the section number. */
-  readonly anchor?: string
   readonly body: string
   readonly children?: ReadonlyArray<Section>
 }
 
-const slug = (title: string): string =>
-  title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-
+/*
+ * Headings carry their number in the text and take the anchor Starlight derives from it. An explicit
+ * `{ #anchor }` would be better — it would survive a renumbering without churning inbound links —
+ * but it cannot be used here: `starlight-md-txt` parses every page's raw body through `remark-mdx`
+ * unconditionally, and a brace expression is a JSX expression to acorn, so the raw Markdown route
+ * fails to render. The raw routes are the point of this site's agent surface and outrank a stabler
+ * anchor. Renumbering therefore changes anchors, and `starlight-links-validator` is what catches the
+ * internal links that breaks.
+ */
 const renderSection = (section: Section, number: string, depth: number): string => {
-  const anchor = section.anchor ?? slug(section.title)
-  const heading = `${"#".repeat(depth)} ${number} ${section.title} { #${anchor} }`
+  const heading = `${"#".repeat(depth)} ${number} ${section.title}`
   const children = (section.children ?? []).map((child, at) =>
     renderSection(child, `${number.slice(0, -1)}.${at + 1}.`, depth + 1)
   )

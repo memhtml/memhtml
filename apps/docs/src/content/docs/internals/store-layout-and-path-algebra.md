@@ -3,7 +3,7 @@ title: Store layout and path algebra
 description: PARA as four fixed buckets, placement as a pure total function, and an archive mapping that is injective and invertible.
 ---
 
-## 1. The layout { #the-layout }
+## 1. The layout
 
 ```
 $MEMHTML_ROOT/                     a git repo, one global memory store
@@ -25,7 +25,7 @@ than a status because the path itself records the state.
 A workspace is a directory and nothing else. There is no workspaces table, so creating one costs a
 `mkdir` inside a commit, and deleting one is a `git mv`.
 
-## 2. Placement is a pure total function { #placement-is-a-pure-total-function }
+## 2. Placement is a pure total function
 
 `placementFor` (`packages/contracts/src/paths.ts:103`) applies six rules in order:
 
@@ -43,7 +43,7 @@ guesses twice and never fails.
 `memoryPathFor` (`packages/contracts/src/paths.ts:142`) adds the filename, date-prefixing an episodic
 entry because time is part of its identity while every other type must be correctable in place.
 
-## 3. The archive mapping is injective and invertible { #the-archive-mapping-is-injective-and-invertible }
+## 3. The archive mapping is injective and invertible
 
 `archivePathFor` (`packages/contracts/src/paths.ts:165`) mirrors the original path whole beneath
 `archive/<YYYY>/`, and `originalPathFor` (`packages/contracts/src/paths.ts:173`) strips exactly one
@@ -55,7 +55,7 @@ The property is pinned by a test: `originalPathFor(archivePathFor(p, y)) === p` 
 path. Invertibility is what lets the sleep pipeline's integrity phase *derive* an archived target's
 new href rather than searching for it — no rename-similarity score is consulted anywhere.
 
-## 4. A path is an id { #a-path-is-an-id }
+## 4. A path is an id
 
 Path validation refuses `.` and `..` segments (`packages/contracts/src/paths.ts:63`), keeping a
 caller-supplied path inside the repo. A path is the id of a memory — there is no separate uuid
@@ -67,7 +67,7 @@ central table, and because that key moves when a memory is evicted, every child 
 document-reference form, converted at the HTML boundary and never stored
 (`packages/contracts/src/types.ts:102-107`, `packages/index/src/project.ts:336-344`).
 
-## 5. Initialization is convergent, not merely idempotent { #initialization-is-convergent-not-merely-idempotent }
+## 5. Initialization is convergent, not merely idempotent
 
 `memhtml init` (`packages/store/src/layout.ts:183`) is the only path that creates the root. Each step
 asks the repo what is already true, so it converges from an empty directory, from a live repo, and

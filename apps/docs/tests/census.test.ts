@@ -207,15 +207,27 @@ describe("the pages themselves", () => {
     }
   })
 
-  it("numbers top-level sections from one, in order, each with an explicit anchor", () => {
+  it("numbers top-level sections from one, in order, in the heading text", () => {
     for (const one of pages) {
       const headings = one.body.split("\n").filter((line) => line.startsWith("## "))
       expect(headings.length).toBeGreaterThan(1)
       expect(headings.map((heading) => heading.split(" ")[1])).toEqual(
         headings.map((_, at) => `${at + 1}.`)
       )
-      for (const heading of headings) expect(heading).toMatch(/\{ #[a-z0-9-]+ \}$/)
     }
+  })
+
+  /*
+   * A brace anchor would be the better convention — it survives a renumbering without churning
+   * inbound links — and it is nonetheless forbidden here. `starlight-md-txt` parses every page's raw
+   * body through `remark-mdx`, where `{ #anchor }` is a JSX expression, so one brace anywhere fails
+   * the whole raw-Markdown route. Those routes are this site's agent surface, so they win.
+   *
+   * This asserts the constraint rather than trusting a comment, because the failure it prevents is a
+   * build error in a route nothing else covers.
+   */
+  it("writes no brace anchor, which would break the raw Markdown route", () => {
+    for (const one of pages) expect(one.body).not.toMatch(/\{\s*#[a-z0-9-]+\s*\}/)
   })
 
   it("names the registry it came from on every page", () => {

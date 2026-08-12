@@ -1,6 +1,15 @@
 import { satteri } from "@astrojs/markdown-satteri"
 import starlight from "@astrojs/starlight"
+import { pluginCollapsibleSections } from "@expressive-code/plugin-collapsible-sections"
+import { pluginLineNumbers } from "@expressive-code/plugin-line-numbers"
 import { defineConfig, passthroughImageService } from "astro/config"
+import astroD2 from "astro-d2"
+import { starlightBasePath } from "starlight-base-path"
+import starlightHeadingBadges from "starlight-heading-badges"
+import starlightLinksValidator from "starlight-links-validator"
+import starlightLlmsTxt from "starlight-llms-txt"
+import starlightMdTxt from "starlight-md-txt"
+import starlightScrollToTop from "starlight-scroll-to-top"
 
 /**
  * The origin and the base segment are configuration carrying the production values as defaults, so a
@@ -37,6 +46,18 @@ export default defineConfig({
   // failure that a build with no images does not reveal. This site optimises no images.
   image: { service: passthroughImageService() },
   integrations: [
+    /*
+     * Figures render to static SVG at build time through the pinned `d2` binary, so no diagram
+     * runtime reaches the browser. Theme 301 is Terminal Grayscale — monochrome with square
+     * corners, which is the line-art register of a specification rather than a diagram tool's
+     * default. Both ids are strings; the schema rejects the numbers D2's own documentation prints.
+     *
+     * `dark: false` disables the dark variant outright so every figure renders identically. That is
+     * the point rather than an omission: D2 emits a dark-mode media block inside the SVG which
+     * would otherwise reassert its own palette over the monochrome, and having one drawing per
+     * diagram is simpler than overriding a second.
+     */
+    astroD2({ theme: { default: "301", dark: false } }),
     starlight({
       title: "memhtml",
       description: "Memory for agents, in HTML.",
@@ -44,6 +65,32 @@ export default defineConfig({
       editLink: { baseUrl: "https://github.com/memhtml/memhtml/edit/main/apps/docs/" },
       lastUpdated: true,
       customCss: ["./src/styles/rfc.css"],
+      expressiveCode: { plugins: [pluginLineNumbers(), pluginCollapsibleSections()] },
+      plugins: [
+        /*
+         * Serves each page's Markdown source at its own path. `injectRoute` is what makes it
+         * base-correct by construction, and it unwraps MDX through a real AST transform rather
+         * than a regex — which matters because this site's install snippets are component-driven
+         * tabs, and a regex extractor drops the tab labels that distinguish pnpm from npm.
+         *
+         * Exactly one dependency may own this route. Nothing else here emits `<path>.md`.
+         */
+        starlightMdTxt(),
+        starlightLlmsTxt(),
+        /*
+         * Prefixes `base` onto authored content links, so a page can write `/internals/x/` and be
+         * correct under `/memhtml/`. It narrows this class of bug without closing it — a
+         * hand-built `new URL(x, Astro.site)` still drops the base, because `Astro.site` excludes
+         * it — so the test asserting no unprefixed internal href stays regardless.
+         */
+        starlightBasePath(),
+        // Fails the build on a broken internal link. Pinned ^0.25.2 deliberately: 0.25.3 shipped
+        // 2026-08-12, and under `minimumReleaseAge` + `minimumReleaseAgeStrict` a ^0.25.3 range has
+        // no satisfying version and the install fails outright rather than falling back.
+        starlightLinksValidator(),
+        starlightHeadingBadges(),
+        starlightScrollToTop()
+      ],
       /*
        * Diátaxis, three tiers: Learn is task-shaped, Reference is derived from the registries, and
        * Internals is the reasoning. An `autogenerate` entry has to sit inside `items` — a group

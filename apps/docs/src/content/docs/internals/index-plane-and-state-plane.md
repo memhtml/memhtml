@@ -3,7 +3,7 @@ title: The index plane and the state plane
 description: What git cannot reproduce, why it is gitignored anyway, and the byte-stable committed sidecar that is its only durable copy.
 ---
 
-## 1. The one thing git cannot reproduce { #the-one-thing-git-cannot-reproduce }
+## 1. The one thing git cannot reproduce
 
 Access counts, reinforcement counts, the outcome EWMA, reprieve bookkeeping, and edge corroboration are
 the only state git cannot reproduce, and they are high-churn: a commit per access bump would be a commit
@@ -21,7 +21,7 @@ Two planes, two properties:
 | index | `.memhtml/index.db` | no | yes, from `git ls-tree` |
 | state | `.memhtml/state.db` | no | only from the committed sidecar |
 
-## 2. The sidecar is byte-stable or it commits nothing { #the-sidecar-is-byte-stable-or-it-commits-nothing }
+## 2. The sidecar is byte-stable or it commits nothing
 
 Rows arrive path-ordered from SQL, floats round to four decimals, keys are written in fixed order, and an
 unchanged plane produces an identical file whose commit is empty
@@ -36,7 +36,7 @@ so two equal planes render identically.
 rather than failing the import — this is the only durable copy of the plane, and refusing a file truncated
 by an interrupted write would turn a partial loss into a total one.
 
-## 3. Cross-database references are explicit { #cross-database-references-are-explicit }
+## 3. Cross-database references are explicit
 
 Cross-database foreign keys do not exist, so a path move is mirrored by an explicit `onMove` hook the
 store calls at the one place a path can change (`packages/store/src/store.ts:160-168`,
@@ -46,7 +46,7 @@ The alternative — deriving the state plane's keys from something other than th
 inventing a second identity for a memory, and the path is the id
 (`packages/contracts/src/types.ts:102-107`).
 
-## 4. The claim is tested end to end { #the-claim-is-tested-end-to-end }
+## 4. The claim is tested end to end
 
 `tests-integration/tests/clone.test.ts` exercises the whole claim: clone the memory repo, assert neither
 database came with it, then `memhtml init` + `state import` + `index rebuild` and check that the origin's

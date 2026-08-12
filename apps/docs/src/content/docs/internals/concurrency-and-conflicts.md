@@ -3,7 +3,7 @@ title: Concurrency and conflicts
 description: Git is the optimistic-concurrency mechanism, a same-file collision surfaces as a typed error carrying both shas, and sleep is stricter than an agent write.
 ---
 
-## 1. Git is the concurrency mechanism { #git-is-the-concurrency-mechanism }
+## 1. Git is the concurrency mechanism
 
 Two agents editing different files never interact. There is no lock, no lease, and no coordination
 service: the tree is the shared state and git's index is the arbiter.
@@ -12,7 +12,7 @@ A CLI command and a running MCP server share one `index.db`. WAL admits one writ
 readers, `busy_timeout = 5000` is set on every connection
 (`packages/index/src/database.ts:342-354`), and a contended write retries.
 
-## 2. A same-file collision is a typed error carrying both shas { #a-same-file-collision-is-a-typed-error-carrying-both-shas }
+## 2. A same-file collision is a typed error carrying both shas
 
 `mergeBranch` (`packages/store/src/store.ts:924`) reads both competing blob shas out of the unmerged
 index — stage 2 is ours, stage 3 is theirs — **before** aborting, because `merge --abort` discards the
@@ -26,7 +26,7 @@ The recovery belongs to the caller. Two agents that wrote different facts into o
 reconciled by a rule the store knows; two shas and a path are what an agent needs to read both sides and
 decide.
 
-## 3. Sleep is stricter { #sleep-is-stricter }
+## 3. Sleep is stricter
 
 `preflight` refuses on a dirty tree (`packages/store/src/store.ts:918`,
 `packages/contracts/src/errors.ts:56`), and `merge` refuses if `main` moved.
@@ -36,7 +36,7 @@ the fact; a curation run rewrites metadata across the whole corpus, so starting 
 work would mix a human's in-progress edit into a machine's fifteen commits with no way to tell them
 apart in the diff.
 
-## 4. Rerunning is cheap because the phases are idempotent { #rerunning-is-cheap-because-the-phases-are-idempotent }
+## 4. Rerunning is cheap because the phases are idempotent
 
 An already-merged duplicate no longer surfaces as a candidate, an already-decayed confidence is a fixed
 point (`packages/domain/src/decay.ts:116`), and an already-archived file is not a candidate.

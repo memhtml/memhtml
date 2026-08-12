@@ -3,7 +3,7 @@ title: Four-arm retrieval
 description: An arm registry folded into one SQL statement, weighted RRF, degradation as a filter rather than an error, MMR diversification, and the disclosure fold.
 ---
 
-## 1. One fused statement, two entry points { #one-fused-statement-two-entry-points }
+## 1. One fused statement, two entry points
 
 `search` and `recall` sit on the same fused SQL and the same MMR pass
 (`packages/index/src/retrieval.ts:16-23`), so a ranking change cannot apply to one and not the other.
@@ -12,7 +12,7 @@ description: An arm registry folded into one SQL statement, weighted RRF, degrad
 `packages/index/src/retrieval-sql.ts:237`) — so adding a fifth is a table entry and dropping one is a
 filter. Each arm returns exactly `(path, rank)`, 1-based.
 
-## 2. The four arms { #the-four-arms }
+## 2. The four arms
 
 `RANK_ARMS` (`packages/index/src/retrieval-sql.ts:243`) holds four members, in fold order. Order is
 presentation only; RRF's sum commutes.
@@ -24,25 +24,25 @@ presentation only; RRF's sum commutes.
 | `recency` | 0.5 | — | `coalesce(event_at, updated_at) DESC, path ASC` |
 | `salience` | 0.4 | state plane | three terms over `state.access`, DESC — no task, no `resources/people/` |
 
-### 2.1. fts { #fts }
+### 2.1. fts
 
 `packages/index/src/retrieval-sql.ts:71`. `ROW_NUMBER() OVER ()` with no `ORDER BY` captures MATCH's own
 row order, the only relevance signal this driver exposes — there is no `rank` column and no `bm25()`.
 The window sits *outside* the `LIMIT`ed subquery, or it would number the pre-limit scan.
 
-### 2.2. vector { #vector }
+### 2.2. vector
 
 `packages/index/src/retrieval-sql.ts:94`. Exact brute force. `GROUP BY c.path` with `min(distance)`
 collapses a file to its best chunk — without it a three-chunk file contributes three ranks, consumes
 three slots of the arm's budget, and has three reciprocal-rank contributions summed, so being long would
 outrank being relevant.
 
-### 2.3. recency { #recency }
+### 2.3. recency
 
 `packages/index/src/retrieval-sql.ts:118`. Event time first, so an episodic memory sorts by when the
 incident happened rather than by when someone wrote it down.
 
-### 2.4. salience { #salience }
+### 2.4. salience
 
 `packages/index/src/retrieval-sql.ts:154`. `exp(-0.01·hours)` + `ln(1 + access_count)` +
 `max(outcome_score, 0.0)`, read over the ATTACH. The clamp is the negative-outcome guard: no boost, but
@@ -67,7 +67,7 @@ so the arm has no opinion rather than the query being narrowed. The mechanism is
 row for an excluded path at all — leaving the row in with a zeroed access count would still rank it by
 write time, which is the recency arm's job, counted twice.
 
-## 3. Fusion { #fusion }
+## 3. Fusion
 
 Fusion is one statement: each active arm a CTE, weighted `1/(rank + 60)` contributions `UNION ALL`ed,
 then summed per path (`packages/index/src/retrieval-sql.ts:246-248`,
@@ -80,7 +80,7 @@ is active, so a caller must treat that as an empty result rather than assemble `
 The pure arithmetic has a twin in `@memhtml/domain` (`packages/domain/src/rrf.ts:37`), so a weight change
 is testable without a database.
 
-## 4. Numbered placeholders and degraded mode { #numbered-placeholders-and-degraded-mode }
+## 4. Numbered placeholders and degraded mode
 
 The placeholder prefix is fixed at four positions (`packages/index/src/retrieval-sql.ts:24-27`): `?1`
 query text, `?2` per-arm limit, `?3` final limit, `?4` query vector. Scope values bind from `?5` up
@@ -98,7 +98,7 @@ embedder failure is caught, logged, and turned into `undefined`
 (`packages/index/src/retrieval.ts:173-194`), so retrieval never errors because the embedding provider is
 down — it gets narrower, and `degraded` says so on the response.
 
-## 5. Query sanitization { #query-sanitization }
+## 5. Query sanitization
 
 `needsQueryTerms` exists because several forms an agent writes are **hard driver errors rather than
 empty results**: an apostrophe, a colon (the system's own entity notation), a leading hyphen, a bare
@@ -110,7 +110,7 @@ escaping is deliberate: `query` is prose, not a query language, and supporting n
 agent invokes it accidentally by writing a hyphenated word. `\p{L}\p{N}` rather than `[a-z0-9]` keeps
 `déployé` one token.
 
-## 6. Scoping { #scoping }
+## 6. Scoping
 
 Scope is assembled **once** and every arm receives the same string, differing only in the alias its
 `files` row goes by via a `{alias}` token (`packages/index/src/scope.ts:92`); per-arm filters would let a
@@ -137,7 +137,7 @@ a hop off a hit's own `entities` list, which is one reference at a time, so a li
 question of whether it broadens or narrows before anyone has asked for either. A scope matching nothing
 returns no hits and says so through `scope_empty` rather than widening.
 
-## 7. MMR { #mmr }
+## 7. MMR
 
 `search` fetches `limit × 3` fused candidates (`packages/index/src/retrieval.ts:31-35`), because
 diversification can only reorder what it was given. `applyMmr` (`packages/domain/src/mmr.ts:36`) is
@@ -156,7 +156,7 @@ final paths only — after MMR, not after fusion — so the fused CTE never chan
 (`packages/index/src/retrieval.ts:286`). A NULL distance loses to any scored chunk and ordinal breaks
 ties, so the winner is deterministic (`packages/index/src/retrieval.ts:457-467`).
 
-## 8. The disclosure fold { #the-disclosure-fold }
+## 8. The disclosure fold
 
 `recall` returns a budgeted pack whose three tiers map onto the HTML structure rather than onto a
 truncation of prose (`packages/index/src/disclosure.ts:1-17`).
@@ -176,7 +176,7 @@ Arcs fold under their **own** 9,000-character envelope rather than competing wit
 compete would make one arc crowd out every concrete memory behind it, and the pack would explain the
 pattern while citing none of the evidence.
 
-## 9. Reinforcement { #reinforcement }
+## 9. Reinforcement
 
 `reinforce` (`packages/index/src/reinforce.ts:45`) is the **one** call site that moves `state.access`,
 because the cooldown is the invariant: `access_count` feeds the salience arm, so a second writer would
@@ -192,7 +192,7 @@ The conditional upsert's `RETURNING` makes the bumped/cooled split authoritative
 would race a concurrent reinforce and report a bump that never happened. Only a non-neutral signal moves
 `reinforcement_count` and the outcome EWMA — being read is evidence of relevance, not of correctness.
 
-### 9.1. What bumps, and what deliberately does not { #what-bumps-and-what-deliberately-does-not }
+### 9.1. What bumps, and what deliberately does not
 
 Salience accumulates evidence that someone *chose* a memory, so the read tiers get three different
 policies.

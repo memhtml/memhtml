@@ -3,7 +3,7 @@ title: The index
 description: Two databases on one connection, a schema whose keys anticipate a moving path, and a projection function that makes rebuild and incremental update agree by construction.
 ---
 
-## 1. Two databases on one connection { #two-databases-on-one-connection }
+## 1. Two databases on one connection
 
 `.memhtml/state.db` is ATTACHed as `state` (`packages/index/src/database.ts:294`) so the salience arm
 can `LEFT JOIN state.access` in the same statement as `main.files` with no application-side join.
@@ -29,7 +29,7 @@ transaction (`packages/index/src/database.ts:215`), so a crash never leaves one 
 are read from disk relative to the built output, so adding one means adding a `.sql` file and no code
 change.
 
-## 2. Schema { #schema }
+## 2. Schema
 
 `files` (`packages/index/migrations/0008_tasks.sql:28`) projects one memory file: identity,
 classification under a ten-value `memory_type` CHECK, three text surfaces, the scoring inputs, the
@@ -39,7 +39,7 @@ Child tables (`packages/index/migrations/0001_files.sql:73-110`) each declare **
 well as `ON DELETE CASCADE`**, because `files.path` is the primary key *and* it moves — eviction is a
 `git mv` — and foreign keys are immediate, so without it the rename's `UPDATE` fails outright.
 
-### 2.1. Three text columns, three jobs { #three-text-columns-three-jobs }
+### 2.1. Three text columns, three jobs
 
 - `body_text` — the full search surface.
 - `fts_text` — title, gist, and body newline-joined (`packages/index/src/project.ts:48`). One
@@ -54,7 +54,7 @@ well as `ON DELETE CASCADE`**, because `files.path` is the primary key *and* it 
   line has no room to say "this is the exception". It is composed from the parser's separated extraction
   fields rather than re-derived from markup.
 
-### 2.2. Chunks, embeddings, edges, watermark { #chunks-embeddings-edges-watermark }
+### 2.2. Chunks, embeddings, edges, watermark
 
 `chunks` and `embeddings` key on `content_hash`, not `path`:
 `chunk_id = sha256(content_hash + ":" + ordinal)` (`packages/index/src/chunking.ts:27`), so an
@@ -72,7 +72,7 @@ The state plane (`packages/index/state-migrations/S0001_access.sql`) holds `acce
 `edge_corroboration`; its DDL names its own schema and puts that name on the INDEX rather than the
 table, which is the form this driver accepts.
 
-### 2.3. Widening a CHECK-bearing table { #widening-a-check-bearing-table }
+### 2.3. Widening a CHECK-bearing table
 
 Migration `0008_tasks.sql` widens both CHECK-bearing tables by recreate-and-copy, and its load-bearing
 detail is that it **snapshots every child table first**
@@ -84,7 +84,7 @@ report success and silently destroy every embedding in the database. The snapsho
 foreign-key state at all: children are copied out, the cascade fires against a table of no consequence,
 and the rows are copied back under the new parent.
 
-## 3. Projection { #projection }
+## 3. Projection
 
 `projectFile` (`packages/index/src/project.ts:141`) is pure: given a doc, a path, and a blob sha the
 row set is fully determined, which makes "a fresh rebuild reproduces the incremental row set" true by
@@ -95,7 +95,7 @@ construction rather than by two implementations agreeing.
 while sitting under `archive/` is stale metadata, and trusting the meta would let a mis-stamped file
 re-enter retrieval and break the dedup index's guarantee.
 
-### 3.1. Four narrow write rules { #four-narrow-write-rules }
+### 3.1. Four narrow write rules
 
 Each avoids a specific loss.
 
@@ -112,7 +112,7 @@ Each avoids a specific loss.
   upsert's assignment clause from one list, since a column added to one and forgotten in another binds
   every subsequent value to the wrong column while every CHECK still passes.
 
-### 3.2. Entity rows { #entity-rows }
+### 3.2. Entity rows
 
 Entity rows come from three sources (`packages/index/src/project.ts:315`): `memhtml-entity` metas, one
 `concept:<term>` per `<dfn>`, and one `lang:<value>` per `<code data-lang>` — so a memory that
@@ -123,7 +123,7 @@ database, because these rows go in through `writeAll` as one atomic batch and a 
 fail the primary key and roll back every other row, taking the whole rebuild down over one repeated
 `<dt>`/`<dd>` pair.
 
-## 4. Rebuild { #rebuild }
+## 4. Rebuild
 
 Both the rebuild and the update path call `projectFile`, which is the reproducibility contract
 (`packages/index/src/indexer.ts:20-27`).
@@ -148,7 +148,7 @@ with foreign keys enforced rather than relying on cascade. A parse failure is a 
 (`packages/index/src/indexer.ts:209-226`): one bad hand-authored file must be reported by
 `memhtml doctor`, not stop the indexing of every other file in the tree.
 
-## 5. Incremental update { #incremental-update }
+## 5. Incremental update
 
 **Update** (`packages/index/src/indexer.ts:565`) reads `index_state.head_sha` as its watermark; an
 absent watermark falls through to a full rebuild rather than diffing against nothing
@@ -181,7 +181,7 @@ and inserting a whole store costs 20 ms at 800 files, 101 ms at 5k, and 234 ms a
 thousands of embedding calls a bulk pass makes, that is not a number worth a drop/recreate bracket — and
 a bracket would open a window where a crash leaves the store with no lexical index at all.
 
-## 6. Chunking and embeddings { #chunking-and-embeddings }
+## 6. Chunking and embeddings
 
 `chunkText` (`packages/index/src/chunking.ts:41`) returns the whole article as chunk 0 below 1,800
 characters — the overwhelmingly common case, since the format is one fact per file — so the embedding is
@@ -202,7 +202,7 @@ ceiling (`packages/llm/src/constants.ts:7-11`, `packages/llm/src/embeddings.ts:1
 `input_type` values for documents and queries** (`packages/llm/src/embeddings.ts:11-14`) — reusing one
 silently degrades every cosine.
 
-## 7. A vector-space mismatch is a hard refusal { #a-vector-space-mismatch-is-a-hard-refusal }
+## 7. A vector-space mismatch is a hard refusal
 
 Never a silent reindex (`packages/index/src/indexer.ts:103-116`,
 `packages/index/src/indexer.ts:241`). `index_state.embed_model` is checked before any write and before
