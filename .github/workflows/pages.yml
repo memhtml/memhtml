@@ -1,0 +1,83 @@
+# Publishes the docs site to GitHub Pages. Separate from `check` because the two answer
+# different questions and must be able to fail independently: `check` gates every push and
+# every pull request, while this runs only on `main` and holds the write permissions and the
+# `github-pages` environment. Folding a deploy into the gate would hand `pages: write` to
+# every pull-request run.
+#
+# There is no pull-request build here, and that is not an omission: `apps/docs` matches the
+# `apps/*` workspace glob and turbo's `typecheck` depends on `build`, so `mise run check`
+# already builds this site on every pull request. A second build would only be a second
+# thing to keep in step.
+#
+# Deployment is the Actions path, not a published branch. Nothing here creates a `.nojekyll`
+# file: Jekyll runs only when a site is published *from a source branch*, and
+# `actions/deploy-pages` contains no Jekyll step at all. Astro emits `_astro/`, and those
+# assets are served as-is. The file would not even survive the upload —
+# `upload-pages-artifact` tars with `--exclude=.[^/]*` unless `include-hidden-files` is set.
+#
+# `withastro/action` is deliberately not used. Its package-manager detection runs
+# `find . -maxdepth 1 -name pnpm-lock.yaml` inside the directory given as `path:`, so with
+# `path: apps/docs` it misses this repo's root lockfile and exits 1; and its explicit
+# `package-manager:` branch pins pnpm to `latest`, which would install a pnpm other than the
+# one `mise run tools:verify` exists to hold.
+name: pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+# Read-only by default. The deploy job widens this for itself alone.
+permissions:
+  contents: read
+# One deployment at a time, and never cancel one in flight: cancelling mid-deploy can leave
+# the site serving a half-published artifact.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v4
+      # Same store-path discovery as `check`: ask pnpm rather than hardcode, and ask after
+      # mise-action has put pnpm on PATH.
+      - run: echo "PNPM_STORE=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.PNPM_STORE }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+      # turbo's cache, keyed on the lockfile and every input the docs build reads. Without
+      # it the workspace packages the docs site imports rebuild from scratch each run.
+      - uses: actions/cache@v6
+        with:
+          path: .turbo
+          key: turbo-pages-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            turbo-pages-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            turbo-pages-${{ runner.os }}-
+      - run: mise run install:ci
+      # Goes through turbo, which builds @memhtml/cli first: the generated reference reads
+      # the CLI's command table, and @memhtml/* exports resolve only to ./dist, so a docs
+      # build against an unbuilt CLI would document a stale surface rather than fail.
+      - run: mise run docs:build
+      # Repo-root-relative. A bare `dist` fails with "No files were found with the provided
+      # path", because the site is a workspace package rather than the repository root.
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: apps/docs/dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    # `pages: write` deploys; `id-token: write` mints the OIDC token whose claim proves to
+    # the Pages service which ref produced this artifact. Scoped to this job so the build
+    # job — the one that runs repository code — never holds either.
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

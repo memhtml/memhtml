@@ -74,6 +74,76 @@ Starlight carries them as direct dependencies and auto-applies both integrations
 `starlight-theme-rapide@0.5.2` zero open PRs, still dev-deps Astro 6 · `@astrojs/starlight-docsearch`
 (credential-bearing; see AC-4-1) · `withastro/action` (see AC-8-7) · TypeDoc (see Deferred).
 
+## Dependency set, revised — prefer a dependency over local code
+
+Settled 2026-08-12 under an explicit "lean into plugins and deps" bias. A dependency still loses when
+it ships a verified defect, is unmaintained or incompatible, or collides with one we need — but when it
+loses, the next move is a better dependency, not local code. Set grows 12 → 21.
+
+**Config beats a plugin beats code.** Starlight 0.41.7's `integrations/markdown-plugins.ts` *additively
+mutates* the processor we supply, so we own `markdown.processor` and Sätteri's opt-ins are reachable
+with `mdastPlugins` a sanctioned extension point. Three of the six RFC-furniture gaps close in two
+lines of `astro.config.ts` and need no dependency at all: **footnotes are on by default** (GFM, with
+customizable labels and backrefs), **definition lists are a feature flag**
+(`features: { definitionList: true }`), and **directives are already force-enabled by Starlight**.
+
+**One install-blocking trap, corrected:** declare `starlight-links-validator` as **`^0.25.2`**, not
+`^0.25.3`. 0.25.3 shipped 2026-08-12, so under `minimumReleaseAge: 1440` + `minimumReleaseAgeStrict`
+a `^0.25.3` range has **no satisfying version and the install fails outright**. `^0.25.2` floats up on
+its own once the release ages past the window.
+
+**Promoted to install:** `starlight-auto-sidebar ^0.4.0` · `@inox-tools/star-warp ^2.0.0` (tightest
+peers on the official page, zero UI footprint) · `astro-contributors ^0.9.0` · `starlight-changelogs
+^0.5.1` · `astro-og-canvas ^0.13.0` · `starlight-scroll-to-top ^1.0.1` (source confirms
+`injectScript('page')` and no component-slot override — the cleanest integration surveyed) ·
+`starlight-cooler-credit ^0.6.0`, with the caveat that it claims `TableOfContents` and `Pagination`,
+and `TableOfContents` is contested by the numbered table of contents.
+
+### The one deliberate exception to the bias
+
+`starlight-md-txt` owns the `.md` routes and the page-action buttons are **local**, roughly twenty
+lines. Reasoning, measured on this project's own content rather than in the abstract: the `.md` copy in
+`starlight-page-context-action` cannot be config-disabled while keeping the button
+(`shouldGenerateMarkdown = copy || viewMarkdown || llmsTxt`), and its extractor is regex-based — it
+**discards `<TabItem label>`**, which makes the pnpm / npm / yarn variants of an install snippet
+indistinguishable, and it leaks raw JSX for unknown components because its tag-strip pass is commented
+out. This site installs `starlight-package-managers`, whose whole output is exactly those tabs, so the
+defect lands on the most common component we ship. `starlight-md-txt` unwraps through a real AST
+transform and loses only on self-closing components. Head-to-head on our content: md-txt wins 3, ties
+3, loses 1.
+
+Hand-rolling the buttons also buys the **Cursor** target, which no dependency provides —
+`starlight-page-context-action`'s `actions` is a closed boolean set with no custom-target hook, and
+`starlight-page-actions`' Cursor link is malformed.
+
+### Section numbering — no dependency can do it
+
+Confirmed dead: `remark-heading-numbering@0.0.3` (2023), `remark-sectionize`,
+`@vivliostyle/remark-sectionize` are all inert under Sätteri, and the `satteri-*` namespace has no
+numbering plugin. But the deeper finding is that **an AST plugin is the wrong shape regardless**:
+`starlight-md-txt` reads `entry.body`, the raw pre-processor source, so an mdast transform would number
+the HTML and `llms.txt` while leaving the raw `.md` routes unnumbered — a human citing "§3.2" and an
+agent reading the Markdown would disagree about which section that is.
+
+**Therefore: numbers are authored literally into the source headings**, gated by a contiguity test.
+Simpler than a plugin, and it is the only option where every surface agrees.
+
+### Deferred
+
+`astro-pdf ^1.10.1` (real and maintained, peers `astro ^7`) — a spec-styled site genuinely wants a PDF
+rendering, but it pulls `puppeteer`, whose postinstall downloads Chromium. That is a **second** browser
+stack alongside Playwright for the axe gate, and a PDF is not in the must-ship set. Revisit once the
+site is live, and check first whether it can be pointed at Playwright's Chromium.
+
+`starlight-theme-mdbook@0.1.5` — ships no font overrides and near-monochrome white/black/blue tokens,
+which is close to the brief. It still loses: nine component overrides including `PageSidebar`, which
+collides with the page actions, and `Pagination`, which collides with the credit. **Lift its ~10 lines
+of tokens; do not install it.** The remaining 20 themes stay skipped on the categorical rule.
+
+**Total install cost of leaning in:** one new `allowBuilds` answer, and only if `astro-pdf` lands
+(`puppeteer`). Zero new answers otherwise across ~60 manifests, no new mise tools, and one benign peer
+warning (`vite-plugin-virtual@0.3.0` caps `vite ^7`).
+
 ## Wave 1 — the package, alone
 
 One task. Everything else is blocked on it, because `@memhtml/*` exports resolve only to `./dist` and
