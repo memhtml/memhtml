@@ -1,0 +1,189 @@
+/*
+ * The site reads as an Internet standards document — an IETF RFC or a W3C Recommendation. Every
+ * colour pair below is computed rather than picked, and every ratio is stated so a later edit can
+ * see what it would be spending.
+ *
+ * The classic browser link colours are used literally because they hold up: #0000EE measures
+ * 9.08:1 on this ground and #551A8B measures 10.64:1, both clearing AAA. That is the whole reason
+ * this direction can quote the defaults instead of imitating them. One substitution is forced —
+ * #EE0000, the classic active-link red, measures 4.38:1 here and fails AA, so #B00018 (7.09:1)
+ * stands in.
+ */
+
+:root {
+  /* Warm paper rather than pure white: the ground a printed specification is read on. */
+  --memhtml-paper: #fcfbf7;
+  --memhtml-ink: #1a1a18; /* 16.83:1 */
+  --memhtml-ink-secondary: #6b6862; /* 5.36:1 */
+  --memhtml-link: #0000ee; /* 9.08:1 */
+  --memhtml-visited: #551a8b; /* 10.64:1 */
+  --memhtml-rule: #c9c5b8;
+  --memhtml-normative: #b00018; /* 7.09:1 — never #EE0000, which is 4.38:1 */
+
+  /*
+   * Ordered by measured metric compatibility, not by name. Liberation Serif, Tinos and Nimbus
+   * Roman match Times New Roman on every advance to four decimal places, so a Linux box degrades
+   * exactly rather than approximately. The bare `serif` keyword is the failure mode and not the
+   * safety net: it resolves to DejaVu Serif at +27% per character, or Noto Serif at +18%.
+   */
+  --sl-font: "Times New Roman", Tinos, "Liberation Serif", "Nimbus Roman", "TeX Gyre Termes", Times,
+    serif;
+
+  /*
+   * Courier is deliberately NOT the code face. Its stem is 0.051em against Times' 0.084em — a 39%
+   * deficit that no font-size can correct, so body-adjacent code set in Courier reads as faded.
+   * Courier is confined to .rfc-verbatim, where a figure genuinely wants a typewriter.
+   */
+  --sl-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", "Liberation Mono",
+    Cousine, "DejaVu Sans Mono", monospace;
+
+  --memhtml-font-sans: Helvetica, Arial, Arimo, "Liberation Sans", "Nimbus Sans", sans-serif;
+  --memhtml-font-typewriter: "Courier New", Courier, "Nimbus Mono PS", "Liberation Mono", monospace;
+}
+
+:root[data-theme="light"] {
+  --sl-color-bg: var(--memhtml-paper);
+  --sl-color-bg-nav: var(--memhtml-paper);
+  --sl-color-bg-sidebar: var(--memhtml-paper);
+  --sl-color-text: var(--memhtml-ink);
+  --sl-color-text-accent: var(--memhtml-link);
+  --sl-color-gray-2: var(--memhtml-ink-secondary);
+  --sl-color-gray-3: var(--memhtml-ink-secondary);
+  --sl-color-hairline: var(--memhtml-rule);
+  --sl-color-hairline-light: var(--memhtml-rule);
+  --sl-color-hairline-shade: var(--memhtml-rule);
+  --sl-color-bg-inline-code: #f2efe6;
+  --sl-color-accent: var(--memhtml-link);
+  --sl-color-accent-high: var(--memhtml-ink);
+  --sl-color-accent-low: #e8e5da;
+}
+
+:root,
+:root[data-theme="dark"] {
+  --sl-color-bg: #121211;
+  --sl-color-bg-nav: #121211;
+  --sl-color-bg-sidebar: #121211;
+  --sl-color-text: #e9e7e1; /* 15.16:1 */
+  --sl-color-text-accent: #8da9ff; /* 8.26:1 */
+  --sl-color-gray-2: #b9b6ae;
+  --sl-color-gray-3: #97948d;
+  --sl-color-hairline: #35342f;
+  --sl-color-hairline-light: #35342f;
+  --sl-color-hairline-shade: #35342f;
+  --sl-color-bg-inline-code: #1e1e1c;
+  --sl-color-accent: #8da9ff;
+  --sl-color-accent-high: #e9e7e1;
+  --sl-color-accent-low: #23231f;
+  --memhtml-link: #8da9ff;
+  --memhtml-visited: #c8a6e9; /* 9.00:1 */
+  --memhtml-normative: #ff9aa5;
+}
+
+/*
+ * font-size-adjust equalises x-height when the primary face is absent, cutting the substitution
+ * error on a box without the MS core fonts from +18–27% to +0.7%. The bare-number form is
+ * deliberate: it reaches back to Firefox 3, where the two-value form does not.
+ */
+body {
+  font-size-adjust: 0.45;
+}
+
+/*
+ * Measure is 30em ≈ 75 characters. NOT 70ch: 1ch is 0.500em in this face while prose advance is
+ * 0.398em, so a ch-based measure overstates by 1.256× and 70ch sets ≈88 characters — past the
+ * comfortable ceiling for continuous reading.
+ */
+.sl-markdown-content {
+  max-width: 30em;
+}
+
+/* Links are underlined, so colour is never the only signal that something is a link (SC 1.4.1). */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--memhtml-link);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.sl-markdown-content a:not(:where(.not-content *)):visited {
+  color: var(--memhtml-visited);
+}
+
+/*
+ * Hanging section numbers. The numbers themselves are authored into the Markdown source rather
+ * than generated here — a CSS counter is invisible to the table of contents, to Pagefind, to
+ * llms.txt, and to the raw .md route this site serves to agents, so a human citing §3.2 and an
+ * agent reading the Markdown would disagree about which section that is. This rule only sets them
+ * outside the measure, which is what makes a monochrome page scannable.
+ */
+.sl-markdown-content :is(h2, h3, h4) {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+@media (min-width: 72rem) {
+  .sl-markdown-content :is(h2, h3) {
+    text-indent: -3.2em;
+    padding-inline-start: 3.2em;
+  }
+}
+
+/* Plain bordered tables, in the register of a specification rather than a data grid. */
+.sl-markdown-content table {
+  border-collapse: collapse;
+  font-size: var(--sl-text-body-sm);
+}
+
+.sl-markdown-content :is(th, td) {
+  border: 1px solid var(--memhtml-rule);
+  padding: 0.35em 0.6em;
+  text-align: start;
+  vertical-align: top;
+}
+
+.sl-markdown-content thead th {
+  font-family: var(--memhtml-font-sans);
+  font-size: var(--sl-text-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/*
+ * A verbatim figure — the monospace ASCII diagram an RFC uses. This is the one place Courier is
+ * correct, because the artifact it renders is a typewriter drawing. An ASCII figure is opaque to a
+ * screen reader, so a text alternative accompanies it rather than being optional.
+ */
+.rfc-verbatim {
+  font-family: var(--memhtml-font-typewriter);
+  font-size: var(--sl-text-code-sm);
+  line-height: 1.25;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* The masthead: the deliberately-typeset element that separates austere from broken. */
+.rfc-masthead {
+  border-block-end: 1px solid var(--memhtml-ink);
+  font-family: var(--memhtml-font-sans);
+  font-size: var(--sl-text-xs);
+  margin-block-end: 2rem;
+  padding-block-end: 0.4rem;
+}
+
+/* Conformance keywords per RFC 2119. Small caps carry the emphasis; colour only reinforces it. */
+.rfc-keyword {
+  color: var(--memhtml-normative);
+  font-family: var(--memhtml-font-sans);
+  font-size: 0.85em;
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.06em;
+}
+
+/*
+ * Tabler icons ship stroke-width="2" as a presentation attribute, which carries specificity 0 —
+ * so this rule wins without !important. vector-effect is not optional: without it a 1.25 stroke
+ * renders at 0.83px once the icon is scaled down and visibly fades at 16–18px.
+ */
+.memhtml-icon {
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+}

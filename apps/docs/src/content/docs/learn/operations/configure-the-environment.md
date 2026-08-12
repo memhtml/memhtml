@@ -1,11 +1,10 @@
 ---
 title: Configure the environment
-description: The eight environment variables memhtml reads, which seven the binary declares, what each one degrades when it is absent, and the SQLite settings every connection applies.
+description: The eight environment variables memhtml reads, what each one degrades when it is absent, and the SQLite settings every connection applies.
 ---
 
-memhtml reads eight environment variables and **declares seven** of them. The seven are in
-`apps/cli/src/config.ts:26` and are exactly what `memhtml manifest` reports, so the authoritative list
-is always one command away on the machine you are on:
+All eight variables below are declared in `apps/cli/src/config.ts:26` and reported by
+`memhtml manifest`, so the authoritative list is always one command away on the machine you are on:
 
 ```bash
 memhtml manifest | jq '.data.config'
@@ -57,10 +56,11 @@ author did not write.
 It locates the server; it changes nothing about retrieval. Absent means the sibling-path default, since
 the two apps ship as one build. Set it for a split deployment that does not keep them side by side.
 
-It is the one variable **not** in `CONFIG_VARS`, so `memhtml manifest` does not report it — which is
-exactly why it is documented here. An operator debugging a split deployment reaches for the manifest
-first, and a variable the binary reads but does not declare is one they would otherwise have no way to
-discover.
+It is on the manifest despite configuring nothing, and that is the point: an operator debugging a split
+deployment reads the manifest, and a variable the binary reads but does not declare is one they cannot
+discover. Its name reaches `CONFIG_VARS` as the imported `MCP_BIN_VAR` constant from
+`apps/cli/src/serve.ts` rather than as a literal, so the variable and the supervisor that reads it
+cannot drift apart.
 
 ## The databases
 

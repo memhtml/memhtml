@@ -139,6 +139,9 @@ importers:
 
   apps/docs:
     dependencies:
+      '@astrojs/markdown-satteri':
+        specifier: ^0.3.5
+        version: 0.3.5
       '@astrojs/starlight':
         specifier: ^0.41.7
         version: 0.41.7(@astrojs/markdown-remark@7.2.2)(astro@7.2.1(@astrojs/markdown-remark@7.2.2)(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(aws4fetch@1.0.20)(db0@0.3.4)(ioredis@5.11.1)(yaml@2.9.0))(typescript@6.0.3)
@@ -161,6 +164,9 @@ importers:
       typescript:
         specifier: 6.0.3
         version: 6.0.3
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.0(@types/node@24.13.3)(esbuild@0.28.2)(yaml@2.9.0))
 
   apps/mcp:
     dependencies:
