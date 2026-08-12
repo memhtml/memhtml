@@ -286,23 +286,43 @@ exclusion cannot be delegated to plugin config.
 *Verification:* test — the AC-2-4 denylist scan runs against the generated bundles, not only the HTML.
 *Dependencies:* AC-2-4, AC-5-1.
 
-**AC-5-6** (Ubiquitous) The site shall emit a sitemap covering every rendered page.
-*Note:* Starlight auto-applies `@astrojs/sitemap` — verified 2026-08-12, `sitemap-index.xml` is emitted
-without declaring the integration. What must be settled deliberately is whether the raw `.md` routes
-and the llms bundles belong in it, and how a crawler discovers the sitemap at all when `robots.txt` is
-unreachable on a project site (AC-5-5). The `<head>` link is the remedy, as it is for `llms.txt`.
-*Verification:* test — the sitemap exists, its URLs carry the base segment, and its entry count is
-derived from the collection rather than a literal.
+**AC-5-6** (Ubiquitous) The site shall emit a sitemap, and shall not declare the sitemap integration
+explicitly.
+*Measured from a real build 2026-08-12:* Starlight auto-applies `@astrojs/sitemap`, emitting
+`sitemap-index.xml` and `sitemap-0.xml` with base-correct trailing-slash URLs. Declaring `sitemap()`
+ourselves buys only `filter` and `customPages` while **costing Starlight's i18n `hreflang` handling** —
+a net loss.
+*The raw `.md` and llms routes are correctly absent from it.* The rule is route *type*, not extension:
+an `.astro` entrypoint becomes a page, an injected route does not. They should stay out — they are
+duplicate content and this host cannot send `X-Robots-Tag: noindex`.
+*Discoverability, stated honestly:* `rel="sitemap"` is unregistered and read by no documented crawler,
+so it is decoration. The real mechanisms are Search Console submission and inbound links.
+*Verification:* test — the sitemap exists, its URLs carry the base segment, its entry count is derived
+from the collection, and the injected routes are absent from it.
 
-**AC-5-7** (Ubiquitous) Every page's `<head>` shall point a machine reader at that page's raw route
-and at the site's machine index.
-*Constraint:* each line of the emitted block shall be marked in a comment as either convention-following
-or a local invention, so a later reader knows which parts have external warrant.
-*Rationale:* `rel="describedby"` is shipped by none of fourteen surveyed sites, including llmstxt.org
-itself, so this area is thin on real convention and honesty about that matters more than the appearance
-of standards compliance. GitHub Pages gives no control over HTTP response headers, so a `Link:` header
-is not available — nothing may be planned around one.
-*Verification:* test — the block is present on every page and each `href` resolves.
+**AC-5-7** (Ubiquitous) Every page's `<head>` shall point a machine reader at that page's raw route and
+at the site's machine surfaces, with each line marked in source as convention-following or a local
+invention.
+*Starlight already emits base-correct `rel="canonical"` and `rel="sitemap"`* — the override adds only
+the delta.
+*What has external warrant:* `rel="alternate" type="text/markdown"` is shipped by Anthropic, Bun, Turso,
+Neon, Vercel, Cloudflare, Hono, and GitHub Docs, and `text/markdown` is RFC 7763. `rel="index"` is
+registered ("Refers to an index") and is GitHub Docs' own spelling for llms.txt — preferred over
+`rel="llms-txt"`, which is unregistered and ships only in HTTP `Link:` headers. `rel="service-meta"` is
+RFC 8631, "metadata… for consumption by machines", which is what Stripe uses it for.
+*What is ours:* `rel="llms-full-txt"` has no registration and must be labelled an invention.
+*Deliberately omitted:* `rel="describedby"` (the wrong relationship — and the choice the llms.txt spec
+itself suggests has zero adopters); every `<meta>` convention, none of which exists in practice; and
+**any visually-hidden agent-directed block.** A `sr-only` element carrying `aria-hidden` is content
+served to machines and hidden from every human, which is cloaking wearing an accessibility class name.
+*Mandatory mechanic:* every href is built with `new URL()`, **never string concatenation**. Deno ships
+`href="//runtime/index.md"` — a protocol-relative URL naming a *host* called `runtime` — which is
+exactly what a base segment plus a string join produces.
+*Free on this host:* GitHub Pages serves `.md` as `text/markdown` already, verified on two live project
+sites. And nothing may be planned around a `Link:` header — the channel real adopters use most is the
+one this host gives no control over.
+*Verification:* test — the block is present on every page, each href resolves, and no emitted href is
+protocol-relative.
 *Dependencies:* AC-6-1, AC-5-1.
 
 **AC-5-5** (Ubiquitous) `robots.txt` and `.well-known/` shall not be attempted, and the reason shall
@@ -730,22 +750,38 @@ weight only if the content underneath is the genuinely fastest path.
 *Dependencies:* AC-11-1.
 
 **AC-11-4** (Ubiquitous) Where a page states behavior that differs for an agent, it shall carry an
-inline agent-directed note, and that note shall survive into the raw `.md` route and the llms bundles.
-*Rationale:* a note that renders in HTML and vanishes from the Markdown is worse than no note, because
-the agent-facing surface then contradicts the human-facing one on exactly the point the note exists to
-make. The note must also carry its meaning without relying on color (SC 1.4.1).
-*Verification:* test — a page with an agent note has that note present in its `.md` twin and in
-`llms-full.txt`.
+inline agent-directed note written as a **container directive**, not as a component.
+*Measured 2026-08-12, and this is the whole reason for the constraint:* `starlight-md-txt` **deletes any
+custom component** from the raw Markdown — a self-closing one becomes empty — while `:::agent` passes
+through verbatim. A component-based note would therefore render in HTML and vanish from the surface it
+exists to address, which is worse than no note: the agent-facing text would then contradict the
+human-facing one on exactly the point being made, and the agent is the reader least able to notice.
+*Second measured consequence:* `starlight-llms-txt` renders and flattens the aside, so a visible textual
+label is the only semantics that survives into the bundle. Colour cannot be the signal (SC 1.4.1), and
+here it could not be even if that were permitted.
+*Verification:* test — a page with an agent note has that note present in its HTML, in its `.md` twin,
+and in `llms-full.txt`, with the label intact in all three.
 *Dependencies:* AC-6-1, AC-5-1.
 
-**AC-11-5** (Ubiquitous) The four agent-facing surfaces shall have one declared canonical source each,
-and no contract shall be described independently in more than one of them.
-*The four:* `AGENTS.md` at the repo root (generated, byte-compare tested), the site's agent page,
-`llms.txt` / `llms-full.txt`, and the 36 generated command pages.
-*Rationale:* four descriptions of one contract is three opportunities to diverge, and divergence here
-misinforms the reader least able to notice it.
-*Verification:* test — a divergence check across the surfaces, asserting the shared facts are equal
-rather than merely present.
+**AC-11-7** (Ubiquitous) The agent page's entry points shall be treated as deliverables in their own
+right: it shall be the first entry in `llms.txt` and shall be reachable from the CLI's own guide.
+*Rationale:* Stripe's measured finding is that agents do not wander — if the guidance was not in the
+loaded context, it did not happen. Placement therefore earns as much effort as prose, and a well-written
+page nobody's context reaches is wasted work.
+*Verification:* test — `llms.txt`'s first listed entry is the agent page.
+*Dependencies:* AC-11-1, AC-5-1.
+
+**AC-11-5** (Ubiquitous) The source registries shall be canonical and every agent-facing surface shall be
+a projection of them, with none hand-editable.
+*Resolved:* `apps/cli/src/commands.ts` and its sibling registries are the single source. `AGENTS.md`, the
+site's agent page, `llms.txt` / `llms-full.txt`, and the generated command pages are all projections.
+*The agent page is not a rendering of `AGENTS.md`*, and rendering it as one would be a mistake: they
+address different readers — one has the repository on disk, the other has only a URL — and they are
+different genres, reference versus procedure. `AGENTS.md` is instead published verbatim as its own page,
+so the repo-root artifact is reachable by URL without pretending to be the procedure.
+*Verification:* test — a verbatim `GUIDE` projection check, per-registry count censuses, an assertion on
+MCP tool *order* (which is deliberately the reading order), a deep-equal against `manifest`, and a
+prose-identifier check that every command named in prose exists in `COMMANDS`. All mutation-verified.
 *Dependencies:* AC-3-1, AC-5-1, AC-11-1.
 
 **AC-11-6** (Unwanted behavior) If an agent-facing artifact would report a count, that count shall be
@@ -755,6 +791,18 @@ claiming "36 commands" as a literal becomes a lie the first time a command is ad
 told specifically to the reader that trusts it most.
 *Verification:* test — census probes over each stated quantity.
 *Dependencies:* AC-11-1.
+
+**AC-11-8** (Ubiquitous) The agent surface shall be verified by deterministic checks, not by asking a
+model whether it understood.
+*Rejected, with reasons:* an end-to-end check that feeds `llms.txt` to a live model and asserts it can
+answer a question cannot isolate its own failure, has **no control arm** — a model answering from
+parametric knowledge scores identically — and would put credentials into a gate that is credential-free
+by construction. Three independent grounds, any one sufficient.
+*Instead:* a fixture that follows every link in `llms.txt` and asserts each resolves and returns the
+expected content. If the real signal is ever wanted, run the with-and-without-`llms.txt` comparison as a
+non-gating nightly and report the delta, where a control arm exists and a flake costs nothing.
+*Verification:* the fixture is the test.
+*Dependencies:* AC-5-1, AC-11-1.
 
 ## Settled decisions
 
