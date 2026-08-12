@@ -12,6 +12,18 @@ minimumReleaseAge: 1440
 # declared. `ignore` closes that path rather than trusting the two to agree.
 pmOnFail: ignore
 
+# nanoid reaches this repo only through the test toolchain (vitest → vite → postcss), so
+# nothing shipped depends on it — but 3.3.16 carries GHSA-2v37-7h3g-55p8 (CVSS 8.2), fixed
+# in 3.3.17. postcss asks for `^3.3.11`, so this is a stale resolution rather than a pinned
+# dependency, and the selector confines the override to the affected range: once postcss or
+# vite resolves 3.3.17+ on its own, this stops applying and can be deleted.
+# `mise run security:osv` is what notices if it ever stops being true.
+# The replacement stays inside 3.x on purpose: nanoid 4 dropped CommonJS, and postcss
+# requires it, so an unbounded `>=3.3.17` resolves to the 6.x line and breaks the very
+# toolchain this dependency serves (measured — it resolved 6.0.1).
+overrides:
+  nanoid@<3.3.17: "^3.3.17"
+
 # Effect v4 is beta: every Effect package moves as one pinned, tested set.
 catalog:
   effect: 4.0.0-beta.102
