@@ -17,3 +17,5 @@ mise.local.toml
 mise.local.lock
 # Scanner output. The durable copy is the SARIF uploaded to code scanning.
 .sarif/
+# The typecheck-gate test builds here so a run never leaves dist/ describing its broken probe.
+dist-typecheck-probe/
