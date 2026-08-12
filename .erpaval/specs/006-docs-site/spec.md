@@ -523,6 +523,10 @@ the gate's cost stays bounded as the corpus grows.
 and 2.5.8 (target size).
 *Verification:* test — mutation-verified by introducing a contrast or focus violation and watching the
 gate fail.
+*Three blind spots this gate does not cover, each closed by a grep rather than by axe:* axe **passes**
+`alt="Diagram"`, which is a present-but-useless alternative; it **ignores inline SVG** that lacks
+`role="img"`, which is exactly how icons and D2 figures are emitted; and it **never tests SC 1.4.12**
+text spacing. A gate whose blind spots are unnamed reads as broader coverage than it has.
 *Dependencies:* AC-10-1, AC-10-3.
 
 **AC-9-6** (Ubiquitous) A performance budget shall be enforced against the built output.
@@ -553,13 +557,69 @@ inventory must be re-derived once they are added.
 
 ## AC-10 — visual identity
 
-**AC-10-1** (Ubiquitous) The site's accent ramp shall derive from the semantic palette already used
-in the repo's diagrams rather than from an invented one.
-*Source:* the four `classDef` fills in `README.md` are the only colors in the repository and they are
-used consistently across two diagrams — `#FFE4B5`/`#FF8C00` = a write door, `#90EE90` = system of
-record and human, `#87CEEB`/`#4682B4` = derived projection and agent, `#E6E6FA`/`#8A2BE2` = state
-plane and sleep.
-*Verification:* inspection.
+**AC-10-1** (Ubiquitous) The site shall present as an Internet standards document — an IETF RFC or W3C
+Recommendation — using the palette below, whose every pair is computed rather than chosen.
+*Superseded:* an earlier revision derived the accent ramp from the four Mermaid `classDef` fills in
+`README.md`. That four-role semantic mapping (door / record / derived / state) is **retired**: the
+direction is near-monochrome and its figures are line art, so a four-colour scheme has nothing to
+colour. The `README.md` diagrams are re-rendered monochrome under AC-10-4.
+
+| Role | Light | Ratio | Dark | Ratio |
+|---|---|---|---|---|
+| ground | `#FCFBF7` | — | `#121211` | — |
+| ink | `#1A1A18` | **16.83:1** | `#E9E7E1` | **15.16:1** |
+| secondary | `#6B6862` | 5.36:1 | — | — |
+| link | `#0000EE` | 9.08:1 | `#8DA9FF` | 8.26:1 |
+| visited | `#551A8B` | 10.64:1 | `#C8A6E9` | 9.00:1 |
+| standards red | `#B00018` | 7.09:1 | — | — |
+
+*The classic browser defaults need no adjustment* — `#0000EE` and `#551A8B` both clear AAA on warm
+paper, which is the whole reason the direction can use them literally. One substitution is forced:
+`#EE0000`, the classic active-link red, measures **4.38:1 on this ground and fails**; `#B00018` replaces
+it. Table borders and `<hr>` are exempt from SC 1.4.11 (checked against the Understanding document);
+input borders are not.
+*Verification:* test — the computed ratios are asserted, not the hex values, so a later palette tweak
+cannot silently drop below AA.
+
+**AC-10-6** (Ubiquitous) Type shall come from system faces, with the fallback chain ordered by measured
+metric compatibility rather than by name.
+*Measured with `fontTools`, 2026-08-12:* Liberation Serif, Tinos, and Nimbus Roman match Times New
+Roman on every advance to four decimal places, so Linux degrades **exactly**. The bare `serif` keyword
+is the failure mode rather than the safety net — it resolves to DejaVu Serif (+27% per character) or
+Noto Serif (+18%). `font-size-adjust: 0.45` reduces the residual error to +0.7%.
+*Consequences that are not obvious:*
+- **Courier is not the code face.** Its stem is 0.051em against Times' 0.084em — a 39% deficit that
+  `font-size` cannot correct. Courier is confined to a verbatim-figure class; code uses a
+  `ui-monospace` stack.
+- **Measure is `30em` (≈75 characters), not `70ch`.** `1ch` is 0.500em while prose advance is 0.398em,
+  so `70ch` renders ≈88 characters — past the comfortable line-length ceiling.
+*Webfont:* none warranted. The single gap is a container or server install lacking LibreOffice's fonts,
+closed if needed by `@fontsource/tinos` (54 KB, 3 faces) as a fallback rather than a primary.
+*Verification:* inspection of the stacks; a test asserting no webfont is fetched on a cold load.
+
+**AC-10-7** (Ubiquitous) Iconography shall be Tabler at stroke 1.25, rendered with no client JavaScript,
+in a closed set of sanctioned positions.
+*Implementation:* `@tabler/icons-astro` — verified to emit zero JS. **Not** `astro-icon`, whose `<use>`
+sprite mode has an open bug for exactly this case and whose shadow trees reject complex selectors.
+*Two mechanics that decide whether this works:* SVG presentation attributes carry specificity 0, so a
+CSS `stroke-width` rule overrides the shipped `stroke-width="2"`; and `vector-effect: non-scaling-stroke`
+is **required**, because without it 1.25 renders at 0.83px and visibly fades at 16–18px.
+*Note:* Starlight's own 125 icons are fill-based, not stroke-based, so they do not blend with Tabler
+outline icons and should be left in the few chrome positions where they are not adjacent.
+*Verification:* test — no JS bundle attributable to icons; a rendered icon's computed stroke-width is
+1.25.
+*Dependencies:* AC-10-1.
+
+**AC-10-8** (Unwanted behavior) If the design's austerity is indistinguishable from a stylesheet that
+failed to load, then the page shall carry at least one deliberately-typeset element above the fold.
+*Rationale:* this is the direction's characteristic failure, and it is not hypothetical — an unstyled
+document and a deliberately plain one look alike to a first-time visitor. One element that could only
+be intentional (the masthead rule, the numbered table of contents, the hanging section number) is what
+separates them.
+*Second guarded failure:* monochrome hurts scanability across ~55 pages. The mitigation is structural —
+section numbers and hanging headings — not reintroduced colour.
+*Verification:* inspection per page type.
+*Dependencies:* AC-10-1.
 
 **AC-10-2** (Ubiquitous) The site shall ship a favicon, a social preview image per page, and a
 landing page that is not the default Starlight splash.
@@ -576,20 +636,65 @@ Starlight default that already satisfies it.
 **AC-10-4** (Ubiquitous) Every published diagram shall be rendered at build time to a static asset,
 and the built output shall contain no client-side diagram runtime.
 *Implementation:* `astro-d2`, with the `d2` binary supplied as a mise tool so it is pinned by
-`mise.lock` like every other tool this repo depends on. The four `README.md` Mermaid diagrams are
-rewritten in D2; `docs/design.md` is text-only across all thirteen chapters and is where 5–8 new
-diagrams land.
-*Constraint:* diagram styling shall use the AC-10-1 palette, so a diagram's colors carry the same
-meaning as the prose around it.
-*Verification:* test — a build emits static SVG and no diagram JS bundle appears in `dist/`.
+`mise.lock` like every other tool this repo depends on. Theme **301, Terminal Grayscale**, gives
+monochrome with square corners — verified `rx="0.000000"` and zero shadows, which is the RFC line-art
+register rather than a diagram-tool aesthetic.
+*Two reproduced hazards:* `dark-theme-overrides` is **mandatory**, or the dark-mode media block inside
+the emitted SVG reverts the monochrome styling; and a `**.style.*` glob combined with `vars.d2-config`
+is a compile error — use `classes:` instead.
+*Verification:* test — a build emits static SVG, no diagram JS bundle appears in `dist/`, and the SVG
+carries no non-monochrome fill.
 *Dependencies:* AC-10-1.
 
-**AC-10-5** (Ubiquitous) `README.md` shall remain readable on GitHub after its diagrams are rewritten.
-*Rationale:* GitHub renders Mermaid in Markdown natively and does not render D2. Moving the four
-diagrams to D2 for the site must not leave the repo's front door showing raw diagram source to a
-first-time visitor.
-*Verification:* inspection — the README either keeps its Mermaid blocks (with D2 sources maintained
-for the site) or substitutes committed SVG.
+**AC-10-5** (Ubiquitous) Each diagram shall have one source producing both the site's vector rendering
+and a form GitHub can display in `README.md`.
+*Resolved:* D2 0.7.1 added an ASCII renderer, so `--ascii-mode=standard` emits a monospace `.txt`
+figure from the same `.d2` source that produces the site's SVG. GitHub renders Mermaid but does not
+render D2 at all, and this closes that gap without maintaining two descriptions of one diagram — which
+would be the real defect, since two drawings of one system drift.
+*Accessibility:* an ASCII figure is opaque to a screen reader, so a text alternative is required
+alongside it, not optional.
+*Verification:* test — every `.d2` source yields both artifacts, and the README contains no unrendered
+diagram source.
+*Dependencies:* AC-10-4.
+
+## AC-12 — document structure
+
+**AC-12-1** (Ubiquitous) Section numbers shall be authored into the heading text in the Markdown source,
+contiguously from 1 within each page, on Reference and Internals pages.
+*Rationale — this is a shape-versus-meaning requirement, not a styling one.* Three implementations were
+considered and two are wrong:
+- **CSS counters** are invisible to Starlight's own table of contents (which reads
+  `metadata.headings`), to Pagefind, to `llms.txt`, to the raw `.md` routes, and to the clipboard.
+- **A hast or mdast plugin** fixes the HTML, the table of contents, and Pagefind, but `starlight-md-txt`
+  reads `entry.body` — the raw pre-processor source — so the raw `.md` routes stay unnumbered. A human
+  citing "§3.2" and an agent reading the Markdown would then disagree about which section that is, and
+  the agent surface is the one that cannot notice.
+- **Authored in source** is the only option under which every surface agrees.
+*Also:* `markdown.rehypePlugins` **silently does not run** under Astro 7's Sätteri processor — it warns
+and exits 0 — so a plugin-based approach fails quietly rather than loudly.
+*Verification:* test — a contiguity probe over every page asserting numbering starts at 1 and skips
+nothing, and that the number present in the rendered heading equals the one in that page's raw `.md`.
+
+**AC-12-2** (Ubiquitous) Every numbered heading shall carry an explicit anchor that omits its number.
+*Implementation:* Sätteri's `headingAttributes` feature (`## 3.2. Edge encoding { #edge-encoding }`),
+which is **off by default** and must be enabled.
+*Rationale:* an anchor derived from numbered heading text reads `#32-edge-encoding` and churns the
+moment a section is inserted or renumbered — silently breaking every inbound link and every citation.
+The explicit anchor keeps the fragment stable while the visible number stays authored.
+*Verification:* test — no heading anchor contains a leading digit sequence; a fixture renumbering does
+not change any anchor.
+*Dependencies:* AC-12-1.
+
+**AC-12-3** (Ubiquitous) Definition-style content shall not use definition-list syntax.
+*Corrected 2026-08-12:* Sätteri 0.9.5 has **no `definitionList` feature** — inspected directly, the flag
+set is `gfm`, `frontmatter`, `math`, `headingAttributes`, `directive`, `superscript`, `subscript`,
+`wikilinks`, `smartPunctuation`, plus the `mdastPlugins` / `hastPlugins` extension points. Definition-list
+syntax renders as literal text with a stray colon. GFM footnotes **are** available and on by default,
+with customizable label and backreference content; container directives are force-enabled by Starlight.
+*Implementation:* a term takes a heading with an explicit anchor, so each definition is independently
+linkable and the raw Markdown stays clean for an agent reading it.
+*Verification:* test — no page contains an unrendered definition-list colon at line start.
 
 ## AC-11 — the agent-addressed surface
 
