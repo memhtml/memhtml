@@ -10,7 +10,7 @@ import {
   MEMORY_BODY_BUDGET
 } from "./disclosure.js"
 import { sanitizeFtsQuery } from "./fts-query.js"
-import { buildRrfSql, buildSnippetSql, truncateSnippet } from "./retrieval-sql.js"
+import { buildRrfSql, buildSnippetSql, rrfParams, truncateSnippet } from "./retrieval-sql.js"
 import { assembleScope, type SearchScope } from "./scope.js"
 
 /**
@@ -237,13 +237,13 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
       })
       if (sql === undefined) return { paths: [] as ReadonlyArray<string>, sql: "" }
 
-      const params: ReadonlyArray<SqlValue> = [
+      const params: ReadonlyArray<SqlValue> = rrfParams(sql, {
         matchQuery,
-        DEFAULT_ARM_LIMIT,
-        input.limit,
-        input.vector ?? null,
-        ...assembled.params
-      ]
+        armLimit: DEFAULT_ARM_LIMIT,
+        finalLimit: input.limit,
+        vector: input.vector,
+        scopeParams: assembled.params
+      })
       const rows = yield* db.all<{ path: string; score: number }>(sql, params)
       return { paths: rows.map((row) => row.path), sql }
     })

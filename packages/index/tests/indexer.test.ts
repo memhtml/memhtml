@@ -9,6 +9,7 @@ import {
   makeIndexer,
   PENDING_SCAN_ID_BATCH
 } from "../src/indexer.js"
+import { FTS_INDEX_NAME } from "../src/schema-const.js"
 import { makeIndexRecorder } from "../src/traces-persist.js"
 import { type FixtureRepo, makeFixtureRepo, type SeedFile } from "./fixture-repo.js"
 import {
@@ -20,7 +21,7 @@ import {
 } from "./harness.js"
 
 /**
- * The indexer against a real temp-dir git repository and a real in-memory Turso.
+ * The indexer against a real temp-dir git repository and a real in-memory SQLite.
  *
  * The fleet's standing lesson is that a stateless fake masks a real state bug, and this is exactly a
  * mutate-then-read use case: the incremental path writes rows, advances a watermark, and then reads
@@ -693,12 +694,11 @@ describe("update", () => {
   })
 
   /**
-   * The bulk path rebuilds the FTS index around its writes (probed 2026-08-06: live-FTS insert
-   * cost accumulates per batch, 2.4 s → 10.7 s over four 256-op updates; bracketed stays flat).
-   * What the projection promises must survive the bracket: the index exists and MATCHes the NEW
-   * rows afterwards. The seed corpus holds 20 files, so 16+ added files crosses both thresholds.
+   * A bulk pass writes straight through the live FTS index — no drop/recreate bracket — so the
+   * triggers are the only thing keeping the lexical index in step with 16 new files at once. This is
+   * the test that fails if `files_fts_insert` is dropped or scoped to the wrong column.
    */
-  it("rebuilds the FTS index around a bulk pass and search still finds the new rows", async () => {
+  it("indexes a bulk pass through the triggers, leaving new and old rows both findable", async () => {
     const outcome = await withRig(repo, ({ db, indexer }) =>
       Effect.gen(function* () {
         yield* indexer.rebuild({ embed: false })
@@ -717,19 +717,20 @@ describe("update", () => {
           )
         )
         const report = yield* indexer.update({ embed: false })
-        const hits = yield* db.all<{ path: string }>(
-          "SELECT path FROM files WHERE fts_text MATCH ?",
-          ["quokka"]
-        )
-        const old = yield* db.all<{ path: string }>(
-          "SELECT path FROM files WHERE fts_text MATCH ?",
-          ["wildebeest OR giraffe"]
-        )
+        const matching = (term: string) =>
+          db.all<{ path: string }>(
+            `SELECT files.path AS path FROM ${FTS_INDEX_NAME}
+             JOIN files ON files.rowid = ${FTS_INDEX_NAME}.rowid
+             WHERE ${FTS_INDEX_NAME} MATCH ?`,
+            [term]
+          )
+        const hits = yield* matching("quokka")
+        const old = yield* matching("wildebeest OR giraffe")
         return { report, hits: hits.length, old: old.length }
       })
     )
     expect(outcome.report.added).toBe(16)
-    // Every new row is findable through the recreated index, and the old rows stayed indexed.
+    // Every new row is findable, and the old rows stayed indexed.
     expect(outcome.hits).toBe(16)
     expect(outcome.old).toBeGreaterThan(0)
   })

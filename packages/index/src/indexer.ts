@@ -11,15 +11,7 @@ import { Context, Effect } from "effect"
 import type { DatabaseShape, Write } from "./database.js"
 import type { GitPort } from "./git-port.js"
 import { type FileProjection, projectFile } from "./project.js"
-import {
-  FTS_COLUMN,
-  FTS_INDEX_NAME,
-  FTS_REBUILD_MIN_FILES,
-  FTS_REBUILD_ROWS_PER_WRITE,
-  INDEX_STATE_ID,
-  MEMORY_TABLES,
-  WRITE_BATCH_SIZE
-} from "./schema-const.js"
+import { INDEX_STATE_ID, MEMORY_TABLES, WRITE_BATCH_SIZE } from "./schema-const.js"
 
 /**
  * The indexer: git is the source of truth, `index.db` is a projection of it.
@@ -177,38 +169,16 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
     })
 
   /**
-   * Apply an incremental pass's writes, rebuilding the FTS index around them when the pass is bulk.
+   * Apply a projection pass's writes. The FTS index maintains itself through its triggers.
    *
-   * Inserting through the live FTS index costs ~8 ms/row freshly built and DEGRADES with every row
-   * inserted since the index was last created — probed 2026-08-06 on @tursodatabase/database 0.7.2:
-   * four consecutive 256-op updates cost 2.4 s → 5.1 s → 7.9 s → 10.7 s in `db.writeAll` at a
-   * constant store size, and the same four updates under a drop/create bracket stay flat at ~0.6 s.
-   * That accumulation is what made bulk ingest's per-batch wall grow 45 s → 5.5 min over 72 batches
-   * (2026-08-05 eval run) after the git-side quadratic was already fixed. Rebuilding the index is
-   * linear in TABLE size (~6.6 µs/row: 13 ms at 1k files, 133 ms at 20k), so for a large enough
-   * batch the bracket is strictly cheaper — and it also resets the accumulated degradation, which
-   * the live path never does.
-   *
-   * The threshold keeps the interactive path on the live insert: a single-file write pays ~8 ms,
-   * and bracketing it would charge the whole table's rebuild for one row. Break-even is roughly
-   * one written row per {@link FTS_REBUILD_ROWS_PER_WRITE} table rows, floored at
-   * {@link FTS_REBUILD_MIN_FILES} so small stores never bracket a handful of writes.
-   *
-   * A crash between the DROP and the CREATE leaves `index.db` without its lexical index — the same
-   * exposure window `rebuild` has always had, and acceptable for the same reason: the whole file is
-   * a projection, and `memhtml index rebuild` reproduces it.
+   * There is no drop/rebuild bracket around a bulk pass, because FTS5 writes are linear and do not
+   * accumulate: probed 2026-08-12 on node 24.19.0, six consecutive 256-op update batches against a
+   * constant 10k-file store cost 6, 5, 6, 5, 5, 5 ms. Inserting a whole store through the live index
+   * costs 20 ms at 800 files, 101 ms at 5k, 234 ms at 10k — beside the thousands of Bedrock
+   * embedding calls a bulk pass makes, that is not a number worth bracketing for, and a bracket
+   * would reintroduce a window where a crash leaves the store with no lexical index.
    */
-  const applyProjectionWrites = (writes: ReadonlyArray<Write>, filesTouched: number) =>
-    Effect.gen(function* () {
-      if (filesTouched < FTS_REBUILD_MIN_FILES) return yield* applyWrites(writes)
-      const counted = yield* db.get<{ n: number }>("SELECT count(*) AS n FROM files")
-      if (filesTouched * FTS_REBUILD_ROWS_PER_WRITE < (counted?.n ?? 0)) {
-        return yield* applyWrites(writes)
-      }
-      yield* db.run(`DROP INDEX IF EXISTS ${FTS_INDEX_NAME}`)
-      yield* applyWrites(writes)
-      yield* db.run(`CREATE INDEX ${FTS_INDEX_NAME} ON files USING fts(${FTS_COLUMN})`)
-    })
+  const applyProjectionWrites = (writes: ReadonlyArray<Write>) => applyWrites(writes)
 
   /**
    * Parse and project one file. A parse failure yields the reason instead of failing the pass: a
@@ -399,16 +369,6 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
       )
       const blobs = yield* git.catFileBatch(entries.map((entry) => entry.blobSha))
 
-      /**
-       * The FTS index is dropped for the bulk load and rebuilt after.
-       *
-       * Probed 2026-08-02: inserting 800 rows through a live FTS index took 19.9 s and the cost is
-       * superlinear in table size; the same rows with the index absent took 18 ms, and building the
-       * index over them afterwards took 13 ms. Keeping the index up during a rebuild would make a
-       * 10k-memory corpus unindexable in practice.
-       */
-      yield* db.run(`DROP INDEX IF EXISTS ${FTS_INDEX_NAME}`)
-
       /** Children before parents. Correct with foreign keys enforced, not merely via cascade. */
       for (const table of MEMORY_TABLES) yield* db.run(`DELETE FROM ${table}`)
 
@@ -426,8 +386,13 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
         else projections.push(projected.success)
       }
 
+      /**
+       * The lexical index needs no attention here: the `DELETE FROM files` above unindexed every row
+       * through the delete trigger and these writes index every new one through the insert trigger.
+       * A rebuild does not drop and recreate it — see {@link applyProjectionWrites} for the numbers
+       * that make a bracket not worth the window it opens.
+       */
       yield* applyWrites(projections.flatMap((projection) => projection.writes))
-      yield* db.run(`CREATE INDEX ${FTS_INDEX_NAME} ON files USING fts(${FTS_COLUMN})`)
       yield* writeState(headSha, true)
 
       const embeddingsWritten = opts.embed ? yield* embedMissing() : 0
@@ -551,7 +516,7 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
         }
       }
 
-      yield* applyProjectionWrites(writes, added)
+      yield* applyProjectionWrites(writes)
       const embeddingsWritten = yield* embedMissing()
       return {
         headSha,
@@ -703,7 +668,7 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
         }
       }
 
-      yield* applyProjectionWrites(writes, added + modified + status.length)
+      yield* applyProjectionWrites(writes)
       yield* writeState(headSha, false)
       /**
        * Scoped to this pass's own chunks, which is what keeps an incremental update's cost flat in

@@ -2,7 +2,7 @@ import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
 
 import { hasFtsTerms, sanitizeFtsQuery } from "../src/fts-query.js"
-import { FTS_COLUMN } from "../src/schema-const.js"
+import { FTS_INDEX_NAME } from "../src/schema-const.js"
 import { withDb } from "./harness.js"
 
 /**
@@ -94,30 +94,46 @@ const seed = (db: Parameters<Parameters<typeof withDb>[0]>[0]) =>
 const matchRaw = (db: Parameters<Parameters<typeof withDb>[0]>[0], query: string) =>
   Effect.result(
     db.all<{ path: string }>(
-      `SELECT path FROM files WHERE ${FTS_COLUMN} MATCH ? AND archived = 0 LIMIT 5`,
+      `SELECT files.path AS path FROM ${FTS_INDEX_NAME}
+       JOIN files ON files.rowid = ${FTS_INDEX_NAME}.rowid
+       WHERE ${FTS_INDEX_NAME} MATCH ? AND files.archived = 0 LIMIT 5`,
       [query]
     )
   )
 
 describe("the driver hazards the sanitizer exists for", () => {
   /**
-   * Probed live 2026-08-02 on @tursodatabase/database 0.7.2. Each of these FAILS the statement rather
+   * Probed live 2026-08-12 on node 24.19.0 (SQLite 3.53.3). Each of these FAILS the statement rather
    * than returning no rows, and every one of them is a form an agent writes without meaning anything
    * by it.
    */
   const hazards = [
     "don't",
     "service:checkout-api",
+    "checkout-api",
     "-zebra",
     "!!! ???",
     "-",
     "--",
     "AND",
-    "^x",
+    "OR",
+    "a OR",
+    "NEAR(a b",
+    '"unbalanced',
     "[x]",
     "{x}",
     "\\"
   ]
+
+  /**
+   * Forms FTS5 ACCEPTS, which the sanitizer normalizes anyway.
+   *
+   * `zebra*` is a prefix search, `^x` anchors to a column's first token, and lowercase `and` is an
+   * ordinary term where `AND` is a keyword. None of them throws, so none is a hazard — they are here
+   * because a query that silently means something other than its words is its own bug, and because
+   * the sanitizer's docstring claims it flattens them.
+   */
+  const tolerated = ["zebra*", "^x", "and", "NEAR"]
 
   it("rejects each hazard raw, and accepts every one of them sanitized", async () => {
     const outcome = await withDb((db) =>
@@ -139,11 +155,16 @@ describe("the driver hazards the sanitizer exists for", () => {
       })
     )
 
-    const tolerated = outcome.filter((entry) => !entry.rawFailed).map((entry) => entry.query)
-    // If this ever shrinks, the driver got more tolerant and the sanitizer is now belt-and-braces —
-    // which is fine, but the comment above is then stale and should be re-probed.
-    expect(tolerated).toEqual([])
+    const survived = outcome.filter((entry) => !entry.rawFailed).map((entry) => entry.query)
+    // If this ever shrinks, FTS5 got more tolerant and the sanitizer is now belt-and-braces — which is
+    // fine, but the docstring's hazard list is then stale and should be re-probed.
+    expect(survived).toEqual([])
     expect(outcome.every((entry) => entry.sanitizedOk)).toBe(true)
+  })
+
+  it("flattens the operator forms FTS5 would have accepted, so a query means its words", () => {
+    // Asserted on the sanitizer alone: these never reach MATCH in operator form.
+    expect(tolerated.map(sanitizeFtsQuery)).toEqual(["zebra", "x", "and", "near"])
   })
 
   it("still finds the row through a sanitized entity reference", async () => {
@@ -151,7 +172,9 @@ describe("the driver hazards the sanitizer exists for", () => {
       Effect.gen(function* () {
         yield* seed(db)
         const rows = yield* db.all<{ path: string }>(
-          `SELECT path FROM files WHERE ${FTS_COLUMN} MATCH ? AND archived = 0 LIMIT 5`,
+          `SELECT files.path AS path FROM ${FTS_INDEX_NAME}
+           JOIN files ON files.rowid = ${FTS_INDEX_NAME}.rowid
+           WHERE ${FTS_INDEX_NAME} MATCH ? AND files.archived = 0 LIMIT 5`,
           [sanitizeFtsQuery("service:checkout-api")]
         )
         return rows.map((row) => row.path)
@@ -161,16 +184,19 @@ describe("the driver hazards the sanitizer exists for", () => {
     expect(paths).toEqual(["areas/oncall/a.html"])
   })
 
-  it("accepts an empty MATCH, which is why an empty result and a bad query must not look alike", async () => {
+  it("REFUSES an empty MATCH, which is why a term-free query must drop the arm, not bind it", async () => {
     const outcome = await withDb((db) =>
       Effect.gen(function* () {
         yield* seed(db)
         return yield* matchRaw(db, "")
       })
     )
-    // The empty string is accepted and matches nothing, while `!!! ???` throws. A caller that treated
-    // both as "MATCH the sanitized text" would turn one agent typo into a storage failure.
-    expect(Result.isSuccess(outcome)).toBe(true)
-    if (Result.isSuccess(outcome)) expect(outcome.success).toEqual([])
+    /**
+     * `fts5: syntax error near ""`. So `sanitizeFtsQuery` returning `""` cannot be forwarded to MATCH:
+     * the lexical arm has to leave the fold entirely (`hasQueryTerms` in the assembler, `matched` in
+     * `searchTraces`). A caller that bound the sanitized text unconditionally would turn every
+     * punctuation-only query into a storage failure — the exact outcome this module prevents.
+     */
+    expect(Result.isFailure(outcome)).toBe(true)
   })
 })

@@ -1,6 +1,6 @@
 import { RRF_K } from "@memhtml/domain"
 
-import { FTS_COLUMN, SNIPPET_MAX_CHARS, STATE_SCHEMA } from "./schema-const.js"
+import { FTS_INDEX_NAME, SNIPPET_MAX_CHARS, STATE_SCHEMA } from "./schema-const.js"
 
 /**
  * The four-arm RRF assembler. Arms are data — a registry folded over by {@link buildRrfSql} — so
@@ -25,6 +25,42 @@ export const PARAM_QUERY = 1
 export const PARAM_ARM_LIMIT = 2
 export const PARAM_FINAL_LIMIT = 3
 export const PARAM_QUERY_VECTOR = 4
+
+/** The highest `?N` a statement names, or 0 when it binds nothing. */
+const highestSlot = (sql: string): number =>
+  [...sql.matchAll(/\?(\d+)/g)].reduce((top, match) => Math.max(top, Number(match[1])), 0)
+
+/**
+ * The bound tuple for an assembled statement, trimmed to the slots that statement actually names.
+ *
+ * SQLite binds by INDEX and refuses a value at a position no `?N` mentions: binding four against a
+ * statement that stops at `?3` is `column index out of range`, not a harmlessly ignored extra. Which
+ * slots survive assembly is not fixed — dropping the vector arm removes `?4`, an empty scope removes
+ * `?5` and up, and one arm run in isolation may reach no further than `?2`.
+ *
+ * So the ceiling is READ OFF THE SQL rather than restated as a rule about which arms are in the fold.
+ * A rule would have to be re-derived every time an arm changes which placeholders it uses, and would
+ * be wrong silently; the statement is the authority on what it references. The full tuple is still
+ * built in slot order first, because the numbered placeholders are what let `?1`-`?3` keep their
+ * meaning whichever arms fire.
+ */
+export const rrfParams = (
+  sql: string,
+  input: {
+    readonly matchQuery: string
+    readonly armLimit: number
+    readonly finalLimit: number
+    readonly vector?: Uint8Array | undefined
+    readonly scopeParams: ReadonlyArray<string | number>
+  }
+): ReadonlyArray<string | number | Uint8Array | null> =>
+  [
+    input.matchQuery,
+    input.armLimit,
+    input.finalLimit,
+    input.vector ?? null,
+    ...input.scopeParams
+  ].slice(0, highestSlot(sql))
 
 /** The filter hole an arm's SQL template carries. Assembled, never bound. */
 export interface ArmHoles {
@@ -60,13 +96,20 @@ export interface RankArm {
 }
 
 /**
- * Lexical. `ROW_NUMBER() OVER ()` with no `ORDER BY` is deliberate and probed: it captures MATCH's
- * own row order, which is the only relevance signal this driver exposes — there is no `rank` column
- * and no `bm25()`. The window must sit OUTSIDE a `LIMIT`ed subquery, because a window function
- * evaluated alongside the MATCH would number the pre-limit scan.
+ * Lexical, ranked by `bm25()` — a real term-frequency/inverse-document-frequency score rather than
+ * whatever order the index happens to return rows in.
  *
- * MATCHes the single denormalized `fts_text` column: a multi-column FTS index returns rowid order
- * instead of relevance order and scopes MATCH to the named column alone.
+ * FTS5 reports bm25 as a NEGATIVE number where more negative is more relevant, so `ORDER BY bm25`
+ * ascending puts the best match first. Getting that sign backwards would invert the whole arm while
+ * still producing a plausible ranked list, which is why the discrimination gate — every probe must
+ * outrank its own wrong-fact twins — is the test that matters here.
+ *
+ * The `ORDER BY` sits INSIDE the limited subquery so the LIMIT keeps the most relevant candidates,
+ * and `ROW_NUMBER()` sits outside it so the fused rank numbers the survivors rather than the
+ * pre-limit scan.
+ *
+ * The join is on `rowid`: `files_fts` is external-content over `files`, so it stores no copy of the
+ * row and the rowid is the only handle back to the path.
  */
 const ftsArm: RankArm = {
   name: "fts",
@@ -76,8 +119,10 @@ const ftsArm: RankArm = {
   needsQueryTerms: true,
   sql: ({ fileFilter }) =>
     `SELECT path, ROW_NUMBER() OVER () AS rank FROM (
-       SELECT path FROM files
-       WHERE ${FTS_COLUMN} MATCH ?${PARAM_QUERY}${fileFilter.replaceAll("{alias}", "files")}
+       SELECT files.path AS path FROM ${FTS_INDEX_NAME}
+       JOIN files ON files.rowid = ${FTS_INDEX_NAME}.rowid
+       WHERE ${FTS_INDEX_NAME} MATCH ?${PARAM_QUERY}${fileFilter.replaceAll("{alias}", "files")}
+       ORDER BY bm25(${FTS_INDEX_NAME})
        LIMIT ?${PARAM_ARM_LIMIT}
      )`
 }

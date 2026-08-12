@@ -36,7 +36,7 @@ const runtimeImports = async (): Promise<ReadonlyMap<string, ReadonlyArray<strin
  * package's own modules.
  */
 const FORBIDDEN = [
-  "@tursodatabase",
+  "node:sqlite",
   "@aws-sdk",
   "@aws/",
   "node:fs",

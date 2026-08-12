@@ -11,6 +11,22 @@ export const EMBED_DIM = 1024
 export const EMBED_BATCH_LIMIT = 96
 
 /**
+ * How many embed batches are in flight at once.
+ *
+ * A whole-store pass is `ceil(chunks / EMBED_BATCH_LIMIT)` requests — about 105 for a 10k-chunk
+ * corpus — and issuing them one after another makes `index rebuild --embed` a serial chain of
+ * network round trips, which is the slowest thing this system does.
+ *
+ * BOUNDED rather than `"unbounded"`, and the bound is about a shared quota rather than about local
+ * resources: every caller on this deployment draws on the same rotated Bedrock token's
+ * tokens-per-minute, so an unbounded fan-out would spend the whole store's budget in one burst and
+ * throttle every other consumer. Throttles that do occur are absorbed below Effect by the SDK's
+ * adaptive retry (`maxAttempts: 10`), which backs off per-request — so the failure mode of a
+ * slightly-too-high bound is latency, not an error.
+ */
+export const EMBED_CONCURRENCY = 6
+
+/**
  * The watermark value `index_state.embed_model` stores. Both axes in one string, because
  * a model id alone does not identify a vector space: the same id at another
  * `output_dimension` produces vectors that are silently incomparable with the stored ones.

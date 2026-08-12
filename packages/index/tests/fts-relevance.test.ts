@@ -2,28 +2,20 @@ import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 
 import type { Write } from "../src/database.js"
-import { FTS_COLUMN } from "../src/schema-const.js"
+import { FTS_INDEX_NAME } from "../src/schema-const.js"
 import { withDb } from "./harness.js"
 
 /**
- * The regression lock on the single-column FTS decision.
+ * The lexical arm's two load-bearing properties: it ranks by `bm25()`, and its index stays in step
+ * with the corpus through triggers.
  *
- * `docs/design.md`'s probe note says MATCH on any indexed column searches the whole index and that
- * MATCH returns rows in relevance order. Re-probed 2026-08-02 on @tursodatabase/database 0.7.2, BOTH
- * halves are false under a MULTI-column index:
+ * Both are worth locking because both fail QUIETLY. A bm25 sign error still returns a ranked list, in
+ * exactly the wrong order. A missing trigger still answers MATCH, from rows the corpus has since
+ * changed — and `files_fts` is EXTERNAL CONTENT, which does not observe its content table on its own,
+ * so nothing but the triggers keeps it honest.
  *
- * - MATCH is scoped to the named column alone — a term living in `title` is not found by
- *   `body_text MATCH`.
- * - the rows come back in ROWID order, not relevance order.
- *
- * That matters because this driver exposes no `rank` column and no `bm25()`, so MATCH's own row order
- * is the entire relevance signal, and the FTS arm's rank is `ROW_NUMBER() OVER ()` over it. Under a
- * multi-column index the lexical arm silently degrades to "any row containing the term, oldest first"
- * — a green test suite and a broken ranking.
- *
- * So the schema carries ONE denormalized `fts_text` column. These tests prove the property that
- * decision buys, and the second one builds a multi-column index on a scratch table to show the
- * failure is real rather than remembered.
+ * The schema carries ONE denormalized `fts_text` column so a term is found wherever it was authored;
+ * the title-only test is what proves that, and it would fail against a per-field index.
  */
 
 /**
@@ -68,7 +60,7 @@ const seedRelevanceCorpus = (count: number) => {
   return { dense, writes }
 }
 
-describe("the single-column FTS index", () => {
+describe("the single-column FTS5 index", () => {
   it("returns term-dense rows first, ahead of rows that merely contain the term", async () => {
     const outcome = await withDb((db) =>
       Effect.gen(function* () {
@@ -76,7 +68,11 @@ describe("the single-column FTS index", () => {
         yield* db.writeAll(writes)
         const rows = yield* db.all<{ path: string; rank: number }>(
           `SELECT path, ROW_NUMBER() OVER () AS rank FROM (
-             SELECT path FROM files WHERE ${FTS_COLUMN} MATCH ? AND archived = 0 LIMIT ?
+             SELECT files.path AS path FROM ${FTS_INDEX_NAME}
+             JOIN files ON files.rowid = ${FTS_INDEX_NAME}.rowid
+             WHERE ${FTS_INDEX_NAME} MATCH ? AND files.archived = 0
+             ORDER BY bm25(${FTS_INDEX_NAME})
+             LIMIT ?
            )`,
           ["zebra", 40]
         )
@@ -85,11 +81,40 @@ describe("the single-column FTS index", () => {
     )
 
     const top = outcome.rows.slice(0, outcome.dense.length).map((row) => row.path)
-    // Every dense row outranks every single-mention row. Under a multi-column index this fails: the
-    // first results are p000, p003, p006, ... — rowid order.
+    // Every dense row outranks every single-mention row. This is what `ORDER BY bm25` buys: seeded in
+    // rowid order, the dense rows are every 7th, so rowid order would interleave them.
     expect(top.sort()).toEqual(outcome.dense)
-    // The window numbers the MATCH order it was given, 1-based and gapless.
+    // The window numbers the ranked order it was given, 1-based and gapless.
     expect(outcome.rows.map((row) => row.rank)).toEqual(outcome.rows.map((_, offset) => offset + 1))
+  })
+
+  it("scores bm25 negative-is-better, which is why the arm orders ASCENDING", async () => {
+    /**
+     * The sign convention, asserted directly. An `ORDER BY bm25(...) DESC` would return a
+     * plausible-looking ranked list with the least relevant row first, and every test that only
+     * checks membership would pass. This is the one that would not.
+     */
+    const scores = await withDb((db) =>
+      Effect.gen(function* () {
+        const { dense, writes } = seedRelevanceCorpus(140)
+        yield* db.writeAll(writes)
+        const rows = yield* db.all<{ path: string; score: number }>(
+          `SELECT files.path AS path, bm25(${FTS_INDEX_NAME}) AS score FROM ${FTS_INDEX_NAME}
+           JOIN files ON files.rowid = ${FTS_INDEX_NAME}.rowid
+           WHERE ${FTS_INDEX_NAME} MATCH ?`,
+          ["zebra"]
+        )
+        const denseScores = rows.filter((row) => dense.has(row.path)).map((row) => row.score)
+        const sparseScores = rows.filter((row) => !dense.has(row.path)).map((row) => row.score)
+        return { denseScores, sparseScores }
+      })
+    )
+
+    expect(scores.denseScores.length).toBeGreaterThan(0)
+    expect(scores.sparseScores.length).toBeGreaterThan(0)
+    // Every score is negative, and the dense rows are MORE negative than the sparse ones.
+    expect(scores.denseScores.every((score) => score < 0)).toBe(true)
+    expect(Math.max(...scores.denseScores)).toBeLessThan(Math.min(...scores.sparseScores))
   })
 
   it("finds a term that lives only in the title, because the column carries the title too", async () => {
@@ -118,13 +143,16 @@ describe("the single-column FTS index", () => {
           }
         ])
         const rows = yield* db.all<{ path: string }>(
-          `SELECT path FROM files WHERE ${FTS_COLUMN} MATCH ?`,
+          `SELECT files.path AS path FROM ${FTS_INDEX_NAME}
+           JOIN files ON files.rowid = ${FTS_INDEX_NAME}.rowid
+           WHERE ${FTS_INDEX_NAME} MATCH ?`,
           ["wildebeest"]
         )
         return rows.map((row) => row.path)
       })
     )
-    // Denormalizing is what makes a title-only term findable: MATCH is per-column on this driver.
+    // Denormalizing is what makes a title-only term findable: one column, so one MATCH reaches the
+    // title, the gist, and the body alike.
     expect(paths).toEqual(["areas/notes/a.html"])
   })
 
@@ -157,80 +185,74 @@ describe("the single-column FTS index", () => {
           "T\nc\ngiraffe body",
           "areas/notes/a.html"
         ])
-        const stale = yield* db.all<{ path: string }>(
-          `SELECT path FROM files WHERE ${FTS_COLUMN} MATCH ?`,
-          ["zebra"]
-        )
-        const fresh = yield* db.all<{ path: string }>(
-          `SELECT path FROM files WHERE ${FTS_COLUMN} MATCH ?`,
-          ["giraffe"]
-        )
+        const matching = (term: string) =>
+          db.all<{ path: string }>(
+            `SELECT files.path AS path FROM ${FTS_INDEX_NAME}
+             JOIN files ON files.rowid = ${FTS_INDEX_NAME}.rowid
+             WHERE ${FTS_INDEX_NAME} MATCH ?`,
+            [term]
+          )
+        const stale = yield* matching("zebra")
+        const fresh = yield* matching("giraffe")
         return { stale: stale.length, fresh: fresh.length }
       })
     )
-    // The index is maintained transactionally, so an incremental re-index needs no separate FTS pass.
+    // The update trigger unindexes the old terms and indexes the new ones in the same transaction as
+    // the row, so an incremental re-index needs no separate FTS pass. Without that trigger `stale`
+    // would still be 1: external-content FTS5 does not observe its content table.
     expect(outcome).toEqual({ stale: 0, fresh: 1 })
   })
 })
 
 /**
- * The counter-demonstration, on a scratch table the schema does not own.
+ * The delete half of the trigger contract, which the update test cannot reach.
  *
- * This exists so the reason for the single-column decision is checkable rather than a claim in a
- * comment. If a future driver release fixes multi-column relevance ordering, THIS test fails — and
- * that failure is the signal to re-probe and reconsider, which is exactly what it is for.
+ * A deleted row must leave the index, and the delete trigger has to pass FTS5 the row's OLD text to
+ * unindex the right terms. Handing it the wrong text does not raise — it corrupts the index quietly,
+ * leaving terms behind that match a row the corpus no longer has. This is the test that catches a
+ * removed or mis-written `files_fts_delete`.
  */
-describe("why the index is not multi-column", () => {
-  it("loses relevance order and scopes MATCH per column under a multi-column index", async () => {
+describe("the delete trigger", () => {
+  it("unindexes a removed row, so MATCH stops finding a path the corpus dropped", async () => {
     const outcome = await withDb((db) =>
       Effect.gen(function* () {
-        yield* db.run(
-          "CREATE TABLE probe (path TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL)"
-        )
-        yield* db.run("CREATE INDEX probe_fts ON probe USING fts(title, body)")
-
-        const dense = new Set<string>()
-        const writes: Array<Write> = []
-        for (let index = 0; index < 60; index += 1) {
-          const path = `p${String(index).padStart(3, "0")}`
-          const isDense = index % 7 === 0
-          if (isDense) dense.add(path)
-          writes.push({
-            sql: "INSERT INTO probe (path, title, body) VALUES (?, ?, ?)",
-            params: [
-              path,
-              index === 5 ? "wildebeest only in the title" : "plain title",
-              isDense
-                ? "zebra zebra zebra zebra zebra zebra dense"
-                : index % 3 === 0
-                  ? "zebra once"
-                  : "filler only"
-            ]
-          })
-        }
+        const { writes } = seedRelevanceCorpus(20)
         yield* db.writeAll(writes)
-
-        const ordered = yield* db.all<{ path: string }>(
-          "SELECT path FROM probe WHERE body MATCH ? LIMIT 12",
+        const target = "areas/notes/p000.html"
+        const before = yield* db.all<{ path: string }>(
+          `SELECT files.path AS path FROM ${FTS_INDEX_NAME}
+           JOIN files ON files.rowid = ${FTS_INDEX_NAME}.rowid
+           WHERE ${FTS_INDEX_NAME} MATCH ?`,
           ["zebra"]
         )
-        const crossColumn = yield* db.all<{ path: string }>(
-          "SELECT path FROM probe WHERE body MATCH ?",
-          ["wildebeest"]
+        yield* db.run("DELETE FROM files WHERE path = ?", [target])
+        const after = yield* db.all<{ path: string }>(
+          `SELECT files.path AS path FROM ${FTS_INDEX_NAME}
+           JOIN files ON files.rowid = ${FTS_INDEX_NAME}.rowid
+           WHERE ${FTS_INDEX_NAME} MATCH ?`,
+          ["zebra"]
+        )
+        /**
+         * Counted from the index itself, not through the join. The join would hide a leak: an orphan
+         * FTS row whose rowid no longer exists in `files` drops out of an inner join silently, so a
+         * corrupt index and a clean one look identical from the outside.
+         */
+        const indexed = yield* db.get<{ n: number }>(
+          `SELECT count(*) AS n FROM ${FTS_INDEX_NAME} WHERE ${FTS_INDEX_NAME} MATCH ?`,
+          ["zebra"]
         )
         return {
-          firstFew: ordered.slice(0, 6).map((row) => row.path),
-          dense: [...dense],
-          crossColumn: crossColumn.length
+          hadTarget: before.some((row) => row.path === target),
+          keepsTarget: after.some((row) => row.path === target),
+          joined: after.length,
+          indexed: indexed?.n ?? -1
         }
       })
     )
 
-    // Rowid order, not relevance order: p000 is dense but p001/p002 contain no `zebra` at all, and the
-    // single-mention p003 arrives ahead of the dense p007.
-    expect(outcome.firstFew).toEqual(["p000", "p003", "p006", "p007", "p009", "p012"])
-    expect(outcome.firstFew.every((path) => outcome.dense.includes(path))).toBe(false)
-    // And a title-only term is invisible to a body MATCH, contradicting design.md's probe note.
-    expect(outcome.crossColumn).toBe(0)
+    expect(outcome.hadTarget).toBe(true)
+    expect(outcome.keepsTarget).toBe(false)
+    // The index holds exactly what the join returns: no orphan row left behind for the deleted path.
+    expect(outcome.indexed).toBe(outcome.joined)
   })
 })

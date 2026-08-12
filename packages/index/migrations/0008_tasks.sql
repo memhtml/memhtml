@@ -20,10 +20,11 @@
 -- an orphan child insert is still refused, and `ON UPDATE CASCADE` still carries a chunk through an
 -- archive rename.
 --
--- `files_fts` needs no explicit drop: `DROP TABLE files` takes it with the table (probed), and
--- `files_next` carries no FTS index while the bulk copy runs — which is the point. Writing rows
--- through a live Tantivy index measured 10-25 ms/row and superlinear, so the index is built once at
--- the end over the finished table.
+-- `files_fts` IS dropped explicitly. It is a separate virtual table, so `DROP TABLE files` does not
+-- take it, and an external-content FTS5 table left pointing at a dropped content table is a stale
+-- index that answers MATCH from rows the corpus no longer has. Its triggers need no drop — a trigger
+-- belongs to the table it is defined ON, so `DROP TABLE files` takes all three. Both are recreated
+-- from 0003_fts.sql's definitions at the end of this file, over the finished table.
 
 CREATE TABLE files_next (
   path            TEXT PRIMARY KEY,
@@ -91,6 +92,7 @@ CREATE TABLE chunks_snap         AS SELECT * FROM chunks;
 -- vector BLOB survives `CREATE TABLE … AS SELECT` at full length (probed: 8 bytes in, 8 out).
 CREATE TABLE embeddings_snap     AS SELECT * FROM embeddings;
 
+DROP TABLE files_fts;
 DROP TABLE files;
 ALTER TABLE files_next RENAME TO files;
 
@@ -136,8 +138,31 @@ CREATE INDEX files_blob          ON files (blob_sha);
 CREATE INDEX files_task_status ON files (task_status)
   WHERE memory_type = 'task' AND archived = 0;
 
--- Built last, over the finished table, for the reason stated at the top of this file.
-CREATE INDEX files_fts ON files USING fts(fts_text);
+-- The lexical index and its triggers, rebuilt over the finished table. These must stay identical to
+-- 0003_fts.sql: two definitions of one index that drifted would make a fresh store and a migrated one
+-- rank differently, which no test comparing a store to itself would catch.
+CREATE VIRTUAL TABLE files_fts USING fts5(
+  fts_text,
+  content='files',
+  content_rowid='rowid'
+);
+
+-- The content table already holds every row, so the index is built in one pass here rather than
+-- accumulated through the triggers.
+INSERT INTO files_fts(files_fts) VALUES ('rebuild');
+
+CREATE TRIGGER files_fts_insert AFTER INSERT ON files BEGIN
+  INSERT INTO files_fts(rowid, fts_text) VALUES (new.rowid, new.fts_text);
+END;
+
+CREATE TRIGGER files_fts_delete AFTER DELETE ON files BEGIN
+  INSERT INTO files_fts(files_fts, rowid, fts_text) VALUES ('delete', old.rowid, old.fts_text);
+END;
+
+CREATE TRIGGER files_fts_update AFTER UPDATE OF fts_text ON files BEGIN
+  INSERT INTO files_fts(files_fts, rowid, fts_text) VALUES ('delete', old.rowid, old.fts_text);
+  INSERT INTO files_fts(rowid, fts_text) VALUES (new.rowid, new.fts_text);
+END;
 
 -- ── edges: the fourth class ──────────────────────────────────────────────────────────────────────
 --

@@ -257,20 +257,28 @@ describe("0008 over a populated 0007 database", () => {
   })
 
   it("rebuilds every index the recreated tables had, plus the task one", async () => {
-    // A dropped table takes its indexes with it, so an index the migration forgot to recreate is
-    // an index the database silently no longer has — and a missing partial UNIQUE index is a
-    // missing dedup guarantee, which no query fails on.
-    const names = await withDbThrough("0007_watermark.sql", (db, apply) =>
+    // A dropped table takes its indexes AND its triggers with it, so anything the migration forgot to
+    // recreate is silently gone — a missing partial UNIQUE index is a missing dedup guarantee, and a
+    // missing FTS trigger is a lexical index that quietly stops tracking the corpus. Neither makes a
+    // query fail.
+    const schema = await withDbThrough("0007_watermark.sql", (db, apply) =>
       Effect.gen(function* () {
         yield* Effect.promise(apply)
-        const rows = yield* db.all<{ name: string }>(
+        const indexes = yield* db.all<{ name: string }>(
           `SELECT name FROM sqlite_schema
            WHERE type = 'index' AND tbl_name IN ('files', 'edges') AND name NOT LIKE 'sqlite_%'
            ORDER BY name`
         )
-        return rows.map((row) => row.name)
+        const fts = yield* db.all<{ name: string; type: string }>(
+          `SELECT name, type FROM sqlite_schema
+           WHERE (type = 'table' AND name = '${FTS_INDEX_NAME}')
+              OR (type = 'trigger' AND tbl_name = 'files')
+           ORDER BY name`
+        )
+        return { names: indexes.map((row) => row.name), fts }
       })
     )
+    const names = schema.names
 
     expect(names).toEqual([
       "edges_derived",
@@ -281,7 +289,6 @@ describe("0008 over a populated 0007 database", () => {
       "files_content_hash_active",
       "files_event",
       "files_frame_key_active",
-      FTS_INDEX_NAME,
       "files_para",
       "files_session",
       "files_task_status",
@@ -290,16 +297,26 @@ describe("0008 over a populated 0007 database", () => {
       "files_updated",
       "files_workspace"
     ])
+    // `files_fts` is a virtual TABLE, not an index, so it is absent from the list above by design.
+    expect(schema.fts).toEqual([
+      { name: FTS_INDEX_NAME, type: "table" },
+      { name: "files_fts_delete", type: "trigger" },
+      { name: "files_fts_insert", type: "trigger" },
+      { name: "files_fts_update", type: "trigger" }
+    ])
   })
 
   it("leaves the rebuilt FTS index ranking the copied rows", async () => {
-    // The index is dropped with the table and rebuilt over the finished copy, so a MATCH has to
-    // find rows that were written before the index existed.
+    // The index is dropped with the table and rebuilt over the finished copy by a `'rebuild'`
+    // command, so a MATCH has to find rows that were written before the index existed — the triggers
+    // never saw them.
     const hits = await withDbThrough("0007_watermark.sql", (db, apply) =>
       Effect.gen(function* () {
         yield* seed(db)
         yield* Effect.promise(apply)
-        return yield* db.all<{ path: string }>("SELECT path FROM files WHERE fts_text MATCH 'body'")
+        return yield* db.all<{ path: string }>(`SELECT files.path AS path FROM ${FTS_INDEX_NAME}
+           JOIN files ON files.rowid = ${FTS_INDEX_NAME}.rowid
+           WHERE ${FTS_INDEX_NAME} MATCH 'body'`)
       })
     )
     expect(hits.length).toBe(3)
@@ -426,13 +443,15 @@ describe("0009 over a populated 0008 database", () => {
   })
 
   it("keeps the FTS index working, so the ALTER did not disturb the virtual index", async () => {
-    // `ADD COLUMN` on a table carrying an FTS index is the one interaction this migration has with
-    // 0003, and a broken index would surface only as retrieval finding nothing.
+    // Recreating `files` is this migration's one interaction with 0003, and a lexical index left
+    // pointing at the dropped table would surface only as retrieval finding nothing.
     const hits = await withDbThrough("0008_tasks.sql", (db, apply) =>
       Effect.gen(function* () {
         yield* seedRow(db, "areas/oncall/a.html", "sha256:aaa", 0)
         yield* Effect.promise(apply)
-        return yield* db.all<{ path: string }>("SELECT path FROM files WHERE fts_text MATCH 'f'")
+        return yield* db.all<{ path: string }>(`SELECT files.path AS path FROM ${FTS_INDEX_NAME}
+           JOIN files ON files.rowid = ${FTS_INDEX_NAME}.rowid
+           WHERE ${FTS_INDEX_NAME} MATCH 'f'`)
       })
     )
     expect(hits).toHaveLength(1)

@@ -51,8 +51,18 @@ describe("the gate on the fixture corpus", () => {
      * The semantic-contracts rule applied to this report: `mrr` and `corpusMrr` are the same
      * arithmetic over DIFFERENT sets, and only the first is gated. `corpusMrr` is dominated by corpus
      * size — the arm limit is 40, which is 13% of this fixture and under 1% of a real corpus — so a
-     * gate on it would be a gate on how big the fixture is. Asserting the inequality pins that they
-     * are not interchangeable.
+     * gate on it would be a gate on how big the fixture is.
+     *
+     * The relation is `mrr >= corpusMrr`, and it is STRUCTURAL rather than empirical: a target's
+     * discrimination rank is its rank among itself plus its OWN controls, which is a subset of the
+     * corpus, so it can never be worse than its rank across the whole corpus. That inequality is
+     * what pins the two readings as non-interchangeable.
+     *
+     * Both currently read exactly `1` on this fixture — every target outranks its controls AND every
+     * other memory in the corpus — so this assertion has no numeric headroom here. It can only break
+     * on a regression that makes a subset rank worse than a corpus rank, which would mean the ranks
+     * are being computed over the wrong sets. The inversion count and the MRR floor are what catch a
+     * quality regression; this catches a coordinate-space one.
      */
     const report = await Effect.runPromise(
       withStack((stack) =>
@@ -61,7 +71,7 @@ describe("the gate on the fixture corpus", () => {
         )
       )
     )
-    expect(report.mrr).toBeGreaterThan(report.corpusMrr)
+    expect(report.mrr).toBeGreaterThanOrEqual(report.corpusMrr)
     for (const result of report.results) {
       // The discrimination rank can never exceed one plus the number of impostors.
       expect(result.discriminationRank).toBeLessThanOrEqual(result.controlRanks.length + 1)

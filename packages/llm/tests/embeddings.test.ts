@@ -93,7 +93,20 @@ describe("makeEmbeddings.embed", () => {
     const result = await Effect.runPromise(Effect.result(makeEmbeddings(client).embed(texts(200))))
 
     expect(Result.isFailure(result)).toBe(true)
-    expect(client.bodies.length).toBe(2)
+    if (Result.isFailure(result)) {
+      // The SECOND batch is the one that came back short, and the reason names its arithmetic.
+      expect(result.failure.reason).toContain("95 vectors for 96 texts")
+    }
+    /**
+     * All three batches are issued, not two.
+     *
+     * The batches run concurrently up to `EMBED_CONCURRENCY`, so a sibling's failure does not
+     * un-send a request already in flight — 200 texts is three batches and all three start before
+     * the second one's short response is observed. That is the cost of the fan-out, and it is
+     * bounded: at most `EMBED_CONCURRENCY - 1` requests are wasted per failure. Asserting the
+     * count pins that the bound is the concurrency limit rather than the whole input.
+     */
+    expect(client.bodies.length).toBe(3)
   })
 
   it("fails typed when a vector carries the wrong width", async () => {

@@ -1,42 +1,63 @@
 import { mkdir, readdir, readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 
+import { DatabaseSync } from "node:sqlite"
+
 import { StorageFailure } from "@memhtml/contracts/errors"
-import { connect, type Database } from "@tursodatabase/database"
-import { Context, Effect } from "effect"
+import { cosineDistance } from "@memhtml/domain"
+import { Context, Effect, Schedule } from "effect"
+
+/** The driver handle. Node's own SQLite, so there is no third-party database dependency. */
+type Database = DatabaseSync
 
 /**
- * The one connect-options constant, the source for every `connect` in the system.
+ * How long a writer waits for the write lock before giving up.
  *
- * `index_method` is what makes `CREATE INDEX ... USING fts(...)` available — and once
- * such an index exists, every statement touching that table needs the flag too, not
- * just the ones that MATCH. A plain `SELECT` from `files` fails without it. `attach`
- * is what lets `.memhtml/state.db` join `main.files` in one query.
- *
- * Probed live 2026-08-01 against @tursodatabase/database 0.7.2 (SQLite 3.50.4 core).
- *
- * `satisfies` checks both names against the driver's own `ExperimentalFeature` union,
- * so a release that renames or drops a flag is a compile error here rather than an
- * unopenable database at runtime.
+ * SQLite in WAL mode admits one writer at a time and any number of concurrent readers, and a
+ * second writer BLOCKS for this long rather than failing immediately. That is the whole of the
+ * concurrency story: the fleet runs many short-lived CLI invocations plus a long-lived MCP
+ * server against one store, and they serialize by waiting. Zero here would turn every overlap
+ * into `SQLITE_BUSY`.
  */
-export const TURSO_OPTS = {
-  experimental: ["index_method", "attach"]
-} as const satisfies { readonly experimental: ReadonlyArray<ExperimentalFeature> }
+const BUSY_TIMEOUT_MS = 5_000
 
 /**
- * Read off `connect`'s own signature rather than imported: the driver declares
- * `DatabaseOpts` in `@tursodatabase/database-common`, which its entry point does not
- * re-export and which is therefore not a dependency this package may name.
+ * A `Float32Array` over stored bytes, copying only when it must.
+ *
+ * `Float32Array` requires a 4-byte-aligned `byteOffset`, and a driver row's `Uint8Array` may be
+ * a view into a pooled buffer at any offset. Viewing in place is the common case and costs
+ * nothing; a misaligned or ragged blob is copied rather than refused, because the vector arm's
+ * job is to rank and a throw here would fail a whole search over one row.
  */
-type DatabaseOpts = NonNullable<Parameters<typeof connect>[1]>
-type ExperimentalFeature = NonNullable<DatabaseOpts["experimental"]>[number]
+const float32View = (bytes: Uint8Array): Float32Array | undefined => {
+  if (bytes.byteLength === 0 || bytes.byteLength % 4 !== 0) return undefined
+  const aligned = bytes.byteOffset % 4 === 0 ? bytes : Uint8Array.from(bytes)
+  return new Float32Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 4)
+}
 
 /**
- * A fresh mutable copy per call. The driver's signature takes a mutable array, and
- * handing the same array to every connection would let one connection's driver
- * mutate the flags of the next.
+ * Register `vector_distance_cos(a, b)` — cosine distance over two float32 blobs.
+ *
+ * SQLite ships no vector functions, so the vector retrieval arm's distance is this. It is
+ * `@memhtml/domain`'s `cosineDistance`, not a second implementation: the MMR pass already
+ * decodes the same blobs and calls the same function in TypeScript, and two copies of this
+ * arithmetic could disagree about a clamp or a zero-magnitude vector while both looked right.
+ *
+ * `deterministic` lets the planner treat it as a pure function of its arguments, which it is.
+ *
+ * Exact brute force over every candidate row: measured 79 ms for 10k × 1024-dim vectors at
+ * top-40 (probed 2026-08-12 on node 24.19.0), against a Bedrock query-embedding round trip of
+ * a few hundred milliseconds that every vector search pays first. An approximate index buys
+ * nothing until the corpus is an order of magnitude larger.
  */
-const connectOpts = (): DatabaseOpts => ({ experimental: [...TURSO_OPTS.experimental] })
+const registerVectorDistance = (db: Database): void => {
+  db.function("vector_distance_cos", { deterministic: true }, (a: unknown, b: unknown) => {
+    if (!(a instanceof Uint8Array) || !(b instanceof Uint8Array)) return null
+    const left = float32View(a)
+    const right = float32View(b)
+    return left === undefined || right === undefined ? null : cosineDistance(left, right)
+  })
+}
 
 export type SqlValue = string | number | null | Uint8Array
 
@@ -60,6 +81,14 @@ export interface DatabaseShape {
   ) => Effect.Effect<ReadonlyArray<A>, StorageFailure>
   /** Applies every write atomically: all commit, or none do. */
   readonly writeAll: (writes: ReadonlyArray<Write>) => Effect.Effect<void, StorageFailure>
+  /**
+   * Apply a whole SQL script — many statements, no parameters — in ONE transaction.
+   *
+   * This is the migration primitive, exposed because a caller applying migration files must use
+   * the same one the runner does. Whether a `DROP TABLE`'s cascade is contained by that
+   * transaction is exactly the kind of fact a per-statement loop would answer differently.
+   */
+  readonly script: (sql: string) => Effect.Effect<void, StorageFailure>
   readonly migrationsApplied: number
   /**
    * Migrations recorded in the ATTACHed state plane's own ledger, or `0` when no state database is
@@ -73,30 +102,94 @@ export interface DatabaseShape {
 
 export const DatabaseService = Context.Service<DatabaseShape>("memhtml/Database")
 
+/**
+ * SQLite's `SQLITE_BUSY`. Surfaced by node:sqlite as `errcode: 5` with `"database is locked"`.
+ *
+ * Matched on the numeric code rather than the message, which is prose and localizable.
+ */
+const SQLITE_BUSY = 5
+
+/**
+ * True when a thrown driver value is `SQLITE_BUSY` — the write lock was unavailable, so the
+ * statement did NOT run and may be retried.
+ *
+ * Exported because it is the load-bearing half of {@link BUSY_BACKOFF}: a retry whose predicate
+ * never matches is a retry that does nothing, and nothing else in the suite would notice. Its test
+ * captures a REAL contended write rather than constructing an error object, since what this has to
+ * agree with is the shape node:sqlite actually throws.
+ */
+export const isBusyCause = (cause: unknown): boolean =>
+  typeof cause === "object" &&
+  cause !== null &&
+  (cause as { errcode?: unknown }).errcode === SQLITE_BUSY
+
 class DriverRejection {
   readonly _tag = "DriverRejection"
   readonly detail: string
+  readonly busy: boolean
   constructor(
     readonly operation: string,
     cause: unknown
   ) {
     this.detail = cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause)
+    this.busy = isBusyCause(cause)
   }
 }
+
+/**
+ * Backoff for a contended write.
+ *
+ * `busy_timeout` covers a short wait inside one call, and stops covering anything past its
+ * deadline — a probe against a held `BEGIN IMMEDIATE` throws `database is locked` rather than
+ * queueing indefinitely. This deployment has many short-lived CLI processes plus a nightly cron
+ * writing to one file, and **Effect coordinates nothing across processes**, so the driver's
+ * timeout plus this retry is the whole of the answer.
+ *
+ * Jittered because the contending processes are cron-triggered and would otherwise retry in
+ * lockstep; v4's `jittered` scales each delay by a random 0.8–1.2.
+ *
+ * Retrying is safe precisely BECAUSE the error is `SQLITE_BUSY`: the lock was never taken, so the
+ * statement had no effect to half-apply. A write inside {@link transact} rolls back before the
+ * retry, so the transaction is re-run whole rather than resumed.
+ */
+const BUSY_BACKOFF = Schedule.exponential("15 millis").pipe(
+  Schedule.jittered,
+  Schedule.upTo({ duration: "20 seconds" })
+)
 
 /**
  * Wraps a driver rejection as a typed failure. The typed error carries only the
  * operation name so SQL parameters and memory contents never reach a tool response;
  * the driver's own message is logged for operators instead of being dropped.
  */
-const attempt = <A>(operation: string, thunk: () => Promise<A>) =>
-  Effect.tryPromise({
-    try: thunk,
-    catch: (cause) => new DriverRejection(operation, cause)
-  }).pipe(
+const asStorageFailure = <A>(operation: string, effect: Effect.Effect<A, DriverRejection>) =>
+  effect.pipe(
     Effect.tapError((error) => Effect.logError(`db.${operation} failed: ${error.detail}`)),
     Effect.mapError((error) => StorageFailure.make({ operation: error.operation })),
     Effect.withSpan(`db.${operation}`)
+  )
+
+/** For the asynchronous edges, which here are all filesystem calls. */
+const attempt = <A>(operation: string, thunk: () => Promise<A>) =>
+  asStorageFailure(
+    operation,
+    Effect.tryPromise({ try: thunk, catch: (cause) => new DriverRejection(operation, cause) })
+  )
+
+/**
+ * For driver calls, which are synchronous — `DatabaseSync` does its work on the calling thread.
+ *
+ * `Effect.try` rather than `Effect.tryPromise` is what keeps that honest. A promise per query
+ * would add a microtask hop and a wrapper allocation to the hottest path in the system, and
+ * would tell a reader the query yields to the event loop when it does not.
+ */
+const attemptSync = <A>(operation: string, thunk: () => A) =>
+  asStorageFailure(
+    operation,
+    Effect.retry(
+      Effect.try({ try: thunk, catch: (cause) => new DriverRejection(operation, cause) }),
+      { while: (error) => error.busy, schedule: BUSY_BACKOFF }
+    )
   )
 
 const migrationsTable = (ledger: string) => `CREATE TABLE IF NOT EXISTS ${ledger} (
@@ -122,14 +215,16 @@ const migrationsTable = (ledger: string) => `CREATE TABLE IF NOT EXISTS ${ledger
 const runMigrations = (db: Database, migrationsDir: string, schemaPrefix = "") =>
   Effect.gen(function* () {
     const ledger = `${schemaPrefix}schema_migrations`
-    yield* attempt("migrate.init", () => db.exec(migrationsTable(ledger)))
+    yield* attemptSync("migrate.init", () => db.exec(migrationsTable(ledger)))
 
     const files = yield* attempt("migrate.scan", async () => {
       const entries = await readdir(migrationsDir)
       return entries.filter((file) => file.endsWith(".sql")).sort()
     })
 
-    const applied = yield* attempt("migrate.applied", () => db.all(`SELECT name FROM ${ledger}`))
+    const applied = yield* attemptSync("migrate.applied", () =>
+      db.prepare(`SELECT name FROM ${ledger}`).all()
+    )
     const seen = new Set(
       applied.flatMap((row) =>
         typeof row === "object" &&
@@ -144,18 +239,15 @@ const runMigrations = (db: Database, migrationsDir: string, schemaPrefix = "") =
     for (const file of files) {
       if (seen.has(file)) continue
       const sql = yield* attempt("migrate.read", () => readFile(join(migrationsDir, file), "utf8"))
-      yield* attempt("migrate.apply", () =>
-        db.batch(
-          [
-            ...splitStatements(sql).map((statement) => ({ sql: statement, args: [] })),
-            {
-              sql: `INSERT INTO ${ledger}(name, applied_at) VALUES(?, ?)`,
-              args: [file, new Date().toISOString()]
-            }
-          ],
-          "immediate"
-        )
-      )
+      yield* attempt("migrate.apply", async () => {
+        transact(db, () => {
+          db.exec(sql)
+          db.prepare(`INSERT INTO ${ledger}(name, applied_at) VALUES(?, ?)`).run(
+            file,
+            new Date().toISOString()
+          )
+        })
+      })
       yield* Effect.log(`applied migration ${file}`)
       count += 1
     }
@@ -164,72 +256,28 @@ const runMigrations = (db: Database, migrationsDir: string, schemaPrefix = "") =
   })
 
 /**
- * Turso's `batch` takes one statement per entry, so migration files are split on
- * statement boundaries. Splitting on every `;` is wrong: a semicolon inside a
- * comment or a quoted literal is not a boundary, and treating it as one truncates
- * the surrounding statement into unparseable fragments.
+ * Run `body` inside one `IMMEDIATE` transaction: it commits, or nothing it did happened.
+ *
+ * `IMMEDIATE` takes the write lock up front rather than on the first write, so a writer that
+ * cannot have the lock waits out `BUSY_TIMEOUT_MS` here instead of half-way through and having
+ * to unwind. SQLite makes DDL transactional, which is what lets a migration file's `CREATE`s
+ * and its ledger row commit together — a crash mid-file leaves the migration unapplied and
+ * unrecorded rather than half-applied.
+ *
+ * The rollback is best-effort on purpose: if the transaction is already gone the original
+ * failure is the one worth reporting, and a throw from `ROLLBACK` would replace it.
  */
-export const splitStatements = (sql: string): ReadonlyArray<string> => {
-  const statements: Array<string> = []
-  let current = ""
-  let index = 0
-
-  const push = () => {
-    const trimmed = current.trim()
-    if (trimmed.length > 0) statements.push(trimmed)
-    current = ""
+const transact = (db: Database, body: () => void): void => {
+  db.exec("BEGIN IMMEDIATE")
+  try {
+    body()
+    db.exec("COMMIT")
+  } catch (cause) {
+    try {
+      db.exec("ROLLBACK")
+    } catch {}
+    throw cause
   }
-
-  while (index < sql.length) {
-    const two = sql.slice(index, index + 2)
-
-    if (two === "--") {
-      const end = sql.indexOf("\n", index)
-      index = end === -1 ? sql.length : end + 1
-      continue
-    }
-
-    if (two === "/*") {
-      const end = sql.indexOf("*/", index + 2)
-      index = end === -1 ? sql.length : end + 2
-      continue
-    }
-
-    const char = sql[index] as string
-
-    if (char === "'" || char === '"') {
-      // Consume the whole literal, honouring SQL's doubled-quote escape.
-      current += char
-      index += 1
-      while (index < sql.length) {
-        if (sql[index] === char) {
-          if (sql[index + 1] === char) {
-            current += char + char
-            index += 2
-            continue
-          }
-          current += char
-          index += 1
-          break
-        }
-        current += sql[index]
-        index += 1
-      }
-      continue
-    }
-
-    if (char === ";") {
-      push()
-      index += 1
-      continue
-    }
-
-    current += char
-    index += 1
-  }
-
-  push()
-  return statements
 }
 
 /**
@@ -241,8 +289,7 @@ export const splitStatements = (sql: string): ReadonlyArray<string> => {
  * result sets.
  *
  * Attaching is not idempotent — a second `ATTACH ... AS state` fails with "database state is
- * already in use" (probed 2026-08-02) — so this is called exactly once per connection, by
- * {@link makeDatabase}.
+ * already in use" — so this is called exactly once per connection, by {@link makeDatabase}.
  */
 export const attachState = (db: Database, statePath: string, migrationsDir: string) =>
   Effect.gen(function* () {
@@ -250,7 +297,7 @@ export const attachState = (db: Database, statePath: string, migrationsDir: stri
       yield* attempt("state.mkdir", () => mkdir(dirname(statePath), { recursive: true }))
     }
     yield* attempt("state.attach", async () => {
-      await db.run("ATTACH ? AS state", statePath)
+      db.prepare("ATTACH ? AS state").run(statePath)
     })
     return yield* runStateMigrations(db, migrationsDir)
   })
@@ -275,39 +322,83 @@ export const makeDatabase = (
   state?: { readonly path: string; readonly migrationsDir: string }
 ) =>
   Effect.gen(function* () {
-    const db = yield* Effect.acquireRelease(
+    /**
+     * `acquireDisposable` rather than `acquireRelease`: `DatabaseSync` implements `Symbol.dispose`
+     * (verified on node 24.19.0), so the scope closes the handle through the language's own
+     * protocol and there is no hand-written release to drift from `close()`.
+     */
+    const db = yield* Effect.acquireDisposable(
       Effect.gen(function* () {
         if (databasePath !== ":memory:") {
           yield* attempt("mkdir", () => mkdir(dirname(databasePath), { recursive: true }))
         }
-        return yield* attempt("connect", () => connect(databasePath, connectOpts()))
-      }),
-      (handle) => Effect.promise(() => handle.close()).pipe(Effect.orDie)
+        return yield* attemptSync(
+          "connect",
+          () => new DatabaseSync(databasePath, { timeout: BUSY_TIMEOUT_MS })
+        )
+      })
     )
 
-    yield* attempt("foreign_keys", () => db.exec("PRAGMA foreign_keys = ON"))
+    /**
+     * WAL is what lets readers run while a writer holds the lock, and it is a persistent
+     * property of the file rather than of the connection — setting it every open is harmless and
+     * means a database created by any caller ends up in the same mode. `NORMAL` synchronous is
+     * the standard WAL pairing: a power loss can cost the last commits, which for a projection
+     * rebuildable from the git tree is not a durability question.
+     */
+    yield* attempt("pragmas", async () => {
+      db.exec("PRAGMA journal_mode = WAL")
+      db.exec("PRAGMA synchronous = NORMAL")
+      db.exec("PRAGMA foreign_keys = ON")
+    })
+    registerVectorDistance(db)
     const migrationsApplied = yield* runMigrations(db, migrationsDir)
     const stateMigrationsApplied =
       state === undefined ? 0 : yield* attachState(db, state.path, state.migrationsDir)
 
     const service: DatabaseShape = {
       run: (sql, params = []) =>
-        attempt("run", async () => {
-          await db.run(sql, ...params)
+        attemptSync("run", () => {
+          db.prepare(sql).run(...params)
         }),
+      /**
+       * Rows come back as null-prototype records of `SQLOutputValue`, and the caller names the
+       * shape it expects. The cast is the seam where an untyped driver row becomes a typed row,
+       * exactly as it was with the previous driver: the SQL and the type parameter are written
+       * together, and no runtime check here could tell a wrong column name from a right one.
+       */
       get: <A>(sql: string, params: ReadonlyArray<SqlValue> = []) =>
-        attempt("get", async () => (await db.get(sql, ...params)) as A | undefined),
+        attemptSync("get", () => db.prepare(sql).get(...params) as A | undefined),
       all: <A>(sql: string, params: ReadonlyArray<SqlValue> = []) =>
-        attempt("all", async () => (await db.all(sql, ...params)) as ReadonlyArray<A>),
+        attemptSync("all", () => db.prepare(sql).all(...params) as unknown as ReadonlyArray<A>),
+      /**
+       * One transaction, and one prepared statement per DISTINCT sql in the batch.
+       *
+       * The indexer's batches are thousands of rows through a handful of statements, so
+       * preparing per row would pay the parse cost once per row for no benefit. Grouping by sql
+       * text keeps the cache batch-local: it cannot grow without bound the way a connection-wide
+       * cache would under the retrieval assembler's per-scope query shapes.
+       */
       writeAll: (writes) =>
         writes.length === 0
           ? Effect.void
-          : attempt("writeAll", async () => {
-              await db.batch(
-                writes.map((write) => ({ sql: write.sql, args: [...write.params] })),
-                "immediate"
-              )
+          : attemptSync("writeAll", () => {
+              const prepared = new Map<string, ReturnType<Database["prepare"]>>()
+              transact(db, () => {
+                for (const write of writes) {
+                  let statement = prepared.get(write.sql)
+                  if (statement === undefined) {
+                    statement = db.prepare(write.sql)
+                    prepared.set(write.sql, statement)
+                  }
+                  statement.run(...write.params)
+                }
+              })
             }),
+      script: (sql) =>
+        attemptSync("script", () => {
+          transact(db, () => db.exec(sql))
+        }),
       migrationsApplied,
       stateMigrationsApplied,
       hasState: state !== undefined

@@ -18,22 +18,22 @@ export const STATE_MIGRATIONS_DIR = new URL("../state-migrations", import.meta.u
 export const STATE_SCHEMA = "state"
 
 /**
- * The lexical index. Named because a full rebuild drops it, bulk-loads, and recreates it: writing
- * through a live FTS index measured 10-25 ms per row and superlinear in table size (probed
- * 2026-08-02 on @tursodatabase/database 0.7.2 — 800 rows took 19.9 s indexed, 18 ms unindexed,
- * plus 13 ms to build the index afterwards).
+ * The lexical index: an external-content FTS5 table over `files`, maintained by triggers.
+ *
+ * It is a TABLE, not an index, which is what makes it MATCHable and `bm25()`-rankable. Nothing
+ * drops or recreates it around a bulk load — see `indexer.ts`'s `applyProjectionWrites` for the
+ * measurements that retired that bracket.
  */
 export const FTS_INDEX_NAME = "files_fts"
 
 /**
  * The one column `files_fts` covers.
  *
- * A multi-column FTS index is not usable for ranked retrieval on this driver (probed 2026-08-02):
- * `WHERE body_text MATCH ?` under `USING fts(title, gist, body_text)` returns matching rows in
- * **rowid order**, and MATCH is scoped to the named column alone — a term living in `title` is not
- * found. A single-column index returns true relevance order, which is the only relevance signal
- * this driver exposes (there is no `rank`, no `bm25()`). So the indexer denormalizes title, gist,
- * and body into one column and the arm MATCHes that.
+ * ONE column so that a single MATCH finds a term wherever it lives: the indexer denormalizes title,
+ * gist, and body into `fts_text`, and the arm MATCHes that. A multi-column FTS5 table would make
+ * `bm25()` weight the columns against each other, which is a ranking decision the RRF fusion
+ * already owns — the lexical arm's job is to contribute one honest relevance order, not to
+ * pre-blend fields.
  */
 export const FTS_COLUMN = "fts_text"
 
@@ -74,19 +74,12 @@ export const CHUNK_MAX_CHARS = 1_800
  */
 export const SNIPPET_MAX_CHARS = 700
 
-/** Rows per `writeAll` batch. Larger batches on an FTS-indexed table degrade superlinearly. */
-export const WRITE_BATCH_SIZE = 500
-
 /**
- * When an incremental pass rebuilds the FTS index instead of inserting through it.
+ * Rows per `writeAll` batch.
  *
- * Inserting through the live index costs ~8 ms/row freshly built and degrades with every row
- * inserted since the last CREATE INDEX (probed 2026-08-06: four 256-op batches cost 2.4 s → 10.7 s
- * in writeAll; bracketed, flat at ~0.6 s). Rebuilding costs ~6.6 µs per TABLE row (13 ms at 1k
- * files, 133 ms at 20k). Break-even is therefore near one written file per ~1000 table rows;
- * {@link FTS_REBUILD_ROWS_PER_WRITE} states it, and a pass touching at least
- * `files / FTS_REBUILD_ROWS_PER_WRITE` files takes the rebuild. The floor keeps the interactive
- * path — one file, ~8 ms — from ever paying a table-sized rebuild.
+ * A bound rather than a tuning knob: one batch is one transaction, so this caps how much work a
+ * single failure discards and how long one write holds the WAL write lock against a concurrent
+ * reader. Whole-store passes are batched rather than sent as one transaction for that reason, not
+ * for a per-row cost that FTS5 does not have.
  */
-export const FTS_REBUILD_ROWS_PER_WRITE = 1_000
-export const FTS_REBUILD_MIN_FILES = 16
+export const WRITE_BATCH_SIZE = 500

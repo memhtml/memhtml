@@ -20,9 +20,11 @@ Every command writes exactly ONE JSON envelope to stdout and logs to stderr, so 
 
 These seven are declared in `apps/cli/src/config.ts:26` and are what `memhtml manifest` reports. `MEMHTML_EMBED` and `MEMHTML_LLM` compare case-insensitively against `off` (`apps/cli/src/api-layer.ts:242`, `apps/cli/src/api-layer.ts:305`). `MEMHTML_MCP_BIN` is the one that configures no store behaviour at all, and it is disclosed anyway: an operator debugging a split deployment reads the manifest, and a variable the binary reads but does not declare is one they cannot discover. `--repo <path>` overrides `MEMHTML_ROOT` per call.
 
-### The Turso experimental flags
+### The database
 
-`index.db` opens with `experimental: ["index_method", "attach"]` (`packages/index/src/database.ts:22`). `index_method` is required by EVERY statement touching an FTS-indexed table, not just the ones that MATCH — a plain `SELECT * FROM files` fails without it. `attach` is what lets `.memhtml/state.db` join `main.files` in one query. The risk is a driver release renaming or gating a flag, making `index.db` unopenable; it is survivable because the index is a projection, so you correct the name, delete the database, and rebuild. The names are one exported constant checked with `satisfies` against the driver's own `ExperimentalFeature` union, so a rename is a compile error rather than a runtime surprise — but only after a dependency bump. Runtime detection is `ERR_STORAGE` from `memhtml status` or any search.
+`index.db` and `state.db` are plain SQLite, opened through node's built-in `node:sqlite` — there is no third-party database dependency and no driver flags to keep in step. `sqlite3`, a GUI browser, or any other tool opens both files directly, which is what makes a stuck index inspectable without this binary.
+
+Each connection sets `journal_mode = WAL`, `busy_timeout = 5000`, `foreign_keys = ON`, and `synchronous = NORMAL`, and registers one SQL function, `vector_distance_cos` (`packages/index/src/database.ts`). WAL is a persistent property of the file rather than of the connection, so a store created by any caller ends up in the same mode. `NORMAL` synchronous can cost the last commits on power loss, which for a projection rebuildable from the git tree is not a durability question.
 
 ---
 
@@ -83,9 +85,13 @@ MEMHTML_MCP_BIN=/path/to/bin.js memhtml serve mcp   # explicit path, for a split
 
 14 tools and 2 resources over this same repo (`apps/mcp/src/tools.ts:735`). Sleep is deliberately absent from the tool surface: it is a cron and operator action producing a reviewable branch, not something an agent triggers mid-conversation.
 
-`memhtml serve mcp` holds no database of its own. It spawns `memhtml-mcp` with inherited stdio and waits (`apps/cli/src/serve.ts:72`) — Turso's lock excludes a second **writable** opener, so a parent that opened `index.db` first would lock the child out of the database it exists to serve. **The same rule binds you: never run a CLI command against a repo while `memhtml serve mcp` is serving it.** Every CLI command builds a writable app layer, so it takes the excluded path: the second process fails to open the database rather than waiting, and you get `ERR_STORAGE`. Interrupting the supervisor kills the child, so Ctrl-C never leaves an orphaned server holding the database open (`apps/cli/src/serve.ts:97`).
+**A CLI command and a running server can share one repo.** WAL admits one writer at a time and any number of concurrent readers: readers never block the writer, a second writer waits rather than failing, and a wait that outlives `busy_timeout` is retried with jittered exponential backoff for up to 20 seconds (`packages/index/src/database.ts`). So `memhtml write` while `memhtml serve mcp` is serving the same store is a supported thing to do, and so is the every-10-minutes `index update` cron. Measure it yourself with `node scripts/probe-sqlite-concurrency.mjs`.
 
-The qualifier is worth knowing because it is what a read-only consumer can rely on. A second process that opens with `readonly: true` succeeds while the server holds the file, reads fine, and is refused every write with `Resource is read-only`. Its snapshot is **pinned at open**, so a long-lived reader serves ever-staler data and must reopen per query if freshness matters. `PRAGMA query_only` is not an alternative: it needs a connection, and the open is the step that fails. Measure it yourself with `node scripts/probe-turso-locking.mjs`; the reasoning behind it, and the two probes that got this backwards, are in `.erpaval/solutions/architecture-patterns/turso-second-opener-and-the-readonly-flag.md`.
+Retrying is safe because the error being retried is `SQLITE_BUSY` specifically — the lock was never taken, so the statement had no effect to half-apply. A write inside a transaction rolls back before the retry, so the transaction re-runs whole rather than resuming.
+
+What still needs one writer is `memhtml sleep run`, for a reason that is about git rather than the database: a run holds a checked-out `sleep/<date>` branch, so a concurrent write commits ONTO that branch and is either merged as if it were curation or lost with `git branch -D`. Quiesce writes for the duration of a run.
+
+`memhtml serve mcp` holds no database of its own — it spawns `memhtml-mcp` with inherited stdio and waits (`apps/cli/src/serve.ts:72`), so the supervisor has no handle to conflict with the child. Interrupting it kills the child, so Ctrl-C never leaves an orphaned server holding the database open (`apps/cli/src/serve.ts:97`).
 
 The one exception is `memhtml eval discriminate`, which never builds the app layer (`apps/cli/src/run.ts:834`): it measures the ranking stack against its own generated fixture corpus in a temp directory with an in-memory database and never reads your `index.db`. Deliberate — checking the gate is exactly what an operator wants while the server is up.
 

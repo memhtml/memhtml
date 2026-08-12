@@ -7,13 +7,13 @@ import { ModelUnavailable } from "@memhtml/contracts/errors"
 import { EMBED_DIM, EMBED_WATERMARK } from "@memhtml/llm"
 import { Effect } from "effect"
 
-import { type DatabaseShape, makeDatabase, splitStatements } from "../src/database.js"
+import { type DatabaseShape, makeDatabase } from "../src/database.js"
 import type { EmbedPort } from "../src/indexer.js"
 import type { QueryEmbedPort } from "../src/retrieval.js"
 import { MIGRATIONS_DIR, STATE_MIGRATIONS_DIR } from "../src/schema-const.js"
 
 /**
- * The integration harness: a real in-memory Turso carrying both planes, the real migrations, and a
+ * The integration harness: a real in-memory SQLite carrying both planes, the real migrations, and a
  * deterministic embedder.
  *
  * Nothing here is a fake of the database. The migrations are the shipped SQL and the driver is the
@@ -72,8 +72,8 @@ export const migrationsAfter = async (through: string): Promise<number> =>
  * The pending migrations are hidden by copying the directory and deleting them, rather than by a
  * parameter on the runner: the runner applies whatever the directory holds, and a test-only "stop
  * here" option would be a second code path in the thing under test. `apply` then runs the real
- * `runMigrations` over the real files, in the real one-`immediate`-batch-per-file shape — which is
- * the shape that decides whether a `DROP TABLE`'s cascade is contained.
+ * `runMigrations` over the real files, in the real one-transaction-per-file shape — which is the
+ * shape that decides whether a `DROP TABLE`'s cascade is contained.
  */
 export const withDbThrough = <A, E>(
   through: string,
@@ -100,10 +100,10 @@ export const withDbThrough = <A, E>(
         })
 
         /**
-         * Apply the migrations after `through`, in order, each as ONE atomic batch.
+         * Apply the migrations after `through`, in order, each as ONE atomic script.
          *
-         * `writeAll` rather than a `run` per statement, because that is what the migration runner
-         * does — one `db.batch(…, "immediate")` per file. Whether a `DROP TABLE`'s cascade is
+         * `script` rather than a `run` per statement, because that is the primitive the migration
+         * runner uses — one transaction around the whole file. Whether a `DROP TABLE`'s cascade is
          * contained by that transaction is exactly the kind of fact a per-statement loop would
          * answer differently, and the answer here has to be the production one.
          */
@@ -111,9 +111,7 @@ export const withDbThrough = <A, E>(
           const pending = all.filter((name) => name > through)
           for (const name of pending) {
             const sql = await readFile(join(MIGRATIONS_DIR, name), "utf8")
-            await Effect.runPromise(
-              db.writeAll(splitStatements(sql).map((statement) => ({ sql: statement, params: [] })))
-            )
+            await Effect.runPromise(db.script(sql))
           }
           return pending.length
         }

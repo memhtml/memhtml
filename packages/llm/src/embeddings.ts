@@ -3,7 +3,7 @@ import { ModelUnavailable } from "@memhtml/contracts/errors"
 import { Context, Effect, Layer } from "effect"
 
 import { type InvokeClient, invokeJson, LlmConfig } from "./client.js"
-import { EMBED_BATCH_LIMIT, EMBED_DIM, EMBED_MODEL_ID } from "./constants.js"
+import { EMBED_BATCH_LIMIT, EMBED_CONCURRENCY, EMBED_DIM, EMBED_MODEL_ID } from "./constants.js"
 
 /**
  * Cohere Embed v4 on `bedrock-runtime` InvokeModel.
@@ -119,16 +119,26 @@ export const makeEmbeddings = (client: InvokeClient): EmbeddingsShape => {
     }).pipe(Effect.withSpan("llm.embed", { attributes: { count: texts.length, inputType } }))
 
   return {
+    /**
+     * Every batch concurrently, bounded by {@link EMBED_CONCURRENCY}, results flattened in order.
+     *
+     * `Effect.forEach` preserves input order in its collected results regardless of completion
+     * order, which this port depends on absolutely: `embed`'s contract is one vector per input text
+     * at the SAME index, and the indexer writes each vector against the chunk at that position. A
+     * fan-out that returned completion-ordered results would attach every vector to the wrong chunk
+     * — a corruption that no type would catch and that reads as poor retrieval quality rather than
+     * as a bug.
+     *
+     * Short-circuiting is the right failure mode here too: one batch failing fails the pass, and the
+     * caller re-runs it. Vectors key on content hash, so the batches that did land are not re-paid
+     * for on the retry.
+     */
     embed: (texts) =>
       texts.length === 0
         ? Effect.succeed([])
-        : Effect.gen(function* () {
-            const results: Array<Float32Array> = []
-            for (const chunk of chunkTexts(texts)) {
-              results.push(...(yield* embedChunk(chunk, "search_document")))
-            }
-            return results
-          }),
+        : Effect.forEach(chunkTexts(texts), (chunk) => embedChunk(chunk, "search_document"), {
+            concurrency: EMBED_CONCURRENCY
+          }).pipe(Effect.map((batches) => batches.flat())),
     embedQuery: (text) =>
       Effect.gen(function* () {
         const vectors = yield* embedChunk([text], "search_query")

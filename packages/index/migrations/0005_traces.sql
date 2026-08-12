@@ -36,7 +36,27 @@ CREATE INDEX traces_cwd     ON traces (cwd);
 CREATE INDEX traces_started ON traces (started_at);
 CREATE INDEX traces_mtime   ON traces (file_mtime);
 
-CREATE INDEX traces_fts ON traces USING fts(search_text);
+-- Trace search, on the same external-content pattern as `files_fts` (see 0003_fts.sql for why).
+CREATE VIRTUAL TABLE traces_fts USING fts5(
+  search_text,
+  content='traces',
+  content_rowid='rowid'
+);
+
+CREATE TRIGGER traces_fts_insert AFTER INSERT ON traces BEGIN
+  INSERT INTO traces_fts(rowid, search_text) VALUES (new.rowid, new.search_text);
+END;
+
+CREATE TRIGGER traces_fts_delete AFTER DELETE ON traces BEGIN
+  INSERT INTO traces_fts(traces_fts, rowid, search_text)
+    VALUES ('delete', old.rowid, old.search_text);
+END;
+
+CREATE TRIGGER traces_fts_update AFTER UPDATE OF search_text ON traces BEGIN
+  INSERT INTO traces_fts(traces_fts, rowid, search_text)
+    VALUES ('delete', old.rowid, old.search_text);
+  INSERT INTO traces_fts(rowid, search_text) VALUES (new.rowid, new.search_text);
+END;
 
 CREATE TABLE trace_prompts (
   session_id TEXT NOT NULL REFERENCES traces (session_id) ON DELETE CASCADE,

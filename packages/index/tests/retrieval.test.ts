@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import type { DatabaseShape } from "../src/database.js"
 import { makeIndexer } from "../src/indexer.js"
 import { DEFAULT_ARM_LIMIT, makeRetrieval, type RetrievalShape } from "../src/retrieval.js"
-import { buildRrfSql, RANK_ARMS } from "../src/retrieval-sql.js"
+import { buildRrfSql, RANK_ARMS, rrfParams } from "../src/retrieval-sql.js"
 import { SNIPPET_MAX_CHARS } from "../src/schema-const.js"
 import { assembleScope } from "../src/scope.js"
 import { type FixtureRepo, makeFixtureRepo, type SeedFile } from "./fixture-repo.js"
@@ -1133,13 +1133,15 @@ describe("search", () => {
       const arm = RANK_ARMS.find((candidate) => candidate.name === "salience")
       if (arm === undefined) throw new Error("the salience arm left the registry")
       const assembled = assembleScope(scope)
-      const rows = yield* db.all<{ path: string }>(arm.sql(assembled.holes), [
-        "",
-        DEFAULT_ARM_LIMIT,
-        20,
-        null,
-        ...assembled.params
-      ])
+      const rows = yield* db.all<{ path: string }>(
+        arm.sql(assembled.holes),
+        rrfParams(arm.sql(assembled.holes), {
+          matchQuery: "",
+          armLimit: DEFAULT_ARM_LIMIT,
+          finalLimit: 20,
+          scopeParams: assembled.params
+        })
+      )
       return rows.map((row) => row.path)
     })
 
@@ -1162,13 +1164,15 @@ describe("search", () => {
         holes: assembled.holes
       })
       if (sql === undefined) throw new Error("no arm assembled")
-      const rows = yield* db.all<{ path: string; score: number }>(sql, [
-        "drain OR VIP OR deploy OR rollback",
-        DEFAULT_ARM_LIMIT,
-        20,
-        null,
-        ...assembled.params
-      ])
+      const rows = yield* db.all<{ path: string; score: number }>(
+        sql,
+        rrfParams(sql, {
+          matchQuery: "drain OR VIP OR deploy OR rollback",
+          armLimit: DEFAULT_ARM_LIMIT,
+          finalLimit: 20,
+          scopeParams: assembled.params
+        })
+      )
       return new Map(rows.map((row) => [row.path, row.score]))
     })
 

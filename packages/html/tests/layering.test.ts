@@ -58,7 +58,7 @@ const ALLOWED = [
 ]
 
 const FORBIDDEN = [
-  "@tursodatabase",
+  "node:sqlite",
   "@aws-sdk",
   "@aws/",
   "node:fs",

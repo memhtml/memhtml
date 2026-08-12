@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Turso service, migrations, indexer, retrieval.",
+  "description": "SQLite schema, migrations, the git-driven indexer, and four-arm retrieval.",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -21,7 +21,6 @@
     "@memhtml/domain": "workspace:*",
     "@memhtml/html": "workspace:*",
     "@memhtml/llm": "workspace:*",
-    "@tursodatabase/database": "0.7.2",
     "effect": "catalog:"
   },
   "devDependencies": {

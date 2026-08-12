@@ -15,8 +15,13 @@
  * Length mismatch is handled by walking the shorter vector rather than failing, because the
  * only way two stored vectors differ in length is a half-migrated embedding model — a
  * condition the index refuses at the `embed_model` watermark, so it can never reach here.
+ *
+ * `ArrayLike` rather than `ReadonlyArray` so a `Float32Array` decoded straight off a stored
+ * blob is an argument: this is the `vector_distance_cos` SQL function's own body, called once
+ * per candidate row, and materialising two 1024-element arrays per call to satisfy a narrower
+ * type would allocate more than the arithmetic costs. Every array caller still fits.
  */
-export const cosine = (a: ReadonlyArray<number>, b: ReadonlyArray<number>): number => {
+export const cosine = (a: ArrayLike<number>, b: ArrayLike<number>): number => {
   const length = Math.min(a.length, b.length)
   let dot = 0
   let normA = 0
@@ -38,7 +43,7 @@ export const cosine = (a: ReadonlyArray<number>, b: ReadonlyArray<number>): numb
  * arm's SQL works in (`vector_distance_cos`), so a threshold stated as a similarity is
  * converted once here rather than inverted at each call site.
  */
-export const cosineDistance = (a: ReadonlyArray<number>, b: ReadonlyArray<number>): number =>
+export const cosineDistance = (a: ArrayLike<number>, b: ArrayLike<number>): number =>
   1 - cosine(a, b)
 
 /**

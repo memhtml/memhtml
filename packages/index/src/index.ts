@@ -14,8 +14,6 @@ export {
   makeDatabase,
   runStateMigrations,
   type SqlValue,
-  splitStatements,
-  TURSO_OPTS,
   type Write
 } from "./database.js"
 export {

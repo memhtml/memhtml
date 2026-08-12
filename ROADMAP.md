@@ -210,7 +210,6 @@ default:
 | 5. the post-fix write wall | stores passing ~50k files |
 | 6b. embedding-proximity conflicts | the lived-in-corpus gym that salience and RRF tuning also wait on |
 | 9. committed embedding cache | a CI stage that needs live search |
-| 10. lexical fallback arm | any Turso driver bump that touches FTS |
 
 **Deliberately not closed, and each is a decision rather than an omission:**
 
@@ -423,14 +422,23 @@ also what a CI job wants. Costs repo weight; keep opt-in. Trigger: a CI
 stage that needs live search (the second-machine trigger died with
 item 8).
 
-### 10. Lexical fallback arm behind config
+### ~~10. Lexical fallback arm behind config~~ — DONE (2026-08-12)
 
-The FTS arm depends on Turso's experimental `index_method` flag; a
-driver release that renames or re-gates it makes the index DB unopenable
-until the flag name updates. Survivable (the DB is rebuildable) but a
-trigram/`LIKE` fallback arm behind a config switch removes the
-single-vendor-flag dependency at a known quality cost. Trigger: any
-Turso driver bump that touches FTS.
+**SHIPPED**, and by removal rather than by the fallback arm this item
+proposed. The single-vendor-flag dependency is gone: the index is plain
+SQLite through node's built-in `node:sqlite`, the lexical arm is FTS5,
+and there are no driver flags to rename. The fallback arm was to buy
+independence "at a known quality cost"; the port bought it at a quality
+GAIN — `bm25()` replaces an unrankable MATCH order, and the fixture's
+discrimination MRR reads 1.0 with zero inversions of 36 probes.
+
+The follow-on this exposes: that fixture is now **saturated**. Every
+target outranks its own controls and every other memory in the corpus,
+so `mrr` and `corpusMrr` both read exactly 1 and the gate has no
+headroom left to measure an improvement — it can only detect a
+regression. A harder fixture (more near-miss distractors per probe, or
+probes drawn from the lived-in corpus) is what restores its resolution.
+Trigger: the next ranking change that this gate reports as "no change".
 
 ### ~~11. trace-consolidation v2 — the unbuilt half of the trace plane~~ — DONE (2026-08-08, redesigned 2026-08-09)
 **SHIPPED** (2026-08-08; redesigned 2026-08-09 —

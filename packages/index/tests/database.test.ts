@@ -1,7 +1,12 @@
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { DatabaseSync } from "node:sqlite"
+
 import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
 
-import { type DatabaseShape, makeDatabase, splitStatements, TURSO_OPTS } from "../src/database.js"
+import { type DatabaseShape, isBusyCause, makeDatabase } from "../src/database.js"
 
 /**
  * This suite is about the runner, not the schema, so it applies NO migrations: an empty directory
@@ -20,44 +25,6 @@ const withDb = <A, E>(body: (db: DatabaseShape) => Effect.Effect<A, E>) =>
       })
     )
   )
-
-describe("TURSO_OPTS", () => {
-  it("requests both experimental features every connect needs", () => {
-    expect(TURSO_OPTS.experimental).toEqual(["index_method", "attach"])
-  })
-})
-
-describe("splitStatements", () => {
-  it("does not split on a semicolon inside a line comment", () => {
-    expect(splitStatements("SELECT 1 -- a; b\n; SELECT 2")).toEqual(["SELECT 1", "SELECT 2"])
-  })
-
-  it("does not split on a semicolon inside a block comment", () => {
-    expect(splitStatements("SELECT 1 /* a; b */; SELECT 2")).toEqual(["SELECT 1", "SELECT 2"])
-  })
-
-  it("does not split on a semicolon inside a string literal", () => {
-    expect(splitStatements("INSERT INTO t VALUES('a;b'); SELECT 2")).toEqual([
-      "INSERT INTO t VALUES('a;b')",
-      "SELECT 2"
-    ])
-  })
-
-  it("handles SQL's doubled-quote escape", () => {
-    expect(splitStatements("SELECT 'it''s; fine'; SELECT 2")).toEqual([
-      "SELECT 'it''s; fine'",
-      "SELECT 2"
-    ])
-  })
-
-  it("drops empty fragments from trailing and doubled semicolons", () => {
-    expect(splitStatements("SELECT 1;;\n\n; ")).toEqual(["SELECT 1"])
-  })
-
-  it("returns nothing for a file that is only comments", () => {
-    expect(splitStatements("-- nothing here\n/* nor here */\n")).toEqual([])
-  })
-})
 
 describe("makeDatabase", () => {
   it("connects to :memory: and applies zero migrations from an empty dir", async () => {
@@ -142,5 +109,47 @@ describe("makeDatabase", () => {
     )
     expect(Result.isFailure(outcome)).toBe(true)
     if (Result.isFailure(outcome)) expect(outcome.failure.operation).toBe("migrate.scan")
+  })
+})
+
+/**
+ * The busy predicate, against a contended write the driver actually rejected.
+ *
+ * `isBusyCause` decides whether a failed statement is retried, and a predicate that never matches
+ * would make the retry policy a no-op that no other test in this suite could detect. So the error
+ * here is CAPTURED from a real second-writer conflict rather than constructed: what the predicate
+ * has to agree with is the shape node:sqlite throws, not the shape this file imagines.
+ */
+describe("isBusyCause", () => {
+  it("recognizes the rejection a real contended write produces", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "memhtml-busy-"))
+    const path = join(dir, "contended.db")
+    const holder = new DatabaseSync(path)
+    try {
+      holder.exec("PRAGMA journal_mode = WAL")
+      holder.exec("CREATE TABLE t (x INTEGER)")
+      holder.exec("BEGIN IMMEDIATE")
+      holder.prepare("INSERT INTO t VALUES (1)").run()
+
+      // A second connection that gives up promptly, so the test does not wait out a real timeout.
+      const contender = new DatabaseSync(path, { timeout: 1 })
+      let captured: unknown
+      try {
+        contender.exec("BEGIN IMMEDIATE")
+      } catch (cause) {
+        captured = cause
+      } finally {
+        contender.close()
+      }
+
+      expect(captured).toBeDefined()
+      expect(isBusyCause(captured)).toBe(true)
+      // And it does not fire for an unrelated failure, which would retry a real bug forever.
+      expect(isBusyCause(new Error("no such column: nope"))).toBe(false)
+      expect(isBusyCause(undefined)).toBe(false)
+    } finally {
+      holder.close()
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })

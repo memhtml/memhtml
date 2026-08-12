@@ -1610,8 +1610,17 @@ export const searchTraces = (params: TraceSearchParams) =>
 
     const conditions: Array<string> = []
     const values: Array<string | number> = []
-    if (match !== "") {
-      conditions.push("t.search_text MATCH ?")
+    /**
+     * The MATCH names `traces_fts`, not a column of `traces`: the index is an external-content FTS5
+     * table, so it is joined in by rowid and only reached when there is something to match. Without
+     * a query the statement never mentions it, which is what keeps a bare listing a plain table scan.
+     */
+    const matched = match !== ""
+    const from = matched
+      ? "FROM traces_fts JOIN traces t ON t.rowid = traces_fts.rowid"
+      : "FROM traces t"
+    if (matched) {
+      conditions.push("traces_fts MATCH ?")
       values.push(match)
     }
     if (params.cwd !== undefined && params.cwd !== "") {
@@ -1624,9 +1633,9 @@ export const searchTraces = (params: TraceSearchParams) =>
     }
 
     const where = conditions.length === 0 ? "" : `WHERE ${conditions.join(" AND ")}`
-    // MATCH's own row order IS the relevance order on this driver, so a matched query must not be
-    // re-sorted. Without a match there is no relevance to preserve and recency is the useful order.
-    const order = match === "" ? "ORDER BY t.started_at DESC" : ""
+    // A matched query orders by relevance, ascending because FTS5's bm25 is negative-is-better.
+    // Without a match there is no relevance to order by and recency is the useful order.
+    const order = matched ? "ORDER BY bm25(traces_fts)" : "ORDER BY t.started_at DESC"
     const rows = yield* db.all<{
       session_id: string
       slug: string
@@ -1637,7 +1646,7 @@ export const searchTraces = (params: TraceSearchParams) =>
       ai_title: string | null
     }>(
       `SELECT t.session_id, t.slug, t.cwd, t.started_at, t.prompt_count, t.first_prompt, t.ai_title
-       FROM traces t ${where} ${order} LIMIT ?`,
+       ${from} ${where} ${order} LIMIT ?`,
       [...values, limit]
     )
 
