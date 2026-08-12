@@ -22,8 +22,7 @@ import { existsSync } from "node:fs"
 import { createRequire } from "node:module"
 import { pathToFileURL } from "node:url"
 
-// Resolve just-bash through the package that declares it, for the reason
-// `scripts/probe-turso-locking.mjs` gives about the driver: under pnpm's strict node_modules a bare
+// Resolve just-bash through the package that declares it: under pnpm's strict node_modules a bare
 // specifier does not resolve from `scripts/`, and hardcoding a `.pnpm` path silently drifts from the
 // installed version. `apps/consolidator` pins 3.2.0 because that is what eve 0.31.0 loads.
 //
