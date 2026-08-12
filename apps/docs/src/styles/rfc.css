@@ -187,3 +187,68 @@ body {
   stroke-width: 1.25;
   vector-effect: non-scaling-stroke;
 }
+
+/*
+ * The page-action control group. Every control is at least 24×24 CSS pixels, which is WCAG 2.2
+ * SC 2.5.8's minimum — a text control at this font size clears it on width and needs the floor
+ * declared on height.
+ */
+.memhtml-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  font-family: var(--memhtml-font-sans);
+  font-size: var(--sl-text-xs);
+  gap: 0.4rem;
+  margin-block: 0.9rem 1.4rem;
+}
+
+.memhtml-page-action {
+  align-items: center;
+  background: none;
+  border: 1px solid var(--memhtml-rule);
+  color: var(--sl-color-text);
+  cursor: pointer;
+  display: inline-flex;
+  gap: 0.3rem;
+  min-height: 24px;
+  padding: 0.25rem 0.5rem;
+  /* A control is a control, not prose: it is bordered rather than underlined. */
+  text-decoration: none;
+}
+
+.memhtml-page-action:hover {
+  border-color: var(--sl-color-text);
+}
+
+/*
+ * The clipboard needs a secure context, so the failure path is real and is reported in the control's
+ * own label. Weight and the label text carry it; the colour only reinforces (SC 1.4.1).
+ */
+.memhtml-page-action[data-memhtml-state] {
+  font-weight: 700;
+}
+
+.memhtml-page-action[data-memhtml-state="failed"] {
+  border-color: var(--memhtml-normative);
+  color: var(--memhtml-normative);
+}
+
+/*
+ * A `:::agent` note. The visible label is authored in the Markdown body, not injected here, because
+ * this rule reaches the HTML while the raw `.md` route is built from source — a CSS-only or
+ * plugin-only label would be absent from the surface the note is addressed to. The rule is a rule and
+ * not a colour for the same reason SC 1.4.1 gives.
+ */
+.sl-markdown-content .memhtml-agent-note {
+  border-inline-start: 3px double var(--memhtml-rule);
+  margin-block: 1rem;
+  padding-inline-start: 0.9rem;
+}
+
+.sl-markdown-content .memhtml-agent-note > :first-child {
+  margin-block-start: 0;
+}
+
+.sl-markdown-content .memhtml-agent-note > :last-child {
+  margin-block-end: 0;
+}

@@ -1,0 +1,34 @@
+---
+/**
+ * Starlight's `<head>`, plus the block that points a machine reader at this page's raw route and at
+ * the site's machine surfaces.
+ *
+ * Starlight already emits base-correct `rel="canonical"` and `rel="sitemap"`, so this adds only the
+ * delta. Each relation carries its warrant in `discoveryLinks` — two follow a convention several
+ * vendors ship, one is this site's own invention and says so.
+ *
+ * Deliberately absent: `rel="describedby"`, which is the wrong relationship and has no adopters — not
+ * even llmstxt.org itself; and any visually-hidden agent-directed block, which is content served to
+ * machines and hidden from every human. That is cloaking wearing an accessibility class name.
+ */
+import Default from "@astrojs/starlight/components/Head.astro"
+
+import { discoveryLinks } from "../lib/agent-surface.js"
+
+const { site } = Astro
+if (site === undefined) {
+  throw new Error("`site` is unset in astro.config.ts, so no absolute machine-surface URL can be built")
+}
+
+const links = discoveryLinks(Astro.locals.starlightRoute.entry.id, {
+  site,
+  base: import.meta.env.BASE_URL
+})
+---
+
+<Default {...Astro.props}><slot /></Default>
+{
+  links.map((link) => (
+    <link rel={link.rel} type={link.type} href={link.href} title={link.title} />
+  ))
+}

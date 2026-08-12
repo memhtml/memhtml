@@ -164,6 +164,13 @@ to get the handful of paths the ranking stack says matter, then `memhtml exec` t
 and filter from there in one execution. Starting with a full-corpus scan means starting with no relevance
 signal.
 
+:::agent
+**For an agent.** The query argument is prose, not a query language — there are no operators to bind an
+`AND`, a field match, or a wildcard to, so writing one puts those characters into the text being matched.
+Add `--dense` when the output goes into a prompt: it drops null fields and minifies. And a question that
+needs more than one hop is one `memhtml exec` script, not a `search` followed by N `read` calls.
+:::
+
 ## What retrieval does not do to your store
 
 **Neither command bumps the access plane**, however many paths it returns. Salience counts *chosen

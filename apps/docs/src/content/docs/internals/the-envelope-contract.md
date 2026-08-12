@@ -12,6 +12,14 @@ Every command writes one JSON envelope to stdout and nothing else; logs go to st
 (`apps/cli/src/agents-doc.ts:24`), so it is the reference for the command list and cannot drift from the
 live answer. Adding a command means editing that one array.
 
+:::agent
+**For an agent.** Branch on `code` and on the exit code, never on the `error` string. The codes are
+append-only and a shipped one never changes meaning; the prose is rewritten whenever the wording
+improves, so a matcher against it passes until someone edits a sentence. Exit 2 means change the call,
+exit 1 means change the store or the environment — the two need different recovery and conflating them
+retries a call that cannot succeed.
+:::
+
 ## 2. `apiVersion` and `type`
 
 `apiVersion` lets the envelope evolve without silently breaking parsers, and `type` is a discriminator an

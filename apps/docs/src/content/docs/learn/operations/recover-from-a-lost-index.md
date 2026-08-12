@@ -45,6 +45,13 @@ history of every eviction via `git log --follow`. `.memhtml/state/access.jsonl` 
 | The trace tables | `$MEMHTML_TRACE_ROOT` | `memhtml trace index` from a zero watermark: slow, not lossy. |
 | An unmerged `sleep/<date>` branch | Nothing, unless it was pushed | Re-run the sleep. Every phase is idempotent. |
 
+:::agent
+**For an agent.** A missing path is not a missing memory. A lost or stale index makes a memory
+unretrievable while the file is still in the tree, and eviction is a `git mv` into `archive/<YYYY>/`
+rather than a delete — so retry with `--include-archived`, and check `memhtml status` for a stale index,
+before reporting anything as gone. Treating absence as deletion here writes a false fact into the corpus.
+:::
+
 The one lossy row in that table is `state.db`, and the loss is bounded by how recently `state export` ran.
 Sleep runs `state-export` as its penultimate phase, which is why it refreshes every night regardless of
 query volume — and why you should run it by hand before a machine goes away. See [preserve the state

@@ -1,0 +1,117 @@
+---
+/**
+ * The page-action control group: copy this page's Markdown, open its raw route, or open it prefilled
+ * in an external assistant.
+ *
+ * This is a local component rather than a plugin. `starlight-page-context-action` was the better of
+ * the two candidates and is still declined: its MDX cleaner is regex-based, and it emits its own
+ * `<path>.md` and `llms.txt` routes, which collide with the two dependencies that already own those
+ * routes here. A dependency that must be half-disabled to avoid two collisions costs more than the
+ * twenty lines it saves.
+ *
+ * Every href is computed in `src/lib/agent-surface.ts`, which is where the format table and the
+ * character budget are asserted.
+ */
+import { IconCopy, IconExternalLink, IconMarkdown } from "@tabler/icons-astro"
+
+import { deepLinks, rawMarkdownUrl } from "../lib/agent-surface.js"
+
+const route = Astro.locals.starlightRoute
+const { site } = Astro
+
+/*
+ * A missing `site` is a build error rather than a fallback. Without it the canonical URL, the sitemap
+ * and every href below are wrong in the same way, and a machine hint that resolves to nothing is worse
+ * than an absent one.
+ */
+if (site === undefined) {
+  throw new Error("`site` is unset in astro.config.ts, so no absolute page URL can be built")
+}
+
+const context = { site, base: import.meta.env.BASE_URL }
+const markdownUrl = rawMarkdownUrl(route.entry.id, context)
+// `Astro.url.pathname` already carries the base segment, so this resolves against the bare origin.
+const pageUrl = new URL(Astro.url.pathname, site)
+const title = route.entry.data.title
+
+const links = deepLinks(
+  { title, pageUrl: pageUrl.href, markdownUrl: markdownUrl.href },
+  route.entry.body ?? ""
+)
+---
+
+<div class="memhtml-page-actions not-content">
+  {/*
+    A real button, so it is reachable by keyboard and announced as an action. It carries the raw
+    route on a data attribute and fetches it on click: the raw route is the one producer of this
+    page's Markdown, so what a human copies and what an agent reads cannot diverge.
+  */}
+  <button
+    type="button"
+    class="memhtml-page-action"
+    data-memhtml-copy={markdownUrl.pathname}
+    data-memhtml-idle="Copy as Markdown"
+    data-memhtml-done="Copied"
+    data-memhtml-failed="Copy failed — open the raw Markdown instead"
+  >
+    <IconCopy class="memhtml-icon" size={16} aria-hidden="true" />
+    <span data-memhtml-copy-label>Copy as Markdown</span>
+  </button>
+
+  <a class="memhtml-page-action" href={markdownUrl.pathname}>
+    <IconMarkdown class="memhtml-icon" size={16} aria-hidden="true" />
+    <span>View as Markdown</span>
+  </a>
+
+  {
+    links.map((link) => (
+      <a
+        class="memhtml-page-action"
+        href={link.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        data-memhtml-target={link.target.id}
+        data-memhtml-carries-content={String(link.carriesContent)}
+      >
+        <IconExternalLink class="memhtml-icon" size={16} aria-hidden="true" />
+        <span>{link.target.label}</span>
+      </a>
+    ))
+  }
+</div>
+
+{/*
+  `navigator.clipboard` needs a secure context, and a docs page opened over plain HTTP or from the
+  filesystem has none. The failure is therefore reported in the control's own label rather than
+  swallowed: a button that appears to work and does nothing is the defect this handles.
+*/}
+<script>
+  document.querySelectorAll<HTMLButtonElement>("[data-memhtml-copy]").forEach((button) => {
+    const label = button.querySelector("[data-memhtml-copy-label]")
+    const source = button.dataset.memhtmlCopy
+    if (label === null || source === undefined) return
+
+    const say = (text: string, failed: boolean) => {
+      label.textContent = text
+      button.dataset.memhtmlState = failed ? "failed" : "done"
+      window.setTimeout(() => {
+        label.textContent = button.dataset.memhtmlIdle ?? "Copy as Markdown"
+        delete button.dataset.memhtmlState
+      }, 4000)
+    }
+
+    button.addEventListener("click", async () => {
+      try {
+        if (!window.isSecureContext || navigator.clipboard === undefined) {
+          throw new Error("the clipboard needs a secure context")
+        }
+        const response = await fetch(source)
+        if (!response.ok) throw new Error(`the raw route answered ${response.status}`)
+        await navigator.clipboard.writeText(await response.text())
+        say(button.dataset.memhtmlDone ?? "Copied", false)
+      } catch {
+        say(button.dataset.memhtmlFailed ?? "Copy failed", true)
+      }
+    })
+  })
+</script>
