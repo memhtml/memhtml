@@ -95,8 +95,8 @@ describe("verification item 4 — embedder down: the lexical floor holds", () =>
   beforeAll(async () => {
     cli = await makeCli({ embedder: failingEmbedder() })
     await writeMemory(cli, {
-      title: "Turso needs the index_method flag once an FTS index exists",
-      claim: "Every statement touching an FTS-indexed table needs the index_method flag.",
+      title: "An external-content FTS5 table is maintained by sync triggers",
+      claim: "Every write to an FTS-indexed table is mirrored into the index by its sync triggers.",
       type: "semantic"
     })
   })
@@ -115,7 +115,7 @@ describe("verification item 4 — embedder down: the lexical floor holds", () =>
       readonly hits: ReadonlyArray<{ readonly path: string }>
       readonly degraded: boolean
       readonly arms: ReadonlyArray<string>
-    }>(["search", "index_method flag"])
+    }>(["search", "sync triggers"])
 
     expect(result.hits.length).toBeGreaterThan(0)
     expect(result.degraded).toBe(true)
@@ -129,7 +129,7 @@ describe("verification item 4 — embedder down: the lexical floor holds", () =>
     const pack = await cli.json<{
       readonly memories: { readonly disclosed: ReadonlyArray<{ readonly gist: string }> }
       readonly degraded: boolean
-    }>(["recall", "index_method flag"])
+    }>(["recall", "sync triggers"])
     expect(pack.degraded).toBe(true)
     expect(pack.memories.disclosed.length).toBeGreaterThan(0)
   })

@@ -206,10 +206,11 @@ describe("trace-consolidation happy path", () => {
       candidates(
         [
           candidate({
-            claim: "Turso partial indexes need the predicate restated in the query to be chosen.",
+            claim:
+              "Partial indexes on this driver need the predicate restated in the query to be chosen.",
             gist: "Three separate lookups planned as SCAN until the redundant IS NOT NULL clause was added, across two different tables.",
             kind: "error_pattern",
-            entities: ["service:turso"]
+            entities: ["service:sqlite"]
           }),
           candidate({
             claim: "Fixture corpora go stale one phase before the phase under test.",
@@ -300,7 +301,7 @@ describe("trace-consolidation happy path", () => {
           claim: "Partial indexes on this driver need their predicate restated in the query.",
           gist: "The distilled prose, which IS allowed in the body.",
           kind: "error_pattern",
-          entities: ["service:turso", "person:sanju"],
+          entities: ["service:sqlite", "person:sanju"],
           evidence: [
             { sessionId: "session-a", quote: QUOTE_A },
             { sessionId: "session-b", quote: QUOTE_B }
@@ -336,7 +337,7 @@ describe("trace-consolidation happy path", () => {
           expect(doc.metas.author).toBe("agent:sleep")
           expect(doc.metas.memoryType).toBe("error_pattern")
           expect(doc.metas.status).toBe("active")
-          expect(doc.entities).toContain("service:turso")
+          expect(doc.entities).toContain("service:sqlite")
 
           /**
            * The evidence IS in the commit message, which is where a reviewer needs it — a commit

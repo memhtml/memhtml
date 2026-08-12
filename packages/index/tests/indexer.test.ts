@@ -80,13 +80,13 @@ const seedCorpus = (): ReadonlyArray<SeedFile> => [
     })
   },
   {
-    path: "resources/turso/fts-relevance-order.html",
+    path: "resources/fts/multi-column-relevance-order.html",
     html: memoryHtml({
-      title: "Turso multi-column FTS loses relevance order",
+      title: "A multi-column FTS index loses relevance order",
       claim: "A multi-column FTS index returns MATCH rows in rowid order, not relevance order.",
       memoryType: "error_pattern",
       definedTerms: ["relevance order"],
-      tags: ["turso", "sqlite"]
+      tags: ["fts", "sqlite"]
     })
   },
   ...Array.from({ length: 16 }, (_, offset): SeedFile => {
@@ -298,7 +298,7 @@ describe("rebuild", () => {
         yield* indexer.rebuild({ embed: false })
         return yield* db.all<{ entity_type: string; entity_name: string }>(
           "SELECT entity_type, entity_name FROM file_entities WHERE path = ? ORDER BY entity_type",
-          ["resources/turso/fts-relevance-order.html"]
+          ["resources/fts/multi-column-relevance-order.html"]
         )
       })
     )

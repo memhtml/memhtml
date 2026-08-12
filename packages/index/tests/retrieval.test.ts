@@ -56,13 +56,14 @@ const corpus = (): ReadonlyArray<SeedFile> => [
     })
   },
   {
-    path: "projects/memhtml/turso-fts.html",
+    path: "projects/memhtml/bm25-sort-direction.html",
     html: memoryHtml({
-      title: "Turso FTS exposes no bm25",
-      claim: "Turso returns MATCH rows already ordered by relevance and exposes no rank column.",
+      title: "bm25 ranks ascending because its scores are negative",
+      claim:
+        "bm25() returns a negative score where a stronger match is more negative, so relevance order is ascending and a DESC sort silently returns the worst matches first.",
       memoryType: "error_pattern",
-      tags: ["turso"],
-      entities: ["service:turso"],
+      tags: ["bm25"],
+      entities: ["service:sqlite"],
       updatedAt: "2026-07-31T00:00:00Z"
     })
   },
@@ -194,14 +195,16 @@ describe("search", () => {
   it("returns hits carrying the fields the tool contract names", async () => {
     const hit = await withIndexed(repo, ({ retrieval }) =>
       Effect.gen(function* () {
-        const result = yield* retrieval.search({ query: "turso relevance rank column" })
-        return result.hits.find((candidate) => candidate.path === "projects/memhtml/turso-fts.html")
+        const result = yield* retrieval.search({ query: "bm25 relevance ascending order" })
+        return result.hits.find(
+          (candidate) => candidate.path === "projects/memhtml/bm25-sort-direction.html"
+        )
       })
     )
     expect(hit).toBeDefined()
-    expect(hit?.title).toBe("Turso FTS exposes no bm25")
+    expect(hit?.title).toBe("bm25 ranks ascending because its scores are negative")
     expect(hit?.memoryType).toBe("error_pattern")
-    expect(hit?.gist).toContain("MATCH rows already ordered by relevance")
+    expect(hit?.gist).toContain("a DESC sort silently returns the worst matches first")
     expect(hit?.updatedAt).toBe("2026-07-31T00:00:00Z")
     expect(hit?.confidence).toBe(1)
   })
@@ -626,7 +629,7 @@ describe("search", () => {
   it("makes a workspace scope strict: it never returns a NULL-workspace page", async () => {
     const paths = await withIndexed(repo, ({ retrieval }) =>
       Effect.gen(function* () {
-        const result = yield* retrieval.search({ query: "turso relevance", workspace: "memhtml" })
+        const result = yield* retrieval.search({ query: "bm25 relevance", workspace: "memhtml" })
         return result.hits.map((hit) => hit.path)
       })
     )
@@ -640,7 +643,7 @@ describe("search", () => {
         const narrow = yield* retrieval.search({ query: "drain deploy rollback", tags: ["oncall"] })
         const broad = yield* retrieval.search({
           query: "drain deploy rollback",
-          tags: ["oncall", "turso"]
+          tags: ["oncall", "bm25"]
         })
         return {
           narrow: narrow.hits.map((hit) => hit.path),
@@ -648,7 +651,9 @@ describe("search", () => {
         }
       })
     )
-    // ANY-of overlap: adding a tag can only add candidates.
+    // ANY-of overlap: adding a tag can only add candidates. The strict growth below needs the two
+    // tags to be DISJOINT over the corpus — mutation-proven: give the `bm25` entry an `oncall` tag
+    // too and `broad.length > narrow.length` becomes 2 > 2, a case that asserts nothing.
     expect(outcome.narrow.every((path) => outcome.broad.includes(path))).toBe(true)
     expect(outcome.broad.length).toBeGreaterThan(outcome.narrow.length)
   })
@@ -739,7 +744,7 @@ describe("search", () => {
     expect(outcome.get("areas/oncall/vip-drain-before-rollback.html")).toEqual([
       "service:checkout-api"
     ])
-    expect(outcome.get("projects/memhtml/turso-fts.html")).toEqual(["service:turso"])
+    expect(outcome.get("projects/memhtml/bm25-sort-direction.html")).toEqual(["service:sqlite"])
     // Empty array rather than absent or null: a caller reading an absent key cannot tell "no
     // entities" from "this server does not report them".
     const filler = [...outcome].find(([path]) => path.includes("filler-"))
@@ -990,7 +995,7 @@ describe("search", () => {
      */
     const outcome = await withIndexed(repo, ({ retrieval }) =>
       Effect.gen(function* () {
-        const query = "drain the VIP deploy turso relevance"
+        const query = "drain the VIP deploy bm25 relevance"
         const both = yield* retrieval.search({
           query,
           entity: "service:checkout-api",
@@ -1000,10 +1005,10 @@ describe("search", () => {
         const disjoint = yield* retrieval.search({
           query,
           entity: "service:checkout-api",
-          tags: ["turso"],
+          tags: ["bm25"],
           limit: 20
         })
-        const tagAlone = yield* retrieval.search({ query, tags: ["turso"], limit: 20 })
+        const tagAlone = yield* retrieval.search({ query, tags: ["bm25"], limit: 20 })
         return {
           both: both.hits.map((hit) => hit.path),
           disjoint: disjoint.hits.map((hit) => hit.path),
@@ -1012,9 +1017,11 @@ describe("search", () => {
       })
     )
     expect(outcome.both).toContain("areas/oncall/vip-drain-before-rollback.html")
-    // The `turso` tag alone DOES return a memory, so the empty intersection below is the AND doing
-    // its job rather than the tag matching nothing.
-    expect(outcome.tagAlone).toContain("projects/memhtml/turso-fts.html")
+    // The `bm25` tag alone DOES return a memory, so the empty intersection below is the AND doing
+    // its job rather than the tag matching nothing. What the corpus owes this case is that no
+    // `service:checkout-api` memory carries `bm25` — give the bm25 entry that entity and `disjoint`
+    // stops being empty for a reason that has nothing to do with the composition under test.
+    expect(outcome.tagAlone).toContain("projects/memhtml/bm25-sort-direction.html")
     expect(outcome.disjoint).toEqual([])
   })
 

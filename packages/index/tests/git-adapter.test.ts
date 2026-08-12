@@ -231,8 +231,11 @@ describe("the store's GitShape satisfies the indexer's GitPort", () => {
       Effect.gen(function* () {
         yield* writeDirty(
           fixture,
-          "areas/notes/turso.html",
-          memoryHtml({ title: "Turso", claim: "Turso exposes no bm25 and no rank column." })
+          "areas/notes/bm25.html",
+          memoryHtml({
+            title: "Ascending bm25",
+            claim: "A stronger bm25 match scores more negative."
+          })
         )
         yield* Effect.promise(() => rm(join(fixture.root, "areas/notes/wildebeest.html")))
         yield* fixture.git.run(["add", "-A"])
@@ -246,7 +249,7 @@ describe("the store's GitShape satisfies the indexer's GitPort", () => {
     expect(diffs).toEqual([
       {
         status: "R",
-        path: "areas/notes/turso.html",
+        path: "areas/notes/bm25.html",
         fromPath: "areas/notes/wildebeest.html"
       }
     ])
@@ -459,7 +462,7 @@ describe("the indexer over the store's own git service", () => {
         fixture,
         [
           ["areas/oncall/a.html", memoryHtml({ title: "Drain the VIP", claim: "Drain first." })],
-          ["projects/memhtml/b.html", memoryHtml({ title: "Turso", claim: "One column." })]
+          ["projects/memhtml/b.html", memoryHtml({ title: "bm25", claim: "One column." })]
         ],
         "seed two memories"
       )
@@ -510,8 +513,11 @@ describe("the indexer over the store's own git service", () => {
         yield* Effect.gen(function* () {
           yield* writeDirty(
             fixture,
-            "areas/notes/turso.html",
-            memoryHtml({ title: "Turso", claim: "Turso exposes no bm25 and no rank column." })
+            "areas/notes/bm25.html",
+            memoryHtml({
+              title: "Ascending bm25",
+              claim: "A stronger bm25 match scores more negative."
+            })
           )
           yield* Effect.promise(() => rm(join(fixture.root, "areas/notes/wildebeest.html")))
           yield* fixture.git.run(["add", "-A"])
@@ -531,8 +537,8 @@ describe("the indexer over the store's own git service", () => {
     // heuristic something nothing downstream has to gate on.
     expect(outcome).toEqual([
       {
-        path: "areas/notes/turso.html",
-        gist: "Turso exposes no bm25 and no rank column."
+        path: "areas/notes/bm25.html",
+        gist: "A stronger bm25 match scores more negative."
       }
     ])
   })

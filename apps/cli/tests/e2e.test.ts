@@ -550,9 +550,9 @@ describe("the lexical floor", () => {
       "--type",
       "semantic",
       "--title",
-      "Turso requires the index_method flag once an FTS index exists",
+      "An external-content FTS5 table is maintained by sync triggers",
       "--claim",
-      "Every statement touching an FTS-indexed table needs the index_method experimental flag."
+      "Every write to an FTS-indexed table is mirrored into the index by its sync triggers."
     ])
   })
 
@@ -566,7 +566,7 @@ describe("the lexical floor", () => {
      * agent comparing two searches learns one of them was ranked by fewer signals — a silent
      * narrowing would make a Bedrock outage look like a change in the corpus.
      */
-    const result = await cli.json<Hits>(["search", "index_method flag"])
+    const result = await cli.json<Hits>(["search", "sync triggers"])
     expect(result.degraded).toBe(true)
     expect(result.arms).not.toContain("vector")
     expect(result.hits.length).toBeGreaterThan(0)
@@ -627,9 +627,9 @@ describe("--article-html: the caller supplies the article verbatim", () => {
 
   /** Markup no claim/body call could produce: a `<dl>` after the mark, plus a `<time datetime>`. */
   const ARTICLE = [
-    "<p><mark>Turso takes an exclusive file lock on index.db.</mark>",
+    "<p><mark>WAL admits one writer and any number of concurrent readers.</mark>",
     'Measured on <time datetime="2026-07-28">28 July</time>.</p>',
-    "<dl><dt>driver</dt><dd>turso</dd></dl>"
+    "<dl><dt>driver</dt><dd>node:sqlite</dd></dl>"
   ].join("\n")
 
   it("writes the markup UNESCAPED, structure intact, and commits it", async () => {
@@ -642,7 +642,7 @@ describe("--article-html: the caller supplies the article verbatim", () => {
       "--type",
       "semantic",
       "--title",
-      "Turso locks index.db",
+      "WAL admits one writer",
       "--article-html",
       ARTICLE
     ])
@@ -658,23 +658,25 @@ describe("--article-html: the caller supplies the article verbatim", () => {
      */
     const html = await readFile(join(cli.root, written.path), "utf8")
     expect(html).toContain("<dl>")
-    expect(html).toContain("<dd>turso</dd>")
+    expect(html).toContain("<dd>node:sqlite</dd>")
     expect(html).not.toContain("&lt;dl&gt;")
     expect(html).toContain('<time datetime="2026-07-28">')
     // The caller's `<mark>` is the claim span; nothing wrapped a second one around it.
-    expect(html).toContain("<mark>Turso takes an exclusive file lock on index.db.</mark>")
+    expect(html).toContain(
+      "<mark>WAL admits one writer and any number of concurrent readers.</mark>"
+    )
     expect((html.match(/<mark>/g) ?? []).length).toBe(1)
 
     // And it is a real memory downstream: the mark became the gist, so retrieval can quote it.
     const detail = await cli.json<{ readonly gist: string }>(["read", written.path])
-    expect(detail.gist).toBe("Turso takes an exclusive file lock on index.db.")
+    expect(detail.gist).toBe("WAL admits one writer and any number of concurrent readers.")
   })
 
   it("corrects a memory from --article-html too, archiving the target in one commit", async () => {
     const listed = await cli.json<{ readonly files: ReadonlyArray<{ readonly path: string }> }>([
       "list"
     ])
-    const target = listed.files.find((file) => file.path.includes("turso-locks"))?.path
+    const target = listed.files.find((file) => file.path.includes("wal-admits"))?.path
     expect(target).toBeDefined()
 
     const corrected = await cli.json<{
@@ -685,11 +687,11 @@ describe("--article-html: the caller supplies the article verbatim", () => {
       "correct",
       target as string,
       "--title",
-      "Turso locks index.db for the whole process",
+      "WAL admits one writer at a time, and never blocks a reader",
       "--article-html",
-      "<p><mark>The lock is held for the process lifetime, not per statement.</mark></p>",
+      "<p><mark>The write lock is held for one transaction, not for the connection.</mark></p>",
       "--reason",
-      "the original implied a per-statement lock"
+      "the original left the lock's duration unstated"
     ])
 
     expect(corrected.archivedPath).toMatch(/^archive\/\d{4}\//)
@@ -700,7 +702,7 @@ describe("--article-html: the caller supplies the article verbatim", () => {
     const html = await readFile(join(cli.root, corrected.path), "utf8")
     expect(html).toContain(`rel="memhtml-supersedes" href="/${corrected.archivedPath}"`)
     expect(html).toContain(
-      "<mark>The lock is held for the process lifetime, not per statement.</mark>"
+      "<mark>The write lock is held for one transaction, not for the connection.</mark>"
     )
   })
 
