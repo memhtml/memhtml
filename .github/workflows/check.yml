@@ -18,7 +18,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4
       # Ask pnpm where its store is rather than hardcoding a path — a path that is wrong
       # caches nothing and says nothing about it. Runs after mise-action because that is
@@ -27,7 +27,7 @@ jobs:
       # pnpm's content-addressable store, keyed on the lockfile. mise-action caches
       # mise's own tools; the store is separate, and without this every run re-downloads
       # every dependency.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ env.PNPM_STORE }}
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}

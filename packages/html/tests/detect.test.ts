@@ -612,6 +612,6 @@ describe("rebuild determinism", () => {
     const pkg = JSON.parse(await readFile(manifest, "utf8")) as {
       dependencies: Record<string, string>
     }
-    expect(pkg.dependencies["highlight.js"]).toBe("11.11.1")
+    expect(pkg.dependencies["highlight.js"]).toBe("11.11.2")
   })
 })

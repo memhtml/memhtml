@@ -31,8 +31,7 @@ import {
  * carry memory titles, and a `GitFailure` is returned to an agent through a tool response.
  * The stderr text goes to `Effect.logError` at the boundary below instead of into the payload.
  */
-export class GitFailure extends Schema.ErrorClass<GitFailure>("GitFailure")({
-  _tag: Schema.tag("GitFailure"),
+export class GitFailure extends Schema.TaggedError<GitFailure>()("GitFailure", {
   command: Schema.String,
   /** The process exit code, or `null` when the process never started. */
   exitCode: Schema.NullOr(Schema.Int)

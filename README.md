@@ -330,7 +330,7 @@ lefthook, the scanners — from `mise.toml`, pinned by checksum and provenance i
 `mise.lock`, so a clone resolves the same binaries CI does:
 
 ```bash
-mise install    # node 24, pnpm 11.16.0, lefthook, scanners — from mise.lock
+mise install    # node 24, pnpm 11.21.0, lefthook, scanners — from mise.lock
 mise run install    # dependencies from the lockfile + the git hooks
 mise run check      # lint + typecheck + test + test:integration + test:eval — the definition of done
 ```

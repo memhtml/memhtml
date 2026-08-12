@@ -144,8 +144,9 @@ REMAINING, in rough order of pull:
 
 ## Upstream watch
 
-- effect `McpServer` never emits the MCP `instructions` initialize field
-  (`McpSchema.ts:701` declares it; `McpServer.ts:1497-1501` omits it, 4.0.0-beta.102). When
+- effect `McpServer` never emits the MCP `instructions` initialize field (`McpSchema` declares it;
+  `layerStdio`'s options are `{name, version, protocols, extensions}`, so there is no argument to
+  supply one — re-verified on 4.0.0-beta.107). When
   effect wires it, move the guide's `write-surfaces`/`when-to-batch` prose into it — comment at
   `apps/mcp/src/server.ts` marks the spot.
 - effect masks handler errors unless a `failure:` schema is declared — any NEW tool must declare

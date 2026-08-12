@@ -30,14 +30,14 @@ jobs:
     steps:
       # Full history: betterleaks sweeps every commit, and a shallow clone would scan a
       # single revision while reporting success.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: jdx/mise-action@v4
       - run: mise run security
       # One upload for the whole directory — each SARIF names its own tool, so code
       # scanning separates them without a step per scanner.
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: .sarif

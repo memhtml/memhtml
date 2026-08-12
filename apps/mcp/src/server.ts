@@ -1,6 +1,6 @@
 import { layerApp } from "@memhtml/cli"
 import { Layer, Logger } from "effect"
-import { McpServer } from "effect/unstable/ai"
+import { McpProtocol, McpServer } from "effect/unstable/ai"
 
 import { ToolHandlers } from "./handlers.js"
 import { Resources } from "./resources.js"
@@ -23,12 +23,11 @@ export const SERVER_VERSION = "0.1.0"
  *
  * **There is no server-level `instructions` here, and it is not an omission.** MCP defines an
  * `instructions` field on the initialize response for exactly the cross-tool guidance this server wants
- * to give — when to batch, the three doors, the commit duty — and effect 4.0.0-beta.102 does not emit
- * it. Verified in the dependency's own source: `McpSchema.ts:701` DECLARES
- * `instructions: optional(Schema.String)` on the initialize result, and the handler that builds that
- * result (`McpServer.ts:1497-1501`) returns `{capabilities, serverInfo, protocolVersion}` and nothing
- * else, with no path to supply one — `layerStdio`'s options are `{name, version, extensions}`
- * (`McpServer.ts:683-687`), so there is not even an argument to pass.
+ * to give — when to batch, the three doors, the commit duty — and effect does not emit it. Verified
+ * against 4.0.0-beta.107 in the dependency's own declarations: `McpSchema` DECLARES
+ * `instructions: optional(Schema.String)` on the initialize result, while `layerStdio`'s options are
+ * `{name, version, protocols, extensions}` — so there is not even an argument to pass, and the handler
+ * that builds the result supplies none.
  *
  * The consequence, which is why this is recorded where a maintainer would come looking for the field
  * rather than in a doc: **TOOL DESCRIPTIONS are this server's only guidance channel.** That is why
@@ -43,7 +42,11 @@ export const layerServer = (repoOverride?: string | undefined) =>
     Layer.provide(
       McpServer.layerStdio({
         name: SERVER_NAME,
-        version: SERVER_VERSION
+        version: SERVER_VERSION,
+        // The protocol revision is now the caller's to state, and `v2025_06_18` is the only adapter
+        // this dependency ships. Naming it here means a future revision is an explicit, reviewable
+        // choice rather than a default that moves the wire format under a shipped client.
+        protocols: [McpProtocol.v2025_06_18]
       })
     ),
     Layer.provide(layerApp(repoOverride)),

@@ -147,7 +147,7 @@ with every other request. Abstention above the cap is the same fail-closed "no s
 out-of-vocabulary detection.
 
 Two properties follow, and both are enforced by tests. **Determinism:** highlight.js is pinned
-EXACTLY (`11.11.1`, no caret) because relevance scores are grammar-dependent, so a version bump
+EXACTLY (`11.11.2`, no caret) because relevance scores are grammar-dependent, so a version bump
 would silently move every confidence and therefore which fences get stamped; a bump is a deliberate
 decision that re-runs the eval and re-derives the threshold. **Rebuildability:** detection runs ONLY
 on the write path, and the stamp is written into the file. Index rebuild reads `data-lang` back

@@ -24,12 +24,12 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.6",
+    "@biomejs/biome": "2.5.8",
     "@effect/vitest": "catalog:",
     "@memhtml/store": "workspace:*",
-    "@types/node": "24.10.2",
+    "@types/node": "24.13.3",
     "fast-check": "catalog:",
-    "typescript": "5.9.3",
+    "typescript": "7.0.2",
     "vitest": "4.1.10"
   }
 }

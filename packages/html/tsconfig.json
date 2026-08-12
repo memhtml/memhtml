@@ -3,7 +3,12 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
-    "tsBuildInfoFile": "dist/.tsbuildinfo"
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    // `node:crypto` in hash.ts and `node:module` in detect.ts. Declared rather than inherited from
+    // whatever @types happens to be installed, which is also what tsconfig.check.json already does.
+    // `contracts` and `domain` deliberately omit this: they are the pure layers, and a test greps
+    // `domain`'s emitted dist to prove no node builtin reaches it.
+    "types": ["node"]
   },
   "include": ["src/**/*.ts"],
   "references": [

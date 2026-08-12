@@ -65,19 +65,19 @@ url_api = "https://api.github.com/repos/google/osv-scanner/releases/assets/50469
 url = "https://github.com/google/osv-scanner/releases/download/v2.5.0/multiple.intoto.jsonl"
 
 [[tools.pnpm]]
-version = "11.16.0"
+version = "11.21.0"
 backend = "aqua:pnpm/pnpm"
 
 [tools.pnpm."platforms.linux-x64"]
-checksum = "sha256:2abc4593a4a502a221d3bd5bbaf18c9d269e4dd7bf53d143ba6c6ee1faf9149d"
-url = "https://github.com/pnpm/pnpm/releases/download/v11.16.0/pnpm-linux-x64.tar.gz"
-url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/486379995"
+checksum = "sha256:aadc489ce4473c2af0fec06a5c19e113b5793d404eac49853c8153bf4b0d8263"
+url = "https://github.com/pnpm/pnpm/releases/download/v11.21.0/pnpm-linux-x64.tar.gz"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/507585503"
 provenance = "github-attestations"
 
 [tools.pnpm."platforms.macos-arm64"]
-checksum = "sha256:b8c9bb892908cbb08993ebdf57df375ccb2afba791de65f5b356707fd4ecb5c7"
-url = "https://github.com/pnpm/pnpm/releases/download/v11.16.0/pnpm-darwin-arm64.tar.gz"
-url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/486380005"
+checksum = "sha256:860a96978a79ca5132bdc247375f94150a3c98edbecbee36e9f8e0c9e2f7f056"
+url = "https://github.com/pnpm/pnpm/releases/download/v11.21.0/pnpm-darwin-arm64.tar.gz"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/507585526"
 provenance = "github-attestations"
 
 [[tools.semgrep]]

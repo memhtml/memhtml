@@ -333,20 +333,20 @@ export interface TranscriptRef {
  * INV-3 turns on the caller being able to SKIP rather than fail: a run with no credentials is
  * not a broken run, it is a run that was never possible.
  */
-export class ConsolidatorCredentialsMissing extends Schema.ErrorClass<ConsolidatorCredentialsMissing>(
-  "ConsolidatorCredentialsMissing"
-)({
-  _tag: Schema.tag("ConsolidatorCredentialsMissing"),
-  reason: Schema.String
-}) {}
+export class ConsolidatorCredentialsMissing extends Schema.TaggedError<ConsolidatorCredentialsMissing>()(
+  "ConsolidatorCredentialsMissing",
+  {
+    reason: Schema.String
+  }
+) {}
 
 /** The agent server could not be built, started, or reached. */
-export class ConsolidatorUnavailable extends Schema.ErrorClass<ConsolidatorUnavailable>(
-  "ConsolidatorUnavailable"
-)({
-  _tag: Schema.tag("ConsolidatorUnavailable"),
-  reason: Schema.String
-}) {}
+export class ConsolidatorUnavailable extends Schema.TaggedError<ConsolidatorUnavailable>()(
+  "ConsolidatorUnavailable",
+  {
+    reason: Schema.String
+  }
+) {}
 
 /**
  * The turn reached the model and did not come back with a usable answer.
@@ -356,13 +356,13 @@ export class ConsolidatorUnavailable extends Schema.ErrorClass<ConsolidatorUnava
  * nothing. `turn` is eve's `status: "ready"` with `outcome.status: "failed"`; `invocation` is a
  * top-level `status: "failed"`.
  */
-export class ConsolidatorRunFailed extends Schema.ErrorClass<ConsolidatorRunFailed>(
-  "ConsolidatorRunFailed"
-)({
-  _tag: Schema.tag("ConsolidatorRunFailed"),
-  phase: Schema.Literals(["invocation", "turn"]),
-  reason: Schema.String
-}) {}
+export class ConsolidatorRunFailed extends Schema.TaggedError<ConsolidatorRunFailed>()(
+  "ConsolidatorRunFailed",
+  {
+    phase: Schema.Literals(["invocation", "turn"]),
+    reason: Schema.String
+  }
+) {}
 
 /**
  * The turn settled but its structured payload is not one this contract accepts: absent when a
@@ -373,12 +373,12 @@ export class ConsolidatorRunFailed extends Schema.ErrorClass<ConsolidatorRunFail
  * `packages/llm/src/structured.ts:52-61`: a coerced object is indistinguishable from a real one
  * downstream, so nothing lenient happens here.
  */
-export class ConsolidatorContractViolation extends Schema.ErrorClass<ConsolidatorContractViolation>(
-  "ConsolidatorContractViolation"
-)({
-  _tag: Schema.tag("ConsolidatorContractViolation"),
-  reason: Schema.String
-}) {}
+export class ConsolidatorContractViolation extends Schema.TaggedError<ConsolidatorContractViolation>()(
+  "ConsolidatorContractViolation",
+  {
+    reason: Schema.String
+  }
+) {}
 
 /** Everything the client wrapper can fail with. */
 export type ConsolidatorError =

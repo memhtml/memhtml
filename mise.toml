@@ -28,19 +28,19 @@ lockfile_platforms = ["linux-x64", "macos-arm64"]
 # directory to PATH in declaration order, and node's own bin holds a `pnpm` symlink to
 # corepack/dist/pnpm.js wherever `corepack enable` has run — so with node first, every
 # pnpm call goes through corepack and this pin is inert. Measured: pnpm below node
-# resolves to installs/node/24/bin/pnpm, pnpm above it resolves to
-# installs/pnpm/11.16.0/pnpm. Keeping corepack out of the path matters beyond tidiness:
-# the Node TSC voted to stop distributing it (nodejs/TSC#1697), Node 25+ does not bundle
-# it, and pnpm 11 no longer reads COREPACK_ENABLE_STRICT.
+# resolves to installs/node/24/bin/pnpm, pnpm above it resolves to its own
+# installs/pnpm/<version> directory. Keeping corepack out of the path matters beyond
+# tidiness: the Node TSC voted to stop distributing it (nodejs/TSC#1697), Node 25+ does
+# not bundle it, and pnpm 11 no longer reads COREPACK_ENABLE_STRICT.
 #
 # This version and package.json's `packageManager` must agree, and `mise run tools:verify`
 # is what makes that a checked invariant rather than a convention.
-# A `latest` here is not "whatever today brings": mise.lock pins the concrete version,
+pnpm = "11.21.0"
+node = "24"                              # the only node declaration; engines says >=24
+# A `latest` below is not "whatever today brings": mise.lock pins the concrete version,
 # checksum, URL, and provenance, and `mise run tools:bump` is the only thing that moves
 # them. So a clone resolves what the lock says, and refreshing a scanner is a reviewable
 # diff rather than a silent change between two runs.
-pnpm = "11.16.0"
-node = "24"                              # the only node declaration; engines says >=24
 lefthook = "latest"                      # git hooks; wired by `mise run install`
 "aqua:betterleaks/betterleaks" = "1.7.4" # secret scanner
 osv-scanner = "latest"                   # vulnerability scan over pnpm-lock.yaml

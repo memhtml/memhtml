@@ -17,16 +17,16 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "3.1099.0",
+    "@aws-sdk/client-bedrock-runtime": "3.1107.0",
     "@aws/bedrock-token-generator": "1.1.0",
     "@memhtml/contracts": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.6",
+    "@biomejs/biome": "2.5.8",
     "@effect/vitest": "catalog:",
-    "@types/node": "24.10.2",
-    "typescript": "5.9.3",
+    "@types/node": "24.13.3",
+    "typescript": "7.0.2",
     "vitest": "4.1.10"
   }
 }

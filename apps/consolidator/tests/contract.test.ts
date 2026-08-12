@@ -282,7 +282,20 @@ describe("the derived JSON Schema eve is handed", () => {
     if (candidates === undefined) throw new Error("schema.properties.candidates is missing")
     expect(candidates.type).toBe("array")
     const items = candidates.items as Record<string, unknown>
-    expect(items.$ref).toBe("#/$defs/CandidateMemoryJsonEncoding")
+    // The pointer's TARGET is the contract, not the name the schema library derives for it: the
+    // generated `$defs` key tracks Effect's own encoding-name convention, while a pointer that does
+    // not RESOLVE is the defect this guards. So assert the ref is a `$defs` pointer and that the
+    // definition behind it is the candidate shape — which fails on a lost ref, a dangling ref, and
+    // a ref retargeted at something else, and survives a rename that changes nothing.
+    const ref = items.$ref
+    if (typeof ref !== "string") throw new Error(`candidates.items has no $ref: ${String(ref)}`)
+    expect(ref).toMatch(/^#\/\$defs\//)
+    const defs = schema.$defs as Record<string, Record<string, unknown> | undefined>
+    const target = defs[ref.slice("#/$defs/".length)]
+    if (target === undefined) throw new Error(`candidates.items.$ref does not resolve: ${ref}`)
+    expect(target.type).toBe("object")
+    expect(target.properties).toHaveProperty("claim")
+    expect(target.properties).toHaveProperty("evidence")
   })
 
   /**

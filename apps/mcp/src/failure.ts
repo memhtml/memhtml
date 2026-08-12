@@ -22,14 +22,14 @@ import { Schema } from "effect"
  * reads the prefix, which is why the code comes first and is followed by a colon: `ERR_*` is a stable
  * vocabulary and the prose after it is not.
  *
- * **Why `Schema.ErrorClass` rather than a hand-written `Error` subclass.** `Schema.is(failureSchema)`
+ * **Why `Schema.TaggedError` rather than a hand-written `Error` subclass.** `Schema.is(failureSchema)`
  * is the branch-2 predicate, so the value has to be something a schema accepts — and it has to be an
- * `Error` for `.message` to be read. `ErrorClass` is the one construction that is both: probed on this
- * beta, an instance is `instanceof Error`, `Schema.is` accepts it, and `Schema.is` REJECTS a plain
- * `Error` — which is what keeps a genuine defect on branch 3 where it belongs.
+ * `Error` for `.message` to be read. `Schema.TaggedError` is the one construction that is both: an
+ * instance is `instanceof Error`, `Schema.is` accepts it, and `Schema.is` REJECTS a plain `Error` —
+ * which is what keeps a genuine defect on branch 3 where it belongs. All three of those are asserted
+ * in `tests/failure.test.ts`, so the construction cannot be swapped for one that loses any of them.
  */
-export class ToolFailure extends Schema.ErrorClass<ToolFailure>("ToolFailure")({
-  _tag: Schema.tag("ToolFailure"),
+export class ToolFailure extends Schema.TaggedError<ToolFailure>()("ToolFailure", {
   /** The stable code, from the same `ERROR_CODES` vocabulary the CLI envelope publishes. */
   code: Schema.String,
   /** The composed wire text: code, reason, then suggestions. This is what the agent reads. */

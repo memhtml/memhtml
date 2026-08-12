@@ -117,7 +117,14 @@ survives vacuously.
 (`apps/cli/tests/agents-doc.test.ts`), not a pipeline step. After touching `commands.ts`:
 `mise run agents-doc`, which builds `@memhtml/cli` first for exactly this reason.
 
-**Effect 4.0.0-beta.102 differs from recall** (full list in
+**Effect v4 is a pre-release and breaks between versions.** The catalog in `pnpm-workspace.yaml` moves
+`effect`, `@effect/platform-node`, and `@effect/vitest` as one set — never one of the three. A typed
+error is `Schema.TaggedError<Self>()("Tag", fields)`, which supplies `_tag` itself, so the fields must
+NOT declare one; and `McpServer.layerStdio` requires `protocols: [McpProtocol.v2025_06_18]`, the only
+adapter shipped. `minimumReleaseAge: 1440` also means the newest release is not installable for its
+first 24 hours — a blocked install is that policy working, not a broken lockfile.
+
+**Effect 4.0.0-beta.107 differs from recall** (full list in
 `.erpaval/solutions/effect-v4/effect-4-beta-102-api-reality.md`): `Effect.either` does not exist — use
 `Effect.result`. `Schema.decodeUnknownEffect` strips excess properties unless you pass
 `{onExcessProperty: "error"}`, so an LLM answering a neighbouring schema decodes "successfully". Use

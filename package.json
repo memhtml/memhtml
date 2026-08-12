@@ -2,7 +2,7 @@
   "name": "memhtml",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.16.0",
+  "packageManager": "pnpm@11.21.0",
   "engines": {
     "node": ">=24"
   },
@@ -19,9 +19,9 @@
     "check": "turbo run lint typecheck test test:integration test:eval"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.6",
+    "@biomejs/biome": "2.5.8",
     "effect": "catalog:",
-    "turbo": "2.10.7",
-    "typescript": "5.9.3"
+    "turbo": "2.10.9",
+    "typescript": "7.0.2"
   }
 }

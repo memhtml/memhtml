@@ -27,3 +27,19 @@
    `effect/unstable/cli` are real and sufficient — no `@modelcontextprotocol/sdk`, no `@effect/cli`.
    Effect's default logger writes to stdout, which IS the MCP RPC stream — `Logger.LogToStderr` in
    any stdio server.
+9. **A typed error is `Schema.TaggedError<Self>()("Tag", fields)`** — note the empty `()` before the
+   tag, and note that it supplies `_tag` itself, so a `_tag: Schema.tag("Tag")` entry in `fields` is
+   wrong. `Schema.ErrorClass` does not exist. Instances are `instanceof Error` and `Schema.is` accepts
+   them while REJECTING a plain `Error`, which is what lets `apps/mcp/src/failure.ts` tell a typed
+   failure from a defect.
+10. **`McpServer.layerStdio` requires `protocols`** — a non-empty array of `McpProtocol.ProtocolAdapter`,
+    and `McpProtocol.v2025_06_18` is the only one shipped. The MCP `instructions` initialize field is
+    still declared in `McpSchema` with no argument to supply it, so tool descriptions remain the only
+    guidance channel.
+11. **`toJsonSchemaDocument`'s generated `$defs` keys are not a contract** — the encoding-name
+    convention changes between releases (`CandidateMemoryJsonEncoding` → `CandidateMemoryEncoded`).
+    Assert that a `$ref` RESOLVES to a definition of the expected shape, never the derived name.
+
+Versions this was verified against: 1-8 on 4.0.0-beta.102, 9-11 on 4.0.0-beta.107. Rules 1-8 still
+hold on beta.107. The three Effect packages move as ONE catalog set; `minimumReleaseAge: 1440` blocks
+a release for its first 24 hours, so the newest version is often not today's option.
