@@ -7,11 +7,11 @@ import { emptyOutcome, type PhaseBody } from "../env.js"
 import { type AccessRow, accessRows } from "../sql.js"
 
 /**
- * Phase 14 — state export. Write `.memhtml/state/access.jsonl` and commit it.
+ * Phase 14, state export. Write `.memhtml/state/access.jsonl` and commit it.
  *
- * This is the only durability story the state plane has. `state.db` is gitignored and is NOT
- * rebuildable from git — access counts, reinforcement counts, and the outcome EWMA are the one set of
- * facts the tree cannot reproduce — so a fresh clone plus `memhtml state import` plus `memhtml index rebuild`
+ * This is the only durability the state plane has. `state.db` is gitignored and is NOT
+ * rebuildable from git, because access counts, reinforcement counts, and the outcome EWMA are the one
+ * set of facts the tree cannot reproduce. A fresh clone plus `memhtml state import` plus `memhtml index rebuild`
  * reproduces the whole system only because this file is committed.
  *
  * **Byte-stable or it commits nothing.** Rows arrive path-ordered from SQL, floats are rounded to four
@@ -19,7 +19,7 @@ import { type AccessRow, accessRows } from "../sql.js"
  * and the phase's commit is empty. Without that, the widest-churn table in the system would produce a
  * commit every single night whether or not anything was read.
  *
- * Four decimals because that is the grid the outcome EWMA lives on: `@memhtml/domain`'s fixed-point scale
+ * Four decimals because that is the grid the outcome EWMA lives on. `@memhtml/domain`'s fixed-point scale
  * is 10^4, so a fourth-decimal value is exact on the grid and a fifth-decimal digit would be float
  * noise that changes the file's bytes without changing its meaning.
  */
@@ -59,8 +59,8 @@ export const toSidecarEntry = (row: AccessRow): SidecarEntry => ({
 /**
  * The whole sidecar as bytes: one JSON object per line, path-ordered, trailing newline.
  *
- * JSONL rather than one JSON array so the file appends cleanly and a partial write costs one row
- * rather than the whole plane — and so `git diff` on it reads as one line per changed memory.
+ * JSONL, not one JSON array, so the file appends cleanly and a partial write costs one row
+ * instead of the whole plane. `git diff` on it also reads as one line per changed memory.
  */
 export const renderSidecar = (rows: ReadonlyArray<AccessRow>): string =>
   rows.length === 0 ? "" : `${rows.map((row) => JSON.stringify(toSidecarEntry(row))).join("\n")}\n`
@@ -90,9 +90,9 @@ export const stateExport: PhaseBody = (env) =>
 /**
  * Parse a sidecar back into entries, for `memhtml state import`.
  *
- * Defensive per line: an unparseable line is skipped and counted rather than failing the import. The
+ * Defensive per line: an unparseable line is skipped and counted instead of failing the import. The
  * sidecar is the only durable copy of this plane, so a file truncated by an interrupted write must
- * restore every row it does hold — refusing the whole file would turn a partial loss into a total one.
+ * restore every row it does hold. Refusing the whole file would turn a partial loss into a total one.
  */
 export const parseSidecar = (
   contents: string

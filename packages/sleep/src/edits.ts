@@ -8,16 +8,16 @@ import { Effect } from "effect"
 import type { PhaseEnv } from "./env.js"
 
 /**
- * The file-level operations a phase performs, all of them staged rather than committed.
+ * The file-level operations a phase performs. Each one stages; none commits.
  *
  * Staging without committing is what lets one phase produce ONE commit covering every file it
  * touched: dedup-merge stamps a keeper and moves several dropped files, and splitting that across
  * commits would leave an interrupted run with a `memhtml-supersedes` pointing at a file still sitting at
  * its live path.
  *
- * **Every head edit goes through `setMeta`/`addLink`/`removeLink`.** They splice by source offset,
- * so the article's bytes — and therefore the content hash and the dedupe key — provably do not move
- * on a bookkeeping pass. A parse→serialize round trip drops a `<pre>` newline per write, which would
+ * **Every head edit goes through `setMeta`/`addLink`/`removeLink`.** They splice by source offset, so
+ * the article's bytes provably do not move on a bookkeeping pass, and neither does the content hash or
+ * the dedupe key. A parse→serialize round trip drops a `<pre>` newline per write, which would
  * make a no-op decay pass look like a content change in `git diff` and, worse, move the dedup key of
  * a file nobody edited.
  */
@@ -30,13 +30,13 @@ export const hrefFor = (path: string): string => `/${normalizePath(path)}`
  *
  * The surgical editors cannot express this: `setMeta` writes the first meta of a name and `addMeta`
  * appends, and entity resolution has to change the third of four `memhtml-entity` lines. So the line is
- * spliced by exact match against what the serializer writes — still head-only, and the article's
+ * spliced by exact match against what the serializer writes. That stays head-only, and the article's
  * bytes are provably outside the edited range because the match is a complete `<meta …>` line.
  *
- * Collapsing rather than doubling is required, not tidy: two aliases of one entity on the SAME file
- * both rewrite to the canonical, and two identical `memhtml-entity` metas project to two identical
- * `file_entities` rows whose primary key refuses the second — failing the whole `writeAll` batch and
- * taking the rest of the indexing pass with it.
+ * Collapsing instead of doubling is required for correctness. Two aliases of one entity on the SAME
+ * file both rewrite to the canonical, and two identical `memhtml-entity` metas project to two identical
+ * `file_entities` rows whose primary key rejects the second. That fails the whole `writeAll` batch and
+ * takes the rest of the indexing pass with it.
  */
 export const rewriteEntityMeta = (html: string, from: string, to: string): string => {
   const fromLine = entityMetaLine(from)
@@ -131,24 +131,24 @@ export const stampFile = (
  * Move a file to its archive path with the archive stamps applied, staged not committed. Returns the
  * archive path, or `null` when the source path holds no file.
  *
- * **`null` rather than a failure, and this is the load-bearing decision in this module.** Every phase
- * reads its candidates from the INDEX, which is refreshed once in preflight and not again — so a path
- * an earlier phase archived is still listed active at its old path when a later phase reads it. Two
- * phases legitimately reach the same file: retention triage evicts a memory scoring below the floor,
- * and the reprieve phase expires a memory whose TTL passed, and one memory is frequently both. The
- * TREE is the system of record, so a path with no file behind it is not a candidate — which is exactly
- * the idempotence the design claims for a re-run, applied WITHIN a run.
+ * **A missing source path returns `null` instead of failing, which this module depends on.** Every
+ * phase reads its candidates from the INDEX, which is refreshed once in preflight and not again, so a
+ * path an earlier phase archived is still listed active at its old path when a later phase reads it.
+ * Two phases legitimately reach the same file: retention triage evicts a memory scoring below the
+ * floor, the reprieve phase expires a memory whose TTL passed, and one memory is frequently both. The
+ * TREE is the system of record, so a path with no file behind it is not a candidate. That gives a
+ * re-run the same idempotence the design claims, applied WITHIN a run.
  *
  * (Found by an integration test on a real repo, 2026-08-02: retention triage evicted a TTL-passed
- * memory and the reprieve phase then failed on the same path. A stateless fake would have passed —
- * the metarepo's recurring lesson, sixth variant: the contaminating state was another PHASE's write.)
+ * memory and the reprieve phase then failed on the same path. A stateless fake would have passed.
+ * The metarepo's recurring lesson, sixth variant: the contaminating state was another PHASE's write.)
  *
- * `mkdir -p` first: `git mv` refuses a destination whose parent does not exist (probed live
- * 2026-08-02 — `fatal: renaming … failed: No such file or directory`), and the year partition is new
+ * `mkdir -p` first, because `git mv` rejects a destination whose parent does not exist (probed live
+ * 2026-08-02, `fatal: renaming … failed: No such file or directory`). The year partition is new
  * every January, so this is not a rare path.
  *
- * The stamps ride in the SAME commit as the move, which is why nothing downstream may gate on a
- * `R100` similarity score: rename similarity is computed tree-to-tree, so a head stamp in the same
+ * The stamps ride in the SAME commit as the move, so nothing downstream may gate on a
+ * `R100` similarity score. Rename similarity is computed tree-to-tree, so a head stamp in the same
  * commit lowers it (measured R059-R087 on real memory files). `originalPathFor` is the authoritative
  * inverse of the archive mapping, and no correctness path here reads the score.
  */
@@ -209,7 +209,7 @@ export const reprievesOf = (html: string): number => {
 /**
  * A confidence rendered for the `memhtml-confidence` meta: three decimals, no exponent.
  *
- * Three rather than two because the commit gate is a 0.005 delta — at two decimals a change of
+ * Three decimals, not two, because the commit gate is a 0.005 delta. At two decimals a change of
  * exactly 0.005 would round to the same string on both sides and the phase would gate a commit it
  * then could not make, leaving the file's stated confidence permanently behind the computed one.
  */

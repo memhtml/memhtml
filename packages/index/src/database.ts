@@ -14,8 +14,8 @@ type Database = DatabaseSync
  * How long a writer waits for the write lock before giving up.
  *
  * SQLite in WAL mode admits one writer at a time and any number of concurrent readers, and a
- * second writer BLOCKS for this long rather than failing immediately. That is the whole of the
- * concurrency story: the fleet runs many short-lived CLI invocations plus a long-lived MCP
+ * second writer BLOCKS for this long rather than failing immediately. That covers the whole
+ * concurrency story. The fleet runs many short-lived CLI invocations plus a long-lived MCP
  * server against one store, and they serialize by waiting. Zero here would turn every overlap
  * into `SQLITE_BUSY`.
  */
@@ -26,7 +26,7 @@ const BUSY_TIMEOUT_MS = 5_000
  *
  * `Float32Array` requires a 4-byte-aligned `byteOffset`, and a driver row's `Uint8Array` may be
  * a view into a pooled buffer at any offset. Viewing in place is the common case and costs
- * nothing; a misaligned or ragged blob is copied rather than refused, because the vector arm's
+ * nothing. A misaligned or ragged blob is copied rather than rejected, because the vector arm's
  * job is to rank and a throw here would fail a whole search over one row.
  */
 const float32View = (bytes: Uint8Array): Float32Array | undefined => {
@@ -36,18 +36,18 @@ const float32View = (bytes: Uint8Array): Float32Array | undefined => {
 }
 
 /**
- * Register `vector_distance_cos(a, b)` — cosine distance over two float32 blobs.
+ * Register `vector_distance_cos(a, b)`, the cosine distance over two float32 blobs.
  *
- * SQLite ships no vector functions, so the vector retrieval arm's distance is this. It is
- * `@memhtml/domain`'s `cosineDistance`, not a second implementation: the MMR pass already
+ * SQLite ships no vector functions, so the vector retrieval arm's distance is this. It calls
+ * `@memhtml/domain`'s `cosineDistance` instead of reimplementing it. The MMR pass already
  * decodes the same blobs and calls the same function in TypeScript, and two copies of this
  * arithmetic could disagree about a clamp or a zero-magnitude vector while both looked right.
  *
  * `deterministic` lets the planner treat it as a pure function of its arguments, which it is.
  *
- * Exact brute force over every candidate row: measured 79 ms for 10k × 1024-dim vectors at
- * top-40 (probed 2026-08-12 on node 24.19.0), against a Bedrock query-embedding round trip of
- * a few hundred milliseconds that every vector search pays first. An approximate index buys
+ * The scan is exact brute force over every candidate row, measured at 79 ms for 10k × 1024-dim
+ * vectors at top-40 (probed 2026-08-12 on node 24.19.0), against a Bedrock query-embedding round
+ * trip of a few hundred milliseconds that every vector search pays first. An approximate index buys
  * nothing until the corpus is an order of magnitude larger.
  */
 const registerVectorDistance = (db: Database): void => {
@@ -105,15 +105,15 @@ export const DatabaseService = Context.Service<DatabaseShape>("memhtml/Database"
 /**
  * SQLite's `SQLITE_BUSY`. Surfaced by node:sqlite as `errcode: 5` with `"database is locked"`.
  *
- * Matched on the numeric code rather than the message, which is prose and localizable.
+ * Matched on the numeric code rather than on the message, which is prose and localizable.
  */
 const SQLITE_BUSY = 5
 
 /**
- * True when a thrown driver value is `SQLITE_BUSY` — the write lock was unavailable, so the
+ * True when a thrown driver value is `SQLITE_BUSY`, meaning the write lock was unavailable, so the
  * statement did NOT run and may be retried.
  *
- * Exported because it is the load-bearing half of {@link BUSY_BACKOFF}: a retry whose predicate
+ * Exported because {@link BUSY_BACKOFF} depends on it. A retry whose predicate
  * never matches is a retry that does nothing, and nothing else in the suite would notice. Its test
  * captures a REAL contended write rather than constructing an error object, since what this has to
  * agree with is the shape node:sqlite actually throws.
@@ -140,15 +140,15 @@ class DriverRejection {
  * Backoff for a contended write.
  *
  * `busy_timeout` covers a short wait inside one call, and stops covering anything past its
- * deadline — a probe against a held `BEGIN IMMEDIATE` throws `database is locked` rather than
+ * deadline. A probe against a held `BEGIN IMMEDIATE` throws `database is locked` rather than
  * queueing indefinitely. This deployment has many short-lived CLI processes plus a nightly cron
  * writing to one file, and **Effect coordinates nothing across processes**, so the driver's
  * timeout plus this retry is the whole of the answer.
  *
  * Jittered because the contending processes are cron-triggered and would otherwise retry in
- * lockstep; v4's `jittered` scales each delay by a random 0.8–1.2.
+ * lockstep. v4's `jittered` scales each delay by a random 0.8–1.2.
  *
- * Retrying is safe precisely BECAUSE the error is `SQLITE_BUSY`: the lock was never taken, so the
+ * Retrying is safe BECAUSE the error is `SQLITE_BUSY`. The lock was never taken, so the
  * statement had no effect to half-apply. A write inside {@link transact} rolls back before the
  * retry, so the transaction is re-run whole rather than resumed.
  */
@@ -159,8 +159,8 @@ const BUSY_BACKOFF = Schedule.exponential("15 millis").pipe(
 
 /**
  * Wraps a driver rejection as a typed failure. The typed error carries only the
- * operation name so SQL parameters and memory contents never reach a tool response;
- * the driver's own message is logged for operators instead of being dropped.
+ * operation name so SQL parameters and memory contents never reach a tool response.
+ * The driver's own message is logged for operators instead of being dropped.
  */
 const asStorageFailure = <A>(operation: string, effect: Effect.Effect<A, DriverRejection>) =>
   effect.pipe(
@@ -177,9 +177,9 @@ const attempt = <A>(operation: string, thunk: () => Promise<A>) =>
   )
 
 /**
- * For driver calls, which are synchronous — `DatabaseSync` does its work on the calling thread.
+ * For driver calls, which are synchronous, because `DatabaseSync` works on the calling thread.
  *
- * `Effect.try` rather than `Effect.tryPromise` is what keeps that honest. A promise per query
+ * `Effect.try` rather than `Effect.tryPromise` is what keeps that visible. A promise per query
  * would add a microtask hop and a wrapper allocation to the hottest path in the system, and
  * would tell a reader the query yields to the event loop when it does not.
  */
@@ -202,10 +202,10 @@ const migrationsTable = (ledger: string) => `CREATE TABLE IF NOT EXISTS ${ledger
  * Each migration and its bookkeeping row commit together, so a crash mid-run
  * never leaves a migration half-applied.
  *
- * `schemaPrefix` qualifies the ledger table: the state plane is a second, independently-versioned
+ * `schemaPrefix` qualifies the ledger table. The state plane is a second, independently-versioned
  * schema reached over the same connection, so it needs its own `state.schema_migrations` rather than
- * sharing the index's ledger. Sharing one would make deleting and rebuilding `index.db` — the whole
- * point of it being rebuildable — silently mark the state plane's migrations as unapplied.
+ * sharing the index's ledger. Sharing one would make deleting and rebuilding `index.db`, the whole
+ * point of it being rebuildable, silently mark the state plane's migrations as unapplied.
  *
  * The migration statements themselves are not rewritten. A state migration names its own schema
  * (`CREATE TABLE state.access`), because the schema name is a fixed property of the design rather
@@ -256,15 +256,15 @@ const runMigrations = (db: Database, migrationsDir: string, schemaPrefix = "") =
   })
 
 /**
- * Run `body` inside one `IMMEDIATE` transaction: it commits, or nothing it did happened.
+ * Run `body` inside one `IMMEDIATE` transaction. It commits, or nothing it did happened.
  *
  * `IMMEDIATE` takes the write lock up front rather than on the first write, so a writer that
  * cannot have the lock waits out `BUSY_TIMEOUT_MS` here instead of half-way through and having
  * to unwind. SQLite makes DDL transactional, which is what lets a migration file's `CREATE`s
- * and its ledger row commit together — a crash mid-file leaves the migration unapplied and
+ * and its ledger row commit together. A crash mid-file leaves the migration unapplied and
  * unrecorded rather than half-applied.
  *
- * The rollback is best-effort on purpose: if the transaction is already gone the original
+ * The rollback is best-effort on purpose. If the transaction is already gone, the original
  * failure is the one worth reporting, and a throw from `ROLLBACK` would replace it.
  */
 const transact = (db: Database, body: () => void): void => {
@@ -288,8 +288,8 @@ const transact = (db: Database, body: () => void): void => {
  * state.access` in the same statement as `main.files`, with no application-side join over two
  * result sets.
  *
- * Attaching is not idempotent — a second `ATTACH ... AS state` fails with "database state is
- * already in use" — so this is called exactly once per connection, by {@link makeDatabase}.
+ * Attaching is not idempotent, because a second `ATTACH ... AS state` fails with "database state is
+ * already in use". So this is called exactly once per connection, by {@link makeDatabase}.
  */
 export const attachState = (db: Database, statePath: string, migrationsDir: string) =>
   Effect.gen(function* () {
@@ -308,11 +308,11 @@ export const runStateMigrations = (db: Database, migrationsDir: string) =>
 
 /**
  * A scoped connection with `foreign_keys` on and every pending migration applied.
- * Exported so tests drive the real driver against `":memory:"` — a fake would verify
+ * Exported so tests drive the real driver against `":memory:"`. A fake would verify
  * the shape of these calls and not the driver's own constraint enforcement.
  *
  * `state` attaches the durable plane over the same connection. Omit it for a caller that only reads
- * the rebuildable index; the salience arm and every `state.*` write then have nothing to bind to,
+ * the rebuildable index. The salience arm and every `state.*` write then have nothing to bind to,
  * which is why {@link DatabaseShape.hasState} is on the service and the arm registry consults it
  * rather than assuming.
  */
@@ -323,9 +323,9 @@ export const makeDatabase = (
 ) =>
   Effect.gen(function* () {
     /**
-     * `acquireDisposable` rather than `acquireRelease`: `DatabaseSync` implements `Symbol.dispose`
-     * (verified on node 24.19.0), so the scope closes the handle through the language's own
-     * protocol and there is no hand-written release to drift from `close()`.
+     * `acquireDisposable` rather than `acquireRelease`, because `DatabaseSync` implements
+     * `Symbol.dispose` (verified on node 24.19.0). The scope closes the handle through the
+     * language's own protocol, and there is no hand-written release to drift from `close()`.
      */
     const db = yield* Effect.acquireDisposable(
       Effect.gen(function* () {
@@ -341,9 +341,9 @@ export const makeDatabase = (
 
     /**
      * WAL is what lets readers run while a writer holds the lock, and it is a persistent
-     * property of the file rather than of the connection — setting it every open is harmless and
+     * property of the file rather than of the connection. Setting it every open is harmless and
      * means a database created by any caller ends up in the same mode. `NORMAL` synchronous is
-     * the standard WAL pairing: a power loss can cost the last commits, which for a projection
+     * the standard WAL pairing. A power loss can cost the last commits, which for a projection
      * rebuildable from the git tree is not a durability question.
      */
     yield* attempt("pragmas", async () => {
@@ -363,7 +363,7 @@ export const makeDatabase = (
         }),
       /**
        * Rows come back as null-prototype records of `SQLOutputValue`, and the caller names the
-       * shape it expects. The cast is the seam where an untyped driver row becomes a typed row: the
+       * shape it expects. The cast is the seam where an untyped driver row becomes a typed row. The
        * SQL and the type parameter are written together, and no runtime check here could tell a
        * wrong column name from a right one.
        */
@@ -376,7 +376,7 @@ export const makeDatabase = (
        *
        * The indexer's batches are thousands of rows through a handful of statements, so
        * preparing per row would pay the parse cost once per row for no benefit. Grouping by sql
-       * text keeps the cache batch-local: it cannot grow without bound the way a connection-wide
+       * text keeps the cache batch-local, so it cannot grow without bound the way a connection-wide
        * cache would under the retrieval assembler's per-scope query shapes.
        */
       writeAll: (writes) =>

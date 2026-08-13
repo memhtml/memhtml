@@ -8,14 +8,14 @@ import { Effect } from "effect"
 /**
  * `memhtml serve mcp`: run the stdio MCP server over the same repo.
  *
- * **A child process, not an in-process server, and the reason is stdout.** The CLI's contract is
- * exactly one JSON envelope on stdout; a stdio MCP server owns stdout as an NDJSON-RPC stream. Two
- * writers on one file descriptor is a corrupted stream for whichever of the two a client is parsing,
- * and there is no framing that makes both readable at once.
+ * **The server runs as a child process because of stdout.** The CLI's contract is exactly one JSON
+ * envelope on stdout, and a stdio MCP server owns stdout as an NDJSON-RPC stream. Two writers on one
+ * file descriptor corrupt the stream for whichever of the two a client is parsing, and no framing
+ * makes both readable at once.
  *
  * `stdio: "inherit"` hands the child the very descriptors the MCP client opened, so the client talks
  * to `memhtml-mcp` directly and this process is only a supervisor. The child inherits the environment
- * too, which is what makes it build a byte-identical `AppLive` — same region, same credentials.
+ * too, which is what makes it build a byte-identical `AppLive`: same region, same credentials.
  * `MEMHTML_ROOT` is passed explicitly on top so a `--repo` override reaches the server, which an
  * inherited environment alone would not carry.
  */
@@ -34,15 +34,15 @@ export const MCP_BIN_VAR = "MEMHTML_MCP_BIN"
 /**
  * The `memhtml-mcp` entry point.
  *
- * Resolved by PATH, not by `require.resolve`, and that is forced by the dependency direction:
+ * Resolved by PATH rather than by `require.resolve`, which the dependency direction forces.
  * `@memhtml/mcp` depends on `@memhtml/cli` for the composition root, so `@memhtml/cli` cannot depend on
- * `@memhtml/mcp` without a cycle — and node resolution can only find a package that IS a dependency.
+ * `@memhtml/mcp` without a cycle, and node resolution can only find a package that is a dependency.
  * (`require.resolve("@memhtml/mcp/bin")` from here raises `MODULE_NOT_FOUND`, which is how this was
  * found.)
  *
- * So the two apps are located as what they are: siblings in one build, shipped and versioned
- * together. `apps/cli/dist/serve.js` → `apps/mcp/dist/bin.js` is two directories up and across, and
- * unlike a dependency path it is a real directory rather than a pnpm symlink into the store, so the
+ * The two apps are therefore located as siblings in one build, shipped and versioned
+ * together. `apps/cli/dist/serve.js` → `apps/mcp/dist/bin.js` is two directories up and across. Unlike
+ * a dependency path it is a real directory rather than a pnpm symlink into the store, so the
  * relative walk is stable. {@link MCP_BIN_VAR} overrides it for a deployment that separates them.
  */
 export const mcpEntryPoint = (): Effect.Effect<string, StorageFailure> =>

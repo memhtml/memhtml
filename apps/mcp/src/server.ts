@@ -13,24 +13,24 @@ export const SERVER_VERSION = "0.1.0"
  * The server as one layer: fourteen tools, two resources, over the CLI's own `AppLive`.
  *
  * The same composition the CLI builds, deliberately. An MCP server with its own layer graph would be
- * a second set of answers to which database file, which git root, and which vector space — and an
- * agent whose `memory_write` landed in one repo while its operator's `memhtml search` read another would
+ * a second set of answers to which database file, which git root, and which vector space. An agent
+ * whose `memory_write` landed in one repo while its operator's `memhtml search` read another would
  * be very hard to diagnose from either side.
  *
- * **`Logger.LogToStderr` is not optional here.** Effect's default logger writes to stdout, and stdout
- * on this transport is the NDJSON-RPC stream: one log line would corrupt the frame a client is
+ * **`Logger.LogToStderr` is required here.** Effect's default logger writes to stdout, and stdout
+ * on this transport is the NDJSON-RPC stream, so one log line would corrupt the frame a client is
  * mid-parse on. The CLI sets the same reference for the same reason, one fd over.
  *
- * **There is no server-level `instructions` here, and it is not an omission.** MCP defines an
- * `instructions` field on the initialize response for exactly the cross-tool guidance this server wants
- * to give — when to batch, the three doors, the commit duty — and effect does not emit it. Verified
- * against 4.0.0-beta.107 in the dependency's own declarations: `McpSchema` DECLARES
- * `instructions: optional(Schema.String)` on the initialize result, while `layerStdio`'s options are
- * `{name, version, protocols, extensions}` — so there is not even an argument to pass, and the handler
- * that builds the result supplies none.
+ * **There is no server-level `instructions` here, because effect provides no way to set one.** MCP
+ * defines an `instructions` field on the initialize response for exactly the cross-tool guidance
+ * this server wants to give (when to batch, the three doors, the commit duty), and effect does not
+ * emit it. Verified against 4.0.0-beta.107 in the dependency's own declarations: `McpSchema`
+ * DECLARES `instructions: optional(Schema.String)` on the initialize result, while `layerStdio`'s
+ * options are `{name, version, protocols, extensions}`, so there is not even an argument to pass,
+ * and the handler that builds the result supplies none.
  *
- * The consequence, which is why this is recorded where a maintainer would come looking for the field
- * rather than in a doc: **TOOL DESCRIPTIONS are this server's only guidance channel.** That is why
+ * **TOOL DESCRIPTIONS are this server's only guidance channel.** That consequence is recorded here,
+ * beside the field a maintainer would come looking for, rather than in a doc. It is why
  * `BATCH_GUIDANCE` and `ARTICLE_HTML_CONTRACT` in `tools.ts` are shared constants appended to every
  * description they apply to, and why they read as prose to an agent rather than as reference notes to a
  * maintainer. Do not patch the dependency; revisit this when effect wires the field, at which point the

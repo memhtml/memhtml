@@ -79,8 +79,8 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
 
 /**
  * `MEMHTML_ROOT`. Re-exported from `@memhtml/store`'s own config rather than redeclared, because the
- * store's `~` expansion is the behaviour that matters: this value arrives from a shell profile,
- * an MCP client config, and a cron line, and only the shell expands tildes.
+ * store's config expands a leading `~`. This value arrives from a shell profile, an MCP client
+ * config, and a cron line, and only the shell expands tildes on its own.
  */
 export const MemhtmlRoot = Config.string("MEMHTML_ROOT").pipe(
   Config.withDefault(join("~", "memhtml")),

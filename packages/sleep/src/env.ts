@@ -10,30 +10,30 @@ import type { PhaseCounts, SleepPhase } from "./contract.js"
  * What a sleep run is composed of, and what one phase is handed.
  *
  * Every dependency is a shape supplied by the caller. The sleep package builds none of its own
- * services: a runner that constructed a database connection or a Bedrock client could not be
+ * services. A runner that constructed a database connection or a Bedrock client could not be
  * pointed at a fixture repo, and the whole test tier for this package is a real temp-dir git repo
  * plus an in-memory SQLite database plus a scripted model.
  */
 
-/** Everything a run needs. Both optional members degrade a phase rather than failing the run. */
+/** Everything a run needs. Both optional members degrade a phase; neither fails the run. */
 export interface SleepDeps {
   readonly git: GitShape
   readonly store: StoreShape
   readonly db: DatabaseShape
   readonly indexer: IndexerShape
   /**
-   * The model behind the four LLM phases. Absent makes each of them `skipped` with a reason —
-   * distinct from `failed`, which is what a model that answers badly produces. A deterministic
+   * The model behind the four LLM phases. Absent makes each of them `skipped` with a reason.
+   * That differs from `failed`, which is what a model that answers badly produces. A deterministic
    * run (a dry run, a fixture without credentials) is not a broken run.
    */
   readonly model?: ModelClientShape | undefined
   /**
    * The agent behind trace consolidation, or absent.
    *
-   * Its own port rather than a use of {@link model}, because it is not a model call: it is an agent
-   * session that greps and reads inside a sandbox over many turns, and its cost comes back as a
-   * COUNT of calls rather than as one. Absent degrades the phase to `ok` with a reason, exactly as
-   * an absent `model` does for the other three — a run without Bedrock credentials, which is every
+   * A separate port from {@link model}, because it runs an agent session that greps and reads
+   * inside a sandbox over many turns, and its cost comes back as a COUNT of calls instead of
+   * one. Absent degrades the phase to `ok` with a reason, exactly as
+   * an absent `model` does for the other three. A run without Bedrock credentials, which is every
    * CI run, is not a broken run.
    */
   readonly consolidator?: ConsolidatorPort | undefined
@@ -45,8 +45,8 @@ export interface SleepDeps {
  * Model assignments per LLM phase: the cheap judge for stance, the strong one for synthesis.
  *
  * `trace-consolidation` names `opus-5` and does not thereby choose it. The consolidator is an eve
- * agent that pins its own model in `apps/consolidator/agent/agent.ts`, and this map cannot reach it —
- * so the entry exists to AGREE with that pin rather than to drive it, and a reader comparing the two
+ * agent that pins its own model in `apps/consolidator/agent/agent.ts`, and this map cannot reach that
+ * pin. The entry exists to AGREE with it, so a reader comparing the two
  * finds one answer instead of a silent disagreement. (ROADMAP item 11's recorded decision: Opus 5 on
  * the Bedrock global endpoint, high reasoning effort, no cost ceiling.)
  */
@@ -64,9 +64,9 @@ export const modelFor = (deps: SleepDeps, phase: SleepPhase): ModelKey =>
 /**
  * What every phase can fail with.
  *
- * A phase failure never leaves the runner: it is caught with `Effect.result` and becomes a
+ * A phase failure stays inside the runner. It is caught with `Effect.result` and becomes a
  * `PhaseResult` with `status: "failed"`. So this union exists to keep each phase's own error channel
- * typed — a phase that could fail with something outside it would be a phase whose failure the runner
+ * typed. A phase that could fail with something outside it would be a phase whose failure the runner
  * cannot describe in a report line.
  */
 export type SleepError = StoreError | EmbedModelMismatch
@@ -79,7 +79,7 @@ export interface PhaseEnv {
   readonly branch: string
   readonly baseSha: string
   /**
-   * The run date as `YYYY-MM-DD`. A PARAMETER, never read from the clock inside a phase: a
+   * The run date as `YYYY-MM-DD`. A PARAMETER; a phase reads no clock. A
    * worker passes wall-clock and a test passes a fixed date, which is what makes an archive
    * year partition and a `memhtml-valid-until` extension assertable.
    */

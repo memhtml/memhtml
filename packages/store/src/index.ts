@@ -1,16 +1,16 @@
 /**
- * `@memhtml/store` — the git-backed file store. Every operation that changes the corpus is one
+ * `@memhtml/store` is the git-backed file store. Every operation that changes the corpus is one
  * commit, and every git failure is a typed value.
  *
- * The tree is the system of record; `.memhtml/index.db` is derived from it. That is what makes the
- * store the only writer: an operation that changed a file without committing would leave the
+ * The tree is the system of record, and `.memhtml/index.db` is derived from it. That is what makes the
+ * store the only writer. An operation that changed a file without committing would leave the
  * index describing a state git does not have, and `git status` is what tells the indexer so.
  */
 
 /**
  * PARA's four buckets are owned by `@memhtml/contracts` and re-exported here, not restated. Two
  * copies of a closed vocabulary drift the moment one is edited, and the `files.para` CHECK
- * constraint already restates this set once in SQL — a third copy would be a third thing to
+ * constraint already restates this set once in SQL. A third copy would be a third thing to
  * keep in agreement.
  */
 export { PARA_BUCKETS, type ParaBucket } from "@memhtml/contracts/types"

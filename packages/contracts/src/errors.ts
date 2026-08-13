@@ -53,8 +53,8 @@ export class DirtyTree extends Schema.TaggedError<DirtyTree>()("DirtyTree", {
 
 /**
  * The model broke its structured-output contract: an undecodable tool payload, a
- * `max_tokens` stop, or a refusal. The item loses its result — a violation is
- * never coerced into a value.
+ * `max_tokens` stop, or a refusal. The item is reported with no result, and a
+ * violation does not become a value.
  */
 export class LlmContractViolation extends Schema.TaggedError<LlmContractViolation>()(
   "LlmContractViolation",

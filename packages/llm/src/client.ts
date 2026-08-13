@@ -3,9 +3,9 @@ import { ModelUnavailable } from "@memhtml/contracts/errors"
 import { Config, Effect } from "effect"
 
 /**
- * The one Bedrock call this package makes, named as a structural type rather than the
+ * The one Bedrock call this package makes, named as a structural type instead of the
  * SDK class. `BedrockRuntimeClient` satisfies it, and so does a fake that records the
- * request body and returns a canned payload — which is what lets every wire assertion
+ * request body and returns a canned payload. That fake lets every wire assertion
  * (batch boundaries, `output_dimension`, the `thinking` key, a truncated `stop_reason`)
  * run with no network and no credential. The response is narrowed to `body` because
  * that is the only field either lane reads.
@@ -19,9 +19,9 @@ export interface InvokeClient {
 
 /**
  * A Bedrock rejection reduced to the model and the driver's own summary. The reason
- * carries no prompt and no memory body: a `ModelUnavailable` is returned to an agent
- * through a tool response, and the corpus content that produced it is not the agent's
- * to see twice.
+ * carries no prompt and no memory body, because a `ModelUnavailable` goes back to an
+ * agent through a tool response, and the corpus content that produced it does not need
+ * to be repeated there.
  */
 export const modelFailure = (modelId: string, cause: unknown): ModelUnavailable =>
   ModelUnavailable.make({
@@ -32,8 +32,8 @@ export const modelFailure = (modelId: string, cause: unknown): ModelUnavailable 
 /**
  * One InvokeModel round trip: send the body, decode the JSON payload. Both the transport
  * rejection and an unparseable payload land on `ModelUnavailable`, because neither one
- * tells us anything about the model's answer — only that we never got one. Reading the
- * answer, and judging whether it honours its contract, is the caller's job.
+ * says anything about the model's answer. They say only that no answer arrived. Reading
+ * the answer, and judging whether it honours its contract, is the caller's job.
  */
 export const invokeJson = (
   client: InvokeClient,

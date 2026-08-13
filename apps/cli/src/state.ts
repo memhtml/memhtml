@@ -11,13 +11,13 @@ import { Git } from "./api-layer.js"
 /**
  * `memhtml state export|import`: the state plane's only durability story.
  *
- * `state.db` is gitignored and is NOT rebuildable from git — access counts, reinforcement counts, and
+ * `state.db` is gitignored and cannot be rebuilt from git. Access counts, reinforcement counts, and
  * the outcome EWMA are the one set of facts the tree cannot reproduce. `.memhtml/state/access.jsonl` is
  * the committed sidecar that survives, so a fresh clone plus `memhtml state import` plus
  * `memhtml index rebuild` reproduces the whole system rather than a system with amnesia.
  *
- * Both halves reuse `@memhtml/sleep`'s own functions — `renderSidecar` for the export, `parseSidecar` for
- * the import — because the sleep cycle's state-export phase writes this file every night and two
+ * Both halves reuse `@memhtml/sleep`'s own functions, `renderSidecar` for the export and `parseSidecar`
+ * for the import, because the sleep cycle's state-export phase writes this file every night and two
  * writers producing two byte sequences for one plane would churn the file on alternating nights. The
  * only difference between this command and that phase is which commit the result lands in.
  */
@@ -38,7 +38,7 @@ export interface StateImportReport {
   readonly rows: number
   /** Rows actually written into `state.access`. */
   readonly restored: number
-  /** Sidecar lines that did not parse. Counted, never fatal — a partial file restores what it holds. */
+  /** Sidecar lines that did not parse. Counted and not fatal: a partial file restores what it holds. */
   readonly skipped: number
   readonly hasState: boolean
 }
@@ -46,10 +46,10 @@ export interface StateImportReport {
 /**
  * Write the sidecar and commit it.
  *
- * Byte-stable or it commits nothing: rows arrive path-ordered from SQL and floats are rounded to the
- * domain's four-decimal grid, so an unchanged plane produces an identical file and `git commit`
- * no-ops on an index matching HEAD. Without that, the widest-churn table in the system would produce
- * a commit every time an operator ran this.
+ * The output is byte-stable, so an unchanged plane commits nothing. Rows arrive path-ordered from SQL
+ * and floats are rounded to the domain's four-decimal grid, so an unchanged plane produces an
+ * identical file and `git commit` no-ops on an index matching HEAD. Without that, the widest-churn
+ * table in the system would produce a commit every time an operator ran this.
  */
 export const stateExport = () =>
   Effect.gen(function* () {
@@ -91,14 +91,14 @@ export const stateExport = () =>
 /**
  * Replay the sidecar into `state.access`.
  *
- * An upsert per row rather than a truncate-and-load: an import onto a live plane must not discard
- * counters the sidecar predates — the sidecar is refreshed once per night and a retrieval an hour
- * later is real state. The upsert takes the MAXIMUM of the two counts for the same reason design §9's
+ * An upsert per row rather than a truncate-and-load, because an import onto a live plane must not
+ * discard counters the sidecar predates. The sidecar is refreshed once per night, and a retrieval an
+ * hour later is real state. The upsert takes the maximum of the two counts for the reason design §9's
  * multi-machine note gives: these columns are monotone, so max-of is the merge that cannot lose a
  * bump, while last-writer-wins can.
  *
  * `parseSidecar` is defensive per line, so a file truncated by an interrupted write restores every row
- * it does hold — refusing the whole file would turn a partial loss into a total one.
+ * it does hold. Rejecting the whole file would turn a partial loss into a total one.
  */
 export const stateImport = () =>
   Effect.gen(function* () {

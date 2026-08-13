@@ -6,30 +6,30 @@ import { emptyOutcome, type PhaseBody } from "../env.js"
 import { activeEntities, type EntityCount, pathsForEntity } from "../sql.js"
 
 /**
- * Phase 3 — entity resolution. Normalize entity names, then fuzzy-merge transitive alias clusters.
+ * Phase 3, entity resolution. Normalize entity names, then fuzzy-merge transitive alias clusters.
  * ONE commit rewriting `memhtml-entity` values in place.
  *
- * Two passes. The first lowercases and collapses whitespace, and is idempotent — a second run
+ * Two passes. The first lowercases and collapses whitespace, and is idempotent, so a second run
  * touches nothing. The second is a union-find over pairs above {@link AUTO_MERGE_THRESHOLD}, so
  * `A~B` and `B~C` land in one cluster; the name held by the most active files wins the root, ties
  * broken lexicographically so a corpus that did not change resolves the same way twice.
  *
  * **Similarity is a normalized-string ratio, not an embedding cosine.** Entity names are short
- * identifiers — `checkout-api`, `checkout_api`, `Checkout API` — where the whole signal is character
- * overlap, and an embedding of a two-token name is dominated by whatever domain the tokens evoke:
+ * identifiers such as `checkout-api`, `checkout_api`, and `Checkout API`, where the whole signal is
+ * character overlap. An embedding of a two-token name is dominated by whatever domain the tokens evoke:
  * `checkout-api` and `payments-api` sit high in vector space because both are payment services, and
  * merging them would fuse two services' memories permanently. A character ratio cannot make that
  * mistake. This is the packet's documented choice between the two options it offered.
  *
- * The 0.75-0.85 band is COUNTED, not merged. A review candidate is a human's call: entity merges are
- * a one-way door on stored identity, and the failure mode of an over-eager threshold is silent and
- * permanent.
+ * The 0.75-0.85 band is COUNTED, not merged. A review candidate is a human's call, because entity
+ * merges are a one-way door on stored identity and the failure mode of an over-eager threshold is
+ * silent and permanent.
  */
 
 /** At or above this ratio two names are the same entity. Auto-merged. */
 export const AUTO_MERGE_THRESHOLD = 0.85
 
-/** At or above this ratio, below the auto threshold: counted for review, never merged. */
+/** At or above this ratio, below the auto threshold: counted for review, left unmerged. */
 export const REVIEW_THRESHOLD = 0.75
 
 /** Lowercase, NFC-normalize, collapse internal whitespace, trim. The pre-compare form. */
@@ -40,9 +40,9 @@ export const normalizeEntityName = (name: string): string =>
  * A character-overlap similarity in `[0, 1]`: the longest common subsequence over the mean length.
  *
  * Chosen over Levenshtein because it is monotone in shared ordered characters, which is what a
- * separator or casing change actually is: `checkout-api` against `checkout api` differs in one
+ * separator or casing change actually is. `checkout-api` against `checkout api` differs in one
  * character and scores 0.92, while `checkout-api` against `payments-api` shares only the suffix and
- * scores 0.67 — below both thresholds, so two distinct services never fuse.
+ * scores 0.67. That sits below both thresholds, so two distinct services stay separate.
  */
 export const nameSimilarity = (left: string, right: string): number => {
   if (left === right) return 1

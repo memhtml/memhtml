@@ -7,8 +7,8 @@ import { RRF_K } from "./ranking.js"
  */
 
 /**
- * One arm's hit. `rank` is a **1-based position within that one arm's own candidate list** —
- * not a global rank and not a score, which is exactly why RRF works across arms whose scores
+ * One arm's hit. `rank` is a **1-based position within that one arm's own candidate list**,
+ * not a global rank and not a score. That is what lets RRF work across arms whose scores
  * are incomparable.
  */
 export interface ArmHit {
@@ -29,8 +29,8 @@ export const rrfScore = (rank: number, weight: number, k: number = RRF_K): numbe
 /**
  * Fuse per-arm ranked lists into one `path -> score` map by summing contributions.
  *
- * `armResults[i]` pairs with `weights[i]`; an arm with no weight scores 0 throughout. The
- * result is order-insensitive across arms — addition commutes — so the arm registry's order
+ * `armResults[i]` pairs with `weights[i]`; an arm with no weight scores 0 throughout. Addition
+ * commutes, so the result is order-insensitive across arms and the arm registry's order
  * is a presentation detail rather than a ranking input. A duplicate path inside one arm's
  * list accumulates, matching the SQL's `SUM` over a `UNION ALL`.
  */
@@ -52,7 +52,7 @@ export const fuseArms = (
 
 /**
  * Fused scores as a ranked list, best first. Ties break on path ascending, so the ordering is
- * total and reproducible — two runs over the same corpus produce the same list, which is what
+ * total and reproducible. Two runs over the same corpus produce the same list, which is what
  * the discrimination gate compares against.
  */
 export const rankFused = (

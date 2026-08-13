@@ -11,7 +11,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
  * which is free Opus tokens plus a bash sandbox. That alone was rated MEDIUM (CWE-306).
  *
  * The sandbox half is what makes it more than that. The sandbox has FULL network egress and this app
- * cannot turn it off — `network:{dangerouslyAllowFullInternetAccess:!0}` is a hardcoded literal in
+ * cannot turn it off: `network:{dangerouslyAllowFullInternetAccess:!0}` is a hardcoded literal in
  * node_modules/eve/dist/src/execution/sandbox/bindings/just-bash-runtime.js, and
  * `justBashSetNetworkPolicyUnsupported()` throws by design. Measured 2026-08-09
  * (`node scripts/probe-sandbox-egress.mjs`): `curl` reaches example.com, an IMDSv2 token PUT returns
@@ -28,7 +28,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
  * SERVER process while the value is decided by the CLIENT that spawns it.
  *
  * **No eve import here.** `VerifyJwtHmacConfig` is a plain interface, so {@link RunVerifierConfig}
- * restates it structurally — the same move `contract.ts` makes for `JsonObject`, and it is what keeps
+ * restates it structurally, the same move `contract.ts` makes for `JsonObject`. That keeps
  * eve out of `src/`'s import graph so the test tier stays server-free. TypeScript is structural, so
  * the value {@link runVerifierConfig} returns is assignable to `jwtHmac`'s parameter with no cast.
  *
@@ -43,9 +43,9 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
  * The variable a spawning client uses to hand the server the run's secret.
  *
  * Named for its LIFETIME rather than its content, because the lifetime is the security property: one
- * spawn, one secret. A value that survived a run — a fixed default, a config key, anything a caller
- * could supply — would reopen the window this closes, since the window is exactly "how long is a
- * credential that reaches this endpoint good for".
+ * spawn, one secret. A value that survived a run, such as a fixed default, a config key, or anything
+ * a caller could supply, would reopen the window this closes, since the window is exactly "how long
+ * is a credential that reaches this endpoint good for".
  */
 export const RUN_SECRET_ENV = "MEMHTML_CONSOLIDATOR_RUN_SECRET"
 
@@ -54,7 +54,7 @@ export const RUN_SECRET_ENV = "MEMHTML_CONSOLIDATOR_RUN_SECRET"
  *
  * RFC 7518 §3.2 requires an HMAC key at least the size of the hash output, and eve keys the verifier
  * with `createSecretKey(Buffer.from(secret, "utf8"))`
- * (node_modules/eve/dist/src/runtime/governance/auth/jwt-hmac.js) — so the KEY MATERIAL is the
+ * (node_modules/eve/dist/src/runtime/governance/auth/jwt-hmac.js), so the KEY MATERIAL is the
  * base64url text, 43 bytes, carrying these 32 bytes of entropy. Both the byte count and the encoded
  * length clear the floor.
  *
@@ -102,7 +102,7 @@ const SUBJECT = "memhtml-consolidator-client"
  * `TokenValue`, which resolves before every HTTP call
  * (node_modules/eve/dist/src/client/types.d.ts:49-69), so a 10-minute turn presents a fresh token on
  * every request rather than one token held open for the turn. That decouples the credential's
- * lifetime from `TURN_TIMEOUT_MS` entirely — a stream reconnect ten minutes in signs a new token.
+ * lifetime from `TURN_TIMEOUT_MS` entirely: a stream reconnect ten minutes in signs a new token.
  *
  * 120s rather than something tighter because the bound that matters is the SERVER's lifetime (one
  * run), and a token has to survive being minted before a request that then queues behind a model
@@ -123,8 +123,8 @@ const CLOCK_SKEW_SECONDS = 5
  * eve's `VerifyJwtHmacConfig`, restated structurally.
  *
  * Field for field with node_modules/eve/dist/src/public/channels/auth.d.ts:41-60, minus the two
- * optional matchers this app does not use. Declared rather than imported to keep `src/` free of eve
- * — see the note at the top of this module.
+ * optional matchers this app does not use. Declared rather than imported to keep `src/` free of eve.
+ * See the note at the top of this module.
  */
 export interface RunVerifierConfig {
   readonly algorithm: "HS256" | "HS384" | "HS512"
@@ -140,7 +140,7 @@ export interface RunVerifierConfig {
  *
  * `randomBytes` and not `randomUUID`: a UUIDv4 carries 122 bits in a fixed 36-character shape, which
  * is under the HS256 key floor {@link SECRET_BYTES} exists to clear. base64url so the value is safe
- * in an environment variable with no quoting question — `+`, `/`, and `=` are all avoided.
+ * in an environment variable with no quoting question, since `+`, `/`, and `=` are all avoided.
  */
 export const mintRunSecret = (): string => randomBytes(SECRET_BYTES).toString("base64url")
 
@@ -149,10 +149,10 @@ export const mintRunSecret = (): string => randomBytes(SECRET_BYTES).toString("b
  *
  * `null` is the FAIL-CLOSED signal and the callers on both sides treat it that way: the channel turns
  * it into a 401 by handing `routeAuth` a walk with nothing that can accept. Absent, blank, and
- * under-width all collapse to `null` on purpose — the caller's move is the same for each (refuse), and
- * distinguishing them in a return value would invite a caller to accept one of them.
+ * under-width all collapse to `null` on purpose, since the caller's move is the same for each
+ * (refuse), and distinguishing them in a return value would invite a caller to accept one of them.
  *
- * Never logged and never returned in a message. The value is the credential.
+ * The value is the credential, so it is not logged and not returned in a message.
  */
 export const runSecretFrom = (env: Record<string, string | undefined>): string | null => {
   const raw = env[RUN_SECRET_ENV]
@@ -166,8 +166,8 @@ export const runSecretFrom = (env: Record<string, string | undefined>): string |
  * The verifier configuration for an environment, or `null` when it holds no usable secret.
  *
  * Both sides of the boundary read their claims from the constants above through this one function and
- * {@link signRunToken}, so a mismatch between what is signed and what is accepted is not expressible
- * — which matters because every claim mismatch fails the same silent way, as `{ ok: false }` with no
+ * {@link signRunToken}, so a mismatch between what is signed and what is accepted is not expressible.
+ * That matters because every claim mismatch fails the same silent way, as `{ ok: false }` with no
  * detail (eve returns no reason so routes cannot leak which check failed, auth.d.ts:9-19).
  */
 export const runVerifierConfig = (
@@ -199,7 +199,7 @@ const segment = (value: unknown): string =>
  * reason both live in this module.
  *
  * `exp` is derived from the call, not from the spawn, so each call produces a token valid
- * {@link TOKEN_TTL_SECONDS} from now — that is what makes the per-request function form work.
+ * {@link TOKEN_TTL_SECONDS} from now, which is what makes the per-request function form work.
  */
 export const signRunToken = (input: { readonly secret: string }): string => {
   const now = Math.floor(Date.now() / 1_000)

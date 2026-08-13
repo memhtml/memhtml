@@ -1,8 +1,8 @@
 /**
  * The closed vocabulary: which elements a memory file may use, which metadata names it
  * carries, and the HTML serialization facts (void elements, raw-text elements) the
- * serializer needs. Everything here is data — the vocabulary IS the policy, so there is no
- * sanitizer library and no allow/deny logic in this module.
+ * serializer needs. Everything here is data, because the vocabulary IS the policy, so this
+ * module holds no sanitizer library and no allow/deny logic.
  */
 
 /**
@@ -29,7 +29,7 @@ export const isRepeatableMeta = (name: string): name is RepeatableMeta =>
  * The metas a file must carry. Each of the five is a fact no pure function can invent: a
  * type cannot be guessed from prose, a status cannot be inferred, and a timestamp cannot be
  * synthesized without a clock. `memhtml-confidence`, `memhtml-importance`, and `memhtml-author` are
- * deliberately absent — the `files` table documents a default for each (1.0, 5, `agent`),
+ * deliberately absent, because the `files` table documents a default for each (1.0, 5, `agent`),
  * so a hand-authored file missing them is completed rather than refused.
  */
 export const REQUIRED_META = [
@@ -41,8 +41,8 @@ export const REQUIRED_META = [
 
 /**
  * Every metadata name in the closed vocabulary, in the order the serializer emits them.
- * A stable order is what makes a meta-only edit a one-line git diff: two writers stamping
- * different keys never reorder each other's lines.
+ * A stable order is what makes a meta-only edit a one-line git diff, so two writers stamping
+ * different keys leave each other's lines in place.
  */
 export const META_ORDER = [
   "memhtml-type",
@@ -90,7 +90,7 @@ export const DOCUMENT_ELEMENTS = ["html", "head", "body", "title", "meta", "link
  *
  * `tr` is here although the table lists only `caption/thead/tbody/th/td`: a `<table>` cannot
  * hold a cell without a row, so refusing `tr` would make every real table warn. Nothing else
- * is added by inference — an element the format does not name is a warning, which is the
+ * is added by inference. An element the format does not name is a warning, which is the
  * graceful-degradation rule for hand-authored files.
  */
 export const ARTICLE_ELEMENTS = [
@@ -134,8 +134,8 @@ export const ARTICLE_ELEMENTS = [
 
 /**
  * `<address>` is the contact surface a person file adds. Permitted everywhere rather than
- * only under `resources/people/` — this module sees HTML, never a path, and a warning keyed
- * on a directory would belong to `memhtml doctor`, not to the parser.
+ * only under `resources/people/`, because this module sees HTML and no path, and a warning
+ * keyed on a directory would belong to `memhtml doctor`, not to the parser.
  */
 export const PERSON_ELEMENTS = ["address"] as const
 
@@ -185,8 +185,8 @@ export const VOID_ELEMENTS: ReadonlySet<string> = new Set([
 
 /**
  * Elements whose text children are emitted verbatim, with no character-reference escaping.
- * `<script>` and `<style>` are constraint-3 violations rather than vocabulary members, but
- * the serializer still has to round-trip a file that carries one before the constraint is
+ * `<script>` and `<style>` are constraint-3 violations rather than vocabulary members. The
+ * serializer still has to round-trip a file that carries one before the constraint is
  * reported, so both are listed.
  */
 export const RAW_TEXT_ELEMENTS: ReadonlySet<string> = new Set([
@@ -213,7 +213,7 @@ export const NEWLINE_SWALLOWING_ELEMENTS: ReadonlySet<string> = new Set([
 
 /**
  * Elements whose text the gist must not absorb. A command line is body text and it is
- * searchable, but it is never the claim — the claim is prose in the `<mark>` span.
+ * searchable. The claim is prose in the `<mark>` span.
  */
 export const GIST_EXCLUDED_ELEMENTS: ReadonlySet<string> = new Set(["pre", "code"])
 
@@ -221,7 +221,7 @@ export const GIST_EXCLUDED_ELEMENTS: ReadonlySet<string> = new Set(["pre", "code
  * Phrasing-level elements: their text runs into the surrounding sentence, so no word boundary
  * is implied at their edges. Everything else in the vocabulary is block-level, and `bodyText`
  * inserts a space at a block edge so `<dt>Applies to</dt><dd>ALB</dd>` yields two searchable
- * words rather than the fused `to ALB` the raw text content would give.
+ * words, not the fused `to ALB` the raw text content would give.
  *
  * The content hash deliberately does NOT use this set: its scope is defined as the article's
  * whitespace-normalized text content, so inserting separators there would make the digest a

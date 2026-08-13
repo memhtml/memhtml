@@ -12,9 +12,9 @@ import {
 } from "./watermark.js"
 
 /**
- * The scan: discovery, the watermark decision, and extraction composed into the unit the indexer
- * persists. Persistence itself is T7's — this module reads a watermark through a callback and hands
- * back the new one, so it stays free of SQL and testable against an in-memory map.
+ * The scan composes discovery, the watermark decision, and extraction into the unit the indexer
+ * persists. Persistence itself belongs to T7. This module reads a watermark through a callback and
+ * hands back the new one, so it stays free of SQL and testable against an in-memory map.
  */
 
 /** Reads a file's stored watermark. `null` for a file never scanned. */
@@ -24,7 +24,7 @@ export type WatermarkReader = (filePath: string) => Effect.Effect<Watermark | nu
 export interface ScannedFile {
   readonly file: SessionFile
   readonly action: WatermarkAction
-  /** Absent for a `skip` — a skipped file is not opened, so it yields no extract. */
+  /** Absent for a `skip`, because a skipped file is not opened and yields no extract. */
   readonly extract: SessionExtract | null
   /**
    * `agent_count` for the `traces` row: this file's distinct `agentId`s unioned with the sidecar
@@ -48,8 +48,8 @@ export interface ScanReport {
 /**
  * Scan every transcript under `traceRoot`, reading only what the watermarks say changed.
  *
- * `traceRoot` is a parameter — `~/.claude` is the caller's default, never this module's constant, so
- * the whole scan is drivable against a fixture tree.
+ * `traceRoot` is a parameter. `~/.claude` is the caller's default rather than this module's
+ * constant, so the whole scan is drivable against a fixture tree.
  *
  * Files are processed sequentially. Concurrency here would trade a bounded, predictable IO profile
  * for contention with the live process that is *writing* these transcripts, and the incremental
@@ -107,21 +107,21 @@ export const scanTraceRoot = (
   }).pipe(Effect.withSpan("traces.scanTraceRoot"))
 
 /**
- * Merge a tail's extract into the session's stored one. **Tails only** — a rescan's extract
+ * Merge a tail's extract into the session's stored one. **Tails only**, because a rescan's extract
  * already describes the whole file and replaces the stored row outright.
  *
- * The merge exists because a tail's extract describes the *appended slice*, not the session: its
- * `first_prompt` is a prompt from the middle of the conversation, its `started_at` is an hour after
- * the session began, its `turn_count` counts only new turns, and its prompt ordinals restart at 0.
- * Every field below states which side owns it and why. This is producer-owned reading semantics:
- * an indexer that merged these fields itself would have to rediscover all of it.
+ * The merge exists because a tail's extract describes the *appended slice* and not the session.
+ * Its `first_prompt` is a prompt from the middle of the conversation, its `started_at` is an hour
+ * after the session began, its `turn_count` counts only new turns, and its prompt ordinals restart
+ * at 0. Every field below states which side owns it and why. The producer owns these reading
+ * semantics, so an indexer that merged the fields itself would have to rediscover all of it.
  */
 export const mergeTailExtract = (stored: SessionExtract, tail: SessionExtract): SessionExtract => {
   const prompts = mergePrompts(stored.prompts, tail.prompts)
   return {
     filePath: tail.filePath,
     slug: tail.slug === "" ? stored.slug : tail.slug,
-    // Identity: the older side is authoritative — these come from the *first* enveloped record.
+    // Identity: the older side wins, since these come from the *first* enveloped record.
     sessionId: stored.sessionId ?? tail.sessionId,
     cwd: stored.cwd ?? tail.cwd,
     entrypoint: stored.entrypoint ?? tail.entrypoint,
@@ -132,8 +132,8 @@ export const mergeTailExtract = (stored: SessionExtract, tail: SessionExtract): 
     model: tail.model ?? stored.model,
     startedAt: earliest(stored.startedAt, tail.startedAt),
     endedAt: latest(stored.endedAt, tail.endedAt),
-    // Derived from the merged set, never summed: a prompt straddling the tail boundary appears in
-    // both extracts, so `stored + tail` would count it twice.
+    // Derived from the merged set instead of summed. A prompt straddling the tail boundary appears
+    // in both extracts, so `stored + tail` would count it twice.
     promptCount: prompts.length,
     // Summed: a tail's `turnCount` counts only the records it read.
     turnCount: stored.turnCount + tail.turnCount,
@@ -155,10 +155,10 @@ export const mergeTailExtract = (stored: SessionExtract, tail: SessionExtract): 
  * Concatenate two prompt lists into one per-session first-appearance ordering.
  *
  * A tail's ordinals are 0-based over the appended slice, so they are renumbered from the end of the
- * stored list — otherwise every tail would collide with ordinal 0 and `trace_prompts.ordinal` would
- * stop being an order at all. A `promptId` present in both sides keeps its stored ordinal, uuid, and
- * instant (it began before the tail), and takes the tail's `textHead` only when the stored one is
- * empty, which is how a prompt whose text arrived after the boundary gets indexed.
+ * stored list. Without that, every tail would collide with ordinal 0 and `trace_prompts.ordinal`
+ * would stop being an order at all. A `promptId` present in both sides keeps its stored ordinal,
+ * uuid, and instant, since it began before the tail. It takes the tail's `textHead` only when the
+ * stored one is empty, which is how a prompt whose text arrived after the boundary gets indexed.
  */
 export const mergePrompts = (
   stored: ReadonlyArray<PromptRow>,

@@ -5,11 +5,11 @@ import { buildCorpus, DEFAULT_CORPUS_SIZE, DEFAULT_PROBE_COUNT, DEFAULT_SEED } f
 import { makeFixtureCorpus } from "./fixture.js"
 
 /**
- * `pnpm gen:fixture` — write a fixture corpus somewhere an operator can browse it.
+ * `pnpm gen:fixture` writes a fixture corpus somewhere an operator can browse it.
  *
- * The corpus is NOT committed and this script is not part of any gate: the tests and
+ * The corpus is NOT committed and this script is not part of any gate. The tests and
  * `memhtml eval discriminate` generate their own into a temp directory, because `corpus.ts` is a pure
- * function of a seed. This exists for the case a generated corpus needs to be looked at — a probe
+ * function of a seed. This exists for the case a generated corpus needs to be looked at. A probe
  * whose target ranks below a control is far easier to understand with both files open than with a
  * rank in an envelope.
  *
@@ -41,7 +41,7 @@ const options = {
 
 /**
  * `--dry-run` builds the spec and writes nothing, so the probe set is inspectable without a
- * filesystem — which is how a corpus change is reviewed before it is generated.
+ * filesystem. That is how a corpus change is reviewed before it is generated.
  */
 if (process.argv.includes("--dry-run")) {
   const spec = buildCorpus(options)

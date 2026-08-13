@@ -62,9 +62,9 @@ export class CandidateEvidence extends Schema.Class<CandidateEvidence>("Candidat
   /**
    * The session the quote was read from.
    *
-   * Must be one of the ids this run made READABLE, which the schema cannot express — a set membership
-   * over per-run values is not a schema constraint. {@link ungroundedEvidenceReason} is that rule,
-   * applied by `client.ts`'s `runTurn` immediately after decode, where the reachable batch is in scope;
+   * Must be one of the ids this run made READABLE, which the schema cannot express, because a set
+   * membership over per-run values is not a schema constraint. {@link ungroundedEvidenceReason} holds
+   * that rule, applied by `runTurn` in `client.ts` after decode, where the reachable batch is in scope;
    * a citation of an unreachable id fails the turn as a `ConsolidatorContractViolation`. All the schema
    * itself asks for is that the field is present and non-empty, so a quote cannot be unattributed.
    */
@@ -76,7 +76,7 @@ export class CandidateEvidence extends Schema.Class<CandidateEvidence>("Candidat
 /**
  * One distilled candidate. Not yet a memory: the next task decides what reaches the corpus.
  *
- * `evidence` is `minLength(2)` and that is the TRACE-2 bar expressed as a type rather than as
+ * `evidence` is `minLength(2)`, which expresses the TRACE-2 bar as a type rather than as
  * prose the model may ignore. A pattern that spans lines or sessions has at least two lines
  * behind it; a candidate that can only cite one is a restatement of that one line, which
  * `agent/instructions.md` names as below the bar. Prose in the instructions asks for the bar,
@@ -96,22 +96,22 @@ export class CandidateMemory extends Schema.Class<CandidateMemory>("CandidateMem
 /**
  * What one run produced, what it cost in model calls, and WHICH SESSIONS IT ACTUALLY REACHED.
  *
- * `analyzedSessionIds` is not reporting. It is the value a caller watermarks from, and it exists
- * because the alternative — watermarking the batch that was ASKED about — records a transcript that
+ * `analyzedSessionIds` is the value a caller watermarks from rather than a reporting field. It exists
+ * because the alternative, watermarking the batch that was ASKED about, records a transcript that
  * never arrived as consolidated and never reads it again. A batch of ten where one path has been
  * rotated away, or sits behind a symlink the sandbox will not follow, is not ten sessions read.
  *
  * The field is REQUIRED rather than optional, and that is what makes the rule structural instead of
  * advisory: nothing can produce a `ConsolidationResult` without stating what it reached, so a caller
  * has the honest set at hand and never has to fall back on the batch. `markSessionsConsolidated`'s
- * only correct input is this set, intersected with the batch — see
+ * only correct input is this set, intersected with the batch. See
  * `packages/sleep/src/phases/trace-consolidation.ts`.
  *
  * It is the set of transcripts whose files RESOLVE AT THEIR GUEST PATH inside the sandbox's
  * read-only mount, not the set the model chose to open. Those are different claims and only the
  * first is checkable: nothing outside the model can prove a file was read, while a file that does
- * not resolve was categorically not read. The pre-existing semantics of a watermark — "the agent saw
- * this session and correctly found nothing above the bar" — needs exactly the first.
+ * not resolve was categorically not read. The pre-existing semantics of a watermark, "the agent saw
+ * this session and correctly found nothing above the bar", needs exactly the first.
  */
 export class ConsolidationResult extends Schema.Class<ConsolidationResult>("ConsolidationResult")({
   candidates: Schema.Array(CandidateMemory),
@@ -125,20 +125,20 @@ export class ConsolidationResult extends Schema.Class<ConsolidationResult>("Cons
  * A candidate may only cite sessions THIS RUN MADE READABLE, and the schema cannot say so: a set
  * membership over per-run values is not a schema constraint. So the check is a function of the
  * decoded answer and the reachable ids, which is why it lives here in the contract rather than inline
- * in the client — `client.ts` needs a live eve server to reach, and INV-3 keeps this app's test tier
+ * in the client. `client.ts` needs a live eve server to reach, and INV-3 keeps this app's test tier
  * credential-free and server-free. Same reasoning `toJsonSchema` records for staying in this module.
  *
- * An id outside that set is a fabricated receipt. The id rides into the sleep phase and then into a commit
- * message as `evidence <id>:`, where a reviewer's whole recourse is to go back to that session and
- * check the quote is really there — so an id naming a session nobody read is worse than no evidence,
+ * An id outside that set is a fabricated receipt. The id rides into the sleep phase and then into a
+ * commit message as `evidence <id>:`, where a reviewer's whole recourse is to go back to that session
+ * and check the quote is really there. An id naming a session nobody read is worse than no evidence,
  * because it reads as provenance.
  *
  * **The whole TURN is refused, not the one candidate**, and that is a deliberate departure from the
  * per-candidate isolation the sleep phase applies to its own gate. Dropping the offender here would
  * be a lenient repair of a model answer, which is the posture `ConsolidationPayload`'s decode already
  * refuses with `onExcessProperty: "error"`: a filtered list is indistinguishable downstream from a
- * list the agent returned. And a fabricated id is not a fault in one candidate — it says the answer
- * is not grounded in the batch handed over, which is a fact about the run. The caller loses nothing
+ * list the agent returned. And a fabricated id says the answer is not grounded in the batch handed
+ * over, which is a fact about the run rather than a fault in one candidate. The caller loses nothing
  * it can act on: `ConsolidatorContractViolation` degrades the sleep phase to `ok` with the `_tag` in
  * its detail, leaving the batch unwatermarked for the next night.
  */
@@ -176,7 +176,7 @@ export const ungroundedEvidenceReason = (
  * a "defence" over a value we constructed asserts that we typed our own constant correctly.
  *
  * Kept as belt-and-braces it would have been WORSE than deleted, because it would have kept
- * asserting a threat model that no longer holds — and the deletion is not a downgrade in practice:
+ * asserting a threat model that no longer holds. The deletion also costs nothing in practice:
  * the readiness poll now refuses any listener that does not answer `/eve/v1/health` as eve, which
  * covers the reachable case (something else on the port) more directly than a hostname check on a
  * self-composed URL ever did.
@@ -185,7 +185,7 @@ export const ungroundedEvidenceReason = (
  * eve's piped stdout carries zero ANSI escape bytes. It does not: probed 2026-08-09 with stdout
  * redirected to a file and no TTY, a failing `eve start` emitted
  * `ESC[90mStopping server gracefully (5s)... Press ESC[1mCtrl+CESC[22m again…ESC[39m`. So an escape
- * on that stream is real, not theoretical — it is simply no longer on any path that decides an
+ * on that stream is real rather than theoretical. It is simply no longer on any path that decides an
  * address. If anything ever parses that stream again it needs the strip, and it needs the ESC byte
  * built via `String.fromCharCode` because biome's `noControlCharactersInRegex` refuses a control
  * character in regex source however it is spelled.
@@ -208,7 +208,7 @@ export class ConsolidationPayload extends Schema.Class<ConsolidationPayload>(
  * A JSON-safe object, structurally identical to eve's own `JsonObject`
  * (node_modules/eve/dist/src/shared/json.d.ts:12).
  *
- * Declared here rather than imported so `contract.ts` keeps its zero-eve-import property — that
+ * Declared here rather than imported so `contract.ts` keeps its zero-eve-import property, which
  * is what lets the test tier decode every shape with no server and no credentials. TypeScript is
  * structural, so the value below is assignable to eve's `outputSchema` parameter without a cast.
  */
@@ -221,22 +221,22 @@ export interface JsonObject {
  * Derive the JSON Schema eve is handed for `outputSchema`.
  *
  * Deliberately a local seven lines rather than an import of `@memhtml/llm`'s `toInputSchema`
- * (`packages/llm/src/structured.ts:33-38`), for two reasons. It keeps the Bedrock SDK — which
- * `@memhtml/llm` pulls in for its own client — out of this app's dependency closure, and it keeps
+ * (`packages/llm/src/structured.ts:33-38`), for two reasons. It keeps the Bedrock SDK, which
+ * `@memhtml/llm` pulls in for its own client, out of this app's dependency closure, and it keeps
  * this app's wire shape independently derived from the same effect schema, so a change in one
  * does not silently redefine the other. The `$defs` fold is the same one `structured.ts`
  * documents: `toJsonSchemaDocument` hoists nested structs into `definitions` and leaves
  * `$ref: "#/$defs/<name>"` behind, so the definitions go back under the root as `$defs`.
  *
- * The `JSON.parse(JSON.stringify(...))` normalization is not decoration: effect types the emitted
- * document loosely, and this both proves the value really is JSON-serializable — it crosses the
- * wire as a request body, so a non-serializable member would fail at the boundary instead of here
- * — and drops `undefined`-valued keys, which are not JSON and which eve's own `parseJsonValue`
- * treats as omitted.
+ * The `JSON.parse(JSON.stringify(...))` normalization does two jobs, since effect types the emitted
+ * document loosely. It proves the value really is JSON-serializable, which matters because the
+ * document crosses the wire as a request body and a non-serializable member would fail at the
+ * boundary instead of here. It also drops `undefined`-valued keys, which are not JSON and which
+ * eve's own `parseJsonValue` treats as omitted.
  *
- * The ROOT `$ref` is then inlined, and that step is not cosmetic. Measured against effect
- * 4.0.0-beta.102: `toJsonSchemaDocument(ConsolidationPayload)` returns a root of exactly
- * `{ $ref: "#/$defs/ConsolidationPayloadJsonEncoding", $defs: {...} }` — a root with NO `type`,
+ * The ROOT `$ref` is then inlined, and that step changes what a consumer reads. Measured against
+ * effect 4.0.0-beta.102: `toJsonSchemaDocument(ConsolidationPayload)` returns a root of exactly
+ * `{ $ref: "#/$defs/ConsolidationPayloadJsonEncoding", $defs: {...} }`, a root with NO `type`,
  * NO `properties`, and nothing at all describing an object. A nested `$ref` is well-supported
  * (`packages/llm/src/structured.ts:24-27` records it verified live against Bedrock's
  * `input_schema`), but a root that only points elsewhere is a different shape, and a consumer that
@@ -282,22 +282,22 @@ export const CONSOLIDATION_OUTPUT_JSON_SCHEMA = toJsonSchema(ConsolidationPayloa
 /**
  * ── `DEFAULT_TAIL_BYTES` is DELETED, and so is the reason it existed ──────────────────────────────
  *
- * It was a 256 KiB per-file cap on how much of each transcript reached the sandbox, and the cap was
- * load-bearing for a mechanism that is gone: the client SEEDED transcripts, so every seeded byte was
+ * It was a 256 KiB per-file cap on how much of each transcript reached the sandbox, and the cap
+ * bounded a mechanism that is gone: the client SEEDED transcripts, so every seeded byte was
  * resident in the server process for the session's lifetime (just-bash is a pure-JS VFS holding file
  * content in memory), and 256 KiB x 32 files was what bounded that at 8 MiB.
  *
  * Transcripts now arrive on a read-only `OverlayFs` mount that reads THROUGH to the host on demand
- * (`src/mount.ts`), so nothing is resident because nothing is copied. A 37.2 MB transcript — the
- * measured maximum over the live corpus — now costs whatever the model actually reads of it, and eve
+ * (`src/mount.ts`), so nothing is resident because nothing is copied. A 37.2 MB transcript, the
+ * measured maximum over the live corpus, now costs whatever the model actually reads of it, and eve
  * bounds each `read_file` at 2000 lines or 50 KB
  * (node_modules/eve/dist/src/execution/sandbox/truncate-output.js). The budget moved from the seeding
  * path to the reader, where the model spends it deliberately.
  *
  * Keeping the constant would have been worse than deleting it: a 256 KiB number labelled "how many
  * bytes reach the sandbox" is now FALSE, and a future reader would have taken it as a live limit.
- * The distribution it was measured against is still recorded — 11,360 transcripts, 6.59 GB, p50
- * 332 KB, p90 915 KB, p99 4.68 MB, max 37.2 MB (2026-08-08) — because
+ * The distribution it was measured against is still recorded (11,360 transcripts, 6.59 GB, p50
+ * 332 KB, p90 915 KB, p99 4.68 MB, max 37.2 MB, 2026-08-08) because
  * `packages/traces/src/parse.ts:16-21` reasons about the same shape.
  */
 
@@ -305,7 +305,7 @@ export const CONSOLIDATION_OUTPUT_JSON_SCHEMA = toJsonSchema(ConsolidationPayloa
  * Ceiling on transcripts per run.
  *
  * This one SURVIVES the seeding path's removal, and its justification changes rather than
- * disappearing. It no longer bounds resident bytes — the mount does not copy — but it still bounds
+ * disappearing. It no longer bounds resident bytes, since the mount does not copy, but it bounds
  * how many files one agent session is asked to hold in attention, and it is the guard against a
  * caller handing over five thousand sessions, which is well within what one sleep cycle could find
  * unconsolidated. The sleep phase's own `TRACE_SESSIONS_PER_RUN` is lower and binds first; this is
@@ -324,7 +324,7 @@ export interface TranscriptRef {
  * on: skip the phase, fail it, or report it.
  *
  * Payloads carry no transcript content. A consolidator error can be logged and reported by the
- * sleep cycle, and transcript text must not ride along into a report — the same posture
+ * sleep cycle, and transcript text must not ride along into a report. That is the same posture
  * `packages/contracts/src/errors.ts:5-8` states for storage failures.
  */
 
@@ -368,8 +368,8 @@ export class ConsolidatorRunFailed extends Schema.TaggedError<ConsolidatorRunFai
  * The turn settled but its structured payload is not one this contract accepts: absent when a
  * schema was requested, or present and undecodable.
  *
- * Kept apart from {@link ConsolidatorRunFailed} because it means something different about the
- * agent — it answered, and the answer broke the contract. Same posture as
+ * Kept apart from {@link ConsolidatorRunFailed} because it says something different about the
+ * agent: it answered, and the answer broke the contract. Same posture as
  * `packages/llm/src/structured.ts:52-61`: a coerced object is indistinguishable from a real one
  * downstream, so nothing lenient happens here.
  */
@@ -390,7 +390,7 @@ export type ConsolidatorError =
 /**
  * Which env vars could authenticate the Bedrock provider, in the order the provider reads them.
  *
- * The provider has NO default AWS credential chain — verified live in the probe: no shared
+ * The provider has NO default AWS credential chain, verified live in the probe: no shared
  * config file, no SSO cache, no instance metadata, env vars only. So presence here is the whole
  * question, and a preflight cannot be fooled by a profile that only the AWS CLI can see.
  */
@@ -405,7 +405,7 @@ const present = (env: Record<string, string | undefined>, name: string): boolean
 /**
  * Whether a consolidation run could authenticate at all, without making a call.
  *
- * The point of asking cheaply: the provider is lazy — `createAmazonBedrock` and
+ * Asking cheaply matters because the provider is lazy. `createAmazonBedrock` and
  * `provider(modelId)` both succeed with zero credentials, and nothing fails until the first
  * request, by which time a server has been built, spawned, and handed transcripts. Verified in
  * the probe. So the caller checks this first and skips, which is the INV-3 groundwork: CI has
@@ -415,7 +415,7 @@ const present = (env: Record<string, string | undefined>, name: string): boolean
  * practice, and `""` would authenticate nothing while reading as present.
  *
  * This answers "could a call be attempted", never "would it be authorized". A stale or
- * unentitled key passes here and fails at the call as {@link ConsolidatorRunFailed} — the
+ * unentitled key passes here and fails at the call as {@link ConsolidatorRunFailed}, which is the
  * honest split, since the only way to know a key works is to use it.
  */
 export const hasConsolidatorCredentials = (
@@ -426,7 +426,7 @@ export const hasConsolidatorCredentials = (
  * The message carried on {@link ConsolidatorCredentialsMissing}: which env vars would fix it.
  *
  * Takes no environment on purpose. It names the two accepted MECHANISMS, which never vary, and
- * says nothing about which vars are currently set — a failure message is logged and reported by
+ * says nothing about which vars are currently set. A failure message is logged and reported by
  * the sleep cycle, so naming the present-but-rejected variables would put credential-shaped
  * details into a report for no diagnostic gain. Whether a given var is set is what
  * {@link hasConsolidatorCredentials} answers.

@@ -16,19 +16,19 @@ import { readPhases, readRun, recordPhase, recordRun } from "./sql.js"
 /**
  * The runner: fifteen phases, each an isolated commit on `sleep/<date>`.
  *
- * **Per-phase isolation is the whole design, not a nicety.** The predecessor memory system ran thirteen curation phases
+ * **Per-phase isolation drives the design.** The predecessor memory system ran thirteen curation phases
  * inside one Postgres transaction, and four consecutive nights of production curation were lost
  * because one phase raised and the abort rolled back the twelve that had already succeeded. Here every
  * phase is its own commit, a failure is caught with `Effect.result` and recorded as a value, and the
- * phases after it still run — so a night that loses one phase keeps the other fourteen's work.
+ * phases after it still run, so a night that loses one phase keeps the other fourteen's work.
  *
  * The only exception is a declared hard prerequisite: `dedup-merge` failing SKIPS `compress` and
  * `retention-triage`, because both operate on the post-merge set and running them over a corpus that
  * still holds its duplicates would compress a pair the merge then archives half of.
  *
  * **Nothing is ever rolled back.** `git branch -D` on the sleep branch is the abort, and `main` never
- * moved — which is what makes a failed run cost nothing and a bad run reviewable rather than
- * recoverable.
+ * moved. So a failed run costs nothing, and a bad run is reviewed and discarded instead of
+ * recovered.
  */
 
 /** What `run` takes. `date` is a parameter: a worker passes wall-clock, a test passes a fixed date. */
@@ -139,9 +139,9 @@ export const run = (deps: SleepDeps, options: RunOptions): Effect.Effect<RunRepo
  * Resume a run: read the completed phases out of the branch's own commit trailers and execute the rest.
  *
  * **The trailers are the source of truth, not `sleep_phases`.** A journal table a resume depended on
- * would be a second record of what already happened, and the two disagree exactly when it matters —
- * a process killed after `git commit` and before the row's write. The commit is the fact; the row is
- * a convenience the history can regenerate.
+ * would be a second record of what already happened, and the two disagree exactly when it matters,
+ * on a process killed after `git commit` and before the row's write. The commit is the fact; the row
+ * is a convenience the history can regenerate.
  */
 export const resume = (
   deps: SleepDeps,
@@ -223,8 +223,8 @@ export const resume = (
 /**
  * Execute phases in order, isolating each failure.
  *
- * `Effect.result` rather than `Effect.either`, which does not exist in effect 4.0.0-beta.102. The
- * distinction that matters here is not the name: a phase failure must become a VALUE the loop reads,
+ * `Effect.result`, because `Effect.either` does not exist in effect 4.0.0-beta.102. What the loop needs
+ * from either name is the same: a phase failure becomes a VALUE the loop reads,
  * so the loop keeps going. Anything that let a failure travel through the error channel would abort
  * the run and lose every prior phase's report row.
  */
@@ -281,8 +281,8 @@ const executePhases = (
         for (const dependent of dependentsOf(phase)) blocked.add(dependent)
         yield* Effect.logError(`sleep.${phase} failed: ${result.detail ?? "no detail"}`)
         /**
-         * A failed phase may have staged files before it failed. Unstaging them is what keeps the
-         * failure isolated in the TREE as well as in the report: leaving a partial stage would make
+         * A failed phase may have staged files before it failed. Unstaging them keeps the
+         * failure isolated in the TREE as well as in the report. Leaving a partial stage would make
          * the NEXT phase's commit carry the failed phase's half-finished work, which is exactly the
          * cross-contamination per-phase commits exist to prevent.
          */
@@ -349,7 +349,7 @@ export const completedPhases = (
     return found
   })
 
-/** Sleep branches that already exist for a date, so a rerun suffixes rather than collides. */
+/** Sleep branches that already exist for a date, so a rerun takes a suffix instead of colliding. */
 const existingSleepBranches = (
   deps: SleepDeps,
   date: string
@@ -375,11 +375,11 @@ export const dateFromRunId = (runId: string): string => {
 }
 
 /**
- * A stored counts string as counts. A malformed value reads as empty rather than failing a report.
+ * A stored counts string as counts. A malformed value reads as empty instead of failing a report.
  *
  * An ARRAY is rejected as well as a non-object. `Object.entries` over an array yields its indices as
- * keys, so `[1,2]` would otherwise read as `{"0":1,"1":2}` — a report line naming counts called `0`
- * and `1`, which is worse than an empty one because it looks like data.
+ * keys, so `[1,2]` would otherwise read as `{"0":1,"1":2}`, giving a report line with counts called
+ * `0` and `1`. That is worse than an empty one because it looks like data.
  */
 export const parseCounts = (raw: string | undefined): PhaseCounts => {
   if (raw === undefined || raw.trim() === "") return {}
@@ -396,7 +396,7 @@ export const parseCounts = (raw: string | undefined): PhaseCounts => {
   }
 }
 
-/** A failure as an operator-readable line. Never a stack, never SQL, never a memory's contents. */
+/** A failure as an operator-readable line. It carries no stack, no SQL, and no memory contents. */
 export const describeFailure = (failure: unknown): string => {
   if (typeof failure === "object" && failure !== null) {
     const tagged = failure as {
@@ -431,7 +431,7 @@ const nowIso = Effect.clockWith((clock) =>
   Effect.map(clock.currentTimeMillis, (millis) => `${new Date(millis).toISOString().slice(0, 19)}Z`)
 )
 
-/** Reporting writes never fail a run: the run's facts are its commits, not its rows. */
+/** A failed reporting write leaves the run intact: the run's facts are its commits, not its rows. */
 const ignoreFailure = <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<void, never, never> =>
   effect.pipe(
     Effect.asVoid,

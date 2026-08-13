@@ -26,26 +26,26 @@ import { type FixtureCorpus, type FixtureOptions, makeFixtureCorpus } from "./fi
  * shipped migrations, the real indexer, and the real four-arm retrieval.
  *
  * Nothing here is a fake of the ranking stack. The only substituted edge is the embedder, and that
- * substitution is the whole reason the gate can run in CI: the deterministic embedder's cosine
- * relations are a pure function of the text, so the numbers are reproducible on any machine with no
- * credentials — while `live` mode swaps in Bedrock and measures the same probes against the real
- * vector space.
+ * substitution is what lets the gate run in CI. The deterministic embedder's cosine relations are
+ * a pure function of the text, so the numbers are reproducible on any machine with no credentials
+ * at all. `live` mode swaps in Bedrock and measures the same probes against the real vector space,
+ * which is the other half of the same gate.
  *
  * The database is `":memory:"` deliberately. The eval reads its own throwaway corpus and never the
- * operator's `index.db`, so a file would be a store the gate opens, migrates, and never queries —
- * and `memhtml eval discriminate` is typically run while `memhtml-mcp` is serving that store, which
+ * operator's `index.db`, so a file would be a store the gate opens, migrates, and never queries.
+ * `memhtml eval discriminate` is also typically run while `memhtml-mcp` is serving that store, which
  * is exactly when an operator wants to check the gate.
  */
 
-/** The vector width the fake produces: the real one, so a width check cannot pass by accident. */
+/** The vector width the fake produces. It is the real one, so a width check cannot pass by luck. */
 export const FAKE_DIM = EMBED_DIM
 
 /**
- * The deterministic embedder: a hash-seeded bag of words, L2-normalized.
+ * The deterministic embedder, built as a hash-seeded bag of words, L2-normalized.
  *
  * The same construction `@memhtml/index` and `@memhtml/sleep` use in their own harnesses. Two texts sharing
- * vocabulary have a genuinely high cosine and two disjoint texts a low one — which is what makes a
- * negation-flipped control a real adversary here rather than a random vector the arm trivially
+ * vocabulary have a genuinely high cosine and two disjoint texts a low one, which makes a
+ * negation-flipped control a real adversary here instead of a random vector the arm trivially
  * separates. A random fake would make the gate meaningless in the easy direction and a constant fake
  * in the hard one.
  */
@@ -92,9 +92,9 @@ export const fakeEmbedder = (): EvalEmbedder => {
 /**
  * An embedder that always fails, for the lexical-floor scenario.
  *
- * The failure travels through the ERROR channel as a typed `ModelUnavailable`, never as a throw: the
- * floor only holds if retrieval can catch it, and a defect would kill the fiber instead of narrowing
- * the search.
+ * The failure travels through the ERROR channel as a typed `ModelUnavailable` rather than a throw.
+ * The floor only holds if retrieval can catch it, and a defect would kill the fiber instead of
+ * narrowing the search.
  */
 export const failingEmbedder = (): EvalEmbedder => {
   const fail = () =>
@@ -113,7 +113,7 @@ export const liveEmbedder = (): Effect.Effect<EvalEmbedder> =>
     }
   }).pipe(Effect.provide(EmbeddingsLive), Effect.orDie)
 
-/** A built stack: the fixture, the database, and retrieval over both. */
+/** A built stack, holding the fixture, the database, and retrieval over both. */
 export interface EvalStack {
   readonly fixture: FixtureCorpus
   readonly db: DatabaseShape
@@ -132,9 +132,9 @@ export interface StackOptions extends FixtureOptions {
 /**
  * Build the whole stack inside a scope: generate the corpus, index it, and return retrieval over it.
  *
- * `Effect.acquireRelease` owns the database, so the caller's `Effect.scoped` closes the connection —
- * and the fixture's own `cleanup` removes the temp tree. Both matter in a CLI: a command that leaked
- * a database handle would keep a WAL file alive under `/tmp` for the life of the process.
+ * `Effect.acquireRelease` owns the database, so the caller's `Effect.scoped` closes the connection,
+ * and the fixture's own `cleanup` removes the temp tree. Both matter in a CLI, because a command
+ * that leaked a database handle would keep a WAL file alive under `/tmp` for the life of the process.
  */
 export const buildStack = (
   options: StackOptions = {}
@@ -180,12 +180,12 @@ export const buildStack = (
     /**
      * Seed the state plane from the spec.
      *
-     * After the rebuild, not before: `state.access.path` has no foreign key onto `files` (cross-database
-     * ones do not exist), so seeding first would work — but the row set would then be unverifiable
-     * against the corpus. Seeding after means every row names a path the index holds, which is also what
-     * `memhtml doctor`'s orphan check asserts.
+     * After the rebuild rather than before. `state.access.path` has no foreign key onto `files`
+     * (cross-database ones do not exist), so seeding first would work, but the row set would then be
+     * unverifiable against the corpus. Seeding after means every row names a path the index holds,
+     * which is also what `memhtml doctor`'s orphan check asserts.
      *
-     * The plane is seeded at all because an empty one makes the salience arm inert: it scores over a
+     * The plane is seeded at all because an empty one makes the salience arm inert. It scores over a
      * `LEFT JOIN state.access`, so with no rows every term collapses to a function of `updated_at` and
      * the arm becomes a second recency arm. See `buildAccess` for why controls are excluded.
      */
@@ -223,7 +223,7 @@ export const buildStack = (
  * Build the stack, run `body`, then tear both down.
  *
  * A scoped helper rather than a fixture the caller assembles, so the temp tree is removed on the
- * failure path too: an eval that exits 1 on an inversion must not leave a 200-file corpus under
+ * failure path too. An eval that exits 1 on an inversion must not leave a 200-file corpus under
  * `/tmp` every time the gate refuses.
  */
 export const withStack = <A, E, R>(

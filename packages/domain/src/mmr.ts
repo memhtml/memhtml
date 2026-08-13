@@ -8,8 +8,8 @@ import { MMR_LAMBDA } from "./ranking.js"
 
 /**
  * A candidate for diversification. `score` is its fused relevance (unitless, higher is
- * better); `vector` is its embedding, or `undefined` when the chunk has no vector yet — a
- * lexical-floor hit or a deferred embed.
+ * better); `vector` is its embedding, or `undefined` when the chunk has no vector yet, which
+ * happens for a lexical-floor hit or a deferred embed.
  */
 export interface MmrCandidate {
   readonly path: string
@@ -25,10 +25,10 @@ export interface MmrCandidate {
  * is multiplied by zero and the greedy pass would otherwise burn O(n^2) cosines to reproduce
  * the order it was given.
  *
- * A candidate with no vector takes penalty 0. That is the honest reading of "unknown
- * similarity" — a vectorless candidate cannot be shown to duplicate anything, so it is not
- * punished for it — and it means vectorless candidates keep their relative fusion order among
- * themselves rather than being shuffled by a fabricated distance.
+ * A candidate with no vector takes penalty 0, which is how "unknown similarity" reads here. A
+ * vectorless candidate cannot be shown to duplicate anything, so it is not penalized for it.
+ * Vectorless candidates therefore keep their relative fusion order among themselves rather
+ * than being shuffled by a fabricated distance.
  *
  * The output is always a duplicate-free subsequence of the input by membership: each candidate
  * is selected at most once and nothing is invented.

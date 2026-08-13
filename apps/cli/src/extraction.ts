@@ -4,20 +4,20 @@ import { Effect } from "effect"
 
 /**
  * Write-time entity extraction: one model call per write batch, entities landing as ordinary
- * `memhtml-entity` metas — the git tree stays the system of record and the index only ever sees the
+ * `memhtml-entity` metas. The git tree stays the system of record and the index only ever sees the
  * rebuildable projection, exactly as if the author had declared them.
  *
- * The port is OPTIONAL and the default is off (`MEMHTML_EXTRACT_ENTITIES`, config.ts): the write path
- * has never carried a generative call, and the embeddings precedent governs the failure mode — a
- * model that is down costs this batch its extracted entities and NOTHING else. The write proceeds,
+ * The port is optional and the default is off (`MEMHTML_EXTRACT_ENTITIES`, config.ts). The write path
+ * has never carried a generative call, and the embeddings precedent governs the failure mode: a
+ * model that is down costs this batch its extracted entities and nothing else. The write proceeds,
  * the warning is logged, and `entities: []` is what an entity-free write always produced.
  *
  * The model is GPT-5.6 Luna on the Bedrock mantle endpoint, which speaks the OpenAI Responses API
- * over HTTPS and is NOT reachable through `@memhtml/llm`'s InvokeModel client (the model card lists
+ * over HTTPS and is not reachable through `@memhtml/llm`'s InvokeModel client (the model card lists
  * Invoke and Converse as unsupported; probed 2026-08-09: a strict-json-schema extraction round
- * trip completes in ~1s). Hence the fetch transport here rather than a fourth lane in
- * `packages/llm` — that package is deliberately one vendor, one call shape, and this port's
- * transport is injectable precisely so no test ever needs the network.
+ * trip completes in ~1s). The fetch transport therefore lives here rather than as a fourth lane in
+ * `packages/llm`, which holds one vendor and one call shape by design. This port's transport is
+ * injectable so no test needs the network.
  */
 
 /** One op's text as the extractor sees it: the title plus whichever body form the op carried. */
@@ -28,7 +28,7 @@ export interface ExtractionItem {
 }
 
 /**
- * The port `batchWrite` consumes. `undefined` entries are NOT permitted in the result: the
+ * The port `batchWrite` consumes. `undefined` entries are not permitted in the result. The
  * contract is one entity array per input item, index-aligned, empty when the model found nothing.
  */
 export interface EntityExtractorShape {
@@ -44,12 +44,12 @@ export interface MantleTransport {
 
 /**
  * GPT-5.6 Luna, the fast high-volume model on the mantle endpoint. A constant rather than config
- * because the schema below is tested against THIS model's strict-mode behaviour; a different model
+ * because the schema below is tested against this model's strict-mode behaviour. Changing the model
  * is a code change with a test run, not an env var.
  */
 export const EXTRACTION_MODEL_ID = "openai.gpt-5.6-luna"
 
-/** Entity types the prompt offers. Open vocabulary downstream — `unknown:` is a valid store type. */
+/** Entity types the prompt offers. Downstream the vocabulary is open: `unknown:` is a valid store type. */
 const ENTITY_TYPES = ["person", "org", "service", "place", "work", "concept", "event"] as const
 
 /**
@@ -96,7 +96,7 @@ const INSTRUCTIONS =
   "name. Return one result per input index, with an empty entities array when a memory names " +
   "nothing."
 
-/** The request body for one batch. Exported for the wire test — the schema IS the contract. */
+/** The request body for one batch. Exported for the wire test, where the schema is the contract. */
 export const requestBodyOf = (modelId: string, items: ReadonlyArray<ExtractionItem>): string =>
   JSON.stringify({
     model: modelId,
@@ -119,7 +119,7 @@ export const requestBodyOf = (modelId: string, items: ReadonlyArray<ExtractionIt
  * Decode one Responses-API payload into index-aligned `type:name` arrays.
  *
  * Total over unknown input: every malformed shape returns `undefined` and the caller maps that to
- * `ModelUnavailable`, because a payload this code cannot read carries no answer — treating it as
+ * `ModelUnavailable`. A payload this code cannot read carries no answer, and treating it as
  * "no entities" would record a model failure as a fact about the corpus.
  */
 export const entitiesOf = (
@@ -176,8 +176,8 @@ const outputTextOf = (payload: unknown): string | undefined => {
 
 /**
  * Per-call ceiling. Generous against the probed ~1s because a batch of 256 ops is a bigger
- * prompt than the probe's one sentence, and the cost of a late abort is only this batch's
- * entities — never the write.
+ * prompt than the probe's one sentence, and a late abort costs only this batch's entities. The
+ * write itself is unaffected.
  */
 const EXTRACT_TIMEOUT_MS = 60_000
 
@@ -217,9 +217,9 @@ export const makeEntityExtractor = (
 /**
  * The production transport: bearer-token fetch against the mantle endpoint.
  *
- * A non-2xx status is a rejection with the status and the body's first line, because mantle
- * reports quota and auth failures as structured JSON the operator needs verbatim — swallowing it
- * into a generic message was exactly the mistake the embeddings lane made first.
+ * A non-2xx status is a rejection carrying the status and the body's first line, because mantle
+ * reports quota and auth failures as structured JSON the operator needs verbatim. Folding it into
+ * a generic message was the mistake the embeddings lane made first.
  */
 export const fetchMantleTransport = (region: string, token: string): MantleTransport => ({
   post: async (body, signal) => {

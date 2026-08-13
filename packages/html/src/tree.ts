@@ -5,7 +5,7 @@ import { writeChildren } from "./markup.js"
 
 /**
  * parse5 tree navigation, narrowed to what the format needs. Every function here is pure and
- * total; nothing in this module knows the memory vocabulary.
+ * total, and nothing in this module knows the memory vocabulary.
  */
 
 export type Node = DefaultTreeAdapterTypes.Node
@@ -26,7 +26,7 @@ export const parseDocument = (html: string): Document =>
 /**
  * Parse article inner HTML back into a subtree, in `<article>` context.
  *
- * The context element is load-bearing: fragment parsing without one runs in `<template>`
+ * The context element matters here. Fragment parsing without one runs in `<template>`
  * content, where the table-scoped elements (`tbody`, `tr`, `td`) are foster-parented out and
  * their text would vanish from the hash. Parsing in the element the markup actually came from
  * makes `contentHash(doc)` and `contentHash(fullHtml)` agree by construction.
@@ -112,7 +112,7 @@ export const isWithin = (candidate: Element, ancestor: Element): boolean => {
 
 /**
  * The inner HTML of a subtree, trimmed. Trimming is what makes the article a serialization
- * fixed point: the wrapper emits its own newline after `<article>`, so keeping the parser's
+ * fixed point. The wrapper emits its own newline after `<article>`, so keeping the parser's
  * boundary text node would grow a blank line on every write.
  */
 export const innerHtml = (node: ParentNode): string => writeChildren(node).trim()

@@ -6,16 +6,16 @@ import type { DatabaseShape } from "./database.js"
 import { STATE_SCHEMA } from "./schema-const.js"
 
 /**
- * Reinforcement: the ONE call site that moves `state.access`.
+ * Reinforcement, the ONE call site that moves `state.access`.
  *
  * One site because the cooldown is the invariant. `access_count` feeds the salience RRF arm, so an
  * unguarded second writer would let a loop in an agent replay one query and rewrite the corpus's
- * ranking — and a cooldown enforced in two places is a cooldown enforced in neither.
+ * ranking. A cooldown enforced in two places is a cooldown enforced in neither.
  *
- * The guard is expressed twice by necessity: once as the SQL `WHERE` below, and once as
- * `@memhtml/domain`'s `shouldBumpAccess`. SQL cannot call the function, so the shared source of truth is
- * the window constant `REINFORCE_COOLDOWN_S` and a property test pins the two to agree at the
- * boundary. Both use `>=`: a stamp exactly the window old IS bumpable.
+ * The guard is expressed twice by necessity, once as the SQL `WHERE` below and once as
+ * `@memhtml/domain`'s `shouldBumpAccess`. SQL cannot call the function, so the shared source of truth
+ * is the window constant `REINFORCE_COOLDOWN_S` and a property test pins the two to agree at the
+ * boundary. Both use `>=`, so a stamp exactly the window old IS bumpable.
  */
 
 /** The EWMA weight a new outcome signal carries. The remainder keeps the prior score. */
@@ -30,16 +30,16 @@ export interface ReinforceResult {
 /**
  * Bump the access bookkeeping for every path past its cooldown.
  *
- * `RETURNING` is what makes the split authoritative rather than inferred: the conditional upsert
+ * `RETURNING` is what makes the split authoritative rather than inferred. The conditional upsert
  * decides in the database, at the instant of the write, and reports which rows it actually touched.
  * Reading `last_accessed_at` first and deciding in TypeScript would race a concurrent reinforce and
  * report a bump that never happened.
  *
- * `at` is passed in rather than read from the clock so a caller can pin the instant — the cooldown
+ * `at` is passed in rather than read from the clock so a caller can pin the instant. The cooldown
  * boundary test needs to name a time exactly `REINFORCE_COOLDOWN_S` after the stored stamp.
  *
- * `reinforcement_count` increments and `outcome_score` moves only on a non-neutral signal: being
- * read is evidence of relevance, not of correctness, so a plain retrieval bumps access without
+ * `reinforcement_count` increments and `outcome_score` moves only on a non-neutral signal. Being
+ * read is evidence of relevance and not of correctness, so a plain retrieval bumps access without
  * claiming the memory was right.
  */
 export const reinforce = (

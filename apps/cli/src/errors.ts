@@ -7,9 +7,9 @@ import { type ErrorCode, type Failure, fail } from "./envelope.js"
  * construction: an unrecognized `_tag` becomes `ERR_UNKNOWN` rather than an empty response, so a
  * new error class added upstream degrades to a documented code instead of a crash.
  *
- * The codes are `ERROR_CODES` and nothing else. An agent branches on `code` and never on the human
- * `error` string, which changes freely as wording improves — that is why the suggestions are part
- * of the contract and the prose is not.
+ * The codes are `ERROR_CODES` and nothing else. An agent branches on `code` and not on the human
+ * `error` string, which changes freely as wording improves. The suggestions are therefore part of
+ * the contract and the prose is not.
  */
 
 /** A typed failure as it arrives here: a `_tag` plus whatever payload its class carries. */
@@ -31,9 +31,9 @@ const paths = (value: unknown): ReadonlyArray<string> =>
 /**
  * The code for a tag.
  *
- * `GitFailure` lives in `@memhtml/store`, not `@memhtml/contracts` — it is the one error class outside the
- * shared contracts package, because it carries a git subcommand name and only the store speaks git.
- * It maps to `ERR_GIT` here, at the CLI edge, which is the only place the two vocabularies meet.
+ * `GitFailure` lives in `@memhtml/store` rather than `@memhtml/contracts`. It is the one error class
+ * outside the shared contracts package, because it carries a git subcommand name and only the store
+ * speaks git. It maps to `ERR_GIT` here at the CLI edge, the only place the two vocabularies meet.
  *
  * `EmbedModelMismatch` is a plain class rather than a schema error (it predates the contracts
  * package), so it arrives with the same `_tag` shape and needs no special case.
@@ -69,11 +69,11 @@ export const codeFor = (error: unknown): ErrorCode => {
 /**
  * The human message for a failure.
  *
- * Deliberately narrow. Every payload field named here is one a caller can ACT on — a path to
- * re-read, two shas to reconcile, a model to check. What is never included is the driver's own
- * message, the SQL, the git argv, or any memory body: each typed error class already dropped those
- * at its adapter edge precisely so a tool response could not carry corpus content, and
- * reconstructing them here would undo that.
+ * Deliberately narrow. Every payload field named here is one a caller can act on: a path to
+ * re-read, two shas to reconcile, a model to check. The message omits the driver's own text, the
+ * SQL, the git argv, and any memory body. Each typed error class already dropped those at its
+ * adapter edge so a tool response could not carry corpus content, and reconstructing them here
+ * would undo that.
  */
 export const messageFor = (error: unknown): string => {
   if (!isTagged(error)) return String(error)
@@ -105,21 +105,21 @@ export const messageFor = (error: unknown): string => {
   }
 }
 
-/** One tag's suggestions, given the failure — some read a payload field, most ignore it. */
+/** One tag's suggestions, given the failure. Some read a payload field, most ignore it. */
 type SuggestionsFor = (error: TaggedError) => ReadonlyArray<string>
 
 /**
  * What to do about a failure, as commands the caller can run.
  *
- * A suggestion is part of the contract — an agent that receives `ERR_INDEX_STALE` and a
+ * A suggestion is part of the contract. An agent that receives `ERR_INDEX_STALE` and a
  * `memhtml index update` suggestion can recover in one step without a round trip to a human. Absent
- * suggestions are an empty array, never a null, so a parser never branches on presence.
+ * suggestions are an empty array rather than a null, so a parser never branches on presence.
  *
- * A RECORD rather than a `switch`, and that is what closes the drift class. Every `memhtml …` string
+ * A record rather than a `switch`, which is what closes the drift class. Every `memhtml …` string
  * below names a command from the table in `commands.ts`, and a rename there used to leave a stale
  * suggestion here that nothing failed on. A record's keys and arms are both walkable, so the suite
  * can enumerate every tag, run every suggestion through the real `parseArgv`, and fail on a name the
- * table does not hold — which a `switch` cannot expose to a test at all.
+ * table does not hold. A `switch` cannot expose any of that to a test.
  *
  * Validated in the test rather than here on purpose: `errors.ts` importing `commands.ts` closes the
  * cycle `commands.ts` → `operations.ts` → `errors.ts` (commands.ts:8, operations.ts:35) and leaves

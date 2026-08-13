@@ -45,7 +45,7 @@ export const phaseIndexOf = (phase: SleepPhase): number => SLEEP_PHASES.indexOf(
  * Phases whose failure blocks a later phase.
  *
  * Everything else is SOFT: a phase that fails is recorded `failed` and the phases after it still
- * run, keeping every prior commit on the branch. That posture is the whole design driver.
+ * run, keeping every prior commit on the branch. That posture comes from one specific failure.
  * The predecessor ran thirteen phases inside one transaction and four consecutive nights of
  * production curation were lost to a single phase raising, because the abort rolled back the
  * twelve that had already succeeded.
@@ -84,8 +84,8 @@ export const LLM_PHASES: ReadonlyArray<SleepPhase> = [
  * function of the corpus and the embedder, and committing thousands of them would bury every
  * real diff in machine noise.
  *
- * `trace-consolidation` was here while it was a counting stub and is NOT any more: it now
- * synthesizes memories and lands each as its own reviewable commit, which is what puts it behind the
+ * `trace-consolidation` was here while it was a counting stub and is NOT any more. It now
+ * synthesizes memories and lands each as its own reviewable commit, which puts it behind the
  * discrimination gate the same way every other mutation is. A phase absent from this list is not
  * obliged to commit (this one still reports `commitSha: null` on a night with nothing to distil, no
  * consolidator bound, or a dry run), so the list names phases that CANNOT commit, not phases that

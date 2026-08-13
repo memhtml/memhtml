@@ -12,26 +12,26 @@ import { runRetentionPass, type ScoredMemory } from "../retention.js"
 import { isSleepExcluded } from "../sql.js"
 
 /**
- * Phase 10 — compress. COMPRESS-band memories grouped by community, folded into a synthesized
+ * Phase 10, compress. COMPRESS-band memories grouped by community, folded into a synthesized
  * canonical in batches. ONE COMMIT PER BATCH.
  *
- * Grouped by community rather than by similarity, because a community is the graph's own answer to
- * "what belongs together": a similarity group folds two memories that happen to share vocabulary,
+ * Grouped by community instead of by similarity, because a community is the graph's own answer to
+ * "what belongs together". A similarity group folds two memories that happen to share vocabulary,
  * while a community folds memories the corpus itself has linked. Communities below the minimum size
- * collapse to `undefined` and are skipped — a pair passed off as a community would make every
+ * collapse to `undefined` and are skipped. A pair passed off as a community would make every
  * cross-pair edge look like a bridge, and would fold two memories that are merely adjacent.
  *
- * **A member is archived only when the model names it in `absorbedKeys`.** The phase never archives a
- * file whose content it cannot show was carried forward — an omitted member stays active, which is
- * the safe outcome. Refusing to fold is a valid model answer, and `absorbedKeys: []` produces no
- * archive and no commit.
+ * **A member is archived only when the model names it in `absorbedKeys`.** The phase archives a
+ * file only when it can show the content was carried forward, so an omitted member stays active,
+ * which is the safe outcome. Declining to fold is a valid model answer, and `absorbedKeys: []`
+ * produces no archive and no commit.
  *
  * **The canonical is excluded from its own members.** A batch can fold into a memory that IS one of
- * the members, and archiving it would destroy the file just folded into — `excludeSelfSupersede` is
+ * the members, and archiving it would destroy the file just folded into. `excludeSelfSupersede` is
  * the guard, and it exists because that case is reachable whenever the model writes a canonical whose
  * slug matches an existing one.
  *
- * `dedup-merge` is a HARD prerequisite: compressing before duplicates are folded would synthesize a
+ * `dedup-merge` is a HARD prerequisite. Compressing before duplicates are folded would synthesize a
  * canonical over a pair the merge phase then archives one half of.
  */
 
@@ -112,7 +112,7 @@ export const compress: PhaseBody = (env) =>
     let lastCommit: string | null = null
 
     for (const batch of batches) {
-      /** Opaque keys again: `absorbedKeys` must never be able to name a path. */
+      /** Opaque keys again, so `absorbedKeys` cannot name a path. */
       const keyed = batch.map((entry, offset) => ({
         key: `m${offset + 1}`,
         path: entry.row.path,
@@ -156,9 +156,9 @@ export const compress: PhaseBody = (env) =>
       }
 
       /**
-       * The canonical is placed by the batch's own directory when the members agree on one, else the
-       * inbox. Placing it under a member's directory keeps a compressed group where a reader would
-       * look for it, and `memhtml doctor` reports inbox depth so a disagreeing batch is visible.
+       * The canonical is placed in the batch's own directory when the members agree on one, and in the
+       * inbox otherwise. Placing it under a member's directory keeps a compressed group where a reader
+       * would look for it, and `memhtml doctor` reports inbox depth so a disagreeing batch is visible.
        */
       const directories = new Set(absorbed.map((path) => path.slice(0, path.lastIndexOf("/"))))
       const directory = directories.size === 1 ? [...directories][0] : INBOX_DIR
@@ -171,7 +171,7 @@ export const compress: PhaseBody = (env) =>
 
       /**
        * The members are archived FIRST, and the canonical is written only if at least one member was
-       * actually moved. A batch whose members an earlier phase already evicted must not leave a
+       * actually moved. A batch whose members an earlier phase already evicted would otherwise leave a
        * canonical behind claiming to supersede files it never absorbed.
        */
       const archivedPaths: Array<string> = []

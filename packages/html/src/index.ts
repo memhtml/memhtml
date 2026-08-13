@@ -1,5 +1,5 @@
 /**
- * `@memhtml/html` — the memory file format: parse, serialize, hash, and the surgical head editors.
+ * `@memhtml/html` is the memory file format: parse, serialize, hash, and the surgical head editors.
  *
  * The format is semantic HTML5 over a closed vocabulary, and this package is its only
  * implementation. Every element in the vocabulary earns its place by carrying indexer

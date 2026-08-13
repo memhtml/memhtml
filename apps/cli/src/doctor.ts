@@ -27,41 +27,41 @@ import { Git, Store } from "./api-layer.js"
  *
  * Eight checks, and each one is a claim the design makes about the corpus rather than a lint:
  *
- * 1. **Dangling `<link>` hrefs** — an authored edge pointing at a path the tree does not hold. Design
+ * 1. **Dangling `<link>` hrefs**: an authored edge pointing at a path the tree does not hold. Design
  *    §2.3 has no foreign key on `edges` deliberately (a `<link>` may name a file the indexer has not
  *    reached), so a LEFT JOIN is the only thing that finds these.
- * 2. **Orphan state rows** — a `state.access` row whose path left the tree. There are no
+ * 2. **Orphan state rows**: a `state.access` row whose path left the tree. There are no
  *    cross-database foreign keys, so the store mirrors a move explicitly and an interrupted mirror
  *    leaves a row describing nothing.
- * 3. **Inbox depth** — design §2.1 rule 6 routes an unplaceable memory to `areas/inbox/` and says
+ * 3. **Inbox depth**: design §2.1 rule 6 routes an unplaceable memory to `areas/inbox/` and says
  *    doctor reports the depth as a health signal. A deep inbox is a placement rule that stopped
  *    matching what agents write, which nothing else surfaces.
- * 4. **Vocabulary warnings** — format constraint 6. An element outside the closed vocabulary still
+ * 4. **Vocabulary warnings**: format constraint 6. An element outside the closed vocabulary still
  *    indexes, so the only way it ever becomes visible is here.
- * 5. **Index staleness** — the index is a projection of a commit, so "fresh" means the commit it
+ * 5. **Index staleness**: the index is a projection of a commit, so "fresh" means the commit it
  *    describes is the commit we are on. Plus the vector-space watermark, because a stored space that
- *    is not the configured one makes every cosine in the index incomparable.
- * 6. **Overdue tasks** — a task is default-excluded from search and skipped by every sleep phase, so
- *    NOTHING else in the system will ever mention that a deadline passed. Doctor is the only surface
+ *    differs from the configured one makes every cosine in the index incomparable.
+ * 6. **Overdue tasks**: a task is default-excluded from search and skipped by every sleep phase, so
+ *    nothing else in the system will ever mention that a deadline passed. Doctor is the only surface
  *    that reads `due_at`.
- * 7. **Stale task blockers** — a `blocks` edge whose blocker is archived or absent. The one
- *    task-graph state no single file can reveal: each file individually is valid and the pair is a
- *    task waiting on something that will never move.
- * 8. **Task inbox depth** — a task in `areas/inbox/tasks/` is work with no project, and a task inbox
+ * 7. **Stale task blockers**: a `blocks` edge whose blocker is archived or absent. This is the one
+ *    task-graph state no single file can reveal, since each file individually is valid and the pair
+ *    is a task waiting on something that will never move.
+ * 8. **Task inbox depth**: a task in `areas/inbox/tasks/` is work with no project, and a task inbox
  *    is meant to be drained rather than accumulated.
  *
- * **`--fix` repairs exactly two of the eight, and the repair logic is IMPORTED from the sleep
+ * **`--fix` repairs exactly two of the eight, and the repair logic is imported from the sleep
  * integrity phase rather than re-ported.** `archivedFormOf` decides whether a dangling target moved
  * to the archive or is genuinely gone, and `applyHeadEdits`/`link`/`unlink`/`meta` are the byte-splice
- * editors that change one head line without touching the article — a parse→serialize round trip drops
+ * editors that change one head line without touching the article. A parse→serialize round trip drops
  * a `<pre>` newline per write, so a "repair" through the serializer would move the content hash of
  * every file it touched. A second implementation of either would be the consumer-side reimplementation
  * of producer semantics the fleet has paid for repeatedly.
  *
- * The other six are reports, not repairs: an inbox memory or task needs a human or an agent to decide
- * where it belongs, a vocabulary warning needs the author's intent, a stale index needs
- * `memhtml index update` — which doctor names in its own suggestions rather than running behind the
- * operator's back — an overdue task needs the work done or the deadline moved, and a stale blocker
+ * The other six report and do not repair. An inbox memory or task needs a human or an agent to decide
+ * where it belongs, a vocabulary warning needs the author's intent, and a stale index needs
+ * `memhtml index update`, which doctor names in its own suggestions rather than running behind the
+ * operator's back. An overdue task needs the work done or the deadline moved, and a stale blocker
  * needs someone to decide whether the blocked task is actually ready.
  */
 
@@ -72,8 +72,8 @@ export const INBOX_WARN_DEPTH = 20
  * How many unplaced tasks may sit in `areas/inbox/tasks/` before doctor calls it a finding.
  *
  * Lower than {@link INBOX_WARN_DEPTH} because the two crowds mean different things. An unplaced
- * MEMORY is a placement rule that stopped matching; an unplaced TASK is work with no project, which
- * is the state a to-do list rots in — and a task inbox is meant to be drained, not accumulated.
+ * memory is a placement rule that stopped matching. An unplaced task is work with no project, which
+ * is the state a to-do list rots in, and a task inbox is meant to be drained rather than accumulated.
  */
 export const INBOX_TASK_WARN_DEPTH = 10
 
@@ -104,7 +104,7 @@ export interface OverdueTaskFinding {
 export interface StaleBlockerFinding {
   readonly path: string
   readonly blockerPath: string
-  /** `archived` — the blocker is finished or evicted. `missing` — no file at that path at all. */
+  /** `archived`: the blocker is finished or evicted. `missing`: no file at that path at all. */
   readonly blockerState: "archived" | "missing"
 }
 
@@ -203,16 +203,16 @@ const inboxTaskDepth = (db: DatabaseShape): Effect.Effect<number, never, never> 
 /**
  * Open tasks past their deadline.
  *
- * `substr(due_at, 1, 10)` states that the comparison is one of CALENDAR DAYS. The bound is always a
+ * `substr(due_at, 1, 10)` states that the comparison is one of calendar days. The bound is always a
  * bare `YYYY-MM-DD` (today, from the clock), and enumerated against that bound the truncation changes
- * no answer — a time-bearing due date on the bound's own day sorts after it either way. It stays as
- * the statement of intent: `listTasks`' `--due-before` takes a caller-supplied bound that MAY carry a
- * time, where the truncation is load-bearing, and one form across both queries is what keeps "overdue"
- * meaning the same thing in the two places an operator reads it.
+ * no answer, because a time-bearing due date on the bound's own day sorts after it either way. It
+ * stays as the statement of intent. `listTasks`' `--due-before` takes a caller-supplied bound that may
+ * carry a time, where the truncation does change answers, and one form across both queries keeps
+ * "overdue" meaning the same thing in the two places an operator reads it.
  *
- * **`archived = 0` and `task_status <> 'done'` are both load-bearing** (mutation-verified 2026-08-02):
- * a finished task's deadline is history, and reporting it would make the finding grow forever and
- * never reach zero.
+ * **`archived = 0` and `task_status <> 'done'` both change the result** (mutation-verified
+ * 2026-08-02). A finished task's deadline is history, and reporting it would make the finding grow
+ * forever and never reach zero.
  */
 const overdueTasks = (
   db: DatabaseShape,
@@ -237,25 +237,25 @@ const overdueTasks = (
  * Open tasks whose blocker can never close them.
  *
  * A `blocks` edge points blocker → blocked, so the blocked task is the edge's `dst_path`. A LEFT JOIN
- * rather than an inner one, because the two failure modes differ: an ARCHIVED blocker is finished work
- * whose edge nobody cleared, and a MISSING one is an edge whose source has no `files` row. Either way
- * the blocked task waits on something that will never move — the one task-graph state no single file
- * can reveal, since each file is individually valid and only the pair is wrong.
+ * rather than an inner one, because the two failure modes differ. An archived blocker is finished work
+ * whose edge nobody cleared, and a missing one is an edge whose source has no `files` row. Either way
+ * the blocked task waits on something that will never move. This is the one task-graph state no single
+ * file can reveal, since each file is individually valid and only the pair is wrong.
  *
- * **The `archived` arm is the reachable one; `missing` is defence in depth.** Probed and
+ * **The `archived` arm is the reachable one, and `missing` is defence in depth.** Probed and
  * mutation-confirmed 2026-08-02: deleting a blocker's file makes `indexer.update` clear
  * `edges WHERE src_path = ?` in the same batch, so an edge cannot outlive its source file and the
- * `missing` branch has nothing to find. Removing that `DELETE` turns the branch on, which is why it
- * stays: `edges` carries no foreign key deliberately, so a future writer of edge rows would not
+ * `missing` branch has nothing to find. Removing that `DELETE` turns the branch on, and it stays for
+ * that reason. `edges` carries no foreign key deliberately, so a future writer of edge rows would not
  * inherit the indexer's discipline.
  *
- * **`edge_class = 'task'` is redundant with `rel = 'blocks'` today** — the migration's per-class CHECKs
- * refuse `blocks` under every other class, so a mutation dropping it leaves the suite green. Kept
+ * **`edge_class = 'task'` is redundant with `rel = 'blocks'` today.** The migration's per-class CHECKs
+ * refuse `blocks` under every other class, so a mutation dropping it leaves the suite green. It is kept
  * because every memory-graph query filters on the class column, and a reader who saw this one trust
  * the rel alone would learn the wrong rule about where the firewall lives.
  *
- * Report-only. Clearing the edge is an authoring decision — the blocked task may be genuinely ready,
- * or the blocker may have been archived prematurely — and `--fix` guessing between those would rewrite
+ * Report-only. Clearing the edge is an authoring decision, since the blocked task may be genuinely
+ * ready or the blocker may have been archived prematurely. `--fix` guessing between those would rewrite
  * a plan.
  */
 const staleBlockers = (
@@ -287,7 +287,7 @@ const staleBlockers = (
 /**
  * Re-read every active file and collect its format warnings.
  *
- * Re-read rather than taken from the index, because a warning is not a stored column: the indexer
+ * Re-read rather than taken from the index, because a warning is not a stored column. The indexer
  * counts a parse failure and projects what it can, and constraint 6 is deliberately non-fatal. Doctor
  * is the one caller that wants the list, so it is the one caller that pays for the read.
  */
@@ -334,14 +334,14 @@ const nowSecond = Effect.clockWith((clock) =>
  * Repair the dangling hrefs and prune the orphan access rows.
  *
  * The href repair mirrors the integrity phase exactly, using its own `archivedFormOf` and its own
- * head editors: a dangling target that moved under `archive/<YYYY>/` gets its href rewritten (the
- * edge still says something true), and a target with no file anywhere gets the link dropped with a
- * warning (the edge asserts a relationship to nothing, and leaving it would produce the same finding
- * on every rebuild forever).
+ * head editors. A dangling target that moved under `archive/<YYYY>/` gets its href rewritten, so the
+ * edge still says something true. A target with no file anywhere gets the link dropped with a
+ * warning, because the edge asserts a relationship to nothing and leaving it would produce the same
+ * finding on every rebuild forever.
  *
- * Remove-then-add on the same file in one pass, so a repair is one line REPLACED rather than a line
- * dropped and another appended elsewhere in the head — and so a re-run is a no-op: once the href
- * points at the archive path the removal matches nothing and the addition is already present.
+ * Remove-then-add on the same file in one pass, so a repair replaces one line rather than dropping a
+ * line and appending another elsewhere in the head. A re-run is then a no-op: once the href points at
+ * the archive path the removal matches nothing and the addition is already present.
  */
 const repair = (
   root: string,
@@ -392,7 +392,7 @@ const repair = (
     let prunedAccessRows = 0
     if (orphans.length > 0 && db.hasState) {
       /**
-       * One statement per path rather than an `IN` list: the list is unbounded, and a driver
+       * One statement per path rather than an `IN` list, because the list is unbounded. A driver
        * parameter limit reached mid-prune would fail the whole batch and leave every row in place.
        */
       for (const path of orphans) {
@@ -421,8 +421,8 @@ const repair = (
 /**
  * Run the health check, optionally repairing.
  *
- * The findings are gathered BEFORE any repair and the report carries the pre-repair lists alongside
- * `repaired`, which is what makes a `--fix` run auditable: an operator reads what was wrong and what
+ * The findings are gathered before any repair and the report carries the pre-repair lists alongside
+ * `repaired`, which is what makes a `--fix` run auditable. An operator reads what was wrong and what
  * was done about it in one envelope, rather than a clean report that says nothing happened.
  */
 export const doctor = (options: { readonly fix: boolean }) =>
@@ -477,8 +477,8 @@ export const doctor = (options: { readonly fix: boolean }) =>
     return {
       root: git.root,
       /**
-       * `healthy` is computed from the findings and NOT from the repair. A `--fix` run that repaired
-       * everything still reports the corpus as it was found: a command that flipped itself green by
+       * `healthy` is computed from the findings and not from the repair. A `--fix` run that repaired
+       * everything still reports the corpus as it was found. A command that flipped itself green by
        * fixing what it found would make "doctor is clean" unfalsifiable.
        */
       healthy:
@@ -486,12 +486,12 @@ export const doctor = (options: { readonly fix: boolean }) =>
         orphanAccessRows.length === 0 &&
         depth <= INBOX_WARN_DEPTH &&
         /**
-         * The task inbox counts toward `healthy` for the same reason the memory inbox does — an
-         * unplaced item is a routing signal — while `overdueTasks` and `staleBlockers` deliberately
-         * do NOT. Those two are facts about the WORK rather than defects in the corpus: a repo whose
-         * owner is late on a to-do is structurally sound, and folding them in would make
-         * `healthy: false` the normal state and stop anyone reading the flag at all. Every other
-         * finding here is the corpus lying about itself; those two are it telling an unwelcome truth.
+         * The task inbox counts toward `healthy` for the same reason the memory inbox does: an
+         * unplaced item is a routing signal. `overdueTasks` and `staleBlockers` are excluded, because
+         * those two are facts about the work rather than defects in the corpus. A repo whose owner is
+         * late on a to-do is structurally sound, and folding them in would make `healthy: false` the
+         * normal state and stop anyone reading the flag at all. Every other finding here is a defect
+         * in the corpus; those two describe work that has fallen behind.
          */
         taskDepth <= INBOX_TASK_WARN_DEPTH &&
         warnings.length === 0 &&

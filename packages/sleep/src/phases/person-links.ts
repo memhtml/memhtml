@@ -10,17 +10,17 @@ import { emptyOutcome, type PhaseBody } from "../env.js"
 import { activeEntities, pathsForEntity } from "../sql.js"
 
 /**
- * Phase 4 — person links. Every `person:*` entity gets a file under `resources/people/`, and every
+ * Phase 4, person links. Every `person:*` entity gets a file under `resources/people/`, and every
  * memory claiming that person gains a `memhtml-about-person` link. ONE commit.
  *
  * Runs immediately after entity resolution, so it keys on names that have already normalized and
  * fuzzy-merged: `Sanju`, `sanju`, and `sanju ` are one person by the time this phase sees them, and
  * running it first would mint three person files and split one person's memories across them.
  *
- * The person file is created only when it is absent, and its content is never rewritten. It is a
- * durable identity surface an agent (or a human) edits by hand — regenerating it every night would
- * silently discard anything written there, so a person file that already exists is only ever linked
- * TO, never through.
+ * The person file is created only when it is absent, and its content stays as written. It is a
+ * durable identity surface an agent (or a human) edits by hand, and regenerating it every night would
+ * silently discard anything written there. A person file that already exists is only ever linked
+ * TO, never rewritten.
  */
 export const personLinks: PhaseBody = (env) =>
   Effect.gen(function* () {
@@ -54,7 +54,7 @@ export const personLinks: PhaseBody = (env) =>
       if (existing === undefined) {
         /**
          * A minimal person file, `semantic` and `person:<name>`-tagged so `placementFor` would put
-         * it exactly here — the path and the metadata agree, which is what keeps a later rebuild
+         * it exactly here. The path and the metadata agree, which is what keeps a later rebuild
          * from re-placing it.
          */
         yield* writeFileBytes(
@@ -76,8 +76,8 @@ export const personLinks: PhaseBody = (env) =>
       for (const target of targets) {
         /**
          * `addLink` is idempotent on the `(rel, href)` pair, so a night that already linked this
-         * memory writes nothing and stages nothing. That is what keeps this phase's commit empty —
-         * and therefore absent — on an unchanged corpus.
+         * memory writes nothing and stages nothing. That keeps this phase's commit empty on an
+         * unchanged corpus, and an empty commit is never made.
          */
         const changed = yield* stampFile(env, target.path, [
           link("about_person", hrefFor(personPath)),

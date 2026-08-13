@@ -8,10 +8,10 @@ import { Schema } from "effect"
  * synthesized by the sleep cycle from many memories, so an agent naming one directly
  * would be asserting a conclusion the corpus has not yet earned.
  *
- * `task` is ONE axis with the other nine rather than a parallel `kind` column, and that is
- * a decision about failure modes: three overlapping type vocabularies is what made
- * the predecessor memory system's classification unanswerable, so a task is a memory type whose retrieval,
- * dedup, and curation treatment is stated by a filter, never by a second axis. Tasks are
+ * `task` is ONE axis with the other nine rather than a parallel `kind` column, because
+ * three overlapping type vocabularies is what made
+ * the predecessor memory system's classification unanswerable. A task is a memory type whose
+ * retrieval, dedup, and curation treatment a filter states, not a second axis. Tasks are
  * default-excluded from search and skipped by sleep. See `@memhtml/index`'s `assembleScope`
  * and the sleep phases' `excludeTypes`.
  */
@@ -75,9 +75,9 @@ export type MemoryStatus = typeof MemoryStatus.Type
  *
  * Two axes rather than four `memhtml-status` values because `active`/`archived` is what every
  * archive, correction, and publish path switches on, and a fifth value there would silently
- * change the meaning of each of them. `done` is therefore not a resting state in this
- * vocabulary's sense: finishing a task stamps `done` AND archives the file through the same
- * `archiveMemory` machinery, so "what did I finish" is the archive tree plus `git log`.
+ * change the meaning of each of them. Finishing a task stamps `done` AND archives the file
+ * through the same `archiveMemory` machinery, so `done` is not a resting state on its own and
+ * "what did I finish" is answered by the archive tree plus `git log`.
  */
 export const TASK_STATUSES = ["todo", "doing", "blocked", "done"] as const
 

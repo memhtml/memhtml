@@ -5,18 +5,18 @@
  * The tiers map 1:1 onto the HTML structure rather than onto a truncation of prose (design §5,
  * format.md's `<details>` row):
  *
- * - **Tier 1** — the `<mark>` gist. The author's chosen load-bearing span, always disclosed.
- * - **Tier 2** — `<summary>` texts. The elaboration's headline, disclosed inside a full quote.
- * - **Tier 3** — the `<details>` body. Reaches an agent only through `memory_read`, never through
- *   recall: it is the "how this was learned" material, and spending a shared budget on it starves
- *   the claims of memories the agent has not seen yet.
+ * - **Tier 1**: the `<mark>` gist. The author's chosen load-bearing span, always disclosed.
+ * - **Tier 2**: `<summary>` texts. The elaboration's headline, disclosed inside a full quote.
+ * - **Tier 3**: the `<details>` body. Reaches an agent only through `memory_read`, never through
+ *   recall, because it is the "how this was learned" material, and spending a shared budget on it
+ *   starves the claims of memories the agent has not seen yet.
  *
  * `<aside>` texts are never quoted in an index line. An aside is a scope caveat, so presenting it as
- * the memory would present the exception as the rule — and an index line has no room to say which
+ * the memory would present the exception as the rule, and an index line has no room to say which
  * it is.
  */
 
-/** An arc gets a bigger envelope than an ordinary memory: it is a synthesis of many of them. */
+/** An arc synthesizes many memories, so it gets a bigger envelope than an ordinary memory. */
 export const ARC_BODY_BUDGET = 9_000
 
 /** The shared envelope for ordinary memories. */
@@ -25,7 +25,7 @@ export const MEMORY_BODY_BUDGET = 16_000
 /**
  * At most two full quotes per ENTITY NAME, not per path.
  *
- * Per-path would be no cap at all: twelve memories about one service are twelve paths, and they
+ * Per-path would be no cap at all. Twelve memories about one service are twelve paths, and they
  * would fill the budget with one entity's history while every other entity the query touched gets
  * an index line. The cap is what makes recall breadth-first over entities.
  */
@@ -39,8 +39,8 @@ export interface DisclosureCandidate {
   readonly gist: string
   readonly memoryType: string
   /**
-   * Article text WITHOUT `<details>` bodies — Tier 1 + Tier 2 only. The indexer supplies this
-   * separately from `body_text` precisely so the fold cannot accidentally quote Tier 3.
+   * Article text WITHOUT `<details>` bodies, so Tier 1 + Tier 2 only. The indexer supplies this
+   * separately from `body_text` so the fold cannot accidentally quote Tier 3.
    */
   readonly disclosureText: string
   /** Entity names this memory claims, for the per-entity cap. */
@@ -56,7 +56,7 @@ export interface DisclosedEntry {
   readonly body: string
 }
 
-/** A memory that did not fit: its claim and its path, so the agent can drill down deliberately. */
+/** A memory that did not fit. Carries its claim and its path, so the agent can drill down. */
 export interface IndexLine {
   readonly path: string
   readonly title: string
@@ -81,9 +81,9 @@ export const budgetFor = (memoryType: string): number =>
 /**
  * Fold ranked candidates into quotes and index lines under one character budget.
  *
- * Rank order is authoritative: a candidate is never promoted past a better-ranked one to make it
- * fit. A candidate that does not fit becomes an index line and the fold CONTINUES — a later,
- * shorter candidate can still be quoted, because the budget is a character budget and not a
+ * Rank order is authoritative. A candidate is never promoted past a better-ranked one to make it
+ * fit. A candidate that does not fit becomes an index line and the fold CONTINUES, so a later,
+ * shorter candidate can still be quoted. The budget is a character budget and not a
  * position cut-off. Without that, one long memory in the middle of the list would silently truncate
  * every shorter one after it.
  *
@@ -110,10 +110,10 @@ export const foldDisclosure = (
 
     /**
      * Deduplicated per candidate. One memory counts ONCE against a name however many times it claims
-     * it — and it can claim one twice, because the cap is keyed on the entity NAME while
-     * `file_entities` is keyed on `(type, name)`: `person:sanju` and `concept:sanju` are two rows
-     * with one name. Counting both would let a single memory exhaust the cap by itself and push every
-     * other memory about that entity into an index line.
+     * it, and it can claim one twice. The cap is keyed on the entity NAME while
+     * `file_entities` is keyed on `(type, name)`. `person:sanju` and `concept:sanju` are two rows
+     * with one name. Counting both would let a single memory exhaust the cap by itself, pushing
+     * every other memory about that entity into an index line.
      */
     const names = new Set(candidate.entityNames)
     const cappedEntity = [...names].some((name) => (perEntity.get(name) ?? 0) >= maxPerEntity)

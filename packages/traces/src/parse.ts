@@ -11,13 +11,13 @@ import {
 } from "./extract.js"
 
 /**
- * The streaming half of the parser: `createReadStream` over one transcript, split into lines on
- * the buffer.
+ * The streaming half of the parser. It runs `createReadStream` over one transcript and splits the
+ * buffer into lines.
  *
- * Line-at-a-time is mandatory, not an optimization — the corpus is 3.67 GB across 5,387 files with
- * a 37 MB maximum, and `readFile` on the tail of that distribution would hold a whole transcript
- * plus its parsed form in memory at once. Peak memory here is one chunk plus one line, whatever the
- * file's size.
+ * Line-at-a-time reading is required here. The corpus is 3.67 GB across 5,387 files with a 37 MB
+ * maximum, and `readFile` on the tail of that distribution would hold a whole transcript plus its
+ * parsed form in memory at once. Peak memory here is one chunk plus one line, whatever the file's
+ * size.
  */
 
 /** What one file's scan consumed, alongside the extract. */
@@ -41,7 +41,7 @@ export interface FileIdentity {
  * The `projects/<slug>` directory a transcript sits under, derived from its path.
  *
  * A sidecar sits two levels deeper (`<slug>/<sessionId>/subagents/`), so the slug is the
- * grandparent's parent there. Returns `""` for a path outside the tree — the extract still carries
+ * grandparent's parent there. Returns `""` for a path outside the tree. The extract still carries
  * a real `session_id` from the records, so an unslugged file indexes rather than being lost.
  */
 export const slugFromPath = (filePath: string): string => {
@@ -57,9 +57,9 @@ export const slugFromPath = (filePath: string): string => {
  * Stream a transcript from `startByte` and fold it into a {@link SessionExtract}.
  *
  * Cannot fail. A missing file, a permission rejection, a truncated line, and a line of binary
- * garbage all degrade to counters on the extract, because this runs over thousands of files written
- * by a live process: one unreadable transcript must cost that transcript's rows, never the run.
- * The counters are the signal an operator reads instead of an error.
+ * garbage all degrade to counters on the extract. This runs over thousands of files written by a
+ * live process, so one unreadable transcript costs that transcript's rows and not the whole run.
+ * The counters are what an operator reads in place of an error.
  *
  * `startByte` is a 0-based byte offset and must be one {@link watermarkPlan} produced. A
  * caller-invented offset can land mid-line, and that first partial line is then counted as
@@ -102,13 +102,13 @@ const NEWLINE = 0x0a
 /**
  * Fold every newline-terminated line and return the bytes those lines occupied.
  *
- * Splitting the raw buffer rather than handing the stream to `node:readline` is what makes the
- * returned byte count exact, and the count is the whole point: `readline` strips the terminator
- * without saying whether the final line had one, so a scan that races a live append would count the
- * partial tail as consumed, the watermark would advance past it, and the completed record would be
- * read next time with its head missing — a silently lost turn on exactly the files a daily run
- * touches. Here an unterminated trailing line is neither folded nor counted, so the next tail
- * re-reads it whole.
+ * Splitting the raw buffer instead of handing the stream to `node:readline` is what makes the
+ * returned byte count exact, and the count is what the watermark depends on. `readline` strips the
+ * terminator without saying whether the final line had one, so a scan that races a live append
+ * would count the partial tail as consumed, the watermark would advance past it, and the completed
+ * record would be read next time with its head missing. That loses a turn on exactly the files a
+ * daily run touches. Here an unterminated trailing line is neither folded nor counted, so the next
+ * tail re-reads it whole.
  *
  * A CRLF transcript leaves `\r` on the end of each line, which `JSON.parse` accepts as whitespace,
  * so no terminator normalization is needed. Decoding per complete line is safe across chunk

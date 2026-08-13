@@ -1,10 +1,10 @@
 import { Schema } from "effect"
 
 /**
- * The four non-mixing edge classes. The class is what makes a person or task edge structurally
- * incapable of entering PageRank, MMR, or the retention bridge count: every memory-graph
- * query filters `edge_class = 'memory'`, and the SQL CHECK constraint refuses a rel that
- * belongs to another class.
+ * The four non-mixing edge classes. The class is what keeps a person or task edge out of
+ * PageRank, MMR, and the retention bridge count. Every memory-graph query filters
+ * `edge_class = 'memory'`, and the SQL CHECK constraint refuses a rel that belongs to
+ * another class.
  */
 export const EDGE_CLASSES = ["memory", "person", "provenance", "task"] as const
 

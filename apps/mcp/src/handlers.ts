@@ -48,14 +48,14 @@ type AppServices = Layer.Success<ReturnType<typeof layerApp>>
 /**
  * Every handler's error translation, applied once.
  *
- * MCP has one error channel and it is prose, so a typed error's STRUCTURE cannot survive the boundary
- * — but everything a caller acts on can, folded into the one string the protocol carries:
+ * MCP has one error channel and it is prose, so a typed error's STRUCTURE cannot survive the
+ * boundary. Everything a caller acts on can, folded into the one string the protocol carries:
  * `toToolFailure` composes the stable code, the reason with its actionable payload fields, and
  * suggestions phrased as tool calls this agent can make. Nothing leaks a driver message, a git argv,
  * or a memory body, because the reason is `messageFor`'s and each error class dropped those at its
  * adapter edge precisely so a tool response could not carry corpus content.
  *
- * This used to build an `AiError`, and that was the bug: `McpServer` catches `AiError` FIRST and
+ * This used to build an `AiError`, which was the bug. `McpServer` catches `AiError` FIRST and
  * rewrites it to a generic internal-error sentence unless its reason is a parameter-validation error
  * (`McpServer.ts:831-838`), so every typed failure this server produced reached its agent with the
  * content removed. A `ToolFailure` is what each tool's `failure:` schema declares, which puts it on the
@@ -63,7 +63,7 @@ type AppServices = Layer.Success<ReturnType<typeof layerApp>>
  * declaration in `tools.ts` re-masks everything this function builds, and the wire test in
  * `tests-integration` is what holds that pair honest.
  *
- * The error type is now `ToolFailure` for every handler, and `kit.toLayer` checks it — so a handler
+ * The error type is now `ToolFailure` for every handler, and `kit.toLayer` checks it, so a handler
  * that failed with a raw domain error would be a compile error rather than a masked response. This is
  * the single place the wire failure is produced.
  */
@@ -74,7 +74,7 @@ const handled = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, Tool
  * The head metadata as a flat string record.
  *
  * Flattened rather than typed per key: the wire schema is `Record<string, string>` because the head's
- * optional metas are genuinely open at the edges — a format version can add `memhtml-*` names, and a
+ * optional metas are genuinely open at the edges. A format version can add `memhtml-*` names, and a
  * client that had to know the closed set would break on the first addition. Numbers are stringified
  * because that is what the `<meta content>` attribute holds; a consumer that wants the number reads
  * the typed field on `memory_search` or `memory_list` instead.
@@ -93,7 +93,7 @@ const metaRecord = (doc: MemoryDoc): Readonly<Record<string, string>> => {
 /**
  * An explicit `null` as an absent value.
  *
- * The parameter schemas accept `null` as well as absence — `Optional` in `tools.ts` explains why: the
+ * The parameter schemas accept `null` as well as absence, and `Optional` in `tools.ts` says why: the
  * derived JSON Schema advertises `null`, and a client that reads the schema and sends
  * `{"workspace": null}` for "no workspace" is doing the documented thing. The operations layer speaks
  * `undefined` for "not supplied" because `exactOptionalPropertyTypes` distinguishes an absent key from
@@ -105,7 +105,7 @@ const opt = <A>(value: A | null | undefined): A | undefined => value ?? undefine
 const arr = <A>(value: ReadonlyArray<A> | null | undefined): ReadonlyArray<A> => value ?? []
 
 /**
- * The article a write authored, from whichever of the two parameters arrived — or a refusal.
+ * The article a write authored, from whichever of the two parameters arrived, or else a refusal.
  *
  * `body` and `article_html` are two ways to author ONE article, so exactly one of them is the whole
  * rule, and it is enforced here rather than in the schema on purpose. A `Schema.Union` of two structs
@@ -114,21 +114,21 @@ const arr = <A>(value: ReadonlyArray<A> | null | undefined): ReadonlyArray<A> =>
  * names neither branch's actual problem. A runtime refusal costs the round trip a bad call already
  * deserved and spends it on prose that states the rule.
  *
- * Both-supplied is refused rather than resolved by precedence, which is the tempting shortcut: a
+ * Both-supplied is refused rather than resolved by precedence, the tempting shortcut. A
  * caller that sent both meant one of them, and silently rendering the other writes a memory whose
- * content the caller did not choose — into a git commit, indexed, retrievable. Neither-supplied is
+ * content the caller did not choose, into a git commit, indexed, retrievable. Neither-supplied is
  * refused for the same reason it cannot be defaulted: an article with no claim has no `<mark>`, so
  * `files.gist` would be empty on every disclosure tier.
  *
- * A blank string counts as absent, on both sides. A client that fills unset fields with `""` — which
- * template-driven clients do — otherwise reads as "supplied both" on a call that supplied one.
+ * A blank string counts as absent, on both sides. Template-driven clients do fill unset fields with
+ * `""`, and such a call would otherwise read as "supplied both" when it supplied one.
  *
  * On the markup path `claim` is `""` and `body` is empty, and neither derivation runs: the template
  * uses `articleHtml` verbatim, so a claim derived from prose that does not exist would be a second,
  * invisible authoring decision. The `<mark>` inside the markup IS the claim, and the parser extracts
  * it into `files.gist` on the first index pass. Markup whose `<mark>` is missing OR EMPTY is the
- * STORE's refusal (`packages/store/src/store.ts`'s render gate, over `@memhtml/html` constraint 1), not
- * this function's — the XOR is the only rule the wire boundary owns.
+ * STORE's refusal (`packages/store/src/store.ts`'s render gate, over `@memhtml/html` constraint 1)
+ * rather than this function's. The XOR is the only rule the wire boundary owns.
  *
  * The prose path derives through `claimFromProse`/`proseTail`, imported from `@memhtml/cli` so this door
  * and `memhtml apply` split prose the same way. A second copy here would let the same body produce
@@ -186,7 +186,7 @@ interface BatchOpParams {
 /**
  * One op's wire-name-to-operation-name rename, given the article its XOR already resolved to.
  *
- * The same rename `memory_write`'s handler performs, over the same field list — the ops carry a whole
+ * The same rename `memory_write`'s handler performs, over the same field list. The ops carry a whole
  * `memory_write` payload (D7), so a second spelling of this mapping would be the drift the shared
  * `writeFields` in `tools.ts` exists to make impossible on the schema side.
  */
@@ -214,8 +214,8 @@ const writeParamsOf = (op: BatchOpParams, article: Authored): WriteParams => ({
  * Not a second mapping of the error: a per-op `code` is part of the batch payload's contract, and
  * `memhtml apply` and `memory_write_batch` reporting different codes for one refused op is exactly the
  * drift the shared-use-case rule exists to prevent. The XOR is the one refusal the operations layer
- * cannot produce — it is a wire-vocabulary rule about two parameters the operations layer never sees,
- * since `WriteParams` takes an already-resolved `claim`/`body`/`articleHtml` — so this is the one place
+ * cannot produce, being a wire-vocabulary rule about two parameters that layer never sees, since
+ * `WriteParams` takes an already-resolved `claim`/`body`/`articleHtml`. So this is the one place
  * a report is built outside `batchWrite`, and it is built with `batchWrite`'s own functions.
  */
 const xorReport = (index: number, error: InvalidMemory): BatchOpReport => ({
@@ -247,10 +247,10 @@ const wireReport = (report: BatchOpReport) => ({
   error: report.error ?? null,
   skipped: report.skipped === true,
   /**
-   * The conflict assist's finding, `batchIndex` renamed to `batch_index` — the whole of the handlers'
-   * remaining job, applied one level deeper than usual because this is the first nested struct on the
-   * batch's wire shape. `memhtml apply`'s own `opPayload` performs the same rename onto the same names, so
-   * the two doors' payloads stay byte-comparable.
+   * The conflict assist's finding, `batchIndex` renamed to `batch_index`. That rename is the whole of
+   * the handlers' remaining job, applied one level deeper than usual because this is the first nested
+   * struct on the batch's wire shape. `memhtml apply`'s own `opPayload` performs the same rename onto
+   * the same names, so the two doors' payloads stay byte-comparable.
    *
    * A conflict says nothing about `ok`, `path`, or `skipped`, and this function is where that is
    * visible: nothing above changes when the field is populated.
@@ -273,7 +273,7 @@ const wireReport = (report: BatchOpReport) => ({
  * The same one-pass derivation `operations.ts`'s `summarize` performs, and it has to be re-derived here
  * rather than taken from `batchWrite` for one reason: in continue mode this handler's own XOR refusals
  * are reports `batchWrite` never saw, so its summary describes a SHORTER op list. Taking it would
- * publish `total` less than `results.length` — a summary a client cannot reconcile with the array it
+ * publish `total` less than `results.length`, a summary a client cannot reconcile with the array it
  * came with. On the atomic path there are no such refusals and this returns `batchWrite`'s own numbers.
  */
 const summarize = (
@@ -340,14 +340,14 @@ export const ToolHandlers: Layer.Layer<
    * The batch: resolve every op's XOR, call `batchWrite` ONCE, report every op in input order.
    *
    * **The XOR runs per op, up front, before `batchWrite` is called at all.** It is the wire boundary's
-   * only rule and it is a rule about two PARAMETERS — `WriteParams` takes an already-resolved
+   * only rule and it is a rule about two PARAMETERS. `WriteParams` takes an already-resolved
    * `claim`/`body`/`articleHtml`, so an op that supplied both is a call the operations layer has no way
    * to recognize. Resolving it here also means the store's phase-1 validation sees only ops that could
    * possibly be written, which is what keeps "the atomic abort happens before any file exists" true of
    * the XOR too.
    *
    * **Then the modes diverge, and each one matches `batchWrite`'s own semantics for the failure class
-   * it already handles** — a malformed `memory_type`, which is likewise a per-op decode refusal:
+   * it already handles**, a malformed `memory_type`, which is likewise a per-op decode refusal:
    *
    * - CONTINUE: each XOR refusal becomes that op's failed report, ONLY the survivors go to
    *   `batchWrite`, and the survivors' reports are spliced back at their ORIGINAL indices. `originOf`
@@ -359,14 +359,14 @@ export const ToolHandlers: Layer.Layer<
    * - ATOMIC (the default): the first refused op aborts, and the abort reaches the agent through the
    *   ERROR channel as `batchAbortFailure`. An XOR refusal short-circuits before `batchWrite` is
    *   called at all, since an atomic batch with a refused op writes nothing by definition and the call
-   *   would be a round trip whose only outcome is the abort. A refusal `batchWrite` itself produced —
-   *   a malformed `memory_type`, or an op the store's render gate refused — comes back as an aborted
-   *   RESULT, and is converted at the same seam.
+   *   would be a round trip whose only outcome is the abort. A refusal `batchWrite` itself produced,
+   *   such as a malformed `memory_type` or an op the store's render gate refused, comes back as an
+   *   aborted RESULT, and is converted at the same seam.
    *
    * **That conversion is the one non-obvious thing here, and it was a real bug caught by a test.** An
    * aborted `batchWrite` returns a well-formed result: every op reported, one of them failed, the rest
    * `skipped`, `commitSha: null`. Returning it verbatim is a SUCCESS response for a call that wrote
-   * nothing — so the XOR path (an error) and the render-gate path (a success) would be two channels for
+   * nothing, so the XOR path (an error) and the render-gate path (a success) would be two channels for
    * one outcome, and `BATCH_GUIDANCE`'s promise that "the first refused op aborts the whole call … and
    * the failure names the offending op" would be false for every refusal the handler did not itself
    * detect. `firstFailure` finds the offending op in the returned reports and `batchAbortFailure`
@@ -411,7 +411,7 @@ export const ToolHandlers: Layer.Layer<
            * doors cannot disagree about what a conflict is.
            *
            * The survivors-only consequence is real and it is right. An op this handler already refused
-           * for the XOR is not in `survivors`, so it gets no conflict report — but it also has no claim
+           * for the XOR is not in `survivors`, so it gets no conflict report, and it also has no claim
            * to derive one FROM: on the both-supplied path there is no way to tell which of the two the
            * caller meant, and on the neither-supplied path there is no claim at all. A finding invented
            * for such an op would name a slot the caller never asserted.
@@ -444,12 +444,12 @@ export const ToolHandlers: Layer.Layer<
         }
 
         /**
-         * Splice each survivor's report back at its ORIGINAL index — and translate the conflict's
+         * Splice each survivor's report back at its ORIGINAL index, and translate the conflict's
          * `batchIndex` through the SAME map, which is the non-obvious half.
          *
          * `batchWrite` saw only `survivors`, so an intra-batch conflict it found names a position in
          * THAT array. In continue mode with an XOR-refused op before the conflicting pair, survivor 1
-         * is the caller's op 2 — so reporting the raw number would name a different op than the one the
+         * is the caller's op 2, so reporting the raw number would name a different op than the one the
          * assist actually matched, and it would name it plausibly enough that nobody would notice. The
          * outer `index` has always needed this translation for exactly the same reason; the conflict is
          * a second index in the same space and needs it too.
@@ -566,9 +566,9 @@ export const ToolHandlers: Layer.Layer<
         /**
          * `lateral` is the union of both folds' index lines.
          *
-         * Not a third retrieval arm: it is what did not fit the budget, surfaced with its claim and
-         * its path so an agent can drill down deliberately. Dropping it would make a truncated pack
-         * indistinguishable from a small corpus.
+         * It holds what did not fit the budget, surfaced with its claim and its path so an agent
+         * can drill down deliberately, and it is not a third retrieval arm. Dropping it would make
+         * a truncated pack indistinguishable from a small corpus.
          */
         return {
           sections: {
@@ -612,7 +612,7 @@ export const ToolHandlers: Layer.Layer<
         })
         /**
          * `superseded` names the target's ARCHIVE path, which is where the file is once the commit
-         * lands — and it is what the new file's `memhtml-supersedes` link points at. Reporting the
+         * lands, and it is what the new file's `memhtml-supersedes` link points at. Reporting the
          * pre-archive path would hand back a path with no file behind it.
          */
         return {

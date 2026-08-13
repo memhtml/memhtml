@@ -8,11 +8,11 @@ import { EMBED_BATCH_LIMIT, EMBED_CONCURRENCY, EMBED_DIM, EMBED_MODEL_ID } from 
 /**
  * Cohere Embed v4 on `bedrock-runtime` InvokeModel.
  *
- * Two entry points, and the difference is not cosmetic: Cohere embeds documents and
+ * Two entry points, and the difference changes the result. Cohere embeds documents and
  * queries into deliberately different regions of the same space, so a corpus indexed
  * with `search_document` must be queried with `search_query` for the cosine to mean
- * what the retrieval arm assumes. Reusing one `input_type` for both silently degrades
- * every vector hit without failing anything.
+ * what the retrieval arm assumes. Reusing one `input_type` for both degrades every
+ * vector hit without failing anything.
  */
 
 export interface EmbeddingsShape {
@@ -28,8 +28,8 @@ export const Embeddings = Context.Service<EmbeddingsShape>("memhtml/Embeddings")
 
 /**
  * Slice `texts` into request-sized chunks, order-preserving. Exported so a test can pin
- * the boundary arithmetic without a client: an off-by-one here is a silently dropped or
- * duplicated vector, which lands in the index as a chunk pointing at the wrong body.
+ * the boundary arithmetic without a client. An off-by-one here drops or duplicates a
+ * vector, which lands in the index as a chunk pointing at the wrong body.
  */
 export const chunkTexts = (
   texts: ReadonlyArray<string>,
@@ -75,10 +75,10 @@ interface EmbedResponseBody {
  * Read the vectors out of a decoded payload, or say why they are unusable.
  *
  * A count mismatch is a typed failure rather than a short array, because the caller pairs
- * vectors with chunk ids positionally: a response one vector short would shift every
- * subsequent pairing and store each embedding against the wrong body. A width mismatch is
- * the same refusal one axis over — the `embed_model` watermark records `id@dim`, so a
- * vector of another width can never be compared against the stored ones.
+ * vectors with chunk ids positionally. A response one vector short would shift every
+ * subsequent pairing and store each embedding against the wrong body. A width mismatch
+ * fails the same way one axis over. The `embed_model` watermark records `id@dim`, so a
+ * vector of another width cannot be compared against the stored ones.
  */
 export const readEmbeddings = (
   payload: unknown,
@@ -123,15 +123,15 @@ export const makeEmbeddings = (client: InvokeClient): EmbeddingsShape => {
      * Every batch concurrently, bounded by {@link EMBED_CONCURRENCY}, results flattened in order.
      *
      * `Effect.forEach` preserves input order in its collected results regardless of completion
-     * order, which this port depends on absolutely: `embed`'s contract is one vector per input text
-     * at the SAME index, and the indexer writes each vector against the chunk at that position. A
-     * fan-out that returned completion-ordered results would attach every vector to the wrong chunk
-     * — a corruption that no type would catch and that reads as poor retrieval quality rather than
-     * as a bug.
+     * order, and this port depends on that. `embed`'s contract is one vector per input text at
+     * the SAME index, and the indexer writes each vector against the chunk at that position. A
+     * fan-out that returned completion-ordered results would attach every vector to the wrong
+     * chunk. No type would catch that corruption, and it reads as poor retrieval quality instead
+     * of as a bug.
      *
-     * Short-circuiting is the right failure mode here too: one batch failing fails the pass, and the
-     * caller re-runs it. Vectors key on content hash, so the batches that did land are not re-paid
-     * for on the retry.
+     * Short-circuiting suits this call too. One batch failing fails the pass, and the caller
+     * re-runs it. Vectors key on content hash, so the batches that did land are not re-paid for
+     * on the retry.
      */
     embed: (texts) =>
       texts.length === 0
@@ -156,10 +156,10 @@ export const makeEmbeddings = (client: InvokeClient): EmbeddingsShape => {
 }
 
 /**
- * `maxAttempts: 10` with adaptive retry, matching croq's botocore configuration: the
- * embed lane is the one that issues hundreds of calls per index run, so a throttle that
- * fails the run instead of backing off would make a full rebuild unreliable at exactly
- * the size where it matters.
+ * `maxAttempts: 10` with adaptive retry, matching croq's botocore configuration. The
+ * embed lane issues hundreds of calls per index run, so a throttle that failed the run
+ * instead of backing off would make a full rebuild unreliable at exactly the corpus size
+ * where the rebuild matters.
  */
 export const EmbeddingsLive = Layer.effect(
   Embeddings,

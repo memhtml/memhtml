@@ -14,13 +14,13 @@ import type {
  * The fakes this package's tests bind, exported at the `@memhtml/sleep/testing` subpath so T9's CLI
  * smoke and T10's integration tier build a sleep run the same way.
  *
- * **Nothing here fakes git or the database.** Both are real in every sleep test — a temp-dir repo
+ * **Nothing here fakes git or the database.** Both are real in every sleep test: a temp-dir repo
  * driven by the store's own subprocess wrapper, and an in-memory SQLite database carrying the shipped
  * migrations. Sleep's whole subject is state transitions across those two planes (a `git mv` plus a
  * head stamp in one commit, an upsert whose `RETURNING` decides a promotion), and the fleet has
  * six times paid for a fake that verified the shape of a call and missed the semantics behind it.
  *
- * What IS faked is the model and the embedder, because neither is a state machine: a model call is a
+ * What IS faked is the model and the embedder, because neither is a state machine. A model call is a
  * function from a prompt to an object, and the tests need that function to be scriptable and free.
  */
 
@@ -33,10 +33,10 @@ export const FAKE_DIM = EMBED_DIM
  * A random fake makes a cosine threshold untestable and a constant fake makes every pair identical,
  * so neither can show that dedup found a duplicate. This one hashes each token to two component
  * indices and L2-normalizes, so two texts sharing vocabulary have a genuinely high cosine and two
- * disjoint texts a low one — while the mapping stays a pure function of the text, so a run on another
+ * disjoint texts a low one. The mapping stays a pure function of the text, so a run on another
  * machine produces the same numbers and the same merge decisions.
  *
- * This is the same construction `@memhtml/index`'s harness uses. Duplicated rather than imported because
+ * This is the same construction `@memhtml/index`'s harness uses. Duplicated instead of imported because
  * that one is a test file, not a shipped export, and a test importing another package's test tree
  * couples two suites' file layouts.
  */
@@ -94,12 +94,12 @@ export interface RecordedCall {
 /**
  * A scripted `ModelClientShape`.
  *
- * `reply` receives the request and the 0-based call offset, so a test varies the answer per call —
- * which is how the injected-failure scenario works: return a value for the first N calls and a
+ * `reply` receives the request and the 0-based call offset, so a test varies the answer per call.
+ * That is how the injected-failure scenario works: return a value for the first N calls and a
  * `LlmContractViolation` for the rest, and the phase's per-item isolation is exercised at exactly
  * the boundary that matters.
  *
- * `generate` (plain text) throws `ModelUnavailable`: no sleep phase calls it, and a fake that
+ * `generate` (plain text) throws `ModelUnavailable`, because no sleep phase calls it and a fake that
  * answered would let a phase quietly start using the untyped path.
  */
 export interface ScriptedModel extends ModelClientShape {
@@ -116,13 +116,13 @@ export type ScriptedReply =
 /** A scripted value. */
 export const value = (payload: unknown): ScriptedReply => ({ kind: "value", value: payload })
 
-/** A scripted contract violation — a model that answered off-schema. */
+/** A scripted contract violation: a model that answered off-schema. */
 export const violation = (reason = "scripted violation"): ScriptedReply => ({
   kind: "violation",
   reason
 })
 
-/** A scripted transport failure — Bedrock throttled or unavailable. */
+/** A scripted transport failure: Bedrock throttled or unavailable. */
 export const unavailable = (reason = "scripted outage"): ScriptedReply => ({
   kind: "unavailable",
   reason
@@ -132,7 +132,7 @@ export const unavailable = (reason = "scripted outage"): ScriptedReply => ({
  * Build a scripted model.
  *
  * The reply function is given the decoded request, so a script can branch on the SYSTEM prompt to
- * answer the triage call and the execute call differently — which is how the arc-synthesis test
+ * answer the triage call and the execute call differently. That is how the arc-synthesis test
  * drives both halves of that phase from one fake.
  */
 export const scriptedModel = (
@@ -165,11 +165,11 @@ export const scriptedModel = (
         )
       }
       /**
-       * The scripted value is decoded through the REQUEST'S OWN SCHEMA by the PRODUCTION decoder —
+       * The scripted value is decoded through the REQUEST'S OWN SCHEMA by the PRODUCTION decoder,
        * `decodeToolInput`, including its `onExcessProperty: "error"`. So a fixture that drifts from
        * the schema, or carries an undeclared key, is refused here exactly as a real model's answer
-       * would be, rather than flowing into a phase as a shape the real model could never produce.
-       * That is the whole reason the fake is a client and not a stubbed phase.
+       * would be, instead of flowing into a phase as a shape the real model could never produce.
+       * That is why the fake is a client and not a stubbed phase.
        */
       return decodeToolInput(request.schema, scripted.value)
     }
@@ -179,12 +179,12 @@ export const scriptedModel = (
 /**
  * One recorded consolidation call: the MANIFEST that was handed over.
  *
- * Recorded because the phase's own selection is half of what it does — the byte floor, the quiet
+ * Recorded because the phase's own selection is half of what it does. The byte floor, the quiet
  * window, and the batch cap are all invisible in the candidates and fully visible here. A test asserts
  * on the SESSIONS that reached the agent, which is the only way those three are non-vacuous.
  *
  * The whole entry is kept and not only `{sessionId, filePath}`, because the manifest's generated fields
- * are now part of what the phase produces: a test can assert that a session's `linkedMemories` really
+ * are now part of what the phase produces. A test can assert that a session's `linkedMemories` really
  * names the memory the corpus links to it, which is a join no candidate reveals.
  */
 export interface RecordedConsolidation {
@@ -200,8 +200,8 @@ export interface ScriptedConsolidator extends ConsolidatorPort {
  * What a scripted consolidation may answer: candidates, or one of the client's real failure classes.
  *
  * The failure arm carries a `_tag` a caller chooses, because the phase's degradation branches on it
- * for the report line and the four real tags mean genuinely different things to an operator —
- * `ConsolidatorCredentialsMissing` is a run that was never possible, `ConsolidatorRunFailed` is one
+ * for the report line and the four real tags mean genuinely different things to an operator.
+ * `ConsolidatorCredentialsMissing` is a run that was never possible; `ConsolidatorRunFailed` is one
  * that reached the model and came back empty-handed.
  */
 export type ScriptedConsolidation =
@@ -212,10 +212,10 @@ export type ScriptedConsolidation =
       /**
        * The sessions this scripted run claims to have READ. Defaults to every transcript it was handed.
        *
-       * The default is the honest one for a fake with no filesystem — a scripted consolidator reaches
-       * whatever it is given — and stating it explicitly is how a test drives the case the real client
-       * hits when a transcript does not resolve: {@link analyzed} names a subset, and the phase must
-       * then watermark that subset and NOT the batch.
+       * The default is the accurate one for a fake with no filesystem, since a scripted consolidator
+       * reaches whatever it is given. Stating it explicitly is how a test drives the case the real
+       * client hits when a transcript does not resolve: {@link analyzed} names a subset, and the phase
+       * must then watermark that subset and NOT the batch.
        */
       readonly analyzedSessionIds?: ReadonlyArray<string> | undefined
     }
@@ -234,10 +234,10 @@ export const candidates = (
 /**
  * A scripted answer that read only SOME of the transcripts it was handed.
  *
- * The shape the real client produces when a transcript does not resolve inside the sandbox — rotated
+ * The shape the real client produces when a transcript does not resolve inside the sandbox: rotated
  * away, moved outside `MEMHTML_TRACE_ROOT`, or behind a symlink the mount will not follow. It exists as a
- * named helper because the invariant it exercises is the one this fake is most needed for: a session
- * whose transcript never arrived must not be watermarked, and no candidate list can express that.
+ * named helper because the invariant it exercises is the one this fake is most needed for. A session
+ * whose transcript did not arrive must stay unwatermarked, and no candidate list can express that.
  */
 export const partiallyRead = (input: {
   readonly analyzedSessionIds: ReadonlyArray<string>
@@ -250,7 +250,7 @@ export const partiallyRead = (input: {
   ...(input.llmCalls === undefined ? {} : { llmCalls: input.llmCalls })
 })
 
-/** A scripted consolidator failure — credentials absent, agent unreachable, contract broken. */
+/** A scripted consolidator failure: credentials absent, agent unreachable, contract broken. */
 export const consolidatorFailure = (
   tag = "ConsolidatorRunFailed",
   reason = "scripted consolidator failure"
@@ -260,7 +260,7 @@ export const consolidatorFailure = (
  * One candidate, with the fields a test does not care about filled in plausibly.
  *
  * Two evidence quotes by default, because that is the bar both the consolidator's schema and the
- * phase's own gate enforce — a helper defaulting to one would make every happy-path fixture a
+ * phase's own gate enforce. A helper defaulting to one would make every happy-path fixture a
  * refusal, and a test author would "fix" it by loosening the gate.
  */
 export const candidate = (
@@ -280,14 +280,14 @@ export const candidate = (
  * Build a scripted consolidator.
  *
  * `reply` sees the transcripts and the 0-based call offset, so a test can answer a first run with
- * candidates and a second with a failure — which is how the resume and idempotence paths are driven
+ * candidates and a second with a failure. That is how the resume and idempotence paths are driven
  * from one fake.
  *
- * Unlike {@link scriptedModel} there is no production decoder to route through: the real client
+ * Unlike {@link scriptedModel} there is no production decoder to route through. The real client
  * decodes eve's structured output against `ConsolidationPayload` and hands back already-typed values,
  * so the boundary a fake could get wrong is the one this fake IS. The phase's own gate
  * (`refusalFor`) is therefore the thing under test here, and a scripted candidate deliberately CAN
- * violate it — that is the per-candidate isolation arm.
+ * violate it, which is the per-candidate isolation arm.
  */
 export const scriptedConsolidator = (
   reply: (
@@ -310,14 +310,14 @@ export const scriptedConsolidator = (
           candidates: scripted.candidates,
           /**
            * Defaults to one call per transcript plus one. Still a MULTI-call default, because the eve
-           * harness loops and a run that grepped five times made five calls — the number comes back
-           * counted off the event stream rather than assumed. A fake that answered `1` would let a test
+           * harness loops and a run that grepped five times made five calls. The number comes back
+           * counted off the event stream, not assumed. A fake that answered `1` would let a test
            * assert `llmCalls === 1` and lock in the wrong model of what a run costs.
            */
           llmCalls: scripted.llmCalls ?? transcripts.length + 1,
           /**
-           * Defaults to EVERY transcript handed over, which is what a fake with no filesystem honestly
-           * reaches. The default is not a shortcut around the invariant: `analyzedSessionIds` is a
+           * Defaults to EVERY transcript handed over, which is what a fake with no filesystem actually
+           * reaches. The default is not a shortcut around the invariant. `analyzedSessionIds` is a
            * required field on the outcome, so this fake has to state a value, and a test that needs the
            * missing-transcript case says so with {@link partiallyRead}.
            */

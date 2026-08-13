@@ -1,22 +1,22 @@
 /**
  * The incremental-scan decision, isolated as pure arithmetic over a file's stat.
  *
- * 3.67 GB of session JSONL sits under the trace root and 8 files change on a given day, so the
- * daily job's cost is decided entirely here: a wrong `"tail"` silently loses records, a wrong
- * `"rescan"` re-reads gigabytes. Keeping the decision pure is what lets it be tested at every
- * boundary without a filesystem.
+ * 3.67 GB of session JSONL sits under the trace root and 8 files change on a given day, so this
+ * decision sets the daily job's cost. A wrong `"tail"` loses records, and a wrong `"rescan"`
+ * re-reads gigabytes. Keeping the decision pure lets it be tested at every boundary without a
+ * filesystem.
  */
 
 /**
  * What a previous scan recorded about a file, mirroring the `trace_watermarks` row
  * (design §3.3). T7 owns the table; this module owns the arithmetic.
  *
- * - `size` — file length in bytes at scan time.
- * - `mtimeMs` — modification time in **milliseconds since the Unix epoch**, the unit
+ * - `size`: file length in bytes at scan time.
+ * - `mtimeMs`: modification time in **milliseconds since the Unix epoch**, the unit
  *   `node:fs`'s `Stats.mtimeMs` reports. The SQL column stores an ISO-8601 string, so the
- *   adapter converts at the boundary and this type never carries two possible units.
- * - `byteOff` — a **0-based byte offset** into the file: the position one past the last byte
- *   consumed, and therefore the `start` of the next read. Equal to `size` after a complete scan.
+ *   adapter converts at the boundary and this type carries one unit only.
+ * - `byteOff`: a **0-based byte offset** into the file, one past the last byte consumed, and
+ *   therefore the `start` of the next read. Equal to `size` after a complete scan.
  */
 export interface Watermark {
   readonly size: number
@@ -31,9 +31,9 @@ export interface FileStat {
 }
 
 /**
- * - `skip` — nothing changed; do not open the file.
- * - `tail` — the file grew by append; read from {@link WatermarkPlan.startByte}.
- * - `rescan` — the file was rewritten, compacted, or is unknown; read from byte 0.
+ * - `skip`: nothing changed, so do not open the file.
+ * - `tail`: the file grew by append, so read from {@link WatermarkPlan.startByte}.
+ * - `rescan`: the file was rewritten, compacted, or is unknown, so read from byte 0.
  */
 export type WatermarkAction = "skip" | "tail" | "rescan"
 
@@ -50,14 +50,14 @@ export interface WatermarkPlan {
  * Both size *and* mtime must match to skip. Size alone would miss an in-place rewrite that
  * happens to preserve the length; mtime alone would miss a write inside the same clock tick.
  *
- * A grown file is tailed only when mtime also advanced or held steady. A file that grew while
- * its mtime moved *backward* is not an append — something restored or rewrote it — so it is
- * rescanned. Shrinking is unambiguous: bytes the watermark counted are gone, so any offset into
- * the file is now meaningless.
+ * A grown file is tailed only when mtime also advanced or held steady. A file that grew while its
+ * mtime moved *backward* was restored or rewritten instead of appended to, so it is rescanned.
+ * Shrinking is unambiguous, because bytes the watermark counted are gone and any offset into the
+ * file is now meaningless.
  *
  * A `byteOff` past the current size is treated as a rescan even when size grew, because that
- * offset could only come from a larger earlier file: the growth is a rewrite that has not yet
- * reached the old length, not an append.
+ * offset could only come from a larger earlier file. The growth is a rewrite that has not yet
+ * reached the old length.
  */
 export const watermarkAction = (prev: Watermark | null, curr: FileStat): WatermarkAction =>
   watermarkPlan(prev, curr).action
@@ -74,8 +74,8 @@ export const watermarkPlan = (prev: Watermark | null, curr: FileStat): Watermark
   if (curr.mtimeMs < prev.mtimeMs) return { action: "rescan", startByte: 0 }
   if (prev.byteOff > curr.size) return { action: "rescan", startByte: 0 }
 
-  // Same size with an advanced mtime: touched, or rewritten to an identical length. The offset
-  // cannot be trusted to still describe the same bytes.
+  // Same size with an advanced mtime means the file was touched or rewritten to an identical
+  // length. The offset may no longer describe the same bytes.
   if (curr.size === prev.size) return { action: "rescan", startByte: 0 }
 
   return { action: "tail", startByte: prev.byteOff }

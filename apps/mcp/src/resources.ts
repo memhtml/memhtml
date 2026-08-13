@@ -34,8 +34,8 @@ const runIdParam = McpSchema.param("run-id", Schema.String)
  * A missing path fails the read rather than answering with an empty resource: a citation that
  * silently resolves to nothing is worse than one that says the file is gone.
  *
- * This read BUMPS salience, through the same `readMemory` the `memory_read` tool calls, and that is
- * correct rather than incidental: the caller named one specific path, which is a chosen open. A client
+ * This read BUMPS salience, through the same `readMemory` the `memory_read` tool calls. The bump is
+ * deliberate: the caller named one specific path, which is a chosen open. A client
  * fetching the file behind an answer is making the same statement an agent makes with `memory_read`,
  * and the plane should not be able to tell them apart.
  */

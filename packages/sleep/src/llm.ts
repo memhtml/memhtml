@@ -5,17 +5,17 @@ import { Effect, Result, Schema } from "effect"
 /**
  * The structured-output schemas the four LLM phases share, and the per-item isolation wrapper.
  *
- * Two rules govern everything here, both learned rather than chosen:
+ * Two rules govern everything here, both of them found by hitting the failure:
  *
- * **Numerics are `Schema.Finite`, never `Schema.Number`.** `Number` derives an `anyOf` carrying a
+ * **Numerics use `Schema.Finite`, not `Schema.Number`.** `Number` derives an `anyOf` carrying a
  * string branch for `Infinity`/`NaN`, which invites a model to answer a confidence field with the
  * string `"NaN"`; `Finite` derives a clean `{type:"number"}`.
  *
  * **Every corpus text reaching a prompt goes through `wrapAsData`.** This corpus records
- * instructions — a procedural memory about a deploy step reads exactly like a directive — so
+ * instructions, and a procedural memory about a deploy step reads exactly like a directive, so
  * un-delimited memory text in a user turn is a prompt-injection surface the system builds for
- * itself. Blind-by-construction: no prompt here names a path, a score, or a decision the caller
- * has already made, so the model cannot agree with a verdict it was shown.
+ * itself. The prompts are also blind by construction. None names a path, a score, or a decision the
+ * caller has already made, so the model cannot agree with a verdict it was shown.
  */
 
 /** A stance judgment over one candidate pair. What conflict-detection asks for. */
@@ -24,7 +24,7 @@ export type StanceVerdict = typeof StanceVerdict.Type
 
 export const StanceJudgment = Schema.Struct({
   verdict: StanceVerdict,
-  /** Unitless in `[0, 1]`. The assertion gate is deterministic and reads this, never the prose. */
+  /** Unitless in `[0, 1]`. The assertion gate is deterministic and reads this, not the prose. */
   confidence: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
   /** One or two sentences naming the specific claims that conflict, or why they are compatible. */
   rationale: Schema.String
@@ -40,7 +40,7 @@ export type StanceJudgment = typeof StanceJudgment.Type
  */
 export const STANCE_CONFIDENCE_FLOOR = 0.7
 
-/** True when a judgment earns a `contradicts` edge. Deterministic — never the model's own call. */
+/** True when a judgment earns a `contradicts` edge. Computed here, not decided by the model. */
 export const assertsContradiction = (judgment: StanceJudgment): boolean =>
   judgment.verdict === "contradicts" && judgment.confidence >= STANCE_CONFIDENCE_FLOOR
 
@@ -50,9 +50,9 @@ export type ArcAction = typeof ArcAction.Type
 
 export const ArcPlanEntry = Schema.Struct({
   /**
-   * The arc's slug when the action is `update` or `skip`, and the empty string on a `create` —
-   * the slug of a not-yet-existing arc is the runner's to mint from the title, never the model's,
-   * because a model-chosen slug is a model-chosen file path.
+   * The arc's slug when the action is `update` or `skip`, and the empty string on a `create`.
+   * The runner mints the slug of a not-yet-existing arc from the title, because a model-chosen
+   * slug would be a model-chosen file path.
    */
   slug: Schema.String,
   /** A concise behavioural-principal name, 3-8 words. */
@@ -73,7 +73,7 @@ export type ArcPlan = typeof ArcPlan.Type
 /** One arc's written content. The execute call's whole output. */
 export const ArcContent = Schema.Struct({
   title: Schema.String,
-  /** The one load-bearing sentence, which becomes the file's `<mark>` claim. */
+  /** The single sentence carrying the arc, which becomes the file's `<mark>` claim. */
   claim: Schema.String,
   /** 2-12 sentences that stand alone, one string per paragraph. */
   paragraphs: Schema.Array(Schema.String)
@@ -87,8 +87,8 @@ export const CompressSynthesis = Schema.Struct({
   paragraphs: Schema.Array(Schema.String),
   /**
    * The members whose content the canonical genuinely absorbs, by the key each was offered under.
-   * A member the model omits is left active rather than archived — the phase never archives a
-   * file whose content it cannot show was carried forward.
+   * A member the model omits stays active instead of being archived. The phase archives a file
+   * only when it can show the content was carried forward.
    */
   absorbedKeys: Schema.Array(Schema.String)
 })
@@ -157,8 +157,8 @@ export const dataBlock = (label: string, text: string): string => wrapAsData(lab
 /**
  * The stance judge's user turn for one pair. Both texts are wrapped; neither carries a path.
  *
- * Blind by construction: the prompt names no path, no cosine, and no prior verdict, so the model
- * cannot infer which answer the caller is hoping for or recognise a pair it judged last night.
+ * The prompt names no path, no cosine, and no prior verdict, so the model cannot infer which answer
+ * the caller is hoping for and cannot recognise a pair it judged last night.
  */
 export const stancePrompt = (textA: string, textB: string): string =>
   `${dataBlock("memory_a", textA)}\n\n${dataBlock("memory_b", textB)}\n\n` +
@@ -195,15 +195,15 @@ export const compressPrompt = (
   "Fold these memories into one canonical memory. List in absorbedKeys exactly the members whose " +
   "content the canonical carries forward."
 
-/** Everything a model call can fail with. Both are per-item, never per-phase. */
+/** Everything a model call can fail with. Both are per-item; neither is per-phase. */
 export type LlmFailure = ModelUnavailable | LlmContractViolation
 
 /**
  * Run one model call in isolation: a failure becomes `undefined` and a counted skip.
  *
  * This is the per-item posture the packet's §4 requires, expressed with `Effect.result` because
- * `Effect.either` does not exist in this beta. One violation must skip its item and never abort
- * the phase — a night that judged 199 pairs and lost the 200th to a malformed tool payload has
+ * `Effect.either` does not exist in this beta. One violation skips its item and leaves
+ * the phase running. A night that judged 199 pairs and lost the 200th to a malformed tool payload has
  * done 199 pairs of work, and failing the phase would throw all of it away.
  */
 export const isolate = <A>(

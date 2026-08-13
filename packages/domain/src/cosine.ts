@@ -1,20 +1,20 @@
 /**
  * Cosine similarity of two vectors, unitless and clamped to `[-1, 1]`.
  *
- * A zero-magnitude input yields `0`, never `NaN`: MMR takes a `max` over the similarities
+ * A zero-magnitude input yields `0` instead of `NaN`. MMR takes a `max` over the similarities
  * to the already-selected set, and one `NaN` there poisons every comparison after it, so a
  * degenerate embedding would silently collapse diversification instead of contributing
  * nothing.
  *
  * The result is clamped because the unclamped ratio does not stay in range. Verified in node
  * 2026-08-02: two vectors whose squared magnitudes fall into the subnormal range return
- * `1.000000106821595` — the squares underflow, so `sqrt` divides by a magnitude smaller than
+ * `1.000000106821595`. The squares underflow, so `sqrt` divides by a magnitude smaller than
  * the true one. Similarity is also the input to `1 - similarity` distance and to the MMR
  * penalty, both of which state a range, so the clamp belongs here rather than at each reader.
  *
- * Length mismatch is handled by walking the shorter vector rather than failing, because the
- * only way two stored vectors differ in length is a half-migrated embedding model — a
- * condition the index refuses at the `embed_model` watermark, so it can never reach here.
+ * Length mismatch is handled by walking the shorter vector rather than failing. The only way
+ * two stored vectors differ in length is a half-migrated embedding model, a condition the
+ * index refuses at the `embed_model` watermark, so it does not reach here.
  *
  * `ArrayLike` rather than `ReadonlyArray` so a `Float32Array` decoded straight off a stored
  * blob is an argument: this is the `vector_distance_cos` SQL function's own body, called once

@@ -8,14 +8,14 @@ import { emptyOutcome, type PhaseEnv, type PhaseOutcome, type SleepError } from 
 import { renderReport } from "../report.js"
 
 /**
- * Phase 15 — report. Write `.memhtml/sleep/<run-id>.html` and commit it. ONE commit.
+ * Phase 15, report. Write `.memhtml/sleep/<run-id>.html` and commit it. ONE commit.
  *
- * This is the only phase whose input is the RUN rather than the corpus, so it takes the phases already
- * executed as a parameter instead of reading them back out of `sleep_phases` — the reporting tables are
- * a convenience the git history can regenerate, and a report that read from them would be a report of
- * what was recorded rather than of what happened.
+ * This is the only phase whose input is the RUN and not the corpus, so it takes the phases already
+ * executed as a parameter instead of reading them back out of `sleep_phases`. The reporting tables are
+ * a convenience the git history can regenerate, and a report that read from them would describe
+ * what was recorded instead of what happened.
  *
- * The report describes fourteen phases, not fifteen: it cannot describe itself. Its own row in
+ * The report describes fourteen phases, not fifteen, because it cannot describe itself. Its own row in
  * `sleep_phases` records the commit, and its file records everything before it.
  */
 export const reportPhase =
@@ -52,7 +52,7 @@ export const reportPhase =
 
 /**
  * The report's filename. `/` is not legal in a filename and the run id is `sleep/<date>`, so the
- * separator becomes a hyphen — `sleep-2026-08-02.html`.
+ * separator becomes a hyphen, as in `sleep-2026-08-02.html`.
  */
 export const reportFilename = (runId: string): string => `${runId.replaceAll("/", "-")}.html`
 

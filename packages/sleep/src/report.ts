@@ -6,12 +6,12 @@ import { type PhaseResult, phaseIndexOf, type RunReport } from "./contract.js"
  * The committed sleep report: `.memhtml/sleep/<run-id>.html`.
  *
  * Semantic HTML in the corpus's own style, and deliberately NOT a memory: it has no `memhtml-*` head, so
- * it carries no type, no claim, and no content hash. That is what keeps it out of retrieval — the
+ * it carries no type, no claim, and no content hash. That is what keeps it out of retrieval. The
  * indexer only reads paths under the four PARA buckets, and a report describing what curation did
  * would otherwise rank above the memories it describes on any query about the corpus itself.
  *
  * The report is what a reviewer reads before `memhtml sleep merge`, so it leads with what changed and what
- * failed rather than with the run's identity: a failed phase and an empty phase look identical in a
+ * failed instead of with the run's identity. A failed phase and an empty phase look identical in a
  * commit list, and the difference decides whether the branch should land.
  */
 
@@ -56,8 +56,8 @@ ${report.phases.map(renderPhaseRow).join("\n")}
 /**
  * The failures, above the table.
  *
- * A `<details>` fold rather than a paragraph: the failure reason is diagnostic detail, and the
- * disclosure tiers put an elaboration behind a fold while its `<summary>` stays visible — so a
+ * A `<details>` fold, not a paragraph, because the failure reason is diagnostic detail. The
+ * disclosure tiers put an elaboration behind a fold while its `<summary>` stays visible, so a
  * reviewer sees THAT a phase failed without reading the reason first.
  */
 const renderFailures = (failed: ReadonlyArray<PhaseResult>): string =>

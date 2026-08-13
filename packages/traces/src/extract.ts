@@ -1,16 +1,16 @@
 /**
  * Session-JSONL extraction as a pure fold over lines.
  *
- * Every field is read defensively and nothing here throws: a session file is written by another
- * process, concurrently, and may be truncated mid-line at any moment. The fold is separated from
- * the stream (`parse.ts`) so the whole extraction contract is testable from string literals, and
- * so per-line memory stays flat — a 37 MB session costs the same as a 4 KB one.
+ * Every field is read defensively and nothing here throws, because another process writes a session
+ * file concurrently and may truncate it mid-line at any moment. The fold is separated from the
+ * stream (`parse.ts`) so the whole extraction contract is testable from string literals and
+ * per-line memory stays flat. A 37 MB session costs the same as a 4 KB one.
  */
 
 /**
  * Record types the parser reads. Applied as an allowlist *before* any field access, because the
- * bare types carry no envelope: reaching for `record.cwd` on a `file-history-snapshot` would be
- * reading a field that does not exist on a record that is not about a session at all.
+ * bare types carry no envelope. Reaching for `record.cwd` on a `file-history-snapshot` would read
+ * a field that does not exist, on a record that is not about a session at all.
  */
 export const READ_RECORD_TYPES = [
   "user",
@@ -57,14 +57,14 @@ export const SYNTHETIC_MODEL = "<synthetic>"
  * How many lines each disposition claimed. Every line lands in exactly one counter, so
  * `parsedLines + droppedLines` is the number of non-empty lines the scan consumed.
  *
- * - `parsedLines` — decoded to a JSON object, whatever happened afterwards.
- * - `droppedLines` — undecodable JSON, or decoded to something that is not an object with a
- *   string `type`. Counted, never fatal: one bad line does not abandon the file.
- * - `droppedNoSession` — a read-type record with no string `sessionId`. Subset of `parsedLines`.
- * - `skippedTypeLines` — a {@link SKIP_RECORD_TYPES} type. Subset of `parsedLines`.
- * - `unknownTypeLines` — a type in neither list: a record type the runtime added after this
- *   allowlist was written. Subset of `parsedLines`, and the counter to watch when a new Claude
- *   Code release lands.
+ * - `parsedLines`: decoded to a JSON object, whatever happened afterwards.
+ * - `droppedLines`: undecodable JSON, or decoded to something that is not an object with a
+ *   string `type`. Counted rather than fatal, so one bad line does not abandon the file.
+ * - `droppedNoSession`: a read-type record with no string `sessionId`. Subset of `parsedLines`.
+ * - `skippedTypeLines`: a {@link SKIP_RECORD_TYPES} type. Subset of `parsedLines`.
+ * - `unknownTypeLines`: a type in neither list, meaning a record type the runtime added after
+ *   this allowlist was written. Subset of `parsedLines`, and the counter to watch when a new
+ *   Claude Code release lands.
  */
 export interface ParseCounters {
   readonly parsedLines: number
@@ -80,7 +80,7 @@ export interface ParseCounters {
  */
 export interface PromptRow {
   readonly promptId: string
-  /** The `uuid` of the first user record carrying this `promptId` — the `(sessionId, uuid)` cite. */
+  /** The `uuid` of the first user record carrying this `promptId`, the `(sessionId, uuid)` cite. */
   readonly turnUuid: string
   /**
    * 0-based position of this prompt among the distinct prompts of **this session**, in
@@ -97,15 +97,15 @@ export interface PromptRow {
 
 /**
  * Everything one session file yields: the `traces` row's content fields, its prompt rows, and the
- * scan's counters. `file_size`/`file_mtime`/`indexed_at` are not here — they belong to the stat the
+ * scan's counters. `file_size`/`file_mtime`/`indexed_at` are absent. They belong to the stat the
  * watermark already took, and duplicating them would give the same fact two sources.
  */
 export interface SessionExtract {
   /** Absolute path of the file scanned. */
   readonly filePath: string
   /**
-   * The `~/.claude/projects/<slug>` directory name — a *path* slug. Not the `slug` field on a
-   * subagent record, which is a title slug for the agent's task and a different fact entirely.
+   * The `~/.claude/projects/<slug>` directory name, which is a *path* slug. The `slug` field on a
+   * subagent record is a title slug for the agent's task, and is a different fact entirely.
    */
   readonly slug: string
   /** From the first record carrying one, bare types included. `null` when the file has none. */
@@ -122,7 +122,7 @@ export interface SessionExtract {
   readonly endedAt: string | null
   /** Distinct `promptId` count on user records. Equals `prompts.length`. */
   readonly promptCount: number
-  /** Enveloped records — those carrying a `uuid`. A `pr-link` has a session but no turn. */
+  /** Enveloped records, meaning those carrying a `uuid`. A `pr-link` has a session but no turn. */
   readonly turnCount: number
   /** Distinct `agentId` seen in this file, first-appearance order. Empty for a main session. */
   readonly agentIds: ReadonlyArray<string>
@@ -143,8 +143,8 @@ const asString = (value: unknown): string | null =>
 /**
  * An instant in canonical ISO-8601 UTC with milliseconds, or `null` when unparseable.
  *
- * `traces.started_at` is `TEXT` under an index (design §3.3), so ordering is lexicographic:
- * a `+09:00`-offset timestamp would sort as *later* than a `Z` instant five hours after it, and
+ * `traces.started_at` is `TEXT` under an index (design §3.3), so ordering is lexicographic.
+ * A `+09:00`-offset timestamp would sort as *later* than a `Z` instant five hours after it, and
  * every range query over that index would be wrong. Canonicalizing here is the one place that
  * cannot be forgotten later. The sampled corpus is already uniformly `Z`, so this normally only
  * pads `…:01Z` to `…:01.000Z`.
@@ -156,18 +156,18 @@ const toIsoUtc = (value: unknown): string | null => {
   return Number.isNaN(epochMs) ? null : new Date(epochMs).toISOString()
 }
 
-/** Collapse whitespace runs to single spaces and trim: this is FTS input, not a transcript. */
+/** Collapse whitespace runs to single spaces and trim. This is FTS input, not a transcript. */
 const collapse = (text: string): string => text.replace(/\s+/g, " ").trim()
 
 /**
  * The text of a user record's `message.content`, or `""` when it carries none.
  *
- * Content arrives in two shapes and both are real prompt text: a bare string, and a block list
+ * Content arrives in two shapes and both hold real prompt text: a bare string, and a block list
  * whose `text` blocks are joined. Probed 2026-08-02: of the distinct prompts in six large
  * sessions, the block-list form was the first appearance for 24 of 30 in one file and 34 of 38 in
  * another, so a string-only rule would leave `first_prompt` empty for most sessions.
  *
- * A `tool_result`-only list yields `""` — a tool's output is not something the user said.
+ * A `tool_result`-only list yields `""`, because a tool's output is not something the user said.
  */
 export const userText = (message: unknown): string => {
   const record = asRecord(message)
@@ -187,7 +187,7 @@ export const userText = (message: unknown): string => {
   return collapse(parts.join("\n"))
 }
 
-/** Mutable fold state. Private: callers see {@link SessionExtract} only. */
+/** Mutable fold state. Private, so callers see {@link SessionExtract} only. */
 interface Accumulator {
   sessionId: string | null
   cwd: string | null
@@ -238,10 +238,10 @@ export const emptyAccumulator = (): Accumulator => ({
 export type { Accumulator }
 
 /**
- * Fold one raw line into the accumulator. Total: every input either updates state or a counter,
+ * Fold one raw line into the accumulator. Total, so every input either updates state or a counter,
  * and no input throws. A blank line is not a record and is not counted.
  *
- * Mutates and returns `accumulator` — a fresh object per line would allocate once per line of a
+ * Mutates and returns `accumulator`. A fresh object per line would allocate once per line of a
  * 3.67 GB corpus.
  */
 export const foldLine = (accumulator: Accumulator, line: string): Accumulator => {
@@ -297,8 +297,8 @@ export const foldLine = (accumulator: Accumulator, line: string): Accumulator =>
   const agentId = asString(record["agentId"])
   if (agentId !== null) accumulator.agentIds.add(agentId)
 
-  // `ai-title` is re-emitted as the title is refined — up to 343 times in one probed session,
-  // with 3 distinct values — so the last emission is the current title, not the first.
+  // `ai-title` is re-emitted as the title is refined, up to 343 times in one probed session with
+  // 3 distinct values, so the last emission holds the current title and the first does not.
   if (type === "ai-title") {
     accumulator.aiTitle = asString(record["aiTitle"]) ?? accumulator.aiTitle
     return accumulator
@@ -307,7 +307,7 @@ export const foldLine = (accumulator: Accumulator, line: string): Accumulator =>
   const uuid = asString(record["uuid"])
   if (uuid === null) return accumulator
 
-  // Enveloped from here down: a `uuid` is what makes a record a turn in the parentUuid DAG.
+  // Enveloped from here down. A `uuid` is what makes a record a turn in the parentUuid DAG.
   accumulator.turnCount += 1
   accumulator.cwd ??= asString(record["cwd"])
   accumulator.gitBranch ??= asString(record["gitBranch"])
@@ -348,9 +348,9 @@ export const foldLine = (accumulator: Accumulator, line: string): Accumulator =>
     return accumulator
   }
 
-  // Identity and order stay with the first record for this prompt; the text head is filled from
-  // the first record that actually carries text. A prompt whose first record is a `tool_result`
-  // would otherwise be indexed with an empty head while its text sits one record away.
+  // Identity and order stay with the first record for this prompt. The text head is filled from
+  // the first record that carries text. A prompt whose first record is a `tool_result` would
+  // otherwise be indexed with an empty head while its text sits one record away.
   if (!existing.hasText && text !== "") {
     accumulator.prompts.set(promptId, {
       row: { ...existing.row, textHead: text.slice(0, TEXT_HEAD_LIMIT) },
@@ -427,9 +427,9 @@ export const extractFromText = (
 
 /**
  * The `agent_count` for a `traces` row: distinct agents named by the session's records unioned
- * with those named by its sidecar filenames (design §7). A union rather than either alone —
- * an agent's sidecar exists before its first record lands, and a resumed session's records can
- * name an agent whose sidecar has been pruned.
+ * with those named by its sidecar filenames (design §7). The union covers both sides, because an
+ * agent's sidecar exists before its first record lands, and a resumed session's records can name
+ * an agent whose sidecar has been pruned.
  */
 export const agentCountFor = (
   extract: SessionExtract,

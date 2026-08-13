@@ -4,12 +4,12 @@ import { emptyOutcome, type PhaseBody } from "../env.js"
 import { corpusSnapshot } from "../sql.js"
 
 /**
- * Phase 1 — preflight. Refresh the index, snapshot the corpus, commit nothing.
+ * Phase 1, preflight. Refresh the index, snapshot the corpus, commit nothing.
  *
- * The index update runs FIRST because every later phase reads the index and writes git: a phase
+ * The index update runs FIRST because every later phase reads the index and writes git. A phase
  * scoring retention over rows that predate last night's writes would evict a memory written
- * yesterday for looking unreferenced. `EmbedModelMismatch` travels out as a phase failure rather
- * than being swallowed — a half-migrated vector space degrades every cosine in the run while each
+ * yesterday for looking unreferenced. `EmbedModelMismatch` travels out as a phase failure instead
+ * of being swallowed. A half-migrated vector space degrades every cosine in the run while each
  * individual vector stays well-formed, so continuing would corrupt dedup, mining, and conflict
  * detection with a green report.
  *

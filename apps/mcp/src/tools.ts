@@ -60,7 +60,7 @@ const MemoryPath = Schema.String
  * `Schema.Finite`, not `Schema.Number`, for every numeric field.
  *
  * `Number` derives a JSON Schema with an `anyOf` carrying a STRING branch, because `Infinity` and
- * `NaN` are not JSON numbers and the codec represents them as strings, probed on this beta,
+ * `NaN` are not JSON numbers and the codec represents them as strings. Probed on this beta,
  * `Schema.Number` derives `{"anyOf":[{"type":"number"},{"type":"string","enum":["Infinity",
  * "-Infinity","NaN"]}]}`. A client reading that sees a union where the tool wants a number. `Finite`
  * derives a clean `{"type":"number"}`.
@@ -126,8 +126,8 @@ const RETRIEVES = () => [Retrieval, DatabaseService]
  *
  * The four clauses are the ones a caller can actually violate: format.md constraint 1 (exactly one
  * `<mark>`, inside the first `<p>` or `<li>`), constraint 3 (no `class`, `style`, or `<script>`),
- * the closed vocabulary, and the `<time datetime>` rule, which is not a constraint at all but a
- * CONSEQUENCE the caller has to know about, since the first such element becomes `files.event_at`
+ * the closed vocabulary, and the `<time datetime>` rule. That last one is a CONSEQUENCE the caller
+ * has to know about rather than a constraint: the first such element becomes `files.event_at`,
  * and the recency arm ranks episodic memories by it rather than by write time.
  */
 const ARTICLE_HTML_CONTRACT =
@@ -158,7 +158,7 @@ const ARTICLE_HTML_CONTRACT =
  * Every clause is something the caller decides or has to predict, and nothing else: the threshold that
  * makes batching worth it, the ordering guarantee it can index results by, the atomicity default it
  * would otherwise have to discover from a refusal, the flag that changes that default, and the two
- * outcomes an agent most often mistakes for errors: a dedupe, and a per-op failure in continue mode.
+ * outcomes an agent most often mistakes for errors, a dedupe and a per-op failure in continue mode.
  * The cost of leaving any of them out is a wrong assumption an agent acts on for the rest of the task.
  */
 const BATCH_GUIDANCE =

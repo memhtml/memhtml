@@ -1,8 +1,8 @@
 /**
- * `@memhtml/sleep` — the nightly curation cycle as fifteen git commits.
+ * `@memhtml/sleep`: the nightly curation cycle as fifteen git commits.
  *
  * Every phase is its own commit on `sleep/<date>`, carrying a `Memhtml-Run`/`Memhtml-Phase`/`Memhtml-Counts`
- * trailer block. The trailers are what `resume` reads, so no journal table is load-bearing and the git
+ * trailer block. The trailers are what `resume` reads, so no journal table is required and the git
  * history alone can say what a run already did. A failed phase keeps every prior commit and lets the
  * later phases run; `git branch -D` is the abort, and `main` never moved.
  */

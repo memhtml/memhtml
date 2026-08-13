@@ -1,5 +1,5 @@
 /**
- * Slug rules. A slug is the filename stem, and the path is the id — there is no uuid
+ * Slug rules. A slug is the filename stem and the path is the id. There is no uuid
  * anywhere in the system, so the slug carries the whole burden of being stable, readable,
  * and filesystem-safe on every platform git runs on.
  */
@@ -8,8 +8,8 @@
 export const SLUG_MAX_LENGTH = 80
 
 /**
- * The stem used when a title reduces to nothing sluggable — an all-punctuation or
- * non-Latin title. Better a placeholder than an empty filename, and `memhtml doctor` can find
+ * The stem used when a title reduces to nothing sluggable, such as an all-punctuation or
+ * non-Latin title. A placeholder beats an empty filename, and `memhtml doctor` can find
  * these by name.
  */
 export const SLUG_FALLBACK = "untitled"
@@ -43,7 +43,7 @@ export const slugify = (title: string): string => {
     : kebab.slice(0, SLUG_MAX_LENGTH).replace(/-+$/, "") || SLUG_FALLBACK
 }
 
-/** True when a string is already a valid slug — the fixed point of {@link slugify}. */
+/** True when a string is already a valid slug, the fixed point of {@link slugify}. */
 export const isSlug = (value: string): boolean =>
   value.length > 0 && value.length <= SLUG_MAX_LENGTH && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)
 

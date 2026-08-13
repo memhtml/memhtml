@@ -78,9 +78,9 @@ const SCOPE_FLAGS: ReadonlyArray<FlagSpec> = [
   {
     name: "entity",
     type: "string",
-    // Singular, unlike --tag: the scope exists to chain one hop off a hit's own entity list, which
-    // is one reference at a time. Same spelling `memhtml list --entity` takes, so the two are one
-    // vocabulary rather than two facets that happen to share a word.
+    // Singular, unlike --tag, because the scope exists to chain one hop off a hit's own entity list,
+    // which is one reference at a time. Same spelling `memhtml list --entity` takes, so the two are
+    // one vocabulary rather than two facets that happen to share a word.
     description:
       "Restrict to memories carrying one `type:name` entity reference, e.g. service:checkout-api, the form a hit's `entities` publishes, so a hop is a copy. A scope matching nothing returns no hits and says so; it never widens."
   },
@@ -315,8 +315,8 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       { name: "src", description: "The asserting memory or task.", required: true },
       {
         name: "rel",
-        // The task rels are authorable here and not in `memory_link`: a `blocks` edge between two
-        // tasks is a real authored assertion, while a person or provenance rel is system-minted.
+        // The task rels are authorable here rather than in `memory_link`, because a `blocks` edge
+        // between two tasks is a real authored assertion, while a person or provenance rel is minted.
         description: `One of: ${AUTHORABLE_RELS.join(", ")}. A task rel needs two tasks; a memory rel refuses a task endpoint.`,
         required: true
       },
@@ -403,10 +403,10 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   /**
    * The task family: CRUDL over the 10th memory type, without retrieval.
    *
-   * Sugar over the same use cases everything else uses: `task add` is `writeMemory` with
+   * Sugar over the same use cases everything else uses. `task add` is `writeMemory` with
    * `--type task`, and `task status` is one head meta plus (for `done`) the archive machinery. The
-   * design intent is that an agent works tasks with `Read`, `Edit`, and `ls` as readily as with these:
-   * a task is a file in a directory, and this family exists so the common moves are one call rather
+   * design intent is that an agent works tasks with `Read`, `Edit`, and `ls` as readily as with these.
+   * A task is a file in a directory, and this family exists so the common moves are one call rather
    * than three.
    */
   {
@@ -711,25 +711,25 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
    * wrong combination is exit 2. `--file` for a script under version control, `--script` for the
    * inline one-liner an agent composes, and a bare `memhtml exec` (or `-`) for stdin, which is the same
    * three-door shape and the same `-` spelling `memhtml apply` already uses for its op stream, so an
-   * agent that learned one learned both. `--script` and not a positional argument: the positional
-   * slot on a two-word command is where a run-id or a path goes on every other command here, and a
-   * multi-line program in that slot would read as one.
+   * agent that learned one learned both. `--script` rather than a positional argument, because the
+   * positional slot on a two-word command is where a run-id or a path goes on every other command
+   * here, and a multi-line program in that slot would read as one.
    *
    * **How long may it run?** `--timeout-ms`, bounded and defaulted, because the guest is a QuickJS
    * worker with no reaper of its own and an unbounded script holds the CLI process open. The
-   * millisecond unit is in the flag NAME rather than left to a note, since `--timeout 30` is
+   * millisecond unit is in the flag name rather than left to a note, since `--timeout 30` is
    * ambiguous by a factor of a thousand.
    *
-   * **Which tree does it see?** `--sha`, defaulting to `HEAD`. Never the live working tree, and that
-   * is a containment decision, not a convenience: a mounted `$MEMHTML_ROOT` exposes `.memhtml/index.db` to
-   * the guest, whose `sqlite3` reads it happily (probed 2026-08-09: a read-only mount is no barrier
-   * to a reader). A gitignored file is ABSENT from a detached worktree, so pinning a commit is what
+   * **Which tree does it see?** `--sha`, defaulting to `HEAD`. Never the live working tree, which is
+   * a containment decision rather than a convenience. A mounted `$MEMHTML_ROOT` exposes `.memhtml/index.db`
+   * to the guest, whose `sqlite3` reads it happily (probed 2026-08-09: a read-only mount is no barrier
+   * to a reader). A gitignored file is absent from a detached worktree, so pinning a commit is what
    * keeps the ranked planes out of reach, and the read-only mount is the second layer rather than
-   * the only one. A pin also makes the answer reproducible: `sha` rides back in the envelope, so a
+   * the only one. A pin also makes the answer reproducible. `sha` rides back in the envelope, so a
    * rerun is exact.
    *
    * There is deliberately no flag for the guest's own opt-ins. `javascript` is on because `js-exec`
-   * IS the feature; `python` and `network` are off and unofferable, so no invocation can turn either
+   * is the feature. `python` and `network` are off and unofferable, so no invocation can turn either
    * on. `apps/cli/src/exec.ts` carries the mechanism and the egress probe.
    */
   {
@@ -816,25 +816,25 @@ export interface GuideBlock {
 /**
  * The example op line, quoted verbatim into the `when-to-batch` block.
  *
- * A constant rather than a literal inside the prose, because a test PARSES it. An example an agent
- * copies has to be valid JSONL, and the way that stays true is that the doc and the parser read the
+ * A constant rather than a literal inside the prose, because a test parses it. An example an agent
+ * copies has to be valid JSONL, and it stays valid because the doc and the parser read the
  * same bytes. A prose-only example drifts silently the first time a field is renamed.
  */
 export const GUIDE_OP_EXAMPLE =
   '{"op":"write","title":"One writer and many readers share the index","type":"semantic","body":"WAL admits a single writer at a time and any number of concurrent readers, so a CLI command and a running `memhtml serve mcp` can work against one store.","tag":"infra"}'
 
 /**
- * The guide: what an agent reads on its FIRST call, before it has written anything.
+ * The guide: what an agent reads on its first call, before it has written anything.
  *
- * Prose, in a structured field, authored HERE beside `COMMANDS`, which is the whole design (spec
+ * Prose, in a structured field, authored here beside `COMMANDS`, which is the design (spec
  * D8/G6). The manifest carries it on a bare `memhtml`, `memhtml help`, `memhtml --help`, and `memhtml manifest`, and
  * `memhtml agents-doc` renders these same strings into `AGENTS.md`, so the doc and the live answer cannot
  * disagree. Prose kept in a separate Markdown file would be a second copy that drifts, and prose kept
  * only in `AGENTS.md` would be invisible to an agent that never opens the repo.
  *
- * Written for an LLM agent mid-task, not for an operator browsing: complete sentences, action first,
- * and every claim TRUE OF THIS BUILD rather than of the design. A guide that describes an intention
- * is worse than no guide, because an agent acts on it.
+ * Written for an LLM agent mid-task rather than for an operator browsing: complete sentences, action
+ * first, and every claim true of this build rather than of the design. A guide that describes an
+ * intention is worse than no guide, because an agent acts on it.
  */
 export const GUIDE: ReadonlyArray<GuideBlock> = [
   {
@@ -1027,9 +1027,9 @@ export const buildManifest = () => ({
   summary: "Read, write, and curate the git-backed memory repo.",
   apiVersion: "1",
   /**
-   * The prose an agent needs BEFORE the command table means anything, so it is listed before it.
+   * The prose an agent needs before the command table means anything, so it is listed before it.
    * A manifest that opened with 33 command specifications makes an agent infer the workflow from a
-   * surface; `guide` states it.
+   * surface, while `guide` states it.
    */
   guide: GUIDE,
   globalFlags: GLOBAL_FLAGS,

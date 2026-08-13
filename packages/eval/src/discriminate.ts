@@ -6,19 +6,19 @@ import type { DivergenceFamily } from "./controls.js"
 import type { Probe } from "./corpus.js"
 
 /**
- * The discrimination gate: can the retrieval stack rank a memory above its own high-similarity
- * WRONG twin?
+ * The discrimination gate asks one question: can the retrieval stack rank a memory above its own
+ * high-similarity WRONG twin?
  *
  * A retrieval layer that cannot is not shipping. Cosine similarity is geometric, and an embedding
- * model is weakest on exactly the tokens carrying a fact's polarity and its discriminators — so
+ * model is weakest on exactly the tokens carrying a fact's polarity and its discriminators, so
  * "drain the VIP before reverting" and "do NOT drain the VIP before reverting" sit above 0.99 in
  * vector space while asserting opposite things. Every arm of the fold exists to break that tie, and
  * this is the only measurement that says whether they do.
  *
- * **Two numbers, and the strict one is the gate.** MRR is the aggregate an operator reads; the
- * refusal is per-probe and absolute: a single target ranked at or below any of its own controls is an
- * inversion, and one inversion fails the run regardless of what MRR says. An aggregate alone can be
- * bought by thirty easy probes covering one broken one.
+ * **Two numbers, and the strict one is the gate.** MRR is the aggregate an operator reads. The
+ * refusal is per-probe and absolute, so a single target ranked at or below any of its own controls
+ * is an inversion, and one inversion fails the run regardless of what MRR says. An aggregate alone
+ * can be bought by thirty easy probes covering one broken one.
  */
 
 /** Which embedder produced the numbers. Recorded on the report so a pass is never ambiguous. */
@@ -30,14 +30,14 @@ export interface ProbeResult {
   readonly targetPath: string
   /**
    * 1-based rank of the target within the WHOLE returned hit list, or `null` when it was not returned.
-   * Scope: every active memory in the corpus. Compare against {@link discriminationRank}, which is the
-   * same position measured in a different space.
+   * The scope is every active memory in the corpus. Compare against {@link discriminationRank}, which
+   * measures the same position in a different space.
    */
   readonly targetRank: number | null
   /**
-   * 1-based rank of the target within `{target} ∪ controls` ALONE — the space the gate is stated in.
-   * `1` means the target beat every one of its own impostors. Never `null`: the target is always a
-   * member of this set, so an absent target ranks last rather than nowhere.
+   * 1-based rank of the target within `{target} ∪ controls` ALONE, the space the gate is stated in.
+   * `1` means the target beat every one of its own impostors. Never `null`, because the target is
+   * always a member of this set, so an absent target ranks last rather than nowhere.
    */
   readonly discriminationRank: number
   /** Each control's 1-based rank in the whole hit list, `null` when absent from the hits. */
@@ -48,7 +48,7 @@ export interface ProbeResult {
   }>
   /**
    * True when the target strictly outranks EVERY control. A control the search never returned counts
-   * as outranked: being absent is worse than being last.
+   * as outranked, since being absent is worse than being last.
    */
   readonly discriminated: boolean
   /** `1 / discriminationRank`. The term of {@link DiscriminationReport.mrr}. */
@@ -70,19 +70,19 @@ export interface DiscriminationReport {
   /**
    * Mean reciprocal rank over `{target} ∪ controls`, unitless in `[0, 1]`, four decimals.
    *
-   * **This is the gated number, and its coordinate space is the discrimination set — not the corpus.**
+   * **This is the gated number, and its coordinate space is the discrimination set, not the corpus.**
    * Design §5 states the floor in the same clause as `rank(target) < min(rank(control))`, so the space
-   * the sentence is about is the target against its own impostors: `1.0` means every target beat every
+   * the sentence is about is the target against its own impostors. `1.0` means every target beat every
    * control outright. See {@link corpusMrr} for the other reading, which is reported and not gated.
    */
   readonly mrr: number
   /**
    * Mean reciprocal rank over the WHOLE hit list, unitless in `[0, 1]`, four decimals.
    *
-   * Reported rather than gated, because it is dominated by corpus size rather than by ranking quality:
+   * Reported rather than gated, because corpus size dominates it more than ranking quality does.
    * `DEFAULT_ARM_LIMIT` is 40, which is 13% of a 300-file fixture and under 1% of a real corpus, so the
    * two query-blind arms cover a far larger share of a fixture than of production. Measured on this
-   * generator at one seed: 0.21 at 304 files, 0.49 at 711, 0.58 at 1323 — with the inversion count
+   * generator at one seed: 0.21 at 304 files, 0.49 at 711, 0.58 at 1323, with the inversion count
    * unchanged at every scale. A gate on this number would be a gate on how big the fixture is.
    */
   readonly corpusMrr: number
@@ -97,15 +97,15 @@ export interface DiscriminationReport {
 
 /**
  * The MRR floor, from design §5. A gate below this admits a target that loses to one of its own
- * negation-flipped twins on one probe in seven, which is not a retrieval layer an agent can trust to
- * answer with the right fact.
+ * negation-flipped twins on one probe in seven. An agent cannot trust that retrieval layer to answer
+ * with the right fact.
  */
 export const MRR_FLOOR = 0.85
 
 /**
  * How many hits each probe requests.
  *
- * Wide enough that a control's rank is observable rather than truncated into `null`: a window of 10
+ * Wide enough that a control's rank is observable rather than truncated into `null`. A window of 10
  * would report an inversion and a merely-narrow miss identically, and the two need different fixes.
  * The gate itself compares ranks, so widening the window can only make it stricter.
  */
@@ -121,7 +121,7 @@ const rankOf = (paths: ReadonlyArray<string>, path: string): number | null => {
  * True when `target` strictly outranks `control`.
  *
  * An absent control (rank `null`) is outranked by any returned target, and an absent TARGET is
- * outranked by everything — including an absent control, since a probe whose target the search never
+ * outranked by everything, including an absent control. A probe whose target the search never
  * returned has failed regardless of what happened to the impostors.
  */
 const outranks = (target: number | null, control: number | null): boolean => {
@@ -136,7 +136,7 @@ const round4 = (value: number): number => Math.round(value * 10_000) / 10_000
 /**
  * Run every probe through the real retrieval service.
  *
- * `includeArchived` stays false: the corpus carries an archived tier and an archived memory must not
+ * `includeArchived` stays false. The corpus carries an archived tier and an archived memory must not
  * be a candidate, so a probe that ranked one would be reporting a scope leak rather than a ranking
  * failure. The controls are ACTIVE files, which is what makes them adversaries.
  */
@@ -164,7 +164,7 @@ export const runProbes = (
        * The target's position among its own impostors: one plus however many controls beat it.
        *
        * Counted rather than read off a re-sort, because `null` is not a rank and the two absences mean
-       * different things — an absent control did NOT beat the target, and an absent target was beaten by
+       * different things. An absent control did NOT beat the target, and an absent target was beaten by
        * every control the search did return. {@link outranks} already encodes both, so the count is the
        * number of controls it says the target failed to outrank.
        */
@@ -191,9 +191,9 @@ export const runProbes = (
  * Aggregate probe results into the report the gate reads.
  *
  * **An empty suite is a FAILURE, not a vacuous pass.** Zero probes yields `mrr: 0`, which is below any
- * floor — so a corpus whose probe generation silently produced nothing refuses rather than reporting a
- * green gate over no measurement. A skipped quality gate must never look like a passing one, and "no
- * probes ran" is the purest form of skipped.
+ * floor, so a corpus whose probe generation produced nothing refuses instead of reporting a green gate
+ * over no measurement. A skipped quality gate must not look like a passing one, and "no probes ran" is
+ * the purest form of skipped.
  */
 export const summarize = (
   mode: EvalMode,
@@ -235,10 +235,10 @@ export const discriminate = (
   )
 
 /**
- * The lexical-floor scenario: the same suite with no vector arm.
+ * The lexical-floor scenario runs the same suite with no vector arm.
  *
- * Design §5 requires two things of it — no error, and the lexical arm still beating the controls on
- * the probes that carry lexical signal. Only the SECOND half is a subset claim, and it has to be: a
+ * Design §5 requires two things of it: no error, and the lexical arm still beating the controls on
+ * the probes that carry lexical signal. Only the SECOND half is a subset claim, and it has to be. A
  * numeric-family control differs from its target by one token, which the FTS arm cannot order, so
  * demanding the full gate without vectors would be demanding the vector arm be unnecessary.
  *
@@ -250,7 +250,7 @@ export interface FloorReport {
   readonly lexicallyDiscriminated: number
   /** Every result, so a caller can see which families survive without vectors. */
   readonly results: ReadonlyArray<ProbeResult>
-  /** True when every probe was ranked degraded — the assertion that the arm really is absent. */
+  /** True when every probe was ranked degraded, which asserts that the arm really is absent. */
   readonly allDegraded: boolean
 }
 
@@ -271,9 +271,9 @@ export const runFloor = (
 /**
  * A one-line summary of a failure, for stderr and for the sleep merge's refusal log.
  *
- * Names the first inversion rather than every one: an operator needs a probe to reproduce, and a
- * thirty-line dump of a failing gate is a thirty-line dump nobody reads. The full list is on the
- * report.
+ * Names the first inversion rather than every one, because an operator needs a probe to reproduce
+ * and a thirty-line dump of a failing gate is a thirty-line dump nobody reads. The full list is on
+ * the report.
  */
 export const describeFailure = (report: DiscriminationReport): string => {
   if (report.passed) return "discrimination passed"

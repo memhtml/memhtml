@@ -24,8 +24,8 @@ export const INBOX_DIR = "areas/inbox"
  *
  * A subdirectory rather than a fifth bucket: PARA is fixed at four, and a task belongs to
  * whatever the memory beside it belongs to. Keeping tasks in one named segment is what makes
- * `ls projects/<slug>/tasks` the list operation — the design's CRUDL-without-retrieval
- * contract — so the segment name is part of the contract, not a layout preference.
+ * `ls projects/<slug>/tasks` the list operation, which is the design's
+ * CRUDL-without-retrieval contract. The segment name is therefore part of the contract.
  */
 export const TASKS_SUBDIR = "tasks"
 
@@ -75,8 +75,8 @@ export const isValidMemoryPath = (path: string): boolean => {
  * Every optional field also admits `undefined` explicitly. Under
  * `exactOptionalPropertyTypes` a bare `path?: string` would refuse
  * `placementFor({ path: params.path, … })` for a `string | undefined` param, forcing every
- * tool adapter to strip absent fields by hand — so the contract accepts the shape the MCP
- * and CLI layers actually hold.
+ * tool adapter to strip absent fields by hand. The contract therefore accepts the shape the
+ * MCP and CLI layers actually hold.
  */
 export interface PlacementInput {
   readonly path?: string | undefined
@@ -95,7 +95,7 @@ const RESOURCE_TYPES: ReadonlyArray<string> = ["semantic", "procedural", "preced
  * directory rooted in a PARA bucket, so the write path never guesses twice and never fails.
  *
  * Returns the *directory*, not the full path, because the filename needs a title this input
- * does not carry — {@link memoryPathFor} composes the two. An explicit `path` contributes
+ * does not carry. {@link memoryPathFor} composes the two. An explicit `path` contributes
  * its directory; when that path is unusable it is ignored rather than propagated, so the
  * return stays a valid bucket. A caller that wants an invalid path refused rather than
  * silently re-derived gates on {@link isValidMemoryPath} first.
@@ -110,8 +110,8 @@ export const placementFor = (input: PlacementInput): string => {
 
   /**
    * A task routes by workspace alone, before the person and topic rules. A task about a person
-   * is still a task — routing it to `resources/people/` would put working state in the durable
-   * identity surface — and a task carries no topic, so the tag rule has nothing to read.
+   * is still a task, and routing it to `resources/people/` would put working state in the
+   * durable identity surface. A task carries no topic, so the tag rule has nothing to read.
    */
   if (input.memoryType === "task") {
     return input.workspace !== undefined && input.workspace !== ""

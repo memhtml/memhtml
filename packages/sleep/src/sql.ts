@@ -6,9 +6,9 @@ import { Effect } from "effect"
 /**
  * Every read a phase makes against the index, in one module.
  *
- * Gathered here rather than inlined per phase because these statements are where the index's
- * reading semantics live — `archived = 0` for active, `derived = 0` for an authored contradiction,
- * `edge_class = 'memory'` for anything that may enter the graph — and a phase that wrote its own
+ * Gathered here instead of inlined per phase because these statements are where the index's
+ * reading semantics live: `archived = 0` for active, `derived = 0` for an authored contradiction,
+ * and `edge_class = 'memory'` for anything that may enter the graph. A phase that wrote its own
  * `WHERE` would be a second reader of a producer's private rules. Every statement below is a read;
  * a phase's writes go through git, through `state.*`, or through the derived-edge insert.
  */
@@ -18,13 +18,13 @@ import { Effect } from "effect"
  *
  * A task is live working state, and every one of the fifteen phases is a judgment about REMEMBERED
  * FACTS: decay says a claim is fading, dedup says two claims are one, conflict detection says two
- * claims disagree, retention says a claim has stopped earning its place. None of those are true of
- * a thing an agent intends to do — and each would be actively wrong on one. A task the agent has
+ * claims disagree, retention says a claim has stopped earning its place. None of those hold for
+ * a thing an agent intends to do, and each would be wrong applied to one. A task the agent has
  * not got to yet is not a claim losing confidence, and two open tasks with the same body are two
- * things to do rather than one fact stored twice.
+ * things to do, not one fact stored twice.
  *
  * Stated once, here, and spread into every phase's exclusion. Nine call sites each writing
- * `"task"` would be nine chances for one to be missed, and a phase that quietly still scored tasks
+ * `"task"` would be nine chances for one to be missed, and a phase that still scored tasks
  * would show up as a task file whose confidence drifts every night with no reader anywhere.
  *
  * DONE tasks need no exclusion: finishing one archives it, and every phase's corpus is
@@ -56,9 +56,9 @@ export interface CorpusRow {
 /**
  * Every active memory, oldest first.
  *
- * `created_at ASC` is not cosmetic: dedup-merge orients each pair so the OLDER file is the keeper,
- * and a stable oldest-first read makes that orientation — and therefore which file survives a
- * night — reproducible across runs on an unchanged corpus.
+ * `created_at ASC` affects the outcome. Dedup-merge orients each pair so the OLDER file is the keeper,
+ * and a stable oldest-first read makes that orientation reproducible across runs on an unchanged
+ * corpus. Which file survives a night follows from it.
  */
 export const activeCorpus = (
   db: DatabaseShape
@@ -80,14 +80,14 @@ export interface PairRow {
 /**
  * Per-source top-`k` nearest neighbours above a similarity floor, over first-chunk vectors.
  *
- * `ordinal = 0` collapses a file to its first chunk rather than its best chunk. The format is one
- * fact per file, so almost every file is a single chunk; taking the first keeps the pair set
- * symmetric, which `min(distance)` over all chunks would not — and an asymmetric neighbourhood
+ * `ordinal = 0` collapses a file to its first chunk, not its best chunk. The format is one
+ * fact per file, so almost every file is a single chunk. Taking the first keeps the pair set
+ * symmetric, which `min(distance)` over all chunks would not. An asymmetric neighbourhood
  * would make `(a, b)` a candidate while `(b, a)` is not, so which of two files was read first
  * would decide whether they merge.
  *
  * `ROW_NUMBER() OVER (PARTITION BY src ...)` is the per-source cap. `vector_distance_cos` takes two
- * STORED blobs here rather than a blob and a bound parameter, which it can because it is a registered
+ * STORED blobs here instead of a blob and a bound parameter. It can, because it is a registered
  * SQL function over two `Uint8Array` arguments (`packages/index/src/database.ts`) and not a driver
  * builtin with a fixed calling shape.
  */
@@ -97,7 +97,7 @@ export const neighbourPairs = (
     readonly floor: number
     readonly perSourceK: number
     readonly limit: number
-    /** Memory types to exclude, e.g. `arc` — a synthesis is never a near-duplicate of its members. */
+    /** Memory types to exclude, e.g. `arc`, since a synthesis is not a near-duplicate of its members. */
     readonly excludeTypes?: ReadonlyArray<string> | undefined
   }
 ): Effect.Effect<ReadonlyArray<PairRow>, StorageFailure> => {
@@ -130,12 +130,12 @@ export const neighbourPairs = (
  * AUTHORED edge between them in either direction.
  *
  * The shared-entity requirement is what keeps the model budget on pairs that could actually be about
- * one thing. The anti-join is what keeps the phase from re-judging a pair an agent already linked — an
+ * one thing. The anti-join keeps the phase from re-judging a pair an agent already linked. An
  * authored `contradicts` is a settled fact, and re-asking the model about it would let a `neutral`
  * answer look like new information.
  *
- * **`derived = 0` is load-bearing in the anti-join.** Relationship mining runs one phase EARLIER and
- * writes a derived `relates_to` for every pair above 0.85 cosine — which is a strict superset of the
+ * **`derived = 0` is what makes the anti-join correct.** Relationship mining runs one phase EARLIER and
+ * writes a derived `relates_to` for every pair above 0.85 cosine, a strict superset of the
  * pairs above the 0.80 conflict floor. An anti-join over ALL edges therefore excludes every candidate
  * this phase exists to find, and the phase reports `candidates: 0` forever with no error anywhere.
  * A mined edge is a machine suspicion, not a settled relationship; only an authored one closes a pair.
@@ -147,8 +147,8 @@ export const conflictCandidates = (
     readonly perSourceK: number
     readonly limit: number
     /**
-     * Memory types to exclude, the same hole {@link neighbourPairs} carries — `task`, because a
-     * task is intended work rather than an asserted fact, so "these two contradict" is not a
+     * Memory types to exclude, the same hole {@link neighbourPairs} carries. `task` is excluded
+     * because a task is intended work, not an asserted fact, so "these two contradict" is not a
      * judgment that can be true of it. Paying for a model call to find out would also spend the
      * candidate budget on rows no phase acts on.
      */
@@ -200,14 +200,14 @@ export interface EntityCount {
 /**
  * Every entity on an active NON-TASK file, with its file count. The union-find's input.
  *
- * Tasks are excluded here rather than in the two phases that read this, so both get the exclusion
- * from one statement — and this module is where the index's reading semantics belong.
+ * Tasks are excluded here instead of in the two phases that read this, so both get the exclusion
+ * from one statement, and this module is where the index's reading semantics belong.
  *
- * The exclusion is not only about leaving a task's bytes alone. A person mentioned ONLY by a task
- * ("ask Imani about the migration ledger") would otherwise mint `resources/people/imani.html` — the
- * durable, hand-editable identity surface created from a to-do item. And a task's entity references
- * are the agent's own handles on its own work: renaming one to a corpus-wide canonical is a nightly
- * job editing live working state.
+ * The exclusion does more than leave a task's bytes alone. A person mentioned ONLY by a task
+ * ("ask Imani about the migration ledger") would otherwise mint `resources/people/imani.html`, a
+ * durable hand-editable identity surface created from a to-do item. A task's entity references
+ * are also the agent's own handles on its own work: renaming one to a corpus-wide canonical is a
+ * nightly job editing live working state.
  */
 export const activeEntities = (
   db: DatabaseShape
@@ -240,7 +240,7 @@ export const pathsForEntity = (
     [entityType, entityName, ...SLEEP_EXCLUDED_TYPES]
   )
 
-/** `?` per excluded type, so the exclusion binds rather than interpolating a value into SQL. */
+/** `?` per excluded type, so the exclusion binds instead of interpolating a value into SQL. */
 const typePlaceholders = (): string => SLEEP_EXCLUDED_TYPES.map(() => "?").join(", ")
 
 /** One memory-class edge between two active files. */
@@ -255,9 +255,9 @@ export interface EdgeRow {
 /**
  * The memory-class edge list over active files, both authored and derived.
  *
- * `edge_class = 'memory'` is the firewall: a person or provenance edge is structurally incapable of
- * entering PageRank, label propagation, or the retention bridge count, and this is the query that
- * makes that true rather than the CHECK constraint alone.
+ * `edge_class = 'memory'` is the firewall. A person or provenance edge cannot enter PageRank, label
+ * propagation, or the retention bridge count, and this query is what makes that true. The CHECK
+ * constraint alone does not.
  */
 export const memoryEdges = (
   db: DatabaseShape
@@ -278,8 +278,8 @@ export interface RetentionEdgeCounts {
   /** Inbound `supports`/`reinforces`-class edges. A quantity. */
   readonly reinforcements: number
   /**
-   * Inbound AUTHORED contradictions only, `derived = 0`. A sleep-mined suspicion is excluded here,
-   * not downstream: an uncorroborated machine guess must not be able to evict a memory, and the
+   * Inbound AUTHORED contradictions only, `derived = 0`. A sleep-mined suspicion is excluded here
+   * instead of downstream, so an uncorroborated machine guess cannot evict a memory. The
    * `derived` column is the firewall the retention scorer relies on.
    */
   readonly contradictions: number
@@ -298,7 +298,7 @@ export const retentionEdgeCounts = (
      GROUP BY f.path ORDER BY f.path ASC`
   )
 
-/** One path's durable access bookkeeping. Absent from the result means never accessed. */
+/** One path's durable access bookkeeping. Absent from the result means it was not accessed. */
 export interface AccessRow {
   readonly path: string
   readonly access_count: number
@@ -312,8 +312,8 @@ export interface AccessRow {
 /**
  * The whole `state.access` table, path-ordered.
  *
- * Ordered in SQL rather than sorted afterwards so the state-export phase's sidecar is byte-stable:
- * two runs over an unchanged plane produce an identical file and therefore no commit.
+ * Ordered in SQL instead of sorted afterwards so the state-export phase's sidecar is byte-stable.
+ * Two runs over an unchanged plane produce an identical file and therefore no commit.
  */
 export const accessRows = (
   db: DatabaseShape
@@ -338,16 +338,16 @@ export interface CorroborationRow {
 /**
  * Bump a detection counter and read the result back.
  *
- * `RETURNING` is what makes the promotion decision authoritative rather than inferred: the upsert
+ * `RETURNING` makes the promotion decision authoritative instead of inferred. The upsert
  * decides in the database at the instant of the write and reports the new count, so two runs racing on
  * one pair cannot both read `detections = 1` and both decline to promote.
  *
- * **The bump is idempotent WITHIN one run's instant** — `detections` advances only when `updated_at`
+ * **The bump is idempotent WITHIN one run's instant.** `detections` advances only when `updated_at`
  * differs from `at`. Corroboration means "two DIFFERENT nights saw this", and conflict detection
  * commits only when something is promoted, so a run that judged pairs and promoted nothing leaves no
  * trailer and `memhtml sleep resume` re-executes it. Without the guard that second pass would count as a
- * second detection and promote a contradiction one night's evidence never earned — a machine
- * suspicion reaching a file, which is the exact one-way door the corroboration gate exists to hold.
+ * second detection and promote a contradiction one night's evidence had not earned. That puts a machine
+ * suspicion into a file, which is the exact one-way door the corroboration gate exists to hold.
  * `at` is derived from the run's own date, so a resume of the same run reuses it and a genuinely later
  * night does not.
  */
@@ -370,7 +370,7 @@ export const bumpCorroboration = (
     [input.srcPath, input.rel, input.dstPath, input.at]
   )
 
-/** Mark a corroborated edge promoted, so a later run reads it as file-borne rather than pending. */
+/** Mark a corroborated edge promoted, so a later run reads it as file-borne instead of pending. */
 export const markPromoted = (
   db: DatabaseShape,
   input: {
@@ -387,7 +387,7 @@ export const markPromoted = (
     [input.at, input.srcPath, input.rel, input.dstPath]
   )
 
-/** Sessions with no memory linked to them — what trace-consolidation counts in v1. */
+/** Sessions with no memory linked to them, which is what trace-consolidation counts in v1. */
 export const unlinkedSessionCount = (db: DatabaseShape): Effect.Effect<number, StorageFailure> =>
   db
     .get<{ n: number }>(
@@ -408,28 +408,28 @@ export interface UnconsolidatedSession {
 /**
  * One session's manifest row: the session, its transcript, and the memories already linked to it.
  *
- * ## What the manifest is for, and why it is a join rather than a file list
+ * ## What the manifest is for, and why it is a join and not a file list
  *
  * The consolidator reads transcripts off a read-only mount and is handed this as its index
  * (`apps/consolidator/src/client.ts`, `manifestFor`). Two of the three groups of columns are here
  * because a TRANSCRIPT'S OWN BYTES DO NOT STATE THEM, so a model without them would either infer them
  * or work without them:
  *
- * - The session's identity and span — `slug`, `cwd`, `git_branch`, `started_at`, `ended_at`,
+ * - The session's identity and span: `slug`, `cwd`, `git_branch`, `started_at`, `ended_at`,
  *   `prompt_count`, `turn_count`. A JSONL file records turns; which project directory it was recorded
  *   under, and how long the session ran, are `traces` columns.
  * - The memories already linked to it, from `memory_session_links`. This is the expensive one and the
- *   reason the shape is a join: the bar in `agent/instructions.md` is "more signal than one grep", and
- *   a pattern already written down is not new signal. A model that has to discover "this session
- *   already produced a memory" would have to read the corpus; one join answers it.
+ *   reason the shape is a join. The bar in `agent/instructions.md` is "more signal than one grep", and
+ *   a pattern already written down is not new signal. A model would otherwise read the corpus to
+ *   discover that this session already produced a memory; one join answers it.
  *
  * ## One row PER LINK, deliberately flat
  *
  * A session with three linked memories comes back as three rows and a session with none as one row
- * carrying `memory_path: null`. Not `group_concat`, and not one query per session: a delimiter-joined
+ * carrying `memory_path: null`. Neither `group_concat` nor one query per session: a delimiter-joined
  * column would put a path inside a string that a `,` in a path would then split, and the loop is the
  * per-row round trip this module's other statements exist to avoid. {@link manifestRowsFor} is the
- * grouper, in TypeScript, where the grouping is a `Map` rather than a SQL feature.
+ * grouper, in TypeScript, where the grouping is a `Map` and not a SQL feature.
  */
 export interface SessionManifestRow {
   readonly session_id: string
@@ -443,7 +443,7 @@ export interface SessionManifestRow {
   readonly ended_at: string | null
   readonly prompt_count: number
   readonly turn_count: number
-  /** `null` when the session has no linked memory at all — a LEFT JOIN miss, not an empty path. */
+  /** `null` when the session has no linked memory at all: a LEFT JOIN miss, not an empty path. */
   readonly memory_path: string | null
   readonly link_kind: string | null
 }
@@ -452,24 +452,24 @@ export interface SessionManifestRow {
  * The manifest rows for a named set of sessions.
  *
  * **`sessionIds` is bound, one `?` per id, and that is not optional.** Every value in this module
- * binds; an id interpolated into the text would be a session id from `traces` — which is a value the
- * trace scanner read out of a filename under `~/.claude/projects` — reaching SQL as syntax.
+ * binds. An id interpolated into the text would reach SQL as syntax, and a session id from `traces` is
+ * a value the trace scanner read out of a filename under `~/.claude/projects`.
  *
- * **The set is passed in rather than re-derived.** The caller already selected its batch through
+ * **The set is passed in instead of re-derived.** The caller already selected its batch through
  * {@link unconsolidatedSessions}, and re-running that selection here would be a second query free to
- * disagree with the first: the two would race a concurrently-written `trace_consolidations` row, and
+ * disagree with the first. The two would race a concurrently-written `trace_consolidations` row, and
  * the manifest would describe a batch the phase is not sending. So the batch is a parameter and this
  * statement is a pure lookup over it.
  *
  * **`ORDER BY t.file_mtime DESC` matches the batch's own order** so the manifest reads newest-first
  * like the selection did, then `session_id ASC` for a stable tie-break, then `l.path ASC` so a
- * session's linked memories are in a fixed order — which is what makes a generated manifest a pure
+ * session's linked memories are in a fixed order. That makes a generated manifest a pure
  * function of the plane and therefore assertable byte-for-byte.
  *
  * Measured plan (2026-08-12, node 24.19.0 against the shipped migrations):
  * `SEARCH t USING INDEX sqlite_autoindex_traces_1 (session_id=?)` then
- * `SEARCH l USING INDEX msl_session (session_id=?) LEFT-JOIN`. Both sides seek — `traces` by its
- * primary key and the links by `msl_session` (`packages/index/migrations/0005_traces.sql`) — so the
+ * `SEARCH l USING INDEX msl_session (session_id=?) LEFT-JOIN`. Both sides seek, `traces` by its
+ * primary key and the links by `msl_session` (`packages/index/migrations/0005_traces.sql`), so the
  * cost is per-batch and not per-corpus.
  */
 export const sessionManifestRows = (
@@ -496,24 +496,24 @@ export const sessionManifestRows = (
  * over, newest first, capped.
  *
  * **The anti-join is the trigger.** `trace_consolidations` holds one row per session already read, so
- * its absence is what makes a session a candidate — not a link count, not a memory's presence. Those
- * two are different questions: {@link unlinkedSessionCount} asks whether the AGENT wrote a memory
+ * its absence is what makes a session a candidate, not a link count and not a memory's presence. Those
+ * two are different questions. {@link unlinkedSessionCount} asks whether the AGENT wrote a memory
  * during a session, which stays interesting as a trend even after the cycle has read the transcript.
  *
  * **`file_size >= minBytes` skips a session that transacted nothing.** Measured over the live corpus
  * at `~/.claude/projects` on 2026-08-08 (11,361 transcripts): only 34 sit below 8 KiB, and each of
- * those holds 5-13 JSONL lines — a session opened and abandoned. p01 is 43.6 KB, so an 8 KiB floor
- * costs ~0.3% of sessions and none that did any work. The floor is a parameter rather than a literal
- * here so the caller states it and a test can move it.
+ * those holds 5-13 JSONL lines, a session opened and abandoned. p01 is 43.6 KB, so an 8 KiB floor
+ * costs ~0.3% of sessions and none that did any work. The floor is a parameter, not a literal
+ * here, so the caller states it and a test can move it.
  *
  * **`file_mtime < settledBefore` is the live-session guard.** A transcript is written by a process
- * that may still be running, and consolidating a session mid-turn would read half a conversation and
- * then watermark it as done — the interesting part arriving after the row that says it was handled.
- * The caller derives the cutoff from the RUN's own instant, never from a clock.
+ * that may still be running. Consolidating a session mid-turn would read half a conversation and
+ * then watermark it as done, with the interesting part arriving after the row that says it was handled.
+ * The caller derives the cutoff from the RUN's own instant, not from a clock.
  *
- * **`ORDER BY file_mtime DESC` + `LIMIT` is the first-run guard, and the order is the substance.** A
+ * **`ORDER BY file_mtime DESC` + `LIMIT` is the first-run guard, and the order carries the policy.** A
  * fresh install faces a year of transcripts, and an uncapped batch would hand thousands of files to
- * one agent session. Newest-first is what makes the cap a policy rather than an accident: the cycle
+ * one agent session. Newest-first is what makes the cap deliberate: the cycle
  * consolidates recent sessions first and works backwards a batch per night, so the memories it earns
  * soonest are the ones about what the agent is doing now.
  */
@@ -521,7 +521,7 @@ export const unconsolidatedSessions = (
   db: DatabaseShape,
   options: {
     readonly minBytes: number
-    /** ISO-8601 instant a session's transcript must predate. Derived from the run, not the clock. */
+    /** ISO-8601 instant a session's transcript must predate. Derived from the run, not a clock. */
     readonly settledBefore: string
     readonly limit: number
   }
@@ -543,16 +543,16 @@ export const unconsolidatedSessions = (
 /**
  * Mark sessions consolidated, as ONE batch.
  *
- * Written AFTER the phase's commits land, and that ordering is the crash-safety property: a process
+ * Written AFTER the phase's commits land, and that ordering is the crash-safety property. A process
  * killed between the commits and this write reconsolidates those sessions next night, which costs a
  * model call and produces a duplicate candidate a reviewer declines. The reverse order would lose the
- * transcripts silently — watermarked as read, with no memory to show for it and nothing anywhere
+ * transcripts silently: watermarked as read, with no memory to show for it and nothing anywhere
  * saying so.
  *
- * `writeAll` rather than a loop, for the reason `replaceMinedEdges` gives: one batch per phase, never
- * one round trip per row.
+ * `writeAll`, not a loop, for the reason `replaceMinedEdges` gives: one batch per phase, and no
+ * round trip per row.
  *
- * `ON CONFLICT DO UPDATE` rather than `DO NOTHING`, so a reconsolidation after a lost `index.db`
+ * `ON CONFLICT DO UPDATE` instead of `DO NOTHING`, so a reconsolidation after a lost `index.db`
  * re-stamps the row with the run that actually re-read the session. A stale `run_id` pointing at a
  * branch that no longer exists is worse than no row, because it reads as provenance.
  *
@@ -594,7 +594,7 @@ export const linkedSessionCount = (db: DatabaseShape): Effect.Effect<number, Sto
     )
     .pipe(Effect.map((row) => row?.n ?? 0))
 
-/** A `<link rel="memhtml-*">` whose target is absent from the tree. The integrity phase's input. */
+/** A `<link rel="memhtml-*">` whose target is not in the tree. The integrity phase's input. */
 export interface DanglingEdge {
   readonly src_path: string
   readonly rel: string
@@ -605,7 +605,7 @@ export interface DanglingEdge {
  * Authored edges pointing at a path the index does not hold.
  *
  * `derived = 0` only: a mined edge lives in the index and nowhere else, so a dangling one is
- * repaired by the next rebuild rather than by rewriting a file. This finds the ones that are in a
+ * repaired by the next rebuild instead of by rewriting a file. This finds the ones that are in a
  * file, which are the ones a commit has to fix.
  */
 export const danglingEdges = (
@@ -686,7 +686,7 @@ export const corpusSnapshot = (db: DatabaseShape): Effect.Effect<CorpusSnapshot,
  *
  * Scoped to `provenance = 'sleep'` so the delete cannot reach an authored edge, and applied as one
  * `writeAll` batch so a corpus is never left with the old mined set deleted and the new one not yet
- * written — a window in which the lateral retrieval arm would return nothing.
+ * written. In that window the lateral retrieval arm would return nothing.
  */
 export const replaceMinedEdges = (
   db: DatabaseShape,
@@ -748,7 +748,7 @@ export const recordRun = (
     ]
   )
 
-/** Record one phase row. Reporting only — the commit trailers are what a resume reads. */
+/** Record one phase row. Reporting only; the commit trailers are what a resume reads. */
 export const recordPhase = (
   db: DatabaseShape,
   input: {

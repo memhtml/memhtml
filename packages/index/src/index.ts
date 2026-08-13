@@ -1,6 +1,6 @@
 /**
- * `@memhtml/index` — the rebuildable SQLite plane: schema, indexer, four-arm RRF retrieval, the state
- * plane, and the trace-plane persistence half.
+ * `@memhtml/index` is the rebuildable SQLite plane: schema, indexer, four-arm RRF retrieval, the
+ * state plane, and the trace-plane persistence half.
  *
  * `index.db` is a projection of the git tree and is deleted and rebuilt without loss. `state.db` is
  * ATTACHed over the same connection and holds the one set of facts git cannot reproduce.

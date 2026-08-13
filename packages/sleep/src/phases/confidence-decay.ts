@@ -12,20 +12,20 @@ import { emptyOutcome, type PhaseBody } from "../env.js"
 import { accessRows, activeCorpus, isSleepExcluded } from "../sql.js"
 
 /**
- * Phase 7 — confidence decay. Un-reinforced memories lose confidence toward the floor. ONE commit
+ * Phase 7, confidence decay. Un-reinforced memories lose confidence toward the floor. ONE commit
  * for the whole corpus.
  *
  * **Only un-reinforced files decay.** A file whose `state.access.reinforcement_count` is above zero
  * has been confirmed useful, and eroding its confidence anyway would make the reinforcement signal
- * meaningless — the phase exists to let an unconfirmed claim fade, not to punish age.
+ * meaningless. The phase lets an unconfirmed claim fade; it does not punish age.
  *
  * **The 0.005 delta gate is what keeps the diff reviewable.** This is the widest commit in a sleep
- * run — one meta line across many files — and a sub-threshold change carries no decision-relevant
+ * run, one meta line across many files, and a sub-threshold change carries no decision-relevant
  * information while costing a reviewer a line of diff. `decayConfidence` is unconditionally
  * non-increasing and stops at the floor, so a corpus that has finished decaying reaches a fixed point
  * and this phase stops committing entirely.
  *
- * Runs BEFORE retention triage so triage scores the decayed value: scoring the pre-decay confidence
+ * Runs BEFORE retention triage so triage scores the decayed value. Scoring the pre-decay confidence
  * would give a memory one extra night of undeserved retention every night, indefinitely.
  */
 export const confidenceDecay: PhaseBody = (env) =>
@@ -45,13 +45,13 @@ export const confidenceDecay: PhaseBody = (env) =>
     for (const row of corpus) {
       /**
        * Confidence is how sure the agent is that a CLAIM is true, and a task makes no claim.
-       * Decaying one would rewrite a task file every night forever — and this is the widest commit
+       * Decaying one would rewrite a task file every night forever, and this is the widest commit
        * in a run, so it would be the noisiest possible no-op.
        *
-       * Counted in its own bucket rather than folded into `reinforced`. `reinforced` is derived
+       * Counted in its own bucket instead of folded into `reinforced`. `reinforced` is derived
        * below as a difference, so a type skip absorbed into it would report tasks as
-       * confirmed-useful memories: a count whose name means one thing and whose value means
-       * another, which is the seam this fleet has paid for repeatedly.
+       * confirmed-useful memories. That gives a count whose name means one thing and whose value
+       * means another, which is the seam this fleet has paid for repeatedly.
        */
       if (isSleepExcluded(row.memory_type)) {
         skippedType += 1
@@ -64,7 +64,7 @@ export const confidenceDecay: PhaseBody = (env) =>
       eligible += 1
       /**
        * The confidence is read from the FILE, not from the `files` row. The file is the system of
-       * record and the row is a projection of it; decaying from the projection would compound a
+       * record and the row is a projection of it. Decaying from the projection would compound a
        * stale index into the corpus itself, writing a value derived from a number the tree never had.
        */
       const html = yield* readFileBytes(env, row.path)

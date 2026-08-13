@@ -19,9 +19,9 @@ import { latestRun, type RunRow, readPhases, readRun, recordRun } from "./sql.js
  * `review` and `merge`: what a human reads before a sleep branch lands, and the two refusals that
  * stop it landing badly.
  *
- * A sleep run is not trusted because it succeeded. It is trusted because a reviewer can see what it
- * did — which files changed, whether the change was a meta stamp or a rewritten claim, and which
- * phases failed — and because the merge refuses on two independent grounds: `main` having moved, and
+ * A run earns trust from what a reviewer can see, not from having succeeded. The review shows which
+ * files changed, whether a change was a meta stamp or a rewritten claim, and which phases failed.
+ * The merge then refuses on two independent grounds: `main` having moved, and
  * the caller's own gate.
  */
 
@@ -39,8 +39,8 @@ const resolveRun = (
  * classification.
  *
  * The classification is the substance. `git diff --stat` says a file changed by two lines and says
- * nothing about whether those lines were a confidence stamp or the memory's claim — and the whole
- * reason head edits go through byte-splicing editors is so that distinction is REAL: a meta-only
+ * nothing about whether those lines were a confidence stamp or the memory's claim. Head edits go
+ * through byte-splicing editors so that distinction is REAL: a meta-only
  * change provably leaves the article's bytes, and therefore its content hash, identical. So
  * `meta-only` here is computed by comparing the two versions' content hashes, not by reading the diff.
  */
@@ -92,10 +92,10 @@ export const review = (
 /**
  * The commits in a range with their phase and counts trailers.
  *
- * Read with `logTrailers`, one call per key, rather than by grepping `%B`. The trailer values can carry
- * colons and commas — `Memhtml-Counts` is JSON — and `%(trailers:key=…,valueonly)` returns them verbatim
- * while a `grep '^Memhtml-Phase:'` over a message body would also match a line inside a memory title that
- * happened to start that way.
+ * Read with `logTrailers`, one call per key, instead of by grepping `%B`. The trailer values can carry
+ * colons and commas, since `Memhtml-Counts` is JSON, and `%(trailers:key=…,valueonly)` returns them
+ * verbatim. A `grep '^Memhtml-Phase:'` over a message body would also match a line inside a memory
+ * title that happened to start that way.
  */
 const readCommits = (
   deps: SleepDeps,
@@ -120,8 +120,8 @@ const readCommits = (
 /**
  * Classify every path the run touched.
  *
- * A rename is `archived` regardless of similarity score — eviction IS a `git mv` into
- * `archive/<YYYY>/`, and the year-partitioned path is what says so. Nothing here reads the score: an
+ * A rename is `archived` regardless of similarity score, because eviction IS a `git mv` into
+ * `archive/<YYYY>/` and the year-partitioned path is what says so. Nothing here reads the score: an
  * archive commit that also stamps the head measures R059-R087 (a head stamp lowers a tree-to-tree
  * similarity), so gating on 100 would classify every real eviction as a delete plus an add.
  */
@@ -196,12 +196,12 @@ const blobText = (deps: SleepDeps, spec: string): Effect.Effect<string | undefin
 /** What `merge` takes. `preMergeGate` is the caller's quality refusal, composed ahead of the merge. */
 export interface MergeOptions {
   /**
-   * A gate that must succeed before `main` moves. T10 wires the discrimination eval here: a sleep run
-   * that degrades retrieval quality cannot land, and the refusal is the point.
+   * A gate that must succeed before `main` moves. T10 wires the discrimination eval here, so a sleep
+   * run that degrades retrieval quality is refused and cannot land.
    *
-   * Absent means no gate. That is a deliberate default rather than a permissive one — this package
-   * cannot import the eval without depending on it, so the composition belongs to the CLI, and a
-   * missing gate has to be visible in the caller's own wiring rather than silently supplied here.
+   * Absent means no gate. This package cannot import the eval without depending on it, so the
+   * composition belongs to the CLI. A missing gate is then visible in the caller's own wiring,
+   * instead of being supplied silently here.
    */
   readonly preMergeGate?: Effect.Effect<void, unknown> | undefined
   /** The branch to fast-forward. Defaults to `main`. */
@@ -214,12 +214,12 @@ export interface MergeOptions {
  * **Two refusals, both before anything moves.** `main` having advanced past `base_sha` means the run
  * curated a corpus that no longer exists: a decay computed against a confidence an agent has since
  * corrected, an eviction of a memory that was just reinforced. The operator reruns the sleep, which is
- * cheap because every phase is idempotent — an already-merged duplicate no longer surfaces, an
- * already-decayed confidence is a fixed point, an already-archived file is not a candidate.
+ * cheap because every phase is idempotent. An already-merged duplicate no longer surfaces, an
+ * already-decayed confidence is a fixed point, and an already-archived file is not a candidate.
  *
- * Fast-forward only, never a merge commit. A three-way merge here would produce a commit whose parents
+ * Fast-forward only, with no merge commit. A three-way merge here would produce a commit whose parents
  * are the sleep branch and a moved `main`, which is exactly the state the first refusal exists to
- * prevent — and the conflict resolution would be a human editing generated `sitemap.xml` by hand.
+ * prevent, and the conflict resolution would be a human editing generated `sitemap.xml` by hand.
  */
 export const merge = (
   deps: SleepDeps,
