@@ -108,15 +108,16 @@ const flagSection = (command: CommandSpec, base: string): Section => ({
             cell(flag.description) + (flag.required === true ? " **Required.**" : "")
           ])
         ),
-    `Every command additionally accepts the ${pageLink(base, `${TIER}/global-flags`, "global flags")}.`
+    `Every command also accepts the ${pageLink(base, `${TIER}/global-flags`, "global flags")}.`
   ].join("\n\n")
 })
 
 const responseSection = (command: CommandSpec, base: string): Section => ({
   title: "Response",
   body: [
-    `One JSON envelope on stdout, whose ${code("type")} is ${codeList([...command.responseTypes])}.`,
-    `See ${pageLink(base, `${TIER}/envelope`, "the JSON envelope")} for the envelope's own shape, ${pageLink(base, `${TIER}/response-types`, "response types")} for the whole discriminator vocabulary, and ${pageLink(base, `${TIER}/error-codes`, "error codes")} for what a failure carries.`
+    `On success the command writes one JSON envelope to stdout, and its ${code("type")} is ${codeList([...command.responseTypes])}.`,
+    `On failure it writes the failure envelope, whose ${code("code")} comes from ${pageLink(base, `${TIER}/error-codes`, "error codes")}.`,
+    `${pageLink(base, `${TIER}/envelope`, "The JSON envelope")} gives the fields both shapes carry. ${pageLink(base, `${TIER}/response-types`, "Response types")} lists every value ${code("type")} takes across the binary.`
   ].join("\n\n")
 })
 
@@ -139,7 +140,7 @@ const furtherReadingSection = (registry: Registry, command: CommandSpec, base: s
     title: "Further reading",
     body:
       topics.length === 0
-        ? `No guide block names this command. The ${pageLink(base, `${TIER}/guide`, "guide")} is the workflow prose an agent reads before the command table means anything.`
+        ? `No guide block names this command. The ${pageLink(base, `${TIER}/guide`, "guide")} is the workflow prose the CLI ships beside the command table: which command to reach for, and in what order.`
         : [
             "The guide blocks that name this command:",
             bullets(topics.map((topic) => pageLink(base, `${TIER}/guide/${topic}`, code(topic))))
@@ -149,7 +150,7 @@ const furtherReadingSection = (registry: Registry, command: CommandSpec, base: s
 
 const provenance = (source: string, what: string): Section => ({
   title: "Provenance",
-  body: `This page is derived from ${code(source)} at build time and has no file of its own: ${what} Change the registry and the page changes with it.`
+  body: `A loader generates this page from ${code(source)} while the site builds, so no file in the repository holds it: ${what} Change the registry and this page changes with it.`
 })
 
 const commandPage = (registry: Registry, command: CommandSpec, base: string): ReferencePage => ({
@@ -200,16 +201,18 @@ const overviewPage = (registry: Registry, base: string): ReferencePage => {
   return {
     id: TIER,
     title: "Reference",
-    description: "Every command, code, vocabulary, and requirement, generated from its registry.",
+    description:
+      "Every command, code, vocabulary, and requirement, read from the source that defines it.",
     source: SOURCES.commands,
     filePath: `${DOCS_COLLECTION}/${TIER}/index.md`,
     lastUpdated: registry.commitDates.commands,
     body: sections([
       {
-        title: "What this tier is",
+        title: "What is here",
         body: [
-          "Every page here is generated at build time from the registry that defines the thing it documents, and no page exists as a file in the repository. A count on one of these pages is the length of an array in the source, so a page cannot claim a surface the binary does not have.",
-          "The registries and their sizes:",
+          "This tier documents the binary's whole surface: every command, every flag, every value a caller can send or read back.",
+          "Each page is generated while the site builds, from the source that defines the thing it documents, so none of these pages exists as a file in the repository. Where a page states a count, that number is the length of an array in the source, so a page here cannot claim a command or a code the binary does not have.",
+          "The registries, and how many members each one holds:",
           table(
             ["Page", "Registry", "Members", "Source"],
             census.map(([id, label, count, source]) => [
@@ -224,7 +227,7 @@ const overviewPage = (registry: Registry, base: string): ReferencePage => {
       {
         title: "The commands",
         body: [
-          `${code("memhtml")} accepts ${registry.commands.length} commands. Each has its own page.`,
+          `${code("memhtml")} accepts ${registry.commands.length} commands, each with its own page below. A subcommand is one command with a space in its name, so ${code("memhtml index rebuild")} is a single entry rather than a tree.`,
           table(
             ["Command", "Summary"],
             registry.commands.map((command) => [
@@ -239,12 +242,12 @@ const overviewPage = (registry: Registry, base: string): ReferencePage => {
         ].join("\n\n")
       },
       {
-        title: "How a command surface is described",
+        title: "Where the command table comes from",
         body: paragraphs(registry.prose.commands ?? "")
       },
       provenance(
         SOURCES.commands,
-        "a content-layer loader injects these pages into the docs collection, so `autogenerate` and Pagefind see them as ordinary pages."
+        "a content-layer loader hands these pages straight to the docs collection, so the sidebar and the site search treat them as ordinary pages."
       )
     ])
   }
@@ -253,7 +256,7 @@ const overviewPage = (registry: Registry, base: string): ReferencePage => {
 const globalFlagsPage = (registry: Registry, base: string): ReferencePage => ({
   id: `${TIER}/global-flags`,
   title: "Global flags",
-  description: "The flags every command accepts, whatever it does.",
+  description: "The flags every command accepts, whichever command it is.",
   source: SOURCES.commands,
   filePath: `${DOCS_COLLECTION}/${TIER}/global-flags.md`,
   lastUpdated: registry.commitDates.commands,
@@ -273,7 +276,7 @@ const globalFlagsPage = (registry: Registry, base: string): ReferencePage => ({
     },
     {
       title: "Where they apply",
-      body: `All ${registry.commands.length} ${pageLink(base, TIER, "commands")} accept every flag above.`
+      body: `All ${registry.commands.length} ${pageLink(base, TIER, "commands")} accept every flag above. A command's own page lists the flags particular to it, and leaves these out.`
     },
     provenance(
       SOURCES.commands,
@@ -285,7 +288,7 @@ const globalFlagsPage = (registry: Registry, base: string): ReferencePage => ({
 const guideIndexPage = (registry: Registry, base: string): ReferencePage => ({
   id: `${TIER}/guide`,
   title: "The guide",
-  description: "The workflow prose the CLI publishes to an agent before it has written anything.",
+  description: "The workflow prose the CLI publishes on a first call, one page per topic.",
   source: SOURCES.commands,
   filePath: `${DOCS_COLLECTION}/${TIER}/guide/index.md`,
   lastUpdated: registry.commitDates.commands,
@@ -293,17 +296,20 @@ const guideIndexPage = (registry: Registry, base: string): ReferencePage => ({
     { title: "What the guide is", body: paragraphs(registry.prose.guide ?? "") },
     {
       title: "The topics",
-      body: table(
-        ["Topic", "Commands it names"],
-        registry.guide.map((block) => [
-          pageLink(base, `${TIER}/guide/${block.topic}`, code(block.topic)),
-          codeList(
-            registry.commands
-              .filter((command) => topicsCovering(registry, command.name).includes(block.topic))
-              .map((command) => `memhtml ${command.name}`)
-          )
-        ])
-      )
+      body: [
+        "Each topic is one block of prose, served verbatim and rendered here on its own page. The second column is the commands whose invocation the block names.",
+        table(
+          ["Topic", "Commands it names"],
+          registry.guide.map((block) => [
+            pageLink(base, `${TIER}/guide/${block.topic}`, code(block.topic)),
+            codeList(
+              registry.commands
+                .filter((command) => topicsCovering(registry, command.name).includes(block.topic))
+                .map((command) => `memhtml ${command.name}`)
+            )
+          ])
+        )
+      ].join("\n\n")
     },
     provenance(
       SOURCES.commands,
@@ -339,7 +345,7 @@ const guideTopicPage = (
     filePath: `${DOCS_COLLECTION}/${TIER}/guide/${block.topic}.md`,
     lastUpdated: registry.commitDates.commands,
     body: sections([
-      { title: "The block", body: rendered },
+      { title: "The block, verbatim", body: rendered },
       {
         title: "Commands it names",
         body:
@@ -366,7 +372,7 @@ const guideTopicPage = (
 const envelopePage = (registry: Registry, base: string): ReferencePage => ({
   id: `${TIER}/envelope`,
   title: "The JSON envelope",
-  description: "One envelope per command on stdout, and nothing else.",
+  description: "One JSON envelope per command on stdout, with logs kept on stderr.",
   source: SOURCES.envelope,
   filePath: `${DOCS_COLLECTION}/${TIER}/envelope.md`,
   lastUpdated: registry.commitDates.envelope,
@@ -375,7 +381,7 @@ const envelopePage = (registry: Registry, base: string): ReferencePage => ({
     {
       title: "The two shapes",
       body: [
-        `Both carry ${code("apiVersion")}, which this build sets to ${code(registry.apiVersion)}.`,
+        `A command answers with one of two shapes, the success envelope or the failure envelope. Both carry ${code("apiVersion")}, which this build sets to ${code(registry.apiVersion)}.`,
         fence(
           "json",
           JSON.stringify(
@@ -397,7 +403,7 @@ const envelopePage = (registry: Registry, base: string): ReferencePage => ({
             2
           )
         ),
-        `Branch on ${code("code")}, never on ${code("error")}.`
+        `Branch on ${code("code")}. The ${code("error")} string is prose for a human and is rewritten whenever the wording improves.`
       ].join("\n\n")
     },
     {
@@ -411,8 +417,8 @@ const envelopePage = (registry: Registry, base: string): ReferencePage => ({
       ].join("\n\n")
     },
     {
-      title: "The discriminators",
-      body: `${registry.responseTypes.length} ${pageLink(base, `${TIER}/response-types`, "response types")} and ${registry.errorCodes.length} ${pageLink(base, `${TIER}/error-codes`, "error codes")}. Both vocabularies are append-only: a shipped value never changes meaning and is never removed.`
+      title: "The two vocabularies",
+      body: `A success envelope carries one of ${registry.responseTypes.length} ${pageLink(base, `${TIER}/response-types`, "response types")}, and a failure envelope one of ${registry.errorCodes.length} ${pageLink(base, `${TIER}/error-codes`, "error codes")}. Both vocabularies are append-only, so a shipped value keeps its meaning and stays in the list.`
     },
     provenance(SOURCES.envelope, "the envelope, its codes, and its exit codes are declared there.")
   ])
@@ -427,7 +433,7 @@ const responseTypesPage = (registry: Registry, base: string): ReferencePage => {
   return {
     id: `${TIER}/response-types`,
     title: "Response types",
-    description: "The discriminator a caller reads before parsing `data`.",
+    description: "The `type` field a caller reads before it parses `data`.",
     source: SOURCES.envelope,
     filePath: `${DOCS_COLLECTION}/${TIER}/response-types.md`,
     lastUpdated: registry.commitDates.envelope,
@@ -436,12 +442,13 @@ const responseTypesPage = (registry: Registry, base: string): ReferencePage => {
       {
         title: "The types",
         body: [
+          `Each row is one value of ${code("type")} and the commands that declare it. A command declares every type it can emit, so a row with several commands means those commands share one payload shape.`,
           table(
             ["Type", "Emitted by"],
             registry.responseTypes.map((type) => [
               code(type),
               emitters(type).length === 0
-                ? "— *no command declares it*"
+                ? "*no command declares it*"
                 : emitters(type)
                     .map((command) =>
                       pageLink(
@@ -455,12 +462,12 @@ const responseTypesPage = (registry: Registry, base: string): ReferencePage => {
           ),
           orphans.length === 0
             ? `Every one of the ${registry.responseTypes.length} types is declared by at least one command.`
-            : `${codeList(orphans)} — ${orphans.length} of the ${registry.responseTypes.length} types — ${orphans.length === 1 ? "is declared" : "are declared"} by no command. The vocabulary is append-only, so a type outlives the command that emitted it.`
+            : `${orphans.length} of the ${registry.responseTypes.length} types ${orphans.length === 1 ? "is" : "are"} declared by no command: ${codeList(orphans)}. The vocabulary is append-only, so a type outlives the command that emitted it.`
         ].join("\n\n")
       },
       provenance(
         SOURCES.envelope,
-        `the emitters are read from each command's own ${code("responseTypes")}, so this table is the join rather than a copy of it.`
+        `the second column is read from each command's own ${code("responseTypes")}, so this table is a join across the two registries.`
       )
     ])
   }
@@ -480,7 +487,7 @@ const errorCodesPage = (registry: Registry, base: string): ReferencePage => {
       {
         title: "The codes",
         body: [
-          `The registry ships the codes as a bare list with no per-code prose, so the columns below are the ones the sources state: the typed domain failures the CLI translates into each code, the suggestions it offers for those failures, and every file naming the code. **A code with no named file and no failure mapped to it is a gap in the sources, not a code with a hidden meaning.**`,
+          `The sources ship the codes as a bare list, and no sentence in them states what any one code means. So the columns below are the ones the sources do state: the typed domain failures the CLI translates into each code, the suggestions it offers for those failures, and every file that names the code. Where a row has neither a failure nor a file, this page has nothing further to tell you about that code, and the gap is in the sources rather than in the page.`,
           table(
             ["Code", "From these failures", "Suggestions", "Named in"],
             registry.errorCodes.map((row) => [
@@ -492,12 +499,12 @@ const errorCodesPage = (registry: Registry, base: string): ReferencePage => {
           ),
           unraised.length === 0
             ? `Every code is named somewhere in ${code("apps/cli/src")} or ${code("apps/mcp/src")}.`
-            : `${codeList(unraised.map((row) => row.code))} — ${unraised.length} of the ${registry.errorCodes.length} codes — ${unraised.length === 1 ? "is declared" : "are declared"} and named nowhere else in ${code("apps/cli/src")} or ${code("apps/mcp/src")}. Append-only means a code outlives the condition that raised it.`
+            : `${unraised.length} of the ${registry.errorCodes.length} codes ${unraised.length === 1 ? "is" : "are"} declared in the vocabulary and named nowhere else in ${code("apps/cli/src")} or ${code("apps/mcp/src")}: ${codeList(unraised.map((row) => row.code))}. Append-only means a code outlives the condition that raised it.`
         ].join("\n\n")
       },
       {
         title: "How a failure reaches a caller",
-        body: `Every typed domain failure passes through one translation in ${code("apps/cli/src/errors.ts")}, which is total: an unrecognised failure becomes ${code("ERR_UNKNOWN")} rather than an empty response. The envelope's shape is on ${pageLink(base, `${TIER}/envelope`, "the JSON envelope")}.`
+        body: `The CLI translates every typed domain failure in one place, ${code("apps/cli/src/errors.ts")}. That translation covers every case: a failure it does not recognise becomes ${code("ERR_UNKNOWN")}, so a caller always gets a code to branch on. ${pageLink(base, `${TIER}/envelope`, "The JSON envelope")} gives the shape the code arrives in.`
       },
       provenance(
         SOURCES.envelope,
@@ -510,7 +517,7 @@ const errorCodesPage = (registry: Registry, base: string): ReferencePage => {
 const configPage = (registry: Registry): ReferencePage => ({
   id: `${TIER}/config`,
   title: "Environment variables",
-  description: "The whole environment surface, and what absence means for each.",
+  description: "Every variable the binary reads, and what it does when one is unset.",
   source: SOURCES.config,
   filePath: `${DOCS_COLLECTION}/${TIER}/config.md`,
   lastUpdated: registry.commitDates.config,
@@ -518,14 +525,17 @@ const configPage = (registry: Registry): ReferencePage => ({
     { title: "How they are read", body: paragraphs(registry.prose.config ?? "") },
     {
       title: "The variables",
-      body: table(
-        ["Variable", "Absent means", "Description"],
-        registry.configVars.map((variable) => [
-          code(variable.name),
-          variable.fallback === null ? "*meaningful*" : code(variable.fallback),
-          cell(variable.description)
-        ])
-      )
+      body: [
+        "The middle column is the value the binary falls back to when the variable is unset. A row with no default changes behaviour by its absence, and its description says how.",
+        table(
+          ["Variable", "When unset", "Description"],
+          registry.configVars.map((variable) => [
+            code(variable.name),
+            variable.fallback === null ? "*no default*" : code(variable.fallback),
+            cell(variable.description)
+          ])
+        )
+      ].join("\n\n")
     },
     provenance(
       SOURCES.config,
@@ -537,7 +547,7 @@ const configPage = (registry: Registry): ReferencePage => ({
 const mcpToolsPage = (registry: Registry, base: string): ReferencePage => ({
   id: `${TIER}/mcp-tools`,
   title: "MCP tools",
-  description: "The stdio server's toolkit, in the order `tools/list` publishes it.",
+  description: "The tools the stdio server publishes, in the order a client receives them.",
   source: SOURCES.mcpTools,
   filePath: `${DOCS_COLLECTION}/${TIER}/mcp-tools.md`,
   lastUpdated: registry.commitDates.mcpTools,
@@ -545,7 +555,8 @@ const mcpToolsPage = (registry: Registry, base: string): ReferencePage => ({
     {
       title: "The toolkit",
       body: [
-        `${registry.mcpTools.length} tools over the same repository the CLI writes, served by ${pageLink(base, `${TIER}/commands/serve-mcp`, code("memhtml serve mcp"))}. The order below is the toolkit's registration order, which is what a client reads top-down.`,
+        `${pageLink(base, `${TIER}/commands/serve-mcp`, code("memhtml serve mcp"))} serves ${registry.mcpTools.length} tools over the same repository the CLI writes to. They appear below in registration order, which is the order ${code("tools/list")} returns them and the order a client reads.`,
+        "The second column names the internal capabilities a tool's handler declares, which bounds what that tool can touch.",
         table(
           ["Tool", "Ports it declares"],
           registry.mcpTools.map((tool) => [code(tool.name), codeList(tool.ports)])
@@ -558,7 +569,7 @@ const mcpToolsPage = (registry: Registry, base: string): ReferencePage => ({
     },
     {
       title: "The tools",
-      body: `Each description below is the string ${code("tools/list")} publishes, verbatim — it is what a client reads when it chooses a tool.`,
+      body: `Each description below is the exact string ${code("tools/list")} publishes. A client reads it to decide which tool to call, so it is the wording that has to carry the tool's contract.`,
       children: registry.mcpTools.map((tool) => ({
         title: tool.name,
         body: [`Ports: ${codeList(tool.ports)}`, paragraphs(tool.description)].join("\n\n")
@@ -574,7 +585,8 @@ const mcpToolsPage = (registry: Registry, base: string): ReferencePage => ({
 const mcpResourcesPage = (registry: Registry): ReferencePage => ({
   id: `${TIER}/mcp-resources`,
   title: "MCP resources",
-  description: "Citation-grade drill-down: the file behind an answer, and a sleep run's report.",
+  description:
+    "What a client can fetch by URI: the file behind an answer, and a sleep run's report.",
   source: SOURCES.mcpResources,
   filePath: `${DOCS_COLLECTION}/${TIER}/mcp-resources.md`,
   lastUpdated: registry.commitDates.mcpResources,
@@ -582,15 +594,18 @@ const mcpResourcesPage = (registry: Registry): ReferencePage => ({
     { title: "What a resource is for", body: paragraphs(registry.prose.mcpResources ?? "") },
     {
       title: "The templates",
-      body: table(
-        ["URI template", "Name", "MIME type", "Description"],
-        registry.mcpResources.map((resource) => [
-          code(resource.template),
-          cell(resource.name),
-          code(resource.mimeType),
-          cell(resource.description)
-        ])
-      )
+      body: [
+        "A client fills in the braced parameter and fetches the result. Each row is one template the server publishes, with the MIME type the content arrives as.",
+        table(
+          ["URI template", "Name", "MIME type", "Description"],
+          registry.mcpResources.map((resource) => [
+            code(resource.template),
+            cell(resource.name),
+            code(resource.mimeType),
+            cell(resource.description)
+          ])
+        )
+      ].join("\n\n")
     },
     provenance(
       SOURCES.mcpResources,
@@ -602,7 +617,8 @@ const mcpResourcesPage = (registry: Registry): ReferencePage => ({
 const vocabularyPage = (registry: Registry): ReferencePage => ({
   id: `${TIER}/vocabulary`,
   title: "Closed vocabularies",
-  description: "Memory types, edge rels, PARA buckets, task statuses, and edge provenance.",
+  description:
+    "The fixed sets a value must come from: memory types, edge relations, PARA buckets, task statuses, and edge provenance.",
   source: SOURCES.types,
   filePath: `${DOCS_COLLECTION}/${TIER}/vocabulary.md`,
   lastUpdated: registry.commitDates.types,
@@ -610,7 +626,7 @@ const vocabularyPage = (registry: Registry): ReferencePage => ({
     {
       title: "The vocabularies",
       body: [
-        `${registry.vocabularies.length} closed sets, each restated by a SQL ${code("CHECK")} constraint. A value outside one is refused rather than stored.`,
+        `A closed vocabulary is a fixed list, and a value from outside it is refused. There are ${registry.vocabularies.length} of them, and each one is restated as a SQL ${code("CHECK")} constraint, so the database enforces the same list the code does.`,
         table(
           ["Constant", "Members", "Values"],
           registry.vocabularies.map((vocabulary) => [
@@ -648,9 +664,10 @@ const sleepPhasesPage = (registry: Registry, base: string): ReferencePage => ({
     {
       title: "The order",
       body: [
-        `${registry.sleepPhases.length} phases, each an isolated commit on a review branch. ${pageLink(base, `${TIER}/commands/sleep-run`, code("memhtml sleep run"))} runs them; ${code("--phases")} takes any subset.`,
+        `${pageLink(base, `${TIER}/commands/sleep-run`, code("memhtml sleep run"))} runs ${registry.sleepPhases.length} phases in the order below, on a review branch, and each committing phase makes its own commit there. ${code("--phases")} runs any subset of them.`,
+        "The last column names the phases that a failure here blocks. Those are the hard prerequisites the runner reads, so a phase with an empty cell can fail without stopping the rest.",
         table(
-          ["#", "Phase", "Commits", "Calls a model", "Blocks on failure"],
+          ["#", "Phase", "Commits", "Calls a model", "Blocked if it fails"],
           registry.sleepPhases.map((phase) => [
             String(phase.index),
             code(phase.name),
@@ -659,13 +676,13 @@ const sleepPhasesPage = (registry: Registry, base: string): ReferencePage => ({
             codeList(phase.blocks)
           ])
         ),
-        `${registry.sleepPhases.filter((phase) => phase.callsModel).length} phases call a model; the rest are deterministic and cost no model call.`
+        `${registry.sleepPhases.filter((phase) => phase.callsModel).length} of the phases call a model. The rest are deterministic, so a run with no credentials still gets through them.`
       ].join("\n\n")
     },
     { title: "Why this order", body: paragraphs(registry.prose.sleepPhases ?? "") },
     provenance(
       SOURCES.sleep,
-      `the phase names, the committing set, the model-calling set, and the hard prerequisites are four constants there — the same ones the runner, ${code("memhtml sleep resume")}, and the report read.`
+      `the phase names, the committing set, the model-calling set, and the hard prerequisites are four constants there, and they are the same four the runner, ${code("memhtml sleep resume")}, and the run report read.`
     )
   ])
 })
@@ -673,15 +690,16 @@ const sleepPhasesPage = (registry: Registry, base: string): ReferencePage => ({
 const rrfArmsPage = (registry: Registry, base: string): ReferencePage => ({
   id: `${TIER}/rrf-arms`,
   title: "RRF arms",
-  description: "The four ranking arms, their weights, and what each needs to fire.",
+  description: "The ranking arms, their weights, and what each one needs before it can fire.",
   source: SOURCES.retrieval,
   filePath: `${DOCS_COLLECTION}/${TIER}/rrf-arms.md`,
   lastUpdated: registry.commitDates.retrieval,
   body: sections([
     {
-      title: "The fold",
+      title: "How the arms combine",
       body: [
-        `${registry.rankArms.length} arms, fused by reciprocal rank. An arm whose precondition is absent leaves the fold, which is how ${pageLink(base, `${TIER}/commands/search`, code("memhtml search"))} degrades to the lexical floor instead of failing.`,
+        `${pageLink(base, `${TIER}/commands/search`, code("memhtml search"))} runs ${registry.rankArms.length} separate rankings over the corpus, then merges them by reciprocal rank fusion: each arm contributes a score that falls off with the position it gave a memory, the scores are summed, and the sums decide the final order. A memory that two arms both place near the top therefore outranks one that a single arm placed first.`,
+        `An arm whose precondition is missing drops out before the SQL is assembled, so a search with no query vector comes back ranked by the arms that could still fire. The last three columns are those preconditions.`,
         table(
           ["Arm", "Weight", "Needs the query vector", "Needs the state plane", "Needs query terms"],
           registry.rankArms.map((arm) => [
@@ -697,7 +715,7 @@ const rrfArmsPage = (registry: Registry, base: string): ReferencePage => ({
     { title: "Why the arms are data", body: paragraphs(registry.prose.rankArms ?? "") },
     {
       title: "The arms",
-      body: "Each arm's own rationale, from the registry.",
+      body: "One subsection per arm, quoting what the registry says about it.",
       children: registry.rankArms.map((arm) => ({
         title: arm.name,
         body: [`Weight ${code(arm.weight)}.`, paragraphs(arm.doc ?? "")]
@@ -716,7 +734,7 @@ const schemaPage = (registry: Registry, base: string): ReferencePage => {
     title,
     body: [
       paragraphs(prose),
-      `${plane(which).length} migrations.`,
+      `${plane(which).length} migrations, in the order they are applied:`,
       table(
         ["File", "Creates"],
         plane(which).map((migration) => [code(migration.file), codeList(migration.creates)])
@@ -739,7 +757,10 @@ const schemaPage = (registry: Registry, base: string): ReferencePage => {
     body: sections([
       {
         title: "Two planes",
-        body: `The index is a disposable projection of the git tree: ${pageLink(base, `${TIER}/commands/index-rebuild`, code("memhtml index rebuild"))} reproduces it from ${code("HEAD")}. The state plane is not reproducible from git, which is why it has a committed sidecar. Adding a migration means adding a ${code(".sql")} file — the directories are read in filename order and no code changes.`
+        body: [
+          `The index plane is a projection of the git tree and can be thrown away: ${pageLink(base, `${TIER}/commands/index-rebuild`, code("memhtml index rebuild"))} reproduces it from ${code("HEAD")}. The state plane holds what git cannot reproduce, which is why it ships a committed sidecar file alongside the database.`,
+          `Both planes grow the same way. Adding a migration means adding one ${code(".sql")} file to the plane's directory: the files are read in filename order at run time, and no code changes.`
+        ].join("\n\n")
       },
       planeSection("index", "The index plane", registry.prose.indexPlane ?? ""),
       planeSection("state", "The state plane", registry.prose.statePlane ?? ""),
@@ -768,16 +789,16 @@ const requirementsPage = (registry: Registry): ReferencePage => {
   return {
     id: `${TIER}/requirements`,
     title: "Requirements",
-    description:
-      "The EARS requirements ledger: every requirement, its status, and its verification.",
+    description: "Every requirement in the ledger, its status, and the method that verifies it.",
     source: SOURCES.symspec,
     filePath: `${DOCS_COLLECTION}/${TIER}/requirements.md`,
     lastUpdated: registry.commitDates.symspec,
     body: sections([
       {
-        title: "Standing",
+        title: "What the ledger holds",
         body: [
-          `${registry.requirements.length} requirements under ${prefixes.length} key prefixes. Each names the method that verifies it and the code that satisfies it.`,
+          `${registry.requirements.length} requirements, grouped under ${prefixes.length} key prefixes. Each one is a single sentence that names a condition and the response the system owes under it, which is the style called EARS, the Easy Approach to Requirements Syntax.`,
+          "Every requirement also carries the method that verifies it and, once implemented, the code that satisfies it. Counted by status:",
           table(
             ["Status", "Requirements", "Keys"],
             statuses.map(([status, count]) => [
@@ -790,6 +811,7 @@ const requirementsPage = (registry: Registry): ReferencePage => {
               )
             ])
           ),
+          "And counted by the method that verifies them:",
           table(
             ["Verification method", "Requirements"],
             methods.map(([method, count]) => [code(method), String(count)])
@@ -799,10 +821,11 @@ const requirementsPage = (registry: Registry): ReferencePage => {
       {
         title: "By prefix",
         body: [
+          "A prefix is one part of the system, and the requirements under it are numbered within that part. Every prefix below has its own table of requirements further down this page.",
           table(
             ["Prefix", "System", "Requirements"],
             prefixes.map(([prefix, count]) => [
-              `[${code(prefix)}](#${prefix.toLowerCase()})`,
+              code(prefix),
               codeList([...new Set(ofPrefix(prefix).map((one) => one.systemName))]),
               String(count)
             ])
@@ -835,7 +858,7 @@ const packagesPage = (registry: Registry): ReferencePage => {
   return {
     id: `${TIER}/packages`,
     title: "Packages",
-    description: "Every workspace package, what it owns, and which siblings it may import.",
+    description: "Every workspace package, what it owns, and which siblings it imports.",
     source: "apps/, packages/",
     filePath: `${DOCS_COLLECTION}/${TIER}/packages.md`,
     lastUpdated: registry.commitDates.commands,
@@ -843,7 +866,7 @@ const packagesPage = (registry: Registry): ReferencePage => {
       {
         title: "The workspace",
         body: [
-          `${registry.packages.length} packages. ${registry.packages.length - undescribed.length} of them state a description in their own manifest.`,
+          `The workspace holds ${registry.packages.length} packages, and ${registry.packages.length - undescribed.length} of them state a description in their own manifest. The last column quotes that manifest.`,
           table(
             ["Package", "Directory", "Description"],
             registry.packages.map((entry) => [
@@ -862,7 +885,7 @@ const packagesPage = (registry: Registry): ReferencePage => {
       {
         title: "Dependency direction",
         body: [
-          "Dependencies point inward, and the column below is each manifest's own workspace dependency list — the edges TypeScript project references enforce.",
+          "Dependencies point inward: a package imports the layers beneath it and none of the layers above. The column below is each manifest's own list of workspace dependencies, which is the same set TypeScript project references enforce at build time.",
           table(
             ["Package", "Imports"],
             registry.packages.map((entry) => [
@@ -874,7 +897,7 @@ const packagesPage = (registry: Registry): ReferencePage => {
       },
       provenance(
         "each package's own package.json",
-        "the description and the dependency list are the manifest's, not a second copy."
+        "both the description and the dependency list are read out of the manifest itself."
       )
     ])
   }

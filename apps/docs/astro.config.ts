@@ -213,12 +213,16 @@ export default defineConfig({
          */
         starlightLlmsTxt({
           details: [
+            "memhtml stores an agent's long-term memory as a git repository of semantic HTML5 files,",
+            "one fact per file, with a rebuildable SQLite index over the tree. Two surfaces reach the",
+            "same store: the `memhtml` CLI and an MCP server over stdio.",
+            "",
             "Start here:",
             "",
-            `- [For agents](${agentPageMarkdown}): the assumptions to unlearn, which door you are behind (CLI or MCP), and the shortest path to a working integration.`,
+            `- [For agents](${agentPageMarkdown}): what to read first, whether you are behind the CLI or the MCP server, and the shortest path to a working integration.`,
             "",
             "Every page on this site is also served as Markdown at its own path with `.md` appended.",
-            "Prefer that over scraping the HTML."
+            "Fetch that rather than the rendered HTML."
           ].join("\n"),
           promote: ["index*", "agents"]
         }),

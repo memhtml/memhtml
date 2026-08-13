@@ -30,15 +30,13 @@
     serif;
 
   /*
-   * Courier is deliberately NOT the code face. Its stem is 0.051em against Times' 0.084em — a 39%
-   * deficit that no font-size can correct, so body-adjacent code set in Courier reads as faded.
-   * Courier is confined to .rfc-verbatim, where a figure genuinely wants a typewriter.
+   * A ui-monospace stack rather than Courier. Courier's stem is 0.051em against Times' 0.084em, a 39%
+   * deficit that no font-size corrects, so code set in Courier beside this body face reads as faded.
    */
   --sl-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", "Liberation Mono",
     Cousine, "DejaVu Sans Mono", monospace;
 
   --memhtml-font-sans: Helvetica, Arial, Arimo, "Liberation Sans", "Nimbus Sans", sans-serif;
-  --memhtml-font-typewriter: "Courier New", Courier, "Nimbus Mono PS", "Liberation Mono", monospace;
 }
 
 :root[data-theme="light"] {
@@ -152,7 +150,7 @@ body {
   max-width: 32em;
 }
 
-.sl-markdown-content :is(table, pre, figure, img, .expressive-code, .rfc-verbatim) {
+.sl-markdown-content :is(table, pre, figure, img, .expressive-code) {
   max-width: 100%;
 }
 
@@ -324,19 +322,6 @@ body {
   font-size: 0.9em;
 }
 
-/*
- * A verbatim figure — the monospace ASCII diagram an RFC uses. This is the one place Courier is
- * correct, because the artifact it renders is a typewriter drawing. An ASCII figure is opaque to a
- * screen reader, so a text alternative accompanies it rather than being optional.
- */
-.rfc-verbatim {
-  font-family: var(--memhtml-font-typewriter);
-  font-size: var(--sl-text-code-sm);
-  line-height: 1.25;
-  overflow-x: auto;
-  white-space: pre;
-}
-
 /* The masthead: the deliberately-typeset element that separates austere from broken. */
 .rfc-masthead {
   border-block-end: 1px solid var(--memhtml-ink);
@@ -471,21 +456,6 @@ body {
   text-indent: -2.4em;
 }
 
-
-/*
- * Conformance keywords per RFC 2119. Small caps carry the emphasis; colour only reinforces it.
- *
- * `all-small-caps` renders capitals as small caps rather than manufacturing them from lowercase, which
- * is why the keywords are authored in capitals: BCP 14 gives them their normative force only in upper
- * case, and this site serves its Markdown to agents that read the source rather than the render.
- */
-.rfc-keyword {
-  color: var(--memhtml-normative);
-  font-family: var(--memhtml-font-sans);
-  font-size: 0.85em;
-  font-variant-caps: all-small-caps;
-  letter-spacing: 0.06em;
-}
 
 /*
  * Tabler icons ship stroke-width="2" as a presentation attribute, which carries specificity 0 —
