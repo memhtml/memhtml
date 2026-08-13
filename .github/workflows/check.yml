@@ -48,4 +48,10 @@ jobs:
       # Only this workflow needs it, which is why it is a step here rather than part of `install:ci` —
       # the pages and links jobs install the same dependencies and drive no browser.
       - run: mise run browsers
+      # Ubuntu 24.04 runners restrict unprivileged user namespaces through AppArmor, and
+      # Chrome's sandbox needs them: the budget gate's headless Chrome aborts at launch with
+      # "No usable sandbox!" (zygote_host_impl_linux.cc:128). Lifting the restriction for this
+      # job lets the gates drive the same sandboxed Chrome a laptop does; the alternative,
+      # --no-sandbox in lighthouserc.json, would also change what developers run locally.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: mise run check
