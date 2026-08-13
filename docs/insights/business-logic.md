@@ -1,0 +1,300 @@
+# memhtml-public · Business logic
+
+This file indexes the domain rules the codebase enforces and names the line that enforces each one. The rules are memory-management rules: what counts as a valid memory file, what a write may and may not do to the managed tree, how a memory's weight is computed, and which gates a nightly curation run must clear before it lands.
+
+**Scope.** In scope: application-layer validations, invariants, calculations, and policy gates in `packages/` and `apps/cli`, `apps/mcp`, `apps/consolidator`. Also in scope, despite the application-layer framing: the SQLite `CHECK` and uniqueness constraints in `packages/index/migrations/`, because several of them are the only enforcement point for a rule the application relies on, and because the application's own predicates are written to agree with them. Out of scope: the `apps/docs` Astro package, test fixtures, and build tooling.
+
+**Two facts a reader needs before reading a rule.** First, this repository stores no memories. It is the software that manages a separate directory, the `memhtml root`, located by `$MEMHTML_ROOT` (`apps/cli/src/config.ts:26-31`). Every rule below acts on whatever root the environment points the binary at. The root's git tree is the system of record and `.memhtml/index.db` inside the root is a rebuildable projection of it. Second, the primary consumer of these surfaces is a coding agent, not a human at a terminal. The rules are shaped accordingly: the CLI answers in a versioned JSON envelope with a stable error code an agent branches on (`apps/cli/src/envelope.ts:62-83`), the MCP server publishes a JSON Schema per tool, and the format constraints are stated in tool descriptions so an agent learns a rule before it spends a round trip discovering it (`apps/mcp/src/tools.ts:116-130`).
+
+## Validations
+
+| Rule | Domain | Citation | Failure mode |
+| --- | --- | --- | --- |
+| A memory file carries exactly one `<article>` | HTML format | `packages/html/src/constraints.ts:114-128` | Violation: `parseMemory` fails, the file is not a memory |
+| A memory file carries exactly one `<mark>`, the claim span | HTML format | `packages/html/src/constraints.ts:165-171` | Violation |
+| The `<mark>` must carry non-empty text once code is excluded | HTML format | `packages/html/src/constraints.ts:146-147`, `:175` | Violation |
+| The `<mark>` must sit inside the article's first `<p>` or `<li>` | HTML format | `packages/html/src/constraints.ts:193-200` | Violation |
+| The `<mark>` may not sit inside an `<aside>` or a `<details>` | HTML format | `packages/html/src/constraints.ts:186-191` | Violation; suppresses the position check |
+| Every `<time>` carries a `datetime` attribute | HTML format | `packages/html/src/constraints.ts:204-212` | Violation |
+| A `datetime` value must be an ISO date, optionally with time and zone, with a real calendar day | HTML format | `packages/html/src/constraints.ts:55-80` | Violation |
+| No `class` or `style` attribute anywhere in the file | HTML format | `packages/html/src/constraints.ts:233-237` | Violation |
+| No `<script>` or `<style>` element anywhere in the file | HTML format | `packages/html/src/constraints.ts:230-232` | Violation |
+| No `on*` event-handler attribute | HTML format | `packages/html/src/constraints.ts:238-244` | Violation |
+| A `<link rel="memhtml-*">` must name a rel in the closed edge vocabulary | HTML format | `packages/html/src/constraints.ts:259-261` | Violation |
+| A `<link rel="memhtml-*">` must carry a non-empty `href` | HTML format | `packages/html/src/constraints.ts:262-263` | Violation |
+| A `<link>` href must be root-relative: leading slash, no scheme, no host, no `..` segment | HTML format | `packages/html/src/constraints.ts:89-97` | Violation |
+| Exactly one non-empty `<title>` | HTML format | `packages/html/src/constraints.ts:280-286` | Violation |
+| The four required metas must each be present: `memhtml-type`, `memhtml-status`, `memhtml-created`, `memhtml-updated` | HTML format | `packages/html/src/vocabulary.ts:35-40`, `packages/html/src/constraints.ts:292-295` | Violation |
+| A `memhtml-` meta name must be in the closed metadata vocabulary | HTML format | `packages/html/src/constraints.ts:296-301` | Violation |
+| A non-repeatable meta may appear once; only `memhtml-entity` and `memhtml-tag` repeat | HTML format | `packages/html/src/vocabulary.ts:16-26`, `packages/html/src/constraints.ts:302-304` | Violation |
+| An element outside the closed vocabulary is reported but still indexes | HTML format | `packages/html/src/constraints.ts:340-342` | Warning: surfaced by `memhtml doctor`, file still indexes |
+| A `<div>` or `<span>` outside a `<figure>` is reported | HTML format | `packages/html/src/constraints.ts:334-339` | Warning |
+| A `data-lang` value outside the language-token grammar is reported | HTML format | `packages/html/src/constraints.ts:330-333` | Warning |
+| A path must be rooted in a PARA bucket, end in `.html`, and carry no `.` or `..` segment | Paths | `packages/contracts/src/paths.ts:58-70` | Predicate returns false; a caller that wants a refusal gates on it, otherwise the path is re-derived |
+| An edge's declared class must match its rel, it must not be a self-loop, and a derived edge must carry `sleep` provenance | Edges | `packages/contracts/src/edges.ts:141-149` | Predicate; the same three conditions are `CHECK` constraints at `packages/index/migrations/0008_tasks.sql:193-200` |
+| A memory-class rel may not touch a `task` file at either endpoint | Edges | `packages/store/src/store.ts:1005-1015` | Refused with `InvalidMemory` before any write |
+| A task-class rel requires both endpoints to be tasks | Edges | `packages/store/src/store.ts:1017-1024` | Refused with `InvalidMemory` before any write |
+| A memory may not link to itself | Edges | `packages/store/src/store.ts:1045-1049` | Refused with `InvalidMemory`, tree left byte-identical |
+| Edge `strength` must be in `[0, 1]` | Edges | `packages/contracts/src/edges.ts:136` | Schema decode failure; also `CHECK` at `packages/index/migrations/0008_tasks.sql:185` |
+| Rendered bytes are re-checked against every format constraint before they are written | Store | `packages/store/src/store.ts:504-528` | `InvalidMemory`; nothing written, staged, or committed |
+| Every batch op passes the same render gate, never bypassed | Store | `packages/store/src/store.ts:621-627` | Per-op failure result, so a continue-mode batch reports it in place |
+| An operation requiring a clean tree refuses on uncommitted changes | Store | `packages/store/src/store.ts:1073-1077` | `DirtyTree` carrying the dirty paths |
+| `confidence` must be in `[0, 1]` | Index schema | `packages/index/migrations/0008_tasks.sql:48` | DB `CHECK`; schema mirror at `packages/contracts/src/types.ts:98-99` |
+| `importance` must be an integer in `[1, 10]` | Index schema | `packages/index/migrations/0008_tasks.sql:49` | DB `CHECK`; schema mirror at `packages/contracts/src/types.ts:91-96` |
+| `memory_type` must be one of the ten known types | Index schema | `packages/index/migrations/0008_tasks.sql:38-40` | DB `CHECK`; vocabulary at `packages/contracts/src/types.ts:18-29` |
+| `para` must be one of the four PARA buckets | Index schema | `packages/index/migrations/0008_tasks.sql:46` | DB `CHECK` |
+| `task_status` must be `todo`, `doing`, `blocked`, or `done`, or NULL on a non-task | Index schema | `packages/index/migrations/0008_tasks.sql:66-72` | DB `CHECK` |
+| `reprieves` must be non-negative | Index schema | `packages/index/migrations/0008_tasks.sql:59` | DB `CHECK` |
+| An `embed_dim` must be positive and a chunk `ordinal` non-negative | Index schema | `packages/index/migrations/0007_watermark.sql:15`, `packages/index/migrations/0002_chunks.sql:12` | DB `CHECK` |
+| A trace-record type must be in the read allowlist before any field is accessed | Traces | `packages/traces/src/extract.ts:10-45` | Skipped and counted; a type in neither list increments `unknownTypeLines` |
+| A malformed transcript line does not abandon the file | Traces | `packages/traces/src/extract.ts:56-75` | Counted as `droppedLines`, scan continues |
+| A file the indexer cannot parse is reported rather than failing the pass | Index | `packages/index/src/indexer.ts:184-201` | Reason recorded; `memhtml doctor` surfaces it |
+| Only the nine writable memory types are exposed as a tool parameter; `arc` is system-written | MCP surface | `packages/contracts/src/types.ts:34-56`, `apps/mcp/src/tools.ts:44-45` | Schema decode failure at the tool boundary |
+| Only the nine memory-class rels are nameable through the link tool | MCP surface | `apps/mcp/src/tools.ts:47-48` | Schema decode failure at the tool boundary |
+| Every numeric tool parameter is `Schema.Finite`, so the published JSON Schema is a clean number | MCP surface | `apps/mcp/src/tools.ts:59-68` | A `Schema.Number` would publish a union with a string branch a client would misread |
+| An optional tool parameter accepts absent, a value, and explicit `null` | MCP surface | `apps/mcp/src/tools.ts:73-91` | A bare `Schema.optional` publishes `null` as valid and then rejects it at decode |
+
+**Violations are collected, not short-circuited.** `checkDocument` runs every check and concatenates the results, so one parse tells an author everything wrong with the file rather than the first thing (`packages/html/src/constraints.ts:347-362`). Violations join into a single `InvalidMemory.reason` with `"; "` (`packages/html/src/constraints.ts:39-40`). Nothing in the checker throws and nothing repairs a violation, because a checker that silently fixed one would make `memhtml doctor` report a clean corpus that the next hand-edit breaks again (`packages/html/src/constraints.ts:35-37`).
+
+**Constraints 1 through 5 refuse; constraint 6 warns.** The split is deliberate. A file using an element outside the closed vocabulary still indexes, because the format has to degrade gracefully on a file a human hand-wrote in a hurry (`packages/html/src/constraints.ts:28-37`). Warnings are deduplicated by element name, so a file with forty stray `<div>` elements produces one actionable line (`packages/html/src/constraints.ts:309-327`).
+
+## Invariants
+
+| Invariant | Where enforced | Citation |
+| --- | --- | --- |
+| The content hash is invariant under head edits: only `<article>` text reaches the digest | Application code | `packages/html/src/hash.ts:7-16`, `:151-161` |
+| Head edits splice by source byte offset, never parse and re-serialize, so a bookkeeping pass cannot move the article's bytes | Application code | `packages/store/src/store.ts:449-454`, `apps/cli/src/doctor.ts:53-59` |
+| U+00A0 is content to the hash while ASCII whitespace collapses | Application code | `packages/html/src/hash.ts:21-22` |
+| `<pre>` descendants are hashed byte for byte, so reindenting a code sample changes the key and reformatting the surrounding prose does not | Application code | `packages/html/src/hash.ts:101-125` |
+| The empty-claim predicate is the gist derivation verbatim, so no file can pass the gate with an empty `files.gist` | Application code | `packages/html/src/constraints.ts:130-147` |
+| Two active non-task memories may not share a content hash | DB constraint | `packages/index/migrations/0008_tasks.sql:119-127` |
+| Two open tasks may share a content hash, because two identical to-do items are two things to do | DB constraint and application code | `packages/index/migrations/0008_tasks.sql:119-127`, `packages/index/src/scope.ts:80-87` |
+| The `index_state` watermark table holds exactly one row | DB constraint | `packages/index/migrations/0007_watermark.sql:4-6` |
+| A phase records at most one row per run | DB constraint | `packages/index/migrations/0006_sleep.sql:32` |
+| A chunk ordinal is unique within a content hash | DB constraint | `packages/index/migrations/0002_chunks.sql:18` |
+| An edge is unique on `(src_path, rel, dst_path)` | DB constraint | `packages/index/migrations/0008_tasks.sql:192` |
+| An edge is never a self-loop | DB constraint and application code | `packages/index/migrations/0008_tasks.sql:193`, `packages/store/src/store.ts:1045-1049` |
+| A derived edge always carries `sleep` provenance | DB constraint and application code | `packages/index/migrations/0008_tasks.sql:200`, `packages/contracts/src/edges.ts:146-149` |
+| The four edge classes do not mix: a rel belongs to exactly one class | DB constraint and application code | `packages/index/migrations/0008_tasks.sql:194-199`, `packages/contracts/src/edges.ts:65-75` |
+| A task edge never enters PageRank, MMR, or the retention bridge count | DB constraint and application code | `packages/index/migrations/0008_tasks.sql:177-183`, `packages/store/src/store.ts:977-1025` |
+| Confidence decay is unconditionally non-increasing | Application code | `packages/domain/src/decay.ts:81-92` |
+| Confidence never erodes past the floor, and never rises to it | Application code | `packages/domain/src/decay.ts:22-27`, `:81-92` |
+| An N-signal EWMA batch reaches the same score as N single-signal calls | Application code | `packages/domain/src/decay.ts:56-66` |
+| Every retention weight profile's eight weights sum to exactly 1.0 under compensated summation, so the composite is in `[0, 1]` | Application code | `packages/domain/src/retention.ts:32-40`, `:195-200` |
+| The three triage bands partition `[0, 1]` with no gap and no overlap; each boundary belongs to the lower band | Application code | `packages/domain/src/retention.ts:139-145`, `:256-264` |
+| The recency signal is exactly 0.5 at one half-life | Application code | `packages/domain/src/retention.ts:131-137`, `:204-209` |
+| A memory's age is clamped non-negative, so a skewed clock cannot produce a recency signal above 1 | Application code | `packages/sleep/src/retention.ts:57-69` |
+| A negative outcome score contributes exactly 0 to the reprieve score, never a penalty | Application code | `packages/domain/src/retention.ts:313-334` |
+| Nothing is ever deleted: eviction is a `git mv` into `archive/<YYYY>/` | Application code | `packages/sleep/src/phases/retention-triage.ts:9-17`, `packages/contracts/src/paths.ts:157-166` |
+| The archive mapping is injective and `originalPathFor` is its left inverse | Application code | `packages/contracts/src/paths.ts:157-177` |
+| `archive` is a PARA bucket rather than a status value, so the path itself records the state | Application code | `packages/contracts/src/types.ts:58-66` |
+| A refusal leaves the managed tree byte-identical: the render gate, the dedupe question, and the endpoint-class check all run before any write | Application code | `packages/store/src/store.ts:516-519`, `:536-540`, `:1050-1051` |
+| A failed batch is rolled back by unstaging and unlinking, so no untracked file survives | Application code | `packages/store/src/store.ts:577-598` |
+| One writer at a time, any number of concurrent readers; a second writer waits rather than failing | Application code and SQLite WAL | `packages/index/src/database.ts:13-22` |
+| A `SQLITE_BUSY` retry is safe because the lock was never taken and the statement had no effect to half-apply | Application code | `packages/index/src/database.ts:139-158` |
+| `writeAll` is atomic: every write in a batch commits or none does | Application code | `packages/index/src/database.ts:82-83` |
+| A storage failure carries only the operation name, never SQL text, parameters, or row contents | Application code | `packages/contracts/src/errors.ts:3-11`, `packages/index/src/database.ts:160-170` |
+| PageRank and label propagation are deterministic: nodes sorted before iteration, parallel edges folded to their maximum, lexicographic tie-breaking instead of a random seed | Application code | `packages/domain/src/graph.ts:1-11`, `:35-61` |
+| Community labels are canonicalized to the smallest member path, so both the grouping and the label assignment are reproducible | Application code | `packages/domain/src/graph.ts:151-163`, `:226-233` |
+| The frame key is pure and synchronous: no clock, no randomness, no model, no I/O, so a full index rebuild reproduces byte-identical keys | Application code | `packages/domain/src/frame.ts:56-66` |
+| Fused retrieval order is total and reproducible: ties break on path ascending | Application code | `packages/domain/src/rrf.ts:53-63` |
+| One scope filter is built once and given to every retrieval arm, so a scope cannot hold for three arms and leak in the fourth | Application code | `packages/index/src/scope.ts:6-20` |
+| The retention scoring pass is computed once and shared by `retention-triage` and `compress`, so the two cannot band a memory differently | Application code | `packages/sleep/src/retention.ts:21-34` |
+| `addLink` is idempotent on the `(rel, href)` pair, so a repeated promotion costs one commit in total | Application code | `packages/store/src/store.ts:1054-1057` |
+| A dangling-href repair is idempotent: remove-then-add on the same file means a re-run matches nothing | Application code | `packages/sleep/src/phases/integrity.ts:75-86` |
+| A sleep phase re-run within one night writes the same value: `cycles <= 0` and `hits <= 0` are no-ops | Application code | `packages/domain/src/decay.ts:68-79`, `:94-109` |
+| An index built under one embedding model can never accumulate rows under another | Application code | `packages/index/src/indexer.ts:100-113`, `:206-218` |
+| The embedding watermark carries model id and dimension together, because a model id alone does not identify a vector space | Application code | `packages/llm/src/constants.ts:29-34` |
+| Generated `index.html` and `sitemap.xml` are never indexed, so the corpus cannot rank its own table of contents above its content | Application code | `packages/index/src/indexer.ts:127-145` |
+| The trace index stores pointers and capped heads, never a copy of a prompt | Application code | `packages/traces/src/extract.ts:47-51` |
+| A slug is the fixed point of `slugify`, and a truncated slug is still a valid slug | Application code | `packages/contracts/src/slug.ts:17-48` |
+| An episodic filename's date prefix sits outside the slug length budget, because it is identity rather than title | Application code | `packages/contracts/src/slug.ts:64-87` |
+| A path is claimed against both the in-batch claimed set and disk, so two ops sharing a title in one batch cannot overwrite each other | Application code | `packages/store/src/store.ts:376-406` |
+| An explicit valid caller path is authoritative and never silently re-derived to a suffixed one | Application code | `packages/store/src/store.ts:388-392` |
+| A memory's `memhtml-valid-until` is min-wins: a fact cannot outlive its earliest stated bound | Application code | `packages/store/src/store.ts:482-495` |
+| An in-batch merge role is fixed: a path that appears as keeper or as drop cannot appear again in either role | Application code | `packages/domain/src/merge.ts:174-195`, `:219` |
+| A compress batch never archives the canonical it folded into | Application code | `packages/domain/src/merge.ts:233-241`, `packages/sleep/src/phases/compress.ts:28-32` |
+| Meta emission order is fixed, so two writers stamping different keys never reorder each other's lines | Application code | `packages/html/src/vocabulary.ts:42-46` |
+| A phase failure is a normal terminal state: later phases still run and every prior commit stays on the branch | Application code | `packages/sleep/src/contract.ts:44-56` |
+| The response-type and error-code vocabularies are append-only: a shipped code's meaning never changes | Application code | `apps/cli/src/envelope.ts:8-11`, `:62-66` |
+| Exit codes are stable so a caller can branch without parsing output | Application code | `apps/cli/src/envelope.ts:87-90` |
+
+**Why the hash invariant carries the most weight.** Confidence decay, access bookkeeping, and every sleep-phase stamp write to the head. If any of them moved the content hash, each nightly decay pass would present the whole corpus as new content and dedup would collapse (`packages/html/src/hash.ts:7-16`). Two mechanisms hold the invariant. The digest is taken over `<article>` text only, with the article located first so head content can never reach it (`packages/html/src/hash.ts:151-161`). And every head edit goes through byte-splicing editors rather than a parse-and-serialize round trip, which would drop a `<pre>` newline per write (`apps/cli/src/doctor.ts:53-59`). The sleep review surface then reads the invariant back out: a modification is classified `meta-only` when the two versions' article hashes agree, which is computed rather than inferred from the diff (`packages/sleep/src/review.ts:169-182`).
+
+## Calculations
+
+| Calculation | Inputs | Output | Citation |
+| --- | --- | --- | --- |
+| Content hash | Article text, whitespace-normalized, `<pre>` verbatim | `sha256:<64 hex>` | `packages/html/src/hash.ts:130-135`, `:151-161` |
+| Canonical article text | Article subtree, optional code exclusion | The exact string the digest covers | `packages/html/src/hash.ts:101-125` |
+| Frame key | A claim's gist text | Lowercased frame string, or `null` | `packages/domain/src/frame.ts:56-77` |
+| Slug | A title | Kebab-case `[a-z0-9-]`, at most 80 chars | `packages/contracts/src/slug.ts:17-44` |
+| Memory placement directory | Explicit path, memory type, entities, workspace, tags | A directory rooted in a PARA bucket | `packages/contracts/src/paths.ts:92-135` |
+| Archive path | A path and a calendar year | `archive/<YYYY>/<original-path>` | `packages/contracts/src/paths.ts:157-166` |
+| Fixed-point EWMA step | Alpha, previous value, incoming signal, all on the 10^4 grid | A grid value between previous and signal | `packages/domain/src/decay.ts:42-54` |
+| Confidence decay step | Alpha, current confidence, floor | A confidence no higher than the current one | `packages/domain/src/decay.ts:81-92` |
+| Confidence decay over N cycles | Confidence, cycle count, alpha, floor | Decayed confidence in `[0, 1]` | `packages/domain/src/decay.ts:94-128` |
+| Committable-change test | Confidence before, confidence after | True when the absolute delta is at least 0.005 | `packages/domain/src/decay.ts:130-139` |
+| Reinforcement signal value | `positive`, `negative`, or `neutral` | `+1`, `-1`, or `0` | `packages/domain/src/reinforce.ts:30-48` |
+| Access-bump cooldown test | Last access instant, now, cooldown seconds | True when at least 900 s elapsed, or never accessed | `packages/domain/src/reinforce.ts:1-28` |
+| Eight retention signals | Memory type, age in days, access count, confidence, PageRank, corpus max PageRank, bridge count, reinforcement count, word count, authored-contradiction count | Eight unitless values in `[0, 1]` | `packages/domain/src/retention.ts:150-178`, `:233-243` |
+| Retention composite score | Eight signals and the type's weight profile | Unitless in `[0, 1]`, rounded to 4 places | `packages/domain/src/retention.ts:245-254` |
+| Triage band | A composite score | `keep`, `compress`, or `evict` | `packages/domain/src/retention.ts:256-264` |
+| Reprieve score | Importance, access count, outcome score, hours since access, decay rate | A non-negative value that may exceed 1 | `packages/domain/src/retention.ts:313-334` |
+| Reprieve gate | Score, reprieve count, floor, max reprieves | Boolean | `packages/domain/src/retention.ts:336-348` |
+| Age in fractional days | Two ISO instants | Non-negative fractional days | `packages/sleep/src/retention.ts:56-69` |
+| RRF arm contribution | 1-based rank within one arm, arm weight, offset `k` | Unitless score | `packages/domain/src/rrf.ts:20-27` |
+| Fused retrieval score | Per-arm ranked lists and per-arm weights | `path -> score` map | `packages/domain/src/rrf.ts:29-51` |
+| Lateral arm fold | Existing fused scores, graph-walk order, weight | Updated fused scores | `packages/domain/src/rrf.ts:65-85` |
+| MMR reordering | Candidates with fused scores and optional vectors, limit, lambda | A duplicate-free subsequence of the input | `packages/domain/src/mmr.ts:20-71` |
+| PageRank | Node list, weighted memory edges, damping, optional seeds | `path -> score`, summing to 1 | `packages/domain/src/graph.ts:63-149` |
+| Community partition | Node list, weighted edges, minimum community size | `path -> canonical label or undefined` | `packages/domain/src/graph.ts:151-234` |
+| Bridge count | Node list, edges, community partition | Per-node count of community-crossing edges | `packages/domain/src/graph.ts:236-257` |
+| Merge divergence veto | Two body texts | Boolean; true vetoes the merge | `packages/domain/src/merge.ts:165-172` |
+| Merge decision list | Oriented candidate pairs, threshold, per-cycle cap | An in-batch-consistent decision list | `packages/domain/src/merge.ts:174-231` |
+| Entity-name similarity | Two normalized entity names | Longest common subsequence over the mean length, in `[0, 1]` | `packages/sleep/src/phases/entity-resolution.ts:39-45` |
+| Recall disclosure fold | Ranked candidates, character budget, per-entity cap | Full quotes, index lines, characters spent | `packages/index/src/disclosure.ts:81-133` |
+| Discrimination rank | A target's rank and its controls' ranks | 1-based rank within `{target} ∪ controls` | `packages/eval/src/discriminate.ts:163-172` |
+| Discrimination MRR | Per-probe reciprocal ranks | Unitless in `[0, 1]`, four decimals | `packages/eval/src/discriminate.ts:190-221` |
+| Nearest command suggestions | An unknown token and the known names | Up to three candidates by Levenshtein distance | `apps/cli/src/envelope.ts:104-138` |
+
+### The fixed-point grid and the two EWMAs
+
+All confidence and outcome arithmetic runs on an integer grid at scale 10^4, so the grid step is the fourth decimal place (`packages/domain/src/decay.ts:12-13`). The grid is a correctness device rather than a performance one. Every invariant in the module is a boundary claim: decay stops at the floor, `alpha = 1` snaps exactly to it, `alpha = 0` is exactly a fixed point. In float arithmetic a convex combination of two equal values can land one unit in the last place below them, so those claims would hold approximately and fail as written (`packages/domain/src/decay.ts:1-10`).
+
+One EWMA step is `alpha * signal + (1 - alpha) * prev`, divided back down with floor division (`packages/domain/src/decay.ts:53-54`). Floor rather than round-half-away, because floor is the one rounding mode whose N-fold composition is reproducible without a rounding-mode argument, and the residual drift against an unrounded fold is bounded by one grid step (`packages/domain/src/decay.ts:42-47`). Rounding happens inside the fold rather than once at the end, which is what makes an N-signal batch agree with N single-signal calls: sleep may process one memory's corrections in a single batch or across several nights, and it must reach the same score either way (`packages/domain/src/decay.ts:56-66`).
+
+Two alphas, deliberately different. The outcome EWMA weights an incoming reinforcement at 0.3 (`packages/domain/src/decay.ts:19-20`). Confidence decay weights the pull toward the floor at 0.1, so a claim closes a tenth of its distance to the floor per unreinforced sleep cycle (`packages/domain/src/decay.ts:29-35`). Confidence should erode over many unreinforced nights rather than collapse in one, so a single missed reinforcement is forgiving.
+
+The confidence decay step is an EWMA toward the floor followed by a `min` with the previous value (`packages/domain/src/decay.ts:91-92`). The `min` is what makes the step unconditionally non-increasing. Without it, a claim already below the floor, one an operator correction pushed down, would be pulled back up toward the floor by the same convex combination that erodes a healthy claim, so decay would rehabilitate a discredited memory (`packages/domain/src/decay.ts:81-89`). The floor is 0.2 rather than 0, because an old uncorroborated claim is weak evidence and a memory decayed to 0 would be indistinguishable from a retracted one (`packages/domain/src/decay.ts:22-27`).
+
+### The eight-signal retention score
+
+Each memory's retention score is a weighted sum of eight normalized signals: recency, access frequency, confidence, PageRank, bridge importance, reinforcement count, content density, and contested status, in that fixed order (`packages/domain/src/retention.ts:8-18`).
+
+The normalization curves live in one place (`packages/domain/src/retention.ts:204-243`):
+
+- **Recency** is `exp(-LN2 * ageDays / halfLife)`, and `null` half-life or non-positive age means no decay (`packages/domain/src/retention.ts:204-209`). `Math.LN2` rather than a `0.693` literal, so the value is exactly 0.5 at one half-life and the half-life is the definition of the curve rather than an approximation of it (`packages/domain/src/retention.ts:131-137`). Half-lives in days: episodic 10, semantic 90, arc 30, error_pattern 14, procedural `null`, task `null` (`packages/domain/src/retention.ts:106-126`). An unlisted type takes 30 days (`packages/domain/src/retention.ts:128-129`).
+- **Access frequency** saturates at ten accesses (`packages/domain/src/retention.ts:211-212`).
+- **PageRank** is the memory's rank over the run's corpus maximum, so the signal is corpus-relative rather than absolute, and 0 when the maximum is 0 (`packages/domain/src/retention.ts:238`).
+- **Bridge importance** saturates at five community-crossing edges (`packages/domain/src/retention.ts:214-215`).
+- **Reinforcement count** saturates at five inbound reinforcements (`packages/domain/src/retention.ts:217-219`).
+- **Content density** uses word count as a proxy: 100 words saturates, and a body under 10 words is penalized into `[0, 0.5)` (`packages/domain/src/retention.ts:221-227`).
+- **Contested status** is inverted and floors at 0 from three contradictions (`packages/domain/src/retention.ts:229-231`). It counts only authored contradictions, so a sleep-mined suspicion can never evict a memory (`packages/domain/src/retention.ts:164-165`, `packages/contracts/src/edges.ts:122-128`).
+
+The composite is the compensated sum of `signal * weight` over the eight, rounded to four decimals (`packages/domain/src/retention.ts:245-254`). Five per-type weight profiles are declared, plus a default for every other type (`packages/domain/src/retention.ts:32-104`). Every profile's eight weights sum to exactly 1.0 under compensated summation, which is what makes the composite a convex combination of eight `[0, 1]` signals and therefore itself in `[0, 1]` (`packages/domain/src/retention.ts:195-200`). The profiles encode a per-type judgement: recency carries the most weight for `episodic`, where time is the type's identity, and exactly zero for `procedural`, because a working procedure does not stale (`packages/domain/src/retention.ts:36-40`).
+
+Bands: `keep` above 0.7, `evict` at or below 0.3, `compress` in the open interval between (`packages/domain/src/retention.ts:139-145`, `:256-264`). Each boundary is owned by the lower band, so exactly 0.7 compresses and exactly 0.3 evicts, and the three bands partition `[0, 1]` with no score left unbanded.
+
+### The four-term reprieve score
+
+A memory whose `memhtml-valid-until` has passed either earns another two weeks or expires. The score is `0.4 * (importance / 10) + 0.3 * log1p(accessCount) + 0.2 * max(0, outcomeScore) + 0.1 * exp(-decayRate * hoursSinceAccess)` (`packages/domain/src/retention.ts:322-334`). Coefficients at `packages/domain/src/retention.ts:292-296`. Salience decay rate 0.01 per hour (`packages/domain/src/retention.ts:289-290`).
+
+The four coefficients sum to 1.0 and the score is nonetheless not convex, because the `log1p(accessCount)` term is unbounded, so the score can exceed 1 (`packages/domain/src/retention.ts:292`, `:313-321`). It is proven only monotone and sign-clamped, which is all the gate needs. A negative outcome score contributes exactly 0 rather than a penalty, mirroring the salience arm's own clamp: without it a memory that once produced a bad outcome would be punished twice, once by the outcome EWMA that already lowered its salience and again here (`packages/domain/src/retention.ts:317-321`).
+
+The gate reprieves a TTL-passed memory when its score clears the floor of 0.5 and it has been reprieved fewer than three times (`packages/domain/src/retention.ts:273-287`, `:336-348`). The cap is what makes the TTL mean something: without it a frequently-read memory would extend its own validity forever, and `memhtml-valid-until` would document an intention the system never enforces (`packages/sleep/src/phases/reprieve.ts:19-22`). `maxReprieves: 0` is the kill switch that restores pure-age TTL, and it works because the score is a sum of non-negative terms and so is always above 0, meaning the floor alone can never force expiry (`packages/domain/src/retention.ts:282-287`).
+
+### Reciprocal rank fusion and MMR
+
+Each retrieval arm produces its own ranked candidate list and contributes `weight / (rank + k)` per hit, with `k` fixed at 60 (`packages/domain/src/ranking.ts:1-8`, `packages/domain/src/rrf.ts:20-27`). The rank is 1-based within that one arm's own list, not a global rank and not a score, which is exactly why the fold works across arms whose scores are incomparable (`packages/domain/src/rrf.ts:9-17`). `k` damps the difference between the top ranks, which is what stops one arm's confident first place from dominating four other arms' consensus (`packages/domain/src/rrf.ts:23-25`).
+
+Contributions are summed per path, and a duplicate path inside one arm's list accumulates, matching the SQL's `SUM` over a `UNION ALL` (`packages/domain/src/rrf.ts:29-51`). A zero-weight arm is skipped entirely, so it is structurally absent from the fold rather than adding a neutral term that later arithmetic could mistake for a real score (`packages/domain/src/ranking.ts:19-30`, `packages/domain/src/rrf.ts:44-45`). The fused list sorts by score descending with ties broken on path ascending, so the ordering is total and two runs over the same corpus produce the same list (`packages/domain/src/rrf.ts:53-63`).
+
+MMR then reorders greedily by `lambda * relevance - (1 - lambda) * maxSimilarityToSelected`, with lambda at 0.5 (`packages/domain/src/ranking.ts:10-11`, `packages/domain/src/mmr.ts:20-71`). At `lambda >= 1` the function short-circuits and returns the input order truncated, because the penalty term is multiplied by zero and the greedy pass would otherwise burn quadratic cosine work to reproduce the order it was given (`packages/domain/src/mmr.ts:23-27`). A candidate with no vector takes penalty 0, which is the honest reading of unknown similarity: a vectorless candidate cannot be shown to duplicate anything (`packages/domain/src/mmr.ts:28-32`).
+
+### The merge divergence veto
+
+Two bodies above cosine 0.92 are treated as the same content and merged, keeping the older file (`packages/domain/src/merge.ts:15-16`). The veto exists because cosine similarity is geometric and embedding models are weakest on exactly the tokens carrying a fact's polarity and its discriminators. "The deploy step is safe" and "the deploy step is NOT safe" sit above 0.92, as do "retry 3 times" against "retry 13 times" and "M1" against "M1 Pro" (`packages/domain/src/merge.ts:1-13`). Because the merge keeps the older file, a blind high-cosine merge would fold a newer correction into an older wrong memory, actively restoring the error the correction was written to fix.
+
+Three deterministic predicates, disjoined (`packages/domain/src/merge.ts:165-172`):
+
+1. **Negation divergence**: exactly one side carries a negation marker (`packages/domain/src/merge.ts:133-141`). The marker set holds 22 words (`packages/domain/src/merge.ts:41-65`), and contractions are expanded before tokenizing so "isn't" surfaces the underlying "not" (`packages/domain/src/merge.ts:67-90`).
+2. **Numeric-token divergence**: the two bodies carry different numeric tokens (`packages/domain/src/merge.ts:143-153`). Two bodies with no numbers at all, or identical numbers, do not trip it.
+3. **Variant-qualifier divergence**: the two bodies carry different version or variant qualifiers from a nine-word set (`packages/domain/src/merge.ts:92-106`, `:155-163`).
+
+A vetoed pair is a candidate contradiction for the conflict phase, never a merge, regardless of how high its cosine runs (`packages/domain/src/merge.ts:10-13`).
+
+`mergeCandidates` then applies five filters in order: the strict similarity threshold, the divergence veto when both texts are present, a self-merge check, the in-batch role guard, and the per-cycle cap of 100 pairs (`packages/domain/src/merge.ts:174-231`). The in-batch role guard is the load-bearing one. A path appearing in any committed decision, as keeper or as drop, is fixed in that role for the batch and cannot appear again in either. Both directions matter. A path already dropped cannot be dropped again, or two keepers would each believe they absorbed it. A path already a keeper cannot later be dropped: given `(gf, a)` then `(b, gf)`, both decisions commit, `gf` absorbs `a` and is then archived into `b`, so `a`'s content is superseded into a file that no longer exists (`packages/domain/src/merge.ts:178-195`).
+
+### The frame key
+
+The frame key gives conflict detection a cheap deterministic signal about whether two claims occupy the same slot. A frame is a subject plus a relation up to the last linking token, and the value is what follows: "The capital of India is New Delhi" keys on `the capital of india is` and carries `New Delhi` as the value, so a later claim writing a different value into the same slot is recognizable as a claim about the same thing without an LLM, without an embedding, and without reading the other claim (`packages/domain/src/frame.ts:1-8`).
+
+The regex quantifier is greedy, and that is the whole rule: the sentence matches the frame through `is` rather than stopping at the inner `of`, so the key is the longest frame the sentence states (`packages/domain/src/frame.ts:39-48`). A lazy quantifier would key that sentence on `the capital of` and collide it with every "the capital of" claim regardless of country.
+
+Two guards, both failing closed to `null`, and asymmetric on purpose because the costs are asymmetric. A false frame collision claims two unrelated facts occupy one slot; a missed collision merely leaves both facts stored, which is the existing behavior (`packages/domain/src/frame.ts:23-37`). The frame must be at least 3 tokens, so "Water is wet" and "Water is life" never share a key (`packages/domain/src/frame.ts:50-51`). The value must be 1 to 6 tokens, so a frame trailed by a clause is not read as a slot assignment (`packages/domain/src/frame.ts:53-54`).
+
+The tokens, both thresholds, the greedy match, and the normalization are fixed by a measurement in an external eval harness rather than chosen here, because tuning them in this file alone would mean the eval and the system no longer agree about what a conflict is (`packages/domain/src/frame.ts:9-21`).
+
+### Recall disclosure under a character budget
+
+A recall pack spends a character budget across full quotes and index lines. Arcs get 9000 characters and ordinary memories 16000, because an arc is a synthesis of many memories (`packages/index/src/disclosure.ts:19-23`, `:77-79`).
+
+Three tiers map onto the HTML structure rather than onto a truncation of prose (`packages/index/src/disclosure.ts:1-17`). Tier 1 is the `<mark>` gist, always disclosed. Tier 2 is `<summary>` text, disclosed inside a full quote. Tier 3 is the `<details>` body, which reaches an agent only through `memory_read` and never through recall, because it is "how this was learned" material and spending a shared budget on it starves the claims of memories the agent has not seen yet. `<aside>` text is never quoted in an index line, because an aside is a scope caveat and presenting it as the memory would present the exception as the rule.
+
+The fold walks candidates in rank order, which is authoritative: a candidate is never promoted past a better-ranked one to make it fit (`packages/index/src/disclosure.ts:81-91`). A candidate that does not fit becomes an index line and the fold continues, so a later shorter candidate can still be quoted. Without that, one long memory in the middle of the list would silently truncate every shorter one after it. A per-entity cap of 2 full quotes applies to entity names rather than to paths, which is what makes recall breadth-first over entities: twelve memories about one service are twelve paths and would otherwise fill the budget with one entity's history (`packages/index/src/disclosure.ts:25-32`). Entity names are deduplicated per candidate, because a single memory can claim one name under two types and counting both would let it exhaust the cap by itself (`packages/index/src/disclosure.ts:111-119`).
+
+## Policy and gates
+
+- **Single write path:** every mutation to the managed tree goes through the store, so the endpoint-class rules and the render gate cannot be bypassed by a second caller. Enforced by construction: the store is the only module that writes memory files, and the CLI and MCP both reach the corpus through it. `packages/store/src/store.ts:977-983`.
+- **Render gate:** rendered bytes are checked against every format constraint before they are written, staged, or committed, so a refusal leaves the tree byte-identical. Enforced in `renderChecked`, called by every write and every correction. `packages/store/src/store.ts:504-528`.
+- **Dedupe before write:** the content-hash question is asked before any file is created, so a duplicate leaves no file, no stage, and no commit for the next `git status` to report. `packages/store/src/store.ts:536-551`.
+- **Batch dedupe order:** a batch consults its own accepted hashes first and the store's index second, because the index does not yet know what this batch wrote. `packages/store/src/store.ts:631-650`.
+- **Task dedupe exemption:** two open tasks with identical bodies are legitimately distinct work items, so the uniqueness rule excludes tasks on both sides: the partial index and the write path's lookup. `packages/index/migrations/0008_tasks.sql:119-127`.
+- **Archive, never delete:** eviction, expiry, correction, and task completion all move a file to `archive/<YYYY>/<original-path>` with archive stamps applied. Nothing in the system deletes a memory, so a wrongly evicted memory is recoverable by reading the archive. `packages/sleep/src/phases/retention-triage.ts:9-17`, `packages/store/src/store.ts:424-458`.
+- **Clean tree required:** `preflight` and any operation gated on `requireCleanTree` refuse when the managed tree has uncommitted changes. `packages/sleep/src/phases/preflight.ts:22`, `packages/store/src/store.ts:1073-1077`.
+- **Task and memory graphs do not mix:** a memory-class rel with a task endpoint is refused, and a task-class rel requires both endpoints to be tasks, because a `blocks` edge reaching PageRank would let an agent's to-do list reweight the retention of its knowledge. Enforced in the store, because SQL can pair a rel with a class but cannot pair a class with the type of the files at either end. `packages/store/src/store.ts:977-1025`.
+- **Tasks default-excluded from search:** an unscoped query sees every type except `task`, and naming `task` in the type list opts a query in. A corpus with fifty open to-do items would otherwise put fifty of them in front of every recall. `packages/index/src/scope.ts:29-40`, `:131-149`.
+- **An explicit type list is honored verbatim:** filtering `task` back out of a caller's own list would make the opt-in unreachable. The exclusion is a default, not a firewall; the firewalls are `edge_class` and the trace tables, and both refuse rather than default. `packages/index/src/scope.ts:134-141`.
+- **Tasks skipped by every sleep phase:** a task is excluded from retention triage, compress, reprieve, relationship mining, and conflict detection. The retention score is dominated by recency and access, so a task nobody has touched for a month scores at the floor, which is exactly the task most likely to still be owed. `packages/sleep/src/sql.ts:33-37`, `packages/sleep/src/phases/retention-triage.ts:24-28`.
+- **Arcs are never evicted and never expire:** an arc is a synthesis whose members may all have aged out, so scoring it on its own recency would discard the conclusion precisely when the evidence behind it faded. Arc demotion belongs to arc synthesis, which has the utility signal. `packages/sleep/src/phases/retention-triage.ts:19-22`, `packages/sleep/src/phases/reprieve.ts:24-26`.
+- **Arcs are system-written:** `arc` is in the storage vocabulary and absent from the writable set, so an agent cannot assert a conclusion the corpus has not earned. `packages/contracts/src/types.ts:6-9`, `:34-40`.
+- **Sleep is absent from the MCP surface:** a sleep run rewrites confidence across the corpus, archives memories, and creates a branch a human is expected to read, so it is a cron or operator action rather than something an agent fires mid-conversation. `memhtml sleep run` is the only entry point. `apps/mcp/src/tools.ts:24-28`.
+- **Per-tool dependency declarations:** each MCP tool declares only the services it uses, which keeps `memory_search` provably unable to reach the store and write. `apps/mcp/src/tools.ts:93-114`.
+- **Every MCP tool declares a failure schema:** a tool with no declared failure gets `Schema.Never`, so the server rewrites every failure, typed domain errors included, to a generic internal-error string before it reaches the caller. `apps/mcp/src/tools.ts:33-41`.
+- **Pre-merge quality gate:** a sleep branch cannot fast-forward `main` when the caller's gate fails. The discrimination eval is wired here, so a sleep run that degrades retrieval quality cannot land. `packages/sleep/src/review.ts:196-209`, `:261-273`.
+- **Absent gate means no gate, by declaration:** the sleep package cannot import the eval without depending on it, so composition belongs to the CLI and a missing gate is visible in the caller's own wiring rather than silently supplied. `packages/sleep/src/review.ts:202-208`.
+- **Main-advanced refusal:** a merge refuses when `main` has moved past the run's base sha, because the run curated a corpus that no longer exists. The operator reruns the sleep, which is cheap because every phase is idempotent. `packages/sleep/src/review.ts:211-259`.
+- **Fast-forward only, never a merge commit:** a three-way merge would produce a commit whose parents are the sleep branch and a moved `main`, which is the state the first refusal exists to prevent, and the conflict resolution would be a human editing generated `sitemap.xml` by hand. `packages/sleep/src/review.ts:220-223`, `:275-284`.
+- **Discrimination gate is per-probe and absolute:** a single target ranked at or below any of its own controls is an inversion, and one inversion fails the run regardless of what MRR says, because an aggregate can be bought by thirty easy probes covering one broken one. `packages/eval/src/discriminate.ts:8-22`, `:217`.
+- **MRR floor 0.85:** a gate below this admits a target losing to one of its own negation-flipped twins on one probe in seven. `packages/eval/src/discriminate.ts:98-103`.
+- **An empty eval suite fails:** zero probes yields `mrr: 0`, which is below any floor, so a corpus whose probe generation silently produced nothing refuses rather than reporting a green gate over no measurement. `packages/eval/src/discriminate.ts:190-197`, `:217`.
+- **Corpus MRR is reported and not gated:** it is dominated by corpus size rather than by ranking quality, so a gate on it would be a gate on how big the fixture is. `packages/eval/src/discriminate.ts:79-88`.
+- **Phase failure is soft by default:** a failing phase is recorded `failed` and later phases still run, keeping every prior commit on the branch. The predecessor system ran thirteen phases in one transaction and lost four consecutive nights of curation to a single raise. `packages/sleep/src/contract.ts:44-56`.
+- **One hard prerequisite:** `dedup-merge` gates `compress` and `retention-triage`, because both operate on the post-merge set. `packages/sleep/src/contract.ts:57-60`.
+- **Two phases cannot commit:** `preflight` produces no mutation to review, and `relationship-mining` writes derived edges to the index only, because they are a re-derivable function of the corpus and the embedder and committing thousands would bury every real diff in machine noise. `packages/sleep/src/contract.ts:79-94`, `packages/sleep/src/phases/relationship-mining.ts:6-19`.
+- **A derived edge can never evict:** the retention `contested_status` signal counts only `derived = 0` file-borne edges, so an uncorroborated machine suspicion has no retention effect. `packages/contracts/src/edges.ts:122-128`, `packages/sleep/src/phases/relationship-mining.ts:10-13`.
+- **A machine-found contradiction needs two detections:** only `verdict: "contradicts"` above the confidence floor bumps the corroboration counter, and only two or more detections promote the edge into both files. `packages/sleep/src/phases/conflict-detection.ts:32-35`, `:51-52`.
+- **Conflict detection detects and stops:** the phase never supersedes, closes a `memhtml-valid-until`, or archives either side, because choosing the winner of a contradiction is a one-way door on stored belief that belongs to an agent or a human. `packages/sleep/src/phases/conflict-detection.ts:36-39`.
+- **Per-item model isolation:** each model call is wrapped so one malformed payload skips its item and is counted, rather than failing the phase and discarding the work already done. `packages/sleep/src/phases/conflict-detection.ts:29-31`.
+- **Entity auto-merge at 0.85, review band 0.75 to 0.85:** the band is counted and never merged, because entity merges are a one-way door on stored identity and the failure mode of an over-eager threshold is silent and permanent. `packages/sleep/src/phases/entity-resolution.ts:23-33`.
+- **Entity similarity is a character ratio, not an embedding cosine:** `checkout-api` and `payments-api` sit high in vector space because both are payment services, and merging them would fuse two services' memories permanently. `packages/sleep/src/phases/entity-resolution.ts:17-22`.
+- **A compress member is archived only when the model names it:** an omitted member stays active, and `absorbedKeys: []` produces no archive and no commit, so refusing to fold is a valid model answer. `packages/sleep/src/phases/compress.ts:24-27`.
+- **A new arc's slug is minted from the title, never by the model:** a model-chosen slug is a model-chosen file path, which is a path-traversal surface and a collision surface at once. `packages/sleep/src/phases/arc-synthesis.ts:35-37`.
+- **Reinforcement cooldown 900 seconds:** `access_count` feeds the salience retrieval arm, so without a cooldown replaying one query ten times would inflate that memory's salience tenfold and let a loop in an agent rewrite the corpus's ranking. `packages/domain/src/reinforce.ts:10-19`, `packages/domain/src/ranking.ts:13-17`.
+- **Embed-model mismatch is a hard refusal:** a half-migrated vector space degrades every cosine while every individual vector stays well-formed, so the check runs before any write and before the first write records a watermark. `memhtml index rebuild --embed-model=<new>` is the only path that rewrites vectors. `packages/index/src/indexer.ts:100-113`, `:206-218`.
+- **`EmbedModelMismatch` travels out of preflight rather than being swallowed:** continuing would corrupt dedup, mining, and conflict detection while reporting green. `packages/sleep/src/phases/preflight.ts:6-14`.
+- **Missing Bedrock credentials degrade, `MEMHTML_EMBED=off` disables:** an absent credential degrades one search at call time to the lexical floor, while `off` degrades every search, and an operator reading the manifest needs those to be different states. `apps/cli/src/config.ts:43-53`.
+- **`MEMHTML_LLM=off` keeps a credential-free sleep run honest:** the four LLM phases report `no model bound` and stay `ok` rather than red. `apps/cli/src/config.ts:55-60`, `packages/sleep/src/phases/conflict-detection.ts:56-59`.
+- **Entity extraction is opt-in, unlike the embedder:** `MEMHTML_EXTRACT_ENTITIES=on` adds one model call per write batch that changes what the write stores, so extracted entities land in files as if authored. The write never waits on or fails with the model; a failed extraction is a logged warning and an unextracted batch. `apps/cli/src/config.ts:61-66`.
+- **A dangling href is rewritten when the target was archived and dropped with a warning otherwise:** an archived target still exists and the edge still says something true, while a target that is gone means the edge asserts a relationship to nothing. `packages/sleep/src/phases/integrity.ts:20-29`.
+- **Generated artifacts are regenerated only by the integrity phase and by `memhtml publish`, never on an ordinary write:** they are the design's one merge-conflict source, and a deterministic regeneration plus `merge=ours` resolves a conflict without a human reading XML. `packages/sleep/src/phases/integrity.ts:31-34`.
+- **`memhtml doctor --fix` repairs exactly two of eight findings:** dangling hrefs and orphan state rows are settleable without a judgement call; an inbox memory, a vocabulary warning, a stale index, an overdue task, and a stale blocker all need a human or an agent to decide, so doctor names the command rather than running it behind the operator's back. `apps/cli/src/doctor.ts:53-65`.
+- **Doctor is the only surface that reads `due_at`:** a task is default-excluded from search and skipped by every sleep phase, so nothing else in the system will ever mention that a deadline passed. `apps/cli/src/doctor.ts:44-46`.
+- **Inbox depth thresholds 20 memories and 10 tasks:** the two crowds mean different things. An unplaced memory is a placement rule that stopped matching what agents write; an unplaced task is work with no project, and a task inbox is meant to be drained rather than accumulated. `apps/cli/src/doctor.ts:68-78`.
+- **Cost guards per sleep cycle:** merge decisions capped at 100 pairs, conflict pairs judged capped at 200, mined pairs capped at 2000, compress candidates capped at 2000 in batches of 8, arc evidence capped at 40 memories. `packages/domain/src/merge.ts:18-19`, `packages/sleep/src/phases/conflict-detection.ts:48-49`, `packages/sleep/src/phases/relationship-mining.ts:27-28`, `packages/sleep/src/phases/compress.ts:38-42`, `packages/sleep/src/phases/arc-synthesis.ts:39-40`.
+- **Bounded embed concurrency at 6:** every caller on the deployment draws on the same Bedrock token's tokens-per-minute quota, so an unbounded fan-out would spend the whole store's budget in one burst and throttle every other consumer. `packages/llm/src/constants.ts:13-27`.
+- **Write batch 500 rows:** one batch is one transaction, so the bound caps how much work a single failure discards and how long one write holds the WAL write lock against a concurrent reader. `packages/index/src/schema-const.ts:77-85`.
+- **Confidence commit delta 0.005:** confidence decay is the widest commit in a sleep run, one meta line across many files, so a sub-threshold delta is dropped rather than committed, keeping the night's diff reviewable. `packages/domain/src/decay.ts:130-139`.
+- **The trace index stores no session content:** only pointers and capped heads, 500 characters for a session's first prompt and 200 per prompt. `packages/traces/src/extract.ts:47-51`, `apps/mcp/src/tools.ts:680`.
+- **`MEMHTML_TRACE_ROOT` is read-only and never written.** `apps/cli/src/config.ts:32-37`.
+- **Error codes and response types are append-only, and agents branch on the code:** once shipped a code's meaning never changes and a code is never removed, while the human `error` string changes freely as wording improves. `apps/cli/src/envelope.ts:8-11`, `:62-83`.
+- **`--dense` drops nulls and indentation:** an agent pasting CLI output into a prompt spends tokens on content rather than decoration. `apps/cli/src/envelope.ts:140-157`.
+
+## See also
+
+- [memhtml-public · Contract map](../insights/contract-map.md): 27 shared source citations
+- [memhtml-public · Impact analysis](../insights/impact-analysis.md): 11 shared source citations
+- [memhtml-public · CLI](../reference/cli.md): 6 shared source citations
+- [memhtml-public · Processes](../behavior/processes.md): 4 shared source citations
+- [memhtml-public · Debugging guide](../insights/debugging-guide.md): 4 shared source citations

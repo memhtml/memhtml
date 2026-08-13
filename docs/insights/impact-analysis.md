@@ -1,0 +1,267 @@
+# memhtml-public · Impact analysis
+
+This file answers one question: if you change surface X, what else do you have to think about?
+
+**A surface is high-impact here when changing it forces edits in more than one workspace package.** The ranking metric is the number of distinct workspace packages that reach the surface in the import graph, with the raw count of importing files as the tie-break. That criterion, rather than raw inbound-file count, because the surfaces with the widest real blast radius are the contract surfaces: `packages/store/src/layout.ts` has only 17 importing files but reaches six packages, while `packages/sleep/src/env.ts` has 28 importers and every one of them is inside `packages/sleep`. Package-internal fan-out is refactoring work in one directory. Cross-package fan-out is a change that has to land in agreement across a build graph.
+
+Two surfaces on this list carry a blast radius that reaches past the build graph entirely. This repository stores no memory. It is the software that manages a separate directory called the memhtml root, located by `$MEMHTML_ROOT` (`apps/cli/src/config.ts:27-31`), and every root already created in the world holds files written by whatever version of this software created them. A change to the memory file format (`packages/html`) or to the root's on-disk layout (`packages/store/src/layout.ts`) is a change to data this repository does not contain and cannot migrate in a commit. Those two carry a "reaches existing roots" note for that reason.
+
+The primary consumer of every surface below is a coding agent, not a person at a terminal. That shapes the judgments: a change to the JSON envelope is high-impact because agents parse it and branch on it, and a change to a closed vocabulary is high-impact because that vocabulary is published in the machine-readable manifest an agent reads before its first call.
+
+Ranking data was produced by walking every `.ts` file under `packages`, `apps`, `tests-integration`, and `scripts`, resolving relative specifiers by path and `@memhtml/*` barrel imports through each package's `src/index.ts` re-export map. One artifact of that method is recorded here so the numbers are not over-trusted: `packages/domain/src/index.ts:6-16` is nine `export * from` lines, so a barrel import of one domain symbol credits all nine domain files. No domain file is selected on count alone as a result.
+
+`Touch on change` reads as follows. `yes` means the consumer must be edited when the surface changes shape. `likely` means the consumer needs review even without a signature change, usually because it restates the surface's content somewhere the type system cannot check. `no` means only a behavioral change reaches it.
+
+## `packages/contracts/src/errors.ts`
+
+Defined at: `packages/contracts/src/errors.ts:9-64`
+
+Nine `Schema.TaggedError` classes: `StorageFailure`, `WriteConflict`, `ModelUnavailable`, `InvalidMemory`, `PathNotFound`, `DuplicateContent`, `DirtyTree`, `LlmContractViolation` (`packages/contracts/src/errors.ts:9-64`). This is the single most widely reached surface in the repository: 51 importing files across 13 workspace packages, which is every package and app except `apps/docs`.
+
+| Downstream | Type | Touch on change | Citation |
+|---|---|---|---|
+| `apps/cli/src/errors.ts` maps each `_tag` to an `ErrorCode` and to prose | direct import | yes | `apps/cli/src/errors.ts:41-67` |
+| `apps/mcp/src/failure.ts` folds `codeFor`/`messageFor` into the one MCP wire failure | indirect | yes | `apps/mcp/src/failure.ts:1,32-38` |
+| `packages/store/src/store.ts` fails writes with `InvalidMemory` and `DuplicateContent` | direct import | yes | `packages/store/src/store.ts:478,524` |
+| `packages/index/src/database.ts` wraps every driver rejection as `StorageFailure` | direct import | yes | `packages/index/src/database.ts:6,165-170` |
+| `packages/store/src/layout.ts` returns `StorageFailure` from every filesystem edge | direct import | yes | `packages/store/src/layout.ts:4,149-158` |
+| `packages/traces/src/discover.ts`, `scan.ts` | direct import | yes | `packages/traces/src/discover.ts:5`, `packages/traces/src/scan.ts:1` |
+| `packages/llm/src/client.ts`, `embeddings.ts`, `model-client.ts`, `structured.ts` | direct import | yes | `packages/llm/src/client.ts:2`, `packages/llm/src/model-client.ts:2`, `packages/llm/src/structured.ts:1` |
+| `packages/sleep/src/edits.ts`, `llm.ts`, `retention.ts`, `sql.ts`, `phases/trace-consolidation.ts` | direct import | yes | `packages/sleep/src/edits.ts:2` |
+| `apps/consolidator/src/contract.ts` | direct import | yes | `apps/consolidator/src/contract.ts:1` |
+| `apps/cli/src/envelope.ts` publishes the `ERROR_CODES` vocabulary each tag maps into | indirect | likely | `apps/cli/src/envelope.ts:67-83` |
+| `packages/contracts/tests/errors.test.ts` asserts every tag is distinct | test | yes | `packages/contracts/tests/errors.test.ts:14-27` |
+| `apps/mcp/tests/failure.test.ts` | test | yes | `apps/mcp/tests/failure.test.ts:11` |
+| `packages/domain/src/index.ts` re-exports `InvalidMemory` as a type only | indirect | no | `packages/domain/src/index.ts:6` |
+
+### Blast-radius notes
+
+- Every error class deliberately withholds the underlying detail: `StorageFailure` carries only an operation name, and the driver's own message goes to `Effect.logError` at the adapter edge instead (`packages/contracts/src/errors.ts:3-8`). Adding a payload field that carries SQL text, git argv, or memory body would let corpus content reach an agent's tool response, and `apps/cli/src/errors.ts:69-77` states that the CLI edge will not reconstruct what the class dropped. The contract is that the payload is safe to return.
+- `GitFailure` is the one error class outside this file, living in `@memhtml/store` because it carries a git subcommand name (`apps/cli/src/errors.ts:34-36`). Adding a tenth class here without adding its case to `codeFor` yields `ERR_UNKNOWN` silently, because the switch has a `default` (`apps/cli/src/errors.ts:64-65`). Nothing in the type system catches that omission.
+- `packages/domain` names `InvalidMemory` as a type only, and `packages/domain/tests/layering.test.ts` reads the emitted `dist/` to prove domain's runtime imports stay limited to `effect` (`packages/domain/src/index.ts:1-6`, `packages/domain/tests/layering.test.ts:7-12`). Converting that type-only import into a value import breaks that standing proof rather than only adding a dependency.
+
+## `packages/contracts/src/types.ts`
+
+Defined at: `packages/contracts/src/types.ts:18-131`
+
+The closed vocabularies: `MEMORY_TYPES` (ten values), `WRITABLE_MEMORY_TYPES` (nine, withholding `arc`), `PARA_BUCKETS` (four), `MemoryStatus`, `TASK_STATUSES` (four), `Importance`, `Confidence`, `MemoryPath`, and the entity-reference helpers. 21 importing files across 8 workspace packages.
+
+| Downstream | Type | Touch on change | Citation |
+|---|---|---|---|
+| `packages/index/migrations/0001_files.sql` restates `MEMORY_TYPES` as a SQL CHECK | config | yes | `packages/index/migrations/0001_files.sql:18-20` |
+| `packages/index/migrations/0008_tasks.sql` restates it again, widened by `task` | config | yes | `packages/index/migrations/0008_tasks.sql:38-40` |
+| `packages/index/migrations/0001_files.sql` restates `PARA_BUCKETS` as a CHECK | config | yes | `packages/index/migrations/0001_files.sql:34` |
+| `packages/index/migrations/0008_tasks.sql` restates `PARA_BUCKETS` and `TASK_STATUSES` | config | yes | `packages/index/migrations/0008_tasks.sql:46,72` |
+| `apps/cli/src/commands.ts` publishes `WRITABLE_MEMORY_TYPES` and `TASK_STATUSES` as flag enums | direct import | yes | `apps/cli/src/commands.ts:2,63` |
+| `apps/mcp/src/tools.ts` publishes `WRITABLE_MEMORY_TYPES` and `PARA_BUCKETS` as tool parameters | direct import | yes | `apps/mcp/src/tools.ts:10,44-45` |
+| `packages/contracts/src/paths.ts` routes on `PARA_BUCKETS` and on the `arc`/`task` type values | direct import | yes | `packages/contracts/src/paths.ts:2,50-56,109-120` |
+| `packages/html/src/document.ts`, `template.ts`, `parse.ts` type the parsed metas | direct import | yes | `packages/html/src/template.ts:2` |
+| `packages/index/src/project.ts` splits entity references with `parseEntity` | direct import | yes | `packages/index/src/project.ts:3` |
+| `packages/index/src/indexer.ts`, `scope.ts` | direct import | yes | `packages/index/src/indexer.ts:7`, `packages/index/src/scope.ts:1` |
+| `apps/consolidator/src/contract.ts` imports `MEMORY_TYPES` through the barrel | direct import | yes | `apps/consolidator/src/contract.ts:1` |
+| `packages/sleep/src/phases/person-links.ts`, `trace-consolidation.ts` | direct import | likely | `packages/sleep/src/phases/person-links.ts:3`, `packages/sleep/src/phases/trace-consolidation.ts:1` |
+| `packages/store/src/index.ts` re-exports `PARA_BUCKETS` rather than restating it | indirect | no | `packages/store/src/index.ts:16` |
+| `AGENTS.md` publishes the type enum in the generated agent doc | config | yes | `AGENTS.md:135` |
+| `packages/contracts/tests/types.test.ts` pins the count and the writable/guard agreement | test | yes | `packages/contracts/tests/types.test.ts:22-76` |
+| `packages/contracts/tests/paths.test.ts`, `apps/mcp/tests/tools.test.ts`, `packages/html/tests/property.test.ts` | test | likely | `packages/contracts/tests/paths.test.ts:20`, `apps/mcp/tests/tools.test.ts:3`, `packages/html/tests/property.test.ts:3-4` |
+
+### Blast-radius notes
+
+- Every closed vocabulary in this file is restated at least once in SQL, and `MEMORY_TYPES` and `PARA_BUCKETS` are restated twice (`packages/index/migrations/0001_files.sql:18-20,34` and `packages/index/migrations/0008_tasks.sql:38-40,46`). No compiler checks that agreement. Adding a memory type without a migration produces a CHECK-constraint failure at index time, which surfaces as a `StorageFailure` from the indexer rather than as a build error.
+- `arc` is in `MEMORY_TYPES` and absent from `WRITABLE_MEMORY_TYPES` on purpose: an arc is synthesized by the sleep cycle, so an agent naming one directly would assert a conclusion the corpus has not earned (`packages/contracts/src/types.ts:7-10`). `packages/contracts/tests/types.test.ts:41-53` asserts the runtime filter and the restated `WritableMemoryType` schema agree on every type, because the filter and the schema are two copies of the same list.
+- `task` is one axis with the other nine rather than a parallel `kind` column, and the file states the reason: overlapping type vocabularies made classification unanswerable in the predecessor system (`packages/contracts/src/types.ts:11-16`). Tasks are excluded from search and skipped by sleep through filters that read this one column, so introducing a second axis would require every one of those filters to be found and changed.
+
+## `packages/contracts/src/edges.ts`
+
+Defined at: `packages/contracts/src/edges.ts:9-149`
+
+Four non-mixing edge classes and their rels: `MEMORY_RELS` (nine), `PERSON_RELS` (two), `PROVENANCE_RELS` (one), `TASK_RELS` (two), plus `relClassFor`, `relsForClass`, `isEdgeRel`, the `<link rel>` token codec (`relTokenFor` / `relForToken`), and the `Edge` schema. 22 importing files across 8 workspace packages.
+
+| Downstream | Type | Touch on change | Citation |
+|---|---|---|---|
+| `packages/index/migrations/0004_edges.sql` restates all four classes as CHECK constraints | config | yes | `packages/index/migrations/0004_edges.sql:30-35` |
+| `packages/index/migrations/0008_tasks.sql` restates the memory rels again | config | yes | `packages/index/migrations/0008_tasks.sql:195` |
+| `packages/store/src/store.ts` derives an edge's class with `relClassFor` before writing | direct import | yes | `packages/store/src/store.ts:4,999` |
+| `packages/html/src/serialize.ts` writes the `<link rel>` token with `relTokenFor` | direct import | yes | `packages/html/src/serialize.ts:1` |
+| `packages/html/src/constraints.ts` validates a link token with `relForToken` | direct import | yes | `packages/html/src/constraints.ts:1` |
+| `packages/html/src/editors.ts` adds and removes links by token | direct import | yes | `packages/html/src/editors.ts:1-2` |
+| `packages/html/src/document.ts`, `template.ts` type a link's rel | direct import | yes | `packages/html/src/document.ts:1`, `packages/html/src/template.ts:1` |
+| `packages/index/src/project.ts` projects a doc's links onto `edges` rows by class | direct import | yes | `packages/index/src/project.ts:1` |
+| `apps/cli/src/operations.ts` gates authored links on `isEdgeRel` and the two rel sets | direct import | yes | `apps/cli/src/operations.ts:1` |
+| `apps/cli/src/commands.ts` publishes `MEMORY_RELS` as the `memhtml neighbors --rel` enum | direct import | yes | `apps/cli/src/commands.ts:1` |
+| `apps/mcp/src/tools.ts` publishes `MEMORY_RELS` as a tool parameter | direct import | yes | `apps/mcp/src/tools.ts:9` |
+| `apps/cli/src/doctor.ts` classifies a dangling href by rel | direct import | likely | `apps/cli/src/doctor.ts:4` |
+| `packages/sleep/src/edits.ts`, `phases/integrity.ts`, `phases/trace-consolidation.ts` | direct import | yes | `packages/sleep/src/edits.ts:1`, `packages/sleep/src/phases/integrity.ts:1` |
+| `apps/consolidator/src/contract.ts` | direct import | likely | `apps/consolidator/src/contract.ts:439` |
+| `AGENTS.md` publishes the rel vocabulary in the generated agent doc | config | yes | `AGENTS.md:213` |
+| `packages/contracts/tests/edges.test.ts`, `packages/html/tests/format.test.ts`, `packages/html/tests/property.test.ts`, `apps/mcp/tests/tools.test.ts` | test | yes | `packages/contracts/tests/edges.test.ts:19`, `packages/html/tests/format.test.ts:1`, `packages/html/tests/property.test.ts:1-2`, `apps/mcp/tests/tools.test.ts:2` |
+
+### Blast-radius notes
+
+- The class is derived from the rel rather than carried beside it, and `relClassFor` is total over `ALL_RELS` and injective per class (`packages/contracts/src/edges.ts:65-75`). A new rel added to one of the four arrays gets a class automatically. A new rel added without a matching SQL CHECK edit is refused by the driver at index time, because `packages/index/migrations/0004_edges.sql:30-35` enumerates the rels per class independently.
+- The class separation is a ranking invariant, not a tidiness one: every memory-graph query filters `edge_class = 'memory'`, which is what makes a person or task edge structurally incapable of entering PageRank, MMR, or the retention bridge count (`packages/contracts/src/edges.ts:3-8`). Promoting a task rel into the memory class would let an agent's to-do list reweight the retention of its knowledge (`packages/contracts/src/edges.ts:48-52`).
+- `relTokenFor` and `relForToken` are inverses on the token image, and the mapping replaces underscores with hyphens because a `rel` token cannot hold a colon (`packages/contracts/src/edges.ts:101-120`). Adding a rel whose name contains a hyphen would break the inverse silently, since `relForToken` converts every hyphen back to an underscore.
+
+## `packages/contracts/src/paths.ts`
+
+Defined at: `packages/contracts/src/paths.ts:10-186`
+
+The path algebra for the memhtml root, all pure and total: the fixed directory names (`ARCS_DIR`, `PEOPLE_DIR`, `INBOX_DIR`, `TASKS_SUBDIR`, `ARCHIVE_BUCKET`, `MEMORY_EXTENSION`), `normalizePath`, `paraBucketOf`, `isValidMemoryPath`, `placementFor`, `memoryPathFor`, `archivePathFor`, `originalPathFor`, `isArchivePath`, `archiveYearOf`. 24 importing files across 8 workspace packages.
+
+| Downstream | Type | Touch on change | Citation |
+|---|---|---|---|
+| `packages/store/src/layout.ts` builds `SCAFFOLD_DIRS` from three of the constants | direct import | yes | `packages/store/src/layout.ts:5,41-48` |
+| `packages/store/src/store.ts` resolves every write path and archive move | direct import | yes | `packages/store/src/store.ts:18` |
+| `packages/index/src/project.ts` derives the `files.para` column with `paraBucketOf` | direct import | yes | `packages/index/src/project.ts:2` |
+| `packages/index/src/indexer.ts` normalizes tree paths before projecting | direct import | yes | `packages/index/src/indexer.ts:6` |
+| `apps/cli/src/operations.ts` places a write and validates a caller path | direct import | yes | `apps/cli/src/operations.ts:3` |
+| `apps/cli/src/doctor.ts` reports inbox depth and task placement | direct import | yes | `apps/cli/src/doctor.ts:5` |
+| `packages/sleep/src/edits.ts` and `phases/integrity.ts` compute archive paths | direct import | yes | `packages/sleep/src/edits.ts:3`, `packages/sleep/src/phases/integrity.ts:2` |
+| `packages/sleep/src/phases/arc-synthesis.ts`, `compress.ts`, `person-links.ts`, `trace-consolidation.ts`, `review.ts` | direct import | yes | `packages/sleep/src/phases/arc-synthesis.ts:1`, `packages/sleep/src/phases/compress.ts:1`, `packages/sleep/src/review.ts:1` |
+| `packages/eval/src/corpus.ts` generates fixture paths through the same algebra | direct import | yes | `packages/eval/src/corpus.ts:1` |
+| `apps/consolidator/src/contract.ts` | direct import | likely | `apps/consolidator/src/contract.ts:41` |
+| Every existing memhtml root's directory tree | runtime dispatch | likely | `packages/store/src/layout.ts:41-48` |
+| `packages/contracts/tests/paths.test.ts` pins placement and the archive inverse | test | yes | `packages/contracts/tests/paths.test.ts:19` |
+| `packages/store/tests/store.test.ts`, `packages/sleep/tests/dedup.test.ts`, `llm-phases.test.ts`, `run.test.ts` | test | yes | `packages/store/tests/store.test.ts:5`, `packages/sleep/tests/dedup.test.ts:1`, `packages/sleep/tests/llm-phases.test.ts:1`, `packages/sleep/tests/run.test.ts:1` |
+| `tests-integration/tests/sleep.test.ts`, `tasks.test.ts` | test | likely | `tests-integration/tests/sleep.test.ts:4`, `tests-integration/tests/tasks.test.ts:4` |
+
+### Blast-radius notes
+
+- `archivePathFor` and `originalPathFor` are a matched pair, and the mirroring of the whole original path beneath `archive/<YYYY>/` is what makes the mapping injective and invertible, so `git log --follow` reads through an eviction and `diff -M` reports it as `R100` rather than a delete plus an add (`packages/contracts/src/paths.ts:157-166`). `originalPathFor` strips exactly one prefix so it stays a left inverse even for a memory archived twice (`packages/contracts/src/paths.ts:168-177`). Changing either side without the other silently breaks archive-path round-tripping on every root already holding archived files.
+- `placementFor` is total: it always returns a directory rooted in a PARA bucket, so the write path never guesses twice and never fails (`packages/contracts/src/paths.ts:92-102`). An unusable explicit `path` is ignored rather than propagated, which means a caller that wants a bad path refused must gate on `isValidMemoryPath` first. A consumer relying on `placementFor` to reject anything will not get a rejection.
+- The `tasks` segment name is part of the contract rather than a layout preference, because keeping tasks in one named segment is what makes `ls projects/<slug>/tasks` the list operation (`packages/contracts/src/paths.ts:21-30`). Renaming it orphans every task file in every existing root, since nothing migrates them.
+
+## `packages/html/src/hash.ts`
+
+Defined at: `packages/html/src/hash.ts:115-185`
+
+`contentHash`, plus `canonicalText`, `canonicalArticleText`, `isContentHash`, and `HASH_ALGORITHM`. The content hash is the dedup key and the one value in the system that must be invariant under head edits (`packages/html/src/hash.ts:7-16`). 18 importing files across 5 workspace packages; the surface reaches further through SQL, where two unique indexes key on it.
+
+| Downstream | Type | Touch on change | Citation |
+|---|---|---|---|
+| `packages/index/migrations/0001_files.sql` makes `content_hash` a unique index over active files | config | yes | `packages/index/migrations/0001_files.sql:61` |
+| `packages/index/migrations/0002_chunks.sql` keys `chunks` and its unique ordinal index on it | config | yes | `packages/index/migrations/0002_chunks.sql:10,17-18` |
+| `packages/index/src/chunking.ts` derives every `chunk_id` from it | indirect | yes | `packages/index/src/chunking.ts:21-28` |
+| `packages/index/migrations/0002_chunks.sql` `embeddings.chunk_id` references `chunks.chunk_id` | config | yes | `packages/index/migrations/0002_chunks.sql:21` |
+| `packages/store/src/store.ts` computes the hash on every write and dedups on it | direct import | yes | `packages/store/src/store.ts:24,535,629,844` |
+| `packages/index/src/indexer.ts` recomputes it from the parsed article | direct import | yes | `packages/index/src/indexer.ts:8,195` |
+| `packages/html/src/parse.ts`, `constraints.ts`, `template.ts` | direct import | yes | `packages/html/src/constraints.ts:4` |
+| `packages/sleep/src/review.ts` classifies a per-file change by hash | direct import | yes | `packages/sleep/src/review.ts:1` |
+| Every existing memhtml root's stored `memhtml-content-hash` metas | runtime dispatch | likely | `packages/html/src/vocabulary.ts:54` |
+| `packages/html/tests/hash.test.ts`, `editors.test.ts`, `property.test.ts`, `template.test.ts` | test | yes | `packages/html/tests/hash.test.ts:4`, `packages/html/tests/editors.test.ts:4`, `packages/html/tests/property.test.ts:9`, `packages/html/tests/template.test.ts:3` |
+| `packages/index/tests/chunking.test.ts`, `project.test.ts` | test | yes | `packages/index/tests/chunking.test.ts:1`, `packages/index/tests/project.test.ts:1` |
+| `packages/sleep/tests/decay.test.ts`, `dedup.test.ts`, `units.test.ts` | test | yes | `packages/sleep/tests/decay.test.ts:7`, `packages/sleep/tests/dedup.test.ts:2`, `packages/sleep/tests/units.test.ts:1` |
+| `packages/store/tests/store.test.ts`, `packages/eval/tests/corpus.test.ts` | test | yes | `packages/store/tests/store.test.ts:6`, `packages/eval/tests/corpus.test.ts:1,42-44` |
+| `tests-integration/tests/contracts.test.ts` proves a double write leaves the tree byte-identical | test | yes | `tests-integration/tests/contracts.test.ts:22-31` |
+
+### Blast-radius notes
+
+- The hash covers only `<article>` text, and head edits are outside its scope by construction. That invariance is what keeps confidence decay, access bookkeeping, and every sleep phase's stamping from looking like content changes: without it, each nightly decay pass would present the whole corpus as new content and dedup would collapse (`packages/html/src/hash.ts:7-16`). Any change that lets a meta or a `<link>` reach the digest breaks that property for every root at once.
+- Whitespace handling is load-bearing in both directions. Block-element edges contribute a collapsible space so the hash is a function of the article's words rather than its indentation, and the outer trim is applied only to collapsible segments so `<pre>  a</pre>` and `<pre>a</pre>` do not collide (`packages/html/src/hash.ts:101-125`). Changing the canonicalization changes every stored hash, which means every `files_content_hash_active` row, every `chunks_hash_ord` row, and every stored embedding keyed through `chunk_id`.
+- `contentHash` is total on purpose: a string with no `<article>` hashes as article-inner-HTML rather than failing, because refusing malformed input is `parseMemory`'s job (`packages/html/src/hash.ts:163-168`). A consumer that expects the hash function to validate its input will not get validation.
+
+## `packages/index/src/database.ts`
+
+Defined at: `packages/index/src/database.ts:69-407`
+
+`DatabaseShape`, the `DatabaseService` tag, `makeDatabase`, `attachState`, `runStateMigrations`, `isBusyCause`, and the `SqlValue` / `Write` types. This is the only connection factory for the rebuildable index and the state plane. 28 importing files across 5 workspace packages.
+
+| Downstream | Type | Touch on change | Citation |
+|---|---|---|---|
+| `apps/cli/src/api-layer.ts` builds the one production connection, both planes attached | direct import | yes | `apps/cli/src/api-layer.ts:9-27,131-141` |
+| `apps/mcp/src/tools.ts` reads `DatabaseService` through the CLI composition root | indirect | yes | `apps/mcp/src/tools.ts:1-8` |
+| `packages/index/src/retrieval.ts` issues every ranked query through the shape | direct import | yes | `packages/index/src/retrieval.ts:5,149` |
+| `packages/index/src/indexer.ts` batches projection writes through `writeAll` | direct import | yes | `packages/index/src/database.ts:374-397` |
+| `packages/index/src/index-state.ts`, `reinforce.ts`, `traces-persist.ts` | direct import | yes | `packages/index/src/index-state.ts:20`, `packages/index/src/reinforce.ts:5`, `packages/index/src/traces-persist.ts:4` |
+| `packages/sleep/src/env.ts`, `sql.ts`, `retention.ts` reach every phase's SQL | direct import | yes | `packages/sleep/src/env.ts:1`, `packages/sleep/src/sql.ts:2`, `packages/sleep/src/retention.ts:10` |
+| `apps/cli/src/doctor.ts`, `operations.ts`, `publish.ts`, `state.ts`, `views.ts` | direct import | yes | `apps/cli/src/doctor.ts:7`, `apps/cli/src/operations.ts:15-16`, `apps/cli/src/publish.ts:3`, `apps/cli/src/state.ts:4`, `apps/cli/src/views.ts:2` |
+| `packages/index/migrations/*.sql` are applied by `runMigrations` in filename order | config | likely | `packages/index/src/database.ts:215-256` |
+| `packages/index/state-migrations/S0001_access.sql` is applied against the `state.` ledger | config | likely | `packages/index/src/database.ts:305-307` |
+| `packages/eval/src/harness.ts` builds a real database for the discrimination gate | direct import | yes | `packages/eval/src/harness.ts:7,18` |
+| Nine `packages/index/tests/*` files drive the real driver against `":memory:"` | test | yes | `packages/index/src/database.ts:309-312` |
+| `tests-integration/tests/rebuild.test.ts` compares whole table row sets across a rebuild | test | yes | `tests-integration/tests/rebuild.test.ts:11-22` |
+| `tests-integration/tests/rebuild.test.ts` reads `STATE_SCHEMA` over the same connection | test | likely | `tests-integration/tests/rebuild.test.ts:4` |
+
+### Blast-radius notes
+
+- Both planes ride one connection, and that is what lets the salience retrieval arm `LEFT JOIN state.access` in the same statement as `main.files` with no application-side join (`packages/index/src/database.ts:283-292`). A connection built without the attachment silently drops that arm, which is why `hasState` is on the service and the arm registry consults it rather than assuming (`packages/index/src/database.ts:99-100,309-318`). A caller that constructs a database without `state` gets degraded ranking and no error.
+- Attaching is not idempotent: a second `ATTACH ... AS state` fails, so `attachState` is called exactly once per connection, by `makeDatabase` (`packages/index/src/database.ts:290-293`). Any new code path that attaches will fail at runtime, not at build time.
+- Concurrency is the driver's alone. WAL admits one writer and any number of readers, a second writer blocks for `BUSY_TIMEOUT_MS` (5000 ms), and `Effect` coordinates nothing across processes, so the driver's timeout plus the jittered `BUSY_BACKOFF` retry is the whole answer (`packages/index/src/database.ts:13-22,139-158`). Retrying is safe only because the error is `SQLITE_BUSY`, where the lock was never taken and the statement had no effect to half-apply. Widening the retry predicate past `isBusyCause` would retry statements that did partially run.
+
+## `packages/store/src/layout.ts`
+
+Defined at: `packages/store/src/layout.ts:22-211`
+
+The memhtml root's on-disk shape and the one operation that creates it: `MEMHTML_DIR`, `INDEX_DB_PATH`, `STATE_DB_PATH`, `STATE_SIDECAR_PATH`, `SLEEP_REPORTS_DIR`, `SCAFFOLD_DIRS`, `GITIGNORE`, `GITATTRIBUTES`, `MERGE_OURS_DRIVER`, `README`, `initRepo`, plus the `attemptIo` and `readFileOrNull` filesystem edges. 17 importing files across 6 workspace packages.
+
+| Downstream | Type | Touch on change | Citation |
+|---|---|---|---|
+| Every existing memhtml root's `.memhtml/`, `.gitignore`, and `.gitattributes` | runtime dispatch | likely | `packages/store/src/layout.ts:41-76` |
+| `apps/cli/src/api-layer.ts` joins the root with `INDEX_DB_PATH` and `STATE_DB_PATH` | direct import | yes | `apps/cli/src/api-layer.ts:43,46,136-137` |
+| `apps/cli/src/run.ts` runs `initRepo` for `memhtml init` | direct import | yes | `apps/cli/src/run.ts:2,197` |
+| `apps/cli/src/state.ts` reads and writes the sidecar for `state export` / `state import` | direct import | yes | `apps/cli/src/state.ts:6,60-157` |
+| `apps/cli/src/doctor.ts`, `operations.ts`, `publish.ts` use the `attemptIo` and `readFileOrNull` edges | direct import | yes | `apps/cli/src/doctor.ts:19`, `apps/cli/src/operations.ts:32`, `apps/cli/src/publish.ts:5` |
+| `apps/mcp/src/resources.ts` resolves a sleep report under `SLEEP_REPORTS_DIR` | direct import | yes | `apps/mcp/src/resources.ts:5,78` |
+| `packages/sleep/src/phases/report.ts` writes the committed run report | direct import | yes | `packages/sleep/src/phases/report.ts:1,25` |
+| `packages/sleep/src/phases/state-export.ts` writes and stages the sidecar | direct import | yes | `packages/sleep/src/phases/state-export.ts:1,75-79` |
+| `packages/store/src/store.ts`, `testing.ts` | direct import | yes | `packages/store/src/testing.ts:8,65` |
+| `packages/eval/src/fixture.ts` calls the real `initRepo` so the fixture carries the real scaffold | direct import | yes | `packages/eval/src/fixture.ts:6,135,151` |
+| `packages/store/tests/layout.test.ts` pins every scaffold directory and both generated files | test | yes | `packages/store/tests/layout.test.ts:9-15,57-61` |
+| `packages/store/tests/buckets.test.ts` asserts `MEMHTML_DIR` is not a PARA bucket | test | yes | `packages/store/tests/buckets.test.ts:3,12` |
+| `tests-integration/tests/clone.test.ts` proves a fresh clone plus init plus import plus rebuild restores everything | test | yes | `tests-integration/tests/clone.test.ts:11-24` |
+| `tests-integration/tests/rebuild.test.ts` asserts the sidecar is tracked | test | yes | `tests-integration/tests/rebuild.test.ts:5,193-201` |
+| `packages/index/tests/git-adapter.test.ts` asserts no scaffold file is ever indexed | test | likely | `packages/index/tests/git-adapter.test.ts:487` |
+
+### Blast-radius notes
+
+- Exactly two files are gitignored, and each has a different recovery story: `index.db` is rebuildable from the tree, and `state.db` is reproduced from its committed JSONL sidecar, so a fresh clone plus `memhtml state import` plus `memhtml index rebuild` yields the whole system (`packages/store/src/layout.ts:50-59`). `tests-integration/tests/clone.test.ts:11-20` is the standing proof. Adding a third gitignored file without a recovery path breaks that claim, and the claim is why `index.db` is gitignored at all.
+- The `merge=ours` attribute alone does nothing. Probed live on 2026-08-02: with the attribute set and no driver configured, git still conflicts and writes conflict markers into the file (`packages/store/src/layout.ts:61-69`). The `merge.ours.driver` config in `initRepo` is what makes it effective, and config is per clone, so `memhtml init` on a fresh clone must set it again (`packages/store/src/layout.ts:195-197`). Any deployment path that skips `init` on a clone gets conflict markers in `sitemap.xml`.
+- `initRepo` is convergent rather than idempotent: every step asks the repo what is already true and supplies only what is missing, so it reaches the same end state from an empty directory, from a fully scaffolded root, and from one left half-initialized by an interrupted run (`packages/store/src/layout.ts:168-182`). A function that short-circuited on "I wrote no files this time" would report success over a repo with an unborn HEAD. `.gitkeep` files hold the empty PARA directories because git tracks files and not directories, and without them a fresh clone has no `areas/inbox/` for the first write to land in.
+
+## `apps/cli/src/envelope.ts`
+
+Defined at: `apps/cli/src/envelope.ts:6-157`
+
+The machine contract every agent parses: `API_VERSION`, `RESPONSE_TYPES` (32 values), `ResponseType`, `Success`, `Failure`, `ERROR_CODES` (15 values), `ErrorCode`, the three exit codes, `succeed`, `fail`, `nearest`, and `render`. 15 importing files across 3 workspace packages, and the widest external surface in the repository, because it is what a calling agent reads.
+
+| Downstream | Type | Touch on change | Citation |
+|---|---|---|---|
+| `apps/cli/src/run.ts` emits every command's envelope and picks the exit code | direct import | yes | `apps/cli/src/run.ts:823,842-843` |
+| `apps/cli/src/commands.ts` declares each command's `responseTypes` from `ResponseType` | direct import | yes | `apps/cli/src/commands.ts:7,31` |
+| `apps/cli/src/errors.ts` maps every error tag onto an `ErrorCode` | direct import | yes | `apps/cli/src/errors.ts:41-67` |
+| `apps/mcp/src/failure.ts` reuses the same code vocabulary on the MCP wire | indirect | yes | `apps/mcp/src/failure.ts:1,32-38` |
+| `apps/cli/src/index.ts` re-exports the whole contract as the package's public surface | direct import | yes | `apps/cli/src/index.ts:71-86` |
+| `apps/cli/src/agents-doc.ts` renders every code into the committed `AGENTS.md` | indirect | yes | `apps/cli/src/agents-doc.ts:7,116` |
+| `AGENTS.md` publishes the envelope shapes, codes, and exit codes verbatim | config | yes | `AGENTS.md:8-24,413-429` |
+| `apps/cli/src/apply.ts`, `exec.ts`, `operations.ts` construct failures with `fail` and `ErrorCode` | direct import | yes | `apps/cli/src/apply.ts:3`, `apps/cli/src/exec.ts:10`, `apps/cli/src/operations.ts:37` |
+| `apps/docs/src/loaders/registry.ts` reads `RESPONSE_TYPES` and its doc comment by source path | runtime dispatch | likely | `apps/docs/src/loaders/registry.ts:57,438` |
+| `apps/cli/tests/cli.test.ts` asserts both vocabularies are duplicate-free | test | yes | `apps/cli/tests/cli.test.ts:6-12,63-64` |
+| `apps/cli/tests/agents-doc.test.ts` asserts every code appears in the generated doc | test | yes | `apps/cli/tests/agents-doc.test.ts:9,35` |
+| `apps/cli/tests/tasks.test.ts`, `apply.test.ts`, `e2e.test.ts` branch on the exit codes | test | yes | `apps/cli/tests/tasks.test.ts:6,72-94` |
+| `tests-integration/tests/clone.test.ts` reads `RESPONSE_TYPES` and `buildManifest` together | test | yes | `tests-integration/tests/clone.test.ts:4` |
+
+### Blast-radius notes
+
+- Both vocabularies are append-only, and the file says so at both declarations: once shipped, a code's meaning never changes and a code is never removed, and a new payload shape gets a new response-type discriminator rather than reusing one (`apps/cli/src/envelope.ts:8-11,62-66`). An agent branches on `code` and never on the `error` prose, which changes freely as wording improves. Removing or repurposing a value silently breaks every already-deployed agent, and no test in this repository can see that.
+- The exit codes are a second, independent contract, kept stable so a shell caller can branch without parsing output: 0 success, 2 usage error, 1 runtime failure (`apps/cli/src/envelope.ts:87-90`, `AGENTS.md:23-24`). The distinction is actionable rather than cosmetic: exit 2 is fixed by changing the call, exit 1 by changing the root or the environment (`AGENTS.md:36`).
+- `--dense` output is produced by `stripNulls`, which drops every null and undefined field recursively (`apps/cli/src/envelope.ts:140-157`). A consumer that distinguishes "field absent" from "field null" reads two different shapes depending on the flag. Adding a field whose null carries meaning breaks dense mode for that field with no signal.
+
+## Other notable surfaces
+
+- `apps/cli/src/api-layer.ts:508-538`: the one composition root. `layerApp` is the single graph production runs and `memhtml serve mcp` runs the same one in a child process, so an MCP tool and its CLI twin cannot look at different databases. 17 importers across 3 packages, but they consume tags rather than shapes, so most changes are contained.
+- `apps/cli/src/commands.ts:111,839,1024`: `COMMANDS`, `GUIDE`, and `buildManifest`. The manifest is derived by walking `COMMANDS` and `GLOBAL_FLAGS`, and `AGENTS.md` is generated from the same arrays (`AGENTS.md:1`), so `memhtml agents-doc --check` fails on drift (`apps/cli/src/agents-doc.ts:212-216`). Adding a flag updates both surfaces automatically; adding a command without a `responseTypes` entry does not.
+- `packages/html/src/parse.ts:322,353`: `parseMemory` and `checkMemory`, the format gate. Five production call sites: `packages/store/src/store.ts:478,524,826`, `packages/index/src/indexer.ts:190`, `apps/cli/src/doctor.ts:311`. The store renders and refuses before it writes, so a format violation leaves the tree byte-identical.
+- `packages/html/src/constraints.ts:351`: `checkDocument`, the six format constraints. Only two production call sites, both inside `parse.ts`, so its blast radius travels through `parseMemory` rather than through imports. Constraints 1 to 5 are violations and constraint 6 is a warning, because the format has to degrade gracefully on a hand-written file (`packages/html/src/constraints.ts:28-36`).
+- `packages/index/src/schema-const.ts:47,59,62`: `MEMORY_TABLES`, `TRACE_TABLES`, `STATE_TABLES`, and the size bounds. 23 importers across 5 packages. Stated once so a table rename is a compile error at every reader, and because a truncate list that has drifted from the schema leaves rows behind, making a rebuild no longer a rebuild (`packages/index/src/schema-const.ts:1-5`).
+- `packages/store/src/store.ts:1037`: `linkMemories` and the write path. 9 importers, but only 3 packages, and `apps/cli/src/api-layer.ts` is the sole app consumer.
+- `packages/sleep/src/env.ts` and `packages/sleep/src/sql.ts`: 28 and 26 importers, the second and fifth highest raw counts in the repository. Excluded from the main set because `env.ts` is imported only from inside `packages/sleep` and `sql.ts` only from `packages/sleep` plus three `apps/cli` files.
+- `packages/html/src/vocabulary.ts:47`: `META_ORDER` and the closed element vocabulary. 12 importers, all inside `packages/html`. The vocabulary is the policy, so there is no sanitizer library and no allow/deny logic (`packages/html/src/vocabulary.ts:1-6`). A stable meta order is what makes a meta-only edit a one-line git diff.
+- `packages/domain/src/*`: nine files at 22 to 28 apparent inbound references each, an artifact of the nine `export *` lines in `packages/domain/src/index.ts:6-16`. Real per-symbol fan-out is much narrower. `packages/domain/tests/layering.test.ts` reads the emitted `dist/` to prove domain's runtime imports stay limited to `effect`, so any new value import here is a test failure rather than a silent coupling.
+
+## See also
+
+- [memhtml-public · Contract map](../insights/contract-map.md): 48 shared source citations
+- [memhtml-public · Business logic](../insights/business-logic.md): 11 shared source citations
+- [memhtml-public · Module map](../architecture/module-map.md): 6 shared source citations
+- [memhtml-public · Processes](../behavior/processes.md): 6 shared source citations
+- [memhtml-public · System overview](../architecture/system-overview.md): 4 shared source citations
