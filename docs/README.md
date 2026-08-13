@@ -1,14 +1,14 @@
 # memhtml-public · Documentation tree
 
-Prose is generated; structure is mechanical. Cross-references are deterministic.
+The primary consumer of memhtml is a coding agent. The CLI answers with typed JSON envelopes and fixed exit codes, `memhtml manifest` describes the whole surface on a machine with no repo or database, and the MCP server exposes the same operations as tools.
 
-This tree documents the memhtml-public codebase for a reader who has never opened it. Two facts frame every page. First, the primary consumer of memhtml is a coding agent: the CLI answers with typed JSON envelopes and fixed exit codes, `memhtml manifest` describes the whole surface on a machine with no repo or database, and the MCP server exposes the same operations as tools. Second, this repository stores no memory. It is the software that manages an external `memhtml root` directory, located by `$MEMHTML_ROOT`, and memhtml manages that root with git: the root's git tree is the system of record, and `.memhtml/index.db` inside it is a projection that can be deleted and rebuilt without loss.
+This repository stores no memory. It is the software that manages an external `memhtml root` directory, located by `$MEMHTML_ROOT`. memhtml manages that root with git, so the root's git tree is the system of record, and `.memhtml/index.db` inside it is a projection that can be deleted and rebuilt without loss.
 
-The `apps/docs` Astro package is excluded from this tree by request.
+The `apps/docs` Astro package is excluded from this tree by request. Most pages end with a `See also` list of the other pages that cite the same source lines.
 
 ## Architecture
 
-What the system is and how the pieces fit.
+These pages describe what the system is and how its parts connect.
 
 - [System overview](architecture/system-overview.md): narrative, stack table, and the top-level component diagram.
 - [Module map](architecture/module-map.md): one section per workspace package with its key files.
@@ -16,7 +16,7 @@ What the system is and how the pieces fit.
 
 ## Reference
 
-What an agent can call and what shape it returns.
+These pages list the calls an agent can make and the shape each one returns.
 
 - [CLI](reference/cli.md): all 36 subcommands of the `memhtml` binary, with flags, error codes, and environment variables.
 - [RPC tools](reference/rpc-tools.md): the 14 MCP tools and 2 resources of `memhtml-mcp`.
@@ -24,7 +24,7 @@ What an agent can call and what shape it returns.
 
 ## Behavior
 
-When X happens, what runs.
+These pages trace what runs when a given event arrives.
 
 - [Processes](behavior/processes.md): the eight main flows plus a minor-flow index.
 - [State machines](behavior/state-machines.md): memory status, sleep-run status, and task status.
@@ -37,7 +37,7 @@ When X happens, what runs.
 
 ## Insights
 
-What the codebase assumes, how it fails, and what resists change.
+These pages cover the assumptions the codebase makes, the ways it fails, and the parts that are expensive to change.
 
 - [Impact analysis](insights/impact-analysis.md): the eight surfaces whose change reaches multiple packages, and what each change touches.
 - [Debugging guide](insights/debugging-guide.md): failure-mode index, error surfaces, and a cheapest-first checks ladder.

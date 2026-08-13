@@ -1,6 +1,6 @@
 # memhtml-public · Contract map
 
-A contract here is any declaration in one file that a file in another package or app depends on. Four kinds count, and all four appear below.
+A contract here is any declaration in one file that a file in another package or app depends on. Four kinds appear below.
 
 1. A TypeScript type or an `effect` `Schema` declared in one package and imported by another.
 2. A closed string vocabulary that several modules must agree on, including where SQL restates it as a CHECK constraint.
@@ -9,15 +9,15 @@ A contract here is any declaration in one file that a file in another package or
 
 Most of this repo's shared types are `effect` `Schema` declarations with a derived type (`export type X = typeof X.Type`), so every Shape block below quotes the `Schema` declaration verbatim rather than an interface.
 
-Two facts frame the whole map. First, this repository stores no memory. It is the software that manages a separate directory called the memhtml root, located by `$MEMHTML_ROOT` and defaulting to `~/memhtml` (`apps/cli/src/config.ts:26-31`). Second, memhtml manages that root with git: the root's git tree is the system of record, and `.memhtml/index.db` inside the root is a projection that is deleted and rebuilt without loss (`packages/index/src/index.ts:1-7`). When a contract below says "the root" it means that external directory, never this repository.
+Two facts apply to the whole map. First, this repository stores no memory. It is the software that manages a separate directory called the memhtml root, located by `$MEMHTML_ROOT` and defaulting to `~/memhtml` (`apps/cli/src/config.ts:26-31`). Second, memhtml manages that root with git. The root's git tree is the system of record, and `.memhtml/index.db` inside the root is a projection that is deleted and rebuilt without loss (`packages/index/src/index.ts:1-7`). When a contract below says "the root" it means that external directory, never this repository.
 
-The primary consumer of every boundary here is a coding agent. The CLI answers in JSON envelopes with stable codes rather than prose, the MCP server publishes the same vocabularies as tool parameter enums, and the agent-facing documentation is generated from the command table. Ergonomics below are judged by what an agent can parse and act on.
+The primary consumer of every boundary here is a coding agent. The CLI answers in JSON envelopes with stable codes rather than prose, the MCP server publishes the same vocabularies as tool parameter enums, and the agent-facing documentation is generated from the command table. The notes below judge each surface by what an agent can parse and act on.
 
 Contracts are ordered by how many files across package boundaries depend on them.
 
 ## The typed error vocabulary
 
-Eight error classes in the shared contracts package are the failure language every other package speaks. `@memhtml/contracts/errors` is imported by 32 non-test files across 8 packages and 2 apps, which makes it the widest contract in the repo.
+Eight error classes in the shared contracts package define how every other package reports failure. `@memhtml/contracts/errors` is imported by 32 non-test files across 8 packages and 2 apps, which makes it the most widely imported contract in the repo.
 
 **Producer:** `packages/contracts/src/errors.ts:9-64`
 
@@ -88,7 +88,7 @@ export class LlmContractViolation extends Schema.TaggedError<LlmContractViolatio
 
 ## The edge vocabulary and its derived class
 
-Four non-mixing edge classes, four rel vocabularies, and one total function from a rel to its class. 14 import sites across 13 non-test files in 5 packages and 2 apps, and the SQL restates the whole thing as CHECK constraints.
+This module declares four edge classes that do not mix, four rel vocabularies, and one total function from a rel to its class. It has 14 import sites across 13 non-test files in 5 packages and 2 apps, and the SQL restates the same vocabularies as CHECK constraints.
 
 **Producer:** `packages/contracts/src/edges.ts:9-149`
 
@@ -153,17 +153,17 @@ export const Edge = Schema.Struct({
 **Assumptions consumers make:**
 
 - The indexer assumes `relClassFor` is total, so it writes the result straight into a NOT NULL column with no fallback (`packages/index/src/project.ts:359-363`). Totality comes from `relClassFor`'s final `return "provenance"` rather than from a check.
-- The two HTML consumers assume an unknown rel token means two different things, and the split is deliberate. The parser drops it so the file still parses (`packages/html/src/parse.ts:229-230`), while the constraint checker reports it (`packages/html/src/constraints.ts:259-261`).
-- The store assumes it is the only module that can see both endpoints' memory types, so it enforces the endpoint rule the SQL cannot. `packages/store/src/store.ts:993-1020` refuses a memory-class rel touching a task file and a task-class rel touching a non-task; `packages/store/src/store.ts:258-263` states that the `edges` CHECK cannot reach the endpoints' types at all.
+- The two HTML consumers handle an unknown rel token differently, on purpose. The parser drops it so the file still parses (`packages/html/src/parse.ts:229-230`), while the constraint checker reports it (`packages/html/src/constraints.ts:259-261`).
+- The store assumes it is the only module that can see both endpoints' memory types, so it checks the endpoint rule that SQL cannot check. `packages/store/src/store.ts:993-1020` rejects a memory-class rel touching a task file, and rejects a task-class rel touching a non-task. `packages/store/src/store.ts:258-263` states that the `edges` CHECK cannot read the endpoints' types at all.
 - Every memory-graph query assumes `edge_class = 'memory'` is enough to keep a person or task edge out of PageRank, MMR, and the retention bridge count (`packages/contracts/src/edges.ts:4-8`, restated at `packages/index/migrations/0008_tasks.sql:177-181`).
-- `packages/index/src/project.ts:343-344` assumes a self-loop must be dropped at projection time rather than sent to the driver, because the table's `CHECK (src_path <> dst_path)` at `packages/index/migrations/0008_tasks.sql:193` would refuse the whole write batch over one hand-authored file.
+- `packages/index/src/project.ts:343-344` assumes a self-loop must be dropped at projection time rather than sent to the driver, because the table's `CHECK (src_path <> dst_path)` at `packages/index/migrations/0008_tasks.sql:193` would reject the whole write batch over one hand-authored file.
 - `relTokenFor` and `relForToken` assume the underscore-to-hyphen mapping is injective on the vocabulary (`packages/contracts/src/edges.ts:109-120`). No rel in `ALL_RELS` contains a hyphen, so the inverse is unambiguous.
 
-**Drift risk:** Adding a rel to a class in TypeScript without widening the matching SQL CHECK makes every write carrying that rel fail at the driver, and since `writeAll` is one transaction (`packages/index/src/database.ts:82-83`) one new rel takes down the whole batch. Mitigation: add the rel and its migration in the same change, following the recreate-and-copy pattern at `packages/index/migrations/0008_tasks.sql:173-209`.
+**Drift risk:** Adding a rel to a class in TypeScript without widening the matching SQL CHECK makes every write carrying that rel fail at the driver. Because `writeAll` is one transaction (`packages/index/src/database.ts:82-83`), one new rel fails the whole batch. Mitigation: add the rel and its migration in the same change, following the recreate-and-copy pattern at `packages/index/migrations/0008_tasks.sql:173-209`.
 
 ## The path algebra
 
-Placement, archival, and normalization as pure total functions over repo-root-relative paths. 13 non-test importers across 5 packages and 1 app, and it is the only module that decides where a memory lands in the root.
+This module provides placement, archival, and normalization as pure total functions over repo-root-relative paths. It has 13 non-test importers across 5 packages and 1 app, and it is the only module that decides where a memory lands in the root.
 
 **Producer:** `packages/contracts/src/paths.ts:10-186`
 
@@ -236,15 +236,15 @@ export const originalPathFor = (archivePath: string): string | undefined => {
 - Every caller assumes `placementFor` never fails and never returns a directory outside a PARA bucket, so the write path does not guess twice (`packages/contracts/src/paths.ts:96-102`). An unusable explicit `path` is ignored rather than propagated, which is how totality is preserved.
 - `packages/store/src/layout.ts:36-48` assumes the three directory constants `placementFor` can return already exist on disk, so `memhtml init` creates all of them and an agent's first write lands somewhere real.
 - `packages/index/src/project.ts:336-341` assumes the leading slash in a link's `href` must be stripped before it becomes a `dst_path`, because the `edges` table stores the git-tree form and a slashed value would fail to join `files.path` while looking exactly like a corpus with no edges.
-- Callers that want an invalid path refused rather than silently re-derived assume they must gate on `isValidMemoryPath` first (`packages/contracts/src/paths.ts:99-102`).
-- `packages/index/src/project.ts:366-368` re-implements the archive-path inverse as a local `originOf` rather than importing `originalPathFor`, so two copies of the same regex now exist. Both match `^archive\/\d{4,}\/(.+)$`.
-- `PlacementInput` admits `| undefined` on every optional field on purpose. `packages/contracts/src/paths.ts:74-80` states that under `exactOptionalPropertyTypes` a bare `path?: string` would force every tool adapter to strip absent fields by hand, so the contract accepts the shape the MCP and CLI layers actually hold.
+- A caller that wants an invalid path rejected instead of re-derived assumes it must check `isValidMemoryPath` itself first (`packages/contracts/src/paths.ts:99-102`).
+- `packages/index/src/project.ts:366-368` re-implements the archive-path inverse as a local `originOf` instead of importing `originalPathFor`, so two copies of the same regex exist. Both match `^archive\/\d{4,}\/(.+)$`.
+- `PlacementInput` allows `| undefined` on every optional field. `packages/contracts/src/paths.ts:74-80` states that under `exactOptionalPropertyTypes` a bare `path?: string` would force every tool adapter to strip absent fields by hand, so the contract accepts the shape the MCP and CLI layers already hold.
 
 **Drift risk:** Adding a routing rule to `placementFor` changes where new memories land without moving anything already in the root, so the same logical memory can sit in two directories depending on when it was written. Mitigation: treat a rule change as needing a migration pass over the root, and check inbox depth through `memhtml doctor`, which already reports it as a health signal (`packages/contracts/src/paths.ts:15-18`).
 
 ## The memory type vocabulary, restated in SQL
 
-Ten memory types, nine of them agent-writable, and the same list restated as a SQL CHECK constraint. 11 import sites across 4 packages and 2 apps, plus two migrations.
+This module declares ten memory types, nine of which an agent may write, and the SQL restates the same list as a CHECK constraint. It has 11 import sites across 4 packages and 2 apps, plus two migrations.
 
 **Producer:** `packages/contracts/src/types.ts:18-56`
 
@@ -301,17 +301,17 @@ And the SQL restatement:
 
 **Assumptions consumers make:**
 
-- Both agent-facing surfaces assume the writable vocabulary is exactly the storage vocabulary minus `arc`, and each derives the enum rather than restating it (`apps/mcp/src/tools.ts:45`, `apps/cli/src/commands.ts:2`). `packages/contracts/src/types.ts:34-37` states the reason: an arc is synthesized by the sleep cycle from many memories, so an agent naming one directly would assert a conclusion the corpus has not earned.
+- Both agent-facing surfaces assume the writable vocabulary is exactly the storage vocabulary minus `arc`, and each derives the enum rather than restating it (`apps/mcp/src/tools.ts:45`, `apps/cli/src/commands.ts:2`). `packages/contracts/src/types.ts:34-37` gives the reason. An arc is synthesized by the sleep cycle from many memories, so an agent naming one directly would assert a conclusion the corpus has not earned.
 - Retrieval assumes `task` is the one type an unscoped query does not see, and names it as a single constant so three copies of the string cannot drift (`packages/index/src/scope.ts:80-87`). `packages/index/src/scope.ts:31-39` states that a corpus with fifty open to-do items would otherwise crowd out the knowledge an agent asked for.
 - `packages/html/src/document.ts:69-74` assumes `taskStatus` is present if and only if `memoryType` is `task`, and the parser reports a violation either way round. `packages/index/migrations/0008_tasks.sql:66-72` admits NULL in the `task_status` CHECK so one column serves both cases.
 - The dedup index assumes tasks are exempt from content deduplication. `packages/index/migrations/0008_tasks.sql:119-127` adds `AND memory_type <> 'task'` to the partial unique index, so two open tasks may share a body while two memories may not.
 - `packages/contracts/src/types.ts:58-62` assumes `archive` is a bucket rather than a status, so eviction is a `git mv` and the path itself records the state. `git log --follow` reads through it and `diff -M` reports the move as `R100`.
 
-**Drift risk:** Widening the TypeScript vocabulary without the matching migration makes every write of the new type fail at the CHECK. The cost is documented: `packages/index/migrations/0008_tasks.sql:1-2` states that adding `task` as the tenth type required a full recreate-and-copy of both `files` and `edges`, because SQLite cannot ALTER a CHECK constraint. Mitigation: budget a recreate-and-copy migration for any vocabulary widening, and copy the pattern at `packages/index/migrations/0008_tasks.sql:30-140`.
+**Drift risk:** Widening the TypeScript vocabulary without the matching migration makes every write of the new type fail at the CHECK. The migration is expensive. `packages/index/migrations/0008_tasks.sql:1-2` states that adding `task` as the tenth type required a full recreate-and-copy of both `files` and `edges`, because SQLite cannot ALTER a CHECK constraint. Mitigation: budget a recreate-and-copy migration for any vocabulary widening, and copy the pattern at `packages/index/migrations/0008_tasks.sql:30-140`.
 
 ## `DatabaseShape`
 
-The one interface between every SQL-writing module and the driver. 15 non-test source files reference it, which makes it the widest service interface in the repo.
+This is the one interface between every SQL-writing module and the driver. 15 non-test source files reference it, which makes it the most widely referenced service interface in the repo.
 
 **Producer:** `packages/index/src/database.ts:62-103`
 
@@ -362,16 +362,16 @@ export interface DatabaseShape {
 
 - Every caller of `get` and `all` supplies its own row type parameter `A` and assumes the driver's rows match it, because there is no runtime decode at this boundary. `packages/index/src/retrieval.ts:153-167` declares `HitRow` with snake_case column names and hands it to `all<HitRow>`, so a column rename becomes a silent `undefined` rather than a type error.
 - `packages/index/src/project.ts:373-380` assumes `writeAll` is one transaction and therefore deduplicates rows before sending them, because a duplicate primary key from one file with a repeated `<dt>`/`<dd>` pair would roll back every other row in the batch.
-- `packages/index/src/indexer.ts` assumes it must batch whole-store passes rather than send one transaction; `packages/index/src/schema-const.ts:77-85` sets `WRITE_BATCH_SIZE` at 500 and states the reason is bounding how much work a single failure discards and how long one write holds the WAL write lock.
+- `packages/index/src/indexer.ts` assumes it must split a whole-store pass into batches instead of sending one transaction. `packages/index/src/schema-const.ts:77-85` sets `WRITE_BATCH_SIZE` at 500 and states the reason, which is to bound how much work a single failure discards and how long one write holds the WAL write lock.
 - Callers assume a concurrent writer blocks rather than fails. `packages/index/src/database.ts:13-22` sets a 5000 ms busy timeout and states that the fleet runs many short-lived CLI invocations plus a long-lived MCP server against one store, serializing by waiting.
-- Retrieval assumes the connection has `vector_distance_cos` registered and that it is the same arithmetic as the TypeScript MMR pass. `packages/index/src/database.ts:38-52` registers it from `@memhtml/domain`'s `cosineDistance` and states that two copies of the arithmetic could disagree about a clamp or a zero-magnitude vector while both looked right.
+- Retrieval assumes the connection has `vector_distance_cos` registered, and that it computes the same arithmetic as the TypeScript MMR pass. `packages/index/src/database.ts:38-52` registers it from `@memhtml/domain`'s `cosineDistance` and states that two copies of the arithmetic could disagree about a clamp or a zero-magnitude vector while both looked right.
 - Cross-plane callers assume `hasState` before qualifying a query with the `state` schema, because `state.db` is ATTACHed rather than always present (`packages/index/src/database.ts:99-100`).
 
 **Drift risk:** A column rename in a migration passes type-check everywhere, because the row types are declared at the call sites and never checked against the schema. Mitigation: `packages/index/src/schema-const.ts:1-5` names identifiers the SQL and the TypeScript both use so a table rename is a compile error at every reader; extend that pattern to a column when one starts drifting.
 
 ## `MemoryDoc` and the parse output
 
-The parsed form of a memory file, and the boundary between the format package and the index. Named by the format package on purpose: a change to the HTML vocabulary changes this shape.
+`MemoryDoc` is the parsed form of a memory file, and the boundary between the format package and the index. The format package owns the name because a change to the HTML vocabulary changes this shape.
 
 **Producer:** `packages/html/src/document.ts:29-209`
 
@@ -424,7 +424,7 @@ export const MemoryLink = Schema.Struct({
 
 ## `StoreShape` and the write surface
 
-Every operation that changes the corpus in the root, each expressed as exactly one git commit. Every write door in the system goes through this interface.
+`StoreShape` declares every operation that changes the corpus in the root, and each operation produces exactly one git commit. Every write in the system goes through this interface.
 
 **Producer:** `packages/store/src/store.ts:198-280`
 
@@ -498,21 +498,21 @@ export interface StoreShape {
 
 **Assumptions consumers make:**
 
-- Callers assume one operation is one commit, and that the store owns staging. `packages/store/src/store.ts:37-44` states that a caller staging its own files could bundle two unrelated writes into one commit and destroy the property that makes `git log` a readable history and `diff base..HEAD` a reviewable sleep run.
+- Callers assume one operation is one commit, and that the store owns staging. `packages/store/src/store.ts:37-44` states that a caller staging its own files could bundle two unrelated writes into one commit, which would stop `git log` from reading as a history and stop `diff base..HEAD` from being a reviewable sleep run.
 - Callers assume `created` and `deduped` are mutually exclusive and that exactly one is true (`packages/store/src/store.ts:61-67`), so they branch on either.
 - Callers assume `commitSha` is `null` exactly when nothing was written. `packages/store/src/store.ts:74` says so for a single write, `packages/store/src/store.ts:103-109` for a batch, and `packages/store/src/store.ts:148-152` for a supersede.
-- Batch callers assume the error channel means the batch mechanism failed, never that an op was rejected. `packages/store/src/store.ts:215-218` states that a rejected op is a `BatchOpResult` with `ok: false`, including in atomic mode, so a caller always gets its per-op array back.
-- Batch callers assume the fold, not the caller, owns two properties: one commit for N writes, and collision-free path assignment. `packages/store/src/store.ts:209-214` states that `freePathFor` reads disk and cannot see a path an earlier op in the same batch has claimed but not written.
+- Batch callers assume the error channel means the batch mechanism failed, and never that a single op was rejected. `packages/store/src/store.ts:215-218` states that a rejected op is a `BatchOpResult` with `ok: false`, including in atomic mode, so a caller always gets its per-op array back.
+- Batch callers assume the fold owns two properties rather than the caller. The fold produces one commit for N writes, and it assigns paths without collisions. `packages/store/src/store.ts:209-214` states that `freePathFor` reads disk and cannot see a path an earlier op in the same batch has claimed but not written.
 - Batch callers assume `skipped` is distinct from a failure, because retrying a skipped op is correct and retrying a failed one is not (`packages/store/src/store.ts:84-88`).
 - Callers assume the dedupe question is asked before any file is written, so a duplicate leaves the tree byte-identical with nothing to roll back. `tests-integration/tests/contracts.test.ts:54-68` asserts that against git itself rather than only against the report.
 - The store assumes dedupe knowledge is injected rather than owned, because the package is SQL-free by design. `packages/store/src/store.ts:161-171` declares `DedupeLookup` as a function and states that the store's only knowledge is that a non-null answer means do not write.
 - The store assumes a path move needs an explicit callback, because cross-database foreign keys do not exist. `packages/store/src/store.ts:173-181` declares `MoveCallback` as how `state.access.path` follows an archive.
 
-**Drift risk:** Adding a method that writes without committing, or splitting an existing one-commit operation into two, breaks rollback and makes `diff base..HEAD` no longer a reviewable unit. Mitigation: `packages/store/src/store.ts:224-231` and `:237-252` state the one-commit rule for corrections and supersedes; hold any new operation to the same rule and assert the commit count in the integration tier.
+**Drift risk:** Adding a method that writes without committing, or splitting an existing one-commit operation into two, breaks rollback and stops `diff base..HEAD` from being a reviewable unit. Mitigation: `packages/store/src/store.ts:224-231` and `:237-252` state the one-commit rule for corrections and supersedes. Hold any new operation to the same rule and assert the commit count in the integration tier.
 
 ## `GitPort` against the store's `GitShape`
 
-The indexer declares its own read-only view of git rather than importing the store's client, and one adapter bridges them. This is the only contract in the repo that ships a written analysis of why the two sides are incompatible.
+The indexer declares its own read-only view of git instead of importing the store's client, and one adapter bridges them. No other contract in the repo ships a written analysis of why its two sides do not fit together directly.
 
 **Producer:** `packages/index/src/git-port.ts:17-76`
 
@@ -569,7 +569,7 @@ export interface GitPort {
 }
 ```
 
-The store's side is re-declared rather than imported, which is the second half of the contract:
+The indexer re-declares the store's side instead of importing it. That declaration is the second half of the contract.
 
 ```typescript
 /** The subset of `@memhtml/store`'s `GitShape` the indexer consumes. Declared, not imported. */
@@ -597,17 +597,17 @@ export interface StoreGitShape {
 - The indexer assumes `revParseHead` returns a commit, never `null`. The adapter turns an unborn HEAD into a typed failure at `packages/index/src/git-adapter.ts:163-170`, and `packages/index/src/git-adapter.ts:157-162` states that letting `null` through would surface as an opaque `git diff null HEAD` error.
 - The indexer assumes `catFileBatch` yields text. The adapter decodes UTF-8 at `packages/index/src/git-adapter.ts:187-198`.
 - The indexer assumes a `copied` entry is NOT a rename. `packages/index/src/git-adapter.ts:109-114` maps it to `A` and states that `R` would make the indexer move the source's row to the destination and drop a live file from the index.
-- The indexer assumes a rename carries `fromPath`, which is what keeps the embedding across an archive move. `packages/index/src/git-adapter.ts:103-108` degrades a source-less rename to `A` rather than moving a row out from under an unknown path.
+- The indexer assumes a rename carries `fromPath`, which is how the embedding survives an archive move. `packages/index/src/git-adapter.ts:103-108` downgrades a source-less rename to `A` rather than moving a row out from under an unknown path.
 - The indexer assumes an `ignored` or `unmerged` status entry is not a change. `packages/index/src/git-adapter.ts:118-129` drops both and states that indexing either side of an unresolved merge would record a state the tree does not agree on.
 - The indexer assumes a missing file is a counted skip, not a crash. `packages/index/src/git-adapter.ts:139-154` uses `Effect.catchCause` rather than `Effect.catch` so a defect from a `readFile` wired with `Effect.promise` cannot kill the fiber, and `packages/index/src/git-adapter.ts:71-79` states that an agent listing a path it just archived is the normal case.
 - The adapter assumes a submodule entry has no blob behind it and drops it, keeping every sha in the batch resolvable (`packages/index/src/git-adapter.ts:176-184`).
-- Both sides assume the tags must differ. `packages/index/src/git-port.ts:71-76` uses `memhtml/IndexGit` because `@memhtml/store` already publishes `memhtml/Git`, and two shapes under one tag would let a layer satisfy the wrong requirement silently.
+- Both sides assume the tags must differ. `packages/index/src/git-port.ts:71-76` uses `memhtml/IndexGit` because `@memhtml/store` already publishes `memhtml/Git`, and two shapes under one tag would let a layer satisfy the wrong requirement without an error.
 
-**Drift risk:** Adding a `kind` to the store's `StoreChangedPath` or `StoreStatusEntry` union breaks the adapter's exhaustive switches at compile time, which is the intended behavior; changing the MEANING of an existing kind does not. Mitigation: `packages/index/src/git-adapter.ts:86-90` exports `toDiffEntry` and `toStatusEntry` so the mapping is assertable without a repository, and names `copied` as the case that would corrupt the index and is awkward to provoke from real git.
+**Drift risk:** Adding a `kind` to the store's `StoreChangedPath` or `StoreStatusEntry` union breaks the adapter's exhaustive switches at compile time, which is the intended behavior. Changing the meaning of an existing kind produces no compile error. Mitigation: `packages/index/src/git-adapter.ts:86-90` exports `toDiffEntry` and `toStatusEntry` so the mapping is assertable without a repository, and names `copied` as the case that would corrupt the index and is awkward to provoke from real git.
 
 ## The CLI JSON envelope and exit codes
 
-The machine contract an agent parses. Two envelope shapes, 32 response discriminators, 15 error codes, and 3 exit codes, all append-only.
+This is the machine contract an agent parses. It declares two envelope shapes, 32 response discriminators, 15 error codes, and 3 exit codes, and all of those lists are append-only.
 
 **Producer:** `apps/cli/src/envelope.ts:6-157`
 
@@ -666,11 +666,11 @@ export const EXIT_RUNTIME = 1
 
 - An agent is assumed to branch on `code` and never on the human `error` string. `apps/cli/src/envelope.ts:62-66` states that a code's meaning never changes and a code is never removed, while the prose changes freely as wording improves.
 - A parser is assumed to read `type` before parsing `data`. `apps/cli/src/envelope.ts:8-11` states that a new payload shape gets a new discriminator rather than reusing one, so a discriminator's meaning is fixed once shipped.
-- `apps/cli/src/errors.ts:110-116` assumes suggestions are part of the contract, not decoration, and that absent suggestions are an empty array rather than a null, so a parser never branches on presence.
-- Payload shapes assume `--dense` drops null-valued keys, which makes a null-when-absent field vanish from exactly the output an agent pastes into a prompt. `apps/cli/src/envelope.ts:140-154` implements `stripNulls`, and `packages/index/src/retrieval.ts:108-118` cites that behavior as the reason `scopeEmpty` is a boolean in every case.
+- `apps/cli/src/errors.ts:110-116` assumes suggestions are part of the contract that a caller may rely on, and that absent suggestions arrive as an empty array rather than a null, so a parser never branches on presence.
+- Payload shapes assume `--dense` drops null-valued keys, so a field that is null when absent disappears from the output an agent pastes into a prompt. `apps/cli/src/envelope.ts:140-154` implements `stripNulls`, and `packages/index/src/retrieval.ts:108-118` cites that behavior as the reason `scopeEmpty` is a boolean in every case.
 - `apps/cli/src/errors.ts:117-126` assumes a suggestion string names a real command from the table in `apps/cli/src/commands.ts:111`, and enforces that with a walkable record rather than a switch so the suite can run every suggestion through the real `parseArgv`. The same comment states the import stays out of `apps/cli/src/errors.ts` because it would close a cycle through `apps/cli/src/operations.ts`.
 - The MCP server assumes only `.message` reaches the wire, so it folds code, reason, and suggestions into one string at construction. `apps/mcp/src/failure.ts:17-23` states that `code` and `suggestions` are not wire fields because MCP's tool-error channel is one text block, and puts the code first behind a colon so a reader can recover it from the prefix.
-- `apps/mcp/src/failure.ts:8-16` assumes a declared failure schema is the difference between prose reaching an agent and the string "Tool execution failed due to an internal server error", because `McpServer` has three catch branches and only one lets prose through.
+- `apps/mcp/src/failure.ts:8-16` assumes a tool must declare a failure schema for its own message to reach the agent. `McpServer` has three catch branches and only one passes the message through. Without the declared schema the agent receives the string "Tool execution failed due to an internal server error".
 - A shell caller is assumed to branch on the exit code without parsing output (`apps/cli/src/envelope.ts:87`), and `apps/cli/src/run.ts:827,952,964,1011,1013` pair every usage refusal with `EXIT_USAGE` while `apps/cli/src/run.ts:850,879,982,1019` pair every runtime failure with `EXIT_RUNTIME`.
 
 **Drift risk:** Reusing an existing `RESPONSE_TYPES` discriminator for a changed payload shape breaks every parser silently, since `apiVersion` stays `"1"` and the discriminator still matches. Mitigation: treat both lists as append-only as the file states, and add a new discriminator for any payload change that is not purely additive.

@@ -1,16 +1,16 @@
 # memhtml-public · CLI
 
-The `memhtml` CLI has 36 subcommands, each writing exactly one JSON envelope to stdout so an agent can parse the result without scraping prose. `apps/cli/package.json:7-9`
+The `memhtml` CLI has 36 subcommands. Each one writes exactly one JSON envelope to stdout, so a calling agent can parse the result instead of scraping prose. `apps/cli/package.json:7-9`
 
-An agent's first call is `memhtml manifest`, which returns the whole contract: every command, argument, flag, response type, error code, and environment variable the binary accepts. `apps/cli/src/commands.ts:1024-1048`
+Start with `memhtml manifest`, which returns the whole contract: every command, argument, flag, response type, error code, and environment variable the binary accepts. `apps/cli/src/commands.ts:1024-1048`
 
-Every command acts on a memhtml root, an external git repository holding the corpus, located by `$MEMHTML_ROOT` or overridden per call with `--repo`. This repository is the software; the root is the managed memory tree. `apps/cli/src/config.ts:26-31`
+The code in this repository is the software. The memory tree it manages lives elsewhere, in an external git repository holding the corpus, called the memhtml root. Every command acts on that root, found through `$MEMHTML_ROOT` or overridden per call with `--repo`. `apps/cli/src/config.ts:26-31`
 
-Exit 0 is success, exit 2 is a usage error the caller fixes by changing the call, exit 1 is a runtime failure the caller fixes by changing the root or the environment. `apps/cli/src/envelope.ts:88-90`
+Exit 0 means success. Exit 2 means a usage error, which the caller fixes by changing the call. Exit 1 means a runtime failure, which the caller fixes by changing the root or the environment. `apps/cli/src/envelope.ts:88-90`
 
 ## Global flags
 
-Three flags apply to every command. They are declared once so the manifest cannot drift from parsing behavior. `apps/cli/src/commands.ts:36-55`
+Three flags apply to every command. They are declared once, so the manifest and the parser read the same declaration. `apps/cli/src/commands.ts:36-55`
 
 Flags:
 
@@ -18,9 +18,9 @@ Flags:
 - `--dense`: Minify JSON and drop null fields, for pasting into a context window. Boolean, default false. `apps/cli/src/commands.ts:44`
 - `--repo`: Path to the memory repo. Defaults to `$MEMHTML_ROOT`. String. `apps/cli/src/commands.ts:50`
 
-The parser accepts `--flag value`, `--flag=value`, `--no-flag`, and bare `--flag`, and stores every value as an array so a repeatable flag does not collapse to its last occurrence. `apps/cli/src/run.ts:61-111`
+The parser accepts `--flag value`, `--flag=value`, `--no-flag`, and bare `--flag`. It stores every value as an array, so a repeatable flag keeps all of its occurrences instead of collapsing to the last one. `apps/cli/src/run.ts:61-111`
 
-`--no-embed` is how a boolean whose default is true gets turned off. `apps/cli/src/run.ts:82-88`
+`--no-embed` turns off a boolean flag whose default is true. `apps/cli/src/run.ts:82-88`
 
 ## manifest
 
@@ -31,7 +31,7 @@ memhtml manifest
 Emit this CLI's full machine-readable contract.
 `apps/cli/src/run.ts:842-844`
 
-This command takes no arguments and no flags. It answers without building the app layer, so it works on a machine with no root, no database, and no credentials, which makes it the liveness check as well as the discovery call. `apps/cli/src/run.ts:829-841`
+This command takes no arguments and no flags. It answers without building the app layer, so it works on a machine with no root, no database, and no credentials, which makes it usable as a liveness check as well as a discovery call. `apps/cli/src/run.ts:829-841`
 
 A bare `memhtml` and `memhtml help` return the same manifest envelope. `apps/cli/src/run.ts:822-824`
 
@@ -72,9 +72,9 @@ Flags:
 - `--prompt-id`: The prompt within that session. String. `apps/cli/src/commands.ts:190`
 - `--turn-uuid`: The turn within that session. String. `apps/cli/src/commands.ts:191`
 
-The `--type` vocabulary comes from `WRITABLE_MEMORY_TYPES`, which is `MEMORY_TYPES` minus `arc`: nine values. `packages/contracts/src/types.ts:38-40`
+The `--type` vocabulary comes from `WRITABLE_MEMORY_TYPES`, the nine values in `MEMORY_TYPES` minus `arc`. `packages/contracts/src/types.ts:38-40`
 
-Supplying both `--claim` and `--article-html`, or neither, is a usage error checked before any service is built, so it exits 2 rather than 1. `apps/cli/src/run.ts:700-725`
+Supplying both `--claim` and `--article-html`, or neither, is a usage error. It is checked before any service is built, so it exits 2 rather than 1. `apps/cli/src/run.ts:700-725`
 
 ## apply
 
@@ -96,7 +96,7 @@ Flags:
 - `--prompt-id`: The prompt within that session. String. `apps/cli/src/commands.ts:234`
 - `--turn-uuid`: The turn within that session. String. `apps/cli/src/commands.ts:235`
 
-The whole stream is read and shape-validated before any service is built, so a malformed line exits 2 with nothing written and no database opened. `apps/cli/src/run.ts:1006-1015`
+The whole stream is read and shape-validated before any service is built. A malformed line therefore exits 2 with nothing written and no database opened. `apps/cli/src/run.ts:1006-1015`
 
 ## read
 
@@ -138,7 +138,7 @@ Flags:
 - `--as-of`: Point-in-time view: returns what was believed valid at this ISO instant, including since-superseded memories marked `superseded_by`. String. `apps/cli/src/commands.ts:94`
 - `--limit`: Hits to return. Int, default 10. `apps/cli/src/commands.ts:258`
 
-The first six flags are `SCOPE_FLAGS`, declared once and spread into this command so `search` and `recall` cannot scope differently. `apps/cli/src/commands.ts:58-99`
+The first six flags are `SCOPE_FLAGS`, declared once and spread into this command, so `search` and `recall` scope the same way. `apps/cli/src/commands.ts:58-99`
 
 ## recall
 
@@ -186,7 +186,7 @@ Flags:
 - `--reason`: Why the correction was made. String. `apps/cli/src/commands.ts:306`
 - `--session-id`: Records a `corrected` session link. String. `apps/cli/src/commands.ts:307`
 
-The same claim-or-markup rule `write` enforces applies here, and both commands are named in one set so the rule lives in one place. `apps/cli/src/run.ts:629`
+The claim-or-markup rule from `write` applies here too. Both commands are named in one set, so the rule is defined in one place. `apps/cli/src/run.ts:629`
 
 ## link
 
@@ -205,7 +205,7 @@ Arguments:
 
 This command takes no flags. `apps/cli/src/commands.ts:325`
 
-The rel vocabulary is `AUTHORABLE_RELS`, the nine `MEMORY_RELS` plus the two `TASK_RELS`. Person rels and the provenance rel are withheld because the system mints those itself. `apps/cli/src/operations.ts:82-89`
+The rel vocabulary is `AUTHORABLE_RELS`, the nine `MEMORY_RELS` plus the two `TASK_RELS`. Person rels and the provenance rel are left out of it, because the system writes those itself. `apps/cli/src/operations.ts:82-89`
 
 ## neighbors
 
@@ -261,7 +261,7 @@ Flags:
 
 - `--signal`: One of `positive`, `negative`, `neutral`. `neutral` bumps access without claiming the memory was right. String, default `neutral`. `apps/cli/src/commands.ts:359`
 
-Every positional token is treated as a path, which matches the `paths` array shape the equivalent MCP tool takes. `apps/cli/src/run.ts:332-333`
+Every positional token is treated as a path. That matches the `paths` array the equivalent MCP tool takes. `apps/cli/src/run.ts:332-333`
 
 The signal vocabulary is `REINFORCE_SIGNALS`. `packages/domain/src/reinforce.ts:31`
 
@@ -308,7 +308,7 @@ Flags:
 - `--prompt-id`: The prompt within that session. String. `apps/cli/src/commands.ts:468`
 - `--turn-uuid`: The turn within that session. String. `apps/cli/src/commands.ts:469`
 
-This command is sugar over the same write path everything else uses: it calls `writeMemory` with `memoryType: "task"`. An agent can work tasks with ordinary file tools instead, because a task is a file in a directory. `apps/cli/src/commands.ts:403-411`
+This command is a shorthand over the same write path every other write uses. It calls `writeMemory` with `memoryType: "task"`. Because a task is a file in a directory, an agent can also work tasks with ordinary file tools. `apps/cli/src/commands.ts:403-411`
 
 The status vocabulary is `TASK_STATUSES`. `packages/contracts/src/types.ts:82`
 
@@ -374,7 +374,7 @@ Flags:
 
 - `--embed`: Fill missing vectors. Boolean, default true. `apps/cli/src/commands.ts:540`
 
-This command projects uncommitted working-tree changes as well as committed ones, so a file an agent edited by hand in the root is searchable before it is committed. `apps/cli/src/commands.ts:863-865`
+This command indexes uncommitted working-tree changes as well as committed ones. A file an agent edited by hand in the root is therefore searchable before it is committed. `apps/cli/src/commands.ts:863-865`
 
 ## index status
 
@@ -398,7 +398,7 @@ Scan `$MEMHTML_TRACE_ROOT` for Claude Code transcripts, reading only what change
 
 This command takes no arguments and no flags. `apps/cli/src/commands.ts:552-557`
 
-`$MEMHTML_TRACE_ROOT` defaults to `~/.claude` and is read-only, never written. `apps/cli/src/config.ts:32-37`
+`$MEMHTML_TRACE_ROOT` defaults to `~/.claude`. The CLI only reads from it and never writes to it. `apps/cli/src/config.ts:32-37`
 
 ## trace search
 
@@ -450,7 +450,7 @@ Flags:
 
 The 15 phase names come from `SLEEP_PHASES`: `preflight`, `dedup-merge`, `entity-resolution`, `person-links`, `relationship-mining`, `conflict-detection`, `confidence-decay`, `arc-synthesis`, `retention-triage`, `compress`, `reprieve`, `trace-consolidation`, `integrity`, `state-export`, `report`. `packages/sleep/src/contract.ts:17-33`
 
-A run holds a checked-out `sleep/<date>` branch, so any write landing during it commits onto that branch. `apps/cli/src/commands.ts:872-876`
+A run holds a checked-out `sleep/<date>` branch. Any write that lands during the run commits onto that branch. `apps/cli/src/commands.ts:872-876`
 
 ## sleep resume
 
@@ -484,7 +484,7 @@ Flags:
 
 - `--diff`: Include the raw diff. Boolean, default false. `apps/cli/src/commands.ts:615`
 
-The raw diff is fetched only when asked, because it is the one field whose size is unbounded and a default response carrying it would not fit a context window. `apps/cli/src/run.ts:484-486`
+The raw diff is fetched only when asked for. Its size is unbounded, so a default response that carried it could exceed a context window. `apps/cli/src/run.ts:484-486`
 
 ## sleep merge
 
@@ -503,7 +503,7 @@ Flags:
 
 - `--skip-gate`: Merge without re-running discrimination. A deliberate, logged override, never a default. Boolean, default false. `apps/cli/src/commands.ts:625`
 
-The gate is composed here rather than defaulted inside the sleep package, and a failed gate becomes `refusal: "gate-failed"` with main never moving. `apps/cli/src/run.ts:503-522`
+The gate is composed here rather than defaulted inside the sleep package. A failed gate returns `refusal: "gate-failed"` and main does not move. `apps/cli/src/run.ts:503-522`
 
 ## sleep status
 
@@ -568,9 +568,9 @@ Flags:
 - `--probes`: Probes to run. Int, default 36. `apps/cli/src/commands.ts:691`
 - `--mrr-floor`: Mean-reciprocal-rank floor. Lowering it is a deliberate, visible choice. String, default `0.85`. `apps/cli/src/commands.ts:697`
 
-A failed gate exits 1 with `ERR_DISCRIMINATION_FAILED`, so a pipeline stops rather than reading a verdict buried in the payload. `apps/cli/src/run.ts:896-899`
+A failed gate exits 1 with `ERR_DISCRIMINATION_FAILED`. A pipeline can stop on the exit code instead of reading a verdict out of the payload. `apps/cli/src/run.ts:896-899`
 
-This command generates its own fixture corpus in a temp directory with an in-memory database and never opens the operator's `index.db`. `apps/cli/src/run.ts:890-895`
+This command generates its own fixture corpus in a temp directory with an in-memory database. It does not open the operator's `index.db`. `apps/cli/src/run.ts:890-895`
 
 ## exec
 
@@ -592,11 +592,11 @@ Flags:
 
 The default and cap are constants: `DEFAULT_TIMEOUT_MS` is 30000 at `apps/cli/src/exec.ts:48` and `MAX_TIMEOUT_MS` is 600000 at `apps/cli/src/exec.ts:58`.
 
-Passing more than one script door, or a non-positive or over-cap `--timeout-ms`, is a usage error checked before any service is built. `apps/cli/src/run.ts:646-686`
+Passing the script through more than one of the three doors is a usage error. So is a `--timeout-ms` that is not positive or is above the cap. Both are checked before any service is built. `apps/cli/src/run.ts:646-686`
 
-A non-zero `exitCode` in the payload is the script failing, and the process still exits 0. Exit 1 is reserved for the runtime failing to run the script at all. `apps/cli/src/run.ts:938-942`
+A non-zero `exitCode` in the payload means the script failed, and the process still exits 0. Exit 1 means the runtime could not run the script at all. `apps/cli/src/run.ts:938-942`
 
-There is no flag for the sandbox's own capabilities. Python and network are off and cannot be turned on by any invocation. `apps/cli/src/commands.ts:730-733`
+The sandbox's own capabilities have no flag. Python and network access are off, and no invocation can turn them on. `apps/cli/src/commands.ts:730-733`
 
 ## state export
 
@@ -634,9 +634,9 @@ Flags:
 - `--check`: Compare the committed doc to the regenerated one and fail on a difference. Boolean, default false. `apps/cli/src/commands.ts:790`
 - `--out`: Where to write. Defaults to `./AGENTS.md`. String. `apps/cli/src/commands.ts:795`
 
-The generated doc renders the same `COMMANDS` array that drives parsing, so it cannot describe a flag the binary does not accept. The rendering is deterministic to the byte, which is what makes the drift check meaningful. `apps/cli/src/agents-doc.ts:11-21`
+The generated doc renders the same `COMMANDS` array that drives parsing, so every flag it describes is one the binary accepts. The rendering is deterministic to the byte, which is what lets the drift check compare the two copies exactly. `apps/cli/src/agents-doc.ts:11-21`
 
-`--check` writes nothing, because a check that fixed the drift it found would turn an uncommitted change into a green pipeline. `apps/cli/src/agents-doc.ts:209-242`
+`--check` writes nothing. A check that repaired the drift it found would turn an uncommitted change into a green pipeline. `apps/cli/src/agents-doc.ts:209-242`
 
 This command builds no app layer, so running it in CI does not scaffold a memhtml root as a side effect. `apps/cli/src/run.ts:836-840`
 
@@ -653,36 +653,36 @@ This command takes no arguments and no command-specific flags. `apps/cli/src/com
 
 It reads the global `--repo` flag and resolves it against the configured root. `apps/cli/src/run.ts:871-876`
 
-The resolved root reaches the child as an explicit `MEMHTML_ROOT` on top of the inherited environment, which an inherited environment alone would not carry. `apps/cli/src/serve.ts:79`
+The resolved root reaches the child as an explicit `MEMHTML_ROOT` on top of the inherited environment. Inheritance alone would not carry a root that came from `--repo`. `apps/cli/src/serve.ts:79`
 
-The server runs as a child process rather than in-process, because a stdio MCP server owns stdout as an NDJSON-RPC stream and the CLI's contract is exactly one JSON envelope on that same descriptor. `apps/cli/src/serve.ts:8-20`
+The server runs as a child process rather than in-process. A stdio MCP server uses stdout as an NDJSON-RPC stream, and the CLI writes exactly one JSON envelope to that same descriptor, so the two cannot share it. `apps/cli/src/serve.ts:8-20`
 
-The server binary is located as a sibling in the same build, overridable with `MEMHTML_MCP_BIN` for a split deployment. `apps/cli/src/serve.ts:31-48`
+The server binary is located as a sibling in the same build. `MEMHTML_MCP_BIN` overrides that path for a split deployment. `apps/cli/src/serve.ts:31-48`
 
-The override variable's name is declared once as a constant and imported by the config table, so a rename cannot leave a documented variable that nothing reads. `apps/cli/src/serve.ts:32`
+The override variable's name is declared once as a constant, and the config table imports that constant. The documented name and the name the supervisor reads are therefore always the same string. `apps/cli/src/serve.ts:32`
 
 ## Error codes
 
-An agent branches on `code`, never on the `error` prose. Codes are append-only: a shipped code never changes meaning and is never removed. `apps/cli/src/envelope.ts:62-83`
+A caller should branch on `code` rather than on the `error` prose. The code list is append-only. A shipped code keeps its meaning and is not removed. `apps/cli/src/envelope.ts:62-83`
 
 The fifteen codes are `ERR_UNKNOWN_COMMAND`, `ERR_MISSING_ARGUMENT`, `ERR_INVALID_FLAG`, `ERR_PATH_NOT_FOUND`, `ERR_INVALID_MEMORY`, `ERR_DUPLICATE_CONTENT`, `ERR_WRITE_CONFLICT`, `ERR_DIRTY_TREE`, `ERR_INDEX_STALE`, `ERR_EMBED_MODEL_MISMATCH`, `ERR_MODEL_UNAVAILABLE`, `ERR_STORAGE`, `ERR_GIT`, `ERR_DISCRIMINATION_FAILED`, `ERR_UNKNOWN`. `apps/cli/src/envelope.ts:67-83`
 
-An unknown command or an unknown flag returns nearest-match candidates in `suggestions`, computed by Levenshtein distance, so an agent recovers from a typo without a second discovery call. `apps/cli/src/envelope.ts:124-138`
+An unknown command or an unknown flag returns nearest-match candidates in `suggestions`, computed by Levenshtein distance. A caller can retry a typo from that list without a second discovery call. `apps/cli/src/envelope.ts:124-138`
 
 For a two-word command the distance is measured against the whole typed invocation, so `memhtml index rebiuld` scores 2 against `index rebuild` rather than losing to `init`. `apps/cli/src/run.ts:596-619`
 
 ## Environment variables
 
-The whole environment surface is declared in one array so `memhtml manifest` can describe it. `apps/cli/src/config.ts:26-78`
+Every environment variable is declared in one array, which is what `memhtml manifest` reads to describe them. `apps/cli/src/config.ts:26-78`
 
 - `MEMHTML_ROOT`: The memory repo's root: a git repository holding the corpus and `.memhtml/`. Defaults to `~/memhtml`. `apps/cli/src/config.ts:27-31`
 - `MEMHTML_TRACE_ROOT`: Where `memhtml trace index` reads Claude Code transcripts from. Read-only. Defaults to `~/.claude`. `apps/cli/src/config.ts:32-37`
 - `MEMHTML_AWS_REGION`: The Bedrock region for embeddings and the sleep cycle's four LLM phases. Defaults to `us-east-1`. `apps/cli/src/config.ts:38-42`
-- `AWS_BEARER_TOKEN_BEDROCK`: Bedrock bearer token, read by the AWS SDK itself. Absent means the default credential chain, and retrieval degrades to the lexical floor rather than failing. `apps/cli/src/config.ts:43-48`
+- `AWS_BEARER_TOKEN_BEDROCK`: Bedrock bearer token, read by the AWS SDK itself. When it is absent the SDK falls back to the default credential chain, and retrieval degrades to the lexical floor instead of failing. `apps/cli/src/config.ts:43-48`
 - `MEMHTML_EMBED`: `off` disables the embedder entirely. Defaults to `on`. `apps/cli/src/config.ts:49-54`
 - `MEMHTML_LLM`: `off` makes the four LLM sleep phases report `no model bound` and stay `ok`. Defaults to `on`. `apps/cli/src/config.ts:55-60`
-- `MEMHTML_EXTRACT_ENTITIES`: `on` adds one model call per write batch that extracts `memhtml-entity` metas the ops did not declare. Opt-in, and defaults to `off`, because it changes what a write stores. `apps/cli/src/config.ts:61-66`
-- `MEMHTML_MCP_BIN`: An explicit path to the `memhtml-mcp` entry point, read only by the `memhtml serve mcp` supervisor. Absent means the sibling-path default. `apps/cli/src/config.ts:67-77`
+- `MEMHTML_EXTRACT_ENTITIES`: `on` adds one model call per write batch that extracts `memhtml-entity` metas the ops did not declare. It defaults to `off` because it changes what a write stores. `apps/cli/src/config.ts:61-66`
+- `MEMHTML_MCP_BIN`: An explicit path to the `memhtml-mcp` entry point, read only by the `memhtml serve mcp` supervisor. When it is absent the supervisor uses the sibling-path default. `apps/cli/src/config.ts:67-77`
 
 ## See also
 

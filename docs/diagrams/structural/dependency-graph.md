@@ -1,8 +1,8 @@
 # memhtml-public · Dependency graph
 
-This repository holds the software that manages a memhtml root. It stores no memories itself. The root is a separate directory located by `$MEMHTML_ROOT` (`apps/cli/src/config.ts:28`), and the two external nodes at the bottom of this graph are the two ways the software reaches into that root: the git CLI, which owns the system of record (`packages/store/src/git.ts:170`), and `node:sqlite`, which owns the rebuildable projection at `.memhtml/index.db` (`packages/index/src/database.ts:4`, `packages/index/src/index.ts:5`).
+This repository holds the software that manages a memhtml root. It stores no memories itself. The root is a separate directory located by `$MEMHTML_ROOT` (`apps/cli/src/config.ts:28`). The software reaches into that root in two ways, which are the two external nodes at the bottom of this graph. The git CLI owns the system of record (`packages/store/src/git.ts:170`), and `node:sqlite` owns the rebuildable projection at `.memhtml/index.db` (`packages/index/src/database.ts:4`, `packages/index/src/index.ts:5`).
 
-The graph shows 12 internal workspace packages and 8 external dependencies. Internal edges are the transitive reduction of the direct-import graph, so a missing arrow between two internal nodes means the relation still holds through a path, not that it is absent. The note below the diagram explains this.
+The graph shows 12 internal workspace packages and 8 external dependencies. Internal edges are the transitive reduction of the direct-import graph: an edge is left out when the same relation already holds along a longer path through other packages. A missing arrow between two internal nodes therefore means the relation is implied by a path, not that it is absent.
 
 ```mermaid
 flowchart LR
@@ -61,7 +61,9 @@ flowchart LR
   classDef external stroke-dasharray: 3 3
 ```
 
-The reduction dropped 18 of the 37 direct internal edges. Every one of the twelve packages imports `contracts`, and `cli` imports nine of the other eleven, so the unreduced graph is close to dense and reads as noise. `contracts` is the only sink: `grep -rn 'from "@memhtml' packages/contracts/src` returns zero matches, and the graph is acyclic, which makes the reduction unique. Three examples of what the reduction elided: `cli --> contracts` (14 import sites in `apps/cli/src`) survives through `cli --> sleep --> contracts`; `mcp --> store` (`apps/mcp/src/resources.ts:5`) survives through `mcp --> cli --> sleep --> store`; `sleep --> html` (8 sites in `packages/sleep/src`) survives through `sleep --> store --> html`.
+The reduction dropped 18 of the 37 direct internal edges. All twelve packages import `contracts`, and `cli` imports nine of the other eleven, so the unreduced graph is close to dense and hard to read. `contracts` is the only sink, because `grep -rn 'from "@memhtml' packages/contracts/src` returns zero matches. The graph is also acyclic, so there is exactly one transitive reduction of it.
+
+Three examples show what the reduction left out. `cli --> contracts` has 14 import sites in `apps/cli/src`, and the relation still holds through `cli --> sleep --> contracts`. `mcp --> store` (`apps/mcp/src/resources.ts:5`) still holds through `mcp --> cli --> sleep --> store`. `sleep --> html` has 8 sites in `packages/sleep/src`, and it still holds through `sleep --> store --> html`.
 
 ## Internal nodes
 
@@ -82,7 +84,7 @@ Each description is the `description` field of the package's own manifest.
 | `traces` | `packages/traces/package.json:2` | Streaming JSONL parser and trace indexer (`packages/traces/package.json:6`). |
 | `eval` | `packages/eval/package.json:2` | Fixture corpus generator and the refusable discrimination gate (`packages/eval/package.json:6`). |
 
-`mcp --> cli` is the load-bearing edge for an agent reading this graph. The MCP server does not reimplement the CLI's operations. It imports them: `apps/mcp/src/server.ts:1` takes `layerApp`, `apps/mcp/src/resources.ts:4` takes `Roots` and `readMemory`, and `apps/mcp/src/failure.ts:1` takes `codeFor` and `messageFor`, so a tool call and a CLI invocation resolve through the same code and produce the same error codes. The CLI also describes itself for an agent rather than for a human at a terminal: `apps/cli/src/commands.ts:113` registers a `manifest` command, and `apps/cli/src/commands.ts:102` states that one command table drives parsing, the manifest, and the generated agent doc, so the machine-readable description cannot drift from behavior.
+`mcp --> cli` is the most important internal edge. The MCP server imports the CLI's operations instead of reimplementing them. `apps/mcp/src/server.ts:1` takes `layerApp`, `apps/mcp/src/resources.ts:4` takes `Roots` and `readMemory`, and `apps/mcp/src/failure.ts:1` takes `codeFor` and `messageFor`. A tool call and a CLI invocation therefore resolve through the same code and produce the same error codes. The CLI also publishes a machine-readable description of itself. `apps/cli/src/commands.ts:113` registers a `manifest` command, and `apps/cli/src/commands.ts:102` states that one command table drives parsing, the manifest, and the generated agent doc, so that description cannot drift from behavior.
 
 ## External nodes
 
@@ -97,11 +99,11 @@ Each description is the `description` field of the package's own manifest.
 | `node:sqlite` | Node builtin, `node >=24` (`package.json:7`) | `index` | `packages/index/src/database.ts:4` imports `DatabaseSync`. |
 | `git CLI` | External binary | `store` | `packages/store/src/git.ts:1` imports `node:child_process`; `packages/store/src/git.ts:170` spawns git through `execFile`. |
 
-`just-bash` carries two edges because both are real at runtime and they differ in kind. The CLI's is dynamic on purpose: `apps/cli/src/index.ts:92` states that `just-bash` arrives dynamically, and `apps/cli/src/exec.ts:231-233` gives the measured reason, a 6 MB bundle across 20 chunks costing roughly 160ms to load. That same comment records a leak in the current graph: `@memhtml/consolidator`'s barrel re-exports `mount.js`, which imports `just-bash` statically, and `apps/cli/src/api-layer.ts` imports that barrel, so `just-bash` already loads on every `memhtml read` (`apps/cli/src/exec.ts:234-236`).
+`just-bash` carries two edges because both exist at runtime and they load differently. The CLI's edge is dynamic on purpose. `apps/cli/src/index.ts:92` states that `just-bash` arrives dynamically, and `apps/cli/src/exec.ts:231-233` gives the measured reason, a 6 MB bundle across 20 chunks costing roughly 160ms to load. That same comment records a leak in the current graph. `@memhtml/consolidator`'s barrel re-exports `mount.js`, which imports `just-bash` statically, and `apps/cli/src/api-layer.ts` imports that barrel, so `just-bash` already loads on every `memhtml read` (`apps/cli/src/exec.ts:234-236`).
 
 Two declared workspace dependencies produce no runtime edge and so are not drawn:
 
-- `packages/traces/package.json:21` declares `@memhtml/index` as a runtime dependency, and no file under `packages/traces/src` or `packages/traces/tests` imports it. The dependency runs the other way, and `packages/index/src/traces-persist.ts:10-11` says so: the trace scanner lives in `@memhtml/traces`, which depends on `@memhtml/index`, so `traces-persist.ts` states the shapes it consumes structurally rather than importing them.
+- `packages/traces/package.json:21` declares `@memhtml/index` as a runtime dependency, and no file under `packages/traces/src` or `packages/traces/tests` imports it. The dependency runs the other way. `packages/index/src/traces-persist.ts:10-11` explains it: the trace scanner lives in `@memhtml/traces`, which depends on `@memhtml/index`, so `traces-persist.ts` declares the shapes it consumes structurally instead of importing them.
 - `packages/index/package.json:29` declares `@memhtml/store` under `devDependencies`, and its only imports are in tests (`packages/index/tests/git-adapter.test.ts:5-6`).
 
 ## Legend (overflow)
@@ -110,7 +112,7 @@ Ten nodes were measured and left out of the 20-node budget. Edge counts are `fro
 
 | Elided node | Edge count | Why elided |
 | --- | --- | --- |
-| `node:path` | 18 | Node builtin used by nearly every module; a node adds mass without information. |
+| `node:path` | 18 | Node builtin used by nearly every module, so drawing it would add edges everywhere and tell the reader nothing new. |
 | `node:fs/promises` | 16 | Same. Present in `apps/mcp/src/resources.ts:1` among others. |
 | `node:os` | 6 | Same. |
 | `node:crypto` | 5 | Same. |

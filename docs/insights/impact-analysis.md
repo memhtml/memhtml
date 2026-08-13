@@ -1,14 +1,14 @@
 # memhtml-public · Impact analysis
 
-This file answers one question: if you change surface X, what else do you have to think about?
+If you change surface X, this file lists what else you have to think about.
 
-**A surface is high-impact here when changing it forces edits in more than one workspace package.** The ranking metric is the number of distinct workspace packages that reach the surface in the import graph, with the raw count of importing files as the tie-break. That criterion, rather than raw inbound-file count, because the surfaces with the widest real blast radius are the contract surfaces: `packages/store/src/layout.ts` has only 17 importing files but reaches six packages, while `packages/sleep/src/env.ts` has 28 importers and every one of them is inside `packages/sleep`. Package-internal fan-out is refactoring work in one directory. Cross-package fan-out is a change that has to land in agreement across a build graph.
+**A surface is high-impact here when changing it forces edits in more than one workspace package.** The ranking metric is the number of distinct workspace packages that reach the surface in the import graph, with the raw count of importing files as the tie-break. Raw inbound-file count is not the metric, because a contract surface can have the widest blast radius without having the most importers. `packages/store/src/layout.ts` has 17 importing files and reaches six packages. `packages/sleep/src/env.ts` has 28 importers, and every one of them is inside `packages/sleep`. Fan-out inside one package is refactoring work in one directory. Fan-out across packages is a change that has to land in agreement across a build graph.
 
-Two surfaces on this list carry a blast radius that reaches past the build graph entirely. This repository stores no memory. It is the software that manages a separate directory called the memhtml root, located by `$MEMHTML_ROOT` (`apps/cli/src/config.ts:27-31`), and every root already created in the world holds files written by whatever version of this software created them. A change to the memory file format (`packages/html`) or to the root's on-disk layout (`packages/store/src/layout.ts`) is a change to data this repository does not contain and cannot migrate in a commit. Those two carry a "reaches existing roots" note for that reason.
+Two surfaces on this list have a blast radius that reaches past the build graph. This repository stores no memory. It is the software that manages a separate directory called the memhtml root, located by `$MEMHTML_ROOT` (`apps/cli/src/config.ts:27-31`). Every root that already exists holds files written by whatever version of this software created them. A change to the memory file format (`packages/html`) or to the root's on-disk layout (`packages/store/src/layout.ts`) changes data this repository does not contain and cannot migrate in a commit. Those two carry a "reaches existing roots" note.
 
-The primary consumer of every surface below is a coding agent, not a person at a terminal. That shapes the judgments: a change to the JSON envelope is high-impact because agents parse it and branch on it, and a change to a closed vocabulary is high-impact because that vocabulary is published in the machine-readable manifest an agent reads before its first call.
+The primary consumer of every surface below is a coding agent rather than a person at a terminal. A change to the JSON envelope is therefore high-impact, because agents parse it and branch on it. A change to a closed vocabulary is high-impact because that vocabulary is published in the machine-readable manifest an agent reads before its first call.
 
-Ranking data was produced by walking every `.ts` file under `packages`, `apps`, `tests-integration`, and `scripts`, resolving relative specifiers by path and `@memhtml/*` barrel imports through each package's `src/index.ts` re-export map. One artifact of that method is recorded here so the numbers are not over-trusted: `packages/domain/src/index.ts:6-16` is nine `export * from` lines, so a barrel import of one domain symbol credits all nine domain files. No domain file is selected on count alone as a result.
+Ranking data was produced by walking every `.ts` file under `packages`, `apps`, `tests-integration`, and `scripts`. Relative specifiers were resolved by path, and `@memhtml/*` barrel imports were resolved through each package's `src/index.ts` re-export map. That method inflates one set of counts. `packages/domain/src/index.ts:6-16` is nine `export * from` lines, so a barrel import of one domain symbol credits all nine domain files. No domain file is therefore selected on count alone.
 
 `Touch on change` reads as follows. `yes` means the consumer must be edited when the surface changes shape. `likely` means the consumer needs review even without a signature change, usually because it restates the surface's content somewhere the type system cannot check. `no` means only a behavioral change reaches it.
 
@@ -16,7 +16,7 @@ Ranking data was produced by walking every `.ts` file under `packages`, `apps`, 
 
 Defined at: `packages/contracts/src/errors.ts:9-64`
 
-Nine `Schema.TaggedError` classes: `StorageFailure`, `WriteConflict`, `ModelUnavailable`, `InvalidMemory`, `PathNotFound`, `DuplicateContent`, `DirtyTree`, `LlmContractViolation` (`packages/contracts/src/errors.ts:9-64`). This is the single most widely reached surface in the repository: 51 importing files across 13 workspace packages, which is every package and app except `apps/docs`.
+Nine `Schema.TaggedError` classes: `StorageFailure`, `WriteConflict`, `ModelUnavailable`, `InvalidMemory`, `PathNotFound`, `DuplicateContent`, `DirtyTree`, `LlmContractViolation` (`packages/contracts/src/errors.ts:9-64`). This is the most widely reached surface in the repository, with 51 importing files across 13 workspace packages. That is every package and app except `apps/docs`.
 
 | Downstream | Type | Touch on change | Citation |
 |---|---|---|---|
@@ -36,15 +36,15 @@ Nine `Schema.TaggedError` classes: `StorageFailure`, `WriteConflict`, `ModelUnav
 
 ### Blast-radius notes
 
-- Every error class deliberately withholds the underlying detail: `StorageFailure` carries only an operation name, and the driver's own message goes to `Effect.logError` at the adapter edge instead (`packages/contracts/src/errors.ts:3-8`). Adding a payload field that carries SQL text, git argv, or memory body would let corpus content reach an agent's tool response, and `apps/cli/src/errors.ts:69-77` states that the CLI edge will not reconstruct what the class dropped. The contract is that the payload is safe to return.
-- `GitFailure` is the one error class outside this file, living in `@memhtml/store` because it carries a git subcommand name (`apps/cli/src/errors.ts:34-36`). Adding a tenth class here without adding its case to `codeFor` yields `ERR_UNKNOWN` silently, because the switch has a `default` (`apps/cli/src/errors.ts:64-65`). Nothing in the type system catches that omission.
-- `packages/domain` names `InvalidMemory` as a type only, and `packages/domain/tests/layering.test.ts` reads the emitted `dist/` to prove domain's runtime imports stay limited to `effect` (`packages/domain/src/index.ts:1-6`, `packages/domain/tests/layering.test.ts:7-12`). Converting that type-only import into a value import breaks that standing proof rather than only adding a dependency.
+- Each error class carries only summary detail. `StorageFailure` carries an operation name, and the driver's own message goes to `Effect.logError` at the adapter edge (`packages/contracts/src/errors.ts:3-8`). Adding a payload field that carries SQL text, git argv, or a memory body would let corpus content reach an agent's tool response. The CLI edge does not reconstruct what the class dropped (`apps/cli/src/errors.ts:69-77`). The contract is that the payload is safe to return.
+- `GitFailure` is the one error class outside this file. It lives in `@memhtml/store` because it carries a git subcommand name (`apps/cli/src/errors.ts:34-36`). Adding a tenth class here without adding its case to `codeFor` yields `ERR_UNKNOWN`, because the switch has a `default` (`apps/cli/src/errors.ts:64-65`). Nothing in the type system catches that omission.
+- `packages/domain` names `InvalidMemory` as a type only, and `packages/domain/tests/layering.test.ts` reads the emitted `dist/` to check that domain's runtime imports stay limited to `effect` (`packages/domain/src/index.ts:1-6`, `packages/domain/tests/layering.test.ts:7-12`). Converting that type-only import into a value import fails that test, so it costs more than adding a dependency.
 
 ## `packages/contracts/src/types.ts`
 
 Defined at: `packages/contracts/src/types.ts:18-131`
 
-The closed vocabularies: `MEMORY_TYPES` (ten values), `WRITABLE_MEMORY_TYPES` (nine, withholding `arc`), `PARA_BUCKETS` (four), `MemoryStatus`, `TASK_STATUSES` (four), `Importance`, `Confidence`, `MemoryPath`, and the entity-reference helpers. 21 importing files across 8 workspace packages.
+This file holds the closed vocabularies: `MEMORY_TYPES` (ten values), `WRITABLE_MEMORY_TYPES` (nine, excluding `arc`), `PARA_BUCKETS` (four), `MemoryStatus`, `TASK_STATUSES` (four), `Importance`, `Confidence`, `MemoryPath`, and the entity-reference helpers. 21 importing files across 8 workspace packages.
 
 | Downstream | Type | Touch on change | Citation |
 |---|---|---|---|
@@ -67,15 +67,15 @@ The closed vocabularies: `MEMORY_TYPES` (ten values), `WRITABLE_MEMORY_TYPES` (n
 
 ### Blast-radius notes
 
-- Every closed vocabulary in this file is restated at least once in SQL, and `MEMORY_TYPES` and `PARA_BUCKETS` are restated twice (`packages/index/migrations/0001_files.sql:18-20,34` and `packages/index/migrations/0008_tasks.sql:38-40,46`). No compiler checks that agreement. Adding a memory type without a migration produces a CHECK-constraint failure at index time, which surfaces as a `StorageFailure` from the indexer rather than as a build error.
-- `arc` is in `MEMORY_TYPES` and absent from `WRITABLE_MEMORY_TYPES` on purpose: an arc is synthesized by the sleep cycle, so an agent naming one directly would assert a conclusion the corpus has not earned (`packages/contracts/src/types.ts:7-10`). `packages/contracts/tests/types.test.ts:41-53` asserts the runtime filter and the restated `WritableMemoryType` schema agree on every type, because the filter and the schema are two copies of the same list.
-- `task` is one axis with the other nine rather than a parallel `kind` column, and the file states the reason: overlapping type vocabularies made classification unanswerable in the predecessor system (`packages/contracts/src/types.ts:11-16`). Tasks are excluded from search and skipped by sleep through filters that read this one column, so introducing a second axis would require every one of those filters to be found and changed.
+- Every closed vocabulary in this file is restated at least once in SQL, and `MEMORY_TYPES` and `PARA_BUCKETS` are restated twice (`packages/index/migrations/0001_files.sql:18-20,34` and `packages/index/migrations/0008_tasks.sql:38-40,46`). No compiler checks that agreement. Adding a memory type without a migration produces a CHECK-constraint failure at index time, which reaches the caller as a `StorageFailure` from the indexer instead of a build error.
+- `arc` is in `MEMORY_TYPES` and absent from `WRITABLE_MEMORY_TYPES` by design. An arc is synthesized by the sleep cycle, so an agent naming one directly would assert a conclusion the corpus has not earned (`packages/contracts/src/types.ts:7-10`). The runtime filter and the restated `WritableMemoryType` schema are two copies of the same list, so `packages/contracts/tests/types.test.ts:41-53` asserts they agree on every type.
+- `task` sits on one axis with the other nine values instead of in a parallel `kind` column. The file gives the reason: overlapping type vocabularies made classification unanswerable in the predecessor system (`packages/contracts/src/types.ts:11-16`). Tasks are excluded from search and skipped by sleep through filters that read this one column. Introducing a second axis would mean finding and changing every one of those filters.
 
 ## `packages/contracts/src/edges.ts`
 
 Defined at: `packages/contracts/src/edges.ts:9-149`
 
-Four non-mixing edge classes and their rels: `MEMORY_RELS` (nine), `PERSON_RELS` (two), `PROVENANCE_RELS` (one), `TASK_RELS` (two), plus `relClassFor`, `relsForClass`, `isEdgeRel`, the `<link rel>` token codec (`relTokenFor` / `relForToken`), and the `Edge` schema. 22 importing files across 8 workspace packages.
+This file defines four edge classes that do not mix, along with their rels: `MEMORY_RELS` (nine), `PERSON_RELS` (two), `PROVENANCE_RELS` (one), and `TASK_RELS` (two). It also holds `relClassFor`, `relsForClass`, `isEdgeRel`, the `<link rel>` token codec (`relTokenFor` / `relForToken`), and the `Edge` schema. 22 importing files across 8 workspace packages.
 
 | Downstream | Type | Touch on change | Citation |
 |---|---|---|---|
@@ -98,15 +98,15 @@ Four non-mixing edge classes and their rels: `MEMORY_RELS` (nine), `PERSON_RELS`
 
 ### Blast-radius notes
 
-- The class is derived from the rel rather than carried beside it, and `relClassFor` is total over `ALL_RELS` and injective per class (`packages/contracts/src/edges.ts:65-75`). A new rel added to one of the four arrays gets a class automatically. A new rel added without a matching SQL CHECK edit is refused by the driver at index time, because `packages/index/migrations/0004_edges.sql:30-35` enumerates the rels per class independently.
-- The class separation is a ranking invariant, not a tidiness one: every memory-graph query filters `edge_class = 'memory'`, which is what makes a person or task edge structurally incapable of entering PageRank, MMR, or the retention bridge count (`packages/contracts/src/edges.ts:3-8`). Promoting a task rel into the memory class would let an agent's to-do list reweight the retention of its knowledge (`packages/contracts/src/edges.ts:48-52`).
-- `relTokenFor` and `relForToken` are inverses on the token image, and the mapping replaces underscores with hyphens because a `rel` token cannot hold a colon (`packages/contracts/src/edges.ts:101-120`). Adding a rel whose name contains a hyphen would break the inverse silently, since `relForToken` converts every hyphen back to an underscore.
+- The class is derived from the rel instead of stored beside it. `relClassFor` is total over `ALL_RELS` and injective per class (`packages/contracts/src/edges.ts:65-75`), so a new rel added to one of the four arrays gets a class automatically. A new rel added without a matching SQL CHECK edit is refused by the driver at index time, because `packages/index/migrations/0004_edges.sql:30-35` enumerates the rels per class independently.
+- The class separation affects ranking. Every memory-graph query filters `edge_class = 'memory'`, so a person or task edge cannot enter PageRank, MMR, or the retention bridge count (`packages/contracts/src/edges.ts:3-8`). Promoting a task rel into the memory class would let an agent's to-do list reweight the retention of its knowledge (`packages/contracts/src/edges.ts:48-52`).
+- `relTokenFor` and `relForToken` are inverses on the token image. The mapping replaces underscores with hyphens because a `rel` token cannot hold a colon (`packages/contracts/src/edges.ts:101-120`). `relForToken` converts every hyphen back to an underscore, so adding a rel whose name contains a hyphen breaks the inverse with no error.
 
 ## `packages/contracts/src/paths.ts`
 
 Defined at: `packages/contracts/src/paths.ts:10-186`
 
-The path algebra for the memhtml root, all pure and total: the fixed directory names (`ARCS_DIR`, `PEOPLE_DIR`, `INBOX_DIR`, `TASKS_SUBDIR`, `ARCHIVE_BUCKET`, `MEMORY_EXTENSION`), `normalizePath`, `paraBucketOf`, `isValidMemoryPath`, `placementFor`, `memoryPathFor`, `archivePathFor`, `originalPathFor`, `isArchivePath`, `archiveYearOf`. 24 importing files across 8 workspace packages.
+This file holds the path algebra for the memhtml root. Every function in it is pure and total. It defines the fixed directory names (`ARCS_DIR`, `PEOPLE_DIR`, `INBOX_DIR`, `TASKS_SUBDIR`, `ARCHIVE_BUCKET`, `MEMORY_EXTENSION`) plus `normalizePath`, `paraBucketOf`, `isValidMemoryPath`, `placementFor`, `memoryPathFor`, `archivePathFor`, `originalPathFor`, `isArchivePath`, and `archiveYearOf`. 24 importing files across 8 workspace packages.
 
 | Downstream | Type | Touch on change | Citation |
 |---|---|---|---|
@@ -127,15 +127,15 @@ The path algebra for the memhtml root, all pure and total: the fixed directory n
 
 ### Blast-radius notes
 
-- `archivePathFor` and `originalPathFor` are a matched pair, and the mirroring of the whole original path beneath `archive/<YYYY>/` is what makes the mapping injective and invertible, so `git log --follow` reads through an eviction and `diff -M` reports it as `R100` rather than a delete plus an add (`packages/contracts/src/paths.ts:157-166`). `originalPathFor` strips exactly one prefix so it stays a left inverse even for a memory archived twice (`packages/contracts/src/paths.ts:168-177`). Changing either side without the other silently breaks archive-path round-tripping on every root already holding archived files.
-- `placementFor` is total: it always returns a directory rooted in a PARA bucket, so the write path never guesses twice and never fails (`packages/contracts/src/paths.ts:92-102`). An unusable explicit `path` is ignored rather than propagated, which means a caller that wants a bad path refused must gate on `isValidMemoryPath` first. A consumer relying on `placementFor` to reject anything will not get a rejection.
-- The `tasks` segment name is part of the contract rather than a layout preference, because keeping tasks in one named segment is what makes `ls projects/<slug>/tasks` the list operation (`packages/contracts/src/paths.ts:21-30`). Renaming it orphans every task file in every existing root, since nothing migrates them.
+- `archivePathFor` and `originalPathFor` are a matched pair. Archiving mirrors the whole original path beneath `archive/<YYYY>/`, which makes the mapping injective and invertible. `git log --follow` therefore reads through an eviction, and `diff -M` reports it as `R100` instead of a delete plus an add (`packages/contracts/src/paths.ts:157-166`). `originalPathFor` strips exactly one prefix, so it stays a left inverse even for a memory archived twice (`packages/contracts/src/paths.ts:168-177`). Changing either side without the other breaks archive-path round-tripping on every root that already holds archived files, with no error at the time of the change.
+- `placementFor` is total. It always returns a directory rooted in a PARA bucket, so the write path never guesses twice and never fails (`packages/contracts/src/paths.ts:92-102`). An unusable explicit `path` is ignored instead of propagated. A caller that wants a bad path refused has to gate on `isValidMemoryPath` first, because `placementFor` rejects nothing.
+- The `tasks` segment name is part of the contract, not a layout preference. Keeping tasks in one named segment is what makes `ls projects/<slug>/tasks` the list operation (`packages/contracts/src/paths.ts:21-30`). Renaming it orphans every task file in every existing root, because nothing migrates them.
 
 ## `packages/html/src/hash.ts`
 
 Defined at: `packages/html/src/hash.ts:115-185`
 
-`contentHash`, plus `canonicalText`, `canonicalArticleText`, `isContentHash`, and `HASH_ALGORITHM`. The content hash is the dedup key and the one value in the system that must be invariant under head edits (`packages/html/src/hash.ts:7-16`). 18 importing files across 5 workspace packages; the surface reaches further through SQL, where two unique indexes key on it.
+`contentHash`, plus `canonicalText`, `canonicalArticleText`, `isContentHash`, and `HASH_ALGORITHM`. The content hash is the dedup key, and it has to stay the same when only the head of a document is edited (`packages/html/src/hash.ts:7-16`). 18 importing files across 5 workspace packages. The surface reaches further through SQL, where two unique indexes key on it.
 
 | Downstream | Type | Touch on change | Citation |
 |---|---|---|---|
@@ -156,15 +156,15 @@ Defined at: `packages/html/src/hash.ts:115-185`
 
 ### Blast-radius notes
 
-- The hash covers only `<article>` text, and head edits are outside its scope by construction. That invariance is what keeps confidence decay, access bookkeeping, and every sleep phase's stamping from looking like content changes: without it, each nightly decay pass would present the whole corpus as new content and dedup would collapse (`packages/html/src/hash.ts:7-16`). Any change that lets a meta or a `<link>` reach the digest breaks that property for every root at once.
-- Whitespace handling is load-bearing in both directions. Block-element edges contribute a collapsible space so the hash is a function of the article's words rather than its indentation, and the outer trim is applied only to collapsible segments so `<pre>  a</pre>` and `<pre>a</pre>` do not collide (`packages/html/src/hash.ts:101-125`). Changing the canonicalization changes every stored hash, which means every `files_content_hash_active` row, every `chunks_hash_ord` row, and every stored embedding keyed through `chunk_id`.
-- `contentHash` is total on purpose: a string with no `<article>` hashes as article-inner-HTML rather than failing, because refusing malformed input is `parseMemory`'s job (`packages/html/src/hash.ts:163-168`). A consumer that expects the hash function to validate its input will not get validation.
+- The hash covers only `<article>` text, so head edits cannot change it. That is what keeps confidence decay, access bookkeeping, and every sleep phase's stamping from looking like content changes. Without it, each nightly decay pass would present the whole corpus as new content and dedup would collapse (`packages/html/src/hash.ts:7-16`). Any change that lets a meta or a `<link>` reach the digest breaks that property for every root at once.
+- Whitespace handling affects the result in two ways. Block-element edges contribute a collapsible space, which makes the hash a function of the article's words instead of its indentation. The outer trim is applied only to collapsible segments, so `<pre>  a</pre>` and `<pre>a</pre>` do not collide (`packages/html/src/hash.ts:101-125`). Changing the canonicalization changes every stored hash, and therefore every `files_content_hash_active` row, every `chunks_hash_ord` row, and every stored embedding keyed through `chunk_id`.
+- `contentHash` is total by design. A string with no `<article>` hashes as article-inner-HTML instead of failing, because refusing malformed input is `parseMemory`'s job (`packages/html/src/hash.ts:163-168`). The hash function performs no validation, so a consumer that needs input validated has to do it elsewhere.
 
 ## `packages/index/src/database.ts`
 
 Defined at: `packages/index/src/database.ts:69-407`
 
-`DatabaseShape`, the `DatabaseService` tag, `makeDatabase`, `attachState`, `runStateMigrations`, `isBusyCause`, and the `SqlValue` / `Write` types. This is the only connection factory for the rebuildable index and the state plane. 28 importing files across 5 workspace packages.
+`DatabaseShape`, the `DatabaseService` tag, `makeDatabase`, `attachState`, `runStateMigrations`, `isBusyCause`, and the `SqlValue` / `Write` types. This is the only connection factory for the rebuildable index and for the state plane. 28 importing files across 5 workspace packages.
 
 | Downstream | Type | Touch on change | Citation |
 |---|---|---|---|
@@ -184,15 +184,15 @@ Defined at: `packages/index/src/database.ts:69-407`
 
 ### Blast-radius notes
 
-- Both planes ride one connection, and that is what lets the salience retrieval arm `LEFT JOIN state.access` in the same statement as `main.files` with no application-side join (`packages/index/src/database.ts:283-292`). A connection built without the attachment silently drops that arm, which is why `hasState` is on the service and the arm registry consults it rather than assuming (`packages/index/src/database.ts:99-100,309-318`). A caller that constructs a database without `state` gets degraded ranking and no error.
-- Attaching is not idempotent: a second `ATTACH ... AS state` fails, so `attachState` is called exactly once per connection, by `makeDatabase` (`packages/index/src/database.ts:290-293`). Any new code path that attaches will fail at runtime, not at build time.
-- Concurrency is the driver's alone. WAL admits one writer and any number of readers, a second writer blocks for `BUSY_TIMEOUT_MS` (5000 ms), and `Effect` coordinates nothing across processes, so the driver's timeout plus the jittered `BUSY_BACKOFF` retry is the whole answer (`packages/index/src/database.ts:13-22,139-158`). Retrying is safe only because the error is `SQLITE_BUSY`, where the lock was never taken and the statement had no effect to half-apply. Widening the retry predicate past `isBusyCause` would retry statements that did partially run.
+- Both planes ride one connection. That lets the salience retrieval arm `LEFT JOIN state.access` in the same statement as `main.files`, with no join in application code (`packages/index/src/database.ts:283-292`). A connection built without the attachment drops that arm, so `hasState` is on the service and the arm registry consults it instead of assuming (`packages/index/src/database.ts:99-100,309-318`). A caller that constructs a database without `state` gets degraded ranking and no error.
+- Attaching is not idempotent. A second `ATTACH ... AS state` fails, so `makeDatabase` calls `attachState` exactly once per connection (`packages/index/src/database.ts:290-293`). Any new code path that attaches fails at runtime rather than at build time.
+- Concurrency is handled entirely by the driver. WAL admits one writer and any number of readers, and a second writer blocks for `BUSY_TIMEOUT_MS` (5000 ms). `Effect` coordinates nothing across processes, so the driver's timeout plus the jittered `BUSY_BACKOFF` retry is the whole mechanism (`packages/index/src/database.ts:13-22,139-158`). Retrying is safe because the error is `SQLITE_BUSY`, where the lock was never taken and the statement had no effect to half-apply. Widening the retry predicate past `isBusyCause` would retry statements that did partially run.
 
 ## `packages/store/src/layout.ts`
 
 Defined at: `packages/store/src/layout.ts:22-211`
 
-The memhtml root's on-disk shape and the one operation that creates it: `MEMHTML_DIR`, `INDEX_DB_PATH`, `STATE_DB_PATH`, `STATE_SIDECAR_PATH`, `SLEEP_REPORTS_DIR`, `SCAFFOLD_DIRS`, `GITIGNORE`, `GITATTRIBUTES`, `MERGE_OURS_DRIVER`, `README`, `initRepo`, plus the `attemptIo` and `readFileOrNull` filesystem edges. 17 importing files across 6 workspace packages.
+This file defines the memhtml root's on-disk shape and the one operation that creates it. It holds `MEMHTML_DIR`, `INDEX_DB_PATH`, `STATE_DB_PATH`, `STATE_SIDECAR_PATH`, `SLEEP_REPORTS_DIR`, `SCAFFOLD_DIRS`, `GITIGNORE`, `GITATTRIBUTES`, `MERGE_OURS_DRIVER`, `README`, and `initRepo`, plus the `attemptIo` and `readFileOrNull` filesystem edges. 17 importing files across 6 workspace packages.
 
 | Downstream | Type | Touch on change | Citation |
 |---|---|---|---|
@@ -214,15 +214,15 @@ The memhtml root's on-disk shape and the one operation that creates it: `MEMHTML
 
 ### Blast-radius notes
 
-- Exactly two files are gitignored, and each has a different recovery story: `index.db` is rebuildable from the tree, and `state.db` is reproduced from its committed JSONL sidecar, so a fresh clone plus `memhtml state import` plus `memhtml index rebuild` yields the whole system (`packages/store/src/layout.ts:50-59`). `tests-integration/tests/clone.test.ts:11-20` is the standing proof. Adding a third gitignored file without a recovery path breaks that claim, and the claim is why `index.db` is gitignored at all.
-- The `merge=ours` attribute alone does nothing. Probed live on 2026-08-02: with the attribute set and no driver configured, git still conflicts and writes conflict markers into the file (`packages/store/src/layout.ts:61-69`). The `merge.ours.driver` config in `initRepo` is what makes it effective, and config is per clone, so `memhtml init` on a fresh clone must set it again (`packages/store/src/layout.ts:195-197`). Any deployment path that skips `init` on a clone gets conflict markers in `sitemap.xml`.
-- `initRepo` is convergent rather than idempotent: every step asks the repo what is already true and supplies only what is missing, so it reaches the same end state from an empty directory, from a fully scaffolded root, and from one left half-initialized by an interrupted run (`packages/store/src/layout.ts:168-182`). A function that short-circuited on "I wrote no files this time" would report success over a repo with an unborn HEAD. `.gitkeep` files hold the empty PARA directories because git tracks files and not directories, and without them a fresh clone has no `areas/inbox/` for the first write to land in.
+- Exactly two files are gitignored, and each one is recovered a different way. `index.db` is rebuildable from the tree, and `state.db` is reproduced from its committed JSONL sidecar. A fresh clone plus `memhtml state import` plus `memhtml index rebuild` therefore yields the whole system (`packages/store/src/layout.ts:50-59`), and `tests-integration/tests/clone.test.ts:11-20` checks that. Adding a third gitignored file without a recovery path breaks that claim, and the claim is why `index.db` is gitignored at all.
+- The `merge=ours` attribute alone does nothing. It was probed live on 2026-08-02: with the attribute set and no driver configured, git still conflicts and writes conflict markers into the file (`packages/store/src/layout.ts:61-69`). The `merge.ours.driver` config that `initRepo` sets is what makes the attribute effective. Git config is per clone, so `memhtml init` on a fresh clone has to set it again (`packages/store/src/layout.ts:195-197`). Any deployment path that skips `init` on a clone gets conflict markers in `sitemap.xml`.
+- `initRepo` converges instead of short-circuiting. Every step asks the repo what is already true and supplies only what is missing, so it reaches the same end state from an empty directory, from a fully scaffolded root, and from a root left half-initialized by an interrupted run (`packages/store/src/layout.ts:168-182`). A function that stopped early because it wrote no files would report success over a repo with an unborn HEAD. `.gitkeep` files hold the empty PARA directories, because git tracks files and not directories. Without them a fresh clone has no `areas/inbox/` for the first write to land in.
 
 ## `apps/cli/src/envelope.ts`
 
 Defined at: `apps/cli/src/envelope.ts:6-157`
 
-The machine contract every agent parses: `API_VERSION`, `RESPONSE_TYPES` (32 values), `ResponseType`, `Success`, `Failure`, `ERROR_CODES` (15 values), `ErrorCode`, the three exit codes, `succeed`, `fail`, `nearest`, and `render`. 15 importing files across 3 workspace packages, and the widest external surface in the repository, because it is what a calling agent reads.
+This file defines the machine contract every agent parses: `API_VERSION`, `RESPONSE_TYPES` (32 values), `ResponseType`, `Success`, `Failure`, `ERROR_CODES` (15 values), `ErrorCode`, the three exit codes, `succeed`, `fail`, `nearest`, and `render`. 15 importing files across 3 workspace packages. It is the widest external surface in the repository, because it is what a calling agent reads.
 
 | Downstream | Type | Touch on change | Citation |
 |---|---|---|---|
@@ -242,21 +242,21 @@ The machine contract every agent parses: `API_VERSION`, `RESPONSE_TYPES` (32 val
 
 ### Blast-radius notes
 
-- Both vocabularies are append-only, and the file says so at both declarations: once shipped, a code's meaning never changes and a code is never removed, and a new payload shape gets a new response-type discriminator rather than reusing one (`apps/cli/src/envelope.ts:8-11,62-66`). An agent branches on `code` and never on the `error` prose, which changes freely as wording improves. Removing or repurposing a value silently breaks every already-deployed agent, and no test in this repository can see that.
-- The exit codes are a second, independent contract, kept stable so a shell caller can branch without parsing output: 0 success, 2 usage error, 1 runtime failure (`apps/cli/src/envelope.ts:87-90`, `AGENTS.md:23-24`). The distinction is actionable rather than cosmetic: exit 2 is fixed by changing the call, exit 1 by changing the root or the environment (`AGENTS.md:36`).
-- `--dense` output is produced by `stripNulls`, which drops every null and undefined field recursively (`apps/cli/src/envelope.ts:140-157`). A consumer that distinguishes "field absent" from "field null" reads two different shapes depending on the flag. Adding a field whose null carries meaning breaks dense mode for that field with no signal.
+- Both vocabularies are append-only, and the file says so at both declarations. Once a code ships, its meaning never changes and the code is never removed. A new payload shape gets a new response-type discriminator instead of reusing an existing one (`apps/cli/src/envelope.ts:8-11,62-66`). An agent branches on `code` and not on the `error` prose, which changes freely as wording improves. Removing or repurposing a value breaks every already-deployed agent, and no test in this repository can detect that.
+- The exit codes are a second, independent contract, kept stable so a shell caller can branch without parsing output: 0 success, 2 usage error, 1 runtime failure (`apps/cli/src/envelope.ts:87-90`, `AGENTS.md:23-24`). The two failure codes call for different fixes. Exit 2 is fixed by changing the call, and exit 1 by changing the root or the environment (`AGENTS.md:36`).
+- `--dense` output is produced by `stripNulls`, which drops every null and undefined field recursively (`apps/cli/src/envelope.ts:140-157`). A consumer that distinguishes "field absent" from "field null" reads two different shapes depending on the flag. Adding a field whose null carries meaning breaks dense mode for that field, with no error to signal it.
 
 ## Other notable surfaces
 
-- `apps/cli/src/api-layer.ts:508-538`: the one composition root. `layerApp` is the single graph production runs and `memhtml serve mcp` runs the same one in a child process, so an MCP tool and its CLI twin cannot look at different databases. 17 importers across 3 packages, but they consume tags rather than shapes, so most changes are contained.
-- `apps/cli/src/commands.ts:111,839,1024`: `COMMANDS`, `GUIDE`, and `buildManifest`. The manifest is derived by walking `COMMANDS` and `GLOBAL_FLAGS`, and `AGENTS.md` is generated from the same arrays (`AGENTS.md:1`), so `memhtml agents-doc --check` fails on drift (`apps/cli/src/agents-doc.ts:212-216`). Adding a flag updates both surfaces automatically; adding a command without a `responseTypes` entry does not.
+- `apps/cli/src/api-layer.ts:508-538`: the one composition root. `layerApp` is the single graph production runs, and `memhtml serve mcp` runs the same one in a child process, so an MCP tool and its CLI twin cannot look at different databases. 17 importers across 3 packages, but they consume tags instead of shapes, so most changes are contained.
+- `apps/cli/src/commands.ts:111,839,1024`: `COMMANDS`, `GUIDE`, and `buildManifest`. The manifest is derived by walking `COMMANDS` and `GLOBAL_FLAGS`, and `AGENTS.md` is generated from the same arrays (`AGENTS.md:1`), so `memhtml agents-doc --check` fails on drift (`apps/cli/src/agents-doc.ts:212-216`). Adding a flag updates both surfaces automatically. Adding a command without a `responseTypes` entry does not.
 - `packages/html/src/parse.ts:322,353`: `parseMemory` and `checkMemory`, the format gate. Five production call sites: `packages/store/src/store.ts:478,524,826`, `packages/index/src/indexer.ts:190`, `apps/cli/src/doctor.ts:311`. The store renders and refuses before it writes, so a format violation leaves the tree byte-identical.
-- `packages/html/src/constraints.ts:351`: `checkDocument`, the six format constraints. Only two production call sites, both inside `parse.ts`, so its blast radius travels through `parseMemory` rather than through imports. Constraints 1 to 5 are violations and constraint 6 is a warning, because the format has to degrade gracefully on a hand-written file (`packages/html/src/constraints.ts:28-36`).
-- `packages/index/src/schema-const.ts:47,59,62`: `MEMORY_TABLES`, `TRACE_TABLES`, `STATE_TABLES`, and the size bounds. 23 importers across 5 packages. Stated once so a table rename is a compile error at every reader, and because a truncate list that has drifted from the schema leaves rows behind, making a rebuild no longer a rebuild (`packages/index/src/schema-const.ts:1-5`).
+- `packages/html/src/constraints.ts:351`: `checkDocument`, the six format constraints. It has only two production call sites, both inside `parse.ts`, so its blast radius travels through `parseMemory` instead of through imports. Constraints 1 to 5 are violations and constraint 6 is a warning, because the format has to degrade gracefully on a hand-written file (`packages/html/src/constraints.ts:28-36`).
+- `packages/index/src/schema-const.ts:47,59,62`: `MEMORY_TABLES`, `TRACE_TABLES`, `STATE_TABLES`, and the size bounds. 23 importers across 5 packages. The lists are stated once so a table rename is a compile error at every reader, and because a truncate list that has drifted from the schema leaves rows behind, which makes a rebuild incomplete (`packages/index/src/schema-const.ts:1-5`).
 - `packages/store/src/store.ts:1037`: `linkMemories` and the write path. 9 importers, but only 3 packages, and `apps/cli/src/api-layer.ts` is the sole app consumer.
-- `packages/sleep/src/env.ts` and `packages/sleep/src/sql.ts`: 28 and 26 importers, the second and fifth highest raw counts in the repository. Excluded from the main set because `env.ts` is imported only from inside `packages/sleep` and `sql.ts` only from `packages/sleep` plus three `apps/cli` files.
-- `packages/html/src/vocabulary.ts:47`: `META_ORDER` and the closed element vocabulary. 12 importers, all inside `packages/html`. The vocabulary is the policy, so there is no sanitizer library and no allow/deny logic (`packages/html/src/vocabulary.ts:1-6`). A stable meta order is what makes a meta-only edit a one-line git diff.
-- `packages/domain/src/*`: nine files at 22 to 28 apparent inbound references each, an artifact of the nine `export *` lines in `packages/domain/src/index.ts:6-16`. Real per-symbol fan-out is much narrower. `packages/domain/tests/layering.test.ts` reads the emitted `dist/` to prove domain's runtime imports stay limited to `effect`, so any new value import here is a test failure rather than a silent coupling.
+- `packages/sleep/src/env.ts` and `packages/sleep/src/sql.ts`: 28 and 26 importers, the second and fifth highest raw counts in the repository. They are excluded from the main set because `env.ts` is imported only from inside `packages/sleep`, and `sql.ts` only from `packages/sleep` plus three `apps/cli` files.
+- `packages/html/src/vocabulary.ts:47`: `META_ORDER` and the closed element vocabulary. 12 importers, all inside `packages/html`. The vocabulary itself is the policy, so there is no sanitizer library and no allow/deny logic (`packages/html/src/vocabulary.ts:1-6`). A stable meta order is what makes a meta-only edit a one-line git diff.
+- `packages/domain/src/*`: nine files at 22 to 28 apparent inbound references each. That count comes from the nine `export *` lines in `packages/domain/src/index.ts:6-16`, and the real per-symbol fan-out is much narrower. `packages/domain/tests/layering.test.ts` reads the emitted `dist/` to check that domain's runtime imports stay limited to `effect`, so any new value import here fails a test instead of adding coupling nobody notices.
 
 ## See also
 

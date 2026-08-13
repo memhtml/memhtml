@@ -14,16 +14,16 @@ Inside a root, one fact is one semantic HTML5 file, and the root's git tree is t
 `.memhtml/state.db`, holds the access plane that git cannot reproduce, so it exports to a committed
 sidecar at `.memhtml/state/access.jsonl` (`packages/store/src/layout.ts:26-30`).
 
-The primary caller is a coding agent, and the surfaces are built for one. Two binaries are declared:
+The primary caller is a coding agent. Two binaries are declared:
 `memhtml` (`apps/cli/package.json:7-9`) and `memhtml-mcp` (`apps/mcp/package.json:7-9`). Every CLI
 call writes exactly one JSON envelope carrying `apiVersion`, a `type` discriminator drawn from a
 31-entry append-only list, and `data` (`apps/cli/src/envelope.ts:12-53`). Failures carry a stable
 `code` from a 15-entry append-only list plus `suggestions`, so an agent branches on the code instead
 of the prose (`apps/cli/src/envelope.ts:67-83`). Exit codes are fixed at 0 for success, 2 for usage,
 1 for runtime (`apps/cli/src/envelope.ts:87-90`). `memhtml manifest` returns the whole command surface
-before any root or database exists (`apps/cli/src/run.ts:823-843`), `--dense` drops nulls and
-indentation to save context tokens (`apps/cli/src/envelope.ts:140-157`), and `AGENTS.md` is generated
-from the same `COMMANDS` array that drives argument parsing, so the doc cannot drift from the binary
+before any root or database exists (`apps/cli/src/run.ts:823-843`), and `--dense` drops nulls and
+indentation to save context tokens (`apps/cli/src/envelope.ts:140-157`). `AGENTS.md` is generated
+from the same `COMMANDS` array that drives argument parsing, so the doc stays in step with the binary
 (`apps/cli/src/agents-doc.ts:11-24`). The MCP server exposes 14 tools and 2 resources over stdio
 (`apps/mcp/src/tools.ts:18`, `apps/mcp/src/resources.ts:10`).
 
@@ -38,9 +38,9 @@ LOC). `@memhtml/domain` adds pure ranking and retention math on top of it (11 fi
 `@memhtml/html` parses, serializes, and hashes the memory file format (13 files, 2552 LOC).
 
 `@memhtml/store` owns the git-backed file store and turns each operation into one commit
-(`packages/store/src/store.ts:1-25`, 6 files, 2336 LOC). It also owns the root's on-disk shape and
-refuses to create a root implicitly, so a typo in `MEMHTML_ROOT` errors instead of scaffolding a
-second empty root (`packages/store/src/layout.ts:12-19`).
+(`packages/store/src/store.ts:1-25`, 6 files, 2336 LOC). It also owns the root's on-disk shape.
+Creating a root is always an explicit step, so a typo in `MEMHTML_ROOT` errors instead of scaffolding
+a second empty root (`packages/store/src/layout.ts:12-19`).
 
 `@memhtml/index` reads the tree through a git adapter and derives the projection
 (`packages/index/src/git-adapter.ts:5-9`, 16 files, 3936 LOC). It uses the built-in `node:sqlite`
