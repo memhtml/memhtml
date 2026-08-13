@@ -1,9 +1,21 @@
 {
   "name": "@memhtml/mcp",
   "version": "0.1.0",
-  "private": true,
-  "type": "module",
   "description": "The `memhtml-mcp` stdio server.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/memhtml/memhtml.git",
+    "directory": "apps/mcp"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "dist",
+    "!dist/.tsbuildinfo"
+  ],
   "bin": {
     "memhtml-mcp": "./dist/bin.js"
   },
@@ -16,6 +28,9 @@
       "types": "./dist/bin.d.ts",
       "default": "./dist/bin.js"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -b",

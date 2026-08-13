@@ -1,9 +1,21 @@
 {
   "name": "@memhtml/contracts",
   "version": "0.1.0",
-  "private": true,
-  "type": "module",
   "description": "Schemas, enums, errors, and path algebra. Zero I/O.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/memhtml/memhtml.git",
+    "directory": "packages/contracts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "dist",
+    "!dist/.tsbuildinfo"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -29,6 +41,9 @@
       "types": "./dist/types.d.ts",
       "default": "./dist/types.js"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -b",

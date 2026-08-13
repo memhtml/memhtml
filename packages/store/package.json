@@ -1,9 +1,21 @@
 {
   "name": "@memhtml/store",
   "version": "0.1.0",
-  "private": true,
-  "type": "module",
   "description": "Git-backed file store: read, write, move, commit, status.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/memhtml/memhtml.git",
+    "directory": "packages/store"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "dist",
+    "!dist/.tsbuildinfo"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -13,6 +25,9 @@
       "types": "./dist/testing.d.ts",
       "default": "./dist/testing.js"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -b",

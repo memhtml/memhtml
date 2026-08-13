@@ -1,0 +1,108 @@
+# Releases are cut by release-please from Conventional Commit subjects and published to
+# npm by the publish job below, authenticated with OIDC trusted publishing — no npm token
+# lives in any secret. RELEASING.md documents the flow, the bootstrap, and the failure
+# signatures.
+#
+# One workflow, two jobs, on purpose: a second workflow keyed on `release: [published]`
+# would never fire, because GitHub does not start workflow runs from events raised by the
+# default GITHUB_TOKEN, and release-please tags with that token.
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+# Least privilege at the top, granted per job below. `id-token: write` in particular must
+# never reach the release-please job — only the step that publishes needs an OIDC token.
+permissions: {}
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    # Manifest mode emits per-path outputs, not the single-package `tag_name`. The
+    # linked-versions plugin releases all twelve paths together, so `releases_created`
+    # is the group signal and any one path's tag names the same tree — apps/cli's is
+    # used because the CLI is the anchor package.
+    outputs:
+      release_created: ${{ steps.release.outputs.releases_created }}
+      tag_name: ${{ steps.release.outputs['apps/cli--tag_name'] }}
+    steps:
+      # @v5, not the @v4 the action's own README still shows: v4 runs on the deprecated
+      # node20 runtime. The twelve workspace packages move in lockstep through the
+      # linked-versions plugin in release-please-config.json, so one release PR bumps all
+      # twelve manifests plus the two source constants annotated with
+      # `x-release-please-version` (apps/cli/src/commands.ts, apps/mcp/src/server.ts).
+      - uses: googleapis/release-please-action@v5
+        id: release
+
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The OIDC token npm exchanges for a short-lived publish credential. This is the
+      # whole reason there is no NPM_TOKEN secret anywhere in this repo.
+      id-token: write
+    steps:
+      # The TAG, not the branch: `main` has already moved on by the time this runs, and
+      # the bytes that get published have to be the bytes that were released.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      # No `version:` — action-setup ERRORS when the workflow pins a version while
+      # package.json's `packageManager` also pins one. That field is the single source of
+      # truth, and it must be >= 11.1.3: earlier pnpm sends the literal
+      # `${NODE_AUTH_TOKEN}` that setup-node writes as a bearer token and 404s before
+      # OIDC can engage (pnpm#11513).
+      - uses: pnpm/action-setup@v6
+
+      # `registry-url` is what writes the .npmrc that scopes the registry, and OIDC never
+      # engages without it.
+      #
+      # NODE_AUTH_TOKEN is deliberately NOT set — not even to an empty string. npm falls
+      # back to OIDC only when no static credential resolves, and an empty string is
+      # still a credential.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: pnpm install --frozen-lockfile
+
+      # Chrome's zygote sandbox needs unprivileged user namespaces, which the Ubuntu
+      # 24.04 runner image restricts through AppArmor — same step as check.yml, same
+      # reason: the a11y and budget gates drive a sandboxed headless Chrome.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # The Playwright Chromium those gates drive; a no-op when the version is cached.
+      - run: pnpm exec playwright install chromium --with-deps
+        working-directory: apps/docs
+
+      # The full gate again, on the tag. release-please opens its PR with the default
+      # GITHUB_TOKEN, and GitHub starts no workflow runs from that token's events, so the
+      # release PR itself runs NO CI. This step is the only gate on a release's contents.
+      # Do not remove it to save minutes.
+      - run: pnpm check
+
+      # Build once at the root so workspace deps exist before any package packs.
+      - run: pnpm build
+
+      # `--no-git-checks` because this is a detached checkout of a tag, and pnpm's
+      # default branch check rejects anything that is not the publish branch.
+      #
+      # `--tag latest` explicitly rather than relying on `publishConfig`: pnpm 11's
+      # native publish has open regressions ignoring publishConfig.access (#11728) and
+      # publishConfig.registry (#11419), so the flag is the signal known to be read.
+      #
+      # `-r` with a filter: the twelve public packages ship; the docs site and the
+      # integration-test package stay private and are skipped by pnpm automatically,
+      # the filter just makes the intent visible.
+      #
+      # No `--provenance`: trusted publishing generates the attestation automatically.
+      - run: pnpm -r --filter '!@memhtml/docs' publish --no-git-checks --tag latest

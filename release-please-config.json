@@ -1,0 +1,76 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "bootstrap-sha": "7eaad048e441b044fee930f9cee38452701931bb",
+  "separate-pull-requests": false,
+  "plugins": [
+    {
+      "type": "linked-versions",
+      "groupName": "memhtml",
+      "components": [
+        "cli",
+        "mcp",
+        "consolidator",
+        "contracts",
+        "domain",
+        "eval",
+        "html",
+        "index",
+        "llm",
+        "sleep",
+        "store",
+        "traces"
+      ]
+    }
+  ],
+  "packages": {
+    "apps/cli": {
+      "component": "cli",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "src/commands.ts"
+        }
+      ]
+    },
+    "apps/mcp": {
+      "component": "mcp",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "src/server.ts"
+        }
+      ]
+    },
+    "apps/consolidator": {
+      "component": "consolidator"
+    },
+    "packages/contracts": {
+      "component": "contracts"
+    },
+    "packages/domain": {
+      "component": "domain"
+    },
+    "packages/eval": {
+      "component": "eval"
+    },
+    "packages/html": {
+      "component": "html"
+    },
+    "packages/index": {
+      "component": "index"
+    },
+    "packages/llm": {
+      "component": "llm"
+    },
+    "packages/sleep": {
+      "component": "sleep"
+    },
+    "packages/store": {
+      "component": "store"
+    },
+    "packages/traces": {
+      "component": "traces"
+    }
+  }
+}

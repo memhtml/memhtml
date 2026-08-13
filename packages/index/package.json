@@ -1,14 +1,31 @@
 {
   "name": "@memhtml/index",
   "version": "0.1.0",
-  "private": true,
-  "type": "module",
   "description": "SQLite schema, migrations, the git-driven indexer, and four-arm retrieval.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/memhtml/memhtml.git",
+    "directory": "packages/index"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "dist",
+    "migrations",
+    "state-migrations",
+    "!dist/.tsbuildinfo"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -b",
