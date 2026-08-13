@@ -107,10 +107,9 @@ memhtml sleep review sleep/2026-08-12
 memhtml sleep review sleep/2026-08-12 --diff
 ```
 
-The per-file classification is the substance here. `git diff --stat` tells you a file changed by two
-lines and says nothing about whether those two lines were a confidence stamp or the memory's claim.
-Review hashes each file's article content on both sides of the change and compares the two hashes
-(`packages/sleep/src/review.ts:170`):
+`git diff --stat` tells you a file changed by two lines and says nothing about whether those two
+lines were a confidence stamp or the memory's claim. Review hashes each file's article content on
+both sides of the change and compares the two hashes (`packages/sleep/src/review.ts:170`):
 
 | Classification | What it is | Read it? |
 |---|---|---|
@@ -207,11 +206,11 @@ depending on a token being valid at 3am. See
 the corpus and archives memories, so the branch waits for a person to read `memhtml sleep review`
 first.
 
-The division of labour is the one the whole system uses: conflict detection runs nightly and
-automatically, and conflict resolution stays with the writer or a human. Choosing a winner between two
+Conflict detection runs nightly and automatically, and conflict resolution stays with the writer or
+a human, which is the division of labour the whole system uses. Choosing a winner between two
 contradictory memories is a one-way door.
 
-For an AI agent, sleep is deliberately absent from the MCP tool surface, so do not try to start a
-curation run mid-conversation. If you found a contradiction yourself, `memhtml correct` is your verb.
+For an AI agent, sleep is absent from the MCP tool surface, so do not try to start a curation run
+mid-conversation. If you found a contradiction yourself, `memhtml correct` is your verb.
 
 [The sleep pipeline](/internals/the-sleep-pipeline/) covers the phases in detail.

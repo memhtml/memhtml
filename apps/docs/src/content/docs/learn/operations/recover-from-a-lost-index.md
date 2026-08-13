@@ -19,7 +19,7 @@ memhtml doctor                    # expect healthy
 memhtml eval discriminate         # expect passed true
 ```
 
-## Order matters
+## Run them in this order
 
 Run `memhtml init` first, because the merge driver it configures lives in this clone and nowhere else.
 `.gitattributes` travels with the clone and the `merge.ours.driver` config does not, so until you run
@@ -91,9 +91,9 @@ memhtml state import
 memhtml index rebuild --embed
 ```
 
-And if only the database file is gone and you do nothing at all, the cron heals it. `memhtml index
-update` with no recorded watermark falls through to a rebuild on its own
-(`packages/index/src/indexer.ts:565`), so the next scheduled pass just takes longer than usual.
+If only the database file is gone, the next cron pass rebuilds it with no action from you.
+`memhtml index update` with no recorded watermark falls through to a rebuild on its own
+(`packages/index/src/indexer.ts:565`), so that pass just takes longer than usual.
 
 ## What a rebuild leaves alone
 

@@ -2,7 +2,7 @@
 -- so every column here is a pointer or a capped head, never a copy.
 --
 -- Firewalled from retrieval. Nothing in the retrieval SQL assembler names `traces` or
--- `trace_prompts`, and a test greps every assembled statement to prove it — the schema separation
+-- `trace_prompts`, and a test greps every assembled statement to prove it. The schema separation
 -- the predecessor memory system got from a second Postgres schema is a table-name firewall here.
 
 CREATE TABLE traces (

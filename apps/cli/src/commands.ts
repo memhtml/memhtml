@@ -82,7 +82,7 @@ const SCOPE_FLAGS: ReadonlyArray<FlagSpec> = [
     // is one reference at a time. Same spelling `memhtml list --entity` takes, so the two are one
     // vocabulary rather than two facets that happen to share a word.
     description:
-      "Restrict to memories carrying one `type:name` entity reference, e.g. service:checkout-api — the form a hit's `entities` publishes, so a hop is a copy. A scope matching nothing returns no hits and says so; it never widens."
+      "Restrict to memories carrying one `type:name` entity reference, e.g. service:checkout-api, the form a hit's `entities` publishes, so a hop is a copy. A scope matching nothing returns no hits and says so; it never widens."
   },
   {
     name: "include-archived",
@@ -104,8 +104,8 @@ const SCOPE_FLAGS: ReadonlyArray<FlagSpec> = [
  * what the binary actually accepts rather than what someone remembered to document.
  *
  * A subcommand is one entry with a space in its name (`index rebuild`), not a nested tree.
- * Flattening keeps `nearest()` able to suggest across the whole surface — a typo in the noun
- * (`memhtml indx rebuild`) and a typo in the verb (`memhtml index rebiuld`) both get a candidate — and
+ * Flattening keeps `nearest()` able to suggest across the whole surface, a typo in the noun
+ * (`memhtml indx rebuild`) and a typo in the verb (`memhtml index rebiuld`) both get a candidate, and
  * keeps one table driving parsing, the manifest, and the generated doc.
  */
 export const COMMANDS: ReadonlyArray<CommandSpec> = [
@@ -208,14 +208,14 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "continue-on-error",
         type: "boolean",
         description:
-          "Best-effort: a refused op is reported and skipped while every surviving op lands in the one commit. Atomic by default — the first refused op aborts the batch and nothing is written.",
+          "Best-effort: a refused op is reported and skipped while every surviving op lands in the one commit. Atomic by default. The first refused op aborts the batch and nothing is written.",
         default: false
       },
       {
         name: "detect-conflicts",
         type: "boolean",
         description:
-          "Report each op's frame-matches as a per-op `conflict`: the ACTIVE memory (or the earlier op) whose claim occupies the same subject-and-relation slot. PROPOSE-ONLY — every op still writes exactly as it would have, because sometimes the contradiction is the answer. You decide: write anyway, `memhtml correct` the match, or drop the line.",
+          "Report each op's frame-matches as a per-op `conflict`: the ACTIVE memory (or the earlier op) whose claim occupies the same subject-and-relation slot. PROPOSE-ONLY: every op still writes exactly as it would have, because sometimes the contradiction is the answer. You decide: write anyway, `memhtml correct` the match, or drop the line.",
         default: false
       },
       {
@@ -223,7 +223,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         type: "string",
         values: ["last-wins"],
         description:
-          "Resolve frame-key matches instead of only reporting them: `--consolidate last-wins` makes the LATER op's value win a shared claim slot — one file, written at the FIRST index that claimed the slot, with each later restatement reporting `consolidated_into` naming that slot — and archives a stored ACTIVE memory a surviving slot displaces, reported as `superseded_path`. Off by default; claims with no frame shape are never consolidated."
+          "Resolve frame-key matches instead of only reporting them: `--consolidate last-wins` makes the LATER op's value win a shared claim slot (one file, written at the FIRST index that claimed the slot, with each later restatement reporting `consolidated_into` naming that slot) and archives a stored ACTIVE memory a surviving slot displaces, reported as `superseded_path`. Off by default; claims with no frame shape are never consolidated."
       },
       {
         name: "session-id",
@@ -403,7 +403,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   /**
    * The task family: CRUDL over the 10th memory type, without retrieval.
    *
-   * Sugar over the same use cases everything else uses — `task add` is `writeMemory` with
+   * Sugar over the same use cases everything else uses: `task add` is `writeMemory` with
    * `--type task`, and `task status` is one head meta plus (for `done`) the archive machinery. The
    * design intent is that an agent works tasks with `Read`, `Edit`, and `ls` as readily as with these:
    * a task is a file in a directory, and this family exists so the common moves are one call rather
@@ -625,7 +625,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "skip-gate",
         type: "boolean",
         description:
-          "Merge without re-running discrimination. A deliberate, logged override — never a default.",
+          "Merge without re-running discrimination. A deliberate, logged override, never a default.",
         default: false
       }
     ],
@@ -709,7 +709,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
    *
    * **How does the script arrive?** Three doors, exactly one per call, enforced in `validate` so a
    * wrong combination is exit 2. `--file` for a script under version control, `--script` for the
-   * inline one-liner an agent composes, and a bare `memhtml exec` (or `-`) for stdin — which is the same
+   * inline one-liner an agent composes, and a bare `memhtml exec` (or `-`) for stdin, which is the same
    * three-door shape and the same `-` spelling `memhtml apply` already uses for its op stream, so an
    * agent that learned one learned both. `--script` and not a positional argument: the positional
    * slot on a two-word command is where a run-id or a path goes on every other command here, and a
@@ -722,7 +722,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
    *
    * **Which tree does it see?** `--sha`, defaulting to `HEAD`. Never the live working tree, and that
    * is a containment decision, not a convenience: a mounted `$MEMHTML_ROOT` exposes `.memhtml/index.db` to
-   * the guest, whose `sqlite3` reads it happily (probed 2026-08-09 — a read-only mount is no barrier
+   * the guest, whose `sqlite3` reads it happily (probed 2026-08-09: a read-only mount is no barrier
    * to a reader). A gitignored file is ABSENT from a detached worktree, so pinning a commit is what
    * keeps the ranked planes out of reach, and the read-only mount is the second layer rather than
    * the only one. A pin also makes the answer reproducible: `sha` rides back in the envelope, so a
@@ -730,7 +730,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
    *
    * There is deliberately no flag for the guest's own opt-ins. `javascript` is on because `js-exec`
    * IS the feature; `python` and `network` are off and unofferable, so no invocation can turn either
-   * on — `apps/cli/src/exec.ts` carries the mechanism and the egress probe.
+   * on. `apps/cli/src/exec.ts` carries the mechanism and the egress probe.
    */
   {
     name: "exec",
@@ -769,7 +769,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   {
     name: "state export",
     summary:
-      "Write .memhtml/state/access.jsonl — the only durable copy of the state plane — and commit.",
+      "Write .memhtml/state/access.jsonl, the only durable copy of the state plane, and commit.",
     args: [],
     flags: [],
     responseTypes: ["state.export"]
@@ -816,7 +816,7 @@ export interface GuideBlock {
 /**
  * The example op line, quoted verbatim into the `when-to-batch` block.
  *
- * A constant rather than a literal inside the prose, because a test PARSES it — an example an agent
+ * A constant rather than a literal inside the prose, because a test PARSES it. An example an agent
  * copies has to be valid JSONL, and the way that stays true is that the doc and the parser read the
  * same bytes. A prose-only example drifts silently the first time a field is renamed.
  */
@@ -826,7 +826,7 @@ export const GUIDE_OP_EXAMPLE =
 /**
  * The guide: what an agent reads on its FIRST call, before it has written anything.
  *
- * Prose, in a structured field, authored HERE beside `COMMANDS` — which is the whole design (spec
+ * Prose, in a structured field, authored HERE beside `COMMANDS`, which is the whole design (spec
  * D8/G6). The manifest carries it on a bare `memhtml`, `memhtml help`, `memhtml --help`, and `memhtml manifest`, and
  * `memhtml agents-doc` renders these same strings into `AGENTS.md`, so the doc and the live answer cannot
  * disagree. Prose kept in a separate Markdown file would be a second copy that drifts, and prose kept
@@ -843,7 +843,7 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "You are reading this CLI's manifest: every command, argument, flag, response type, error code, " +
       "and environment variable the binary accepts. A bare `memhtml`, `memhtml help`, `memhtml --help`, and " +
       "`memhtml manifest` all return it, and all four answer on a machine with no repo, no database, and " +
-      "no credentials — so this is also the liveness check when something else has failed. " +
+      "no credentials, so this is also the liveness check when something else has failed. " +
       "Every command writes exactly ONE JSON envelope to stdout and nothing else; logs go to stderr. " +
       "A success is `{apiVersion, type, data}` and a failure is `{apiVersion, error, code, suggestions}`. " +
       "Branch on `code`, never on the `error` prose: the codes and response types are append-only and a " +
@@ -857,7 +857,7 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
     body:
       "There are three ways to put a memory into the corpus, and they are all legitimate. " +
       "First, this CLI: `memhtml write` for one memory, `memhtml apply` for many. " +
-      "Second, the MCP server — `memhtml serve mcp` speaks stdio with 14 tools and 2 resources over this " +
+      "Second, the MCP server: `memhtml serve mcp` speaks stdio with 14 tools and 2 resources over this " +
       "same repo, and it is the door to use when you are already an MCP client. " +
       "Third, editing files under $MEMHTML_ROOT directly with your normal file tools: the git tree IS the " +
       "system of record and `.memhtml/index.db` is only a projection of it, so a hand-written or hand-edited " +
@@ -866,12 +866,12 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "What you take on by editing directly is everything the write path would have done for you: the " +
       "file must satisfy the format (run `memhtml doctor`, and `memhtml read <path>` reports per-file format " +
       "warnings), you own choosing a path that does not collide, you own noticing that the content " +
-      "already exists somewhere else, and you own the commit — the nightly `memhtml sleep run` refuses to " +
+      "already exists somewhere else, and you own the commit. The nightly `memhtml sleep run` refuses to " +
       "start on a dirty tree, so an uncommitted edit blocks curation until it is committed or stashed. " +
       "A CLI command and a running `memhtml serve mcp` may share one store: the index is WAL SQLite, " +
       "which admits one writer at a time and any number of concurrent readers, so a second writer " +
       "waits its turn rather than failing. The one thing to keep clear of is `memhtml sleep run`, and " +
-      "for a git reason rather than a database one — a run holds a checked-out `sleep/<date>` branch, " +
+      "for a git reason rather than a database one: a run holds a checked-out `sleep/<date>` branch, " +
       "so a write landing during it commits onto that branch and is merged as if it were curation or " +
       "lost when the branch is dropped."
   },
@@ -882,14 +882,14 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "instead of running `memhtml write` N times. A batch stages every file, makes ONE commit, and " +
       "reindexes ONCE, where N separate writes make N commits and pay N index passes over N diffs. " +
       "Pass the stream as `memhtml apply --file ops.jsonl`, or pipe it: `memhtml apply -` and a bare `memhtml apply` " +
-      "both read stdin. One complete JSON object per line, no wrapping array, no pretty-printing — a " +
+      "both read stdin. One complete JSON object per line, no wrapping array, no pretty-printing. A " +
       "line looks like this:\n" +
       `${GUIDE_OP_EXAMPLE}\n` +
       "`op` is `write` (the only verb in the vocabulary today), `title` and `type` are required, and each " +
       "op carries the same optional fields `memhtml write` takes, in snake_case: `path`, `workspace`, `tag`, " +
       "`entity`, `importance`, `confidence`, `session_id`, `prompt_id`, `turn_uuid`. " +
       "The whole file is validated for shape before ANY op executes, so a malformed line 7 is exit 2 " +
-      "naming line 7 with nothing written — a failed apply costs you nothing but the call. " +
+      "naming line 7 with nothing written. A failed apply costs you nothing but the call. " +
       "You get one result per op in INPUT ORDER, each naming its own `index`, so you can match results " +
       "back to the lines you sent. " +
       "A batch is ATOMIC by default: the first refused op aborts the whole batch, no file is written, no " +
@@ -898,7 +898,7 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "`error` while every op that succeeded lands in the one commit. " +
       "A duplicate is never an error: an op whose exact content is already stored comes back `ok: true` " +
       "with `deduped: true` and the existing path, so re-applying a file you already applied is safe and " +
-      "writes nothing. `commit_sha` is null exactly when nothing was committed — a batch that only " +
+      "writes nothing. `commit_sha` is null exactly when nothing was committed: a batch that only " +
       "deduped, or one that aborted."
   },
   {
@@ -906,7 +906,7 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
     body:
       "Pass `--detect-conflicts` to `memhtml apply` and each result gains a `conflict` field naming what " +
       "that op's claim contradicts. Dedupe catches an op whose content is IDENTICAL to something stored; " +
-      "this catches an op that says something DIFFERENT about the same thing — the case dedupe is blind " +
+      "this catches an op that says something DIFFERENT about the same thing, the case dedupe is blind " +
       "to and the one that actually rots a corpus. " +
       "The match is grammatical, not semantic: a claim is split into a frame (the subject and relation, " +
       "up to its last `of`/`is`/`in`/`to`/`by`/`as`) and a value, and two claims conflict when they share " +
@@ -914,41 +914,41 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "`conflict.path` names an ACTIVE memory already holding that slot; `conflict.batch_index` names an " +
       "EARLIER op in this same call, which is the case nothing else can see because neither op is stored " +
       "yet; `conflict.claim` is the other claim's own text, so you can decide without a second read. " +
-      "It is null when nothing matched, and also when the claim has no frame shape — the rule refuses " +
+      "It is null when nothing matched, and also when the claim has no frame shape. The rule refuses " +
       "frames under three tokens and values over six, so short claims and claims trailed by a clause are " +
       "deliberately unmatched rather than loosely matched. On a line using `article_html` instead of " +
       "`body` it is always null, because the claim lives inside your markup and is not read until the " +
       "store renders it. " +
       "THE ASSIST NEVER CHANGES WHAT IS WRITTEN. An op carrying a conflict is written exactly as it " +
       "would have been without the flag: nothing is archived, nothing is refused, and later does not win. " +
-      "That is deliberate, because sometimes the contradiction IS the answer — a memory recording that a " +
+      "That is deliberate, because sometimes the contradiction IS the answer. A memory recording that a " +
       "runbook step changed necessarily contradicts the memory stating the old step, and a system that " +
       "resolved that for you would delete the pair a reader needs in order to see the change at all. " +
       "You decide per conflict: keep both (they are about different things, or both are true), " +
       "`memhtml correct <path>` instead (the new claim supersedes the old one, and the old one stays readable " +
       "under archive/), or drop the line (you were about to restate something already stored). " +
       "Archived memories never match, so a superseded claim stops contradicting the claim that superseded it.\n" +
-      "When you have already decided that later wins — a re-scrape, a settings sync, any stream where " +
-      "each line is the newest statement of its slot — pass `--consolidate last-wins` (the batch tool's " +
+      "When you have already decided that later wins (a re-scrape, a settings sync, any stream where " +
+      "each line is the newest statement of its slot), pass `--consolidate last-wins` (the batch tool's " +
       '`consolidate: "last-wins"`) and the batch RESOLVES those matches instead of reporting them. ' +
       "Ops sharing a frame key write ONE file carrying the LATER value at the FIRST index that claimed " +
       "the slot; each later restatement reports `consolidated_into` naming that slot and the summary " +
       "counts it under `consolidated`, neither written nor failed. A stored ACTIVE memory occupying a " +
       "surviving slot is archived with a supersedes link from the new file, its archive path reported " +
-      "as `superseded_path` — the same chain `memhtml correct` leaves, so ancestry reads identically. " +
+      "as `superseded_path`, the same chain `memhtml correct` leaves, so ancestry reads identically. " +
       "OFF by default, and the key is the conflict rule's own: the frame split is a rule measured in " +
       "the eval harness before it was believed and ported verbatim into `@memhtml/domain`'s frame.ts, " +
-      "which detection and consolidation share — so anything the rule refuses to key (short frames, " +
+      "which detection and consolidation share, so anything the rule refuses to key (short frames, " +
       "clause values) is never consolidated, and what you saw reported with `--detect-conflicts` is " +
       "exactly what this flag would have acted on.\n" +
-      "Every supersede — `memhtml correct` and `--consolidate last-wins` alike — also stamps a VALIDITY " +
+      "Every supersede, `memhtml correct` and `--consolidate last-wins` alike, also stamps a VALIDITY " +
       "WINDOW, in the same one commit. The superseded memory gains `memhtml-valid-until` set to the " +
       "moment the new fact became true (the winner's own `memhtml-valid-from`, else its first " +
       "`<time datetime>`, else the operation's instant), and the winner gains `memhtml-valid-from` at " +
-      "that same moment — so one window closes exactly where the next opens. Min-wins: a memory " +
+      "that same moment, so one window closes exactly where the next opens. Min-wins: a memory " +
       "already stating an EARLIER `memhtml-valid-until` keeps it, because a fact cannot outlive its " +
       "earliest stated bound. That is what `--as-of` on `memhtml search` reads: pass an ISO instant and " +
-      "the result is what was believed valid AT THAT MOMENT — since-superseded memories return, each " +
+      "the result is what was believed valid AT THAT MOMENT. Since-superseded memories return, each " +
       "marked `superseded_by` naming what replaced it, and facts not yet valid then are absent. " +
       "History is read from the files, not replayed from git, so it survives a full index rebuild."
   },
@@ -956,14 +956,14 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
     topic: "authoring",
     body:
       "Every write authors the article in exactly one of two ways, and supplying both or neither is " +
-      "refused. Either you write prose and the template owns the markup — `--claim` is the one " +
+      "refused. Either you write prose and the template owns the markup (`--claim` is the one " +
       "load-bearing sentence and becomes the `<mark>` claim span and `files.gist`, and each `--body` " +
-      "is one paragraph after it — or you supply `--article-html` and own the markup yourself. " +
+      "is one paragraph after it) or you supply `--article-html` and own the markup yourself. " +
       "On a `memhtml apply` line the prose form is the `body` field, whose first sentence becomes the claim, " +
       "and the markup form is `article_html`. " +
       "When you supply markup you own two constraints. It must contain EXACTLY ONE `<mark>`, and that " +
       "`<mark>` must sit in the article's first `<p>` or `<li>` and not inside an `<aside>` or " +
-      "`<details>` — the claim leads the article and is never a caveat or behind a fold. And the first " +
+      "`<details>`. The claim leads the article and is never a caveat or behind a fold. And the first " +
       "`<time datetime>` in your markup becomes the memory's event time, which is what recency ranks " +
       "on, so a memory about something that happened last year should say so rather than being ranked " +
       "as today's news. " +
@@ -973,7 +973,7 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "the markup and retry. " +
       "Code goes in the prose path as a fenced block: a body paragraph that is entirely a ``` fence " +
       "becomes <figure><pre><code>, whitespace preserved verbatim, and the fence's info string " +
-      "(```ts) is stamped as data-lang and promoted to a `lang:ts` entity — so `memhtml list --entity " +
+      "(```ts) is stamped as data-lang and promoted to a `lang:ts` entity, so `memhtml list --entity " +
       "lang:ts` finds every memory carrying TypeScript. A blank line inside a fence does NOT split " +
       'paragraphs. On the markup path write the same <figure><pre><code data-lang="ts"> yourself; ' +
       "never `class` (forbidden) and never `lang=` (that attribute names human languages)."
@@ -984,14 +984,14 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "Answering a question that takes MORE THAN ONE HOP through the corpus? Write it as a script and " +
       "run `memhtml exec` once, instead of spending a tool call per hop. Supersedence ancestry, live " +
       "contradiction pairs, orphan census, entity co-occurrence, 'which of these 40 paths has no " +
-      "backlink' — each of those is one traversal in code and N round trips through `memhtml read` and " +
+      "backlink': each of those is one traversal in code and N round trips through `memhtml read` and " +
       "`memhtml neighbors`. Measured on a 305-file corpus: a full census in 598ms, and 410 edges resolved " +
       "into 201 chains, longest 8 hops, in one execution at 430ms. " +
       "The script runs under QuickJS in a sandbox with the corpus mounted READ-ONLY at `/mnt/memhtml`, and " +
       "a helper is already seeded for you at `/workspace/lib/corpus.mjs`. Import it: " +
       '`import { corpus, backlinks, chain, edges } from "/workspace/lib/corpus.mjs"`. `corpus()` ' +
-      "returns a Map keyed by root-absolute path — the SAME string an edge's href holds, so " +
-      "`memories.get(link.href)` resolves with no path juggling — and each value carries `claim`, " +
+      "returns a Map keyed by root-absolute path (the SAME string an edge's href holds, so " +
+      "`memories.get(link.href)` resolves with no path juggling) and each value carries `claim`, " +
       "`memoryType`, `status`, `tags`, `entities`, `links`, `facets`, `citations`, `eventAt`, and a " +
       "`document` escape hatch for any selector the fields do not cover. " +
       "Print your answer as JSON on stdout with `console.log`; it comes back verbatim in `data.stdout`, " +
@@ -999,17 +999,17 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "THREE THINGS IT CANNOT DO, by design. It cannot write: the corpus is read-only and a write " +
       "answers EROFS, so every write still goes through `memhtml write` / `memhtml apply`, which own commits, " +
       "dedup, and conflict detection. It cannot rank: no cosine, no RRF, no salience, and no index " +
-      "database — for ranked retrieval shell out to `memhtml search --json` and parse its envelope, which " +
+      "database. For ranked retrieval shell out to `memhtml search --json` and parse its envelope, which " +
       "the one-envelope-per-command contract already makes a code-mode API. And it cannot reach the " +
       "network: there is no curl and the guest's `fetch` refuses on call. " +
       "The intended opening move is ranked retrieval FIRST, code-mode second: `memhtml search` or " +
       "`memhtml recall` to get the handful of paths the ranking stack says matter, then `memhtml exec` to walk, " +
       "join, count, and filter from there. Starting in code-mode means starting with a full-corpus scan " +
       "and no relevance signal. " +
-      "A non-zero `exitCode` in the response is YOUR script failing, not the command failing — read " +
+      "A non-zero `exitCode` in the response is YOUR script failing, not the command failing. Read " +
       "`data.stderr` for the diagnostic and the exit code is still 0. A script that runs past " +
       "`--timeout-ms` (default 30000) comes back `exitCode: 124` with `timedOut: true`. " +
-      "The tree you get is a pinned commit, HEAD by default, named in `data.sha` — so an answer is " +
+      "The tree you get is a pinned commit, HEAD by default, named in `data.sha`, so an answer is " +
       "reproducible with `--sha`, and an uncommitted edit is NOT visible to the script."
   }
 ]

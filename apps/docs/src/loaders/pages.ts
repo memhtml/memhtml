@@ -63,7 +63,7 @@ const flagType = (flag: FlagSpec): string =>
   flag.type === "boolean" ? "flag" : flag.type === "int" ? "integer" : "string"
 
 const flagDefault = (flag: FlagSpec): string =>
-  flag.default === undefined || flag.default === "" ? "—" : code(String(flag.default))
+  flag.default === undefined || flag.default === "" ? "*no default*" : code(String(flag.default))
 
 const synopsisFlag = (flag: FlagSpec): string =>
   flag.type === "boolean" ? `--${flag.name}` : `--${flag.name} <${flag.type}>`
@@ -104,7 +104,7 @@ const flagSection = (command: CommandSpec, base: string): Section => ({
             code(`--${flag.name}`),
             flagType(flag) + (flag.repeatable === true ? ", repeatable" : ""),
             flagDefault(flag),
-            flag.values === undefined ? "—" : codeList([...flag.values]),
+            flag.values === undefined ? "*no fixed set*" : codeList([...flag.values]),
             cell(flag.description) + (flag.required === true ? " **Required.**" : "")
           ])
         ),
@@ -487,13 +487,13 @@ const errorCodesPage = (registry: Registry, base: string): ReferencePage => {
       {
         title: "The codes",
         body: [
-          `The sources ship the codes as a bare list, and no sentence in them states what any one code means. So the columns below are the ones the sources do state: the typed domain failures the CLI translates into each code, the suggestions it offers for those failures, and every file that names the code. Where a row has neither a failure nor a file, this page has nothing further to tell you about that code, and the gap is in the sources rather than in the page.`,
+          `The sources ship the codes as a bare list, and no sentence in them states what any one code means. So the columns below are the ones the sources do state: the typed domain failures the CLI translates into each code, the suggestions it offers for those failures, and every file that names the code. A row with an empty second and fourth column is a code the sources name only in the vocabulary list.`,
           table(
             ["Code", "From these failures", "Suggestions", "Named in"],
             registry.errorCodes.map((row) => [
               code(row.code),
               codeList(row.tags),
-              row.suggestions.length === 0 ? "—" : codeList(row.suggestions),
+              row.suggestions.length === 0 ? "*none*" : codeList(row.suggestions),
               row.sites.length === 0 ? "*nowhere*" : codeList(row.sites)
             ])
           ),
@@ -840,7 +840,9 @@ const requirementsPage = (registry: Registry): ReferencePage => {
               cell(requirement.sentence),
               code(requirement.status),
               code(requirement.verificationMethod),
-              requirement.verificationNote === "" ? "—" : cell(requirement.verificationNote)
+              requirement.verificationNote === ""
+                ? "*none stated*"
+                : cell(requirement.verificationNote)
             ])
           )
         }))

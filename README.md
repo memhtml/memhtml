@@ -282,7 +282,8 @@ everything past the budget collapses to one index line plus a path to drill into
 
 ## The discrimination gate
 
-`memhtml eval discriminate` is the number that says whether retrieval can tell two similar facts apart.
+`memhtml eval discriminate` reports the number that says whether retrieval can tell two similar facts
+apart.
 Embeddings are weakest on the tokens that carry a fact's polarity: "drain the VIP before reverting" and
 "do not drain the VIP before reverting" sit above 0.99 cosine similarity while asserting opposite things.
 So the gate derives every control from the probe's own target by flipping a negation, a number, or a
@@ -290,10 +291,10 @@ qualifier, which makes each control a high-cosine wrong answer by construction. 
 strictly outrank all of its own controls, mean reciprocal rank has to clear 0.85, and one inversion fails
 the run.
 
-It gates two places. `pnpm check` runs it, and CI runs `pnpm check`. `memhtml sleep merge` runs it a second
+Two places run it. `pnpm check` runs it, and CI runs `pnpm check`. `memhtml sleep merge` runs it a second
 time, so a sleep run that degrades retrieval cannot land. Fake-embedder mode is deterministic and needs
-no credentials. `live` mode is an operator diagnostic, and it reports `skipped: true` when it cannot reach
-the model, so a skipped gate reads as skipped rather than as green.
+no credentials. `live` mode is an operator diagnostic, and it reports `skipped: true` when it cannot
+reach the model, so a skipped gate reads as skipped rather than as green.
 
 ## Sleep
 
@@ -384,10 +385,10 @@ envelope. `docs/code-mode.md` is the cookbook, with a measured helper and five r
 
 | benchmark | memhtml | published reference |
 |---|---|---|
-| MemoryAgentBench FactConsolidation single-hop (26KB–1.1MB stores) | 92–97% | ~60% at 26KB only |
-| MemoryAgentBench FactConsolidation multi-hop | 37–49% | ≤7% all methods |
-| BEAM Contradiction Resolution (100K split, 40 probes) | 43.8% mean | 0–5% all systems |
-| LongMemEval-S (25-instance smoke) | 68% | ~55–65% typical agent baselines |
+| MemoryAgentBench FactConsolidation single-hop (26KB to 1.1MB stores) | 92% to 97% | ~60% at 26KB only |
+| MemoryAgentBench FactConsolidation multi-hop | 37% to 49% | ≤7% all methods |
+| BEAM Contradiction Resolution (100K split, 40 probes) | 43.8% mean | 0% to 5% all systems |
+| LongMemEval-S (25-instance smoke) | 68% | ~55% to 65% typical agent baselines |
 
 Read the cross-judge numbers as reference points rather than as a ranking: the judges here are verbatim
 prompt ports running haiku-4.5, where the papers used gpt-4o and gpt-4.1-mini. `ROADMAP.md` carries these
@@ -466,9 +467,9 @@ this system have actually lived.
 | `mise run test:a11y` | `pnpm test:a11y` | WCAG 2.2 AA over the built docs site, in a real browser |
 | `mise run test:budget` | `pnpm test:budget` | Lighthouse category floors and the byte budget for that site |
 | `mise run gen:fixture` | `pnpm gen:fixture` | write a browsable fixture corpus (pure function of a seed) |
-| `mise run agents-doc` | — | regenerate `AGENTS.md` from the built CLI's own table |
-| `mise run security` | — | osv-scanner + semgrep + betterleaks, SARIF into `.sarif/` |
-| `mise run tools:bump` | — | re-resolve every `latest` tool in `mise.lock` |
+| `mise run agents-doc` | none | regenerate `AGENTS.md` from the built CLI's own table |
+| `mise run security` | none | osv-scanner + semgrep + betterleaks, SARIF into `.sarif/` |
+| `mise run tools:bump` | none | re-resolve every `latest` tool in `mise.lock` |
 
 To narrow a run to one package, use `mise run test-pkg <package> [vitest args]`. The package name takes
 either spelling, and everything after it goes to vitest:

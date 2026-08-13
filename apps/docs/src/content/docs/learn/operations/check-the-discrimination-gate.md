@@ -1,6 +1,6 @@
 ---
 title: Check the discrimination gate
-description: Run the one number that says whether retrieval works at all, read its report, and never mistake a skipped gate for a passing one.
+description: Run the gate, read its report, and tell a skipped run from a passing one.
 ---
 
 ```bash
@@ -69,10 +69,10 @@ memhtml eval discriminate
 and visible choice: a gate below that floor admits a target that loses to one of its own
 negation-flipped twins on one probe in seven.
 
-## fake is the mode that counts
+## fake is the mode CI measures
 
-`fake` uses a deterministic embedder, needs no credentials, and is the mode CI measures, so a pass
-there is the verdict this project ships on. It is also the mode `memhtml sleep merge` runs, which keeps
+`fake` uses a deterministic embedder and needs no credentials, so a pass there is the verdict this
+project ships on. It is also the mode `memhtml sleep merge` runs, which keeps
 a nightly merge from depending on a token being valid at 3am.
 
 `live` runs the same probes against Bedrock's actual vector space. Treat it as an operator diagnostic
@@ -84,9 +84,9 @@ rather than a CI gate.
 `skipped: true`, zero probes, `passed: false`, and a loud `logError` on stderr
 (`packages/eval/src/run.ts:85`).
 
-That combination is deliberate down to the log level. The failure being guarded against is a green
-pipeline over a gate that never ran, and operators filter warnings out. Reporting `passed: false` on a
-skip keeps a skipped quality gate looking like the failure it is.
+The failure being guarded against is a green pipeline over a gate that never ran, and operators
+filter warnings out, which is why the line is an error rather than a warning. Reporting
+`passed: false` on a skip keeps a skipped quality gate looking like the failure it is.
 
 Re-run with credentials, or run `--mode fake`.
 

@@ -7,7 +7,7 @@
 -- Every child table declares `ON UPDATE CASCADE` as well as `ON DELETE CASCADE`. `files.path` is the
 -- primary key AND it moves: eviction is a `git mv` into `archive/<YYYY>/`, so a rename is an UPDATE
 -- of a parent key. Foreign keys are immediate on this driver, so without `ON UPDATE CASCADE` that
--- UPDATE fails outright (probed 2026-08-02) — and a rename handled as a delete plus an insert would
+-- UPDATE fails outright (probed 2026-08-02), and a rename handled as a delete plus an insert would
 -- cascade the chunk rows away and take their embeddings with them, re-paying Bedrock for text that
 -- did not change.
 
@@ -101,7 +101,7 @@ CREATE TABLE file_facets (
 );
 CREATE INDEX file_facets_name ON file_facets (name);
 
--- <cite> and <q cite>. `href` is the quotation's source URI when the file gave one — an
+-- <cite> and <q cite>. `href` is the quotation's source URI when the file gave one, an
 -- arbitrary URI, not necessarily a memory path, so it is deliberately unconstrained.
 CREATE TABLE file_citations (
   path TEXT NOT NULL REFERENCES files (path) ON DELETE CASCADE ON UPDATE CASCADE,

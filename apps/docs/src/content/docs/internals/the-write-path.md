@@ -9,11 +9,11 @@ description: How ordering does the duplicate detection, why a batch is one commi
 checks the result, hashes the article text, asks whether that content already exists, claims a free
 path, writes the file, then stages and commits it.
 
-The order does the work. Asking the duplicate question before writing means a duplicate leaves the tree
-byte-identical, with nothing for the next `git status` to report. Writing first and checking afterwards
-would need a rollback, and rolling back a git operation introduces a second way to fail.
+Asking the duplicate question before writing means a duplicate leaves the tree byte-identical, with
+nothing for the next `git status` to report. Writing first and checking afterwards would need a
+rollback, and rolling back a git operation introduces a second way to fail.
 
-## 2. Content-hash dedup is enforced twice
+## 2. Two independent checks refuse a duplicate
 
 The write path calls an injected `dedupeLookup` (`packages/store/src/store.ts:156`, wired to
 `activePathForHash` at `packages/index/src/traces-persist.ts:162`). On a hit it returns the existing
@@ -29,11 +29,11 @@ A partial unique index in the database refuses the duplicate independently:
 index does, so the question and the answer agree because they share one predicate and not because two
 authors remembered to keep them aligned.
 
-Tasks are excluded from duplicate detection in both directions
-(`packages/store/src/store.ts:292-303`). Two open tasks with identical bodies are two real work items.
-A memory whose article matches a task's must not be folded onto that task either, or the caller gets a
-task's path handed back as the home of its fact. One predicate covers both directions, which keeps a
-`memoryType !== "task"` test out of the three places the batch path touches its hash map.
+Duplicate detection skips tasks in both directions (`packages/store/src/store.ts:292-303`). Two open
+tasks with identical bodies are two real work items. A memory whose article matches a task's must
+not be folded onto that task either, or the caller gets a task's path handed back as the home of its
+fact. One predicate covers both directions, which keeps a `memoryType !== "task"` test out of the
+three places the batch path touches its hash map.
 
 ## 3. Batch write is one commit and one index pass
 
@@ -47,7 +47,7 @@ the watermark. The watermark is the commit sha the index has caught up to, store
 the reindex is gated on a file having actually been written. Moving the watermark for a commit that
 never happened is the bug that guard prevents.
 
-## 4. Atomicity is a two-phase fold
+## 4. A batch validates everything before it writes anything
 
 Figure 1 draws the fold and its four exits. Every exit produces the same envelope: one result per
 operation, in the order the caller supplied them.
@@ -72,7 +72,7 @@ Phase 2 writes, stages, and commits once. A failure there triggers `rollbackBatc
 (`packages/store/src/store.ts:524`), which clears the staged paths with `git reset -- <paths>`, because
 `git rm --cached` exits 128 on a path that was never staged.
 
-Three more properties of the fold matter:
+Three more choices inside the fold each prevent a specific loss:
 
 - The batch's duplicate oracle consults itself first and the store second
   (`packages/store/src/store.ts:565-599`), because the store's lookup reads the index and the index
@@ -93,13 +93,13 @@ matched against active non-task memories plus the batch's own earlier operations
 as a per-operation `conflict` naming the other claim and where it lives
 (`apps/cli/src/operations.ts:394`).
 
-The write itself is unaffected. There is no auto-archive, no last-writer-wins, and no refusal, because
-the contradiction is sometimes the answer: a memory recording that a runbook step changed necessarily
-contradicts the memory stating the old step, and a resolver would destroy the pair a later reader needs
-in order to see the change at all. The caller keeps both, calls `memory_correct` on the match, or skips.
-That is a settled decision rather than a first-version limitation.
+The write itself lands unchanged, and the caller resolves the match. A memory recording that a
+runbook step changed necessarily contradicts the memory stating the old step, and the pair is what
+tells a later reader that the step moved, so a resolver that picked the newer one would destroy what
+that reader needs. The caller keeps both, calls `memory_correct` on the match, or skips. That is a
+settled decision rather than a first-version limitation.
 
-Three properties follow from it:
+The assist therefore carries three limits:
 
 - The assist cannot block a write. `detectFrameConflicts` returns `Effect<…, never>` and turns a lookup
   failure into an empty map with a logged warning, matching how `bumpAccess` and `recordLink` behave, so
@@ -130,9 +130,9 @@ extracts it on the first index pass, so `frameKeyOf` has nothing to work with. D
 operations layer would mean parsing every operation's article before the store renders it: a second
 parse of the same bytes, and a second place the gist rule could drift away from the parser.
 
-`summary` counts no conflicts. Its five numbers partition the operations exactly, and a conflict is not
-an outcome, since the operation wrote. Adding a field later stays possible; adding a sixth number a
-client cannot reconcile with the other five does not.
+`summary` counts no conflicts. Its five numbers partition the operations exactly, and a conflict is
+not an outcome, since the operation wrote. A later release can add a field. It cannot add a sixth
+number that a client could not reconcile with the other five.
 
 ## 6. Correction and archive
 
@@ -145,7 +145,7 @@ Archive (`packages/store/src/store.ts:808`) is a `git mv` plus the metadata stam
 (`packages/store/src/store.ts:397`) creates the destination's parent directory first, because `git mv`
 refuses a destination whose parent does not exist and the year partition is new every January.
 
-## 7. Provenance is recorded in both planes
+## 7. The writer records provenance in both planes
 
 The writer stamps `memhtml-session`, `memhtml-prompt`, and `memhtml-turn` into the head, and attaches
 `Memhtml-Session` and `Memhtml-Prompt` commit trailers

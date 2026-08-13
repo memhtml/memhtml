@@ -85,12 +85,12 @@ rm "$MEMHTML_ROOT"/.memhtml/index.db "$MEMHTML_ROOT"/.memhtml/index.db-*
 memhtml index rebuild --embed
 ```
 
-The `index.db-*` glob matters: it takes the write-ahead log and shared-memory files with it. Nothing
+The `index.db-*` glob takes the write-ahead log and shared-memory files with it. Nothing
 in the tree is at risk, and `state.db` is a separate file this command leaves untouched.
 
-The guard is doing its job here. A half-migrated index, holding some vectors from one model and some
-from another, would return similarity scores computed against two different geometries and would
-never say so.
+A half-migrated index, holding some vectors from one model and some from another, would return
+similarity scores computed against two different geometries and would never say so, which is the
+failure the guard prevents.
 
 ## Reading index status
 

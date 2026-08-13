@@ -50,10 +50,10 @@ absent from the figure is order-independent of every other phase, which the tabl
 ```d2 pad=20 src="_figures/phase-order.d2" title="Four dependency edges among six phases. Phase 2 dedup-merge points at phase 10 compress and at phase 9 retention-triage, both labelled post-merge set. Phase 3 entity-resolution points at phase 4 person-links, labelled aliases merged first. Phase 7 confidence-decay points at phase 9 retention-triage, labelled scores the decayed value. Compress is drawn as a hexagon because it calls a model; the other five are deterministic."
 ```
 
-**Figure 2: the fixed order exists to satisfy four edges.** Nine of the fifteen phases appear nowhere in
-this graph, and that absence is the useful reading: the order among them is arbitrary and could change
-without consequence. The hexagon marks the one phase here that calls a model, which is also why
-`compress` archives a member only when the model names it as absorbed.
+**Figure 2: the fixed order exists to satisfy four edges.** Nine of the fifteen phases appear
+nowhere in this graph, so the order among them is arbitrary and could change without consequence.
+The hexagon marks the one phase here that calls a model, which is also why `compress` archives a
+member only when the model names it as absorbed.
 
 Four phases call a model (`packages/sleep/src/contract.ts:71`). Every other phase is deterministic and
 costs no model call.
@@ -93,7 +93,7 @@ reporting write never fails a run (`packages/sleep/src/run.ts:434-439`).
 A resume reports already-done phases explicitly as `skipped`, so its report still accounts for all fifteen
 (`packages/sleep/src/run.ts:176-191`).
 
-## 4. Tasks are excluded from every phase
+## 4. Every phase excludes tasks
 
 `packages/sleep/src/sql.ts:33` applies the exclusion, and the reason differs by phase.
 
@@ -103,9 +103,9 @@ the retention scorer's bridge count. The `edges` CHECK cannot refuse it, because
 `memory` is well-formed whatever files sit at its ends
 (`packages/sleep/src/phases/relationship-mining.ts:32-38`).
 
-In `retention-triage` the reason is sharper. Recency and access dominate the score, so a task untouched
-for a month scores at the floor, and that is exactly the task most likely to still be owed. Evicting on
-that signal would archive the neglected work first and leave the busy work behind
+In `retention-triage` the reason is the score itself. Recency and access dominate it, so a task
+untouched for a month scores at the floor, and that is exactly the task most likely to still be
+owed. Evicting on that signal would archive the neglected work first and leave the busy work behind
 (`packages/sleep/src/phases/retention-triage.ts:24-28`).
 
 ## 5. Thresholds and caps
@@ -180,10 +180,11 @@ Determinism is a correctness requirement here. These scores feed the `pagerank` 
 signals, so a run-to-run reordering would change which memories get evicted on a corpus that did not change
 (`packages/domain/src/graph.ts:1-11`).
 
-Every source of ordering is pinned. Nodes are sorted before iteration so the floating-point summation order
-is fixed. Parallel edges are folded to their maximum strength. Label propagation visits in sorted order and
-breaks ties lexicographically rather than with a random seed. Community labels are canonicalized to the
-smallest member path, which makes the partition reproducible and not merely the grouping.
+The implementation pins every source of ordering. It sorts nodes before iteration, which fixes the
+floating-point summation order. It folds parallel edges to their maximum strength. Label propagation
+visits in sorted order and breaks ties lexicographically rather than with a random seed. It
+canonicalizes each community label to the smallest member path, so two runs produce the same labels
+as well as the same grouping.
 
 A community below three members collapses to `undefined`
 (`packages/domain/src/graph.ts:29-30`), because a pair passed off as a community would make every

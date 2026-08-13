@@ -40,9 +40,9 @@ violation (`packages/html/src/constraints.ts:302`). `memhtml-content-hash` is ad
 reports whatever the file says and never recomputes it (`packages/html/src/document.ts:37`), so a stale
 value stays visible instead of being quietly reconciled.
 
-`META_ORDER` (`packages/html/src/vocabulary.ts:42`) serves two purposes at once. It is the closed list
-of meta names, and it is the order the serializer emits them in
-(`packages/html/src/serialize.ts:83`). That makes it a diff-stability contract. A new scalar meta is
+`META_ORDER` (`packages/html/src/vocabulary.ts:42`) is both the closed list of meta names and the
+order the serializer emits them in (`packages/html/src/serialize.ts:83`), which makes it a
+diff-stability contract. A new scalar meta is
 appended at the end of the scalar block, because inserting one mid-list would shift every following
 line in every file the next edit touches. The surgical head editors insert in the same order
 (`packages/html/src/editors.ts:79`).
@@ -97,7 +97,7 @@ directly instead of parsing the file and serializing it again. A serializer roun
 inside a `<pre>`, which would move the content hash of every file a bookkeeping pass touched
 (`packages/store/src/store.ts:417-419`).
 
-## 5. Constraints are collected rather than short-circuited
+## 5. The checker collects every violation
 
 Six numbered constraints run over the parsed tree (`packages/html/src/constraints.ts:29`), alongside
 checks on head well-formedness and on meta values. The checker collects every violation instead of
@@ -159,11 +159,11 @@ An info string naming the language wins outright and reaches `data-lang` unchang
 `LANG_TOKEN`.
 
 An unlabelled fence goes to a detector at write time (`packages/html/src/detect.ts`). The detector
-proposes a language and never overrides one the author gave. It runs highlight.js `highlightAuto` over
-that library's full grammar set and scores the result as the per-line evidence margin between the
-winning grammar and its closest real competitor: `1 - exp(-(top - runnerUp) / lines)`. `runnerUp` is
-zeroed when it normalizes to the same language as the winner, because `pgsql` beating `n1ql` is a
-dialect duel rather than a disagreement.
+proposes a language and never overrides one the author gave. It runs highlight.js `highlightAuto`
+over that library's full grammar set and scores the result as the per-line evidence margin between
+the winning grammar and its closest real competitor: `1 - exp(-(top - runnerUp) / lines)`.
+`runnerUp` is zeroed when it normalizes to the same language as the winner, because `pgsql` beating
+`n1ql` is one language under two grammar names.
 
 `data-lang` is stamped only when confidence reaches 0.30 and the detected language is one of a closed
 12-name vocabulary. Otherwise the attribute is absent, because a wrong value reaches `lang:` entities

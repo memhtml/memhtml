@@ -132,7 +132,7 @@ memhtml recall "one writer many readers" --budget 2000
 }
 ```
 
-Same ranking underneath, different product. `recall` layers a disclosure fold on top of it:
+`recall` runs the same ranking and then layers a disclosure fold on top of it:
 
 - Two envelopes rather than one list. `arcs` and `memories` are folded separately under their own
   character budgets, so an arc, which is a behavioural summary sleep synthesizes, does not compete
@@ -172,7 +172,7 @@ the output goes into a prompt: it drops null fields and minifies. And a question
 one hop is one `memhtml exec` script rather than a `search` followed by N `read` calls.
 :::
 
-## What retrieval does not do to your store
+## Retrieval leaves the access plane alone
 
 Neither command bumps the access plane, however many paths it returns. Salience counts chosen opens:
 `memhtml read` of a named path bumps it, and so does the `memhtml://file/{path}` MCP resource, because

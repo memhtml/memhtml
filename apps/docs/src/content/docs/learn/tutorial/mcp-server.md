@@ -99,11 +99,10 @@ Two resource templates come with them:
 access plane: it is a chosen open. `memhtml://sleep/{run-id}` serves one curation run's committed HTML
 report.
 
-Sleep is deliberately absent from the tool surface. It is a cron and operator action that produces a
-reviewable branch, and an agent triggering it mid-conversation is the case memhtml refuses. The
-operator commands are absent with it: there is no tool for `doctor`, `publish`, `index rebuild`,
-`sleep merge`, or the discrimination gate. Those stay on the CLI, so reach for `memhtml` for anything
-on the operations pages.
+Sleep is absent from the tool surface, because it is a cron and operator action that produces a
+reviewable branch and an agent should not start one mid-conversation. The other operator commands
+are absent with it: `doctor`, `publish`, `index rebuild`, `sleep merge`, and the discrimination gate
+all stay on the CLI, so reach for `memhtml` for anything on the operations pages.
 
 ## Call a tool
 
@@ -149,9 +148,9 @@ The result carries the answer twice, once as text and once as `structuredContent
 }
 ```
 
-Same fields as `memhtml search`, in snake_case on this surface: `memory_type`, `updated_at`,
-`superseded_by`, `scope_empty`, where the CLI's own envelope is camelCase. Read the key from the
-surface you are on.
+The fields are the same as `memhtml search`'s, spelled in snake_case on this surface: `memory_type`,
+`updated_at`, `superseded_by`, `scope_empty`, where the CLI's own envelope is camelCase. Read the
+key from the surface you are on.
 
 `degraded`, `arms`, and `scope_empty` mean exactly what they mean on the
 [CLI](/learn/tutorial/first-retrieval/), and they are on the tool result for the same reason: a client

@@ -6,7 +6,7 @@
 --
 -- Probed 2026-08-12 on node 24.19.0: `DROP TABLE files` DELETES every row of every child table
 -- (`file_tags`, `file_entities`, `file_facets`, `file_citations`, `chunks`, and `embeddings` behind
--- `chunks`) via `ON DELETE CASCADE` — including inside the one `immediate` transaction the migration
+-- `chunks`) via `ON DELETE CASCADE`, including inside the one `immediate` transaction the migration
 -- runner wraps this file in, which does NOT protect them. A migration that merely copied `files` would
 -- therefore report success and silently destroy every embedding in the database: thousands of Bedrock
 -- calls for text that never changed, plus the whole edge set.
@@ -14,7 +14,7 @@
 -- `PRAGMA foreign_keys = OFF` around the drop is no escape, and the probe above measured that too: the
 -- pragma is a NO-OP inside a transaction, exactly as SQLite documents it, so the cascade fires anyway
 -- and a file that relied on the pragma would be silent data loss with no error anywhere. (Outside a
--- transaction the pragma does suppress the cascade — which is not where a migration runs.)
+-- transaction the pragma does suppress the cascade, which is not where a migration runs.)
 -- The snapshot does not depend on foreign-key state at all: each child's rows are copied out, the
 -- cascade fires against an empty-of-consequence table, and the rows are copied back under the new
 -- parent. Verified after the fact: `PRAGMA foreign_key_check` is empty, `foreign_keys` is still ON,
@@ -23,7 +23,7 @@
 --
 -- `files_fts` IS dropped explicitly. It is a separate virtual table, so `DROP TABLE files` does not
 -- take it, and an external-content FTS5 table left pointing at a dropped content table is a stale
--- index that answers MATCH from rows the corpus no longer has. Its triggers need no drop — a trigger
+-- index that answers MATCH from rows the corpus no longer has. Its triggers need no drop. A trigger
 -- belongs to the table it is defined ON, so `DROP TABLE files` takes all three. Both are recreated
 -- from 0003_fts.sql's definitions at the end of this file, over the finished table.
 
@@ -33,8 +33,8 @@ CREATE TABLE files_next (
   content_hash    TEXT NOT NULL,
   -- Widened by exactly one value. `task` is a memory TYPE rather than a second axis: three
   -- overlapping type vocabularies is what made the predecessor memory system's classification unanswerable, so a
-  -- task's different treatment is stated by the filters that read this column — default-excluded
-  -- from retrieval scope, skipped by every sleep phase — and never by a parallel `kind`.
+  -- task's different treatment is stated by the filters that read this column (default-excluded
+  -- from retrieval scope, skipped by every sleep phase) and never by a parallel `kind`.
   memory_type     TEXT NOT NULL CHECK (memory_type IN (
                     'episodic','semantic','procedural','agent_insight',
                     'user_preference','error_pattern','verdict','precedent','arc','task')),
@@ -71,7 +71,7 @@ CREATE TABLE files_next (
   -- `git mv` every eviction uses, so every path that switches on active/archived keeps its meaning.
   task_status     TEXT CHECK (task_status IN ('todo','doing','blocked','done')),
   -- When a task is due, from `memhtml-due`. An ISO date or datetime, compared and ordered AS A STRING
-  -- exactly as `event_at` is — @memhtml/html refuses a value that does not sort alongside the others,
+  -- exactly as `event_at` is. @memhtml/html refuses a value that does not sort alongside the others,
   -- which is what makes `due_at < ?` an overdue query rather than a per-row parse.
   due_at          TEXT
 );
@@ -117,7 +117,7 @@ DROP TABLE embeddings_snap;
 -- index missing from this list is an index the database silently no longer has.
 --
 -- The dedup index gains `AND memory_type <> 'task'`. Two open tasks with identical bodies are
--- legitimately distinct work items — "review the deploy runbook" twice is two things to do — while
+-- legitimately distinct work items ("review the deploy runbook" twice is two things to do), while
 -- two identical active MEMORIES are one fact stored twice, which is what this index exists to
 -- refuse. `dedupeLookup` (`traces-persist.ts` `activePathForHash`) carries the same exclusion, so
 -- the write path's question and the database's answer agree by construction rather than by

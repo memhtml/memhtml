@@ -206,7 +206,7 @@ describe("tool surface", () => {
     expect(description).toContain("THE ASSIST NEVER CHANGES WHAT IS WRITTEN")
     expect(description).toContain("nothing is archived, nothing is refused, later does not win")
     // The BEAM reason, without which an agent reads the above as a limitation to work around.
-    expect(description).toMatch(/sometimes the contradiction IS the answer/)
+    expect(description).toMatch(/[Ss]ometimes the contradiction IS the answer/)
     expect(description).toContain("memory_correct")
     // Not dedupe — the confusion that would make an agent stop checking for either.
     expect(description).toMatch(/not dedupe/i)

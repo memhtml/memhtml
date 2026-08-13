@@ -9,8 +9,9 @@ Integration tests drive the real SQLite driver against `":memory:"` with the rea
 (`packages/index/src/database.ts:262-266`), and the real git binary against a repository in a temp
 directory (`packages/store/src/store.ts:331-334`).
 
-A fake driver would verify the shape of the calls and miss every constraint the database enforces. A fake
-git would verify that the right strings were assembled and miss every state transition that matters.
+A fake driver would verify the shape of the calls and miss every constraint the database enforces. A
+fake git would verify that the right strings were assembled and miss every state transition they
+cause.
 
 Fakes are limited to the two edges that reach the network, and each is a `Layer.succeed` value: a
 deterministic hash-seeded embedder whose cosine relations are a pure function of the text

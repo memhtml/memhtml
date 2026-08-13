@@ -40,11 +40,11 @@ end.
 `failureFor` (`apps/cli/src/errors.ts:154`) is the only translation, and it is total: an unrecognized
 `_tag` becomes `ERR_UNKNOWN` rather than an empty response (`apps/cli/src/errors.ts:41`).
 
-The human message is deliberately narrow (`apps/cli/src/errors.ts:69-77`). Every payload field it names is
-one a caller can act on: a path to re-read, two shas to reconcile, a model to check. It carries no driver
-message, no SQL, no git argv, and no memory body, because each typed error class already dropped those at
-its adapter edge so that a tool response could not carry corpus content
-(`packages/contracts/src/errors.ts:3-8`, `packages/index/src/database.ts:87-91`).
+The human message is narrow (`apps/cli/src/errors.ts:69-77`). Every payload field it names is one a
+caller can act on: a path to re-read, two shas to reconcile, a model to check. Each typed error
+class drops the driver message, the SQL, the git argv, and the memory body at its adapter edge, so a
+tool response cannot carry corpus content (`packages/contracts/src/errors.ts:3-8`,
+`packages/index/src/database.ts:87-91`).
 
 Suggestions are part of the contract (`apps/cli/src/errors.ts:111-127`), so an agent receiving
 `ERR_INDEX_STALE` can recover in one step without a round trip to a human. An absent list is `[]` rather
@@ -62,7 +62,8 @@ from that registry, so it states how many there are and this page does not. Two 
 them: `memhtml://file/{path}` for citation-grade drill-down and `memhtml://sleep/{run-id}` for a run
 report (`apps/mcp/src/resources.ts:90`).
 
-Sleep is not an agent tool. It is an operator action that produces a reviewable branch.
+Sleep stays off the tool surface, because it is an operator action that produces a branch for a
+human to review.
 
 Two things about the server come from the transport and the SDK rather than from a preference:
 

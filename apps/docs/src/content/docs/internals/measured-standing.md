@@ -11,10 +11,10 @@ a leaderboard position. Read section 2 before reading the table as a comparison.
 
 | benchmark | memhtml | published reference |
 |---|---|---|
-| MAB FactConsolidation single-hop (26KB–1.1MB stores) | 92–97% | ~60% at 26KB only |
-| MAB FactConsolidation multi-hop | 37–49% | ≤7% all methods |
-| BEAM Contradiction Resolution (100K split, 40 probes) | 43.8% mean | 0–5% all systems |
-| LongMemEval-S (full 500, judged 2026-08-07) | 67.0% | mid-50s–low-60s memory-system baselines |
+| MAB FactConsolidation single-hop (26KB to 1.1MB stores) | 92% to 97% | ~60% at 26KB only |
+| MAB FactConsolidation multi-hop | 37% to 49% | ≤7% all methods |
+| BEAM Contradiction Resolution (100K split, 40 probes) | 43.8% mean | 0% to 5% all systems |
+| LongMemEval-S (full 500, judged 2026-08-07) | 67.0% | mid-50s to low-60s memory-system baselines |
 
 ## 2. The judge caveat
 
@@ -24,19 +24,17 @@ behind the reference column ran those prompts on gpt-4o and gpt-4.1-mini. Every 
 self-run and unpublished. So read each row as two reference points and not as a ranking, and read a gap of
 a few points across the columns as telling you about the graders.
 
-The caveat travels with the table wherever the table goes, and it appears in every result header, because a
-bare comparison table would misrepresent what was measured.
+Every result header repeats this caveat, because a bare comparison table would misrepresent what was
+measured.
 
 Where a gap within one row is large, the columns do support a claim about order of magnitude. A multi-hop
-consolidation rate of 37–49% against a published ceiling of 7%, or a contradiction-resolution mean of 43.8%
-against 0–5%, is a difference no plausible disagreement between graders closes.
+consolidation rate of 37% to 49% against a published ceiling of 7%, or a contradiction-resolution
+mean of 43.8% against 0% to 5%, is a difference no plausible disagreement between graders closes.
 
 ## 3. What the campaign established about the architecture
 
-Two findings hold at the level of the design rather than of any one fix.
-
-The git tree as the record of facts, plus a rebuildable index, survives ingest at adversarial scale: 18k
-memories land in minutes. And the retrieval stack finds one-fact memories reliably at every store size
+The git tree as the record of facts, plus a rebuildable index, absorbed a bulk ingest of 18k
+memories in minutes. The retrieval stack found one-fact memories reliably at every store size
 tested, from 26KB to 1.1MB.
 
 Both are properties of the shape described in
@@ -44,7 +42,7 @@ Both are properties of the shape described in
 [The index](/internals/the-index/) rather than of a tuning pass, which is why they are recorded here rather
 than in a changelog.
 
-## 4. What these numbers are not
+## 4. What gates a change
 
 They do not gate anything. The number that decides whether a change ships is the discrimination gate
 (`packages/eval/src/discriminate.ts:224`), which runs on every check and inside `memhtml sleep merge`, and

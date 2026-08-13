@@ -19,9 +19,9 @@ Each plane keeps its own migration ledger (`packages/index/src/database.ts:195`,
 `packages/index/src/schema-const.ts:10-15`). Rebuilding `index.db` must not mark the state plane's
 migrations unapplied.
 
-Both planes are plain SQLite reached through node's built-in `node:sqlite`. There is no third-party
-database dependency and no driver feature flags to keep in step, and `sqlite3` or a GUI browser opens
-either file directly.
+Both planes are plain SQLite reached through node's built-in `node:sqlite`, so the only database
+dependency is node itself, with no driver feature flags to keep in step, and `sqlite3` or a GUI
+browser opens either file directly.
 
 Every connection sets `journal_mode = WAL`, `busy_timeout = 5000`, `synchronous = NORMAL`, and
 `foreign_keys = ON`, and registers one SQL function, `vector_distance_cos`
@@ -228,7 +228,8 @@ reindexes silently (`packages/index/src/indexer.ts:103-116`,
 the first write records a watermark, so an index can never accumulate rows from two vector spaces.
 
 A half-migrated vector space degrades every cosine while every individual vector stays well-formed,
-which no test would notice. That is the failure the refusal exists to make loud.
+which no test would notice. The refusal turns that silent degradation into an error at the first
+write.
 
 Recovering from one, and rebuilding an index in general, is an operations how-to under
 [Learn](/learn/).

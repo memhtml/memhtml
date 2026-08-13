@@ -11,13 +11,13 @@
 -- an unqualified MATCH across all columns but make `bm25()` weight them, which is a ranking decision
 -- the RRF fusion already owns.
 --
--- Ranking is `bm25(files_fts)` — a real relevance score, ascending, most relevant first (FTS5 returns
+-- Ranking is `bm25(files_fts)`, a real relevance score, ascending, most relevant first (FTS5 returns
 -- bm25 as a negative number). The lexical arm's `ROW_NUMBER()` orders by it.
 --
 -- The triggers are the whole maintenance contract. External-content FTS5 does NOT observe its content
 -- table on its own: without them the index silently stops matching rows the corpus has. A delete is
 -- written as the `'delete'` command with the OLD text, because FTS5 needs the previous terms to
--- unindex them — passing the new text, or omitting it, corrupts the index rather than failing.
+-- unindex them. Passing the new text, or omitting it, corrupts the index rather than failing.
 CREATE VIRTUAL TABLE files_fts USING fts5(
   fts_text,
   content='files',

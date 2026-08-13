@@ -30,10 +30,9 @@ shell.
 (`apps/cli/src/api-layer.ts:242`, `apps/cli/src/api-layer.ts:305`). Any other value, including an empty
 string, leaves the feature on.
 
-The manifest keeps a missing credential and an explicit opt-out apart. A missing credential degrades
-one search at the moment that search runs, while `MEMHTML_EMBED=off` degrades every search. An
-operator reading a manifest needs to tell those two apart, so the manifest reports them as different
-states.
+A missing credential degrades one search at the moment that search runs, while `MEMHTML_EMBED=off`
+degrades every search. An operator reading a manifest needs to tell those two apart, so the manifest
+reports them as different states.
 
 `MEMHTML_LLM=off` is what lets a sleep run finish clean with no credentials at all. Every phase still
 reports `ok`, and the four model-driven ones say why they did nothing:
@@ -53,11 +52,10 @@ waits on the model and never fails with it, so a failed extraction leaves a logg
 with nothing extracted. Run a store with this on for a month and then off, though, and the tree holds
 two populations of files, only one of which carries entities its author did not write.
 
-## MEMHTML_MCP_BIN configures no store behaviour, and is disclosed anyway
+## MEMHTML_MCP_BIN locates the server and nothing else
 
-It locates the server, and it changes nothing about retrieval. Absent, the supervisor uses the
-sibling-path default, since the two apps ship as one build. Set it for a split deployment that keeps
-them apart.
+Absent, the supervisor uses the sibling-path default, since the two apps ship as one build. Set it
+for a split deployment that keeps them apart.
 
 It appears on the manifest despite configuring nothing, because an operator debugging a split
 deployment reads the manifest, and a variable the binary reads without declaring is one they cannot
@@ -82,15 +80,14 @@ Each connection sets four pragmas and registers one SQL function (`packages/inde
 | `synchronous` | `NORMAL` | Can cost the last commits on power loss, which is a fair price for a database the git tree can rebuild. |
 | `vector_distance_cos` | registered | Cosine distance as a SQL function, which is how the vector arm runs inside the single statement that ranks all four arms at once. |
 
-`synchronous = NORMAL` is a deliberate trade, and it is correct because `index.db` is disposable.
-`state.db` is the file the git tree cannot rebuild, and its durability comes from the committed sidecar
-rather than from a pragma. See
+That last trade is safe because `index.db` is disposable. `state.db` is the file the git tree cannot
+rebuild, and its durability comes from the committed sidecar rather than from a pragma. See
 [preserve the state plane](/learn/operations/preserve-the-state-plane/).
 
 ## Cron does not carry your shell profile
 
 Every command is safe to run from cron, because stdout carries one envelope and logs go to stderr.
-What cron leaves behind is your shell profile, so set the variables on the line itself:
+Cron runs without your shell profile, so set the variables on the line itself:
 
 ```cron
 */10 * * * *  cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml index update --embed >> /var/log/memhtml/index.log 2>&1

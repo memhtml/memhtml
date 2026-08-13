@@ -21,7 +21,7 @@ CREATE TABLE state.access (
   access_count        INTEGER NOT NULL DEFAULT 0 CHECK (access_count >= 0),
   reinforcement_count INTEGER NOT NULL DEFAULT 0 CHECK (reinforcement_count >= 0),
   -- An EWMA over reinforcement signals, unitless in [-1, 1]. The salience arm clamps the negative
-  -- half to 0 — a memory that led somewhere bad is not boosted, and it is not buried either.
+  -- half to 0. A memory that led somewhere bad is not boosted, and it is not buried either.
   outcome_score       REAL    NOT NULL DEFAULT 0.0 CHECK (outcome_score BETWEEN -1 AND 1),
   last_accessed_at    TEXT,
   last_reinforced_at  TEXT,

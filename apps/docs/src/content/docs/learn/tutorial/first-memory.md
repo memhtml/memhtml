@@ -70,11 +70,11 @@ cat "$MEMHTML_ROOT/resources/infra/one-writer-and-many-readers-share-the-index.h
 </html>
 ```
 
-Standard HTML5, view-source readable, with no framework and no front matter. The `<meta>` elements are
-the typed head plane. The `<mark>` is the claim, the single load-bearing sentence, which becomes the
-gist every listing shows and the span a correction targets. Note the markup: the claim sits at
-`<article><p><mark>`, so the selector that finds it is the descendant `article mark`. The child
-selector `article > mark` matches nothing.
+The file is standard HTML5, readable in view-source, with no framework and no front matter. The
+`<meta>` elements are the typed head plane. The `<mark>` is the claim, the single load-bearing
+sentence, which becomes the gist every listing shows and the span a correction targets. Note the
+markup: the claim sits at `<article><p><mark>`, so the selector that finds it is the descendant
+`article mark`. The child selector `article > mark` matches nothing.
 
 The store generates the commit subject too:
 
@@ -127,7 +127,7 @@ behind a fold. The store renders your article, runs the format check, and refuse
 violations before it creates a file, stages it, or commits, so a refused write leaves the tree
 byte-identical.
 
-Supplying both `--claim` and `--article-html`, or neither, is refused.
+Passing both `--claim` and `--article-html`, or passing neither, is a usage error.
 
 ## Write many at once
 
@@ -188,19 +188,19 @@ memhtml apply --file ops.jsonl --detect-conflicts
 }
 ```
 
-N files, one commit, one index pass, and one result per op in input order. Each result names its own
-`index`, so you can match results back to the lines you sent. The store validates the whole file's
-shape before any op executes, so a malformed line 7 is exit 2 naming line 7 with nothing written.
+A batch writes N files in one commit and one index pass, and returns one result per op in input
+order. Each result names its own `index`, so you can match results back to the lines you sent. The
+store validates the whole file's shape before any op executes, so a malformed line 7 is exit 2
+naming line 7 with nothing written.
 
 A batch is atomic by default: the first refused op aborts it, nothing is written, and the surviving
 ops report `skipped: true`. `--continue-on-error` makes it best-effort instead. `commit_sha` is null
 exactly when nothing was committed, which happens on a batch that only deduped and on one that
 aborted.
 
-Note the field naming. The batch payload is snake_case (`commit_sha`, `existing_path`) where the
-single-write payload is camelCase (`commitSha`). Read the key from the envelope you received. Each
-surface spells its own field names, so a translation layer between the two spellings would hide which
-surface answered.
+The batch payload is snake_case (`commit_sha`, `existing_path`) where the single-write payload is
+camelCase (`commitSha`). Read the key from the envelope you received. Each surface spells its own
+field names, so a translation layer between the two spellings would hide which surface answered.
 
 Pass `--detect-conflicts` on any real batch. It reports what each op's claim contradicts:
 an active memory, or an earlier op in the same call, which nothing else can see because neither op is
@@ -220,8 +220,8 @@ reports it, and `memhtml read <path>` reports per-file warnings), a path that do
 noticing that the content already exists, and the commit. `memhtml sleep run` refuses to start on a
 dirty tree, so an uncommitted edit blocks curation until you commit or stash it.
 
-For an AI agent, the ordering is this. Prefer `memhtml apply` over your file tools for writes, because
-the batch owns dedup, conflict detection, and the single commit. Reach for file tools when you are
+For an AI agent, prefer `memhtml apply` over your file tools for writes, because the batch owns
+dedup, conflict detection, and the single commit. Reach for file tools when you are
 repairing a file the parser refuses, which is the one case the write path cannot express.
 
 Next: [retrieve what you just wrote](/learn/tutorial/first-retrieval/).

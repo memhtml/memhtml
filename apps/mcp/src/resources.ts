@@ -17,10 +17,10 @@ import { McpSchema, McpServer } from "effect/unstable/ai"
  * publishes `{path}` and `{run-id}` as named rather than positional holes.
  */
 
-/** `memhtml://file/{path}` — one memory's rendered content. */
+/** `memhtml://file/{path}`: one memory's rendered content. */
 const pathParam = McpSchema.param("path", Schema.String)
 
-/** `memhtml://sleep/{run-id}` — one sleep run's committed HTML report. */
+/** `memhtml://sleep/{run-id}`: one sleep run's committed HTML report. */
 const runIdParam = McpSchema.param("run-id", Schema.String)
 
 /**

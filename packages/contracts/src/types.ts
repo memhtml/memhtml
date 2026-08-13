@@ -12,7 +12,7 @@ import { Schema } from "effect"
  * a decision about failure modes: three overlapping type vocabularies is what made
  * the predecessor memory system's classification unanswerable, so a task is a memory type whose retrieval,
  * dedup, and curation treatment is stated by a filter, never by a second axis. Tasks are
- * default-excluded from search and skipped by sleep — see `@memhtml/index`'s `assembleScope`
+ * default-excluded from search and skipped by sleep. See `@memhtml/index`'s `assembleScope`
  * and the sleep phases' `excludeTypes`.
  */
 export const MEMORY_TYPES = [
@@ -57,7 +57,7 @@ export const isWritableMemoryType = (type: MemoryType): type is WritableMemoryTy
 
 /**
  * PARA's four buckets, closed and ordered. `archive` is a bucket rather than a status
- * because eviction is a `git mv` — the path itself records the state, so `git log
+ * because eviction is a `git mv`. The path itself records the state, so `git log
  * --follow` reads through it and `diff -M` reports the move as `R100`.
  */
 export const PARA_BUCKETS = ["projects", "areas", "resources", "archive"] as const
@@ -70,7 +70,7 @@ export const MemoryStatus = Schema.Literals(["active", "archived"])
 export type MemoryStatus = typeof MemoryStatus.Type
 
 /**
- * A task's own status, carried in `memhtml-task-status` — a SEPARATE axis from
+ * A task's own status, carried in `memhtml-task-status`, a SEPARATE axis from
  * {@link MemoryStatus}, which stays `active | archived` for every type including `task`.
  *
  * Two axes rather than four `memhtml-status` values because `active`/`archived` is what every
@@ -89,7 +89,7 @@ export const isTaskStatus = (value: string): value is TaskStatus =>
   (TASK_STATUSES as ReadonlyArray<string>).includes(value)
 
 /**
- * Importance, 1-10 inclusive, 1-based ordinal on a display scale — never an arithmetic
+ * Importance, 1-10 inclusive, 1-based ordinal on a display scale, never an arithmetic
  * input on its own. The retention scorer divides it by 10 to reach `[0, 1]` before it
  * meets any other signal.
  */
@@ -101,7 +101,7 @@ export const Confidence = Schema.Number.check(Schema.isBetween({ minimum: 0, max
 /**
  * A repo-root-relative path to a memory file, e.g. `areas/oncall/rollback-order.html`.
  * No leading slash: this is the git-tree form, the `files.path` primary key, and the id
- * of a memory. `<link href>` values carry the same path with a leading `/` — that is a
+ * of a memory. `<link href>` values carry the same path with a leading `/`. That is a
  * document-reference form, converted at the HTML boundary, never stored here.
  */
 export const MemoryPath = Schema.String.check(Schema.isMinLength(1))

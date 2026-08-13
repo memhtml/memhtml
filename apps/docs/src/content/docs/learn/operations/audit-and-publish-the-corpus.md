@@ -4,7 +4,7 @@ description: Every memhtml doctor finding and its fix, what --fix will and will 
 ---
 
 ```bash
-memhtml doctor          # eight checks
+memhtml doctor          # ten findings; eight of them decide healthy
 memhtml doctor --fix    # repairs the two that need no judgement call
 memhtml publish         # regenerate index.html listings and sitemap.xml, and commit
 ```
@@ -63,7 +63,7 @@ The two inbox thresholds are `INBOX_WARN_DEPTH` 20 and `INBOX_TASK_WARN_DEPTH` 1
 Search excludes a `task` memory by default and every sleep phase skips it, so `memhtml doctor` is the
 only command that reports a task past its due date. If you use tasks, put this command on your cron.
 
-## What --fix repairs, and why only two
+## What `--fix` repairs, and why only two
 
 `--fix` rewrites `dangling` hrefs and prunes `orphanAccessRows`. Everything else needs a decision
 doctor is not entitled to make: a crowded inbox might be a bad day or bad placement rules, an element

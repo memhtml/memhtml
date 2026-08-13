@@ -64,8 +64,7 @@ which is never fatal, because a partial file restores what it holds.
 
 ## The hazard with two machines
 
-Two machines both committing memories is the conflict path git handles well. The state plane behaves
-differently.
+Two machines both committing memories is the conflict path git handles well.
 
 `.memhtml/state/access.jsonl` merges as a whole file, so two machines' access counts never combine.
 The later commit wins and the other machine's reads are lost. `memhtml state import` merges by taking

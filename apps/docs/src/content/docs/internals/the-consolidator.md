@@ -11,17 +11,16 @@ system prompt rather than as prose written for documentation. It addresses the a
 it is the file the running system reads, and the mounts, limits, and refusal rules it names are the ones in
 force.
 
-It is published here because it is the only place the editorial policy of the corpus is written down. Every
-other page in this topic describes a mechanism. This one is the bar a candidate memory has to clear before
-a mechanism ever sees it.
+It is published here because it holds the editorial policy of the corpus. The other chapters
+describe mechanisms; this prompt sets the bar a candidate memory clears before any mechanism sees
+it.
 
 ## 2. Why the bar is where it is
 
 The phase exists because anything an agent learned mid-session and did not explicitly write down is
-otherwise lost: the transcripts hold it and the corpus does not. The failure mode is easy to walk into. A
-plausible, well-written candidate that restates one line of one transcript passes every schema check and
-adds nothing to the corpus, while costing a reviewer a commit to read and the retrieval stack a
-near-duplicate to rank.
+otherwise lost: the transcripts hold it and the corpus does not. A plausible, well-written candidate
+that restates one line of one transcript passes every schema check and adds nothing to the corpus,
+while costing a reviewer a commit to read and the retrieval stack a near-duplicate to rank.
 
 So the prompt's central rule is stated as something checkable. A candidate must name a pattern across
 lines or sessions, and it must carry at least two verbatim evidence quotes. The quote requirement restates
@@ -196,6 +195,5 @@ algebra as any agent write. There is one commit per distilled memory, so a revie
 time.
 
 The evidence quotes go into the commit message and nowhere else
-(`packages/sleep/src/phases/trace-consolidation.ts:158-165`). A commit message is not indexed, not
-chunked, not embedded, and not retrievable, so the memory body carries the claim and the commit carries the
-receipt.
+(`packages/sleep/src/phases/trace-consolidation.ts:158-165`). Nothing indexes, chunks, embeds, or
+retrieves a commit message, so the memory body carries the claim and the commit carries the receipt.

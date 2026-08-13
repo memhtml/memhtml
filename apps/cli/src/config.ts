@@ -61,7 +61,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   {
     name: "MEMHTML_EXTRACT_ENTITIES",
     description:
-      "`on` adds one GPT-5.6 Luna call per write batch that extracts `memhtml-entity` metas the ops did not declare. Opt-in, unlike MEMHTML_EMBED, because it changes what a write STORES: extracted entities land in the files as if authored, and the write itself never waits on or fails with the model — a failed extraction is a logged warning and an unextracted batch.",
+      "`on` adds one GPT-5.6 Luna call per write batch that extracts `memhtml-entity` metas the ops did not declare. Opt-in, unlike MEMHTML_EMBED, because it changes what a write STORES: extracted entities land in the files as if authored, and the write itself never waits on or fails with the model. A failed extraction is a logged warning and an unextracted batch.",
     fallback: "off"
   },
   {
@@ -72,7 +72,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
      */
     name: MCP_BIN_VAR,
     description:
-      "An explicit path to the `memhtml-mcp` entry point, read only by the `memhtml serve mcp` supervisor. Absent means the sibling-path default — the two apps ship as one build, so `apps/cli/dist/serve.js` finds `apps/mcp/dist/bin.js` two directories over. An operator sets it for a split deployment that does not keep the apps side by side; it locates the server rather than configuring the store, so it changes no retrieval behaviour.",
+      "An explicit path to the `memhtml-mcp` entry point, read only by the `memhtml serve mcp` supervisor. Absent means the sibling-path default. The two apps ship as one build, so `apps/cli/dist/serve.js` finds `apps/mcp/dist/bin.js` two directories over. An operator sets it for a split deployment that does not keep the apps side by side; it locates the server rather than configuring the store, so it changes no retrieval behaviour.",
     fallback: null
   }
 ]
@@ -91,7 +91,7 @@ export const MemhtmlRoot = Config.string("MEMHTML_ROOT").pipe(
  * `MEMHTML_TRACE_ROOT`, defaulting to `~/.claude`.
  *
  * A parameter rather than a constant so the trace indexer is drivable against a fixture tree and
- * against an archived copy — which is also what keeps real transcripts out of the test suite.
+ * against an archived copy, which is also what keeps real transcripts out of the test suite.
  */
 export const TraceRoot = Config.string("MEMHTML_TRACE_ROOT").pipe(
   Config.withDefault(join(homedir(), ".claude")),

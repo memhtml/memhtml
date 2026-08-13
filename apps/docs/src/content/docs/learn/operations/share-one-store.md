@@ -38,12 +38,12 @@ The error being retried is `SQLITE_BUSY` specifically. The lock was never taken,
 effect to half-apply and there is no partial write to reconcile. A write inside a transaction rolls back
 before the retry, so the transaction re-runs whole rather than resuming from the middle.
 
-That is what makes the backoff a retry that preserves correctness. A blanket retry on any SQLite error
-would carry no such property.
+The retry layer therefore matches `SQLITE_BUSY` alone, where a blanket retry on any SQLite error
+would repeat a statement that had already taken effect.
 
 ## The one operation that needs exclusivity
 
-`memhtml sleep run`, and the reason is git rather than the database.
+`memhtml sleep run` needs it, for a git reason rather than a database one.
 
 A run holds a checked-out `sleep/<date>` branch. A concurrent write therefore commits onto that branch,
 where it either gets merged into `main` as if it were curation or disappears with `git branch -D`.
@@ -70,9 +70,8 @@ the discrimination gate, which checks that every probe query ranks its target fa
 wrong versions of that fact. It measures the ranking stack against its own generated fixture corpus, in
 a temp directory, with an in-memory database, and it never opens your `index.db`.
 
-That isolation is deliberate, because checking the gate is exactly what an operator wants to do while
-the server is up, and a gate that needed the store quiet would be a gate nobody ran at the moment it
-mattered.
+Checking the gate is exactly what an operator wants to do while the server is up, and a gate that
+needed the store quiet would be a gate nobody ran at the moment it mattered.
 
 ```bash
 memhtml eval discriminate        # safe with a server running, and with no credentials

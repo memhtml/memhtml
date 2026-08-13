@@ -47,7 +47,7 @@ export const code = (value: string): string => `\`${value}\``
 
 /** A comma-separated list of code spans, or a dash when there are none. */
 export const codeList = (values: ReadonlyArray<string>): string =>
-  values.length === 0 ? "—" : values.map(code).join(", ")
+  values.length === 0 ? "-" : values.map(code).join(", ")
 
 /** A GFM table. Rows are already-escaped cells. */
 export const table = (

@@ -59,9 +59,8 @@ A test pins the property: `originalPathFor(archivePathFor(p, y)) === p` for ever
 invertibility is what lets the sleep pipeline's integrity phase derive an archived target's new href
 rather than searching for it, and no rename-similarity score is consulted anywhere in the system.
 
-Figure 1 draws the mapping as a ladder rather than as a round trip, which is what "exactly one prefix"
-means: from a twice-evicted path the inverse climbs one rung, to the once-evicted path, and not to the
-live one.
+Figure 1 draws the mapping as a ladder rather than as a round trip. From a twice-evicted path the
+inverse climbs one rung, reaching the once-evicted path, which is what "exactly one prefix" means.
 
 ```d2 pad=20 src="_figures/archive-mapping.d2" title="Three paths stacked vertically as the rungs of a ladder: notes/x.html, then archive/2026/notes/x.html, then archive/2027/archive/2026/notes/x.html. A solid arrow labelled archivePathFor descends one rung at a time. A dashed arrow labelled originalPathFor ascends one rung at a time and never more than one, so from the bottom rung it reaches the middle one rather than the top."
 ```
@@ -84,7 +83,7 @@ An `href` value in the HTML plane carries the same path with a leading slash. Th
 document-reference form, converted at the HTML boundary and never stored
 (`packages/contracts/src/types.ts:102-107`, `packages/index/src/project.ts:336-344`).
 
-## 5. Initialization converges rather than merely repeating safely
+## 5. `memhtml init` converges on one end state
 
 `memhtml init` (`packages/store/src/layout.ts:183`) is the only code path that creates the root. Each
 step asks the repository what is already true, so the command reaches the same end state from an empty

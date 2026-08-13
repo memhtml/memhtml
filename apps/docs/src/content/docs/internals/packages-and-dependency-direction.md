@@ -27,13 +27,13 @@ Dependencies point inward. `contracts` imports only `effect`. `domain` and `html
 contracts ← domain, html ← store ← index (+domain, +llm) ← traces, sleep, eval ← apps/cli ← apps/mcp
 ```
 
-TypeScript project references enforce the direction rather than convention doing it, and a second,
-test-inclusive typecheck configuration applies the same check to the test files.
+TypeScript project references enforce the direction, and a second, test-inclusive typecheck
+configuration applies the same check to the test files.
 
 `apps/mcp` depends on `@memhtml/cli` instead of composing the service graph again, so there is one answer
 to which database, which git root, and which vector space (`apps/mcp/src/server.ts:13-18`).
 
-## 3. Purity is a test rather than a convention
+## 3. A test enforces purity
 
 `packages/domain/tests/layering.test.ts` greps the emitted `dist/*.js` for a runtime import of
 `node:sqlite`, `@aws-sdk`, or `node:fs`. Math that needed infrastructure in order to be tested would let

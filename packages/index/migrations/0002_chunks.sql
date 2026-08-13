@@ -1,5 +1,5 @@
--- Chunks and their vectors. Both key on `content_hash`, not on `path`: a `git mv` — which is what
--- eviction and every rename are — reuses the vector with zero Bedrock calls, and two files whose
+-- Chunks and their vectors. Both key on `content_hash`, not on `path`: a `git mv`, which is what
+-- eviction and every rename are, reuses the vector with zero Bedrock calls, and two files whose
 -- bodies later diverge never share one.
 
 CREATE TABLE chunks (

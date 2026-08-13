@@ -15,13 +15,13 @@ Two rules hold the design together. Most decisions in the chapters below follow 
 most of the bugs this system has had came from breaking one of them.
 
 The first rule is that the git repository holds the facts, and `.memhtml/index.db` is a derived copy
-that can be thrown away. A derived copy like that is called a projection, meaning every row in it is computed
-from files in the tree and nothing is stored there first. `git ls-tree` regenerates the whole database
-(`packages/store/src/layout.ts:25`, `packages/store/src/layout.ts:55`), which is why the index is
-gitignored. Anything that has to survive `rm index.db` lives in a file instead: authored links are
-`<link>` elements and metadata is `<meta>` elements. Embeddings and mined edges can be recomputed, so
-they live only in the index. One store of state breaks the pattern. The state plane holds access
-counts and reinforcement history, no file in the tree records them, and it therefore carries a
+that can be thrown away. A derived copy like that is called a projection, meaning every row in it is
+computed from files in the tree and nothing is stored there first. `git ls-tree` regenerates the
+whole database (`packages/store/src/layout.ts:25`, `packages/store/src/layout.ts:55`), which is why
+the index is gitignored. Anything that has to survive `rm index.db` lives in a file instead:
+authored links are `<link>` elements and metadata is `<meta>` elements. Embeddings and mined edges
+can be recomputed, so they live only in the index. The state plane breaks the pattern, because it
+holds access counts and reinforcement history that no file in the tree records, so it carries a
 committed sidecar file as its durable copy.
 
 Figure 1 draws that rule. Three ways of writing reach one tree, and two databases are derived from it.

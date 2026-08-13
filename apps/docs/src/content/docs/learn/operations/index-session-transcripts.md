@@ -11,7 +11,7 @@ memhtml trace links --path areas/inbox/some-memory.html
 ```
 
 The trace plane answers provenance questions: which session produced this memory, and which memories
-came out of that session. It is a separate set of tables from memory retrieval, deliberately.
+came out of that session. It uses its own tables, which no ranking arm reads.
 
 ## Scanning
 
@@ -107,7 +107,7 @@ of `$MEMHTML_TRACE_ROOT`. The trace plane and the memory index are rebuilt by di
 because they are recovered from different sources: the tree for one, the transcripts for the other.
 
 Recovering the trace tables therefore means re-running `memhtml trace index` from a zero watermark,
-which re-walks `$MEMHTML_TRACE_ROOT` in full: slow, and it loses nothing.
+which re-walks `$MEMHTML_TRACE_ROOT` in full. That is slow and loses nothing.
 
 ## How transcripts become memories
 

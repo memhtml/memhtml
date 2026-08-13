@@ -16,8 +16,8 @@ credentials, which makes the manifest your liveness check as well as your contra
 
 :::agent
 **For an agent.** Prefer the manifest to this page wherever the two could disagree. The manifest is
-generated from the source of truth, so it is right and this page is stale. What this page adds is
-what a schema cannot state: what a silence means, and which surface you are on.
+generated from the source of truth, so it is right and this page is stale. This page adds what a
+schema cannot state: what a silence means, and which surface you are on.
 :::
 
 ## 2. Assumptions to drop
@@ -50,7 +50,7 @@ See [the memory file format](/internals/the-memory-file-format/).
 
 Read the flags instead of guessing them. Every flag the binary accepts is in the manifest, and an
 unknown flag returns a usage error with a suggestion attached rather than a silent default. A guess
-costs you a round trip that reading the manifest does not. See [global
+costs a round trip, where the manifest answers the same question in one call. See [global
 flags](/reference/global-flags/).
 
 ## 3. Which surface you are on
@@ -63,9 +63,9 @@ Two surfaces reach the same store, and the test for which one you have is free.
 | You can run a shell command | CLI | `memhtml manifest`, then the command you need. |
 | Neither | Read-only | You are reading documentation. Fetch the Markdown, not the HTML. |
 
-The MCP server is the CLI. `memhtml serve mcp` speaks stdio and composes the same services the
-command line does, so both surfaces agree on which store, which database, and which vector space a
-call reaches. A tool's arguments mirror its command's flags. See [MCP
+The MCP server is the same binary. `memhtml serve mcp` speaks stdio and composes the same services
+the command line does, so both surfaces agree on which store, which database, and which vector space
+a call reaches. A tool's arguments mirror its command's flags. See [MCP
 tools](/reference/mcp-tools/) and the [reference overview](/reference/), which links one page per
 command.
 

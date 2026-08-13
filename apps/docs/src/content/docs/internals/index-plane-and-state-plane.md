@@ -3,7 +3,7 @@ title: The index plane and the state plane
 description: What git cannot reproduce, why it is gitignored anyway, and the byte-stable committed sidecar that is its only durable copy.
 ---
 
-## 1. The one thing git cannot reproduce
+## 1. What git cannot reproduce
 
 The system keeps two databases, and this page calls them planes. The index plane, `.memhtml/index.db`, is
 computed from the git tree. The state plane, `.memhtml/state.db`, holds the usage statistics no file in
@@ -11,7 +11,8 @@ the tree records: access counts, reinforcement counts, the outcome average, the 
 reprieves, and edge corroboration counts. A reprieve is an extension of a memory's validity window
 granted instead of evicting it, and the count of how many a memory has already had lives here.
 
-Those numbers change constantly. A commit per access bump would be a commit per memory an agent opens.
+Those numbers change on every read. A commit per access bump would be a commit per memory an agent
+opens.
 
 So `state.db` is gitignored like the index, and unlike the index it cannot be rebuilt from the tree. Its
 durable copy is an append-only JSONL sidecar, `.memhtml/state/access.jsonl`, which the nightly sleep cycle
@@ -59,15 +60,14 @@ the store calls at the single place a path can change (`packages/store/src/store
 The alternative would be to key the state plane on something other than the path, which means inventing a
 second identity for a memory. The path is the id (`packages/contracts/src/types.ts:102-107`).
 
-## 4. The claim is tested end to end
+## 4. An integration test proves the claim
 
-`tests-integration/tests/clone.test.ts` exercises the whole claim. It clones the memory repository,
+`tests-integration/tests/clone.test.ts` runs the whole path. It clones the memory repository,
 asserts that neither database came with the clone, then runs `memhtml init`, `state import`, and
 `index rebuild`, and checks that the origin's access counts come back. It checks the counts themselves
 rather than the presence of the rows.
 
-Asserting that the rows exist would pass against a sidecar that wrote every count as zero. The counts are
-the fact.
+Asserting that the rows exist would pass against a sidecar that wrote every count as zero.
 
 The operational procedure this implies, exporting, committing, and importing the sidecar around any move
 of the store, is an operations how-to under [Learn](/learn/).

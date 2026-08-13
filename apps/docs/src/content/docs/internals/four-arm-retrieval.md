@@ -15,9 +15,9 @@ Each arm is an entry in a registry, and `buildRrfSql` folds over that registry t
 arm therefore means adding a table entry, and dropping one means filtering the registry. Each arm returns
 exactly `(path, rank)`, with rank counted from 1.
 
-Figure 1 draws the whole path, and labels the diversification pass by its usual name, maximal marginal
-relevance, abbreviated MMR. The boundary worth reading off the figure is where SQL stops: everything down
-to the per-path sum is one statement, and MMR is TypeScript over what that statement returned.
+Figure 1 draws the whole path, and labels the diversification pass by its usual name, maximal
+marginal relevance, abbreviated MMR. Everything down to the per-path sum is one SQL statement, and
+MMR is TypeScript over what that statement returned.
 
 ```d2 pad=20 src="_figures/rrf-and-mmr.d2" title="Query text fans out to four arms - fts at weight 1.0, vector at weight 1.0, recency at weight 0.5, and salience at weight 0.4 - each returning a path and a rank. The salience arm additionally reads state.access, attached in the same statement. All four arms feed a UNION ALL of weight over rank plus sixty, then a SUM per path with ties broken on path ascending. That feeds MMR at lambda one half over three times the limit, then one snippet statement over the final paths, then ranked hits."
 ```
@@ -209,9 +209,8 @@ then explain a pattern while citing none of the evidence for it.
 ## 9. Reinforcement
 
 `reinforce` (`packages/index/src/reinforce.ts:45`) is the only call site that writes `state.access`,
-and the cooldown is why. `access_count` feeds the salience arm, so a second writer would let a loop in
-an agent replay one query and rewrite the corpus's ranking. A cooldown enforced in two places is
-enforced in neither.
+and the cooldown is why. `access_count` feeds the salience arm, so a second writer would let a loop
+in an agent replay one query and rewrite the corpus's ranking.
 
 The guard is necessarily expressed twice, once as the SQL `WHERE` clause and once as a pure function, so
 both read the same constant, `REINFORCE_COOLDOWN_S = 900` (`packages/domain/src/ranking.ts:17`), and a
@@ -223,7 +222,7 @@ in TypeScript would race a concurrent reinforce and report a bump that never hap
 non-neutral signal moves `reinforcement_count` and the outcome average, because being read is evidence
 of relevance and not of correctness.
 
-### 9.1. What bumps, and what deliberately does not
+### 9.1. Which reads bump salience
 
 Salience accumulates evidence that someone chose a memory, so the three read tiers get three different
 policies.

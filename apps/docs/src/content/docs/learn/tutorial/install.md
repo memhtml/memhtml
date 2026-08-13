@@ -50,8 +50,8 @@ memhtml manifest | head -5
   "data": {
 ```
 
-`memhtml manifest` is the liveness check, and it is the one command that answers on a machine with no
-repository, no database, and no credentials. An envelope back means the build is good.
+`memhtml manifest` is the liveness check, and it answers on a machine with no repository, no
+database, and no credentials. An envelope back means the build is good.
 
 Two alternatives to the symlink, both equivalent:
 
@@ -106,7 +106,8 @@ already true and supplying only what is missing (`packages/store/src/layout.ts:1
 same end state from an empty directory, from a fully scaffolded repository, and from one a killed run
 left half finished, so re-running it is always safe.
 
-Four PARA buckets, fixed: `projects/`, `areas/`, `resources/`, `archive/`. A workspace is a directory
+The top level is fixed at four PARA buckets: `projects/`, `areas/`, `resources/`, and `archive/`. A
+workspace is a directory
 under `projects/`, and there is no workspaces table. [Store layout and path
 algebra](/internals/store-layout-and-path-algebra/) explains the rest of the tree.
 
@@ -128,9 +129,9 @@ export MEMHTML_EMBED=off      # an explicit opt-out, distinct from a missing cre
 memhtml index rebuild --no-embed
 ```
 
-The distinction matters and the runbook is strict about it. A missing credential degrades one search
-at call time, while `MEMHTML_EMBED=off` degrades every search. Both are honest, and only the second
-one is a decision you made.
+A missing credential degrades one search at call time, while `MEMHTML_EMBED=off` degrades every
+search. Only the second is a decision you made, and the manifest reports the two as different
+states.
 
 ## Confirm it
 
@@ -182,8 +183,8 @@ Two databases sit under `.memhtml/`, and they differ in what you can recover:
   reinforcement counts, and the outcome EWMA. Its durability comes from the committed sidecar
   `.memhtml/state/access.jsonl`.
 
-Both are plain SQLite, opened through node's built-in `node:sqlite`. There is no third-party database
-dependency and no driver flags to keep in step, so `sqlite3` or any GUI browser opens both files
+Both are plain SQLite, opened through node's built-in `node:sqlite`. The only database dependency is
+node itself, with no driver flags to keep in step, so `sqlite3` or any GUI browser opens both files
 directly and a stuck index stays inspectable without this binary.
 
 Next: [write your first memory](/learn/tutorial/first-memory/).

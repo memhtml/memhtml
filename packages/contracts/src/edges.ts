@@ -12,8 +12,8 @@ export const EdgeClass = Schema.Literals(EDGE_CLASSES)
 export type EdgeClass = typeof EdgeClass.Type
 
 /**
- * The nine memory rels. `supersedes` and `contradicts` are penalty-bearing — they gate
- * the retention `contested_status` signal — so sleep promotes a corroborated one into
+ * The nine memory rels. `supersedes` and `contradicts` are penalty-bearing: they gate
+ * the retention `contested_status` signal, so sleep promotes a corroborated one into
  * both files rather than leaving it in the rebuildable index.
  */
 export const MEMORY_RELS = [
@@ -63,7 +63,7 @@ export const EdgeRel = Schema.Literals(ALL_RELS)
 export type EdgeRel = typeof EdgeRel.Type
 
 /**
- * The class a rel belongs to. Total over {@link ALL_RELS} and injective per class — a rel
+ * The class a rel belongs to. Total over {@link ALL_RELS} and injective per class: a rel
  * name appears in exactly one class, which is what lets the class be derived rather than
  * carried alongside the rel and risk disagreeing with it.
  */
@@ -139,7 +139,7 @@ export const Edge = Schema.Struct({
 export type Edge = typeof Edge.Type
 
 /**
- * True when an edge's declared class matches its rel and it is not a self-loop — the two
+ * True when an edge's declared class matches its rel and it is not a self-loop, the two
  * conditions the `edges` table's CHECK constraints enforce, stated once here so a caller
  * can refuse a bad edge before the driver does.
  */

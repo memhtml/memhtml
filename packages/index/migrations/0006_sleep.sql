@@ -1,6 +1,6 @@
 -- Sleep-run reporting. Not load-bearing: the commit trailers on the sleep branch are what
 -- `memhtml sleep resume` reads (`git log --format=%B base..HEAD | grep '^Memhtml-Phase:'`), so this pair of
--- tables is a reporting convenience the git history can regenerate. That is deliberate — a journal
+-- tables is a reporting convenience the git history can regenerate. That is deliberate. A journal
 -- table that a resume depended on would be a second source of truth for what already happened.
 
 CREATE TABLE sleep_runs (

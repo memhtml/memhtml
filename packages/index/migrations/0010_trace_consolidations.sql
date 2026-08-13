@@ -12,7 +12,7 @@
 -- absent from that list is untouched. Verified the same way `sleep_runs` is.
 --
 -- If the file itself is ever deleted, every watermark goes with it and the next cycle reconsolidates
--- the sessions it can still see. That is wasteful — it re-pays Opus for transcripts already read —
+-- the sessions it can still see. That is wasteful (it re-pays Opus for transcripts already read)
 -- and it is SAFE, which is the ordering that matters: the phase writes memories through the same
 -- reviewable-commit discipline as every other sleep mutation, so a duplicate candidate is a commit a
 -- reviewer declines, never a corruption. Nothing here is load-bearing for correctness.
@@ -34,7 +34,7 @@ CREATE TABLE trace_consolidations (
   -- The sleep run that distilled it, e.g. `sleep/2026-08-08`. Reporting and provenance only:
   -- nothing reads this to decide anything, the same posture 0006's tables carry.
   run_id          TEXT NOT NULL,
-  -- The run's own instant, not a clock read at insert time — a phase derives every stamp from the
+  -- The run's own instant, not a clock read at insert time: a phase derives every stamp from the
   -- injected run date (`packages/sleep/src/env.ts:60-67`), so two runs of one date agree here.
   consolidated_at TEXT NOT NULL
 );

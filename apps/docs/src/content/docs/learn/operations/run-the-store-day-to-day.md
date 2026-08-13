@@ -18,7 +18,7 @@ file, makes one commit, and reindexes once, where the same memories written one 
 commit and one index pass each. `apply` is atomic by default, and `--continue-on-error` makes it
 best-effort. Both `apply` and `exec` read stdin when you omit `--file` or pass `-`.
 
-## Nothing is deleted
+## Every removal is a move into the archive
 
 - `memhtml correct <target>` writes the superseding file and archives the target in one commit, so an
   interrupted run can never leave two live memories contradicting each other.
@@ -61,9 +61,9 @@ Two things leave the count alone:
 - `memhtml search` and `memhtml recall`, however many paths they return.
 - Every sleep phase.
 
-Those two are the ranker's guess and the schedule's sweep, and counting either would let the ranking
-teach itself. Today's top five would rank higher tomorrow purely for having been listed, while the
-memory that should displace them would never get a first bump.
+Those two are the ranker's guess and the schedule's sweep, and counting either would feed the
+ranker's own output back into its input. Today's top five would rank higher tomorrow purely for
+having been listed, while the memory that should displace them would never get a first bump.
 
 So a corpus that has been searched all day and never read has an empty `state.access`. That is the
 expected state.
@@ -113,7 +113,7 @@ converged store answers `unchanged: true` and writes nothing:
 `memhtml publish` is deterministic to the byte, so two runs over an unchanged corpus write nothing and
 commit nothing.
 
-`memhtml sleep merge` stays off the cron deliberately. A curation run rewrites confidence across the
+`memhtml sleep merge` stays off the cron. A curation run rewrites confidence across the
 corpus and archives memories, so the branch waits for a person to read `memhtml sleep review` first.
 The nightly `sleep run` produces the branch, and landing it is a decision. See
 [run and review a sleep cycle](/learn/operations/run-and-review-a-sleep-cycle/).

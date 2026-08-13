@@ -95,9 +95,10 @@ full-text index, the vectors, and the derived edges. See [The index](/internals/
 
 ### Last-wins consolidation
 
-The policy this system refuses: resolving a contradiction silently in favour of the newer memory.
-Sometimes the contradiction itself is the answer, so memhtml detects a contradiction automatically
-and leaves the resolution to a writer or a human. See [The write path](/internals/the-write-path/).
+Resolving a contradiction silently in favour of the newer memory. memhtml declines that policy,
+because sometimes the contradiction itself is the answer, so it detects a contradiction
+automatically and leaves the resolution to a writer or a human. See [The write
+path](/internals/the-write-path/).
 
 ### Memory
 

@@ -5,16 +5,18 @@ description: A read-only index over session transcripts that stores pointers rat
 
 ## 1. The store never holds session content
 
-Nothing under `.memhtml` holds session content. The trace tables are a read-only index over the agent
-runtime's transcript directory. The root of that directory is a parameter rather than a constant, so the
-scan can be driven against a fixture tree in tests (`packages/traces/src/scan.ts:48-57`).
+The trace tables are a read-only index over the agent runtime's transcript directory, and nothing
+under `.memhtml` copies a transcript into the store. The root of that directory is a parameter
+rather than a constant, so the scan can be driven against a fixture tree in tests
+(`packages/traces/src/scan.ts:48-57`).
 
 ## 2. The watermark is size, mtime, and a byte offset
 
 A watermark records how far the scanner has already read, and here it is three values per file
-(`packages/traces/src/watermark.ts:66`). Matching size and mtime skip the file without opening it. Growth
-means the scanner reads the tail from the stored byte offset. A shrink, a backward mtime, or an offset
-past the current size all rescan from 0, because a rewrite makes the stored offset meaningless.
+(`packages/traces/src/watermark.ts:66`). The scanner skips a file whose size and mtime both match,
+without opening it. When the file has grown, it reads the tail from the stored byte offset. A
+shrink, a backward mtime, or an offset past the current size all rescan from 0, because a rewrite
+makes the stored offset meaningless.
 
 ## 3. Streaming parse
 
@@ -60,7 +62,7 @@ would stop describing an order. A rescan replaces the row outright.
 `text_head` caps at 200 characters and `first_prompt` at 500
 (`packages/traces/src/extract.ts:48-51`), because this is an index and not a copy.
 
-## 6. The firewall is a table-name firewall, and a test enforces it
+## 6. A test greps every assembled statement for the trace table names
 
 Nothing in the retrieval SQL assembler names `traces` or `trace_prompts`. A test asserts that by grepping
 every statement the module can assemble, in both the default and the scoped form, since a firewall that
@@ -69,16 +71,15 @@ holds for one form and leaks in the other is no firewall at all
 
 ## 7. What the plane is for, and who consumes it
 
-The sections above describe how the plane is built. This one says why it exists, because the three tables
-divide a question that sounds like one question.
+The three tables answer three questions that sound like one.
 
 `traces` answers what a session was. One row per session, keyed on `session_id`
-(`packages/index/migrations/0005_traces.sql:8`), carrying the cwd-derived `slug`, `cwd`, `git_branch`,
-`entrypoint`, `model`, `version`, `started_at` and `ended_at`, the prompt, turn, and agent counts,
-`first_prompt`, an `ai_title`, and three columns that make the whole design work: `file_path`,
-`file_size`, and `file_mtime`, which point at the transcript on disk. `search_text` is `first_prompt` and
-`ai_title` joined by a newline under a full-text index, single-column for the same reason
-`files.fts_text` is.
+(`packages/index/migrations/0005_traces.sql:8`), carrying the cwd-derived `slug`, `cwd`,
+`git_branch`, `entrypoint`, `model`, `version`, `started_at` and `ended_at`, the prompt, turn, and
+agent counts, `first_prompt`, an `ai_title`, and `file_path`, `file_size`, and `file_mtime`, which
+point at the transcript on disk and let a rescan skip a file that has not changed. `search_text` is
+`first_prompt` and `ai_title` joined by a newline under a full-text index, single-column for the
+same reason `files.fts_text` is.
 
 `trace_prompts` answers what was asked, and in what order. One row per distinct prompt with a `text_head`
 the extractor caps at 200 characters, and an `ordinal` that counts from 0 within one session and is
@@ -116,18 +117,18 @@ memories through the store, copying no transcript text into the corpus. That is 
 pointer rather than content.
 
 The distillation has to be checkable, so a candidate must cite at least two verbatim evidence quotes
-(`apps/consolidator/src/contract.ts:93`), with `MAX_QUOTE_CHARS = 600` so that a quote cannot smuggle in a
-transcript. Those quotes go into the commit message and nowhere else
-(`packages/sleep/src/phases/trace-consolidation.ts:158-165`), because a commit message sits outside the
-corpus: it is not indexed, not chunked, not embedded, and not retrievable. The memory body carries the
-claim, and the commit carries the receipt a reviewer needs in order to judge whether the claim earned its
-place.
+(`apps/consolidator/src/contract.ts:93`), with `MAX_QUOTE_CHARS = 600` so that a quote cannot
+smuggle in a transcript. Those quotes go into the commit message and nowhere else
+(`packages/sleep/src/phases/trace-consolidation.ts:158-165`), because a commit message sits outside
+the corpus, where nothing indexes, chunks, embeds, or retrieves it. The memory body carries the
+claim, and the commit carries the receipt a reviewer needs in order to judge whether the claim
+earned its place.
 
 Every cited `sessionId` is checked for membership in the batch that was actually seeded. An invented id
 fails the turn instead of landing a citation nobody can check
 (`apps/consolidator/src/contract.ts:133`).
 
-Joining `traces` to `memory_session_links` produces the manifest that turns the consolidator's first move
-from reading everything into reading the sessions that touch the memories in question. The manifest
-carries paths, date ranges, and session ids, tied to the memory files they relate to.
+Joining `traces` to `memory_session_links` produces the manifest. With it the consolidator's first
+move is reading the sessions that touch the memories in question, rather than reading everything.
+The manifest carries paths, date ranges, and session ids, tied to the memory files they relate to.
 [The consolidator](/internals/the-consolidator/) is the prompt that reads it.

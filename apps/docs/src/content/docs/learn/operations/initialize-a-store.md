@@ -77,9 +77,9 @@ keeps beside them:
 A clone therefore hands you the tree and the committed sidecar `.memhtml/state/access.jsonl`, and no
 databases at all. That sidecar is why `memhtml state import` is a step in
 [recovery](/learn/operations/recover-from-a-lost-index/). Retrieval ranks a
-query with four arms: full-text search, vector similarity, recency, and salience, which favours
-memories you have opened and reinforced before. Skip the import and the salience arm has no signal to
-work with, so ranking gets quietly worse instead of failing.
+query with four arms: full-text search, vector similarity, recency, and salience. Salience favours
+the memories you have opened and reinforced before, so skipping the import leaves that arm with no
+signal and ranking gets quietly worse instead of failing.
 
 ## What the scaffold contains
 

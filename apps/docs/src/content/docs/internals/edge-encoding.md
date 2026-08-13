@@ -53,7 +53,7 @@ The HTML `rel` token is the rel with a `memhtml-` prefix and its underscores tur
 (`packages/contracts/src/edges.ts:106-110`), so `laterally_related` becomes
 `memhtml-laterally-related`. `relForToken` inverts that mapping (`packages/contracts/src/edges.ts:116`).
 
-## 4. What SQL cannot enforce, the store refuses
+## 4. The store checks the endpoint types SQL cannot
 
 SQL cannot check the type of the files at either end of an edge, so the store refuses an edge whose class
 disagrees with its endpoints (`packages/store/src/store.ts:838-870`). Both directions are refusals, with
@@ -79,7 +79,7 @@ dropped when the file is projected.
 indexer has not reached yet, or an archived path, and a hard foreign key would make indexing depend on
 the order files arrive in (`packages/index/src/indexer.ts:470-473`).
 
-Dangling hrefs are therefore found rather than prevented. A LEFT JOIN finds them
-(`packages/sleep/src/sql.ts:524`) and the sleep pipeline's integrity phase repairs them in a commit,
-distinguishing an archived target, where it rewrites the href to the derived archive path, from a target
-that is simply gone, where it drops the edge with a warning.
+A dangling href is therefore found and repaired instead of refused at write time. A LEFT JOIN finds
+them (`packages/sleep/src/sql.ts:524`) and the sleep pipeline's integrity phase repairs them in a
+commit, distinguishing an archived target, where it rewrites the href to the derived archive path,
+from a target that is simply gone, where it drops the edge with a warning.
