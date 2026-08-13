@@ -22,14 +22,14 @@ import {
  * The retention scoring pass, computed once and consumed by both `retention-triage` and `compress`.
  *
  * Shared because the two phases must agree by construction. They run adjacently and read the same
- * corpus, so a second computation would be a second chance to disagree — and a memory that triage
+ * corpus, so a second computation would be a second chance to disagree. A memory that triage
  * banded COMPRESS while compress scored it KEEP would be neither compressed nor kept, silently
  * falling out of both phases' work.
  *
  * PageRank and communities run in TypeScript over the memory-class edge list, both deterministic:
  * PageRank sorts its nodes before iterating so the floating-point summation order is fixed, and label
- * propagation visits in sorted order with lexicographic tie-breaking rather than a random seed. That
- * matters because these scores decide which memories are evicted — a run-to-run reordering would
+ * propagation visits in sorted order with lexicographic tie-breaking instead of a random seed. These
+ * scores decide which memories are evicted, so a run-to-run reordering would
  * change the outcome on a corpus that did not change.
  */
 
@@ -57,9 +57,9 @@ export interface RetentionPass {
 /**
  * Fractional days between two ISO instants, floored at zero.
  *
- * Non-negative by clamp rather than by assumption: a file whose `memhtml-updated` is ahead of the run
- * date — a clock skew, or a hand-edited stamp — would otherwise produce a negative age and an
- * exponential recency signal ABOVE 1, which the retention composite's convexity argument forbids.
+ * The clamp holds the result non-negative instead of assuming it. A file whose `memhtml-updated` is
+ * ahead of the run date, from a clock skew or a hand-edited stamp, would otherwise produce a negative
+ * age and an exponential recency signal ABOVE 1, which the retention composite's convexity forbids.
  */
 export const ageDaysBetween = (from: string, to: string): number => {
   const start = Date.parse(from)
@@ -74,7 +74,7 @@ export const hoursBetween = (from: string, to: string): number => ageDaysBetween
 /**
  * Score every active memory.
  *
- * `at` is the run's own instant, passed in rather than read from a clock: the recency signal is a
+ * `at` is the run's own instant, passed in instead of read from a clock. The recency signal is a
  * function of it, so a fixed instant is what makes a band decision assertable in a test.
  */
 export const runRetentionPass = (

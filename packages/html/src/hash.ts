@@ -10,18 +10,18 @@ import { GIST_EXCLUDED_ELEMENTS, INLINE_ELEMENTS } from "./vocabulary.js"
  *
  * `sha256` over the whitespace-normalized text content of `<article>`, except inside `<pre>`
  * where whitespace is preserved verbatim. Meta and `<link>` edits are outside the scope by
- * construction, which is what makes confidence decay, access bookkeeping, and the sleep
- * phases' own stamping not look like content changes — without that invariance every nightly
- * decay pass would present the whole corpus as new content and dedup would collapse.
+ * construction, so confidence decay, access bookkeeping, and the sleep phases' own stamping do
+ * not look like content changes. Without that invariance every nightly decay pass would
+ * present the whole corpus as new content and dedup would collapse.
  */
 
 /** The digest's algorithm prefix. A hash is self-describing so a stored value can be re-verified. */
 export const HASH_ALGORITHM = "sha256"
 
-/** ASCII whitespace, per the HTML definition. U+00A0 is deliberately excluded — it is content. */
+/** ASCII whitespace, per the HTML definition. U+00A0 is excluded because it is content. */
 const ASCII_WHITESPACE = /[ \t\n\f\r]+/g
 
-/** One run of extracted text and whether its whitespace is load-bearing. */
+/** One run of extracted text and whether its whitespace is significant. */
 interface Segment {
   readonly verbatim: boolean
   readonly text: string
@@ -33,16 +33,16 @@ const preservesWhitespace = (element: Element): boolean => element.tagName === "
 /** What {@link canonicalText} may skip. */
 export interface CanonicalTextOptions {
   /**
-   * Omit `<pre>` and `<code>` subtrees. The gist rule — a command line is body text and it is
-   * searchable, but it is never part of the claim.
+   * Omit `<pre>` and `<code>` subtrees, per the gist rule. A command line is body text and it
+   * is searchable, and it is not part of the claim.
    */
   readonly excludeCode?: boolean | undefined
 }
 
 /**
  * Text segments of a subtree in document order, each tagged with whether its whitespace is
- * load-bearing. A block element contributes a collapsible space at each of its edges, so the
- * text of two adjacent blocks never fuses. Iterative, so depth cannot overflow the stack.
+ * significant. A block element contributes a collapsible space at each of its edges, so the
+ * text of two adjacent blocks stays separate. Iterative, so depth cannot overflow the stack.
  */
 const segmentsOf = (root: Node, options: CanonicalTextOptions): ReadonlyArray<Segment> => {
   const out: Array<Segment> = []
@@ -84,7 +84,7 @@ const segmentsOf = (root: Node, options: CanonicalTextOptions): ReadonlyArray<Se
   return out
 }
 
-/** Concatenate adjacent same-mode segments, so a collapse never runs across a `<pre>` boundary. */
+/** Concatenate adjacent same-mode segments, so no collapse runs across a `<pre>` boundary. */
 const coalesce = (segments: ReadonlyArray<Segment>): ReadonlyArray<Segment> => {
   const out: Array<Segment> = []
   for (const segment of segments) {
@@ -105,8 +105,8 @@ const coalesce = (segments: ReadonlyArray<Segment>): ReadonlyArray<Segment> => {
  * Block-element edges contribute a collapsible space, so the hash is a function of the article's
  * *words* and not of its indentation: `<li>one</li><li>two</li>` and the same list pretty-printed
  * across lines yield one digest. Without that edge space the flat form would canonicalize to
- * `onetwo` and reformatting a file — which changes nothing a reader can see — would move its dedup
- * key.
+ * `onetwo`, so reformatting a file would move its dedup key while changing nothing a reader can
+ * see.
  *
  * The outer trim is applied only to a leading or trailing *collapsible* segment. Trimming the
  * whole result would let `<pre>  a</pre>` and `<pre>a</pre>` hash identically, and the leading
@@ -124,7 +124,7 @@ export const canonicalText = (root: Node, options: CanonicalTextOptions = {}): s
   return rendered.join("")
 }
 
-/** The digest's input. `canonicalText` with `<pre>`/`<code>` kept — everything is hashed. */
+/** The digest's input. `canonicalText` with `<pre>`/`<code>` kept, so everything is hashed. */
 export const canonicalArticleText = (root: Node): string => canonicalText(root)
 
 /** `sha256:<hex>` over a string. */
@@ -151,7 +151,7 @@ const isHashableArticle = (input: unknown): input is HashableArticle =>
 /**
  * The content hash of an article, from a parsed document, an article node, or the article's
  * inner HTML. Passing whole-file HTML works too: the `<article>` element is located first, so
- * head content can never reach the digest.
+ * head content does not reach the digest.
  */
 export const contentHash = (input: HashableArticle | Node | string): string => {
   if (typeof input === "string") return digest(canonicalArticleText(articleTreeOf(input)))
@@ -163,8 +163,8 @@ export const contentHash = (input: HashableArticle | Node | string): string => {
 /**
  * The subtree to hash for a string input: the first `<article>` when the string is a whole
  * document, and the fragment itself when it is bare article markup. A string with no
- * `<article>` hashes as article-inner-HTML rather than failing — `contentHash` is total, and
- * refusing malformed input is `parseMemory`'s job, not the digest's.
+ * `<article>` hashes as article-inner-HTML rather than failing, because `contentHash` is total
+ * and refusing malformed input is `parseMemory`'s job, not the digest's.
  */
 const articleTreeOf = (html: string): ParentNode => {
   if (/<article[\s>]/i.test(html)) {

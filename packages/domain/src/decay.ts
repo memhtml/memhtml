@@ -1,12 +1,12 @@
 /**
  * Confidence decay and the outcome EWMA, both on a fixed-point grid.
  *
- * The grid is not decoration. Every invariant here is a boundary claim — decay stops *at*
- * the floor, `alpha = 1` snaps *exactly* to it, `alpha = 0` is *exactly* a fixed point — and
- * in float arithmetic a convex combination of two equal values can land one ulp below them,
- * so the boundary cases would hold approximately and fail as written. On the integer grid
- * they are exact, which is what lets the property tests assert equality rather than
- * closeness. Ported from the predecessor memory system's `domain/curation.py`.
+ * Every invariant here is a boundary claim. Decay stops *at* the floor, `alpha = 1` snaps
+ * *exactly* to it, and `alpha = 0` is *exactly* a fixed point. In float arithmetic a convex
+ * combination of two equal values can land one ulp below them, so the boundary cases would
+ * hold approximately and fail as written. On the integer grid they are exact, so the
+ * property tests can assert equality instead of closeness. Ported from the predecessor
+ * memory system's `domain/curation.py`.
  */
 
 /** The fixed-point scale: 10^4, so the grid step is the 4th decimal place. */
@@ -56,8 +56,8 @@ export const ewmaStepFp = (alphaFp: number, prevFp: number, signalFp: number): n
 /**
  * Fold signals through {@link ewmaStepFp}, one rounding per step. Rounding inside the fold
  * rather than once at the end is what makes an N-signal batch agree with N single-signal
- * calls — the difference matters because sleep may process a memory's corrections in one
- * batch or across several nights and must reach the same score either way.
+ * calls. Sleep may process a memory's corrections in one batch or across several nights,
+ * and both paths must reach the same score.
  */
 export const applyOutcomesFp = (
   alphaFp: number,
@@ -83,10 +83,10 @@ export const applyNegativeHitsFp = (alphaFp: number, prevFp: number, hits: numbe
  * previous value.
  *
  * The `min` is what makes the step *unconditionally* non-increasing. Without it, a claim
- * already below the floor — one an operator correction pushed down, say — would be pulled
+ * already below the floor (one an operator correction pushed down, say) would be pulled
  * back *up* toward the floor by the same convex combination that erodes a healthy claim, so
  * decay would rehabilitate a discredited memory. The floor is a resting place for a claim
- * that stops being reinforced, never a promotion for one that was refuted.
+ * that stops being reinforced. A refuted claim is not pulled back up to it.
  */
 export const decayConfidenceFp = (alphaFp: number, confFp: number, floorFp: number): number =>
   Math.min(confFp, ewmaStepFp(alphaFp, confFp, floorFp))
@@ -129,7 +129,7 @@ export const decayConfidenceN = (
 
 /**
  * The smallest confidence change worth committing. Confidence decay is the widest commit in
- * a sleep run — one meta line across many files — so a sub-threshold delta is dropped rather
+ * a sleep run, one meta line across many files, so a sub-threshold delta is dropped rather
  * than committed, keeping the night's diff reviewable.
  */
 export const CONFIDENCE_COMMIT_DELTA = 0.005

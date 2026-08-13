@@ -9,18 +9,18 @@ import {
  * high-similarity WRONG one.
  *
  * A control is adversarial exactly when it is lexically and semantically near its target and
- * factually incompatible with it — which is what `@memhtml/domain`'s anti-merge guards already
- * formalize for the sleep cycle. So the control generator is the merge veto read backwards: the
- * three predicates that forbid folding two memories together are the three ways to build a
- * plausible impostor, and a control the veto cannot see is not a control at all.
+ * factually incompatible with it, which is what `@memhtml/domain`'s anti-merge guards already
+ * formalize for the sleep cycle. The control generator is therefore the merge veto read backwards.
+ * The three predicates that forbid folding two memories together are the three ways to build a
+ * plausible impostor, and a control the veto cannot see does not test anything.
  *
  * **Every control is validated against its OWN family's predicate, never against the
- * disjunction.** `negationDivergent` is a marker-PRESENCE check over the whole text: a target body
+ * disjunction.** `negationDivergent` is a marker-PRESENCE check over the whole text. A target body
  * already containing `no`/`not`/`fail`/`invalid` puts a marker on both sides, the predicate returns
  * false, and the "flipped" control is then a paraphrase the retrieval stack is right to rank
- * alongside its target. Checking the disjunction would hide that — the numeric predicate would fire
- * on some incidental digit and the pair would look adversarial while the polarity flip did nothing.
- * {@link deriveControl} refuses that pair instead, so a weak control cannot enter a probe set.
+ * alongside its target. Checking the disjunction would hide that, because the numeric predicate
+ * would fire on some incidental digit and the pair would look adversarial while the polarity flip
+ * did nothing. {@link deriveControl} refuses that pair, so a weak control cannot enter a probe set.
  */
 
 /** Which divergence a control embodies. Named on the probe, so a failure says which axis broke. */
@@ -32,13 +32,13 @@ export const DIVERGENCE_FAMILIES: ReadonlyArray<DivergenceFamily> = [
   "variant"
 ]
 
-/** The text of a memory as the flips see it: the claim, then each body paragraph. */
+/** The text of a memory as the flips see it, meaning the claim then each body paragraph. */
 export interface ClaimText {
   readonly claim: string
   readonly body: ReadonlyArray<string>
 }
 
-/** A derived control: the flipped text plus the family that produced it. */
+/** A derived control, holding the flipped text plus the family that produced it. */
 export interface DerivedControl extends ClaimText {
   readonly family: DivergenceFamily
   /** What changed, for the probe's own record. */
@@ -52,7 +52,7 @@ export const wholeText = (text: ClaimText): string => [text.claim, ...text.body]
  * Insertion points for a polarity flip, longest first so ` is not ` cannot be produced twice.
  *
  * Matched with surrounding spaces so a substring inside a word (`this`, `scan`) is never an
- * insertion point — the flip has to land on a verb, or the sentence reads as noise rather than as a
+ * insertion point. The flip has to land on a verb, or the sentence reads as noise instead of as a
  * claim a retrieval stack could plausibly return.
  */
 const NEGATION_ANCHORS: ReadonlyArray<string> = [
@@ -71,10 +71,10 @@ const NEGATION_ANCHORS: ReadonlyArray<string> = [
 /**
  * The affirmative claim as its negation.
  *
- * Total. When no verb anchor is present the whole sentence is wrapped rather than left unchanged —
- * a transform that silently returned its input would produce a "control" identical to its target,
- * and an identical control is a duplicate the content-hash index would refuse at index time, one
- * layer too late to explain itself.
+ * Total. When no verb anchor is present the whole sentence is wrapped rather than left unchanged.
+ * A transform that returned its input would produce a "control" identical to its target, and an
+ * identical control is a duplicate the content-hash index refuses at index time, one layer too late
+ * to explain itself.
  */
 export const negationFlip = (claim: string): string => {
   for (const anchor of NEGATION_ANCHORS) {
@@ -93,13 +93,13 @@ const NUMBER_PATTERN = /\d+(?:\.\d+)*/g
 /**
  * The claim with its first numeric token replaced by a different one.
  *
- * `undefined` when the claim carries no number: the family does not apply, and inventing a number
- * to flip would produce a control that differs from its target by an ADDED fact rather than by a
- * contradicted one. The probe builder reads the `undefined` and skips the family rather than
+ * `undefined` when the claim carries no number, because the family does not apply. Inventing a
+ * number to flip would produce a control that differs from its target by an ADDED fact rather than
+ * by a contradicted one. The probe builder reads the `undefined` and skips the family instead of
  * emitting a weaker control under the same name.
  *
  * The replacement is `value + 10` for a small integer and `value * 2` otherwise, so the wrong
- * number stays in the plausible range for whatever the sentence counts — a retry budget of 13 is a
+ * number stays in the plausible range for whatever the sentence counts. A retry budget of 13 is a
  * believable misremembering of 3, and 3000 is not.
  */
 export const numericFlip = (claim: string): string | undefined => {
@@ -118,9 +118,9 @@ export const numericFlip = (claim: string): string | undefined => {
  * The claim with a variant qualifier inserted after `anchor`.
  *
  * `qualifier` must be a token `@memhtml/domain`'s `VARIANT_QUALIFIERS` knows, or the pair is not
- * variant-divergent and {@link deriveControl} refuses it. Total: an absent anchor appends a
- * scope sentence naming the qualifier, which is a different fact about a different variant rather
- * than a paraphrase.
+ * variant-divergent and {@link deriveControl} refuses it. Total, so an absent anchor appends a
+ * scope sentence naming the qualifier. That states a different fact about a different variant
+ * instead of a paraphrase.
  */
 export const variantFlip = (claim: string, anchor: string, qualifier: string): string => {
   const at = claim.indexOf(anchor)
@@ -145,24 +145,24 @@ export const familyPredicate = (
 
 /** What a variant-family derivation needs beyond the target's own text. */
 export interface VariantOptions {
-  /** The token the qualifier is inserted after — a product or host name in the claim. */
+  /** The token the qualifier is inserted after, a product or host name in the claim. */
   readonly anchor: string
-  /** A `VARIANT_QUALIFIERS` member: `pro`, `beta`, `legacy`, … */
+  /** A `VARIANT_QUALIFIERS` member, such as `pro`, `beta`, or `legacy`. */
   readonly qualifier: string
 }
 
 /**
  * Derive one control from a target, or refuse.
  *
- * Refusal — `undefined` — is the load-bearing behavior, and it has two causes, both of which
- * produce a control that LOOKS adversarial and is not:
+ * Refusal, returned as `undefined`, is the behavior callers depend on. It has two causes, and each
+ * one would otherwise produce a control that LOOKS adversarial and is not:
  *
  * 1. The family does not apply (no number to flip).
  * 2. The pair fails the family's own predicate. For `negation` that means the target body already
- *    carried a marker, so the flip is invisible to the very guard that defines the family.
+ *    carried a marker, so the flip is invisible to the guard that defines the family.
  *
  * A caller that ignores the refusal and ships the pair anyway gets a probe whose control is a
- * paraphrase — and a gate built on paraphrases passes no matter how badly retrieval discriminates.
+ * paraphrase, and a gate built on paraphrases passes no matter how badly retrieval discriminates.
  */
 export const deriveControl = (
   target: ClaimText,

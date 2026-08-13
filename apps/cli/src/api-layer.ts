@@ -61,9 +61,9 @@ import {
  * The service tags, re-exported from the composition root.
  *
  * A handler imports its services from here rather than from six packages, so "which tag does this
- * come from" is answered once. `IndexGit` is the pointed case: `@memhtml/store` publishes `memhtml/Git` for
- * its `GitShape` and `@memhtml/index` publishes `memhtml/IndexGit` for a DIFFERENT shape, and the two
- * appearing side by side in this list is what keeps them from being confused.
+ * come from" is answered once. `IndexGit` is the case that needs care. `@memhtml/store` publishes
+ * `memhtml/Git` for its `GitShape` and `@memhtml/index` publishes `memhtml/IndexGit` for a different
+ * shape, and the two appearing side by side in this list keeps them from being confused.
  */
 export { DatabaseService, Indexer, IndexGit, IndexRecorder, Retrieval } from "@memhtml/index"
 export { Embeddings, ModelClient } from "@memhtml/llm"
@@ -74,22 +74,22 @@ export { Git, Store } from "@memhtml/store"
  * `AppLive`: the one place every service is wired to every other.
  *
  * Built bottom-up with `Layer.provideMerge`, so each level both consumes what is below it and
- * stays visible to what is above. Every command handler and every MCP tool then reads the SAME
- * tags — which is what keeps a handler down to decode, call, envelope, with no composition logic
+ * stays visible to what is above. Every command handler and every MCP tool then reads the same
+ * tags, which keeps a handler down to decode, call, envelope, with no composition logic
  * of its own to drift from its sibling in the other app.
  *
- * The order is forced by real dependencies, not by taste:
+ * Real dependencies force the order:
  *
- * 1. **Root** — `MEMHTML_ROOT`/`MEMHTML_TRACE_ROOT`, needed to open anything.
- * 2. **Database** — `index.db` with `state.db` ATTACHed. `Indexer` and `Retrieval` both need it,
+ * 1. **Root**: `MEMHTML_ROOT`/`MEMHTML_TRACE_ROOT`, needed to open anything.
+ * 2. **Database**: `index.db` with `state.db` ATTACHed. `Indexer` and `Retrieval` both need it,
  *    and so does the recorder the store's dedupe hook calls.
- * 3. **Git** — the store's subprocess wrapper, plus the indexer's own port over it.
- * 4. **Recorder** — `makeIndexRecorder(db)` supplies BOTH the store's `dedupeLookup` and the
+ * 3. **Git**: the store's subprocess wrapper, plus the indexer's own port over it.
+ * 4. **Recorder**: `makeIndexRecorder(db)` supplies both the store's `dedupeLookup` and the
  *    session-link writer, which is why the store cannot come before the database.
- * 5. **Store** — over git, with the recorder's hooks attached.
- * 6. **Indexer / Retrieval** — over the database and the git port.
+ * 5. **Store**: over git, with the recorder's hooks attached.
+ * 6. **Indexer / Retrieval**: over the database and the git port.
  *
- * The one cycle in the design is broken at step 4: the store needs a SQL lookup to answer "does
+ * The one cycle in the design is broken at step 4. The store needs a SQL lookup to answer "does
  * this content already exist", and `@memhtml/store` is SQL-free by design. The lookup arrives as an
  * injected function, so the arrow still points inward and this file is the only module that knows
  * both halves exist.
@@ -99,15 +99,15 @@ export { Git, Store } from "@memhtml/store"
 export interface RootsShape {
   /** `MEMHTML_ROOT`, absolute, `~` expanded. */
   readonly memhtmlRoot: string
-  /** `MEMHTML_TRACE_ROOT`, absolute. Read-only: nothing under it is ever written. */
+  /** `MEMHTML_TRACE_ROOT`, absolute. Read-only, so nothing under it is ever written. */
   readonly traceRoot: string
 }
 
 export const Roots = Context.Service<RootsShape>("memhtml/Roots")
 
 /**
- * The roots layer. `repoOverride` is `--repo`, which wins over `MEMHTML_ROOT`: an operator running
- * against a second repo must not have to mutate their environment to do it.
+ * The roots layer. `repoOverride` is `--repo`, and it wins over `MEMHTML_ROOT` so an operator running
+ * against a second repo does not have to mutate their environment to do it.
  */
 export const layerRoots = (repoOverride?: string | undefined): Layer.Layer<RootsShape> =>
   Layer.effect(Roots)(
@@ -125,7 +125,7 @@ export const layerRoots = (repoOverride?: string | undefined): Layer.Layer<Roots
  *
  * Both planes on one connection, always. The salience retrieval arm `LEFT JOIN`s `state.access`
  * in the same statement as `main.files`, so a connection without the attachment silently drops
- * that arm — `DatabaseShape.hasState` is what the arm registry consults, and it is `false` only
+ * that arm. `DatabaseShape.hasState` is what the arm registry consults, and it is `false` only
  * for a caller that deliberately asked for the index alone.
  */
 export const layerDatabase: Layer.Layer<DatabaseShape, never, RootsShape> = Layer.effect(
@@ -151,9 +151,9 @@ export const layerGit: Layer.Layer<GitShape, never, RootsShape> = Layer.effect(G
 /**
  * The indexer's git port, over the store's git service.
  *
- * `readFile` is `Effect.tryPromise`, NOT `Effect.promise`. `Effect.promise` turns an ENOENT into a
- * DEFECT, and a defect travels past the `Effect.catch` the indexer wraps each projection in — so
- * an absent path would kill the fiber mid-update instead of becoming the counted skip the indexer
+ * `readFile` is `Effect.tryPromise` rather than `Effect.promise`. `Effect.promise` turns an ENOENT
+ * into a defect, and a defect travels past the `Effect.catch` the indexer wraps each projection in.
+ * An absent path would then kill the fiber mid-update instead of becoming the counted skip the indexer
  * already handles. An agent listing a path it just archived is the normal case, which makes this
  * the difference between a working `index update` and a crash on an ordinary day.
  */
@@ -208,9 +208,9 @@ export const layerStore: Layer.Layer<
       dedupeLookup: recorder.activePathForHash,
       onMove: (from, to) =>
         db.run("UPDATE state.access SET path = ? WHERE path = ?", [to, from]).pipe(
-          // A move whose mirror fails must not fail the move: the archive commit has already
+          // A move whose mirror fails must not fail the move. The archive commit has already
           // landed, and the orphan row is what `memhtml doctor` reports. Losing the commit to a
-          // bookkeeping error would be strictly worse than an orphan.
+          // bookkeeping error would be worse than an orphan.
           Effect.catch((error) =>
             Effect.logWarning(`state.access mirror missed ${from} -> ${to}: ${error.operation}`)
           )
@@ -222,10 +222,10 @@ export const layerStore: Layer.Layer<
 /**
  * The embeddings ports, or absent.
  *
- * Absent is a first-class configuration, not an error: `index rebuild --no-embed` and every test
+ * Absent is a supported configuration rather than an error. `index rebuild --no-embed` and every test
  * run without credentials take this path, and retrieval then assembles without the vector arm and
  * reports `degraded: true`. Making the embedder mandatory would turn a Bedrock outage into a dead
- * CLI, which is exactly the failure the lexical floor exists to prevent.
+ * CLI, which is the failure the lexical floor exists to prevent.
  */
 export interface EmbedderShape {
   readonly document: EmbedPort | undefined
@@ -238,7 +238,7 @@ export const Embedder = Context.Service<EmbedderShape>("memhtml/Embedder")
  * Bedrock embeddings when the region resolves, absent when `MEMHTML_EMBED` is `off`.
  *
  * The switch is an explicit opt-out rather than credential sniffing. A missing credential is
- * discovered at call time and degrades one search; a deliberate `off` degrades every search, and
+ * discovered at call time and degrades one search. A deliberate `off` degrades every search, and
  * an operator reading `memhtml manifest` needs those to be different states.
  */
 export const layerEmbedder: Layer.Layer<EmbedderShape, never, EmbeddingsShape> = Layer.effect(
@@ -295,7 +295,7 @@ export const layerRetrieval: Layer.Layer<RetrievalShape, never, DatabaseShape | 
 /**
  * The model behind the four LLM sleep phases, or absent.
  *
- * Absent is a run whose LLM phases report `skipped` — which `@memhtml/sleep` distinguishes from
+ * Absent is a run whose LLM phases report `skipped`, which `@memhtml/sleep` distinguishes from
  * `failed`, because a deterministic run on a fixture without credentials is not a broken run.
  */
 export interface ModelPortShape {
@@ -322,21 +322,21 @@ export const layerModelFrom = (model: ModelClientShape | undefined): Layer.Layer
   Layer.succeed(ModelPort)({ model })
 
 /**
- * Write-time entity extraction, or absent — absent is the DEFAULT.
+ * Write-time entity extraction, or absent. Absent is the default.
  *
- * Opt-in (`MEMHTML_EXTRACT_ENTITIES=on`) where the embedder is opt-out, and the asymmetry is the
- * decision: the write path has never carried a generative call, extraction changes what a write
- * STORES rather than what a search finds, and a default-on model call in every agent's write path
+ * Opt-in (`MEMHTML_EXTRACT_ENTITIES=on`) where the embedder is opt-out, and the asymmetry is
+ * deliberate. The write path has never carried a generative call, extraction changes what a write
+ * stores rather than what a search finds, and a default-on model call in every agent's write path
  * is a behaviour change an operator must choose. The failure mode does follow the embedder
- * precedent — a bound extractor that fails costs this batch its extracted entities and never the
+ * precedent: a bound extractor that fails costs this batch its extracted entities and never the
  * write (`batchWrite` logs and proceeds).
  *
- * The transport is a bearer-token fetch against the Bedrock mantle endpoint, NOT a fourth lane in
- * `@memhtml/llm`: GPT-5.6 Luna is mantle-only (no InvokeModel, no Converse), and that package is
- * deliberately one vendor and one call shape. The bearer token is the same
- * `AWS_BEARER_TOKEN_BEDROCK` the SDK chain reads; absent token with the flag on is a configuration
+ * The transport is a bearer-token fetch against the Bedrock mantle endpoint rather than a fourth lane
+ * in `@memhtml/llm`. GPT-5.6 Luna is mantle-only (no InvokeModel, no Converse), and that package holds
+ * one vendor and one call shape by design. The bearer token is the same
+ * `AWS_BEARER_TOKEN_BEDROCK` the SDK chain reads. An absent token with the flag on is a configuration
  * the operator asked for and cannot have, so it degrades per batch with a logged warning rather
- * than refusing at layer build — matching how a missing embedder credential degrades a search.
+ * than failing at layer build, matching how a missing embedder credential degrades a search.
  */
 export interface ExtractorPortShape {
   readonly extractor: EntityExtractorShape | undefined
@@ -373,19 +373,19 @@ export const layerExtractorFrom = (
 /**
  * The consolidator behind trace consolidation, or absent.
  *
- * **This file is the only place that knows both halves exist**, and that is the whole reason it is
+ * **This file is the only place that knows both halves exist**, which is why it is
  * here rather than in `@memhtml/sleep`. `apps/consolidator` is an eve agent over the AI SDK Bedrock
- * provider with a `just-bash` sandbox; sleep declares the SHAPE it consumes
+ * provider with a `just-bash` sandbox. Sleep declares the shape it consumes
  * (`packages/sleep/src/consolidator.ts`) and never imports any of that. The assignment below needs no
- * adapter and no cast — TypeScript is structural, and `ConsolidatorShape` satisfies
+ * adapter and no cast, because TypeScript is structural and `ConsolidatorShape` satisfies
  * `ConsolidatorPort` field for field.
  *
- * **Never a host, by construction.** The consolidator's eve channel now demands a bearer JWT signed
- * with a per-run secret (`apps/consolidator/agent/channels/eve.ts` via `jwtHmac`), so the bind address
- * is no longer the only thing keeping the agent off the network — and it is still not optional, because
- * two layers are only depth while both are in place. `makeConsolidator` exposes no `host` option at all
- * and pins loopback itself (`apps/consolidator/src/client.ts`, `LOOPBACK_HOST`). Nothing here may
- * reintroduce one, and the absence of an option is the mechanism.
+ * **There is no host option, by construction.** The consolidator's eve channel now demands a bearer
+ * JWT signed with a per-run secret (`apps/consolidator/agent/channels/eve.ts` via `jwtHmac`), so the
+ * bind address is no longer the only thing keeping the agent off the network. It is still not optional,
+ * because two layers are only depth while both are in place. `makeConsolidator` exposes no `host`
+ * option at all and pins loopback itself (`apps/consolidator/src/client.ts`, `LOOPBACK_HOST`). Nothing
+ * here may reintroduce one, and the absence of an option is the mechanism.
  */
 export interface ConsolidatorPortShape {
   readonly consolidator: ConsolidatorShape | undefined
@@ -399,35 +399,35 @@ export const ConsolidatorPortService = Context.Service<ConsolidatorPortShape>(
  * Two gates, both cheap, both before anything is spawned.
  *
  * `MEMHTML_LLM=off` is the same explicit opt-out `layerModelPort` reads, and it covers the consolidator
- * too: an operator who turned the models off did not mean "except the expensive agent".
+ * too, because an operator who turned the models off did not mean "except the expensive agent".
  *
  * `hasConsolidatorCredentials` is the credential preflight, read here as well as inside the client.
- * The redundancy is deliberate and it is not belt-and-braces: this one decides whether the phase sees
- * a consolidator AT ALL, so a credential-free environment gets `detail: "no consolidator bound"` —
- * the same shape the other three LLM phases report with no model — rather than a bound port that
- * fails on every call and reports a degradation. CI has no credentials and must read as skipped, not
- * as degraded.
+ * The redundancy is deliberate and the two reads do different jobs. This one decides whether the phase
+ * sees a consolidator at all, so a credential-free environment gets `detail: "no consolidator bound"`,
+ * the same shape the other three LLM phases report with no model, rather than a bound port that
+ * fails on every call and reports a degradation. CI has no credentials and must read as skipped rather
+ * than degraded.
  *
- * The check cannot be skipped in favour of the client's own, because the provider is LAZY:
+ * The check cannot be skipped in favour of the client's own, because the provider is lazy.
  * `createAmazonBedrock` and `provider(modelId)` both succeed with zero credentials and nothing fails
  * until the first request (verified in T-EVE-1's probe, recorded at
  * `apps/consolidator/src/contract.ts:301-319`).
  *
  * **`env` is a parameter, and it has to be.** `Config` reads its values through a `ConfigProvider`,
- * which a test substitutes — but `hasConsolidatorCredentials` reads `process.env` directly, and
- * effect's default provider SNAPSHOTS `process.env` at MODULE LOAD (probed 2026-08-08: mutating
- * `process.env.MEMHTML_LLM` after importing `effect` changes nothing `Config.string` returns). So a test
+ * which a test substitutes, while `hasConsolidatorCredentials` reads `process.env` directly, and
+ * effect's default provider snapshots `process.env` at module load (probed 2026-08-08: mutating
+ * `process.env.MEMHTML_LLM` after importing `effect` changes nothing `Config.string` returns). A test
  * that set both by mutation would read a stale snapshot for one gate and a live object for the other,
  * and the two gates would disagree about which environment they are in. Threading the credential
- * environment through as an argument makes both injectable from one call — see
+ * environment through as an argument makes both injectable from one call. See
  * `apps/cli/tests/consolidator-wiring.test.ts`, where that disagreement produced a false defect
  * before this parameter existed.
  *
- * **It now requires `RootsShape`, for `traceRoot`.** That is how transcripts reach the agent: the
- * consolidator MOUNTS the trace root read-only rather than sending transcripts as a model message
+ * **It now requires `RootsShape`, for `traceRoot`.** That is how transcripts reach the agent. The
+ * consolidator mounts the trace root read-only rather than sending transcripts as a model message
  * (`apps/consolidator/src/client.ts`, `manifestFor`, records what the superseded path actually did).
  * The root is `MEMHTML_TRACE_ROOT` and this file is where config becomes services, so it is read from the
- * same `Roots` service `memhtml trace index` scans with — one resolution of one variable, which is what
+ * same `Roots` service `memhtml trace index` scans with. One resolution of one variable is what
  * keeps the mounted tree and the indexed `traces` rows describing the same directory. A second
  * `Config.string("MEMHTML_TRACE_ROOT")` here would be a second place the `~/.claude` default lives.
  */
@@ -449,9 +449,9 @@ export const layerConsolidatorPort = (
         return { consolidator: undefined }
       }
       /**
-       * The client is built over the SAME environment the gate just read. A client over ambient
-       * `process.env` while the gate read an injected one would pass the gate and fail at the call —
-       * the degradation-instead-of-skip outcome this gate exists to prevent.
+       * The client is built over the same environment the gate just read. A client over ambient
+       * `process.env` while the gate read an injected one would pass the gate and fail at the call,
+       * which is the degradation-instead-of-skip outcome this gate exists to prevent.
        */
       return { consolidator: makeConsolidator({ env, traceRoot: roots.traceRoot }) }
     })
@@ -463,10 +463,10 @@ export const layerConsolidatorFrom = (
 ): Layer.Layer<ConsolidatorPortShape> => Layer.succeed(ConsolidatorPortService)({ consolidator })
 
 /**
- * The sleep runner over the SAME services every other command uses.
+ * The sleep runner over the same services every other command uses.
  *
- * `@memhtml/sleep` deliberately ships no `SleepLive` that resolves its own git, database, and model:
- * a layer that built its own would open a second connection to one database file and a second git
+ * `@memhtml/sleep` deliberately ships no `SleepLive` that resolves its own git, database, and model.
+ * A layer that built its own would open a second connection to one database file and a second git
  * wrapper on one root, and the run would then curate a corpus the indexer is not describing.
  */
 export const layerSleep: Layer.Layer<
@@ -495,14 +495,14 @@ export const layerSleep: Layer.Layer<
 /**
  * Everything above the embedder and the model, as one layer requiring only the roots and those two.
  *
- * Written top-down because that is what `Layer.provideMerge(that)` means: it feeds `that`'s output
- * into `self`'s requirements, so the CONSUMER is `self` and each `.pipe` step below adds the level
- * beneath it. Chaining in dependency order instead — database first — reads naturally and is wrong:
- * it would provide git TO the database and leave `GitShape` in the final requirement set, which
+ * Written top-down because that is what `Layer.provideMerge(that)` means. It feeds `that`'s output
+ * into `self`'s requirements, so the consumer is `self` and each `.pipe` step below adds the level
+ * beneath it. Chaining in dependency order instead, with the database first, reads naturally and is
+ * wrong. It would provide git to the database and leave `GitShape` in the final requirement set, which
  * typechecks as an unsatisfied layer rather than failing where the mistake is.
  *
  * Split out from `layerApp` so a test provides a deterministic embedder and a real temp repo with
- * no Bedrock anywhere in the graph — the composition under test is then the SAME composition
+ * no Bedrock anywhere in the graph. The composition under test is then the same composition
  * production runs, which a hand-assembled test wiring would not be.
  */
 export const layerCore = Layer.mergeAll(layerSleep, layerRetrieval).pipe(
@@ -515,7 +515,7 @@ export const layerCore = Layer.mergeAll(layerSleep, layerRetrieval).pipe(
  * The production graph: roots from config, Bedrock behind both model ports, everything else over
  * them. `repoOverride` is `--repo`.
  *
- * This is the ONE composition production runs. `memhtml serve mcp` runs the same one in a child
+ * This is the one composition production runs. `memhtml serve mcp` runs the same one in a child
  * process, so an MCP tool and its CLI twin cannot be looking at different databases.
  */
 export const layerApp = (repoOverride?: string | undefined) =>
@@ -527,9 +527,9 @@ export const layerApp = (repoOverride?: string | undefined) =>
         layerModelPort.pipe(Layer.provide(ModelClientLive), Layer.orDie),
         layerExtractorPort,
         /**
-         * `layerRoots` is provided to the consolidator port explicitly, not merged beside it. The
-         * consolidator needs `traceRoot` to mount, and a sibling in one `mergeAll` is not a
-         * dependency — the roots layer is built ONCE with `repoOverride` and fed in, so a `--repo`
+         * `layerRoots` is provided to the consolidator port explicitly rather than merged beside it.
+         * The consolidator needs `traceRoot` to mount, and a sibling in one `mergeAll` is not a
+         * dependency. The roots layer is built once with `repoOverride` and fed in, so a `--repo`
          * run and the mounted trace root cannot come from two different resolutions.
          */
         layerConsolidatorPort().pipe(Layer.provide(layerRoots(repoOverride)))
@@ -540,7 +540,7 @@ export const layerApp = (repoOverride?: string | undefined) =>
 /**
  * The graph a test provides: the real composition, with the embedder and the model injected.
  *
- * Same `layerCore`, so a test exercises the wiring production uses rather than a parallel one — the
+ * Same `layerCore`, so a test exercises the wiring production uses rather than a parallel one. The
  * only substituted edges are the two that reach the network.
  */
 export const layerAppWith = (options: {
@@ -549,11 +549,11 @@ export const layerAppWith = (options: {
   readonly model?: ModelClientShape | undefined
   /**
    * Absent leaves trace consolidation skipped, which is the right default for every test that is not
-   * about that phase — it is what a credential-free environment produces, and binding a live agent
+   * about that phase. It is what a credential-free environment produces, and binding a live agent
    * from a test harness would spawn an eve server per case.
    */
   readonly consolidator?: ConsolidatorShape | undefined
-  /** Absent leaves writes unextracted, the production default — only extraction tests bind one. */
+  /** Absent leaves writes unextracted, the production default. Only extraction tests bind one. */
   readonly extractor?: EntityExtractorShape | undefined
 }) =>
   layerCore.pipe(

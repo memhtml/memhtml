@@ -19,7 +19,7 @@ import {
  * Git as a service, over `node:child_process` and nothing else.
  *
  * No git library. The plumbing commands this uses have been stable for a decade and their
- * output formats are versioned by explicit flags (`-z`, `--porcelain=v2`, `--batch`); a
+ * output formats are versioned by explicit flags (`-z`, `--porcelain=v2`, `--batch`). A
  * library wrapping them is a dependency whose own API is not stable, and which would have to
  * be audited for whether it shells out anyway. The parsing lives in `plumbing.ts` as pure
  * functions, so every format below is asserted against captured bytes rather than a live repo.
@@ -27,7 +27,7 @@ import {
 
 /**
  * A git subprocess exited non-zero, or could not be spawned. `command` is the subcommand
- * name only — never the full argv, because arguments carry memory paths and commit subjects
+ * name only, and never the full argv, because arguments carry memory paths and commit subjects
  * carry memory titles, and a `GitFailure` is returned to an agent through a tool response.
  * The stderr text goes to `Effect.logError` at the boundary below instead of into the payload.
  */
@@ -64,7 +64,7 @@ export interface GitShape {
   ) => Effect.Effect<ReadonlyArray<TreeEntry>, GitFailure>
   /**
    * The contents of many blobs in ONE subprocess. The shas go in on stdin and the bodies come
-   * back framed, so reading the whole tree costs one process instead of one per file — and it
+   * back framed, so reading the whole tree costs one process instead of one per file. It also
    * works against a bare repo or a detached checkout, where `readFile` has nothing to read.
    */
   readonly catFileBatch: (
@@ -80,7 +80,7 @@ export interface GitShape {
   /** The blob sha a working-tree file would hash to. Equals its sha in the tree once committed. */
   readonly hashObject: (path: string) => Effect.Effect<string, GitFailure>
   readonly add: (paths: ReadonlyArray<string>) => Effect.Effect<void, GitFailure>
-  /** `git mv`. The destination's parent directory must already exist — git will not create it. */
+  /** `git mv`. The destination's parent directory must already exist, since git will not make it. */
   readonly mv: (from: string, to: string) => Effect.Effect<void, GitFailure>
   readonly commit: (
     message: string,
@@ -91,10 +91,10 @@ export interface GitShape {
     options?: { readonly create?: boolean | undefined }
   ) => Effect.Effect<void, GitFailure>
   readonly branchExists: (branch: string) => Effect.Effect<boolean, GitFailure>
-  /** Fast-forward `HEAD` to `commitish`, or fail — this never creates a merge commit. */
+  /** Fast-forward `HEAD` to `commitish`, or fail. This never creates a merge commit. */
   readonly mergeFastForward: (commitish: string) => Effect.Effect<void, GitFailure>
   /**
-   * A three-way merge, whose conflict is a VALUE rather than a failure: git exits 1 on a
+   * A three-way merge, whose conflict is a VALUE rather than a failure. Git exits 1 on a
    * content conflict, which is an ordinary outcome for two agents editing one file, and the
    * caller needs the conflicted paths to build its own typed error.
    */
@@ -102,8 +102,8 @@ export interface GitShape {
   /** Abandon an in-progress merge, restoring the pre-merge index and worktree. */
   readonly mergeAbort: () => Effect.Effect<void, GitFailure>
   /**
-   * The unmerged index stages of a conflict: stage 1 base, 2 ours, 3 theirs, per path.
-   * Where `WriteConflict.ourSha`/`theirSha` come from.
+   * The unmerged index stages of a conflict, so stage 1 base, 2 ours, 3 theirs, per path.
+   * This is where `WriteConflict.ourSha`/`theirSha` come from.
    */
   readonly unmergedStages: () => Effect.Effect<ReadonlyArray<UnmergedStage>, GitFailure>
   /** One trailer key's values per commit in a range, newest first. Drives `sleep resume`. */
@@ -117,7 +117,7 @@ export interface GitShape {
   readonly run: (args: ReadonlyArray<string>) => Effect.Effect<string, GitFailure>
 }
 
-/** One unmerged index entry. `stage` is git's own 1/2/3 — base, ours, theirs. */
+/** One unmerged index entry. `stage` is git's own 1/2/3, meaning base, ours, theirs. */
 export interface UnmergedStage {
   readonly path: string
   readonly stage: 1 | 2 | 3
@@ -158,7 +158,7 @@ const MAX_BUFFER = 64 * 1024 * 1024
  * Spawn git and collect its output as bytes.
  *
  * `stdout` stays a Buffer because `cat-file --batch` frames binary blob bodies with byte
- * lengths; decoding to a string first would corrupt any non-UTF-8 content and, worse, make
+ * lengths. Decoding to a string first would corrupt any non-UTF-8 content and would make
  * the frame lengths disagree with the string indices used to walk them.
  */
 const spawnGit = (
@@ -176,18 +176,18 @@ const spawnGit = (
           Effect.succeed({
             stdout,
             stderr: stderr.toString("utf8"),
-            // execFile reports a signal kill or a spawn failure with a non-numeric `code`;
-            // both mean "no exit status", which the failure's `null` says exactly.
+            // execFile reports a signal kill or a spawn failure with a non-numeric `code`.
+            // Both mean "no exit status", which the failure's `null` says exactly.
             exitCode: error === null ? 0 : typeof error.code === "number" ? error.code : null
           })
         )
       }
     )
-    // stdin is closed unconditionally: `cat-file --batch` reads until EOF, so a child whose
+    // stdin is closed unconditionally. `cat-file --batch` reads until EOF, so a child whose
     // stdin stayed open would never exit and the effect would never resume.
     //
     // The `error` listener is what keeps that from crashing the process. Every git command that
-    // reads no stdin — which is all of them but `cat-file --batch` — usually exits before this
+    // reads no stdin, which is all of them but `cat-file --batch`, usually exits before this
     // write lands, and writing to the closed pipe of an exited child raises EPIPE
     // asynchronously, with no `try` able to catch it. The exit status is the only outcome that
     // matters here, so a stdin write that loses the race is discarded rather than fatal.
@@ -199,7 +199,7 @@ const spawnGit = (
   })
 
 /**
- * Run git and fail on a non-zero exit. `command` names the subcommand for the typed failure;
+ * Run git and fail on a non-zero exit. `command` names the subcommand for the typed failure, and
  * `okExitCodes` widens the accepted set for the calls where non-zero is an answer rather than
  * an error (`rev-parse --verify --quiet` on an unborn HEAD, `merge` on a conflict).
  */
@@ -226,9 +226,9 @@ const git = (
 const text = (result: ProcessResult): string => result.stdout.toString("utf8")
 
 /**
- * The service against a repository root. Exported rather than only wrapped in a layer: every
- * test in this package drives the real git binary against a temp-dir repo, because a fake git
- * verifies the shape of these calls and not git's own behaviour — and it is git's behaviour
+ * The service against a repository root. Exported rather than only wrapped in a layer, because every
+ * test in this package drives the real git binary against a temp-dir repo. A fake git
+ * verifies the shape of these calls and not git's own behaviour, and it is git's behaviour
  * (rename detection, index staging, merge conflict stages) that this package exists to use.
  */
 export const makeGit = (root: string): GitShape => ({
@@ -236,8 +236,8 @@ export const makeGit = (root: string): GitShape => ({
 
   revParseHead: () =>
     git(root, "rev-parse", ["rev-parse", "--verify", "--quiet", "HEAD"], {
-      // Exit 1 with empty output is an unborn HEAD: a repo initialized but not yet committed.
-      // That is a state `initRepo` legitimately observes, not a failure.
+      // Exit 1 with empty output is an unborn HEAD, a repo initialized but not yet committed.
+      // That is a state `initRepo` legitimately observes rather than a failure.
       okExitCodes: [0, 1]
     }).pipe(
       Effect.map((result) => {
@@ -293,7 +293,7 @@ export const makeGit = (root: string): GitShape => ({
   commit: (message, options = {}) =>
     Effect.gen(function* () {
       // `diff --cached --quiet` exits 1 when the index differs from HEAD. Asking first is what
-      // makes a no-op write a no-op instead of an empty commit: `commit` with nothing staged
+      // makes a no-op write a no-op instead of an empty commit. `commit` with nothing staged
       // exits 1, and treating that as a failure would make every deduped write look broken.
       const staged = yield* git(root, "diff-cached", ["diff", "--cached", "--quiet"], {
         okExitCodes: [0, 1]
@@ -323,8 +323,8 @@ export const makeGit = (root: string): GitShape => ({
 
   merge: (commitish) =>
     Effect.gen(function* () {
-      // Exit 1 is a conflict, not an error. Git also uses 128 for a refusal to start (dirty
-      // tree, unborn HEAD), which stays a GitFailure.
+      // Exit 1 is a conflict rather than an error. Git also uses 128 when it declines to start
+      // (dirty tree, unborn HEAD), which stays a GitFailure.
       const result = yield* git(root, "merge", ["merge", "--no-edit", commitish], {
         okExitCodes: [0, 1]
       })
@@ -359,7 +359,7 @@ export const makeGit = (root: string): GitShape => ({
 })
 
 /**
- * `git ls-files -u -z` rows: `<mode> <sha> <stage>\t<path>\0`. Kept here rather than in
+ * `git ls-files -u -z` rows, shaped `<mode> <sha> <stage>\t<path>\0`. Kept here rather than in
  * `plumbing.ts` because the stage numbers are this module's own narrowing.
  */
 const parseUnmergedStages = (output: string): ReadonlyArray<UnmergedStage> =>
@@ -378,7 +378,7 @@ const parseUnmergedStages = (output: string): ReadonlyArray<UnmergedStage> =>
     })
 
 /**
- * The live layer, rooted at a caller-supplied path. There is no `MEMHTML_ROOT` read here: the
+ * The live layer, rooted at a caller-supplied path. There is no `MEMHTML_ROOT` read here. The
  * root is config the store owns (`store.ts`), and a git service that resolved its own root
  * could not be pointed at a fixture repo or at a sleep worktree.
  */

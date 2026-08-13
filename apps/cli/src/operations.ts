@@ -40,11 +40,11 @@ import type { ExtractionItem } from "./extraction.js"
 
 /**
  * The use cases, one per tool. Every CLI command and every MCP tool is a thin adapter over exactly
- * one of these — which is what makes `memhtml search` and `memory_search` provably the same query
+ * one of these, which makes `memhtml search` and `memory_search` provably the same query
  * rather than two implementations that agree today.
  *
  * Nothing here parses argv or builds an envelope. A function takes decoded parameters, returns a
- * typed result, and fails with a typed error; the adapters own the shape of the wire.
+ * typed result, and fails with a typed error. The adapters own the shape of the wire.
  */
 
 /** Wall-clock as an ISO-8601 UTC second, through the Effect clock so a test can pin it. */
@@ -62,7 +62,7 @@ const defined = <T extends Record<string, unknown>>(input: T): Partial<T> => {
 /**
  * Narrow an untrusted memory-type string.
  *
- * `arc` is refused even though it is a valid storage type: an arc is synthesized by the sleep
+ * `arc` is refused even though it is a valid storage type. An arc is synthesized by the sleep
  * cycle from many memories, so an agent naming one directly would be asserting a conclusion the
  * corpus has not earned. The vocabulary the tool exposes is therefore narrower than the CHECK
  * constraint by exactly that one value.
@@ -81,7 +81,7 @@ export const decodeWritableType = (
 /**
  * The rels a CALLER may author: the nine memory rels plus the two task rels.
  *
- * The two classes the vocabulary withholds are the ones the system mints itself — a `person` edge is
+ * The two classes the vocabulary withholds are the ones the system mints itself. A `person` edge is
  * written by sleep's person-links phase against `resources/people/*`, and `from_session` is written
  * by the write path from the provenance a caller already supplied. Authoring either by hand would put
  * a hand-guessed row where a derivation belongs.
@@ -94,13 +94,13 @@ export type AuthorableRel = (typeof AUTHORABLE_RELS)[number]
  * Narrow an untrusted rel to one a caller may author.
  *
  * A `blocks` edge between two tasks is a legitimate authored assertion, so the task class is in and
- * refusing it would leave the task graph writable by nothing. Whether the rel AGREES with its
- * endpoints is not this function's business: `@memhtml/store`'s `linkMemories` reads both files'
+ * refusing it would leave the task graph writable by nothing. Whether the rel agrees with its
+ * endpoints is not this function's business. `@memhtml/store`'s `linkMemories` reads both files'
  * `memhtml-type` and refuses a mismatch, and it is the only layer that can see the endpoints at all.
  *
  * `memory_link`'s MCP schema stays memory-rels-only (`MemoryRelSchema`, `apps/mcp/src/tools.ts`) and
- * refuses a task rel at DECODE — one narrow surface for agents, one wider one for the operator, with
- * the store's endpoint guard governing both.
+ * refuses a task rel at decode. That is one narrow surface for agents and one wider one for the
+ * operator, with the store's endpoint guard governing both.
  */
 export const decodeAuthorableRel = (value: string): Effect.Effect<AuthorableRel, InvalidMemory> =>
   isEdgeRel(value) && (AUTHORABLE_RELS as ReadonlyArray<string>).includes(value)
@@ -125,7 +125,7 @@ export const decodeTaskStatus = (value: string): Effect.Effect<TaskStatus, Inval
  * Narrow an untrusted due date, using the FORMAT's own validator.
  *
  * `isValidDatetime` rather than a local regex or `Date.parse`, because `files.due_at` is compared and
- * ordered as a string: `2026-8-9` and `Aug 9 2026` both parse as instants and neither sorts alongside
+ * ordered as a string. `2026-8-9` and `Aug 9 2026` both parse as instants and neither sorts alongside
  * `2026-08-09`, so the overdue query would silently miss them. Reusing the parser's own validator is
  * also what keeps this refusal and the parser's violation from drifting apart.
  */
@@ -158,7 +158,7 @@ export interface Provenance {
 /**
  * Record the session link for an operation that touched a path.
  *
- * Fire-and-log rather than fail-the-call: the link is a note ABOUT what happened, and losing the
+ * Fire-and-log rather than fail-the-call. The link is a note about what happened, and losing the
  * memory over a failed note about it would invert the priority. The file's own head already
  * carries `memhtml-session`/`memhtml-prompt`/`memhtml-turn`, so the durable half of the link survives even
  * when this row does not.
@@ -188,8 +188,8 @@ export interface WriteParams extends Provenance {
   readonly body?: ReadonlyArray<string> | undefined
   /**
    * Pre-authored article markup, used verbatim in place of `claim`/`body`. The caller owns
-   * constraint 1 when it supplies this, and the store's render gate is what enforces that —
-   * markup with no `<mark>` fails with `InvalidMemory` before anything is written or committed.
+   * constraint 1 when it supplies this, and the store's render gate is what enforces it. Markup
+   * with no `<mark>` fails with `InvalidMemory` before anything is written or committed.
    */
   readonly articleHtml?: string | undefined
   readonly memoryType: string
@@ -208,21 +208,21 @@ export interface WriteParams extends Provenance {
 /**
  * Bring the index up to the commit a write just made.
  *
- * `indexer.update()`, NOT `indexPaths([…])`, and the difference is load-bearing on two counts:
+ * `indexer.update()` rather than `indexPaths([…])`, and the difference changes behaviour twice:
  *
  * 1. **`indexPaths` cannot express a rename.** Every correction and every archive is a `git mv`, and
- *    an index that handled one as "index the destination" leaves the SOURCE row live: the archived
+ *    an index that handled one as "index the destination" leaves the source row live. The archived
  *    memory stays in `memhtml list`, `files` gains a row the tree does not have, and the chunk rows the
  *    move exists to preserve are duplicated under two paths. `update()` reads `diff --name-status -M`,
- *    sees the `R`, and re-points the row — which keeps the embedding and drops nothing.
+ *    sees the `R`, and re-points the row, which keeps the embedding and drops nothing.
  * 2. **`indexPaths` never records the watermark.** `index_state.head_sha` is what makes
  *    "the index describes the current commit" answerable at all, so a write path that skipped it
  *    would leave `memhtml status` reporting `index_fresh: false` forever and `index update` re-deriving
  *    from a stale base.
  *
  * The cost is one `git diff` over one commit, which is what the watermark exists to bound. On the
- * very first write the watermark is absent and `update()` falls through to a full rebuild — correct,
- * and cheap on a corpus that has one file in it.
+ * very first write the watermark is absent and `update()` falls through to a full rebuild. That is
+ * correct, and cheap on a corpus that has one file in it.
  */
 const reindex = () =>
   Effect.gen(function* () {
@@ -233,16 +233,16 @@ const reindex = () =>
 /**
  * Decode untrusted write parameters into the store's `WriteInput`.
  *
- * Shared by {@link writeMemory} and {@link batchWrite}, and the sharing is the point: a batch that
+ * Shared by {@link writeMemory} and {@link batchWrite}, and the sharing matters. A batch that
  * re-derived this would be a second decode of the same vocabulary, and the two would agree today
- * and drift the first time a field is added. `symspec`'s lesson stated as code — the batch folds
- * the SINGULAR's own decode rather than a parallel one.
+ * and drift the first time a field is added. This is `symspec`'s lesson stated as code: the batch
+ * folds the singular's own decode rather than a parallel one.
  *
- * The two task metas are decoded HERE, before any file is rendered, and only for a task.
+ * The two task metas are decoded here, before any file is rendered, and only for a task.
  * `@memhtml/html`'s parser refuses `memhtml-task-status` on a non-task and refuses a `memhtml-due` that is not
  * an ISO datetime, so a bad value passed through would render a file the indexer then declines to
- * project — present in the tree, absent from every search, visible only as a log line. Deciding
- * here turns that into a typed `InvalidMemory` before the commit.
+ * project. That file is present in the tree, absent from every search, and visible only as a log
+ * line. Deciding here turns it into a typed `InvalidMemory` before the commit.
  */
 const toWriteInput = (params: WriteParams, at: string): Effect.Effect<WriteInput, InvalidMemory> =>
   Effect.gen(function* () {
@@ -300,21 +300,21 @@ export const writeMemory = (params: WriteParams) =>
  * A frame-match the `detect_conflicts` assist found for one op: something else already occupies this
  * claim's slot.
  *
- * ONE shape for both kinds of match, with the two source fields nullable, rather than a discriminated
- * union. A caller reads `claim` unconditionally — that is the disagreement, and it is what a decision
- * is made on — and then reads whichever of `path`/`batchIndex` is non-null to find the other claim. A
+ * One shape for both kinds of match, with the two source fields nullable, rather than a discriminated
+ * union. A caller reads `claim` unconditionally, because that is the disagreement and what a decision
+ * is made on, and then reads whichever of `path`/`batchIndex` is non-null to find the other claim. A
  * union would make every consumer branch before it could read the field it actually wants, and the
  * wire form (`Schema.NullOr` per field, per the batch's present-and-nullable rule) would publish the
  * same two nullable fields anyway.
  *
- * Exactly one of the two is non-null, always. A store match names the ACTIVE memory's `path`; an
- * intra-batch match names the EARLIER op's `batchIndex`, and has no path because that op's file does
- * not exist yet — the batch has not been written when the assist runs.
+ * Exactly one of the two is non-null, always. A store match names the active memory's `path`. An
+ * intra-batch match names the earlier op's `batchIndex`, and has no path because that op's file does
+ * not exist yet, since the batch has not been written when the assist runs.
  */
 export interface FrameConflict {
-  /** The ACTIVE memory already holding this frame key, or null for an intra-batch match. */
+  /** The active memory already holding this frame key, or null for an intra-batch match. */
   readonly path: string | null
-  /** The earlier op in THIS batch holding it, or null for a store match. */
+  /** The earlier op in this same batch holding it, or null for a store match. */
   readonly batchIndex: number | null
   /** The other claim's own text. The disagreement itself, which is what a caller decides on. */
   readonly claim: string
@@ -335,21 +335,21 @@ export interface BatchOpReport {
    * What this op's claim contradicts, when `detectConflicts` was on and something matched. Absent
    * when the flag was off, when nothing matched, or when the claim has no frame shape.
    *
-   * PROPOSE-ONLY: the presence of this field never changed what was written. See {@link batchWrite}.
+   * Propose-only, so the presence of this field never changed what was written. See {@link batchWrite}.
    */
   readonly conflict?: FrameConflict | undefined
   /**
-   * Set on a batch-internal LOSER under `consolidate: "last-wins"`: a later restatement of a slot
-   * an earlier op already occupied. Its value won the slot — last wins — but the write landed at
-   * the EARLIEST index with that frame key, so this op never got its own file and has no `path`.
-   * The number is that slot: the caller-space index whose report carries the surviving write (its
-   * path, and any `supersededPath`).
+   * Set on a batch-internal loser under `consolidate: "last-wins"`: a later restatement of a slot
+   * an earlier op already occupied. Its value won the slot, since last wins, but the write landed at
+   * the earliest index with that frame key, so this op never got its own file and has no `path`.
+   * The number is that slot, the caller-space index whose report carries the surviving write with its
+   * path and any `supersededPath`.
    */
   readonly consolidatedInto?: number | undefined
   /**
-   * Set on a WINNER whose write superseded a live stored memory under `consolidate: "last-wins"`:
-   * the loser's ARCHIVE path, where its bytes now live. Absent when nothing stored occupied the
-   * slot, and also when the supersede itself degraded — the corpus is then merely unconsolidated,
+   * Set on a winner whose write superseded a live stored memory under `consolidate: "last-wins"`:
+   * the loser's archive path, where its bytes now live. Absent when nothing stored occupied the
+   * slot, and also when the supersede itself degraded. The corpus is then merely unconsolidated,
    * which is what every batch produced before this flag existed.
    */
   readonly supersededPath?: string | undefined
@@ -374,36 +374,36 @@ export interface BatchWriteParams extends Provenance {
   /** Best-effort mode: failed ops are reported and skipped, survivors land in the one commit. */
   readonly continueOnError?: boolean | undefined
   /**
-   * Report each op's frame-matches as a per-op `conflict`. Changes NOTHING about what is written.
+   * Report each op's frame-matches as a per-op `conflict`. Changes nothing about what is written.
    *
-   * Off by default, and the default is the contract rather than caution: the assist costs one extra
-   * query per batch, and a caller that did not ask for the field would be paying for an answer it
-   * does not read.
+   * Off by default, and the default is part of the contract rather than caution. The assist costs one
+   * extra query per batch, and a caller that did not ask for the field would be paying for an answer
+   * it does not read.
    */
   readonly detectConflicts?: boolean | undefined
   /**
    * Opt-in write-time consolidation: deterministic frame-key (`frameKeyOf`) last-wins.
    *
-   * Where `detectConflicts` reports and refuses to act, this ACTS — on the caller's explicit ask.
+   * `detectConflicts` reports and leaves the corpus alone. This one acts, on the caller's explicit ask.
    * A later op whose claim occupies the same frame slot as an earlier one replaces it before
-   * anything is written, so a batch-internal loser never reaches disk; a surviving op whose slot a
-   * LIVE stored memory occupies supersedes it after the commit, archiving the old file with a
+   * anything is written, so a batch-internal loser never reaches disk. A surviving op whose slot a
+   * live stored memory occupies supersedes it after the commit, archiving the old file with a
    * `supersedes` chain back from the winner. Fail-closed on the rule's own terms: a claim with no
    * frame shape (null key) is never touched, and a failed store lookup degrades to
    * batch-internal-only consolidation through the same `Effect.catch` → `logWarning` → neutral
-   * shape {@link detectFrameConflicts} takes — the flag must never become a new way to lose writes.
+   * shape {@link detectFrameConflicts} takes, so the flag cannot become a new way to lose writes.
    */
   readonly consolidate?: "last-wins" | undefined
 }
 
 /**
- * A typed failure as a per-op report, through the SAME `codeFor`/`messageFor` every envelope error
+ * A typed failure as a per-op report, through the same `codeFor`/`messageFor` every envelope error
  * takes.
  *
- * Mapped here rather than in each door, deliberately. A per-op code is part of the batch's payload,
- * not of the envelope, so two doors shaping it independently is two mappings that agree today —
- * and `memhtml apply` and `memory_write_batch` reporting different codes for the same refused op is
- * exactly the drift the shared-use-case rule exists to prevent.
+ * Mapped here rather than in each door, deliberately. A per-op code is part of the batch's payload
+ * rather than of the envelope, so two doors shaping it independently is two mappings that agree today.
+ * `memhtml apply` and `memory_write_batch` reporting different codes for the same refused op is
+ * the drift the shared-use-case rule exists to prevent.
  */
 const reportFailure = (index: number, error: unknown): BatchOpReport => ({
   index,
@@ -416,33 +416,33 @@ const reportFailure = (index: number, error: unknown): BatchOpReport => ({
  * The `detect_conflicts` assist: which claim, if any, each op's own claim contradicts.
  *
  * **Propose-only, and that is the design rather than a v1 limitation.** The function returns a report
- * per op index and writes nothing, stages nothing, and refuses nothing — because sometimes the
- * contradiction IS the answer. A memory recording that a runbook step changed necessarily contradicts
+ * per op index and writes nothing, stages nothing, and refuses nothing, because sometimes the
+ * contradiction is the answer. A memory recording that a runbook step changed necessarily contradicts
  * the memory stating the old step, and an assist that auto-archived, applied last-wins, or blocked the
- * write would destroy the very pair a later reader needs to see the change in. The caller decides:
- * write anyway, `memory_correct` the match, or skip.
+ * write would destroy the pair a later reader needs to see the change in. The caller decides: write
+ * anyway, `memory_correct` the match, or skip.
  *
- * **ONE query for the whole batch.** Every op's frame key is collected first and `activeFramesFor` is
- * called ONCE with all of them — the signature takes an array precisely so a caller cannot loop, and a
+ * **One query for the whole batch.** Every op's frame key is collected first and `activeFramesFor` is
+ * called once with all of them. The signature takes an array so a caller cannot loop, and a
  * per-op lookup would be the quadratic-write-cost pattern this codebase has already paid for once.
  *
- * **Two match sources, checked in that order.** The store answers for ACTIVE non-task memories (its
- * predicate, and 0009's index, exclude archived rows and tasks — an archived claim is not a competing
- * assertion, and an open to-do phrased as a claim is working state rather than knowledge). Then the
- * batch's own earlier ops, folded as this loop walks them in order: two ops in ONE call can occupy the
- * same slot, and neither is in the store yet, so nothing but this fold can see that pair. A store match
- * WINS when an op has both, because the store's memory is a fact already in the corpus while the
- * earlier op is one this same call is about to create.
+ * **Two match sources, checked in that order.** The store answers for active non-task memories. Its
+ * predicate, and 0009's index, exclude archived rows and tasks, because an archived claim is not a
+ * competing assertion and an open to-do phrased as a claim is working state rather than knowledge. Then
+ * come the batch's own earlier ops, folded as this loop walks them in order. Two ops in one call can
+ * occupy the same slot, and neither is in the store yet, so nothing but this fold can see that pair. A
+ * store match wins when an op has both, because the store's memory is a fact already in the corpus
+ * while the earlier op is one this same call is about to create.
  *
- * **A later op reports on an earlier one, never the reverse.** The fold is asymmetric on purpose: op 3
+ * **A later op reports on an earlier one, never the reverse.** The fold is asymmetric on purpose. Op 3
  * matching op 1 tells a caller "you are about to restate something you just said", which is actionable
  * with op 3 still in hand. Reporting it on op 1 as well would name a conflict with something that did
  * not exist when op 1 was written, and would double one finding into two.
  *
- * **A lookup failure degrades to no conflicts.** The assist is a note ABOUT the writes, so losing the
- * memories over a failed note about them would invert the priority exactly as it would for
- * {@link recordLink} and {@link bumpAccess} — same `Effect.catch` → `logWarning` → neutral-value shape.
- * The write path never sees this function's failure, which is what makes "the assist cannot block a
+ * **A lookup failure degrades to no conflicts.** The assist is a note about the writes, so losing the
+ * memories over a failed note about them would invert the priority as it would for
+ * {@link recordLink} and {@link bumpAccess}, with the same `Effect.catch` → `logWarning` → neutral value.
+ * The write path never sees this function's failure, which makes "the assist cannot block a
  * write" true structurally rather than by review.
  */
 const detectFrameConflicts = (
@@ -452,10 +452,10 @@ const detectFrameConflicts = (
     /**
      * `frameKeyOf(op.claim)` per op, computed once and kept alongside the index.
      *
-     * On the `article_html` path `claim` is `""` by construction — both doors leave it empty and the
-     * `<mark>` inside the markup is the claim — so `frameKeyOf` returns null and a markup op gets no
-     * assist. Deriving one here would mean parsing every op's article at the ops layer, a second render
-     * of bytes the store is about to render anyway; the honest boundary is stated in the tool
+     * On the `article_html` path `claim` is `""` by construction, because both doors leave it empty and
+     * the `<mark>` inside the markup is the claim. `frameKeyOf` therefore returns null and a markup op
+     * gets no assist. Deriving one here would mean parsing every op's article at the ops layer, a second
+     * render of bytes the store is about to render anyway. The boundary is stated in the tool
      * description instead of hidden behind a duplicate parse.
      */
     const keyed: Array<{ readonly index: number; readonly key: string; readonly claim: string }> =
@@ -478,7 +478,7 @@ const detectFrameConflicts = (
       )
 
     const conflicts = new Map<number, FrameConflict>()
-    /** frame key → the FIRST op in this batch to occupy it. Built as the loop walks in order. */
+    /** frame key → the first op in this batch to occupy it. Built as the loop walks in order. */
     const seen = new Map<string, { readonly index: number; readonly claim: string }>()
     for (const entry of keyed) {
       const [stored] = live.get(entry.key) ?? []
@@ -503,34 +503,34 @@ const detectFrameConflicts = (
 
 /**
  * The `consolidate: "last-wins"` plan: which slots survive, which ops lost to a later restatement,
- * and which stored memories a surviving slot supersedes. Everything is in the CALLER's index space.
+ * and which stored memories a surviving slot supersedes. Everything is in the caller's index space.
  */
 interface LastWinsPlan {
   /** The ops the pipeline runs, each at its original slot index. Losers are absent. */
   readonly ops: ReadonlyArray<{ readonly index: number; readonly op: WriteParams }>
   /** Batch-internal loser index → the slot whose position carries the surviving value. */
   readonly losers: ReadonlyMap<number, number>
-  /** Surviving slot index → the LIVE stored memory occupying that slot's frame key. */
+  /** Surviving slot index → the live stored memory occupying that slot's frame key. */
   readonly pendingSupersede: ReadonlyMap<number, string>
 }
 
 /**
- * Fold last-wins over the caller's op array, BEFORE the decode fold, so a batch-internal loser
- * never reaches disk — the surviving value simply occupies the earliest slot with that key.
+ * Fold last-wins over the caller's op array, before the decode fold, so a batch-internal loser
+ * never reaches disk. The surviving value simply occupies the earliest slot with that key.
  *
- * NOT derived from {@link detectFrameConflicts}' output, although the walk mirrors it: a store
- * match WINS there, masking the batch-internal pair the plan needs, and the plan needs BOTH — the
- * batch collision decides which value writes, the store match decides what that write supersedes.
+ * Not derived from {@link detectFrameConflicts}' output, although the walk mirrors it. A store
+ * match wins there, masking the batch-internal pair the plan needs, and the plan needs both: the
+ * batch collision decides which value writes, and the store match decides what that write supersedes.
  *
- * The slot rule: the FIRST occupant of a key keeps its position and later ops with the same key
- * replace its CONTENT (`plannedOps[slot] = laterOp`, provenance and all, since the surviving value
+ * The slot rule: the first occupant of a key keeps its position and later ops with the same key
+ * replace its content (`plannedOps[slot] = laterOp`, provenance and all, since the surviving value
  * is the later op's own statement). The occupant-tracking never moves, so a third restatement
- * replaces the slot again — last wins, at a stable position a caller can index by.
+ * replaces the slot again, last wins, at a stable position a caller can index by.
  *
  * Fail-closed on both of the rule's own guards: a null frame key is never consolidated, and a
- * failed store lookup degrades to batch-internal consolidation only — the same
+ * failed store lookup degrades to batch-internal consolidation only, through the same
  * `Effect.catch` → `logWarning` → neutral-shape path the conflict assist takes, because an opt-in
- * consolidation must never become a new way to lose writes.
+ * consolidation must not become a new way to lose writes.
  */
 const planLastWins = (
   ops: ReadonlyArray<WriteParams>
@@ -547,7 +547,7 @@ const planLastWins = (
     for (const [index, op] of ops.entries()) {
       const key = frameKeyOf(op.claim)
       if (key === null) {
-        // No frame shape, no slot: the rule's guards fail CLOSED, so this op is never touched.
+        // No frame shape, no slot. The rule's guards fail closed, so this op is never touched.
         order.push(index)
         content.set(index, op)
         continue
@@ -566,7 +566,7 @@ const planLastWins = (
     const pendingSupersede = new Map<number, string>()
     if (slotOf.size > 0) {
       const recorder = yield* IndexRecorder
-      // ONE query for every surviving key, for detectFrameConflicts' reason: a per-slot lookup is
+      // One query for every surviving key, for detectFrameConflicts' reason: a per-slot lookup is
       // the quadratic-write-cost shape this codebase has already paid for once.
       const live = yield* recorder
         .activeFramesFor([...slotOf.keys()])
@@ -594,10 +594,10 @@ const planLastWins = (
   })
 
 /**
- * Loser reports for a last-wins plan, derived from the WINNER slots' own final reports.
+ * Loser reports for a last-wins plan, derived from the winner slots' own final reports.
  *
- * A loser reports `ok` with `consolidatedInto` only when its slot's write landed — the surviving
- * value is on disk and the pointer names where. A slot that was skipped or refused took the
+ * A loser reports `ok` with `consolidatedInto` only when its slot's write landed, which means the
+ * surviving value is on disk and the pointer names where. A slot that was skipped or refused took the
  * loser's value down with it, so the loser reports `skipped`, which is the retryable outcome and
  * the one an atomic abort already means: nothing of this op reached disk.
  */
@@ -617,23 +617,23 @@ const withConsolidation = (
 }
 
 /**
- * Write N memories: ONE commit, ONE reindex, per-op results in input order.
+ * Write N memories: one commit, one reindex, per-op results in input order.
  *
  * **Two folds, not one.** Decode is the operations layer's job and the store never sees it, so a
- * malformed `memory_type` on op 4 has to be caught here — which means this function folds decode
+ * malformed `memory_type` on op 4 has to be caught here. This function therefore folds decode
  * over the ops and hands the store only what decoded. The store then folds the render gate, dedup,
- * and path claim over that, and this function splices the two result sets back into ONE array in
- * the CALLER's index space. Anything less and a decode failure would either be invisible per-op or
+ * and path claim over that, and this function splices the two result sets back into one array in
+ * the caller's index space. Anything less and a decode failure would either be invisible per-op or
  * would shift every later op's index by one.
  *
- * **ONE reindex, gated on a file having been written** (G4). The indexer's `update()` reads
- * `git diff` over one commit, so a batch that committed once costs one diff — and a dedupe-only
- * batch, which commits nothing, must skip it entirely: moving the watermark for a commit that never
- * happened is what `writeMemory`'s own `if (result.created)` guard exists to avoid.
+ * **One reindex, gated on a file having been written** (G4). The indexer's `update()` reads
+ * `git diff` over one commit, so a batch that committed once costs one diff. A dedupe-only
+ * batch, which commits nothing, skips it entirely, because moving the watermark for a commit that
+ * never happened is what `writeMemory`'s own `if (result.created)` guard exists to avoid.
  *
- * **The conflict assist is a THIRD pass and it is read-only** (AC-1-2). It runs before the store's
- * fold, over the ops as the CALLER sent them, and its findings are merged into the reports at the end
- * — so it observes the batch and never participates in it. Nothing downstream of
+ * **The conflict assist is a third pass and it is read-only** (AC-1-2). It runs before the store's
+ * fold, over the ops as the caller sent them, and its findings are merged into the reports at the
+ * end, so it observes the batch and never participates in it. Nothing downstream of
  * {@link detectFrameConflicts} branches on its result: the same files are written, the same commit is
  * made, and the same ops are refused whether the flag is on or off. That is what propose-only means,
  * and it is checkable by reading this function rather than by trusting a description.
@@ -645,15 +645,15 @@ export const batchWrite = (params: BatchWriteParams) =>
     const at = yield* nowSecond
 
     /**
-     * The assist, over the CALLER's own op array and BEFORE anything is written.
+     * The assist, over the caller's own op array and before anything is written.
      *
      * Over `params.ops` rather than the decoded `inputs` below, so a conflict is reported in the
-     * caller's index space directly and needs no `originOf` translation — and so an op the store then
-     * refuses still gets its finding, which is the more useful order: a caller told both "this op is
-     * malformed" and "it also contradicts X" fixes one thing.
+     * caller's index space directly and needs no `originOf` translation. An op the store then
+     * refuses still gets its finding, which is the more useful order, because a caller told both "this
+     * op is malformed" and "it also contradicts X" fixes one thing.
      *
-     * Not gated on the ops being valid, and deliberately: `frameKeyOf` is a pure lexical function over
-     * a string, so it has nothing to refuse and cannot fail on an op the decode is about to reject.
+     * Not gated on the ops being valid, and deliberately so. `frameKeyOf` is a pure lexical function
+     * over a string, so it has nothing to refuse and cannot fail on an op the decode is about to reject.
      */
     const conflicts =
       params.detectConflicts === true
@@ -661,9 +661,9 @@ export const batchWrite = (params: BatchWriteParams) =>
         : new Map<number, FrameConflict>()
 
     /**
-     * The consolidation plan, BEFORE the decode fold and in the caller's index space. A
-     * batch-internal loser is excluded from everything downstream — its value never earns a file —
-     * and the surviving value sits at the earliest slot with its key, so every later report and
+     * The consolidation plan, before the decode fold and in the caller's index space. A
+     * batch-internal loser is excluded from everything downstream, so its value never earns a file.
+     * The surviving value sits at the earliest slot with its key, so every later report and
      * conflict finding stays at the index the caller sent.
      */
     const plan = params.consolidate === "last-wins" ? yield* planLastWins(params.ops) : null
@@ -671,7 +671,7 @@ export const batchWrite = (params: BatchWriteParams) =>
       plan === null ? [...params.ops.entries()].map(([index, op]) => ({ index, op })) : plan.ops
 
     /**
-     * Fold 1 — decode. `Effect.result` rather than letting the failure escape, because a decode
+     * Fold 1, decode. `Effect.result` rather than letting the failure escape, because a decode
      * refusal is this op's result and not the batch's.
      */
     const reports: Array<BatchOpReport | undefined> = params.ops.map(() => undefined)
@@ -695,8 +695,8 @@ export const batchWrite = (params: BatchWriteParams) =>
     }
 
     /**
-     * An atomic decode abort touches the store at all: nothing was written, so every other op —
-     * including the ones that decoded — reports `skipped`, matching the store's own abort semantics
+     * An atomic decode abort touches the store at all. Nothing was written, so every other op,
+     * including the ones that decoded, reports `skipped`, matching the store's own abort semantics
      * exactly rather than inventing a second one.
      */
     if (decodeAborted) {
@@ -705,14 +705,14 @@ export const batchWrite = (params: BatchWriteParams) =>
     }
 
     /**
-     * The extraction assist: one model call over the DECODED ops, extracted entities unioned into
-     * each op's own `entities` before anything is written — so they land as ordinary `memhtml-entity`
-     * metas and the git tree, not the index, is what remembers them.
+     * The extraction assist: one model call over the decoded ops, extracted entities unioned into
+     * each op's own `entities` before anything is written, so they land as ordinary `memhtml-entity`
+     * metas and the git tree, rather than the index, is what remembers them.
      *
      * After the decode fold because a refused op must not reach the prompt, and before the store
      * because the render is what serializes the metas. Failure costs exactly this batch's
-     * extracted entities: the port being absent, the model being down, and an unreadable payload
-     * all take the same logged-warning path, and the write itself never waits on a retry —
+     * extracted entities. The port being absent, the model being down, and an unreadable payload
+     * all take the same logged-warning path, and the write itself never waits on a retry.
      * `entities: []` is what every write produced before this assist existed.
      */
     const extractor = (yield* ExtractorPort).extractor
@@ -740,7 +740,7 @@ export const batchWrite = (params: BatchWriteParams) =>
       }
     }
 
-    // Fold 2 — the store: render gate, dedup against the folded state, one commit.
+    // Fold 2, the store: render gate, dedup against the folded state, one commit.
     const batch = yield* store.writeMemories(inputs, { continueOnError })
 
     for (const entry of batch.results) {
@@ -761,23 +761,23 @@ export const batchWrite = (params: BatchWriteParams) =>
           : reportFailure(index, entry.error)
     }
 
-    // ONE reindex, after the commit, only when a file was actually written.
+    // One reindex, after the commit, only when a file was actually written.
     if (batch.writtenPaths.length > 0) yield* reindex()
     for (const path of batch.writtenPaths) yield* recordLink(path, "wrote", params, at)
 
     /**
-     * The store-supersede pass, AFTER a successful batch commit: every surviving slot whose frame
-     * key a live memory occupied archives that memory, in ONE `supersedeMemories` call.
+     * The store-supersede pass, after a successful batch commit: every surviving slot whose frame
+     * key a live memory occupied archives that memory, in one `supersedeMemories` call.
      *
-     * A slot qualifies when its report is `ok` with a path — including a DEDUPE, where the path is
-     * the pre-existing file that already carries this slot's value: the stored occupant still
+     * A slot qualifies when its report is `ok` with a path, including a dedupe, where the path is
+     * the pre-existing file that already carries this slot's value. The stored occupant still
      * states the losing value, so superseding it is still correct. A slot that failed or was
      * skipped wrote nothing, so there is nothing for its occupant to lose to.
      *
-     * `Effect.result`, not a bare yield: a failed supersede must not fail a batch whose memories
-     * already landed. The degradation is annotate-only — `supersededPath` is omitted, the warning
-     * says why, and the corpus is merely unconsolidated, which is what every batch produced before
-     * this flag existed. On success ONE extra reindex, because archive paths moved.
+     * `Effect.result` rather than a bare yield, because a failed supersede must not fail a batch whose
+     * memories already landed. The degradation is annotate-only: `supersededPath` is omitted, the
+     * warning says why, and the corpus is merely unconsolidated, which is what every batch produced
+     * before this flag existed. On success there is one extra reindex, because archive paths moved.
      */
     if (plan !== null && plan.pendingSupersede.size > 0) {
       const pairs: Array<{ readonly winnerPath: string; readonly loserPath: string }> = []
@@ -786,8 +786,8 @@ export const batchWrite = (params: BatchWriteParams) =>
         const report = reports[slot]
         if (report === undefined || !report.ok || report.skipped === true) continue
         if (report.path === undefined) continue
-        // A slot whose content DEDUPED onto the occupant itself is a restatement, not a
-        // supersession: winner and loser are one file, and archiving it would lose the value.
+        // A slot whose content deduped onto the occupant itself is a restatement rather than a
+        // supersession. Winner and loser are one file, and archiving it would lose the value.
         if (report.path === storedPath) continue
         pairs.push({ winnerPath: report.path, loserPath: storedPath })
         winnerOf.set(storedPath, slot)
@@ -812,7 +812,7 @@ export const batchWrite = (params: BatchWriteParams) =>
 
     /**
      * An op the store aborted before reaching has no result of its own, and neither does one whose
-     * decode succeeded in a batch the store then aborted — both are `skipped`. Losers pick up their
+     * decode succeeded in a batch the store then aborted. Both are `skipped`. Losers pick up their
      * `consolidatedInto` pointer last, from their winner slot's own final report.
      */
     const results = withConsolidation(merged(reports, conflicts), plan)
@@ -827,8 +827,8 @@ export const batchWrite = (params: BatchWriteParams) =>
 /**
  * Per-op provenance falls back to the batch's own.
  *
- * The batch call carries the session the agent is in; an op may name its own (a `memhtml apply` file
- * replaying a previous session's writes). Per-op wins, because it is the more specific statement
+ * The batch call carries the session the agent is in, and an op may name its own (a `memhtml apply`
+ * file replaying a previous session's writes). Per-op wins, because it is the more specific statement
  * about where that one memory came from.
  */
 const provenanceOf = (params: BatchWriteParams, op: WriteParams): Provenance =>
@@ -842,15 +842,15 @@ const provenanceOf = (params: BatchWriteParams, op: WriteParams): Provenance =>
  * The reports as their final array: an unreported op becomes `skipped`, and every op picks up the
  * assist's finding for its index.
  *
- * ONE function for both exit paths — the atomic decode abort and the normal return — because they had
+ * One function for both exit paths, the atomic decode abort and the normal return, because they had
  * already grown two copies of the same `?? skipped` fill and a third responsibility spliced into only
  * one of them is how a batch that aborted would silently lose its conflict findings. The abort path
- * needs them precisely BECAUSE nothing was written: a caller told "op 2 is malformed" and also "op 0
+ * needs them because nothing was written. A caller told "op 2 is malformed" and also "op 0
  * contradicts areas/x.html" can fix both before retrying, rather than discovering the second on the
  * next round trip.
  *
- * Merging here rather than at each report's construction site is also what keeps the assist out of the
- * write path: the reports are already final when the conflicts are attached, so there is no point at
+ * Merging here rather than at each report's construction site also keeps the assist out of the
+ * write path. The reports are already final when the conflicts are attached, so there is no point at
  * which a conflict could be read by anything that decides an outcome.
  */
 const merged = (
@@ -871,8 +871,8 @@ const summarize = (results: ReadonlyArray<BatchOpReport>): BatchWriteResult["sum
   let skipped = 0
   let consolidated = 0
   for (const result of results) {
-    // A batch-internal loser is neither written nor failed: its VALUE survived at another slot,
-    // and no file of its own was ever attempted — so it partitions into its own count.
+    // A batch-internal loser is neither written nor failed. Its value survived at another slot,
+    // and no file of its own was ever attempted, so it partitions into its own count.
     if (result.consolidatedInto !== undefined) consolidated += 1
     else if (result.skipped === true) skipped += 1
     else if (!result.ok) failed += 1
@@ -885,15 +885,15 @@ const summarize = (results: ReadonlyArray<BatchOpReport>): BatchWriteResult["sum
 /**
  * Read one memory, optionally recording that the session read it.
  *
- * The access bump lives HERE and nowhere else on the retrieval side, because salience accumulates
- * evidence that someone CHOSE a memory and a ranker's guess is not a choice. An explicit open names
- * one path — this call, and the `memhtml://file/{path}` resource that funnels through it — which is the
- * strongest signal short of a write. A path merely RETURNED by search or recall was the ranker's own
- * suggestion, and bumping it is what builds the rich-get-richer loop: today's top five rank higher
+ * The access bump lives here and nowhere else on the retrieval side, because salience accumulates
+ * evidence that someone chose a memory and a ranker's guess is not a choice. An explicit open names
+ * one path, through this call and the `memhtml://file/{path}` resource that funnels through it, which is
+ * the strongest signal short of a write. A path merely returned by search or recall was the ranker's own
+ * suggestion, and bumping it builds a rich-get-richer loop: today's top five rank higher
  * tomorrow while the memory that should displace them never breaks in to earn a first bump.
  *
- * `bumpAccess` beside `recordLink` deliberately: both are notes ABOUT the read, both swallow their own
- * failures, and neither may cost the caller the memory it asked for.
+ * `bumpAccess` sits beside `recordLink` deliberately. Both are notes about the read, both swallow their
+ * own failures, and neither may cost the caller the memory it asked for.
  */
 export const readMemory = (path: string, provenance: Provenance = {}) =>
   Effect.gen(function* () {
@@ -910,16 +910,16 @@ export interface SearchParams extends SearchScope {
 }
 
 /**
- * Ranked search. The retrieval service sanitizes the query text itself — `fts-query.ts` — so this
+ * Ranked search. The retrieval service sanitizes the query text itself in `fts-query.ts`, so this
  * function never MATCHes user prose and neither does any caller of it.
  *
  * **No access bump, and the omission is the rule rather than an oversight.** A hit is the ranker's
- * guess about what the caller wanted, so counting it as salience would let the ranking teach itself:
- * a memory in today's top five would rank higher tomorrow purely for having been listed, and the
+ * guess about what the caller wanted, so counting it as salience would let the ranking teach itself.
+ * A memory in today's top five would rank higher tomorrow purely for having been listed, and the
  * memory that should displace it never appears and so never earns a first bump. The cooldown does not
- * help — it bounds one query replayed within 900 seconds, while the drift it would have to bound
- * operates across days. Salience moves when a caller OPENS a path ({@link readMemory}) or names an
- * outcome ({@link reinforceMemories}).
+ * help, because it bounds one query replayed within 900 seconds, while the drift it would have to
+ * bound operates across days. Salience moves when a caller opens a path ({@link readMemory}) or names
+ * an outcome ({@link reinforceMemories}).
  */
 export const searchMemories = (params: SearchParams) =>
   Effect.gen(function* () {
@@ -935,8 +935,8 @@ export interface RecallParams extends SearchScope {
 /**
  * A context pack under a character budget.
  *
- * No access bump either, for {@link searchMemories}' reason: a disclosed body is still the ranker's
- * choice of what to spend the budget on, not the caller's choice of what to read.
+ * No access bump either, for {@link searchMemories}' reason. A disclosed body is still the ranker's
+ * choice of what to spend the budget on rather than the caller's choice of what to read.
  */
 export const recallMemories = (params: RecallParams) =>
   Effect.gen(function* () {
@@ -945,10 +945,10 @@ export const recallMemories = (params: RecallParams) =>
   })
 
 /**
- * Bump access bookkeeping for paths a caller CHOSE to open. A missing state plane makes this a no-op.
+ * Bump access bookkeeping for paths a caller chose to open. A missing state plane makes this a no-op.
  *
- * `reinforce` is the one SQL writer for `state.access` and this helper never becomes a second one — it
- * moves callers, it does not move the write.
+ * `reinforce` is the one SQL writer for `state.access` and this helper does not become a second one.
+ * It moves callers to that writer rather than moving the write here.
  */
 const bumpAccess = (paths: ReadonlyArray<string>) =>
   Effect.gen(function* () {
@@ -976,10 +976,10 @@ export interface CorrectParams extends Provenance {
 }
 
 /**
- * Supersede a memory: the new file and the archived target land in ONE commit.
+ * Supersede a memory: the new file and the archived target land in one commit.
  *
  * The type defaults to the target's own. A correction that silently changed the type would move
- * the memory to a different retention profile and a different PARA directory, which is a second
+ * the memory to a different retention profile and a different PARA directory, and that is a second
  * decision the caller did not make.
  */
 export const correctMemory = (params: CorrectParams) =>
@@ -1005,8 +1005,8 @@ export const correctMemory = (params: CorrectParams) =>
       })
     })
 
-    // A correction is an add AND a rename in one commit, so it needs the diff-driven path: the
-    // archived target's row has to MOVE, not be re-added under its new name beside its old one.
+    // A correction is an add and a rename in one commit, so it needs the diff-driven path. The
+    // archived target's row has to move rather than be re-added under a new name beside its old one.
     yield* reindex()
     yield* recordLink(result.path, "corrected", params, at)
     return result
@@ -1015,7 +1015,7 @@ export const correctMemory = (params: CorrectParams) =>
 /**
  * Add an authored edge. Idempotent on `(rel, href)`, so a re-run commits nothing.
  *
- * The rel is decoded against {@link AUTHORABLE_RELS} — the memory class plus the task class — so
+ * The rel is decoded against {@link AUTHORABLE_RELS}, the memory class plus the task class, so
  * `memhtml link a.html blocks b.html` reaches the task graph while a person or provenance rel, both of
  * which the system mints itself, stays unauthorable.
  */
@@ -1026,7 +1026,7 @@ export const linkMemories = (srcPath: string, rel: string, dstPath: string) =>
     const src = normalizePath(srcPath)
     const result = yield* store.linkMemories(src, edgeRel, dstPath)
     // `addLink` is idempotent on the pair, so a re-link commits nothing and there is nothing to
-    // index — re-deriving a diff for a no-op would move the watermark for a commit that never was.
+    // index. Re-deriving a diff for a no-op would move the watermark for a commit that never was.
     if (result.commitSha !== null) yield* reindex()
     return { ...result, srcPath: src, dstPath: normalizePath(dstPath), rel: edgeRel }
   })
@@ -1037,7 +1037,7 @@ export const archiveMemory = (path: string, reason: string) =>
     const store = yield* Store
     const result = yield* store.archiveMemory(path, reason)
     // An archive is a pure rename. Handled as two independent paths it would leave the source row
-    // live and duplicate the chunks; the diff path re-points the row and keeps the vector.
+    // live and duplicate the chunks. The diff path re-points the row and keeps the vector.
     yield* reindex()
     return result
   })
@@ -1080,10 +1080,10 @@ export interface NeighborNode {
  * and `edges_dst`, which a recursive walk is not.
  *
  * **Both directions, and `derived = 0 ∪ derived = 1`.** An edge is an assertion about a pair, and
- * which file happens to hold the `<link>` is authorship, not direction of meaning — a neighbourhood
- * that read only outbound edges would show a superseding memory its target and hide from the
- * target that it had been superseded. Derived edges are included because lateral retrieval is
- * exactly what they are for; `derived` is still reported per node so a caller can tell a
+ * which file happens to hold the `<link>` is authorship rather than direction of meaning. A
+ * neighbourhood that read only outbound edges would show a superseding memory its target and hide
+ * from the target that it had been superseded. Derived edges are included because lateral retrieval
+ * is what they are for. `derived` is still reported per node so a caller can tell a
  * sleep-mined suspicion from an authored assertion.
  *
  * `edge_class = 'memory'` on every join. A person edge entering here would put
@@ -1135,8 +1135,8 @@ export const neighborsOf = (params: NeighborsParams) =>
      * `min(hop)` per path: a node reachable both directly and via a detour is a 1-hop neighbour,
      * and reporting it twice would let one memory occupy two slots in a bounded answer.
      *
-     * The join onto `files` is an INNER join, so an edge pointing at a path the tree does not hold
-     * contributes nothing — a dangling href is `memhtml doctor`'s finding, not a node with no title.
+     * The join onto `files` is an inner join, so an edge pointing at a path the tree does not hold
+     * contributes nothing. A dangling href is `memhtml doctor`'s finding rather than a titleless node.
      */
     const rows = yield* db.all<{
       path: string
@@ -1152,8 +1152,8 @@ export const neighborsOf = (params: NeighborsParams) =>
        GROUP BY w.path
        ORDER BY hop ASC, w.path ASC`,
       // The rel list binds once per occurrence of the filter, in textual order: hop 1 uses it
-      // twice, hop 2 uses it four times. Getting this count wrong is a bind mismatch, not a wrong
-      // answer, so it fails loudly.
+      // twice, hop 2 uses it four times. Getting this count wrong is a bind mismatch rather than a
+      // wrong answer, so it fails loudly.
       [
         centre,
         ...(depth === 1
@@ -1178,7 +1178,7 @@ export interface ListParams {
   readonly entity?: string | undefined
   readonly para?: string | undefined
   readonly limit?: number | undefined
-  /** The previous page's `nextCursor`: the last path returned. Keyset, not an offset. */
+  /** The previous page's `nextCursor`: the last path returned. A keyset rather than an offset. */
   readonly cursor?: string | undefined
   readonly includeArchived?: boolean | undefined
 }
@@ -1186,9 +1186,9 @@ export interface ListParams {
 /**
  * Page the corpus by facet.
  *
- * Keyset pagination on `path`, not `LIMIT/OFFSET`. `files.path` is the primary key AND it moves —
- * eviction is a `git mv` — so an offset page taken while a sleep cycle archives a file would skip
- * a row or repeat one. A cursor on the path itself is stable against exactly that.
+ * Keyset pagination on `path` rather than `LIMIT/OFFSET`. `files.path` is the primary key and it also
+ * moves, because eviction is a `git mv`, so an offset page taken while a sleep cycle archives a file
+ * would skip a row or repeat one. A cursor on the path itself is stable against that.
  */
 export const listMemories = (params: ListParams) =>
   Effect.gen(function* () {
@@ -1273,10 +1273,10 @@ export const listMemories = (params: ListParams) =>
  * The task surface: CRUDL without retrieval.
  *
  * A task is the 10th `memory_type` and it is default-excluded from search, dedup, and all fifteen
- * sleep phases — so the working set an agent needs is not reachable by ranking, and these three
- * functions are how it IS reachable: `task add` wraps {@link writeMemory}, `task status` is one head
- * meta edited in place, and {@link listTasks} is a direct indexed scan. Reading a directory, grepping
- * a meta, and editing one line remain equally valid; nothing here is the only path.
+ * sleep phases, so the working set an agent needs is not reachable by ranking. These three
+ * functions are how it becomes reachable: `task add` wraps {@link writeMemory}, `task status` is one
+ * head meta edited in place, and {@link listTasks} is a direct indexed scan. Reading a directory,
+ * grepping a meta, and editing one line remain equally valid, and nothing here is the only path.
  */
 
 export interface TaskStatusParams {
@@ -1301,19 +1301,19 @@ export interface TaskStatusResult {
 /**
  * Move a task to a new status.
  *
- * **`setMeta`, never parse→serialize.** The editors splice by source offset, so the article's bytes —
- * and therefore `memhtml-content-hash`, the dedupe key, and every chunk id hanging off it — cannot move
- * on a status change. A round trip through the serializer drops a `<pre>` newline per write, which
+ * **`setMeta`, never parse→serialize.** The editors splice by source offset, so the article's bytes
+ * cannot move on a status change, and neither can `memhtml-content-hash`, the dedupe key, or any chunk
+ * id hanging off it. A round trip through the serializer drops a `<pre>` newline per write, which
  * would re-embed a task for a one-word edit and break the hash the file claims for itself.
  *
  * **`done` routes through `store.archiveMemory`**, which is a `git mv`. That is the design decision
- * that keeps `done` off the `memhtml-status` axis: finishing a task stamps the status AND moves the file
+ * that keeps `done` off the `memhtml-status` axis. Finishing a task stamps the status and moves the file
  * under `archive/<YYYY>/`, so "what did I finish" is the archive tree plus `git log` rather than a
  * fifth value every archive, correction, and publish path would have to learn. The stamp is written
- * BEFORE the move so both land in one commit and `git log --follow` reads through it.
+ * before the move so both land in one commit and `git log --follow` reads through it.
  *
- * `indexer.update()` afterwards, NEVER `indexPaths` — the `done` transition IS a rename, and
- * `indexPaths` cannot express one: it would leave the pre-archive row live, duplicate the chunks
+ * `indexer.update()` afterwards rather than `indexPaths`, because the `done` transition is a rename and
+ * `indexPaths` cannot express one. It would leave the pre-archive row live, duplicate the chunks
  * under two paths, and skip the watermark (finding from T9, stated at {@link reindex}).
  */
 export const setTaskStatus = (params: TaskStatusParams) =>
@@ -1323,7 +1323,7 @@ export const setTaskStatus = (params: TaskStatusParams) =>
     const path = normalizePath(params.path)
     const at = yield* nowSecond
 
-    // Read through the parser: a `memhtml task status` on a memory file would otherwise stamp a meta the
+    // Read through the parser. A `memhtml task status` on a memory file would otherwise stamp a meta the
     // format refuses on that type, producing a file the indexer then declines to project.
     const existing = yield* store.readMemory(path)
     if (existing.doc.metas.memoryType !== "task") {
@@ -1336,7 +1336,7 @@ export const setTaskStatus = (params: TaskStatusParams) =>
 
     /**
      * A no-op status change writes nothing and commits nothing, so a re-run is free and the tree
-     * stays byte-identical. The `memhtml-updated` stamp is skipped along with it deliberately: a fresh
+     * stays byte-identical. The `memhtml-updated` stamp is skipped along with it, because a fresh
      * timestamp with no status change would claim the task moved when it did not.
      */
     if (existing.doc.metas.taskStatus === status) {
@@ -1374,7 +1374,7 @@ export const setTaskStatus = (params: TaskStatusParams) =>
     }
 
     /**
-     * `archiveMemory` stages the `git mv` and commits, and it reads the file from disk — so the
+     * `archiveMemory` stages the `git mv` and commits, and it reads the file from disk, so the
      * `memhtml-task-status: done` stamp written just above travels with the move rather than needing a
      * second commit. `git mv` carries a working-tree modification with it (probed live 2026-08-02:
      * the staged blob is the pre-edit content and the worktree keeps the edit), and `archiveMemory`
@@ -1396,10 +1396,10 @@ export const setTaskStatus = (params: TaskStatusParams) =>
 export interface ListTasksParams {
   readonly status?: string | undefined
   readonly workspace?: string | undefined
-  /** An ISO date. Returns tasks due strictly BEFORE it, so `--due-before today` is "overdue". */
+  /** An ISO date. Returns tasks due strictly before it, so `--due-before today` is "overdue". */
   readonly dueBefore?: string | undefined
   readonly limit?: number | undefined
-  /** The previous page's `nextCursor`: the last path returned. Keyset, not an offset. */
+  /** The previous page's `nextCursor`: the last path returned. A keyset rather than an offset. */
   readonly cursor?: string | undefined
   readonly includeArchived?: boolean | undefined
 }
@@ -1418,28 +1418,28 @@ export interface TaskRow {
 }
 
 /**
- * The task working set: a direct indexed scan, deliberately NOT retrieval.
+ * The task working set: a direct indexed scan, deliberately not retrieval.
  *
- * No RRF, no MMR, no embedding. A to-do list is not a ranking problem — an agent asking "what is
+ * No RRF, no MMR, no embedding. A to-do list is not a ranking problem. An agent asking "what is
  * open" wants every row in a stable order, and a relevance score over working state would make the
  * answer depend on a query the caller does not have. The partial index `files_task_status`
  * (`WHERE memory_type='task' AND archived=0`) is what makes the default scan cheap.
  *
- * `blockedBy` is one correlated subquery over `edges`, filtered to `edge_class='task'` AND
+ * `blockedBy` is one correlated subquery over `edges`, filtered to `edge_class='task'` and
  * `rel='blocks'`. **The class filter is redundant with the rel filter today and is kept anyway.**
  * Probed live 2026-08-02: `0008_tasks.sql`'s per-class CHECKs refuse `blocks` under `memory`,
- * `person`, and `provenance`, so `rel='blocks'` already implies the class — a mutation removing the
+ * `person`, and `provenance`, so `rel='blocks'` already implies the class, and a mutation removing the
  * class predicate leaves every test green. It stays because the class column is what every
  * memory-graph query filters on, and a reader who saw this one query trust the rel alone would learn
  * the wrong rule about how the firewall is enforced.
  *
- * `group_concat` over an ordered subselect, probed 2026-08-12 on node 24.19.0 — the inner `ORDER BY`
+ * `group_concat` over an ordered subselect, probed 2026-08-12 on node 24.19.0. The inner `ORDER BY`
  * is preserved, and `char(10)` is the separator because a path cannot contain a newline while it can
  * contain a comma.
  *
- * The join is deliberately NOT an inner join onto `files`: a blocker whose file left the tree still
+ * The join is deliberately not an inner join onto `files`. A blocker whose file left the tree still
  * blocks, and hiding it here would make a permanently-blocked task look ready. `memhtml doctor` reports
- * that as a finding — this function reports the edge as the corpus states it.
+ * that as a finding, and this function reports the edge as the corpus states it.
  */
 export const listTasks = (params: ListTasksParams) =>
   Effect.gen(function* () {
@@ -1461,12 +1461,12 @@ export const listTasks = (params: ListTasksParams) =>
     if (params.dueBefore !== undefined && params.dueBefore !== "") {
       const dueBefore = yield* decodeDueAt(params.dueBefore)
       /**
-       * `substr(…, 1, 10)` on BOTH sides, so the comparison is one of calendar days.
+       * `substr(…, 1, 10)` on both sides, so the comparison is one of calendar days.
        *
        * The case it fixes, established by enumeration 2026-08-02: a due date stored as a bare day
        * against a bound carrying a time on that same day. Whole-string,
-       * `"2026-08-25" < "2026-08-25T09:00:00Z"` is TRUE, because the shorter string is a prefix and
-       * sorts first — so a task due sometime on the 25th would be reported late at 09:00 on the 25th.
+       * `"2026-08-25" < "2026-08-25T09:00:00Z"` is true, because the shorter string is a prefix and
+       * sorts first, so a task due sometime on the 25th would be reported late at 09:00 on the 25th.
        * A day-granularity deadline is not late until the day is over, and truncating both sides is
        * what says so. Every other combination of the two forms agrees either way.
        */
@@ -1522,10 +1522,10 @@ export const listTasks = (params: ListTasksParams) =>
  * `mergeTailExtract` as the merger `persistScanned` requires.
  *
  * The two shapes differ in exactly one field, and the difference is real rather than cosmetic.
- * `SessionExtract` carries `counters` — the parse bookkeeping of one scan — and the persisted
- * `traces` row does not, because those are facts about a read and not about the session. So
- * `readStoredExtract` genuinely cannot reconstruct them, and the merge is handed zeros for the
- * stored side: the merged counters then describe THIS scan alone, which is the only honest reading
+ * `SessionExtract` carries `counters`, the parse bookkeeping of one scan, and the persisted
+ * `traces` row does not, because those are facts about a read rather than about the session.
+ * `readStoredExtract` therefore cannot reconstruct them, and the merge is handed zeros for the
+ * stored side. The merged counters then describe this scan alone, which is the only reading
  * available. Inventing a stored value would produce a number that claims to count lines nobody
  * read.
  *
@@ -1548,8 +1548,8 @@ const tailMerger: TailMerger = (stored, tail) =>
 /**
  * Scan the trace root and persist what changed.
  *
- * {@link tailMerger} is passed as the tail merger and this is the ONLY correct way to call
- * `persistScanned` on a `tail` action: a tail's extract describes the appended slice, so its
+ * {@link tailMerger} is passed as the tail merger, and this is the only correct way to call
+ * `persistScanned` on a `tail` action. A tail's extract describes the appended slice, so its
  * `first_prompt` is a mid-conversation prompt, its `started_at` is later than the session's, and
  * its prompt ordinals restart at 0. `persistScanned` takes the merger as a parameter precisely so
  * that "never upsert a tail extract directly" is a type-level obligation rather than a convention.
@@ -1595,13 +1595,13 @@ export interface TraceSearchParams {
 /**
  * FTS over session first-prompts and AI titles.
  *
- * The query goes through the same sanitizer the memory arms use. It has to: an apostrophe is a
+ * The query goes through the same sanitizer the memory arms use, and it has to. An apostrophe is a
  * hard driver error rather than an empty result, and "what did I ask about don't-repeat-yourself"
  * is an ordinary trace query. An empty sanitized query returns the most recent sessions rather
- * than nothing — a caller with no terms wants a listing, and an empty MATCH is not a listing.
+ * than nothing, because a caller with no terms wants a listing and an empty MATCH is not a listing.
  *
  * This is the trace plane and it stops here. No memory table is named, and nothing in the
- * retrieval assembler names `traces` — the firewall is by table name, in both directions.
+ * retrieval assembler names `traces`. The firewall is by table name, in both directions.
  */
 export const searchTraces = (params: TraceSearchParams) =>
   Effect.gen(function* () {
@@ -1612,8 +1612,8 @@ export const searchTraces = (params: TraceSearchParams) =>
     const conditions: Array<string> = []
     const values: Array<string | number> = []
     /**
-     * The MATCH names `traces_fts`, not a column of `traces`: the index is an external-content FTS5
-     * table, so it is joined in by rowid and only reached when there is something to match. Without
+     * The MATCH names `traces_fts` rather than a column of `traces`. The index is an external-content
+     * FTS5 table, so it is joined in by rowid and only reached when there is something to match. Without
      * a query the statement never mentions it, which is what keeps a bare listing a plain table scan.
      */
     const matched = match !== ""
@@ -1668,8 +1668,8 @@ export const searchTraces = (params: TraceSearchParams) =>
 /**
  * The memory-session links, from either side.
  *
- * Both parameters absent is a refusal, not an unbounded scan of every link ever recorded. A tool
- * whose no-argument form returns the whole table is a tool an agent calls by accident.
+ * Both parameters absent is a refusal rather than an unbounded scan of every link ever recorded. A
+ * tool whose no-argument form returns the whole table is a tool an agent calls by accident.
  */
 export const traceLinks = (params: {
   readonly sessionId?: string | undefined
@@ -1726,13 +1726,13 @@ export const traceLinks = (params: {
 /**
  * Corpus health, in one call.
  *
- * `indexFresh` compares the recorded watermark to `HEAD`, which is the only honest answer: the
- * index is a projection of a commit, so "fresh" means "the commit it describes is the commit we
- * are on". A count of rows would say the index exists, not that it is current.
+ * `indexFresh` compares the recorded watermark to `HEAD`, which is the only answer that means
+ * anything. The index is a projection of a commit, so "fresh" means "the commit it describes is the
+ * commit we are on". A count of rows would say the index exists rather than that it is current.
  *
- * `embedderUp` is read off the STORED watermark rather than by probing Bedrock. A status call that
+ * `embedderUp` is read off the stored watermark rather than by probing Bedrock. A status call that
  * made a network request would fail for a reason unrelated to the corpus, and what a caller
- * actually needs to know is whether the vectors in this index are usable.
+ * needs to know is whether the vectors in this index are usable.
  */
 export const statusReport = () =>
   Effect.gen(function* () {
@@ -1792,7 +1792,7 @@ export const statusReport = () =>
 const countOne = (db: DatabaseShape, sql: string): Effect.Effect<number, StorageFailure> =>
   db.get<{ n: number }>(sql).pipe(Effect.map((row) => row?.n ?? 0))
 
-/** A `GROUP BY` into a record. Absent keys mean zero, so the caller never reads a null. */
+/** A `GROUP BY` into a record. An absent key means zero, so the caller never reads a null. */
 const countRows = (
   db: DatabaseShape,
   sql: string

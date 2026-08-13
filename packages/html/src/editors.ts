@@ -13,9 +13,9 @@ import { isMemoryMetaName, META_ORDER, META_PREFIX, type MemoryMetaName } from "
  * The sleep phases stamp `memhtml-updated`, decay `memhtml-confidence`, bump `memhtml-reprieves`, and set
  * `memhtml-needs-revision` on files they otherwise leave alone. Round-tripping the whole document
  * for that would re-serialize the article and make a bookkeeping pass look like a content
- * change in `git diff` — and, because the article is the hash scope, would risk moving the
+ * change in `git diff`. The article is the hash scope, so that would also risk moving the
  * dedup key. Splicing by source offset keeps `contentHash` invariant by construction: the
- * article's bytes are never in the edited range.
+ * article's bytes stay outside the edited range.
  */
 
 /** The offsets of a source span, half-open. */
@@ -74,7 +74,7 @@ const linkLine = (rel: string, href: string): string =>
  * Where a new meta line goes: immediately before the first existing `memhtml-` meta that sorts
  * after it, else after the last one that sorts before it, else before the first `<link>`, else
  * at `</head>`. Following {@link META_ORDER} is what keeps two agents stamping different keys
- * from ever reordering each other's lines.
+ * from reordering each other's lines.
  */
 const insertionOffsetForMeta = (
   html: string,
@@ -143,11 +143,11 @@ const lineEndAt = (html: string, offset: number): number => {
 
 /**
  * Set a head meta to one value, replacing the first `<meta>` of that name in place or inserting
- * a line in {@link META_ORDER} position. Exactly one line changes, and the article is never in
- * the edited range — so `contentHash(setMeta(html, name, value)) === contentHash(html)` holds
+ * a line in {@link META_ORDER} position. Exactly one line changes, and the article stays outside
+ * the edited range, so `contentHash(setMeta(html, name, value)) === contentHash(html)` holds
  * for every name, repeatable ones included.
  *
- * On a repeatable key this sets the FIRST value; {@link addMeta} is the append. An unknown name
+ * On a repeatable key this sets the FIRST value. {@link addMeta} is the append. An unknown name
  * is refused by returning the input unchanged rather than writing a meta `memhtml doctor` would
  * immediately flag.
  */
@@ -169,7 +169,7 @@ export const setMeta = (html: string, name: string, value: string): string => {
 }
 
 /**
- * Append another `<meta>` of a repeatable name — a new `memhtml-entity` or `memhtml-tag` — after the
+ * Append another `<meta>` of a repeatable name, a new `memhtml-entity` or `memhtml-tag`, after the
  * last one already present. Adding a value that is already there is a no-op, so the operation
  * is idempotent and a re-run of a sleep phase cannot grow the head.
  */
@@ -229,7 +229,7 @@ export const addLink = (html: string, rel: EdgeRel, href: string): string => {
 
 /**
  * Drop a `<link rel="memhtml-…">` edge. Omitting `href` drops every link of that rel; naming one
- * drops just that pair — which is what the integrity phase does when it replaces a dangling
+ * drops just that pair, which is what the integrity phase does when it replaces a dangling
  * href with the target's new path.
  */
 export const removeLink = (html: string, rel: EdgeRel, href?: string): string => {

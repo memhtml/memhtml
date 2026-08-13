@@ -18,18 +18,18 @@ import { generateArtifacts } from "../publish.js"
 import { allPaths, danglingEdges, publishRows } from "../sql.js"
 
 /**
- * Phase 13 — integrity. Repair dangling `memhtml-*` hrefs and regenerate the artifacts. ONE commit.
+ * Phase 13, integrity. Repair dangling `memhtml-*` hrefs and regenerate the artifacts. ONE commit.
  *
  * **A dangling href is repaired by rewriting it to the archive path when the target was archived, and
- * dropped with a warning otherwise.** Those are different facts: an archived target still exists and
- * the edge still says something true, so rewriting preserves it; a target that is simply gone means
+ * dropped with a warning otherwise.** Those are different facts. An archived target still exists and
+ * the edge still says something true, so rewriting preserves it. A target that is simply gone means
  * the edge asserts a relationship to nothing, and leaving it would keep producing a dangling row on
- * every rebuild forever. The archive path is derived with `archivePathFor` rather than searched for,
- * because the mapping is injective and `originalPathFor` inverts it — no rename-similarity score is
+ * every rebuild forever. The archive path is derived with `archivePathFor` instead of searched for,
+ * because the mapping is injective and `originalPathFor` inverts it. No rename-similarity score is
  * consulted anywhere.
  *
  * The generated `index.html` files and `sitemap.xml` are the design's ONE merge-conflict source, and
- * they are regenerated only here and by `memhtml publish` — never on an ordinary write. Both call the same
+ * they are regenerated only here and by `memhtml publish`, not on an ordinary write. Both call the same
  * `generateArtifacts`, and it is deterministic given the row set, so `.gitattributes`' `merge=ours`
  * plus a regeneration pass resolves a conflict without a human reading XML.
  */
@@ -42,7 +42,7 @@ export const integrity: PhaseBody = (env) =>
 
     /**
      * Candidate repairs, resolved before any write. A target's archive path is looked for under EVERY
-     * plausible year rather than only the run's, because a file archived in a previous January sits
+     * plausible year, not only the run's, because a file archived in a previous January sits
      * under that year and the run date says nothing about it.
      */
     const repairs: Array<{
@@ -73,8 +73,8 @@ export const integrity: PhaseBody = (env) =>
       const to = repair.to
       if (to === undefined) continue
       /**
-       * Remove-then-add on the SAME file in one stamp, so a repair is one line replaced rather than a
-       * line dropped and a line appended somewhere else in the head — and so a re-run is a no-op:
+       * Remove-then-add on the SAME file in one stamp, so a repair replaces one line instead of
+       * dropping a line and appending one elsewhere in the head. A re-run is then a no-op:
        * once the href points at the archive path, the removal matches nothing and the addition is
        * already present.
        */
@@ -121,7 +121,7 @@ export const integrity: PhaseBody = (env) =>
  * The archive path a missing target now lives at, or `undefined` when it is genuinely gone.
  *
  * Years are tried newest-first from the run's own year back over {@link ARCHIVE_LOOKBACK_YEARS}, so
- * the most recent archiving of a path that was archived more than once wins — which is the one a live
+ * the most recent archiving of a path that was archived more than once wins. That is the one a live
  * edge means, since an earlier archiving was superseded by a later restore.
  */
 export const archivedFormOf = (

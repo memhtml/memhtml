@@ -33,7 +33,7 @@ export type ReinforceSignal = (typeof REINFORCE_SIGNALS)[number]
 
 /**
  * The outcome-EWMA signal value for a reinforcement, unitless in `[-1, 1]`. `neutral` is 0, so
- * a neutral reinforcement bumps the access count without moving the outcome score — a memory
+ * a neutral reinforcement bumps the access count without moving the outcome score. A memory
  * being read is evidence of relevance, not of correctness.
  */
 export const signalValue = (signal: ReinforceSignal): number => {

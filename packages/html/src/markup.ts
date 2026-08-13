@@ -7,8 +7,8 @@ import { NEWLINE_SWALLOWING_ELEMENTS, RAW_TEXT_ELEMENTS, VOID_ELEMENTS } from ".
  *
  * parse5 ships a serializer, and it is not usable here for two reasons.
  *
- * The load-bearing one is `<pre>`. The HTML parser swallows one newline immediately after a
- * `<pre>` start tag, and parse5's serializer does not re-emit it — so `<pre>\n\nx</pre>` becomes
+ * The costlier one is `<pre>`. The HTML parser swallows one newline immediately after a
+ * `<pre>` start tag, and parse5's serializer does not re-emit it, so `<pre>\n\nx</pre>` becomes
  * `<pre>\nx</pre>` becomes `<pre>x</pre>`, losing one newline on every write. `<pre>` whitespace
  * is inside the content-hash scope verbatim, so that drift would silently change a memory's
  * dedup key on a pass that edited nothing. {@link NEWLINE_SWALLOWING_ELEMENTS} re-emits the
@@ -30,7 +30,7 @@ type TextNode = DefaultTreeAdapterTypes.TextNode
 
 /**
  * Escape a text run. U+00A0 becomes `&nbsp;` because a literal no-break space is invisible in
- * an editor and reads as an ordinary space in review — an invisible character in a memory's
+ * an editor and reads as an ordinary space in review. An invisible character in a memory's
  * claim is a trap, so the file names it.
  */
 export const escapeText = (text: string): string =>

@@ -1,15 +1,15 @@
 /**
- * `@memhtml/eval` — the fixture corpus generator and the refusable discrimination gate.
+ * `@memhtml/eval` holds the fixture corpus generator and the refusable discrimination gate.
  *
  * A package of its own rather than a directory inside `@memhtml/index`, because the harness builds a REAL
- * git repository and renders real memory files: it needs `@memhtml/store` and `@memhtml/html` at runtime, and
- * `@memhtml/index` lists the store as a devDependency on purpose — it declares its own `memhtml/IndexGit` port
+ * git repository and renders real memory files. It needs `@memhtml/store` and `@memhtml/html` at runtime, and
+ * `@memhtml/index` lists the store as a devDependency on purpose, declaring its own `memhtml/IndexGit` port
  * instead. Promoting git-subprocess code to a runtime dependency of the projection layer to host an
- * eval harness would invert that. The arrow still points inward: this package depends on the six below
- * it, and `apps/cli` depends on this one.
+ * eval harness would invert that. The arrow still points inward, since this package depends on the six
+ * below it, and `apps/cli` depends on this one.
  *
  * The corpus is never committed. `corpus.ts` is a pure function of a seed, so a fixture is regenerated
- * on demand and two runs at one seed are byte-identical — which is what makes a change in the gate's
+ * on demand and two runs at one seed are byte-identical. That is what makes a change in the gate's
  * numbers mean the ranking changed rather than the corpus.
  */
 

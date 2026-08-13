@@ -1,9 +1,9 @@
 /**
- * `@memhtml/mcp` — the `memhtml-mcp` stdio server: fourteen tools and two resources over the memory repo.
+ * `@memhtml/mcp` is the `memhtml-mcp` stdio server: fourteen tools and two resources over the memory repo.
  *
  * Sleep is deliberately absent from the tool surface. It is a cron/operator action producing a
- * reviewable branch — a run rewrites confidence across the corpus, archives memories, and creates a
- * branch a human is expected to read — so `memhtml sleep run` is its entry point and no tool fires it.
+ * reviewable branch. A run rewrites confidence across the corpus, archives memories, and creates a
+ * branch a human is expected to read, so `memhtml sleep run` is its entry point and no tool fires it.
  */
 
 export { mcpSuggestionsFor, ToolFailure, toToolFailure } from "./failure.js"

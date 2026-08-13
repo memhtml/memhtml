@@ -114,12 +114,12 @@ export const HALF_LIVES_DAYS: Readonly<Record<string, number | null>> = {
   arc: 30,
   error_pattern: 14,
   /**
-   * A task never decays, and this entry is self-documenting rather than load-bearing: sleep's
+   * A task does not decay. This entry documents that and nothing reads it today, because sleep's
    * phases exclude tasks by type before any of them is scored, so nothing reaches the scorer to
-   * decay. Stated anyway, because the fallback for an unlisted type is
-   * {@link DEFAULT_HALF_LIFE_DAYS} — so if a future caller ever DOES score a task, the answer is
-   * "age says nothing about it" rather than a silent 30-day half-life. Age is the one signal that
-   * is actively misleading about intended work: an untouched task is the most likely to still be
+   * decay. It is stated anyway, because the fallback for an unlisted type is
+   * {@link DEFAULT_HALF_LIFE_DAYS}. If a future caller DOES score a task, the answer is then
+   * "age says nothing about it" rather than a silent 30-day half-life. Age is actively
+   * misleading about intended work, since an untouched task is the most likely to still be
    * owed.
    */
   task: null
@@ -130,15 +130,15 @@ export const DEFAULT_HALF_LIFE_DAYS = 30
 
 /**
  * The recency decay constant. `Math.LN2` rather than a `0.693` literal, so
- * `exp(-LN2 * age / halfLife)` is **exactly** 0.5 at `age == halfLife` — the half-life is
+ * `exp(-LN2 * age / halfLife)` is **exactly** 0.5 at `age == halfLife`. The half-life is
  * then the definition of the curve rather than an approximation of it, and a property test
  * can assert the equality instead of a tolerance.
  */
 export const LN2 = Math.LN2
 
 /**
- * Band edges. KEEP is `> 0.7`, EVICT is `<= 0.3`, COMPRESS is the open interval between —
- * so **each boundary is owned by the lower band**: exactly 0.7 compresses, exactly 0.3
+ * Band edges. KEEP is `> 0.7`, EVICT is `<= 0.3`, and COMPRESS is the open interval between.
+ * **Each boundary is owned by the lower band**: exactly 0.7 compresses, exactly 0.3
  * evicts. The three bands partition `[0, 1]` with no gap and no overlap.
  */
 export const KEEP_THRESHOLD = 0.7
@@ -153,15 +153,15 @@ export const SCORE_PRECISION = 4
  *
  * Units and scopes, per field:
  * - `memoryType` selects the weight profile and the half-life.
- * - `ageDays` — fractional days since the memory's own last update. Non-negative.
- * - `accessCount` — a quantity, per-memory lifetime, 0-based.
- * - `confidence` — unitless in `[0, 1]`; clamped rather than rejected.
- * - `graphRank` / `maxGraphRank` — PageRank scores in the same run's scale;
+ * - `ageDays`: fractional days since the memory's own last update. Non-negative.
+ * - `accessCount`: a quantity, per-memory lifetime, 0-based.
+ * - `confidence`: unitless in `[0, 1]`; clamped rather than rejected.
+ * - `graphRank` / `maxGraphRank`: PageRank scores in the same run's scale;
  *   `maxGraphRank` is that run's maximum, so the ratio is corpus-relative, not absolute.
- * - `bridgeCount` — a quantity of cross-community memory edges for this memory.
- * - `reinforcementCount` — a quantity of inbound `supports`/`reinforces` edges.
- * - `wordCount` — a quantity of words in the memory's body.
- * - `contradictionCount` — a quantity of **authored** (`derived: false`) contradictions;
+ * - `bridgeCount`: a quantity of cross-community memory edges for this memory.
+ * - `reinforcementCount`: a quantity of inbound `supports`/`reinforces` edges.
+ * - `wordCount`: a quantity of words in the memory's body.
+ * - `contradictionCount`: a quantity of **authored** (`derived: false`) contradictions;
  *   a sleep-mined suspicion is excluded upstream, so a machine guess cannot evict.
  */
 export interface RetentionInput {
@@ -220,8 +220,8 @@ const signalReinforcement = (reinforcementCount: number): number =>
 
 /**
  * Word count as a density proxy: 100 words saturates, and a body under 10 words is
- * penalized into `[0, 0.5)` — a one-line memory carries less recoverable content than its
- * raw length suggests.
+ * penalized into `[0, 0.5)`, because a one-line memory carries less recoverable content
+ * than its raw length suggests.
  */
 const signalContentDensity = (wordCount: number): number =>
   wordCount < 10 ? Math.max(0, wordCount) / 20 : Math.min(1, wordCount / 100)
@@ -297,10 +297,10 @@ export const REPRIEVE_W_RECENCY = 0.1
 
 /**
  * What the reprieve score reads. Units and scopes:
- * - `importance` — 1-based ordinal in `[1, 10]`, clamped; divided by 10 before use.
- * - `accessCount` — a quantity, per-memory lifetime, 0-based.
- * - `outcomeScore` — unitless in `[-1, 1]`. A negative value contributes 0.
- * - `hoursSinceAccess` — fractional hours, non-negative.
+ * - `importance`: 1-based ordinal in `[1, 10]`, clamped; divided by 10 before use.
+ * - `accessCount`: a quantity, per-memory lifetime, 0-based.
+ * - `outcomeScore`: unitless in `[-1, 1]`. A negative value contributes 0.
+ * - `hoursSinceAccess`: fractional hours, non-negative.
  */
 export interface ReprieveInput {
   readonly importance: number
@@ -314,9 +314,9 @@ export interface ReprieveInput {
  * The four-term reprieve score. Deliberately **not** convex: the `log1p(accessCount)` term
  * is unbounded, so the score can exceed 1. It is proven only monotone and sign-clamped.
  *
- * A negative `outcomeScore` contributes exactly 0, never a penalty — mirroring the salience
- * arm's `max(coalesce(outcome_score, 0.0), 0.0)`. Without that clamp a memory that once
- * produced a bad outcome would be doubly punished: once by the outcome EWMA that already
+ * A negative `outcomeScore` contributes exactly 0 and does not subtract, mirroring the
+ * salience arm's `max(coalesce(outcome_score, 0.0), 0.0)`. Without that clamp a memory that
+ * once produced a bad outcome would be punished twice, once by the outcome EWMA that already
  * lowered its salience, and again here by having its reprieve pushed below the floor.
  */
 export const reprieveScore = (input: ReprieveInput): number => {

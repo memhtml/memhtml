@@ -8,17 +8,17 @@ import { hoursBetween, runRetentionPass } from "../retention.js"
 import { isSleepExcluded } from "../sql.js"
 
 /**
- * Phase 11 — reprieve. A TTL-passed memory earns another two weeks, or it expires. ONE commit.
+ * Phase 11, reprieve. A TTL-passed memory earns another two weeks, or it expires. ONE commit.
  *
- * The reprieve score is four terms — importance, access, outcome, recency-of-use — and it is
- * deliberately NOT convex: `log1p(accessCount)` is unbounded, so the score can exceed 1. It is proven
- * only monotone and sign-clamped, which is all the gate needs. A negative outcome contributes exactly
- * zero rather than a penalty: the outcome EWMA has already lowered that memory's salience, and
+ * The reprieve score sums four terms: importance, access, outcome, and recency-of-use. It is
+ * deliberately NOT convex, because `log1p(accessCount)` is unbounded and the score can exceed 1. It is
+ * proven only monotone and sign-clamped, which is all the gate needs. A negative outcome contributes
+ * exactly zero and no penalty. The outcome EWMA has already lowered that memory's salience, and
  * penalizing it again here would punish one bad outcome twice.
  *
  * **`MAX_REPRIEVES` is what makes the TTL mean something.** Without the cap a frequently-read memory
  * would extend its own validity forever, and `memhtml-valid-until` would document an intention the system
- * never enforces. Three reprieves is six weeks past the stated expiry — enough for a human to notice
+ * does not enforce. Three reprieves is six weeks past the stated expiry, enough for a human to notice
  * and re-assert the fact deliberately.
  *
  * **Arcs are exempt.** An arc is system-written and carries no meaningful TTL; expiring one on age
@@ -31,9 +31,9 @@ export const reprieve: PhaseBody = (env) =>
       if (entry.row.memory_type === "arc") return false
       /**
        * A task's `memhtml-due` is a DEADLINE, not a validity bound, and it is a different column
-       * (`due_at`) from the `valid_until` this phase reads — so a task reaching here could only do
-       * so by carrying both. Excluded explicitly anyway: expiring an overdue task would archive
-       * work precisely because it is late, and `memhtml doctor` reports overdue tasks so a human
+       * (`due_at`) from the `valid_until` this phase reads, so a task reaching here could only do
+       * so by carrying both. Excluded explicitly anyway, because expiring an overdue task would
+       * archive work precisely for being late. `memhtml doctor` reports overdue tasks so a human
        * decides instead.
        */
       if (isSleepExcluded(entry.row.memory_type)) return false
@@ -80,8 +80,8 @@ export const reprieve: PhaseBody = (env) =>
     let archived = 0
     for (const decision of toExpire) {
       /**
-       * `null` means retention triage already evicted this path — which is the COMMON case, not an
-       * edge one: a memory whose TTL has passed usually also scores below the retention floor, and
+       * `null` means retention triage already evicted this path, which is the COMMON case and not an
+       * edge one. A memory whose TTL has passed usually also scores below the retention floor, and
        * triage runs two phases earlier. Both phases read the index, refreshed once in preflight, so
        * both list it active at its pre-eviction path.
        */

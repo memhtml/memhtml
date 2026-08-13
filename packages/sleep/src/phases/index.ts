@@ -19,10 +19,10 @@ import { traceConsolidation } from "./trace-consolidation.js"
 /**
  * The phase registry: one body per phase name, exhaustively.
  *
- * A total `Record<SleepPhase, PhaseBody>` rather than a lookup that can miss, so adding a phase name
- * to `SLEEP_PHASES` without writing its body is a compile error rather than a run that silently skips
+ * A total `Record<SleepPhase, PhaseBody>`, not a lookup that can miss, so adding a phase name
+ * to `SLEEP_PHASES` without writing its body is a compile error instead of a run that silently skips
  * it. `report` is the one entry that takes the run's own results, so its registry entry is a
- * zero-result placeholder the runner replaces — see `run.ts`.
+ * zero-result placeholder the runner replaces. See `run.ts`.
  */
 export const PHASE_BODIES: Readonly<Record<SleepPhase, PhaseBody>> = {
   preflight,

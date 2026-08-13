@@ -9,7 +9,7 @@ import { CHUNK_MAX_CHARS } from "./schema-const.js"
 
 /** One chunk of a memory's article text. */
 export interface Chunk {
-  /** `sha256(content_hash + ":" + ordinal)` — corpus-wide, so an identical body reuses the vector. */
+  /** `sha256(content_hash + ":" + ordinal)`. Corpus-wide, so an identical body reuses the vector. */
   readonly chunkId: string
   /** 0-based position within THIS file's chunk sequence. */
   readonly ordinal: number
@@ -30,8 +30,8 @@ export const chunkIdFor = (contentHash: string, ordinal: number): string =>
 /**
  * Split article text into chunks of at most {@link CHUNK_MAX_CHARS} characters, no overlap.
  *
- * An entry short enough to be one chunk is the overwhelmingly common case — the format is one fact
- * per file — so the fast path returns a single chunk 0 whose text is the whole article, and the
+ * An entry short enough to be one chunk is the overwhelmingly common case, because the format is
+ * one fact per file. The fast path returns a single chunk 0 whose text is the whole article, and the
  * embedding is then a function of the article rather than of an arbitrary window.
  *
  * Longer text splits on sentence-ish boundaries, greedily packing whole sentences into each chunk.
@@ -60,8 +60,8 @@ export const chunkText = (
 }
 
 /**
- * Sentence-ish units, each already within `maxChars`. A run with no sentence terminator — a long
- * table row, a URL list — is cut at the ceiling rather than returned oversized, which is what keeps
+ * Sentence-ish units, each already within `maxChars`. A run with no sentence terminator, such as a
+ * long table row or a URL list, is cut at the ceiling rather than returned oversized, which keeps
  * every chunk within the embedder's window.
  */
 const splitSentences = (text: string, maxChars: number): ReadonlyArray<string> => {

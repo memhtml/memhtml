@@ -2,9 +2,9 @@ import { Schema } from "effect"
 
 /**
  * The three Claude 5 models the sleep phases run on, and the wire rules that differ
- * between them. Anthropic-only by design: the four LLM phases need one call shape, and a
- * second vendor would buy a second set of truncation and structured-output semantics for
- * no phase that asks for it.
+ * between them. The set is Anthropic-only on purpose, because the four LLM phases need one
+ * call shape. A second vendor would add a second set of truncation and structured-output
+ * semantics that no phase asks for.
  */
 
 /** Reasoning effort, passed as `output_config.effort`. Accepted by all three models. */
@@ -21,8 +21,8 @@ export interface ModelInfo {
 }
 
 /**
- * Bedrock ids use the `global.` inference profiles, which is what makes them reachable
- * from a single region without provisioning per-region throughput.
+ * Bedrock ids use the `global.` inference profiles, which makes them reachable from a
+ * single region without provisioning per-region throughput.
  */
 export const MODELS: ReadonlyArray<ModelInfo> = [
   { key: "sonnet-5", label: "Claude Sonnet 5", modelId: "global.anthropic.claude-sonnet-5" },
@@ -33,9 +33,9 @@ export const MODELS: ReadonlyArray<ModelInfo> = [
 const BY_KEY = new Map(MODELS.map((model) => [model.key, model]))
 
 /**
- * Resolve a key to its model. Total over `ModelKey`, so the throw is unreachable through
- * the type — it exists to fail loudly if the table is ever edited out of agreement with
- * the literal union rather than to be caught.
+ * Resolve a key to its model. Total over `ModelKey`, so the type makes the throw
+ * unreachable. It is there to fail loudly if the table is ever edited out of agreement
+ * with the literal union, not to be caught.
  */
 export const modelByKey = (key: ModelKey): ModelInfo => {
   const found = BY_KEY.get(key)
@@ -47,8 +47,8 @@ export const modelByKey = (key: ModelKey): ModelInfo => {
 
 /**
  * The `thinking` object per model. Opus 5 and Fable 5 take `{type: "adaptive"}` (Fable is
- * adaptive-only); Sonnet 5 reasons unconditionally and takes NO thinking key — sending one
- * is a validation error, not a no-op.
+ * adaptive-only). Sonnet 5 reasons unconditionally and takes NO thinking key. Sending one
+ * to Sonnet 5 raises a validation error instead of being ignored.
  *
  * Verified live 2026-08-02: all three accept this shape alongside a forced `tool_choice`,
  * so structured output and adaptive thinking compose.

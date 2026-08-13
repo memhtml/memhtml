@@ -6,7 +6,7 @@ import { StorageFailure } from "@memhtml/contracts/errors"
 import { Effect } from "effect"
 
 /**
- * Discovery over the session-transcript tree. `.memhtml` never holds session content — the `traces`
+ * Discovery over the session-transcript tree. `.memhtml` holds no session content. The `traces`
  * table is a read-only index over this tree (design §7), and this module is the only place that
  * names its layout.
  */
@@ -17,15 +17,15 @@ export const SUBAGENTS_DIR = "subagents"
 /** The `projects/` directory the per-cwd slug directories live under. */
 export const PROJECTS_DIR = "projects"
 
-/** A sidecar filename is `agent-<agentId>.jsonl`; the `.meta.json` beside it is not a transcript. */
+/** A sidecar filename is `agent-<agentId>.jsonl`. The `.meta.json` beside it is not a transcript. */
 const SIDECAR_PATTERN = /^agent-(.+)\.jsonl$/
 
 /** A main session's filename stem is its `sessionId`. */
 const SESSION_PATTERN = /^(.+)\.jsonl$/
 
 /**
- * - `session` — `<root>/projects/<slug>/<sessionId>.jsonl`, the main transcript.
- * - `subagent` — `<root>/projects/<slug>/<sessionId>/subagents/agent-<agentId>.jsonl`. Its
+ * - `session`: `<root>/projects/<slug>/<sessionId>.jsonl`, the main transcript.
+ * - `subagent`: `<root>/projects/<slug>/<sessionId>/subagents/agent-<agentId>.jsonl`. Its
  *   records carry the parent `sessionId` too, so it indexes into the same session row.
  */
 export type SessionFileKind = "session" | "subagent"
@@ -34,12 +34,12 @@ export type SessionFileKind = "session" | "subagent"
 export interface SessionFile {
   /** Absolute path, built from the caller's `traceRoot`. */
   readonly filePath: string
-  /** The `projects/<slug>` directory name — the cwd slug, `traces.slug`. */
+  /** The `projects/<slug>` directory name, which is the cwd slug, `traces.slug`. */
   readonly slug: string
   /**
-   * The session this file belongs to, read from the path: the filename stem for a main session,
-   * the owning directory name for a sidecar. Path-derived rather than parsed, so discovery costs
-   * one `readdir` per directory and never opens a file.
+   * The session this file belongs to, read from the path. That is the filename stem for a main
+   * session and the owning directory name for a sidecar. Deriving it from the path costs one
+   * `readdir` per directory and opens no file.
    */
   readonly sessionId: string
   readonly kind: SessionFileKind
@@ -58,11 +58,11 @@ const errnoOf = (cause: unknown): string | null => {
 /**
  * Directory entries, or `[]` when the directory is absent.
  *
- * Absence is a normal state, not a failure: a session directory has no `subagents/` until its
- * first subagent runs, and a machine with no transcripts has no `projects/` at all. `ENOTDIR`
- * counts as absence too — a *file* where a slug directory was expected holds no transcripts. Any
- * other rejection, permission denied above all, is a real {@link StorageFailure}: silently
- * returning `[]` for an unreadable tree would report a successful scan of zero sessions.
+ * Absence is a normal state. A session directory has no `subagents/` until its first subagent
+ * runs, and a machine with no transcripts has no `projects/` at all. `ENOTDIR` counts as absence
+ * too, since a *file* where a slug directory was expected holds no transcripts. Any other
+ * rejection, permission denied above all, becomes a {@link StorageFailure}, because returning
+ * `[]` for an unreadable tree would report a successful scan of zero sessions.
  */
 const readDirOrEmpty = (
   path: string,
@@ -85,10 +85,10 @@ const readDirOrEmpty = (
 /**
  * Every transcript file under `traceRoot`, main sessions and subagent sidecars alike.
  *
- * `traceRoot` is a parameter with `~/.claude` as the caller's default — never hardcoded here, so a
- * test drives a fixture tree and an operator can point the indexer at an archive.
+ * `traceRoot` is a parameter with `~/.claude` as the caller's default, and it is not hardcoded
+ * here, so a test drives a fixture tree and an operator can point the indexer at an archive.
  *
- * A file that vanishes between `readdir` and `stat` is dropped rather than failed: transcripts are
+ * A file that vanishes between `readdir` and `stat` is dropped rather than failed. Transcripts are
  * written by a live process that may compact or delete one mid-scan, and the next run rediscovers
  * whatever is there.
  */
@@ -157,14 +157,14 @@ export const discoverSessions = (
 /**
  * A file's size and mtime, or `null` when it disappeared between listing and stat.
  *
- * `mtimeMs` is TRUNCATED to a whole millisecond, and that is load-bearing rather than tidy.
+ * `mtimeMs` is TRUNCATED to a whole millisecond, and the skip test depends on that.
  * `node:fs`'s `Stats.mtimeMs` is a float carrying sub-millisecond precision on Linux (measured
  * 2026-08-02: `1785650975408.8376`), while the `trace_watermarks.mtime` column is ISO-8601 text,
- * which has exactly millisecond resolution. So a stored watermark reads back as the integer
- * `1785650975408` and never equals the float the next stat reports — the skip test
- * `curr.mtimeMs === prev.mtimeMs` fails for EVERY unchanged file, and every run re-reads the whole
- * corpus. Truncating here makes the value's resolution match the only serialized form it has, so
- * the equality is round-trip-safe by construction rather than by a comparison tolerance.
+ * which has exactly millisecond resolution. A stored watermark therefore reads back as the
+ * integer `1785650975408` and does not equal the float the next stat reports. The skip test
+ * `curr.mtimeMs === prev.mtimeMs` then fails for EVERY unchanged file, and every run re-reads the
+ * whole corpus. Truncating here makes the value's resolution match the only serialized form it
+ * has, so the equality round-trips by construction instead of needing a comparison tolerance.
  */
 const statOrNull = (
   filePath: string
@@ -179,7 +179,7 @@ const statOrNull = (
 
 /**
  * The `agentId`s of a session's sidecars, from filenames alone. Feeds `agent_count` without
- * opening a sidecar — the count is a property of the tree, and the sidecars' own records are
+ * opening a sidecar, because the count is a property of the tree. The sidecars' own records are
  * indexed on their own pass.
  */
 export const sidecarAgentIds = (

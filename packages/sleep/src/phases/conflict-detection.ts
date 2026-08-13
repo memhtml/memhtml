@@ -19,23 +19,23 @@ import {
 } from "../sql.js"
 
 /**
- * Phase 6 — conflict detection. An NLI stance judge over embedding-near same-entity pairs; a
+ * Phase 6, conflict detection. An NLI stance judge over embedding-near same-entity pairs; a
  * corroborated contradiction is promoted into BOTH files and committed.
  *
- * Three stages, and the separation is the safety property:
+ * Three stages, and keeping them separate is what makes the phase safe:
  *
  * 1. **Scan (SQL, no model).** Same-entity active pairs above {@link CONFLICT_COSINE_FLOOR} carrying
  *    no edge in either direction, capped at {@link CONFLICT_CANDIDATE_LIMIT}.
  * 2. **Judge (one model call per pair, isolated).** Each call is wrapped so one malformed tool
  *    payload skips its pair and is counted. A night that judged 199 pairs and lost the 200th has
  *    done 199 pairs of work; failing the phase would discard all of it.
- * 3. **Assert (deterministic, never the model).** Only `verdict: "contradicts"` above the confidence
- *    floor bumps the corroboration counter, and only `detections >= 2` promotes the edge into the
- *    files. A single machine detection can therefore never reach the retention penalty — the counter
- *    lives in the state plane and the penalty counts only `derived = 0` file-borne edges.
+ * 3. **Assert (deterministic, decided here and not by the model).** Only `verdict: "contradicts"` above
+ *    the confidence floor bumps the corroboration counter, and only `detections >= 2` promotes the edge
+ *    into the files. A single machine detection therefore cannot reach the retention penalty. The
+ *    counter lives in the state plane and the penalty counts only `derived = 0` file-borne edges.
  *
- * **Detection only.** The phase asserts the contradiction and stops. It never supersedes, closes a
- * `memhtml-valid-until`, or archives either side: choosing the winner of a contradiction is a one-way
+ * **Detection only.** The phase asserts the contradiction and stops. It does not supersede, close a
+ * `memhtml-valid-until`, or archive either side. Choosing the winner of a contradiction is a one-way
  * door on stored belief, and it belongs to an agent or a human, not to a nightly job.
  */
 
@@ -60,7 +60,7 @@ export const conflictDetection: PhaseBody = (env) =>
 
     /**
      * Tasks are out of the candidate set. "These two contradict" is a judgment about asserted
-     * facts, and a task asserts nothing — so a model asked about two tasks would answer a question
+     * facts, and a task asserts nothing. A model asked about two tasks would answer a question
      * that has no true answer, and a promoted `contradicts` between them would be a memory-class
      * edge with task endpoints written into both files.
      */

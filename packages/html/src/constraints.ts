@@ -32,7 +32,7 @@ import {
  * 6 is a warning: an element outside the vocabulary still indexes, because the format has to
  * degrade gracefully on a file a human hand-wrote in a hurry.
  *
- * Nothing here throws and nothing repairs — a checker that silently fixed a violation would
+ * Nothing here throws and nothing repairs. A checker that silently fixed a violation would
  * make `memhtml doctor` report a clean corpus that the next hand-edit breaks again.
  */
 
@@ -50,7 +50,7 @@ export interface CheckResult {
  *
  * The time components carry their ranges in the character classes rather than being checked
  * afterwards: an hour of `25` is not a time at all, and a value that is not a time cannot be
- * compared with one that is. `60` seconds is admitted — a leap second is a real instant.
+ * compared with one that is. `60` seconds is admitted, because a leap second is a real instant.
  */
 const ISO_DATETIME =
   /^\d{4}-\d{2}-\d{2}(?:[T ](?:[01]\d|2[0-3]):[0-5]\d(?::(?:[0-5]\d|60)(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d)?)?$/
@@ -58,7 +58,7 @@ const ISO_DATETIME =
 /**
  * True when a `datetime` value is one this format accepts: a calendar date, or a date with a
  * time. Narrower than HTML's own `datetime` grammar (which admits durations, weeks, and bare
- * times) because `files.event_at` and `files.due_at` are compared and ordered as strings — a
+ * times) because `files.event_at` and `files.due_at` are compared and ordered as strings. A
  * value that does not sort lexicographically alongside the others would corrupt the recency arm
  * and the overdue query alike.
  *
@@ -130,13 +130,13 @@ const checkArticle = (
 /**
  * True when a `<mark>` would yield an empty `files.gist`.
  *
- * The predicate is the GIST rule verbatim — `canonicalText` with `excludeCode`, then trimmed — and
- * that identity is the point rather than a convenience: `parse.ts` derives `gist` from exactly this
- * text, so a constraint computed any other way could refuse a file whose gist is fine or pass one
- * whose gist is empty. Two consequences fall out of using the real rule. A mark whose text arrives
- * through a nested `<strong>` is NOT empty, though the direct-text `textOf` below would call it so.
- * A mark containing only `<code>` IS empty, because a command line is body text and never the
- * claim — so `<mark><code>drain --vip</code></mark>` indexes with no gist and must be refused here.
+ * The predicate is the GIST rule verbatim, `canonicalText` with `excludeCode` and then trimmed.
+ * That identity is what matters here, not the convenience: `parse.ts` derives `gist` from exactly
+ * this text, so a constraint computed any other way could refuse a file whose gist is fine or pass
+ * one whose gist is empty. Two consequences fall out of using the real rule. A mark whose text
+ * arrives through a nested `<strong>` is NOT empty, though the direct-text `textOf` below would
+ * call it so. A mark containing only `<code>` IS empty, because a command line is body text and
+ * not the claim, so `<mark><code>drain --vip</code></mark>` indexes with no gist and is refused.
  *
  * U+00A0 is whitespace for this purpose. It is content to the hash (`hash.ts`'s ASCII-only
  * collapse), because a non-breaking space inside a claim is a typographic decision worth
@@ -157,8 +157,8 @@ const isEmptyClaim = (mark: Element): boolean =>
  *
  * The non-empty rule closes the hole those two leave open. An empty `<mark>` satisfies the count
  * and the placement, so `<p><mark></mark> the prose</p>` used to pass the store's render gate and
- * land a committed, indexed file with an empty `files.gist` — absent from every disclosure tier and
- * from the recall pack's quoted body, so invisible rather than merely wrong. Both write doors
+ * land a committed, indexed file with an empty `files.gist`. Such a file is absent from every
+ * disclosure tier and from the recall pack's quoted body, so it is invisible. Both write doors
  * already derived a claim from prose to route around it (`apps/cli/src/prose.ts`); with the rule
  * here, the gate owns the invariant and the doors are defense in depth.
  */
@@ -179,8 +179,8 @@ const checkMark = (article: Element): ReadonlyArray<string> => {
    *
    * A mark inside an `<aside>` is never in the first `<p>`, so reporting both would name one
    * mistake twice and the position line would be the less useful of the two. Emptiness is an
-   * orthogonal defect — an empty mark can be correctly or incorrectly placed, and an author fixing
-   * one still has the other — so it is collected alongside, per `checkDocument`'s rule that one
+   * orthogonal defect. An empty mark can be correctly or incorrectly placed, and an author fixing
+   * one still has the other, so it is collected alongside, per `checkDocument`'s rule that one
    * parse tells an author everything wrong with the file.
    */
   const folded: Array<string> = []

@@ -19,10 +19,10 @@ import { runRetentionPass } from "../retention.js"
 import { isSleepExcluded } from "../sql.js"
 
 /**
- * Phase 8 — arc synthesis. One triage call plans the night; one execute call writes each actionable
+ * Phase 8, arc synthesis. One triage call plans the night; one execute call writes each actionable
  * arc. ONE COMMIT PER ARC.
  *
- * The two-call split is a cost decision that survived contact: a single call asked to both choose and
+ * The two-call split is a cost decision that held up in use. A single call asked to both choose and
  * write produces content for arcs it should have skipped, and the writing is the expensive half. So
  * the triage call sees every live arc plus the recent evidence and returns only a plan, and only the
  * `update`/`create` entries cost a second call.
@@ -30,7 +30,7 @@ import { isSleepExcluded } from "../sql.js"
  * **One commit per arc, not one for the phase.** An arc is a standalone assertion about the agent's
  * own behaviour, and a reviewer reads it as one thing; a commit carrying four unrelated arcs is a
  * commit nobody reviews. It also means a model failure on the third arc leaves the first two
- * committed — the per-item isolation extends to the git history, not only to the counters.
+ * committed, so the per-item isolation reaches the git history and not only the counters.
  *
  * **The slug of a new arc is minted here, from the title.** A model-chosen slug is a model-chosen file
  * path, which is a path-traversal surface and a collision surface at once.
@@ -57,7 +57,7 @@ export const arcSynthesis: PhaseBody = (env) =>
     /**
      * Tasks are not evidence. An arc is a claim about how this agent BEHAVES, drawn from what it
      * has learned; a task is what it intends to do next. Offering tasks to the triage call would
-     * let an arc be synthesized from intentions rather than outcomes — and the phase then stamps
+     * let an arc be synthesized from intentions instead of outcomes. The phase then stamps
      * `memhtml-part-of` onto each supporting file, which for a task would be a memory-class edge into
      * the graph the task class exists to stay out of.
      */
@@ -71,9 +71,9 @@ export const arcSynthesis: PhaseBody = (env) =>
     }
 
     /**
-     * Evidence is keyed by an OPAQUE ordinal, never by path. The model's `evidenceKeys` come back as
+     * Evidence is keyed by an OPAQUE ordinal, not by path. The model's `evidenceKeys` come back as
      * whatever it was given, and a path in that field would let a model response name a file the
-     * phase then reads — so the key space is one the phase controls and can reject.
+     * phase then reads. So the key space is one the phase controls and can reject.
      */
     const evidenceKeyed = evidence.map((entry, offset) => ({
       key: `e${offset + 1}`,
@@ -180,8 +180,8 @@ export const arcSynthesis: PhaseBody = (env) =>
 
       const arcPath = existingPath ?? `${ARCS_DIR}/${slugify(content.title || title)}.html`
       /**
-       * An arc file is written whole, not stamped: its BODY is what this phase produces, so the
-       * head-editor rule does not apply — there is no bookkeeping edit to keep surgical, and
+       * An arc file is written whole, not stamped. Its BODY is what this phase produces, so the
+       * head-editor rule does not apply: there is no bookkeeping edit to keep surgical, and
        * `renderTemplate` stamps a `memhtml-content-hash` computed from the article it just built.
        */
       yield* writeFileBytes(
@@ -200,7 +200,7 @@ export const arcSynthesis: PhaseBody = (env) =>
 
       /**
        * Each supporting memory gains `memhtml-part-of` toward the arc. That is what makes an arc
-       * traversable back to its evidence after a rebuild — the arc's own file names no paths, so
+       * traversable back to its evidence after a rebuild. The arc's own file names no paths, so
        * without the inbound links the synthesis would be unattributable.
        */
       for (const one of supporting) {

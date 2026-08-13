@@ -1,8 +1,8 @@
 /**
  * Bedrock wire constants. Cohere Embed v4 returns 1536 floats when `output_dimension` is
  * absent and exactly 1024 when it is named (probed live 2026-08-02), so the InvokeModel
- * body names it — a silent default change would invalidate every stored vector against a
- * schema that says 1024.
+ * body names it. If the default changed without notice, every stored vector would be
+ * invalid against a schema that says 1024.
  */
 export const EMBED_MODEL_ID = "cohere.embed-v4:0"
 export const EMBED_DIM = 1024
@@ -13,16 +13,16 @@ export const EMBED_BATCH_LIMIT = 96
 /**
  * How many embed batches are in flight at once.
  *
- * A whole-store pass is `ceil(chunks / EMBED_BATCH_LIMIT)` requests — about 105 for a 10k-chunk
- * corpus — and issuing them one after another makes `index rebuild --embed` a serial chain of
- * network round trips, which is the slowest thing this system does.
+ * A whole-store pass is `ceil(chunks / EMBED_BATCH_LIMIT)` requests, about 105 for a 10k-chunk
+ * corpus. Issuing them one after another makes `index rebuild --embed` a serial chain of network
+ * round trips, which is the slowest thing this system does.
  *
- * BOUNDED rather than `"unbounded"`, and the bound is about a shared quota rather than about local
- * resources: every caller on this deployment draws on the same rotated Bedrock token's
- * tokens-per-minute, so an unbounded fan-out would spend the whole store's budget in one burst and
- * throttle every other consumer. Throttles that do occur are absorbed below Effect by the SDK's
- * adaptive retry (`maxAttempts: 10`), which backs off per-request — so the failure mode of a
- * slightly-too-high bound is latency, not an error.
+ * The concurrency is bounded, and the bound protects a shared quota rather than local resources.
+ * Every caller on this deployment draws on the same rotated Bedrock token's tokens-per-minute, so
+ * an unbounded fan-out would spend the whole store's budget in one burst and throttle every other
+ * consumer. Throttles that do occur are absorbed below Effect by the SDK's adaptive retry
+ * (`maxAttempts: 10`), which backs off per request. A slightly-too-high bound therefore costs
+ * latency instead of failing the run.
  */
 export const EMBED_CONCURRENCY = 6
 
@@ -40,10 +40,10 @@ export const EMBED_WATERMARK = `${EMBED_MODEL_ID}@${EMBED_DIM}`
 export const STRUCTURED_TOOL_NAME = "emit"
 
 /**
- * A generous default: 8192 truncated early croq runs mid-object, and a truncated
- * structured response is a contract violation, not a partial result. `max_tokens` bounds
- * thinking and answer together, which is what makes a tight budget bite earlier than it
- * looks like it should.
+ * A generous default. A budget of 8192 truncated early croq runs mid-object, and a
+ * truncated structured response is a contract violation rather than a partial result.
+ * `max_tokens` bounds thinking and answer together, which makes a tight budget bite
+ * earlier than it looks like it should.
  */
 export const MAX_TOKENS_DEFAULT = 16_384
 

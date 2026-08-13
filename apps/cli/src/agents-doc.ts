@@ -11,8 +11,8 @@ import { API_VERSION, ERROR_CODES, EXIT_OK, EXIT_RUNTIME, EXIT_USAGE } from "./e
 /**
  * `AGENTS.md`, generated from the same `COMMANDS` array that drives parsing.
  *
- * Generated rather than written, so the doc cannot describe a flag the binary does not accept. The
- * committed file is checked against a fresh render by a test — `memhtml agents-doc --check` is the same
+ * Generated rather than written, so the doc cannot describe a flag the binary does not accept. A test
+ * checks the committed file against a fresh render, and `memhtml agents-doc --check` runs the same
  * comparison as a command, so the drift is catchable in CI and fixable in one call.
  *
  * The rendering is deterministic to the byte: no timestamp, no version of anything but the CLI
@@ -41,8 +41,8 @@ const argCell = (args: ReadonlyArray<{ readonly name: string; readonly required:
  * The guide blocks as Markdown, each under its own topic heading.
  *
  * The topic is the heading and it is code-quoted, so the key an agent reads from
- * `memhtml manifest`'s `guide[].topic` is greppable in this file — the two projections of one array
- * name their blocks identically or the reader cannot cross-reference them.
+ * `memhtml manifest`'s `guide[].topic` is greppable in this file. The two projections of one array
+ * must name their blocks identically, or the reader cannot cross-reference them.
  *
  * A body line beginning with `{` becomes a fenced JSON block. The `when-to-batch` block carries an
  * example op line an agent copies, and that example is only useful if it survives the trip through
@@ -116,7 +116,7 @@ export const renderAgentsDoc = (): string => {
   lines.push("no database, and no credentials, so it is also the liveness check.")
   lines.push("")
   /**
-   * The guide goes BEFORE the command table, because it is what makes the table mean something: the
+   * The guide goes before the command table, because it is what makes the table mean something. The
    * three write doors, when to batch, and the authoring XOR are decisions an agent makes before it
    * picks a command. Rendered from the same `GUIDE` array `memhtml manifest` returns, so an agent that
    * read the doc and an agent that called the binary got the same words.
@@ -207,9 +207,9 @@ export interface AgentsDocResult {
 }
 
 /**
- * Write the doc, or compare it and refuse on drift.
+ * Write the doc, or compare it and fail on drift.
  *
- * `--check` is the CI form and it writes nothing: a check that fixed the drift it found would make
+ * `--check` is the CI form and it writes nothing. A check that fixed the drift it found would make
  * a green pipeline out of an uncommitted change.
  */
 export const runAgentsDoc = (options: {

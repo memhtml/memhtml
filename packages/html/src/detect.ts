@@ -2,20 +2,20 @@
  * Fence language auto-detection: a PORT of the measured detector, not a fresh design.
  *
  * An unlabeled fence carries no language, so `data-lang` is absent and the snippet reaches no
- * `lang:` entity. A detector can propose one — but wrong metadata is worse than none, so what
+ * `lang:` entity. A detector can propose one, and wrong metadata costs more than none, so what
  * ships here is exactly the implementation an eval measured, at a threshold that eval chose.
  *
- * PROVENANCE. `memhtml-evals` (`results/detector-eval-2026-08-04.json`) swept two candidates —
- * `flourite` and highlight.js `highlightAuto` — over a 332-snippet corpus of real fences and file
+ * PROVENANCE. `memhtml-evals` (`results/detector-eval-2026-08-04.json`) swept two candidates,
+ * `flourite` and highlight.js `highlightAuto`, over a 332-snippet corpus of real fences and file
  * slices, and picked the operating point where MEASURED precision first reaches the 95% floor:
  *
  *     winner    highlight.js
  *     threshold 0.28685957116771854   precision 95.18%   coverage 25.0%
  *
- * flourite reached 100% precision at only 3.0% coverage — it abstains where this one stamps.
- * {@link DEPLOY_THRESHOLD} is 0.30, a conservative rounding UP of the measured point: confidence
- * is monotone in evidence, so raising the threshold can only drop marginal stamps, never add one.
- * Re-measured at 0.30 on the same corpus: 81 stamped, 77 correct — precision 95.06%, coverage
+ * flourite reached 100% precision at only 3.0% coverage, abstaining where this one stamps.
+ * {@link DEPLOY_THRESHOLD} is 0.30, a conservative rounding UP of the measured point. Confidence
+ * is monotone in evidence, so raising the threshold only drops marginal stamps and adds none.
+ * Re-measured at 0.30 on the same corpus: 81 stamped, 77 correct, precision 95.06%, coverage
  * 24.4%. Both numbers are recorded because the measured one is the evidence and the deployed one
  * is the decision.
  *
@@ -27,14 +27,14 @@
  *
  * WRITE TIME ONLY. Detection runs on the write path and the result is stamped into the file, which
  * is the system of record. Index rebuild reads `data-lang` back (`parse.ts`) and never re-detects,
- * so `rm index.db && rebuild` is a pure function of the tree — a detector at index time would make
+ * so `rm index.db && rebuild` is a pure function of the tree. A detector at index time would make
  * rebuild output depend on the installed hljs version, breaking rebuildability. The indexer package
  * reaches this module not at all, and a grep lock in `tests/detect.test.ts` keeps it that way.
  *
  * AUTHOR STRINGS ARE UNTOUCHED. This vocabulary gates DETECTOR output only. A fence whose info
  * string names a language keeps that author's token verbatim through the existing `LANG_TOKEN`
- * grammar (`fences.ts`), whether or not it is canonical — `js`, `c++`, and `objective-c` all
- * still reach `data-lang`. The author knows; the detector only guesses.
+ * grammar (`fences.ts`), canonical or not, so `js`, `c++`, and `objective-c` all
+ * still reach `data-lang`. The author knows the language; the detector only guesses at it.
  */
 import { createRequire } from "node:module"
 
@@ -42,18 +42,18 @@ import type { HLJSApi } from "highlight.js"
 
 /**
  * highlight.js loads lazily on the FIRST detection, not at module load. Eagerly imported, its 192
- * grammars cost ~100ms and ~12MB in every process that touches the format layer — including the
- * read path (indexer, retrieval), which never detects anything (quality review 2026-08-07).
+ * grammars cost ~100ms and ~12MB in every process that touches the format layer, including the
+ * read path (indexer, retrieval), which detects nothing (quality review 2026-08-07).
  * `createRequire` keeps `detect` synchronous where a dynamic `import()` would force async through
  * `articleHtmlFor`. The pinned-version determinism contract is unchanged: same input, same build,
- * same stamp — only WHEN the module loads moves.
+ * same stamp. Only WHEN the module loads moves.
  */
 const requireModule = createRequire(import.meta.url)
 let hljsInstance: HLJSApi | undefined
 const hljsLazy = (): HLJSApi => {
   if (hljsInstance === undefined) {
     // hljs ships CJS: require() hands back the API object itself (probed on the pinned build;
-    // `default` also exists and points at the same object — take the direct shape).
+    // `default` also exists and points at the same object, so take the direct shape).
     hljsInstance = requireModule("highlight.js") as HLJSApi
   }
   return hljsInstance
@@ -61,8 +61,8 @@ const hljsLazy = (): HLJSApi => {
 
 /**
  * The languages a DETECTION may name. One canonical lowercase token each, because `data-lang`
- * promotes to a `lang:` entity by exact string match — two spellings of TypeScript would be two
- * entities. Anything outside this list is "do not stamp".
+ * promotes to a `lang:` entity by exact string match, so two spellings of TypeScript would be
+ * two entities. Anything outside this list is "do not stamp".
  */
 export const CANONICAL_LANGS = [
   "typescript",
@@ -85,7 +85,7 @@ export type CanonicalLang = (typeof CANONICAL_LANGS)[number]
  * Aliases seen in detector output, real info strings, and file extensions.
  *
  * `xml -> html` because highlight.js names its HTML grammar "xml", and `ini -> toml` because it
- * ships no TOML grammar — its ini grammar is documented "TOML, also INI". SQL dialects collapse
+ * ships no TOML grammar and documents its ini grammar as "TOML, also INI". SQL dialects collapse
  * because a dialect distinction is noise at `lang:` entity granularity, and collapsing them is
  * also what makes the runner-up rule below work: `pgsql` beating `n1ql` is not disagreement.
  */
@@ -130,8 +130,8 @@ export const normalizeLang = (raw: string): CanonicalLang | undefined => {
 /**
  * The confidence at or above which a detection is stamped: 0.30.
  *
- * See the module header for provenance. Not a guess and not a round number chosen for looking
- * tidy — it is the measured 0.28685957116771854 rounded in the safe direction.
+ * See the module header for provenance. This is the measured 0.28685957116771854 rounded in the
+ * safe direction, not a guess and not a round number chosen for looking tidy.
  */
 export const DEPLOY_THRESHOLD = 0.3
 
@@ -139,7 +139,7 @@ export const DEPLOY_THRESHOLD = 0.3
  * Fences longer than this abstain without running hljs: 4096 characters.
  *
  * `highlightAuto` runs all 192 grammars synchronously and its cost is super-linear in input
- * size — measured on the pinned build: 5KB ≈ 450ms, 10KB ≈ 1.4s, 40KB ≈ 20s, 100KB ≈ 122s of
+ * size. Measured on the pinned build: 5KB ≈ 450ms, 10KB ≈ 1.4s, 40KB ≈ 20s, 100KB ≈ 122s of
  * blocking CPU. The MCP server is one single-threaded process and the body param is unbounded,
  * so an uncapped detector lets one large unlabeled fence wedge every other request
  * (security review 2026-08-07). Abstention is the same fail-closed value as an out-of-vocabulary
@@ -154,17 +154,17 @@ export const DETECT_MAX_CHARS = 4096
 export interface Detection {
   /** Canonical language, or `undefined` when hljs abstained or named a language outside the vocabulary. */
   readonly lang: CanonicalLang | undefined
-  /** Monotone evidence score in [0, 1). NOT a calibrated probability — meaningful only against {@link DEPLOY_THRESHOLD}. */
+  /** Monotone evidence score in [0, 1). NOT a calibrated probability, and meaningful only against {@link DEPLOY_THRESHOLD}. */
   readonly confidence: number
 }
 
-/** Saturating map from a per-line margin in [0, ∞) to [0, 1) — monotone, no clipping. */
+/** Saturating map from a per-line margin in [0, ∞) to [0, 1). Monotone, with no clipping. */
 const saturate = (marginPerLine: number): number => 1 - Math.exp(-Math.max(0, marginPerLine))
 
 /**
  * hljs's own evidence, squeezed into the sweepable scalar the eval calibrated.
  *
- * `confidence = 1 - exp(-(top - runnerUp) / lines)` — the per-line evidence MARGIN between the
+ * `confidence = 1 - exp(-(top - runnerUp) / lines)`, the per-line evidence MARGIN between the
  * best language and its closest REAL competitor. Two refinements carry their weight, and a grid
  * search over the alternatives (relative margin, top score alone, saturating absolute margin) put
  * all of them at ≤9% coverage against this shape's 25%:
@@ -201,7 +201,7 @@ export const detect = (code: string): Detection => {
  *
  * Both gates are independent and both must pass: the detection must be IN the vocabulary, and its
  * confidence must reach {@link DEPLOY_THRESHOLD}. A confident detection of a language outside the
- * vocabulary is still `undefined` — measured on the corpus, hljs names `smali` at confidence 0.86
+ * vocabulary is still `undefined`. Measured on the corpus, hljs names `smali` at confidence 0.86
  * and `autohotkey` at 0.55 for snippets that are really bash and TypeScript. Confidence says only
  * "this grammar won by a wide margin", never "this grammar is one we stamp".
  *

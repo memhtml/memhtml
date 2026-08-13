@@ -35,7 +35,7 @@ export const SLEEP_REPORTS_DIR = `${MEMHTML_DIR}/sleep`
 
 /**
  * Every directory `memhtml init` creates. The four PARA buckets plus the three system directories
- * whose names other packages resolve paths against — an agent's first write must land in a
+ * whose names other packages resolve paths against. An agent's first write must land in a
  * directory that exists, and `placementFor` can return `areas/inbox` on its very first call.
  */
 export const SCAFFOLD_DIRS: ReadonlyArray<string> = [
@@ -48,7 +48,7 @@ export const SCAFFOLD_DIRS: ReadonlyArray<string> = [
 ]
 
 /**
- * `.gitignore`. Both databases are excluded and nothing else is: `index.db` is rebuildable
+ * `.gitignore`. Both databases are excluded and nothing else is. `index.db` is rebuildable
  * from the tree, and `state.db` is reproduced from its committed JSONL sidecar, so a fresh
  * clone plus `memhtml state import` plus `memhtml index rebuild` yields the whole system.
  */
@@ -62,7 +62,7 @@ ${STATE_DB_PATH}-*
  * `.gitattributes`. The generated artifacts are the design's one merge-conflict source, and
  * `merge=ours` plus a regeneration pass is how a conflict in them is resolved.
  *
- * The attribute alone does nothing — probed live 2026-08-02: with `merge=ours` set and no
+ * The attribute alone does nothing. Probed live 2026-08-02, with `merge=ours` set and no
  * driver configured, git still conflicts and writes conflict markers into the file. The
  * `merge.ours.driver` config in {@link initRepo} is what makes the attribute effective, and
  * config is per-clone, so `memhtml init` on a fresh clone must set it again.
@@ -77,7 +77,7 @@ export const MERGE_OURS_DRIVER = { key: "merge.ours.driver", value: "true" } as 
 
 /**
  * The root `README.html`, browsable with no server. Deliberately a memory-shaped document
- * rather than Markdown: the repo's own entry point demonstrates the format it stores.
+ * rather than Markdown, so the repo's own entry point demonstrates the format it stores.
  */
 export const README = `<!doctype html>
 <html lang="en">
@@ -157,7 +157,7 @@ export const attemptIo = <A>(
     Effect.mapError(() => StorageFailure.make({ operation }))
   )
 
-/** Every path `memhtml init` scaffolds: a `.gitkeep` per directory, plus the three root files. */
+/** Every path `memhtml init` scaffolds. A `.gitkeep` per directory, plus the three root files. */
 const SCAFFOLD_FILES: ReadonlyArray<readonly [string, string]> = [
   ...SCAFFOLD_DIRS.map((directory) => [`${directory}/.gitkeep`, ""] as const),
   [".gitignore", GITIGNORE],
@@ -171,13 +171,13 @@ const SCAFFOLD_FILES: ReadonlyArray<readonly [string, string]> = [
  * **Convergent, not merely idempotent.** Every step asks the repo what is already true and
  * supplies only what is missing, so this reaches the same end state from an empty directory,
  * from a fully scaffolded repo (writing nothing and committing nothing), and from a repo left
- * half-initialized by an interrupted earlier run — which is a state that really occurs, because
- * `git commit` refuses on a machine with no git identity and leaves the scaffold staged. A
+ * half-initialized by an interrupted earlier run. That last state really occurs, because
+ * `git commit` fails on a machine with no git identity and leaves the scaffold staged. A
  * function that short-circuited on "I wrote no files this time" would report success over a
  * repo with an unborn HEAD.
  *
  * `.gitkeep` files hold the empty PARA directories, because git tracks files and not
- * directories — without them a fresh clone would have no `areas/inbox/` for the first write to
+ * directories. Without them a fresh clone would have no `areas/inbox/` for the first write to
  * land in, and `placementFor` returns that directory before any memory exists.
  */
 export const initRepo = (git: GitShape): Effect.Effect<InitResult, GitFailure | StorageFailure> =>
@@ -186,13 +186,13 @@ export const initRepo = (git: GitShape): Effect.Effect<InitResult, GitFailure | 
     const alreadyRepo = yield* git.isRepo()
     if (!alreadyRepo) {
       yield* attemptIo("init.mkdir", () => mkdir(root, { recursive: true }))
-      // `-b main` rather than relying on `init.defaultBranch`: a repo whose branch name
+      // `-b main` rather than relying on `init.defaultBranch`. A repo whose branch name
       // depends on the operator's global config would make every branch reference in sleep
       // and in the runbook conditional on whose machine ran `memhtml init`.
       yield* git.run(["init", "-b", "main", "."])
     }
 
-    // Config is per-clone, so this is re-set on every init: a fresh clone of a memory repo
+    // Config is per-clone, so this is re-set on every init. A fresh clone of a memory repo
     // inherits `.gitattributes` but not the driver that makes `merge=ours` mean anything.
     yield* git.setConfig(MERGE_OURS_DRIVER.key, MERGE_OURS_DRIVER.value)
 
@@ -201,8 +201,8 @@ export const initRepo = (git: GitShape): Effect.Effect<InitResult, GitFailure | 
       if (yield* writeIfAbsent(root, path, contents)) wrote.push(path)
     }
 
-    // Stage the whole scaffold rather than only what this call wrote, and let `commit` decide:
-    // it no-ops on an index that matches HEAD, so a fully initialized repo stays untouched
+    // Stage the whole scaffold rather than only what this call wrote, and let `commit` decide.
+    // It no-ops on an index that matches HEAD, so a fully initialized repo stays untouched
     // while a half-staged one is carried to a commit.
     yield* git.add(SCAFFOLD_FILES.map(([path]) => path))
     const commit = yield* git.commit(commitSubject("init", "scaffold the memory repository"))

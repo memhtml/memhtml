@@ -8,10 +8,10 @@ import { isRepeatableMeta, META_ORDER, type MemoryMetaName } from "./vocabulary.
 /**
  * Serialize a `MemoryDoc` back to a memory file.
  *
- * Determinism is the whole point. One `<meta>` per line in {@link META_ORDER}, attributes in a
- * fixed order, no indentation of head lines — so stamping `memhtml-updated` produces a one-line git
- * diff and two agents stamping different keys never reorder each other's work. A diff that
- * reads as one line is a diff a human reviews; a reordered head is one nobody reads twice.
+ * The output is deterministic. One `<meta>` per line in {@link META_ORDER}, attributes in a
+ * fixed order, and no indentation of head lines, so stamping `memhtml-updated` produces a one-line
+ * git diff and two agents stamping different keys leave each other's work in place. A diff that
+ * reads as one line is a diff a human reviews. A reordered head is one nobody reads twice.
  */
 
 /** The document preamble, byte for byte. `lang` is fixed: the corpus is English. */
@@ -23,8 +23,8 @@ const PREAMBLE = [
 ] as const
 
 /**
- * One `<meta name=… content=…>` line. `name` leads and `content` follows — the reading order, and
- * fixed, so a head's lines are comparable across files.
+ * One `<meta name=… content=…>` line. `name` leads and `content` follows, which is the reading
+ * order, and the order is fixed, so a head's lines are comparable across files.
  */
 const metaLine = (name: string, content: string): string =>
   `<meta name="${escapeAttribute(name)}" content="${escapeAttribute(content)}">`
@@ -39,7 +39,7 @@ const formatNumber = (name: MemoryMetaName, value: number): string =>
 
 /**
  * The metas of a doc as `[name, content]` pairs in {@link META_ORDER}, repeatable keys expanded
- * to one pair per value. A meta whose value is absent contributes nothing — the file states
+ * to one pair per value. A meta whose value is absent contributes nothing, so the file states
  * what it knows and the `files` defaults cover the rest.
  */
 export const metaPairs = (doc: MemoryDoc): ReadonlyArray<readonly [MemoryMetaName, string]> => {

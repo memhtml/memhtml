@@ -5,16 +5,16 @@ import type { PublishRow } from "./sql.js"
 /**
  * The generated artifacts: one `index.html` per directory and a root `sitemap.xml`.
  *
- * **This lives in `@memhtml/sleep` rather than `@memhtml/store`, and T10's `memhtml publish` imports it.** The
- * generator needs the index — a listing shows each memory's title, gist, type, and updated stamp, all
- * of which are projections — and `@memhtml/store` is SQL-free by design. Sleep's integrity phase is the
- * only automatic regenerator, so the generator lives beside its one caller and the CLI command binds
- * to the same functions rather than re-deriving the format. Two generators would produce two byte
- * sequences for one tree, and these files are `merge=ours`: a conflict is resolved by regenerating,
- * which only works if regeneration is unambiguous.
+ * **This lives in `@memhtml/sleep`, not `@memhtml/store`, and T10's `memhtml publish` imports it.** The
+ * generator needs the index, because a listing shows each memory's title, gist, type, and updated
+ * stamp, all of which are projections, and `@memhtml/store` is SQL-free by design. Sleep's integrity
+ * phase is the only automatic regenerator, so the generator lives beside its one caller and the CLI
+ * command binds to the same functions instead of re-deriving the format. Two generators would produce
+ * two byte sequences for one tree, and these files are `merge=ours`: a conflict is resolved by
+ * regenerating, which only works if regeneration is unambiguous.
  *
  * Deterministic by construction. The row set arrives path-ordered from SQL, every string is escaped,
- * and no timestamp of generation appears anywhere — so two runs over an unchanged corpus produce
+ * and no timestamp of generation appears anywhere. So two runs over an unchanged corpus produce
  * byte-identical files, nothing is staged, and the integrity phase's commit stays empty.
  */
 
@@ -41,7 +41,7 @@ const directoryOf = (path: string): string => {
  * the tree browses from the root down.
  *
  * Ancestors are included because a browser following `/projects/` with no listing there gets a 404 or
- * a server's directory index — and the repo's stated property is that it browses with no server at
+ * a server's directory index, and the repo's stated property is that it browses with no server at
  * all. An ancestor's listing shows its child directories, which is what makes the walk possible.
  */
 export const generateIndexes = (rows: ReadonlyArray<PublishRow>): ReadonlyArray<GeneratedFile> => {
@@ -84,9 +84,9 @@ export const generateIndexes = (rows: ReadonlyArray<PublishRow>): ReadonlyArray<
 /**
  * One directory listing.
  *
- * Written as a memory-shaped document — `<article>` with a `<mark>` — so the generated pages obey the
- * same closed vocabulary the corpus does and a browser renders them identically. The indexer refuses
- * them by NAME (`GENERATED_NAMES`), so a listing whose body is the titles of other memories can never
+ * Written as a memory-shaped document, an `<article>` with a `<mark>`, so the generated pages obey the
+ * same closed vocabulary the corpus does and a browser renders them identically. The indexer excludes
+ * them by NAME (`GENERATED_NAMES`), so a listing whose body is the titles of other memories cannot
  * enter retrieval and rank the corpus's own table of contents above its content.
  */
 const renderIndex = (
@@ -132,9 +132,9 @@ ${subdirectories === "" ? "" : `<ul>\n${subdirectories}\n</ul>\n`}${entries === 
 /**
  * The root `sitemap.xml`, one `<url>` per memory with `memhtml-updated` as its `<lastmod>`.
  *
- * `loc` values are repo-root-relative rather than absolute URLs. The repo has no canonical origin —
- * it is browsed from a filesystem, from a clone on another machine, and occasionally from a static
- * server — so an absolute origin would be a value the generator has to invent and every consumer has
+ * `loc` values are repo-root-relative, not absolute URLs. The repo has no canonical origin. It
+ * is browsed from a filesystem, from a clone on another machine, and occasionally from a static
+ * server, so an absolute origin would be a value the generator has to invent and every consumer has
  * to ignore.
  */
 export const generateSitemap = (rows: ReadonlyArray<PublishRow>): GeneratedFile => {

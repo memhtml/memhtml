@@ -14,9 +14,9 @@ import { makeStore, type StoreHooks, type StoreShape } from "./store.js"
  * build their fixtures the same way this package does.
  *
  * Deliberately not a fake. The fleet has now had five bugs where a stateless fake verified the
- * shape of a call and missed the state semantics behind it — and this package's entire subject
+ * shape of a call and missed the state semantics behind it, and this package's entire subject
  * is git's state semantics: what rename detection scores, what the index holds mid-merge, what
- * `mv` refuses. A fake git would pass a suite that a real one fails.
+ * `mv` rejects. A fake git would pass a suite that a real one fails.
  */
 
 /** A fixture repo and the services over it. `cleanup` removes the whole temp tree. */
@@ -28,8 +28,8 @@ export interface FixtureRepo {
 }
 
 /**
- * `user.name`/`user.email` are set per repo rather than assumed from the environment: CI has no
- * global git identity, and `git commit` refuses without one — which would fail every test here
+ * `user.name`/`user.email` are set per repo rather than assumed from the environment. CI has no
+ * global git identity, and `git commit` fails without one, which would fail every test here
  * for a reason unrelated to what it asserts.
  */
 const FIXTURE_IDENTITY: ReadonlyArray<readonly [string, string]> = [
@@ -44,8 +44,8 @@ const FIXTURE_IDENTITY: ReadonlyArray<readonly [string, string]> = [
 /**
  * A scaffolded memory repo in a fresh temp directory.
  *
- * `init: false` yields an empty directory that is not a git repo at all — what `initRepo`'s own
- * idempotence and refusal tests need.
+ * `init: false` yields an empty directory that is not a git repo at all, which is what `initRepo`'s
+ * own idempotence and rejection tests need.
  */
 export const makeFixtureRepo = (
   options: { readonly init?: boolean; readonly hooks?: StoreHooks } = {}
@@ -56,7 +56,7 @@ export const makeFixtureRepo = (
     const cleanup = () => rm(root, { recursive: true, force: true })
 
     if (options.init !== false) {
-      // The identity has to exist before the first commit, and `initRepo` makes one — so the
+      // The identity has to exist before the first commit, and `initRepo` makes one, so the
       // repo is created here, configured, and only then scaffolded.
       yield* git.run(["init", "-b", "main", "."]).pipe(Effect.orDie)
       for (const [key, value] of FIXTURE_IDENTITY) {

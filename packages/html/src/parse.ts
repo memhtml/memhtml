@@ -37,16 +37,16 @@ import { META_PREFIX } from "./vocabulary.js"
  * The extraction table in `docs/format.md` is implemented here one element at a time. Every
  * output field is named for what the indexer stores, so nothing downstream renames or
  * reinterprets: `gist` is the mark, `eventAt` is the first `<time>`, `facets` are the `<dl>`
- * pairs. A file that violates a constraint yields `InvalidMemory` and no partial doc; a file
- * that merely uses an unknown element yields a doc carrying `warnings`.
+ * pairs. A file that violates a constraint yields `InvalidMemory` and no partial doc. A file
+ * that only uses an unknown element yields a doc carrying `warnings`.
  */
 
-/** Collapse runs of ASCII whitespace to one space and trim. U+00A0 stays — it is content. */
+/** Collapse runs of ASCII whitespace to one space and trim. U+00A0 stays, being content. */
 const collapse = (text: string): string => text.replace(/[ \t\n\f\r]+/g, " ").trim()
 
 /**
  * Whitespace-collapsed text of a subtree, blocks separated. Fully collapsing rather than
- * preserving `<pre>` is the difference between this and the hash's own canonicalization: the FTS
+ * preserving `<pre>` is the difference between this and the hash's own canonicalization. The FTS
  * index and the embedder both tokenize on whitespace, so a code sample's indentation is noise
  * to them and identity to the digest.
  */
@@ -54,7 +54,7 @@ const textContent = (root: Node): string => collapse(canonicalText(root))
 
 /**
  * Text of a subtree with `<pre>` and `<code>` subtrees omitted. The gist rule: a command line
- * is body text and it is searchable, but it is never part of the claim.
+ * is body text and it is searchable, and it is not part of the claim.
  */
 const textExcludingCode = (root: Node): string =>
   collapse(canonicalText(root, { excludeCode: true }))
@@ -154,14 +154,14 @@ const asTaskStatus = (value: string | undefined): TaskStatus | undefined =>
   value !== undefined && isTaskStatus(value) ? value : undefined
 
 /**
- * The task metas' agreement with the type, as violations rather than dropped optionals.
+ * The task metas' agreement with the type, reported as violations, not as dropped optionals.
  *
- * A malformed *optional* meta is dropped and reported by `memhtml doctor` — but these two are not
- * ordinary optionals, they are the type's own required field and a field the type does not have.
+ * A malformed *optional* meta is dropped and reported by `memhtml doctor`. These two are not
+ * ordinary optionals: they are the type's own required field and a field the type does not have.
  * A `task` file with no `memhtml-task-status` has no lifecycle position at all, so `memhtml task list`
  * would omit it from every status filter and the task would be invisible to the surface that
- * exists to show it; a non-task carrying one asserts a lifecycle nothing advances. Both are
- * refusals, so the disagreement cannot reach the index.
+ * exists to show it. A non-task carrying one asserts a lifecycle nothing advances. Both are
+ * refusals, so the disagreement does not reach the index.
  *
  * `memhtml-due` reuses the `<time datetime>` validator: `files.due_at` is compared and ordered as a
  * string, so a value that does not sort lexicographically alongside the others would make an
@@ -235,7 +235,7 @@ const readLinks = (document: Document): ReadonlyArray<MemoryLink> => {
  * `<dt>`/`<dd>` pairs of every `<dl>`, positionally paired in document order.
  *
  * A `<dt>` may govern several `<dd>`s (HTML allows it), so each `<dd>` becomes its own facet
- * row under the most recent `<dt>` — that keeps `file_facets` one row per value rather than
+ * row under the most recent `<dt>`. That keeps `file_facets` one row per value rather than
  * one row per definition list, which is what a facet query needs.
  */
 const readFacets = (article: Element): ReadonlyArray<Facet> => {
@@ -315,7 +315,7 @@ const readArticle = (article: Element): MemoryDoc["article"] => {
 
 /**
  * Parse a memory file. Fails with `InvalidMemory` whose `reason` is every violation joined by
- * {@link VIOLATION_SEPARATOR} — the error type carries one string, so the list is joined rather
+ * {@link VIOLATION_SEPARATOR}. The error type carries one string, so the list is joined rather
  * than smuggled through a field the frozen contract does not have. A caller that wants the
  * structured list calls {@link checkMemory}.
  */
@@ -348,7 +348,7 @@ export const parseMemory = (html: string): Effect.Effect<MemoryDoc, InvalidMemor
 
 /**
  * Check a file without building a doc: the structured `{ violations, warnings }` `memhtml doctor`
- * reports. Total — a completely malformed string yields violations, never a throw.
+ * reports. Total, so a completely malformed string yields violations instead of throwing.
  */
 export const checkMemory = (
   html: string

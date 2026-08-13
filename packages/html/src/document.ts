@@ -9,22 +9,22 @@ import {
 import { Schema } from "effect"
 
 /**
- * `MemoryDoc` — the parsed form of a memory file. It lives here rather than in
+ * `MemoryDoc` is the parsed form of a memory file. It lives here rather than in
  * `@memhtml/contracts` because these are format types: the extraction fields exist only because
  * the HTML has those elements, and a change to the vocabulary changes this shape.
  *
  * Every field's coordinate space is stated on it. The indexer consumes these names directly,
- * and a field whose scope is ambiguous is exactly the seam the fleet has paid for six times.
+ * and a field whose scope is ambiguous has cost the fleet six times.
  */
 
 /**
- * The head's typed metadata. Absent means the file did not state it — never a substituted
- * default, because the `files` table owns the defaults and a parser that invents `confidence:
+ * The head's typed metadata. Absent means the file did not state it, and no default is
+ * substituted. The `files` table owns the defaults, and a parser that invented `confidence:
  * 1.0` would make a hand-authored omission indistinguishable from a deliberate assertion.
  *
  * Timestamps are ISO-8601 UTC instants of *write* time. `createdAt` is when the memory was
- * first written and `updatedAt` when it last changed — neither is when the remembered fact
- * happened, which is `article.eventAt`.
+ * first written and `updatedAt` when it last changed. When the remembered fact happened is
+ * `article.eventAt` instead.
  */
 export const MemoryMetas = Schema.Struct({
   memoryType: MemoryType,
@@ -37,7 +37,7 @@ export const MemoryMetas = Schema.Struct({
   importance: Schema.optional(Importance),
   /**
    * The `sha256:<hex>` the file claims for its own article. Advisory: the parser reports it
-   * verbatim and never repairs it, so a stale value is visible to `memhtml doctor` rather than
+   * verbatim and leaves it alone, so a stale value is visible to `memhtml doctor` rather than
    * silently corrected into agreement.
    */
   contentHash: Schema.optional(Schema.String),
@@ -67,7 +67,7 @@ export const MemoryMetas = Schema.Struct({
   /** Sleep flagged the claim as stale or contested and wants an agent to revisit it. */
   needsRevision: Schema.optional(Schema.Boolean),
   /**
-   * A task's own lifecycle position, present iff `memoryType` is `task` — the parser reports a
+   * A task's own lifecycle position, present iff `memoryType` is `task`. The parser reports a
    * violation either way round. A separate axis from {@link MemoryMetas.status}, which stays
    * `active`/`archived` for a task as for anything else.
    */
@@ -76,8 +76,8 @@ export const MemoryMetas = Schema.Struct({
    * When a task is due. An ISO date or datetime, ordered as a string exactly as `event_at` is,
    * so `due_at < now` is a lexicographic comparison rather than a parse per row.
    *
-   * A wall-clock DEADLINE, not a write time and not a validity bound: `validUntil` says when a
-   * remembered fact stops being true, and this says when work is late.
+   * A wall-clock DEADLINE. `validUntil` says when a remembered fact stops being true, and this
+   * says when work is late, so neither a write time nor a validity bound belongs here.
    */
   dueAt: Schema.optional(Schema.String)
 })
@@ -87,7 +87,7 @@ export type MemoryMetas = typeof MemoryMetas.Type
  * One `<link rel="memhtml-*">`. `rel` is the unprefixed rel from the closed edge vocabulary; the
  * `memhtml-`-prefixed hyphenated token is the wire form and is re-derived on serialize.
  *
- * `href` is the document-reference form — repo-root-relative *with* a leading slash, as it
+ * `href` is the document-reference form, repo-root-relative *with* a leading slash, as it
  * appears in the file. The git-tree form the `edges` table stores drops that slash;
  * `@memhtml/contracts`'s `normalizePath` is the conversion, applied at the store boundary.
  */
@@ -103,7 +103,7 @@ export type MemoryLink = typeof MemoryLink.Type
  * `numericValue` is present only when the `<dd>` holds a `<data value>` whose attribute parses
  * as a finite number. It is unitless here on purpose: the unit lives in the human phrasing
  * (`<data value="120">about two minutes</data>` is seconds because the prose says so), so a
- * consumer must never assume a unit from the number alone.
+ * consumer cannot read a unit off the number alone.
  */
 export const Facet = Schema.Struct({
   name: Schema.String,
@@ -113,7 +113,7 @@ export const Facet = Schema.Struct({
 export type Facet = typeof Facet.Type
 
 /**
- * One `<cite>` or `<q>`. `href` is the `<q cite>` URI when present — an absolute or
+ * One `<cite>` or `<q>`. `href` is the `<q cite>` URI when present, an absolute or
  * root-relative source URI, not necessarily a memory path.
  */
 export const Citation = Schema.Struct({
@@ -134,19 +134,19 @@ export const ArticleExtractions = Schema.Struct({
   html: Schema.String,
   /**
    * All article text, whitespace-collapsed. The FTS body and the embedding input. Includes
-   * `<aside>`, `<details>` bodies, `<figcaption>`, and `<pre>` — everything is searchable.
+   * `<aside>`, `<details>` bodies, `<figcaption>`, and `<pre>`, so everything is searchable.
    */
   bodyText: Schema.String,
   /**
-   * The ONE `<mark>` span's text — the claim, and only the claim. Not a summary, not the first
-   * sentence, and not derived from anything: it is the author's chosen load-bearing span, the
-   * Tier-1 disclosure line, and the span a correction targets.
+   * The ONE `<mark>` span's text, the claim and only the claim. It is the span the author chose,
+   * the Tier-1 disclosure line, and the span a correction targets. Nothing derives it, so it is
+   * not a summary and not the first sentence.
    */
   gist: Schema.String,
   /**
    * The FIRST `<time datetime>` value, as authored (ISO date or ISO datetime, so `2026-07-28`
-   * and `2026-07-28T14:03:11Z` both occur). This is when the remembered fact HAPPENED — world
-   * time, not write time. The recency arm ranks by `coalesce(event_at, updated_at)`, so an
+   * and `2026-07-28T14:03:11Z` both occur). This is when the remembered fact HAPPENED, so it is
+   * world time and not write time. The recency arm ranks by `coalesce(event_at, updated_at)`, so an
    * episodic memory backdates correctly. Absent when the article names no time.
    */
   eventAt: Schema.optional(Schema.String),
@@ -161,13 +161,13 @@ export const ArticleExtractions = Schema.Struct({
    */
   definedTerms: Schema.Array(Schema.String),
   /**
-   * `<summary>` texts in document order. Always disclosed in recall — Tier 2 of the fold.
+   * `<summary>` texts in document order. Always disclosed in recall, as Tier 2 of the fold.
    * The matching `<details>` body is Tier 3 and reaches an agent only through `memory_read`.
    */
   summaryTexts: Schema.Array(Schema.String),
   /**
-   * `<aside>` texts in document order. In `bodyText` and therefore searchable, but never
-   * quoted in a recall index line: an aside is a scope caveat, so quoting it as the memory
+   * `<aside>` texts in document order. In `bodyText` and therefore searchable, and left out of
+   * a recall index line. An aside is a scope caveat, so quoting it as the memory
    * would present the exception as the rule.
    */
   asideTexts: Schema.Array(Schema.String),
@@ -175,7 +175,7 @@ export const ArticleExtractions = Schema.Struct({
   captions: Schema.Array(Schema.String),
   /**
    * `data-lang` values of `<code>` elements, lowercased, in document order. Each promotes to a
-   * `lang:<value>` entity the way a `<dfn>` promotes to `concept:` — a memory carrying a
+   * `lang:<value>` entity the way a `<dfn>` promotes to `concept:`. A memory carrying a
    * TypeScript snippet is findable by `--entity lang:ts` without the author restating the
    * language in a `memhtml-entity` meta the fence's info string already carried.
    */
@@ -200,8 +200,8 @@ export const MemoryDoc = Schema.Struct({
   links: Schema.Array(MemoryLink),
   article: ArticleExtractions,
   /**
-   * Vocabulary warnings — an element outside the closed vocabulary, a `<div>` outside a
-   * `<figure>`. Format constraint 6: the file still parses and still indexes, so a
+   * Vocabulary warnings, such as an element outside the closed vocabulary or a `<div>` outside
+   * a `<figure>`. Format constraint 6: the file still parses and still indexes, so a
    * hand-authored file degrades gracefully instead of being refused.
    */
   warnings: Schema.Array(Schema.String)

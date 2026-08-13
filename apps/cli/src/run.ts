@@ -53,8 +53,8 @@ const COMPOUND_NAMES = COMMAND_NAMES.filter((name) => name.includes(" ")).sort(
 /**
  * `--flag value`, `--flag=value`, `--no-flag`, and bare `--flag`.
  *
- * Every flag's value is an ARRAY, because several flags are repeatable (`--tag`, `--entity`,
- * `--body`) and a map of scalars would silently keep only the last occurrence — a write with three
+ * Every flag's value is an array, because several flags are repeatable (`--tag`, `--entity`,
+ * `--body`) and a map of scalars would silently keep only the last occurrence, so a write with three
  * entities would store one. Non-repeatable flags read `.at(-1)`, so a duplicate is last-wins rather
  * than an error, which is what a shell user retyping a flag expects.
  */
@@ -175,13 +175,13 @@ type Handled = readonly [Success<unknown>["type"], unknown]
  * Dispatch one parsed invocation against the provided services.
  *
  * Every arm is decode → call → name the response type. No arm builds an envelope, catches an error,
- * or writes to a stream: those happen once in {@link run}, which is what keeps thirty-one commands
+ * or writes to a stream. Those happen once in {@link run}, which keeps thirty-one commands
  * from having thirty-one slightly different failure shapes.
  *
- * `applyOps` is the one piece of state an arm cannot derive from `parsed`: reading a file or draining
- * stdin is async I/O whose failures are USAGE errors (exit 2), and `run` has already done it and
- * refused before reaching here. Passed in rather than read here, so the `apply` arm stays what every
- * other arm is — one call to a shared use case.
+ * `applyOps` is the one piece of state an arm cannot derive from `parsed`. Reading a file or draining
+ * stdin is async I/O whose failures are usage errors (exit 2), and `run` has already done it and
+ * refused before reaching here. It is passed in rather than read here, so the `apply` arm stays what
+ * every other arm is: one call to a shared use case.
  */
 const dispatch = (
   parsed: Parsed,
@@ -222,8 +222,8 @@ const dispatch = (
 
     /**
      * The batch door. One call to the shared `batchWrite`, and the per-op `code`/`error` it returns
-     * are NOT re-mapped here — the operation already ran them through the same `codeFor`/`messageFor`
-     * every envelope error takes, precisely so this door and `memory_write_batch` cannot report
+     * are not re-mapped here. The operation already ran them through the same `codeFor`/`messageFor`
+     * every envelope error takes, so this door and `memory_write_batch` cannot report
      * different codes for one refused op.
      */
     case "apply":
@@ -358,8 +358,8 @@ const dispatch = (
         const title = str(parsed, "title") ?? ""
         const result = yield* ops.writeMemory({
           title,
-          // The claim defaults to the title: a task's statement and its name are usually the same
-          // sentence, and a required second phrasing would be restated verbatim every time.
+          // The claim defaults to the title, because a task's statement and its name are usually the
+          // same sentence, and a required second phrasing would be restated verbatim every time.
           claim: str(parsed, "claim") ?? title,
           body: list(parsed, "body"),
           memoryType: "task",
@@ -377,8 +377,8 @@ const dispatch = (
             created: result.created,
             deduped: result.deduped,
             // Two open tasks with identical bodies are two real work items, so the dedup carve-out
-            // means this is normally false — reported anyway, because a caller cannot tell a fresh
-            // file from a returned one without it.
+            // means this is normally false. It is reported anyway, because a caller cannot tell a
+            // fresh file from a returned one without it.
             existingPath: result.existingPath ?? null,
             taskStatus: str(parsed, "status") ?? "todo",
             dueAt: str(parsed, "due") ?? null,
@@ -481,8 +481,8 @@ const dispatch = (
         const report = yield* sleep.review(parsed.positional[0])
         const withDiff = bool(parsed, "diff", false)
         if (!withDiff) return ["sleep.review", report] as const
-        // The raw diff is fetched here rather than inside `review`: it is the one field whose size
-        // is unbounded, and a review that always carried it would make the default response
+        // The raw diff is fetched here rather than inside `review`, because it is the one field whose
+        // size is unbounded, and a review that always carried it would make the default response
         // unusable in a context window.
         const git = yield* Git
         const diff = yield* git
@@ -502,19 +502,19 @@ const dispatch = (
         }
         /**
          * **The discrimination gate, composed here.** A sleep run that degrades retrieval quality
-         * cannot land, and the refusal is the point — the whole reason `@memhtml/sleep` takes the gate as
-         * a parameter and supplies none is that a package that cannot import the eval must not be
-         * able to silently default it. The composition is visible in this wiring or it does not exist.
+         * cannot land. `@memhtml/sleep` takes the gate as a parameter and supplies none, so a package
+         * that cannot import the eval also cannot silently default it. The composition is visible in
+         * this wiring or it does not exist.
          *
          * `discriminationGate` fails on an inversion, `merge` wraps it in `Effect.result`, and the
          * failure becomes `refusal: "gate-failed"` with `main` never moving.
          *
-         * `fake` mode, always. The gate measures the RANKING STACK against its own generated fixture
+         * `fake` mode, always. The gate measures the ranking stack against its own generated fixture
          * corpus, so a live-Bedrock run would make a nightly merge conditional on a network call and
-         * on credentials being present at 3am — and the deterministic embedder's cosine relations are
-         * a pure function of the text, which is exactly the property a regression gate needs. A
+         * on credentials being present at 3am. The deterministic embedder's cosine relations are
+         * a pure function of the text, which is the property a regression gate needs. A
          * cron whose merge silently skipped its gate because a token expired is the failure this
-         * refuses to have.
+         * arrangement prevents.
          */
         const report = yield* sleep.merge(
           parsed.positional[0] ?? "",
@@ -585,24 +585,24 @@ const today = Effect.clockWith((clock) =>
 /**
  * The services `dispatch` may reach for, derived from the app layer's own output.
  *
- * Derived rather than listed: a service added to `layerCore` becomes available to a handler with no
- * edit here, and — more to the point — a service REMOVED from the layer becomes a compile error at
+ * Derived rather than listed. A service added to `layerCore` becomes available to a handler with no
+ * edit here, and a service removed from the layer becomes a compile error at
  * the handler that reads it, rather than a runtime "service not found" at the one moment an operator
  * is running the command.
  */
 type DispatchServices = Layer.Success<ReturnType<typeof layerApp>>
 
 /**
- * An unknown command, with candidates measured against the WHOLE typed invocation.
+ * An unknown command, with candidates measured against the whole typed invocation.
  *
  * `parseArgv` only matches a compound name exactly, so a typo in either word of `memhtml index rebuild`
- * leaves `command` holding the first token alone and every remaining token in `positional` — and
- * measuring `"index"` against the flat name list scores `init` at 2 and `index rebuild` at 8, so the
- * suggestion an operator needs loses to one they did not ask for. Re-joining the tokens is what makes
+ * leaves `command` holding the first token alone and every remaining token in `positional`.
+ * Measuring `"index"` against the flat name list scores `init` at 2 and `index rebuild` at 8, so the
+ * suggestion an operator needs loses to one they did not ask for. Re-joining the tokens makes
  * the distance a comparison of the two things: `"index rebiuld"` is 2 from `index rebuild` and 12
  * from `init`.
  *
- * Both are offered — the joined form first — because the typo could be in either half. A one-word
+ * Both are offered, the joined form first, because the typo could be in either half. A one-word
  * invocation joins to itself, so the single-command path is unchanged.
  */
 const unknownCommand = (parsed: Parsed): Failure => {
@@ -619,10 +619,10 @@ const unknownCommand = (parsed: Parsed): Failure => {
 }
 
 /**
- * The commands where the article body comes from EITHER a claim or pre-authored markup, never both.
+ * The commands where the article body comes from either a claim or pre-authored markup, never both.
  *
  * Listed here rather than expressed in `FlagSpec`, because `FlagSpec` has one `required: boolean` and
- * no notion of a conditional — and inventing a table field for a rule that holds on two commands
+ * no notion of a conditional. Inventing a table field for a rule that holds on two commands
  * would put a second, weaker copy of this check into the manifest for every command that does not
  * need it. Both flag descriptions state the rule, so `memhtml manifest` still carries it.
  */
@@ -635,12 +635,12 @@ const EITHER_CLAIM_OR_ARTICLE: ReadonlySet<string> = new Set(["write", "correct"
  * `dispatch` becomes exit 1, so "you passed the wrong flags" must be decided before any service is
  * built. `.erpaval/solutions/api-patterns/xor-params-and-mcp-error-masking.md` records the rule.
  *
- * At most one rather than exactly one, because ZERO doors is legal and means stdin — the same shape
- * `memhtml apply` has, where a bare invocation drains the pipe. So a missing script is not a usage error
- * here; an EMPTY one is, and that check lives beside the read in {@link run} because reading is async.
+ * At most one rather than exactly one, because zero doors is legal and means stdin, the same shape
+ * `memhtml apply` has, where a bare invocation drains the pipe. A missing script is not a usage error
+ * here. An empty one is, and that check sits beside the read in {@link run} because reading is async.
  *
- * `--timeout-ms` is checked for a POSITIVE integer within the cap. Zero and negatives are refused
- * rather than clamped: just-bash treats a non-positive `maxJsTimeoutMs` as no bound at all, so
+ * `--timeout-ms` is checked for a positive integer within the cap. Zero and negatives are refused
+ * rather than clamped, because just-bash treats a non-positive `maxJsTimeoutMs` as no bound at all, so
  * `--timeout-ms 0` would read as "be quick" and mean "run forever".
  */
 const execFlags = (parsed: Parsed): Failure | undefined => {
@@ -688,12 +688,12 @@ const execFlags = (parsed: Parsed): Failure | undefined => {
 /**
  * Exactly one of `--claim` / `--article-html`.
  *
- * Checked HERE and not in the dispatch arm, because the exit code is the contract: `validate`'s
+ * Checked here rather than in the dispatch arm, because the exit code is the contract. `validate`'s
  * return is emitted as exit 2 ({@link EXIT_USAGE}), while a failure raised inside `dispatch` travels
  * through `failureFor` and becomes exit 1. Supplying the wrong flags is a usage error, and a shell
  * caller branching on the code must not see it as a runtime one.
  *
- * Two codes for two conditions, each following the convention already in this function: an absent
+ * Two codes for two conditions, each following the convention already in this function. An absent
  * required flag is `ERR_MISSING_ARGUMENT` (as below), and a flag present but unusable as given is
  * `ERR_INVALID_FLAG` (as above, and in the closed-vocabulary check). Neither is newly minted.
  */
@@ -725,9 +725,9 @@ const claimOrArticle = (parsed: Parsed): Failure | undefined => {
 }
 
 /**
- * Validate a parsed invocation against its spec. Usage errors only — nothing here touches a service.
+ * Validate a parsed invocation against its spec. Usage errors only; nothing here touches a service.
  *
- * Returning the failure rather than throwing keeps the exit code decision in one place: a usage
+ * Returning the failure rather than throwing keeps the exit code decision in one place. A usage
  * error is exit 2 and a runtime error is exit 1, and a validator that emitted its own envelope would
  * have to know that too.
  */
@@ -773,9 +773,9 @@ const validate = (parsed: Parsed): Failure | undefined => {
 
   /**
    * A closed-vocabulary flag is checked here rather than at the service, so a typo answers with the
-   * whole vocabulary and never touches the database. The check is skipped for a repeatable flag's
-   * non-final values only in the sense that every value is checked — a `--type` list with one bad
-   * entry is a usage error, not a silently narrowed search.
+   * whole vocabulary and never touches the database. Every value of a repeatable flag is checked, not
+   * only the last one, so a `--type` list with one bad entry is a usage error rather than a silently
+   * narrowed search.
    */
   for (const flag of spec.flags) {
     if (flag.values === undefined) continue
@@ -798,10 +798,10 @@ const validate = (parsed: Parsed): Failure | undefined => {
  * Returns the rendered envelope and an exit code rather than writing to the process, so tests
  * assert on the exact bytes an agent would parse.
  *
- * `layer` is injectable for exactly that reason: a test supplies the real composition over a temp
+ * `layer` is injectable for that reason. A test supplies the real composition over a temp
  * repo and a deterministic embedder, and every assertion below then describes the shipped path.
  *
- * `stdin` is injectable for the same reason one step further out: `memhtml apply` reads a JSONL stream
+ * `stdin` is injectable for the same reason one step further out. `memhtml apply` reads a JSONL stream
  * from a pipe, and a test that had to spawn a process and write to its descriptor to exercise the
  * stdin path would be an integration test of the shell rather than of this function. The default
  * reads `process.stdin`, so `bin.ts` needs no knowledge of which commands want input.
@@ -827,17 +827,17 @@ export const run = async (
   if (invalid !== undefined) return emit(invalid, EXIT_USAGE)
 
   /**
-   * The two self-describing commands answer WITHOUT building the app layer.
+   * The two self-describing commands answer without building the app layer.
    *
-   * `manifest` is the load-bearing case: it is the FIRST call an agent makes and it must answer on a
+   * `manifest` matters most here. It is the first call an agent makes and it must answer on a
    * machine with no repo, no database, and no credentials. Building the layer first would make the
    * self-description conditional on the thing it describes being already working.
    *
-   * `agents-doc` is here because building the layer has a SIDE EFFECT — `layerDatabase` opens
+   * `agents-doc` is here because building the layer has a side effect. `layerDatabase` opens
    * `$MEMHTML_ROOT/.memhtml/index.db`, creating the directory and running every migration. A doc generator
    * that scaffolded a memory repo as a side effect of rendering Markdown would create `~/memhtml`
    * on any machine that ran `memhtml agents-doc --check` in CI. It reads only the command table, so it
-   * has no business touching the app graph at all.
+   * has no reason to touch the app graph at all.
    */
   if (parsed.command === "manifest") {
     return emit(succeed("cli.manifest", buildManifest()), EXIT_OK)
@@ -854,12 +854,12 @@ export const run = async (
   }
 
   /**
-   * `serve mcp` must not build the app layer either, and here the reason is the DATABASE.
+   * `serve mcp` must not build the app layer either, and here the reason is the database.
    *
    * The supervisor's only job is to spawn the server and wait. Building `layerApp` first would open
-   * `$MEMHTML_ROOT/.memhtml/index.db` and run its migrations in the parent — a second writer against
-   * the very store the child exists to serve, held open for as long as the child lives, by a process
-   * that never issues a query. The parent needs the resolved repo ROOT, which is config, not a
+   * `$MEMHTML_ROOT/.memhtml/index.db` and run its migrations in the parent. That is a second writer
+   * against the store the child exists to serve, held open for as long as the child lives, by a process
+   * that never issues a query. The parent needs the resolved repo root, which is config rather than a
    * service.
    *
    * Nothing is emitted until the child exits, because stdout belongs to the child from the moment it
@@ -888,15 +888,15 @@ export const run = async (
   }
 
   /**
-   * `eval discriminate` does not build the app layer either, for the reason the command above gives:
-   * the gate measures the ranking stack against its own GENERATED fixture corpus in a temp directory
+   * `eval discriminate` does not build the app layer either, for the reason the command above gives.
+   * The gate measures the ranking stack against its own generated fixture corpus in a temp directory
    * with an in-memory database, and reads the operator's `index.db` not at all. Building `layerApp`
-   * would open and migrate a store this command never queries — and an operator checking the gate is
+   * would open and migrate a store this command never queries, and an operator checking the gate is
    * typically doing it while `memhtml-mcp` serves that store.
    *
-   * **Exit 1 on a failed gate**, with `ERR_DISCRIMINATION_FAILED`. A refusable gate that exited 0 and
-   * left the verdict inside the payload would be a gate every shell caller forgets to read — the
-   * whole point is that a pipeline stops.
+   * **Exit 1 on a failed gate**, with `ERR_DISCRIMINATION_FAILED`. A gate that exited 0 and
+   * left the verdict inside the payload would be a gate every shell caller forgets to read. The
+   * exit code is what stops a pipeline.
    */
   if (parsed.command === "eval discriminate") {
     const requested = (str(parsed, "mode") ?? "fake") as EvalMode
@@ -929,20 +929,20 @@ export const run = async (
   /**
    * `memhtml exec` does not build the app layer either, for the reason two commands over.
    *
-   * The command reads a git TREE and nothing else: it materializes a commit as a detached worktree and
+   * The command reads a git tree and nothing else. It materializes a commit as a detached worktree and
    * mounts that directory read-only. It never queries `index.db`, so building `layerApp` would open and
    * migrate a database it does not use, on the path an agent reaches for while `memhtml serve mcp` is
    * serving the repo. Nothing here can be reached through `dispatch`, because `dispatch`'s service set
-   * IS the app layer's.
+   * is the app layer's.
    *
    * **Non-zero `exitCode` in the payload is still exit 0 for the process**, and that split is the
-   * contract. A failing script is a REPORT with `stderr` an agent reads and fixes; the CLI's exit 1 is
+   * contract. A failing script is a report with `stderr` an agent reads and fixes. The CLI's exit 1 is
    * reserved for the runtime failing to run the script at all (no repo, unreadable sha, absent helper).
    * Collapsing the two would make an agent unable to tell a bad selector from a broken install, and
    * would bury the script's own diagnostic inside an `error` string.
    *
-   * The script is read HERE rather than in `runExec`, so a missing or empty script is exit 2 like every
-   * other input error: `runExec` takes source, never a path.
+   * The script is read here rather than in `runExec`, so a missing or empty script is exit 2 like every
+   * other input error. `runExec` takes source, never a path.
    */
   if (parsed.command === "exec") {
     const inline = str(parsed, "script")
@@ -992,20 +992,20 @@ export const run = async (
   }
 
   /**
-   * `memhtml apply` reads and SHAPE-VALIDATES its whole op stream before any service is built (AC-6-4).
+   * `memhtml apply` checks the shape of its whole op stream before any service is built (AC-6-4).
    *
    * Here rather than in `validate` because reading a file is async and `validate` is a pure synchronous
-   * function of the parsed argv; here rather than in the dispatch arm because a refusal raised inside
-   * `dispatch` travels through `failureFor` and becomes exit 1, while a malformed input file is a USAGE
-   * error and must be exit 2. The caller wrote a bad file; the corpus is fine.
+   * function of the parsed argv. Here rather than in the dispatch arm because a refusal raised inside
+   * `dispatch` travels through `failureFor` and becomes exit 1, while a malformed input file is a usage
+   * error and must be exit 2. The caller wrote a bad file, and the corpus is fine.
    *
-   * The ordering is the observable contract: nothing is written for a file with a bad line, and at this
-   * point nothing CAN have been — the app layer has not been built, so no database is open and no git
-   * command has run.
+   * The ordering is the observable contract. Nothing is written for a file with a bad line, and at this
+   * point nothing can have been, because the app layer has not been built, so no database is open and
+   * no git command has run.
    */
   let applyOps: ReadonlyArray<ops.WriteParams> = []
   if (parsed.command === "apply") {
-    // `memhtml apply -` is the explicit "read stdin" spelling; the dash is not a path.
+    // `memhtml apply -` is the explicit "read stdin" spelling, and the dash is not a path.
     const file = parsed.positional[0] === "-" ? undefined : str(parsed, "file")
     const text = await applyText(file, stdin)
     if (typeof text !== "string") return emit(text, EXIT_USAGE)
@@ -1018,8 +1018,8 @@ export const run = async (
     Effect.map(([type, data]) => emit(succeed(type, data), EXIT_OK)),
     Effect.catch((error) => Effect.succeed(emit(failureFor(error), EXIT_RUNTIME))),
     // A defect is still an answer. An unexpected throw anywhere below would otherwise reach the
-    // process as an unhandled rejection and print a stack trace onto stdout, which is precisely the
-    // one thing this contract promises never to do — stdout is a parse target.
+    // process as an unhandled rejection and print a stack trace onto stdout. Stdout is a parse
+    // target, so it carries the envelope and nothing else.
     Effect.catchCause((cause) =>
       Effect.succeed(
         emit(fail("ERR_UNKNOWN", `unexpected failure: ${String(cause)}`, []), EXIT_RUNTIME)

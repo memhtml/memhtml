@@ -7,8 +7,8 @@ import {
 import { type Effort, type ModelKey, thinkingFor } from "./models.js"
 
 /**
- * The native Messages API body for `invoke_model`. Not Converse: the effort and thinking
- * rules are per-model and exact, and Converse has no field for either.
+ * The native Messages API body for `invoke_model`. The effort and thinking rules are
+ * per-model and exact, and Converse has no field for either, so Converse is not used.
  */
 
 export interface GenerateOptions {
@@ -40,9 +40,9 @@ export interface StructuredTool {
 }
 
 /**
- * Build the request body. The `tool` argument is what separates the two lanes: absent, the
- * model answers in prose; present, it is forced through `tool_choice` into exactly one
- * `emit` call, which is the whole structured-output mechanism.
+ * Build the request body. The `tool` argument selects the lane. When it is absent the model
+ * answers in prose. When it is present, `tool_choice` forces the model into exactly one
+ * `emit` call, and that is the whole structured-output mechanism.
  *
  * `system` is omitted rather than sent empty, because an empty system block is a distinct
  * (and rejected) input from no system block at all.
@@ -80,10 +80,10 @@ export const buildInvokeBody = (
 }
 
 /**
- * `stop_reason` values that mean the content is not a complete answer. Both are typed
- * failures: a response cut off at `max_tokens` may never have reached the point that made
- * it a judgment, and a refusal carries no judgment at all. Either one read as a finished
- * result is a silent data-quality bug, so neither is ever coerced into one.
+ * `stop_reason` values that mean the content is not a complete answer. Both become typed
+ * failures. A response cut off at `max_tokens` may never have reached the point that made
+ * it a judgment, and a refusal carries no judgment at all. Reading either as a finished
+ * result would be a silent data-quality bug, so neither is coerced into one.
  */
 export const INCOMPLETE_STOP_REASONS: ReadonlySet<string> = new Set(["max_tokens", "refusal"])
 
@@ -103,7 +103,7 @@ export interface InvokeResponseBody {
   }
 }
 
-/** The parsed payload, read defensively — every field on the wire is optional. */
+/** The parsed payload, read defensively, since every field on the wire is optional. */
 export const asResponseBody = (payload: unknown): InvokeResponseBody =>
   (payload ?? {}) as InvokeResponseBody
 
@@ -114,9 +114,9 @@ export const incompleteReason = (parsed: InvokeResponseBody): string | null => {
 }
 
 /**
- * Join the text blocks. Thinking blocks are discarded deliberately: a caller reads the
- * answer, not the deliberation, and concatenating the two would put reasoning the model
- * did not commit to into the value a phase acts on.
+ * Join the text blocks. Thinking blocks are discarded on purpose, because a caller reads
+ * the answer rather than the deliberation. Concatenating the two would put reasoning the
+ * model did not commit to into the value a phase acts on.
  */
 export const readText = (parsed: InvokeResponseBody): string =>
   (parsed.content ?? [])
@@ -129,8 +129,8 @@ export const readText = (parsed: InvokeResponseBody): string =>
 
 /**
  * The forced tool's `input`, or undefined when the model answered without calling it.
- * Matched on the block's `name`, not its position: a thinking block precedes the tool call
- * on the two adaptive models, so an index-based read would find the wrong block.
+ * Matched on the block's `name` instead of its position, because a thinking block precedes
+ * the tool call on the two adaptive models and an index-based read would find that block.
  */
 export const readToolInput = (parsed: InvokeResponseBody): unknown => {
   const block = (parsed.content ?? []).find(

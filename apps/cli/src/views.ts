@@ -8,16 +8,16 @@ import { Effect } from "effect"
  * Response shaping: the few places a payload is not simply the use case's own return value.
  *
  * Kept out of the dispatcher so an arm stays one call. Each function here exists because a wire
- * shape and an internal shape genuinely differ — a report that must not carry an unbounded field, a
- * flag list that must be validated against a closed vocabulary before it reaches a runner.
+ * shape and an internal shape differ. One is a report that must not carry an unbounded field. The
+ * other is a flag list that must be validated against a closed vocabulary before it reaches a runner.
  */
 
 /**
  * The index's own report of itself: the watermark, the vector space, and the row counts.
  *
  * `memhtml index status` reads this rather than running an indexer method, because "what does the index
- * currently contain" must be answerable without the git subprocess an `update` would spawn — an
- * operator asking about a stale index is frequently asking BECAUSE something is wrong with the repo.
+ * currently contain" must be answerable without the git subprocess an `update` would spawn. An
+ * operator asking about a stale index is frequently asking because something is wrong with the repo.
  */
 export const indexReport = () =>
   Effect.gen(function* () {
@@ -30,9 +30,9 @@ export const indexReport = () =>
       embedModel: state?.embed_model ?? null,
       embedDim: state?.embed_dim ?? null,
       /**
-       * True when the stored vector space IS the configured one. A mismatch is not a warning — the
-       * indexer refuses to write against it — so reporting the two values separately lets an
-       * operator see which side to change.
+       * True when the stored vector space IS the configured one. On a mismatch the indexer stops
+       * instead of writing, so reporting the two values separately lets an operator see which side
+       * to change.
        */
       embedModelMatches: state?.embed_model === EMBED_WATERMARK,
       configuredEmbedModel: EMBED_WATERMARK,
@@ -63,10 +63,10 @@ const count = (db: DatabaseShape, sql: string) =>
 /**
  * A `--phases` value as a validated phase list, or `undefined` for "all fifteen".
  *
- * An unknown phase is a refusal rather than a silent drop. A run asked for `--phases dedup,compress`
- * with a typo in the first name would otherwise execute only the second — and `dedup-merge` is a
- * HARD prerequisite of `compress`, so the typo would produce a compress pass over a corpus that
- * still holds its duplicates.
+ * An unknown phase is rejected instead of dropped silently. A run asked for `--phases dedup,compress`
+ * with a typo in the first name would otherwise execute only the second. `dedup-merge` is a hard
+ * prerequisite of `compress`, so the typo would produce a compress pass over a corpus that still
+ * holds its duplicates.
  */
 export const sleepPhases = (
   raw: string | undefined
@@ -86,8 +86,8 @@ export const sleepPhases = (
     )
   }
 
-  // Canonical order, not the caller's. The order encodes real dependencies — decay before triage so
-  // triage scores the decayed value — and honouring a caller's ordering would let a `--phases` value
+  // Canonical order, not the caller's. The order encodes real dependencies: decay runs before triage
+  // so triage scores the decayed value. Honouring a caller's ordering would let a `--phases` value
   // silently invert them.
   return Effect.succeed(SLEEP_PHASES.filter((phase) => names.includes(phase)))
 }
@@ -95,9 +95,9 @@ export const sleepPhases = (
 /**
  * A run report on the wire.
  *
- * Identical to the internal shape except for `llmCalls`, which is summed per phase AND totalled — a
+ * Identical to the internal shape except for `llmCalls`, which is summed per phase and totalled. A
  * caller auditing Bedrock spend reads the total, and one debugging a phase reads the per-phase
- * number, and deriving either from the other at the call site is how two consumers end up disagreeing
+ * number. Deriving either from the other at the call site is how two consumers end up disagreeing
  * about what a number counts.
  */
 export const sleepRunReport = (report: RunReport) => ({

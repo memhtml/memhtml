@@ -6,10 +6,10 @@
  * carry a fact's polarity and its discriminators: "the deploy step is safe" and "the deploy
  * step is NOT safe" sit above 0.92, and so do "retry 3 times" vs "retry 13 times" and "M1"
  * vs "M1 Pro". The merge keeps the *older* file, so a blind high-cosine merge folds a newer
- * correction into an older wrong memory — it does not just lose information, it actively
- * restores the error the correction was written to fix. These guards are a deterministic
- * veto: a divergent pair is a candidate contradiction for the conflict phase, never a merge,
- * regardless of how high its cosine runs.
+ * correction into an older wrong memory. That loses the correction and restores the error the
+ * correction was written to fix. These guards are a deterministic veto. A divergent pair
+ * becomes a candidate contradiction for the conflict phase instead of a merge, no matter how
+ * high its cosine runs.
  */
 
 /** Cosine similarity above which two bodies are the same content. Strict. */
@@ -19,7 +19,7 @@ export const NEAR_DUPLICATE_THRESHOLD = 0.92
 export const MAX_MERGE_PAIRS = 100
 
 /**
- * One oriented candidate pair. `keepPath` is already the canonical (the older file) — the
+ * One oriented candidate pair. `keepPath` is already the canonical (the older file). The
  * orientation is the caller's, because it depends on commit dates this module does not read.
  * The texts are optional; when either is absent the divergence guards are skipped.
  */
@@ -176,21 +176,21 @@ export const mergeVetoed = (textA: string, textB: string): boolean =>
  * order: the strict similarity threshold, the divergence veto (only when both texts are
  * present), a self-merge check, the in-batch role guard, and the per-cycle cap.
  *
- * The **in-batch role guard** is the load-bearing one. A path that appears in any committed
- * decision — as the keeper or as the drop — is fixed in that role for the batch and cannot
- * appear again in either. Both directions are required, and each rules out a distinct
- * corruption on a transitive chain:
+ * The **in-batch role guard** needs the most explanation of the five. A path that appears in
+ * any committed decision, as the keeper or as the drop, is fixed in that role for the batch
+ * and cannot appear again in either. Both directions are required, and each rules out a
+ * distinct corruption on a transitive chain:
  *
  * - A path already **dropped** cannot be dropped again (two keepers would each believe they
  *   absorbed it) nor become a keeper (content folded into a file this same batch archives).
  * - A path already a **keeper** cannot later be dropped. This is the case that survives if
  *   only the drop side is recorded: given `(gf, a)` then `(b, gf)`, both decisions commit,
- *   `gf` absorbs `a` and is then archived into `b` — so `a`'s content is superseded into a
- *   file that no longer exists, which is exactly the loss the guard exists to prevent.
+ *   `gf` absorbs `a` and is then archived into `b`, so `a`'s content is superseded into a
+ *   file that no longer exists. That is the loss the guard exists to prevent.
  *   Verified against the input `[(gf → a), (b → gf)]`.
  *
  * Fixing a role rather than a membership also keeps the output a function of input order
- * alone: the first decision claiming a path wins, matching the SQL result-set iteration
+ * alone. The first decision claiming a path wins, matching the SQL result-set iteration
  * upstream, and a later pair naming it is skipped rather than reordering anything.
  */
 export const mergeCandidates = (

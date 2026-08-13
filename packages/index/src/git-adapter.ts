@@ -5,12 +5,12 @@ import type { DiffEntry, GitPort, StatusEntry, TreeEntry } from "./git-port.js"
 /**
  * The adapter from `@memhtml/store`'s `GitShape` to the indexer's {@link GitPort}.
  *
- * The two shapes are NOT structurally compatible, and this module is what makes the port honest
- * rather than phantom. Five real differences, each of which would be a silent bug if the store's
+ * The two shapes are NOT structurally compatible, and this module is what gives the port real work
+ * to do. Five differences, each of which would be a silent bug if the store's
  * service were passed where a `GitPort` is expected:
  *
- * 1. `revParseHead` returns `string | null` — an unborn HEAD, which a freshly `git init`ed repo
- *    genuinely has. The indexer needs a commit, so an unborn HEAD becomes a typed failure here.
+ * 1. `revParseHead` returns `string | null`, the `null` being an unborn HEAD, which a freshly
+ *    `git init`ed repo genuinely has. The indexer needs a commit, so that becomes a typed failure.
  * 2. `catFileBatch` yields `Uint8Array`, not `string`. Memory files are UTF-8 and the parser takes
  *    text, so the decode belongs at this boundary.
  * 3. `diffNameStatus` reports `kind: "added" | "modified" | ... | "renamed" | "copied"` with a
@@ -20,12 +20,12 @@ import type { DiffEntry, GitPort, StatusEntry, TreeEntry } from "./git-port.js"
  * 4. `statusPorcelainV2` reports a five-way `kind` plus a two-letter `xy` code. "Is this path gone
  *    from the worktree?" is `xy` containing `D`, and an `ignored` entry is not a change at all.
  * 5. Failures are `GitFailure { command, exitCode }`, and the port speaks `StorageFailure
- *    { operation }` — so the git command name is logged for the operator and never returned to an
+ *    { operation }`, so the git command name is logged for the operator and never returned to an
  *    agent.
  *
- * The store owns none of this: its shape is the right shape for a git client. Translating at the
- * consumer is correct here precisely because the semantics are not the producer's private ones —
- * they are git's, and both sides read them the same way.
+ * The store owns none of this, because its shape is the right shape for a git client. Translating at
+ * the consumer works here because the semantics are git's rather than the producer's private ones,
+ * and both sides read them the same way.
  */
 
 /** The subset of `@memhtml/store`'s `GitShape` the indexer consumes. Declared, not imported. */
@@ -70,10 +70,10 @@ export interface GitAdapterDeps {
   /**
    * Reads a repo-relative path as UTF-8 text. The CLI supplies one rooted at `MEMHTML_ROOT`.
    *
-   * MUST report a missing or unreadable file through its ERROR channel — `Effect.tryPromise`, never
-   * `Effect.promise`. A defect propagates past `Effect.catch` and takes down the fiber, so an absent
-   * path would crash the indexer instead of becoming the counted skip it is: an agent listing a path
-   * it just archived is the normal case.
+   * MUST report a missing or unreadable file through its ERROR channel, so `Effect.tryPromise` and
+   * not `Effect.promise`. A defect propagates past `Effect.catch` and takes down the fiber, so an
+   * absent path would crash the indexer instead of becoming the counted skip it is. An agent listing
+   * a path it just archived is the normal case.
    */
   readonly readFile: (path: string) => Effect.Effect<string, unknown>
   /**
@@ -85,15 +85,15 @@ export interface GitAdapterDeps {
 
 /**
  * One store change entry as a port entry. Total over the six kinds, and exported so the mapping is
- * assertable without a repository — the `copied` case in particular is the one that would corrupt the
- * index if it were folded in with `renamed`, and it is awkward to provoke from real git.
+ * assertable without a repository. The `copied` case would corrupt the index if it were folded in
+ * with `renamed`, and it is awkward to provoke from real git.
  */
 export const toDiffEntry = (change: StoreChangedPath): DiffEntry => {
   switch (change.kind) {
     case "added":
       return { status: "A", path: change.path }
-    // A type change — a file becoming a symlink — is a content replacement as far as the index is
-    // concerned: re-project the path from whatever the new blob holds.
+    // A type change, such as a file becoming a symlink, is a content replacement as far as the
+    // index is concerned. Re-project the path from whatever the new blob holds.
     case "modified":
     case "typechanged":
       return { status: "M", path: change.path }
@@ -101,16 +101,16 @@ export const toDiffEntry = (change: StoreChangedPath): DiffEntry => {
       return { status: "D", path: change.path }
     case "renamed":
       // The archive move. `fromPath` is what lets the indexer re-point the row instead of deleting
-      // it, which is what keeps the embedding. A rename reported with no source degrades to an add:
-      // the destination still gets indexed, and nothing is moved out from under an unknown path.
+      // it, which is what keeps the embedding. A rename reported with no source degrades to an add,
+      // so the destination still gets indexed and nothing moves out from under an unknown path.
       return change.fromPath === null
         ? { status: "A", path: change.path }
         : { status: "R", path: change.path, fromPath: change.fromPath }
     case "copied":
       // NOT a rename. A copy's SOURCE still exists in the tree, so `R` would make the indexer move
-      // the source's row to the destination and drop a live file from the index. `A` costs nothing:
-      // the destination's body is unchanged, so its content-derived `chunk_id`s already carry
-      // vectors and the projection's upsert reuses them.
+      // the source's row to the destination and drop a live file from the index. `A` costs nothing,
+      // because the destination's body is unchanged, so its content-derived `chunk_id`s already
+      // carry vectors and the projection's upsert reuses them.
       return { status: "A", path: change.path }
   }
 }
@@ -118,7 +118,7 @@ export const toDiffEntry = (change: StoreChangedPath): DiffEntry => {
 /**
  * One store status entry as zero or one port entries.
  *
- * `ignored` is not a change, and an `unmerged` path is mid-conflict: indexing either side of an
+ * `ignored` is not a change, and an `unmerged` path is mid-conflict. Indexing either side of an
  * unresolved merge would record a state the tree does not agree on yet, and the conflict is the
  * caller's to resolve.
  */
@@ -132,18 +132,18 @@ export const toStatusEntry = (entry: StoreStatusEntry): ReadonlyArray<StatusEntr
  * Map a store `GitShape` onto the indexer's port.
  *
  * `fail` translates every rejection to the port's error type after logging the git command, so a
- * subprocess's stderr — which can contain a path, a branch name, or a hunk — never travels to an
- * agent through a tool response.
+ * subprocess's stderr never travels to an agent through a tool response. That stderr can contain a
+ * path, a branch name, or a hunk.
  */
 export const makeGitPort = (deps: GitAdapterDeps): GitPort => {
   /**
    * Translate one operation's rejection into the port's typed failure.
    *
-   * `Effect.catchCause` rather than `Effect.catch`: it catches a DEFECT as well as a typed failure. A
-   * `readFile` wired with `Effect.promise` instead of `Effect.tryPromise` raises a defect on ENOENT,
-   * and a defect passing through would kill the fiber — so a missing path would crash an index update
-   * rather than become the counted skip the indexer already handles. Catching the cause makes the port
-   * total whatever its dependencies do.
+   * `Effect.catchCause` rather than `Effect.catch`, because it catches a DEFECT as well as a typed
+   * failure. A `readFile` wired with `Effect.promise` instead of `Effect.tryPromise` raises a defect
+   * on ENOENT, and a defect passing through would kill the fiber, so a missing path would crash an
+   * index update rather than become the counted skip the indexer already handles. Catching the cause
+   * makes the port total whatever its dependencies do.
    */
   const attempt = <A>(operation: string, effect: Effect.Effect<A, unknown>) =>
     effect.pipe(
@@ -155,10 +155,10 @@ export const makeGitPort = (deps: GitAdapterDeps): GitPort => {
 
   return {
     /**
-     * An unborn HEAD is a refusal, not `null`. Every indexer path needs a commit to diff against or
-     * to read a tree from, and letting `null` through would make `git diff null HEAD` the first
-     * place the problem surfaced — as an opaque subprocess error rather than "this repo has no
-     * commits".
+     * An unborn HEAD becomes a typed failure instead of `null`. Every indexer path needs a commit to
+     * diff against or to read a tree from, and letting `null` through would make `git diff null
+     * HEAD` the first place the problem surfaced, as an opaque subprocess error rather than "this
+     * repo has no commits".
      */
     revParseHead: () =>
       attempt(

@@ -11,17 +11,17 @@ import { Git } from "./api-layer.js"
  * `memhtml publish`: regenerate the per-directory `index.html` listings and the root `sitemap.xml`, and
  * commit whatever changed.
  *
- * **The generator is imported from `@memhtml/sleep`, never re-derived.** `generateArtifacts` lives there
- * because a listing needs `files.title`/`gist`/`updated_at` — all index projections — and
+ * **The generator is imported from `@memhtml/sleep` and never re-derived.** `generateArtifacts` lives
+ * there because a listing needs `files.title`/`gist`/`updated_at`, all of them index projections, and
  * `@memhtml/store` is SQL-free by design. Two generators would produce two byte sequences for one tree,
- * and these files are the design's ONE merge-conflict source: `.gitattributes` marks them
- * `merge=ours` and a conflict is resolved by REGENERATING, which only works if regeneration is
- * unambiguous. So the sleep integrity phase and this command call the same function, and the only
- * difference between them is which commit the result lands in.
+ * and these files are the design's one merge-conflict source. `.gitattributes` marks them
+ * `merge=ours` and a conflict is resolved by regenerating, which only works if regeneration is
+ * unambiguous. The sleep integrity phase and this command therefore call the same function, and the
+ * only difference between them is which commit the result lands in.
  *
- * Deterministic to the byte: the rows arrive path-ordered from SQL, every string is escaped, and no
- * timestamp of generation appears anywhere. Two runs over an unchanged corpus therefore write nothing
- * and commit nothing — which is also what makes the command safe to run after every merge.
+ * The output is deterministic to the byte: the rows arrive path-ordered from SQL, every string is
+ * escaped, and no timestamp of generation appears anywhere. Two runs over an unchanged corpus write
+ * nothing and commit nothing, which also makes the command safe to run after every merge.
  */
 
 /** What a publish did. `written: 0` means the artifacts already matched the corpus. */
@@ -53,8 +53,8 @@ const writeIfChanged = (root: string, artifact: GeneratedFile) =>
  * Regenerate and commit.
  *
  * The whole artifact set is staged rather than only the rewritten files, because a listing that was
- * hand-edited and then regenerated to its correct bytes is a change git already knows about — and
- * `commit` no-ops on an index matching HEAD, so staging everything costs nothing when nothing moved.
+ * hand-edited and then regenerated to its correct bytes is a change git already knows about. `commit`
+ * no-ops on an index matching HEAD, so staging everything costs nothing when nothing moved.
  */
 export const publish = () =>
   Effect.gen(function* () {

@@ -7,28 +7,28 @@ import { runRetentionPass } from "../retention.js"
 import { isSleepExcluded } from "../sql.js"
 
 /**
- * Phase 9 — retention triage. Score every active memory on the eight signals; the EVICT band moves
+ * Phase 9, retention triage. Score every active memory on the eight signals; the EVICT band moves
  * into the archive. ONE commit.
  *
- * Eviction is a `git mv` into `archive/<YYYY>/<original-path>`, never a delete. The path under the
+ * Eviction is a `git mv` into `archive/<YYYY>/<original-path>`, not a delete. The path under the
  * year mirrors the original exactly, so the mapping is injective, `originalPathFor` inverts it, and
- * `git log --follow` reads straight through. Nothing in this system is ever deleted — a wrongly
+ * `git log --follow` reads straight through. Nothing in this system is deleted. A wrongly
  * evicted memory is recoverable by reading the archive, and an unrecoverable eviction would make the
  * eight-signal score a decision nobody could safely tune.
  *
- * **Arcs are never evicted here.** An arc is a synthesis whose members may all have aged out; scoring
+ * **Arcs are not evicted here.** An arc is a synthesis whose members may all have aged out. Scoring
  * it on its own recency and access would discard the conclusion precisely when the evidence behind it
  * has faded, which is the opposite of what the arc is for. Arc demotion belongs to arc synthesis,
  * which has the utility signal.
  *
- * **Tasks are never evicted either, and the reason is sharper.** The retention score is dominated by
- * recency and access: a task nobody has touched for a month scores at the FLOOR, which is exactly
+ * **Tasks are not evicted either, for a sharper reason.** The retention score is dominated by
+ * recency and access, so a task nobody has touched for a month scores at the FLOOR, and that is exactly
  * the task most likely to still be owed. Evicting on that signal would archive the neglected work
- * first and leave the busy work behind — the inverse of what a to-do list is for. A task leaves the
+ * first and leave the busy work behind, the inverse of what a to-do list is for. A task leaves the
  * active tree one way, by being finished.
  *
- * Runs after confidence decay so it scores the decayed value, and after dedup-merge — declared a HARD
- * prerequisite — so the corpus it scores is the post-merge one.
+ * Runs after confidence decay so it scores the decayed value, and after dedup-merge, declared a HARD
+ * prerequisite, so the corpus it scores is the post-merge one.
  */
 export const retentionTriage: PhaseBody = (env) =>
   Effect.gen(function* () {

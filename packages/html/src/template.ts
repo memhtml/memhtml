@@ -15,7 +15,7 @@ import { innerHtml, parseArticleFragment } from "./tree.js"
  * The write path calls this, not the serializer directly: an agent supplies a title, a claim,
  * and prose, and the template is what turns that into the `<mark>`-led first paragraph the
  * format requires. An agent that had to hand-author the `<mark>` placement would violate
- * constraint 1 regularly; a template that places it cannot.
+ * constraint 1 regularly. A template that places it always places it correctly.
  */
 
 /** What `memory_write` supplies. Mirrors the tool's parameters, with the format's own additions. */
@@ -34,7 +34,7 @@ export interface NewMemoryInput {
   readonly body?: ReadonlyArray<string> | undefined
   /**
    * Pre-authored article markup, used verbatim in place of `claim`/`body`. The escape hatch for
-   * a correction that carries a `<dl>` or a `<figure>`; it must already contain its own
+   * a correction that carries a `<dl>` or a `<figure>`. It must already contain its own
    * `<mark>`, so the caller owns constraint 1 when it uses this.
    */
   readonly articleHtml?: string | undefined
@@ -67,7 +67,7 @@ export interface NewMemoryInput {
  * The status a new task starts in.
  *
  * Defaulted rather than required of the caller because `parseMemory` REFUSES a task with no
- * `memhtml-task-status` — so a template that omitted it would render a file the format rejects, and
+ * `memhtml-task-status`. A template that omitted it would render a file the format rejects, and
  * every `memhtml task add` would have to restate the obvious opening state.
  */
 export const DEFAULT_TASK_STATUS: TaskStatus = "todo"
@@ -82,20 +82,20 @@ const definedOnly = <T extends Record<string, unknown>>(input: T): Partial<T> =>
 }
 
 /**
- * A fenced block's markup: `<figure><pre><code>` with the code escaped but otherwise verbatim —
- * indentation and blank lines are the content, and the hash rules already treat `<pre>` text
+ * A fenced block's markup: `<figure><pre><code>` with the code escaped but otherwise verbatim.
+ * Indentation and blank lines are the content, and the hash rules already treat `<pre>` text
  * byte-for-byte. `class` is a constraint-3 violation and `lang=` is a BCP-47 human-language
  * attribute, so the language rides on the one attribute that is legal, semantic, and plain in
  * view-source.
  *
- * The info string wins outright: when the author named a language, {@link detectLang} never runs,
- * so no detector opinion can override what a human wrote — even where hljs would score the snippet
- * differently. Only an UNLABELED fence is detected, and only above the eval's measured threshold
- * and inside the ported vocabulary (`detect.ts`); otherwise the attribute stays absent, because
- * wrong metadata reaches `lang:` entities and search while a missing attribute costs nothing.
+ * The info string wins outright. When the author named a language, {@link detectLang} does not
+ * run, so no detector opinion overrides what a human wrote, even where hljs would score the
+ * snippet differently. Only an UNLABELED fence is detected, and only above the eval's measured
+ * threshold and inside the ported vocabulary (`detect.ts`). Otherwise the attribute stays
+ * absent, because wrong metadata reaches `lang:` entities while a missing one costs nothing.
  *
  * Detection belongs HERE, on the write path, and nowhere downstream. The stamp is written into the
- * file, which is the system of record; index rebuild reads `data-lang` back (`parse.ts`) and never
+ * file, which is the system of record. Index rebuild reads `data-lang` back (`parse.ts`) and never
  * re-detects, so `rm index.db && rebuild` stays a pure function of the tree rather than of the
  * installed highlight.js version.
  */
@@ -112,10 +112,10 @@ const codeBlockHtml = (block: { readonly lang?: string | undefined; readonly cod
  * payload does not become an empty element.
  *
  * A body paragraph that is a fenced code block becomes a `<figure><pre><code>` instead of a
- * `<p>` — the one way the prose path can author real code markup. A fence is never joined onto
- * the claim's paragraph: when the first body paragraph is a fence, the claim stands alone in its
+ * `<p>`, the one way the prose path can author real code markup. A fence is not joined onto
+ * the claim's paragraph. When the first body paragraph is a fence, the claim stands alone in its
  * `<p>` and the figure follows, so the claim still leads the article (constraint 1) and code
- * never fuses into a sentence.
+ * stays out of the sentence.
  */
 export const articleHtmlFor = (input: NewMemoryInput): string => {
   if (input.articleHtml !== undefined && input.articleHtml.trim() !== "") {
@@ -141,7 +141,7 @@ export const articleHtmlFor = (input: NewMemoryInput): string => {
 
 /**
  * A fresh `MemoryDoc` for an input, with `memhtml-content-hash` already stamped from the article the
- * template just built — so the file that reaches disk is self-consistent and the indexer's own
+ * template just built, so the file that reaches disk is self-consistent and the indexer's own
  * recomputation agrees with it on the first read.
  */
 export const newMemoryDoc = (input: NewMemoryInput): MemoryDoc => {
@@ -167,8 +167,8 @@ export const newMemoryDoc = (input: NewMemoryInput): MemoryDoc => {
         /**
          * Stamped only for a task, and defaulted there. A non-task carrying
          * `memhtml-task-status` is a parse violation, so emitting a caller's stray value would put
-         * a file in git that the indexer then skips — present in the tree, absent from every
-         * search, visible only as a log line.
+         * a file in git that the indexer then skips. It would be present in the tree, absent
+         * from every search, and visible only as a log line.
          */
         taskStatus:
           input.memoryType === "task" ? (input.taskStatus ?? DEFAULT_TASK_STATUS) : undefined,
@@ -196,7 +196,7 @@ export const newMemoryDoc = (input: NewMemoryInput): MemoryDoc => {
 }
 
 /**
- * A fresh memory file as bytes. The one function the write path calls; the extraction fields on
+ * A fresh memory file as bytes. The one function the write path calls. The extraction fields on
  * the intermediate doc are empty because serialization reads only `article.html`, and the real
  * extractions come back from `parseMemory` on the next read.
  */

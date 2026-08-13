@@ -1,9 +1,9 @@
 /**
- * `@memhtml/cli` — the `memhtml` binary, and the composition root the MCP server shares.
+ * `@memhtml/cli`: the `memhtml` binary, and the composition root the MCP server shares.
  *
  * The layer graph lives here rather than in each app because a second composition would be a second
- * set of decisions about which database file, which git root, and which vector space — and the two
- * apps must be looking at exactly one of each. `apps/mcp` imports `layerApp` and the operations from
+ * set of decisions about which database file, which git root, and which vector space. The two apps
+ * must be looking at exactly one of each. `apps/mcp` imports `layerApp` and the operations from
  * this package for that reason.
  */
 
@@ -88,7 +88,7 @@ export { codeFor, failureFor, messageFor, SUGGESTIONS, suggestionsFor } from "./
 /**
  * Code-mode's runtime. Exported for the test tier, which drives `runExec` against a plain directory to
  * assert the sandbox's own properties without a git repository in the way, and `execCommand` to assert
- * the pin. Nothing outside this package imports either on a read path — see `exec.ts` on why
+ * the pin. Nothing outside this package imports either on a read path. See `exec.ts` on why
  * `just-bash` arrives dynamically.
  */
 export {
