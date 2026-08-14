@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/traces",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Streaming JSONL parser and trace indexer.",
   "type": "module",
   "license": "Apache-2.0",
