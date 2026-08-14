@@ -163,6 +163,85 @@ const parserSourcePath = (): string =>
 export const cutOffByTheRuntime = (exitCode: number, stderr: string): boolean =>
   exitCode === 124 && /timeout|deadline|aborted/i.test(stderr)
 
+/**
+ * The two phrases just-bash's sandbox bridge speaks when it fails to answer a guest's filesystem call.
+ *
+ * ## Why this classification exists
+ *
+ * A guest `fs` call is a synchronous round trip over a `SharedArrayBuffer`: the QuickJS thread parks in
+ * `Atomics.wait` while the host thread services the operation and writes a status back. When that
+ * handshake does not complete, `SyncBackend.execSync` throws a message of its OWN making rather than the
+ * host's — verbatim from `just-bash@3.2.0`'s bundle, byte-identical in 3.3.0:
+ *
+ * - `Error code: <n>` — the wait returned with a status that is not `SUCCESS` and no error was recorded.
+ * - `Operation timed out` — the wait expired without the host answering at all.
+ *
+ * Neither is a fact about the corpus or the script. Both reach `stderr` as a thrown guest error, which
+ * without this check is reported as the SCRIPT's non-zero exit — telling an agent its selector is wrong
+ * when the sandbox merely failed to hand back a `stat`. Observed once on a 4-vCPU CI runner (2026-08-14,
+ * `memhtml/memhtml` run 31830358200) on a walk of ~900 entries: `at isDirectory
+ * (/workspace/lib/corpus.mjs:45:28): Error code: 0`, on a commit whose tree was byte-identical to one
+ * that had passed minutes earlier. The bridge kept working afterwards — the guest's own `stderr` write
+ * and exit both landed — so the fault is one operation, not a torn-down sandbox, which is what makes
+ * re-running the script the right answer.
+ *
+ * A cut-off script is deliberately NOT a fault here: {@link cutOffByTheRuntime}'s wordings arrive with
+ * exit 124 and name a limit, and treating them as a bridge fault would re-run a runaway script until it
+ * had burned every attempt's full bound.
+ *
+ * Returns the phrase it matched, so a caller logs the evidence rather than a boolean.
+ */
+export const bridgeFault = (exitCode: number, stderr: string): string | null => {
+  if (exitCode === 0) return null
+  const matched = /(?:^|:\s)(Error code: \d+|Operation timed out)\s*$/m.exec(stderr)
+  return matched?.[1] ?? null
+}
+
+/**
+ * How many times one script is run before a bridge fault is called the runtime's failure.
+ *
+ * Three, and the retry is sound rather than hopeful: the corpus is mounted read-only, the sandbox has no
+ * network client, and every attempt reads the same pinned tree, so a script cannot have committed a
+ * partial effect that a second run would double. Nothing about the guest survives an attempt either —
+ * each one builds a fresh `Bash`, and therefore a fresh shared buffer and bridge.
+ */
+export const BRIDGE_ATTEMPTS = 3
+
+/**
+ * Run one attempt at a time until a report is the script's own answer, or fail as the runtime.
+ *
+ * Exported and parameterized by `attempt` because that is the only shape this loop can be tested in: a
+ * bridge fault is a rare race — 72 executions under 3x CPU oversubscription did not produce one
+ * (measured 2026-08-14) — so a test driving the real sandbox could not distinguish a working retry from
+ * a fault that never fired. The injected attempt makes the loop's three claims falsifiable: a faulting
+ * attempt is re-run, a script's own failure is NOT, and exhaustion is a typed failure.
+ *
+ * Exhaustion becomes a `StorageFailure`, so it leaves through the error channel as exit 1 and
+ * `ERR_STORAGE` rather than as an `exec.report` carrying the guest's confusing diagnostic. That is the
+ * split this module already draws: a script's failure is a successful envelope, the runtime's own is not.
+ */
+export const withBridgeRetry = <E>(
+  attempt: (attemptIndex: number) => Effect.Effect<ExecReport, E>,
+  attempts: number = BRIDGE_ATTEMPTS
+): Effect.Effect<ExecReport, E | StorageFailure> =>
+  Effect.gen(function* () {
+    let fault = "no attempt ran"
+    for (let attemptIndex = 1; attemptIndex <= attempts; attemptIndex++) {
+      const report = yield* attempt(attemptIndex)
+      const faulted = bridgeFault(report.exitCode, report.stderr)
+      if (faulted === null) return report
+      fault = faulted
+      yield* Effect.logWarning(
+        `exec.bridge: the sandbox did not answer a guest call ("${faulted}") on attempt ${attemptIndex} of ${attempts}; re-running the same script against the same tree`
+      )
+    }
+    return yield* Effect.fail(
+      StorageFailure.make({
+        operation: `exec.bridge: the sandbox failed to answer a guest filesystem call ${attempts} times ("${fault}"), so no report is the script's own answer`
+      })
+    )
+  })
+
 /** What a script produced. `stdout` is the script's own bytes, uninterpreted. */
 export interface ExecReport {
   /** The guest path the corpus was mounted at, so a script's paths are explainable from the report. */
@@ -203,6 +282,11 @@ export interface ExecInput {
  * an agent debugging a selector would get an error envelope with the script's real diagnostic buried
  * in an `error` string. The runtime's own failures (an absent corpus, an unreadable helper) do travel
  * the error channel and become exit 1.
+ *
+ * A sandbox that fails to answer a guest filesystem call is the RUNTIME failing, even though the guest
+ * surfaces it as a thrown script error. {@link bridgeFault} names the two phrases that say so, and the
+ * script is re-run against the same tree up to {@link BRIDGE_ATTEMPTS} times; only exhaustion becomes a
+ * failure, and it becomes the runtime's. `durationMs` is therefore the attempt that answered.
  *
  * ## The sandbox has no network client, and that is this function's choice
  *
@@ -257,82 +341,98 @@ export const runExec = (
     })
 
     /**
-     * The one composition, from `apps/consolidator/src/mount.ts`.
+     * One attempt: a fresh mount, a fresh sandbox, one execution.
      *
-     * Not re-derived here. That module encodes the `mountPoint: "/"` requirement on the nested
-     * `OverlayFs`, which a file count cannot catch, because all three spellings expose the same
-     * number of files at three different prefixes. It also validates roots eagerly, so a bad
-     * `corpusPath` is refused before a sandbox exists.
+     * Everything the guest touches is built here rather than above, so a retry
+     * ({@link withBridgeRetry}) starts from a new shared buffer and a new bridge instead of re-running
+     * against the one that just failed to answer. Only the two sources read off the host — the parser
+     * and the helper — are hoisted, because they are the same bytes on every attempt.
      */
-    const { filesystem } = yield* Effect.try({
-      try: () =>
-        mountReadOnlyRoots({ roots: [{ mountPath: CORPUS_MOUNT, hostPath: input.corpusPath }] }),
-      catch: (cause) =>
-        InvalidMemory.make({ reason: `exec cannot mount the corpus: ${String(cause)}` })
-    })
+    const attempt = (): Effect.Effect<ExecReport, InvalidMemory | StorageFailure> =>
+      Effect.gen(function* () {
+        /**
+         * The one composition, from `apps/consolidator/src/mount.ts`.
+         *
+         * Not re-derived here. That module encodes the `mountPoint: "/"` requirement on the nested
+         * `OverlayFs`, which a file count cannot catch, because all three spellings expose the same
+         * number of files at three different prefixes. It also validates roots eagerly, so a bad
+         * `corpusPath` is refused before a sandbox exists.
+         */
+        const { filesystem } = yield* Effect.try({
+          try: () =>
+            mountReadOnlyRoots({
+              roots: [{ mountPath: CORPUS_MOUNT, hostPath: input.corpusPath }]
+            }),
+          catch: (cause) =>
+            InvalidMemory.make({ reason: `exec cannot mount the corpus: ${String(cause)}` })
+        })
 
-    /**
-     * Two bounds, and the shell's is deliberately the looser one.
-     *
-     * `maxJsTimeoutMs` bounds the `js-exec` call and `maxExecutionTimeMs` bounds the whole shell
-     * invocation, so both are needed. A script cannot outlive its budget by spending the time outside
-     * the JS worker. Which one fires first changes the diagnostic, probed 2026-08-09 on a
-     * `for(;;)` loop at a 400ms bound:
-     *
-     * | limits | exit | stderr |
-     * | --- | --- | --- |
-     * | `maxJsTimeoutMs` alone | 124 | `js-exec: Execution timeout: exceeded 400ms limit` |
-     * | both equal | 124 | `bash: js-exec exceeded its execution deadline` |
-     * | shell bound looser | 124 | `js-exec: execution timeout exceeded` + the limit-naming line |
-     *
-     * Setting them equal is a race whose winner decides whether the operator is told the number they
-     * set. The shell's bound gets a small margin so the JS bound wins and its message, the one naming
-     * the limit, is what reaches `stderr`. The margin is a grace period rather than extra budget. The
-     * script is already cut off at `timeoutMs`, and the shell's bound exists only to catch the case
-     * where `js-exec` itself fails to stop.
-     */
-    const bash = new Bash({
-      fs: filesystem,
-      javascript: { bootstrap: ATOB_BOOTSTRAP },
-      executionLimits: {
-        maxJsTimeoutMs: timeoutMs,
-        maxExecutionTimeMs: timeoutMs + SHELL_TIMEOUT_GRACE_MS
-      }
-    })
+        /**
+         * Two bounds, and the shell's is deliberately the looser one.
+         *
+         * `maxJsTimeoutMs` bounds the `js-exec` call and `maxExecutionTimeMs` bounds the whole shell
+         * invocation, so both are needed. A script cannot outlive its budget by spending the time
+         * outside the JS worker. Which one fires first changes the diagnostic, probed 2026-08-09 on a
+         * `for(;;)` loop at a 400ms bound:
+         *
+         * | limits | exit | stderr |
+         * | --- | --- | --- |
+         * | `maxJsTimeoutMs` alone | 124 | `js-exec: Execution timeout: exceeded 400ms limit` |
+         * | both equal | 124 | `bash: js-exec exceeded its execution deadline` |
+         * | shell bound looser | 124 | `js-exec: execution timeout exceeded` + the limit-naming line |
+         *
+         * Setting them equal is a race whose winner decides whether the operator is told the number
+         * they set. The shell's bound gets a small margin so the JS bound wins and its message, the one
+         * naming the limit, is what reaches `stderr`. The margin is a grace period rather than extra
+         * budget. The script is already cut off at `timeoutMs`, and the shell's bound exists only to
+         * catch the case where `js-exec` itself fails to stop.
+         */
+        const bash = new Bash({
+          fs: filesystem,
+          javascript: { bootstrap: ATOB_BOOTSTRAP },
+          executionLimits: {
+            maxJsTimeoutMs: timeoutMs,
+            maxExecutionTimeMs: timeoutMs + SHELL_TIMEOUT_GRACE_MS
+          }
+        })
 
-    yield* Effect.tryPromise({
-      try: async () => {
-        await filesystem.mkdir(GUEST_LIB, { recursive: true })
-        await filesystem.writeFile(`${GUEST_LIB}/nhp.mjs`, parserSource)
-        await filesystem.writeFile(`${GUEST_LIB}/corpus.mjs`, helperSource)
-        // Written through the filesystem rather than passed as `bash -c` text. A script arriving as a
-        // shell argument would be subject to the shell's own quoting, and an agent's traversal is
-        // full of `$`, backticks, and quotes that a heredoc mangles differently than a file does.
-        await filesystem.writeFile(GUEST_SCRIPT, input.script)
-      },
-      catch: (cause) => StorageFailure.make({ operation: `exec.seed: ${String(cause)}` })
-    })
+        yield* Effect.tryPromise({
+          try: async () => {
+            await filesystem.mkdir(GUEST_LIB, { recursive: true })
+            await filesystem.writeFile(`${GUEST_LIB}/nhp.mjs`, parserSource)
+            await filesystem.writeFile(`${GUEST_LIB}/corpus.mjs`, helperSource)
+            // Written through the filesystem rather than passed as `bash -c` text. A script arriving as
+            // a shell argument would be subject to the shell's own quoting, and an agent's traversal is
+            // full of `$`, backticks, and quotes that a heredoc mangles differently than a file does.
+            await filesystem.writeFile(GUEST_SCRIPT, input.script)
+          },
+          catch: (cause) => StorageFailure.make({ operation: `exec.seed: ${String(cause)}` })
+        })
 
-    const started = Date.now()
-    const result = yield* Effect.tryPromise({
-      try: () => bash.exec(`js-exec ${GUEST_SCRIPT}`),
-      // A thrown failure from `bash.exec` is the runtime's rather than the script's. just-bash reports a
-      // script's own non-zero exit through `exitCode`, and throws only when it could not run at all.
-      catch: (cause) => StorageFailure.make({ operation: `exec.run: ${String(cause)}` })
-    })
-    const durationMs = Date.now() - started
+        const started = Date.now()
+        const result = yield* Effect.tryPromise({
+          try: () => bash.exec(`js-exec ${GUEST_SCRIPT}`),
+          // A thrown failure from `bash.exec` is the runtime's rather than the script's. just-bash
+          // reports a script's own non-zero exit through `exitCode`, and throws only when it could not
+          // run at all.
+          catch: (cause) => StorageFailure.make({ operation: `exec.run: ${String(cause)}` })
+        })
+        const durationMs = Date.now() - started
 
-    const stderr = String(result.stderr ?? "")
-    return {
-      corpusMount: CORPUS_MOUNT,
-      sha: input.sha ?? null,
-      exitCode: result.exitCode,
-      stdout: String(result.stdout ?? ""),
-      stderr,
-      durationMs,
-      timeoutMs,
-      timedOut: cutOffByTheRuntime(result.exitCode, stderr)
-    }
+        const stderr = String(result.stderr ?? "")
+        return {
+          corpusMount: CORPUS_MOUNT,
+          sha: input.sha ?? null,
+          exitCode: result.exitCode,
+          stdout: String(result.stdout ?? ""),
+          stderr,
+          durationMs,
+          timeoutMs,
+          timedOut: cutOffByTheRuntime(result.exitCode, stderr)
+        }
+      })
+
+    return yield* withBridgeRetry(attempt)
   })
 
 /**

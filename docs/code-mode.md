@@ -81,6 +81,7 @@ export interface Memhtml {
 
 const walk = (dir: string): string[] =>
   readdirSync(dir).flatMap((name) => {
+    if (name === ".git") return []
     const p = join(dir, name)
     if (statSync(p).isDirectory()) return walk(p)
     if (!p.endsWith(".html")) return []
@@ -276,7 +277,13 @@ What the runtime guarantees, each measured rather than declared (`apps/cli/tests
   `exitCode: 124` with `timedOut: true`.
 - **A failing script is exit 0.** The report carries `exitCode` and `stderr`; the CLI's exit 1 is
   reserved for the runtime failing to run the script at all.
+- **A sandbox that fails to answer is the runtime's failure, not the script's.** A guest `fs` call is a
+  synchronous round trip over a shared buffer, and when that handshake does not complete just-bash
+  throws `Error code: <n>` or `Operation timed out` — a phrase of its own, which without classification
+  reads as a script that threw. The script is re-run against the same tree up to three times (sound
+  because the mount is read-only and there is no egress), and only exhaustion answers, as `ERR_STORAGE`.
 
 The helper's `path` keys are root-absolute, matching the `href` convention exactly, so
 `memories.get(link.href)` resolves with no normalization. Generated `index.html` listings are not
-counted as memories.
+counted as memories, and `.git` is not walked at all — a ref is a file at a name the author chose, so a
+branch called `foo.html` would otherwise be counted as a memory.
