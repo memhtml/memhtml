@@ -13,7 +13,7 @@ import { InMemoryFs, MountableFs, OverlayFs } from "just-bash"
  * mounts the transcript root so the agent reads transcripts off a filesystem, and `memhtml exec`, which
  * mounts the memory corpus so a sandboxed script can traverse it. The module lives in
  * `apps/consolidator` because that is where `just-bash` is a real dependency, pinned to 3.2.0,
- * the version eve 0.31.0 loads through its own optional-package path
+ * the version eve 0.33.0 loads through its own optional-package path
  * (node_modules/eve/dist/src/execution/sandbox/bindings/just-bash-runtime.js). `memhtml exec` imports it
  * from `@memhtml/consolidator`.
  *

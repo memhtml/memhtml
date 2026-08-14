@@ -92,8 +92,8 @@ flowchart LR
 | Storage | `node:sqlite` `DatabaseSync` over 10 SQL migrations | `packages/index/src/database.ts:4` |
 | Storage | git as the system of record for the root | `packages/store/src/layout.ts:22-24` |
 | HTML parsing | parse5 8.0.1 | `packages/html/package.json:23` |
-| Embeddings | AWS Bedrock SDK 3.1107.0, `cohere.embed-v4:0` at 1024 dims | `packages/llm/package.json:20`, `packages/llm/src/constants.ts:7-8` |
-| Agent sandbox | eve 0.32.0, just-bash 3.2.0, ai 7.0.59 | `apps/consolidator/package.json:23-29` |
+| Embeddings | AWS Bedrock SDK 3.1108.0, `cohere.embed-v4:0` at 1024 dims | `packages/llm/package.json:20`, `packages/llm/src/constants.ts:7-8` |
+| Agent sandbox | eve 0.33.0, just-bash 3.2.0, ai 7.0.61 | `apps/consolidator/package.json:23-29` |
 | Build tooling | turbo 2.10.9, pnpm 11.21.0, biome 2.5.8 | `package.json:5`, `package.json:25-27` |
 | Test tooling | vitest 4.1.10, `@effect/vitest`, fast-check 4.9.0 | `apps/cli/package.json:41-44`, `pnpm-workspace.yaml:33` |
 
