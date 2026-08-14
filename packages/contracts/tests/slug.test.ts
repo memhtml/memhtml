@@ -128,6 +128,55 @@ describe("withCollisionOrdinal", () => {
       { numRuns: 1000 }
     )
   })
+
+  /**
+   * **A slug at the cap whose own tail is the suffix.** The case above found this with a random
+   * seed, so it is pinned here as a value: the counterexample's title kebabs to exactly
+   * {@link SLUG_MAX_LENGTH} characters ending in `-2`, and cutting it to 78 to make room for `-2`
+   * rebuilds the slug itself — so ordinals 1 and 2 named one file and the store's loop re-proposed
+   * the name that had collided.
+   *
+   * Asserted as a value rather than left to the property, because a property test that only fails
+   * on 1 seed in N is not a regression lock. The suffixed form stays a valid slug inside the budget,
+   * which is the other half: shortening the stem may not produce `…--2` or an overrun.
+   *
+   * (Mutation: restoring the single-width cut in `withCollisionOrdinal` makes ordinals 1 and 2 equal
+   * here. Observed: `expected '…-0aa000aa-0-2' not to be '…-0aa000aa-0-2'`.)
+   */
+  it("distinguishes ordinal 2 from ordinal 1 for a capped slug already ending in -2", () => {
+    const slug = slugify(
+      "A00Aa0a aaaAAaA0A aa00AAA0aAAA AAaAa0Aa AaAAAA00Aa aAAa AaAaaaaa0AA 0aa000AA 0 2A A"
+    )
+    expect(slug.length).toBe(SLUG_MAX_LENGTH)
+    expect(slug.endsWith("-2")).toBe(true)
+
+    expect(withCollisionOrdinal(slug, 2)).not.toBe(withCollisionOrdinal(slug, 1))
+    expect(isSlug(withCollisionOrdinal(slug, 2))).toBe(true)
+    expect(withCollisionOrdinal(slug, 2).length).toBeLessThanOrEqual(SLUG_MAX_LENGTH)
+  })
+
+  /**
+   * Every ordinal the store can reach names a DIFFERENT file, on the slugs where that is hardest.
+   *
+   * The store walks 1..1000 (`pathFor`) and treats each candidate as a fresh name, so distinctness
+   * has to hold across the whole range rather than between neighbours: a repeat anywhere is an
+   * iteration that re-proposes a name already rejected. Enumerated rather than sampled, over the
+   * family where the cut interacts with the suffix — a capped slug whose tail is itself an ordinal
+   * suffix of each width.
+   */
+  it("names 1000 distinct files for every capped slug whose tail is an ordinal suffix", () => {
+    for (const tail of ["-2", "-3", "-42", "-999"]) {
+      const slug = `${"a".repeat(SLUG_MAX_LENGTH - tail.length)}${tail}`
+      expect(slug.length).toBe(SLUG_MAX_LENGTH)
+      const named = new Set<string>()
+      for (let ordinal = 1; ordinal <= 1000; ordinal += 1) {
+        const candidate = withCollisionOrdinal(slug, ordinal)
+        expect(isSlug(candidate), `${tail} @ ${ordinal}: ${candidate}`).toBe(true)
+        named.add(candidate)
+      }
+      expect(named.size, `tail ${tail}`).toBe(1000)
+    }
+  })
 })
 
 describe("episodic filenames", () => {

@@ -1,0 +1,68 @@
+# Dependabot: weekly grouped updates for the pnpm workspace and the pinned actions.
+#
+# What Dependabot deliberately does NOT own here:
+# - mise.lock — scanners and toolchain move through `mise run tools:bump`, where the
+#   lock diff is the review artifact.
+# - The 7-day pnpm `minimumReleaseAge` in pnpm-workspace.yaml still applies to what
+#   Dependabot proposes; a fresh release inside the soak window will not resolve, which
+#   is the intended supply-chain tradeoff (see the exclude-newer note in that file).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/Los_Angeles
+    # 72-hour soak on top of pnpm's own 7-day minimumReleaseAge: Dependabot will not
+    # even PROPOSE a release younger than this, so a compromised-then-yanked version
+    # never reaches a PR. Security updates bypass cooldown by design.
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 10
+    commit-message:
+      # `deps:` is not a release-please type, so dependency bumps do not by themselves
+      # force a release; a maintainer promotes one with fix:/feat: when it matters.
+      prefix: "deps"
+    labels:
+      - dependencies
+    ignore:
+      # `typescript` is two roles under one name: the compiler `tsc -b` runs (7.x at the
+      # root) and the in-process parser `apps/docs/src/loaders/repo-sources.ts` calls (6.x
+      # in that package). A major that moves both at once is not installable there, on two
+      # counts measured against 7.0.2 on 2026-08-14: the main entry exports only
+      # `{ version, versionMajorMinor }`, with parsing behind `typescript/unstable/sync`'s
+      # out-of-process `API`; and `@astrojs/check@0.9.10`, which IS that package's
+      # `typecheck` task, declares `peerDependencies: { typescript: "^5.0.0 || ^6.0.0" }`.
+      # Lift this when the loader no longer needs an in-process AST and astro check accepts
+      # the major — a compiler bump is then a deliberate change, not a weekly one. Minor and
+      # patch updates still flow.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+    groups:
+      # Effect is pinned as one moving set in the workspace catalog; everything else
+      # minor/patch rides in one weekly PR so review cost stays flat.
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/Los_Angeles
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies
+      - github-actions
+    groups:
+      actions:
+        update-types:
+          - minor
+          - patch

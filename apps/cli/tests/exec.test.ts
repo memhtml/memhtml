@@ -9,11 +9,15 @@ import { Effect } from "effect"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import {
+  BRIDGE_ATTEMPTS,
+  bridgeFault,
   CORPUS_MOUNT,
   cutOffByTheRuntime,
+  type ExecReport,
   execCommand,
   MAX_TIMEOUT_MS,
-  runExec
+  runExec,
+  withBridgeRetry
 } from "../src/exec.js"
 import { run } from "../src/run.js"
 
@@ -237,6 +241,148 @@ describe("the census asserts against a total derived outside the sandbox", () =>
     )
     expect(seen.memories).toBe(2)
   }, 120_000)
+
+  /**
+   * `.git` is git's storage, not the corpus, and a ref is a file at a name the author chose.
+   *
+   * Asserted with a branch called `foo.html`, because that is the shape where the skip is a CORRECTNESS
+   * fix rather than a saving: `.git/refs/heads/foo.html` is a real path a real repository holds, and a
+   * walk that descends into it reports a census one higher than any grep of the corpus can find. The
+   * saving is real too and measured on the fixture: 578 of its 935 entries are git's.
+   *
+   * (Mutation: dropping `entry !== ".git"` from `walk` in `corpus.mjs` makes this 2 rather than 1.
+   * Observed: `expected 2 to be 1`.)
+   */
+  it("does not descend into .git, where a ref can be named like a memory", async () => {
+    const vcsRoot = await ensure(join(host, "vcs"))
+    await writeFile(join(vcsRoot, "real.html"), memoryHtml("real", []))
+    await writeFile(
+      join(await ensure(join(vcsRoot, ".git", "refs", "heads")), "foo.html"),
+      "0000000000000000000000000000000000000000\n"
+    )
+
+    const seen = await answer(
+      `import { corpus } from "/workspace/lib/corpus.mjs"
+       console.log(JSON.stringify({ memories: corpus().size }))`,
+      vcsRoot
+    )
+    expect(seen.memories).toBe(1)
+  }, 120_000)
+})
+
+/**
+ * **A sandbox that fails to answer is the RUNTIME failing, not the script.**
+ *
+ * The guest's filesystem calls are synchronous round trips over a `SharedArrayBuffer`, and when that
+ * handshake does not complete `just-bash`'s `SyncBackend` throws a message of its own — which reaches
+ * `stderr` looking exactly like a script that threw. Observed once on a 4-vCPU CI runner (2026-08-14,
+ * run 31830358200): `at isDirectory (/workspace/lib/corpus.mjs:45:28): Error code: 0`, on a tree
+ * byte-identical to one that had passed minutes before.
+ *
+ * Both tiers here are UNIT tiers over injected values, and that is forced rather than lazy: 72 executions
+ * under 3x CPU oversubscription produced no fault (measured 2026-08-14), so a test driving the real
+ * sandbox cannot tell a working retry from a fault that never fired. What is testable is the
+ * classification and the loop, so both are separate functions.
+ */
+describe("a bridge fault is the runtime's failure, and the script is re-run", () => {
+  /** The two phrases, verbatim from `just-bash@3.2.0`'s bundle, as `formatError` delivers them. */
+  it("names the bridge's own two wordings, and nothing else", () => {
+    expect(
+      bridgeFault(1, "at isDirectory (/workspace/lib/corpus.mjs:45:28): Error code: 0\n")
+    ).toBe("Error code: 0")
+    expect(bridgeFault(1, "at walk (/workspace/lib/corpus.mjs:59:29): Error code: 7\n")).toBe(
+      "Error code: 7"
+    )
+    expect(
+      bridgeFault(1, "at readFileSync (/workspace/script.mjs:3:9): Operation timed out\n")
+    ).toBe("Operation timed out")
+    // A script's own diagnostic is the script's, and re-running it would only produce it again.
+    expect(
+      bridgeFault(1, "at <eval> (/workspace/script.mjs:2:7): the selector matched nothing\n")
+    ).toBeNull()
+    /**
+     * A cut-off script is NOT a bridge fault, and this is the case that keeps the retry from mattering
+     * where it must not: a runaway loop re-run three times would burn three full bounds before
+     * answering. `cutOffByTheRuntime` owns that wording, and the two classifications may not overlap.
+     */
+    expect(bridgeFault(124, "js-exec: Execution timeout: exceeded 400ms limit\n")).toBeNull()
+    expect(cutOffByTheRuntime(124, "js-exec: Execution timeout: exceeded 400ms limit")).toBe(true)
+    // Exit 0 is an answer. A script printing the phrase deliberately has still answered.
+    expect(bridgeFault(0, "Error code: 0\n")).toBeNull()
+  })
+
+  const reportWith = (exitCode: number, stderr: string): ExecReport => ({
+    corpusMount: CORPUS_MOUNT,
+    sha: null,
+    exitCode,
+    stdout: exitCode === 0 ? '{"memories":305}' : "",
+    stderr,
+    durationMs: 1,
+    timeoutMs: 30_000,
+    timedOut: false
+  })
+
+  const faulted = reportWith(1, "at isDirectory (/workspace/lib/corpus.mjs:45:28): Error code: 0\n")
+
+  it("re-runs a faulted attempt and answers with the attempt that succeeded", async () => {
+    const attempted: Array<number> = []
+    const report = await Effect.runPromise(
+      withBridgeRetry((attemptIndex) => {
+        attempted.push(attemptIndex)
+        return Effect.succeed(attemptIndex === 1 ? faulted : reportWith(0, ""))
+      })
+    )
+    expect(attempted).toEqual([1, 2])
+    expect(report.exitCode).toBe(0)
+    expect(report.stdout).toBe('{"memories":305}')
+  })
+
+  /**
+   * A script's own failure is run ONCE.
+   *
+   * The count is the assertion, not the returned report: a loop that retried every non-zero exit would
+   * return the same report here and pass on the report alone.
+   */
+  it("does not re-run a script that failed on its own terms", async () => {
+    const attempted: Array<number> = []
+    const own = reportWith(
+      1,
+      "at <eval> (/workspace/script.mjs:2:7): the selector matched nothing\n"
+    )
+    const report = await Effect.runPromise(
+      withBridgeRetry((attemptIndex) => {
+        attempted.push(attemptIndex)
+        return Effect.succeed(own)
+      })
+    )
+    expect(attempted).toEqual([1])
+    expect(report).toBe(own)
+  })
+
+  /**
+   * Exhaustion leaves through the ERROR channel, so `memhtml exec` exits 1 with `ERR_STORAGE` rather
+   * than handing an agent an `exec.report` whose diagnostic is about a `stat` it never made.
+   */
+  it("fails as the runtime once every attempt faults", async () => {
+    const attempted: Array<number> = []
+    const outcome = await Effect.runPromise(
+      Effect.result(
+        withBridgeRetry((attemptIndex) => {
+          attempted.push(attemptIndex)
+          return Effect.succeed(faulted)
+        })
+      )
+    )
+    expect(attempted).toHaveLength(BRIDGE_ATTEMPTS)
+    expect(outcome._tag).toBe("Failure")
+    if (outcome._tag === "Failure") {
+      expect(outcome.failure._tag).toBe("StorageFailure")
+      // The evidence rides along: the operator sees which phrase the bridge answered with.
+      expect(String((outcome.failure as { operation?: string }).operation)).toContain(
+        "Error code: 0"
+      )
+    }
+  })
 })
 
 describe("the corpus is read-only, and the mount proves it (CODE-2)", () => {

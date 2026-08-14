@@ -27,7 +27,7 @@ export default defineAgent({
   /**
    * REQUIRED here, unlike for a gateway model id. eve's window catalog does not know this
    * model id, and without the window it cannot judge when to compact. Verified against the
-   * installed 0.31.0 type: `modelContextWindowTokens?: number` on the agent definition
+   * installed 0.33.0 type: `modelContextWindowTokens?: number` on the agent definition
    * (node_modules/eve/dist/src/shared/agent-definition.d.ts:59).
    *
    * **1,000,000 is the window Opus 5 serves on the Bedrock global inference profile**, confirmed by
