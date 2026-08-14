@@ -32,8 +32,8 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
  * eve out of `src/`'s import graph so the test tier stays server-free. TypeScript is structural, so
  * the value {@link runVerifierConfig} returns is assignable to `jwtHmac`'s parameter with no cast.
  *
- * Every claim and bound below was verified against the installed eve 0.31.0 by driving
- * `verifyJwtHmac` directly (2026-08-09): a token from {@link signRunToken} verifies as
+ * Every claim and bound below was verified against the installed eve 0.33.0 by driving
+ * `verifyJwtHmac` directly (2026-08-14): a token from {@link signRunToken} verifies as
  * `principalType: "service"`, and `null`, a non-JWT string, a token signed with a different secret,
  * an expired token, one with no `sub`, one with a foreign `sub`, and one with a foreign `aud` each
  * return `{ ok: false }`. `tests/run-auth.test.ts` is that probe kept as a test.
@@ -194,7 +194,7 @@ const segment = (value: unknown): string =>
  *
  * Hand-rolled over `node:crypto` because eve exports NO signer: `jwtHmac`, `verifyJwtHmac`, and the
  * jose bundle behind them are verify-only on the public surface (checked across every subpath export
- * of eve 0.31.0), so the alternative to these six lines is a new dependency for one HMAC. The claims
+ * of eve 0.33.0, 46 of them), so the alternative to these six lines is a new dependency for one HMAC. The claims
  * are the ones {@link runVerifierConfig} matches, which is the whole correctness condition and the
  * reason both live in this module.
  *

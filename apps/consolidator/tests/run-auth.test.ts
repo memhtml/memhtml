@@ -76,8 +76,8 @@ describe("reading the secret out of an environment", () => {
 
   /**
    * Absent, blank, and under-width all read as NO SECRET, and the third is the measured one:
-   * `verifyJwtHmac` accepts a three-character secret's own token (probed 2026-08-09 against eve
-   * 0.31.0 — jose does not check HS key width on verify), so an under-width value would otherwise be
+   * `verifyJwtHmac` accepts a three-character secret's own token (probed 2026-08-14 against eve
+   * 0.33.0 — jose does not check HS key width on verify), so an under-width value would otherwise be
    * a working password. The floor is this app's to enforce or nobody's.
    */
   it("refuses an absent, blank, or under-width value", () => {
