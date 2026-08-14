@@ -15,6 +15,11 @@ updates:
       day: monday
       time: "08:00"
       timezone: America/Los_Angeles
+    # 72-hour soak on top of pnpm's own 7-day minimumReleaseAge: Dependabot will not
+    # even PROPOSE a release younger than this, so a compromised-then-yanked version
+    # never reaches a PR. Security updates bypass cooldown by design.
+    cooldown:
+      default-days: 3
     open-pull-requests-limit: 10
     commit-message:
       # `deps:` is not a release-please type, so dependency bumps do not by themselves
@@ -36,6 +41,8 @@ updates:
       day: monday
       time: "08:00"
       timezone: America/Los_Angeles
+    cooldown:
+      default-days: 3
     commit-message:
       prefix: "ci"
     labels:
