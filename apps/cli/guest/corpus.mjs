@@ -54,9 +54,20 @@ const isDirectory = (path) => {
  * the directory count and pollutes an entity tally with link text. The fixture corpus happens to
  * contain none, so a test built only on the fixture would not catch a regression here; a real
  * `$MEMHTML_ROOT` has one per directory.
+ *
+ * `.git` is skipped because the corpus is the HTML tree and git's own storage is not part of it. The
+ * name covers both shapes it takes: a directory when a plain root is mounted, and a FILE when a
+ * pinned worktree is (`git worktree add` writes a `.git` file naming the parent repo). Two reasons,
+ * and the first is correctness: a ref is a file at a path the author chooses, so a branch named
+ * `foo.html` lands at `.git/refs/heads/foo.html` and is counted as a memory whose every field is
+ * empty — a census one higher than any grep of the corpus reports. The second is cost, and it is
+ * paid per entry: every name here is one round-trip across the sandbox's synchronous host bridge, and
+ * 578 of the 305-memory fixture's 935 entries are git's (measured 2026-08-14), so the walk spent 62%
+ * of its calls on files no recipe can read.
  */
 export const walk = (dir = ROOT, found = []) => {
   for (const entry of fs.readdirSync(dir)) {
+    if (entry === ".git") continue
     const path = `${dir}/${entry}`
     if (isDirectory(path)) walk(path, found)
     else if (path.endsWith(".html") && entry !== "index.html") found.push(path)
