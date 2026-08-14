@@ -20,7 +20,7 @@
           "error",
           {
             "minScore": 0.9,
-            "aggregationMethod": "median"
+            "aggregationMethod": "optimistic"
           }
         ],
         "categories:accessibility": [

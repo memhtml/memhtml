@@ -38,7 +38,7 @@ build-before-integration ordering.
 | `mise run test` | every package's unit + property suites |
 | `mise run test:integration` | `tests-integration/` — real git repo, real database, whole stack |
 | `mise run test:eval` | the discrimination gate (fake embedder) |
-| `mise run test:a11y` | WCAG 2.2 AA over four pages of `apps/docs/dist`, plus the probes axe lacks |
+| `mise run test:a11y` | the browser tier: WCAG 2.2 AA over four pages of `apps/docs/dist`, the probes axe lacks, and the layout-shift probe |
 | `mise run test:budget` | Lighthouse category floors + the byte budget over `apps/docs/dist` |
 | `mise run spell` | cspell over `apps/docs/src/content/**` (also the tail of `mise run lint`) |
 | `mise run browsers` | fetch the pinned Chromium the two browser tiers drive |
@@ -184,6 +184,14 @@ Standing hazards to write tests against, learned here:
   unchanged page whose geometry was identical throughout. The rule is disabled and the criterion is
   covered by a probe in `apps/docs/tests/a11y.test.ts` that reads the geometry itself. Measure the flake
   before trusting or before suppressing.
+- **A measurement can describe the harness rather than the subject, and it reads as a regression.**
+  Measured 2026-08-14: Lighthouse scored one unchanged page `1, 1, 0.81` at identical `screenEmulation`
+  and host speed, the outlier carrying `CLS 0.427` beside `TBT 0 ms` and `LCP 324 ms` — a shift whose
+  recorded box (1335px wide, ending at x=2370) does not fit the 1350px viewport it was supposedly
+  measured in, because Lighthouse's own viewport emulation raced the first paint. So
+  `categories:performance` aggregates `optimistic` (contention can only depress a static page's score)
+  and layout stability is gated by `apps/docs/tests/layout-stability.test.ts`, which fixes the viewport
+  before navigating. Check whether a metric's units and geometry are even possible before believing it.
 
 The docs site's accessibility gate carries a **declared baseline** — `KNOWN_A11Y_FAILURES` in
 `apps/docs/src/gates.ts`, three violations owned by `src/styles/rfc.css`, Expressive Code and Starlight.
