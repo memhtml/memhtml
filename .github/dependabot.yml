@@ -27,6 +27,19 @@ updates:
       prefix: "deps"
     labels:
       - dependencies
+    ignore:
+      # `typescript` is two roles under one name: the compiler `tsc -b` runs (7.x at the
+      # root) and the in-process parser `apps/docs/src/loaders/repo-sources.ts` calls (6.x
+      # in that package). A major that moves both at once is not installable there, on two
+      # counts measured against 7.0.2 on 2026-08-14: the main entry exports only
+      # `{ version, versionMajorMinor }`, with parsing behind `typescript/unstable/sync`'s
+      # out-of-process `API`; and `@astrojs/check@0.9.10`, which IS that package's
+      # `typecheck` task, declares `peerDependencies: { typescript: "^5.0.0 || ^6.0.0" }`.
+      # Lift this when the loader no longer needs an in-process AST and astro check accepts
+      # the major — a compiler bump is then a deliberate change, not a weekly one. Minor and
+      # patch updates still flow.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     groups:
       # Effect is pinned as one moving set in the workspace catalog; everything else
       # minor/patch rides in one weekly PR so review cost stays flat.
