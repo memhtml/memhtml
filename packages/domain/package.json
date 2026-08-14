@@ -1,14 +1,29 @@
 {
   "name": "@memhtml/domain",
   "version": "0.1.0",
-  "private": true,
-  "type": "module",
   "description": "Pure math: retention, decay, RRF, MMR, merge guards.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/memhtml/memhtml.git",
+    "directory": "packages/domain"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "dist",
+    "!dist/.tsbuildinfo"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -b",
