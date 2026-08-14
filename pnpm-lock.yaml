@@ -102,20 +102,20 @@ importers:
   apps/consolidator:
     dependencies:
       '@ai-sdk/amazon-bedrock':
-        specifier: 5.0.51
-        version: 5.0.51(zod@4.4.3)
+        specifier: 5.0.52
+        version: 5.0.52(zod@4.4.3)
       '@memhtml/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       ai:
-        specifier: 7.0.59
-        version: 7.0.59(zod@4.4.3)
+        specifier: 7.0.60
+        version: 7.0.60(zod@4.4.3)
       effect:
         specifier: 'catalog:'
         version: 4.0.0-beta.107
       eve:
         specifier: 0.32.0
-        version: 0.32.0(ai@7.0.59(zod@4.4.3))(aws4fetch@1.0.20)(chokidar@5.0.0)(ioredis@5.11.1(supports-color@10.2.2))(just-bash@3.2.0(supports-color@10.2.2))(lru-cache@11.5.2)(vite@8.2.0(@types/node@24.13.3)(esbuild@0.28.2)(yaml@2.9.0))
+        version: 0.32.0(ai@7.0.60(zod@4.4.3))(aws4fetch@1.0.20)(chokidar@5.0.0)(ioredis@5.11.1(supports-color@10.2.2))(just-bash@3.2.0(supports-color@10.2.2))(lru-cache@11.5.2)(vite@8.2.0(@types/node@24.13.3)(esbuild@0.28.2)(yaml@2.9.0))
       just-bash:
         specifier: 3.2.0
         version: 3.2.0(supports-color@10.2.2)
@@ -633,8 +633,8 @@ importers:
 
 packages:
 
-  '@ai-sdk/amazon-bedrock@5.0.51':
-    resolution: {integrity: sha512-jRcwNHBpWsnfwM63STV+HqGplccQdFWP+oFD1RovjWaV3cWvCHMmtBAlrwM0ys3tbL4iQBiJwGr5YaB/nB0dkQ==}
+  '@ai-sdk/amazon-bedrock@5.0.52':
+    resolution: {integrity: sha512-LQj+n42qxX/8F8TU0uRakNGs0UO370NpMd34wBWTvc4Z6T5yQ1eVGR7ZS3A05mQ65RmVSatT+fEVhpAXq66rGw==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -645,14 +645,14 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/gateway@4.0.47':
-    resolution: {integrity: sha512-BuWWlA8atWEnEJzN4eamCpGZWkoK9V3TCyNaMwgRIazhqkgWkA1Wp36si3j2JeVYzlvlEAOWrJ92dr92j/Vkqg==}
+  '@ai-sdk/gateway@4.0.48':
+    resolution: {integrity: sha512-62yBV2sD8I488UIRsS0mu2axhtd/bt1neyQUpe3N5UbJhAeVbZr0OhA7N/K7COQosLJjkhiO9EfSvddTbZCoLw==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/openai@4.0.37':
-    resolution: {integrity: sha512-rQIdkvqHaqyu94zMJKkhucRwsyTpYUmI+vrH/Dm1Erc6ypURikOV+9e51Pni6RL8IxFlu2bv6y8hA1ghzCy7Gw==}
+  '@ai-sdk/openai@4.0.38':
+    resolution: {integrity: sha512-G9T4lQHA2GCPpUhg2oYZMJMKurpz789KoTY+uW5x04cuTB11letlP9atOAo9zu/i7hBp7x/z11pyyWHa1D7r6Q==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -2393,8 +2393,8 @@ packages:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
     engines: {node: '>= 14'}
 
-  ai@7.0.59:
-    resolution: {integrity: sha512-p10cqg8KvLIZi7Gk+XsQjoYoLENoDdEYvehP0rSo6Wg15nbCmP+nwIy1rOIX+WGIDWGdI+jmhjVx5fXShBVC3w==}
+  ai@7.0.60:
+    resolution: {integrity: sha512-b56otp/hSz61+wqDuiadtRRTV+8+bU/+3XDCvl3r66e6jPwuJKc4oe75ltjGfL4NF1dOkLoBaHyinT+jI569ew==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -5666,10 +5666,10 @@ packages:
 
 snapshots:
 
-  '@ai-sdk/amazon-bedrock@5.0.51(zod@4.4.3)':
+  '@ai-sdk/amazon-bedrock@5.0.52(zod@4.4.3)':
     dependencies:
       '@ai-sdk/anthropic': 4.0.37(zod@4.4.3)
-      '@ai-sdk/openai': 4.0.37(zod@4.4.3)
+      '@ai-sdk/openai': 4.0.38(zod@4.4.3)
       '@ai-sdk/provider': 4.0.7
       '@ai-sdk/provider-utils': 5.0.26(zod@4.4.3)
       '@smithy/eventstream-codec': 4.4.16
@@ -5683,14 +5683,14 @@ snapshots:
       '@ai-sdk/provider-utils': 5.0.26(zod@4.4.3)
       zod: 4.4.3
 
-  '@ai-sdk/gateway@4.0.47(zod@4.4.3)':
+  '@ai-sdk/gateway@4.0.48(zod@4.4.3)':
     dependencies:
       '@ai-sdk/provider': 4.0.7
       '@ai-sdk/provider-utils': 5.0.26(zod@4.4.3)
       '@vercel/oidc': 3.2.0
       zod: 4.4.3
 
-  '@ai-sdk/openai@4.0.37(zod@4.4.3)':
+  '@ai-sdk/openai@4.0.38(zod@4.4.3)':
     dependencies:
       '@ai-sdk/provider': 4.0.7
       '@ai-sdk/provider-utils': 5.0.26(zod@4.4.3)
@@ -7559,9 +7559,9 @@ snapshots:
 
   agent-base@7.1.4: {}
 
-  ai@7.0.59(zod@4.4.3):
+  ai@7.0.60(zod@4.4.3):
     dependencies:
-      '@ai-sdk/gateway': 4.0.47(zod@4.4.3)
+      '@ai-sdk/gateway': 4.0.48(zod@4.4.3)
       '@ai-sdk/provider': 4.0.7
       '@ai-sdk/provider-utils': 5.0.26(zod@4.4.3)
       zod: 4.4.3
@@ -8440,9 +8440,9 @@ snapshots:
 
   etag@1.8.1: {}
 
-  eve@0.32.0(ai@7.0.59(zod@4.4.3))(aws4fetch@1.0.20)(chokidar@5.0.0)(ioredis@5.11.1(supports-color@10.2.2))(just-bash@3.2.0(supports-color@10.2.2))(lru-cache@11.5.2)(vite@8.2.0(@types/node@24.13.3)(esbuild@0.28.2)(yaml@2.9.0)):
+  eve@0.32.0(ai@7.0.60(zod@4.4.3))(aws4fetch@1.0.20)(chokidar@5.0.0)(ioredis@5.11.1(supports-color@10.2.2))(just-bash@3.2.0(supports-color@10.2.2))(lru-cache@11.5.2)(vite@8.2.0(@types/node@24.13.3)(esbuild@0.28.2)(yaml@2.9.0)):
     dependencies:
-      ai: 7.0.59(zod@4.4.3)
+      ai: 7.0.60(zod@4.4.3)
       nitro: 3.0.260610-beta(aws4fetch@1.0.20)(chokidar@5.0.0)(ioredis@5.11.1(supports-color@10.2.2))(lru-cache@11.5.2)(vite@8.2.0(@types/node@24.13.3)(esbuild@0.28.2)(yaml@2.9.0))
       undici: 8.9.0
     optionalDependencies:
