@@ -38,7 +38,20 @@ const FIXTURE_IDENTITY: ReadonlyArray<readonly [string, string]> = [
   // A signing config inherited from a developer's global gitconfig would make every fixture
   // commit prompt for a key or fail outright.
   ["commit.gpgsign", "false"],
-  ["tag.gpgsign", "false"]
+  ["tag.gpgsign", "false"],
+  /**
+   * No background maintenance in a fixture, because it OUTLIVES the test.
+   *
+   * `git commit` starts `git maintenance run --auto` (and `gc --auto` before it) as a detached
+   * process, so a repo that a test tears down at the end of its case can still have git writing into
+   * `.git/objects` — and {@link FixtureRepo.cleanup} then fails with `ENOTEMPTY: directory not empty,
+   * rmdir '…/.git/objects'`, attributed to whichever case happened to be last. Observed on CI
+   * 2026-08-14 (`memhtml/memhtml` run 31849757926). A fixture lives for one test and never has enough
+   * objects for maintenance to be worth doing, so switching it off removes the race rather than
+   * waiting the race out.
+   */
+  ["gc.auto", "0"],
+  ["maintenance.auto", "false"]
 ]
 
 /**
@@ -53,7 +66,15 @@ export const makeFixtureRepo = (
   Effect.gen(function* () {
     const root = yield* Effect.promise(() => mkdtemp(join(tmpdir(), "memhtml-store-")))
     const git = makeGit(root)
-    const cleanup = () => rm(root, { recursive: true, force: true })
+    /**
+     * `maxRetries` because a temp tree can have a writer that is not this process.
+     *
+     * The `gc.auto` entry above stops git's own background maintenance, the writer that caused this;
+     * the retries are the second layer, for anything else that holds a file open for a moment — a
+     * scanner, an editor, an OS indexer. `rm` retries only the errors worth retrying (`ENOTEMPTY`,
+     * `EBUSY`, `EPERM`), so a genuinely undeletable tree still fails rather than stalling.
+     */
+    const cleanup = () => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
 
     if (options.init !== false) {
       // The identity has to exist before the first commit, and `initRepo` makes one, so the
