@@ -50,9 +50,30 @@ const VIEWPORT = { width: 1350, height: 940 }
  */
 const SETTLE_MS = 1_500
 
+/** One recorded shift: how much it moved the page, when, and which nodes moved. */
+type Shift = {
+  readonly value: number
+  readonly at: number
+  readonly sources: ReadonlyArray<{
+    readonly node: string
+    readonly from: string
+    readonly to: string
+  }>
+}
+
 let site: StaticSite
 let browser: Browser
-const shifts = new Map<string, number>()
+const shifts = new Map<string, ReadonlyArray<Shift>>()
+
+/** Every move that made up a page's total, so the failure message is the diagnosis. */
+const report = (entries: ReadonlyArray<Shift>): string =>
+  entries
+    .map(
+      (entry) =>
+        `${entry.value.toFixed(4)} at ${entry.at}ms: ` +
+        (entry.sources.map((s) => `${s.node} ${s.from} -> ${s.to}`).join("; ") || "no source node")
+    )
+    .join("\n      ")
 
 beforeAll(async () => {
   site = await serveStatic(dist, BASE)
@@ -70,22 +91,53 @@ beforeAll(async () => {
      * against a future case that does.
      */
     await page.addInitScript(() => {
-      const w = window as unknown as { __shift: number }
-      w.__shift = 0
+      const w = window as unknown as { __shifts: Array<unknown> }
+      w.__shifts = []
       new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
           const shift = entry as PerformanceEntry & {
             value: number
             hadRecentInput: boolean
+            sources?: ReadonlyArray<{
+              node?: Element | null
+              previousRect?: DOMRectReadOnly
+              currentRect?: DOMRectReadOnly
+            }>
           }
-          if (!shift.hadRecentInput) w.__shift += shift.value
+          if (shift.hadRecentInput) continue
+          const box = (rect?: DOMRectReadOnly): string =>
+            rect === undefined
+              ? ""
+              : `${Math.round(rect.x)},${Math.round(rect.y)} ${Math.round(rect.width)}x${Math.round(rect.height)}`
+          // The node's identity, not its text: a tag plus its first classes is what a fix is written
+          // against, where a snippet of prose would make the failure message unreadable.
+          w.__shifts.push({
+            value: shift.value,
+            at: Math.round(shift.startTime),
+            sources: (shift.sources ?? []).map((source) => {
+              const node = source.node
+              const classes = node?.className ? String(node.className).trim().split(/\s+/) : []
+              return {
+                node: node
+                  ? `${node.tagName.toLowerCase()}.${classes.slice(0, 3).join(".")}`
+                  : "detached",
+                from: box(source.previousRect),
+                to: box(source.currentRect)
+              }
+            })
+          })
         }
       }).observe({ type: "layout-shift", buffered: true })
     })
     await page.goto(`${site.origin}${path}`, { waitUntil: "networkidle" })
     await page.evaluate(() => document.fonts.ready)
     await page.waitForTimeout(SETTLE_MS)
-    shifts.set(path, await page.evaluate(() => (window as unknown as { __shift: number }).__shift))
+    shifts.set(
+      path,
+      (await page.evaluate(
+        () => (window as unknown as { __shifts: Array<unknown> }).__shifts
+      )) as ReadonlyArray<Shift>
+    )
     await page.close()
   }
   await context.close()
@@ -98,9 +150,14 @@ afterAll(async () => {
 
 describe("no audited page shifts its layout while it loads", () => {
   it.each([...AUDITED_PAGES])("holds %s under the Core Web Vitals ceiling", (path) => {
-    const measured = shifts.get(path)
-    expect(measured, `${path} was never measured`).toBeDefined()
-    expect(measured, `${path} shifted ${measured}`).toBeLessThan(LAYOUT_SHIFT_CEILING)
+    const entries = shifts.get(path)
+    expect(entries, `${path} was never measured`).toBeDefined()
+    if (entries === undefined) return
+    const total = entries.reduce((sum, entry) => sum + entry.value, 0)
+    expect(
+      total,
+      `${path} shifted ${total.toFixed(4)} across ${entries.length} shift(s):\n      ${report(entries)}`
+    ).toBeLessThan(LAYOUT_SHIFT_CEILING)
   })
 
   /**
