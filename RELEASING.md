@@ -108,10 +108,30 @@ automatically. Provenance is per-version, not per-package.
 
 ## Repository settings this depends on
 
-- **Settings → Actions → General → Allow GitHub Actions to create and approve pull
-  requests** must be ON, or release-please fails with `GitHub Actions is not permitted
-  to create or approve pull requests`. `default_workflow_permissions` stays `read`:
-  every workflow here declares its own per-job permissions.
+- **Allow GitHub Actions to create and approve pull requests** must be ON, or
+  release-please fails with `GitHub Actions is not permitted to create or approve pull
+  requests`. `default_workflow_permissions` stays `read`: every workflow here declares its
+  own per-job permissions.
+
+  It is set in **two** places and the outer one wins, which is the part worth knowing
+  before debugging the inner one (probed 2026-08-14, on this repo's first release run):
+
+  ```
+  # Repository — refused while the org forbids it, with a 409 that names the reason:
+  #   "The organization does not allow GitHub Actions to create or approve pull requests"
+  gh api -X PUT repos/memhtml/memhtml/actions/permissions/workflow \
+    -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
+
+  # Organization — https://github.com/organizations/memhtml/settings/actions
+  # ("Workflow permissions" → tick the create-and-approve box), or by API with a token
+  # carrying admin:org, which a default `gh` login does NOT have:
+  gh api -X PUT orgs/memhtml/actions/permissions/workflow \
+    -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
+  ```
+
+  The failure is not destructive and loses no work: release-please computes every bump,
+  pushes `release-please--branches--main`, and fails only on the PR call, so flipping the
+  setting and re-running the workflow opens the PR from the branch already there.
 - The npm trusted publisher must name `release-please.yml`, because that is the workflow
   whose `publish` job runs `pnpm publish`.
 
