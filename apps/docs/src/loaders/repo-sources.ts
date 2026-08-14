@@ -21,6 +21,25 @@ import ts from "typescript"
  * Every accessor here THROWS when a registry is missing, renamed, or shaped differently than it
  * reads: a build failure names the drift, where a fallback would publish a page that quietly lost a
  * row.
+ *
+ * ## `typescript` is a LIBRARY here, and that is why `apps/docs` pins a different major than the root
+ *
+ * The repository compiles with `typescript` 7.x at the root while `apps/docs/package.json` pins 6.x,
+ * and the two are separate roles for one package name: 7.x is the compiler `tsc -b` runs, 6.x is the
+ * in-process parser this file calls. Both of this package's uses need 6.x, measured 2026-08-14
+ * against 7.0.2:
+ *
+ * - **There is no in-process parse.** `import ts from "typescript"` yields exactly
+ *   `{ version, versionMajorMinor }`; the node predicates moved to `typescript/unstable/ast`, which
+ *   exports no `createSourceFile`, and parsing goes through `typescript/unstable/sync`'s `API` — an
+ *   out-of-process client that spawns the native compiler and holds project snapshots. Reading six
+ *   standalone files at build time does not want a compiler server, and `unstable` is the vendor's own
+ *   label for how settled that surface is.
+ * - **`astro check` refuses it anyway.** `@astrojs/check@0.9.10` declares
+ *   `peerDependencies: { typescript: "^5.0.0 || ^6.0.0" }`, and it is this package's `typecheck` task.
+ *
+ * `.github/dependabot.yml` therefore ignores `typescript` majors, and names both conditions that have
+ * to change before the pin moves.
  */
 
 const findRepoRoot = (): string => {
