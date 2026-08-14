@@ -29,7 +29,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.8",
     "@effect/vitest": "catalog:",
-    "@types/node": "24.13.3",
+    "@types/node": "26.2.0",
     "typescript": "7.0.2",
     "vitest": "4.1.10"
   }
