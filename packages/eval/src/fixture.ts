@@ -40,7 +40,12 @@ const FIXTURE_IDENTITY: ReadonlyArray<readonly [string, string]> = [
   ["user.name", "memhtml eval fixture"],
   ["user.email", "eval@memhtml.invalid"],
   ["commit.gpgsign", "false"],
-  ["tag.gpgsign", "false"]
+  ["tag.gpgsign", "false"],
+  // No background maintenance, for the reason `@memhtml/store/testing` gives: `git commit` starts
+  // `maintenance run --auto` detached, and a fixture removed at the end of a test can still have git
+  // writing into `.git/objects`, so `cleanup` fails with ENOTEMPTY in whichever case ran last.
+  ["gc.auto", "0"],
+  ["maintenance.auto", "false"]
 ]
 
 /**
@@ -158,6 +163,8 @@ export const makeFixtureCorpus = (options: FixtureOptions = {}): Effect.Effect<F
       git,
       spec,
       written,
-      cleanup: () => rm(root, { recursive: true, force: true })
+      // Retried for the same reason the store's fixture retries: a temp tree can briefly have a
+      // writer that is not this process.
+      cleanup: () => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
     }
   })
