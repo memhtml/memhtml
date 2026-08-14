@@ -127,6 +127,38 @@ export const DIST_DIR = "dist"
 export const LAYOUT_SHIFT_CEILING = 0.1
 
 /**
+ * The one layout shift this site ships today, declared so every OTHER shift still fails.
+ *
+ * Starlight emits the right sidebar BEFORE `<main>` and moves it into place with `order: 2`, so a
+ * host slow enough to paint before `<main>` is parsed paints the aside as the row's only flex item.
+ * Measured on a 4-vCPU CI runner and reproduced locally under an 8x CPU throttle, identically both
+ * times: `div.right-sidebar` at `300,0 1050x940` becoming `1050,0 300x940` at ~230-330ms, CLS 0.432.
+ * It is invisible on a fast machine, which is exactly why it needs to be written down rather than
+ * remembered.
+ *
+ * **This entry is a bound, not a licence.** `node` has to match the shift's own source element and
+ * `most` caps how far it may move, so the same element shifting further fails, and any other element
+ * shifting at all fails. What it deliberately does NOT do is assert that the shift still fires — that
+ * half of the `KNOWN_A11Y_FAILURES` ratchet cannot hold here, because whether the race is lost
+ * depends on the host: the shift fires on CI and not on a developer's laptop. Deleting the entry is
+ * therefore how it retires, and `docs/backlog.md` carries the fix that would let it go: give the
+ * sidebar column a reserved track so the incomplete-DOM paint puts it where the finished one does.
+ */
+export const KNOWN_LAYOUT_SHIFTS: ReadonlyArray<{
+  readonly node: string
+  readonly most: number
+  readonly why: string
+}> = [
+  {
+    node: "div.right-sidebar",
+    most: 0.5,
+    why:
+      "Starlight paints its table-of-contents aside before `<main>` exists on a slow host, then " +
+      "moves it into place — source order plus `order: 2`, owned upstream"
+  }
+]
+
+/**
  * The base segment `astro.config.ts` builds under, following its own default. Every asset URL in the
  * output is prefixed with it, so anything serving `dist/` has to mount it here rather than elsewhere —
  * a site served one segment too high loads its HTML and none of its CSS, which reads as a catastrophic

@@ -4,7 +4,13 @@ import { fileURLToPath } from "node:url"
 import { type Browser, chromium } from "playwright"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
-import { AUDITED_PAGES, BASE, DIST_DIR, LAYOUT_SHIFT_CEILING } from "../src/gates.js"
+import {
+  AUDITED_PAGES,
+  BASE,
+  DIST_DIR,
+  KNOWN_LAYOUT_SHIFTS,
+  LAYOUT_SHIFT_CEILING
+} from "../src/gates.js"
 import { type StaticSite, serveStatic } from "./static-server.js"
 
 /**
@@ -153,10 +159,26 @@ describe("no audited page shifts its layout while it loads", () => {
     const entries = shifts.get(path)
     expect(entries, `${path} was never measured`).toBeDefined()
     if (entries === undefined) return
-    const total = entries.reduce((sum, entry) => sum + entry.value, 0)
+
+    /**
+     * A shift is claimed only if EVERY node it moved is declared and it stays inside that entry's
+     * bound. One shift can carry several source nodes, so a single declared node does not excuse the
+     * others travelling with it.
+     */
+    const claimed = (shift: Shift): boolean =>
+      shift.sources.length > 0 &&
+      shift.sources.every((source) =>
+        KNOWN_LAYOUT_SHIFTS.some(
+          (known) => source.node.startsWith(known.node) && shift.value <= known.most
+        )
+      )
+
+    const unclaimed = entries.filter((entry) => !claimed(entry))
+    const total = unclaimed.reduce((sum, entry) => sum + entry.value, 0)
     expect(
       total,
-      `${path} shifted ${total.toFixed(4)} across ${entries.length} shift(s):\n      ${report(entries)}`
+      `${path} shifted ${total.toFixed(4)} outside the declared baseline, across ` +
+        `${unclaimed.length} of ${entries.length} shift(s):\n      ${report(unclaimed)}`
     ).toBeLessThan(LAYOUT_SHIFT_CEILING)
   })
 

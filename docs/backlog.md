@@ -160,3 +160,21 @@ Docs-only: the cookbook's helper and five recipes ran against the fixture corpus
 package ships them yet. Next pull: `memhtml exec` (sandboxed helper preload, read-only index.db
 handle) once real usage shows which recipes agents reach for; then the traversal gate beside
 the discrimination gate. `pnpm check` green pre-merge (48/48 tasks).
+
+## Reserve the table-of-contents column (recorded 2026-08-14)
+
+The docs site ships one real layout shift, declared in `apps/docs/src/gates.ts` as
+`KNOWN_LAYOUT_SHIFTS` and bounded by `apps/docs/tests/layout-stability.test.ts`. Starlight emits the
+right sidebar BEFORE `<main>` and moves it with `order: 2`, so a host slow enough to paint before
+`<main>` is parsed paints the aside as the row's only flex item: measured identically on a 4-vCPU CI
+runner and under a local 8x CPU throttle, `div.right-sidebar` at `300,0 1050x940` becoming
+`1050,0 300x940` at ~230-330ms, CLS 0.432 against a 0.1 ceiling. A fast machine never sees it, and
+Lighthouse only caught it one run in three, which is why the deterministic probe exists.
+
+The fix is to reserve the sidebar's track so the incomplete-DOM paint lands where the finished one
+does — a grid row with `grid-template-columns: minmax(0, 1fr) var(--sl-sidebar-width)` at the desktop
+breakpoint, overriding Starlight's percentage `width: max(…)` centering math in
+`apps/docs/src/styles/rfc.css`. It is deferred rather than attempted because the override changes the
+content column's centering on wide viewports, so it needs a visual pass at several widths and a
+re-run of the a11y baseline, not a blind patch. Retire the `KNOWN_LAYOUT_SHIFTS` entry with it; the
+probe fails on any other shift meanwhile, and on this one growing past 0.5.
