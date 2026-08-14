@@ -52,12 +52,26 @@ export const isSlug = (value: string): boolean =>
  * ordinal 1 is the unsuffixed slug, 2 becomes `-2`, and so on, matching the `-2`/`-3`
  * convention. The suffix is added inside the length budget, so a maximum-length slug is
  * shortened rather than overflowed.
+ *
+ * **Two ordinals never name one file.** That is what makes the store's collision loop
+ * (`packages/store/src/store.ts`, `pathFor`) terminate rather than re-propose the name that
+ * collided, and it is not free at the length cap: a slug of exactly {@link SLUG_MAX_LENGTH}
+ * characters whose own tail IS the suffix comes back UNCHANGED from the cut-and-append, because
+ * cutting `…-0aa000aa-0-2` to 78 characters and appending `-2` rebuilds it. Reproduced
+ * 2026-08-14 from a `fast-check` counterexample; ordinals 1 and 2 both named
+ * `a00aa0a-…-0aa000aa-0-2`. Taking one character less resolves it for every ordinal, because the
+ * result is then shorter than {@link SLUG_MAX_LENGTH} and only a slug OF that length can be
+ * rebuilt this way.
  */
 export const withCollisionOrdinal = (slug: string, ordinal: number): string => {
   if (ordinal <= 1) return slug
   const suffix = `-${ordinal}`
+  /** The slug cut to `upTo` characters, with any hyphen the cut exposed trimmed off. */
+  const stemAt = (upTo: number): string =>
+    slug.length <= upTo ? slug : slug.slice(0, upTo).replace(/-+$/, "")
   const room = SLUG_MAX_LENGTH - suffix.length
-  const stem = slug.length <= room ? slug : slug.slice(0, room).replace(/-+$/, "")
+  const widest = stemAt(room)
+  const stem = `${widest}${suffix}` === slug ? stemAt(room - 1) : widest
   return `${stem || SLUG_FALLBACK}${suffix}`
 }
 
