@@ -115,6 +115,18 @@ export const KNOWN_A11Y_FAILURES: ReadonlyArray<{
 export const DIST_DIR = "dist"
 
 /**
+ * The Cumulative Layout Shift a page may not reach, in CLS units (unitless, per-page, 0 is perfect).
+ *
+ * 0.1 is the Core Web Vitals "good" boundary rather than a number chosen to fit this site: every
+ * audited page measures 0 today (`tests/layout-stability.test.ts`), so the headroom is not budget
+ * anyone is spending. It lives here, beside the page list, because the probe that enforces it and
+ * the case in `tests/built-site.test.ts` that keeps `lighthouserc.json` honest both need the same
+ * number, and Lighthouse's own CLS reading is the one this repo does NOT gate on — see that probe's
+ * header for the measurement that decided it.
+ */
+export const LAYOUT_SHIFT_CEILING = 0.1
+
+/**
  * The base segment `astro.config.ts` builds under, following its own default. Every asset URL in the
  * output is prefixed with it, so anything serving `dist/` has to mount it here rather than elsewhere —
  * a site served one segment too high loads its HTML and none of its CSS, which reads as a catastrophic
