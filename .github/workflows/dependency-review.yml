@@ -1,0 +1,25 @@
+# Blocks a PR that introduces a dependency with a known vulnerability or an
+# incompatible license. This is the one scanner that gates rather than reports: it sees
+# the DIFF of the dependency set, so a red mark here is always caused by the PR it
+# lands on, never by the database moving under an unrelated change (the situation that
+# keeps security.yml report-only).
+name: dependency-review
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # comment-summary-in-pr
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+          # Apache-2.0 repo: copyleft in a published dependency would encumber the
+          # twelve npm packages. The deny list is the strong-copyleft family; weak
+          # copyleft (MPL, LGPL) is fine for dynamically-linked JS dependencies.
+          deny-licenses: GPL-2.0, GPL-3.0, AGPL-1.0, AGPL-3.0, SSPL-1.0

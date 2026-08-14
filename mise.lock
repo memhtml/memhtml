@@ -30,6 +30,20 @@ checksum = "sha256:80de85f3b0ac7d9569acac0780ed65dd994ea78969b6b230c58bbb2c61134
 url = "https://github.com/d2lang/d2/releases/download/v0.7.1/d2-v0.7.1-macos-arm64.tar.gz"
 url_api = "https://api.github.com/repos/d2lang/d2/releases/assets/284023623"
 
+[[tools.grype]]
+version = "0.111.1"
+backend = "aqua:anchore/grype"
+
+[tools.grype."platforms.linux-x64"]
+checksum = "sha256:2bc0bc60f1f4e10b0429f5e84517ec4cf0d769d2ef66875c64fc6640e136fd8f"
+url = "https://github.com/anchore/grype/releases/download/v0.111.1/grype_0.111.1_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/anchore/grype/releases/assets/402722883"
+
+[tools.grype."platforms.macos-arm64"]
+checksum = "sha256:87b71207a657818adcd1aa65073ad854e516f5dfd91c0a66c333064c7312f355"
+url = "https://github.com/anchore/grype/releases/download/v0.111.1/grype_0.111.1_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/anchore/grype/releases/assets/402722903"
+
 [[tools.lefthook]]
 version = "2.1.10"
 backend = "aqua:evilmartians/lefthook"
@@ -111,3 +125,33 @@ provenance = "github-attestations"
 [[tools.semgrep]]
 version = "1.172.0"
 backend = "pipx:semgrep"
+
+[[tools.syft]]
+version = "1.43.0"
+backend = "aqua:anchore/syft"
+
+[tools.syft."platforms.linux-x64"]
+checksum = "sha256:7b98251d2d08926bb5d4639b56b1f0996a58ef6667c5830e3fe3cd3ad5f4214a"
+url = "https://github.com/anchore/syft/releases/download/v1.43.0/syft_1.43.0_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/anchore/syft/releases/assets/402658325"
+
+[tools.syft."platforms.macos-arm64"]
+checksum = "sha256:3640e2181c8be7a56377f3c96e520d5380c924dbafd115ee3c8d45fcbc89cac2"
+url = "https://github.com/anchore/syft/releases/download/v1.43.0/syft_1.43.0_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/anchore/syft/releases/assets/402658324"
+
+[[tools.trivy]]
+version = "0.70.0"
+backend = "aqua:aquasecurity/trivy"
+
+[tools.trivy."platforms.linux-x64"]
+checksum = "sha256:8b4376d5d6befe5c24d503f10ff136d9e0c49f9127a4279fd110b727929a5aa9"
+url = "https://github.com/aquasecurity/trivy/releases/download/v0.70.0/trivy_0.70.0_Linux-64bit.tar.gz"
+url_api = "https://api.github.com/repos/aquasecurity/trivy/releases/assets/398381981"
+provenance = "cosign"
+
+[tools.trivy."platforms.macos-arm64"]
+checksum = "sha256:68e543c51dcc96e1c344053a4fde9660cf602c25565d9f09dc17dd41e13b838a"
+url = "https://github.com/aquasecurity/trivy/releases/download/v0.70.0/trivy_0.70.0_macOS-ARM64.tar.gz"
+url_api = "https://api.github.com/repos/aquasecurity/trivy/releases/assets/398381999"
+provenance = "cosign"

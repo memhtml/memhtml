@@ -3,7 +3,29 @@ packages:
   - packages/*
   - tests-integration
 
-minimumReleaseAge: 1440
+# 72 hours, in minutes — matching Dependabot's cooldown.default-days: 3 so the two
+# gates state one policy: no release younger than three days installs here, whether a
+# human, an agent, or Dependabot asks for it. Security updates arrive through
+# Dependabot security PRs, which bypass its cooldown; for a fresh CVE fix pinned
+# below the soak window, override per-package with minimumReleaseAgeExclude.
+minimumReleaseAge: 4320
+
+# A version whose trust evidence is weaker than an earlier release's (trusted
+# publisher yesterday, bare token today) is refused: that shape is what a package
+# takeover looks like. The check is publish-date-based, not semver-aware, so old
+# transitive pins that predate a project's adoption of provenance read as downgrades
+# (pnpm#10622 — semver@5/6 from 2023, chokidar@4.0.3, which its maintainer declined
+# to re-release with provenance). ignoreAfter exempts anything older than a year:
+# pre-OIDC history cannot carry evidence, while every release young enough to matter
+# stays checked. Preferred over trustPolicyExclude, which would grow forever.
+trustPolicy: no-downgrade
+trustPolicyIgnoreAfter: 525948
+
+# Transitive dependencies must come from the registry: a sub-dependency declared as a
+# git URL, tarball URL, or workspace path smuggles unreviewed code past the lockfile
+# diff, so exotic sources are allowed only for DIRECT dependencies this file's owners
+# wrote down themselves.
+blockExoticSubdeps: true
 
 # The `packageManager` field in package.json is the ONE pnpm pin, and mise installs from
 # it (mise.toml's `idiomatic_version_file_enable_tools`). pnpm 11 defaults `pmOnFail` to
@@ -23,6 +45,20 @@ pmOnFail: ignore
 # toolchain this dependency serves (measured — it resolved 6.0.1).
 overrides:
   nanoid@<3.3.17: "^3.3.17"
+  # tmp reaches this repo only through the docs toolchain (@lhci/cli directly, and
+  # external-editor inside inquirer). 0.0.33 and 0.1.0 carry GHSA-ph9p-34f9-6g65
+  # (HIGH, symlink directory traversal) and GHSA-52f5-9888-hmc6 (LOW); both are fixed
+  # in 0.2.6, and the 0.2.x API keeps the fileSync/dirSync surface those consumers
+  # call. Range-scoped like nanoid above: once the parents resolve 0.2.6+ on their
+  # own, this stops applying and can be deleted.
+  tmp@<0.2.6: "^0.2.6"
+  # uuid 8.3.2 sits under @lhci/cli. CVE-2026-41907 is fixed in 11.1.1; uuid 9-11
+  # kept the named-export CommonJS surface lhci uses (verified: the budget gate runs
+  # green under this override). Same delete-when-stale rule as the two above.
+  uuid@<11.1.1: "^11.1.1"
+  # NOT overridden: extract-zip 2.0.1 (GHSA-jmr9-qjv8-65gv, via @puppeteer/browsers)
+  # has no fixed release yet. It runs only at browser-download time in the docs
+  # toolchain, never in anything published. Revisit when a fix ships.
 
 # Effect v4 is pre-release: every Effect package moves as one pinned, tested set, and the
 # three versions here are always the same string.

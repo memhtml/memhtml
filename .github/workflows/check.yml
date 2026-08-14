@@ -18,8 +18,8 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
       # Ask pnpm where its store is rather than hardcoding a path — a path that is wrong
       # caches nothing and says nothing about it. Runs after mise-action because that is
       # what puts pnpm on PATH.
@@ -27,7 +27,7 @@ jobs:
       # pnpm's content-addressable store, keyed on the lockfile. mise-action caches
       # mise's own tools; the store is separate, and without this every run re-downloads
       # every dependency.
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PNPM_STORE }}
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -40,7 +40,7 @@ jobs:
       # Keyed on the lockfile, which is the only file that can move the Playwright version, with no
       # `restore-keys`: a partial hit would seed the directory with some OTHER build number, and
       # Playwright would download the right one anyway while the stale one stayed on disk for good.
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
