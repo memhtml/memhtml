@@ -41,3 +41,13 @@ jobs:
         if: always()
         with:
           sarif_file: .sarif
+      # The CycloneDX SBOM syft produced during `mise run security` (grype scanned the
+      # same file, so the artifact and the scan describe one dependency set). 90 days
+      # matches the advisory-response window this exists to serve: when a CVE drops,
+      # the question "did we ship that?" is answered from here without a rebuild.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: sbom-cyclonedx
+          path: .sbom/sbom.cyclonedx.json
+          retention-days: 90

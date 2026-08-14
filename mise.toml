@@ -45,6 +45,9 @@ lefthook = "latest"                      # git hooks; wired by `mise run install
 "aqua:betterleaks/betterleaks" = "1.7.4" # secret scanner
 osv-scanner = "latest"                   # vulnerability scan over pnpm-lock.yaml
 semgrep = "latest"                       # SAST
+syft = "latest"                          # SBOM generator (CycloneDX); grype scans its output
+grype = "latest"                         # vulnerability scan over the syft SBOM
+trivy = "latest"                         # filesystem misconfiguration + vulnerability scan
 # The docs site renders its figures at build time through astro-d2, which shells out to this
 # binary — so a docs build on a machine without it produces a page with a missing figure rather
 # than an error. Pinned exactly, not `latest`: 0.7.1 is the release that added the ASCII
@@ -217,10 +220,30 @@ mkdir -p .sarif
 betterleaks git . -f sarif -r .sarif/betterleaks.sarif --exit-code=0
 """
 
+[tasks."security:sbom"]
+description = "CycloneDX SBOM of the workspace via syft, then grype scans it (SARIF, report-only)"
+# One syft pass feeds both outputs: the SBOM artifact CI uploads, and the input grype
+# scans. Scanning the SBOM instead of re-walking the tree keeps the two views of the
+# dependency set identical by construction.
+run = """
+mkdir -p .sarif .sbom
+syft scan dir:. --source-name memhtml -o cyclonedx-json=.sbom/sbom.cyclonedx.json
+grype sbom:.sbom/sbom.cyclonedx.json -o sarif --file .sarif/grype.sarif || true
+"""
+
+[tasks."security:trivy"]
+description = "Filesystem vuln + misconfig scan via trivy (SARIF, report-only)"
+run = """
+mkdir -p .sarif
+trivy fs . --scanners vuln,misconfig --severity HIGH,CRITICAL \
+  --format sarif --output .sarif/trivy.sarif --exit-code 0
+"""
+
 [tasks.security]
-description = "All scanners in parallel: osv + semgrep + leaks (SARIF under .sarif/)"
-# Genuinely independent — none of the three builds anything or reads another's output.
-depends = ["security:osv", "security:semgrep", "security:leaks"]
+description = "All scanners in parallel: osv + semgrep + leaks + sbom/grype + trivy (SARIF under .sarif/)"
+# Genuinely independent — none of the five builds anything or reads another's output
+# (sbom/grype chain internally within their one task).
+depends = ["security:osv", "security:semgrep", "security:leaks", "security:sbom", "security:trivy"]
 
 # --- the binary ---------------------------------------------------------------------
 # `raw = true` on both: every command writes exactly ONE JSON envelope to stdout and

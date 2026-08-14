@@ -1,0 +1,48 @@
+# Dependabot: weekly grouped updates for the pnpm workspace and the pinned actions.
+#
+# What Dependabot deliberately does NOT own here:
+# - mise.lock — scanners and toolchain move through `mise run tools:bump`, where the
+#   lock diff is the review artifact.
+# - The 7-day pnpm `minimumReleaseAge` in pnpm-workspace.yaml still applies to what
+#   Dependabot proposes; a fresh release inside the soak window will not resolve, which
+#   is the intended supply-chain tradeoff (see the exclude-newer note in that file).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 10
+    commit-message:
+      # `deps:` is not a release-please type, so dependency bumps do not by themselves
+      # force a release; a maintainer promotes one with fix:/feat: when it matters.
+      prefix: "deps"
+    labels:
+      - dependencies
+    groups:
+      # Effect is pinned as one moving set in the workspace catalog; everything else
+      # minor/patch rides in one weekly PR so review cost stays flat.
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/Los_Angeles
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies
+      - github-actions
+    groups:
+      actions:
+        update-types:
+          - minor
+          - patch

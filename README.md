@@ -1,5 +1,10 @@
 # memhtml
 
+[![check](https://github.com/memhtml/memhtml/actions/workflows/check.yml/badge.svg)](https://github.com/memhtml/memhtml/actions/workflows/check.yml)
+[![security](https://github.com/memhtml/memhtml/actions/workflows/security.yml/badge.svg)](https://github.com/memhtml/memhtml/actions/workflows/security.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/memhtml/memhtml/badge)](https://scorecard.dev/viewer/?uri=github.com/memhtml/memhtml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 memhtml stores an agent's long-term memory as a git repository of semantic HTML5 files, one fact per
 file. A rebuildable SQLite index sits over that tree, retrieval fuses four ranking arms, and a nightly
 curation pipeline commits its work to a branch a human reviews before it lands.
