@@ -45,7 +45,11 @@ build-before-integration ordering.
 | `mise run docs:links` | external links in the built site — reports, never gates |
 | `mise run gen:fixture` | write a browsable fixture corpus (pure function of a seed) |
 | `mise run agents-doc` | regenerate `AGENTS.md` from the built CLI's table |
-| `mise run security` | osv-scanner + semgrep + betterleaks → SARIF in `.sarif/` (report-only) |
+| `mise run package:assemble` / `package:pack` | tsdown-build the one publishable `memhtml` into `dist-package/` / also `npm pack` it |
+| `mise run package:lint` | publint over the staged package |
+| `mise run package:smoke` | install that tarball in a temp dir and drive every command and MCP tool through it |
+| `mise run package:smoke:live` | the same, plus the three edges that reach Bedrock (spends tokens) |
+| `mise run security` | osv-scanner + semgrep + betterleaks + syft/grype (SBOM) + trivy → SARIF in `.sarif/` (report-only) |
 | `mise run tools:verify` / `tools:bump` | check the two pnpm pins agree / re-resolve `latest` in `mise.lock` |
 | `mise run cli <args>` | the built CLI, `raw` so stdout stays one JSON envelope |
 
@@ -75,6 +79,12 @@ to evaluate a template, and pnpm will not read `mise.toml`. `mise run tools:veri
 disagreement and `install` depends on it. `pnpm` is declared **above** `node` on purpose: node's bin
 holds a `pnpm` symlink into corepack wherever `corepack enable` has run, and with node first every
 pnpm call resolves to corepack instead of the pinned binary.
+
+## Code intelligence
+
+codegraph is initialized in this repo (`.codegraph/`) — `codegraph query`, `codegraph explore`, and
+`codegraph node` are available for symbol lookup and impact tracing. It resolves by bare method name,
+so confirm a consumer actually names the surface before citing an impact result.
 
 ## Architecture
 
@@ -128,12 +138,33 @@ survives vacuously.
 (`apps/cli/tests/agents-doc.test.ts`), not a pipeline step. After touching `commands.ts`:
 `mise run agents-doc`, which builds `@memhtml/cli` first for exactly this reason.
 
+**A green suite says nothing about the published artifact.** Every tier resolves `@memhtml/*` through
+pnpm's links, where `guest/`, `agent/`, `src/`, and `migrations/` are on disk whether or not a manifest
+names them — while `npm publish` ships only what `files` names. Three assets were absent from every
+tarball under exactly that blindness: `guest/corpus.mjs` (so code mode could not start) and the
+consolidator's `src/*.ts` (so `eve build` failed `UNRESOLVED_IMPORT`), with the migrations surviving only
+because `packages/index` happened to name them. Two gates hold it now: a claim table over the pack
+manifest (`tests-integration/tests/packaging.test.ts`), where each claim also names the source line that
+resolves it so a guard cannot outlive the thing it guards, and `mise run package:smoke`, which installs
+the tarball and runs the binary. **A new run-time asset means a claim in that table**, or the census over
+`import.meta.url` resolutions in shipped source fails at the commit that adds it.
+
+**Where eve's agent gets built decides whether it can boot.** nitro externalizes any module it resolves
+from inside `node_modules`, so building the agent in an installed package yields `eve build` exit 0 and
+then `eve start` exit 13 on an unsettled top-level await — a build that looks fine and a server that
+dies. `agent-build.ts` copies `agent/` plus `src/` to `~/.cache/memhtml/eve/<version>/` and builds
+there, where the emitted `index.mjs` is ~316 kB inlined rather than ~17 kB beside a traced
+`_libs/@memhtml/…` chunk. Shipping a prebuilt `.output/` is refused: it traces platform-specific native
+binaries.
+
 **Effect v4 is a pre-release and breaks between versions.** The catalog in `pnpm-workspace.yaml` moves
 `effect`, `@effect/platform-node`, and `@effect/vitest` as one set — never one of the three. A typed
 error is `Schema.TaggedError<Self>()("Tag", fields)`, which supplies `_tag` itself, so the fields must
 NOT declare one; and `McpServer.layerStdio` requires `protocols: [McpProtocol.v2025_06_18]`, the only
-adapter shipped. `minimumReleaseAge: 1440` also means the newest release is not installable for its
-first 24 hours — a blocked install is that policy working, not a broken lockfile.
+adapter shipped. `minimumReleaseAge: 4320` also means the newest release is not installable for its
+first 72 hours (Dependabot security PRs bypass the cooldown; for a fresh CVE fix inside the window,
+override per-package with `minimumReleaseAgeExclude`) — a blocked install is that policy working, not
+a broken lockfile.
 
 **Effect 4.0.0-beta.107 differs from recall** (full list in
 `.erpaval/solutions/effect-v4/effect-4-beta-102-api-reality.md`): `Effect.either` does not exist — use
@@ -194,10 +225,12 @@ Standing hazards to write tests against, learned here:
   before navigating. Check whether a metric's units and geometry are even possible before believing it.
 
 The docs site's accessibility gate carries a **declared baseline** — `KNOWN_A11Y_FAILURES` in
-`apps/docs/src/gates.ts`, three violations owned by `src/styles/rfc.css`, Expressive Code and Starlight.
-It is a ratchet, not an exemption: a violation outside it fails, and an entry that stops firing fails
-too, so a fix cannot leave its suppression behind. Each entry's `signature` must match every offending
-node, so the same rule failing for a new reason is still a failure.
+`apps/docs/src/gates.ts`, currently one violation owned upstream by Starlight (its search button's
+label/name mismatch). It is a ratchet, not an exemption: a violation outside it fails, and an entry
+that stops firing fails too, so a fix cannot leave its suppression behind. Each entry's `signature`
+must match every offending node, so the same rule failing for a new reason is still a failure. The
+layout probe carries the same shape of baseline — `KNOWN_LAYOUT_SHIFTS`, one bounded Starlight
+right-sidebar shift — where an entry is a bound (`node` + `most`), not a licence.
 
 ## Conventions
 
@@ -206,6 +239,39 @@ Conventional Commits on a typed branch (`feature/…`, `fix/…`, `chore/…`, `
 formatting is non-negotiable and machine-applied: double quotes, no semicolons, 2-space indent, 100
 columns, no trailing commas. `noExplicitAny`, `noNonNullAssertion`, and unused-variable/import are
 errors; `exactOptionalPropertyTypes` and `noUncheckedIndexedAccess` are on.
+
+Releases are cut by release-please from those Conventional Commit subjects and published to npm with
+OIDC trusted publishing as **one package, `memhtml`**, carrying two binaries. `RELEASING.md` documents
+the flow, the fifteen version sites, and the failure signatures. Commit subjects therefore move version
+numbers: `feat:` the minor, `fix:` the patch, `!`/`BREAKING CHANGE:` the major.
+
+**The twelve workspace packages are `private` and cannot publish.** `mise run package:assemble` runs
+**tsdown** (`tsdown.config.ts`) to bundle the two bins into `dist-package/dist/`, copies the run-time
+assets beside them, and generates the manifest from `scripts/package-manifest.mjs`. Two rules hold that
+build together, and both cost real debugging:
+
+- **Externals are patterns that match subpaths, derived from the manifests.** `"effect"` does not match
+  `effect/unstable/cli`, and externalizing only the bare name inlined the rest and took
+  `memhtml-mcp.mjs` from 192 kB to 1.45 MB — silently, because tsdown's bundled-dependency hint reports
+  only top-level names. `node-html-parser`, `highlight.js`, and `eve` must stay external for a stronger
+  reason: their FILES are read or spawned, not imported.
+- **Assets are copied with a directory `from` and `to: OUT_DIR`.** A glob plus `flatten: false` keeps
+  each match's path relative to the glob's base, so `packages/index/migrations/**` becomes
+  `migrations/index/migrations/…` — a directory that exists, holds no `.sql` at its top level, and
+  applies zero migrations. The symptom was `no such table: files` on the first write.
+
+`mise run package:smoke` is the only gate whose subject is the artifact: publint, then install the
+tarball and drive **every one of the 36 commands and all 14 MCP tools** through the installed binary,
+62 checks. The surface is enumerated from `memhtml manifest` and `tools/list`, so a new command or tool
+fails a census rather than going untested. It is outside `check` because it needs the registry, and
+`check` is offline by construction.
+
+`package:smoke:live` adds the three edges the credential-free run cannot see — Bedrock embeddings, the
+sleep phases that call a model, and the consolidator distilling a transcript through eve — and is what
+lefthook's pre-push runs when a credential is present, saying so on stderr when it cannot. Reaching the
+consolidation phase needs a transcript over `TRACE_MIN_BYTES` (8 KB) whose mtime predates
+`TRACE_QUIET_MILLIS` (1 hour); a fresh fixture fails both and the phase reports `batch: 0`, which is
+correct behaviour that reads as coverage.
 
 `spec/memhtml.symspec.json` is the EARS requirements ledger (keys like `RET-3`, `STORE-2`, each naming
 its verification method and the code that satisfies it) — retiring or adding a requirement is its own

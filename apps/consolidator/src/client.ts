@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Context, Effect, Layer, Result, Schema } from "effect"
 
+import { eveBinPath, resolveAgentAppRoot } from "./agent-build.js"
 import {
   CONSOLIDATION_OUTPUT_JSON_SCHEMA,
   ConsolidationPayload,
@@ -650,9 +651,21 @@ const startServerOnPort = (input: {
     const { appRoot, port, secret, mounts } = input
     const url = `http://${LOOPBACK_HOST}:${String(port)}`
 
+    const eveBin = eveBinPath()
+    if (eveBin === null) {
+      resume(
+        Effect.fail({
+          reason: "eve does not resolve from @memhtml/consolidator; reinstall its dependencies",
+          retryable: false
+        })
+      )
+      // Nothing was spawned, so there is nothing for the finalizer to stop.
+      return Effect.void
+    }
+
     const child = spawn(
-      "pnpm",
-      ["exec", "eve", "start", "--host", LOOPBACK_HOST, "--port", String(port)],
+      process.execPath,
+      [eveBin, "start", "--host", LOOPBACK_HOST, "--port", String(port)],
       {
         cwd: appRoot,
         stdio: ["ignore", "pipe", "pipe"],
@@ -987,7 +1000,6 @@ const runTurn = (
  */
 export const makeConsolidator = (options: ConsolidatorOptions): ConsolidatorShape => {
   const { traceRoot } = options
-  const appRoot = options.appRoot ?? packageRoot()
   const maxTranscripts = options.maxTranscripts ?? MAX_TRANSCRIPTS_PER_RUN
   const env = options.env ?? process.env
   const extraMounts = options.mounts ?? []
@@ -1043,6 +1055,26 @@ export const makeConsolidator = (options: ConsolidatorOptions): ConsolidatorShap
          * enforces it (`agent/channels/eve.ts`). A leaked temp directory is a manifest of a past
          * run left on disk, which is smaller but still nothing this should leave behind.
          */
+        /**
+         * Resolved HERE rather than when the client is built, because an installed package has to
+         * build its agent first and that is work — it belongs after the credential preflight and the
+         * empty-batch exit, both of which return without it. See `agent-build.ts` for why an
+         * installed tree cannot be built in place.
+         */
+        const eveBin = eveBinPath()
+        if (eveBin === null) {
+          return yield* Effect.fail(
+            ConsolidatorUnavailable.make({
+              reason: "eve does not resolve from @memhtml/consolidator; reinstall its dependencies"
+            })
+          )
+        }
+        const appRoot = yield* resolveAgentAppRoot({
+          packageRoot: packageRoot(),
+          configured: options.appRoot,
+          eveBin
+        })
+
         return yield* Effect.acquireUseRelease(
           writeManifestDirectory({ reachable }),
           (manifestRoot) =>

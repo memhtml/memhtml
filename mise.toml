@@ -177,6 +177,40 @@ description = "Regenerate AGENTS.md from the BUILT CLI's own command table"
 # so regenerating against stale dist reproduces the old doc and hides the drift.
 run = "pnpm --filter @memhtml/cli build && node apps/cli/dist/bin.js agents-doc"
 
+# --- the published artifact ----------------------------------------------------------
+
+[tasks."package:assemble"]
+description = "Bundle the workspace into ONE publishable `memhtml` under dist-package/"
+# The pnpm script runs turbo's build first. tsdown bundles from `src/`, but `@memhtml/*` specifiers
+# resolve through each package's `exports` to `./dist`, so a stale dist is a stale bundle.
+run = "pnpm package:assemble"
+
+[tasks."package:pack"]
+description = "Assemble, then `npm pack` the single package into dist-package/"
+depends = ["package:assemble"]
+dir = "{{config_root}}/dist-package"
+run = "npm pack"
+
+[tasks."package:lint"]
+description = "publint over the staged package: entry points, module type, and what actually ships"
+depends = ["package:assemble"]
+run = "pnpm package:lint"
+
+[tasks."package:smoke:live"]
+description = "package:smoke plus the three edges that reach Bedrock: embeddings, sleep's model calls, eve"
+# Spends real tokens, and needs AWS_BEARER_TOKEN_BEDROCK (or SigV4 keys). The credential check FAILS
+# rather than skips: `--live` was asked for, and quietly proving less is what this tier exists to
+# prevent. lefthook's pre-push picks this when a credential is present and says so when it cannot.
+run = "pnpm package:smoke:live"
+
+[tasks."package:smoke"]
+description = "Install the assembled package into a temp dir and drive every subsystem through it"
+# Deliberately NOT in `mise run check`: this resolves the twelve external dependencies from the npm
+# registry, and check is offline and credential-free by construction. CI runs it as its own job, and
+# the publish job runs it on the tag. It is the only tier whose subject is the published artifact
+# rather than the workspace.
+run = "pnpm package:smoke"
+
 # --- git hooks ----------------------------------------------------------------------
 
 [tasks."hooks:install"]

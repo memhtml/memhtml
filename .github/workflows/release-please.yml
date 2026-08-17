@@ -23,19 +23,19 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
-    # Manifest mode emits per-path outputs, not the single-package `tag_name`. The
-    # linked-versions plugin releases all twelve paths together, so `releases_created`
-    # is the group signal and any one path's tag names the same tree — apps/cli's is
-    # used because the CLI is the anchor package.
+    # One package at the repository root, so these are the plain single-package outputs.
     outputs:
-      release_created: ${{ steps.release.outputs.releases_created }}
-      tag_name: ${{ steps.release.outputs['apps/cli--tag_name'] }}
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       # @v5, not the @v4 the action's own README still shows: v4 runs on the deprecated
-      # node20 runtime. The twelve workspace packages move in lockstep through the
-      # linked-versions plugin in release-please-config.json, so one release PR bumps all
-      # twelve manifests plus the two source constants annotated with
+      # node20 runtime. The version lives in fifteen places and release-please updates all
+      # of them from this one root manifest: the root `package.json`, the twelve workspace
+      # manifests through `json` extra-files, and the two source constants annotated with
       # `x-release-please-version` (apps/cli/src/commands.ts, apps/mcp/src/server.ts).
+      # The workspace manifests still move even though none of them publishes — the
+      # assembled tarball vendors them, and a vendored manifest claiming an old version
+      # would misreport what a user installed.
       - uses: googleapis/release-please-action@v5
         id: release
 
@@ -90,19 +90,24 @@ jobs:
       # Do not remove it to save minutes.
       - run: pnpm check
 
-      # Build once at the root so workspace deps exist before any package packs.
-      - run: pnpm build
+      # Assemble the one publishable package from the twelve workspace trees, then INSTALL
+      # it and drive every subsystem through the installed binary. `pnpm check` proves the
+      # workspace works and is structurally blind to what npm serves — three run-time
+      # assets shipped broken under exactly that blindness. This is the only step whose
+      # subject is the artifact.
+      #
+      # The pnpm script rather than `mise run package:smoke`: this job deliberately has no
+      # mise, because setup-node below owns the node that writes the OIDC `.npmrc` and a
+      # second node on PATH is a way for the wrong `npm` to run the publish.
+      - run: pnpm package:smoke
 
-      # `--no-git-checks` because this is a detached checkout of a tag, and pnpm's
-      # default branch check rejects anything that is not the publish branch.
+      # `npm publish`, not `pnpm publish`, and from the staging directory: the artifact is
+      # already assembled with concrete dependency versions and no `workspace:`/`catalog:`
+      # specifier left to rewrite, so pnpm's publish-time rewriting has nothing to do here.
+      # pnpm 11's native publish also has open regressions ignoring publishConfig.access
+      # (#11728) and publishConfig.registry (#11419).
       #
-      # `--tag latest` explicitly rather than relying on `publishConfig`: pnpm 11's
-      # native publish has open regressions ignoring publishConfig.access (#11728) and
-      # publishConfig.registry (#11419), so the flag is the signal known to be read.
-      #
-      # `-r` with a filter: the twelve public packages ship; the docs site and the
-      # integration-test package stay private and are skipped by pnpm automatically,
-      # the filter just makes the intent visible.
-      #
-      # No `--provenance`: trusted publishing generates the attestation automatically.
-      - run: pnpm -r --filter '!@memhtml/docs' publish --no-git-checks --tag latest
+      # `--tag latest` explicitly rather than relying on `publishConfig`, and no
+      # `--provenance`: trusted publishing generates the attestation automatically.
+      - run: npm publish --tag latest
+        working-directory: dist-package

@@ -2,75 +2,26 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "node",
   "bootstrap-sha": "7eaad048e441b044fee930f9cee38452701931bb",
-  "separate-pull-requests": false,
-  "plugins": [
-    {
-      "type": "linked-versions",
-      "groupName": "memhtml",
-      "components": [
-        "cli",
-        "mcp",
-        "consolidator",
-        "contracts",
-        "domain",
-        "eval",
-        "html",
-        "index",
-        "llm",
-        "sleep",
-        "store",
-        "traces"
-      ]
-    }
-  ],
   "packages": {
-    "apps/cli": {
-      "component": "cli",
+    ".": {
+      "package-name": "memhtml",
+      "changelog-path": "CHANGELOG.md",
       "extra-files": [
-        {
-          "type": "generic",
-          "path": "src/commands.ts"
-        }
+        { "type": "json", "path": "apps/cli/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "apps/mcp/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "apps/consolidator/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "packages/contracts/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "packages/domain/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "packages/eval/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "packages/html/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "packages/index/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "packages/llm/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "packages/sleep/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "packages/store/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "packages/traces/package.json", "jsonpath": "$.version" },
+        { "type": "generic", "path": "apps/cli/src/commands.ts" },
+        { "type": "generic", "path": "apps/mcp/src/server.ts" }
       ]
-    },
-    "apps/mcp": {
-      "component": "mcp",
-      "extra-files": [
-        {
-          "type": "generic",
-          "path": "src/server.ts"
-        }
-      ]
-    },
-    "apps/consolidator": {
-      "component": "consolidator"
-    },
-    "packages/contracts": {
-      "component": "contracts"
-    },
-    "packages/domain": {
-      "component": "domain"
-    },
-    "packages/eval": {
-      "component": "eval"
-    },
-    "packages/html": {
-      "component": "html"
-    },
-    "packages/index": {
-      "component": "index"
-    },
-    "packages/llm": {
-      "component": "llm"
-    },
-    "packages/sleep": {
-      "component": "sleep"
-    },
-    "packages/store": {
-      "component": "store"
-    },
-    "packages/traces": {
-      "component": "traces"
     }
   }
 }

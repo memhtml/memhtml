@@ -8,8 +8,9 @@ This topic gets a memory store running and then keeps it running.
 The tutorials are one path, in order. Each ends with a store that does more than the one before it,
 and every command shown is a command you can run.
 
-1. [Install memhtml and initialize a store](/learn/tutorial/install/): clone, build, `memhtml init`.
-   Nothing is published to a registry, so a clone and a build is the whole install.
+1. [Install memhtml and initialize a store](/learn/tutorial/install/): `npm i -g memhtml`, then
+   `memhtml init`. One package carries the whole system and installs two binaries; the page also
+   covers building from a clone, which is what contributors do.
 2. [Write your first memory](/learn/tutorial/first-memory/): `memhtml write`, the file it commits into
    the git tree, and why one fact goes in one file.
 3. [Retrieve it](/learn/tutorial/first-retrieval/): `memhtml search` and `memhtml recall`, and what

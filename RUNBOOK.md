@@ -39,6 +39,25 @@ memhtml index rebuild --embed
 
 `memhtml init` is convergent: each step asks the repo what is already true and supplies only what is missing, so it reaches the same end state from an empty directory, from a fully scaffolded repo, and from one left half-initialized by an interrupted run (`packages/store/src/layout.ts:183`).
 
+**A git identity is a precondition, and its absence surfaces as `ERR_GIT` exit 128.** `memhtml init`
+commits the scaffold, and `git commit` refuses without one — so on a fresh container, a CI runner, or any
+sandbox with no `~/.gitconfig`, the very first command fails with `git commit failed (exit 128)` while
+git's own "Please tell me who you are" goes to stderr. Nothing is lost: `init` is convergent, so setting
+an identity and re-running carries the staged scaffold to a commit. Either configure it:
+
+```bash
+git config --global user.name "You"
+git config --global user.email "you@example.com"
+```
+
+or supply it per-process, which needs no repository and no config file and is what an unattended agent
+should prefer:
+
+```bash
+export GIT_AUTHOR_NAME="memhtml" GIT_AUTHOR_EMAIL="memhtml@localhost"
+export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+```
+
 **`memhtml init` is required on a fresh clone.** `.gitattributes` marks `index.html` and `sitemap.xml` `merge=ours`, and that attribute is INERT without the `merge.ours.driver` config (`packages/store/src/layout.ts:76`). Git config is per-clone and is not cloned, so a clone that skips `memhtml init` gets conflict markers written into a generated file on the first merge touching one. Verify with `git -C "$MEMHTML_ROOT" config --get merge.ours.driver`; it must print `true`.
 
 `.memhtml/index.db` and `.memhtml/state.db` are both gitignored (`packages/store/src/layout.ts:55`). A clone carries the TREE plus `.memhtml/state/access.jsonl`, which is why `memhtml state import` is a step and not an optimization: without it the salience retrieval arm has no signal and ranking is silently poorer rather than broken.
@@ -168,7 +187,7 @@ Phase 12 hands unread session transcripts to the consolidator agent and commits 
 | `detail` | Meaning | What to do |
 |---|---|---|
 | `no consolidator bound` | `MEMHTML_LLM=off`, or no Bedrock credentials in the environment. The phase was never able to run. | Nothing, if that was intended. Otherwise export `AWS_BEARER_TOKEN_BEDROCK` (or the SigV4 pair). |
-| `consolidator unavailable: ConsolidatorUnavailable` | The agent server could not be built, started, or reached. Usually its output is missing. | `pnpm --filter @memhtml/consolidator build:agent`. That build is deliberately outside the turbo graph, so a fresh clone has not run it. |
+| `consolidator unavailable: ConsolidatorUnavailable` | The agent server could not be built, started, or reached. Usually its output is missing. | **From a checkout**: `pnpm --filter @memhtml/consolidator build:agent`. That build is deliberately outside the turbo graph, so a fresh clone has not run it. **From an installed package**: nothing to run — the first consolidation builds the agent into `~/.cache/memhtml/eve/<version>/` itself and reports this only if that build fails, so read the `reason`, which carries eve's own stderr. Never build it inside `node_modules`: nitro externalizes what it resolves there and the server exits 13 on an unsettled top-level await (`apps/consolidator/src/agent-build.ts`). |
 | `consolidator unavailable: ConsolidatorRunFailed` | The turn reached the model and came back with nothing usable — a throttle, a timeout, an unentitled key. | Re-run. No session was watermarked, so nothing was lost. |
 | absent, with `candidates: 0` | The agent read the batch and found nothing above the bar. **A successful night.** | Nothing. The sessions are watermarked and will not be re-read. |
 

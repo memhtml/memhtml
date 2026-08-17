@@ -33,6 +33,27 @@ retrieval stack (FTS + vector + recency + salience arms) finds one-fact
 memories reliably at every store size tested. The two structural findings
 that remain are consolidation ownership and hop chaining — both below.
 
+## Where distribution stands (2026-08-17)
+
+One published package, `memhtml`, carrying two binaries — `memhtml` and
+`memhtml-mcp`. All twelve workspace packages are `private`; nine of the eleven
+libraries had no consumer outside this repository, and none of the twelve was
+ever published, which is what made collapsing them free. `RELEASING.md` carries
+the flow, `docs/design.md` §14 the decisions.
+
+The artifact has a gate of its own because no other tier can see it:
+`mise run package:smoke` installs the tarball and drives all 36 commands and all
+14 MCP tools through the installed binary, and `--live` adds the three edges the
+credential-free run cannot reach (Bedrock embeddings, the sleep phases that call
+a model, the consolidator distilling through eve). It found four packaging
+defects that a green `pnpm check` could not, catalogued in
+`.erpaval/solutions/build-errors/the-published-artifact-is-not-the-workspace.md`.
+
+**Not yet published.** The remaining step is external: release-please needs
+"Allow GitHub Actions to create and approve pull requests" at the ORG level, and
+the first publish needs a one-time token because trusted publishing cannot
+bootstrap a package that does not exist.
+
 ## Horizon 1 — pulled by measured evidence — ✅ COMPLETE 2026-08-07
 
 ### ~~1. Write-time consolidation as a SYSTEM capability (the H4 finding)~~ — DONE (2026-08-07)
@@ -587,6 +608,12 @@ to eve):
 
 These are constraints on HOW future work here is done, not features:
 
+- **A green suite says nothing about the published artifact** — every tier
+  resolves `@memhtml/*` through pnpm's links, where run-time assets exist
+  whether or not a manifest declares them. Three shipped absent from every
+  tarball. Any future change to what ships needs a claim in the packaging table
+  and a pass through `package:smoke`. build-errors/
+  the-published-artifact-is-not-the-workspace.md.
 - **Probe the real composition before trusting a suspect list** — the
   dominant term was unlisted twice in a row (projectFromTree per-op walks,
   then FTS live-insert accumulation). performance/

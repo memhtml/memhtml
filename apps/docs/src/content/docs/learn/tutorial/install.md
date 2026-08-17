@@ -1,19 +1,42 @@
 ---
 title: Install memhtml and initialize a store
-description: Clone the repository, build the binary, and scaffold a memory store, which is the whole install path because nothing is published to a registry.
+description: Install the memhtml package, or build it from a clone, then scaffold a git-initialized memory store.
 ---
 
-There is no package to install. Probed 2026-08-12: `npm view memhtml` and `npm view @memhtml/cli`
-both answer 404, there are zero GitHub releases, and every workspace package is `private: true`. The
-install is a clone and a build, and this page is the whole of it. Anything you read elsewhere that
-starts with `npm install memhtml` is describing a package that does not exist.
+One package carries the whole system, and installing it puts two binaries on your `PATH`: `memhtml`
+and `memhtml-mcp`. Node 24 or newer.
 
-At the end you will have a `memhtml` binary on your `PATH` and a scaffolded, git-initialized store.
+At the end of this page you will have both binaries and a scaffolded, git-initialized store.
 
-## Get the toolchain
+## Install the package
 
-[`mise`](https://mise.jdx.dev) is the command surface for this repository. It installs the toolchain
-itself, meaning node 24, pnpm 11.21.0, lefthook, and the scanners, from `mise.toml`. The committed
+```bash
+npm i -g memhtml       # or: pnpm add -g memhtml, bun add -g memhtml
+memhtml manifest | head -5
+```
+
+```json
+{
+  "apiVersion": "1",
+  "type": "cli.manifest",
+  "data": {
+```
+
+`memhtml manifest` is the liveness check, and it answers on a machine with no repository, no
+database, and no credentials. An envelope back means the install is good. `npx memhtml manifest`
+answers the same way without installing anything, which is the cheapest way to read the whole
+command surface before deciding.
+
+There is no `@memhtml/*` package to install. The eleven workspace libraries and the two apps are
+`private`, and one assembled `memhtml` is the only thing published — see
+[Packages and dependency direction](/internals/packages-and-dependency-direction/) for why the
+layering stays internal.
+
+## Or build it from a clone
+
+Contributors, and anyone who wants the binary from a specific commit, build it instead.
+[`mise`](https://mise.jdx.dev) is the command surface for the repository: it installs the toolchain
+itself, meaning node 24, pnpm, lefthook, and the scanners, from `mise.toml`. The committed
 `mise.lock` pins each one by checksum and provenance, so your clone resolves the same binaries CI
 does.
 
@@ -30,38 +53,50 @@ pin and `package.json`'s `packageManager` disagree. Both declare the same pnpm a
 derived from the other, which is why the check runs on every install.
 
 When `mise run install` refuses because a dependency is too young to install, that is
-`minimumReleaseAge: 1440` working: the newest release of a package stays uninstallable for its first
-24 hours. Wait, or take the previous release.
+`minimumReleaseAge: 4320` working: the newest release of a package stays uninstallable for its first
+72 hours. Wait, or take the previous release.
 
-## Put the binary on your PATH
-
-`mise run build` emits an executable with a `node` shebang at `apps/cli/dist/bin.js`. Symlink it:
+`mise run build` emits an executable with a `node` shebang at `apps/cli/dist/bin.js`. Reach it three
+equivalent ways:
 
 ```bash
 mkdir -p ~/.local/bin
 ln -sf "$PWD/apps/cli/dist/bin.js" ~/.local/bin/memhtml
-memhtml manifest | head -5
 ```
 
-```json
-{
-  "apiVersion": "1",
-  "type": "cli.manifest",
-  "data": {
-```
-
-`memhtml manifest` is the liveness check, and it answers on a machine with no repository, no
-database, and no credentials. An envelope back means the build is good.
-
-Two alternatives to the symlink, both equivalent:
-
-- `mise run cli <args>` runs the same `apps/cli/dist/bin.js` from inside the repository. The task is
-  declared `raw`, so mise prefixes nothing onto its output lines and the one-envelope-per-command
-  contract survives.
+- `mise run cli <args>` runs the same file from inside the repository. The task is declared `raw`, so
+  mise prefixes nothing onto its output lines and the one-envelope-per-command contract survives.
 - `node /path/to/memhtml/apps/cli/dist/bin.js <args>` from anywhere.
 
 Every `@memhtml/*` package's exports resolve only to `./dist`, so after editing any package's `src/`
 run `mise run build` again before the binary reflects the edit.
+
+To build the published artifact rather than the workspace binary, `mise run package:assemble` writes
+it to `dist-package/`, and `mise run package:smoke` installs that tarball into a temporary directory
+and drives every command and MCP tool through it.
+
+## Give git an identity
+
+`memhtml init` commits the scaffold it writes, and `git commit` refuses to run without an author. On a
+machine with a `~/.gitconfig` this is already true and you can skip ahead. On a fresh container or a CI
+runner it is not, and the first command fails with `git commit failed (exit 128)` — git's own
+explanation goes to stderr, so check there when an `ERR_GIT` envelope surprises you.
+
+```bash
+git config --global user.name "You"
+git config --global user.email "you@example.com"
+```
+
+An unattended agent should prefer the environment, which needs no repository and writes no config:
+
+```bash
+export GIT_AUTHOR_NAME="memhtml" GIT_AUTHOR_EMAIL="memhtml@localhost"
+export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+```
+
+Nothing is lost if you find out the hard way. `memhtml init` is convergent: it asks the repository what
+is already true and supplies only what is missing, so setting an identity and running it again carries
+the staged scaffold to a commit.
 
 ## Point at a store and scaffold it
 

@@ -969,3 +969,51 @@ silent fake would be told the real vector space discriminates when nothing measu
 The gate is wired in three places: `memhtml eval discriminate` exits non-zero on any inversion, `pnpm check`
 runs it as a `test:eval` turbo task, and `memhtml sleep merge` re-runs it and refuses the merge on failure. The
 refusal is the point — a sleep run that degrades retrieval quality does not land.
+
+## 14. The published artifact
+
+Twelve workspace packages, one published package. All twelve are `private`, so `npm publish` refuses
+them, and `mise run package:assemble` bundles them into a single `memhtml` carrying two binaries,
+`memhtml` and `memhtml-mcp` (`tsdown.config.ts`, `scripts/package-manifest.mjs`). The layering in §1 is
+the shape of the source; it is not a distribution surface, and nine of the eleven libraries had no
+consumer outside this repository to be a surface for.
+
+**The published contract is the two binaries and their envelope**, not an import. There is no `exports`
+map, deliberately: declaring an entry point would promise a surface no test covers, and adding one later
+is a minor bump while removing one is a major, so the cheap direction stays available.
+
+**Nothing that resolves a path at run time may be bundled with the code that resolves it.** Five things
+do, and after bundling the resolving module lives in `dist/`, so each asset is copied to the package
+root one level above:
+
+| Asset | Resolved by | From |
+|---|---|---|
+| `migrations/`, `state-migrations/` | `new URL("../migrations", import.meta.url)` (`packages/index/src/schema-const.ts:8`) | `packages/index/` |
+| `guest/corpus.mjs` | `resolve(dirname(fileURLToPath(import.meta.url)), "..", "guest", …)` (`apps/cli/src/exec.ts:108`) | `apps/cli/` |
+| `agent/`, `src/` | eve compiles them; `agent/` reaches `../../src/*.js` | `apps/consolidator/` |
+
+Two dependencies must additionally stay OUTSIDE the bundle, because their files are read rather than
+imported: `node-html-parser`, whose published `dist/index.mjs` is read as bytes into the QuickJS guest
+(`apps/cli/src/exec.ts:136`), and `highlight.js`, loaded through `createRequire` on the first detection
+(`packages/html/src/detect.ts:51`). A third, `eve`, is spawned rather than imported and is located
+through `eve/package.json` because its `exports` map declares no `./bin/*` subpath
+(`apps/consolidator/src/agent-build.ts`). Externals are derived from the workspace manifests as patterns
+that match subpaths, since `effect` alone does not match `effect/unstable/cli`.
+
+**Where eve's agent is built decides whether it can boot.** nitro externalizes any module it resolves
+from inside `node_modules`, so building the agent in an installed package produces `eve build` exit 0
+followed by `eve start` exit 13 on an unsettled top-level await — a build that looks fine and a server
+that dies. `resolveAgentAppRoot` copies `agent/` plus `src/` to `~/.cache/memhtml/eve/<version>/` and
+builds there, outside `node_modules`, where the emitted `index.mjs` is ~316 kB inlined rather than ~17 kB
+beside a traced `_libs/@memhtml/…` chunk. Shipping a prebuilt `.output/` is refused: the build traces
+platform-specific native binaries into it.
+
+**The artifact has its own gate, because no other tier can see it.** Every suite in §13 resolves
+`@memhtml/*` through pnpm's links, where each asset is on disk whether or not anything declares it —
+three assets shipped absent from every tarball under exactly that blindness. `mise run package:smoke`
+installs the tarball into a throwaway directory and drives all 36 commands and all 14 MCP tools through
+the installed binary, enumerating both surfaces from the artifact itself (`memhtml manifest`,
+`tools/list`) so a new command or tool fails a census rather than going untested. It is outside `pnpm
+check` because it needs the registry, and `check` is offline by construction. `--live` adds the three
+edges the credential-free run cannot reach: Bedrock embeddings, the sleep phases that call a model, and
+the consolidator distilling a transcript through eve.

@@ -9,6 +9,23 @@ memhtml stores an agent's long-term memory as a git repository of semantic HTML5
 file. A rebuildable SQLite index sits over that tree, retrieval fuses four ranking arms, and a nightly
 curation pipeline commits its work to a branch a human reviews before it lands.
 
+## Install
+
+One package carries the whole system — the CLI, code mode, the sleep cycle, the trace indexer, and the
+MCP server — and installs two binaries, `memhtml` and `memhtml-mcp`. Node 24 or newer.
+
+```bash
+npm i -g memhtml       # or: pnpm add -g memhtml, bun add -g memhtml
+npx memhtml manifest   # every command, flag, and error code, without installing anything
+```
+
+Point it at a corpus with `MEMHTML_ROOT` (default `~/memhtml`), and at your transcripts with
+`MEMHTML_TRACE_ROOT` (default `~/.claude`). Reading and writing memories needs no credentials;
+embeddings and the sleep cycle's model calls use Bedrock through the default AWS credential chain, and
+`MEMHTML_EMBED=off` / `MEMHTML_LLM=off` turn both off.
+
+To register the MCP server with a client, the command is `memhtml-mcp` over stdio.
+
 ```bash
 memhtml init                                  # scaffold $MEMHTML_ROOT: git init, PARA dirs, merge driver
 memhtml write --title "WAL admits one writer and many readers" --type semantic \
@@ -423,6 +440,11 @@ $MEMHTML_ROOT/                        # its own git repo, one global memory stor
 The layering is strict and TypeScript project references enforce it. `@memhtml/contracts` and
 `@memhtml/domain` import `effect` and nothing else, and a test reads `domain`'s own `dist` to confirm it
 names no database driver, no SDK, and no `node:fs`.
+
+None of them is published. All twelve are `private`, and `mise run package:assemble` bundles them into
+the single `memhtml` package that carries the two binaries — so the table below is a map of the source,
+not a list of things to install. `RELEASING.md` covers how the artifact is built and what must stay
+outside the bundle.
 
 | Package | What it owns |
 |---|---|
