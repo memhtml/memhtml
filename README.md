@@ -441,6 +441,11 @@ The layering is strict and TypeScript project references enforce it. `@memhtml/c
 `@memhtml/domain` import `effect` and nothing else, and a test reads `domain`'s own `dist` to confirm it
 names no database driver, no SDK, and no `node:fs`.
 
+None of them is published. All twelve are `private`, and `mise run package:assemble` bundles them into
+the single `memhtml` package that carries the two binaries — so the table below is a map of the source,
+not a list of things to install. `RELEASING.md` covers how the artifact is built and what must stay
+outside the bundle.
+
 | Package | What it owns |
 |---|---|
 | `@memhtml/contracts` | Schemas, the closed vocabularies, errors, path algebra. Zero I/O. |

@@ -168,7 +168,7 @@ Phase 12 hands unread session transcripts to the consolidator agent and commits 
 | `detail` | Meaning | What to do |
 |---|---|---|
 | `no consolidator bound` | `MEMHTML_LLM=off`, or no Bedrock credentials in the environment. The phase was never able to run. | Nothing, if that was intended. Otherwise export `AWS_BEARER_TOKEN_BEDROCK` (or the SigV4 pair). |
-| `consolidator unavailable: ConsolidatorUnavailable` | The agent server could not be built, started, or reached. Usually its output is missing. | `pnpm --filter @memhtml/consolidator build:agent`. That build is deliberately outside the turbo graph, so a fresh clone has not run it. |
+| `consolidator unavailable: ConsolidatorUnavailable` | The agent server could not be built, started, or reached. Usually its output is missing. | **From a checkout**: `pnpm --filter @memhtml/consolidator build:agent`. That build is deliberately outside the turbo graph, so a fresh clone has not run it. **From an installed package**: nothing to run — the first consolidation builds the agent into `~/.cache/memhtml/eve/<version>/` itself and reports this only if that build fails, so read the `reason`, which carries eve's own stderr. Never build it inside `node_modules`: nitro externalizes what it resolves there and the server exits 13 on an unsettled top-level await (`apps/consolidator/src/agent-build.ts`). |
 | `consolidator unavailable: ConsolidatorRunFailed` | The turn reached the model and came back with nothing usable — a throttle, a timeout, an unentitled key. | Re-run. No session was watermarked, so nothing was lost. |
 | absent, with `candidates: 0` | The agent read the batch and found nothing above the bar. **A successful night.** | Nothing. The sessions are watermarked and will not be re-read. |
 

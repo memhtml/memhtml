@@ -71,7 +71,7 @@ package ships no types, so there is nothing for it to check.
 drives **62 checks** through the installed binary: all 36 commands and all 14 MCP tools, plus the
 consolidator agent building outside `node_modules` and answering `/eve/v1/health`. The surface is
 enumerated from the artifact itself — `memhtml manifest` for commands, `tools/list` for tools — so a new
-command or tool fails a census rather than going unrun. Writes are asserted against `git log`, not
+command or tool fails a census rather than going untested. Writes are asserted against `git log`, not
 against the report, and `sleep merge` is proven to move `main` on a corpus of its own.
 
 `mise run package:smoke:live` adds three checks for the edges nothing else can reach from an install:

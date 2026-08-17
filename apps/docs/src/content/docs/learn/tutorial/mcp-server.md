@@ -165,8 +165,7 @@ differs between clients, the `command` / `args` / `env` triple is the shape they
 {
   "mcpServers": {
     "memhtml": {
-      "command": "memhtml",
-      "args": ["serve", "mcp"],
+      "command": "memhtml-mcp",
       "env": {
         "MEMHTML_ROOT": "/home/you/memhtml"
       }
@@ -174,6 +173,11 @@ differs between clients, the `command` / `args` / `env` triple is the shape they
   }
 }
 ```
+
+`memhtml-mcp` is the server itself, installed beside `memhtml` by the same package. `"command":
+"memhtml", "args": ["serve", "mcp"]` reaches the same server through a supervisor process and is
+equally valid — use it when you want the CLI's own resolution of the entry point, and the direct
+binary when you would rather not spawn a process to spawn a process.
 
 Set `MEMHTML_ROOT` explicitly in the client config rather than relying on a shell profile. A client
 launches the server from its own environment, which is not your interactive shell, and the default

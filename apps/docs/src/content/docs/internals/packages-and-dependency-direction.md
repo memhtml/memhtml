@@ -1,6 +1,6 @@
 ---
 title: Packages and dependency direction
-description: The layering, the test that enforces the pure packages' purity, and the single place every service is wired together.
+description: The layering, the test that enforces the pure packages' purity, the single place every service is wired together, and why twelve packages ship as one.
 ---
 
 ## 1. The packages
@@ -61,3 +61,30 @@ package outside the service graph above. It composes a sandboxed agent rather th
 Its behaviour is a prompt, reproduced in [The consolidator](/internals/the-consolidator/), and its output
 contract is a schema (`apps/consolidator/src/contract.ts:93`,
 `apps/consolidator/src/contract.ts:133`) that the sleep pipeline's trace-consolidation phase consumes.
+
+## 6. Twelve packages, one published package
+
+Every package above is `private`. `npm publish` refuses a private package, so none of them can reach a
+registry, and one assembled `memhtml` is published instead — carrying two binaries, `memhtml` and
+`memhtml-mcp`. The layering on this page is the shape of the SOURCE. It is not a distribution surface,
+and nine of the eleven libraries had no consumer outside this repository to be a surface for.
+
+The published contract is the two binaries and the JSON envelope they write. The package declares no
+`exports` map, deliberately: an entry point is a promise, adding one later is a minor version bump, and
+removing one is a major, so the reversible direction is the one left open.
+
+Assembly bundles the twelve with [tsdown](https://tsdown.dev) and copies out the files that cannot be
+bundled. Three things resolve a path from their own module location at run time — the index's two
+migration directories, the CLI's `guest/corpus.mjs`, and the consolidator's `agent/` reaching
+`../../src/*.js` — and after bundling that location is `dist/`, so each is copied to the package root one
+level above it. Two dependencies additionally stay outside the bundle because their FILES are read rather
+than imported: `node-html-parser`, read as bytes into the QuickJS guest that
+[code-mode](/internals/the-envelope-contract/) runs, and `highlight.js`, loaded through `createRequire` on
+the first language detection. A third, `eve`, is spawned rather than imported.
+
+The artifact has a gate of its own, because no other tier can see it. Every suite described in
+[Testing posture](/internals/testing-posture/) resolves `@memhtml/*` through the workspace, where each
+asset is present whether or not anything declares it. `mise run package:smoke` installs the tarball into
+a throwaway directory and drives all 36 commands and all 14 MCP tools through the installed binary,
+enumerating both surfaces from the artifact itself so a new command or tool fails a census rather than
+going untested.

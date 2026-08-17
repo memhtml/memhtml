@@ -263,7 +263,7 @@ build together, and both cost real debugging:
 `mise run package:smoke` is the only gate whose subject is the artifact: publint, then install the
 tarball and drive **every one of the 36 commands and all 14 MCP tools** through the installed binary,
 62 checks. The surface is enumerated from `memhtml manifest` and `tools/list`, so a new command or tool
-fails a census rather than going unrun. It is outside `check` because it needs the registry, and
+fails a census rather than going untested. It is outside `check` because it needs the registry, and
 `check` is offline by construction.
 
 `package:smoke:live` adds the three edges the credential-free run cannot see — Bedrock embeddings, the
