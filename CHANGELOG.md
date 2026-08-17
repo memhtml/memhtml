@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/memhtml/memhtml/compare/memhtml-v0.2.0...memhtml-v0.2.1) (2026-08-17)
+
+
+### Bug Fixes
+
+* **ci:** give the publish job its toolchain, and make a failed publish retryable ([e80b70a](https://github.com/memhtml/memhtml/commit/e80b70a7ec98a66c6235d418b9fabc399668388a))
+* **ci:** give the publish job its toolchain, and make a failed publish retryable ([edb83f7](https://github.com/memhtml/memhtml/commit/edb83f75d9291a44448d80dc490a2fb29f6bdea2))
+
 ## [0.2.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.1.0...memhtml-v0.2.0) (2026-08-17)
 
 
