@@ -120,6 +120,12 @@ export interface IndexerDeps {
   readonly embedWatermark: string
   readonly embedDim: number
   readonly embeddings?: EmbedPort | undefined
+  /**
+   * How many pending chunks are embedded and PERSISTED per `embedMissing` slice. Defaults to
+   * {@link EMBED_PERSIST_SLICE}. Injectable so a test can force several slices over a small
+   * corpus; production callers leave it alone.
+   */
+  readonly embedPersistEvery?: number | undefined
   /** Wall-clock, injected. A fixed instant makes `indexed_at` assertable. */
   readonly now: () => string
 }
@@ -157,6 +163,16 @@ export const TREE_PREFIXES: ReadonlyArray<string> = [...PARA_BUCKETS]
  * so the ceiling here is a correctness guard rather than a tuning knob.
  */
 export const PENDING_SCAN_ID_BATCH = 500
+
+/**
+ * Pending chunks embedded and persisted per `embedMissing` slice.
+ *
+ * Ten of `@memhtml/llm`'s 96-text Bedrock batches. Large enough that the per-slice SQLite
+ * transaction is noise against ten model round trips; small enough that a throttled pass on a
+ * multi-thousand-chunk corpus keeps most of what it paid for. The unit of loss on failure is one
+ * slice, not the whole pass.
+ */
+export const EMBED_PERSIST_SLICE = 960
 
 export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
   const { db, git } = deps
@@ -326,35 +342,55 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
       const pending = yield* pendingChunks(candidateChunkIds)
       if (pending.length === 0) return 0
 
-      const vectors = yield* embeddings.embed(pending.map((row) => row.text)).pipe(
-        Effect.tapError((error) =>
-          Effect.logError(`indexer.embed skipped ${pending.length} chunks: ${error.reason}`)
-        ),
-        Effect.result
-      )
-      if (vectors._tag === "Failure") return 0
+      /**
+       * Embed and persist in SLICES rather than one all-or-nothing pass. Vectors key on chunk_id
+       * (that is, on content hash), so every slice that lands is progress the next invocation
+       * does not re-pay for. Under a Bedrock token throttle the old shape starved: each retry
+       * re-embedded from zero, failed partway, and wrote nothing, so a large corpus could never
+       * complete. Measured on a 4,219-chunk import (2026-08-16): `rebuild --embed` failed whole
+       * five times running while a sliced backfill finished in one pass.
+       *
+       * A slice that fails stops the pass (the throttle that killed it will kill the next slice
+       * too) and reports what already landed. The caller re-runs; `pendingChunks` finds only the
+       * remainder.
+       */
+      const sliceSize = deps.embedPersistEvery ?? EMBED_PERSIST_SLICE
+      let written = 0
+      for (let start = 0; start < pending.length; start += sliceSize) {
+        const slice = pending.slice(start, start + sliceSize)
+        const vectors = yield* embeddings.embed(slice.map((row) => row.text)).pipe(
+          Effect.tapError((error) =>
+            Effect.logError(
+              `indexer.embed stopped after ${written} of ${pending.length} chunks (${error.reason}); the written vectors are kept, re-run to continue`
+            )
+          ),
+          Effect.result
+        )
+        if (vectors._tag === "Failure") return written
 
-      const at = deps.now()
-      const writes = pending.flatMap((row, at_) => {
-        const vector = vectors.success[at_]
-        if (vector === undefined) return []
-        return [
-          {
-            sql: `INSERT INTO embeddings (chunk_id, model, dim, vec, created_at) VALUES (?, ?, ?, ?, ?)
+        const at = deps.now()
+        const writes = slice.flatMap((row, at_) => {
+          const vector = vectors.success[at_]
+          if (vector === undefined) return []
+          return [
+            {
+              sql: `INSERT INTO embeddings (chunk_id, model, dim, vec, created_at) VALUES (?, ?, ?, ?, ?)
                   ON CONFLICT(chunk_id) DO UPDATE SET model = excluded.model, dim = excluded.dim,
                     vec = excluded.vec, created_at = excluded.created_at`,
-            params: [
-              row.chunk_id,
-              deps.embedWatermark,
-              deps.embedDim,
-              new Uint8Array(vector.buffer, vector.byteOffset, vector.byteLength),
-              at
-            ] satisfies Write["params"]
-          }
-        ]
-      })
-      yield* applyWrites(writes)
-      return writes.length
+              params: [
+                row.chunk_id,
+                deps.embedWatermark,
+                deps.embedDim,
+                new Uint8Array(vector.buffer, vector.byteOffset, vector.byteLength),
+                at
+              ] satisfies Write["params"]
+            }
+          ]
+        })
+        yield* applyWrites(writes)
+        written += writes.length
+      }
+      return written
     }).pipe(Effect.withSpan("indexer.embedMissing"))
 
   const rebuild = (opts: { readonly embed: boolean }) =>
