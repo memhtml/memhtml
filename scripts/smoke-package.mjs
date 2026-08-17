@@ -168,6 +168,7 @@ const main = async () => {
     }
 
     await checkEveryCommand({ bin, work, env })
+    await checkSleepLifecycle({ bin, work, env })
     await checkEveryMcpTool({ mcpBin, env })
     await checkAgentBuild({ consumer, env })
   } finally {
@@ -283,21 +284,24 @@ const checkEveryCommand = async ({ bin, work, env }) => {
   ]
 
   /**
-   * Commands this tier deliberately does not invoke, each with the reason.
+   * Commands covered by a check of their own rather than by the table, each naming which one.
    *
-   * An excuse is a claim, so each one names something checkable rather than "hard to test".
+   * Not excuses. `serve mcp` is a long-running server, so its check is a handshake rather than an
+   * envelope, and the sleep lifecycle needs a corpus whose `main` has not advanced — every write above
+   * moves `main`, which makes `sleep merge` refuse with `main-advanced`, a correct answer that proves
+   * the refusal rather than the merge. Both are invoked, just elsewhere.
    */
-  const EXCUSED = {
-    "serve mcp": "covered above by its own handshake check, which is what it does",
-    "sleep resume": "resumes an INTERRUPTED run; a dry run leaves nothing to resume, and interrupting one here would test the harness",
-    "sleep merge": "merges a review branch into main; it is the one command that mutates main from a sleep run, and the review above is the reachable half"
+  const COVERED_ELSEWHERE = {
+    "serve mcp": "`memhtml serve mcp answers the MCP handshake`",
+    "sleep resume": "`checkSleepLifecycle`",
+    "sleep merge": "`checkSleepLifecycle`"
   }
 
-  const invoked = new Set(INVOCATIONS.map(([name]) => name))
-  const missing = declared.filter((name) => !invoked.has(name) && EXCUSED[name] === undefined)
-  await check("every declared command is invoked or excused", async () => ({
+  const invoked = new Set([...INVOCATIONS.map(([name]) => name), ...Object.keys(COVERED_ELSEWHERE)])
+  const missing = declared.filter((name) => !invoked.has(name))
+  await check("every declared command is invoked", async () => ({
     ok: missing.length === 0 && declared.length > 30,
-    detail: `${String(invoked.size)}/${String(declared.length)} invoked, ${String(Object.keys(EXCUSED).length)} excused${missing.length > 0 ? `, MISSING: ${missing.join(", ")}` : ""}`
+    detail: `${String(invoked.size)}/${String(declared.length)}, ${String(Object.keys(COVERED_ELSEWHERE).length)} by a dedicated check${missing.length > 0 ? `, MISSING: ${missing.join(", ")}` : ""}`
   }))
 
   for (const [name, argv, commandEnv] of INVOCATIONS) {
@@ -310,6 +314,50 @@ const checkEveryCommand = async ({ bin, work, env }) => {
   }
 
   void corpus
+}
+
+/**
+ * The sleep cycle end to end, on a corpus of its own: run, resume, review, then a merge that lands.
+ *
+ * A separate corpus because `sleep merge` fast-forwards `main` to the run's branch and refuses with
+ * `main-advanced` when `main` has moved since the branch point — which every write in the table above
+ * does. Sharing one corpus therefore proves the refusal and never the merge, and the merge is the half
+ * that mutates the system of record.
+ *
+ * The gate is the reason this is worth reaching. `sleep merge` re-runs the discrimination gate before
+ * landing anything (`apps/cli/src/run.ts`, where the composition is deliberately visible), so the gate
+ * generates its own ~300-file fixture corpus with its own database — which is why the merge's log names
+ * a file count and a sha belonging to neither the corpus nor this repo. It passes in fake mode, so this
+ * asserts `merged: true` and that `main` actually moved.
+ */
+const checkSleepLifecycle = async ({ bin, work, env }) => {
+  const corpus = join(work, "sleep-corpus")
+  const sleepEnv = { ...env, MEMHTML_ROOT: corpus }
+
+  await envelope(bin, ["init"], sleepEnv)
+  await envelope(
+    bin,
+    ["write", "--title", "The only memory this corpus holds", "--claim", "One fact.", "--type", "semantic", "--workspace", "checkout-api"],
+    sleepEnv
+  )
+  await envelope(bin, ["sleep", "run"], sleepEnv)
+  const runId = (await envelope(bin, ["sleep", "status"], sleepEnv)).data.runId
+  const beforeMerge = (await exec("git", ["-C", corpus, "rev-parse", "main"])).stdout.trim()
+
+  await check("sleep resume answers from the installed binary", async () => {
+    const resumed = await envelope(bin, ["sleep", "resume", runId], sleepEnv)
+    return { ok: resumed.type === "sleep.report", detail: `phases=${String((resumed.data?.phases ?? []).length)}` }
+  })
+
+  await check("sleep merge lands the run on main", async () => {
+    const merged = await envelope(bin, ["sleep", "merge", runId], sleepEnv)
+    const after = (await exec("git", ["-C", corpus, "rev-parse", "main"])).stdout.trim()
+    // Both halves: the envelope says it merged, and git agrees that main moved.
+    return {
+      ok: merged.type === "sleep.merge" && merged.data?.merged === true && after !== beforeMerge,
+      detail: merged.data?.merged === true ? `main moved to ${after.slice(0, 8)}` : `refusal=${String(merged.data?.refusal)}`
+    }
+  })
 }
 
 /**
