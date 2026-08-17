@@ -45,6 +45,9 @@ build-before-integration ordering.
 | `mise run docs:links` | external links in the built site — reports, never gates |
 | `mise run gen:fixture` | write a browsable fixture corpus (pure function of a seed) |
 | `mise run agents-doc` | regenerate `AGENTS.md` from the built CLI's table |
+| `mise run package:assemble` / `package:pack` | tsdown-build the one publishable `memhtml` into `dist-package/` / also `npm pack` it |
+| `mise run package:lint` | publint over the staged package |
+| `mise run package:smoke` | install that tarball in a temp dir and drive every subsystem through it |
 | `mise run security` | osv-scanner + semgrep + betterleaks + syft/grype (SBOM) + trivy → SARIF in `.sarif/` (report-only) |
 | `mise run tools:verify` / `tools:bump` | check the two pnpm pins agree / re-resolve `latest` in `mise.lock` |
 | `mise run cli <args>` | the built CLI, `raw` so stdout stays one JSON envelope |
@@ -134,6 +137,25 @@ survives vacuously.
 (`apps/cli/tests/agents-doc.test.ts`), not a pipeline step. After touching `commands.ts`:
 `mise run agents-doc`, which builds `@memhtml/cli` first for exactly this reason.
 
+**A green suite says nothing about the published artifact.** Every tier resolves `@memhtml/*` through
+pnpm's links, where `guest/`, `agent/`, `src/`, and `migrations/` are on disk whether or not a manifest
+names them — while `npm publish` ships only what `files` names. Three assets were absent from every
+tarball under exactly that blindness: `guest/corpus.mjs` (so code mode could not start) and the
+consolidator's `src/*.ts` (so `eve build` failed `UNRESOLVED_IMPORT`), with the migrations surviving only
+because `packages/index` happened to name them. Two gates hold it now: a claim table over the pack
+manifest (`tests-integration/tests/packaging.test.ts`), where each claim also names the source line that
+resolves it so a guard cannot outlive the thing it guards, and `mise run package:smoke`, which installs
+the tarball and runs the binary. **A new run-time asset means a claim in that table**, or the census over
+`import.meta.url` resolutions in shipped source fails at the commit that adds it.
+
+**Where eve's agent gets built decides whether it can boot.** nitro externalizes any module it resolves
+from inside `node_modules`, so building the agent in an installed package yields `eve build` exit 0 and
+then `eve start` exit 13 on an unsettled top-level await — a build that looks fine and a server that
+dies. `agent-build.ts` copies `agent/` plus `src/` to `~/.cache/memhtml/eve/<version>/` and builds
+there, where the emitted `index.mjs` is ~316 kB inlined rather than ~17 kB beside a traced
+`_libs/@memhtml/…` chunk. Shipping a prebuilt `.output/` is refused: it traces platform-specific native
+binaries.
+
 **Effect v4 is a pre-release and breaks between versions.** The catalog in `pnpm-workspace.yaml` moves
 `effect`, `@effect/platform-node`, and `@effect/vitest` as one set — never one of the three. A typed
 error is `Schema.TaggedError<Self>()("Tag", fields)`, which supplies `_tag` itself, so the fields must
@@ -218,9 +240,28 @@ columns, no trailing commas. `noExplicitAny`, `noNonNullAssertion`, and unused-v
 errors; `exactOptionalPropertyTypes` and `noUncheckedIndexedAccess` are on.
 
 Releases are cut by release-please from those Conventional Commit subjects and published to npm with
-OIDC trusted publishing — twelve packages in lockstep; `RELEASING.md` documents the flow, the two
-`x-release-please-version` source constants, and the failure signatures. Commit subjects therefore
-move version numbers: `feat:` the minor, `fix:` the patch, `!`/`BREAKING CHANGE:` the major.
+OIDC trusted publishing as **one package, `memhtml`**, carrying two binaries. `RELEASING.md` documents
+the flow, the fifteen version sites, and the failure signatures. Commit subjects therefore move version
+numbers: `feat:` the minor, `fix:` the patch, `!`/`BREAKING CHANGE:` the major.
+
+**The twelve workspace packages are `private` and cannot publish.** `mise run package:assemble` runs
+**tsdown** (`tsdown.config.ts`) to bundle the two bins into `dist-package/dist/`, copies the run-time
+assets beside them, and generates the manifest from `scripts/package-manifest.mjs`. Two rules hold that
+build together, and both cost real debugging:
+
+- **Externals are patterns that match subpaths, derived from the manifests.** `"effect"` does not match
+  `effect/unstable/cli`, and externalizing only the bare name inlined the rest and took
+  `memhtml-mcp.mjs` from 192 kB to 1.45 MB — silently, because tsdown's bundled-dependency hint reports
+  only top-level names. `node-html-parser`, `highlight.js`, and `eve` must stay external for a stronger
+  reason: their FILES are read or spawned, not imported.
+- **Assets are copied with a directory `from` and `to: OUT_DIR`.** A glob plus `flatten: false` keeps
+  each match's path relative to the glob's base, so `packages/index/migrations/**` becomes
+  `migrations/index/migrations/…` — a directory that exists, holds no `.sql` at its top level, and
+  applies zero migrations. The symptom was `no such table: files` on the first write.
+
+`mise run package:smoke` is the only gate whose subject is the artifact: publint, then install the
+tarball and drive all twelve subsystem checks through the installed binary. It is outside `check`
+because it needs the registry, and `check` is offline by construction.
 
 `spec/memhtml.symspec.json` is the EARS requirements ledger (keys like `RET-3`, `STORE-2`, each naming
 its verification method and the code that satisfies it) — retiring or adding a requirement is its own

@@ -180,11 +180,10 @@ run = "pnpm --filter @memhtml/cli build && node apps/cli/dist/bin.js agents-doc"
 # --- the published artifact ----------------------------------------------------------
 
 [tasks."package:assemble"]
-description = "Assemble the twelve workspace packages into ONE publishable `memhtml` in dist-package/"
-# Builds first, unconditionally: the script copies each package's `dist/`, so a stale or missing
-# one is silently published rather than caught. It refuses outright when a `dist/` is absent, and
-# building here means that refusal never fires for a reason the caller could have avoided.
-run = "mise run build && node scripts/assemble-package.mjs"
+description = "Bundle the workspace into ONE publishable `memhtml` under dist-package/"
+# The pnpm script runs turbo's build first. tsdown bundles from `src/`, but `@memhtml/*` specifiers
+# resolve through each package's `exports` to `./dist`, so a stale dist is a stale bundle.
+run = "pnpm package:assemble"
 
 [tasks."package:pack"]
 description = "Assemble, then `npm pack` the single package into dist-package/"
@@ -192,14 +191,18 @@ depends = ["package:assemble"]
 dir = "{{config_root}}/dist-package"
 run = "npm pack"
 
+[tasks."package:lint"]
+description = "publint over the staged package: entry points, module type, and what actually ships"
+depends = ["package:assemble"]
+run = "pnpm package:lint"
+
 [tasks."package:smoke"]
 description = "Install the assembled package into a temp dir and drive every subsystem through it"
 # Deliberately NOT in `mise run check`: this resolves the twelve external dependencies from the npm
 # registry, and check is offline and credential-free by construction. CI runs it as its own job, and
 # the publish job runs it on the tag. It is the only tier whose subject is the published artifact
 # rather than the workspace.
-depends = ["package:assemble"]
-run = "node scripts/smoke-package.mjs"
+run = "pnpm package:smoke"
 
 # --- git hooks ----------------------------------------------------------------------
 

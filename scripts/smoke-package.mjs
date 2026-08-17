@@ -186,13 +186,20 @@ const main = async () => {
  * and then dies on an unsettled top-level await, so a build that merely succeeds proves nothing.
  */
 const checkAgentBuild = async ({ consumer, env }) => {
-  const vendored = join(consumer, "node_modules", "memhtml", "node_modules", "@memhtml", "consolidator")
+  /**
+   * The installed package root, which is what the bundle's own `packageRoot()` resolves to: the
+   * emitted code sits in `dist/`, so `..` from there is here, and `agent/` and `src/` sit beside it.
+   */
+  const installed = join(consumer, "node_modules", "memhtml")
   let appRoot
   await check("the agent builds outside node_modules", async () => {
     const { Effect } = await import(join(consumer, "node_modules", "effect", "dist", "index.js"))
       .catch(() => import("effect"))
+    // The bundle exports nothing, so the staged SOURCE is imported instead. It is the same file eve
+    // compiles, and importing it is how this tier reaches a path no CLI command can (the credential
+    // preflight returns before consolidation).
     const { resolveAgentAppRoot, eveBinPath } = await import(
-      join(vendored, "dist", "agent-build.js")
+      join(REPO_ROOT, "apps", "consolidator", "dist", "agent-build.js")
     )
     /**
      * `process.env`, not the child `env` above: this call runs IN THIS PROCESS, and the cache location
@@ -203,7 +210,7 @@ const checkAgentBuild = async ({ consumer, env }) => {
     process.env.XDG_CACHE_HOME = env.XDG_CACHE_HOME
     try {
       appRoot = await Effect.runPromise(
-        resolveAgentAppRoot({ packageRoot: vendored, configured: undefined, eveBin: eveBinPath() })
+        resolveAgentAppRoot({ packageRoot: installed, configured: undefined, eveBin: eveBinPath() })
       )
     } finally {
       if (before === undefined) delete process.env.XDG_CACHE_HOME

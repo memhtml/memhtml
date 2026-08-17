@@ -9,6 +9,23 @@ memhtml stores an agent's long-term memory as a git repository of semantic HTML5
 file. A rebuildable SQLite index sits over that tree, retrieval fuses four ranking arms, and a nightly
 curation pipeline commits its work to a branch a human reviews before it lands.
 
+## Install
+
+One package carries the whole system — the CLI, code mode, the sleep cycle, the trace indexer, and the
+MCP server — and installs two binaries, `memhtml` and `memhtml-mcp`. Node 24 or newer.
+
+```bash
+npm i -g memhtml       # or: pnpm add -g memhtml, bun add -g memhtml
+npx memhtml manifest   # every command, flag, and error code, without installing anything
+```
+
+Point it at a corpus with `MEMHTML_ROOT` (default `~/memhtml`), and at your transcripts with
+`MEMHTML_TRACE_ROOT` (default `~/.claude`). Reading and writing memories needs no credentials;
+embeddings and the sleep cycle's model calls use Bedrock through the default AWS credential chain, and
+`MEMHTML_EMBED=off` / `MEMHTML_LLM=off` turn both off.
+
+To register the MCP server with a client, the command is `memhtml-mcp` over stdio.
+
 ```bash
 memhtml init                                  # scaffold $MEMHTML_ROOT: git init, PARA dirs, merge driver
 memhtml write --title "WAL admits one writer and many readers" --type semantic \

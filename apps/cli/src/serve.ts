@@ -32,7 +32,7 @@ export interface ServeResult {
 export const MCP_BIN_VAR = "MEMHTML_MCP_BIN"
 
 /**
- * The `memhtml-mcp` entry point.
+ * Where the `memhtml-mcp` entry point sits relative to this module, in each layout that ships.
  *
  * Resolved by PATH rather than by `require.resolve`, which the dependency direction forces.
  * `@memhtml/mcp` depends on `@memhtml/cli` for the composition root, so `@memhtml/cli` cannot depend on
@@ -40,25 +40,35 @@ export const MCP_BIN_VAR = "MEMHTML_MCP_BIN"
  * (`require.resolve("@memhtml/mcp/bin")` from here raises `MODULE_NOT_FOUND`, which is how this was
  * found.)
  *
- * The two apps are therefore located as siblings in one build, shipped and versioned
- * together. `apps/cli/dist/serve.js` → `apps/mcp/dist/bin.js` is two directories up and across. Unlike
- * a dependency path it is a real directory rather than a pnpm symlink into the store, so the
- * relative walk is stable. {@link MCP_BIN_VAR} overrides it for a deployment that separates them.
+ * Two candidates, tried in order, because the two apps are one build and where that build puts them
+ * differs:
+ *
+ * - `./memhtml-mcp.mjs` — the PUBLISHED package, where both bins are entry points of one bundle and
+ *   land beside each other in `dist/`.
+ * - `../../mcp/dist/bin.js` — the workspace, where `apps/cli/dist/serve.js` reaches
+ *   `apps/mcp/dist/bin.js` two directories up and across.
+ *
+ * Both are real directories rather than pnpm symlinks into the store, so each walk is stable where it
+ * applies. {@link MCP_BIN_VAR} still overrides for a deployment that separates them.
  */
+const MCP_CANDIDATES = ["./memhtml-mcp.mjs", "../../mcp/dist/bin.js"] as const
+
 export const mcpEntryPoint = (): Effect.Effect<string, StorageFailure> =>
   Effect.gen(function* () {
     const override = process.env[MCP_BIN_VAR]
     if (override !== undefined && override.trim() !== "") return override.trim()
 
-    const sibling = fileURLToPath(new URL("../../mcp/dist/bin.js", import.meta.url))
-    const present = yield* Effect.tryPromise({
-      try: () => access(sibling),
-      catch: () => "absent" as const
-    }).pipe(
-      Effect.as(true),
-      Effect.orElseSucceed(() => false)
-    )
-    if (present) return sibling
+    for (const candidate of MCP_CANDIDATES) {
+      const path = fileURLToPath(new URL(candidate, import.meta.url))
+      const present = yield* Effect.tryPromise({
+        try: () => access(path),
+        catch: () => "absent" as const
+      }).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false)
+      )
+      if (present) return path
+    }
 
     // A build that produced the CLI but not the server is the one thing that lands here, so the
     // message names the fix rather than the missing path.
