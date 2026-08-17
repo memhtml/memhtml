@@ -192,6 +192,15 @@ depends = ["package:assemble"]
 dir = "{{config_root}}/dist-package"
 run = "npm pack"
 
+[tasks."package:smoke"]
+description = "Install the assembled package into a temp dir and drive every subsystem through it"
+# Deliberately NOT in `mise run check`: this resolves the twelve external dependencies from the npm
+# registry, and check is offline and credential-free by construction. CI runs it as its own job, and
+# the publish job runs it on the tag. It is the only tier whose subject is the published artifact
+# rather than the workspace.
+depends = ["package:assemble"]
+run = "node scripts/smoke-package.mjs"
+
 # --- git hooks ----------------------------------------------------------------------
 
 [tasks."hooks:install"]

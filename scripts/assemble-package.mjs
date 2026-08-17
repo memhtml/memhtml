@@ -45,7 +45,7 @@ const PACKAGE_NAME = "memhtml"
  * `tests-integration/tests/packaging.test.ts` holds the same asset facts as claims tied to the source
  * line that resolves each one, so a new asset fails there before it can be forgotten here.
  */
-const VENDORED = [
+export const VENDORED = [
   { dir: "apps/cli", assets: ["guest"] },
   { dir: "apps/mcp", assets: [] },
   { dir: "apps/consolidator", assets: ["agent", "src"] },
@@ -191,8 +191,15 @@ const assemble = async () => {
   return { version: anchor.version, external: Object.keys(external).length, bundled: bundled.length }
 }
 
-const report = await assemble()
-const files = (await readdir(STAGING, { recursive: true })).length
-process.stdout.write(
-  `${JSON.stringify({ staging: STAGING, ...report, entries: files }, null, 2)}\n`
-)
+/**
+ * Only assemble when RUN, never when imported.
+ *
+ * `tests-integration/tests/packaging.test.ts` imports {@link VENDORED} so the gate and the shipper
+ * cannot disagree about which packages travel. Without this guard that import would assemble the
+ * whole tree as a side effect of running a test.
+ */
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const report = await assemble()
+  const entries = (await readdir(STAGING, { recursive: true })).length
+  process.stdout.write(`${JSON.stringify({ staging: STAGING, ...report, entries }, null, 2)}\n`)
+}

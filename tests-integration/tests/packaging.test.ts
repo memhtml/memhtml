@@ -6,6 +6,9 @@ import { promisify } from "node:util"
 
 import { describe, expect, it } from "vitest"
 
+// @ts-expect-error -- the shipper is plain ESM with no declaration file; VENDORED is its own list.
+import { VENDORED } from "../../scripts/assemble-package.mjs"
+
 const run = promisify(execFile)
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
@@ -141,6 +144,17 @@ const DEPENDENCY_FILE_CLAIMS: ReadonlyArray<DependencyFileClaim> = [
     dependency: "highlight.js",
     resolvedIn: "src/detect.ts",
     needle: 'requireModule("highlight.js")'
+  },
+  /**
+   * eve's CLI is SPAWNED, not imported, so what matters is that its bin is a real file on disk at a
+   * resolvable path. Reached through `eve/package.json` because eve's `exports` map declares no
+   * `./bin/*` subpath and node refuses the deep path.
+   */
+  {
+    dir: "apps/consolidator",
+    dependency: "eve",
+    resolvedIn: "src/agent-build.ts",
+    needle: 'require.resolve("eve/package.json")'
   }
 ]
 
@@ -149,21 +163,16 @@ interface Packed {
   readonly paths: ReadonlySet<string>
 }
 
-/** Every publishable workspace package, discovered rather than listed, so a new one cannot escape. */
-const publishableDirs = async (): Promise<ReadonlyArray<string>> => {
-  const found: string[] = []
-  for (const parent of ["apps", "packages"]) {
-    for (const entry of await readdir(join(REPO_ROOT, parent), { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue
-      const dir = posix.join(parent, entry.name)
-      const manifest = JSON.parse(
-        await readFile(join(REPO_ROOT, dir, "package.json"), "utf8")
-      ) as Record<string, unknown>
-      if (manifest.private !== true) found.push(dir)
-    }
-  }
-  return found.sort()
-}
+/**
+ * The packages that TRAVEL, taken from the shipper itself.
+ *
+ * Not "the packages that are publishable": every workspace package is `private` now, and only the
+ * assembled `memhtml` reaches npm, so a private-flag filter would select nothing and every census
+ * below would pass by scanning an empty set. Importing the shipper's own list makes the gate and the
+ * artifact disagree only if someone edits one of them.
+ */
+const shippedDirs = (): ReadonlyArray<string> =>
+  (VENDORED as ReadonlyArray<{ readonly dir: string }>).map((entry) => entry.dir).sort()
 
 const packed = new Map<string, Packed>()
 
@@ -240,6 +249,38 @@ describe("a dependency read as a file stays an unbundled dependency", () => {
 })
 
 /**
+ * One artifact reaches npm, and the twelve cannot.
+ *
+ * They were configured to publish in lockstep and never did, which is the only reason changing it is
+ * free: `@memhtml/cli` and its eleven siblings were public names with `publishConfig.access`, and nine
+ * of them had no consumer outside this repo. `private: true` is the mechanical half of that decision —
+ * `npm publish` refuses a private package outright, so the assembled `memhtml` is the only thing that
+ * can ship even if a workflow asks for more.
+ */
+describe("only the assembled package can publish", () => {
+  it.for((VENDORED as ReadonlyArray<{ readonly dir: string }>).map(({ dir }) => dir))(
+    "%s is private",
+    async (dir) => {
+      const manifest = JSON.parse(await readFile(join(REPO_ROOT, dir, "package.json"), "utf8")) as {
+        readonly private?: boolean
+        readonly publishConfig?: unknown
+      }
+      expect(manifest.private).toBe(true)
+      // `publishConfig` on a package that cannot publish is a leftover that reads as intent.
+      expect(manifest.publishConfig).toBeUndefined()
+    }
+  )
+
+  /** The assembler names `memhtml`, and the staged manifest is what `npm publish` would read. */
+  it("assembles under the one published name, with both bins", async () => {
+    const shipper = await readFile(join(REPO_ROOT, "scripts", "assemble-package.mjs"), "utf8")
+    expect(shipper).toContain('const PACKAGE_NAME = "memhtml"')
+    expect(shipper).toContain('memhtml: "./bin/memhtml.mjs"')
+    expect(shipper).toContain('"memhtml-mcp": "./bin/memhtml-mcp.mjs"')
+  })
+})
+
+/**
  * The census, which is what makes the two tables above a gate rather than a list of things somebody
  * happened to think of. Any shipped source file that resolves a path from its own location is either
  * declared or a failure: a new asset added with no claim fails here, at the commit that adds it,
@@ -254,7 +295,7 @@ describe("every run-time path resolution in shipped source is declared", () => {
     )
 
     const undeclared: string[] = []
-    for (const dir of await publishableDirs()) {
+    for (const dir of shippedDirs()) {
       for (const sub of ["src", "agent"]) {
         let files: ReadonlyArray<string>
         try {
