@@ -12,6 +12,9 @@ coverage/
 .erpaval/sessions/
 .codegraph/
 docs/.repomix/
+# Agent scratch from a codebase-understanding pass: derived analysis of the tree, not an artifact of
+# the system. The durable version of anything worth keeping is a file under docs/ proper.
+docs/.packets/
 # mise.toml and mise.lock are committed — these two are the per-machine overrides.
 mise.local.toml
 mise.local.lock
