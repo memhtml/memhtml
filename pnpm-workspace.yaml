@@ -65,7 +65,7 @@ overrides:
 catalog:
   effect: 4.0.0-beta.107
   "@effect/platform-node": 4.0.0-beta.107
-  "@effect/vitest": 4.0.0-beta.107
+  "@effect/vitest": 4.0.0-rc.109
   fast-check: 4.9.0
 
 allowBuilds:
