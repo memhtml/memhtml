@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process"
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { createRequire } from "node:module"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
@@ -265,6 +266,31 @@ export interface ConsolidatorOptions {
 
 /** This package's root, resolved from this module rather than from `process.cwd()`. */
 const packageRoot = (): string => resolve(dirname(fileURLToPath(import.meta.url)), "..")
+
+/**
+ * eve's CLI entry point, or `null` when eve does not resolve from here.
+ *
+ * Spawned as `process.execPath <path>` rather than through a package manager, because a consumer who
+ * installed this package has whatever manager they used and need not have any particular one on PATH.
+ * `apps/cli/src/serve.ts` spawns the MCP server the same way, for the same reason.
+ *
+ * Resolution goes through the MANIFEST, not the bin. `resolve("eve/bin/eve.js")` raises
+ * `ERR_PACKAGE_PATH_NOT_EXPORTED`: eve's `exports` map declares no `./bin/*` subpath, so node refuses
+ * the deep path even though the file is there (probed against eve 0.33.0). `./package.json` IS
+ * exported, and the `bin` field beside it names the entry point.
+ */
+const eveBinPath = (): string | null => {
+  const require = createRequire(import.meta.url)
+  let manifestPath: string
+  try {
+    manifestPath = require.resolve("eve/package.json")
+  } catch {
+    return null
+  }
+  const { bin } = require(manifestPath) as { readonly bin?: Record<string, string> | string }
+  const entry = typeof bin === "string" ? bin : bin?.eve
+  return entry === undefined ? null : resolve(dirname(manifestPath), entry)
+}
 
 /**
  * One transcript that RESOLVES inside the sandbox, with the guest path it resolves at.
@@ -650,9 +676,21 @@ const startServerOnPort = (input: {
     const { appRoot, port, secret, mounts } = input
     const url = `http://${LOOPBACK_HOST}:${String(port)}`
 
+    const eveBin = eveBinPath()
+    if (eveBin === null) {
+      resume(
+        Effect.fail({
+          reason: "eve does not resolve from @memhtml/consolidator; reinstall its dependencies",
+          retryable: false
+        })
+      )
+      // Nothing was spawned, so there is nothing for the finalizer to stop.
+      return Effect.void
+    }
+
     const child = spawn(
-      "pnpm",
-      ["exec", "eve", "start", "--host", LOOPBACK_HOST, "--port", String(port)],
+      process.execPath,
+      [eveBin, "start", "--host", LOOPBACK_HOST, "--port", String(port)],
       {
         cwd: appRoot,
         stdio: ["ignore", "pipe", "pipe"],

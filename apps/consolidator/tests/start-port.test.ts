@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { createRequire } from "node:module"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
@@ -29,8 +31,8 @@ const clientSource = (): Promise<string> =>
  * Existing is the load-bearing part. A path that does not exist fails one step earlier — `spawn` with
  * an unreachable `cwd` reports `ENOENT` on the spawn itself, so the run never reaches the readiness
  * poll or the retry, and both cases below would assert against a message about a missing directory.
- * With a real empty directory the spawn succeeds, `pnpm exec` fails to find a package, and the child
- * EXITS before answering — which is the failure shape a real "eve build has not run" produces.
+ * With a real empty directory the spawn succeeds, `eve start` finds no `.output/` to serve, and the
+ * child EXITS before answering — which is the failure shape a real "eve build has not run" produces.
  */
 let unbuiltRoot: string
 
@@ -49,12 +51,11 @@ const codeOnly = (source: string): string =>
 /**
  * How long a case driving three real spawn attempts may take.
  *
- * The two cases below each spawn `pnpm exec eve start` up to {@link MAX_PORT_ATTEMPTS} times and wait
- * for each child to EXIT, and a `pnpm exec` that has to fail to resolve a package is not fast. Measured
+ * The two cases below each spawn `eve start` up to {@link MAX_PORT_ATTEMPTS} times and wait for each
+ * child to EXIT, and a node process that has to load eve's CLI before failing is not fast. Measured
  * on this box (2026-08-09, three runs): 3.98s, 4.20s, 4.57s — against vitest's 5000ms default, which is
  * why they intermittently timed out under `pnpm check`'s parallel load and passed when the file ran
- * alone. The latency predates this change; it was confirmed at HEAD with the working tree stashed, so
- * this is a too-tight budget rather than a regression being papered over.
+ * alone. The latency is the child's, not the assertion's, so the budget is generous rather than tight.
  *
  * 30s: comfortably past the measurement with room for a loaded box, and far below the 60s
  * `START_TIMEOUT_MS` budget a single attempt is allowed — so a case that hangs still fails rather than
@@ -132,6 +133,66 @@ describe("the port is passed explicitly, never read back", () => {
     expect(code).toContain('const LOOPBACK_HOST = "127.0.0.1"')
     expect(code).toMatch(/"--host",\s*LOOPBACK_HOST/)
     expect(code).not.toMatch(/readonly host\?:/)
+  })
+
+  /**
+   * The spawn needs node on PATH and nothing else.
+   *
+   * A package manager in the command line is a workspace assumption that does not survive
+   * publication: a consumer installs this package with whatever manager they use, and pnpm need not
+   * be present at all. `process.execPath` against a resolved path is what `apps/cli/src/serve.ts`
+   * already does to spawn the MCP server.
+   *
+   * (Mutation: restoring `spawn("pnpm", ["exec", "eve", …])` fails all three assertions.)
+   */
+  it("spawns eve through node rather than through a package manager", async () => {
+    const code = codeOnly(await clientSource())
+    expect(code).toMatch(/spawn\(\s*process\.execPath,\s*\[eveBin,\s*"start"/)
+    expect(code).not.toMatch(/spawn\(\s*"pnpm"/)
+    expect(code).not.toMatch(/"exec",\s*"eve"/)
+  })
+})
+
+describe("eve's entry point is reached through its manifest", () => {
+  const consolidatorRequire = createRequire(
+    resolve(dirname(fileURLToPath(import.meta.url)), "..", "package.json")
+  )
+
+  /**
+   * The deep path is not a longer spelling of the same thing — it does not resolve at all. eve's
+   * `exports` map declares no `./bin/*` subpath, so node refuses `eve/bin/eve.js` even though the file
+   * is on disk. Asserted against the installed eve rather than described, so an eve release that DOES
+   * export its bin fails here and invites the simplification instead of hiding it.
+   */
+  it("refuses eve/bin/eve.js and exports eve/package.json", () => {
+    // The `code`, not the message: the code is node's stable identifier for the refusal, and the
+    // prose around it names a path that differs per install.
+    let code: string | undefined
+    try {
+      consolidatorRequire.resolve("eve/bin/eve.js")
+    } catch (cause) {
+      code = (cause as { readonly code?: string }).code
+    }
+    expect(code).toBe("ERR_PACKAGE_PATH_NOT_EXPORTED")
+    expect(consolidatorRequire.resolve("eve/package.json")).toContain("eve")
+  })
+
+  /** The manifest's `bin.eve` names a file that is really there, which is what the spawn depends on. */
+  it("names a bin that exists on disk", () => {
+    const manifestPath = consolidatorRequire.resolve("eve/package.json")
+    const { bin } = consolidatorRequire(manifestPath) as {
+      readonly bin: Record<string, string>
+    }
+    const entry = bin.eve
+    expect(entry).toBeTypeOf("string")
+    expect(existsSync(resolve(dirname(manifestPath), entry ?? ""))).toBe(true)
+  })
+
+  /** The resolution in `client.ts` is the manifest route, not the deep path the case above refuses. */
+  it("resolves through the manifest in client.ts", async () => {
+    const code = codeOnly(await clientSource())
+    expect(code).toContain('require.resolve("eve/package.json")')
+    expect(code).not.toMatch(/resolve\("eve\/bin/)
   })
 })
 
