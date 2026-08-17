@@ -167,9 +167,279 @@ const main = async () => {
       })
     }
 
+    await checkEveryCommand({ bin, work, env })
+    await checkEveryMcpTool({ mcpBin, env })
     await checkAgentBuild({ consumer, env })
   } finally {
     await rm(work, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Every command the binary declares, run against the installed artifact.
+ *
+ * The checks above are a scenario: they prove the paths a first-time user walks. They are not coverage,
+ * and the difference matters here more than it usually would — this is the ONLY tier that runs the
+ * published bytes, so a command it never invokes is a command nobody has ever run from an install.
+ *
+ * So the surface is enumerated from `memhtml manifest` — the binary's own table, which also drives its
+ * argument parsing — and every entry is either INVOKED or EXCUSED with a reason. A command that is
+ * neither fails the census, at the commit that adds it.
+ *
+ * Ordering is state, not taste: `read` needs something written, `link` needs two paths, `neighbors`
+ * needs the link, and `archive` moves a file so it runs last.
+ */
+const checkEveryCommand = async ({ bin, work, env }) => {
+  const manifest = await envelope(bin, ["manifest"], env)
+  const declared = manifest.data.commands.map((command) => command.name)
+
+  const corpus = env.MEMHTML_ROOT
+  const traceRoot = join(work, "traces")
+  await exec("mkdir", ["-p", join(traceRoot, "projects", "-smoke")])
+  await writeFile(
+    join(traceRoot, "projects", "-smoke", "s1.jsonl"),
+    `${JSON.stringify({ type: "user", uuid: "u1", sessionId: "s1", message: { role: "user", content: "the VIP drain question" } })}\n`
+  )
+  const traced = { ...env, MEMHTML_TRACE_ROOT: traceRoot }
+
+  /**
+   * Two memories written HERE, so `link` gets distinct endpoints.
+   *
+   * Taking one path from `list` instead handed back the same memory twice — the list is
+   * recency-ordered, so its first entry was the write just made — and `link` correctly refused a
+   * self-edge. Each write reports its own path; use that.
+   */
+  const writeTwo = async (title, claim) =>
+    (
+      await envelope(
+        bin,
+        ["write", "--title", title, "--claim", claim, "--type", "semantic", "--workspace", "checkout-api"],
+        env
+      )
+    ).data.path
+
+  const pathA = await writeTwo("A drain precedes every revert", "Drain, then revert.")
+  const pathB = await writeTwo("A revert without a drain keeps serving", "Reverting alone does not drain.")
+
+  const task = await envelope(bin, ["task", "add", "--title", "Drain the VIP before the next revert"], env)
+  const taskPath = task.data?.path
+
+  const applyFile = join(work, "ops.jsonl")
+  await writeFile(
+    applyFile,
+    // `body`, not `claim`: the batch op vocabulary is its own snake_case surface and `memhtml apply`
+    // rejects an unknown field by name. `memhtml manifest` lists the accepted set.
+    `${JSON.stringify({ op: "write", title: "Applied through the batch door", body: "Batch writes share one commit.", type: "semantic", workspace: "checkout-api" })}\n`
+  )
+
+  const execFile_ = join(work, "census.mjs")
+  await writeFile(execFile_, 'import { corpus } from "/workspace/lib/corpus.mjs"\nconsole.log(corpus().size)\n')
+
+  const sleepRun = await envelope(bin, ["sleep", "run", "--dry-run"], env)
+  const runId = sleepRun.data?.runId
+
+  /** `[command, argv, env]`. A command with no entry here must appear in EXCUSED below. */
+  const INVOCATIONS = [
+    ["manifest", ["manifest"]],
+    ["init", ["init"]],
+    ["write", ["write", "--title", "Third memory", "--claim", "Three.", "--type", "semantic"]],
+    ["apply", ["apply", "--file", applyFile]],
+    ["read", ["read", pathA]],
+    ["search", ["search", "VIP revert"]],
+    ["recall", ["recall", "VIP revert"]],
+    // `--title` alone is a usage error by design — the command's own suggestions name `--claim` or
+    // `--article-html`, because a correction with no new content is a rename, not a correction.
+    // Before `correct`: a correction rewrites its target to a new slug, so any path captured earlier is
+    // stale afterwards. `link` refused the resulting dangling edge, which is the store being right.
+    ["link", ["link", pathA, "relates_to", pathB]],
+    ["neighbors", ["neighbors", pathA]],
+    ["reinforce", ["reinforce", pathA]],
+    ["correct", ["correct", pathB, "--title", "A revert without a drain keeps serving", "--claim", "Reverting alone leaves the old group serving."]],
+    ["list", ["list"]],
+    ["task add", ["task", "add", "--title", "Second task"]],
+    ["task list", ["task", "list"]],
+    ["task status", ["task", "status", taskPath, "doing"]],
+    ["index update", ["index", "update"]],
+    ["index rebuild", ["index", "rebuild"]],
+    ["index status", ["index", "status"]],
+    ["trace index", ["trace", "index"], traced],
+    ["trace search", ["trace", "search", "VIP"], traced],
+    // One of `--session-id` / `--path` is required, which is an either-or no `required` flag can
+    // express, so neither is marked and a bare call is a usage error.
+    ["trace links", ["trace", "links", "--session-id", "s1"], traced],
+    ["sleep run", ["sleep", "run", "--dry-run"]],
+    ["sleep status", ["sleep", "status"]],
+    ["sleep review", ["sleep", "review", runId]],
+    ["status", ["status"]],
+    ["publish", ["publish"]],
+    ["doctor", ["doctor"]],
+    ["eval discriminate", ["eval", "discriminate", "--mode", "fake", "--probes", "4", "--size", "12"]],
+    ["exec", ["exec", "--file", execFile_]],
+    ["state export", ["state", "export"]],
+    ["state import", ["state", "import"]],
+    ["agents-doc", ["agents-doc", "--out", join(work, "AGENTS.md")]],
+    // Last: it `git mv`s a memory into archive/, which every command above would rather read.
+    ["archive", ["archive", pathA, "--reason", "superseded by the corrected memory"]]
+  ]
+
+  /**
+   * Commands this tier deliberately does not invoke, each with the reason.
+   *
+   * An excuse is a claim, so each one names something checkable rather than "hard to test".
+   */
+  const EXCUSED = {
+    "serve mcp": "covered above by its own handshake check, which is what it does",
+    "sleep resume": "resumes an INTERRUPTED run; a dry run leaves nothing to resume, and interrupting one here would test the harness",
+    "sleep merge": "merges a review branch into main; it is the one command that mutates main from a sleep run, and the review above is the reachable half"
+  }
+
+  const invoked = new Set(INVOCATIONS.map(([name]) => name))
+  const missing = declared.filter((name) => !invoked.has(name) && EXCUSED[name] === undefined)
+  await check("every declared command is invoked or excused", async () => ({
+    ok: missing.length === 0 && declared.length > 30,
+    detail: `${String(invoked.size)}/${String(declared.length)} invoked, ${String(Object.keys(EXCUSED).length)} excused${missing.length > 0 ? `, MISSING: ${missing.join(", ")}` : ""}`
+  }))
+
+  for (const [name, argv, commandEnv] of INVOCATIONS) {
+    await check(`${name} answers from the installed binary`, async () => {
+      const answer = await envelope(bin, argv, commandEnv ?? env)
+      // The envelope's own contract: a `type` on success, a `code` on failure. Either is a real
+      // answer; a crash, a non-zero exit, or unparseable stdout is not, and `envelope` throws on those.
+      return { ok: typeof answer.type === "string", detail: answer.type ?? answer.code }
+    })
+  }
+
+  void corpus
+}
+
+/**
+ * Every MCP tool the server advertises, called over stdio against the installed artifact.
+ *
+ * `initialize` proves the transport and nothing else. The tools are the MCP surface, and until each one
+ * is called from an install, "the MCP server works" means "it answered a handshake". The list comes from
+ * `tools/list` rather than from a literal, so a new tool is covered the day it is registered — or fails
+ * the census for want of arguments.
+ */
+const checkEveryMcpTool = async ({ mcpBin, env }) => {
+  /**
+   * Arguments per tool, spelled the way the SCHEMA spells them.
+   *
+   * The tool surface is its own vocabulary and does not mirror the CLI's flags: `memory_type` not
+   * `type`, `target_path` not `target`, `src_path`/`dst_path` not `src`/`dst`, and `paths` is an array.
+   * Guessing from the CLI produced `Invalid parameters … Missing key` on seven of the fourteen. The
+   * census below reads each tool's `inputSchema.required` and fails when a key here does not cover it,
+   * so a rename or a new required field surfaces as a failure rather than as a wrong call.
+   */
+  const ARGUMENTS = {
+    memory_write: {
+      title: "Written through the MCP door",
+      body: "Tools and the CLI share one store.",
+      memory_type: "semantic",
+      workspace: "checkout-api"
+    },
+    // A batch op is `Schema.Struct(writeFields())` — the same fields as `memory_write`, so
+    // `memory_type` and no `op` discriminator. `memhtml apply`'s JSONL vocabulary is the one with `op`.
+    memory_write_batch: {
+      ops: [
+        {
+          title: "Batched through the MCP door",
+          body: "One commit per batch.",
+          memory_type: "semantic",
+          workspace: "checkout-api"
+        }
+      ]
+    },
+    memory_search: { query: "MCP door" },
+    memory_recall: { query: "MCP door" },
+    memory_list: {},
+    memory_status: {},
+    trace_search: { query: "VIP" },
+    // One of `session_id` / `path` is required, which no `required` array can express.
+    trace_links: { session_id: "s1" },
+    memory_read: { path: "PLACEHOLDER" },
+    memory_correct: {
+      target_path: "CORRECTED",
+      title: "Corrected through the MCP door",
+      body: "The correction carries new content.",
+      reason: "written by the MCP smoke tier"
+    },
+    memory_link: { src_path: "PLACEHOLDER", rel: "relates_to", dst_path: "SECOND" },
+    memory_neighbors: { path: "PLACEHOLDER" },
+    memory_reinforce: { paths: ["PLACEHOLDER"], signal: "positive" },
+    memory_archive: { path: "DOOMED", reason: "written by the MCP smoke tier" }
+  }
+
+  const session = await mcpSession(mcpBin, env)
+  try {
+    const listed = await session.request("tools/list", {})
+    const tools = listed.result?.tools ?? []
+
+    const uncovered = tools.filter((tool) => ARGUMENTS[tool.name] === undefined).map((t) => t.name)
+    const underspecified = tools.flatMap((tool) => {
+      const supplied = new Set(Object.keys(ARGUMENTS[tool.name] ?? {}))
+      return (tool.inputSchema?.required ?? [])
+        .filter((key) => !supplied.has(key))
+        .map((key) => `${tool.name}.${key}`)
+    })
+    await check("every advertised MCP tool has schema-complete arguments", async () => ({
+      ok: uncovered.length === 0 && underspecified.length === 0 && tools.length > 10,
+      detail: `${String(tools.length)} tools${uncovered.length > 0 ? `, UNCOVERED: ${uncovered.join(", ")}` : ""}${underspecified.length > 0 ? `, MISSING REQUIRED: ${underspecified.join(", ")}` : ""}`
+    }))
+
+    /**
+     * Three paths the SERVER wrote, so the read/link/archive tools address memories it made itself.
+     *
+     * The BODY varies, not just the title: the store dedupes on content hash, so two writes with the
+     * same body return the same path and `memory_link` then refuses a self-edge. And `archive` gets its
+     * own memory because `memory_correct` rewrites the one it touches to a new slug, which left archive
+     * addressing a path that no longer existed.
+     */
+    const writeOne = async (title, body) => {
+      const answer = await session.request("tools/call", {
+        name: "memory_write",
+        arguments: { ...ARGUMENTS.memory_write, title, body }
+      })
+      return JSON.parse(answer.result?.content?.[0]?.text ?? "{}").path
+    }
+    const target = await writeOne("Written through the MCP door", "The first body, distinct.")
+    const second = await writeOne("A second memory through the MCP door", "The second body, also distinct.")
+    const doomed = await writeOne("A memory written to be archived", "The third body, distinct again.")
+    const corrected = await writeOne("A memory written to be corrected", "The fourth body, distinct too.")
+
+    for (const tool of tools) {
+      if (tool.name === "memory_write") continue
+      await check(`MCP tool ${tool.name} answers`, async () => {
+        const substitute = (value) =>
+          value === "PLACEHOLDER"
+            ? target
+            : value === "SECOND"
+              ? second
+              : value === "DOOMED"
+                ? doomed
+                : value === "CORRECTED"
+                  ? corrected
+                  : value
+        const args = Object.fromEntries(
+          Object.entries(ARGUMENTS[tool.name] ?? {}).map(([key, value]) => [
+            key,
+            Array.isArray(value) ? value.map(substitute) : substitute(value)
+          ])
+        )
+        const answer = await session.request("tools/call", { name: tool.name, arguments: args })
+        // `isError` is the protocol's own failure channel; a JSON-RPC `error` is a broken call. Both
+        // are failures here: a tool that answers "that went wrong" has not been shown to work.
+        return {
+          ok: answer.error === undefined && answer.result?.isError !== true,
+          detail:
+            answer.error?.message ??
+            (answer.result?.isError === true
+              ? String(answer.result?.content?.[0]?.text ?? "isError").slice(0, 120)
+              : "ok")
+        }
+      })
+    }
+  } finally {
+    session.stop()
   }
 }
 
@@ -255,6 +525,66 @@ const checkAgentBuild = async ({ consumer, env }) => {
       child.kill("SIGKILL")
     }
   })
+}
+
+/**
+ * One long-lived MCP session over stdio: initialize once, then send requests and match replies by id.
+ *
+ * The handshake check spawns a server per request, which is fine for one message and wrong for fifteen —
+ * a fresh process per tool call would test process startup, and `memory_read` needs to see what
+ * `memory_write` wrote in the same session.
+ */
+const mcpSession = async (bin, env) => {
+  const child = spawn(bin, [], { env, stdio: ["pipe", "pipe", "ignore"] })
+  const pending = new Map()
+  let buffer = ""
+  let nextId = 100
+
+  child.stdout.setEncoding("utf8")
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk
+    for (;;) {
+      const newline = buffer.indexOf("\n")
+      if (newline === -1) break
+      const line = buffer.slice(0, newline).trim()
+      buffer = buffer.slice(newline + 1)
+      if (!line.startsWith("{")) continue
+      let message
+      try {
+        message = JSON.parse(line)
+      } catch {
+        continue
+      }
+      const settle = pending.get(message.id)
+      if (settle !== undefined) {
+        pending.delete(message.id)
+        settle(message)
+      }
+    }
+  })
+
+  const request = (method, params) =>
+    new Promise((done, fail) => {
+      const id = nextId++
+      const timer = setTimeout(() => {
+        pending.delete(id)
+        fail(new Error(`${method} did not answer within 60s`))
+      }, 60_000)
+      pending.set(id, (message) => {
+        clearTimeout(timer)
+        done(message)
+      })
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`)
+    })
+
+  await request("initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "memhtml-smoke", version: "1" }
+  })
+  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`)
+
+  return { request, stop: () => child.kill("SIGKILL") }
 }
 
 /** One `initialize` request over stdio, and the first line of the reply. */
