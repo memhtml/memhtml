@@ -15,6 +15,7 @@
   "files": [
     "dist",
     "agent",
+    "src",
     "!dist/.tsbuildinfo"
   ],
   "exports": {
