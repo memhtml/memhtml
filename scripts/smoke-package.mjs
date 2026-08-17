@@ -11,10 +11,17 @@
  * `check` is offline and credential-free by construction. CI runs it as its own job, and the publish
  * job runs it on the tag before publishing.
  *
- * Every command runs with `MEMHTML_EMBED=off` and `MEMHTML_LLM=off`, so nothing here needs a
- * credential. That bounds what it can prove — the model and embedder edges are covered by the eval and
- * integration tiers — and everything else is real: a real git repository, real migrations, a real
- * QuickJS sandbox, a real MCP handshake.
+ * ## Two modes
+ *
+ * By DEFAULT every command runs with `MEMHTML_EMBED=off` and `MEMHTML_LLM=off`, so nothing needs a
+ * credential and CI can gate on it. Everything else is real: a real git repository, real migrations, a
+ * real QuickJS sandbox, a real MCP handshake.
+ *
+ * With `--live` it additionally drives the two edges that reach the network, which is the only way to
+ * prove them from an install: Bedrock embeddings, the sleep phases that call a model, and the
+ * consolidator distilling a transcript through eve. Those three are the whole of what the default mode
+ * cannot see, so `--live` is the difference between "every command answers" and "every command works".
+ * It needs `AWS_BEARER_TOKEN_BEDROCK` (or SigV4 keys) and it spends real tokens.
  */
 import { execFile, spawn } from "node:child_process"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
@@ -26,6 +33,9 @@ import { promisify } from "node:util"
 const exec = promisify(execFile)
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const STAGING = join(REPO_ROOT, "dist-package")
+
+/** `--live` also drives Bedrock. Off by default so the gate stays credential-free. */
+const LIVE = process.argv.includes("--live") || process.env.MEMHTML_SMOKE_LIVE === "1"
 
 const results = []
 const record = (name, ok, detail) => {
@@ -171,6 +181,7 @@ const main = async () => {
     await checkSleepLifecycle({ bin, work, env })
     await checkEveryMcpTool({ mcpBin, env })
     await checkAgentBuild({ consumer, env })
+    if (LIVE) await checkLiveBedrock({ bin, work, env })
   } finally {
     await rm(work, { recursive: true, force: true })
   }
@@ -489,6 +500,127 @@ const checkEveryMcpTool = async ({ mcpBin, env }) => {
   } finally {
     session.stop()
   }
+}
+
+/**
+ * A transcript the consolidation phase will actually pick up.
+ *
+ * Two gates decide that, and both are policy rather than accident: `TRACE_MIN_BYTES` is 8 KB, because a
+ * memory distilled from a ten-line file could only restate one of those lines; and `file_mtime` must
+ * predate `TRACE_QUIET_MILLIS` (one hour), because a transcript being written is a session still in
+ * progress. A freshly copied fixture fails both, which is why the default mode's consolidation phase
+ * reports `batch: 0` and never reaches the agent — correct behaviour that looks like coverage.
+ *
+ * So this writes a multi-turn session over 8 KB with two facts worth keeping, and backdates it.
+ */
+const writeQualifyingTranscript = async (traceRoot) => {
+  const sessionId = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+  const dir = join(traceRoot, "projects", "-tmp-checkout-api")
+  await exec("mkdir", ["-p", dir])
+  const common = {
+    sessionId,
+    cwd: "/tmp/checkout-api",
+    gitBranch: "main",
+    entrypoint: "cli",
+    version: "2.1.219",
+    isSidechain: false,
+    userType: "external"
+  }
+  const turns = [
+    ["user", "The checkout-api deploy rolled back again. Connections kept landing on the old target group after we reverted."],
+    ["assistant", "The revert alone does not drain the VIP. In-flight connections stay pinned to the old target group until the VIP is drained, so reverting while the VIP still points at the old group keeps serving stale pods."],
+    ["user", "So what is the right order of operations?"],
+    ["assistant", "Drain the VIP first, wait for connections to bleed off, then revert the deploy. Reversing that order is what produced the rollback: the deploy reverted while the VIP still routed to the old target group."],
+    ["user", "We also saw the health check pass while real requests were failing."],
+    ["assistant", "The health check probes the pod directly rather than through the VIP, so it reports healthy while the VIP still routes to drained pods. A check that bypasses the VIP cannot observe VIP-level routing failures."],
+    ["user", "Anything else worth recording about this incident?"],
+    ["assistant", "Two durable facts: draining the VIP must precede a revert, because the revert does not move connections; and a health check that bypasses the VIP cannot detect VIP-level routing failures, so a green check during an outage is expected."],
+    ["user", "Good. Note it against checkout-api."],
+    ["assistant", "Recorded against checkout-api: the drain-before-revert ordering, and the health-check blind spot. Both are procedural rather than incidental, so they should outlive the incident."]
+  ]
+  const lines = [JSON.stringify({ type: "mode", mode: "default", sessionId })]
+  let at = Date.parse("2026-08-14T10:00:00.000Z")
+  turns.forEach(([role, text], index) => {
+    // Padded past the 8 KB floor with the turn's own words rather than filler, so what the model reads
+    // is still a coherent session.
+    const body = `${text} ${text.repeat(role === "assistant" ? 4 : 2)}`
+    at += 6_000
+    lines.push(
+      JSON.stringify({
+        ...common,
+        type: role,
+        uuid: `u${String(index + 1)}`,
+        parentUuid: index === 0 ? null : `u${String(index)}`,
+        promptId: `p${String(Math.ceil((index + 1) / 2))}`,
+        timestamp: new Date(at).toISOString(),
+        message:
+          role === "user"
+            ? { role: "user", content: body }
+            : { role: "assistant", id: `msg${String(index + 1)}`, model: "claude-opus-5", content: [{ type: "text", text: body }] }
+      })
+    )
+  })
+  const file = join(dir, `${sessionId}.jsonl`)
+  await writeFile(file, `${lines.join("\n")}\n`)
+  // Three days back: comfortably outside the one-hour quiet window.
+  await exec("touch", ["-d", "3 days ago", file])
+  return file
+}
+
+/**
+ * The two edges that reach the network, driven for real against the installed artifact.
+ *
+ * Everything else this file checks is exercised with the embedder and the model switched off, which is
+ * what keeps the gate credential-free — and it means the vector arm of retrieval, the sleep phases that
+ * call a model, and the consolidator's whole reason to exist have never run from an install. These
+ * three checks are that gap, and nothing else covers it: the eval tier fakes the embedder and the
+ * integration tier sets both to `off`.
+ */
+const checkLiveBedrock = async ({ bin, work, env }) => {
+  const corpus = join(work, "live-corpus")
+  const traceRoot = join(work, "live-traces")
+  // The credential is whatever the ambient environment holds; EMBED and LLM are simply not disabled.
+  const live = { ...env, MEMHTML_ROOT: corpus, MEMHTML_TRACE_ROOT: traceRoot }
+  delete live.MEMHTML_EMBED
+  delete live.MEMHTML_LLM
+
+  await check("a Bedrock credential is present", async () => {
+    const bearer = Boolean(process.env.AWS_BEARER_TOKEN_BEDROCK)
+    const sigv4 = Boolean(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY)
+    // A FAILURE, not a skip: `--live` was asked for, and quietly proving nothing is the outcome this
+    // whole tier exists to prevent.
+    return { ok: bearer || sigv4, detail: bearer ? "bearer token" : sigv4 ? "sigv4" : "none" }
+  })
+
+  await envelope(bin, ["init"], live)
+  await envelope(
+    bin,
+    ["write", "--title", "Draining the VIP precedes a revert", "--claim", "Drain the VIP before reverting a deploy.", "--type", "semantic", "--workspace", "checkout-api"],
+    live
+  )
+
+  await check("Bedrock embeddings are written and the model is named", async () => {
+    await envelope(bin, ["index", "update"], live)
+    const status = (await envelope(bin, ["index", "status"], live)).data
+    return {
+      ok: status.embeddings >= 1 && status.embedModelMatches === true,
+      detail: `${String(status.embeddings)} embedding(s) from ${String(status.embedModel)}`
+    }
+  })
+
+  await writeQualifyingTranscript(traceRoot)
+  await envelope(bin, ["trace", "index"], live)
+
+  await check("the sleep cycle calls the model and distils a transcript", async () => {
+    const slept = (await envelope(bin, ["sleep", "run"], live)).data
+    const phase = (slept.phases ?? []).find((entry) => entry.phase === "trace-consolidation")
+    const counts = phase?.counts ?? {}
+    // `batch` proves the transcript qualified, `candidates` proves eve ran and the model answered.
+    return {
+      ok: slept.llmCalls >= 1 && counts.batch >= 1 && counts.candidates >= 1,
+      detail: `llmCalls=${String(slept.llmCalls)} batch=${String(counts.batch)} candidates=${String(counts.candidates)} written=${String(counts.written)}`
+    }
+  })
 }
 
 /**

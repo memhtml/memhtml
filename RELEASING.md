@@ -68,16 +68,25 @@ package ships no types, so there is nothing for it to check.
 ## The gate that matters
 
 `mise run package:smoke` assembles, lints with publint, packs, installs into a throwaway directory, and
-drives twelve checks through the installed binary — the manifest, `init`, `write` (asserted against `git log`, not
-against the report), `search`, migrations, code mode in the QuickJS sandbox, fifteen sleep phases, the
-MCP handshake by both entry points, and the consolidator agent building outside `node_modules` and
-answering `/eve/v1/health`.
+drives **62 checks** through the installed binary: all 36 commands and all 14 MCP tools, plus the
+consolidator agent building outside `node_modules` and answering `/eve/v1/health`. The surface is
+enumerated from the artifact itself — `memhtml manifest` for commands, `tools/list` for tools — so a new
+command or tool fails a census rather than going unrun. Writes are asserted against `git log`, not
+against the report, and `sleep merge` is proven to move `main` on a corpus of its own.
+
+`mise run package:smoke:live` adds three checks for the edges nothing else can reach from an install:
+Bedrock embeddings, the sleep phases that call a model, and the consolidator distilling a transcript
+through eve. It spends real tokens and needs `AWS_BEARER_TOKEN_BEDROCK` (or SigV4 keys); the credential
+check FAILS rather than skips, because `--live` was asked for. lefthook's pre-push runs it when a
+credential is present and prints what goes unproven when it cannot. Roughly 60s credential-free, 105s
+live.
 
 **`mise run check` cannot replace it.** Check resolves `@memhtml/*` through pnpm's links, where every
 asset is on disk whether or not a manifest names it. Three assets shipped broken under exactly that
 blindness. Smoke is a separate CI job because it needs the registry to resolve the twelve external
-dependencies, while check is offline and credential-free; smoke is credential-free too
-(`MEMHTML_EMBED=off`, `MEMHTML_LLM=off`).
+dependencies, while check is offline. Its default mode is credential-free too (`MEMHTML_EMBED=off`,
+`MEMHTML_LLM=off`), which is what CI gates on; `--live` is the mode that spends tokens, and it runs
+pre-push rather than in CI.
 
 ## The normal path
 

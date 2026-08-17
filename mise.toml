@@ -196,6 +196,13 @@ description = "publint over the staged package: entry points, module type, and w
 depends = ["package:assemble"]
 run = "pnpm package:lint"
 
+[tasks."package:smoke:live"]
+description = "package:smoke plus the three edges that reach Bedrock: embeddings, sleep's model calls, eve"
+# Spends real tokens, and needs AWS_BEARER_TOKEN_BEDROCK (or SigV4 keys). The credential check FAILS
+# rather than skips: `--live` was asked for, and quietly proving less is what this tier exists to
+# prevent. lefthook's pre-push picks this when a credential is present and says so when it cannot.
+run = "pnpm package:smoke:live"
+
 [tasks."package:smoke"]
 description = "Install the assembled package into a temp dir and drive every subsystem through it"
 # Deliberately NOT in `mise run check`: this resolves the twelve external dependencies from the npm

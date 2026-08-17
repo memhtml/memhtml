@@ -47,7 +47,8 @@ build-before-integration ordering.
 | `mise run agents-doc` | regenerate `AGENTS.md` from the built CLI's table |
 | `mise run package:assemble` / `package:pack` | tsdown-build the one publishable `memhtml` into `dist-package/` / also `npm pack` it |
 | `mise run package:lint` | publint over the staged package |
-| `mise run package:smoke` | install that tarball in a temp dir and drive every subsystem through it |
+| `mise run package:smoke` | install that tarball in a temp dir and drive every command and MCP tool through it |
+| `mise run package:smoke:live` | the same, plus the three edges that reach Bedrock (spends tokens) |
 | `mise run security` | osv-scanner + semgrep + betterleaks + syft/grype (SBOM) + trivy → SARIF in `.sarif/` (report-only) |
 | `mise run tools:verify` / `tools:bump` | check the two pnpm pins agree / re-resolve `latest` in `mise.lock` |
 | `mise run cli <args>` | the built CLI, `raw` so stdout stays one JSON envelope |
@@ -260,8 +261,17 @@ build together, and both cost real debugging:
   applies zero migrations. The symptom was `no such table: files` on the first write.
 
 `mise run package:smoke` is the only gate whose subject is the artifact: publint, then install the
-tarball and drive all twelve subsystem checks through the installed binary. It is outside `check`
-because it needs the registry, and `check` is offline by construction.
+tarball and drive **every one of the 36 commands and all 14 MCP tools** through the installed binary,
+62 checks. The surface is enumerated from `memhtml manifest` and `tools/list`, so a new command or tool
+fails a census rather than going unrun. It is outside `check` because it needs the registry, and
+`check` is offline by construction.
+
+`package:smoke:live` adds the three edges the credential-free run cannot see — Bedrock embeddings, the
+sleep phases that call a model, and the consolidator distilling a transcript through eve — and is what
+lefthook's pre-push runs when a credential is present, saying so on stderr when it cannot. Reaching the
+consolidation phase needs a transcript over `TRACE_MIN_BYTES` (8 KB) whose mtime predates
+`TRACE_QUIET_MILLIS` (1 hour); a fresh fixture fails both and the phase reports `batch: 0`, which is
+correct behaviour that reads as coverage.
 
 `spec/memhtml.symspec.json` is the EARS requirements ledger (keys like `RET-3`, `STORE-2`, each naming
 its verification method and the code that satisfies it) — retiring or adding a requirement is its own
