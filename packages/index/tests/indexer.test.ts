@@ -1,3 +1,4 @@
+import { ModelUnavailable } from "@memhtml/contracts/errors"
 import { EMBED_DIM, EMBED_WATERMARK } from "@memhtml/llm"
 import { Effect, Result } from "effect"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -15,6 +16,7 @@ import { type FixtureRepo, makeFixtureRepo, type SeedFile } from "./fixture-repo
 import {
   type FakeEmbedder,
   failingEmbedder,
+  fakeVector,
   makeFakeEmbedder,
   memoryHtml,
   withDb
@@ -418,6 +420,65 @@ describe("rebuild", () => {
     expect(outcome.after).toBe(20)
     // Idempotent: a second backfill finds nothing missing and issues no model call.
     expect(outcome.again).toBe(0)
+  })
+
+  it("keeps the slices that landed when the embedder fails partway, and a re-run finishes the rest", async () => {
+    // Succeeds once, then throttles. With embedPersistEvery: 8 over the 20-chunk corpus the pass
+    // is slices of 8, 8, 4 — so the first 8 vectors must be PERSISTED and reported, not rolled
+    // back with the failure. This is the shape a Bedrock token throttle produces on a large
+    // corpus, where an all-or-nothing pass re-pays every landed batch on every retry and never
+    // completes.
+    const partial = (): FakeEmbedder => {
+      let calls = 0
+      return {
+        embed: (input) => {
+          calls += 1
+          return calls === 1
+            ? Effect.sync(() => input.map(fakeVector))
+            : Effect.fail(
+                ModelUnavailable.make({ modelId: EMBED_WATERMARK, reason: "fake throttle" })
+              )
+        },
+        embedQuery: () =>
+          Effect.fail(ModelUnavailable.make({ modelId: EMBED_WATERMARK, reason: "fake throttle" })),
+        calls: () => calls,
+        textsEmbedded: () => []
+      }
+    }
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        const throttled = makeIndexer({
+          db,
+          git: repo.git,
+          embedWatermark: EMBED_WATERMARK,
+          embedDim: EMBED_DIM,
+          embeddings: partial(),
+          embedPersistEvery: 8,
+          now: () => AT
+        })
+        yield* throttled.rebuild({ embed: false })
+        const firstPass = yield* throttled.embedMissing()
+        const kept = yield* db.get<{ n: number }>("SELECT count(*) AS n FROM embeddings")
+
+        const healthy = makeIndexer({
+          db,
+          git: repo.git,
+          embedWatermark: EMBED_WATERMARK,
+          embedDim: EMBED_DIM,
+          embeddings: makeFakeEmbedder(),
+          embedPersistEvery: 8,
+          now: () => AT
+        })
+        const secondPass = yield* healthy.embedMissing()
+        const after = yield* db.get<{ n: number }>("SELECT count(*) AS n FROM embeddings")
+        return { firstPass, kept: kept?.n, secondPass, after: after?.n }
+      })
+    )
+    expect(outcome.firstPass).toBe(8)
+    expect(outcome.kept).toBe(8)
+    // The re-run finds exactly the remainder: the landed slices are not re-embedded or re-paid.
+    expect(outcome.secondPass).toBe(12)
+    expect(outcome.after).toBe(20)
   })
 
   it("keeps the lexical index usable when the embedder fails outright", async () => {
