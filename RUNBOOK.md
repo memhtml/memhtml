@@ -39,6 +39,25 @@ memhtml index rebuild --embed
 
 `memhtml init` is convergent: each step asks the repo what is already true and supplies only what is missing, so it reaches the same end state from an empty directory, from a fully scaffolded repo, and from one left half-initialized by an interrupted run (`packages/store/src/layout.ts:183`).
 
+**A git identity is a precondition, and its absence surfaces as `ERR_GIT` exit 128.** `memhtml init`
+commits the scaffold, and `git commit` refuses without one — so on a fresh container, a CI runner, or any
+sandbox with no `~/.gitconfig`, the very first command fails with `git commit failed (exit 128)` while
+git's own "Please tell me who you are" goes to stderr. Nothing is lost: `init` is convergent, so setting
+an identity and re-running carries the staged scaffold to a commit. Either configure it:
+
+```bash
+git config --global user.name "You"
+git config --global user.email "you@example.com"
+```
+
+or supply it per-process, which needs no repository and no config file and is what an unattended agent
+should prefer:
+
+```bash
+export GIT_AUTHOR_NAME="memhtml" GIT_AUTHOR_EMAIL="memhtml@localhost"
+export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+```
+
 **`memhtml init` is required on a fresh clone.** `.gitattributes` marks `index.html` and `sitemap.xml` `merge=ours`, and that attribute is INERT without the `merge.ours.driver` config (`packages/store/src/layout.ts:76`). Git config is per-clone and is not cloned, so a clone that skips `memhtml init` gets conflict markers written into a generated file on the first merge touching one. Verify with `git -C "$MEMHTML_ROOT" config --get merge.ours.driver`; it must print `true`.
 
 `.memhtml/index.db` and `.memhtml/state.db` are both gitignored (`packages/store/src/layout.ts:55`). A clone carries the TREE plus `.memhtml/state/access.jsonl`, which is why `memhtml state import` is a step and not an optimization: without it the salience retrieval arm has no signal and ranking is silently poorer rather than broken.

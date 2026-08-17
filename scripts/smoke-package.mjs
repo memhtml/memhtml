@@ -94,7 +94,24 @@ const main = async () => {
       MEMHTML_ROOT: corpus,
       MEMHTML_EMBED: "off",
       MEMHTML_LLM: "off",
-      XDG_CACHE_HOME: cache
+      XDG_CACHE_HOME: cache,
+      /**
+       * A git identity, supplied by ENVIRONMENT rather than config.
+       *
+       * `memhtml init` commits the scaffold, and `git commit` fails with exit 128 on a machine with no
+       * identity — which a CI runner is. That is a real precondition of the tool rather than an
+       * artifact defect (`packages/store/src/layout.ts` says so, and the fixture helper in
+       * `packages/store/src/testing.ts` sets an identity for the same reason), so it is supplied here
+       * rather than worked around. Env vars and not `git config`, because there is no repository to
+       * configure until `init` has made one.
+       *
+       * Setting it here means this tier cannot see that precondition. `RUNBOOK.md` §1 and the install
+       * tutorial state it instead, which is where a user hitting exit 128 would look.
+       */
+      GIT_AUTHOR_NAME: "memhtml smoke",
+      GIT_AUTHOR_EMAIL: "smoke@memhtml.invalid",
+      GIT_COMMITTER_NAME: "memhtml smoke",
+      GIT_COMMITTER_EMAIL: "smoke@memhtml.invalid"
     }
 
     await check("manifest names the published binary", async () => {

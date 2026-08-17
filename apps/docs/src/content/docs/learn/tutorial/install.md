@@ -75,6 +75,29 @@ To build the published artifact rather than the workspace binary, `mise run pack
 it to `dist-package/`, and `mise run package:smoke` installs that tarball into a temporary directory
 and drives every command and MCP tool through it.
 
+## Give git an identity
+
+`memhtml init` commits the scaffold it writes, and `git commit` refuses to run without an author. On a
+machine with a `~/.gitconfig` this is already true and you can skip ahead. On a fresh container or a CI
+runner it is not, and the first command fails with `git commit failed (exit 128)` — git's own
+explanation goes to stderr, so check there when an `ERR_GIT` envelope surprises you.
+
+```bash
+git config --global user.name "You"
+git config --global user.email "you@example.com"
+```
+
+An unattended agent should prefer the environment, which needs no repository and writes no config:
+
+```bash
+export GIT_AUTHOR_NAME="memhtml" GIT_AUTHOR_EMAIL="memhtml@localhost"
+export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+```
+
+Nothing is lost if you find out the hard way. `memhtml init` is convergent: it asks the repository what
+is already true and supplies only what is missing, so setting an identity and running it again carries
+the staged scaffold to a commit.
+
 ## Point at a store and scaffold it
 
 `MEMHTML_ROOT` is where the memory repository lives. It defaults to `~/memhtml`, and the binary
