@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process"
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises"
-import { createRequire } from "node:module"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Context, Effect, Layer, Result, Schema } from "effect"
 
+import { eveBinPath, resolveAgentAppRoot } from "./agent-build.js"
 import {
   CONSOLIDATION_OUTPUT_JSON_SCHEMA,
   ConsolidationPayload,
@@ -266,31 +266,6 @@ export interface ConsolidatorOptions {
 
 /** This package's root, resolved from this module rather than from `process.cwd()`. */
 const packageRoot = (): string => resolve(dirname(fileURLToPath(import.meta.url)), "..")
-
-/**
- * eve's CLI entry point, or `null` when eve does not resolve from here.
- *
- * Spawned as `process.execPath <path>` rather than through a package manager, because a consumer who
- * installed this package has whatever manager they used and need not have any particular one on PATH.
- * `apps/cli/src/serve.ts` spawns the MCP server the same way, for the same reason.
- *
- * Resolution goes through the MANIFEST, not the bin. `resolve("eve/bin/eve.js")` raises
- * `ERR_PACKAGE_PATH_NOT_EXPORTED`: eve's `exports` map declares no `./bin/*` subpath, so node refuses
- * the deep path even though the file is there (probed against eve 0.33.0). `./package.json` IS
- * exported, and the `bin` field beside it names the entry point.
- */
-const eveBinPath = (): string | null => {
-  const require = createRequire(import.meta.url)
-  let manifestPath: string
-  try {
-    manifestPath = require.resolve("eve/package.json")
-  } catch {
-    return null
-  }
-  const { bin } = require(manifestPath) as { readonly bin?: Record<string, string> | string }
-  const entry = typeof bin === "string" ? bin : bin?.eve
-  return entry === undefined ? null : resolve(dirname(manifestPath), entry)
-}
 
 /**
  * One transcript that RESOLVES inside the sandbox, with the guest path it resolves at.
@@ -1025,7 +1000,6 @@ const runTurn = (
  */
 export const makeConsolidator = (options: ConsolidatorOptions): ConsolidatorShape => {
   const { traceRoot } = options
-  const appRoot = options.appRoot ?? packageRoot()
   const maxTranscripts = options.maxTranscripts ?? MAX_TRANSCRIPTS_PER_RUN
   const env = options.env ?? process.env
   const extraMounts = options.mounts ?? []
@@ -1081,6 +1055,26 @@ export const makeConsolidator = (options: ConsolidatorOptions): ConsolidatorShap
          * enforces it (`agent/channels/eve.ts`). A leaked temp directory is a manifest of a past
          * run left on disk, which is smaller but still nothing this should leave behind.
          */
+        /**
+         * Resolved HERE rather than when the client is built, because an installed package has to
+         * build its agent first and that is work — it belongs after the credential preflight and the
+         * empty-batch exit, both of which return without it. See `agent-build.ts` for why an
+         * installed tree cannot be built in place.
+         */
+        const eveBin = eveBinPath()
+        if (eveBin === null) {
+          return yield* Effect.fail(
+            ConsolidatorUnavailable.make({
+              reason: "eve does not resolve from @memhtml/consolidator; reinstall its dependencies"
+            })
+          )
+        }
+        const appRoot = yield* resolveAgentAppRoot({
+          packageRoot: packageRoot(),
+          configured: options.appRoot,
+          eveBin
+        })
+
         return yield* Effect.acquireUseRelease(
           writeManifestDirectory({ reachable }),
           (manifestRoot) =>

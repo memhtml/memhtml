@@ -1,6 +1,9 @@
 node_modules/
 dist/
 dist-check/
+# The assembled single package. A pure function of the twelve `dist/` trees plus
+# scripts/assemble-package.mjs, rebuilt by `mise run package:assemble`.
+dist-package/
 coverage/
 .turbo/
 # Astro's generated types and dev cache. It holds a dev.json carrying a live PID, which is also

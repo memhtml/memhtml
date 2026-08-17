@@ -177,6 +177,21 @@ description = "Regenerate AGENTS.md from the BUILT CLI's own command table"
 # so regenerating against stale dist reproduces the old doc and hides the drift.
 run = "pnpm --filter @memhtml/cli build && node apps/cli/dist/bin.js agents-doc"
 
+# --- the published artifact ----------------------------------------------------------
+
+[tasks."package:assemble"]
+description = "Assemble the twelve workspace packages into ONE publishable `memhtml` in dist-package/"
+# Builds first, unconditionally: the script copies each package's `dist/`, so a stale or missing
+# one is silently published rather than caught. It refuses outright when a `dist/` is absent, and
+# building here means that refusal never fires for a reason the caller could have avoided.
+run = "mise run build && node scripts/assemble-package.mjs"
+
+[tasks."package:pack"]
+description = "Assemble, then `npm pack` the single package into dist-package/"
+depends = ["package:assemble"]
+dir = "{{config_root}}/dist-package"
+run = "npm pack"
+
 # --- git hooks ----------------------------------------------------------------------
 
 [tasks."hooks:install"]

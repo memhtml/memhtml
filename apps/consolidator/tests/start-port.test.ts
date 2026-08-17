@@ -22,8 +22,12 @@ import { ConsolidatorUnavailable } from "../src/contract.js"
  * port produced no distinguishable error at all.
  */
 
-const clientSource = (): Promise<string> =>
-  readFile(resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "client.ts"), "utf8")
+const sourceOf = (file: string): Promise<string> =>
+  readFile(resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", file), "utf8")
+
+const clientSource = (): Promise<string> => sourceOf("client.ts")
+
+const agentBuildSource = (): Promise<string> => sourceOf("agent-build.ts")
 
 /**
  * An app root that EXISTS and holds no `.output/`.
@@ -188,9 +192,9 @@ describe("eve's entry point is reached through its manifest", () => {
     expect(existsSync(resolve(dirname(manifestPath), entry ?? ""))).toBe(true)
   })
 
-  /** The resolution in `client.ts` is the manifest route, not the deep path the case above refuses. */
-  it("resolves through the manifest in client.ts", async () => {
-    const code = codeOnly(await clientSource())
+  /** `agent-build.ts` takes the manifest route, not the deep path the case above refuses. */
+  it("resolves through the manifest in agent-build.ts", async () => {
+    const code = codeOnly(await agentBuildSource())
     expect(code).toContain('require.resolve("eve/package.json")')
     expect(code).not.toMatch(/resolve\("eve\/bin/)
   })
