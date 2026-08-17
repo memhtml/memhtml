@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/eval",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Fixture corpus generator and the refusable discrimination gate.",
   "type": "module",
