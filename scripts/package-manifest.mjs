@@ -100,7 +100,15 @@ await writeFile(
        */
       files: ["dist", "migrations", "state-migrations", "guest", "agent", "src", "README.md", "LICENSE"],
       dependencies: Object.fromEntries(Object.entries(dependencies).sort(([a], [b]) => a.localeCompare(b))),
-      publishConfig: { access: "public", provenance: false }
+      /**
+       * `access` only. No `provenance` key, in either direction.
+       *
+       * Trusted publishing generates a SLSA attestation automatically, and an explicit `false` here
+       * would suppress the one thing OIDC gives for free. The manual bootstrap publish needs no
+       * opt-out either: provenance requires a cloud-hosted runner, so a laptop publish simply does
+       * not produce one unless `--provenance` is passed.
+       */
+      publishConfig: { access: "public" }
     },
     null,
     2

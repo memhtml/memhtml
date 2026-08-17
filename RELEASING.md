@@ -65,6 +65,11 @@ steps from the cause.
 `publint --strict` runs over the staged package before the smoke tier. There is no `attw` step: the
 package ships no types, so there is nothing for it to check.
 
+`publishConfig` carries `access` and nothing else. It must NOT carry `provenance: false`: trusted
+publishing generates a SLSA attestation automatically, and an explicit `false` suppresses the one thing
+OIDC gives for free. The manual bootstrap needs no opt-out either — provenance requires a cloud-hosted
+runner, so a laptop publish produces none unless `--provenance` is passed.
+
 ## The gate that matters
 
 `mise run package:smoke` assembles, lints with publint, packs, installs into a throwaway directory, and
@@ -126,7 +131,11 @@ commit message drops footers, and the trailer is what release-please reads.
 
 Trusted publishing cannot bootstrap a package that does not exist — npm requires the package on the
 registry before a trusted publisher can be configured for it (npm/cli#8544). So the first release
-needs a token, exactly once. With one package this is one publish and one `npm trust`, not twelve.
+needs a human, exactly once. With one package this is one publish and one `npm trust`, not twelve.
+
+**The package cannot be reserved ahead of time.** A trusted publisher is configured at
+`npmjs.com/package/<name>/access`, which does not exist until the package does, so the ordering is
+forced: publish once by hand, then configure OIDC, then never touch a credential again.
 
 Until it is done the `publish` job fails, and the log is the useful part:
 
@@ -154,18 +163,23 @@ AFTER bootstrapping means the trusted publisher does not match: check the workfl
 git checkout v0.2.0 && pnpm install --frozen-lockfile
 pnpm package:smoke            # assembles, lints, and proves the artifact works
 
-# 2. A short-lived granular token: read-write, "Bypass 2FA" ON (required for a non-interactive
-#    publish), shortest expiry. Create at https://www.npmjs.com/settings/~/tokens
+# 2. Publish INTERACTIVELY. This step is a human at a terminal, so it needs no token at all:
+#    `npm login` opens the browser flow, and `npm publish` prompts for the 2FA one-time
+#    password. A granular token with "Bypass 2FA" is the CI shape and is the wrong tool here —
+#    it creates a stealable credential to do a job a session already does, and npm now steers
+#    that checkbox toward trusted publishing anyway.
+npm login
 cd dist-package
-NODE_AUTH_TOKEN=<token> npm publish --tag latest
+npm publish --tag latest      # prompts for the OTP; --dry-run first if you want to see the tarball
 
 # 3. Register the trusted publisher, now that the package exists.
 #    `--file` takes a bare filename, not a path.
 npm trust github memhtml --repo memhtml/memhtml --file release-please.yml --allow-publish -y
 npm trust ls memhtml
 
-# 4. Revoke the token. It is the thing OIDC exists to remove.
-npm token list && npm token revoke <id>
+# 4. Require 2FA for future publishes, so the session that just published cannot be replayed:
+#    npmjs.com/package/memhtml/access -> Publishing access -> require 2FA.
+#    Nothing to revoke, because nothing long-lived was created.
 ```
 
 That first publish carries no provenance attestation: provenance requires a cloud-hosted CI runner and
