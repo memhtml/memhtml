@@ -45,7 +45,7 @@ build-before-integration ordering.
 | `mise run docs:links` | external links in the built site — reports, never gates |
 | `mise run gen:fixture` | write a browsable fixture corpus (pure function of a seed) |
 | `mise run agents-doc` | regenerate `AGENTS.md` from the built CLI's table |
-| `mise run security` | osv-scanner + semgrep + betterleaks → SARIF in `.sarif/` (report-only) |
+| `mise run security` | osv-scanner + semgrep + betterleaks + syft/grype (SBOM) + trivy → SARIF in `.sarif/` (report-only) |
 | `mise run tools:verify` / `tools:bump` | check the two pnpm pins agree / re-resolve `latest` in `mise.lock` |
 | `mise run cli <args>` | the built CLI, `raw` so stdout stays one JSON envelope |
 
@@ -75,6 +75,12 @@ to evaluate a template, and pnpm will not read `mise.toml`. `mise run tools:veri
 disagreement and `install` depends on it. `pnpm` is declared **above** `node` on purpose: node's bin
 holds a `pnpm` symlink into corepack wherever `corepack enable` has run, and with node first every
 pnpm call resolves to corepack instead of the pinned binary.
+
+## Code intelligence
+
+codegraph is initialized in this repo (`.codegraph/`) — `codegraph query`, `codegraph explore`, and
+`codegraph node` are available for symbol lookup and impact tracing. It resolves by bare method name,
+so confirm a consumer actually names the surface before citing an impact result.
 
 ## Architecture
 
@@ -132,8 +138,10 @@ survives vacuously.
 `effect`, `@effect/platform-node`, and `@effect/vitest` as one set — never one of the three. A typed
 error is `Schema.TaggedError<Self>()("Tag", fields)`, which supplies `_tag` itself, so the fields must
 NOT declare one; and `McpServer.layerStdio` requires `protocols: [McpProtocol.v2025_06_18]`, the only
-adapter shipped. `minimumReleaseAge: 1440` also means the newest release is not installable for its
-first 24 hours — a blocked install is that policy working, not a broken lockfile.
+adapter shipped. `minimumReleaseAge: 4320` also means the newest release is not installable for its
+first 72 hours (Dependabot security PRs bypass the cooldown; for a fresh CVE fix inside the window,
+override per-package with `minimumReleaseAgeExclude`) — a blocked install is that policy working, not
+a broken lockfile.
 
 **Effect 4.0.0-beta.107 differs from recall** (full list in
 `.erpaval/solutions/effect-v4/effect-4-beta-102-api-reality.md`): `Effect.either` does not exist — use
@@ -194,10 +202,12 @@ Standing hazards to write tests against, learned here:
   before navigating. Check whether a metric's units and geometry are even possible before believing it.
 
 The docs site's accessibility gate carries a **declared baseline** — `KNOWN_A11Y_FAILURES` in
-`apps/docs/src/gates.ts`, three violations owned by `src/styles/rfc.css`, Expressive Code and Starlight.
-It is a ratchet, not an exemption: a violation outside it fails, and an entry that stops firing fails
-too, so a fix cannot leave its suppression behind. Each entry's `signature` must match every offending
-node, so the same rule failing for a new reason is still a failure.
+`apps/docs/src/gates.ts`, currently one violation owned upstream by Starlight (its search button's
+label/name mismatch). It is a ratchet, not an exemption: a violation outside it fails, and an entry
+that stops firing fails too, so a fix cannot leave its suppression behind. Each entry's `signature`
+must match every offending node, so the same rule failing for a new reason is still a failure. The
+layout probe carries the same shape of baseline — `KNOWN_LAYOUT_SHIFTS`, one bounded Starlight
+right-sidebar shift — where an entry is a bound (`node` + `most`), not a licence.
 
 ## Conventions
 
@@ -206,6 +216,11 @@ Conventional Commits on a typed branch (`feature/…`, `fix/…`, `chore/…`, `
 formatting is non-negotiable and machine-applied: double quotes, no semicolons, 2-space indent, 100
 columns, no trailing commas. `noExplicitAny`, `noNonNullAssertion`, and unused-variable/import are
 errors; `exactOptionalPropertyTypes` and `noUncheckedIndexedAccess` are on.
+
+Releases are cut by release-please from those Conventional Commit subjects and published to npm with
+OIDC trusted publishing — twelve packages in lockstep; `RELEASING.md` documents the flow, the two
+`x-release-please-version` source constants, and the failure signatures. Commit subjects therefore
+move version numbers: `feat:` the minor, `fix:` the patch, `!`/`BREAKING CHANGE:` the major.
 
 `spec/memhtml.symspec.json` is the EARS requirements ledger (keys like `RET-3`, `STORE-2`, each naming
 its verification method and the code that satisfies it) — retiring or adding a requirement is its own
