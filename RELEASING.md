@@ -99,9 +99,20 @@ pre-push rather than in CI.
    `BREAKING CHANGE:` footer moves the major.
 2. release-please opens (and keeps updating) a release PR bumping the version and writing
    `CHANGELOG.md`.
-3. Merge that PR. release-please tags the release, and the `publish` job in the same workflow run
-   re-runs `pnpm check`, then `pnpm package:smoke` on the tag, then `npm publish` from
-   `dist-package/`.
+3. Merge that PR. release-please tags the release — `memhtml-v0.2.0`, component-prefixed because the
+   package is named in the config — and the `publish` job in the same workflow run re-runs
+   `pnpm check`, then `pnpm package:smoke` on the tag, then `npm publish` from `dist-package/`.
+
+**A publish that fails for an environment reason is retryable without cutting another version.** The
+workflow takes a `workflow_dispatch` with a `tag` input for exactly that:
+
+```bash
+gh workflow run release-please.yml -f tag=memhtml-v0.2.0
+```
+
+This exists because the first real release failed that way: the publish job had no mise, so the `d2`
+binary was absent, and the docs build inside `pnpm check` died in `astro:config:setup` — nothing to do
+with the bytes being published.
 
 The version lives in **fifteen** places and release-please updates all of them from the one root
 manifest: the root `package.json`, the twelve workspace manifests via `json` extra-files, and two
@@ -160,7 +171,7 @@ AFTER bootstrapping means the trusted publisher does not match: check the workfl
 
 # 1. Land the release PR so the tag and all fifteen version sites agree, then check out the tag
 #    and assemble from it. The bytes that get published have to be the bytes that were released.
-git checkout v0.2.0 && pnpm install --frozen-lockfile
+git checkout memhtml-v0.2.0 && pnpm install --frozen-lockfile
 pnpm package:smoke            # assembles, lints, and proves the artifact works
 
 # 2. Publish INTERACTIVELY. This step is a human at a terminal, so it needs no token at all:
