@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/llm",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "Bedrock embeddings and structured output.",
   "type": "module",
