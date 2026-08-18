@@ -15,11 +15,15 @@
 commit-msg:
   jobs:
     - name: conventional-commit
-      # Conventional Commits, plus the two prefixes this repo actually uses beyond the
+      # Conventional Commits, plus the three prefixes this repo actually uses beyond the
       # standard set: `spec` (the spec/memhtml.symspec.json requirements ledger gets its
-      # own commits) and `merge`.
+      # own commits), `merge`, and `deps` — which is what `.github/dependabot.yml` sets as
+      # its `commit-message.prefix`, so the two files have to name the same type or a
+      # rebased Dependabot commit cannot pass a hook its own config guarantees it will fail.
+      # None of the three is a release-please type, which is the point: they do not move a
+      # version, so a dependency bump only ships when a maintainer promotes it with fix:/feat:.
       run: |
-        head -1 {1} | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert|spec|merge)(\(.+\))?!?: .+' \
+        head -1 {1} | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert|spec|merge|deps)(\(.+\))?!?: .+' \
           || { echo "commit message must follow Conventional Commits: <type>(<scope>): <subject>"; exit 1; }
 
 pre-commit:
