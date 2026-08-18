@@ -19,11 +19,15 @@
  * 24.4%. Both numbers are recorded because the measured one is the evidence and the deployed one
  * is the decision.
  *
- * DETERMINISM. highlight.js is pinned EXACTLY (`11.11.1`, no caret) in this package's
+ * DETERMINISM. highlight.js is pinned EXACTLY (`11.11.2`, no caret) in this package's
  * `package.json`, because relevance scores are grammar-dependent: a version bump silently moves
  * every confidence, and therefore which fences get stamped. The contract is "same input + same
  * pinned version → same stamp". A bump is a deliberate decision that RE-RUNS the eval and
- * re-derives the threshold, not a routine dependency refresh.
+ * re-derives the threshold, not a routine dependency refresh. Measured against 11.12.0 on
+ * 2026-08-18, which is the size of "silently": `slice:example-service/mise.toml@42+9` fell 0.5406
+ * to 0.1993 and stopped stamping `toml`, and one python row stopped stamping — coverage lost with
+ * no evidence about precision, because the 332-snippet corpus that measured it lives in
+ * `memhtml-evals`, not here. `.github/dependabot.yml` holds minor and major back for that reason.
  *
  * WRITE TIME ONLY. Detection runs on the write path and the result is stamped into the file, which
  * is the system of record. Index rebuild reads `data-lang` back (`parse.ts`) and never re-detects,

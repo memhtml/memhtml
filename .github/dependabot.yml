@@ -40,9 +40,36 @@ updates:
       # patch updates still flow.
       - dependency-name: typescript
         update-types: ["version-update:semver-major"]
+      # `highlight.js` relevance scores ARE the fence-language detector's confidences, so any
+      # grammar change moves which fences get `data-lang` stamped. `packages/html/src/detect.ts`
+      # ships a threshold swept by `memhtml-evals` over a 332-snippet corpus at a 95%-precision
+      # floor, and this repo holds neither that corpus nor that harness — so a bump cannot be
+      # accepted here without re-running the eval and re-deriving the threshold. Measured against
+      # 11.12.0 on 2026-08-18: `slice:example-service/mise.toml@42+9` fell 0.5406 -> 0.1993 and
+      # stopped stamping `toml`, and one python row stopped stamping too, both losses in coverage
+      # with no evidence about precision. Minor and major are therefore a deliberate decision that
+      # re-runs the eval. Patch stays open so a security fix can still reach a PR; the pin
+      # assertion in `packages/html/tests/detect.test.ts` gates whether it may land.
+      - dependency-name: highlight.js
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
     groups:
-      # Effect is pinned as one moving set in the workspace catalog; everything else
-      # minor/patch rides in one weekly PR so review cost stays flat.
+      # Effect v4 is pre-release and `pnpm-workspace.yaml`'s catalog holds the three packages at
+      # ONE string. Its prerelease moves (beta.107 -> rc.109) are neither minor nor patch, so
+      # `minor-and-patch` below does not catch them and Dependabot opened one PR per package —
+      # each landing a catalog whose three versions disagree, which is the state that catalog
+      # refuses. This group is the pattern-matched fix: the trio arrives as one reviewable PR,
+      # and `tests-integration/tests/catalog.test.ts` fails if they ever diverge anyway.
+      effect:
+        patterns:
+          - effect
+          - "@effect/*"
+        update-types:
+          - major
+          - minor
+          - patch
+      # Everything else minor/patch rides in one weekly PR so review cost stays flat.
       minor-and-patch:
         update-types:
           - minor
