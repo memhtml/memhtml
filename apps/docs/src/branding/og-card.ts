@@ -6,12 +6,12 @@ import { ICON_PNG_SIZE, PALETTE } from "./mark.ts"
  * The social card, as a pure function of a page.
  *
  * The card is a specification excerpt and not a banner: warm paper, the mark at the head, one ink
- * title, a grey line of abstract, a running foot, and the standards-red rule bleeding off the bottom
+ * title, a gray line of abstract, a running foot, and the standards-red rule bleeding off the bottom
  * edge. Flat fill, no gradient, no photograph and no wordmark — each of those would be the first thing
  * on this site that existed to decorate.
  *
  * `astro-og-canvas` draws exactly two text registers, a title and a description, so the hierarchy has
- * to come from size, weight and colour. That is what an RFC's first page does anyway.
+ * to come from size, weight and color. That is what an RFC's first page does anyway.
  */
 
 /** The slug the root page's card is written under. Its collection id is the empty string. */

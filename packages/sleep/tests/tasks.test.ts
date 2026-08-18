@@ -11,7 +11,7 @@ import { personLinks } from "../src/phases/person-links.js"
 import { retentionTriage } from "../src/phases/retention-triage.js"
 import { runRetentionPass } from "../src/retention.js"
 import { instantFor } from "../src/run.js"
-import { conflictCandidates, neighbourPairs } from "../src/sql.js"
+import { conflictCandidates, neighborPairs } from "../src/sql.js"
 import { scriptedModel, value } from "../src/testing.js"
 import { DEDUP_CORPUS, type Fixture, TASK_CORPUS, withFixture } from "./fixture.js"
 
@@ -69,7 +69,7 @@ const inertModel = () =>
 describe("retention-triage", () => {
   it("drops a task from the candidate set before it is banded at all", async () => {
     /**
-     * The exclusion here is DEFENCE IN DEPTH, and saying so is the honest form of this test.
+     * The exclusion here is DEFENSE IN DEPTH, and saying so is the honest form of this test.
      *
      * `HALF_LIVES_DAYS.task` is `null`, so a task's recency signal is pinned at 1 whatever its age
      * — and with a uniform PageRank over an edgeless corpus contributing its own fixed share, the
@@ -245,20 +245,20 @@ describe("arc-synthesis", () => {
 describe("the candidate scans themselves", () => {
   it("returns no pair with a task endpoint, from either scan", async () => {
     /**
-     * The two SQL holes, directly. `neighbourPairs` feeds dedup-merge and relationship-mining and
+     * The two SQL holes, directly. `neighborPairs` feeds dedup-merge and relationship-mining and
      * `conflictCandidates` feeds conflict detection; both scans are where a task would enter, and
      * both are asserted at a floor low enough that the near-duplicate task pair WOULD clear it.
      */
     const outcome = await withFixture(
       (fixture) =>
         Effect.gen(function* () {
-          const withoutTasks = yield* neighbourPairs(fixture.db, {
+          const withoutTasks = yield* neighborPairs(fixture.db, {
             floor: 0.5,
             perSourceK: 10,
             limit: 500,
             excludeTypes: ["task"]
           })
-          const withTasks = yield* neighbourPairs(fixture.db, {
+          const withTasks = yield* neighborPairs(fixture.db, {
             floor: 0.5,
             perSourceK: 10,
             limit: 500

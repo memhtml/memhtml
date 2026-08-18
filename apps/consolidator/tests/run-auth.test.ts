@@ -294,7 +294,7 @@ describe("the client presents a per-run credential", () => {
   })
 
   /**
-   * The bind address survives the change. It is now defence in depth rather than the whole boundary,
+   * The bind address survives the change. It is now defense in depth rather than the whole boundary,
    * and depth is only depth while both layers are there — an agent reading "auth is handled now" could
    * plausibly relax this, so the guard is restated in this file beside the auth it complements.
    */

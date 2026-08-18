@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url"
  *
  * **BUILD ORDER.** This drives `dist`, not `src`. `turbo` makes `test:integration` depend on `build`,
  * and {@link cliEntryPoint} names a build artifact so a stale or absent build fails as a missing file
- * rather than as a behavioural difference.
+ * rather than as a behavioral difference.
  */
 
 /**

@@ -133,7 +133,7 @@ memhtml index status
   wrote into the index rather than into files. The system can derive them again, which is why they
   live only here.
 - `hasState: false` means no state plane is attached, so the salience arm cannot fire. Retrieval
-  ranks with four arms: full-text search, vector similarity, recency, and salience, which favours
+  ranks with four arms: full-text search, vector similarity, recency, and salience, which favors
   memories you have opened before. The first three keep working with no state plane; salience drops
   out.
 - `headSha` is the watermark. Compare it against `git rev-parse HEAD`, or let `memhtml status` do

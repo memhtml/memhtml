@@ -35,7 +35,7 @@ import { runVerifierConfig } from "../../src/run-auth.js"
  * and eve rejects a token with no `sub` before consulting any matcher. That is what keeps a secret
  * leaked into some other eve app's environment from cross-authenticating here.
  *
- * ## The bind address STAYS, as defence in depth
+ * ## The bind address STAYS, as defense in depth
  *
  * `eve start` binds ALL INTERFACES by default (node_modules/eve/docs/reference/cli.md, `eve start
  * --host`), so `src/client.ts` still spawns with `--host 127.0.0.1` from a constant that takes no

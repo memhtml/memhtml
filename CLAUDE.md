@@ -116,7 +116,7 @@ There is exactly one composition root: `AppLive` in `apps/cli/src/api-layer.ts`.
 dependency cycle is broken there — the store needs a SQL lookup for content dedup and `@memhtml/store`
 is SQL-free, so the lookup arrives as an injected function.
 
-`apps/consolidator` (`@memhtml/consolidator`) is the eve agent that distils candidate memories from raw
+`apps/consolidator` (`@memhtml/consolidator`) is the eve agent that distills candidate memories from raw
 transcripts; it is the one package outside the Effect service graph (ai-sdk + zod + `just-bash`).
 
 ### The contract surface
@@ -170,7 +170,7 @@ a broken lockfile.
 **Effect 4.0.0-beta.107 differs from recall** (full list in
 `.erpaval/solutions/effect-v4/effect-4-beta-102-api-reality.md`): `Effect.either` does not exist — use
 `Effect.result`. `Schema.decodeUnknownEffect` strips excess properties unless you pass
-`{onExcessProperty: "error"}`, so an LLM answering a neighbouring schema decodes "successfully". Use
+`{onExcessProperty: "error"}`, so an LLM answering a neighboring schema decodes "successfully". Use
 `Schema.Finite` in JSON-Schema-derived surfaces (`Schema.Number` derives a string branch). Compose
 layers **top-down** — `Layer.provideMerge(that)` feeds `that` into `self`, so bottom-up chaining
 typechecks and is wrong at runtime. `effect/Config` snapshots `process.env`, so tests must set env
@@ -202,7 +202,7 @@ coordinate spaces — do not read the second as a retrieval defect.
 
 Standing hazards to write tests against, learned here:
 
-- **A clean-database test can pass against a real bug.** Seed a *neighbour's* rows, not only the
+- **A clean-database test can pass against a real bug.** Seed a *neighbor's* rows, not only the
   subject's, wherever a table is shared across entities.
 - **Mutation-verify every lock you call a lock** — roughly a quarter of candidate regression tests
   written in this repo were vacuous until someone reverted the fix and watched them fail.
@@ -231,7 +231,7 @@ label/name mismatch). It is a ratchet, not an exemption: a violation outside it 
 that stops firing fails too, so a fix cannot leave its suppression behind. Each entry's `signature`
 must match every offending node, so the same rule failing for a new reason is still a failure. The
 layout probe carries the same shape of baseline — `KNOWN_LAYOUT_SHIFTS`, one bounded Starlight
-right-sidebar shift — where an entry is a bound (`node` + `most`), not a licence.
+right-sidebar shift — where an entry is a bound (`node` + `most`), not a license.
 
 ## Security gates and the VEX ledger
 
@@ -312,7 +312,7 @@ sleep phases that call a model, and the consolidator distilling a transcript thr
 lefthook's pre-push runs when a credential is present, saying so on stderr when it cannot. Reaching the
 consolidation phase needs a transcript over `TRACE_MIN_BYTES` (8 KB) whose mtime predates
 `TRACE_QUIET_MILLIS` (1 hour); a fresh fixture fails both and the phase reports `batch: 0`, which is
-correct behaviour that reads as coverage.
+correct behavior that reads as coverage.
 
 `spec/memhtml.symspec.json` is the EARS requirements ledger (keys like `RET-3`, `STORE-2`, each naming
 its verification method and the code that satisfies it) — retiring or adding a requirement is its own

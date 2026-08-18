@@ -1,9 +1,9 @@
 /*
  * The site reads as an Internet standards document — an IETF RFC or a W3C Recommendation. Every
- * colour pair below is computed rather than picked, and every ratio is stated so a later edit can
+ * color pair below is computed rather than picked, and every ratio is stated so a later edit can
  * see what it would be spending.
  *
- * The classic browser link colours are used literally because they hold up: #0000EE measures
+ * The classic browser link colors are used literally because they hold up: #0000EE measures
  * 9.08:1 on this ground and #551A8B measures 10.64:1, both clearing AAA. That is the whole reason
  * this direction can quote the defaults instead of imitating them. One substitution is forced —
  * #EE0000, the classic active-link red, measures 4.38:1 here and fails AA, so #B00018 (7.09:1)
@@ -48,8 +48,8 @@
    * separately, so that bare `:root` ties with the one above it and wins on order alone — which means
    * every reference to `var(--memhtml-link)` in THIS block resolved to the dark accent. Measured
    * before the fix: #8da9ff on warm paper is 2.19:1, so the site title, the table of contents and
-   * every in-content link failed WCAG AA in light mode while the declarations metres above said
-   * 9.08:1. The comment was right about the colour and silent about the cascade.
+   * every in-content link failed WCAG AA in light mode while the declarations meters above said
+   * 9.08:1. The comment was right about the color and silent about the cascade.
    *
    * An attribute selector outranks a bare `:root`, so declaring them here settles it by specificity
    * rather than by ordering. `tests/a11y.test.ts` is what keeps the claim honest from now on.
@@ -96,7 +96,7 @@
 }
 
 /*
- * font-size-adjust equalises x-height when the primary face is absent, cutting the substitution
+ * font-size-adjust equalizes x-height when the primary face is absent, cutting the substitution
  * error on a box without the MS core fonts from +18–27% to +0.7%. The bare-number form is
  * deliberate: it reaches back to Firefox 3, where the two-value form does not.
  */
@@ -154,7 +154,7 @@ body {
   max-width: 100%;
 }
 
-/* Links are underlined, so colour is never the only signal that something is a link (SC 1.4.1). */
+/* Links are underlined, so color is never the only signal that something is a link (SC 1.4.1). */
 .sl-markdown-content a:not(:where(.not-content *)) {
   color: var(--memhtml-link);
   text-decoration: underline;
@@ -167,7 +167,7 @@ body {
 
 /*
  * Headings carry weight and a touch of negative tracking, and nothing else. A monochrome page has one
- * axis of emphasis available — how black a line is — so a heading may not also change colour or face.
+ * axis of emphasis available — how black a line is — so a heading may not also change color or face.
  */
 .sl-markdown-content :is(h2, h3, h4) {
   font-weight: 700;
@@ -323,8 +323,8 @@ body {
 }
 
 /*
- * The memo title and the brand line beneath it, centred as a specification's title block is centred.
- * This is the only centred type on the site, which is what makes it read as a title block rather than
+ * The memo title and the brand line beneath it, centered as a specification's title block is centered.
+ * This is the only centered type on the site, which is what makes it read as a title block rather than
  * as a page that lost its alignment.
  *
  * The letterspacing is authored on already-uppercase text — no `text-transform` — so the words are
@@ -337,9 +337,9 @@ body {
 
 /*
  * The prose measure (`max-width: 32em` on most prose blocks, including `p`) does not apply here, because
- * `em` resolves against each element's own font size: the memo title's 32em exceeds the column and centres true, while the
- * brand line's 32em at --sl-text-xs is a box narrower than the column that sits flush left — so its centred text lands left of
- * the title's axis. Display type centres on the column, not on a measure.
+ * `em` resolves against each element's own font size: the memo title's 32em exceeds the column and centers true, while the
+ * brand line's 32em at --sl-text-xs is a box narrower than the column that sits flush left — so its centered text lands left of
+ * the title's axis. Display type centers on the column, not on a measure.
  * The `.sl-markdown-content` prefix ensures this override wins against the measure rule.
  */
 .sl-markdown-content .rfc-title-block > p {
@@ -359,7 +359,7 @@ body {
   letter-spacing: 0.26em;
   margin-block: 0.35rem 0;
   /* The tracking is applied to the right of each glyph, so the last one carries a trailing space
-     that would knock a centred line off centre by half of it. */
+     that would knock a centered line off center by half of it. */
   margin-inline-start: 0.26em;
 }
 
@@ -397,7 +397,7 @@ body {
  * The line-height above and the padding here exist for SC 2.5.8 rather than for the look. A contents
  * entry is one line of text, so its link is an inline box about the height of the font and short of the
  * 24px target minimum; block padding on an inline box grows the hit area without moving a character,
- * and the 1.75 line-height is what keeps two neighbouring entries' areas from overlapping.
+ * and the 1.75 line-height is what keeps two neighboring entries' areas from overlapping.
  */
 .rfc-toc a {
   padding-block: 0.2em;
@@ -464,7 +464,7 @@ body {
 
 /*
  * The clipboard needs a secure context, so the failure path is real and is reported in the control's
- * own label. Weight and the label text carry it; the colour only reinforces (SC 1.4.1).
+ * own label. Weight and the label text carry it; the color only reinforces (SC 1.4.1).
  */
 .memhtml-page-action[data-memhtml-state] {
   font-weight: 700;
@@ -479,7 +479,7 @@ body {
  * A `:::agent` note. The visible label is authored in the Markdown body, not injected here, because
  * this rule reaches the HTML while the raw `.md` route is built from source — a CSS-only or
  * plugin-only label would be absent from the surface the note is addressed to. The rule is a rule and
- * not a colour for the same reason SC 1.4.1 gives.
+ * not a color for the same reason SC 1.4.1 gives.
  */
 .sl-markdown-content .memhtml-agent-note {
   border-inline-start: 3px double var(--memhtml-rule);

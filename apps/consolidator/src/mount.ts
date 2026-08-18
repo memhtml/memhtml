@@ -41,7 +41,7 @@ export interface MountedFilesystem {
   readonly roots: ReadonlyArray<ReadOnlyRoot>
 }
 
-/** A root declaration this composition cannot honour. Carries the reason, never a file's content. */
+/** A root declaration this composition cannot honor. Carries the reason, never a file's content. */
 export class SandboxMountInvalid extends Error {
   override readonly name = "SandboxMountInvalid"
 }

@@ -328,7 +328,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   {
     name: "neighbors",
     summary: "The memory graph around one path, to a fixed depth of at most two hops.",
-    args: [{ name: "path", description: "The centre of the neighbourhood.", required: true }],
+    args: [{ name: "path", description: "The center of the neighborhood.", required: true }],
     flags: [
       { name: "depth", type: "int", description: "1 or 2. Never more.", default: 1 },
       {

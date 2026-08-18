@@ -217,7 +217,7 @@ Add an authored edge to the source file and commit it. Idempotent.
 
 The memory graph around one path, to a fixed depth of at most two hops.
 
-- `<path>` — The centre of the neighbourhood.
+- `<path>` — The center of the neighborhood.
 
 - `--depth` (int) — 1 or 2. Never more. _(default `1`)_
 - `--rel` (string) — Restrict to these rels. Repeatable. _(repeatable; one of: `supersedes`, `contradicts`, `caused_by`, `leads_to`, `part_of`, `relates_to`, `example_of`, `supports`, `laterally_related`)_
@@ -439,5 +439,5 @@ Run the `memhtml-mcp` stdio server: 14 tools and 2 resources over this same repo
 | `MEMHTML_EMBED` | `on` | `off` disables the embedder entirely. An explicit opt-out, distinct from a missing credential: a missing credential degrades one search at call time, `off` degrades every search, and an operator reading this manifest needs those to be different states. |
 | `MEMHTML_LLM` | `on` | `off` makes the four LLM sleep phases report `no model bound` and stay `ok`, so a credential-free run is honest rather than red. |
 | `MEMHTML_EXTRACT_ENTITIES` | `off` | `on` adds one GPT-5.6 Luna call per write batch that extracts `memhtml-entity` metas the ops did not declare. Opt-in, unlike MEMHTML_EMBED, because it changes what a write STORES: extracted entities land in the files as if authored, and the write itself never waits on or fails with the model. A failed extraction is a logged warning and an unextracted batch. |
-| `MEMHTML_MCP_BIN` | — | An explicit path to the `memhtml-mcp` entry point, read only by the `memhtml serve mcp` supervisor. Absent means the sibling-path default. The two apps ship as one build, so `apps/cli/dist/serve.js` finds `apps/mcp/dist/bin.js` two directories over. An operator sets it for a split deployment that does not keep the apps side by side; it locates the server rather than configuring the store, so it changes no retrieval behaviour. |
+| `MEMHTML_MCP_BIN` | — | An explicit path to the `memhtml-mcp` entry point, read only by the `memhtml serve mcp` supervisor. Absent means the sibling-path default. The two apps ship as one build, so `apps/cli/dist/serve.js` finds `apps/mcp/dist/bin.js` two directories over. An operator sets it for a split deployment that does not keep the apps side by side; it locates the server rather than configuring the store, so it changes no retrieval behavior. |
 

@@ -73,7 +73,7 @@ describe("decodeToolInput", () => {
 
   it("refuses an EXTRA field rather than silently stripping it", async () => {
     // The default parse option ignores excess keys and succeeds, which would let a model
-    // answer a neighbouring schema and have the difference disappear.
+    // answer a neighboring schema and have the difference disappear.
     const result = await decode({
       keep: "areas/x.html",
       drop: [],
@@ -184,7 +184,7 @@ describe("makeModelClient.generateObject", () => {
     }
   })
 
-  it("honours a hand-written inputSchema override while still decoding with the schema", async () => {
+  it("honors a hand-written inputSchema override while still decoding with the schema", async () => {
     const override = {
       type: "object",
       properties: { keep: { type: "string" } },

@@ -5,7 +5,7 @@
 
 ## The seventh variant of the fleet's recurring mistake
 
-The metarepo lesson says "seed a NEIGHBOUR's rows". In a multi-phase pipeline the neighbour is the
+The metarepo lesson says "seed a NEIGHBOR's rows". In a multi-phase pipeline the neighbor is the
 **preceding phase**: conflict-detection's anti-join was blinded by relationship-mining's derived
 edges written one phase earlier (`candidates: 0` forever, green suite, phantom arm); archive ops hit
 paths an earlier phase already moved (the COMMON case between retention-triage and reprieve);

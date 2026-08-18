@@ -57,11 +57,11 @@ const decodePng = (bytes: Uint8Array): Decoded => {
     const payload = bytes.subarray(at + 8, at + 8 + length)
     if (type === "IHDR") {
       const bitDepth = payload[8]
-      const colourType = payload[9]
+      const colorType = payload[9]
       const interlace = payload[12]
-      expect({ bitDepth, colourType, interlace }).toEqual({
+      expect({ bitDepth, colorType, interlace }).toEqual({
         bitDepth: 8,
-        colourType: 6,
+        colorType: 6,
         interlace: 0
       })
       header = {
@@ -86,7 +86,7 @@ const decodePng = (bytes: Uint8Array): Decoded => {
   return { ...header, pixels }
 }
 
-const colourAt = ({ width, pixels }: Decoded, x: number, y: number): string => {
+const colorAt = ({ width, pixels }: Decoded, x: number, y: number): string => {
   const at = (y * width + x) * 4
   const hex = (channel: number | undefined): string =>
     (channel ?? 0).toString(16).padStart(2, "0").toUpperCase()
@@ -107,8 +107,8 @@ describe("the mark", () => {
   })
 
   /*
-   * Every colour the mark and the card use has to be one `rfc.css` measured a ratio for. A fourth
-   * value invented here would be the one colour on the site with no contrast figure behind it.
+   * Every color the mark and the card use has to be one `rfc.css` measured a ratio for. A fourth
+   * value invented here would be the one color on the site with no contrast figure behind it.
    */
   it("uses only the palette rfc.css measured", () => {
     const css = readFileSync(join(root, "src", "styles", "rfc.css"), "utf8")
@@ -174,7 +174,7 @@ describe("the committed artifacts still draw the mark", () => {
   })
 
   /*
-   * The three colours, read out of the raster at the coordinate each stroke owns.
+   * The three colors, read out of the raster at the coordinate each stroke owns.
    *
    * This is the check that would fail on a mark that encodes and decodes perfectly and draws the
    * wrong thing — a transposed rectangle, a swapped fill, a red band that lost its bleed.
@@ -182,20 +182,20 @@ describe("the committed artifacts still draw the mark", () => {
   it("puts paper at the corner, ink on the rules, and red across the whole foot", () => {
     const decoded = decodePng(asset(`icon-${ICON_PNG_SIZE}.png`))
     const unit = ICON_PNG_SIZE / GRID
-    const centre = (rect: { x: number; y: number; w: number; h: number }): [number, number] => [
+    const center = (rect: { x: number; y: number; w: number; h: number }): [number, number] => [
       Math.round((rect.x + rect.w / 2) * unit),
       Math.round((rect.y + rect.h / 2) * unit)
     ]
 
-    expect(colourAt(decoded, 0, 0)).toBe(PALETTE.paper)
+    expect(colorAt(decoded, 0, 0)).toBe(PALETTE.paper)
     for (const rect of MARK.slice(1)) {
-      const [x, y] = centre(rect)
-      expect(colourAt(decoded, x, y)).toBe(rect.fill)
+      const [x, y] = center(rect)
+      expect(colorAt(decoded, x, y)).toBe(rect.fill)
     }
     // The foot bleeds: both bottom corners are red, not paper.
     const bottom = ICON_PNG_SIZE - 1
-    expect(colourAt(decoded, 0, bottom)).toBe(PALETTE.normative)
-    expect(colourAt(decoded, bottom, bottom)).toBe(PALETTE.normative)
+    expect(colorAt(decoded, 0, bottom)).toBe(PALETTE.normative)
+    expect(colorAt(decoded, bottom, bottom)).toBe(PALETTE.normative)
   })
 })
 

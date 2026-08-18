@@ -78,7 +78,7 @@ run that degrades retrieval quality does not land.
 Four failure modes have each cost real debugging time here, and each is now a rule for writing a test.
 
 - A clean-database test can pass against a real bug. Where a table is shared across entities, seed a
-  neighbour's rows and not only the subject's. Window bounds derived from a table-global sequence agree
+  neighbor's rows and not only the subject's. Window bounds derived from a table-global sequence agree
   exactly with the correct projection in an empty database.
 - Mutation-verify every lock you call a lock. Roughly a quarter of candidate regression tests written in
   this repository were vacuous until someone reverted the fix and watched them fail.
@@ -97,5 +97,5 @@ fake cannot give.
 
 Every defect this system has had in that class was green under a stateless fake and red against the real
 adapter. The list so far is a bare `SET` in a pool configure callback, a resolve-then-read join that came
-back empty against a real database, and a queue contaminated by a neighbour's rows. Each fix is
+back empty against a real database, and a queue contaminated by a neighbor's rows. Each fix is
 regression-locked by a test proven to fail on the bug.

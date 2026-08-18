@@ -46,7 +46,7 @@ The artifact has a gate of its own because no other tier can see it:
 14 MCP tools through the installed binary, and `--live` adds the three edges the
 credential-free run cannot reach (Bedrock embeddings, the sleep phases that call
 a model, the consolidator distilling through eve). It found four packaging
-defects that a green `pnpm check` could not, catalogued in
+defects that a green `pnpm check` could not, cataloged in
 `.erpaval/solutions/build-errors/the-published-artifact-is-not-the-workspace.md`.
 
 **Published.** The package is on npm as `memhtml` (0.2.2 at time of writing),
@@ -551,7 +551,7 @@ Two things remain open and are accepted rather than fixed:
   sandbox, but a same-UID reader of the server's environment still wins.
 
 What remains open is the watermark's coverage under reconsolidation: losing
-`index.db` loses every watermark, and the next cycle re-reads and re-distils
+`index.db` loses every watermark, and the next cycle re-reads and re-distills
 those sessions. Safe (a duplicate candidate is a commit a reviewer declines)
 but not free, and worth revisiting if the corpus ever makes it expensive.
 

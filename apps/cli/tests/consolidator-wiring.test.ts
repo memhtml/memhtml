@@ -9,7 +9,7 @@ import { ConsolidatorPortService, layerConsolidatorPort, Roots } from "../src/ap
  * This is the only place the decision is made, and getting it wrong is not a small bug in either
  * direction. Bound when it should not be spawns an eve server and spends Opus tokens on a night an
  * operator turned the models off; unbound when it should not be makes the phase permanently report
- * `no consolidator bound` on a machine that has credentials, and a nightly job that never distils
+ * `no consolidator bound` on a machine that has credentials, and a nightly job that never distills
  * anything looks exactly like one that found nothing worth distilling.
  *
  * ── Two environments, and why they are threaded rather than mutated ──────────────────────────────
@@ -140,7 +140,7 @@ describe("layerConsolidatorPort", () => {
      * So the divergence is manufactured: the AMBIENT credentials are cleared for the duration, while
      * the INJECTED ones are present. `hasConsolidatorCredentials` reads its argument live (it is not a
      * `Config` snapshot), so an ambient-env client now refuses while an injected-env client proceeds —
-     * and that difference is observable in the client's own behaviour.
+     * and that difference is observable in the client's own behavior.
      *
      * The call is made with an EMPTY transcript list, which is what keeps this cheap and hermetic: the
      * client short-circuits an empty batch immediately after its preflight
@@ -206,7 +206,7 @@ describe("layerConsolidatorPort", () => {
      * The mount root has to come from the SAME `Roots` service `memhtml trace index` scans with, or the
      * agent mounts a tree whose paths no `traces` row names — and the failure mode is quiet: every
      * transcript in every batch reads as unreachable, so the phase reports `consolidated: 0` forever
-     * and a nightly job that never distils anything looks exactly like one that found nothing.
+     * and a nightly job that never distills anything looks exactly like one that found nothing.
      *
      * ── The observable, and why the obvious one is vacuous ────────────────────────────────────────
      *

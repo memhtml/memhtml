@@ -175,7 +175,7 @@ describe("the mutation lock", () => {
 
 describe("composition with Starlight's own loader", () => {
   /**
-   * A stand-in for Astro's glob loader, whose real behaviour is the hazard: it deletes every store
+   * A stand-in for Astro's glob loader, whose real behavior is the hazard: it deletes every store
    * key it did not touch, so a generated entry written before it would be swept as a removed file.
    */
   const sweepingDocsLoader = (): Loader => ({

@@ -208,7 +208,7 @@ export interface WriteParams extends Provenance {
 /**
  * Bring the index up to the commit a write just made.
  *
- * `indexer.update()` rather than `indexPaths([…])`, and the difference changes behaviour twice:
+ * `indexer.update()` rather than `indexPaths([…])`, and the difference changes behavior twice:
  *
  * 1. **`indexPaths` cannot express a rename.** Every correction and every archive is a `git mv`, and
  *    an index that handled one as "index the destination" leaves the source row live. The archived
@@ -1062,7 +1062,7 @@ export interface NeighborsParams {
   readonly rels?: ReadonlyArray<string> | undefined
 }
 
-/** One node in a neighbourhood. `hop` is 1-based distance from the centre: 1 or 2, never 0. */
+/** One node in a neighborhood. `hop` is 1-based distance from the center: 1 or 2, never 0. */
 export interface NeighborNode {
   readonly path: string
   readonly title: string
@@ -1081,19 +1081,19 @@ export interface NeighborNode {
  *
  * **Both directions, and `derived = 0 ∪ derived = 1`.** An edge is an assertion about a pair, and
  * which file happens to hold the `<link>` is authorship rather than direction of meaning. A
- * neighbourhood that read only outbound edges would show a superseding memory its target and hide
+ * neighborhood that read only outbound edges would show a superseding memory its target and hide
  * from the target that it had been superseded. Derived edges are included because lateral retrieval
  * is what they are for. `derived` is still reported per node so a caller can tell a
  * sleep-mined suspicion from an authored assertion.
  *
  * `edge_class = 'memory'` on every join. A person edge entering here would put
- * `resources/people/*` into a memory neighbourhood, and the class column exists to make that
+ * `resources/people/*` into a memory neighborhood, and the class column exists to make that
  * structurally impossible.
  */
 export const neighborsOf = (params: NeighborsParams) =>
   Effect.gen(function* () {
     const db = yield* DatabaseService
-    const centre = normalizePath(params.path)
+    const center = normalizePath(params.path)
     const depth = Math.min(2, Math.max(1, Math.trunc(params.depth ?? 1)))
 
     const rels = (params.rels ?? []).filter(
@@ -1103,8 +1103,8 @@ export const neighborsOf = (params: NeighborsParams) =>
     const relFilter2 = rels.length > 0 ? ` AND e2.rel IN (${rels.map(() => "?").join(", ")})` : ""
 
     /**
-     * Hop 1 is the centre's own edges, either direction. Hop 2 walks one further from each hop-1
-     * node and excludes the centre, so a two-cycle does not report the centre as its own neighbour
+     * Hop 1 is the center's own edges, either direction. Hop 2 walks one further from each hop-1
+     * node and excludes the center, so a two-cycle does not report the center as its own neighbor
      * at distance 2.
      */
     const hopOne = `
@@ -1132,7 +1132,7 @@ export const neighborsOf = (params: NeighborsParams) =>
     const walk = depth === 1 ? hopOne : `${hopOne}\n      UNION ALL${hopTwo}`
 
     /**
-     * `min(hop)` per path: a node reachable both directly and via a detour is a 1-hop neighbour,
+     * `min(hop)` per path: a node reachable both directly and via a detour is a 1-hop neighbor,
      * and reporting it twice would let one memory occupy two slots in a bounded answer.
      *
      * The join onto `files` is an inner join, so an edge pointing at a path the tree does not hold
@@ -1155,7 +1155,7 @@ export const neighborsOf = (params: NeighborsParams) =>
       // twice, hop 2 uses it four times. Getting this count wrong is a bind mismatch rather than a
       // wrong answer, so it fails loudly.
       [
-        centre,
+        center,
         ...(depth === 1
           ? [...rels, ...rels]
           : [...rels, ...rels, ...rels, ...rels, ...rels, ...rels])
@@ -1168,7 +1168,7 @@ export const neighborsOf = (params: NeighborsParams) =>
       hop: row.hop,
       rel: row.rel
     }))
-    return { centre, depth, nodes, edges: nodes.length }
+    return { center, depth, nodes, edges: nodes.length }
   })
 
 export interface ListParams {

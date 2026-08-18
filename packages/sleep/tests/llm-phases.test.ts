@@ -364,7 +364,7 @@ describe("arc-synthesis", () => {
 
 describe("compress", () => {
   /**
-   * A community of four memories that are pairwise near-neighbours AND authored-linked into one
+   * A community of four memories that are pairwise near-neighbors AND authored-linked into one
    * community, all four in the COMPRESS band. Label propagation needs the edges: a similarity group is
    * not a community, and communities below the minimum size collapse to `undefined` and are skipped.
    */

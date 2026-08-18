@@ -146,7 +146,7 @@ describe("a transcript that does not resolve in the sandbox is not analyzed", ()
   })
 
   /**
-   * A SYMLINK inside the root reads as absent, and this case exists because the measured behaviour is
+   * A SYMLINK inside the root reads as absent, and this case exists because the measured behavior is
    * asymmetric in a way that would produce a false positive: `exists()` returns TRUE for the link
    * while `readFile`/`stat` fail with ENOENT (both probed 2026-08-09 against just-bash 3.2.0, since
    * `allowSymlinks` defaults to false).
@@ -306,7 +306,7 @@ describe("transcripts never enter the model's context", () => {
   /**
    * The regression guard for the security finding this whole change is, asserted as SOURCE SHAPE.
    *
-   * It has to be a source assertion rather than a behavioural one, and that is a real limitation stated
+   * It has to be a source assertion rather than a behavioral one, and that is a real limitation stated
    * plainly: the defect was that transcripts rode into the model's context as a `clientContext` payload,
    * and observing what did NOT enter a context requires a live model call. What is checkable without
    * one is that the client composes no such payload — there is no `clientContext` in it at all, and the

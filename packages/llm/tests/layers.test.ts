@@ -27,7 +27,7 @@ describe("LlmConfig", () => {
     expect(await withEnv({}, LlmConfig)).toEqual({ region: "us-east-1" })
   })
 
-  it("honours MEMHTML_AWS_REGION", async () => {
+  it("honors MEMHTML_AWS_REGION", async () => {
     expect(await withEnv({ MEMHTML_AWS_REGION: "us-west-2" }, LlmConfig)).toEqual({
       region: "us-west-2"
     })

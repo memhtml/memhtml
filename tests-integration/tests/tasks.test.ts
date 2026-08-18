@@ -613,7 +613,7 @@ describe("verification item 3 — doctor reports the task findings", () => {
 
     /**
      * A NON-task memory filed in the task inbox directory, hand-authored — the contaminating
-     * neighbour, and without it `inboxTaskDepth`'s `memory_type = 'task'` filter is removable with the
+     * neighbor, and without it `inboxTaskDepth`'s `memory_type = 'task'` filter is removable with the
      * suite still green (measured by mutation, 2026-08-02). A directory is not a type: the count
      * claims to be work awaiting a project, and a memory that happens to sit there is neither.
      */
@@ -696,7 +696,7 @@ describe("verification item 3 — doctor reports the task findings", () => {
 
   it("reports a blocker whose FILE left the tree, via the mechanism that clears its edge", async () => {
     /**
-     * **The `missing` arm is defence in depth, not the mechanism, and this test says so rather than
+     * **The `missing` arm is defense in depth, not the mechanism, and this test says so rather than
      * faking a state the system cannot reach.** Probed live 2026-08-02, then confirmed by mutation:
      *
      * - Deleting a blocker's file and running `index update` clears `edges WHERE src_path = ?` in the

@@ -20,7 +20,7 @@ import {
  * Per-item failure isolation is NOT here. A phase that iterates candidates decides for
  * itself whether one bad response skips an item or fails the phase, and it does that with
  * `Effect.result` over each call. This service's contract is narrower and total. One call
- * goes in, and either a value that honours its type or a typed failure comes out.
+ * goes in, and either a value that honors its type or a typed failure comes out.
  */
 
 export interface Generation {

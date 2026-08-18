@@ -120,7 +120,7 @@ under `projects/<ws>/tasks/` satisfying the format is as real as one the CLI wro
 ## What the corpus machinery does not do to a task
 
 - **Retrieval excludes tasks by default.** An unscoped query gets `memory_type <> 'task'`
-  (`packages/index/src/scope.ts:121`); a caller-named type list is honoured verbatim, so this is a
+  (`packages/index/src/scope.ts:121`); a caller-named type list is honored verbatim, so this is a
   default with a reachable opt-in rather than a hidden row (`:109`).
 - **Dedup carves tasks out, both directions.** The partial unique index and the write path's lookup
   state one predicate (`packages/index/migrations/0008_tasks.sql:126-127`,

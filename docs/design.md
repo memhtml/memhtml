@@ -499,7 +499,7 @@ by writing a hyphenated word. `\p{L}\p{N}` rather than `[a-z0-9]` keeps `déploy
 scope apply to three arms and not the fourth, a leak no type catches. Defaults exclude archived files and
 `memory_type <> 'task'` (`packages/index/src/scope.ts:102-122`), because a corpus with fifty open to-do
 items would put fifty of them in front of every recall, crowding out the knowledge an agent asked for with
-a list it can read by `ls`-ing a directory. A caller-named type list is honoured verbatim, `task` included
+a list it can read by `ls`-ing a directory. A caller-named type list is honored verbatim, `task` included
 — filtering it back out would make the opt-in unreachable, so this is a default and not a firewall. That
 default is inlined rather than bound, because binding it would consume a placeholder number and shift
 every scope parameter below it. Workspace is **strict equality**: an unplaced memory is not "in every

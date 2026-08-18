@@ -112,7 +112,7 @@ learned mid-session and did not explicitly write down is otherwise lost, because
 and the corpus does not.
 
 The phase selects sessions carrying no `trace_consolidations` watermark and hands the agent their
-`file_path` values. The agent reads the transcripts at their source and distils claims into ordinary
+`file_path` values. The agent reads the transcripts at their source and distills claims into ordinary
 memories through the store, copying no transcript text into the corpus. That is why `traces` stores a
 pointer rather than content.
 

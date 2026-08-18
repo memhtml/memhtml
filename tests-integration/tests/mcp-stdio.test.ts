@@ -31,7 +31,7 @@ import { type Client, connect, failureText, handshake, structured } from "./spaw
  *
  * **BUILD ORDER.** This drives `dist`, not `src`. `turbo` makes `test:integration` depend on
  * `build`, and {@link cliEntryPoint} fails loudly rather than let a stale or absent build read as a
- * behavioural failure.
+ * behavioral failure.
  *
  * **The second subject: what a FAILED call says.** The same session also makes two calls that must
  * fail, because a failure's wire text is only observable here. `McpServer` catches a failed handler and

@@ -347,7 +347,7 @@ describe.each(AUDITED_PAGES)("%s", (path) => {
 describe("the baseline is a ratchet", () => {
   /*
    * Every declared failure must still be reported somewhere. Without this a fix leaves its
-   * suppression behind, and the next defect of the same shape lands inside a licence nobody remembers
+   * suppression behind, and the next defect of the same shape lands inside a license nobody remembers
    * granting.
    */
   it("carries no entry that has already been fixed", () => {

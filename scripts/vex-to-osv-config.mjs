@@ -1,7 +1,7 @@
 /**
  * Render `osv-scanner.toml` from the OpenVEX ledger, because osv-scanner cannot read VEX.
  *
- * grype and trivy both take `--vex` and honour `not_affected` directly (probed 2026-08-18: grype
+ * grype and trivy both take `--vex` and honor `not_affected` directly (probed 2026-08-18: grype
  * 0.111.1 moved extract-zip's two matches into `ignoredMatches` with
  * `{namespace: "vex", vex-status: "not_affected"}`). osv-scanner 2.5.0 has no VEX flag at all — its
  * only suppression surface is `[[IgnoredVulns]]` in its own TOML. Rendering that file from the

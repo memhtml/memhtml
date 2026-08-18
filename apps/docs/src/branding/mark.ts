@@ -10,7 +10,7 @@ import { deflateSync } from "node:zlib"
  * Three properties make it survive 16px, and each is a constraint rather than a preference:
  *
  * - The geometry is whole units on a 16-unit grid, so a 16px icon lands on whole pixels and no edge
- *   is antialiased into grey. `GRID` is the unit count, and every raster size is a scale of it.
+ *   is antialiased into gray. `GRID` is the unit count, and every raster size is a scale of it.
  * - The ground is opaque paper rather than transparent. Ink at 16.83:1 against paper is invisible
  *   against a dark browser tab strip, so the mark carries the page it is drawn on.
  * - Nothing is thinner than two units. A one-unit rule is a 1px hairline at favicon size, which
@@ -71,7 +71,7 @@ export const MARK_LABEL = "memhtml"
  * The mark as SVG.
  *
  * `shape-rendering="crispEdges"` is what keeps a browser scaling the vector to 17px from softening
- * the rules into grey; the geometry is integral, so there is nothing to interpolate.
+ * the rules into gray; the geometry is integral, so there is nothing to interpolate.
  */
 export const markSvg = (): string =>
   [
@@ -167,7 +167,7 @@ const pngChunk = (type: string, data: Uint8Array): Uint8Array => {
 export const markPng = (size: number): Uint8Array => {
   const pixels = markRaster(size)
   const stride = size * 4
-  // Filter type 0 (None) prefixes each scanline. A predictor buys nothing on flat colour fields.
+  // Filter type 0 (None) prefixes each scanline. A predictor buys nothing on flat color fields.
   const scanlines = new Uint8Array((stride + 1) * size)
   for (let y = 0; y < size; y += 1) {
     scanlines[y * (stride + 1)] = 0
@@ -179,7 +179,7 @@ export const markPng = (size: number): Uint8Array => {
   headerView.setUint32(0, size)
   headerView.setUint32(4, size)
   header[8] = 8 // bit depth
-  header[9] = 6 // colour type: truecolour with alpha
+  header[9] = 6 // color type: truecolor with alpha
   header[10] = 0 // deflate
   header[11] = 0 // adaptive filtering
   header[12] = 0 // no interlace
@@ -218,7 +218,7 @@ export const markIco = (sizes: ReadonlyArray<number> = ICO_SIZES): Uint8Array =>
     directory[entry + 1] = size % 256
     directory[entry + 2] = 0 // palette size: not paletted
     directory[entry + 3] = 0 // reserved
-    view.setUint16(entry + 4, 1, true) // colour planes
+    view.setUint16(entry + 4, 1, true) // color planes
     view.setUint16(entry + 6, 32, true) // bits per pixel
     view.setUint32(entry + 8, images[at]?.length ?? 0, true)
     view.setUint32(entry + 12, offset, true)

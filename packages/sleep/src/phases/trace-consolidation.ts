@@ -423,7 +423,7 @@ export const traceConsolidation: PhaseBody = (env) =>
       const commitSha = yield* commitPhase(
         env,
         "trace-consolidation",
-        `${conflict === undefined ? "distil" : "distil (frame conflict)"} ${title}`,
+        `${conflict === undefined ? "distill" : "distill (frame conflict)"} ${title}`,
         counts,
         commitContextFor(candidate, conflict)
       )

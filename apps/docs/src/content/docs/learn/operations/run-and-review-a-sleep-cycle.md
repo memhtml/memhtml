@@ -14,7 +14,7 @@ memhtml sleep merge <run-id>
 ```
 
 A sleep cycle is the nightly curation pass over the corpus. It merges duplicates, resolves entities,
-mines relationships, decays confidence, evicts what has gone stale, and distils new memories out of
+mines relationships, decays confidence, evicts what has gone stale, and distills new memories out of
 session transcripts. Each phase makes its own commit on a branch, so nothing reaches `main` until you
 merge.
 
@@ -148,7 +148,7 @@ branch's own commits rather than a journal table (`packages/sleep/src/run.ts:146
 record of what happened. A process killed after `git commit` and before a row write therefore resumes
 correctly instead of redoing work it already committed.
 
-## When trace-consolidation distils nothing
+## When trace-consolidation distills nothing
 
 Phase 12 hands unread session transcripts to the consolidator agent and commits one memory per
 candidate that clears the bar. It reports `ok` in four different situations, and `detail` is what tells
@@ -172,7 +172,7 @@ consolidates the ten most recent sessions and works backwards a batch per night.
 
 Each commit's body carries the evidence quotes the claim rests on, which is the receipt you review. The
 memory itself carries only the distilled claim, because `.memhtml` holds no session content. A commit
-whose subject reads `distil (frame conflict) …` means the new claim fills the same slot as a live
+whose subject reads `distill (frame conflict) …` means the new claim fills the same slot as a live
 memory, where a slot is a subject-and-relation phrase such as "the capital of India is". The body names
 the memory it collides with. The phase writes the new memory anyway and reports the conflict, because
 sometimes the contradiction is the answer.

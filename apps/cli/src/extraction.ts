@@ -44,7 +44,7 @@ export interface MantleTransport {
 
 /**
  * GPT-5.6 Luna, the fast high-volume model on the mantle endpoint. A constant rather than config
- * because the schema below is tested against this model's strict-mode behaviour. Changing the model
+ * because the schema below is tested against this model's strict-mode behavior. Changing the model
  * is a code change with a test run, not an env var.
  */
 export const EXTRACTION_MODEL_ID = "openai.gpt-5.6-luna"

@@ -66,6 +66,6 @@ the same shape `apps/cli/src/serve.ts` uses to spawn the MCP server.
 The consolidation phase selects transcripts that clear `TRACE_MIN_BYTES` (8 KB) and whose `file_mtime`
 predates `TRACE_QUIET_MILLIS` (one hour) — a small file cannot yield a memory that is more than a
 restatement, and a recent one is a session still in progress. **The repo's own fixtures are ~2.5 KB and
-freshly copied, so they fail both and the phase reports `batch: 0`** — correct behaviour that reads
+freshly copied, so they fail both and the phase reports `batch: 0`** — correct behavior that reads
 exactly like coverage. A live test must synthesize a session over 8 KB and backdate it, or it proves
 nothing while appearing to pass.

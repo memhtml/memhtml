@@ -44,7 +44,7 @@ import {
  * downstream of eleven real predecessors.
  *
  * The vacuous-lock lesson says a guard is a comment until it has been seen to fail. Every case below
- * that locks a behaviour names the mutation that breaks it, and the packet records the runs.
+ * that locks a behavior names the mutation that breaks it, and the packet records the runs.
  */
 
 const DATE = "2026-08-08"
@@ -852,7 +852,7 @@ describe("trace-consolidation session selection", () => {
     /**
      * The first-run guard, and the ORDER is half of it. A fresh install faces a year of transcripts,
      * and an uncapped batch would hand thousands of files to one agent session. Newest-first makes the
-     * cap a policy: the cycle distils recent sessions first and works backwards a batch per night.
+     * cap a policy: the cycle distills recent sessions first and works backwards a batch per night.
      *
      * The sessions are seeded in an order that DISAGREES with their mtimes, so a phase that took the
      * first N rows rather than the newest N would fail rather than pass by insertion luck.
@@ -1194,7 +1194,7 @@ describe("trace-consolidation session selection", () => {
      * category as `sleep_runs` and must not be truncated by a rebuild.
      *
      * Asserted by running the REAL `indexer.rebuild`, not by inspecting the truncate list: the list is
-     * checked in the index suite, and what matters here is the composed behaviour.
+     * checked in the index suite, and what matters here is the composed behavior.
      *
      * (Mutation: adding `"trace_consolidations"` to `MEMORY_TABLES` empties the table and fails here.)
      */
@@ -1221,7 +1221,7 @@ describe("trace-consolidation session selection", () => {
 describe("the manifest join's SQL shape", () => {
   /**
    * SQL asserted as TEXT, because correctness and cost diverge here and only the text sees the
-   * difference. Every case below is a property a behavioural test passes without: a manifest built from
+   * difference. Every case below is a property a behavioral test passes without: a manifest built from
    * N queries returns the same rows as one; an interpolated session id returns the same rows as a bound
    * one; an inner join returns the same rows whenever every session happens to have a link.
    */

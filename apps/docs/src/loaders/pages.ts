@@ -504,7 +504,7 @@ const errorCodesPage = (registry: Registry, base: string): ReferencePage => {
       },
       {
         title: "How a failure reaches a caller",
-        body: `The CLI translates every typed domain failure in one place, ${code("apps/cli/src/errors.ts")}. That translation covers every case: a failure it does not recognise becomes ${code("ERR_UNKNOWN")}, so a caller always gets a code to branch on. ${pageLink(base, `${TIER}/envelope`, "The JSON envelope")} gives the shape the code arrives in.`
+        body: `The CLI translates every typed domain failure in one place, ${code("apps/cli/src/errors.ts")}. That translation covers every case: a failure it does not recognize becomes ${code("ERR_UNKNOWN")}, so a caller always gets a code to branch on. ${pageLink(base, `${TIER}/envelope`, "The JSON envelope")} gives the shape the code arrives in.`
       },
       provenance(
         SOURCES.envelope,
@@ -526,7 +526,7 @@ const configPage = (registry: Registry): ReferencePage => ({
     {
       title: "The variables",
       body: [
-        "The middle column is the value the binary falls back to when the variable is unset. A row with no default changes behaviour by its absence, and its description says how.",
+        "The middle column is the value the binary falls back to when the variable is unset. A row with no default changes behavior by its absence, and its description says how.",
         table(
           ["Variable", "When unset", "Description"],
           registry.configVars.map((variable) => [

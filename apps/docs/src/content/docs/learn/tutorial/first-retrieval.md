@@ -135,7 +135,7 @@ memhtml recall "one writer many readers" --budget 2000
 `recall` runs the same ranking and then layers a disclosure fold on top of it:
 
 - Two envelopes rather than one list. `arcs` and `memories` are folded separately under their own
-  character budgets, so an arc, which is a behavioural summary sleep synthesizes, does not compete
+  character budgets, so an arc, which is a behavioral summary sleep synthesizes, does not compete
   with the memories it summarizes.
 - `disclosed` is quoted and `indexLines` is not. A candidate that fits the budget arrives with its
   body. One that does not becomes an index line, carrying the claim plus the path, so you drill down

@@ -474,7 +474,7 @@ export const readScript = async (file: string): Promise<string | Failure> => {
  *
  * The pin also makes an answer reproducible. `sha` rides back in the report, so the same
  * traversal over the same tree is one `--sha` away, and an uncommitted edit is invisible. That is
- * the right behaviour for a command whose whole output is a claim about a corpus state.
+ * the right behavior for a command whose whole output is a claim about a corpus state.
  *
  * Cost measured: `git worktree add --detach` on the 305-file fixture is 31ms (three runs: 31/30/31),
  * against a 640ms full-corpus parse. The pin is ~5% of the work it makes correct.

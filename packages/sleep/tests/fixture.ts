@@ -255,7 +255,7 @@ ${metas.join("\n")}
  *
  * The flipped pair is the whole point, and the metarepo's narrator lesson is why: a corpus holding
  * only the true duplicate passes against a dedup phase whose veto does nothing, because there is
- * nothing for the veto to block. The flip is the NEIGHBOUR that makes the assertion non-vacuous — it
+ * nothing for the veto to block. The flip is the NEIGHBOR that makes the assertion non-vacuous — it
  * shares every token with its twin but one, so it scores higher than the true duplicate does, and the
  * one differing token inverts the claim.
  *

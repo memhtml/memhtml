@@ -34,7 +34,7 @@ with the clone; the git config one of them depends on does not.
 
 `.gitattributes` marks `index.html` and `sitemap.xml` with `merge=ours`, which tells git to keep the
 local version of those two files instead of merging them line by line. The attribute does nothing on
-its own: git only honours it when the clone's own config also names the driver as
+its own: git only honors it when the clone's own config also names the driver as
 `merge.ours.driver` (`packages/store/src/layout.ts:76`), and git config is per clone and never
 travels with a clone. So a clone that skips `memhtml init` gets conflict markers written into a
 generated file the first time a merge touches one.
@@ -77,7 +77,7 @@ keeps beside them:
 A clone therefore hands you the tree and the committed sidecar `.memhtml/state/access.jsonl`, and no
 databases at all. That sidecar is why `memhtml state import` is a step in
 [recovery](/learn/operations/recover-from-a-lost-index/). Retrieval ranks a
-query with four arms: full-text search, vector similarity, recency, and salience. Salience favours
+query with four arms: full-text search, vector similarity, recency, and salience. Salience favors
 the memories you have opened and reinforced before, so skipping the import leaves that arm with no
 signal and ranking gets quietly worse instead of failing.
 
@@ -93,7 +93,7 @@ areas/arcs/     areas/inbox/    resources/people/
 .gitignore      .gitattributes  README.html
 ```
 
-Only the nightly sleep cycle writes into `areas/arcs/`, which holds behavioural arcs: memories that
+Only the nightly sleep cycle writes into `areas/arcs/`, which holds behavioral arcs: memories that
 summarize a pattern running across many other memories. `resources/people/` is the person plane. A
 memory the placement rules cannot place lands in `areas/inbox/`, and
 [`memhtml doctor`](/learn/operations/audit-and-publish-the-corpus/) warns you when that directory

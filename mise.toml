@@ -232,7 +232,7 @@ run = "lefthook uninstall"
 description = "Render osv-scanner.toml from the OpenVEX ledger (security/memhtml.openvex.json)"
 # The ledger is the single record of why a finding is suppressed, and the three vulnerability
 # scanners disagree about how to read one. Probed 2026-08-18: grype 0.111.1 and trivy 0.70.0 both
-# take `--vex` and honour `not_affected`; osv-scanner 2.5.0 has no VEX flag at all, so its
+# take `--vex` and honor `not_affected`; osv-scanner 2.5.0 has no VEX flag at all, so its
 # `[[IgnoredVulns]]` TOML is generated rather than hand-kept. A second hand-maintained list is how a
 # suppression outlives the reasoning that justified it.
 run = "node scripts/vex-to-osv-config.mjs"

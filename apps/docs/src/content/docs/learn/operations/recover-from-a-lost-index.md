@@ -26,7 +26,7 @@ Run `memhtml init` first, because the merge driver it configures lives in this c
 it, the first merge that touches a generated file writes conflict markers into that file.
 
 Run `memhtml state import` before the rebuild. Retrieval ranks a query with four arms: full-text
-search, vector similarity, recency, and salience, which favours memories you have opened and
+search, vector similarity, recency, and salience, which favors memories you have opened and
 reinforced before. The import gives the salience arm signal on your first query instead of after the
 first night.
 

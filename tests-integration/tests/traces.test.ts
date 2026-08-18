@@ -222,7 +222,7 @@ describe("verification item 5 — the trace plane, and trace_links from a --sess
   })
 
   it("keeps the trace plane out of memory retrieval entirely", async () => {
-    // The firewall as a behavioural assertion: a phrase that exists ONLY in a transcript must not be
+    // The firewall as a behavioral assertion: a phrase that exists ONLY in a transcript must not be
     // findable through `memhtml search`, whatever the FTS index holds.
     const hits = await cli.json<{ readonly hits: ReadonlyArray<{ readonly path: string }> }>([
       "search",

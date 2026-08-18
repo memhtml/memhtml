@@ -13,7 +13,7 @@ import { DEDUP_CORPUS, type Fixture, withFixture } from "./fixture.js"
  * The corpus carries a true duplicate AND a negation-flipped near-twin whose cosine is HIGHER than the
  * duplicate's (0.9907 against 0.9277, measured). So the veto's effect is observable: without it, the
  * flipped pair merges — and because the merge keeps the OLDER file, it would restore exactly the claim
- * the newer memory was written to correct. That is why the fixture holds a neighbour and not just a
+ * the newer memory was written to correct. That is why the fixture holds a neighbor and not just a
  * subject.
  */
 

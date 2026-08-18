@@ -116,7 +116,7 @@ warning never blocks a write.
    (`packages/html/src/constraints.ts:205`). The rule is narrower than HTML's own grammar because
    `files.event_at` and `files.due_at` are compared as strings.
 3. No `class`, no `style`, no `<script>`, no `<style>`, and no `on*` handler
-   (`packages/html/src/constraints.ts:227`). Presentation belongs to a stylesheet, and behaviour
+   (`packages/html/src/constraints.ts:227`). Presentation belongs to a stylesheet, and behavior
    belongs nowhere in a memory file.
 4. Every head `<link rel="memhtml-*">` names a rel from the closed vocabulary and a root-relative
    href (`packages/html/src/constraints.ts:251`). A relative href would break on the first `git mv` of

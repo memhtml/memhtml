@@ -918,7 +918,7 @@ const buildProbes = (
          * the cosine. Measured before this was fixed: the kit-free control took FTS rank 1 and vector
          * rank 3 while its target sat at 4 and 10, on 22 of 36 probes. The gate was failing on
          * document length instead of on the fact. A control that wins by being terser proves nothing
-         * about discrimination, and a fold that "fixed" it would be tuned against an artefact.
+         * about discrimination, and a fold that "fixed" it would be tuned against an artifact.
          *
          * With the kit copied, the pair differs by exactly the flipped token, which is the
          * high-cosine wrong-fact adversary design §5 asks for.
@@ -999,7 +999,7 @@ const ACCESSED_FRACTION = 0.6
  *    happens to be some probe's control.
  * 2. **The spread is QUERY-BLIND.** It is a function of the corpus seed and the path order. Nothing
  *    here reads the probe list, so a target's history is whatever its position in the corpus earns it.
- *    A spread that favoured targets would make the gate pass by construction.
+ *    A spread that favored targets would make the gate pass by construction.
  *
  * The distribution is a long tail, `1 / (floor + jitter)`, because that is the shape retrieval traffic
  * has: a handful of memories are read constantly and most are read once. A uniform count would make

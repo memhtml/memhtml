@@ -23,7 +23,7 @@ import {
  * four-arm statement.
  *
  * The corpus is built so the ranking assertions are about the RANKING and not about the corpus being
- * trivially small: a target, a lexical near-miss, a vocabulary-sharing neighbour, and a set of
+ * trivially small: a target, a lexical near-miss, a vocabulary-sharing neighbor, and a set of
  * unrelated filler entries the arms must rank below all of them.
  */
 
@@ -247,7 +247,7 @@ describe("search", () => {
         {
           path: "areas/oncall/long-quorum-note.html",
           html: memoryHtml({
-            title: "Quorum breaker behaviour",
+            title: "Quorum breaker behavior",
             claim: "The quorum breaker is documented here.",
             body: `${filler} ${tail}`,
             memoryType: "semantic",
@@ -327,7 +327,7 @@ describe("search", () => {
     expect(target?.snippet).toContain("drain the VIP before reverting the deploy")
   })
 
-  it("honours the limit", async () => {
+  it("honors the limit", async () => {
     const result = await withIndexed(repo, ({ retrieval }) =>
       retrieval.search({ query: "deploy rollback drain", limit: 3 })
     )

@@ -12,7 +12,7 @@ import type { satteri } from "@astrojs/markdown-satteri"
  *
  * **Why the label is authored in the body and not injected here.** `starlight-llms-txt` renders the
  * page and flattens it back to Markdown, so only visible text survives into the bundle — a class name
- * does not, and colour could not be the signal anyway (SC 1.4.1). A label injected by this plugin
+ * does not, and color could not be the signal anyway (SC 1.4.1). A label injected by this plugin
  * would reach the HTML and the llms bundle but NOT the raw `.md` route, which is built from source.
  * One authored line reaches all three surfaces as the same bytes, and `AGENT_NOTE_LABEL` is what a
  * test asserts so the convention cannot quietly rot.
@@ -51,7 +51,7 @@ type ParagraphNode = Extract<Awaited<ReturnType<DirectiveVisitor>>, { type: "par
 /**
  * Claims the `agent` container directive.
  *
- * Registration order matters and is in our favour: Starlight *pushes* its own mdast plugins after the
+ * Registration order matters and is in our favor: Starlight *pushes* its own mdast plugins after the
  * ones configured here, and its `starlight-directives-restoration` pass — which would otherwise turn
  * an unclaimed directive into an unstyled bare `<div>` — skips any node another plugin has already
  * claimed. Returning a replacement node is that claim.

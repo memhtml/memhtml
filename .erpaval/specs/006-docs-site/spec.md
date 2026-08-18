@@ -581,8 +581,8 @@ inventory must be re-derived once they are added.
 Recommendation — using the palette below, whose every pair is computed rather than chosen.
 *Superseded:* an earlier revision derived the accent ramp from the four Mermaid `classDef` fills in
 `README.md`. That four-role semantic mapping (door / record / derived / state) is **retired**: the
-direction is near-monochrome and its figures are line art, so a four-colour scheme has nothing to
-colour. The `README.md` diagrams are re-rendered monochrome under AC-10-4.
+direction is near-monochrome and its figures are line art, so a four-color scheme has nothing to
+color. The `README.md` diagrams are re-rendered monochrome under AC-10-4.
 
 | Role | Light | Ratio | Dark | Ratio |
 |---|---|---|---|---|
@@ -637,7 +637,7 @@ document and a deliberately plain one look alike to a first-time visitor. One el
 be intentional (the masthead rule, the numbered table of contents, the hanging section number) is what
 separates them.
 *Second guarded failure:* monochrome hurts scanability across ~55 pages. The mitigation is structural —
-section numbers and hanging headings — not reintroduced colour.
+section numbers and hanging headings — not reintroduced color.
 *Verification:* inspection per page type.
 *Dependencies:* AC-10-1.
 
@@ -757,7 +757,7 @@ through verbatim. A component-based note would therefore render in HTML and vani
 exists to address, which is worse than no note: the agent-facing text would then contradict the
 human-facing one on exactly the point being made, and the agent is the reader least able to notice.
 *Second measured consequence:* `starlight-llms-txt` renders and flattens the aside, so a visible textual
-label is the only semantics that survives into the bundle. Colour cannot be the signal (SC 1.4.1), and
+label is the only semantics that survives into the bundle. Color cannot be the signal (SC 1.4.1), and
 here it could not be even if that were permitted.
 *Verification:* test — a page with an agent note has that note present in its HTML, in its `.md` twin,
 and in `llms-full.txt`, with the label intact in all three.

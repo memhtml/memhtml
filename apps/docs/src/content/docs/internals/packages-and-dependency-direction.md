@@ -56,9 +56,9 @@ wiring in one visible place.
 
 ## 5. The consolidator sits outside the graph
 
-`apps/consolidator` is the agent that distils candidate memories from raw transcripts, and it is the one
+`apps/consolidator` is the agent that distills candidate memories from raw transcripts, and it is the one
 package outside the service graph above. It composes a sandboxed agent rather than a layer of the store.
-Its behaviour is a prompt, reproduced in [The consolidator](/internals/the-consolidator/), and its output
+Its behavior is a prompt, reproduced in [The consolidator](/internals/the-consolidator/), and its output
 contract is a schema (`apps/consolidator/src/contract.ts:93`,
 `apps/consolidator/src/contract.ts:133`) that the sleep pipeline's trace-consolidation phase consumes.
 

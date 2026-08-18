@@ -45,7 +45,7 @@ above. Nothing else did.
    credential is present. A tier that quietly proves less is the failure mode the whole file exists to
    prevent.
 
-## npm behaviours, each probed rather than assumed (2026-08-17)
+## npm behaviors, each probed rather than assumed (2026-08-17)
 
 Relevant to any future change of packaging strategy, and none of it is in the guides:
 

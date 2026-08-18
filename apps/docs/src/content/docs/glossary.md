@@ -7,7 +7,7 @@ description: The project's domain vocabulary, one entry each, with the page that
 
 The terms are alphabetical, and each entry names the page that develops it. Several of them mean
 something looser in the wider literature, so each definition states the narrow sense this project
-uses and, where a neighbouring term is easy to confuse with it, says which one it is.
+uses and, where a neighboring term is easy to confuse with it, says which one it is.
 
 ## 2. Terms
 
@@ -95,7 +95,7 @@ full-text index, the vectors, and the derived edges. See [The index](/internals/
 
 ### Last-wins consolidation
 
-Resolving a contradiction silently in favour of the newer memory. memhtml declines that policy,
+Resolving a contradiction silently in favor of the newer memory. memhtml declines that policy,
 because sometimes the contradiction itself is the answer, so it detects a contradiction
 automatically and leaves the resolution to a writer or a human. See [The write
 path](/internals/the-write-path/).

@@ -133,7 +133,7 @@ export const assembleScope = (scope: SearchScope = {}): AssembledScope => {
   )
   if (types.length > 0) {
     /**
-     * A caller-named type list is honoured VERBATIM, `task` included. Filtering `task` back out of
+     * A caller-named type list is honored VERBATIM, `task` included. Filtering `task` back out of
      * an explicit list would make the opt-in unreachable, and there would then be no way to search
      * tasks at all. The exclusion is a default and not a firewall. (The firewalls in this system are
      * `edge_class` and the trace tables, and both reject a write rather than defaulting.)

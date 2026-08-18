@@ -224,7 +224,7 @@ const MemoryNeighbors = Tool.make("memory_neighbors", {
       Schema.Struct({
         path: MemoryPath,
         title: Schema.String,
-        /** 1-based distance from the centre: 1 or 2, never 0. */
+        /** 1-based distance from the center: 1 or 2, never 0. */
         hop: Count,
         rel: Schema.String
       })

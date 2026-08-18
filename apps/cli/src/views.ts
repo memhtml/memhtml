@@ -87,7 +87,7 @@ export const sleepPhases = (
   }
 
   // Canonical order, not the caller's. The order encodes real dependencies: decay runs before triage
-  // so triage scores the decayed value. Honouring a caller's ordering would let a `--phases` value
+  // so triage scores the decayed value. Honoring a caller's ordering would let a `--phases` value
   // silently invert them.
   return Effect.succeed(SLEEP_PHASES.filter((phase) => names.includes(phase)))
 }
