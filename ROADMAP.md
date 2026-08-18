@@ -33,11 +33,11 @@ retrieval stack (FTS + vector + recency + salience arms) finds one-fact
 memories reliably at every store size tested. The two structural findings
 that remain are consolidation ownership and hop chaining — both below.
 
-## Where distribution stands (2026-08-17)
+## Where distribution stands (2026-08-18)
 
 One published package, `memhtml`, carrying two binaries — `memhtml` and
-`memhtml-mcp`. All twelve workspace packages are `private`; nine of the eleven
-libraries had no consumer outside this repository, and none of the twelve was
+`memhtml-mcp`. All thirteen workspace packages are `private`; the nine
+libraries had no consumer outside this repository, and none of the thirteen was
 ever published, which is what made collapsing them free. `RELEASING.md` carries
 the flow, `docs/design.md` §14 the decisions.
 
@@ -49,10 +49,12 @@ a model, the consolidator distilling through eve). It found four packaging
 defects that a green `pnpm check` could not, catalogued in
 `.erpaval/solutions/build-errors/the-published-artifact-is-not-the-workspace.md`.
 
-**Not yet published.** The remaining step is external: release-please needs
-"Allow GitHub Actions to create and approve pull requests" at the ORG level, and
-the first publish needs a one-time token because trusted publishing cannot
-bootstrap a package that does not exist.
+**Published.** The package is on npm as `memhtml` (0.2.2 at time of writing),
+released by release-please on merge to main and authenticated with OIDC trusted
+publishing — no long-lived token anywhere. The two external blockers resolved
+as designed: the org-level "Allow GitHub Actions to create and approve pull
+requests" setting was granted, and the first publish used a one-time token to
+bootstrap the package trusted publishing could not create.
 
 ## Horizon 1 — pulled by measured evidence — ✅ COMPLETE 2026-08-07
 
@@ -99,7 +101,7 @@ BEAM consolidation-off decision 2026-08-06.
 ### ~~2. Fence auto-detect write-path stamping (backlog 7, decision 3)~~ — DONE (2026-08-07)
 
 **SHIPPED** (6d8b7bb + 1ca44f4 + a05723e): `packages/html/src/detect.ts` —
-highlight.js 11.11.1 exact-pinned, port-fidelity proven against all 332
+highlight.js 11.11.1 exact-pinned (since bumped to 11.11.2), port-fidelity proven against all 332
 eval-corpus rows, threshold 0.30 (re-measured: precision 95.06%, coverage
 24.4%). Write time only; rebuild reads the stamp back. Two validation
 hardenings beyond the ask: `DETECT_MAX_CHARS = 4096` abstention ceiling
@@ -331,7 +333,7 @@ corpus helper is preloaded and the script arrives by `--file`, `--script`, or
 stdin. CODE-1 and CODE-2 are `implemented`.
 
 **The spike collapsed 7(b) from "build a runtime" to "compose one."** `just-bash`
-3.2.0 — already a dependency, pinned to what eve loads — ships 88 commands
+3.3.0 — already a dependency, pinned to what eve (0.38.3) loads — ships 88 commands
 including `js-exec`, a QuickJS-sandboxed JS/TS runtime with a Node-compatible
 `node:fs` shim. So the work was a mount, an opt-in, and a helper rather than a
 runtime. The mount composition is shared with the consolidator on one helper
@@ -597,8 +599,10 @@ to eve):
 - **Sleep backfill for unlabeled fences** (backlog 7 decision 5): now that
   the detector has a measured threshold, this is mechanical — but wait for
   a corpus with enough unlabeled code to matter.
-- **Doc-sync sweep** (backlog 6): design.md's ResponseType line names 16 of
-  31 members; derive it from the enum.
+- ~~**Doc-sync sweep** (backlog 6): design.md's ResponseType line names 16 of
+  31 members; derive it from the enum.~~ — RESOLVED (2026-08-18): design.md
+  now cites the constant (`apps/cli/src/envelope.ts:12`) without enumerating,
+  so the enum (32 members today) can grow without the doc drifting.
 - **Batch op vocabulary v2** (backlog 5): defer until a consumer pulls it.
 - **Upstream watch** (backlog): effect McpServer still drops the MCP
   `instructions` initialize field; new tools must declare

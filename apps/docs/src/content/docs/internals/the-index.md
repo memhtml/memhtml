@@ -10,7 +10,7 @@ and nothing is recorded there first. It lives in two SQLite files. `.memhtml/ind
 plane, and `.memhtml/state.db` is the state plane, which holds the usage statistics no file records.
 
 `state.db` is attached to the same connection under the schema name `state`
-(`packages/index/src/database.ts:294`), which lets the salience ranker `LEFT JOIN state.access` in the
+(`packages/index/src/database.ts:287`), which lets the salience ranker `LEFT JOIN state.access` in the
 same statement that reads `main.files`, with no join performed in application code. Attaching twice is
 an error, so it happens once per connection in `makeDatabase`
 (`packages/index/src/database.ts:319`).
@@ -143,7 +143,7 @@ getting at the bytes, and one projection function they all reach.
 entry point produced it, which is what makes a fresh rebuild reproduce the incremental row set. The
 watermark's absent branch is why an update can never diff against nothing.
 
-Rebuild (`packages/index/src/indexer.ts:389`) runs `rev-parse HEAD`, one `ls-tree -r` over the four
+Rebuild (`packages/index/src/indexer.ts:396`) runs `rev-parse HEAD`, one `ls-tree -r` over the four
 top-level prefixes, and one `cat-file --batch` for the whole corpus. That is one subprocess for the tree
 instead of N `readFile` calls, and it works on a bare or detached checkout.
 
@@ -166,7 +166,7 @@ correct with foreign keys enforced rather than relying on the cascade. A parse f
 
 ## 5. Incremental update
 
-Update (`packages/index/src/indexer.ts:565`) reads `index_state.head_sha` as its watermark. An absent
+Update (`packages/index/src/indexer.ts:567`) reads `index_state.head_sha` as its watermark. An absent
 watermark falls through to a full rebuild rather than diffing against nothing
 (`packages/index/src/indexer.ts:572-586`).
 

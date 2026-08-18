@@ -89,7 +89,7 @@ one text block. The `ERR_*` code goes first so a consumer can read it back off t
 
 ## 6. Guidance and the sugar commands
 
-The CLI's own guidance lives in the manifest's `guide` blocks (`apps/cli/src/commands.ts:762`) and is
+The CLI's own guidance lives in the manifest's `guide` blocks (`apps/cli/src/commands.ts:839`) and is
 rendered into `AGENTS.md` by the same generator (`apps/cli/src/agents-doc.ts:52`), so the document and the
 live answer cannot disagree.
 

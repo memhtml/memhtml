@@ -27,7 +27,7 @@ actors outside the system, and `main` and the branch are double-bordered because
 
 ## 2. A same-file collision is a typed error carrying both shas
 
-`mergeBranch` (`packages/store/src/store.ts:924`) reads both competing blob shas out of the unmerged
+`mergeBranch` (`packages/store/src/store.ts:1079`) reads both competing blob shas out of the unmerged
 index, where stage 2 is ours and stage 3 is theirs, and it reads them before aborting, because
 `merge --abort` discards the unmerged index.
 
@@ -41,8 +41,8 @@ and decide.
 
 ## 3. The nightly run refuses a dirty tree
 
-`preflight` refuses to start on a dirty tree (`packages/store/src/store.ts:918`,
-`packages/contracts/src/errors.ts:56`), and `merge` refuses if `main` has moved.
+`preflight` refuses to start on a dirty tree (`packages/store/src/store.ts:1073`,
+`packages/contracts/src/errors.ts:50`), and `merge` refuses if `main` has moved.
 
 An agent write is one commit against one file and can be reconciled after the fact. A curation run
 rewrites metadata across the whole corpus, so starting it against uncommitted work would mix a

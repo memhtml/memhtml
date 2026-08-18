@@ -29,13 +29,13 @@ a `mkdir` inside a commit, and deleting one is a `git mv`.
 
 ## 2. Placement is a pure total function
 
-`placementFor` (`packages/contracts/src/paths.ts:103`) applies six rules in order:
+`placementFor` (`packages/contracts/src/paths.ts:113`) applies six rules in order:
 
 1. an explicit valid path;
 2. an `arc` goes to `areas/arcs`;
 3. a `task` is placed by workspace alone, before the person and topic rules run, so a task about a
    person does not land in the durable identity surface
-   (`packages/contracts/src/paths.ts:116-120`);
+   (`packages/contracts/src/paths.ts:126-130`);
 4. a `person:` entity on a `semantic` memory goes to `resources/people`;
 5. a named workspace goes to `projects/<slug>`;
 6. a `semantic`, `procedural`, or `precedent` memory with a primary tag goes to `resources/<tag>`.
@@ -43,14 +43,14 @@ a `mkdir` inside a commit, and deleting one is a `git mv`.
 Anything remaining goes to `areas/inbox`. The function always returns a directory rooted in a bucket, so
 the write path never guesses twice and never fails to place a memory.
 
-`memoryPathFor` (`packages/contracts/src/paths.ts:142`) adds the filename. It date-prefixes an episodic
+`memoryPathFor` (`packages/contracts/src/paths.ts:152`) adds the filename. It date-prefixes an episodic
 entry, because time is part of that memory's identity, while every other type has to stay correctable in
 place.
 
 ## 3. The archive mapping can be inverted
 
-`archivePathFor` (`packages/contracts/src/paths.ts:165`) mirrors the whole original path beneath
-`archive/<YYYY>/`, and `originalPathFor` (`packages/contracts/src/paths.ts:173`) strips exactly one such
+`archivePathFor` (`packages/contracts/src/paths.ts:175`) mirrors the whole original path beneath
+`archive/<YYYY>/`, and `originalPathFor` (`packages/contracts/src/paths.ts:183`) strips exactly one such
 prefix. Stripping one rather than all of them keeps it a left inverse even for a memory archived twice.
 `git log --follow` reads through the move, and `diff -M` reports `R100` instead of a delete plus an add.
 No memory is removed from the repository.

@@ -17,9 +17,9 @@ Every command writes exactly ONE JSON envelope to stdout and logs to stderr, so 
 | `MEMHTML_EMBED` | `on` | `off` disables the embedder entirely. Distinct from a missing credential: a missing credential degrades one search at call time, `off` degrades every search. |
 | `MEMHTML_LLM` | `on` | `off` makes the three model-driven sleep phases report `no model bound` and `trace-consolidation` report `no consolidator bound`, all staying `ok`. |
 | `MEMHTML_EXTRACT_ENTITIES` | `off` | `on` adds one model call per write batch that extracts `memhtml-entity` metas the ops did not declare (`apps/cli/src/config.ts:62`). Opt-in, unlike `MEMHTML_EMBED`, because it changes what a write STORES: extracted entities land in the files as if authored. The write never waits on or fails with the model — a failed extraction is a logged warning and an unextracted batch. |
-| `MEMHTML_MCP_BIN` | — | An explicit path to the `memhtml-mcp` entry point, read only by the serve supervisor (`apps/cli/src/serve.ts:50`). Absent means the sibling-path default, since the two apps ship as one build. Set it for a split deployment; it locates the server rather than configuring the store. |
+| `MEMHTML_MCP_BIN` | — | An explicit path to the `memhtml-mcp` entry point, read only by the serve supervisor (`apps/cli/src/serve.ts:58`). Absent means the sibling-path default, since the two apps ship as one build. Set it for a split deployment; it locates the server rather than configuring the store. |
 
-These eight are declared in `apps/cli/src/config.ts:26` and are what `memhtml manifest` reports. `MEMHTML_EMBED` and `MEMHTML_LLM` compare case-insensitively against `off` (`apps/cli/src/api-layer.ts:242`, `apps/cli/src/api-layer.ts:305`). `MEMHTML_MCP_BIN` is the one that configures no store behaviour at all, and it is disclosed anyway: an operator debugging a split deployment reads the manifest, and a variable the binary reads but does not declare is one they cannot discover. `--repo <path>` overrides `MEMHTML_ROOT` per call.
+These eight are declared in `apps/cli/src/config.ts:26` and are what `memhtml manifest` reports. `MEMHTML_EMBED` and `MEMHTML_LLM` compare case-insensitively against `off` (`apps/cli/src/api-layer.ts:250`, `apps/cli/src/api-layer.ts:313`). `MEMHTML_MCP_BIN` is the one that configures no store behaviour at all, and it is disclosed anyway: an operator debugging a split deployment reads the manifest, and a variable the binary reads but does not declare is one they cannot discover. `--repo <path>` overrides `MEMHTML_ROOT` per call.
 
 ### The database
 
@@ -103,7 +103,7 @@ memhtml serve mcp
 MEMHTML_MCP_BIN=/path/to/bin.js memhtml serve mcp   # explicit path, for a split deployment
 ```
 
-14 tools and 2 resources over this same repo (`apps/mcp/src/tools.ts:735`). Sleep is deliberately absent from the tool surface: it is a cron and operator action producing a reviewable branch, not something an agent triggers mid-conversation.
+14 tools and 2 resources over this same repo (`apps/mcp/src/tools.ts:763`). Sleep is deliberately absent from the tool surface: it is a cron and operator action producing a reviewable branch, not something an agent triggers mid-conversation.
 
 **A CLI command and a running server can share one repo.** WAL admits one writer at a time and any number of concurrent readers: readers never block the writer, a second writer waits rather than failing, and a wait that outlives `busy_timeout` is retried with jittered exponential backoff for up to 20 seconds (`packages/index/src/database.ts`). So `memhtml write` while `memhtml serve mcp` is serving the same store is a supported thing to do, and so is the every-10-minutes `index update` cron. Measure it yourself with `node scripts/probe-sqlite-concurrency.mjs`.
 
@@ -111,9 +111,9 @@ Retrying is safe because the error being retried is `SQLITE_BUSY` specifically �
 
 What still needs one writer is `memhtml sleep run`, for a reason that is about git rather than the database: a run holds a checked-out `sleep/<date>` branch, so a concurrent write commits ONTO that branch and is either merged as if it were curation or lost with `git branch -D`. Quiesce writes for the duration of a run.
 
-`memhtml serve mcp` holds no database of its own — it spawns `memhtml-mcp` with inherited stdio and waits (`apps/cli/src/serve.ts:72`), so the supervisor has no handle to conflict with the child. Interrupting it kills the child, so Ctrl-C never leaves an orphaned server holding the database open (`apps/cli/src/serve.ts:97`).
+`memhtml serve mcp` holds no database of its own — it spawns `memhtml-mcp` with inherited stdio and waits (`apps/cli/src/serve.ts:87`), so the supervisor has no handle to conflict with the child. Interrupting it kills the child, so Ctrl-C never leaves an orphaned server holding the database open (`apps/cli/src/serve.ts:108`).
 
-The one exception is `memhtml eval discriminate`, which never builds the app layer (`apps/cli/src/run.ts:834`): it measures the ranking stack against its own generated fixture corpus in a temp directory with an in-memory database and never reads your `index.db`. Deliberate — checking the gate is exactly what an operator wants while the server is up.
+The one exception is `memhtml eval discriminate`, which never builds the app layer (`apps/cli/src/run.ts:891`): it measures the ranking stack against its own generated fixture corpus in a temp directory with an in-memory database and never reads your `index.db`. Deliberate — checking the gate is exactly what an operator wants while the server is up.
 
 ---
 
@@ -207,7 +207,7 @@ The refusal is a value on the report, never an error (`packages/sleep/src/contra
 | `main-advanced` | `main` moved past the run's `base_sha`, so the run curated a corpus that no longer exists. Also the refusal when the fast-forward itself fails. | Re-run the sleep. Every phase is idempotent, so it is cheap. |
 | `gate-failed` | The discrimination gate refused: this run degrades retrieval. | `memhtml eval discriminate` to see which probes inverted, then `git branch -D <run-id>`. |
 
-`--skip-gate` merges without re-running discrimination and logs a warning (`apps/cli/src/run.ts:490`) — a deliberate override, never a default. The gate always runs in FAKE mode (`apps/cli/src/run.ts:514`), precisely so a nightly merge is not conditional on a token being valid at 3am.
+`--skip-gate` merges without re-running discrimination and logs a warning (`apps/cli/src/run.ts:497`) — a deliberate override, never a default. The gate always runs in FAKE mode (`apps/cli/src/run.ts:514`), precisely so a nightly merge is not conditional on a token being valid at 3am.
 
 ---
 
@@ -259,7 +259,7 @@ memhtml trace links --session-id <id>
 memhtml trace links --path areas/inbox/some-memory.html
 ```
 
-The scan reads only what changed, against a size + mtime + byte-offset watermark (`packages/traces/src/watermark.ts:66`), so an unchanged corpus reads zero bytes rather than re-walking the tree. Both size and mtime must match to skip: size alone would miss an in-place rewrite. `$MEMHTML_TRACE_ROOT` is read-only and never written. `memhtml trace search` is FTS over session first-prompts and AI titles and never enters memory retrieval. `memhtml trace links` with neither `--session-id` nor `--path` is a refusal, not a scan of the whole table (`apps/cli/src/operations.ts:1415`). The trace tables are never touched by a memory rebuild (`packages/index/src/schema-const.ts:59`), so a rebuild does not cost a re-walk of `~/.claude`.
+The scan reads only what changed, against a size + mtime + byte-offset watermark (`packages/traces/src/watermark.ts:66`), so an unchanged corpus reads zero bytes rather than re-walking the tree. Both size and mtime must match to skip: size alone would miss an in-place rewrite. `$MEMHTML_TRACE_ROOT` is read-only and never written. `memhtml trace search` is FTS over session first-prompts and AI titles and never enters memory retrieval. `memhtml trace links` with neither `--session-id` nor `--path` is a refusal, not a scan of the whole table (`apps/cli/src/operations.ts:1671`). The trace tables are never touched by a memory rebuild (`packages/index/src/schema-const.ts:59`), so a rebuild does not cost a re-walk of `~/.claude`.
 
 ---
 
@@ -271,8 +271,8 @@ memhtml index status     # the watermark, the vector space, per-table row counts
 memhtml doctor
 ```
 
-- `indexFresh: false` → `memhtml index update --embed`. The index describes a commit; "fresh" means that commit is HEAD (`apps/cli/src/operations.ts:1524`).
-- `embedderUp: false` → the stored watermark disagrees with the configured model, or there are zero vectors (`apps/cli/src/operations.ts:1530`). Read off the stored watermark rather than by probing Bedrock, so it never fails for a reason unrelated to the corpus.
+- `indexFresh: false` → `memhtml index update --embed`. The index describes a commit; "fresh" means that commit is HEAD (`apps/cli/src/operations.ts:1729`).
+- `embedderUp: false` → the stored watermark disagrees with the configured model, or there are zero vectors (`apps/cli/src/operations.ts:1733`). Read off the stored watermark rather than by probing Bedrock, so it never fails for a reason unrelated to the corpus.
 - `degraded: true` on a search response → the query embedder returned nothing. Search still works on the lexical floor; check `MEMHTML_AWS_REGION` and the Bedrock credential.
 - Quality feels wrong but nothing errors → `memhtml eval discriminate`. That is what it is for.
 

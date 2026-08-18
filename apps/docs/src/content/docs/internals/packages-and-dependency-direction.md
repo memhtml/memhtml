@@ -50,7 +50,7 @@ broken there. The store needs a SQL lookup to answer whether some content alread
 
 Two other functions arrive the same way and for the same reason. One is the `onMove` hook the store calls
 at the single place a path can change, which keeps the state plane's keys in step
-(`packages/store/src/store.ts:160-168`, `apps/cli/src/api-layer.ts:203`). The other is the session-link
+(`packages/store/src/store.ts:174-181`, `apps/cli/src/api-layer.ts:209`). The other is the session-link
 recorder. Each keeps a layer's dependency direction intact while letting the composition root state the
 wiring in one visible place.
 
@@ -67,7 +67,7 @@ contract is a schema (`apps/consolidator/src/contract.ts:93`,
 Every package above is `private`. `npm publish` refuses a private package, so none of them can reach a
 registry, and one assembled `memhtml` is published instead — carrying two binaries, `memhtml` and
 `memhtml-mcp`. The layering on this page is the shape of the SOURCE. It is not a distribution surface,
-and nine of the eleven libraries had no consumer outside this repository to be a surface for.
+and the nine libraries had no consumer outside this repository to be a surface for.
 
 The published contract is the two binaries and the JSON envelope they write. The package declares no
 `exports` map, deliberately: an entry point is a promise, adding one later is a minor version bump, and
