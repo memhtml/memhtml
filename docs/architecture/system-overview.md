@@ -16,9 +16,9 @@ sidecar at `.memhtml/state/access.jsonl` (`packages/store/src/layout.ts:26-30`).
 
 The primary caller is a coding agent. Two binaries are declared:
 `memhtml` (`apps/cli/package.json:7-9`) and `memhtml-mcp` (`apps/mcp/package.json:7-9`). Every CLI
-call writes exactly one JSON envelope carrying `apiVersion`, a `type` discriminator drawn from a
-32-entry append-only list, and `data` (`apps/cli/src/envelope.ts:12-45`). Failures carry a stable
-`code` from a 15-entry append-only list plus `suggestions`, so an agent branches on the code instead
+call writes exactly one JSON envelope carrying `apiVersion`, a `type` discriminator drawn from the
+append-only `RESPONSE_TYPES` list, and `data` (`apps/cli/src/envelope.ts:12`). Failures carry a stable
+`code` from the append-only `ERROR_CODES` list plus `suggestions`, so an agent branches on the code instead
 of the prose (`apps/cli/src/envelope.ts:67-83`). Exit codes are fixed at 0 for success, 2 for usage,
 1 for runtime (`apps/cli/src/envelope.ts:87-90`). `memhtml manifest` returns the whole command surface
 before any root or database exists (`apps/cli/src/run.ts:823-843`), and `--dense` drops nulls and

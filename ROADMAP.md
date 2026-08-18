@@ -36,10 +36,10 @@ that remain are consolidation ownership and hop chaining — both below.
 ## Where distribution stands (2026-08-18)
 
 One published package, `memhtml`, carrying two binaries — `memhtml` and
-`memhtml-mcp`. All thirteen workspace packages are `private`; the nine
-libraries had no consumer outside this repository, and none of the thirteen was
-ever published, which is what made collapsing them free. `RELEASING.md` carries
-the flow, `docs/design.md` §14 the decisions.
+`memhtml-mcp`. Every workspace package is `private`; the libraries had no
+consumer outside this repository, and none of them was ever published, which
+is what made collapsing them free. `RELEASING.md` carries the flow,
+`docs/design.md` §14 the decisions.
 
 The artifact has a gate of its own because no other tier can see it:
 `mise run package:smoke` installs the tarball and drives all 36 commands and all
@@ -101,7 +101,7 @@ BEAM consolidation-off decision 2026-08-06.
 ### ~~2. Fence auto-detect write-path stamping (backlog 7, decision 3)~~ — DONE (2026-08-07)
 
 **SHIPPED** (6d8b7bb + 1ca44f4 + a05723e): `packages/html/src/detect.ts` —
-highlight.js 11.11.1 exact-pinned (since bumped to 11.11.2), port-fidelity proven against all 332
+highlight.js exact-pinned (the pin lives in `packages/html/package.json`), port-fidelity proven against all 332
 eval-corpus rows, threshold 0.30 (re-measured: precision 95.06%, coverage
 24.4%). Write time only; rebuild reads the stamp back. Two validation
 hardenings beyond the ask: `DETECT_MAX_CHARS = 4096` abstention ceiling
