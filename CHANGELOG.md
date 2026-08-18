@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/memhtml/memhtml/compare/memhtml-v0.2.1...memhtml-v0.2.2) (2026-08-18)
+
+
+### Bug Fixes
+
+* **ci:** make a betterleaks no-op fail loudly instead of passing green ([ddd0e69](https://github.com/memhtml/memhtml/commit/ddd0e6901dbe0f95987c6475785e0906bcf89761))
+
 ## [0.2.1](https://github.com/memhtml/memhtml/compare/memhtml-v0.2.0...memhtml-v0.2.1) (2026-08-17)
 
 
