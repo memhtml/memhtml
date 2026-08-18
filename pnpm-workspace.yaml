@@ -63,9 +63,9 @@ overrides:
 # Effect v4 is pre-release: every Effect package moves as one pinned, tested set, and the
 # three versions here are always the same string.
 catalog:
-  effect: 4.0.0-beta.107
-  "@effect/platform-node": 4.0.0-beta.107
-  "@effect/vitest": 4.0.0-beta.107
+  effect: 4.0.0-rc.109
+  "@effect/platform-node": 4.0.0-rc.109
+  "@effect/vitest": 4.0.0-rc.109
   fast-check: 4.9.0
 
 allowBuilds:
