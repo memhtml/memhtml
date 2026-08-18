@@ -1,5 +1,8 @@
 # ERPAVal lessons index
 
+## best-practices
+- [a-security-gate-you-have-not-measured-is-a-guess](solutions/best-practices/a-security-gate-you-have-not-measured-is-a-guess.md) — a security check has THREE outcomes and the third looks like success: betterleaks exited 0 having written a truncated SARIF, intermittently, and only `upload-sarif` noticed — verify the artifact, never infer it from the exit code. CodeQL raised two identical-looking ReDoS findings that measurement separated into one real fragility (`normalizePath` was flat at 0.05 ms only because a preceding collapse defused a regex that takes 3049 ms alone — so its cost depended on the ORDER of three chained calls, ungated, 42 call sites) and one false positive (`frameKeyOf` linear at 128k in all three shapes). Fix the order-dependence, not the analyzer; lock with a cost curve, since the reordered version returned byte-identical output in 5.5 s. A normalization step can be load-bearing for COST, not just semantics. VEX is where a suppression belongs (grype/trivy read `--vex`, osv-scanner cannot — generate its TOML and expand aliases; `affected` must never render an ignore entry) and a VEX-suppressed finding auto-closes as `fixed`. A ruleset naming a tool that never runs blocks every PR forever; don't gate on Scorecard, whose `MaintainedID` scores commit cadence. Resolve an action SHA via the `tags` API, not `git/ref/tags`. `fix(ci):` still cuts a release.
+
 ## effect-v4
 - [effect-4-beta-102-api-reality](solutions/effect-v4/effect-4-beta-102-api-reality.md) — Effect.result not either; onExcessProperty:"error" on LLM decodes; Schema.Finite; provideMerge direction; NullOr on the MCP wire; Config snapshots env; LogToStderr in stdio servers.
 
