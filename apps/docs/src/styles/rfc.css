@@ -335,6 +335,17 @@ body {
   text-align: center;
 }
 
+/*
+ * The prose measure (`max-width: 32em` on every `p`) does not apply here, because 32em is relative to
+ * each element's OWN font size: the memo title's 32em exceeds the column and centres true, while the
+ * brand line's 32em at --sl-text-xs is a box narrower than the column that sits flush left — so its
+ * centred text lands left of the title's axis. Display type centres on the column, not on a measure.
+ * The `.sl-markdown-content` prefix matches the measure rule's specificity and then wins on order.
+ */
+.sl-markdown-content .rfc-title-block > p {
+  max-width: none;
+}
+
 .rfc-title-block .rfc-memo-title {
   font-size: var(--sl-text-h3);
   font-weight: 400;
