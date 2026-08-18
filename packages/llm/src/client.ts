@@ -33,7 +33,7 @@ export const modelFailure = (modelId: string, cause: unknown): ModelUnavailable 
  * One InvokeModel round trip: send the body, decode the JSON payload. Both the transport
  * rejection and an unparseable payload land on `ModelUnavailable`, because neither one
  * says anything about the model's answer. They say only that no answer arrived. Reading
- * the answer, and judging whether it honours its contract, is the caller's job.
+ * the answer, and judging whether it honors its contract, is the caller's job.
  */
 export const invokeJson = (
   client: InvokeClient,

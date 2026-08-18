@@ -159,7 +159,7 @@ describe("withCollisionOrdinal", () => {
    * Every ordinal the store can reach names a DIFFERENT file, on the slugs where that is hardest.
    *
    * The store walks 1..1000 (`pathFor`) and treats each candidate as a fresh name, so distinctness
-   * has to hold across the whole range rather than between neighbours: a repeat anywhere is an
+   * has to hold across the whole range rather than between neighbors: a repeat anywhere is an
    * iteration that re-proposes a name already rejected. Enumerated rather than sampled, over the
    * family where the cut interacts with the suffix — a capped slug whose tail is itself an ordinal
    * suffix of each width.

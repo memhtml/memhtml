@@ -17,7 +17,7 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
  * gated on three properties rather than trusted — it says what OpenVEX allows, it carries a reason a
  * human can audit, and the file generated from it has not drifted.
  *
- * What this tier deliberately does NOT assert is that a scanner honours the document, because that
+ * What this tier deliberately does NOT assert is that a scanner honors the document, because that
  * needs the scanners, and `check` is offline and toolchain-free by construction. Probed by hand
  * 2026-08-18 instead, and recorded here so the gap is named rather than assumed:
  *   - grype 0.111.1  `--vex` moved extract-zip's 2 matches to `ignoredMatches`, tagged
@@ -77,7 +77,7 @@ describe("the OpenVEX ledger", () => {
 
   it("uses only statuses and justifications the spec defines", () => {
     /**
-     * The load-bearing one. A scanner given an unrecognised status does not error — it declines to
+     * The load-bearing one. A scanner given an unrecognized status does not error — it declines to
      * match, so the finding reappears and the ledger reads as though it were applied. `not_affacted`
      * would be a silent no-op, which is the failure mode this whole file exists to prevent.
      */
@@ -169,7 +169,7 @@ describe("osv-scanner.toml", () => {
      * opposite, and would do so silently, since the file still generates and still parses.
      *
      * Driven through `--stdout` against a synthetic ledger in a temp dir, so the case proves the
-     * shipped renderer's behaviour without writing anything into the repo.
+     * shipped renderer's behavior without writing anything into the repo.
      */
     const scratch = await mkdtemp(join(tmpdir(), "vex-"))
     try {

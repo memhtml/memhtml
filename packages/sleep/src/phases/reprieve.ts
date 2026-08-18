@@ -22,7 +22,7 @@ import { isSleepExcluded } from "../sql.js"
  * and re-assert the fact deliberately.
  *
  * **Arcs are exempt.** An arc is system-written and carries no meaningful TTL; expiring one on age
- * would delete the agent's own behavioural identity on a schedule.
+ * would delete the agent's own behavioral identity on a schedule.
  */
 export const reprieve: PhaseBody = (env) =>
   Effect.gen(function* () {

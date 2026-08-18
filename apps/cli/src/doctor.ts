@@ -242,7 +242,7 @@ const overdueTasks = (
  * the blocked task waits on something that will never move. This is the one task-graph state no single
  * file can reveal, since each file is individually valid and only the pair is wrong.
  *
- * **The `archived` arm is the reachable one, and `missing` is defence in depth.** Probed and
+ * **The `archived` arm is the reachable one, and `missing` is defense in depth.** Probed and
  * mutation-confirmed 2026-08-02: deleting a blocker's file makes `indexer.update` clear
  * `edges WHERE src_path = ?` in the same batch, so an edge cannot outlive its source file and the
  * `missing` branch has nothing to find. Removing that `DELETE` turns the branch on, and it stays for

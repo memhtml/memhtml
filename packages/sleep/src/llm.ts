@@ -55,7 +55,7 @@ export const ArcPlanEntry = Schema.Struct({
    * slug would be a model-chosen file path.
    */
   slug: Schema.String,
-  /** A concise behavioural-principal name, 3-8 words. */
+  /** A concise behavioral-principal name, 3-8 words. */
   title: Schema.String,
   action: ArcAction,
   /** One or two sentences naming what changed or emerged. */
@@ -111,36 +111,36 @@ aspect — answer neutral, not contradicts. Rate your confidence honestly and na
 conflicting or compatible claims in the rationale.`
 
 /** The arc-triage system prompt: plan only, no content. */
-export const ARC_TRIAGE_SYSTEM = `You triage behavioural arcs for an AI agent's long-term memory system. This is the planning pass:
+export const ARC_TRIAGE_SYSTEM = `You triage behavioral arcs for an AI agent's long-term memory system. This is the planning pass:
 a second pass writes each arc's content, so your output is only the plan.
 
 - Assign every existing arc an action of update or skip. An arc omitted from the plan stays stale.
-- Propose create only when a genuinely new behavioural pattern emerges that no existing arc covers.
+- Propose create only when a genuinely new behavioral pattern emerges that no existing arc covers.
 - Propose update only when the evidence materially changes or reinforces the arc. Each update costs
   a model call, so skip trivial or redundant evidence.
 - Keep evidenceKeys to the strongest 1-5 supporting memories per arc.
-- Titles are concise behavioural-principal names of 3-8 words.
+- Titles are concise behavioral-principal names of 3-8 words.
 - Rationale is one or two sentences naming what changed or emerged.
 - Leave slug empty on a create.`
 
 /** The arc-execute system prompt: one arc's content. */
-export const ARC_EXECUTE_SYSTEM = `You write one behavioural arc for an AI agent's long-term memory system. An arc is a self-contained
-behavioural principal — a statement of a pattern, preference, or principle the agent developed
+export const ARC_EXECUTE_SYSTEM = `You write one behavioral arc for an AI agent's long-term memory system. An arc is a self-contained
+behavioral principal — a statement of a pattern, preference, or principle the agent developed
 through experience. Arcs are read back in future sessions with no transcript context, so the
 content must stand alone.
 
-- claim is the ONE load-bearing sentence: the principle itself, stated as behaviour to adopt.
-- paragraphs holds 2-12 sentences across one to four paragraphs. Behavioural principles fit at the
+- claim is the ONE load-bearing sentence: the principle itself, stated as behavior to adopt.
+- paragraphs holds 2-12 sentences across one to four paragraphs. Behavioral principles fit at the
   tight end; an operational playbook may span the wider range.
-- Use IF/THEN conditional phrasing for rules, framed positively around the behaviour to adopt.
+- Use IF/THEN conditional phrasing for rules, framed positively around the behavior to adopt.
 - When updating, incorporate both the existing content and the new evidence, preserving knowledge
   that still holds.
-- Keep references like "the evidence" or "recent sessions" out of the text — name the behaviour.
+- Keep references like "the evidence" or "recent sessions" out of the text — name the behavior.
 - The content reads as a stable identity statement, not a changelog.`
 
 /** The compress-synthesis system prompt. */
 export const COMPRESS_SYSTEM = `You fold a group of related memories into ONE canonical memory for an AI agent's long-term memory
-system. The members are near-neighbours in one community of the memory graph; the canonical replaces
+system. The members are near-neighbors in one community of the memory graph; the canonical replaces
 them, and each member you list in absorbedKeys is archived once the canonical is written.
 
 - claim is the ONE load-bearing sentence the group shares.
@@ -158,7 +158,7 @@ export const dataBlock = (label: string, text: string): string => wrapAsData(lab
  * The stance judge's user turn for one pair. Both texts are wrapped; neither carries a path.
  *
  * The prompt names no path, no cosine, and no prior verdict, so the model cannot infer which answer
- * the caller is hoping for and cannot recognise a pair it judged last night.
+ * the caller is hoping for and cannot recognize a pair it judged last night.
  */
 export const stancePrompt = (textA: string, textB: string): string =>
   `${dataBlock("memory_a", textA)}\n\n${dataBlock("memory_b", textB)}\n\n` +
@@ -169,7 +169,7 @@ export const stancePrompt = (textA: string, textB: string): string =>
 export const arcTriagePrompt = (arcsText: string, evidenceText: string): string =>
   `${dataBlock("current_arcs", arcsText)}\n\n${dataBlock("evidence", evidenceText)}\n\n` +
   "Produce a triage plan. Assign update or skip to every existing arc, and add a create entry for " +
-  "any genuinely new behavioural pattern the existing arcs do not cover."
+  "any genuinely new behavioral pattern the existing arcs do not cover."
 
 /** The arc-execute user turn for one arc. `current` is absent on a create. */
 export const arcExecutePrompt = (input: {
@@ -184,7 +184,7 @@ export const arcExecutePrompt = (input: {
   `${dataBlock("evidence", input.evidenceText)}\n\n` +
   `${dataBlock("triage_rationale", input.rationale)}\n\n` +
   (input.current === undefined
-    ? "Synthesize a new behavioural principal from this evidence."
+    ? "Synthesize a new behavioral principal from this evidence."
     : "Update the arc to incorporate the new evidence, preserving existing knowledge that holds.")
 
 /** The compress user turn for one batch: every member's text, wrapped, under its offered key. */

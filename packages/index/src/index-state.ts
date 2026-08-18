@@ -11,7 +11,7 @@
  * `onExcessProperty: "error"` means a column added to the SELECT without being added here is a
  * decode failure, not a silently ignored field. Probed 2026-08-12 on node 24.19.0: `node:sqlite`
  * hands back null-prototype records and `Schema.decodeUnknownEffect` reads them correctly, so the
- * driver's row objects need no normalisation at this seam.
+ * driver's row objects need no normalization at this seam.
  */
 
 import { StorageFailure } from "@memhtml/contracts/errors"

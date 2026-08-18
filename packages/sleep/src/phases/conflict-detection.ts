@@ -42,7 +42,7 @@ import {
 /** The moderate similarity floor a pair must clear to be worth a model call. */
 export const CONFLICT_COSINE_FLOOR = 0.8
 
-/** Nearest same-entity neighbours considered per source. */
+/** Nearest same-entity neighbors considered per source. */
 export const CONFLICT_PER_SOURCE_K = 5
 
 /** Pairs judged per cycle. The model-cost guard. */

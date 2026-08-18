@@ -225,7 +225,7 @@ describe("labelPropagation", () => {
   })
 
   it("breaks an equal-weight label tie toward the lexicographically smaller label", () => {
-    // Adopting whichever label the neighbour map happens to enumerate first would make the
+    // Adopting whichever label the neighbor map happens to enumerate first would make the
     // partition depend on edge insertion order; sorting the candidate labels pins it. Witness
     // found by differential search 2026-08-02 — unsorted enumeration collapses all four nodes
     // into one community here, and the difference survives canonicalization.

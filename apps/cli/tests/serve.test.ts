@@ -58,7 +58,7 @@ describe("the supervisor's own restraint", () => {
      * of the child by a process that issues no query. One extra layer build, paid on every `serve mcp`.
      *
      * The property is asserted structurally: `serve.ts` may import the error class and the config, and
-     * nothing that yields a service. A source assertion rather than a behavioural one because an
+     * nothing that yields a service. A source assertion rather than a behavioral one because an
      * unused handle is invisible from outside — two processes and a real store to observe it at all,
      * while the CAUSE is one import.
      */

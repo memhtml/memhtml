@@ -327,7 +327,7 @@ export const layerModelFrom = (model: ModelClientShape | undefined): Layer.Layer
  * Opt-in (`MEMHTML_EXTRACT_ENTITIES=on`) where the embedder is opt-out, and the asymmetry is
  * deliberate. The write path has never carried a generative call, extraction changes what a write
  * stores rather than what a search finds, and a default-on model call in every agent's write path
- * is a behaviour change an operator must choose. The failure mode does follow the embedder
+ * is a behavior change an operator must choose. The failure mode does follow the embedder
  * precedent: a bound extractor that fails costs this batch its extracted entities and never the
  * write (`batchWrite` logs and proceeds).
  *
@@ -408,7 +408,7 @@ export const ConsolidatorPortService = Context.Service<ConsolidatorPortShape>(
  * fails on every call and reports a degradation. CI has no credentials and must read as skipped rather
  * than degraded.
  *
- * The check cannot be skipped in favour of the client's own, because the provider is lazy.
+ * The check cannot be skipped in favor of the client's own, because the provider is lazy.
  * `createAmazonBedrock` and `provider(modelId)` both succeed with zero credentials and nothing fails
  * until the first request (verified in T-EVE-1's probe, recorded at
  * `apps/consolidator/src/contract.ts:301-319`).

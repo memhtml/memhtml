@@ -361,7 +361,7 @@ const hasProvenance = (entry: PendingWrite): boolean =>
 
 /**
  * The store over a git service. Exported so tests build it against a temp-dir repo with the
- * real git binary. This package's job IS git's behaviour, so a fake git would verify only that
+ * real git binary. This package's job IS git's behavior, so a fake git would verify only that
  * the right strings were assembled and would miss every state transition that matters.
  */
 export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => {

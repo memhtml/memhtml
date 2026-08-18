@@ -218,7 +218,7 @@ describe("memhtml trace index", () => {
 
   it("keeps the trace plane out of memory retrieval", async () => {
     /**
-     * The firewall, as a behavioural assertion rather than a SQL grep. The corpus holds ONE memory
+     * The firewall, as a behavioral assertion rather than a SQL grep. The corpus holds ONE memory
      * about the rollback and the trace plane holds a session whose first prompt is about the same
      * thing — so if the two planes were joined anywhere, a memory search would return a session and
      * a trace search would return a memory path. Neither may happen.

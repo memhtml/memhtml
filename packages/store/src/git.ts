@@ -228,7 +228,7 @@ const text = (result: ProcessResult): string => result.stdout.toString("utf8")
 /**
  * The service against a repository root. Exported rather than only wrapped in a layer, because every
  * test in this package drives the real git binary against a temp-dir repo. A fake git
- * verifies the shape of these calls and not git's own behaviour, and it is git's behaviour
+ * verifies the shape of these calls and not git's own behavior, and it is git's behavior
  * (rename detection, index staging, merge conflict stages) that this package exists to use.
  */
 export const makeGit = (root: string): GitShape => ({

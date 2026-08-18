@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 
 import { emptyOutcome, type PhaseBody } from "../env.js"
-import { neighbourPairs, replaceMinedEdges, SLEEP_EXCLUDED_TYPES } from "../sql.js"
+import { neighborPairs, replaceMinedEdges, SLEEP_EXCLUDED_TYPES } from "../sql.js"
 
 /**
  * Phase 5, relationship mining. Derived `relates_to` edges in the index only. NO COMMIT.
@@ -21,7 +21,7 @@ import { neighbourPairs, replaceMinedEdges, SLEEP_EXCLUDED_TYPES } from "../sql.
 /** The similarity floor a pair must clear to become a mined `relates_to`. */
 export const MINING_COSINE_FLOOR = 0.85
 
-/** Nearest neighbours considered per source file. */
+/** Nearest neighbors considered per source file. */
 export const MINING_PER_SOURCE_K = 5
 
 /** Pairs mined per cycle. The cost guard on a corpus whose pair space is quadratic. */
@@ -36,7 +36,7 @@ export const relationshipMining: PhaseBody = (env) =>
      * count. The `edges` CHECK cannot refuse it, because `relates_to` under `memory` is a
      * well-formed edge whatever files sit at its ends.
      */
-    const pairs = yield* neighbourPairs(env.deps.db, {
+    const pairs = yield* neighborPairs(env.deps.db, {
       floor: MINING_COSINE_FLOOR,
       perSourceK: MINING_PER_SOURCE_K,
       limit: MINING_SAMPLE_LIMIT,

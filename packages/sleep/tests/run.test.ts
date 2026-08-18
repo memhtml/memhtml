@@ -153,7 +153,7 @@ describe("run", () => {
   it("isolates a failing LLM phase: prior commits intact, later phases still run", async () => {
     /**
      * The injected failure is a `LlmContractViolation` on every conflict-detection call. Per-item
-     * isolation means the PHASE does not fail — it counts the skips — which is the correct behaviour
+     * isolation means the PHASE does not fail — it counts the skips — which is the correct behavior
      * and is asserted below. The phase-level failure path is covered separately by the hard-prereq
      * test, where a real phase failure is provoked.
      */

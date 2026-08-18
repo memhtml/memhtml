@@ -80,7 +80,7 @@ export interface TranscriptManifestEntry extends TranscriptRef {
    *
    * The reason this is worth a join: the bar in `agent/instructions.md` is "more signal than one
    * grep", and a pattern already written down is by definition not new signal. A model told which
-   * memories a session produced can decline to re-distil them; one told nothing re-derives them
+   * memories a session produced can decline to re-distill them; one told nothing re-derives them
    * every night and a reviewer declines the duplicate every night.
    */
   readonly linkedMemories?:
@@ -125,7 +125,7 @@ type ConsolidatorError =
  *
  * The option is still absent rather than defaulted, for the reason it always was: `eve start` binds
  * ALL INTERFACES by default (node_modules/eve/docs/reference/cli.md, `eve start --host`), and a `host`
- * option here would be a way for a caller to widen a boundary the caller does not own. Defence in
+ * option here would be a way for a caller to widen a boundary the caller does not own. Defense in
  * depth is only depth while both layers are in place.
  *
  * It also fixes where this process CONNECTS, because the port is now chosen HERE rather than read

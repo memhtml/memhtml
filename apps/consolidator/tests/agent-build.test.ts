@@ -50,7 +50,7 @@ describe("the cache directory is keyed by version", () => {
   })
 
   /** `XDG_CACHE_HOME` is where a cache belongs when the environment names one. */
-  it("honours XDG_CACHE_HOME", () => {
+  it("honors XDG_CACHE_HOME", () => {
     const before = process.env.XDG_CACHE_HOME
     try {
       process.env.XDG_CACHE_HOME = "/tmp/xdg-probe"

@@ -21,7 +21,7 @@ import {
 /**
  * Store operations against real git repos.
  *
- * Where a criterion is about git's own behaviour, the assertion reads git — not the store's
+ * Where a criterion is about git's own behavior, the assertion reads git — not the store's
  * return value. A store that reported `created: true` while committing nothing would satisfy
  * every shape assertion and none of these.
  */
@@ -124,7 +124,7 @@ describe("writeMemory", () => {
     expect(result.path).toBe("resources/people/sanju-reviews-infra.html")
   })
 
-  it("honours an explicit valid path verbatim", async () => {
+  it("honors an explicit valid path verbatim", async () => {
     const repo = await fixture()
     const result = await run(
       repo.store.writeMemory(writeInput({ path: "areas/oncall/named.html" }))

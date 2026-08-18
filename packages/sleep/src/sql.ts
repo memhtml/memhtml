@@ -69,7 +69,7 @@ export const activeCorpus = (
      FROM files WHERE archived = 0 ORDER BY created_at ASC, path ASC`
   )
 
-/** One candidate pair from a vector neighbourhood, unoriented. */
+/** One candidate pair from a vector neighborhood, unoriented. */
 export interface PairRow {
   readonly src: string
   readonly dst: string
@@ -78,11 +78,11 @@ export interface PairRow {
 }
 
 /**
- * Per-source top-`k` nearest neighbours above a similarity floor, over first-chunk vectors.
+ * Per-source top-`k` nearest neighbors above a similarity floor, over first-chunk vectors.
  *
  * `ordinal = 0` collapses a file to its first chunk, not its best chunk. The format is one
  * fact per file, so almost every file is a single chunk. Taking the first keeps the pair set
- * symmetric, which `min(distance)` over all chunks would not. An asymmetric neighbourhood
+ * symmetric, which `min(distance)` over all chunks would not. An asymmetric neighborhood
  * would make `(a, b)` a candidate while `(b, a)` is not, so which of two files was read first
  * would decide whether they merge.
  *
@@ -91,7 +91,7 @@ export interface PairRow {
  * SQL function over two `Uint8Array` arguments (`packages/index/src/database.ts`) and not a driver
  * builtin with a fixed calling shape.
  */
-export const neighbourPairs = (
+export const neighborPairs = (
   db: DatabaseShape,
   options: {
     readonly floor: number
@@ -147,7 +147,7 @@ export const conflictCandidates = (
     readonly perSourceK: number
     readonly limit: number
     /**
-     * Memory types to exclude, the same hole {@link neighbourPairs} carries. `task` is excluded
+     * Memory types to exclude, the same hole {@link neighborPairs} carries. `task` is excluded
      * because a task is intended work, not an asserted fact, so "these two contradict" is not a
      * judgment that can be true of it. Paying for a model call to find out would also spend the
      * candidate budget on rows no phase acts on.

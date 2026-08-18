@@ -20,7 +20,7 @@ import { Schema } from "effect"
  * cannot be earned from a transcript pattern:
  *
  * - `task` is work to do, not something observed to have happened.
- * - `user_preference` is a standing instruction the user gave; inferring one from behaviour is
+ * - `user_preference` is a standing instruction the user gave; inferring one from behavior is
  *   how a corpus starts asserting preferences nobody stated.
  * - `verdict` is a judgement this agent is not the one to pass.
  * - `arc` is synthesized by the sleep cycle from many memories and is not writable at all.
@@ -173,7 +173,7 @@ export const ungroundedEvidenceReason = (
  * `client.ts` now chooses the port itself (`reserveLoopbackPort`) and passes it to
  * `eve start --port <n>`, so the origin is composed from a constant and an integer this process got
  * from the kernel. There is no untrusted string in the path any more, and nothing left to validate:
- * a "defence" over a value we constructed asserts that we typed our own constant correctly.
+ * a "defense" over a value we constructed asserts that we typed our own constant correctly.
  *
  * Kept as belt-and-braces it would have been WORSE than deleted, because it would have kept
  * asserting a threat model that no longer holds. The deletion also costs nothing in practice:

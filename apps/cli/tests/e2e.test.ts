@@ -205,7 +205,7 @@ describe("the write path, end to end", () => {
     expect(neighbors.nodes.every((node) => node.hop >= 1)).toBe(true)
   })
 
-  it("reads the edge from the other side too: an inbound edge is still a neighbour", async () => {
+  it("reads the edge from the other side too: an inbound edge is still a neighbor", async () => {
     const listed = await cli.json<{ readonly files: ReadonlyArray<{ readonly path: string }> }>([
       "list",
       "--workspace",
@@ -215,7 +215,7 @@ describe("the write path, end to end", () => {
     expect(target).toBeDefined()
 
     /**
-     * The load-bearing direction. Only the SOURCE file holds the `<link>`, so a neighbourhood that
+     * The load-bearing direction. Only the SOURCE file holds the `<link>`, so a neighborhood that
      * walked outbound edges alone would tell a superseding memory about its target and hide from the
      * target that it had been superseded.
      */

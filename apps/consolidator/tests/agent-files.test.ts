@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 
 /**
- * The authored-file tier: eve is filesystem-first, so the agent's behaviour is decided by files
+ * The authored-file tier: eve is filesystem-first, so the agent's behavior is decided by files
  * that no unit test would otherwise open. These are cheap guards on the facts that are expensive
  * to rediscover — every one of them is a hazard the live probe actually hit.
  *

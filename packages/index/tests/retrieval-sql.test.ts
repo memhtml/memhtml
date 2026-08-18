@@ -409,7 +409,7 @@ describe("assembleScope", () => {
     }
   })
 
-  it("honours a caller who names task, and never both filters at once", () => {
+  it("honors a caller who names task, and never both filters at once", () => {
     const optedIn = assembleScope({ memoryTypes: ["task"] })
     expect(optedIn.holes.fileFilter).toContain("memory_type IN (?5)")
     expect(optedIn.params).toEqual(["task"])

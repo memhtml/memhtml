@@ -137,7 +137,7 @@ export {
   markPromoted,
   markSessionsConsolidated,
   memoryEdges,
-  neighbourPairs,
+  neighborPairs,
   pathsForEntity,
   publishRows,
   readPhases,

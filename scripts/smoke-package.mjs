@@ -526,7 +526,7 @@ const checkEveryMcpTool = async ({ mcpBin, env }) => {
  * memory distilled from a ten-line file could only restate one of those lines; and `file_mtime` must
  * predate `TRACE_QUIET_MILLIS` (one hour), because a transcript being written is a session still in
  * progress. A freshly copied fixture fails both, which is why the default mode's consolidation phase
- * reports `batch: 0` and never reaches the agent — correct behaviour that looks like coverage.
+ * reports `batch: 0` and never reaches the agent — correct behavior that looks like coverage.
  *
  * So this writes a multi-turn session over 8 KB with two facts worth keeping, and backdates it.
  */
@@ -628,7 +628,7 @@ const checkLiveBedrock = async ({ bin, work, env }) => {
   await writeQualifyingTranscript(traceRoot)
   await envelope(bin, ["trace", "index"], live)
 
-  await check("the sleep cycle calls the model and distils a transcript", async () => {
+  await check("the sleep cycle calls the model and distills a transcript", async () => {
     const slept = (await envelope(bin, ["sleep", "run"], live)).data
     const phase = (slept.phases ?? []).find((entry) => entry.phase === "trace-consolidation")
     const counts = phase?.counts ?? {}

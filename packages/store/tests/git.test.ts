@@ -13,7 +13,7 @@ import { configureIdentity, type FixtureRepo, makeFixtureRepo } from "../src/tes
  * The git service against the real git binary in temp-dir repos.
  *
  * There is no fake git in this package and there will not be one. Its subject is git's own
- * behaviour — what rename detection scores, what the index holds mid-conflict, what `mv`
+ * behavior — what rename detection scores, what the index holds mid-conflict, what `mv`
  * refuses — and a fake would verify that the right argv was assembled while missing every one
  * of those. The fleet's standing lesson, applied where the "real adapter" IS the feature.
  */

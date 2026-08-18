@@ -87,7 +87,7 @@ export const LLM_PHASES: ReadonlyArray<SleepPhase> = [
  * `trace-consolidation` was here while it was a counting stub and is NOT any more. It now
  * synthesizes memories and lands each as its own reviewable commit, which puts it behind the
  * discrimination gate the same way every other mutation is. A phase absent from this list is not
- * obliged to commit (this one still reports `commitSha: null` on a night with nothing to distil, no
+ * obliged to commit (this one still reports `commitSha: null` on a night with nothing to distill, no
  * consolidator bound, or a dry run), so the list names phases that CANNOT commit, not phases that
  * happened not to.
  */

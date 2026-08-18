@@ -10,7 +10,7 @@
  *
  * A disagreement between them is silent by default. `pnpm-workspace.yaml` sets
  * `pmOnFail: ignore`, so pnpm 11 runs whatever version it is rather than self-switching
- * to the one `packageManager` names — the behaviour that would otherwise paper over a bad
+ * to the one `packageManager` names — the behavior that would otherwise paper over a bad
  * pin. (Measured on pnpm 10, which predates that setting: a `[tools]` pin of 10 against a
  * `packageManager` of 11.16.0 self-switched and reported 11.16.0. pnpm 11 will not.)
  *

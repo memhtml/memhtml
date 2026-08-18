@@ -177,7 +177,7 @@ describe("read-only is enforced, not declared", () => {
       const { filesystem } = mountReadOnlyRoots({
         roots: [{ mountPath: "/mnt/memhtml", hostPath: corpus }]
       })
-      // Listed by the directory read, and unreadable — the two together are the actual behaviour.
+      // Listed by the directory read, and unreadable — the two together are the actual behavior.
       expect(await filesystem.readdir("/mnt/memhtml")).toContain("linked.txt")
       expect(await readGuest(filesystem, "/mnt/memhtml/linked.txt")).toBeNull()
     } finally {

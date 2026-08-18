@@ -28,7 +28,7 @@ import { isSleepExcluded } from "../sql.js"
  * `update`/`create` entries cost a second call.
  *
  * **One commit per arc, not one for the phase.** An arc is a standalone assertion about the agent's
- * own behaviour, and a reviewer reads it as one thing; a commit carrying four unrelated arcs is a
+ * own behavior, and a reviewer reads it as one thing; a commit carrying four unrelated arcs is a
  * commit nobody reviews. It also means a model failure on the third arc leaves the first two
  * committed, so the per-item isolation reaches the git history and not only the counters.
  *

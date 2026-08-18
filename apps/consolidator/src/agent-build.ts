@@ -234,7 +234,7 @@ const runEveBuild = (input: {
  *
  * Order is deliberate. An explicit `appRoot` is an operator's choice and is never second-guessed. A
  * package that already holds `.output/` is a checkout where `build:agent` has run, and reusing it keeps
- * development behaviour byte-identical. Only the remaining case — an installed package with no output —
+ * development behavior byte-identical. Only the remaining case — an installed package with no output —
  * materializes the cache directory, and it costs one ~17 MB build per version rather than one per run.
  */
 export const resolveAgentAppRoot = (input: {
