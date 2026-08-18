@@ -56,9 +56,27 @@ overrides:
   # kept the named-export CommonJS surface lhci uses (verified: the budget gate runs
   # green under this override). Same delete-when-stale rule as the two above.
   uuid@<11.1.1: "^11.1.1"
-  # NOT overridden: extract-zip 2.0.1 (GHSA-jmr9-qjv8-65gv, via @puppeteer/browsers)
-  # has no fixed release yet. It runs only at browser-download time in the docs
-  # toolchain, never in anything published. Revisit when a fix ships.
+  # NOT overridden, and NOT overridable: extract-zip (GHSA-jmr9-qjv8-65gv /
+  # CVE-2026-56876, CVSS 8.1, unvalidated symlink path traversal). The advisory's
+  # vulnerable range is `<= 2.0.1` and 2.0.1 is the highest version ever published, so
+  # there is no version to point an override at — every release is in range. GitHub's own
+  # alert reports first_patched: NONE.
+  #
+  # Measured 2026-08-18, because "reached through a dev tool" is a weaker claim than the
+  # one that actually holds. Sole path is
+  # extract-zip <- @puppeteer/browsers <- puppeteer-core <- lighthouse <- @lhci/cli, a
+  # devDependency of apps/docs, and:
+  #   - none of the three carries an install script, so `pnpm install` never invokes it;
+  #   - `test:budget` ran green under a module-load probe over its 17 node processes with
+  #     ZERO loads of extract-zip, @puppeteer/browsers, or yauzl (probe positive-controlled
+  #     against a forced require, so the negative is trustworthy);
+  #   - that isolation does not rest on `CHROME_PATH`: with it unset, lhci fails
+  #     "Chrome installation not found" rather than falling back to a browser download, so
+  #     the extract path is unreachable in both configurations;
+  #   - the published package declares 12 dependencies and apps/docs is not among the
+  #     packages that feed that manifest, so it cannot reach a consumer of `memhtml`.
+  # Revisit if the docs toolchain ever downloads its own browser instead of being handed
+  # Playwright's — that, not a fixed release, is what would make this reachable.
 
 # Effect v4 is pre-release: every Effect package moves as one pinned, tested set, and the
 # three versions here are always the same string.
