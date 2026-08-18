@@ -47,7 +47,7 @@
     "@memhtml/store": "workspace:*",
     "@memhtml/traces": "workspace:*",
     "effect": "catalog:",
-    "just-bash": "3.2.0",
+    "just-bash": "3.3.0",
     "node-html-parser": "9.0.1"
   },
   "devDependencies": {

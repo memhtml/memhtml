@@ -35,12 +35,12 @@
     "dev:agent": "eve dev"
   },
   "dependencies": {
-    "@ai-sdk/amazon-bedrock": "5.0.53",
+    "@ai-sdk/amazon-bedrock": "5.0.57",
     "@memhtml/contracts": "workspace:*",
-    "ai": "7.0.61",
+    "ai": "7.0.66",
     "effect": "catalog:",
-    "eve": "0.33.0",
-    "just-bash": "3.2.0",
+    "eve": "0.38.3",
+    "just-bash": "3.3.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
