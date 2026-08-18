@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/domain",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "Pure math: retention, decay, RRF, MMR, merge guards.",
   "type": "module",

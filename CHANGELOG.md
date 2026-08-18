@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.4](https://github.com/memhtml/memhtml/compare/memhtml-v0.2.3...memhtml-v0.2.4) (2026-08-18)
+
+
+### Bug Fixes
+
+* **mcp:** pin @effect/platform-node-shared into the published Effect set ([f621f69](https://github.com/memhtml/memhtml/commit/f621f6974f4fd35303ef47afa754c026c4ccc61c))
+
 ## [0.2.3](https://github.com/memhtml/memhtml/compare/memhtml-v0.2.2...memhtml-v0.2.3) (2026-08-18)
 
 
