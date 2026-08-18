@@ -118,7 +118,7 @@ two commands pair naturally: index hourly, consolidate nightly.
 
 `memhtml trace index` on the cron is therefore the prerequisite for that phase having anything to read.
 See [run and review a sleep cycle](/learn/operations/run-and-review-a-sleep-cycle/) for what the phase
-reports when it distils nothing.
+reports when it distills nothing.
 
 [The trace indexer and its firewall](/internals/the-trace-indexer/) covers the streaming parser and the
 watermark.

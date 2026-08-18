@@ -15,7 +15,7 @@
  * Every URL is built with `new URL()`, never by concatenating strings. `Astro.site` EXCLUDES the base
  * — it is `https://memhtml.github.io` — so resolving a path against it directly drops the `/memhtml`
  * segment and yields a 404 that only appears in production. `import.meta.env.BASE_URL` is the accessor
- * that includes it, and the trailing slash is normalised because `new URL("og/x", ".../memhtml")` would
+ * that includes it, and the trailing slash is normalized because `new URL("og/x", ".../memhtml")` would
  * otherwise resolve the base segment away.
  */
 import Default from "@astrojs/starlight/components/Head.astro"

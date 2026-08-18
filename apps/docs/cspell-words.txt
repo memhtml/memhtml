@@ -1,8 +1,8 @@
 # The vocabulary this project writes in, and nothing else. A word belongs here when it is a
 # term of art, an identifier quoted from source, or a dependency's name — never because a
-# spelling was inconvenient to fix. British spellings are not in this list: `cspell.json`
-# enables the `en-GB` dictionary, so `behaviour` and `neighbour` are correct rather than
-# excused.
+# spelling was inconvenient to fix. This project writes US English: `cspell.json` carries a
+# `flagWords` list that rejects the recurring British forms (`behaviour`, `colour`, …) with
+# their US replacements.
 #
 # cspell splits on case and on `-`/`_`/`.`, so a compound like `rrfWeight` needs only `rrf`.
 
@@ -50,7 +50,6 @@ upserts
 EWMA
 
 # --- pipeline and operations vocabulary ---------------------------------------------------
-distil
 oneline
 sandboxed
 unentitled

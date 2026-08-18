@@ -84,9 +84,9 @@ export const AUDITED_PAGES: ReadonlyArray<string> = [
  * directions: a violation outside this list fails, and an entry here that no longer fires fails too,
  * so a fix cannot leave a suppression behind to hide the next defect.
  *
- * `signature` is what keeps an entry from widening into a licence for its whole rule. It is matched
+ * `signature` is what keeps an entry from widening into a license for its whole rule. It is matched
  * against each violating node's markup followed by the failure summary, and every node has to be
- * claimed by some entry, so a third contrast defect in a third colour — or a scrollable `<div>`
+ * claimed by some entry, so a third contrast defect in a third color — or a scrollable `<div>`
  * rather than the two element types recorded here — is a failure even though the rule id is listed.
  * A rule may therefore appear more than once: two independent contrast defects with two owners are
  * two entries, and the ratchet holds each of them separately.
@@ -136,7 +136,7 @@ export const LAYOUT_SHIFT_CEILING = 0.1
  * It is invisible on a fast machine, which is exactly why it needs to be written down rather than
  * remembered.
  *
- * **This entry is a bound, not a licence.** `node` has to match the shift's own source element and
+ * **This entry is a bound, not a license.** `node` has to match the shift's own source element and
  * `most` caps how far it may move, so the same element shifting further fails, and any other element
  * shifting at all fails. What it deliberately does NOT do is assert that the shift still fires — that
  * half of the `KNOWN_A11Y_FAILURES` ratchet cannot hold here, because whether the race is lost

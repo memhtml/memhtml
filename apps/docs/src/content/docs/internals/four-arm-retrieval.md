@@ -144,7 +144,7 @@ filters would allow a scope to apply to three arms and miss the fourth, and no t
 The defaults exclude archived files and set `memory_type <> 'task'`
 (`packages/index/src/scope.ts:102-122`). A corpus holding fifty open to-do items would otherwise put
 fifty of them in front of every recall, crowding out the knowledge an agent asked for with a list it
-could read by listing a directory. A caller-named type list is honoured exactly as given, `task`
+could read by listing a directory. A caller-named type list is honored exactly as given, `task`
 included, since filtering it back out would make the opt-in unreachable. A caller can override the
 exclusion, which makes it a default and not a firewall. The predicate is inlined into the SQL, because
 binding it would consume a placeholder number and shift every scope parameter below it.

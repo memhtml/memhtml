@@ -25,7 +25,7 @@ Four instances, all measured:
 separate places shipped that arithmetic — a static test server (every page 404'd, so axe audited error
 pages), and two assertions. Each was correct against the base it was written for.
 
-**Normalise once and export it.** A `BASE_SEGMENT` carrying a guaranteed trailing slash makes the root
+**Normalize once and export it.** A `BASE_SEGMENT` carrying a guaranteed trailing slash makes the root
 and a path segment the same code. And the analogous defect at the root is not a doubled segment but a
 protocol-relative `//path` — a URL naming a *host* — so an assertion has to change shape with the base
 rather than go vacuous at one of them.

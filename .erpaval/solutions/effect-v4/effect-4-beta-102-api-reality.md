@@ -9,7 +9,7 @@
    "Success"|"Failure"`, fields `.success`/`.failure`, guards `Result.isSuccess`/`isFailure`.
 2. **`Schema.decodeUnknownEffect` accepts and strips excess properties by default.** For any
    LLM/tool-payload decode pass `{onExcessProperty: "error"}` explicitly, or a model answering a
-   neighbouring schema decodes "successfully" (`packages/llm/src/structured.ts`).
+   neighboring schema decodes "successfully" (`packages/llm/src/structured.ts`).
 3. **`Schema.Finite`, not `Schema.Number`, in JSON-Schema-derived surfaces** — `Number` derives an
    `anyOf` with a string branch for `"Infinity"`/`"NaN"`.
 4. **`Schema.toJsonSchemaDocument`** exists on `Schema` and hoists nested structs to `$defs`;

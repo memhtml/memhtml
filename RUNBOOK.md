@@ -19,7 +19,7 @@ Every command writes exactly ONE JSON envelope to stdout and logs to stderr, so 
 | `MEMHTML_EXTRACT_ENTITIES` | `off` | `on` adds one model call per write batch that extracts `memhtml-entity` metas the ops did not declare (`apps/cli/src/config.ts:62`). Opt-in, unlike `MEMHTML_EMBED`, because it changes what a write STORES: extracted entities land in the files as if authored. The write never waits on or fails with the model — a failed extraction is a logged warning and an unextracted batch. |
 | `MEMHTML_MCP_BIN` | — | An explicit path to the `memhtml-mcp` entry point, read only by the serve supervisor (`apps/cli/src/serve.ts:58`). Absent means the sibling-path default, since the two apps ship as one build. Set it for a split deployment; it locates the server rather than configuring the store. |
 
-These eight are declared in `apps/cli/src/config.ts:26` and are what `memhtml manifest` reports. `MEMHTML_EMBED` and `MEMHTML_LLM` compare case-insensitively against `off` (`apps/cli/src/api-layer.ts:250`, `apps/cli/src/api-layer.ts:313`). `MEMHTML_MCP_BIN` is the one that configures no store behaviour at all, and it is disclosed anyway: an operator debugging a split deployment reads the manifest, and a variable the binary reads but does not declare is one they cannot discover. `--repo <path>` overrides `MEMHTML_ROOT` per call.
+These eight are declared in `apps/cli/src/config.ts:26` and are what `memhtml manifest` reports. `MEMHTML_EMBED` and `MEMHTML_LLM` compare case-insensitively against `off` (`apps/cli/src/api-layer.ts:250`, `apps/cli/src/api-layer.ts:313`). `MEMHTML_MCP_BIN` is the one that configures no store behavior at all, and it is disclosed anyway: an operator debugging a split deployment reads the manifest, and a variable the binary reads but does not declare is one they cannot discover. `--repo <path>` overrides `MEMHTML_ROOT` per call.
 
 ### The database
 
@@ -180,7 +180,7 @@ Every phase is its own commit and a failure is caught as a VALUE: the phase reco
 
 `git branch -D <run-id>` is the abort, and `main` never moved. Resume with `memhtml sleep resume <run-id>`, which reads the branch's own `Memhtml-Phase` commit trailers rather than a journal table — the commit is the fact, so a process killed after `git commit` and before the row write resumes correctly (`packages/sleep/src/run.ts:146`).
 
-### When trace-consolidation distils nothing
+### When trace-consolidation distills nothing
 
 Phase 12 hands unread session transcripts to the consolidator agent and commits one memory per candidate that clears the bar. It reports `ok` in four different situations, and the `detail` is what tells them apart:
 
@@ -195,7 +195,7 @@ The distinction matters because only the last one means the transcripts have bee
 
 A run takes at most 10 sessions, newest first, skipping transcripts under 8 KiB and any modified within an hour of the run's instant (`packages/sleep/src/phases/trace-consolidation.ts:64`). So a first run over a year of history is an increment, not a stampede — it consolidates the ten most recent sessions and works backwards a batch per night.
 
-Each commit's body carries the evidence quotes the claim rests on, which is the reviewable receipt; the memory itself carries only the distilled claim, because `.memhtml` holds no session content. A commit whose subject reads `distil (frame conflict) …` means the new claim occupies the same frame slot as a live memory, named in the body — the phase writes it anyway and reports the conflict, because sometimes the contradiction is the answer.
+Each commit's body carries the evidence quotes the claim rests on, which is the reviewable receipt; the memory itself carries only the distilled claim, because `.memhtml` holds no session content. A commit whose subject reads `distill (frame conflict) …` means the new claim occupies the same frame slot as a live memory, named in the body — the phase writes it anyway and reports the conflict, because sometimes the contradiction is the answer.
 
 ### When the merge refuses
 

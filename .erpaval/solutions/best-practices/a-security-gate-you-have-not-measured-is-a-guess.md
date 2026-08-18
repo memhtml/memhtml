@@ -64,7 +64,7 @@ they do not agree:
 
 | tool | VEX support |
 |---|---|
-| grype 0.111.1 | `--vex`, honours `not_affected` — matches moved to `ignoredMatches` tagged `{namespace: vex, vex-status: not_affected}` |
+| grype 0.111.1 | `--vex`, honors `not_affected` — matches moved to `ignoredMatches` tagged `{namespace: vex, vex-status: not_affected}` |
 | trivy 0.70.0 | `--vex`, EXPERIMENTAL, accepts a file path |
 | osv-scanner 2.5.0 | **none** — only `[[IgnoredVulns]]` in its own TOML |
 

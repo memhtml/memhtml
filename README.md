@@ -422,7 +422,7 @@ numbers and the horizons they rank.
 $MEMHTML_ROOT/                        # its own git repo, one global memory store
   projects/<workspace-slug>/      # a workspace IS a directory. There is no workspaces table.
   areas/<area-slug>/              # ongoing responsibilities
-  areas/arcs/                     # behavioural arcs (system-written by sleep only)
+  areas/arcs/                     # behavioral arcs (system-written by sleep only)
   areas/inbox/                    # where an unplaceable memory lands
   resources/<topic>/
   resources/people/<person>.html  # the person plane
@@ -461,7 +461,7 @@ bundle.
 | `@memhtml/eval` | The fixture corpus generator and the refusable discrimination gate. |
 | `@memhtml/cli` | The `memhtml` binary, the envelope contract, and the one composition root. |
 | `@memhtml/mcp` | The `memhtml-mcp` stdio server: 14 tools, 2 resources. |
-| `@memhtml/consolidator` | The sandboxed eve agent that distils candidate memories from raw transcripts. |
+| `@memhtml/consolidator` | The sandboxed eve agent that distills candidate memories from raw transcripts. |
 | `@memhtml/docs` | The documentation site. |
 
 ## Development

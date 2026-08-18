@@ -218,7 +218,7 @@ The memory graph around one path, to a fixed depth of at most two hops.
 
 Arguments:
 
-- `<path>`: The centre of the neighbourhood. Required. `apps/cli/src/commands.ts:331`
+- `<path>`: The center of the neighborhood. Required. `apps/cli/src/commands.ts:331`
 
 Flags:
 

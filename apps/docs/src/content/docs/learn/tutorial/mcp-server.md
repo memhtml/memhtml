@@ -41,7 +41,7 @@ envelope the contract promises:
 
 The two apps ship as one build, so the supervisor finds the server by sibling path. For a split
 deployment that does not keep them side by side, set `MEMHTML_MCP_BIN` to an explicit path. That
-variable locates the server and configures no store behaviour at all.
+variable locates the server and configures no store behavior at all.
 
 ## See what a client sees
 

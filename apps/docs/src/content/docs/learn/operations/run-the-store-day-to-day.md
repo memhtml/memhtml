@@ -47,7 +47,7 @@ two values that move the outcome EWMA, a running average of how well a memory ha
 ## What moves the access plane
 
 Read this section when a salience number surprises you. Salience is one of retrieval's four ranking
-arms, alongside full-text search, vector similarity, and recency, and it favours memories you have
+arms, alongside full-text search, vector similarity, and recency, and it favors memories you have
 opened before by reading the access plane.
 
 Three things bump a memory's access count:

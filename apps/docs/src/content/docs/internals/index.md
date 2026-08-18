@@ -75,7 +75,7 @@ pipelines and the contract surface.
 | [Testing posture](/internals/testing-posture/) | Real driver, real git, two fakes, and the quality gate that can refuse a merge |
 
 Three pages sit beside the chapters. [The consolidator](/internals/the-consolidator/) reproduces the
-live system prompt of the agent that distils memories out of transcripts.
+live system prompt of the agent that distills memories out of transcripts.
 [Measured standing](/internals/measured-standing/) carries the benchmark numbers together with the
 caveat that governs how to read them. The [glossary](/glossary/) defines the domain vocabulary these
 pages use and links each term to the chapter that develops it.

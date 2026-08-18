@@ -1,6 +1,6 @@
 ---
 title: The consolidator
-description: The live system prompt of the agent that distils candidate memories out of raw transcripts, reproduced as the artifact it is.
+description: The live system prompt of the agent that distills candidate memories out of raw transcripts, reproduced as the artifact it is.
 ---
 
 ## 1. What this page is

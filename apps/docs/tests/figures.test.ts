@@ -77,7 +77,7 @@ const htmlPathFor = (fence: Fence) =>
 const CHANNELS = /#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})\b/gi
 
 /**
- * Every colour a rendered ELEMENT paints, achromatic or not.
+ * Every color a rendered ELEMENT paints, achromatic or not.
  *
  * Scoped to paint attributes rather than to the whole file on purpose. D2 emits a static CSS preamble in
  * every theme carrying `--color-*` custom properties for its Markdown and code blocks, and unreferenced
@@ -213,7 +213,7 @@ describe("the built figures are static monochrome SVG", () => {
     expect(emitted).toHaveLength(fences.length)
   })
 
-  it("paints no channel-unequal colour", () => {
+  it("paints no channel-unequal color", () => {
     for (const fence of fences) {
       const svg = readFileSync(svgPathFor(fence), "utf8")
       expect(nonAchromatic(svg), `${fence.page}#${fence.offset}`).toEqual([])

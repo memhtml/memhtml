@@ -14,7 +14,7 @@ rather than by a pipeline step — the same posture a generated command doc has.
 
 - **`fill-pattern: none` produces invalid SVG.** D2 accepts the value, emits
   `.none-overlay { fill: url(#none-…) }` in a second `<style>` block, and never closes its `<![CDATA[`.
-  Three opens, two closes: a strict XML parser (librsvg) fails the whole document. Any unrecognised
+  Three opens, two closes: a strict XML parser (librsvg) fails the whole document. Any unrecognized
   `fill-pattern` value is a candidate for the same shape of bug — D2 does not validate the name.
 - **Themes 300 and 301 texture every container.** They put `class="dots-overlay"` on a container's rect,
   a `#0A0F25` dotted pattern at 0.1 opacity. No `style.fill` value displaces it — measured against
@@ -66,6 +66,6 @@ against `dist/`. Read the built artifact rather than re-rendering in the test: r
 integration's flags and can agree with itself while disagreeing with the site. Scope a monochrome check
 to what an element PAINTS (`fill=`, `stroke=`, and the `fill:`/`stroke:` inside `style=`) — D2 emits a
 static CSS preamble carrying `--color-danger-fg:red` and unreferenced `.sketch-overlay-*` rules in every
-theme, and a whole-file colour grep fails on dead declarations. Scope a corner check to `<rect>`, where
+theme, and a whole-file color grep fails on dead declarations. Scope a corner check to `<rect>`, where
 `rx` is a corner radius; on an `<ellipse>` the same attribute is the radius and a legitimate figure
 carries a large one.

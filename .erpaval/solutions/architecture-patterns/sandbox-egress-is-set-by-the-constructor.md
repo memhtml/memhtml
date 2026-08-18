@@ -4,7 +4,7 @@
 **Modules**: apps/consolidator/agent/sandbox, apps/cli (memhtml exec), scripts/probe-sandbox-egress.mjs
 **Probe**: `node scripts/probe-sandbox-egress.mjs` — run it rather than citing this file
 
-## The measured behaviour
+## The measured behavior
 
 `just-bash` 3.2.0 (the version eve 0.31.0 loads), `javascript: true` on both cases:
 
