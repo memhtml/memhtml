@@ -249,9 +249,39 @@ semgrep scan \
 
 [tasks."security:leaks"]
 description = "Secrets sweep over git history via betterleaks (SARIF, report-only)"
+# `--exit-code=0` means betterleaks reports success whether it found secrets, found none, or
+# never produced a usable report — so "the sweep found nothing" and "the sweep did not happen"
+# arrive as the same exit status. Observed 2026-08-18 on CI run 32092649447: betterleaks exited
+# 0 having written a truncated `betterleaks.sarif` and printed neither its `scanned N bytes`
+# nor its `no leaks found` line, `mise run security` went green, and the only thing that
+# noticed was `upload-sarif` rejecting the file as `Unexpected end of JSON input` — which
+# fails the job for the wrong reason and reads like an upload defect. A re-run passed, so it
+# is intermittent, which is the worst version: a silent no-op that usually works.
+#
+# So the report is verified rather than assumed, and retried once before the task fails.
+# Failing loses nothing here that report-only exists to protect: an invalid SARIF carries no
+# finding detail to throw away, and a sweep that produced no report is the one result that
+# must not be mistaken for a clean one.
 run = """
 mkdir -p .sarif
+verify() {
+  node -e '
+    const { readFileSync } = require("node:fs")
+    const sarif = JSON.parse(readFileSync(".sarif/betterleaks.sarif", "utf8"))
+    if (!Array.isArray(sarif.runs) || sarif.runs.length === 0) throw new Error("no runs[]")
+    if (!sarif.runs.every((r) => Array.isArray(r.results))) throw new Error("a run has no results[]")
+  ' 2>/dev/null
+}
 betterleaks git . -f sarif -r .sarif/betterleaks.sarif --exit-code=0
+if ! verify; then
+  echo "security:leaks: betterleaks exited 0 but its SARIF is unusable; retrying once" >&2
+  rm -f .sarif/betterleaks.sarif
+  betterleaks git . -f sarif -r .sarif/betterleaks.sarif --exit-code=0
+  if ! verify; then
+    echo "security:leaks: betterleaks produced no usable SARIF twice — the secrets sweep did NOT run" >&2
+    exit 1
+  fi
+fi
 """
 
 [tasks."security:sbom"]
