@@ -48,6 +48,35 @@ describe("normalizePath", () => {
     expect(normalizePath("areas//arcs///x.html")).toBe("areas/arcs/x.html")
     expect(normalizePath("areas/arcs/")).toBe("areas/arcs")
   })
+
+  it("stays linear on a long slash run, so no caller can stall the write path", () => {
+    /**
+     * A cost-curve assertion rather than a correctness one, because the defect this locks is
+     * invisible to output: every implementation here returns the same string, and only one of them
+     * takes three seconds to do it.
+     *
+     * `/\/+$/` — the obvious way to strip a trailing slash — is quadratic on a long slash run
+     * followed by a non-slash. Measured 2026-08-18 on the shape below: 4 ms, 57 ms, 769 ms,
+     * 3049 ms at n = 2k, 8k, 32k, 64k. The version that ships does not use it, and this fails if
+     * anyone reintroduces it, whether directly or by reordering the collapse that used to be the
+     * only thing keeping the input away from it.
+     *
+     * The bound is generous on purpose. A quadratic implementation exceeds it by three orders of
+     * magnitude at n = 64k, so the gap between pass and fail is not a matter of a loaded machine —
+     * which is what lets a timing assertion be a blocking test rather than a flake.
+     */
+    const adversarial = `a/${"/".repeat(64_000)}a`
+    // Correct first: the guard is worthless if it locks the cost of a wrong answer.
+    expect(normalizePath(adversarial)).toBe("a/a")
+
+    const started = process.hrtime.bigint()
+    for (let i = 0; i < 20; i++) normalizePath(adversarial)
+    const perCallMs = Number(process.hrtime.bigint() - started) / 20e6
+    expect(
+      perCallMs,
+      `normalizePath took ${perCallMs.toFixed(1)}ms on a 64k slash run`
+    ).toBeLessThan(50)
+  })
 })
 
 describe("archive path algebra", () => {

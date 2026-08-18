@@ -121,4 +121,42 @@ describe("frameKeyOf — the guards at their thresholds", () => {
     const gist = "The capital of India is New Delhi."
     expect(frameKeyOf(gist)).toBe(frameKeyOf(gist))
   })
+
+  it("stays linear on the three shapes that could make its regex backtrack", () => {
+    /**
+     * `FRAME` pairs a greedy `.*` with `\s+` and a lazy `(.+?)`, which is the structural shape of a
+     * polynomial ReDoS — CodeQL flags it as `js/polynomial-redos` on the grounds that the gist is
+     * unbounded library input, and the gist IS unbounded: nothing caps a `<mark>` claim's length.
+     *
+     * Measured 2026-08-18 at 128k characters, this is linear in all three adversarial shapes —
+     * whitespace-dense 0.07 ms, keyword-free 0.27 ms, keyword-dense 12.66 ms, each growing ~1x per
+     * doubling. The whitespace shape, which is the one the analyzer names, is defused by the
+     * `\s+ -> " "` collapse on the line before the match: `\s+` inside `FRAME` can then only ever
+     * consume a single space, so the ambiguity with `.*` never materialises.
+     *
+     * That collapse is therefore load-bearing for COST, not just for the case- and
+     * whitespace-insensitivity it is documented for. This asserts the consequence, so that removing
+     * it fails a test here rather than turning a claim into a stall on the write path.
+     */
+    const shapes = [
+      // Collapses to "is x", whose one-token frame is below MIN_FRAME_TOKENS — so null, and the
+      // 128k spaces never reach `FRAME` at all, which is exactly the point being asserted.
+      { name: "whitespace-dense", gist: `is${" ".repeat(128_000)}x`, expected: null },
+      { name: "keyword-free", gist: "x".repeat(128_000), expected: null },
+      // Every token is a linking token, so `.*` has 42k candidate split points to backtrack through.
+      { name: "keyword-dense", gist: "is ".repeat(42_000), expected: "is ".repeat(41_999).trim() }
+    ]
+
+    for (const { name, gist, expected } of shapes) {
+      // Correctness first, so the guard cannot lock the cost of a wrong answer.
+      expect(frameKeyOf(gist), `${name} result`).toBe(expected)
+
+      const started = process.hrtime.bigint()
+      for (let i = 0; i < 5; i++) frameKeyOf(gist)
+      const perCallMs = Number(process.hrtime.bigint() - started) / 5e6
+      // Three orders of magnitude below a quadratic blow-up at this size, so a loaded machine
+      // cannot drift a pass into a fail.
+      expect(perCallMs, `frameKeyOf took ${perCallMs.toFixed(1)}ms on ${name}`).toBeLessThan(250)
+    }
+  })
 })

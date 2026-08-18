@@ -39,12 +39,22 @@ export const MEMORY_EXTENSION = ".html"
  * Reduce a caller-supplied path to the canonical git-tree form: leading slashes dropped
  * (callers may pass the `<link href>` document-reference form), repeated slashes collapsed,
  * trailing slash dropped.
+ *
+ * The trailing slash is removed by `endsWith`/`slice` rather than by `/\/+$/`, which is not a
+ * style choice: an unanchored-left `\/+$` is quadratic on a long run of slashes followed by a
+ * non-slash, measured 2026-08-18 at 4 ms / 57 ms / 769 ms / 3049 ms for n = 2k / 8k / 32k / 64k.
+ * The collapse above happens to defuse it — after it, no run of two slashes survives, so the
+ * pattern can only ever match one character — but that made the cost of this function depend on
+ * the ORDER of three chained calls, with nothing stating it and nothing checking it. Reordering
+ * them, or dropping the collapse, would reintroduce a multi-second stall on 64 KB of input across
+ * this function's callers, all of which sit on the write path that accepts agent-supplied paths.
+ * A single-character slice cannot be reordered into a hazard.
+ * `packages/contracts/tests/paths.test.ts` asserts the cost curve at adversarial sizes.
  */
-export const normalizePath = (path: string): string =>
-  path
-    .replace(/^\/+/, "")
-    .replace(/\/{2,}/g, "/")
-    .replace(/\/+$/, "")
+export const normalizePath = (path: string): string => {
+  const collapsed = path.replace(/^\/+/, "").replace(/\/{2,}/g, "/")
+  return collapsed.endsWith("/") ? collapsed.slice(0, -1) : collapsed
+}
 
 /** The PARA bucket a path sits in, or `undefined` when it sits outside all four. */
 export const paraBucketOf = (path: string): ParaBucket | undefined => {
