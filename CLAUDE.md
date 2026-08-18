@@ -50,6 +50,7 @@ build-before-integration ordering.
 | `mise run package:smoke` | install that tarball in a temp dir and drive every command and MCP tool through it |
 | `mise run package:smoke:live` | the same, plus the three edges that reach Bedrock (spends tokens) |
 | `mise run security` | osv-scanner + semgrep + betterleaks + syft/grype (SBOM) + trivy → SARIF in `.sarif/` (report-only) |
+| `mise run security:vex` | regenerate `osv-scanner.toml` from the OpenVEX ledger — run after editing it |
 | `mise run tools:verify` / `tools:bump` | check the two pnpm pins agree / re-resolve `latest` in `mise.lock` |
 | `mise run cli <args>` | the built CLI, `raw` so stdout stays one JSON envelope |
 
@@ -232,10 +233,50 @@ must match every offending node, so the same rule failing for a new reason is st
 layout probe carries the same shape of baseline — `KNOWN_LAYOUT_SHIFTS`, one bounded Starlight
 right-sidebar shift — where an entry is a bound (`node` + `most`), not a licence.
 
+## Security gates and the VEX ledger
+
+The scanners **report**; the repository ruleset **gates**. Six tools block a merge at
+`alerts_threshold: errors` / `security_alerts_threshold: high_or_higher` — CodeQL, Semgrep OSS, Trivy,
+Grype, osv-scanner, betterleaks. **Scorecard is deliberately not one of them**: its high findings are
+repo posture (`BranchProtectionID`, `CodeReviewID`, `TokenPermissionsID`) and `MaintainedID` scores
+commit cadence, so gating on it would block PRs for reasons unrelated to any diff and would flip with
+the calendar. A gate a quiet fortnight can turn red is a gate people learn to bypass.
+
+CodeQL lives in its own workflow (`javascript-typescript`, `build-mode: none`, `security-extended`)
+rather than as a mise task, because its analysis runs inside the action — there is no local command it
+could drift from, which is the reason every *other* scanner IS a mise task. Its `init`, `analyze`, and
+`upload-sarif` must pin the same version; mixing them is unsupported.
+
+**An exception is an OpenVEX statement, never a click.** `security/memhtml.openvex.json` is the ledger,
+and the scanners disagree about reading it (probed 2026-08-18): grype 0.111.1 and trivy 0.70.0 take
+`--vex`, osv-scanner 2.5.0 has no VEX support at all. So `osv-scanner.toml` is **generated** from the
+ledger by `scripts/vex-to-osv-config.mjs` — edit the ledger, run `mise run security:vex`, commit both.
+`tests-integration/tests/vex.test.ts` gates the pair, and the assertions that matter are the silent
+ones: a status or justification outside the spec enum makes a scanner decline to match rather than
+error, so the finding reappears while the document reads as applied; and `affected` /
+`under_investigation` must never render an ignore entry, which would invert the ledger while still
+parsing. Aliases are expanded because osv-scanner reports the GHSA where Dependabot and trivy report
+the CVE. A VEX-suppressed finding auto-closes as `fixed`, which is why this is preferred to dismissing
+an alert: the record is in git.
+
+Two hazards this setup exists to answer, both measured here:
+
+- **A scanner can exit 0 having produced nothing.** `--exit-code=0` / `|| true` collapses "found
+  none" and "never ran" into one status. `security:leaks` therefore verifies its SARIF and retries
+  once before failing; the other scanners still carry the hole.
+- **Measure a finding before believing OR dismissing it.** CodeQL raised two identical-looking
+  `js/polynomial-redos`; one was a real order-dependence (a regex that takes 3049 ms alone, defused
+  only by a preceding collapse, on a function with 42 call sites) and one was a false positive
+  measured linear at 128k. Cost-curve assertions lock both, because the reordered version returned
+  byte-identical output in 5.5 seconds — this defect class is invisible to output.
+
 ## Conventions
 
 Conventional Commits on a typed branch (`feature/…`, `fix/…`, `chore/…`, `docs/…`, `refactor/…`,
-`test/…`, `spec/…`); a clean local merge to `main` is fine provided the branch is green. Biome
+`test/…`, `spec/…`); a clean local merge to `main` is fine provided the branch is green. `deps` is also
+accepted, since `.github/dependabot.yml` sets it as its prefix. **A type moves a version and a scope
+does not save you**: `fix(ci):` on a scanner task cuts a release PR whose changelog describes a change
+that ships nothing — CI-only work is `ci:`. Biome
 formatting is non-negotiable and machine-applied: double quotes, no semicolons, 2-space indent, 100
 columns, no trailing commas. `noExplicitAny`, `noNonNullAssertion`, and unused-variable/import are
 errors; `exactOptionalPropertyTypes` and `noUncheckedIndexedAccess` are on.
