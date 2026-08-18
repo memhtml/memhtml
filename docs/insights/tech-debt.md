@@ -22,14 +22,14 @@ Two limits apply to what follows. Every debt item in the register is either a de
 | 2 | `memory_archive` moves a task into the archive without touching `task_status`, leaving a `todo`-status file under `archive/` in the root. | wrong abstraction | S | `docs/tasks.md:168-169` |
 | 3 | Agent-facing workflow prose is hand-written twice, once per door, with no shared constant and no test asserting the two agree. An agent reading the CLI manifest and an agent reading `tools/list` can be told different rules. | duplicated logic | M | `apps/mcp/src/tools.ts:133-145`, `apps/cli/src/commands.ts:956-980` |
 | 4 | The sleep `reprieve` phase archives TTL-passed memories out of the root, and no test asserts its `reprieved` or `expired` counts. Only the domain scoring function is covered. | missing tests | S | `packages/sleep/src/phases/reprieve.ts:91`, `packages/domain/tests/retention.test.ts:343` |
-| 5 | The doc-sync ledger entry is stale in both directions. It claims `design.md` names 16 of 31 response types, while `RESPONSE_TYPES` now holds 32 members and `design.md` enumerates none of them. | dead code adjacent | S | `docs/backlog.md:50-53`, `apps/cli/src/envelope.ts:12-45`, `docs/design.md:878` |
+| 5 | The doc-sync ledger entry was stale in both directions. It claimed `design.md` names 16 of 31 response types, while `RESPONSE_TYPES` now holds 32 members and `design.md` enumerates none of them. The ledger entry was corrected and marked done on 2026-08-18. | dead code adjacent | S | `docs/backlog.md:49-54`, `apps/cli/src/envelope.ts:12-45`, `docs/design.md:878` |
 | 6 | Thirty-eight doc-comment citations point into `node_modules/eve/...`, several with exact line numbers. `node_modules` is gitignored, so a reader in a fresh clone cannot check any of them, and an eve bump invalidates them silently. | dead code adjacent | M | `apps/consolidator/src/run-auth.ts:103`, `.gitignore:1` |
-| 7 | The MCP door runs on a pre-release Effect catalog pinned to `4.0.0-beta.107` and imports from the explicitly unstable `effect/unstable/ai` subpath. The project's own notes say v4 breaks between versions. | version pin | L | `pnpm-workspace.yaml:30-32`, `apps/mcp/src/tools.ts:13`, `CLAUDE.md:131-136` |
+| 7 | The MCP door runs on a pre-release Effect catalog pinned to `4.0.0-rc.109` and imports from the explicitly unstable `effect/unstable/ai` subpath. The project's own notes say v4 breaks between versions. | version pin | L | `pnpm-workspace.yaml:84-86`, `apps/mcp/src/tools.ts:13`, `CLAUDE.md:131-136` |
 | 8 | The consolidator's agent sandbox has full network egress and this repo cannot turn it off. A measured probe from inside reaches a public host, obtains an IMDSv2 token, and reads the instance-role name. Mitigation has to live outside the dependency. | wrong abstraction | L | `apps/consolidator/src/run-auth.ts:13-20`, `ROADMAP.md:522-528` |
 | 9 | `batchWrite` runs about 185 lines in one function body and carries two coordinate systems at once: the caller's op index space and the store's result positions, bridged by an `originOf` array. *judgment-call* | wrong abstraction | M | `apps/cli/src/operations.ts:641-825`, `apps/cli/src/operations.ts:679-680` |
-| 10 | The conflict assist is write-time only. `memory_search` and `memory_recall` return a hit whose slot holds two live claims as though the fact were uncontested, even though `frame_key` is indexed and available. | wrong abstraction | M | `docs/backlog.md:124-127` |
-| 11 | An `article_html` op reports no conflicts at all, because the claim lives inside the caller's markup and the ops layer never parses it. Fixing it means moving the assist behind the store's own render. | wrong abstraction | L | `docs/backlog.md:131-135` |
-| 12 | A store created before migration 0009 carries NULL `frame_key` until `memhtml index rebuild` runs, so the conflict assist silently finds fewer conflicts on an older root. | deprecated pattern | S | `docs/backlog.md:140-143`, `ROADMAP.md:44-47` |
+| 10 | The conflict assist is write-time only. `memory_search` and `memory_recall` return a hit whose slot holds two live claims as though the fact were uncontested, even though `frame_key` is indexed and available. | wrong abstraction | M | `docs/backlog.md:126-128` |
+| 11 | An `article_html` op reports no conflicts at all, because the claim lives inside the caller's markup and the ops layer never parses it. Fixing it means moving the assist behind the store's own render. | wrong abstraction | L | `docs/backlog.md:132-136` |
+| 12 | A store created before migration 0009 carries NULL `frame_key` until `memhtml index rebuild` runs, so the conflict assist silently finds fewer conflicts on an older root. | deprecated pattern | S | `docs/backlog.md:141-144`, `ROADMAP.md:44-47` |
 | 13 | `docs/code-mode.md` ships its cookbook helper against cheerio, which is not a dependency of any manifest and is known to be unloadable in the sandbox the recipes now run in. The doc's own caveat contradicts its code. | dead code adjacent | S | `docs/code-mode.md:59-63`, `ROADMAP.md:321-325` |
 | 14 | `pinCorpusSnapshot` is implemented and tested but wired to nothing. A snapshot is a git worktree that needs release, and the object that would hold it is built once per client, so the lifetimes do not match. | dead code adjacent | M | `apps/consolidator/src/mount.ts:258`, `apps/consolidator/src/client.ts:250-261` |
 | 15 | Counted-drop sites record how many records were unusable and never why, so an operator reading `skipped` or `droppedLines` cannot distinguish a truncated write from a schema change. | error handling | S | `packages/sleep/src/phases/state-export.ts:120-122`, `packages/traces/src/extract.ts:253-256` |
@@ -37,10 +37,9 @@ Two limits apply to what follows. Every debt item in the register is either a de
 | 17 | The discrimination gate's fixture is saturated at MRR 1.0 with zero inversions over 36 probes, so it can detect a ranking regression and can no longer measure an improvement. | missing tests | M | `ROADMAP.md:437-442` |
 | 18 | Sleep-cycle watermarks live only in `index.db`, which is a rebuildable projection. Losing it loses every watermark, and the next cycle re-reads and re-distils those sessions. | wrong abstraction | M | `ROADMAP.md:530-533` |
 | 19 | `apps/cli/guest/corpus.mjs` is 182 lines of runtime-loaded source that `tsc` never sees and biome never lints, since the lint include list is `**/*.ts`. *judgment-call* | missing tests | S | `apps/cli/src/exec.ts:95-107`, `biome.json:5-12` |
-| 20 | `biome.json` declares the `2.5.6` schema and `mise.toml` names 2.5.6 in prose, while all fifteen manifests pin `@biomejs/biome` at `2.5.8`. Three-way disagreement about one tool version. | version pin | S | `biome.json:2`, `package.json:25`, `mise.toml:61` |
-| 21 | `.claude/` is untracked and unignored, and it holds a 1.1 GB agent worktree, inside a project whose discipline is a clean git tree. | dead code adjacent | S | `.gitignore:12-19` |
-| 22 | The MCP server cannot publish server-level `instructions`, because the dependency declares the field and gives `layerStdio` no argument for it. Tool descriptions are the only guidance channel an agent gets. | version pin | L | `apps/mcp/src/server.ts:24-37`, `docs/backlog.md:146-151` |
-| 23 | Any new MCP tool must declare `failure: ToolFailure` or its errors reach the agent as "internal server error". Only convention and wire tests enforce this, and no type signature does. | deprecated pattern | M | `docs/backlog.md:152-154` |
+| 20 | `biome.json` declares the `2.5.6` schema and `mise.toml` names 2.5.6 in prose, while all fifteen manifests pin `@biomejs/biome` at `2.5.8`. Three-way disagreement about one tool version. | version pin | S | `biome.json:2`, `package.json:30`, `mise.toml:64` |
+| 21 | The MCP server cannot publish server-level `instructions`, because the dependency declares the field and gives `layerStdio` no argument for it. Tool descriptions are the only guidance channel an agent gets. | version pin | L | `apps/mcp/src/server.ts:24-37`, `docs/backlog.md:148-153` |
+| 22 | Any new MCP tool must declare `failure: ToolFailure` or its errors reach the agent as "internal server error". Only convention and wire tests enforce this, and no type signature does. | deprecated pattern | M | `docs/backlog.md:154-156` |
 
 ## Explicit markers
 
@@ -88,7 +87,7 @@ Cost: M. The fix is one shared constants module in `@memhtml/contracts` that bot
 
 ### Comment evidence that cites paths a clone cannot read
 
-The comments in this codebase carry their own evidence, in the form of measured numbers, named probes, and dated verifications. The problem is where that evidence lives. Thirty-eight doc-comment citations across the consolidator point into `node_modules/eve/dist/...` or `node_modules/eve/docs/...`, and several carry exact line numbers, such as the client-types citation at `apps/consolidator/src/run-auth.ts:103`. `node_modules/` is the first line of `.gitignore`, so none of those citations is checkable from a fresh clone, and a dependency bump moves all of them with nothing to notice. The dependency has already moved. Five comments cite "eve 0.31.0" as the version their claims were verified against while the manifest pins `0.32.0`. This counts as debt because the comments carry security-relevant conclusions. `apps/consolidator/src/run-auth.ts:13-20` establishes that the sandbox has full network egress by pointing at a hardcoded literal in eve's compiled output, and the mitigation strategy for the whole app depends on that literal still being there.
+The comments in this codebase carry their own evidence, in the form of measured numbers, named probes, and dated verifications. The problem is where that evidence lives. Thirty-eight doc-comment citations across the consolidator point into `node_modules/eve/dist/...` or `node_modules/eve/docs/...`, and several carry exact line numbers, such as the client-types citation at `apps/consolidator/src/run-auth.ts:103`. `node_modules/` is the first line of `.gitignore`, so none of those citations is checkable from a fresh clone, and a dependency bump moves all of them with nothing to notice. The dependency has already moved. Eight comments cite "eve 0.33.0" as the version their claims were verified against while the manifest pins `0.38.3`. This counts as debt because the comments carry security-relevant conclusions. `apps/consolidator/src/run-auth.ts:13-20` establishes that the sandbox has full network egress by pointing at a hardcoded literal in eve's compiled output, and the mitigation strategy for the whole app depends on that literal still being there.
 
 Shows up in:
 
@@ -102,11 +101,11 @@ Cost: M. Two options work. A test can read the cited file and assert the literal
 
 ### A ledger that outlives the defect it describes
 
-Written ledgers replace comment markers here, and they share one failure mode with markers. An entry can stay in the ledger after its defect is gone. The doc-sync item is the live instance. `docs/backlog.md:50-53` says `design.md`'s ResponseType line names 16 of 31 members, `ROADMAP.md:579-580` repeats it, and DOCSYNC-1 in `spec/memhtml.symspec.json` carries it as a draft requirement with the same count in its verification note. A direct check of the source disagrees on both counts. `RESPONSE_TYPES` holds 32 members, and `docs/design.md:878` cites the constant by path instead of listing anything, so a grep for any response-type literal in that document returns zero. The entry is wrong about the enum's size and wrong that the defect exists. The wider problem is that three documents agreed on a number none of them re-derived, which is the same shape as the selector error `ROADMAP.md:328-330` records, where "three documents agreed on the wrong selector; the markup settled it." Two other entries drift the same way to a smaller degree. `docs/code-mode.md:59-63` still presents cheerio as the cookbook's parser after `ROADMAP.md:321-325` measured that cheerio cannot load in the sandbox the recipes now run in.
+Written ledgers replace comment markers here, and they share one failure mode with markers. An entry can stay in the ledger after its defect is gone. The doc-sync item was the live instance until 2026-08-18, when the ledger entry was corrected and marked done (`docs/backlog.md:49-54`). It said `design.md`'s ResponseType line names 16 of 31 members, `ROADMAP.md:579-580` repeats it, and DOCSYNC-1 in `spec/memhtml.symspec.json` carries it as a draft requirement with the same count in its verification note. A direct check of the source disagreed on both counts. `RESPONSE_TYPES` holds 32 members, and `docs/design.md:878` cites the constant by path instead of listing anything, so a grep for any response-type literal in that document returns zero. The entry was wrong about the enum's size and wrong that the defect exists. The wider problem is that three documents agreed on a number none of them re-derived, which is the same shape as the selector error `ROADMAP.md:328-330` records, where "three documents agreed on the wrong selector; the markup settled it." Two other entries drift the same way to a smaller degree. `docs/code-mode.md:59-63` still presents cheerio as the cookbook's parser after `ROADMAP.md:321-325` measured that cheerio cannot load in the sandbox the recipes now run in.
 
 Shows up in:
 
-- `docs/backlog.md:50-53`
+- `docs/backlog.md:49-54`
 - `ROADMAP.md:579-580`
 - `apps/cli/src/envelope.ts:12-45`
 - `docs/design.md:878`
@@ -134,9 +133,9 @@ Write-time conflict detection was the campaign's largest measured win, and it re
 
 Shows up in:
 
-- `docs/backlog.md:131-135`
-- `docs/backlog.md:124-127`
-- `docs/backlog.md:140-143`
+- `docs/backlog.md:132-136`
+- `docs/backlog.md:126-128`
+- `docs/backlog.md:141-144`
 - `ROADMAP.md:44-47`
 - `apps/cli/src/operations.ts:658-661`
 

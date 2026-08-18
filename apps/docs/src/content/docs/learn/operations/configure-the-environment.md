@@ -19,7 +19,7 @@ memhtml manifest | jq '.data.config'
 | `MEMHTML_EMBED` | `on` | `off` disables the embedder entirely. |
 | `MEMHTML_LLM` | `on` | `off` makes the three model-driven sleep phases report `no model bound` and `trace-consolidation` report `no consolidator bound`, all staying `ok`. |
 | `MEMHTML_EXTRACT_ENTITIES` | `off` | `on` adds one model call per write batch that extracts `memhtml-entity` metas the ops did not declare. |
-| `MEMHTML_MCP_BIN` | none | An explicit path to the `memhtml-mcp` entry point, read only by the serve supervisor (`apps/cli/src/serve.ts:50`). |
+| `MEMHTML_MCP_BIN` | none | An explicit path to the `memhtml-mcp` entry point, read only by the serve supervisor (`apps/cli/src/serve.ts:58`). |
 
 `--repo <path>` overrides `MEMHTML_ROOT` for one call, which is how you operate two stores from one
 shell.
@@ -27,7 +27,7 @@ shell.
 ## Off and absent are different states
 
 `MEMHTML_EMBED` and `MEMHTML_LLM` compare case-insensitively against `off`
-(`apps/cli/src/api-layer.ts:242`, `apps/cli/src/api-layer.ts:305`). Any other value, including an empty
+(`apps/cli/src/api-layer.ts:250`, `apps/cli/src/api-layer.ts:313`). Any other value, including an empty
 string, leaves the feature on.
 
 A missing credential degrades one search at the moment that search runs, while `MEMHTML_EMBED=off`

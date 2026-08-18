@@ -46,13 +46,14 @@ already established.
 The JSONL/ops envelope carries `op: "write"` precisely so correct/link/archive can join without
 a wire break (spec 004 D4). No current consumer needs them; build when one does.
 
-## 6. Doc-sync sweep (small, hygiene)
+## ~~6. Doc-sync sweep (small, hygiene)~~ — DONE (verified 2026-08-18)
 
-`docs/design.md`'s ResponseType line names 16 of 31 `RESPONSE_TYPES` (15 omissions, none
-spurious — T-AC-6-4 finding). Candidate: derive that line from the enum the way AGENTS.md is
-derived, or trim the doc to point at the enum.
+`docs/design.md`'s ResponseType line named 16 of 31 `RESPONSE_TYPES` (15 omissions, none
+spurious — T-AC-6-4 finding). Resolved: `RESPONSE_TYPES` now holds 32 members and
+`docs/design.md:878` cites the enum by path instead of enumerating, so the line can no longer
+drift from the constant.
 
-## 7. Code snippets: fences in the prose door + `data-lang` (CORE DONE 2026-08-04, fc6addb)
+## 7. Code snippets: fences in the prose door + `data-lang` (CORE DONE 2026-08-04, fc6addb — a pre-publication-history SHA, not resolvable in this repository)
 
 Decisions 1, 2, and 4 shipped: `@memhtml/html` `fences.ts` owns the backtick-fence grammar (one copy
 for the template and `prose.ts`'s paragraph splitter, so a blank line inside a fence no longer
@@ -63,7 +64,7 @@ ARTICLE_HTML_CONTRACT updated. Five mutations proven to fire; live smoke through
 verified bytes and the `lang:ts` query.
 
 Decision 3 shipped (T-AC-2-1): `detect.ts` ports the eval's winner — highlight.js pinned exactly
-11.11.1, the measured confidence formula, a 12-name vocabulary — and stamps unlabeled fences at
+(11.11.2 today, `packages/html/package.json:35`), the measured confidence formula, a 12-name vocabulary — and stamps unlabeled fences at
 write time above 0.30 (the measured 0.28686 operating point, precision 95.18%, rounded safe). Nine
 mutations proven to fire, including grep and dependency locks keeping detection out of `@memhtml/index`.
 REMAINING from the plan: decision 5's sleep backfill (v2, deferred until the corpus has unlabeled
@@ -146,7 +147,8 @@ REMAINING, in rough order of pull:
 
 - effect `McpServer` never emits the MCP `instructions` initialize field (`McpSchema` declares it;
   `layerStdio`'s options are `{name, version, protocols, extensions}`, so there is no argument to
-  supply one — re-verified on 4.0.0-beta.107). When
+  supply one — re-verified on 4.0.0-beta.107; the catalog now pins 4.0.0-rc.109, and the comment at
+  `apps/mcp/src/server.ts:27` still names beta.107 as its verification version). When
   effect wires it, move the guide's `write-surfaces`/`when-to-batch` prose into it — comment at
   `apps/mcp/src/server.ts` marks the spot.
 - effect masks handler errors unless a `failure:` schema is declared — any NEW tool must declare
@@ -155,7 +157,8 @@ REMAINING, in rough order of pull:
 
 ## Code-mode (recorded 2026-08-06)
 
-ROADMAP item 7 + docs/code-mode.md landed via feature/code-mode-roadmap (merge 50ba916).
+ROADMAP item 7 + docs/code-mode.md landed via feature/code-mode-roadmap (merge 50ba916 — a
+pre-publication-history SHA, not resolvable in this repository).
 Docs-only: the cookbook's helper and five recipes ran against the fixture corpus but no
 package ships them yet. Next pull: `memhtml exec` (sandboxed helper preload, read-only index.db
 handle) once real usage shows which recipes agents reach for; then the traversal gate beside

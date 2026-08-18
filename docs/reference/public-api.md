@@ -4,7 +4,7 @@ This repository is the software that manages a memory tree. It stores no memorie
 it manages is the `memhtml root`, located by `$MEMHTML_ROOT`, which is the default every command
 resolves its target from (`AGENTS.md:74`). The root's git history is the system of record, and
 `.memhtml/index.db` inside the root is a projection of it that an operator deletes and rebuilds
-without loss (`README.md:23-24`).
+without loss (`README.md:45-46`, under "The design in three sentences").
 
 An agent reaches this software through two binaries, and package manifests declare both.
 `apps/cli/package.json:7-8` maps `memhtml` to `./dist/bin.js`, and

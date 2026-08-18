@@ -322,59 +322,10 @@ body {
   font-size: 0.9em;
 }
 
-/* The masthead: the deliberately-typeset element that separates austere from broken. */
-.rfc-masthead {
-  border-block-end: 1px solid var(--memhtml-ink);
-  font-family: var(--memhtml-font-sans);
-  font-size: var(--sl-text-xs);
-  margin-block-end: 2rem;
-  padding-block-end: 0.4rem;
-}
-
 /*
- * The document header: the two-column block of coordinates an RFC opens with — who issued it on the
- * left, when and at what version on the right. It is worn TOGETHER with `.rfc-masthead`, which already
- * supplies the sans face, the small size and the closing rule; this adds the second column and thickens
- * the rule to two pixels, which is the heaviest line anywhere on the site and is what makes the block
- * read as a document header rather than as a caption.
- *
- * It is a grid of two authored columns rather than alternating children, so the source reads as two
- * lists and a later edit cannot silently move a fact from one side to the other. `1fr auto` lets the
- * right column take exactly the width of its longest line; at the narrowest viewport the columns
- * stack, because two columns of eight characters each is worse than one column of sixteen.
- */
-.rfc-doc-header {
-  border-block-end-width: 2px;
-  display: grid;
-  gap: 0.15rem 1.5rem;
-  grid-template-columns: 1fr auto;
-  line-height: 1.55;
-  margin-block-end: 1.75rem;
-  padding-block-end: 0.5rem;
-}
-
-.rfc-doc-header > * > p {
-  margin: 0;
-}
-
-.rfc-doc-header > *:last-child {
-  text-align: end;
-}
-
-@media (max-width: 30rem) {
-  .rfc-doc-header {
-    grid-template-columns: 1fr;
-  }
-
-  .rfc-doc-header > *:last-child {
-    text-align: start;
-  }
-}
-
-/*
- * The brand line and the memo title, centred as a specification's title block is centred. This is the
- * only centred type on the site, which is what makes it read as a title block rather than as a page
- * that lost its alignment.
+ * The memo title and the brand line beneath it, centred as a specification's title block is centred.
+ * This is the only centred type on the site, which is what makes it read as a title block rather than
+ * as a page that lost its alignment.
  *
  * The letterspacing is authored on already-uppercase text — no `text-transform` — so the words are
  * uppercase in the Markdown this site serves to agents as well as on the page.
@@ -384,20 +335,21 @@ body {
   text-align: center;
 }
 
-.rfc-brand {
-  font-family: var(--memhtml-font-sans);
-  font-size: var(--sl-text-xs);
-  letter-spacing: 0.26em;
-  /* The tracking is applied to the right of each glyph, so the last one carries a trailing space
-     that would knock a centred line off centre by half of it. */
-  margin-inline-start: 0.26em;
-}
-
 .rfc-title-block .rfc-memo-title {
   font-size: var(--sl-text-h3);
   font-weight: 400;
   letter-spacing: -0.01em;
+  margin-block: 0;
+}
+
+.rfc-brand {
+  font-family: var(--memhtml-font-sans);
+  font-size: var(--sl-text-xs);
+  letter-spacing: 0.26em;
   margin-block: 0.35rem 0;
+  /* The tracking is applied to the right of each glyph, so the last one carries a trailing space
+     that would knock a centred line off centre by half of it. */
+  margin-inline-start: 0.26em;
 }
 
 /*

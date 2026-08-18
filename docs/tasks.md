@@ -38,43 +38,43 @@ the tag rule to read (`packages/contracts/src/paths.ts:112`).
 `memhtml-status` stays `active | archived` for a task exactly as for a memory
 (`packages/contracts/src/types.ts:69`); `memhtml-task-status` is a separate axis (`:72`), and `task_status`
 is its own nullable CHECK-constrained column beside `archived`
-(`packages/index/migrations/0008_tasks.sql:70`). Two axes rather than a fifth `memhtml-status` value,
+(`packages/index/migrations/0008_tasks.sql:72`). Two axes rather than a fifth `memhtml-status` value,
 because `active`/`archived` is what every archive, correction, publish, and retention path switches on.
 
 So `done` is not a resting state. `memhtml task status <path> done` writes the status with `setMeta`, then
 routes through `store.archiveMemory` — a `git mv` into `archive/<YYYY>/<original path>` plus the
-`memhtml-status`/`memhtml-updated`/`memhtml-archived` stamps (`apps/cli/src/operations.ts:1137`,
-`packages/store/src/store.ts:808`). The stamp is written *before* the move, so both land in one commit
+`memhtml-status`/`memhtml-updated`/`memhtml-archived` stamps (`apps/cli/src/operations.ts:1384`,
+`packages/store/src/store.ts:893-897`). The stamp is written *before* the move, so both land in one commit
 and `git log --follow` reads through it. There is no delete and no completed-task list: **"what did I
 finish" is the archive tree plus `git log`**, and `memhtml task list --include-archived` shows it.
 
 Every other transition is one head line plus the `memhtml-updated` stamp — `setMeta` splices by source
 offset, so the article's bytes and therefore `memhtml-content-hash` do not move
-(`apps/cli/src/operations.ts:1109`). Re-stamping the status a file already carries writes nothing and
-returns `unchanged: true` (`apps/cli/src/operations.ts:1099`). Pointing `memhtml task status` at a non-task
-fails `ERR_INVALID_MEMORY` before any write (`apps/cli/src/operations.ts:1086`).
+(`apps/cli/src/operations.ts:1352`). Re-stamping the status a file already carries writes nothing and
+returns `unchanged: true` (`apps/cli/src/operations.ts:1342-1349`). Pointing `memhtml task status` at a non-task
+fails `ERR_INVALID_MEMORY` before any write (`apps/cli/src/operations.ts:1329-1335`).
 
 ## `memhtml-due` is string-ordered, so the format is the contract
 
 `files.due_at` is compared and ordered **as a string**, never parsed per row
-(`packages/index/migrations/0008_tasks.sql:71`). A value that does not sort lexicographically alongside
+(`packages/index/migrations/0008_tasks.sql:73-75`). A value that does not sort lexicographically alongside
 the others makes an overdue query silently wrong rather than empty, so `memhtml-due` reuses the format's own
 `<time datetime>` validator (`packages/html/src/constraints.ts:67`) at three points: the parser reports
 a violation (`packages/html/src/parse.ts:188`), `decodeDueAt` refuses the write
-(`apps/cli/src/operations.ts:130`), and `--due-before` refuses the query bound (`:1215`).
+(`apps/cli/src/operations.ts:132`), and `--due-before` refuses the query bound (`:1462`).
 
 Accepted: `YYYY-MM-DD`, optionally `T` or a space plus `hh:mm`, optional `:ss` with fractional seconds,
 optional `Z` or `±hh:mm`. Refused: `2026-8-9`, `Aug 9 2026`, `2026-13-45` (the day is round-tripped
 through `Date.UTC`), a bare time, a duration, a week — `Date.parse` accepts several of those and none
 sorts alongside a padded date. Both overdue queries truncate to `substr(…, 1, 10)` on both sides,
-stating the comparison is one of **calendar days** (`apps/cli/src/operations.ts:1226`,
+stating the comparison is one of **calendar days** (`apps/cli/src/operations.ts:1473`,
 `apps/cli/src/doctor.ts:225`): a task due sometime on the 25th is not late at 09:00 on the 25th.
 
 ## Edges: `blocks` and `subtask_of`
 
 The task rel vocabulary is exactly two (`packages/contracts/src/edges.ts:54`), forming their own
 `edge_class` — the fourth (`:9`). The class is a firewall: every memory-graph query filters
-`edge_class = 'memory'` (`packages/sleep/src/sql.ts:261`, `apps/cli/src/operations.ts:857`), so task
+`edge_class = 'memory'` (`packages/sleep/src/sql.ts:271`, `apps/cli/src/operations.ts:1113`), so task
 topology cannot enter PageRank, label propagation, MMR's lateral arm, or the retention bridge count.
 
 ```
@@ -84,12 +84,12 @@ memhtml link <child> subtask_of <parent>         # decomposition
 
 Both endpoints must be tasks. `requireEndpointClasses` refuses the mismatch in both directions — a
 memory rel with a task endpoint, and a task rel with a non-task endpoint — because the store is the only
-layer that reads both files' `memhtml-type` (`packages/store/src/store.ts:838`). The SQL CHECK pairs a rel
-with its class only and cannot reach the endpoints (`packages/index/migrations/0008_tasks.sql:173`).
+layer that reads both files' `memhtml-type` (`packages/store/src/store.ts:993`). The SQL CHECK pairs a rel
+with its class only and cannot reach the endpoints (`packages/index/migrations/0008_tasks.sql:194-199`).
 Provenance is unaffected: a task legitimately came from a session.
 
 `blocks` has two readers — `memhtml task list`'s `blockedBy`, every task asserting `blocks` toward this one
-(`apps/cli/src/operations.ts:1247`), and `memhtml doctor`'s `staleBlockers` (`apps/cli/src/doctor.ts:269`).
+(`apps/cli/src/operations.ts:1492-1495`), and `memhtml doctor`'s `staleBlockers` (`apps/cli/src/doctor.ts:269`).
 **`subtask_of` has none**: no surface reports it and `memhtml neighbors` filters to the memory class, so a
 decomposition is stored but read back only from the file's `<link>` or the `edges` table.
 
@@ -101,18 +101,18 @@ decomposition is stored but read back only from the file's `<link>` or the `edge
 | `memhtml task status` | `<path> <status>`, `--reason` | `task.updated` |
 | `memhtml task list` | `--status` `--workspace` `--due-before` `--limit` `--cursor` `--include-archived` | `task.list` |
 
-Defined at `apps/cli/src/commands.ts:400`, dispatched at `apps/cli/src/run.ts:349`, envelope types at
-`apps/cli/src/envelope.ts:40`. `--claim` defaults to `--title` (`apps/cli/src/run.ts:356`), and
+Defined at `apps/cli/src/commands.ts:413`, dispatched at `apps/cli/src/run.ts:356`, envelope types at
+`apps/cli/src/envelope.ts:40`. `--claim` defaults to `--title` (`apps/cli/src/run.ts:361-363`), and
 `--reason` is recorded on the archive commit, so only `done` has one to record.
 
 `memhtml task list` is a **direct indexed scan**, never retrieval: every matching row ordered by path, a
 keyset cursor on the last path, `--limit` 50 by default and capped at 500
-(`apps/cli/src/operations.ts:1200`). The partial index `files_task_status`
+(`apps/cli/src/operations.ts:1447`). The partial index `files_task_status`
 (`WHERE memory_type='task' AND archived=0`) keeps it the size of the open work
-(`packages/index/migrations/0008_tasks.sql:136`).
+(`packages/index/migrations/0008_tasks.sql:139`).
 
 `memhtml link` authors both task rels — `AUTHORABLE_RELS` is the nine memory rels plus the two
-(`apps/cli/src/operations.ts:87`) — and `memhtml apply` writes tasks in a batch, a line carrying
+(`apps/cli/src/operations.ts:89`) — and `memhtml apply` writes tasks in a batch, a line carrying
 `"type":"task"` taking `status` and `due` alongside the ordinary fields (`apps/cli/src/apply.ts:49`).
 `memhtml write --type task` reaches the same placement rule and template default, and a hand-written file
 under `projects/<ws>/tasks/` satisfying the format is as real as one the CLI wrote.
@@ -123,9 +123,9 @@ under `projects/<ws>/tasks/` satisfying the format is as real as one the CLI wro
   (`packages/index/src/scope.ts:121`); a caller-named type list is honoured verbatim, so this is a
   default with a reachable opt-in rather than a hidden row (`:109`).
 - **Dedup carves tasks out, both directions.** The partial unique index and the write path's lookup
-  state one predicate (`packages/index/migrations/0008_tasks.sql:123`,
+  state one predicate (`packages/index/migrations/0008_tasks.sql:126-127`,
   `packages/index/src/traces-persist.ts:166`), and the store's intra-batch map restates it
-  (`packages/store/src/store.ts:292`). Two open tasks with identical bodies are two work items, and a
+  (`packages/store/src/store.ts:316-323`). Two open tasks with identical bodies are two work items, and a
   memory is never deduped onto a task's path.
 - **Sleep skips them.** `SLEEP_EXCLUDED_TYPES` is stated once (`packages/sleep/src/sql.ts:33`) and
   spread into eight phase sites — dedup-merge, relationship-mining, conflict-detection,
@@ -155,16 +155,16 @@ deadline; `--due-before` reads `due_at` only against a caller-supplied bound.
 
 ## MCP status: read and create, never advance
 
-The toolkit is fourteen tools and none is a task tool (`apps/mcp/src/tools.ts:712`).
+The toolkit is fourteen tools and none is a task tool (`apps/mcp/src/tools.ts:774`).
 
-- `memory_write` takes `memory_type: "task"` — the enum derives from `WRITABLE_MEMORY_TYPES` (`:38`).
-  There is no `status` or `due` field in the write parameters (`:204`), so a task authored over MCP
+- `memory_write` takes `memory_type: "task"` — the enum derives from `WRITABLE_MEMORY_TYPES` (`:45`).
+  There is no `status` or `due` field in the write parameters (`:237-246`), so a task authored over MCP
   opens in `todo` with no deadline.
 - `memory_list` filters `memory_type: "task"` and `memory_search` opts in through
-  `memory_types: ["task"]` (`:588`, `:397`). `memory_recall` takes no type parameter at all (`:452`), so
+  `memory_types: ["task"]` (`:650`, `:444`). `memory_recall` takes no type parameter at all (`:514-518`), so
   over MCP a task is unreachable through recall with no opt-in available.
 - `memory_link`'s `rel` is `MemoryRelSchema`, the nine memory rels, so a task rel is refused at
-  **decode** (`:516`). The task graph is authored from the CLI: asserting `blocks` is planning.
+  **decode** (`:578`). The task graph is authored from the CLI: asserting `blocks` is planning.
 - **No status transition and no archive-on-done.** `memory_archive` moves a task into the archive
   without touching `task_status`, leaving a `todo` file under `archive/`.
 

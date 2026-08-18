@@ -27,8 +27,9 @@ database, and no credentials. An envelope back means the install is good. `npx m
 answers the same way without installing anything, which is the cheapest way to read the whole
 command surface before deciding.
 
-There is no `@memhtml/*` package to install. The eleven workspace libraries and the two apps are
-`private`, and one assembled `memhtml` is the only thing published — see
+There is no `@memhtml/*` package to install. Every workspace package is `private`, and the one
+assembled `memhtml` — bundling the libraries and the binary-bearing apps, with the docs site left
+out — is the only thing published. See
 [Packages and dependency direction](/internals/packages-and-dependency-direction/) for why the
 layering stays internal.
 

@@ -5,7 +5,7 @@ description: How ordering does the duplicate detection, why a batch is one commi
 
 ## 1. Singular write
 
-`writeMemory` (`packages/store/src/store.ts:464`) does six things in order. It renders the memory and
+`writeMemory` (`packages/store/src/store.ts:530`) does six things in order. It renders the memory and
 checks the result, hashes the article text, asks whether that content already exists, claims a free
 path, writes the file, then stages and commits it.
 
@@ -15,7 +15,7 @@ rollback, and rolling back a git operation introduces a second way to fail.
 
 ## 2. Two independent checks refuse a duplicate
 
-The write path calls an injected `dedupeLookup` (`packages/store/src/store.ts:156`, wired to
+The write path calls an injected `dedupeLookup` (`packages/store/src/store.ts:185`, wired to
 `activePathForHash` at `packages/index/src/traces-persist.ts:162`). On a hit it returns the existing
 path with `deduped: true`, and it creates no file and no commit.
 
@@ -37,7 +37,8 @@ three places the batch path touches its hash map.
 
 ## 3. Batch write is one commit and one index pass
 
-`writeBatch` (`packages/store/src/store.ts:633`, `apps/cli/src/operations.ts:494`) exists as a
+`writeMemories` (`packages/store/src/store.ts:699`, surfaced as `batchWrite` at
+`apps/cli/src/operations.ts:641`) exists as a
 primitive rather than as a loop in the caller for one reason: N singular writes are N commits, and
 because the indexer diffs one commit at a time, they are also N index passes.
 
@@ -69,7 +70,7 @@ validated-but-unwritten operation as `ok` with a path would hand the caller a pa
 it.
 
 Phase 2 writes, stages, and commits once. A failure there triggers `rollbackBatch`
-(`packages/store/src/store.ts:524`), which clears the staged paths with `git reset -- <paths>`, because
+(`packages/store/src/store.ts:590`), which clears the staged paths with `git reset -- <paths>`, because
 `git rm --cached` exits 128 on a path that was never staged.
 
 Three more choices inside the fold each prevent a specific loss:
@@ -141,8 +142,8 @@ file with nothing to supersede. Its `memhtml-supersedes` points at the target's 
 file lives only after this commit lands. Pointing at the pre-archive path would create a dangling href
 in the same commit that made it dangle. Both files land in one commit.
 
-Archive (`packages/store/src/store.ts:808`) is a `git mv` plus the metadata stamps. `stageArchive`
-(`packages/store/src/store.ts:397`) creates the destination's parent directory first, because `git mv`
+Archive (`packages/store/src/store.ts:888`) is a `git mv` plus the metadata stamps. `stageArchive`
+(`packages/store/src/store.ts:429`) creates the destination's parent directory first, because `git mv`
 refuses a destination whose parent does not exist and the year partition is new every January.
 
 ## 7. The writer records provenance in both planes
@@ -151,8 +152,8 @@ The writer stamps `memhtml-session`, `memhtml-prompt`, and `memhtml-turn` into t
 `Memhtml-Session` and `Memhtml-Prompt` commit trailers
 (`packages/store/src/plumbing.ts:367-389`). The operations layer records a `memory_session_links` row
 carrying its `link_kind`, one of `wrote`, `read`, `corrected`, or `reinforced`
-(`apps/cli/src/operations.ts:293`, `apps/cli/src/operations.ts:659`,
-`apps/cli/src/operations.ts:768`).
+(`apps/cli/src/operations.ts:295`, `apps/cli/src/operations.ts:902`,
+`apps/cli/src/operations.ts:766`).
 
 The file-borne copy survives an index rebuild. The row makes the same link queryable in both
 directions.

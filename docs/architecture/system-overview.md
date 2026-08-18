@@ -16,9 +16,9 @@ sidecar at `.memhtml/state/access.jsonl` (`packages/store/src/layout.ts:26-30`).
 
 The primary caller is a coding agent. Two binaries are declared:
 `memhtml` (`apps/cli/package.json:7-9`) and `memhtml-mcp` (`apps/mcp/package.json:7-9`). Every CLI
-call writes exactly one JSON envelope carrying `apiVersion`, a `type` discriminator drawn from a
-31-entry append-only list, and `data` (`apps/cli/src/envelope.ts:12-53`). Failures carry a stable
-`code` from a 15-entry append-only list plus `suggestions`, so an agent branches on the code instead
+call writes exactly one JSON envelope carrying `apiVersion`, a `type` discriminator drawn from the
+append-only `RESPONSE_TYPES` list, and `data` (`apps/cli/src/envelope.ts:12`). Failures carry a stable
+`code` from the append-only `ERROR_CODES` list plus `suggestions`, so an agent branches on the code instead
 of the prose (`apps/cli/src/envelope.ts:67-83`). Exit codes are fixed at 0 for success, 2 for usage,
 1 for runtime (`apps/cli/src/envelope.ts:87-90`). `memhtml manifest` returns the whole command surface
 before any root or database exists (`apps/cli/src/run.ts:823-843`), and `--dense` drops nulls and
@@ -88,14 +88,14 @@ flowchart LR
 |---|---|---|
 | Language | TypeScript 7.0.2 | `package.json:28` |
 | Runtime | Node.js >= 24, pinned to 24 | `package.json:6-8`, `mise.toml:39` |
-| Framework | Effect 4.0.0-beta.107, one catalog pin | `pnpm-workspace.yaml:29-33` |
+| Framework | Effect 4.0.0-rc.109, one catalog pin | `pnpm-workspace.yaml:84-86` |
 | Storage | `node:sqlite` `DatabaseSync` over 10 SQL migrations | `packages/index/src/database.ts:4` |
 | Storage | git as the system of record for the root | `packages/store/src/layout.ts:22-24` |
-| HTML parsing | parse5 8.0.1 | `packages/html/package.json:23` |
-| Embeddings | AWS Bedrock SDK 3.1108.0, `cohere.embed-v4:0` at 1024 dims | `packages/llm/package.json:20`, `packages/llm/src/constants.ts:7-8` |
-| Agent sandbox | eve 0.33.0, just-bash 3.2.0, ai 7.0.61 | `apps/consolidator/package.json:23-29` |
-| Build tooling | turbo 2.10.9, pnpm 11.21.0, biome 2.5.8 | `package.json:5`, `package.json:25-27` |
-| Test tooling | vitest 4.1.10, `@effect/vitest`, fast-check 4.9.0 | `apps/cli/package.json:41-44`, `pnpm-workspace.yaml:33` |
+| HTML parsing | parse5 8.0.1 | `packages/html/package.json:36` |
+| Embeddings | AWS Bedrock SDK 3.1111.0, `cohere.embed-v4:0` at 1024 dims | `packages/llm/package.json:33`, `packages/llm/src/constants.ts:7-8` |
+| Agent sandbox | eve 0.38.3, just-bash 3.3.0, ai 7.0.66 | `apps/consolidator/package.json:38-43` |
+| Build tooling | turbo 2.10.10, pnpm 11.21.0, biome 2.5.8 | `package.json:6`, `package.json:30-35` |
+| Test tooling | vitest 4.1.10, `@effect/vitest`, fast-check 4.9.0 | `apps/cli/package.json:55-58`, `pnpm-workspace.yaml:87` |
 
 ## See also
 

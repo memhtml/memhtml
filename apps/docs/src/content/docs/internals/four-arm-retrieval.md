@@ -42,14 +42,14 @@ only, since a sum commutes.
 
 ### 2.1. fts
 
-`packages/index/src/retrieval-sql.ts:71`. `ROW_NUMBER() OVER ()` with no `ORDER BY` captures the row
+`packages/index/src/retrieval-sql.ts:114`. `ROW_NUMBER() OVER ()` with no `ORDER BY` captures the row
 order MATCH itself produced, which is the only relevance signal this driver exposes. There is no `rank`
 column and no `bm25()` function available. The window sits outside the `LIMIT`ed subquery, since inside
 it the numbering would apply to the pre-limit scan.
 
 ### 2.2. vector
 
-`packages/index/src/retrieval-sql.ts:94`. Exact brute-force comparison. `GROUP BY c.path` with
+`packages/index/src/retrieval-sql.ts:139`. Exact brute-force comparison. `GROUP BY c.path` with
 `min(distance)` collapses a file to its best-matching chunk. Without that collapse a three-chunk file
 would contribute three ranks, consume three slots of the arm's candidate budget, and have three
 reciprocal-rank contributions summed, so length would beat relevance.
@@ -81,7 +81,7 @@ themselves.
 Memories about a person live outside `resources/people/` and keep their salience, which is the signal
 that answers which five of fifty entries about a person actually get consulted. The discriminator is a
 path prefix rather than a memory type because there is no `person` type: a person file is a `semantic`
-record that `placementFor` routes to that directory (`packages/contracts/src/paths.ts:122`).
+record that `placementFor` routes to that directory (`packages/contracts/src/paths.ts:132`).
 
 Both predicates sit inside the arm and never in the shared `fileFilter`
 (`packages/index/src/scope.ts:12-22`). An excluded row still earns its lexical, vector, and recency
@@ -118,7 +118,7 @@ parameter. Weights are inlined as literals rather than bound, because they are t
 and inlining keeps the parameter tuple at four values however many arms fire.
 
 Degradation drops arms and never fails the query. `activeArms`
-(`packages/index/src/retrieval-sql.ts:218`) filters out any arm whose `needsEmbedding`, `needsState`, or
+(`packages/index/src/retrieval-sql.ts:263`) filters out any arm whose `needsEmbedding`, `needsState`, or
 `needsQueryTerms` precondition is unmet. An embedder failure is caught, logged, and turned into
 `undefined` (`packages/index/src/retrieval.ts:173-194`), so retrieval keeps answering when the
 embedding provider is down. The result set gets narrower, and the response's `degraded` field says so.
@@ -129,7 +129,7 @@ embedding provider is down. The result set gets narrower, and the response's `de
 results: an apostrophe, a colon (which is this system's own entity notation), a leading hyphen, and a
 bare boolean operator (`packages/index/src/fts-query.ts:1-26`).
 
-`sanitizeFtsQuery` (`packages/index/src/fts-query.ts:35`) reduces a query to runs of Unicode letters
+`sanitizeFtsQuery` (`packages/index/src/fts-query.ts:41`) reduces a query to runs of Unicode letters
 and digits, and returns `""` when nothing survives, at which point the lexical arm leaves the fold.
 Dropping the offending characters beats escaping them: `query` is prose rather than a query language,
 and supporting negation would let an agent invoke it by accident every time it wrote a hyphenated word.
@@ -138,7 +138,7 @@ The character class is `\p{L}\p{N}` rather than `[a-z0-9]`, which keeps `déploy
 ## 6. Scoping
 
 The scope predicate is assembled once, and every arm receives the same string, differing only in the
-alias its `files` row goes by through a `{alias}` token (`packages/index/src/scope.ts:92`). Per-arm
+alias its `files` row goes by through a `{alias}` token (`packages/index/src/scope.ts:99`). Per-arm
 filters would allow a scope to apply to three arms and miss the fourth, and no type would catch that.
 
 The defaults exclude archived files and set `memory_type <> 'task'`
@@ -229,8 +229,8 @@ policies.
 
 | Read | Bumps | Why |
 |---|---|---|
-| `memory_read` or `memhtml read` of a named path, and the `memhtml://file/{path}` resource | yes | the caller chose that memory, which is the strongest signal short of a write (`apps/cli/src/operations.ts:655`) |
-| a path merely returned by `memory_search` or `memory_recall` | no | that is the ranker's own guess (`apps/cli/src/operations.ts:681`, `:692`) |
+| `memory_read` or `memhtml read` of a named path, and the `memhtml://file/{path}` resource | yes | the caller chose that memory, which is the strongest signal short of a write (`apps/cli/src/operations.ts:898`) |
+| a path merely returned by `memory_search` or `memory_recall` | no | that is the ranker's own guess (`apps/cli/src/operations.ts:924`, `:941`) |
 | the fifteen sleep phases | no | a schedule that touches the whole corpus drives everything toward uniform salience, and sleep bypasses the tool path anyway |
 | `memory_reinforce` with a named signal | yes, and it moves the outcome average too | the caller is asserting the memory was right or wrong |
 

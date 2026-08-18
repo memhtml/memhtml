@@ -90,16 +90,16 @@ Each description is the `description` field of the package's own manifest.
 
 | Node | Version pin | Source module | Import sites |
 | --- | --- | --- | --- |
-| `effect` | `4.0.0-beta.107` (`pnpm-workspace.yaml:30`) | `sleep` | 76 files across `apps/*/src` and `packages/*/src`; 25 in `packages/sleep` alone. Declared by all 12 packages, always as `catalog:`. |
-| `platform-node` | `4.0.0-beta.107` (`pnpm-workspace.yaml:31`) | `mcp` | `apps/mcp/src/bin.ts:2` takes `NodeRuntime` and `NodeStdio`, which is what makes the server a stdio process. |
-| `eve` | `0.32.0` (`apps/consolidator/package.json:27`) | `consolidator` | `apps/consolidator/agent/agent.ts:2`, `apps/consolidator/agent/channels/eve.ts:1-2`, `apps/consolidator/agent/sandbox/sandbox.ts:1-2`. |
-| `Bedrock Runtime` | `3.1107.0` (`packages/llm/package.json:20`) | `llm` | `packages/llm/src/client.ts:1`, `packages/llm/src/model-client.ts:1`, `packages/llm/src/embeddings.ts:1`. |
-| `just-bash` | `3.2.0` (`apps/cli/package.json:36`, `apps/consolidator/package.json:28`) | `consolidator`, `cli` | `apps/consolidator/src/mount.ts:6-7` imports it statically; `apps/cli/src/exec.ts:242` loads it through a dynamic `import`. |
-| `parse5` | `8.0.1` (`packages/html/package.json:23`) | `html` | `packages/html/src/tree.ts:1-2`, `packages/html/src/markup.ts:1`. |
+| `effect` | `4.0.0-rc.109` (`pnpm-workspace.yaml:84`) | `sleep` | 76 files across `apps/*/src` and `packages/*/src`; 25 in `packages/sleep` alone. Declared by all 12 packages, always as `catalog:`. |
+| `platform-node` | `4.0.0-rc.109` (`pnpm-workspace.yaml:85`) | `mcp` | `apps/mcp/src/bin.ts:2` takes `NodeRuntime` and `NodeStdio`, which is what makes the server a stdio process. |
+| `eve` | `0.38.3` (`apps/consolidator/package.json:42`) | `consolidator` | `apps/consolidator/agent/agent.ts:2`, `apps/consolidator/agent/channels/eve.ts:1-2`, `apps/consolidator/agent/sandbox/sandbox.ts:1-2`. |
+| `Bedrock Runtime` | `3.1111.0` (`packages/llm/package.json:33`) | `llm` | `packages/llm/src/client.ts:1`, `packages/llm/src/model-client.ts:1`, `packages/llm/src/embeddings.ts:1`. |
+| `just-bash` | `3.3.0` (`apps/cli/package.json:50`, `apps/consolidator/package.json:43`) | `consolidator`, `cli` | `apps/consolidator/src/mount.ts:6-7` imports it statically; `apps/cli/src/exec.ts:326` loads it through a dynamic `import`. |
+| `parse5` | `8.0.1` (`packages/html/package.json:36`) | `html` | `packages/html/src/tree.ts:1-2`, `packages/html/src/markup.ts:1`. |
 | `node:sqlite` | Node builtin, `node >=24` (`package.json:7`) | `index` | `packages/index/src/database.ts:4` imports `DatabaseSync`. |
 | `git CLI` | External binary | `store` | `packages/store/src/git.ts:1` imports `node:child_process`; `packages/store/src/git.ts:170` spawns git through `execFile`. |
 
-`just-bash` carries two edges because both exist at runtime and they load differently. The CLI's edge is dynamic on purpose. `apps/cli/src/index.ts:92` states that `just-bash` arrives dynamically, and `apps/cli/src/exec.ts:231-233` gives the measured reason, a 6 MB bundle across 20 chunks costing roughly 160ms to load. That same comment records a leak in the current graph. `@memhtml/consolidator`'s barrel re-exports `mount.js`, which imports `just-bash` statically, and `apps/cli/src/api-layer.ts` imports that barrel, so `just-bash` already loads on every `memhtml read` (`apps/cli/src/exec.ts:234-236`).
+`just-bash` carries two edges because both exist at runtime and they load differently. The CLI's edge is dynamic on purpose. `apps/cli/src/index.ts:92` states that `just-bash` arrives dynamically, and `apps/cli/src/exec.ts:315-317` gives the measured reason, a 6 MB bundle across 20 chunks costing roughly 160ms to load. That same comment records a leak in the current graph. `@memhtml/consolidator`'s barrel re-exports `mount.js`, which imports `just-bash` statically, and `apps/cli/src/api-layer.ts` imports that barrel, so `just-bash` already loads on every `memhtml read` (`apps/cli/src/exec.ts:317-320`).
 
 Two declared workspace dependencies produce no runtime edge and so are not drawn:
 
@@ -118,8 +118,8 @@ Ten nodes were measured and left out of the 20-node budget. Edge counts are `fro
 | `node:crypto` | 5 | Same. |
 | `node:url` | 3 | Same. Present in `apps/cli/src/exec.ts:4`. |
 | `node:module` | 2 | Same. `apps/cli/src/exec.ts:2` uses `createRequire` to resolve a path only. |
-| `highlight.js` | 2 | `11.11.2` (`packages/html/package.json:22`). Type-only at `packages/html/src/detect.ts:41` and lazily required at `packages/html/src/detect.ts:57`, so it is never on the load-time graph. |
-| `@ai-sdk/amazon-bedrock` | 1 | `5.0.51` (`apps/consolidator/package.json:23`). One site, `apps/consolidator/agent/agent.ts:1`, and it reaches the same service as the `Bedrock Runtime` node already drawn. |
+| `highlight.js` | 2 | `11.11.2` (`packages/html/package.json:35`). Type-only at `packages/html/src/detect.ts:45` and lazily required at `packages/html/src/detect.ts:61`, so it is never on the load-time graph. |
+| `@ai-sdk/amazon-bedrock` | 1 | `5.0.57` (`apps/consolidator/package.json:38`). One site, `apps/consolidator/agent/agent.ts:1`, and it reaches the same service as the `Bedrock Runtime` node already drawn. |
 | `@memhtml/docs` | n/a | The Astro documentation site (`apps/docs/package.json:2`), out of scope for this run. |
 | `@memhtml/integration` | 11 | The cross-package integration test harness (`tests-integration/package.json:6`). It declares all eleven other workspace packages (`tests-integration/package.json:13-23`) and ships no runtime code, so drawing it would add eleven edges that describe the test tier rather than the system. |
 

@@ -54,8 +54,8 @@ interrupted write left truncated would turn a partial loss into a total one.
 ## 3. Cross-database references are explicit
 
 SQLite has no cross-database foreign keys, so a path move is mirrored by an explicit `onMove` hook that
-the store calls at the single place a path can change (`packages/store/src/store.ts:160-168`,
-`apps/cli/src/api-layer.ts:203`), and `memhtml doctor` reports rows the hook missed.
+the store calls at the single place a path can change (`packages/store/src/store.ts:174-181`,
+`apps/cli/src/api-layer.ts:209`), and `memhtml doctor` reports rows the hook missed.
 
 The alternative would be to key the state plane on something other than the path, which means inventing a
 second identity for a memory. The path is the id (`packages/contracts/src/types.ts:102-107`).

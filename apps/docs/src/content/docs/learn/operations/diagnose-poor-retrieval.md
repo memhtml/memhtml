@@ -88,7 +88,7 @@ ERR_INDEX_STALE       ERR_EMBED_MODEL_MISMATCH  ERR_MODEL_UNAVAILABLE   ERR_STOR
 ERR_GIT               ERR_DISCRIMINATION_FAILED ERR_UNKNOWN
 ```
 
-Fifteen codes (`apps/cli/src/envelope.ts:66`), append-only: a shipped code keeps its meaning forever
+Fifteen codes (`apps/cli/src/envelope.ts:67`), append-only: a shipped code keeps its meaning forever
 and is never removed.
 
 Branch on `code` and never on the `error` prose, which changes freely as the wording improves. Most

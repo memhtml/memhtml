@@ -410,7 +410,7 @@ envelope. `docs/code-mode.md` is the cookbook, with a measured helper and five r
 | MemoryAgentBench FactConsolidation single-hop (26KB to 1.1MB stores) | 92% to 97% | ~60% at 26KB only |
 | MemoryAgentBench FactConsolidation multi-hop | 37% to 49% | ≤7% all methods |
 | BEAM Contradiction Resolution (100K split, 40 probes) | 43.8% mean | 0% to 5% all systems |
-| LongMemEval-S (25-instance smoke) | 68% | ~55% to 65% typical agent baselines |
+| LongMemEval-S (full 500, judged 2026-08-07) | 67.0% | ~55% to 65% typical agent baselines |
 
 Read the cross-judge numbers as reference points rather than as a ranking: the judges here are verbatim
 prompt ports running haiku-4.5, where the papers used gpt-4o and gpt-4.1-mini. `ROADMAP.md` carries these
@@ -441,10 +441,12 @@ The layering is strict and TypeScript project references enforce it. `@memhtml/c
 `@memhtml/domain` import `effect` and nothing else, and a test reads `domain`'s own `dist` to confirm it
 names no database driver, no SDK, and no `node:fs`.
 
-None of them is published. All twelve are `private`, and `mise run package:assemble` bundles them into
-the single `memhtml` package that carries the two binaries — so the table below is a map of the source,
-not a list of things to install. `RELEASING.md` covers how the artifact is built and what must stay
-outside the bundle.
+None of them is published. Every workspace package is `private`, and `mise run package:assemble`
+bundles the libraries and the binary-bearing apps into the single `memhtml` package that carries the
+two binaries — the docs site and the integration-test harness stay outside the bundle
+(`tsdown.config.ts` names the exact set). The table below is a map of the source, not a list of
+things to install. `RELEASING.md` covers how the artifact is built and what must stay outside the
+bundle.
 
 | Package | What it owns |
 |---|---|
@@ -459,6 +461,8 @@ outside the bundle.
 | `@memhtml/eval` | The fixture corpus generator and the refusable discrimination gate. |
 | `@memhtml/cli` | The `memhtml` binary, the envelope contract, and the one composition root. |
 | `@memhtml/mcp` | The `memhtml-mcp` stdio server: 14 tools, 2 resources. |
+| `@memhtml/consolidator` | The sandboxed eve agent that distils candidate memories from raw transcripts. |
+| `@memhtml/docs` | The documentation site. |
 
 ## Development
 

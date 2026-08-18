@@ -55,15 +55,15 @@ Markdown cannot express and that the index consumes mechanically.
 | Element | Meaning | Indexer semantics |
 |---|---|---|
 | `<article>` | the memory; exactly one, and the scope the content hash covers | text becomes `files.body_text` (`packages/index/src/project.ts:160`), which drives `fts_text`, `word_count`, and the embedding chunks |
-| `<mark>` | the claim, the one span the memory turns on | `packages/html/src/parse.ts:285` fills `files.gist`, the first `fts_text` field after the title, the first `disclosure_text` line, and the span a correction targets |
-| `<time datetime>` | when the fact happened, as distinct from when it was written | the first one in document order fills `files.event_at` (`packages/html/src/parse.ts:279`); the recency ranker sorts on `coalesce(event_at, updated_at)` |
+| `<mark>` | the claim, the one span the memory turns on | `packages/html/src/parse.ts:289` fills `files.gist`, the first `fts_text` field after the title, the first `disclosure_text` line, and the span a correction targets |
+| `<time datetime>` | when the fact happened, as distinct from when it was written | the first one in document order fills `files.event_at` (`packages/html/src/parse.ts:284`); the recency ranker sorts on `coalesce(event_at, updated_at)` |
 | `<dl>/<dt>/<dd>` | structured facets | positional pairs become `file_facets(path, name, value)` rows; one `<dt>` may govern several `<dd>`s and each becomes its own row |
-| `<data value>` | a machine value beside the human phrasing | the first `<data value>` inside a `<dd>`, read as a finite number, fills `file_facets.numeric_value` (`packages/html/src/parse.ts:257`). It carries no unit; the unit lives in the prose |
-| `<cite>`, `<q cite>` | where the fact came from | rows in `file_citations` (`packages/html/src/parse.ts:268`), with the `cite` URI going into `file_citations.href` |
-| `<dfn>` | the term a semantic memory defines | promotes to a `concept:<term>` entity row (`packages/html/src/parse.ts:289`) |
+| `<data value>` | a machine value beside the human phrasing | the first `<data value>` inside a `<dd>`, read as a finite number, fills `file_facets.numeric_value` (`packages/html/src/parse.ts:261`). It carries no unit; the unit lives in the prose |
+| `<cite>`, `<q cite>` | where the fact came from | rows in `file_citations` (`packages/html/src/parse.ts:272`), with the `cite` URI going into `file_citations.href` |
+| `<dfn>` | the term a semantic memory defines | promotes to a `concept:<term>` entity row (`packages/html/src/parse.ts:293`) |
 | `<details>/<summary>` | elaboration behind a fold | `<summary>` reaches `disclosure_text`; the body is searchable through `body_text` and is never quoted back |
 | `<aside>` | a scope caveat that is not the claim | searchable through `body_text`, and absent from `disclosure_text` (`packages/index/src/project.ts:61`) |
-| `<code data-lang="ts">` | the snippet's language | promotes to a `lang:ts` entity (`packages/html/src/parse.ts:301`), lowercased. Never `class`, never `lang=` |
+| `<code data-lang="ts">` | the snippet's language | promotes to a `lang:ts` entity (`packages/html/src/parse.ts:305`), lowercased. Never `class`, never `lang=` |
 | `<pre>`, `<code>`, `<kbd>`, `<samp>`, `<var>` | technical content | all text reaches `body_text`; `<pre>` and `<code>` are excluded from `gist`; only `<pre>` preserves whitespace in the hash |
 | `<div>`, `<span>` | containers a pasted sample brings with it | permitted under a `<figure>` only; elsewhere they warn (`packages/html/src/vocabulary.ts:142`) |
 
@@ -92,7 +92,7 @@ the content hash where it was, and that case is what the index's narrow write ru
 ## 4. Head edits go through byte-splice editors
 
 `setMeta` (`packages/html/src/editors.ts:154`), `addLink`
-(`packages/html/src/editors.ts:216`), and `readMeta` (`packages/html/src/editors.ts:261`) edit bytes
+(`packages/html/src/editors.ts:216`), and `readMeta` (`packages/html/src/editors.ts:263`) edit bytes
 directly instead of parsing the file and serializing it again. A serializer round trip drops a newline
 inside a `<pre>`, which would move the content hash of every file a bookkeeping pass touched
 (`packages/store/src/store.ts:417-419`).
