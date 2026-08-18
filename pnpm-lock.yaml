@@ -9,6 +9,9 @@ catalogs:
     '@effect/platform-node':
       specifier: 4.0.0-rc.109
       version: 4.0.0-rc.109
+    '@effect/platform-node-shared':
+      specifier: 4.0.0-rc.109
+      version: 4.0.0-rc.109
     '@effect/vitest':
       specifier: 4.0.0-rc.109
       version: 4.0.0-rc.109
@@ -241,6 +244,9 @@ importers:
       '@effect/platform-node':
         specifier: 'catalog:'
         version: 4.0.0-rc.109(effect@4.0.0-rc.109)(redis@6.2.1)
+      '@effect/platform-node-shared':
+        specifier: 'catalog:'
+        version: 4.0.0-rc.109(effect@4.0.0-rc.109)
       '@memhtml/cli':
         specifier: workspace:*
         version: link:../cli

@@ -79,10 +79,17 @@ overrides:
   # Playwright's — that, not a fixed release, is what would make this reachable.
 
 # Effect v4 is pre-release: every Effect package moves as one pinned, tested set, and the
-# three versions here are always the same string.
+# four versions here are always the same string.
+#
+# @effect/platform-node-shared is @effect/platform-node's own dependency, declared with a
+# caret upstream. It is pinned here and declared by apps/mcp so the published manifest
+# carries the WHOLE set exactly: left to the caret, a consumer's installer resolves it to
+# the newest rc, whose peer wants an effect this artifact does not ship — an ERESOLVE
+# override and a mixed Effect RC set the gates never ran against.
 catalog:
   effect: 4.0.0-rc.109
   "@effect/platform-node": 4.0.0-rc.109
+  "@effect/platform-node-shared": 4.0.0-rc.109
   "@effect/vitest": 4.0.0-rc.109
   fast-check: 4.9.0
 

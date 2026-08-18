@@ -159,7 +159,11 @@ there, where the emitted `index.mjs` is ~316 kB inlined rather than ~17 kB besid
 binaries.
 
 **Effect v4 is a pre-release and breaks between versions.** The catalog in `pnpm-workspace.yaml` moves
-`effect`, `@effect/platform-node`, and `@effect/vitest` as one set — never one of the three. A typed
+`effect`, `@effect/platform-node`, `@effect/platform-node-shared`, and `@effect/vitest` as one set —
+never one of the four. `@effect/platform-node-shared` is in the set even though no code imports it:
+it is `@effect/platform-node`'s own caret-ranged dependency, and `apps/mcp` declares it so the
+published manifest pins it — otherwise a consumer's installer resolves the newest rc and ships a
+mixed set the gates never ran against (`catalog.test.ts` + the packaging claim gate this). A typed
 error is `Schema.TaggedError<Self>()("Tag", fields)`, which supplies `_tag` itself, so the fields must
 NOT declare one; and `McpServer.layerStdio` requires `protocols: [McpProtocol.v2025_06_18]`, the only
 adapter shipped. `minimumReleaseAge: 4320` also means the newest release is not installable for its

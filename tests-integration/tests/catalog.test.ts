@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest"
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
 
 /**
- * The workspace catalog's own invariant: Effect v4 is a pre-release whose three packages are a
+ * The workspace catalog's own invariant: Effect v4 is a pre-release whose four packages are a
  * SET, and `pnpm-workspace.yaml` holds them at one version string.
  *
  * This tier is the right home because the subject is the repo, not a package: no single package's
@@ -72,7 +72,12 @@ const readManifests = async (): Promise<
   return manifests
 }
 
-const EFFECT_SET = ["effect", "@effect/platform-node", "@effect/vitest"] as const
+const EFFECT_SET = [
+  "effect",
+  "@effect/platform-node",
+  "@effect/platform-node-shared",
+  "@effect/vitest"
+] as const
 
 describe("the workspace catalog", () => {
   it("holds every Effect package at ONE version string", async () => {
@@ -91,7 +96,7 @@ describe("the workspace catalog", () => {
 
   it("names every Effect package the set is supposed to cover", async () => {
     /**
-     * The completeness half, and the reason the assertion above cannot be trusted alone: a fourth
+     * The completeness half, and the reason the assertion above cannot be trusted alone: an
      * `@effect/*` entry added to the catalog without being added to {@link EFFECT_SET} would be
      * free to drift, and a same-string check over a stale list would still pass. So the list is
      * derived from the catalog and compared, rather than assumed to be exhaustive.

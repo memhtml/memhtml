@@ -40,6 +40,7 @@
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
+    "@effect/platform-node-shared": "catalog:",
     "@memhtml/cli": "workspace:*",
     "@memhtml/contracts": "workspace:*",
     "@memhtml/domain": "workspace:*",

@@ -223,6 +223,26 @@ describe("only the assembled package can publish", () => {
   })
 })
 
+describe("the published manifest pins the whole Effect set", () => {
+  /**
+   * `@effect/platform-node-shared` is `@effect/platform-node`'s own dependency, declared upstream
+   * with a caret that crosses rc boundaries. The published manifest pins only what a workspace
+   * package DECLARES (`scripts/package-manifest.mjs` walks manifest dependencies), so the pin
+   * exists exactly as long as `apps/mcp` declares it: left to the caret, a consumer's installer
+   * resolves the newest rc, whose peer wants an `effect` this artifact does not ship — an
+   * ERESOLVE override and a mixed Effect RC set no gate here ever ran against. The
+   * one-version-string invariant over the set itself lives in `catalog.test.ts`.
+   */
+  it("declares @effect/platform-node-shared beside @effect/platform-node", async () => {
+    const manifest = (await manifestOf("apps/mcp")) as {
+      readonly dependencies?: Record<string, string>
+    }
+    const names = Object.keys(manifest.dependencies ?? {})
+    expect(names).toContain("@effect/platform-node")
+    expect(names).toContain("@effect/platform-node-shared")
+  })
+})
+
 /**
  * The census, which is what makes the claim tables a gate rather than a list of things somebody thought
  * of. Any shipped source that resolves a path from its own location is declared or a failure, at the
