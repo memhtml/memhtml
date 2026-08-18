@@ -228,11 +228,23 @@ run = "lefthook uninstall"
 # scan worth running. The one place a scanner DOES gate is lefthook's pre-commit leak
 # job, because a staged secret must never become a commit.
 
+[tasks."security:vex"]
+description = "Render osv-scanner.toml from the OpenVEX ledger (security/memhtml.openvex.json)"
+# The ledger is the single record of why a finding is suppressed, and the three vulnerability
+# scanners disagree about how to read one. Probed 2026-08-18: grype 0.111.1 and trivy 0.70.0 both
+# take `--vex` and honour `not_affected`; osv-scanner 2.5.0 has no VEX flag at all, so its
+# `[[IgnoredVulns]]` TOML is generated rather than hand-kept. A second hand-maintained list is how a
+# suppression outlives the reasoning that justified it.
+run = "node scripts/vex-to-osv-config.mjs"
+
 [tasks."security:osv"]
 description = "Vulnerability scan of pnpm-lock.yaml via osv-scanner (SARIF, report-only)"
+# `--config` carries the VEX-derived suppressions; osv-scanner names the justification in its own
+# output ("... filtered out because: not_affected: vulnerable_code_not_in_execute_path"), so a
+# suppression is legible where it applies rather than only where it is declared.
 run = """
 mkdir -p .sarif
-osv-scanner scan source --lockfile=pnpm-lock.yaml \
+osv-scanner scan source --lockfile=pnpm-lock.yaml --config=osv-scanner.toml \
   --format=sarif --output=.sarif/osv.sarif || true
 """
 
@@ -249,9 +261,39 @@ semgrep scan \
 
 [tasks."security:leaks"]
 description = "Secrets sweep over git history via betterleaks (SARIF, report-only)"
+# `--exit-code=0` means betterleaks reports success whether it found secrets, found none, or
+# never produced a usable report — so "the sweep found nothing" and "the sweep did not happen"
+# arrive as the same exit status. Observed 2026-08-18 on CI run 32092649447: betterleaks exited
+# 0 having written a truncated `betterleaks.sarif` and printed neither its `scanned N bytes`
+# nor its `no leaks found` line, `mise run security` went green, and the only thing that
+# noticed was `upload-sarif` rejecting the file as `Unexpected end of JSON input` — which
+# fails the job for the wrong reason and reads like an upload defect. A re-run passed, so it
+# is intermittent, which is the worst version: a silent no-op that usually works.
+#
+# So the report is verified rather than assumed, and retried once before the task fails.
+# Failing loses nothing here that report-only exists to protect: an invalid SARIF carries no
+# finding detail to throw away, and a sweep that produced no report is the one result that
+# must not be mistaken for a clean one.
 run = """
 mkdir -p .sarif
+verify() {
+  node -e '
+    const { readFileSync } = require("node:fs")
+    const sarif = JSON.parse(readFileSync(".sarif/betterleaks.sarif", "utf8"))
+    if (!Array.isArray(sarif.runs) || sarif.runs.length === 0) throw new Error("no runs[]")
+    if (!sarif.runs.every((r) => Array.isArray(r.results))) throw new Error("a run has no results[]")
+  ' 2>/dev/null
+}
 betterleaks git . -f sarif -r .sarif/betterleaks.sarif --exit-code=0
+if ! verify; then
+  echo "security:leaks: betterleaks exited 0 but its SARIF is unusable; retrying once" >&2
+  rm -f .sarif/betterleaks.sarif
+  betterleaks git . -f sarif -r .sarif/betterleaks.sarif --exit-code=0
+  if ! verify; then
+    echo "security:leaks: betterleaks produced no usable SARIF twice — the secrets sweep did NOT run" >&2
+    exit 1
+  fi
+fi
 """
 
 [tasks."security:sbom"]
@@ -262,7 +304,8 @@ description = "CycloneDX SBOM of the workspace via syft, then grype scans it (SA
 run = """
 mkdir -p .sarif .sbom
 syft scan dir:. --source-name memhtml -o cyclonedx-json=.sbom/sbom.cyclonedx.json
-grype sbom:.sbom/sbom.cyclonedx.json -o sarif --file .sarif/grype.sarif || true
+grype sbom:.sbom/sbom.cyclonedx.json --vex security/memhtml.openvex.json \
+  -o sarif --file .sarif/grype.sarif || true
 """
 
 [tasks."security:trivy"]
@@ -270,11 +313,15 @@ description = "Filesystem vuln + misconfig scan via trivy (SARIF, report-only)"
 run = """
 mkdir -p .sarif
 trivy fs . --scanners vuln,misconfig --severity HIGH,CRITICAL \
+  --vex security/memhtml.openvex.json \
   --format sarif --output .sarif/trivy.sarif --exit-code 0
 """
 
 [tasks.security]
 description = "All scanners in parallel: osv + semgrep + leaks + sbom/grype + trivy (SARIF under .sarif/)"
+# `security:vex` is NOT a dependency: osv-scanner.toml is committed and gated against drift by
+# tests-integration/tests/vex.test.ts, so regenerating it here would let a scan run against a file
+# that no test has seen. Editing the ledger means running `mise run security:vex` and committing.
 # Genuinely independent — none of the five builds anything or reads another's output
 # (sbom/grype chain internally within their one task).
 depends = ["security:osv", "security:semgrep", "security:leaks", "security:sbom", "security:trivy"]

@@ -1,0 +1,30 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/memhtml/memhtml/security/memhtml.openvex.json",
+  "author": "memhtml maintainers",
+  "role": "document creator",
+  "timestamp": "2026-08-18T03:15:53Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GHSA-jmr9-qjv8-65gv",
+        "@id": "https://github.com/advisories/GHSA-jmr9-qjv8-65gv",
+        "aliases": ["CVE-2026-56876"],
+        "description": "extract-zip does not validate symlink targets when extracting zip archives, so an archive containing a relative symlink can point outside the extraction directory."
+      },
+      "timestamp": "2026-08-18T03:15:53Z",
+      "products": [
+        {
+          "@id": "pkg:npm/extract-zip@2.0.1",
+          "identifiers": {
+            "purl": "pkg:npm/extract-zip@2.0.1"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory's vulnerable range is `<= 2.0.1` and 2.0.1 is the highest version ever published, so no upgrade or override target exists; GitHub reports first_patched: NONE. extract-zip reaches this repository through exactly one path — @puppeteer/browsers <- puppeteer-core <- lighthouse <- @lhci/cli, a devDependency of apps/docs used only by the `test:budget` gate — and that path never calls it. Measured 2026-08-18: none of the three packages carries an install script, so `pnpm install` never invokes it; `test:budget` ran green under a module-load probe over its 17 node processes with zero loads of extract-zip, @puppeteer/browsers, or yauzl, the probe having been positive-controlled against a forced require first; the isolation does not rest on the CHROME_PATH that hands Lighthouse a Playwright Chromium, because with it unset lhci fails `Chrome installation not found` rather than falling back to a browser download; and the published `memhtml` package declares 12 dependencies, none of them on this path, because apps/docs is not among the packages feeding that manifest. Revisit if the docs toolchain ever downloads its own browser instead of being handed one — that, not a fixed release, is what would make this reachable."
+    }
+  ]
+}
