@@ -60,11 +60,12 @@ You do not need a client to check the wiring. Speak the protocol on stdin:
 The handshake answers:
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"logging":{},"completions":{},"resources":{"subscribe":true,"listChanged":true},"tools":{"listChanged":true}},"serverInfo":{"name":"memhtml","version":"0.1.0"}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"logging":{},"completions":{},"resources":{"subscribe":true,"listChanged":true},"tools":{"listChanged":true}},"serverInfo":{"name":"memhtml","version":"0.2.2"}}}
 ```
 
 `2025-06-18` is the protocol revision this server speaks, and it is the only adapter shipped, so a
-client negotiating a different revision will not connect.
+client negotiating a different revision will not connect. `serverInfo.version` is the released
+package version, so expect it to read higher than this transcript.
 
 `tools/list` publishes the tools in this order:
 
