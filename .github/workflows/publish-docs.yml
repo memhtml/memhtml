@@ -1,0 +1,43 @@
+# Tells memhtml.github.io to publish, on every push to main that touches the docs site or the
+# prose surfaces it renders.
+#
+# The publisher lives in memhtml/memhtml.github.io because an org site serves from that repository's
+# root; see its own docs.yml for why. GITHUB_TOKEN cannot reach across repositories and this org
+# runs no PATs, so the bridge is a deploy key: scoped to exactly one repository, no user identity,
+# no expiry surprise, revocable from that repository's settings alone. This job pushes a one-line
+# trigger commit over that key, and the publisher's `push` trigger does the rest. The commit body
+# carries the source SHA being published, so the publisher's git log doubles as the publish log.
+#
+# The trigger is a commit rather than a `repository_dispatch` because a dispatch needs a token with
+# API scope (a PAT or a GitHub App installation), while a push needs only the deploy key. The
+# publisher builds from the source repo's `main` at checkout time, not from this SHA — two merges in
+# quick succession coalesce into one build of the newer state, and its `concurrency: pages` group
+# serialises the deploys.
+name: publish-docs
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/docs/**"
+      - "README.md"
+permissions:
+  contents: read
+concurrency:
+  group: publish-docs
+  cancel-in-progress: true
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: memhtml/memhtml.github.io
+          ssh-key: ${{ secrets.PAGES_TRIGGER_KEY }}
+      - name: Push a trigger commit
+        run: |
+          git config user.name "memhtml-docs-trigger"
+          git config user.email "docs-trigger@users.noreply.github.com"
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .last-publish-trigger
+          git add .last-publish-trigger
+          git commit -m "publish: memhtml@${GITHUB_SHA}"
+          git push
