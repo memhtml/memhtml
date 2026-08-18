@@ -3,9 +3,9 @@ import { deflateSync } from "node:zlib"
 /**
  * The mark, and every raster derived from it.
  *
- * The mark is the masthead reduced to three strokes: two ink rules on warm paper — a document name
- * and a status line — closed by a standards-red band that bleeds off the foot. It is the same object
- * `.rfc-masthead` sets at the head of a page, at the smallest size that object still reads.
+ * The mark is an RFC masthead reduced to three strokes: two ink rules on warm paper — a document
+ * name and a status line — closed by a standards-red band that bleeds off the foot. It is the
+ * document header a printed specification opens with, at the smallest size that object still reads.
  *
  * Three properties make it survive 16px, and each is a constraint rather than a preference:
  *
