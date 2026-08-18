@@ -273,12 +273,12 @@ refuses a link whose endpoints disagree with its class in either direction
 either end. That is what keeps a to-do list out of PageRank, MMR, and the retention bridge count.
 
 **Two open tasks with identical bodies are two real work items**, so content-hash dedup carves tasks
-out (`store.ts:292`): the `files_content_hash_active` partial unique index and the write path's dedupe
-lookup both filter `memory_type <> 'task'` (`store.ts:283`, `packages/index/src/traces-persist.ts:152`),
+out (`store.ts:316-318`): the `files_content_hash_active` partial unique index and the write path's dedupe
+lookup both filter `memory_type <> 'task'` (`store.ts:314-315`, `packages/index/src/traces-persist.ts:152`),
 and a memory whose article matches an open task's is not deduped onto it either.
 
 **Corrections.** `memory_correct` writes a fresh `<article>` with a new claim in `<mark>`, stamps
-`memhtml-supersedes` toward the old file, and archives the old one (`store.ts:764`). No `<ins>`/`<del>` —
+`memhtml-supersedes` toward the old file, and archives the old one (`store.ts:830`). No `<ins>`/`<del>` —
 git is the diff.
 
 ## Writing markup directly
@@ -305,5 +305,5 @@ commit, and every op goes through the same render-then-reparse gate individually
 twenty is refused with its own violation list, and in the default atomic mode the whole batch is
 refused before any file exists. Content-hash dedup applies per op, resolved against the corpus AND
 against earlier ops in the same batch, with the same `task` carve-out in both directions
-(`store.ts:303`). The batch is a commit-shape optimization, never a validation shortcut;
+(`store.ts:335`). The batch is a commit-shape optimization, never a validation shortcut;
 `docs/design.md` "Batch writes" has the contract.

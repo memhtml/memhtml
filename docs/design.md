@@ -169,7 +169,7 @@ no file and no commit. Structurally a partial unique index refuses it anyway:
 (`packages/index/migrations/0008_tasks.sql:123-124`). The lookup carries the same `task` exclusion as the
 index, so the question and the answer agree by construction rather than by discipline.
 
-**Tasks are carved out of dedup in both directions** (`packages/store/src/store.ts:292-303`). Two open
+**Tasks are carved out of dedup in both directions** (`packages/store/src/store.ts:316-335`). Two open
 tasks with identical bodies are two real work items; and a memory whose article matches a task's must not
 be deduped onto that task, or the caller is handed a task's path as the home of its fact. One predicate,
 not a `memoryType !== "task"` test at each of the three places the batch touches its hash map.
@@ -235,7 +235,7 @@ parse of the same bytes and a second place the gist rule could drift from `parse
 conflict is not an outcome — the op wrote. A v2 field is possible; a sixth number a client cannot
 reconcile with the other five is not.
 
-**Correction** (`packages/store/src/store.ts:764`) reads the target first, or the tree gains an orphan
+**Correction** (`packages/store/src/store.ts:830`) reads the target first, or the tree gains an orphan
 superseding file with nothing to supersede. Its `memhtml-supersedes` points at the target's *archive* path,
 where the file lives only after this commit lands; pointing at the pre-archive path would create a
 dangling href in the same commit that made it dangle. Both files land in one commit.
@@ -896,7 +896,7 @@ operations layer (`apps/cli/src/operations.ts:367-381`), so `memhtml apply` and 
 report different codes for one refused op.
 
 Fourteen MCP tools are built with `Tool.make` and collected by `Toolkit.make`
-(`apps/mcp/src/tools.ts:712`), plus two resources — `memhtml://file/{path}` for citation-grade drill-down and
+(`apps/mcp/src/tools.ts:774`), plus two resources — `memhtml://file/{path}` for citation-grade drill-down and
 `memhtml://sleep/{run-id}` for a run report (`apps/mcp/src/resources.ts:90`). Sleep is not an agent tool: it is
 an operator action producing a reviewable branch. Two things about the server are forced by the transport
 and the SDK rather than chosen:

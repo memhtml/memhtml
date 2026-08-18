@@ -10,8 +10,8 @@ This repository is the software that manages a memory root, a separate git repos
 - `apps/cli/src/commands.ts` (1048 LOC)
 - `apps/cli/src/run.ts` (1039 LOC)
 - `apps/cli/src/api-layer.ts` (569 LOC)
+- `apps/cli/src/exec.ts` (534 LOC)
 - `apps/cli/src/doctor.ts` (520 LOC)
-- `apps/cli/src/exec.ts` (434 LOC)
 - `apps/cli/src/apply.ts` (399 LOC)
 - `apps/cli/src/envelope.ts` (157 LOC)
 
