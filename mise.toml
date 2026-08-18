@@ -228,11 +228,23 @@ run = "lefthook uninstall"
 # scan worth running. The one place a scanner DOES gate is lefthook's pre-commit leak
 # job, because a staged secret must never become a commit.
 
+[tasks."security:vex"]
+description = "Render osv-scanner.toml from the OpenVEX ledger (security/memhtml.openvex.json)"
+# The ledger is the single record of why a finding is suppressed, and the three vulnerability
+# scanners disagree about how to read one. Probed 2026-08-18: grype 0.111.1 and trivy 0.70.0 both
+# take `--vex` and honour `not_affected`; osv-scanner 2.5.0 has no VEX flag at all, so its
+# `[[IgnoredVulns]]` TOML is generated rather than hand-kept. A second hand-maintained list is how a
+# suppression outlives the reasoning that justified it.
+run = "node scripts/vex-to-osv-config.mjs"
+
 [tasks."security:osv"]
 description = "Vulnerability scan of pnpm-lock.yaml via osv-scanner (SARIF, report-only)"
+# `--config` carries the VEX-derived suppressions; osv-scanner names the justification in its own
+# output ("... filtered out because: not_affected: vulnerable_code_not_in_execute_path"), so a
+# suppression is legible where it applies rather than only where it is declared.
 run = """
 mkdir -p .sarif
-osv-scanner scan source --lockfile=pnpm-lock.yaml \
+osv-scanner scan source --lockfile=pnpm-lock.yaml --config=osv-scanner.toml \
   --format=sarif --output=.sarif/osv.sarif || true
 """
 
@@ -292,7 +304,8 @@ description = "CycloneDX SBOM of the workspace via syft, then grype scans it (SA
 run = """
 mkdir -p .sarif .sbom
 syft scan dir:. --source-name memhtml -o cyclonedx-json=.sbom/sbom.cyclonedx.json
-grype sbom:.sbom/sbom.cyclonedx.json -o sarif --file .sarif/grype.sarif || true
+grype sbom:.sbom/sbom.cyclonedx.json --vex security/memhtml.openvex.json \
+  -o sarif --file .sarif/grype.sarif || true
 """
 
 [tasks."security:trivy"]
@@ -300,11 +313,15 @@ description = "Filesystem vuln + misconfig scan via trivy (SARIF, report-only)"
 run = """
 mkdir -p .sarif
 trivy fs . --scanners vuln,misconfig --severity HIGH,CRITICAL \
+  --vex security/memhtml.openvex.json \
   --format sarif --output .sarif/trivy.sarif --exit-code 0
 """
 
 [tasks.security]
 description = "All scanners in parallel: osv + semgrep + leaks + sbom/grype + trivy (SARIF under .sarif/)"
+# `security:vex` is NOT a dependency: osv-scanner.toml is committed and gated against drift by
+# tests-integration/tests/vex.test.ts, so regenerating it here would let a scan run against a file
+# that no test has seen. Editing the ledger means running `mise run security:vex` and committing.
 # Genuinely independent — none of the five builds anything or reads another's output
 # (sbom/grype chain internally within their one task).
 depends = ["security:osv", "security:semgrep", "security:leaks", "security:sbom", "security:trivy"]

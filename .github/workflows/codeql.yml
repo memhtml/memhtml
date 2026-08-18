@@ -1,0 +1,65 @@
+# CodeQL, kept in its own workflow because it is the one scanner that does not fit `mise run
+# security`: its analysis runs inside the action rather than behind a CLI a developer can invoke, so
+# there is no local task it could drift from. Every other scanner is a mise task for exactly that
+# reason, and pretending this one is too would be a lie in the task list.
+#
+# Unlike the five in security.yml, this one GATES. The repository ruleset's `code_scanning` rule names
+# CodeQL with `alerts_threshold: errors` and `security_alerts_threshold: high_or_higher`, so an error
+# or high finding blocks the merge rather than filing a report. A finding that is real gets fixed; a
+# finding that is not applicable gets a statement in `security/memhtml.openvex.json` and a dismissal
+# that cites it, which is the whole point of keeping that ledger.
+#
+# The three sub-actions MUST be one version — init, analyze, and security.yml's upload-sarif all pin
+# ff2f1c62 (v4.37.7, confirmed against the tags API, since `git/ref/tags` returns the annotated tag
+# object rather than the commit). Mixing versions is unsupported and fails at analyze time.
+name: codeql
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Weekly, for the same reason security.yml has a schedule: the query suite moves even when the code
+  # does not, and a finding that lands on a quiet week should not wait for the next push.
+  schedule:
+    - cron: "47 6 * * 2"
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      # CodeQL reads workflow run metadata to attribute an analysis to its trigger.
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          # One language covers the whole repo: `javascript-typescript` is a single CodeQL language,
+          # not two, so naming both would be an error rather than more coverage.
+          languages: javascript-typescript
+          # No build: the JS/TS extractor reads source directly. This job deliberately does NOT run
+          # `pnpm install`, which keeps it fast and keeps dependency code out of the analysis.
+          build-mode: none
+          # `security-extended` over the default suite, because the point of this workflow is maximum
+          # coverage. It trades precision for recall, so it will surface findings the default suite
+          # does not — triage each one to a fix or to a VEX statement plus a dismissal that cites it.
+          queries: security-extended
+          config: |
+            paths-ignore:
+              # Compiled output. Absent from a clean checkout, but a dirty workspace or a future
+              # build step here would otherwise get every finding reported twice — once in the
+              # source that produced it and once in the emitted JavaScript.
+              - "**/dist/**"
+              - dist-package/**
+              # Vendored and generated: the docs site's built assets and pagefind index are not
+              # first-party source and are not edited by hand.
+              - apps/docs/dist/**
+
+      - uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          category: /language:javascript-typescript
