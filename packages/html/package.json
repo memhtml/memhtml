@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/html",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "Parse and serialize the memory file format.",
   "type": "module",

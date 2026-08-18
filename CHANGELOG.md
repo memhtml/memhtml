@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.3](https://github.com/memhtml/memhtml/compare/memhtml-v0.2.2...memhtml-v0.2.3) (2026-08-18)
+
+
+### Bug Fixes
+
+* **docs:** centre the title block's lines on the column, not the prose measure ([bc3220d](https://github.com/memhtml/memhtml/commit/bc3220de5f37d50459c539bc3932f1ba1bdb82f0))
+* **docs:** let the title block's lines centre on the column, not the measure ([cd9be5c](https://github.com/memhtml/memhtml/commit/cd9be5c73845aea68675f3684e97bd72b4d7cc32))
+* spell the system's own strings in US English ([5323446](https://github.com/memhtml/memhtml/commit/5323446fd86973920ee686b679fa59f5a6e86ad2))
+
 ## [0.2.2](https://github.com/memhtml/memhtml/compare/memhtml-v0.2.1...memhtml-v0.2.2) (2026-08-18)
 
 
