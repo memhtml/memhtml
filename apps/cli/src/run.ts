@@ -405,7 +405,8 @@ const dispatch = (
           dueBefore: str(parsed, "due-before"),
           limit: int(parsed, "limit"),
           cursor: str(parsed, "cursor"),
-          includeArchived: bool(parsed, "include-archived", false)
+          includeArchived: bool(parsed, "include-archived", false),
+          detected: bool(parsed, "detected", false)
         })
         return ["task.list", result] as const
       })

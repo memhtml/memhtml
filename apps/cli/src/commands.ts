@@ -514,6 +514,13 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         type: "boolean",
         description: "Include finished tasks. `done` archives, so they are otherwise absent.",
         default: false
+      },
+      {
+        name: "detected",
+        type: "boolean",
+        description:
+          "Only machine-detected tasks: the ones carrying a `memhtml-finding-key` minted by sleep.",
+        default: false
       }
     ],
     responseTypes: ["task.list"]

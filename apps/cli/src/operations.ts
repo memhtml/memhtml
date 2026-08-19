@@ -1402,6 +1402,11 @@ export interface ListTasksParams {
   /** The previous page's `nextCursor`: the last path returned. A keyset rather than an offset. */
   readonly cursor?: string | undefined
   readonly includeArchived?: boolean | undefined
+  /**
+   * Restrict to machine-detected tasks: `finding_key IS NOT NULL`. Absent or false is no filter, so
+   * the default working set stays every task however it was filed.
+   */
+  readonly detected?: boolean | undefined
 }
 
 /** One task row as `task list` reports it. */
@@ -1449,6 +1454,13 @@ export const listTasks = (params: ListTasksParams) =>
     const values: Array<string | number> = []
 
     if (params.includeArchived !== true) conditions.push("f.archived = 0")
+    /**
+     * The presence of a key IS the "detected" predicate — there is no boolean column, because a
+     * detector's identity anchor and the fact that a detector filed the task are the same fact.
+     * Stated as `IS NOT NULL` rather than as a range over a detector segment: this flag asks "which
+     * tasks did a machine open", and naming a detector is `sleep`'s question, not the working set's.
+     */
+    if (params.detected === true) conditions.push("f.finding_key IS NOT NULL")
     if (params.status !== undefined && params.status !== "") {
       const status = yield* decodeTaskStatus(params.status)
       conditions.push("f.task_status = ?")

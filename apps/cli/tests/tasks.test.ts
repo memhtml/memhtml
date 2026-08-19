@@ -1,11 +1,12 @@
-import { readFile } from "node:fs/promises"
+import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
+import { COMMANDS } from "../src/commands.js"
 import { EXIT_RUNTIME, EXIT_USAGE } from "../src/envelope.js"
 import { AUTHORABLE_RELS } from "../src/operations.js"
-import { run } from "../src/run.js"
+import { parseArgv, run } from "../src/run.js"
 import { type Cli, makeCli } from "./harness.js"
 
 /**
@@ -87,6 +88,35 @@ describe("usage validation, before any service is touched", () => {
     const result = await run(["task", "add"])
     expect(result.exitCode).toBe(EXIT_USAGE)
     expect((JSON.parse(result.stdout) as Record<string, unknown>).error).toContain("--title")
+  })
+
+  /**
+   * `--detected` is a BARE boolean, so the two things that can go wrong are both parse-level: the
+   * table not declaring it (which `validate`'s unknown-flag loop turns into exit 2 before any
+   * service is reached) and `--no-detected` not resolving to an explicit false.
+   */
+  it("accepts a bare --detected rather than rejecting it as unknown", async () => {
+    const result = await run(["task", "list", "--detected", "--status", "in-progress"])
+    /**
+     * Deliberately paired with an INVALID status, so this passes only when `--detected` is known.
+     * On an unknown `--detected` the flag loop returns first — it runs before the per-command spec
+     * is even looked up — and the failure would name the flag rather than the status vocabulary.
+     */
+    expect(result.exitCode).toBe(EXIT_USAGE)
+    const body = JSON.parse(result.stdout) as Record<string, unknown>
+    expect(body.error).not.toContain("unknown flag")
+    expect(body.error).toContain("todo, doing, blocked, done")
+  })
+
+  it("reads `--no-detected` as an explicit false, matching the declared default", async () => {
+    expect(parseArgv(["task", "list", "--no-detected"]).flags.get("detected")).toEqual([false])
+    // The negation only parses because the flag is in the table with `default: false`, and the
+    // default is what makes an absent flag and `--no-detected` the same unfiltered working set.
+    const spec = COMMANDS.find((command) => command.name === "task list")
+    expect(spec?.flags.find((flag) => flag.name === "detected")).toMatchObject({
+      type: "boolean",
+      default: false
+    })
   })
 
   it("suggests `task list` for a near miss on the compound name", async () => {
@@ -351,5 +381,103 @@ describe("the task lifecycle, end to end", () => {
     expect(open.tasks.map((task) => task.path)).not.toContain(first.path)
     const all = await cli.json<TaskList>(["task", "list", "--include-archived"])
     expect(all.tasks.map((task) => task.path)).toContain(done.archivePath)
+  })
+})
+
+describe("--detected: the tasks a machine opened", () => {
+  /**
+   * Its own fixture repo, because the corpus is the assertion. `--detected` is a set DIFFERENCE
+   * between two `task list` calls, so a stray task filed by another phase of the ordered suite above
+   * would change what "both" means and the exclusion half would pass for the wrong reason.
+   */
+  let cli: Cli
+  let handAuthored: string
+
+  /** `sleep`'s side of the contract: `<detector>:<digest16>`, per `FINDING_KEY_PATTERN`. */
+  const FINDING_KEY = "edge-typing:0123456789abcdef"
+  const DETECTED_PATH = "areas/inbox/tasks/type-the-checkout-to-deploy-edge.html"
+
+  beforeAll(async () => {
+    cli = await makeCli()
+    const written = await cli.json<TaskWritten>([
+      "task",
+      "add",
+      "--title",
+      "Confirm the staging bastion port by hand"
+    ])
+    handAuthored = written.path
+
+    /**
+     * The detected task is written as RAW BYTES and then indexed, rather than through `task add`.
+     * That is not a shortcut around a helper — `memhtml-finding-key` has no CLI flag at all, by
+     * design: only a detector mints one, and `task add` offering it would let an agent forge a
+     * machine identity. Writing the head a detector writes and letting the real projection read it
+     * is what makes this a test of `finding_key` reaching the query rather than of a test fixture.
+     *
+     * `index update` picks it up through its DIRTY lane, which reads the working tree, so the file
+     * needs no commit to become a row.
+     */
+    await writeFile(
+      join(cli.root, DETECTED_PATH),
+      `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Type the checkout-to-deploy edge</title>
+<meta name="memhtml-type" content="task">
+<meta name="memhtml-status" content="active">
+<meta name="memhtml-created" content="2026-08-01T00:00:00Z">
+<meta name="memhtml-updated" content="2026-08-01T00:00:00Z">
+<meta name="memhtml-task-status" content="todo">
+<meta name="memhtml-finding-key" content="${FINDING_KEY}">
+</head>
+<body>
+<article>
+<p><mark>The checkout and deploy memories have no typed edge between them.</mark></p>
+</article>
+</body>
+</html>
+`,
+      "utf8"
+    )
+    await cli.json(["index", "update", "--no-embed"])
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  it("returns only the detected task, and without the flag returns both", async () => {
+    const detected = await cli.json<TaskList>(["task", "list", "--detected"])
+    expect(detected.tasks.map((task) => task.path)).toEqual([DETECTED_PATH])
+
+    /**
+     * The other half, and the one that makes the first mean something: both rows are PRESENT in the
+     * default working set, so the hand-authored task was excluded by the predicate rather than never
+     * indexed at all. Without this the assertion above would hold on a corpus of one.
+     */
+    const all = await cli.json<TaskList>(["task", "list"])
+    const paths = all.tasks.map((task) => task.path)
+    expect(paths).toContain(DETECTED_PATH)
+    expect(paths).toContain(handAuthored)
+  })
+
+  it("treats `--no-detected` as no filter at all, the same as omitting it", async () => {
+    const negated = await cli.json<TaskList>(["task", "list", "--no-detected"])
+    const omitted = await cli.json<TaskList>(["task", "list"])
+    expect(negated.tasks.map((task) => task.path)).toEqual(omitted.tasks.map((task) => task.path))
+    expect(negated.tasks.map((task) => task.path)).toContain(handAuthored)
+  })
+
+  it("composes with the other predicates rather than replacing them", async () => {
+    /**
+     * `--detected` is one more `AND`, so a filter it cannot satisfy empties the page. `doing` is the
+     * case that separates composition from replacement: the detected task is `todo`, so a
+     * `--detected --status doing` returning it would mean the status clause was dropped.
+     */
+    const doing = await cli.json<TaskList>(["task", "list", "--detected", "--status", "doing"])
+    expect(doing.tasks).toEqual([])
+    const todo = await cli.json<TaskList>(["task", "list", "--detected", "--status", "todo"])
+    expect(todo.tasks.map((task) => task.path)).toEqual([DETECTED_PATH])
   })
 })
