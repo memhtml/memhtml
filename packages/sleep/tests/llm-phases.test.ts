@@ -4,6 +4,7 @@ import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 
 import type { PhaseEnv } from "../src/env.js"
+import { ENTITY_CLUSTER_SYSTEM } from "../src/llm.js"
 import { arcSynthesis } from "../src/phases/arc-synthesis.js"
 import { COMPRESS_MEMBER_CHARS, compress } from "../src/phases/compress.js"
 import {
@@ -11,13 +12,19 @@ import {
   conflictDetection,
   PROMOTION_DETECTIONS
 } from "../src/phases/conflict-detection.js"
+import { ENTITY_CONFIDENCE_FLOOR, entityResolution } from "../src/phases/entity-resolution.js"
 import { instantFor } from "../src/run.js"
 import { conflictCandidates } from "../src/sql.js"
 import { type ScriptedReply, scriptedModel, unavailable, value, violation } from "../src/testing.js"
 import {
   DEDUP_CORPUS,
+  ENTITY_CORPUS,
+  entityCorroborations,
   type Fixture,
   memoryHtml,
+  PERSON_ALIAS,
+  PERSON_CANONICAL,
+  personFile,
   type SeedFile,
   seedCorroboration,
   withFixture
@@ -34,14 +41,19 @@ import {
 
 const DATE = "2026-08-02"
 
-const envFor = (fixture: Fixture, dryRun = false): PhaseEnv => {
-  const instant = instantFor(DATE)
+/**
+ * One phase environment. `date` is a parameter so a test can drive a genuinely LATER NIGHT, which is
+ * what a two-night corroboration gate needs: `at` derives from the date, and the same date is what a
+ * resume of one run reuses.
+ */
+const envFor = (fixture: Fixture, dryRun = false, date: string = DATE): PhaseEnv => {
+  const instant = instantFor(date)
   return {
     deps: fixture.deps,
-    runId: `sleep/${DATE}`,
-    branch: `sleep/${DATE}`,
+    runId: `sleep/${date}`,
+    branch: `sleep/${date}`,
     baseSha: "",
-    date: DATE,
+    date,
     at: instant.at,
     atMillis: instant.millis,
     dryRun
@@ -737,6 +749,608 @@ describe("compress", () => {
           expect(yield* fixture.deps.store.dirtyPaths().pipe(Effect.orDie)).toEqual([])
         }),
       { seed: COMMUNITY, model }
+    )
+  })
+})
+
+/**
+ * Entity resolution's model core: one structured clustering call per entity type, then the
+ * deterministic post-pass that decides whether the answer becomes a rewrite.
+ *
+ * The corpus is {@link ENTITY_CORPUS}, whose one person is recorded under a short and a full name at
+ * 0.476 character overlap — below the review band, which is the live defect. Every case below either
+ * writes the merge or proves it was held back, and the two are asserted on the FILES rather than on the
+ * counts, because a count agreeing with a phase that wrote nothing is what a vacuous test looks like.
+ */
+describe("entity-resolution", () => {
+  const SHORT_FORM = "areas/team/monday-signoff.html"
+  const MIXED_CASE = "areas/team/release-train-owner.html"
+  const SANJU = "areas/team/search-relevance-owner.html"
+  const CHECKOUT = "areas/services/checkout-token-rejection.html"
+  const PAYMENTS = "areas/services/payments-token-rejection.html"
+
+  /** The `<meta>` line a `person:` entity holds, as the serializer writes it. */
+  const personMeta = (name: string) => `<meta name="memhtml-entity" content="person:${name}">`
+
+  /**
+   * A model that clusters the two spellings of the one person and nothing else.
+   *
+   * The member KEYS are resolved from the prompt rather than hard-coded, because `m1`..`mN` follow the
+   * batch's own sorted-name order and a hard-coded key would silently name a different member the day
+   * the corpus grew — a test that passed for the wrong reason. `confidence` is a parameter so one fake
+   * drives the above-floor and below-floor cases.
+   */
+  const clusterModel = (options: { readonly confidence?: number | undefined } = {}) =>
+    scriptedModel((request) => {
+      if (!request.system.startsWith("You group entity names")) return value({ clusters: [] })
+      const keyOf = (name: string): string | undefined =>
+        /** Each member is wrapped as `<entity_mN>` with `name: <the name>` on its first line. */
+        [...request.prompt.matchAll(/<entity_(m\d+)>\s*\nname: ([^\n]+)/g)].find(
+          (match) => match[2]?.trim() === name
+        )?.[1]
+      const canonicalKey = keyOf(PERSON_CANONICAL)
+      const aliasKey = keyOf(PERSON_ALIAS)
+      if (canonicalKey === undefined || aliasKey === undefined) return value({ clusters: [] })
+      return value({
+        clusters: [
+          {
+            canonicalKey,
+            memberKeys: [canonicalKey, aliasKey],
+            confidence: options.confidence ?? 0.9,
+            evidence: "the same rollout cadence and release train sign off under both names"
+          }
+        ]
+      })
+    })
+
+  /**
+   * Every `person:` entity name any COMMITTED file claims, read out of the tree.
+   *
+   * Read from git rather than from `file_entities`, and that is not a convenience. Every phase reads its
+   * candidates from an index refreshed once in preflight and not again, so the index still lists the
+   * pre-merge names after the phase's own commit — a test asserting the merge against the index would
+   * fail against a phase that had done the work correctly. The TREE is the system of record.
+   */
+  const personNames = (fixture: Fixture): Effect.Effect<ReadonlyArray<string>> =>
+    Effect.gen(function* () {
+      const listing = yield* fixture.raw("ls-tree", "-r", "--name-only", "HEAD")
+      const names = new Set<string>()
+      for (const path of listing.trim().split("\n")) {
+        if (!path.endsWith(".html")) continue
+        const html = yield* atHead(fixture, path)
+        for (const match of (html ?? "").matchAll(
+          /<meta name="memhtml-entity" content="person:([^"]+)">/g
+        )) {
+          if (match[1] !== undefined) names.add(match[1])
+        }
+      }
+      return [...names].sort()
+    })
+
+  it("holds a model-only merge back on night one, counts it, and applies it on night two", async () => {
+    /**
+     * The corroboration gate, at the boundary that matters, across two real runs.
+     *
+     * A merge the model alone proposes rewrites every `memhtml-entity` meta naming the alias and fuses
+     * two subjects' memories permanently — no later commit separates them. So the first night COUNTS and
+     * the second night writes, and both halves are asserted: a phase that promoted on the first
+     * detection would fail the first half, and a phase that never promoted would fail the second.
+     *
+     * The second run passes a LATER `at`, which is what makes it a different night. The same scripted
+     * reply is used for both, so what changed between them is the corroboration state and nothing else.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const before = yield* atHead(fixture, SHORT_FORM)
+          expect(before).toContain(personMeta(PERSON_ALIAS))
+
+          const first = yield* entityResolution(envFor(fixture))
+          expect(first.llmCalls).toBeGreaterThan(0)
+          expect(first.counts.pendingCorroboration).toBe(1)
+          expect(first.counts.llmMerges).toBe(0)
+          expect(first.counts.aliasMerges).toBe(0)
+
+          /**
+           * The short form is UNTOUCHED, which is the load-bearing half. The phase does commit on night
+           * one — pass one normalizes the mixed-case meta — so a commit's presence proves nothing and
+           * only the alias file's own bytes do.
+           */
+          expect(yield* atHead(fixture, SHORT_FORM)).toBe(before)
+          expect(yield* personNames(fixture)).toContain(PERSON_ALIAS)
+
+          const pending = yield* entityCorroborations(fixture)
+          expect(pending).toEqual([
+            {
+              alias_name: PERSON_ALIAS,
+              canonical_name: PERSON_CANONICAL,
+              detections: 1,
+              promoted: 0
+            }
+          ])
+
+          /** Night two: a later instant, the same answer. */
+          const second = yield* entityResolution(envFor(fixture, false, "2026-08-03"))
+          expect(second.counts.llmMerges).toBe(1)
+          expect(second.counts.pendingCorroboration).toBe(0)
+          expect(second.commitSha).not.toBeNull()
+
+          const after = yield* atHead(fixture, SHORT_FORM)
+          expect(after).toContain(personMeta(PERSON_CANONICAL))
+          expect(after).not.toContain(personMeta(PERSON_ALIAS))
+          // The merge went toward the THREE-memory full form, which is the file-count rule and not the
+          // model's choice — the fake names the same member as canonical, so this also holds when the
+          // orientation is inverted, and the unit tier is where the inversion is caught.
+          expect(yield* personNames(fixture)).not.toContain(PERSON_ALIAS)
+
+          const promoted = yield* entityCorroborations(fixture)
+          expect(promoted[0]?.promoted).toBe(1)
+          expect(promoted[0]?.detections).toBe(2)
+        }),
+      { seed: ENTITY_CORPUS, model: clusterModel() }
+    )
+  })
+
+  it("does not double-count a resume within ONE night", async () => {
+    /**
+     * The resume-idempotence semantics, which this phase needs more than conflict detection does. It
+     * commits whenever it rewrites any file, and pass one's normalization is such a rewrite — so a night
+     * that only bumped counters still commits, and `memhtml sleep resume` re-executes the phase on a
+     * branch it already partly ran. Without the `updated_at` guard the second pass would be a second
+     * night's independent evidence and would apply a merge on one night's worth.
+     *
+     * Both runs pass the SAME `at`, which is what a resume of one run does.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* entityResolution(envFor(fixture))
+          const before = yield* atHead(fixture, SHORT_FORM)
+
+          const again = yield* entityResolution(envFor(fixture))
+          expect(again.counts.llmMerges).toBe(0)
+          expect(again.counts.pendingCorroboration).toBe(1)
+
+          expect(yield* entityCorroborations(fixture)).toEqual([
+            {
+              alias_name: PERSON_ALIAS,
+              canonical_name: PERSON_CANONICAL,
+              detections: 1,
+              promoted: 0
+            }
+          ])
+          expect(yield* atHead(fixture, SHORT_FORM)).toBe(before)
+        }),
+      { seed: ENTITY_CORPUS, model: clusterModel() }
+    )
+  })
+
+  it("applies an ALIAS-BACKED merge on night one, with no corroboration at all", async () => {
+    /**
+     * The oracle: a person file declaring `laith` an alias is a human's (or an authoritative
+     * directory's) assertion of identity, not a machine's suspicion, so it needs no second night. The
+     * character distance is unchanged at 0.476 — the declaration is what moved, and nothing else.
+     *
+     * The contrast with the case above is the whole assertion: the same corpus, the same scripted
+     * answer, one extra seeded file, and the merge lands a night earlier and leaves NO counter row.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* entityResolution(envFor(fixture))
+          expect(outcome.counts.aliasMerges).toBe(1)
+          expect(outcome.counts.llmMerges).toBe(0)
+          expect(outcome.counts.pendingCorroboration).toBe(0)
+
+          const after = yield* atHead(fixture, SHORT_FORM)
+          expect(after).toContain(personMeta(PERSON_CANONICAL))
+          expect(after).not.toContain(personMeta(PERSON_ALIAS))
+          // No counter: an alias-backed merge never enters the corroboration table, so a reader of that
+          // table sees only the merges that are actually waiting on evidence.
+          expect(yield* entityCorroborations(fixture)).toEqual([])
+        }),
+      {
+        seed: [
+          ...ENTITY_CORPUS,
+          personFile({ canonical: PERSON_CANONICAL, aliases: [PERSON_ALIAS] })
+        ],
+        model: clusterModel()
+      }
+    )
+  })
+
+  it("counts a BELOW-FLOOR cluster for review and merges nothing", async () => {
+    /**
+     * The confidence floor, which is the guard that runs before the corroboration counter. A cluster the
+     * model is unsure of must not even start accumulating nights, or two unsure nights would add up to a
+     * merge neither night believed in.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const before = yield* atHead(fixture, SHORT_FORM)
+          const outcome = yield* entityResolution(envFor(fixture))
+          expect(outcome.counts.reviewCandidates).toBeGreaterThan(0)
+          expect(outcome.counts.llmMerges).toBe(0)
+          expect(outcome.counts.pendingCorroboration).toBe(0)
+          expect(yield* entityCorroborations(fixture)).toEqual([])
+          expect(yield* atHead(fixture, SHORT_FORM)).toBe(before)
+        }),
+      { seed: ENTITY_CORPUS, model: clusterModel({ confidence: ENTITY_CONFIDENCE_FLOOR - 0.01 }) }
+    )
+  })
+
+  it("drops a cluster naming a member key the batch never offered", async () => {
+    /**
+     * A key the batch did not mint is a member the model invented, and every merge here becomes a
+     * rewrite — so an unresolvable key has to be a drop and not a write. Asserted through `m999` and
+     * through a canonical key that resolves but sits OUTSIDE its own cluster, which is a
+     * self-contradicting answer the caller cannot repair without guessing.
+     */
+    const model = scriptedModel((request) => {
+      if (!request.system.startsWith("You group entity names")) return value({ clusters: [] })
+      return value({
+        clusters: [
+          {
+            canonicalKey: "m999",
+            memberKeys: ["m1", "m999"],
+            confidence: 0.99,
+            evidence: "a member that was never offered"
+          },
+          {
+            // Resolvable keys, but the stated canonical is not among the members.
+            canonicalKey: "m2",
+            memberKeys: ["m1", "m3"],
+            confidence: 0.99,
+            evidence: "a canonical outside its own cluster"
+          }
+        ]
+      })
+    })
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const before = yield* atHead(fixture, SHORT_FORM)
+          const outcome = yield* entityResolution(envFor(fixture))
+          expect(outcome.counts.llmMerges).toBe(0)
+          expect(outcome.counts.aliasMerges).toBe(0)
+          expect(outcome.counts.pendingCorroboration).toBe(0)
+          expect(yield* entityCorroborations(fixture)).toEqual([])
+          expect(yield* atHead(fixture, SHORT_FORM)).toBe(before)
+        }),
+      { seed: ENTITY_CORPUS, model }
+    )
+  })
+
+  it("stops counting a REVIEW-BAND pair for review once the model has decided it", async () => {
+    /**
+     * `reviewCandidates` is what a human is asked to look at, so it must not report a pair the night
+     * already settled. A band pair the model clustered was DECIDED — recorded either as a merge or, when
+     * it is below the confidence floor, as one review candidate already — and adding the band's copy on
+     * top would report one pair twice and inflate the number an operator triages against.
+     *
+     * The band pair is `metrics-api`/`metrics-cli` at 0.8182, which is inside 0.75-0.85 and therefore
+     * neither auto-merged nor ignored. The model is scripted to cluster exactly that pair with an
+     * ABOVE-floor confidence, so it takes the corroboration path and no review candidate is minted for
+     * it anywhere — leaving the count at zero for that pair.
+     *
+     * (Verified by mutation: replacing the filter with `character.review.length` makes this case fail
+     * with 1 while the whole rest of the suite stays green — which is exactly how quietly a
+     * double-counted review number would ship.)
+     */
+    const BAND_CORPUS: ReadonlyArray<SeedFile> = [
+      {
+        path: "areas/services/metrics-api-scrape.html",
+        html: memoryHtml({
+          title: "The metrics API serves the scrape endpoint",
+          claim: "The metrics api serves the scrape endpoint on each host.",
+          memoryType: "semantic",
+          createdAt: "2026-04-01T00:00:00Z",
+          entities: ["service:metrics-api"]
+        })
+      },
+      {
+        path: "areas/services/metrics-cli-scrape.html",
+        html: memoryHtml({
+          title: "The metrics CLI reads the scrape endpoint",
+          claim: "The metrics cli reads the scrape endpoint on each host.",
+          memoryType: "semantic",
+          createdAt: "2026-04-02T00:00:00Z",
+          entities: ["service:metrics-cli"]
+        })
+      }
+    ]
+    const model = scriptedModel((request) => {
+      if (!request.system.startsWith("You group entity names")) return value({ clusters: [] })
+      const keyOf = (name: string): string | undefined =>
+        [...request.prompt.matchAll(/<entity_(m\d+)>\s*\nname: ([^\n]+)/g)].find(
+          (match) => match[2]?.trim() === name
+        )?.[1]
+      const api = keyOf("metrics-api")
+      const cli = keyOf("metrics-cli")
+      if (api === undefined || cli === undefined) return value({ clusters: [] })
+      return value({
+        clusters: [
+          {
+            canonicalKey: api,
+            memberKeys: [api, cli],
+            confidence: 0.95,
+            evidence: "both are written about as the same scrape endpoint"
+          }
+        ]
+      })
+    })
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* entityResolution(envFor(fixture))
+          // Decided, not awaiting a human: it took the corroboration path instead.
+          expect(outcome.counts.pendingCorroboration).toBe(1)
+          expect(outcome.counts.reviewCandidates).toBe(0)
+        }),
+      { seed: BAND_CORPUS, model }
+    )
+  })
+
+  it("does not corroborate a merge the character pass ALREADY made", async () => {
+    /**
+     * A model asked to partition one type's names sees the pairs the cheap pass already settled too, and
+     * it will cluster them — they are the easy cases. Counting that as a night of corroboration would
+     * accumulate evidence for a decision that is no longer waiting on any, so the table would fill with
+     * rows for merges that have happened and an operator reading "pending" would be reading noise.
+     *
+     * `queue-worker` / `queue-workers` scores 0.96, above the 0.85 auto threshold, so the merge lands on
+     * night one from the character pass alone. The scripted model clusters exactly that pair with an
+     * above-floor confidence, so the only thing standing between the answer and a counter row is the
+     * guard.
+     *
+     * (Verified by mutation: dropping the `>= AUTO_MERGE_THRESHOLD` skip makes this case fail with a
+     * `pendingCorroboration` of 1 and a counter row, while the merge still lands — a defect entirely
+     * invisible in the files.)
+     */
+    const PLURAL_CORPUS: ReadonlyArray<SeedFile> = [
+      {
+        path: "areas/services/queue-worker-drain.html",
+        html: memoryHtml({
+          title: "The queue worker drains before it exits",
+          claim: "The queue worker drains its in-flight jobs before the process exits.",
+          memoryType: "semantic",
+          createdAt: "2026-04-01T00:00:00Z",
+          entities: ["service:queue-worker"]
+        })
+      },
+      {
+        path: "areas/services/queue-workers-scale.html",
+        html: memoryHtml({
+          title: "The queue workers scale on depth",
+          claim: "The queue workers scale out on queue depth rather than on CPU.",
+          memoryType: "semantic",
+          createdAt: "2026-04-02T00:00:00Z",
+          entities: ["service:queue-workers"]
+        })
+      }
+    ]
+    const model = scriptedModel((request) => {
+      if (!request.system.startsWith("You group entity names")) return value({ clusters: [] })
+      const keys = [...request.prompt.matchAll(/<entity_(m\d+)>/g)].map((match) => match[1] ?? "")
+      const [first, second] = keys
+      if (first === undefined || second === undefined) return value({ clusters: [] })
+      return value({
+        clusters: [
+          {
+            canonicalKey: first,
+            memberKeys: [first, second],
+            confidence: 0.99,
+            evidence: "one name is the other's plural"
+          }
+        ]
+      })
+    })
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* entityResolution(envFor(fixture))
+          // The character pass merged it on night one, with no corroboration involved.
+          expect(outcome.counts.fuzzyMerges).toBe(1)
+          expect(outcome.counts.pendingCorroboration).toBe(0)
+          expect(outcome.counts.llmMerges).toBe(0)
+          expect(yield* entityCorroborations(fixture)).toEqual([])
+          // And the merge really landed, so the counts above are not describing an inert phase.
+          expect(yield* atHead(fixture, "areas/services/queue-workers-scale.html")).toContain(
+            '<meta name="memhtml-entity" content="service:queue-worker">'
+          )
+        }),
+      { seed: PLURAL_CORPUS, model }
+    )
+  })
+
+  it("keeps counting a band pair the model did NOT cluster", async () => {
+    // The other half, and it is what keeps the case above from passing against a phase that simply
+    // stopped counting the band. Same corpus, a model that declines, and the pair is still a human's call.
+    const BAND_CORPUS: ReadonlyArray<SeedFile> = [
+      {
+        path: "areas/services/metrics-api-scrape.html",
+        html: memoryHtml({
+          title: "The metrics API serves the scrape endpoint",
+          claim: "The metrics api serves the scrape endpoint on each host.",
+          memoryType: "semantic",
+          createdAt: "2026-04-01T00:00:00Z",
+          entities: ["service:metrics-api"]
+        })
+      },
+      {
+        path: "areas/services/metrics-cli-scrape.html",
+        html: memoryHtml({
+          title: "The metrics CLI reads the scrape endpoint",
+          claim: "The metrics cli reads the scrape endpoint on each host.",
+          memoryType: "semantic",
+          createdAt: "2026-04-02T00:00:00Z",
+          entities: ["service:metrics-cli"]
+        })
+      }
+    ]
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* entityResolution(envFor(fixture))
+          expect(outcome.counts.reviewCandidates).toBe(1)
+          expect(outcome.counts.pendingCorroboration).toBe(0)
+        }),
+      { seed: BAND_CORPUS, model: scriptedModel(() => value({ clusters: [] })) }
+    )
+  })
+
+  it("keeps two services apart though their centroids are CLOSER than the one person's spellings", async () => {
+    /**
+     * The negative control, and the reason a centroid cosine is evidence rather than a threshold.
+     * Measured under the deterministic embedder: `checkout-api` and `payments-api` sit at 0.9333 while
+     * the two spellings of one person sit at 0.7788 — so any cosine floor that merged the person would
+     * merge the two services first, and fusing two services' memories is permanent.
+     *
+     * The model declines here, which is the honest shape: the phase's job is to hand the number over and
+     * to write nothing the model did not cluster. Both service files keep their own entity.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* entityResolution(envFor(fixture))
+          expect(outcome.counts.llmMerges).toBe(0)
+
+          expect(yield* atHead(fixture, CHECKOUT)).toContain(
+            '<meta name="memhtml-entity" content="service:checkout-api">'
+          )
+          expect(yield* atHead(fixture, PAYMENTS)).toContain(
+            '<meta name="memhtml-entity" content="service:payments-api">'
+          )
+          // And the third person is untouched: a phase that fused every person into one would show here.
+          expect(yield* atHead(fixture, SANJU)).toContain(personMeta("sanju kumar"))
+        }),
+      { seed: ENTITY_CORPUS, model: clusterModel() }
+    )
+  })
+
+  it("shows the model the centroid neighbors and the declared aliases, and no path", async () => {
+    /**
+     * What actually goes over the wire, asserted on the recorded prompt. Three of the phase's
+     * mechanisms are invisible in its counts and fully visible here: the neighbor list is what lets a
+     * model see that two spellings are written about identically, the alias line is what makes the
+     * oracle reachable at all, and the absence of a path is the prompt-injection and write-target
+     * boundary — a model shown a path could name a file to rewrite.
+     *
+     * `cacheSystem` is recorded too. Every batch of a night repeats one system prompt and one tool
+     * schema, so an unset flag re-bills the whole prefix per call and is invisible in the phase's counts
+     * and in its written files.
+     */
+    const model = clusterModel()
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* entityResolution(envFor(fixture))
+
+          const person = model.calls.find((call) => call.prompt.includes(`name: ${PERSON_ALIAS}\n`))
+          expect(person, "the person type reached a call").toBeDefined()
+          expect(person?.cacheSystem).toBe(true)
+          expect(person?.system).toBe(ENTITY_CLUSTER_SYSTEM)
+
+          const prompt = person?.prompt ?? ""
+          expect(prompt).toContain("nearest by memory centroid:")
+          // The two spellings of one person are each other's neighbors, which is the evidence the name
+          // string cannot carry.
+          expect(prompt).toMatch(
+            new RegExp(`nearest by memory centroid:\\n- ${PERSON_CANONICAL} \\(0\\.\\d\\d\\)`)
+          )
+          expect(prompt).toContain("declared aliases: laith al-saadoon")
+          // Member text is wrapped as data, because this corpus stores instructions.
+          expect(prompt).toContain("<entity_m1>")
+          // No path anywhere: not a write target, and not a hint at one.
+          expect(prompt).not.toContain(".html")
+          // One call per TYPE, not one per pair: `person` and `service` are the two types here.
+          expect(model.calls).toHaveLength(2)
+        }),
+      {
+        seed: [
+          ...ENTITY_CORPUS,
+          personFile({ canonical: PERSON_CANONICAL, aliases: [PERSON_ALIAS] })
+        ],
+        model
+      }
+    )
+  })
+
+  it("degrades to the deterministic passes with no model bound, and still normalizes", async () => {
+    /**
+     * A credential-free run is not a broken run, and for THIS phase it is not an inert one either: the
+     * normalization and character-overlap passes are the phase's pre-stage and they still write. What
+     * degrades is the decision core, so the mixed-case meta folds and the short form stays.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const shortBefore = yield* atHead(fixture, SHORT_FORM)
+          expect(yield* atHead(fixture, MIXED_CASE)).toContain("person:Laith Al-Saadoon")
+
+          const outcome = yield* entityResolution(envFor(fixture))
+
+          expect(outcome.llmCalls).toBe(0)
+          expect(outcome.counts.namesNormalized).toBeGreaterThan(0)
+          expect(outcome.counts.llmMerges).toBe(0)
+          expect(outcome.counts.aliasMerges).toBe(0)
+          expect(outcome.counts.pendingCorroboration).toBe(0)
+          expect(outcome.commitSha).not.toBeNull()
+
+          // Pass one did its work.
+          const mixed = yield* atHead(fixture, MIXED_CASE)
+          expect(mixed).not.toContain("person:Laith Al-Saadoon")
+          expect(mixed).toContain(personMeta(PERSON_CANONICAL))
+          // And the model-only merge did not happen, because there was no model.
+          expect(yield* atHead(fixture, SHORT_FORM)).toBe(shortBefore)
+          expect(yield* entityCorroborations(fixture)).toEqual([])
+        }),
+      { seed: ENTITY_CORPUS }
+    )
+  })
+
+  it("makes no model call and bumps no counter on a dry run", async () => {
+    /**
+     * A counter bumped by a run that wrote nothing would be a night of corroboration the corpus never
+     * saw, so the next real night would promote on evidence a dry run manufactured. The dry run's own
+     * counts are still real — that is what makes it useful — and only the writes are not.
+     */
+    const model = clusterModel()
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const head = (yield* fixture.raw("rev-parse", "HEAD")).trim()
+          const outcome = yield* entityResolution(envFor(fixture, true))
+
+          expect(outcome.llmCalls).toBe(0)
+          expect(model.calls).toEqual([])
+          expect(outcome.counts.entities).toBeGreaterThan(0)
+          expect(outcome.counts.namesNormalized).toBeGreaterThan(0)
+          expect(outcome.commitSha).toBeNull()
+          expect(yield* entityCorroborations(fixture)).toEqual([])
+          expect((yield* fixture.raw("rev-parse", "HEAD")).trim()).toBe(head)
+          expect(yield* fixture.deps.store.dirtyPaths().pipe(Effect.orDie)).toEqual([])
+        }),
+      { seed: ENTITY_CORPUS, model }
+    )
+  })
+
+  it("keeps running when a batch's model call fails, and merges nothing from it", async () => {
+    // Per-item isolation: one malformed tool payload skips its batch and leaves the deterministic
+    // passes' work in place, rather than failing a phase that had already normalized real files.
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* entityResolution(envFor(fixture))
+          expect(outcome.llmCalls).toBeGreaterThan(0)
+          expect(outcome.counts.llmMerges).toBe(0)
+          // Pass one still landed, so the phase did real work despite the model.
+          expect(yield* atHead(fixture, MIXED_CASE)).toContain(personMeta(PERSON_CANONICAL))
+        }),
+      { seed: ENTITY_CORPUS, model: scriptedModel(() => violation("scripted off-schema clusters")) }
     )
   })
 })

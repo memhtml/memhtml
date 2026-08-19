@@ -26,7 +26,7 @@ moved. The two boxes leaving the gate are the only two outcomes.
 |---|---|---|---|
 | 1 | `preflight` | no | none; runs `index update` and snapshots counts |
 | 2 | `dedup-merge` | no | one commit: keeper gains `memhtml-supersedes`, dropped files `git mv` to archive |
-| 3 | `entity-resolution` | no | one commit: `memhtml-entity` values normalized and cluster-merged in place |
+| 3 | `entity-resolution` | yes | one commit: `memhtml-entity` values normalized and cluster-merged in place |
 | 4 | `person-links` | no | one commit: `memhtml-about-person` links to `resources/people/*` |
 | 5 | `relationship-mining` | no | no commit; derived `relates_to` rows in the index only |
 | 6 | `conflict-detection` | yes | one commit, only for corroborated promotions |
@@ -47,16 +47,21 @@ precedes both compress and retention triage, because both operate on the post-me
 Those four constraints are the whole of what the order is for, and Figure 2 draws only them. Every phase
 absent from the figure is order-independent of every other phase, which the table above cannot show.
 
-```d2 pad=20 src="_figures/phase-order.d2" title="Four dependency edges among six phases. Phase 2 dedup-merge points at phase 10 compress and at phase 9 retention-triage, both labelled post-merge set. Phase 3 entity-resolution points at phase 4 person-links, labelled aliases merged first. Phase 7 confidence-decay points at phase 9 retention-triage, labelled scores the decayed value. Compress is drawn as a hexagon because it calls a model; the other five are deterministic."
+```d2 pad=20 src="_figures/phase-order.d2" title="Four dependency edges among six phases. Phase 2 dedup-merge points at phase 10 compress and at phase 9 retention-triage, both labelled post-merge set. Phase 3 entity-resolution points at phase 4 person-links, labelled aliases merged first. Phase 7 confidence-decay points at phase 9 retention-triage, labelled scores the decayed value. Entity-resolution and compress are drawn as hexagons because both call a model; the other four are deterministic."
 ```
 
 **Figure 2: the fixed order exists to satisfy four edges.** Nine of the fifteen phases appear
 nowhere in this graph, so the order among them is arbitrary and could change without consequence.
-The hexagon marks the one phase here that calls a model, which is also why `compress` archives a
-member only when the model names it as absorbed.
+The two hexagons mark the phases here that call a model, and each one's edge is about that call:
+`compress` archives a member only when the model names it as absorbed, and `person-links` waits on
+`entity-resolution` so a person's aliases have already collapsed before a file is minted for them.
 
-Four phases call a model (`packages/sleep/src/contract.ts:71`). Every other phase is deterministic and
+Five phases call a model (`packages/sleep/src/contract.ts:71`). Every other phase is deterministic and
 costs no model call.
+
+`entity-resolution` is the one of the five that still does real work without a model. Its normalization
+and character-overlap passes are a pre-stage, so a credential-free run still collapses `Checkout API`
+onto `checkout api`; what an absent model removes is the decision core, not the phase.
 
 `PHASE_BODIES` is a total `Record<SleepPhase, PhaseBody>` (`packages/sleep/src/phases/index.ts:27`), so a
 name added to `SLEEP_PHASES` without a body is a compile error rather than a run that silently skips it.
@@ -113,7 +118,8 @@ owed. Evicting on that signal would archive the neglected work first and leave t
 | Constant | Value | Location |
 |---|---|---|
 | Near-duplicate cosine / merges per cycle | 0.92 strict / 100 | `packages/domain/src/merge.ts:16-19` |
-| Entity auto-merge / review ratio | 0.85 / 0.75 | `packages/sleep/src/phases/entity-resolution.ts:30-33` |
+| Entity auto-merge / review ratio | 0.85 / 0.75 | `packages/sleep/src/phases/entity-resolution.ts:65-68` |
+| Entity cluster confidence / detections / shard | 0.7 / 2 / 500 | `packages/sleep/src/phases/entity-resolution.ts:77-86` |
 | Mining cosine / k / sample | 0.85 / 5 / 2000 | `packages/sleep/src/phases/relationship-mining.ts:22-28` |
 | Conflict cosine / k / cap / detections | 0.80 / 5 / 200 / 2 | `packages/sleep/src/phases/conflict-detection.ts:43-52` |
 | Confidence commit delta | 0.005 | `packages/domain/src/decay.ts:135` |

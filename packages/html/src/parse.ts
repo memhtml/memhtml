@@ -340,6 +340,7 @@ export const parseMemory = (html: string): Effect.Effect<MemoryDoc, InvalidMemor
       metas: metaResult.metas,
       entities: repeated(metas, "memhtml-entity"),
       tags: repeated(metas, "memhtml-tag"),
+      aliases: repeated(metas, "memhtml-alias"),
       links: readLinks(document),
       article: readArticle(article),
       warnings: structural.warnings

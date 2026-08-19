@@ -16,8 +16,14 @@ export const LINK_REL_PREFIX = "memhtml-"
 /**
  * Meta keys that may appear more than once. Each value is its own `<meta>` element
  * rather than a comma-joined string, so correcting one tag is a one-line diff.
+ *
+ * `memhtml-alias` is the third: a person file declares the other names the same person is recorded
+ * under, so `laith al-saadoon` can state that `laith` is them. Sleep's entity resolution reads it as
+ * EVIDENCE and auto-merges an alias-backed pair whatever the character distance says, which no
+ * string similarity can supply — `laith` against `laith al-saadoon` scores 0.476, below even the
+ * review band. One meta per alias, for the same one-line-diff reason.
  */
-export const REPEATABLE_META = ["memhtml-entity", "memhtml-tag"] as const
+export const REPEATABLE_META = ["memhtml-entity", "memhtml-tag", "memhtml-alias"] as const
 
 export type RepeatableMeta = (typeof REPEATABLE_META)[number]
 
@@ -70,7 +76,12 @@ export const META_ORDER = [
   "memhtml-task-status",
   "memhtml-due",
   "memhtml-entity",
-  "memhtml-tag"
+  "memhtml-tag",
+  /**
+   * Appended after the two established repeatables, for the same diff-stability reason: a new
+   * repeatable goes at the END of the repeatable block, so no file's existing head lines move.
+   */
+  "memhtml-alias"
 ] as const
 
 export type MemoryMetaName = (typeof META_ORDER)[number]

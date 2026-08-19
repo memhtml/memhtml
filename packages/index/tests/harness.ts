@@ -65,6 +65,14 @@ export const migrationNames = async (): Promise<ReadonlyArray<string>> =>
 export const migrationsAfter = async (through: string): Promise<number> =>
   (await migrationNames()).filter((name) => name > through).length
 
+/** Every STATE migration filename in order. The state plane's own ledger, read the same way. */
+export const stateMigrationNames = async (): Promise<ReadonlyArray<string>> =>
+  (await readdir(STATE_MIGRATIONS_DIR)).filter((name) => name.endsWith(".sql")).sort()
+
+/** How many state migrations sit after `through` — what {@link withStateDbThrough}'s `apply` returns. */
+export const stateMigrationsAfter = async (through: string): Promise<number> =>
+  (await stateMigrationNames()).filter((name) => name > through).length
+
 /**
  * A database migrated only as far as `through` (inclusive), so a test can seed the PRE-upgrade
  * schema and then apply one migration over real rows.
@@ -111,6 +119,58 @@ export const withDbThrough = <A, E>(
           const pending = all.filter((name) => name > through)
           for (const name of pending) {
             const sql = await readFile(join(MIGRATIONS_DIR, name), "utf8")
+            await Effect.runPromise(db.script(sql))
+          }
+          return pending.length
+        }
+
+        return yield* body(db, apply)
+      })
+    )
+  )
+
+/**
+ * The STATE plane migrated only as far as `through`, so a test can seed the pre-upgrade state schema
+ * and then apply one state migration over real rows.
+ *
+ * The index plane is fully migrated, because the two ledgers are independent and a state upgrade test
+ * has nothing to say about `files`. The staging trick is {@link withDbThrough}'s, for the same reason:
+ * the runner applies whatever the directory holds, so a test-only stop-here parameter would be a second
+ * code path in the thing under test.
+ *
+ * The state plane's upgrades are additive `CREATE TABLE`s, and that is exactly why an upgrade test is
+ * needed rather than assumed. A fresh attach applies every file in order and would pass over a
+ * statement that only works on an empty schema; this path proves the file applies to a plane that
+ * already carries S0001's tables and its rows.
+ */
+export const withStateDbThrough = <A, E>(
+  through: string,
+  body: (db: DatabaseShape, apply: () => Promise<number>) => Effect.Effect<A, E>
+): Promise<A> =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const all = yield* Effect.promise(() => stateMigrationNames())
+        const staged = yield* Effect.acquireRelease(
+          Effect.promise(async () => {
+            const dir = await mkdtemp(join(tmpdir(), "memhtml-state-migrations-"))
+            for (const name of all.filter((candidate) => candidate <= through)) {
+              await copyFile(join(STATE_MIGRATIONS_DIR, name), join(dir, name))
+            }
+            return dir
+          }),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true }))
+        )
+
+        const db = yield* makeDatabase(":memory:", MIGRATIONS_DIR, {
+          path: ":memory:",
+          migrationsDir: staged
+        })
+
+        const apply = async (): Promise<number> => {
+          const pending = all.filter((name) => name > through)
+          for (const name of pending) {
+            const sql = await readFile(join(STATE_MIGRATIONS_DIR, name), "utf8")
             await Effect.runPromise(db.script(sql))
           }
           return pending.length
