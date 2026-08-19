@@ -25,10 +25,11 @@ export interface SleepDeps {
    * The model behind the LLM phases. Absent DEGRADES each of them; it never fails a run.
    *
    * What degradation means is per phase, and the two shapes are different on purpose. `compress`,
-   * `arc-synthesis`, and `conflict-detection` have nothing to do without a model, so they report a
-   * reason and write nothing. `dedup-merge` has a deterministic answer — the 0.92 cosine floor plus
-   * the divergence veto — so with no model it does that work and commits it. A night with no
-   * credentials still folds every duplicate a cosine can prove.
+   * `arc-synthesis`, and `edge-typing` have nothing to do without a model, so they report a reason and
+   * write nothing. `dedup-merge` has a deterministic answer — the 0.92 cosine floor plus the divergence
+   * veto — so with no model it does that work and commits it, and `entity-resolution` likewise runs its
+   * normalization, character, and declared-alias passes. A night with no credentials still folds every
+   * duplicate a cosine can prove and applies every alias a person file declares.
    *
    * Either way this differs from `failed`, which is what a model that answers badly produces. A
    * deterministic run (a dry run, a fixture without credentials) is not a broken run.

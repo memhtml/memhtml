@@ -27,19 +27,20 @@ import {
  * Three stages, and the separation is what makes the phase safe:
  *
  * 1. **Pre (deterministic, cheap).** Normalize every name, exact-merge the ones that normalize
- *    together, and auto-merge pairs at or above {@link AUTO_MERGE_THRESHOLD} character overlap. This
- *    pass alone is the whole phase when no model is bound, so a credential-free run still collapses
- *    `Checkout API` onto `checkout api`. The same pass computes one MEMORY CENTROID per name, in
+ *    together, auto-merge pairs at or above {@link AUTO_MERGE_THRESHOLD} character overlap, and merge
+ *    every pair a person file DECLARES ({@link aliasPairs}). This pass alone is the whole phase when no
+ *    model is bound, so a credential-free run still collapses `Checkout API` onto `checkout api` and
+ *    still applies a seeded declaration. The same pass computes one MEMORY CENTROID per name, in
  *    O(files) and never per pair.
  * 2. **Core (one model call per entity type, sharded at {@link ENTITY_BATCH_SIZE}).** The model sees
  *    every name of one type as a numbered member list and returns a PARTITION into subjects. Never one
  *    call per pair: 59 entities on the measured corpus is one call, and the pair space is 1,711.
  * 3. **Post (deterministic, the one-way-door guards).** Which name survives a merge is decided by
- *    {@link unionPairs}'s weight-then-lexicographic rule and never by the model. All three pair sources
- *    feed that ONE union-find, so the character pass and the model cannot disagree about a canonical. A
- *    merge backed by a DECLARED alias applies at once; a merge the model alone proposes is counted in
- *    `state.entity_corroboration` and applies only once {@link ENTITY_PROMOTION_DETECTIONS} different
- *    nights have reached it.
+ *    {@link unionPairs}'s weight-then-lexicographic rule and never by the model. All THREE pair sources
+ *    — the character pass, the declarations, and the model — feed that ONE union-find, so no two of them
+ *    can disagree about a canonical. A merge backed by a DECLARED alias applies at once and is never
+ *    counted; a merge the model alone proposes is counted in `state.entity_corroboration` and applies
+ *    only once {@link ENTITY_PROMOTION_DETECTIONS} different nights have reached it.
  *
  * **Why the model, and why centroids as its evidence.** Character overlap is measurably wrong on the
  * case this phase exists for. Measured on the live corpus: `laith` against `laith al-saadoon` scores
@@ -475,6 +476,41 @@ export const aliasBacked = (
 ): boolean => groups.some((group) => group.has(left) && group.has(right))
 
 /**
+ * Every pair of one type's names that a DECLARATION backs: the alias oracle as a pair source of its
+ * own, answerable with no model and no corroboration.
+ *
+ * **This is what makes the oracle an oracle.** Issue #43 states that entity resolution consults
+ * declared aliases FIRST and that an alias-backed merge auto-commits regardless of string distance. A
+ * declaration read only where the model core reads it would deliver neither half: a credential-free
+ * night would leave `laith` and `laith al-saadoon` split with a person file sitting in the corpus
+ * saying they are one person, and even a night WITH credentials would apply the declaration only if
+ * the model happened to propose that pair — so the operator surface the format invites someone to
+ * hand-edit would work or not work depending on a model's attention.
+ *
+ * A pair the character pass already merges is left out, because counting it as an alias merge as well
+ * would report one merge twice. Names are walked in sorted order, so the pair list is a function of the
+ * name set and the declarations alone.
+ */
+export const aliasPairs = (
+  groups: ReadonlyArray<AliasGroup>,
+  counts: ReadonlyMap<string, number>
+): ReadonlyArray<NamePair> => {
+  const names = [...counts.keys()].sort()
+  const out: Array<NamePair> = []
+  for (let outer = 0; outer < names.length; outer += 1) {
+    for (let inner = outer + 1; inner < names.length; inner += 1) {
+      const left = names[outer]
+      const right = names[inner]
+      if (left === undefined || right === undefined) continue
+      if (!aliasBacked(groups, left, right)) continue
+      if (nameSimilarity(left, right) >= AUTO_MERGE_THRESHOLD) continue
+      out.push([left, right])
+    }
+  }
+  return out
+}
+
+/**
  * Read the alias declarations out of the person files.
  *
  * Parsed with the production parser rather than scanned for meta lines, because `memhtml-alias` is
@@ -487,6 +523,10 @@ export const aliasBacked = (
  * declaration behind an index refresh, so an alias written and committed during a session would not be
  * evidence until the next rebuild, and the one surface an operator is invited to edit would be the one
  * with a stale read. There are as many person files as there are people, and the phase reads each once.
+ *
+ * Read on EVERY run, including a credential-free one and a dry run, because the declarations are a
+ * deterministic pair source rather than the model core's evidence. Reading them is pure, so a dry run
+ * can count what they would merge without writing anything.
  */
 const readAliasGroups = (env: PhaseEnv): Effect.Effect<ReadonlyArray<AliasGroup>> =>
   Effect.gen(function* () {
@@ -557,24 +597,45 @@ export const entityResolution: PhaseBody = (env) =>
      * deterministic passes running. A dry run must make no model call and bump no counter, because a
      * counter bumped by a run that wrote nothing would be a night of corroboration the corpus never
      * saw. An absent model is a credential-free run, not a broken one.
+     *
+     * **`dedup-merge`'s dry run makes the opposite choice and DOES spend its calls**, because there the
+     * model's partition is the number an operator is asking for and a call costs nothing but money. Here
+     * an honest preview would have to bump the corroboration counter — the merge count for night two
+     * depends on it — and this phase's writes are identity rewrites, which is the one-way door where
+     * manufacturing a night of evidence is worse than declining to preview.
      */
     const model = env.dryRun ? undefined : env.deps.model
     const modelKey = modelFor(env.deps, "entity-resolution")
 
-    /** The evidence the model core needs, gathered once for every type rather than per type. */
-    const evidence =
+    /**
+     * The declarations, read UNCONDITIONALLY — before the model core, and whether or not one exists.
+     *
+     * The oracle is a deterministic pair source like the character pass, not evidence the model core
+     * owns. Reading it here is what makes a person file an operator surface: seed one, and the merge it
+     * declares lands on the next night with no credentials, no cosine, and no second night. Gathering it
+     * under `model !== undefined` made the declaration effective only where a model had already proposed
+     * the same pair, which is the narrower behavior issue #43 names as the defect.
+     *
+     * It is also the model core's evidence, unchanged: `aliasesFor` reads these same groups to render
+     * the `declared aliases` line, so the model sees what the code already decided rather than being
+     * asked about it.
+     *
+     * A read, never a write, so a DRY RUN performs it too. Its merges are counted like every other dry
+     * run count and nothing is written, which is what an operator sizing a night needs.
+     */
+    const aliasGroups = yield* readAliasGroups(env)
+
+    /** The centroids the model core needs, gathered once for every type rather than per type. */
+    const centroidsByType =
       model === undefined
         ? undefined
-        : yield* Effect.all({
-            centroids: Effect.all([entityClaims(env.deps.db), entityVectors(env.deps.db)]).pipe(
-              Effect.map(([claims, vectors]) =>
-                entityCentroids(claims, new Map(vectors.map((entry) => [entry.key, entry.vec])), {
-                  sampleTitles: ENTITY_SAMPLE_TITLES
-                })
-              )
-            ),
-            aliasGroups: readAliasGroups(env)
-          })
+        : yield* Effect.all([entityClaims(env.deps.db), entityVectors(env.deps.db)]).pipe(
+            Effect.map(([claims, vectors]) =>
+              entityCentroids(claims, new Map(vectors.map((entry) => [entry.key, entry.vec])), {
+                sampleTitles: ENTITY_SAMPLE_TITLES
+              })
+            )
+          )
 
     for (const [entityType, bucket] of [...byType.entries()].sort(([left], [right]) =>
       left < right ? -1 : 1
@@ -594,19 +655,37 @@ export const entityResolution: PhaseBody = (env) =>
       const accepted: Array<NamePair> = [...character.auto]
 
       /**
+       * Pass two-and-a-half: the DECLARED aliases, accepted straight into the union.
+       *
+       * Only for {@link PERSON_TYPE}, because that is the only type the format gives a declaration
+       * surface — `resources/people/` — so an alias group can only ever be about a person, and running
+       * this for `service` would compare names against groups that cannot hold them.
+       *
+       * These merges are recorded in `aliasMerges` and never in `entity_corroboration`. A declaration is
+       * a human's assertion of identity rather than a machine's suspicion, so a second night would add no
+       * evidence, and a counter row for it would tell a reader of that table there is a decision still
+       * waiting.
+       */
+      const declared = entityType === PERSON_TYPE ? aliasPairs(aliasGroups, counts) : []
+      accepted.push(...declared)
+      aliasMerges += declared.length
+      /** So the model core does not count a declared pair a second time. */
+      const declaredKeys = new Set(declared.map(([left, right]) => pairKey(left, right)))
+
+      /**
        * Pass three: the model core. One call per shard of one type, then a deterministic decision per
        * proposed merge. Every merge the model contributes is either alias-backed and immediate, or
        * corroborated across nights, or counted for review — the model never writes.
        */
       const clusteredPairs = new Set<string>()
-      if (model !== undefined && evidence !== undefined) {
-        const centroids = evidence.centroids.get(entityType) ?? []
+      if (model !== undefined && centroidsByType !== undefined) {
+        const centroids = centroidsByType.get(entityType) ?? []
         const members = centroids.filter((centroid) => counts.has(centroid.name))
         const aliasesFor = (name: string): ReadonlyArray<string> =>
           entityType === PERSON_TYPE
             ? [
                 ...new Set(
-                  evidence.aliasGroups
+                  aliasGroups
                     .filter((group) => group.has(name))
                     .flatMap((group) => [...group].filter((other) => other !== name))
                 )
@@ -662,14 +741,27 @@ export const entityResolution: PhaseBody = (env) =>
             }
 
             for (const merge of decomposeCluster(memberNames, counts)) {
-              clusteredPairs.add(pairKey(merge.alias, merge.canonical))
+              const key = pairKey(merge.alias, merge.canonical)
+              clusteredPairs.add(key)
               // Already merged by the character pass. Corroborating a merge that has happened would
               // count a night of evidence for a decision no longer awaiting one.
               if (nameSimilarity(merge.alias, merge.canonical) >= AUTO_MERGE_THRESHOLD) continue
 
-              if (aliasBacked(evidence.aliasGroups, merge.alias, merge.canonical)) {
-                // A declaration in a person file is a human's assertion of identity, not a machine's
-                // suspicion, so it applies on the first night whatever the strings look like.
+              /**
+               * Already accepted by the declaration pass above, so the merge is happening and only the
+               * counting is at stake: adding it again would report one merge as two, and corroborating
+               * it would count a night of evidence toward a decision already made. The model agreeing
+               * with a declaration is not new information — the declaration is the stronger evidence.
+               */
+              if (declaredKeys.has(key)) continue
+
+              /**
+               * A declaration the pass above could not have seen: the model named a pair whose two names
+               * are in one alias group, but at least one of them is not in `counts` for this type — a
+               * name the batch offered whose entity rows this type's bucket does not hold. Rare, and the
+               * rule is the same one, so it is applied here rather than left to the corroboration path.
+               */
+              if (aliasBacked(aliasGroups, merge.alias, merge.canonical)) {
                 accepted.push([merge.alias, merge.canonical])
                 aliasMerges += 1
                 continue

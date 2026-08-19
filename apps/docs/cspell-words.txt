@@ -66,5 +66,13 @@ déployé
 # `serch` is a deliberate misspelling: `learn/operations/diagnose-poor-retrieval` prints the
 # `unknown command: serch x` envelope a mistyped invocation returns.
 serch
+# The test corpus's person names, quoted verbatim by `internals/the-memory-file-format` and
+# `internals/the-sleep-pipeline` where they state the MEASURED character-overlap scores that make
+# entity resolution's alias oracle necessary (`laith` against `laith al-saadoon` at 0.476). The
+# numbers are only checkable against the names they were measured on, so the docs cannot paraphrase
+# them into a generic `alice`/`bob` pair.
+laith
+saadoon
+sanju
 llms
 Grayscale

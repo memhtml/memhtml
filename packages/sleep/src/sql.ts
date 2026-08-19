@@ -1,5 +1,5 @@
 import type { StorageFailure } from "@memhtml/contracts/errors"
-import { PEOPLE_DIR } from "@memhtml/contracts/paths"
+import { ARCHIVE_BUCKET, PEOPLE_DIR } from "@memhtml/contracts/paths"
 import type { KeyedVector } from "@memhtml/domain"
 import { float32View, rankCandidatePairs, topNeighborPairs } from "@memhtml/domain"
 import type { DatabaseShape } from "@memhtml/index"
@@ -272,7 +272,16 @@ export const sharedEntityPairs = (
  * entity-authoring habits of whoever wrote the memories.
  *
  * `strength` is the mined edge's own cosine (`replaceMinedEdges` clamps it into `[0, 1]`), so the
- * caller can rank both arms of the union on one scale without re-decoding a vector.
+ * caller can rank both arms of the union on one scale without re-decoding a vector. The statement
+ * ORDERS BY it, descending, for the same reason {@link sharedEntityPairs} hands back a ranked list:
+ * the caller's cap is a model-cost bound, and a cap over a path-ordered read would spend the night on
+ * whichever pairs sort alphabetically first. `src_path` then `dst_path` break a tie, which is
+ * `collectRanked`'s ordering, so both arms of the union arrive in one ordering.
+ *
+ * **Deliberately unbounded**, unlike the other arm: the caller ranks the UNION and caps that, so a
+ * limit here would cut candidates before the two arms have been compared. The mined set is one row per
+ * pair above mining's cosine floor (measured 1,498 on the production corpus), which is a read this
+ * phase already performs once a night.
  *
  * Three filters, each load-bearing:
  *
@@ -304,7 +313,7 @@ export const minedPairs = (
            AND ((a.src_path = e.src_path AND a.dst_path = e.dst_path)
              OR (a.src_path = e.dst_path AND a.dst_path = e.src_path))
        )
-     ORDER BY e.src_path ASC, e.dst_path ASC`,
+     ORDER BY e.strength DESC, e.src_path ASC, e.dst_path ASC`,
     [...excluded, ...excluded, options.rel]
   )
 }
@@ -425,15 +434,24 @@ export const entityVectors = (
  * person, not that two of their names stopped being the same name, and an alias declaration losing its
  * force on archival would silently re-split a person the phase had already merged.
  *
+ * **Which is why the archive prefix is matched too, and not just `archived = 0` left off.** Eviction is
+ * the `git mv` into `archive/<YYYY>/<original-path>`, so an archived person file's PATH is
+ * `archive/2026/resources/people/…` and no longer matches `resources/people/%` at all. A single
+ * `LIKE` here would have said "archived files are included" while excluding every one of them, and the
+ * re-split above is exactly what would have followed. The second pattern mirrors
+ * `archivePathFor`'s shape (`%` for the year segment, which is four digits the statement need not
+ * verify — a false match would be another file under `resources/people/`, which is a person file).
+ *
  * The phase reads the BYTES of each of these; this statement only says which paths to open, because
  * `memhtml-alias` is repeatable and lives in the file rather than in any projection.
  */
 export const peoplePaths = (
   db: DatabaseShape
 ): Effect.Effect<ReadonlyArray<{ readonly path: string }>, StorageFailure> =>
-  db.all<{ path: string }>("SELECT path FROM files WHERE path LIKE ? ORDER BY path ASC", [
-    `${PEOPLE_DIR}/%`
-  ])
+  db.all<{ path: string }>(
+    "SELECT path FROM files WHERE path LIKE ? OR path LIKE ? ORDER BY path ASC",
+    [`${PEOPLE_DIR}/%`, `${ARCHIVE_BUCKET}/%/${PEOPLE_DIR}/%`]
+  )
 
 /** One memory-class edge between two active files. */
 export interface EdgeRow {

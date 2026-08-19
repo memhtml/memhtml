@@ -432,6 +432,15 @@ export const dedupMerge: PhaseBody = (env) =>
  *
  * The counts are real on a dry run — including the veto — because an operator sizing a night needs to
  * know what it would have folded. Only the writes are withheld.
+ *
+ * **A dry run here DOES spend model calls, and `entity-resolution`'s deliberately does not.** The two
+ * choices differ because what a preview is worth differs. The number an operator wants from this phase
+ * is how many folds a real night would make, and the model's partition is what decides that — a dry run
+ * that skipped the call would report only the deterministic floor's folds and understate the night it is
+ * previewing. `entity-resolution` refuses because its writes are identity rewrites, the one-way door
+ * this codebase guards hardest: its dry run would have to bump `entity_corroboration` to be honest about
+ * night two, and a counter bumped by a run that wrote nothing is a night of evidence the corpus never
+ * saw.
  */
 const commitMerges = (
   env: PhaseEnv,

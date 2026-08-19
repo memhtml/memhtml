@@ -54,6 +54,7 @@ import {
   DEDUP_MEMBER_CHARS,
   DEDUP_PAIR_LIMIT
 } from "../src/phases/dedup-merge.js"
+import { unionPairs as candidateUnion } from "../src/phases/edge-typing.js"
 import {
   AUTO_MERGE_THRESHOLD,
   aliasBacked,
@@ -807,6 +808,65 @@ describe("the character pair pass", () => {
   it("is a function of the name SET, not of the order it was given", () => {
     const names = ["checkout_api", "checkout api", "checkout-api"]
     expect(characterPairs(names)).toEqual(characterPairs([...names].reverse()))
+  })
+})
+
+describe("edge typing's candidate union", () => {
+  /**
+   * The paths are chosen so PATH ORDER and SIM ORDER are exact opposites: the strongest pair sits on
+   * the lexicographically LAST paths and the weakest on the first. That is the arrangement the
+   * candidate cap has to survive, because a cap over a path-ordered union spends the whole night's
+   * model budget on the weakest pairs the corpus offers — silently, since it reports the same
+   * `candidates` count either way. Sorting by `sim` first is what makes the cap SELECT.
+   */
+  const pair = (src: string, dst: string, sim: number) => ({ src, dst, sim })
+  const ARM: ReadonlyArray<{ readonly src: string; readonly dst: string; readonly sim: number }> = [
+    pair("areas/aardvark/a.html", "areas/aardvark/b.html", 0.81),
+    pair("areas/middling/a.html", "areas/middling/b.html", 0.9),
+    pair("areas/zulu/a.html", "areas/zulu/b.html", 0.99)
+  ]
+
+  it("ranks `sim` DESC so a cap keeps the STRONGEST pairs and not the alphabetically first", () => {
+    const ranked = candidateUnion([ARM])
+    expect(ranked.map((one) => one.sim)).toEqual([0.99, 0.9, 0.81])
+    /**
+     * The cap the phase applies, at a size that truncates. The kept pair is the strongest, which under
+     * the old path ordering was the one thrown away — and asserting on which pair is DROPPED is the
+     * load-bearing half, since a ranking that only happened to put the right row first would pass an
+     * assertion on the survivor alone.
+     */
+    const capped = ranked.slice(0, 1)
+    expect(capped.map((one) => one.src)).toEqual(["areas/zulu/a.html"])
+  })
+
+  it("breaks a `sim` tie on `src` then `dst`, so the cap is reproducible across runs", () => {
+    /**
+     * `collectRanked`'s house ordering in `@memhtml/domain`, matched here. Without a total order two
+     * runs over one corpus could cap differently — the pairs that got judged would depend on the order
+     * two SQL reads happened to return — and every batch boundary and `m1`..`mN` key would move with
+     * it. Fed in REVERSE of the expected order, so a stable sort that did nothing would fail.
+     */
+    const tied = [
+      pair("areas/x/b.html", "areas/x/z.html", 0.9),
+      pair("areas/x/b.html", "areas/x/a.html", 0.9),
+      pair("areas/x/a.html", "areas/x/q.html", 0.9)
+    ]
+    expect(candidateUnion([tied]).map((one) => [one.src, one.dst])).toEqual([
+      ["areas/x/a.html", "areas/x/q.html"],
+      ["areas/x/b.html", "areas/x/a.html"],
+      ["areas/x/b.html", "areas/x/z.html"]
+    ])
+  })
+
+  it("keeps the FIRST arm's orientation and sim for a pair both arms found", () => {
+    /**
+     * The dedup is on the unordered pair, and the mined arm is walked first — so a mirrored pair from
+     * the second arm collapses onto the first arm's row, sim included. That is what keeps a pair in
+     * both arms ranked once, at one value, rather than twice at two.
+     */
+    const mined = [pair("areas/x/a.html", "areas/x/b.html", 0.97)]
+    const shared = [pair("areas/x/b.html", "areas/x/a.html", 0.83)]
+    expect(candidateUnion([mined, shared])).toEqual(mined)
   })
 })
 

@@ -3,7 +3,7 @@ import { Effect } from "effect"
 
 import { assembleBatches, batchCall, keyMembers, resolveKeys } from "../batch.js"
 import { commitPhase } from "../commit.js"
-import { hrefFor, link, meta, stampFile } from "../edits.js"
+import { hrefFor, link, meta, readFileBytes, stampFile } from "../edits.js"
 import { emptyOutcome, modelFor, type PhaseBody, type PhaseEnv } from "../env.js"
 import {
   assertsContradiction,
@@ -31,13 +31,14 @@ import {
  *
  * Four stages, and keeping them separate is what makes the phase safe:
  *
- * 1. **Scan (SQL, no model).** The union of two candidate arms, deduplicated by unordered pair:
- *    relationship mining's derived `relates_to` edges ({@link minedPairs}) and the shared-entity
- *    scan ({@link sharedEntityPairs}). Neither arm subsumes the other — two memories about one
- *    incident naming no common entity are invisible to the join and obvious to the embedder, and a
- *    same-entity pair below the mining floor is the reverse — so recall is the union rather than
- *    whichever signal happens to be stronger in a corpus. Both arms exclude tasks and anti-join
- *    pairs that already carry an AUTHORED edge either way.
+ * 1. **Scan (SQL, no model).** The union of two candidate arms, deduplicated by unordered pair and
+ *    RANKED BY SIMILARITY before the cap: relationship mining's derived `relates_to` edges
+ *    ({@link minedPairs}) and the shared-entity scan ({@link sharedEntityPairs}). Neither arm
+ *    subsumes the other — two memories about one incident naming no common entity are invisible to
+ *    the join and obvious to the embedder, and a same-entity pair below the mining floor is the
+ *    reverse — so recall is the union rather than whichever signal happens to be stronger in a
+ *    corpus. Both arms exclude tasks and anti-join pairs that already carry an AUTHORED edge either
+ *    way.
  * 2. **Batch (deterministic).** Pairs sorted by the directory both endpoints share, then sliced at
  *    {@link EDGE_PAIRS_PER_CALL} on the shared kernel, so topically related pairs land in one call.
  *    One call per batch, never one per pair: at the measured 1,498 mined pairs a night, per-pair
@@ -49,7 +50,10 @@ import {
  *    direction, and a confidence; code decides what is written:
  *    - `contradicts` above `EDGE_CONFIDENCE_FLOOR` bumps the corroboration counter and is
  *      written into BOTH files only at `detections >= 2`. A single machine detection therefore
- *      cannot reach the retention penalty, which counts only `derived = 0` file-borne edges.
+ *      cannot reach the retention penalty, which counts only `derived = 0` file-borne edges. Both
+ *      endpoints must still be in the TREE, checked before either write, and the counter is marked
+ *      promoted only when both sides actually gained the link — otherwise the pair is left
+ *      re-eligible for a later night rather than recorded as half done.
  *    - A DIRECTIONAL rel above the floor is written into the SUBJECT's file alone, per the
  *      direction the model named. No corroboration gate: a `part_of` carries no penalty and is
  *      cheap for a reviewer to delete, so a second night's wait would buy nothing.
@@ -61,6 +65,12 @@ import {
  * **Determinism is the phase's, not the kernel's.** Both sorts below fix the batch boundaries and
  * the `m1`..`mN` keys, and the kernel preserves the order it is handed. Two runs over an unchanged
  * corpus therefore send the same prompt bytes in the same order.
+ *
+ * **Deferred: a `none` pair is re-judged on every later night, bounded by the candidate cap.** Neither
+ * arm records that a pair was judged and answered `none`, so the pair stays a mined `relates_to` and
+ * re-enters the union tomorrow. The cap is what bounds that cost — a night judges
+ * {@link EDGE_TYPING_CANDIDATE_LIMIT} pairs whatever their history — and a judged-`none` watermark is
+ * new durable state-plane surface, so it stays out of this change.
  *
  * **Detection only, still.** A promoted `contradicts` asserts the conflict and stops: nothing is
  * superseded, no `memhtml-valid-until` is closed, neither side is archived. Choosing the winner of a
@@ -129,7 +139,7 @@ interface TypingCandidate {
 }
 
 /**
- * The union of both candidate arms, deduplicated by UNORDERED pair and ordered deterministically.
+ * The union of both candidate arms, deduplicated by UNORDERED pair and ranked `sim` DESC.
  *
  * The two arms orient their pairs differently — the shared-entity join emits `dst < src` and a mined
  * edge carries whichever orientation mining wrote — so the dedup key sorts the endpoints. Without
@@ -137,9 +147,19 @@ interface TypingCandidate {
  * disagree.
  *
  * The kept row is the FIRST one seen, and the mined arm is walked first, so a pair in both arms
- * carries mining's own orientation. That choice is arbitrary, because the direction the phase writes
- * comes from the model's `direction` field relative to this orientation, so it must only be STABLE,
- * which the sort makes it.
+ * carries mining's own orientation AND mining's own `sim`. That choice is arbitrary, because the
+ * direction the phase writes comes from the model's `direction` field relative to this orientation,
+ * so it must only be STABLE, which the sort makes it.
+ *
+ * **`sim` DESC is what makes the candidate cap select rather than truncate.** Both arms carry a
+ * similarity on one scale — `sharedEntityPairs` reports the cosine `rankCandidatePairs` computed and
+ * `minedPairs` reports the mined edge's own clamped cosine — so the union is rankable without
+ * re-decoding a vector. A path-ordered union capped at {@link EDGE_TYPING_CANDIDATE_LIMIT} would spend
+ * the whole night's model budget on whichever pairs sort alphabetically first, so a corpus whose
+ * strongest candidates live under `services/` or `team/` would never have them judged at all, however
+ * many nights ran. The tie-break is `src` ASC then `dst` ASC, which is `collectRanked`'s ordering in
+ * `@memhtml/domain` — the house rule every other pair consumer already follows, so two runs over an
+ * unchanged corpus select and batch the same pairs.
  */
 export const unionPairs = (arms: ReadonlyArray<ReadonlyArray<PairRow>>): ReadonlyArray<PairRow> => {
   const seen = new Set<string>()
@@ -153,13 +173,19 @@ export const unionPairs = (arms: ReadonlyArray<ReadonlyArray<PairRow>>): Readonl
     }
   }
   return out.sort((left, right) => {
+    if (left.sim !== right.sim) return left.sim < right.sim ? 1 : -1
     if (left.src !== right.src) return left.src < right.src ? -1 : 1
     return left.dst < right.dst ? -1 : left.dst > right.dst ? 1 : 0
   })
 }
 
 /**
- * The night's candidate pairs: the union of both arms, capped.
+ * The night's candidate pairs: the union of both arms, ranked `sim` DESC, then capped.
+ *
+ * The rank is {@link unionPairs}' and the cap is applied AFTER it, so the cap selects the strongest
+ * {@link EDGE_TYPING_CANDIDATE_LIMIT} pairs the corpus offers rather than the alphabetically first
+ * ones. That ordering is also the batch order's first input, so a night's strongest pairs are judged
+ * even when the cap bites.
  *
  * Its own function so the SCAN is separable from the judging, and exported so a test asserting on a
  * batch boundary, a cap, or a skip count reads the same set the phase will type instead of
@@ -226,7 +252,21 @@ export const edgeTyping: PhaseBody = (env) =>
      */
     const candidates = yield* edgeTypingCandidates(env.deps.db)
 
-    const zero = { candidates: 0, judged: 0, typed: 0, contradictions: 0, promoted: 0, skipped: 0 }
+    /**
+     * The full path's count SHAPE, at zero. Every key the phase can report is present, because a
+     * report reader comparing two nights reads a missing key as a phase that does not have that
+     * concept rather than as a night that did none of it.
+     */
+    const zero = {
+      candidates: 0,
+      judged: 0,
+      typed: 0,
+      contradictions: 0,
+      promoted: 0,
+      skipped: 0,
+      capped: 0,
+      duplicates: 0
+    }
     if (candidates.length === 0) return emptyOutcome(zero)
     if (env.dryRun) return emptyOutcome({ ...zero, candidates: candidates.length })
 
@@ -281,6 +321,8 @@ export const edgeTyping: PhaseBody = (env) =>
     let contradictions = 0
     let promoted = 0
     let capped = 0
+    /** Second-and-later verdicts naming a key their batch had already answered for. */
+    let duplicates = 0
     let llmCalls = 0
 
     for (const batch of batches) {
@@ -307,15 +349,34 @@ export const edgeTyping: PhaseBody = (env) =>
         continue
       }
 
+      /**
+       * The keys this batch has already answered for, so a SECOND verdict naming one is dropped.
+       *
+       * A verdict is one pair's answer, and nothing in the schema stops a model from emitting two for
+       * one key. Acting on both would write two authored edges from one relationship — and since the
+       * two are free to disagree about `direction`, `caused_by` could land in BOTH files, which says
+       * each memory caused the other. `resolveKeys` does not help: it is called one key at a time
+       * here, because a verdict names one pair, so its own repeat-collapsing never sees the pair.
+       *
+       * FIRST wins rather than last, and the choice is the same one {@link unionPairs} makes: the
+       * batch's order is deterministic, so which verdict is first is reproducible, and a later verdict
+       * cannot revise a write already committed to the tree. Repeats are counted in `duplicates`
+       * rather than silently swallowed, so a model doing this is visible in a night's report.
+       */
+      const answered = new Set<string>()
+
       for (const verdict of answer.verdicts) {
         /**
          * The key is resolved through the kernel, so an invented key yields no candidate and no
-         * write. `resolveKeys` is given one key at a time because a verdict is one pair's answer;
-         * two verdicts naming the same key are two answers about one pair, and only the first is
-         * acted on — the `judged` set below is what enforces that.
+         * write.
          */
         const [candidate] = resolveKeys(keyed, [verdict.pairKey])
         if (candidate === undefined) continue
+        if (answered.has(verdict.pairKey)) {
+          duplicates += 1
+          continue
+        }
+        answered.add(verdict.pairKey)
         judged += 1
         if (!assertsEdge(verdict)) continue
 
@@ -342,16 +403,64 @@ export const edgeTyping: PhaseBody = (env) =>
             continue
           }
 
-          // Both directions: a contradiction is symmetric, and a reader arriving at either file must
-          // see it. `addLink` is idempotent on the pair, so a re-promotion writes nothing.
-          yield* stampFile(env, candidate.pair.src, [
+          /**
+           * **BOTH endpoints, or nothing at all — checked BEFORE either write.**
+           *
+           * A `contradicts` is symmetric, and the phase's own promotion rule is that a reader arriving
+           * at either file sees it. So the pair is all-or-nothing, and the check has to come first
+           * because the alternative is not recoverable: stamping `src` and then finding `dst` gone
+           * leaves a `<link>` pointing at a path the tree does not hold — a dangling href committed by
+           * the commit that created it — while the other half of the conflict is invisible.
+           *
+           * A missing endpoint is ORDINARY here, not exceptional. Every phase reads its candidates from
+           * an index refreshed once in preflight and not again, so a file an earlier phase archived is
+           * still listed active at its old path when this phase reads it. `readFileBytes` answers
+           * `undefined` for exactly that case, and the TREE is the system of record.
+           */
+          /**
+           * **BOTH endpoints, or nothing at all — checked BEFORE either write.**
+           *
+           * A `contradicts` is symmetric, and the phase's own promotion rule is that a reader arriving
+           * at either file sees it. So the pair is all-or-nothing, and the check has to come first
+           * because the alternative is not recoverable: stamping `src` and then finding `dst` gone
+           * leaves a `<link>` pointing at a path the tree does not hold — a dangling href committed by
+           * the commit that created it — while the other half of the conflict is invisible.
+           *
+           * A missing endpoint is ORDINARY here, not exceptional. Every phase reads its candidates from
+           * an index refreshed once in preflight and not again, so a file an earlier phase archived is
+           * still listed active at its old path when this phase reads it. `readFileBytes` answers
+           * `undefined` for exactly that case, and the TREE is the system of record.
+           */
+          const haveSrc = yield* readFileBytes(env, candidate.pair.src)
+          const haveDst = yield* readFileBytes(env, candidate.pair.dst)
+          if (haveSrc === undefined || haveDst === undefined) continue
+
+          // `addLink` is idempotent on the pair, so a re-promotion writes nothing.
+          const wroteSrc = yield* stampFile(env, candidate.pair.src, [
             link("contradicts", hrefFor(candidate.pair.dst)),
             meta("memhtml-updated", env.at)
           ])
-          yield* stampFile(env, candidate.pair.dst, [
+          const wroteDst = yield* stampFile(env, candidate.pair.dst, [
             link("contradicts", hrefFor(candidate.pair.src)),
             meta("memhtml-updated", env.at)
           ])
+
+          /**
+           * The counter is promoted only when BOTH sides gained the edge on this run. `stampFile`'s
+           * `false` also covers "the head already said this", so a pair whose files were somehow
+           * stamped without the counter being promoted stays un-promoted — and therefore RE-ELIGIBLE,
+           * which is the outcome that lets a later night with a refreshed index finish the job rather
+           * than record a half-written edge as done.
+           */
+          /**
+           * The counter is promoted only when BOTH sides gained the edge on this run. `stampFile`'s
+           * `false` also covers "the head already said this", so a pair whose files were somehow
+           * stamped without the counter being promoted stays un-promoted — and therefore RE-ELIGIBLE,
+           * which is the outcome that lets a later night with a refreshed index finish the job rather
+           * than record a half-written edge as done.
+           */
+          if (!wroteSrc || !wroteDst) continue
+
           yield* markPromoted(env.deps.db, {
             srcPath: candidate.pair.src,
             rel: "contradicts",
@@ -394,7 +503,8 @@ export const edgeTyping: PhaseBody = (env) =>
       contradictions,
       promoted,
       skipped,
-      capped
+      capped,
+      duplicates
     }
     if (promoted === 0 && typed === 0) return { counts, commitSha: null, llmCalls }
 

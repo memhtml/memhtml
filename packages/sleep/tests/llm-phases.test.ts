@@ -1,5 +1,6 @@
 import { archivePathFor } from "@memhtml/contracts/paths"
 import { parseMemory } from "@memhtml/html"
+import { STATE_SCHEMA } from "@memhtml/index"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 
@@ -513,6 +514,97 @@ describe("edge-typing", () => {
     )
   })
 
+  it("promotes NOTHING when one endpoint's file is gone, and leaves the survivor undangled", async () => {
+    /**
+     * A `contradicts` is symmetric and the phase writes it into both files, so it is all-or-nothing —
+     * and one endpoint being absent is ORDINARY here, not exceptional: every phase reads its candidates
+     * from an index refreshed once in preflight, so a file an earlier phase archived is still listed
+     * active at its old path when this phase runs. Reproduced exactly that way, by archiving one
+     * endpoint's file in the TREE and leaving the index row where it was.
+     *
+     * Three things have to hold, and each fails against a different wrong implementation:
+     *
+     * - `promoted` is 0 and there is NO COMMIT. A phase that counted the half-write reports a promotion
+     *   the corpus does not carry.
+     * - `edge_corroboration.promoted` stays 0, so the pair is RE-ELIGIBLE. Marking it promoted on a
+     *   one-sided write records a half-written edge as done, and no later night — with a refreshed index
+     *   and both files present, or with the pair correctly out of both arms — ever finishes it.
+     * - The SURVIVING file gains no `contradicts`. That is the assertion the naive fix misses: capturing
+     *   both `stampFile` results and gating `markPromoted` on them still stamps `src` first, leaving a
+     *   `<link>` pointing at a path the tree does not hold — a dangling href committed by the commit
+     *   that created it.
+     *
+     * The counter is seeded one detection short, so the gate is genuinely reached and the phase really
+     * does try to write. Without that the test would pass against any implementation, because the
+     * corroboration gate would have refused first.
+     */
+    const model = scriptedModel((request) =>
+      value({
+        verdicts: pairKeysWithText(request.prompt, "is not safe").map((key) =>
+          verdict({ pairKey: key, rel: "contradicts" })
+        )
+      })
+    )
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const pairs = yield* candidatePairs(fixture)
+          const pair = pairOf(pairs, SAFE, NOT_SAFE)
+          expect(pair).toBeDefined()
+          yield* seedCorroboration(fixture.db, {
+            srcPath: pair?.src ?? "",
+            dstPath: pair?.dst ?? "",
+            detections: PROMOTION_DETECTIONS - 1
+          })
+
+          /**
+           * `NOT_SAFE` leaves the tree the way an earlier phase would have moved it — a `git mv` into
+           * the archive plus a commit — and the index is NOT refreshed, which is the whole point.
+           */
+          const destination = archivePathFor(NOT_SAFE, 2026)
+          yield* Effect.promise(async () => {
+            const { mkdir, rename } = await import("node:fs/promises")
+            const { dirname, join } = await import("node:path")
+            await mkdir(dirname(join(fixture.root, destination)), { recursive: true })
+            await rename(join(fixture.root, NOT_SAFE), join(fixture.root, destination))
+          })
+          yield* fixture.raw("add", "-A")
+          yield* fixture.raw("commit", "-m", "archive one endpoint out from under the phase")
+          const head = (yield* fixture.raw("rev-parse", "HEAD")).trim()
+          // Non-vacuous: the index still lists the pair while the tree no longer holds one side.
+          expect(yield* atHead(fixture, NOT_SAFE)).toBeUndefined()
+          expect(yield* candidatePairs(fixture).pipe(Effect.map((one) => one.length))).toBe(
+            pairs.length
+          )
+
+          const outcome = yield* edgeTyping({
+            ...envFor(fixture),
+            deps: { ...fixture.deps, model }
+          })
+
+          // The verdict was reached and counted; the WRITE is what declined.
+          expect(outcome.counts.contradictions).toBe(1)
+          expect(outcome.counts.promoted).toBe(0)
+          expect(outcome.counts.typed).toBe(0)
+          expect(outcome.commitSha).toBeNull()
+          expect((yield* fixture.raw("rev-parse", "HEAD")).trim()).toBe(head)
+
+          // The survivor carries no edge toward the file that is not there.
+          expect(yield* atHead(fixture, SAFE)).not.toContain("memhtml-contradicts")
+          expect(yield* fixture.deps.store.dirtyPaths().pipe(Effect.orDie)).toEqual([])
+
+          // And the pair is still waiting, not recorded as done.
+          const rows = yield* fixture.db
+            .all<{ detections: number; promoted: number }>(
+              `SELECT detections, promoted FROM ${STATE_SCHEMA}.edge_corroboration`
+            )
+            .pipe(Effect.orDie)
+          expect(rows).toEqual([{ detections: PROMOTION_DETECTIONS, promoted: 0 }])
+        }),
+      { seed: DEDUP_CORPUS }
+    )
+  })
+
   it("writes a directional rel into the SUBJECT's file, per the direction the model named", async () => {
     /**
      * The direction is the whole meaning of a directional rel: `caused_by` in the cause instead of the
@@ -655,6 +747,55 @@ describe("edge-typing", () => {
           expect(yield* atHead(fixture, SAFE)).not.toContain("memhtml-caused-by")
         }),
       { seed: DEDUP_CORPUS, model }
+    )
+  })
+
+  it("acts on the FIRST verdict for a pair key and drops a second one contradicting it", async () => {
+    /**
+     * Nothing in `EdgeTyping`'s schema stops a model from emitting two verdicts for one key, and the
+     * two are free to disagree. Here they name the SAME directional rel in OPPOSITE directions, which
+     * is the shape that makes the defect legible rather than merely double: acting on both writes
+     * `caused_by` into BOTH files, so the corpus says each memory caused the other. That is not a
+     * relationship a reader can interpret and not one a human asked for.
+     *
+     * The two files are seeded alone, so the batch holds exactly one pair and both verdicts name the
+     * same key by construction rather than by luck. `judged` counts the pair ONCE — a pair judged twice
+     * would report a night that asked more questions than it had pairs — and `duplicates` counts the
+     * refusal, so a model doing this is visible rather than silently absorbed.
+     */
+    const model = scriptedModel((request) => {
+      const [key] = offeredKeys(request.prompt)
+      return value({
+        verdicts: [
+          verdict({ pairKey: key ?? "", rel: "caused_by", direction: "src_to_dst" }),
+          verdict({ pairKey: key ?? "", rel: "caused_by", direction: "dst_to_src" })
+        ]
+      })
+    })
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const pairs = yield* candidatePairs(fixture)
+          expect(pairs).toHaveLength(1)
+          const pair = pairs[0]
+
+          const outcome = yield* edgeTyping(envFor(fixture))
+          expect(model.calls).toHaveLength(1)
+          expect(outcome.counts.judged).toBe(1)
+          expect(outcome.counts.typed).toBe(1)
+          expect(outcome.counts.duplicates).toBe(1)
+
+          /**
+           * The FIRST verdict's write, and only it. `src_to_dst` makes `src` the subject, so the link
+           * is in `src` alone — and the assertion on the OBJECT's file is the load-bearing half: it is
+           * what fails if the second verdict was acted on too.
+           */
+          const src = yield* atHead(fixture, pair?.src ?? "")
+          const dst = yield* atHead(fixture, pair?.dst ?? "")
+          expect(src).toContain(`<link rel="memhtml-caused-by" href="/${pair?.dst}">`)
+          expect(dst).not.toContain("memhtml-caused-by")
+        }),
+      { seed: [SAFE_FILE, NOT_SAFE_FILE], model }
     )
   })
 
@@ -1545,6 +1686,51 @@ describe("entity-resolution", () => {
     )
   })
 
+  it("keeps a declaration's force after the person file is ARCHIVED", async () => {
+    /**
+     * Archiving a person file records that the corpus moved on from the person, not that two of their
+     * names stopped being the same name. So the alias oracle's file list has to reach the archived form
+     * — and it does not reach it for free, because eviction is the `git mv` into
+     * `archive/<YYYY>/<original-path>`: an archived person file's path is
+     * `archive/2026/resources/people/…` and stops matching `resources/people/%` entirely. A single
+     * prefix pattern would say "archived files are included" while excluding every one of them, and the
+     * silent consequence is the re-split this test exists to catch — a person the phase merged last
+     * night comes apart the night after the declaration is archived.
+     *
+     * The file is seeded AT the archive path rather than moved there, because what is under test is the
+     * READ, and seeding it directly is the same row `archiveFile` would produce with none of another
+     * phase's behavior in the way. `archivePathFor` mints the path, so the test cannot disagree with the
+     * mapping the archive actually uses.
+     *
+     * No model is bound, so the declaration is the ONLY thing that can produce this merge — the same
+     * closure the night-one test above states.
+     */
+    const declaration = personFile({ canonical: PERSON_CANONICAL, aliases: [PERSON_ALIAS] })
+    const archived: SeedFile = {
+      path: archivePathFor(declaration.path, 2026),
+      html: declaration.html
+    }
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          // Non-vacuous: the live path really holds nothing, so only the archived read can find this.
+          expect(yield* atHead(fixture, declaration.path)).toBeUndefined()
+          expect(yield* atHead(fixture, archived.path)).toContain(PERSON_ALIAS)
+
+          const outcome = yield* entityResolution(envFor(fixture))
+          expect(outcome.llmCalls).toBe(0)
+          expect(outcome.counts.aliasMerges).toBe(1)
+          expect(outcome.counts.pendingCorroboration).toBe(0)
+
+          const after = yield* atHead(fixture, SHORT_FORM)
+          expect(after).toContain(personMeta(PERSON_CANONICAL))
+          expect(after).not.toContain(personMeta(PERSON_ALIAS))
+          expect(yield* entityCorroborations(fixture)).toEqual([])
+        }),
+      { seed: [...ENTITY_CORPUS, archived] }
+    )
+  })
+
   it("counts a BELOW-FLOOR cluster for review and merges nothing", async () => {
     /**
      * The confidence floor, which is the guard that runs before the corroboration counter. A cluster the
@@ -1870,6 +2056,12 @@ describe("entity-resolution", () => {
      * A credential-free run is not a broken run, and for THIS phase it is not an inert one either: the
      * normalization and character-overlap passes are the phase's pre-stage and they still write. What
      * degrades is the decision core, so the mixed-case meta folds and the short form stays.
+     *
+     * `aliasMerges: 0` here is a statement about THIS CORPUS, which seeds no person file — not about
+     * what a no-model night can do. It used to be a pin on the phase's old behavior, where the
+     * declarations were read only inside the model core; the test below is the one that pins the
+     * corrected behavior, and the contrast between the two is what makes the declared-alias pass
+     * visible. There is nothing here for it to merge, so the count is honest either way.
      */
     await withFixture(
       (fixture) =>
@@ -1895,6 +2087,61 @@ describe("entity-resolution", () => {
           expect(yield* entityCorroborations(fixture)).toEqual([])
         }),
       { seed: ENTITY_CORPUS }
+    )
+  })
+
+  it("applies a DECLARED alias on night one with NO MODEL BOUND at all", async () => {
+    /**
+     * The oracle's headline property, and the one the phase used not to have: issue #43 says entity
+     * resolution consults declared aliases FIRST and that an alias-backed merge auto-commits regardless
+     * of string distance. Reading the declarations only inside the model core delivered neither half —
+     * a credential-free night left `laith` and `laith al-saadoon` split with a person file sitting in
+     * the corpus saying they are one person, and a night WITH credentials applied the declaration only
+     * if the model happened to propose that exact pair.
+     *
+     * Every other route to this merge is CLOSED here, which is what makes the assertion about the
+     * declaration and nothing else:
+     *
+     * - No model is bound, so `llmCalls` is 0 and the clustering core never runs.
+     * - Character overlap between the two forms is 0.476 (measured, `fixture.ts`), below even the 0.75
+     *   review band, so the character pass neither merges them nor counts them.
+     * - The corroboration table stays EMPTY, so this is night one and not a counter that was already
+     *   part-way there.
+     *
+     * `sanju kumar` is the negative control the corpus already carries: a declaration naming two names
+     * must not collapse a third person, so a phase that merged every person on any declaration is a
+     * visible failure rather than a pass.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          expect(yield* atHead(fixture, SHORT_FORM)).toContain(personMeta(PERSON_ALIAS))
+
+          const outcome = yield* entityResolution(envFor(fixture))
+
+          expect(outcome.llmCalls).toBe(0)
+          expect(outcome.counts.aliasMerges).toBe(1)
+          expect(outcome.counts.llmMerges).toBe(0)
+          expect(outcome.counts.pendingCorroboration).toBe(0)
+          expect(outcome.commitSha).not.toBeNull()
+
+          // The merge is FILE-BORNE on night one, which is what survives `rm index.db`.
+          const after = yield* atHead(fixture, SHORT_FORM)
+          expect(after).toContain(personMeta(PERSON_CANONICAL))
+          expect(after).not.toContain(personMeta(PERSON_ALIAS))
+          expect(yield* personNames(fixture)).not.toContain(PERSON_ALIAS)
+          // And a third person the declaration says nothing about is untouched.
+          expect(yield* atHead(fixture, SANJU)).toContain(personMeta("sanju kumar"))
+
+          // No counter row: a declaration is evidence enough, so nothing is left waiting on a night two.
+          expect(yield* entityCorroborations(fixture)).toEqual([])
+        }),
+      {
+        seed: [
+          ...ENTITY_CORPUS,
+          personFile({ canonical: PERSON_CANONICAL, aliases: [PERSON_ALIAS] })
+        ]
+      }
     )
   })
 

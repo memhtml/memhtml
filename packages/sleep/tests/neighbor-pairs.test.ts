@@ -262,4 +262,42 @@ describe("the mined-edge arm", () => {
       { seed: SEED }
     )
   })
+
+  it("reads mined pairs `strength` DESC, so the caller's cap keeps the strongest", async () => {
+    /**
+     * The arm hands its rows to a caller that unions them with the shared-entity arm, ranks the union,
+     * and caps it — and this statement's own order is the union's first input. Ordering by path would
+     * leave a corpus's strongest mined pairs behind whichever ones sort alphabetically first.
+     *
+     * The seeded strengths are the exact INVERSE of path order: the two lexicographically LAST paths
+     * carry the highest strength and the first ones the lowest. So a statement that still ordered by
+     * path returns this list exactly reversed rather than in some order that happens to agree.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const mine = (src: string, dst: string, strength: number) =>
+            fixture.db.run(
+              `INSERT INTO edges
+                 (src_path, rel, dst_path, edge_class, derived, strength, provenance, created_at)
+               VALUES (?, 'relates_to', ?, 'memory', 1, ?, 'sleep', '2026-08-01T00:00:00Z')`,
+              [src, dst, strength]
+            )
+
+          // `areas/deploy/…` sorts first and is the WEAKEST; `areas/oncall/…` sorts last and is the
+          // strongest. Seeded weakest-first, so an unordered read would also come back wrong.
+          yield* mine(FLIP_SAFE, FLIP_NOT_SAFE, 0.87)
+          yield* mine(METRICS_A, METRICS_B, 0.93)
+          yield* mine(ONCALL_KEEP, ONCALL_DROP, 0.99)
+
+          const mined = yield* minedPairs(fixture.db, {
+            rel: "relates_to",
+            excludeTypes: ["task"]
+          })
+          expect(mined.map((pair) => pair.sim)).toEqual([0.99, 0.93, 0.87])
+          expect(mined.map((pair) => pair.src)).toEqual([ONCALL_KEEP, METRICS_A, FLIP_SAFE])
+        }),
+      { seed: SEED }
+    )
+  })
 })
