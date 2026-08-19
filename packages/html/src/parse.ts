@@ -1,6 +1,7 @@
 import { relForToken } from "@memhtml/contracts/edges"
 import { InvalidMemory } from "@memhtml/contracts/errors"
 import {
+  FINDING_KEY_PATTERN,
   isTaskStatus,
   MEMORY_TYPES,
   type MemoryType,
@@ -84,7 +85,11 @@ const boundedNumber = (
  */
 const readMetas = (
   metas: ReadonlyArray<{ name: string; content: string }>
-): { readonly metas: MemoryMetas | undefined; readonly violations: ReadonlyArray<string> } => {
+): {
+  readonly metas: MemoryMetas | undefined
+  readonly violations: ReadonlyArray<string>
+  readonly warnings: ReadonlyArray<string>
+} => {
   const single = (name: string): string | undefined =>
     metas.find((meta) => meta.name === name)?.content
 
@@ -110,13 +115,17 @@ const readMetas = (
     ...taskViolations(memoryType, single("memhtml-task-status"), single("memhtml-due"))
   )
 
+  const rawFindingKey = single("memhtml-finding-key")
+  const findingKey = asFindingKey(rawFindingKey)
+  const warnings = metaWarnings(rawFindingKey, findingKey)
+
   if (
     memoryType === undefined ||
     status === undefined ||
     createdAt === undefined ||
     updatedAt === undefined
   ) {
-    return { metas: undefined, violations }
+    return { metas: undefined, violations, warnings }
   }
 
   const optionals = {
@@ -134,7 +143,8 @@ const readMetas = (
     supersededBy: single("memhtml-superseded-by"),
     needsRevision: readBoolean(single("memhtml-needs-revision")),
     taskStatus: asTaskStatus(single("memhtml-task-status")),
-    dueAt: single("memhtml-due")
+    dueAt: single("memhtml-due"),
+    findingKey
   }
 
   return {
@@ -145,13 +155,44 @@ const readMetas = (
       updatedAt,
       ...definedOnly(optionals)
     },
-    violations
+    violations,
+    warnings
   }
 }
 
 /** Narrow a `memhtml-task-status` content string to the closed status vocabulary. */
 const asTaskStatus = (value: string | undefined): TaskStatus | undefined =>
   value !== undefined && isTaskStatus(value) ? value : undefined
+
+/**
+ * Narrow a `memhtml-finding-key` content string to `<detector>:<digest16>`. Anything else is
+ * absent, so `metas.findingKey` is either a well-formed anchor or nothing, and the dedup path
+ * that reads it never has to re-validate what the parser already accepted.
+ */
+const asFindingKey = (value: string | undefined): string | undefined =>
+  value !== undefined && FINDING_KEY_PATTERN.test(value) ? value : undefined
+
+/**
+ * The head's WARNINGS, as distinct from its violations. One entry so far.
+ *
+ * `memhtml-finding-key` is deliberately NOT on `taskViolations`'s path, and the difference is the
+ * whole point of the meta. The two task metas are refusals because the task's own lifecycle
+ * position is missing or contradictory, and a file the indexer must skip is better than one it
+ * indexes wrongly. A finding key is bookkeeping ABOUT a task — which detector filed it, so a
+ * second run recognizes its own work — and the task is a real task whether or not the anchor
+ * parses. Refusing the file over a mistyped key would make `memhtml task list` lose a task a human
+ * can see in the tree, which is the exact failure the graceful-degradation rule exists to prevent.
+ * Dedup treats a malformed key as no key: the worst case is one duplicate task, not a vanished one.
+ */
+const metaWarnings = (
+  rawFindingKey: string | undefined,
+  findingKey: string | undefined
+): ReadonlyArray<string> =>
+  rawFindingKey !== undefined && findingKey === undefined
+    ? [
+        `<meta name="memhtml-finding-key" content="${rawFindingKey}"> is not <detector>:<16 hex digits>`
+      ]
+    : []
 
 /**
  * The task metas' agreement with the type, reported as violations, not as dropped optionals.
@@ -343,7 +384,7 @@ export const parseMemory = (html: string): Effect.Effect<MemoryDoc, InvalidMemor
       aliases: repeated(metas, "memhtml-alias"),
       links: readLinks(document),
       article: readArticle(article),
-      warnings: structural.warnings
+      warnings: [...structural.warnings, ...metaResult.warnings]
     })
   })
 
@@ -359,6 +400,6 @@ export const checkMemory = (
   const metaResult = readMetas(headMetas(document))
   return {
     violations: [...structural.violations, ...metaResult.violations],
-    warnings: structural.warnings
+    warnings: [...structural.warnings, ...metaResult.warnings]
   }
 }

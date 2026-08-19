@@ -88,9 +88,62 @@ export interface CandidateMemoryLike {
   readonly evidence: ReadonlyArray<CandidateEvidenceLike>
 }
 
+/**
+ * One thing someone said they were going to do, still open at the end of the batch.
+ *
+ * A commitment is NOT a candidate memory and could not have arrived as one: the consolidator's kind
+ * vocabulary deliberately omits `task`, because a task is work to do rather than something observed to
+ * have happened (`apps/consolidator/src/contract.ts`). So it comes back on its own list, and this port
+ * carries it as its own type for the same reason.
+ *
+ * `actor` is `string` rather than `"user" | "assistant"`, matching how `kind` is widened above: the
+ * phase gates it against whatever it is about to write, and a narrower type here would be a second copy
+ * of a two-value list free to drift from the one the consolidator enforces.
+ *
+ * `evidence` is ONE quote, not an array, and that asymmetry with {@link CandidateMemoryLike} is the
+ * contract rather than an omission. A candidate needs two because a cross-session pattern has two lines
+ * behind it by definition; a commitment IS a single sentence someone said, so the sentence is the whole
+ * evidence. The consolidator additionally verifies that this quote really appears in the named
+ * transcript before returning, which candidate evidence does not get.
+ */
+export interface CommitmentLike {
+  readonly statement: string
+  /** `"user"` or `"assistant"`: whose intent it was. */
+  readonly actor: string
+  /** The transcript's own words for when, if any were said. Never a parsed date. */
+  readonly dueHint?: string | undefined
+  readonly evidence: CandidateEvidenceLike
+  /** 0 to 1: how firmly the intent was stated, not how likely the work is. */
+  readonly confidence: number
+}
+
+/**
+ * One statement that previously-committed work is DONE.
+ *
+ * No `actor`, deliberately, and the reason is upstream rather than a widening decision here: a
+ * completion is a fact about the WORK, so "the retry is merged" is equally true whoever said it, while a
+ * commitment needs an actor because whose intent it was decides whether it may be asserted at all.
+ */
+export interface ResolutionLike {
+  readonly statement: string
+  readonly evidence: CandidateEvidenceLike
+  readonly confidence: number
+}
+
 /** What one consolidation run produced, what it cost, and which sessions it actually reached. */
 export interface ConsolidationOutcome {
   readonly candidates: ReadonlyArray<CandidateMemoryLike>
+  /**
+   * The open commitments and the completions the run read out of the batch.
+   *
+   * `[]` when the run found none, never absent, and the consolidator makes that true rather than the
+   * phase having to assume it: the field is optional-with-default-`[]` on the MODEL's wire, so an agent
+   * build that predates these lists decodes clean, and the client resolves the absent case to `[]` before
+   * the port sees it. So a reader here never has to tell "found none" from "was not asked", and the
+   * phase's own gate can treat an empty list as the answer it is.
+   */
+  readonly commitments: ReadonlyArray<CommitmentLike>
+  readonly resolutions: ReadonlyArray<ResolutionLike>
   /**
    * Model calls the run actually made. NOT one: the eve harness loops, so a run that grepped five
    * times made five calls, and the number comes back counted from the stream rather than assumed.

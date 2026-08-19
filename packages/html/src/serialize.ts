@@ -73,6 +73,7 @@ export const metaPairs = (doc: MemoryDoc): ReadonlyArray<readonly [MemoryMetaNam
   put("memhtml-needs-revision", metas.needsRevision)
   put("memhtml-task-status", metas.taskStatus)
   put("memhtml-due", metas.dueAt)
+  put("memhtml-finding-key", metas.findingKey)
 
   const repeatables = new Map<MemoryMetaName, ReadonlyArray<string>>([
     ["memhtml-entity", doc.entities],

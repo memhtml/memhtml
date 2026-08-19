@@ -101,7 +101,8 @@ describe("the metadata vocabulary", () => {
       "memhtml-superseded-by",
       "memhtml-needs-revision",
       "memhtml-task-status",
-      "memhtml-due"
+      "memhtml-due",
+      "memhtml-finding-key"
     ])
   })
 
@@ -109,13 +110,14 @@ describe("the metadata vocabulary", () => {
     /**
      * Position in `META_ORDER` is a diff-stability contract: the serializer emits one meta per
      * line in this order, so inserting a name mid-list moves every line below it in every file
-     * the next bookkeeping pass rewrites. The two task metas are therefore the LAST scalars,
-     * immediately before the repeatables.
+     * the next bookkeeping pass rewrites. The two task metas and the finding key are therefore
+     * the LAST scalars, immediately before the repeatables, and `memhtml-finding-key` went after
+     * `memhtml-due` rather than beside it for exactly that reason.
      */
     const scalars = META_ORDER.filter(
       (name) => !(REPEATABLE_META as ReadonlyArray<string>).includes(name)
     )
-    expect(scalars.slice(-2)).toEqual(["memhtml-task-status", "memhtml-due"])
+    expect(scalars.slice(-3)).toEqual(["memhtml-task-status", "memhtml-due", "memhtml-finding-key"])
   })
 
   it("orders emission with the required metas first, so a head reads top-down", () => {

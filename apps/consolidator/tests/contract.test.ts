@@ -6,10 +6,13 @@ import {
   CandidateMemory,
   CONSOLIDATION_KINDS,
   CONSOLIDATION_OUTPUT_JSON_SCHEMA,
+  Commitment,
   ConsolidationPayload,
   isConsolidationKind,
   MAX_CLAIM_CHARS,
   MAX_QUOTE_CHARS,
+  quoteAppearsIn,
+  Resolution,
   ungroundedEvidenceReason
 } from "../src/contract.js"
 
@@ -173,12 +176,24 @@ describe("evidence must be grounded in the READABLE batch", () => {
    */
   const READABLE = ["session-a", "session-b"]
 
-  it("accepts candidates citing only readable sessions", () => {
-    expect(ungroundedEvidenceReason([candidate()], READABLE)).toBeNull()
+  /**
+   * The three lists are passed as ONE argument rather than three positional parameters, so a fourth
+   * evidence-carrying list added to `ConsolidationPayload` cannot silently skip the walk: it has to be
+   * added to the argument type to typecheck at the client's one call site.
+   */
+  const answer = (overrides: Partial<Parameters<typeof ungroundedEvidenceReason>[0]> = {}) => ({
+    candidates: [candidate()],
+    commitments: [],
+    resolutions: [],
+    ...overrides
   })
 
-  it("accepts an empty candidate list, which cites nothing at all", () => {
-    expect(ungroundedEvidenceReason([], READABLE)).toBeNull()
+  it("accepts candidates citing only readable sessions", () => {
+    expect(ungroundedEvidenceReason(answer(), READABLE)).toBeNull()
+  })
+
+  it("accepts an empty answer, which cites nothing at all", () => {
+    expect(ungroundedEvidenceReason(answer({ candidates: [] }), READABLE)).toBeNull()
   })
 
   /**
@@ -192,14 +207,16 @@ describe("evidence must be grounded in the READABLE batch", () => {
    */
   it("REJECTS a candidate citing a session this run never made readable", () => {
     const reason = ungroundedEvidenceReason(
-      [
-        candidate({
-          evidence: [
-            evidence("session-a", "TypeError: Cannot read properties of undefined"),
-            evidence("session-c", "a quote from a session that was never provided")
-          ]
-        })
-      ],
+      answer({
+        candidates: [
+          candidate({
+            evidence: [
+              evidence("session-a", "TypeError: Cannot read properties of undefined"),
+              evidence("session-c", "a quote from a session that was never provided")
+            ]
+          })
+        ]
+      }),
       READABLE
     )
     expect(reason).not.toBeNull()
@@ -215,7 +232,9 @@ describe("evidence must be grounded in the READABLE batch", () => {
    */
   it("names the OFFSET of the offending candidate, not merely that one exists", () => {
     const reason = ungroundedEvidenceReason(
-      [candidate(), candidate({ evidence: [evidence("session-z", "invented")] })],
+      answer({
+        candidates: [candidate(), candidate({ evidence: [evidence("session-z", "invented")] })]
+      }),
       READABLE
     )
     expect(reason).toContain("candidate 1")
@@ -231,7 +250,276 @@ describe("evidence must be grounded in the READABLE batch", () => {
    * caller did ask about that session.
    */
   it("REJECTS every candidate when nothing was reachable", () => {
-    expect(ungroundedEvidenceReason([candidate()], [])).not.toBeNull()
+    expect(ungroundedEvidenceReason(answer(), [])).not.toBeNull()
+  })
+
+  /**
+   * The check reaches the two NEWER lists, and this is the case AC-4-1 turns on. A commitment rides
+   * into the sleep phase and out to the user as something THEY said, whose whole recourse is to open the
+   * cited session and read the line — so an id naming a session nobody opened is a fabricated receipt in
+   * exactly the sense a candidate's is, and the same whole-turn refusal applies.
+   *
+   * (Mutation: dropping the `answer.commitments` loop from `ungroundedEvidenceReason` fails this and
+   * the two below it, while every candidate case above still passes. That is why they are separate.)
+   */
+  it("REJECTS a commitment citing a session this run never made readable", () => {
+    const reason = ungroundedEvidenceReason(
+      answer({
+        candidates: [],
+        commitments: [{ evidence: { sessionId: "session-c" } }]
+      }),
+      READABLE
+    )
+    expect(reason).not.toBeNull()
+    expect(reason).toContain("commitment 0")
+    expect(reason).toContain("session-c")
+    expect(reason).toContain("did not make readable")
+  })
+
+  it("REJECTS a resolution citing a session this run never made readable", () => {
+    const reason = ungroundedEvidenceReason(
+      answer({ candidates: [], resolutions: [{ evidence: { sessionId: "session-z" } }] }),
+      READABLE
+    )
+    expect(reason).toContain("resolution 0")
+    expect(reason).toContain("session-z")
+  })
+
+  it("accepts commitments and resolutions citing readable sessions", () => {
+    expect(
+      ungroundedEvidenceReason(
+        answer({
+          commitments: [{ evidence: { sessionId: "session-a" } }],
+          resolutions: [{ evidence: { sessionId: "session-b" } }]
+        }),
+        READABLE
+      )
+    ).toBeNull()
+  })
+})
+
+/**
+ * The verbatim-quote check, which is the one grounding rule that opens a file.
+ *
+ * `ungroundedEvidenceReason` above proves a quote is ATTRIBUTED to a session the run read; it never
+ * reads the transcript, so a model that legitimately opened `session-a` and then wrote a plausible line
+ * from it passes it cleanly. For a commitment that residual gap is the whole product: the corpus tells
+ * the user "you said you would do X", and the only thing behind that is the quote.
+ *
+ * A pure function over two strings, so this tier needs no transcript on disk and no server.
+ */
+describe("a commitment quote must really appear in the transcript", () => {
+  const TRANSCRIPT =
+    '{"role":"user","content":"I\'ll wire the retry next session, once the pin lands"}\n' +
+    '{"role":"assistant","content":"Noted. I will leave the migration until the review."}\n'
+
+  it("finds a quote that is verbatim in the file", () => {
+    expect(quoteAppearsIn("I'll wire the retry next session", TRANSCRIPT)).toBe(true)
+  })
+
+  /**
+   * The normalization that makes this usable rather than lenient. Transcripts are JSONL, so a model
+   * quoting across a wrapped line legitimately renders one run of whitespace differently from the
+   * file — a newline for a space, a doubled space, leading indentation. Every one of those is the same
+   * sentence, so collapsing runs on both sides is the one difference a faithful quote may have.
+   */
+  it("tolerates whitespace variance in either direction", () => {
+    expect(quoteAppearsIn("I'll wire the   retry\n next session", TRANSCRIPT)).toBe(true)
+    expect(quoteAppearsIn("  I'll wire the retry next session  ", TRANSCRIPT)).toBe(true)
+    expect(
+      quoteAppearsIn("I'll wire the retry next session", "I'll wire\tthe retry\nnext session")
+    ).toBe(true)
+  })
+
+  /**
+   * The fabrication this exists to catch, and it is the realistic shape rather than a nonsense string:
+   * a paraphrase of a line that IS in the file, from a session that WAS read. Nothing before this check
+   * refuses it.
+   */
+  it("REJECTS a paraphrase of a line that is really there", () => {
+    expect(quoteAppearsIn("I will wire the retry next session", TRANSCRIPT)).toBe(false)
+    expect(quoteAppearsIn("I'll wire up the retry next session", TRANSCRIPT)).toBe(false)
+  })
+
+  /**
+   * Only WHITESPACE is normalized. Case and punctuation are each a way a "quote" can differ from the
+   * line in a way that changes what it says, so they are compared as written.
+   */
+  it("does not normalize case or punctuation", () => {
+    expect(quoteAppearsIn("i'll wire the retry next session", TRANSCRIPT)).toBe(false)
+    expect(quoteAppearsIn("I'll wire the retry next session!", TRANSCRIPT)).toBe(false)
+  })
+
+  /**
+   * Guard the guard: `"".includes` is TRUE against anything, so an empty or whitespace-only needle
+   * would make the check pass unconditionally — a gate that cannot fail. The schema's `minLength(1)`
+   * already refuses an empty quote, and this refuses it a second time at the point of use, because a
+   * check whose degenerate input passes is worse than no check.
+   */
+  it("REJECTS an empty or whitespace-only quote rather than matching everything", () => {
+    expect(quoteAppearsIn("", TRANSCRIPT)).toBe(false)
+    expect(quoteAppearsIn("   \n  ", TRANSCRIPT)).toBe(false)
+  })
+
+  it("REJECTS any quote against an empty transcript", () => {
+    expect(quoteAppearsIn("I'll wire the retry next session", "")).toBe(false)
+  })
+})
+
+/**
+ * The wire-compatibility rule, and it needs its own gate because it is a behavior nothing else asserts:
+ * a stated invariant with no test is not an invariant.
+ *
+ * `commitments` and `resolutions` are optional-with-default-`[]` while `candidates` is required, and the
+ * asymmetry is about BUILDS rather than answers. The `outputSchema` is composed per turn so decoder and
+ * wire schema cannot skew, but the INSTRUCTIONS bake into an agent build that `resolveAgentAppRoot`
+ * reuses per package version — so an operator with a warm `.output/` runs today's schema against an
+ * agent never told these lists exist. Required keys would fail every such turn and throw away the
+ * candidates that build still produces correctly.
+ */
+describe("commitments and resolutions on the wire", () => {
+  const commitment = (overrides: Record<string, unknown> = {}) => ({
+    statement: "The user will wire the retry before the pin lands.",
+    actor: "user",
+    evidence: evidence("session-a", "I'll wire the retry next session"),
+    confidence: 0.8,
+    ...overrides
+  })
+
+  const resolution = (overrides: Record<string, unknown> = {}) => ({
+    statement: "The retry is merged.",
+    evidence: evidence("session-b", "merged the retry branch"),
+    confidence: 0.9,
+    ...overrides
+  })
+
+  /**
+   * The compatibility case. An OLD agent build answers the old shape, and it must decode — with both
+   * lists `[]` rather than absent, so nothing downstream has to ask whether a missing list means
+   * "found none" or "was never asked".
+   *
+   * (Mutation: making either field required, or dropping the `withDecodingDefaultKey`, fails this.)
+   */
+  it("decodes a payload with NEITHER key, defaulting both to []", () => {
+    const result = decode({ candidates: [candidate()] })
+    expect(Result.isSuccess(result)).toBe(true)
+    if (!Result.isSuccess(result)) return
+    expect(result.success.commitments).toEqual([])
+    expect(result.success.resolutions).toEqual([])
+  })
+
+  it("round-trips a payload carrying both", () => {
+    const result = decode({
+      candidates: [],
+      commitments: [commitment()],
+      resolutions: [resolution()]
+    })
+    expect(Result.isSuccess(result)).toBe(true)
+    if (!Result.isSuccess(result)) return
+    expect(result.success.commitments[0]).toBeInstanceOf(Commitment)
+    expect(result.success.resolutions[0]).toBeInstanceOf(Resolution)
+    expect(result.success.commitments[0]?.actor).toBe("user")
+  })
+
+  /**
+   * `candidates` stays REQUIRED, and defaulting it would be the real regression: an agent that returned
+   * `{}` where it meant `{"candidates": []}` produced a truncated answer, and a default would decode
+   * that truncation as a clean empty result.
+   */
+  it("still REJECTS a payload with no candidates key at all", () => {
+    expect(Result.isFailure(decode({ commitments: [], resolutions: [] }))).toBe(true)
+  })
+
+  it("accepts an omitted dueHint and a stated one", () => {
+    expect(Result.isSuccess(decode({ candidates: [], commitments: [commitment()] }))).toBe(true)
+    expect(
+      Result.isSuccess(
+        decode({ candidates: [], commitments: [commitment({ dueHint: "before the review" })] })
+      )
+    ).toBe(true)
+  })
+
+  /**
+   * `optionalKey` is EXACT-optional, so the only spelling of absent is an absent key. `optional` would
+   * be `optionalKey(UndefinedOr(S))`, which publishes a `{"type": "null"}` branch in the wire schema
+   * that the decoder then refuses — the model would be shown the exact spelling that fails the turn.
+   */
+  it("REJECTS a null dueHint, because absent is spelled by omitting the key", () => {
+    expect(
+      Result.isFailure(decode({ candidates: [], commitments: [commitment({ dueHint: null })] }))
+    ).toBe(true)
+    expect(
+      Result.isFailure(decode({ candidates: [], commitments: [commitment({ dueHint: "" })] }))
+    ).toBe(true)
+  })
+
+  it("REJECTS an actor outside the two speakers a transcript records", () => {
+    expect(
+      Result.isFailure(decode({ candidates: [], commitments: [commitment({ actor: "system" })] }))
+    ).toBe(true)
+    expect(
+      Result.isFailure(decode({ candidates: [], commitments: [commitment({ actor: "" })] }))
+    ).toBe(true)
+  })
+
+  /**
+   * `Schema.Finite`, not `Schema.Number`: `Number` accepts `NaN` and derives an `anyOf` with a string
+   * branch for `"Infinity"`/`"NaN"` in the wire schema. A confidence outside 0..1 is a number the
+   * consumer's own threshold cannot reason about.
+   */
+  it("REJECTS a confidence outside 0..1, and a non-finite one", () => {
+    for (const bad of [1.2, -0.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(
+        Result.isFailure(decode({ candidates: [], commitments: [commitment({ confidence: bad })] }))
+      ).toBe(true)
+      expect(
+        Result.isFailure(decode({ candidates: [], resolutions: [resolution({ confidence: bad })] }))
+      ).toBe(true)
+    }
+    // The boundaries themselves are IN range, or a firmly-stated commitment could not be reported.
+    expect(
+      Result.isSuccess(decode({ candidates: [], commitments: [commitment({ confidence: 1 })] }))
+    ).toBe(true)
+    expect(
+      Result.isSuccess(decode({ candidates: [], commitments: [commitment({ confidence: 0 })] }))
+    ).toBe(true)
+  })
+
+  it("REJECTS a statement past the claim ceiling, and an empty one", () => {
+    for (const bad of ["x".repeat(MAX_CLAIM_CHARS + 1), ""]) {
+      expect(
+        Result.isFailure(decode({ candidates: [], commitments: [commitment({ statement: bad })] }))
+      ).toBe(true)
+      expect(
+        Result.isFailure(decode({ candidates: [], resolutions: [resolution({ statement: bad })] }))
+      ).toBe(true)
+    }
+  })
+
+  /**
+   * ONE evidence quote, not an array, and that asymmetry with a candidate's two is the contract: a
+   * commitment IS a single sentence someone said, so the sentence is the whole evidence.
+   */
+  it("takes one evidence object rather than an array of them", () => {
+    expect(
+      Result.isFailure(
+        decode({
+          candidates: [],
+          commitments: [commitment({ evidence: [evidence("session-a", "quote")] })]
+        })
+      )
+    ).toBe(true)
+  })
+
+  it("REJECTS an undeclared extra key on either, instead of stripping it", () => {
+    expect(
+      Result.isFailure(
+        decode({ candidates: [], commitments: [commitment({ actorName: "laith" })] })
+      )
+    ).toBe(true)
+    expect(
+      Result.isFailure(decode({ candidates: [], resolutions: [resolution({ actor: "user" })] }))
+    ).toBe(true)
   })
 })
 
@@ -270,6 +558,76 @@ describe("the derived JSON Schema eve is handed", () => {
   it("keeps the root's own constraints after inlining", () => {
     expect(schema.required).toEqual(["candidates"])
     expect(schema.additionalProperties).toBe(false)
+  })
+
+  /**
+   * The optional-with-default fields have to reach the MODEL, described but not required. Described,
+   * or the agent is never told the shape to fill; not required, or a warm agent build that predates
+   * them fails every turn. `required` above already pins the second half — this pins the first, which
+   * a `required` assertion alone would let regress to the fields vanishing entirely.
+   */
+  it("describes commitments and resolutions without requiring them", () => {
+    const properties = schema.properties as Record<string, Record<string, unknown> | undefined>
+    for (const name of ["commitments", "resolutions"]) {
+      const field = properties[name]
+      if (field === undefined) throw new Error(`schema.properties.${name} is missing`)
+      expect(field.type).toBe("array")
+      expect(schema.required as readonly string[]).not.toContain(name)
+    }
+  })
+
+  /**
+   * The constraints a model can actually be guided by, asserted on the rendered document rather than
+   * navigated to: the shared `CandidateEvidence` reached through `Commitment.evidence` hoists to a
+   * `$defs` key whose NAME is effect's own encoding convention and not a contract, so the walk to it
+   * would be asserting the generated name.
+   */
+  it("carries the commitment vocabulary and the 0..1 confidence bound", () => {
+    const properties = schema.properties as Record<string, Record<string, unknown> | undefined>
+    const rendered = JSON.stringify(properties.commitments)
+    expect(rendered).toContain('"user"')
+    expect(rendered).toContain('"assistant"')
+    expect(rendered).toContain('"minimum":0')
+    expect(rendered).toContain('"maximum":1')
+    // `dueHint` is described but outside the item's own `required`, so absent is a legal answer.
+    expect(rendered).toContain("dueHint")
+    expect(rendered).not.toContain('"dueHint","evidence"')
+  })
+
+  /**
+   * The published schema must not advertise a spelling of absent that the DECODER refuses, and this is
+   * the gate that pins it — the decode test alone cannot, because `optional` and `optionalKey` both
+   * reject `dueHint: null` and differ only in what the model is TOLD.
+   *
+   * `Schema.optional` is `optionalKey(UndefinedOr(S))`, which publishes `anyOf: [{type: "string"},
+   * {type: "null"}]`. A model reading that sends `dueHint: null` for a commitment with no stated due
+   * date, which is the overwhelmingly common case, and the whole turn then fails decode over an absent
+   * optional. `packages/llm/src/structured.ts` records the same hazard on the MCP wire.
+   *
+   * (Mutation: `Schema.optionalKey` → `Schema.optional` on `dueHint` fails this case and nothing else
+   * in the file, which is exactly why it is here.)
+   */
+  it("does not publish a null branch for the optional dueHint", () => {
+    const properties = schema.properties as Record<string, Record<string, unknown> | undefined>
+    const commitments = properties.commitments
+    if (commitments === undefined) throw new Error("schema.properties.commitments is missing")
+    const item = commitments.items as Record<string, Record<string, unknown> | undefined>
+    const itemProperties = item.properties
+    if (itemProperties === undefined) throw new Error("the commitment item has no properties")
+    expect(JSON.stringify(itemProperties.dueHint)).toBe(
+      JSON.stringify({ type: "string", allOf: [{ minLength: 1 }] })
+    )
+  })
+
+  /**
+   * `Schema.Finite`, not `Schema.Number`, on both confidences. `Number` derives an `anyOf` carrying a
+   * STRING branch for `"Infinity"` and `"NaN"`, which tells the model a string is an acceptable
+   * confidence — the house lesson `packages/llm/src/structured.ts:28-31` records.
+   */
+  it("publishes confidence as a plain number, with no string branch for NaN", () => {
+    const rendered = JSON.stringify(schema)
+    expect(rendered).not.toContain('"NaN"')
+    expect(rendered).not.toContain('"Infinity"')
   })
 
   /** The nested refs must survive the root inlining, or the item shape is lost. */

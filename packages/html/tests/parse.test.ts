@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 
+import { checkMemory } from "../src/parse.js"
 import {
   FORMAT_MD_EXAMPLE,
   fileOfType,
@@ -407,6 +408,108 @@ describe("the task metas, which the type governs in both directions", () => {
     const doc = parseOk(fileOfType("task", '<meta name="memhtml-task-status" content="todo">'))
     expect(doc.metas.dueAt).toBeUndefined()
     expect("dueAt" in doc.metas).toBe(false)
+  })
+})
+
+describe("memhtml-finding-key — the one meta whose malformed value warns", () => {
+  /** A task head carrying a finding key of the caller's choosing. */
+  const taskWithKey = (key: string): string =>
+    fileOfType(
+      "task",
+      [
+        '<meta name="memhtml-task-status" content="todo">',
+        `<meta name="memhtml-finding-key" content="${key}">`
+      ].join("\n")
+    )
+
+  it("reads a well-formed key as a single optional string", () => {
+    const doc = parseOk(taskWithKey("todo-scan:0123456789abcdef"))
+    expect(doc.metas.findingKey).toBe("todo-scan:0123456789abcdef")
+    expect(doc.warnings).toEqual([])
+  })
+
+  it("admits a task with no key at all, which is what a human-authored task looks like", () => {
+    const doc = parseOk(fileOfType("task", '<meta name="memhtml-task-status" content="todo">'))
+    expect(doc.metas.findingKey).toBeUndefined()
+    expect("findingKey" in doc.metas).toBe(false)
+    expect(doc.warnings).toEqual([])
+  })
+
+  it("parses a malformed key as ABSENT and warns, naming the meta", () => {
+    const doc = parseOk(taskWithKey("Bad_Key"))
+    expect(doc.metas.findingKey).toBeUndefined()
+    expect("findingKey" in doc.metas).toBe(false)
+    expect(doc.warnings).toHaveLength(1)
+    expect(doc.warnings[0]).toContain("memhtml-finding-key")
+    expect(doc.warnings[0]).toContain("Bad_Key")
+  })
+
+  it("does NOT make a malformed key a violation, so a typo cannot hide a task", () => {
+    /**
+     * The guard on the qualifier. `memhtml-task-status` and `memhtml-due` are refusals, and this
+     * meta deliberately is not, so the temptation to "fix" it into the neighbouring precedent is
+     * real. If someone moves the shape check onto `taskViolations`, `parseOk` throws here and
+     * `violations` stops being empty — the test fails twice over rather than passing quietly.
+     *
+     * What it protects: a task whose finding key a human mistyped must still appear in
+     * `memhtml task list`. A violation would delete it from every status filter while leaving the
+     * file sitting in the tree looking fine.
+     */
+    const html = taskWithKey("Bad_Key")
+    const checked = checkMemory(html)
+    expect(checked.violations).toEqual([])
+    expect(checked.warnings).toHaveLength(1)
+    expect(checked.warnings[0]).toContain("memhtml-finding-key")
+
+    const doc = parseOk(html)
+    expect(doc.metas.taskStatus).toBe("todo")
+    expect(doc.metas.memoryType).toBe("task")
+  })
+
+  it("warns on every malformed shape rather than guessing what the author meant", () => {
+    for (const key of [
+      "Bad_Key",
+      "todo-scan:0123456789ABCDEF",
+      "todo-scan:0123456789abcde",
+      "0123456789abcdef",
+      "todo-scan:not-hex-at-all!",
+      ""
+    ]) {
+      const checked = checkMemory(taskWithKey(key))
+      expect(checked.violations, key).toEqual([])
+      expect(checked.warnings, key).toHaveLength(1)
+      expect(parseOk(taskWithKey(key)).metas.findingKey, key).toBeUndefined()
+    }
+  })
+
+  it("carries a key on a non-task without complaint, since only the caller knows better", () => {
+    // Unlike `memhtml-task-status`, a key on a non-task is not a format error. "Detected tasks
+    // only" is caller discipline; the parser checks the shape and nothing else.
+    const doc = parseOk(
+      fileOfType(
+        "semantic",
+        '<meta name="memhtml-finding-key" content="todo-scan:0123456789abcdef">'
+      )
+    )
+    expect(doc.metas.findingKey).toBe("todo-scan:0123456789abcdef")
+    expect(doc.warnings).toEqual([])
+  })
+
+  it("keeps a meta warning alongside a structural one, so one parse reports both", () => {
+    const doc = parseOk(
+      fileOfType(
+        "task",
+        [
+          '<meta name="memhtml-task-status" content="todo">',
+          '<meta name="memhtml-finding-key" content="Bad_Key">'
+        ].join("\n"),
+        "<p><mark>A claim.</mark></p><blink>stop</blink>"
+      )
+    )
+    expect(doc.warnings).toEqual([
+      "<blink> is outside the closed vocabulary",
+      '<meta name="memhtml-finding-key" content="Bad_Key"> is not <detector>:<16 hex digits>'
+    ])
   })
 })
 

@@ -66,6 +66,17 @@ export interface NewMemoryInput {
   readonly taskStatus?: TaskStatus | undefined
   /** When a task is due. An ISO date or datetime, string-ordered. */
   readonly dueAt?: string | undefined
+  /**
+   * A detector's idempotency anchor, `<detector>:<digest16>`, stamped verbatim when given.
+   *
+   * Stamped on ANY memory type, unlike {@link NewMemoryInput.taskStatus}, which the template drops
+   * on a non-task. The difference is that a non-task carrying `memhtml-task-status` is a parse
+   * violation, so emitting one would render a file the format rejects, and a finding key on a
+   * non-task is merely pointless. "Only a detected task carries a key" is caller discipline, not a
+   * format rule, so it is not enforced here — a rule the format does not check is not a rule the
+   * template should invent.
+   */
+  readonly findingKey?: string | undefined
 }
 
 /**
@@ -177,7 +188,8 @@ export const newMemoryDoc = (input: NewMemoryInput): MemoryDoc => {
          */
         taskStatus:
           input.memoryType === "task" ? (input.taskStatus ?? DEFAULT_TASK_STATUS) : undefined,
-        dueAt: input.dueAt
+        dueAt: input.dueAt,
+        findingKey: input.findingKey
       })
     },
     entities: input.entities ?? [],

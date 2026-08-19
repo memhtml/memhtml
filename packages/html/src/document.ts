@@ -79,7 +79,15 @@ export const MemoryMetas = Schema.Struct({
    * A wall-clock DEADLINE. `validUntil` says when a remembered fact stops being true, and this
    * says when work is late, so neither a write time nor a validity bound belongs here.
    */
-  dueAt: Schema.optional(Schema.String)
+  dueAt: Schema.optional(Schema.String),
+  /**
+   * Idempotency anchor for machine-detected tasks, `<detector>:<digest16>`. Absent on
+   * human-authored memories.
+   *
+   * A value failing `FINDING_KEY_PATTERN` parses as ABSENT and warns, so this field is either a
+   * well-formed key or nothing. A consumer reading it never has to re-validate it.
+   */
+  findingKey: Schema.optional(Schema.String)
 })
 export type MemoryMetas = typeof MemoryMetas.Type
 

@@ -1,5 +1,5 @@
 import { MEMORY_TYPES, type WritableMemoryType } from "@memhtml/contracts"
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 
 /**
  * What a consolidation run is allowed to return, and what a caller may act on.
@@ -94,6 +94,71 @@ export class CandidateMemory extends Schema.Class<CandidateMemory>("CandidateMem
 }) {}
 
 /**
+ * One thing the USER (or the assistant) said they were going to do, still open at the end of the batch.
+ *
+ * A commitment is NOT a candidate memory and cannot be one: `CONSOLIDATION_KINDS` deliberately omits
+ * `task` because a task "is work to do, not something observed to have happened" (see above). That
+ * omission is right for the corpus and it left a real signal on the floor — "I'll wire the retry next
+ * session" is stated plainly in a transcript, and nothing was allowed to carry it out. This class is
+ * that carrier: a separate list, kept out of the kind vocabulary, so the corpus's rule about what a
+ * memory may assert stays intact.
+ *
+ * `actor` is the field that keeps this honest. A transcript's first-person "I will…" belongs to
+ * whoever was speaking, and an assistant's own plan for the next tool call is not a commitment the
+ * user made. Conflating them would let the corpus tell the user they promised something the model
+ * said. There is no third value: a transcript records two speakers and inferring a commitment for
+ * anyone else would be invention.
+ *
+ * `confidence` is the model's own reading of how firm the statement was, since "I need to look at
+ * that sometime" and "I'll do it before the review" are both first-person intent and only one is
+ * actionable. `Schema.Finite` rather than `Schema.Number`, because `Number` derives an `anyOf` with a
+ * string branch for `"Infinity"`/`"NaN"` in the wire schema (`packages/llm/src/structured.ts:28-31`).
+ */
+export class Commitment extends Schema.Class<Commitment>("Commitment")({
+  /** One sentence stating what was committed to. */
+  statement: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_CLAIM_CHARS)),
+  actor: Schema.Literals(["user", "assistant"]),
+  /**
+   * When it was said to be due, in the transcript's own words rather than a parsed date.
+   *
+   * A HINT and optional, because a due date this agent parsed out of a phrase like `after the release`
+   * would be a timestamp nobody stated. Absent is the common case and it is not a defect: most
+   * commitments are made with no time attached.
+   *
+   * `optionalKey`, not `optional`, and the difference is measured rather than stylistic. `optional` is
+   * `optionalKey(UndefinedOr(S))`, and on an LLM wire schema that publishes an `anyOf` with a
+   * `{"type": "null"}` branch — `dueHint: null` is then exactly what a model reads as the way to say
+   * "no due date", and the decoder REFUSES it, failing the whole turn over an absent optional. Probed
+   * on effect 4.0.0-rc.109: with `optional`, `{dueHint: null}` fails decode while the derived schema
+   * advertises the null branch. `optionalKey` is exact-optional, so the only spelling of absent is
+   * an absent key, which is what the schema then says.
+   */
+  dueHint: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))),
+  evidence: CandidateEvidence,
+  confidence: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }))
+}) {}
+
+/**
+ * One statement that previously-committed work is DONE.
+ *
+ * The other half of {@link Commitment}, and the reason both are collected in one turn: a batch that
+ * reported only commitments would grow a list that never shrinks, and the consumer would have to
+ * decide on its own whether "shipped the retry" closes "I'll wire the retry". The transcript already
+ * says so, so the reading happens here where the transcript is open.
+ *
+ * No `actor`, deliberately. A commitment needs one because whose intent it was decides whether it may
+ * be asserted at all; a completion is a fact about the WORK, and "the retry is merged" is equally true
+ * whoever said it. Adding the field would invite a mismatch nobody can act on — a resolution the user
+ * stated against a commitment the assistant made.
+ */
+export class Resolution extends Schema.Class<Resolution>("Resolution")({
+  /** One sentence stating what completed. */
+  statement: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_CLAIM_CHARS)),
+  evidence: CandidateEvidence,
+  confidence: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }))
+}) {}
+
+/**
  * What one run produced, what it cost in model calls, and WHICH SESSIONS IT ACTUALLY REACHED.
  *
  * `analyzedSessionIds` is the value a caller watermarks from rather than a reporting field. It exists
@@ -115,6 +180,17 @@ export class CandidateMemory extends Schema.Class<CandidateMemory>("CandidateMem
  */
 export class ConsolidationResult extends Schema.Class<ConsolidationResult>("ConsolidationResult")({
   candidates: Schema.Array(CandidateMemory),
+  /**
+   * The open commitments and the completions this run read out of the batch.
+   *
+   * REQUIRED here while {@link ConsolidationPayload} makes them optional, and the asymmetry is the
+   * point: absent-on-the-wire is a fact about an AGENT BUILD, `[]` in a result is a fact about the
+   * BATCH, and only the second is something a caller may act on. The client resolves one into the
+   * other at decode, so nothing downstream has to ask whether a missing list means "found none" or
+   * "was never asked".
+   */
+  commitments: Schema.Array(Commitment),
+  resolutions: Schema.Array(Resolution),
   llmCalls: Schema.Finite,
   analyzedSessionIds: Schema.Array(Schema.String)
 }) {}
@@ -143,22 +219,75 @@ export class ConsolidationResult extends Schema.Class<ConsolidationResult>("Cons
  * its detail, leaving the batch unwatermarked for the next night.
  */
 export const ungroundedEvidenceReason = (
-  candidates: ReadonlyArray<{
-    readonly evidence: ReadonlyArray<{ readonly sessionId: string }>
-  }>,
+  answer: {
+    readonly candidates: ReadonlyArray<{
+      readonly evidence: ReadonlyArray<{ readonly sessionId: string }>
+    }>
+    readonly commitments: ReadonlyArray<{ readonly evidence: { readonly sessionId: string } }>
+    readonly resolutions: ReadonlyArray<{ readonly evidence: { readonly sessionId: string } }>
+  },
   readableSessionIds: ReadonlyArray<string>
 ): string | null => {
   const readable = new Set(readableSessionIds)
-  for (const [offset, candidate] of candidates.entries()) {
+  const ungrounded = (label: string, offset: number, sessionId: string): string =>
+    `${label} ${String(offset)} cites session ${sessionId}, which this run did ` +
+    `not make readable (${String(readable.size)} transcript(s) resolved in the sandbox)`
+
+  for (const [offset, candidate] of answer.candidates.entries()) {
     const invented = candidate.evidence.find((quote) => !readable.has(quote.sessionId))
-    if (invented !== undefined) {
-      return (
-        `candidate ${String(offset)} cites session ${invented.sessionId}, which this run did ` +
-        `not make readable (${String(readable.size)} transcript(s) resolved in the sandbox)`
-      )
+    if (invented !== undefined) return ungrounded("candidate", offset, invented.sessionId)
+  }
+  /**
+   * The same rule over the two newer lists, and the reason it is the same rule rather than a laxer
+   * one: a commitment rides into the sleep phase and out into a task the user is shown as something
+   * THEY said, whose whole recourse is to go back to the cited session and read the line. A commitment
+   * attributed to a session nobody opened is a fabricated receipt in exactly the sense recorded above.
+   *
+   * The lists are FIELDS on the argument rather than three positional parameters so that a fourth
+   * evidence-carrying list cannot be added to `ConsolidationPayload` and silently skip this walk: it
+   * would have to be added here to typecheck at the one call site.
+   */
+  for (const [offset, commitment] of answer.commitments.entries()) {
+    if (!readable.has(commitment.evidence.sessionId)) {
+      return ungrounded("commitment", offset, commitment.evidence.sessionId)
+    }
+  }
+  for (const [offset, resolution] of answer.resolutions.entries()) {
+    if (!readable.has(resolution.evidence.sessionId)) {
+      return ungrounded("resolution", offset, resolution.evidence.sessionId)
     }
   }
   return null
+}
+
+/**
+ * Whether a quote really appears in a transcript, comparing with whitespace collapsed on both sides.
+ *
+ * This is the check the schema and {@link ungroundedEvidenceReason} together still cannot make. Those
+ * two establish that a quote is ATTRIBUTED to a session the run read; neither opens the file, so a
+ * model that read `session-a` and invented a plausible line from it passes both. For a candidate
+ * memory that gap is tolerable-ish, because a `claim` is a distillation a reviewer reads as one. For a
+ * commitment it is not: the product of a commitment is the corpus telling the user "you said you would
+ * do X", and the only thing standing behind that is the quote.
+ *
+ * **Whitespace-normalized rather than exact**, and that is a concession to the transcripts rather than
+ * leniency. They are JSONL, so a line's text arrives with escaped newlines and whatever indentation the
+ * speaker typed, and a model quoting across a wrapped line legitimately renders one run of whitespace
+ * differently from the file. Collapsing runs to single spaces on both sides keeps every character of
+ * CONTENT load-bearing while dropping the one difference a faithful quote is allowed to have.
+ *
+ * Nothing else is normalized. Case, punctuation, and quote characters are compared as written, because
+ * each of those is a way a "quote" could differ from the line in a way that changes what it says.
+ *
+ * A pure function over two strings, exported, so the test tier can exercise it with no transcript on
+ * disk and any later doctor check shares this exact definition rather than a second one.
+ */
+export const quoteAppearsIn = (quote: string, text: string): boolean => {
+  const flatten = (value: string): string => value.replace(/\s+/g, " ").trim()
+  const needle = flatten(quote)
+  /** An empty needle is `includes`-true against anything, which would gate nothing. */
+  if (needle === "") return false
+  return flatten(text).includes(needle)
 }
 
 /**
@@ -197,11 +326,42 @@ export const ungroundedEvidenceReason = (
  * A wrapper object rather than a bare array: eve lowers this to the model's structured-output
  * contract, and a top-level array leaves nowhere to say "I found nothing" that is
  * distinguishable from a truncated answer. `candidates: []` is a real, readable result.
+ *
+ * ## `candidates` is REQUIRED and the other two are OPTIONAL-WITH-DEFAULT-[], deliberately
+ *
+ * The wrapper's whole job is that "I found nothing" is a statable answer, and for `candidates` that
+ * job is done by requiring the key: an agent that returns `{}` where it meant `{"candidates": []}`
+ * has produced a truncated answer, and a defaulted `candidates` would decode that truncation as a
+ * clean empty result. So the required key is what keeps a missing list distinguishable from an empty
+ * one.
+ *
+ * `commitments` and `resolutions` cannot be required for a reason that is about BUILDS rather than
+ * about answers. The `outputSchema` is composed here and sent per turn by the client, so decoder and
+ * wire schema cannot skew — but the INSTRUCTIONS are baked into an agent build, and
+ * `resolveAgentAppRoot` (`agent-build.ts:240-277`) reuses an existing `.output/`, keyed on the package
+ * version. An operator with a warm build therefore runs today's schema against an agent that was never
+ * told these two lists exist. Required keys would fail every such turn as a
+ * `ConsolidatorContractViolation`, losing the candidates that build can still produce perfectly well;
+ * optional-with-default-`[]` decodes it clean and reports "this run surfaced no commitments", which is
+ * the honest reading of an agent that was not asked for any.
+ *
+ * The cost of that choice is real and worth naming rather than hiding: a stale build is INVISIBLE here,
+ * because "not asked" and "asked and found none" both arrive as `[]`. That is accepted because the
+ * consumer's action is the same for both — there is nothing to write — while the alternative fails runs
+ * for a reason the operator cannot read off the error.
+ *
+ * `Schema.withDecodingDefaultKey` is the mechanism, verified against effect 4.0.0-rc.109: the key
+ * becomes `optionalKey` on the ENCODED side, so an absent key decodes to `[]` while an explicit
+ * `undefined` is still refused, and the derived JSON Schema drops the field from `required` while
+ * still describing its shape under `properties`, so the model is told what to send without being
+ * forced to send it.
  */
 export class ConsolidationPayload extends Schema.Class<ConsolidationPayload>(
   "ConsolidationPayload"
 )({
-  candidates: Schema.Array(CandidateMemory)
+  candidates: Schema.Array(CandidateMemory),
+  commitments: Schema.Array(Commitment).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+  resolutions: Schema.Array(Resolution).pipe(Schema.withDecodingDefaultKey(Effect.succeed([])))
 }) {}
 
 /**

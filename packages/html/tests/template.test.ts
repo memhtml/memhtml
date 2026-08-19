@@ -228,6 +228,9 @@ describe("a task's head", () => {
     at: "2026-08-02T14:03:11Z"
   }
 
+  /** A well-formed finding key: `<detector>:<sha256 prefix, 16 hex digits>`. */
+  const KEY = "todo-scan:0123456789abcdef"
+
   it("defaults memhtml-task-status to todo, so the emitted file parses", () => {
     /**
      * The parser REFUSES a task with no `memhtml-task-status`, so the default is what keeps the
@@ -259,6 +262,53 @@ describe("a task's head", () => {
   it("is a serialization fixed point, so a status edit stays a one-line diff", () => {
     const html = renderTemplate({ ...TASK, dueAt: "2026-08-09" })
     expect(serializeMemory(parseOk(html))).toBe(html)
+  })
+
+  it("stamps a finding key when given one and round-trips it byte-stably", () => {
+    const html = renderTemplate({ ...TASK, dueAt: "2026-08-09", findingKey: KEY })
+    expect(checkMemory(html)).toEqual({ violations: [], warnings: [] })
+    expect(html).toContain(`<meta name="memhtml-finding-key" content="${KEY}">`)
+
+    const doc = parseOk(html)
+    expect(doc.metas.findingKey).toBe(KEY)
+    // Byte-stable: render → parse → serialize is the identity on the bytes, which is what lets a
+    // bookkeeping pass rewrite one head line without touching the rest of the file.
+    expect(serializeMemory(doc)).toBe(html)
+    expect(serializeMemory(parseOk(serializeMemory(doc)))).toBe(html)
+  })
+
+  it("stamps nothing when no key is given, so a human-authored task carries no anchor", () => {
+    const html = renderTemplate(TASK)
+    expect(html).not.toContain("memhtml-finding-key")
+    expect(parseOk(html).metas.findingKey).toBeUndefined()
+  })
+
+  it("emits the key after memhtml-due and before the repeatables", () => {
+    // Position in `META_ORDER` is the diff-stability contract, asserted on the emitted bytes
+    // rather than on the constant: appending the key must not push `memhtml-due` or the
+    // repeatables' own lines anywhere.
+    const html = renderTemplate({
+      ...TASK,
+      dueAt: "2026-08-09",
+      findingKey: KEY,
+      entities: ["service:checkout-api"],
+      tags: ["deploy"]
+    })
+    const lines = html.split("\n")
+    const at = (name: string) => lines.findIndex((line) => line.startsWith(`<meta name="${name}"`))
+    expect(at("memhtml-finding-key")).toBeGreaterThan(at("memhtml-due"))
+    expect(at("memhtml-finding-key")).toBeLessThan(at("memhtml-entity"))
+    expect(at("memhtml-finding-key")).toBeLessThan(at("memhtml-tag"))
+  })
+
+  it("stamps a key on a non-task too, because that is caller discipline and not a format rule", () => {
+    // The contrast with `memhtml-task-status` above is deliberate: that one the template DROPS on
+    // a non-task, because emitting it would render a file the parser refuses. A key on a
+    // non-task is merely pointless, and a rule the format does not check is not one the template
+    // invents.
+    const html = renderTemplate({ ...BASE, findingKey: KEY })
+    expect(checkMemory(html)).toEqual({ violations: [], warnings: [] })
+    expect(parseOk(html).metas.findingKey).toBe(KEY)
   })
 
   it("keeps the task metas out of the content hash", () => {

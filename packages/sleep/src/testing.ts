@@ -6,7 +6,9 @@ import { Effect } from "effect"
 
 import type {
   CandidateMemoryLike,
+  CommitmentLike,
   ConsolidatorPort,
+  ResolutionLike,
   TranscriptManifestEntry
 } from "./consolidator.js"
 
@@ -229,6 +231,18 @@ export type ScriptedConsolidation =
        * must then watermark that subset and NOT the batch.
        */
       readonly analyzedSessionIds?: ReadonlyArray<string> | undefined
+      /**
+       * The commitments and resolutions this scripted run claims to have read. Both default to `[]`.
+       *
+       * `[]` is the accurate default rather than a shortcut, because it is what the real client produces
+       * in two different cases that a consumer treats identically: a batch where nobody committed to
+       * anything, and an agent build predating the two lists (they are optional-with-default-`[]` on the
+       * wire, `apps/consolidator/src/contract.ts`). A fake that omitted the fields entirely could not be
+       * assigned to `ConsolidationOutcome`, which requires them — that asymmetry is deliberate and
+       * documented there.
+       */
+      readonly commitments?: ReadonlyArray<CommitmentLike> | undefined
+      readonly resolutions?: ReadonlyArray<ResolutionLike> | undefined
     }
   | { readonly kind: "failure"; readonly tag: string; readonly reason: string }
 
@@ -333,7 +347,10 @@ export const scriptedConsolidator = (
            * missing-transcript case says so with {@link partiallyRead}.
            */
           analyzedSessionIds:
-            scripted.analyzedSessionIds ?? transcripts.map((entry) => entry.sessionId)
+            scripted.analyzedSessionIds ?? transcripts.map((entry) => entry.sessionId),
+          /** See {@link ScriptedConsolidation} for why `[]` is the accurate default rather than absent. */
+          commitments: scripted.commitments ?? [],
+          resolutions: scripted.resolutions ?? []
         })
       })
   }

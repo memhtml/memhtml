@@ -3,6 +3,7 @@ import fc from "fast-check"
 import { describe, expect, it } from "vitest"
 
 import {
+  FINDING_KEY_PATTERN,
   isPersonEntity,
   isTaskStatus,
   isWritableMemoryType,
@@ -99,6 +100,54 @@ describe("task status vocabulary", () => {
     for (const status of TASK_STATUSES) expect(isTaskStatus(status)).toBe(true)
     expect(isTaskStatus("wip")).toBe(false)
     expect(isTaskStatus("active")).toBe(false)
+  })
+})
+
+describe("finding keys — a detector's idempotency anchor", () => {
+  it("accepts a hyphenated detector name and exactly sixteen lowercase hex digits", () => {
+    for (const key of [
+      "todo-scan:0123456789abcdef",
+      "x:ffffffffffffffff",
+      "sleep-task-detector:00000000000000ff"
+    ]) {
+      expect(FINDING_KEY_PATTERN.test(key), key).toBe(true)
+    }
+  })
+
+  it("refuses a digest of the wrong length, so a truncated key is not silently accepted", () => {
+    // The length is the whole collision argument. A 15-digit key is a bug in whoever built it,
+    // and admitting it would let two findings share an anchor and one task swallow the other.
+    expect(FINDING_KEY_PATTERN.test("todo-scan:0123456789abcde")).toBe(false)
+    expect(FINDING_KEY_PATTERN.test("todo-scan:0123456789abcdef0")).toBe(false)
+  })
+
+  it("refuses uppercase hex, a missing detector, and a bare digest", () => {
+    // Case matters: two spellings of one digest are two keys to a string comparison, and the
+    // dedup path compares strings.
+    for (const key of [
+      "todo-scan:0123456789ABCDEF",
+      ":0123456789abcdef",
+      "0123456789abcdef",
+      "todo scan:0123456789abcdef",
+      "todo-scan:0123456789abcdeg",
+      ""
+    ]) {
+      expect(FINDING_KEY_PATTERN.test(key), key).toBe(false)
+    }
+  })
+
+  it("is anchored at both ends, so no surrounding text sneaks a key through", () => {
+    expect(FINDING_KEY_PATTERN.test("prefix todo-scan:0123456789abcdef")).toBe(false)
+    expect(FINDING_KEY_PATTERN.test("todo-scan:0123456789abcdef suffix")).toBe(false)
+  })
+
+  it("carries no global flag, whose lastIndex would make the same key test true then false", () => {
+    // A `/g` regex is stateful across `.test` calls. The parser tests one key per file and the
+    // dedup path tests many in a loop, so a global flag here would drop every other one.
+    expect(FINDING_KEY_PATTERN.global).toBe(false)
+    const key = "todo-scan:0123456789abcdef"
+    expect(FINDING_KEY_PATTERN.test(key)).toBe(true)
+    expect(FINDING_KEY_PATTERN.test(key)).toBe(true)
   })
 })
 

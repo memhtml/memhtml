@@ -75,6 +75,16 @@ export const META_ORDER = [
    */
   "memhtml-task-status",
   "memhtml-due",
+  /**
+   * The detector's idempotency anchor, appended after `memhtml-due` for the same reason the two
+   * task metas were appended after the scalars before them: a new scalar goes at the END of the
+   * scalar block, so no existing head line moves.
+   *
+   * Alone among the value-bearing metas, a malformed value here is a WARNING and not a violation
+   * (`parse.ts`'s `metaWarnings`). A key is bookkeeping ABOUT a task rather than part of it, and
+   * refusing the file over a typo'd anchor would make a human's task disappear from `task list`.
+   */
+  "memhtml-finding-key",
   "memhtml-entity",
   "memhtml-tag",
   /**

@@ -89,6 +89,21 @@ export const isTaskStatus = (value: string): value is TaskStatus =>
   (TASK_STATUSES as ReadonlyArray<string>).includes(value)
 
 /**
+ * A finding key: the idempotency anchor of a machine-detected task, `<detector>:<digest16>`,
+ * where the digest is the first 16 hex characters of a sha256 over whatever the detector
+ * decided identifies the finding. A detector that runs twice over the same signal produces the
+ * same key, so the second run recognizes its own earlier task instead of filing a duplicate.
+ *
+ * 16 characters rather than the full 64: the key is a head meta a human reads and edits in place,
+ * and a full digest makes that line unreadable while adding collision margin no corpus of tasks
+ * will ever need.
+ *
+ * Human-authored tasks carry no key at all. Absence is the signal that nothing owns the file's
+ * identity but the human who wrote it.
+ */
+export const FINDING_KEY_PATTERN = /^[a-z0-9-]+:[0-9a-f]{16}$/
+
+/**
  * Importance, 1-10 inclusive, 1-based ordinal on a display scale, never an arithmetic
  * input on its own. The retention scorer divides it by 10 to reach `[0, 1]` before it
  * meets any other signal.
