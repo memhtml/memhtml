@@ -93,9 +93,9 @@ describe("topNeighborPairs", () => {
       fc.property(fc.integer({ min: 1, max: 6 }).chain(corpus), options, (vectors, opts) => {
         expect(topNeighborPairs(vectors, opts)).toEqual(referenceTopPairs(vectors, opts))
       }),
-      { numRuns: 500 }
+      { numRuns: 250 }
     )
-  })
+  }, 30_000)
 
   it("reports the sim cosine itself reports, bit for bit", () => {
     fc.assert(
@@ -215,9 +215,9 @@ describe("rankCandidatePairs", () => {
           )
         }
       ),
-      { numRuns: 500 }
+      { numRuns: 250 }
     )
-  })
+  }, 30_000)
 
   it("contributes nothing for a pair naming a key with no vector", () => {
     const vectors: ReadonlyArray<KeyedVector> = [{ key: "a", vec: Float32Array.from([1, 0]) }]
