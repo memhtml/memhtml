@@ -150,6 +150,52 @@ export const neighborPairs = (
   )
 
 /**
+ * Active non-task pairs that occupy the SAME frame key. Dedup's component seeds.
+ *
+ * A frame key is a claim's slot as surface grammar states it, so two active memories sharing one are
+ * making a claim about the same thing by the corpus's own indexed evidence — no cosine, no model.
+ * That is signal the vector floor can miss: "the owner of the deploy runbook is Priya" and "the owner
+ * of the deploy runbook is Priya Raman" share a slot while their bodies share almost no vocabulary,
+ * and their measured cosine under the fixture embedder is 0.59, far under any floor a night could
+ * afford to mine at. Seeding components with these pairs puts them in front of the model, which is
+ * the only reader that can say whether one is a rewording of the other.
+ *
+ * **The statement is OUTPUT-SENSITIVE: its cost follows the frame sharing that exists, not the pair
+ * space.** The self-join is an equality on `frame_key`, which `files_frame_key_active` indexes under
+ * exactly this predicate (`archived = 0 AND memory_type <> 'task' AND frame_key IS NOT NULL`,
+ * migration 0009). So each row seeks its own key's bucket and emits one row per co-occupant, and a
+ * corpus where no two memories share a slot emits nothing having read no pairs. `frame_key IS NOT
+ * NULL` is stated even though the join equality already excludes NULL, because it is what makes the
+ * partial index usable rather than leaving the planner to prove it.
+ *
+ * `r.path < l.path` orients each unordered pair once, which keeps the seed set the same size as the
+ * edge set the component builder wants.
+ *
+ * **`memory_type <> 'task'` is written as the LITERAL the index uses, not as this module's
+ * {@link SLEEP_EXCLUDED_TYPES} binding.** It is the same exclusion for the same reason — two open
+ * tasks phrased alike are two things to do — but `NOT IN (?)` and `<> 'task'` are different
+ * expressions to the planner, and only the second one matches `files_frame_key_active`'s predicate.
+ * A bound form here would read as more general while quietly turning the seek into a scan.
+ * `activeFramesFor` writes the literal for the same reason. `tests/units.test.ts` holds the two in
+ * agreement, so a change to the excluded set cannot leave this statement behind silently.
+ *
+ * Measured plan (2026-08-19, node 24.19.0 against the shipped migrations): `SCAN l` then
+ * `SEARCH r USING INDEX files_frame_key_active (frame_key=?)`. One side walks the KEYED rows, which
+ * the partial index confines to the rows with a frame at all, and the other seeks.
+ */
+export const frameKeyPairs = (
+  db: DatabaseShape
+): Effect.Effect<ReadonlyArray<{ readonly src: string; readonly dst: string }>, StorageFailure> =>
+  db.all<{ src: string; dst: string }>(
+    `SELECT l.path AS src, r.path AS dst
+     FROM files l
+     JOIN files r ON r.frame_key = l.frame_key AND r.path < l.path
+       AND r.archived = 0 AND r.memory_type <> 'task' AND r.frame_key IS NOT NULL
+     WHERE l.archived = 0 AND l.memory_type <> 'task' AND l.frame_key IS NOT NULL
+     ORDER BY l.path ASC, r.path ASC`
+  )
+
+/**
  * Candidate pairs for conflict detection: embedding-near, sharing an entity, and carrying no
  * AUTHORED edge between them in either direction.
  *

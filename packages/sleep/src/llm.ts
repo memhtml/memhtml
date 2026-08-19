@@ -1,7 +1,7 @@
 import { wrapAsData } from "@memhtml/llm"
 import { Schema } from "effect"
 
-import { batchPrompt } from "./batch.js"
+import { batchPrompt, memberList } from "./batch.js"
 
 /**
  * The structured-output schemas the four LLM phases share, and their prompts.
@@ -95,6 +95,41 @@ export const CompressSynthesis = Schema.Struct({
 })
 export type CompressSynthesis = typeof CompressSynthesis.Type
 
+/**
+ * One merge group: the members the model says are the same memory, by their offered keys.
+ *
+ * **No canonical field, deliberately.** The keeper is the OLDER file, decided from corpus order in
+ * the phase, and a model-chosen canonical would be a model-chosen write target: the file that
+ * survives and the files that get archived. The model's whole job here is the partition — which
+ * members are one memory — and orientation is arithmetic over `created_at` that needs no judgment.
+ *
+ * A group of fewer than two keys is meaningless and the phase drops it. That is the shape a model
+ * produces when it wants to say "this one is on its own", which is a valid answer.
+ */
+export const MergeGroup = Schema.Struct({
+  memberKeys: Schema.Array(Schema.String)
+})
+export type MergeGroup = typeof MergeGroup.Type
+
+/**
+ * The dedup partition for one packed batch: every merge group the model found, across every
+ * component in the batch.
+ *
+ * **The groups are FLAT, not nested per component, and the phase re-derives which component each one
+ * came from.** A nested answer would need the model to keep a component index aligned with its
+ * groups, which is bookkeeping a model gets wrong under load, and a mis-aligned index would attach a
+ * group to the wrong component's files. A flat list of member keys carries the same information,
+ * because a key already identifies its member and therefore its component. So the phase can check
+ * containment itself instead of trusting a label.
+ *
+ * `groups: []` is a full refusal: every member stays where it is, which is the safe outcome and the
+ * behavior a night with no model already has.
+ */
+export const MergePartition = Schema.Struct({
+  groups: Schema.Array(MergeGroup)
+})
+export type MergePartition = typeof MergePartition.Type
+
 /** The stance judge's system prompt. */
 export const STANCE_SYSTEM = `You are a natural-language-inference stance judge for an AI agent's long-term memory system.
 You are given two memories, A and B, that are embedding-near and about the same entity or topic.
@@ -152,6 +187,35 @@ them, and each member you list in absorbedKeys is archived once the canonical is
 - If the members do not actually describe one thing, return an empty absorbedKeys and say so in the
   claim. Refusing to fold is a valid answer.`
 
+/**
+ * The dedup-partition system prompt.
+ *
+ * The stable prefix for every dedup call of a night: {@link batchCall} marks it cacheable, so only
+ * the member list is new bytes per batch.
+ *
+ * It tells the model that a group is a claim about SAMENESS and nothing else. Every other decision
+ * the fold needs — which file survives, whether the pair diverges in polarity or in a number,
+ * whether either path is already spoken for — is made by code after the answer comes back, and the
+ * prompt says so, because a model told it is choosing what gets deleted answers more conservatively
+ * than the question deserves.
+ */
+export const DEDUP_SYSTEM = `You partition groups of near-duplicate memories for an AI agent's long-term memory system.
+Each component below holds memories that are near neighbors in vector space, or that state the same
+relation. Within EACH component, group the memories that are THE SAME MEMORY — one fact stored more
+than once, in different words.
+
+- A group means: these state one fact, and keeping all of them stores it repeatedly. Two memories
+  about the same topic that carry DIFFERENT facts are not a group.
+- Group only members of the SAME component. Members of different components are already known not to
+  be near-duplicates.
+- A member belongs to at most one group. Leave a member out of every group when it is on its own.
+- Return groups: [] when no component holds a duplicate. Refusing to group is a valid answer and is
+  the right one whenever you are unsure.
+- You are not choosing what to delete. Which memory survives a fold is decided from the memories'
+  own dates afterwards, and a proposed group is still checked for contradicting claims, differing
+  numbers, and differing product variants before anything is written. Answer only the question of
+  sameness.`
+
 /** One labelled corpus block, delimited so its prose cannot be read as an instruction. */
 export const dataBlock = (label: string, text: string): string => wrapAsData(label, text)
 
@@ -204,3 +268,37 @@ export const COMPRESS_INSTRUCTION =
 export const compressPrompt = (
   members: ReadonlyArray<{ readonly key: string; readonly text: string }>
 ): string => batchPrompt(members, COMPRESS_INSTRUCTION)
+
+/** The instruction that closes a dedup batch's user turn, after the components. */
+export const DEDUP_INSTRUCTION =
+  "Within each component above, group the members that are the same memory stated more than once. " +
+  "Name each group's members by the keys they were offered under. Return groups: [] if no " +
+  "component holds a duplicate."
+
+/**
+ * The dedup user turn for one packed batch: each component's members, wrapped, under a header that
+ * names which keys sit in that component.
+ *
+ * **The component boundary is in the prompt because it is EVIDENCE.** Two members in different
+ * components have already been measured as not near-duplicates, by a cosine floor and a frame-key
+ * lookup, and a flat member list would throw that away and ask the model to rediscover it across the
+ * whole batch. Packing ten components into one call is a cost decision; letting them blur into one
+ * list would make it a correctness one.
+ *
+ * The headers are built from the OFFERED KEYS alone, never from a path or a title, so a header
+ * carries nothing a member's own text could have chosen. `memberList` still wraps every member's
+ * text, so the injection boundary is per member and the framing around it holds no corpus bytes.
+ *
+ * A containment claim in the prompt is not a containment guarantee: the phase re-checks that every
+ * group the model returns sits inside ONE component, because the prompt is an instruction and the
+ * post-pass is the enforcement.
+ */
+export const dedupPrompt = (
+  components: ReadonlyArray<ReadonlyArray<{ readonly key: string; readonly text: string }>>
+): string => {
+  const blocks = components.map((members, offset) => {
+    const keys = members.map((member) => member.key).join(", ")
+    return `component_${offset + 1} holds ${keys}.\n\n${memberList(members)}`
+  })
+  return `${blocks.join("\n\n")}\n\n${DEDUP_INSTRUCTION}`
+}
