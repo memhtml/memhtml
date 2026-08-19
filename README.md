@@ -321,7 +321,7 @@ reach the model, so a skipped gate reads as skipped rather than as green.
 ## Sleep
 
 `memhtml sleep run` executes fifteen curation phases on a `sleep/<date>` branch: dedup-merge, entity
-resolution, conflict detection, confidence decay, arc synthesis, retention triage, compress, integrity,
+resolution, edge typing, confidence decay, arc synthesis, retention triage, compress, integrity,
 and the rest. Each committing phase makes its own isolated commit with a machine-readable trailer, so
 `memhtml sleep resume` re-runs only what is missing. Two phases commit nothing by design. `preflight`
 refreshes the index, and `relationship-mining` writes derived edges to the index alone, because thousands

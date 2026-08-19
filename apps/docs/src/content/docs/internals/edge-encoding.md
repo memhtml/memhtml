@@ -14,6 +14,24 @@ them would bury every human diff in machine output while recovering nothing
 So authored edges are `<link rel="memhtml-*">` elements in the file, and derived edges exist only as
 `edges` rows in the index. Deleting the index costs the derived set and nothing else.
 
+An authored memory edge arises two ways, and both write the same `<link>`. An agent or a human writes it
+through the write path, or the nightly `edge-typing` phase promotes one. Promotion is the only path by
+which a machine-found relationship crosses from the index into a file, and it is deliberately narrow: the
+phase takes the pairs mining and the shared-entity scan already turned up, judges a batch of them over
+`{caused_by, leads_to, example_of, supports, part_of, contradicts, none}` with a direction, and writes a
+`<link>` only above a confidence floor and under a per-night cap
+(`packages/sleep/src/phases/edge-typing.ts:48-59`).
+
+Which file receives the link follows from the rel. A directional rel is written into the **subject's**
+file alone, because a `caused_by` read from the wrong end inverts its meaning. `contradicts` is symmetric
+and is written into **both**, because a reader arriving at either file must see it, and it is the one rel
+that waits for a second night's independent detection before it is written at all. A verdict of `none`, or
+anything below the floor, writes nothing and leaves the pair a derived `relates_to` — which is why
+`relates_to` and `laterally_related` are outside what the phase may propose: they are what a pair already
+carries, so proposing one is a no-op with a model call attached. `supersedes` is outside it too, being a
+one-way door that belongs to dedup-merge and compress and rides with an archive
+(`packages/sleep/src/llm.ts:24-39`).
+
 ## 2. The `derived` column is the firewall
 
 The retention scorer's `contestedStatus` signal counts authored contradictions only, meaning rows with
@@ -22,7 +40,7 @@ The retention scorer's `contestedStatus` signal counts authored contradictions o
 memory.
 
 One fact in this area does not survive a rebuild: the counter recording how many times a contradiction
-has been detected. It lives in the state plane. The nightly conflict phase promotes a corroborated
+has been detected. It lives in the state plane. The nightly `edge-typing` phase promotes a corroborated
 contradiction into both files, after which the counter is decoration and the fact is carried by the files
 themselves. A SQL CHECK refuses `derived = 1` outside `provenance = 'sleep'`
 (`packages/index/migrations/0008_tasks.sql:147`), and `isWellFormedEdge` states the same condition once

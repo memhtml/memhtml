@@ -78,7 +78,7 @@ system's own story is currently split:
 
 - `memory_correct` exists but requires the writer to already know the
   target path — it resolves a conflict the agent has ALREADY found.
-- Sleep's conflict-detection phase finds conflicts nightly but deliberately
+- Sleep's `edge-typing` phase finds conflicts nightly but deliberately
   never resolves them (detection-only by design — choosing a winner is a
   one-way door that belongs to the writer or a human).
 
@@ -306,22 +306,39 @@ and a `memory_search` that accepted an entity from a prior hit's entities
 list as a scope would cut a two-hop chain from 4+ tool calls to 2. Sequence
 AFTER item 1; measure on the same MAB multi-hop rows.
 
-### 6b. Embedding-proximity conflict detection — the paraphrase layer
+### 6b. Embedding-proximity conflict detection at WRITE time — the paraphrase layer
 
-(Added 2026-08-07.) Frame-key matching (Horizon 1 item 1)
-only catches claims sharing a frame shape; a full paraphrase ("the deploy
-failed because of the lockfile" vs "the lockfile broke the deploy") sails
-past it. The next layer is a KNN proximity check at write time — writes
-already compute document embeddings, so the marginal cost is one vector query
-per op. Constraints settled at recording time: propose-only like every other
-assist (BEAM's lesson stands — the caller decides, because sometimes the
-contradiction IS the answer); surfaces through the same per-op `conflict`
-field; and the threshold must be MEASURED on a labeled near-duplicate corpus
-before deployment, never guessed (the fence-detector discipline). That
-measurement wants the lived-in-corpus gym that salience/RRF tuning already
-waits on — one gym serves all three. Note this layer puts Bedrock on the
-conflict path where frame keys are credential-free; keep frame keys as the
-floor, proximity as the opt-in upgrade.
+Frame-key matching (Horizon 1 item 1) only catches claims sharing a frame
+shape; a full paraphrase ("the deploy failed because of the lockfile" vs "the
+lockfile broke the deploy") sails past it. Two lanes could close that, and
+they are at different stages.
+
+**The nightly lane ships.** Sleep's `edge-typing` phase types pairs an
+embedding turned up: it unions mining's derived `relates_to` edges with a
+shared-entity scan at cosine 0.80, batches thirty pairs per structured call,
+and judges each over `{caused_by, leads_to, example_of, supports, part_of,
+contradicts, none}` with a direction. `contradicts` is one verdict in that
+list, so a paraphrased contradiction sharing no frame shape is reachable
+nightly. Promotion stays conservative: above a 0.7 confidence floor, a
+`contradicts` bumps `state.edge_corroboration` and is written into both files
+only at `detections >= 2`, and a night promotes at most fifty authored edges.
+The phase detects and stops — it never supersedes, closes a
+`memhtml-valid-until`, or archives either side.
+
+**The write-time lane is unbuilt, and it is the one that matters for the H4
+finding.** Nightly typing helps a reader tomorrow; it does not help the writer
+at the moment of writing, which is when the writer still has the context to
+judge. The shape: a KNN proximity check on the write path, where writes
+already compute document embeddings so the marginal cost is one vector query
+per op. Constraints settled at recording time and still binding — propose-only
+like every other assist (BEAM's lesson stands: the caller decides, because
+sometimes the contradiction IS the answer); surfaces through the same per-op
+`conflict` field the frame-key assist uses; and the threshold must be MEASURED
+on a labeled near-duplicate corpus before deployment, never guessed (the
+fence-detector discipline). That measurement wants the lived-in-corpus gym
+salience/RRF tuning also waits on — one gym serves all three. This lane puts
+Bedrock on the write-time conflict path where frame keys are credential-free,
+so frame keys stay the floor and proximity is the opt-in upgrade.
 
 ### ~~7. Code-mode — the corpus as a programmable API (read-only)~~ — DONE (2026-08-09)
 **SHIPPED** (2026-08-09; `623d7d3` the shared mount, `bdc468a`

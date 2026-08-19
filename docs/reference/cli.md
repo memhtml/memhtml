@@ -448,7 +448,7 @@ Flags:
 - `--phases`: Comma-separated subset. All 15 by default. String. `apps/cli/src/commands.ts:590`
 - `--dry-run`: Report per-phase counts and commit nothing. Boolean, default false. `apps/cli/src/commands.ts:595`
 
-The 15 phase names come from `SLEEP_PHASES`: `preflight`, `dedup-merge`, `entity-resolution`, `person-links`, `relationship-mining`, `conflict-detection`, `confidence-decay`, `arc-synthesis`, `retention-triage`, `compress`, `reprieve`, `trace-consolidation`, `integrity`, `state-export`, `report`. `packages/sleep/src/contract.ts:17-33`
+The 15 phase names come from `SLEEP_PHASES`: `preflight`, `dedup-merge`, `entity-resolution`, `person-links`, `relationship-mining`, `edge-typing`, `confidence-decay`, `arc-synthesis`, `retention-triage`, `compress`, `reprieve`, `trace-consolidation`, `integrity`, `state-export`, `report`. `packages/sleep/src/contract.ts:17-33`
 
 A run holds a checked-out `sleep/<date>` branch. Any write that lands during the run commits onto that branch. `apps/cli/src/commands.ts:872-876`
 
