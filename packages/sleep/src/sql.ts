@@ -19,8 +19,8 @@ import { Effect } from "effect"
  * The memory type no phase of a sleep cycle touches.
  *
  * A task is live working state, and every one of the fifteen phases is a judgment about REMEMBERED
- * FACTS: decay says a claim is fading, dedup says two claims are one, conflict detection says two
- * claims disagree, retention says a claim has stopped earning its place. None of those hold for
+ * FACTS: decay says a claim is fading, dedup says two claims are one, edge typing says one claim
+ * caused or contradicts another, retention says a claim has stopped earning its place. None of those hold for
  * a thing an agent intends to do, and each would be wrong applied to one. A task the agent has
  * not got to yet is not a claim losing confidence, and two open tasks with the same body are two
  * things to do, not one fact stored twice.
@@ -150,19 +150,21 @@ export const neighborPairs = (
   )
 
 /**
- * Candidate pairs for conflict detection: embedding-near, sharing an entity, and carrying no
+ * Candidate pairs for edge typing: embedding-near, sharing an entity, and carrying no
  * AUTHORED edge between them in either direction.
  *
  * The shared-entity requirement is what keeps the model budget on pairs that could actually be about
- * one thing. The anti-join keeps the phase from re-judging a pair an agent already linked. An
- * authored `contradicts` is a settled fact, and re-asking the model about it would let a `neutral`
- * answer look like new information.
+ * one thing. The anti-join keeps the phase from re-typing a pair an agent already linked. An
+ * authored `contradicts` or `caused_by` is a settled fact, and re-asking the model about it would let
+ * a `none` answer look like new information.
  *
  * **`derived = 0` is what makes the anti-join correct.** Relationship mining runs one phase EARLIER and
  * writes a derived `relates_to` for every pair above 0.85 cosine, a strict superset of the
- * pairs above the 0.80 conflict floor. An anti-join over ALL edges therefore excludes every candidate
- * this phase exists to find, and the phase reports `candidates: 0` forever with no error anywhere.
+ * pairs above the 0.80 typing floor. An anti-join over ALL edges therefore excludes every candidate
+ * this scan exists to find, and the phase reports `candidates: 0` forever with no error anywhere.
  * A mined edge is a machine suspicion, not a settled relationship; only an authored one closes a pair.
+ * {@link minedPairs} reads that same mined set as the OTHER arm of edge typing's candidate union, and
+ * carries the identical anti-join for the identical reason.
  *
  * The statement ENUMERATES pairs from the shared-entity join instead of filtering an n×n vector
  * self-join, so its cost follows the entity sharing that actually exists. Similarity then ranks in
@@ -170,7 +172,7 @@ export const neighborPairs = (
  * where the ranking CTE's `WHERE` stood: the predicates run BEFORE per-source top-`k`. `re.path <
  * le.path` orients each pair once, dst below src.
  */
-export const conflictCandidates = (
+export const sharedEntityPairs = (
   db: DatabaseShape,
   options: {
     readonly floor: number
@@ -178,9 +180,9 @@ export const conflictCandidates = (
     readonly limit: number
     /**
      * Memory types to exclude, the same hole {@link neighborPairs} carries. `task` is excluded
-     * because a task is intended work, not an asserted fact, so "these two contradict" is not a
-     * judgment that can be true of it. Paying for a model call to find out would also spend the
-     * candidate budget on rows no phase acts on.
+     * because a task is intended work, not an asserted fact, so "these two contradict" and "this
+     * one caused that one" are not judgments that can be true of it. Paying for a model call to
+     * find out would also spend the candidate budget on rows no phase acts on.
      */
     readonly excludeTypes?: ReadonlyArray<string> | undefined
   }
@@ -209,6 +211,54 @@ export const conflictCandidates = (
         limit: options.limit
       })
     )
+  )
+}
+
+/**
+ * The MINED edges of one rel, as candidate pairs: edge typing's second arm.
+ *
+ * Relationship mining runs one phase earlier and writes a derived `relates_to` for every pair above
+ * its cosine floor, index-only. Those pairs are the corpus's own answer to "which memories look
+ * related", and they are NOT a subset of {@link sharedEntityPairs}: two memories about one incident
+ * that name no entity in common are invisible to the shared-entity join and obvious to the embedder.
+ * Reading them here is what makes edge typing's recall the union of both signals rather than the
+ * entity-authoring habits of whoever wrote the memories.
+ *
+ * `strength` is the mined edge's own cosine (`replaceMinedEdges` clamps it into `[0, 1]`), so the
+ * caller can rank both arms of the union on one scale without re-decoding a vector.
+ *
+ * Three filters, each load-bearing:
+ *
+ * - `derived = 1` restricts this to the machine-mined set. An authored `relates_to` is an agent's
+ *   assertion, and re-typing it would let a nightly job overwrite a human judgment with a narrower rel.
+ * - `edge_class = 'memory'` is the same firewall every graph read carries.
+ * - The `derived = 0` anti-join drops a pair that already carries ANY authored edge either way, which
+ *   is exactly {@link sharedEntityPairs}' rule. Without it a pair typed last night would be re-judged
+ *   every night, because promoting a typed edge does not delete the mined `relates_to` underneath it.
+ */
+export const minedPairs = (
+  db: DatabaseShape,
+  options: {
+    readonly rel: string
+    /** The same `task` hole the rest of this module carries, applied to BOTH endpoints. */
+    readonly excludeTypes?: ReadonlyArray<string> | undefined
+  }
+): Effect.Effect<ReadonlyArray<PairRow>, StorageFailure> => {
+  const excluded = options.excludeTypes ?? []
+  return db.all<PairRow>(
+    `SELECT e.src_path AS src, e.dst_path AS dst, e.strength AS sim
+     FROM edges e
+     JOIN files fs ON fs.path = e.src_path AND fs.archived = 0${typeFilterFor("fs", excluded)}
+     JOIN files fd ON fd.path = e.dst_path AND fd.archived = 0${typeFilterFor("fd", excluded)}
+     WHERE e.derived = 1 AND e.edge_class = 'memory' AND e.rel = ?
+       AND NOT EXISTS (
+         SELECT 1 FROM edges a
+         WHERE a.derived = 0
+           AND ((a.src_path = e.src_path AND a.dst_path = e.dst_path)
+             OR (a.src_path = e.dst_path AND a.dst_path = e.src_path))
+       )
+     ORDER BY e.src_path ASC, e.dst_path ASC`,
+    [...excluded, ...excluded, options.rel]
   )
 }
 
@@ -365,7 +415,7 @@ export interface CorroborationRow {
  * one pair cannot both read `detections = 1` and both decline to promote.
  *
  * **The bump is idempotent WITHIN one run's instant.** `detections` advances only when `updated_at`
- * differs from `at`. Corroboration means "two DIFFERENT nights saw this", and conflict detection
+ * differs from `at`. Corroboration means "two DIFFERENT nights saw this", and edge typing
  * commits only when something is promoted, so a run that judged pairs and promoted nothing leaves no
  * trailer and `memhtml sleep resume` re-executes it. Without the guard that second pass would count as a
  * second detection and promote a contradiction one night's evidence had not earned. That puts a machine

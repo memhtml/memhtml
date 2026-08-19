@@ -20,7 +20,7 @@ export const SLEEP_PHASES = [
   "entity-resolution",
   "person-links",
   "relationship-mining",
-  "conflict-detection",
+  "edge-typing",
   "confidence-decay",
   "arc-synthesis",
   "retention-triage",
@@ -70,7 +70,7 @@ export const TRAILER_COUNTS = "Memhtml-Counts"
 
 /** The four LLM phases. Every other phase is deterministic and costs no model call. */
 export const LLM_PHASES: ReadonlyArray<SleepPhase> = [
-  "conflict-detection",
+  "edge-typing",
   "arc-synthesis",
   "compress",
   "trace-consolidation"

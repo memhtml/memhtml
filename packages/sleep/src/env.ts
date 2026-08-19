@@ -42,7 +42,7 @@ export interface SleepDeps {
 }
 
 /**
- * Model assignments per LLM phase: the cheap judge for stance, the strong one for synthesis.
+ * Model assignments per LLM phase: the cheap judge for edge typing, the strong one for synthesis.
  *
  * `trace-consolidation` names `opus-5` and does not thereby choose it. The consolidator is an eve
  * agent that pins its own model in `apps/consolidator/agent/agent.ts`, and this map cannot reach that
@@ -51,7 +51,7 @@ export interface SleepDeps {
  * the Bedrock global endpoint, high reasoning effort, no cost ceiling.)
  */
 export const DEFAULT_MODELS: Readonly<Record<string, ModelKey>> = {
-  "conflict-detection": "sonnet-5",
+  "edge-typing": "sonnet-5",
   "arc-synthesis": "opus-5",
   compress: "sonnet-5",
   "trace-consolidation": "opus-5"

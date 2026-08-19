@@ -5,13 +5,13 @@ import { describe, expect, it } from "vitest"
 import type { PhaseEnv } from "../src/env.js"
 import { arcSynthesis } from "../src/phases/arc-synthesis.js"
 import { compress } from "../src/phases/compress.js"
-import { conflictDetection } from "../src/phases/conflict-detection.js"
+import { edgeTyping } from "../src/phases/edge-typing.js"
 import { entityResolution } from "../src/phases/entity-resolution.js"
 import { personLinks } from "../src/phases/person-links.js"
 import { retentionTriage } from "../src/phases/retention-triage.js"
 import { runRetentionPass } from "../src/retention.js"
 import { instantFor } from "../src/run.js"
-import { conflictCandidates, neighborPairs } from "../src/sql.js"
+import { minedPairs, neighborPairs, sharedEntityPairs } from "../src/sql.js"
 import { scriptedModel, value } from "../src/testing.js"
 import { DEDUP_CORPUS, type Fixture, TASK_CORPUS, withFixture } from "./fixture.js"
 
@@ -63,7 +63,9 @@ const inertModel = () =>
   scriptedModel((request) =>
     request.system.startsWith("You triage")
       ? value({ entries: [] })
-      : value({ verdict: "neutral", confidence: 0.9, rationale: "compatible" })
+      : request.system.startsWith("You type")
+        ? value({ verdicts: [] })
+        : value({ title: "x", claim: "y", paragraphs: [], absorbedKeys: [] })
   )
 
 describe("retention-triage", () => {
@@ -243,11 +245,18 @@ describe("arc-synthesis", () => {
 })
 
 describe("the candidate scans themselves", () => {
-  it("returns no pair with a task endpoint, from either scan", async () => {
+  it("returns no pair with a task endpoint, from any scan", async () => {
     /**
-     * The two SQL holes, directly. `neighborPairs` feeds dedup-merge and relationship-mining and
-     * `conflictCandidates` feeds conflict detection; both scans are where a task would enter, and
-     * both are asserted at a floor low enough that the near-duplicate task pair WOULD clear it.
+     * The three SQL holes, directly. `neighborPairs` feeds dedup-merge and relationship-mining, and
+     * `sharedEntityPairs` plus `minedPairs` are edge typing's two candidate arms; all three are where
+     * a task would enter, and the first two are asserted at a floor low enough that the
+     * near-duplicate task pair WOULD clear it.
+     *
+     * `minedPairs` needs its own arm because it reads the `edges` table rather than the vector space,
+     * so the `excludeTypes` hole it carries is a different statement's `NOT IN` and could be missed
+     * on its own. Its input is seeded here as a mined edge BETWEEN TWO TASKS, which is what the
+     * relationship-mining phase would write if its own hole ever regressed — so this arm holds even
+     * against a contaminated index.
      */
     const outcome = await withFixture(
       (fixture) =>
@@ -263,13 +272,28 @@ describe("the candidate scans themselves", () => {
             perSourceK: 10,
             limit: 500
           })
-          const conflicts = yield* conflictCandidates(fixture.db, {
+          const shared = yield* sharedEntityPairs(fixture.db, {
             floor: 0.5,
             perSourceK: 10,
             limit: 500,
             excludeTypes: ["task"]
           })
-          return { withoutTasks, withTasks, conflicts }
+
+          yield* fixture.db.run(
+            `INSERT INTO edges
+               (src_path, rel, dst_path, edge_class, derived, strength, provenance, created_at)
+             VALUES (?, 'relates_to', ?, 'memory', 1, 0.99, 'sleep', '2026-08-01T00:00:00Z')`,
+            [
+              "areas/inbox/tasks/t-runbook-review-a.html",
+              "areas/inbox/tasks/t-runbook-review-b.html"
+            ]
+          )
+          const mined = yield* minedPairs(fixture.db, {
+            rel: "relates_to",
+            excludeTypes: ["task"]
+          })
+          const minedWithTasks = yield* minedPairs(fixture.db, { rel: "relates_to" })
+          return { withoutTasks, withTasks, shared, mined, minedWithTasks }
         }),
       { seed: SEED, model: inertModel() }
     )
@@ -277,27 +301,28 @@ describe("the candidate scans themselves", () => {
     const namesTask = (pair: { src: string; dst: string }) =>
       pair.src.includes("/tasks/") || pair.dst.includes("/tasks/")
 
-    // The hole works…
+    // The holes work…
     expect(outcome.withoutTasks.filter(namesTask)).toEqual([])
-    expect(outcome.conflicts.filter(namesTask)).toEqual([])
-    // …and it is doing something: without it, the same scan DOES return task pairs. Without this
-    // half the assertions above would hold on a corpus whose tasks were simply too dissimilar.
+    expect(outcome.shared.filter(namesTask)).toEqual([])
+    expect(outcome.mined.filter(namesTask)).toEqual([])
+    // …and each is doing something: without it, the same scan DOES return task pairs. Without these
+    // halves the assertions above would hold on a corpus whose tasks were simply too dissimilar, or
+    // on an index that happened to hold no mined edge between two tasks.
     expect(outcome.withTasks.filter(namesTask).length).toBeGreaterThan(0)
+    expect(outcome.minedWithTasks.filter(namesTask).length).toBeGreaterThan(0)
   })
 })
 
-describe("conflict-detection", () => {
-  it("judges no pair involving a task, so no model call is spent on one", async () => {
-    // "These two contradict" is a judgment about asserted facts. A task asserts nothing, so the
-    // question has no true answer — and a promoted `contradicts` would be a memory-class edge
-    // written into two task files.
-    const model = scriptedModel(() =>
-      value({ verdict: "contradicts", confidence: 0.99, rationale: "scripted" })
-    )
+describe("edge-typing", () => {
+  it("types no pair involving a task, so no model call is spent on one", async () => {
+    // Every rel in the vocabulary is a judgment about asserted facts. A task asserts nothing, so
+    // "these contradict" and "this caused that" have no true answer — and a promoted edge would be a
+    // memory-class edge written into two task files.
+    const model = scriptedModel(() => value({ verdicts: [] }))
     await withFixture(
       (fixture) =>
         Effect.gen(function* () {
-          yield* conflictDetection(envFor(fixture))
+          yield* edgeTyping(envFor(fixture))
           for (const call of model.calls) {
             expect(call.prompt).not.toContain("staging bastion port")
             expect(call.prompt).not.toContain("deploy runbook needs a review")

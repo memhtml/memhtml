@@ -3,8 +3,8 @@ import type { PhaseBody } from "../env.js"
 import { arcSynthesis } from "./arc-synthesis.js"
 import { compress } from "./compress.js"
 import { confidenceDecay } from "./confidence-decay.js"
-import { conflictDetection } from "./conflict-detection.js"
 import { dedupMerge } from "./dedup-merge.js"
+import { edgeTyping } from "./edge-typing.js"
 import { entityResolution } from "./entity-resolution.js"
 import { integrity } from "./integrity.js"
 import { personLinks } from "./person-links.js"
@@ -30,7 +30,7 @@ export const PHASE_BODIES: Readonly<Record<SleepPhase, PhaseBody>> = {
   "entity-resolution": entityResolution,
   "person-links": personLinks,
   "relationship-mining": relationshipMining,
-  "conflict-detection": conflictDetection,
+  "edge-typing": edgeTyping,
   "confidence-decay": confidenceDecay,
   "arc-synthesis": arcSynthesis,
   "retention-triage": retentionTriage,
@@ -51,14 +51,20 @@ export {
   compress
 } from "./compress.js"
 export { confidenceDecay } from "./confidence-decay.js"
-export {
-  CONFLICT_CANDIDATE_LIMIT,
-  CONFLICT_COSINE_FLOOR,
-  CONFLICT_PER_SOURCE_K,
-  conflictDetection,
-  PROMOTION_DETECTIONS
-} from "./conflict-detection.js"
 export { dedupMerge } from "./dedup-merge.js"
+export {
+  EDGE_COSINE_FLOOR,
+  EDGE_PAIR_SIDE_CHARS,
+  EDGE_PAIRS_PER_CALL,
+  EDGE_PER_SOURCE_K,
+  EDGE_PROMOTION_CAP,
+  EDGE_TYPING_CANDIDATE_LIMIT,
+  edgeTyping,
+  edgeTypingCandidates,
+  PROMOTION_DETECTIONS,
+  pairGroupKey,
+  unionPairs
+} from "./edge-typing.js"
 export {
   AUTO_MERGE_THRESHOLD,
   entityResolution,

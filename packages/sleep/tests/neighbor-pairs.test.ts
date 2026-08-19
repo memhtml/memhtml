@@ -3,7 +3,7 @@ import type { DatabaseShape } from "@memhtml/index"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 
-import { conflictCandidates, neighborPairs, type PairRow } from "../src/sql.js"
+import { minedPairs, neighborPairs, type PairRow, sharedEntityPairs } from "../src/sql.js"
 import { DEDUP_CORPUS, TASK_CORPUS, withFixture } from "./fixture.js"
 
 /**
@@ -56,7 +56,7 @@ const neighborOracle = (
   )
 }
 
-const conflictOracle = (
+const sharedEntityOracle = (
   db: DatabaseShape,
   options: ScanOptions
 ): Effect.Effect<ReadonlyArray<PairRow>, StorageFailure> => {
@@ -133,10 +133,10 @@ describe("the pair scans against the all-SQL oracle", () => {
            */
           expect(neighbors).toHaveLength(6)
 
-          const conflicts = yield* conflictCandidates(fixture.db, atPhaseFloor)
-          expectEquivalent(conflicts, yield* conflictOracle(fixture.db, atPhaseFloor))
+          const shared = yield* sharedEntityPairs(fixture.db, atPhaseFloor)
+          expectEquivalent(shared, yield* sharedEntityOracle(fixture.db, atPhaseFloor))
           // The same three pairs: each shares its entity, none carries an authored edge.
-          expect(conflicts.map((pair) => [pair.src, pair.dst])).toEqual([
+          expect(shared.map((pair) => [pair.src, pair.dst])).toEqual([
             [FLIP_SAFE, FLIP_NOT_SAFE],
             [METRICS_A, METRICS_B],
             [ONCALL_DROP, ONCALL_KEEP]
@@ -153,8 +153,8 @@ describe("the pair scans against the all-SQL oracle", () => {
             yield* neighborOracle(fixture.db, sweep)
           )
           expectEquivalent(
-            yield* conflictCandidates(fixture.db, sweep),
-            yield* conflictOracle(fixture.db, sweep)
+            yield* sharedEntityPairs(fixture.db, sweep),
+            yield* sharedEntityOracle(fixture.db, sweep)
           )
         }),
       { seed: SEED }
@@ -200,11 +200,63 @@ describe("the pair scans against the all-SQL oracle", () => {
             METRICS_A
           ])
 
-          const conflicts = yield* conflictCandidates(fixture.db, atPhaseFloor)
-          expectEquivalent(conflicts, yield* conflictOracle(fixture.db, atPhaseFloor))
+          const shared = yield* sharedEntityPairs(fixture.db, atPhaseFloor)
+          expectEquivalent(shared, yield* sharedEntityOracle(fixture.db, atPhaseFloor))
           // Authored closes metrics, archived removes oncall, the DERIVED edge closes nothing.
-          expect(conflicts.map((pair) => [pair.src, pair.dst])).toEqual([
-            [FLIP_SAFE, FLIP_NOT_SAFE]
+          expect(shared.map((pair) => [pair.src, pair.dst])).toEqual([[FLIP_SAFE, FLIP_NOT_SAFE]])
+        }),
+      { seed: SEED }
+    )
+  })
+})
+
+describe("the mined-edge arm", () => {
+  it("reads mined `relates_to` and no other edge, with the same authored anti-join", async () => {
+    /**
+     * Edge typing's SECOND candidate arm, and its four filters against a corpus contaminated so each
+     * one has something to refuse. A clean index holds no mined edges at all, so every assertion here
+     * would be vacuous without the four seeded rows.
+     *
+     * - The flip pair is a genuine mined `relates_to` and is the ONLY row that must come back.
+     * - The oncall pair is a mined `caused_by`, so the `rel = ?` filter is doing something rather
+     *   than reading as "every derived edge".
+     * - The metrics pair is a mined `relates_to` whose two endpoints ALSO carry an authored
+     *   `contradicts`, so the `derived = 0` anti-join has a pair to close. Without this, a pair typed
+     *   last night would be re-judged every night, because promoting a typed edge does not delete the
+     *   mined edge underneath it.
+     * - One endpoint of the fourth row is archived, so the `archived = 0` join has something to drop.
+     *
+     * `strength` comes back as `sim` verbatim, which is what lets the phase rank both arms on one
+     * scale without re-decoding a vector.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const mine = (src: string, rel: string, dst: string, strength: number) =>
+            fixture.db.run(
+              `INSERT INTO edges
+                 (src_path, rel, dst_path, edge_class, derived, strength, provenance, created_at)
+               VALUES (?, ?, ?, 'memory', 1, ?, 'sleep', '2026-08-01T00:00:00Z')`,
+              [src, rel, dst, strength]
+            )
+
+          yield* mine(FLIP_SAFE, "relates_to", FLIP_NOT_SAFE, 0.99)
+          yield* mine(ONCALL_KEEP, "caused_by", ONCALL_DROP, 0.9)
+          yield* mine(METRICS_A, "relates_to", METRICS_B, 0.93)
+          yield* fixture.db.run(
+            `INSERT INTO edges (src_path, rel, dst_path, edge_class, derived, strength, provenance, created_at)
+             VALUES (?, 'contradicts', ?, 'memory', 0, 1.0, 'authored', '2026-08-01T00:00:00Z')`,
+            [METRICS_A, METRICS_B]
+          )
+          yield* mine(ONCALL_DROP, "relates_to", METRICS_A, 0.5)
+          yield* fixture.db.run("UPDATE files SET archived = 1 WHERE path = ?", [ONCALL_DROP])
+
+          const mined = yield* minedPairs(fixture.db, {
+            rel: "relates_to",
+            excludeTypes: ["task"]
+          })
+          expect(mined.map((pair) => [pair.src, pair.dst, pair.sim])).toEqual([
+            [FLIP_SAFE, FLIP_NOT_SAFE, 0.99]
           ])
         }),
       { seed: SEED }

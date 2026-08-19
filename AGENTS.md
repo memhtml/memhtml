@@ -329,7 +329,7 @@ The memory-session links, from either side.
 The nightly curation cycle: 15 phases, each an isolated commit on a review branch.
 
 - `--date` (string) — The run date, `YYYY-MM-DD`. Defaults to today. Names the branch.
-- `--phases` (string) — Comma-separated subset. All 15 by default: preflight, dedup-merge, entity-resolution, person-links, relationship-mining, conflict-detection, confidence-decay, arc-synthesis, retention-triage, compress, reprieve, trace-consolidation, integrity, state-export, report.
+- `--phases` (string) — Comma-separated subset. All 15 by default: preflight, dedup-merge, entity-resolution, person-links, relationship-mining, edge-typing, confidence-decay, arc-synthesis, retention-triage, compress, reprieve, trace-consolidation, integrity, state-export, report.
 - `--dry-run` (boolean) — Report per-phase counts and commit nothing. _(default `false`)_
 
 ### `memhtml sleep resume`
