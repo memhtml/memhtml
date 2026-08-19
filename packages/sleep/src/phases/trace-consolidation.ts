@@ -8,9 +8,13 @@ import { makeIndexRecorder } from "@memhtml/index"
 import { Effect, Result } from "effect"
 
 import { commitPhase } from "../commit.js"
-import type { CandidateMemoryLike, TranscriptManifestEntry } from "../consolidator.js"
+import type {
+  CandidateCommitmentLike,
+  CandidateMemoryLike,
+  TranscriptManifestEntry
+} from "../consolidator.js"
 import { readFileBytes, writeFileBytes } from "../edits.js"
-import { emptyOutcome, type PhaseBody, type PhaseEnv } from "../env.js"
+import { emptyOutcome, type PhaseBody, type PhaseEnv, type SleepError } from "../env.js"
 import {
   linkedSessionCount,
   markSessionsConsolidated,
@@ -19,6 +23,13 @@ import {
   unconsolidatedSessions,
   unlinkedSessionCount
 } from "../sql.js"
+import {
+  budgetFor,
+  closeDetectedTask,
+  detectionKey,
+  mintDetectedTask,
+  openDetections
+} from "../tasks.js"
 
 /**
  * Phase 12, trace consolidation. Unread transcripts go to the injected agent; each candidate it
@@ -59,6 +70,48 @@ import {
  * (missing credentials, an unreachable agent, an off-contract answer), and a candidate this phase
  * refuses all produce `ok` with counts and a reason. INV-3 in full: a night with no Bedrock
  * credentials is not a broken night, and a run that lost this phase stays green.
+ *
+ * ## Surface 2: the same answer also carries COMMITMENTS
+ *
+ * The consolidator's turn now reports two lists, and the second is issue #44's surface 2. The marginal
+ * cost is tokens in a call this phase was already making — no new model call, which is what makes this
+ * surface cheap enough to run every night and is the reason the issue sizes it above the net-new scan.
+ *
+ * A commitment is not a candidate memory and does not travel through the candidate loop.
+ * {@link CONSOLIDATION_KINDS} excludes `task` deliberately ("task is work to do, not something observed
+ * to have happened"), and that exclusion still holds: the model reports what a transcript SAYS, and the
+ * decision to open a task is made HERE, deterministically, by {@link commitmentRefusalFor} plus
+ * {@link COMMITMENT_FLOOR}.
+ *
+ * Two arms, from one list:
+ *
+ * - **Unresolved** commitments mint detected tasks, sharing the night's `DETECTED_TASK_CAP` budget with
+ *   every other detector, keyed on a normalized digest of the STATEMENT so the same promise restated on
+ *   a later night refreshes rather than duplicating.
+ * - **Resolved** commitments — a session showing the work done — close an OPEN detected task whose key
+ *   matches. That is the issue's "closure is also detected", and it is the reason a commitment that
+ *   arrives already-done is still worth reporting: a night that opens a task and a later night that
+ *   closes it are two readings of the same commitment.
+ *
+ * The key carries the statement and NOT the session, which is the one place surface 2 departs from
+ * `task-detection`'s keying, and it is forced by what closure has to reach across. See
+ * {@link commitmentKey}.
+ *
+ * **Only a DETECTED task is ever closed, and the guard is `closeDetectedTask`'s, on the path.** A
+ * human-opened task must not be archived because a model read "shipped it" in somebody's scrollback.
+ *
+ * **A commitment's evidence quote never enters the corpus, exactly like a candidate's.** The task body
+ * carries the model's own restatement plus the session id as a `memhtml-session` stamp; the verbatim
+ * line goes in the commit message. `packages/sleep/src/tasks.ts`' `DetectionEvidence` `session` arm is
+ * where that split is enforced, and its header records why the quote is not re-verified against
+ * transcript bytes.
+ *
+ * **One commit for the batch of commitment tasks**, not one per task, and that is the one place this
+ * phase departs from its one-commit-per-candidate discipline. The reason the discipline exists is that
+ * a distilled memory is a standalone ASSERTION about the world a reviewer weighs on its own. A detected
+ * task asserts nothing — it is a proposal, and the reviewer's decision is made in the task file rather
+ * than at the commit. What the commit has to do is be reviewable, and "the night found four
+ * commitments, here they are with their quotes" is one reviewable decision about one model answer.
  */
 
 /**
@@ -111,6 +164,346 @@ const COMMIT_QUOTE_CHARS = 200
 
 /** Where a consolidated memory lands: by kind and tag, exactly as an agent's own write is placed. */
 const CONSOLIDATION_TAG = "trace-consolidation"
+
+/**
+ * The confidence a commitment must clear before it mints a task or closes one.
+ *
+ * 0.7, the same floor `TASK_DETECT_FLOOR`, `EDGE_CONFIDENCE_FLOOR`, and `ENTITY_CONFIDENCE_FLOOR` set,
+ * and one number rather than one per arm. The mint arm and the closure arm read it identically on
+ * purpose: they are the same judgement about the same sentence, made once, and a lower floor on closure
+ * would mean a commitment too weak to open a task was strong enough to close one.
+ *
+ * The resource this bounds is a reviewer's attention, which is a property of the human rather than of
+ * how the finding was reached — the reasoning `DETECTED_TASK_CAP` records for being shared.
+ */
+export const COMMITMENT_FLOOR = 0.7
+
+/** The detector name every commitment task is keyed, tagged, and closed under. */
+export const COMMITMENT_DETECTOR = "trace-commitment"
+
+/** The actors whose commitments are FIRST-PERSON, and therefore the only ones minted. */
+const FIRST_PERSON_ACTORS: ReadonlySet<string> = new Set(["user", "agent"])
+
+/**
+ * A commitment this phase will act on, or the reason it was refused.
+ *
+ * Deterministic and between the model and the tree, the same position {@link refusalFor} occupies for a
+ * candidate memory, and every clause is a real failure mode rather than a restatement of the schema:
+ *
+ * - **An actor outside `user`/`agent`.** Issue #44 asks for first-person commitments only, and the
+ *   contract's third value exists so a model has somewhere honest to put a third party's commitment
+ *   instead of mislabelling it. Dropping `other` HERE rather than refusing it in the schema is what
+ *   makes that honesty free: the model can report "a colleague said they'd ship it" accurately, and the
+ *   phase declines to open a task nobody in this store owes.
+ * - **An empty statement.** It becomes the task's `<mark>` claim and therefore `files.gist`, so a
+ *   whitespace claim is a file the parser accepts and no search can find.
+ * - **An empty quote or session id.** The quote is the reviewer's receipt in the commit message, and
+ *   the session is the task's `from_session` provenance. Neither is optional in the contract; this is
+ *   the redundancy every model-facing gate in this package carries, so a scripted or future
+ *   consolidator that skipped the schema still does not get past here.
+ * - **Below the floor.** Counted separately by the caller rather than folded into the refusals,
+ *   because a night pressing against the floor is a different signal from a night sending malformed
+ *   commitments — the first says the threshold may be wrong and the second says the agent is.
+ *
+ * A session id OUTSIDE the batch is not checked here and is checked by the caller, which holds the
+ * batch. See {@link commitmentSession}.
+ */
+const commitmentRefusalFor = (commitment: CandidateCommitmentLike): string | null => {
+  if (!FIRST_PERSON_ACTORS.has(commitment.actor)) {
+    return `actor ${commitment.actor} is not first-person`
+  }
+  if (commitment.statement.trim() === "") return "empty statement"
+  if (commitment.evidence.quote.trim() === "") return "empty evidence quote"
+  if (commitment.evidence.sessionId.trim() === "") return "empty evidence session"
+  return null
+}
+
+/**
+ * A commitment's stable key: a normalized digest of the STATEMENT, and deliberately NOT of the session.
+ *
+ * This is the one place surface 2's keying departs from `task-detection`'s, which puts the source path
+ * in its key, and the difference is forced by what closure has to do. The issue's requirement is that
+ * "a commitment whose completion appears in A LATER SESSION can propose `task status done`" — so the
+ * task a Monday session opened has to be findable from a Friday session's completion, and any key
+ * carrying the session id makes those two keys different by construction. A session-keyed design cannot
+ * close anything across nights, which is the only span closure is for.
+ *
+ * The consequence is that one sentence said in two sessions is ONE task, refreshed rather than
+ * duplicated. That is the right reading for a commitment and the wrong one for `task-detection`'s
+ * findings, and the asymmetry is not an inconsistency. A commitment is a piece of WORK: "wire the
+ * capture path" promised on Monday and again on Wednesday is one thing to do, and two rows in the queue
+ * would be one task and one duplicate. `task-detection`'s findings are per-MEMORY review decisions —
+ * a corrected memory and its correction share most of their prose — and those are two files a reviewer
+ * looks at separately, which is why the path belongs in that key.
+ *
+ * `detectionKey` normalizes (NFC, lowercase, collapsed whitespace), so a restatement whose spacing or
+ * casing differs keys the same. It does not survive the model REWORDING the statement, which is the
+ * honest limit of a digest over prose: `mintDetectedTask`'s frame-key check is the second net, the
+ * volume cap is the third, and a completion whose wording moved is what `completionsUnmatched` counts.
+ */
+const commitmentKey = (commitment: CandidateCommitmentLike): string =>
+  detectionKey(COMMITMENT_DETECTOR, commitment.statement)
+
+/** The claim a commitment becomes: the work, stated as work, with the actor who owes it. */
+const commitmentClaim = (commitment: CandidateCommitmentLike): string =>
+  `confirm: the ${commitment.actor} committed to ${flattenOne(commitment.statement)}`
+
+/** The title. The statement itself, which is already one sentence; `mintDetectedTask` cuts it to 90. */
+const commitmentTitle = (commitment: CandidateCommitmentLike): string =>
+  `Commitment: ${flattenOne(commitment.statement)}`
+
+/** Whitespace collapsed and one trailing sentence period dropped, so the claim reads as one clause. */
+const flattenOne = (text: string): string =>
+  text
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.!?]+$/, "")
+
+/** The session a commitment cites, trimmed. The value the batch check and the key both read. */
+const commitmentSession = (commitment: CandidateCommitmentLike): string =>
+  commitment.evidence.sessionId.trim()
+
+/**
+ * The commit body for a batch of commitment tasks: one `commitment <session>: <quote>` line each.
+ *
+ * This is where a commitment's verbatim quote is allowed to go and nowhere else, the same rule
+ * {@link commitContextFor} states for a candidate's evidence. A reviewer deciding whether a proposed
+ * task is real needs the line it was read from, and a commit message is not part of the corpus: not
+ * indexed, not chunked, not embedded, not retrievable. `commitPhase` indents the body, which is the
+ * trailer-injection guard, and it matters here for the same reason it matters there — the text is a
+ * model's, read out of a transcript nobody wrote for this system.
+ */
+const commitmentContext = (
+  minted: ReadonlyArray<CandidateCommitmentLike>,
+  closed: ReadonlyArray<string>
+): string =>
+  [
+    ...minted
+      .slice(0, COMMIT_EVIDENCE_LIMIT)
+      .map(
+        (one) =>
+          `commitment ${commitmentSession(one)}: ` +
+          `${one.evidence.quote.replace(/\s+/g, " ").slice(0, COMMIT_QUOTE_CHARS)}`
+      ),
+    ...closed.map((path) => `closed ${path}: completion detected`)
+  ].join("\n")
+
+/** What the commitment pass did, as the counts and the commit need it. */
+interface CommitmentOutcome {
+  /** Commitments the answer carried, before any filter. */
+  readonly commitments: number
+  /** Tasks newly minted. A refresh is not one; see {@link mintDetectedTask}. */
+  readonly commitmentTasks: number
+  /** Resolved commitments that closed an open detected task. */
+  readonly completionsApplied: number
+  /**
+   * Resolved commitments that closed nothing: below the floor, refused by the filter, or matching no
+   * open detected task.
+   *
+   * Counted rather than dropped, because it is the operator-visible reading of the arm working at all.
+   * A night whose every completion is unmatched is a night where the keying is wrong — the model
+   * reworded the statement, or the task was already closed by hand — and that is invisible unless the
+   * number is reported. The issue asks for exactly this count.
+   */
+  readonly completionsUnmatched: number
+  /** Refused by the deterministic filter: a non-first-person actor, an empty field. */
+  readonly commitmentsSkipped: number
+  /** Above the filter and below {@link COMMITMENT_FLOOR}. */
+  readonly commitmentsBelowFloor: number
+  /** Tasks a second reading refreshed rather than duplicated. */
+  readonly commitmentsRefreshed: number
+  /**
+   * Commitments the nightly volume cap turned away, measured as THIS PASS's DELTA on the shared
+   * budget's overflow.
+   *
+   * A delta rather than `budget.overflow` outright, and the difference is not cosmetic. The budget is
+   * shared across every detector (`DETECTED_TASK_CAP` records why: the number a human can review is a
+   * property of the human, not of how many detectors ran), so by the time this phase runs the counter
+   * may already carry entity-resolution's and dedup's overflow. Reporting it raw would attribute their
+   * turned-away findings to this phase's commitments — a number an operator would read as "the
+   * commitment detector is too noisy" about a night where it minted everything it found.
+   *
+   * The reading a delta gives is the one that answers a question: how many commitments this night saw
+   * did not fit. That the cap was already full when they arrived is real and is what the SHARED budget
+   * means; whose findings filled it is a different question, answered by the other phases' own counts.
+   */
+  readonly commitmentsCapped: number
+  /** True when anything was staged, so the caller knows whether to commit. */
+  readonly staged: boolean
+  /** The tasks whose quotes go in the commit body, and the paths closed. */
+  readonly mintedCommitments: ReadonlyArray<CandidateCommitmentLike>
+  readonly closedPaths: ReadonlyArray<string>
+}
+
+/** Every count at zero, so a phase that ran no commitment pass still reports the shape. */
+const ZERO_COMMITMENTS: CommitmentOutcome = {
+  commitments: 0,
+  commitmentTasks: 0,
+  completionsApplied: 0,
+  completionsUnmatched: 0,
+  commitmentsSkipped: 0,
+  commitmentsBelowFloor: 0,
+  commitmentsRefreshed: 0,
+  commitmentsCapped: 0,
+  staged: false,
+  mintedCommitments: [],
+  closedPaths: []
+}
+
+/**
+ * The whole commitment pass: filter, then close what resolved and mint what did not.
+ *
+ * **Closures run BEFORE mints, and the order is load-bearing.** A resolved commitment and an unresolved
+ * one can key the same when a model reports both readings of one sentence, and closing first means the
+ * task leaves the open queue before the mint arm looks at it — so the mint opens a fresh task for a
+ * commitment the same answer says is done, which reads as churn. Running mints first would instead
+ * REFRESH the task and then immediately close it, which is worse: the queue loses a task in the same
+ * commit that touched it, and the refresh's `memhtml-updated` stamp says a human was shown something
+ * that was archived before they could look. Ordering closures first makes a same-answer contradiction
+ * resolve to "closed", which is the reading that costs a reviewer nothing.
+ *
+ * **Only sessions in the BATCH.** The client already refuses a turn citing a session it did not make
+ * readable (`ungroundedCommitmentReason`), and this narrows the same way `analyzedFrom` narrows the
+ * watermark set: an id outside the batch this phase asked about is a bug in the consolidator, and it
+ * must not become a task file whose provenance names a session nobody selected. Cheap, so unconditional.
+ *
+ * **The budget is the run's shared one**, taken once here and threaded, per `budgetFor`'s contract.
+ * Overflow lands in `budget.overflow`, which the caller reports as `capped` alongside every other
+ * detector's.
+ */
+const consolidateCommitments = (
+  env: PhaseEnv,
+  commitments: ReadonlyArray<CandidateCommitmentLike>,
+  batchSessionIds: ReadonlySet<string>
+): Effect.Effect<CommitmentOutcome, SleepError> =>
+  Effect.gen(function* () {
+    if (commitments.length === 0) return ZERO_COMMITMENTS
+
+    let skipped = 0
+    let belowFloor = 0
+    /** Resolved commitments the floor turned away: completions this night declined to apply. */
+    let belowFloorCompletions = 0
+    const admissible: Array<CandidateCommitmentLike> = []
+    for (const [offset, commitment] of commitments.entries()) {
+      const refusal = commitmentRefusalFor(commitment)
+      if (refusal !== null) {
+        yield* Effect.logWarning(
+          `sleep.trace-consolidation commitment ${offset} skipped: ${refusal}`
+        )
+        skipped += 1
+        continue
+      }
+      if (!batchSessionIds.has(commitmentSession(commitment))) {
+        yield* Effect.logWarning(
+          `sleep.trace-consolidation commitment ${offset} skipped: session ` +
+            `${commitmentSession(commitment)} is not in this run's batch`
+        )
+        skipped += 1
+        continue
+      }
+      if (commitment.confidence < COMMITMENT_FLOOR) {
+        belowFloor += 1
+        /**
+         * A resolved commitment below the floor is the issue's "left for review" case, so it is counted
+         * as an unapplied completion HERE rather than inferred later by subtraction.
+         *
+         * Only the ones that reached the floor. A commitment the filter refused above — a third party's,
+         * or one naming a session outside the batch — is not a completion this store declined to apply;
+         * it was never a first-person commitment at all, and counting it as an unmatched completion would
+         * report the same finding under two counters and make `completionsUnmatched` read as a keying
+         * problem on a night whose only fault was a mislabelled actor.
+         */
+        if (commitment.resolved) belowFloorCompletions += 1
+        continue
+      }
+      admissible.push(commitment)
+    }
+
+    /**
+     * The closure arm. The open queue is read ONCE for the whole batch and then narrowed in memory:
+     * `openDetections` is a `readdir` plus a parse per file, and asking it per resolved commitment
+     * would be the round-trip-per-row shape every batch read in this package exists to avoid.
+     */
+    const resolved = admissible.filter((commitment) => commitment.resolved)
+    const closedPaths: Array<string> = []
+    let unmatched = 0
+    if (resolved.length > 0) {
+      const open = yield* openDetections(env)
+      const byKey = new Map(open.map((detected) => [detected.key, detected] as const))
+      for (const commitment of resolved) {
+        const match = byKey.get(commitmentKey(commitment))
+        if (match === undefined) {
+          unmatched += 1
+          continue
+        }
+        /**
+         * `closeDetectedTask` re-checks the path, which is redundant with `openDetections` only
+         * returning detected paths and is kept for the reason that function's own note gives: the guard
+         * belongs at the write, not at the lookup. A `false` here means the file vanished between the
+         * read and the write, so it is counted as unmatched rather than as a closure.
+         */
+        if (yield* closeDetectedTask(env, match.path)) closedPaths.push(match.path)
+        else unmatched += 1
+        byKey.delete(match.key)
+      }
+    }
+    /**
+     * The completions the floor turned away, added to the ones that matched nothing.
+     *
+     * ADDED rather than derived by subtracting `resolved.length` from the resolved commitments in the
+     * whole answer, which is what an earlier version did and got wrong: that difference also swept in
+     * every resolved commitment the FILTER refused, so a night whose only fault was a third party's
+     * completion reported an unmatched completion and pointed an operator at the keying.
+     */
+    unmatched += belowFloorCompletions
+
+    const budget = budgetFor(env)
+    /** The shared counter BEFORE this pass, so `commitmentsCapped` is this pass's own delta. */
+    const overflowBefore = budget.overflow
+    const minted: Array<CandidateCommitmentLike> = []
+    let refreshed = 0
+    for (const commitment of admissible) {
+      if (commitment.resolved) continue
+      const outcome = yield* mintDetectedTask(env, budget, {
+        detector: COMMITMENT_DETECTOR,
+        /**
+         * The statement alone, matching {@link commitmentKey} exactly. `mintDetectedTask` re-derives the
+         * digest from `detector` + `finding`, so a `finding` that disagreed with the key this phase
+         * matches closures against would mint under one path and look for another — the arms would
+         * silently never meet. One expression rather than two is what keeps them the same key.
+         */
+        finding: commitment.statement,
+        title: commitmentTitle(commitment),
+        claim: commitmentClaim(commitment),
+        detail:
+          `Recorded in a consolidated session at confidence ` +
+          `${commitment.confidence.toFixed(2)} and never stated as done. Confirm it is still ` +
+          `wanted, or close it.`,
+        evidence: {
+          kind: "session",
+          sessionId: commitmentSession(commitment),
+          statement: commitment.statement
+        },
+        ...(typeof commitment.dueHint === "string" ? { dueHint: commitment.dueHint } : {})
+      })
+      if (outcome === "minted") minted.push(commitment)
+      else if (outcome === "refreshed") refreshed += 1
+    }
+
+    return {
+      commitments: commitments.length,
+      commitmentTasks: minted.length,
+      completionsApplied: closedPaths.length,
+      completionsUnmatched: unmatched,
+      commitmentsSkipped: skipped,
+      commitmentsBelowFloor: belowFloor,
+      commitmentsRefreshed: refreshed,
+      commitmentsCapped: budget.overflow - overflowBefore,
+      staged: minted.length > 0 || refreshed > 0 || closedPaths.length > 0,
+      mintedCommitments: minted,
+      closedPaths
+    }
+  })
 
 /**
  * A candidate the phase will write, or `null` with the reason it was refused.
@@ -249,7 +642,7 @@ export const traceConsolidation: PhaseBody = (env) =>
     const consolidator = env.deps.consolidator
     if (consolidator === undefined) {
       return {
-        ...emptyOutcome({ ...base, batch: 0, candidates: 0, written: 0, consolidated: 0 }),
+        ...emptyOutcome({ ...base, ...ZERO_COUNTS }),
         detail: "no consolidator bound"
       }
     }
@@ -272,7 +665,7 @@ export const traceConsolidation: PhaseBody = (env) =>
       limit: TRACE_SESSIONS_PER_RUN
     })
     if (batch.length === 0) {
-      return emptyOutcome({ ...base, batch: 0, candidates: 0, written: 0, consolidated: 0 })
+      return emptyOutcome({ ...base, ...ZERO_COUNTS })
     }
 
     /**
@@ -282,13 +675,7 @@ export const traceConsolidation: PhaseBody = (env) =>
      * expensive way to count.
      */
     if (env.dryRun) {
-      return emptyOutcome({
-        ...base,
-        batch: batch.length,
-        candidates: 0,
-        written: 0,
-        consolidated: 0
-      })
+      return emptyOutcome({ ...base, ...ZERO_COUNTS, batch: batch.length })
     }
 
     /**
@@ -323,13 +710,7 @@ export const traceConsolidation: PhaseBody = (env) =>
         `sleep.trace-consolidation degraded: ${failure._tag}: ${failure.reason}`
       )
       return {
-        ...emptyOutcome({
-          ...base,
-          batch: batch.length,
-          candidates: 0,
-          written: 0,
-          consolidated: 0
-        }),
+        ...emptyOutcome({ ...base, ...ZERO_COUNTS, batch: batch.length }),
         detail: `consolidator unavailable: ${failure._tag}`
       }
     }
@@ -432,6 +813,37 @@ export const traceConsolidation: PhaseBody = (env) =>
     }
 
     /**
+     * Surface 2, AFTER every candidate commit and BEFORE the watermark.
+     *
+     * After the candidates, so a commitment task cannot ride into a `distill …` commit and confuse what
+     * that commit decided; each half of the answer gets its own reviewable commit. Before the watermark,
+     * for the reason the watermark's own note gives: it goes last, so a process killed mid-phase
+     * re-reads the batch rather than recording it read with nothing to show.
+     *
+     * The batch is the grounding set, `analyzedFrom` is not. A commitment cites a session whose
+     * TRANSCRIPT was read, and `analyzedSessionIds` is the reachable set the CLIENT computed — which is
+     * the right input for a watermark and the wrong one for this check, since a scripted or degraded
+     * consolidator could report a narrower reachable set while still having read the sessions it quotes.
+     * The batch is what this phase asked about, and it is the containment the phase can assert.
+     */
+    const commitments = yield* consolidateCommitments(
+      env,
+      outcome.success.commitments,
+      new Set(batch.map((session) => session.session_id))
+    )
+    if (commitments.staged) {
+      const commitSha = yield* commitPhase(
+        env,
+        "trace-consolidation",
+        `detect ${String(commitments.commitmentTasks)} commitments, ` +
+          `close ${String(commitments.completionsApplied)} completed`,
+        { ...base, batch: batch.length, ...commitmentCounts(commitments) },
+        commitmentContext(commitments.mintedCommitments, commitments.closedPaths)
+      )
+      if (commitSha !== null) lastCommit = commitSha
+    }
+
+    /**
      * The watermark is written LAST, after every commit, and covers exactly the sessions the agent
      * ACTUALLY READ. {@link analyzedFrom} is that set, and it is not `batch`.
      *
@@ -496,12 +908,51 @@ export const traceConsolidation: PhaseBody = (env) =>
         skipped,
         conflicts: conflicted,
         consolidated: analyzed.length,
-        unreachable
+        unreachable,
+        ...commitmentCounts(commitments)
       },
       commitSha: lastCommit,
       llmCalls
     }
   })
+
+/**
+ * The commitment half of the counts, from the pass's outcome.
+ *
+ * One function, called by both the phase's return and the commitment commit's trailer, so a reader
+ * comparing the `Memhtml-Counts` trailer against the report sees the same keys with the same meanings.
+ * `capped` is the SHARED budget's overflow — every detector's, not this one's, per `DETECTED_TASK_CAP`'s
+ * note — so it is read off the budget rather than counted here.
+ */
+const commitmentCounts = (outcome: CommitmentOutcome): Record<string, number> => ({
+  commitments: outcome.commitments,
+  commitmentTasks: outcome.commitmentTasks,
+  completionsApplied: outcome.completionsApplied,
+  completionsUnmatched: outcome.completionsUnmatched,
+  commitmentsSkipped: outcome.commitmentsSkipped,
+  commitmentsBelowFloor: outcome.commitmentsBelowFloor,
+  commitmentsRefreshed: outcome.commitmentsRefreshed,
+  commitmentsCapped: outcome.commitmentsCapped
+})
+
+/**
+ * The full count SHAPE, at zero, for every path that returns before the model answer.
+ *
+ * Every key the phase can report is present on every path, because a report reader comparing two nights
+ * reads a missing key as a phase that does not have the concept rather than as a night that did none of
+ * it. Same rule `task-detection`'s `ZERO` and `edge-typing`'s `zero` state. `base` is spread beside it
+ * because those three counters are real on every path, including a dry run.
+ */
+const ZERO_COUNTS = {
+  batch: 0,
+  candidates: 0,
+  written: 0,
+  skipped: 0,
+  conflicts: 0,
+  consolidated: 0,
+  unreachable: 0,
+  ...commitmentCounts(ZERO_COMMITMENTS)
+}
 
 /**
  * The sessions to watermark: those the agent reported analyzing, INTERSECTED with the batch.

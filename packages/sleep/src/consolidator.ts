@@ -88,9 +88,45 @@ export interface CandidateMemoryLike {
   readonly evidence: ReadonlyArray<CandidateEvidenceLike>
 }
 
+/**
+ * One commitment the consolidator found, as the phase reads it.
+ *
+ * WIDER than `apps/consolidator`'s `CandidateCommitment` on `actor`, exactly as `CandidateMemoryLike`
+ * is wider on `kind`, and for the same reason: the phase's own post-filter decides what is admissible
+ * (`actor` must be `user` or `agent`, `confidence` must clear the floor, the statement must be
+ * non-empty), so a narrower type here would be a second copy of that vocabulary free to drift from the
+ * one the filter enforces. The filter is the thing under test; the type is not the guard.
+ *
+ * `evidence` is ONE quote rather than a list, which is the shape difference from a candidate memory and
+ * not an omission. See `apps/consolidator/src/contract.ts`' `CandidateCommitment`: a commitment IS one
+ * sentence somebody said, so a second quote could only be padding.
+ */
+export interface CandidateCommitmentLike {
+  /** The commitment in one sentence. Not necessarily verbatim; `evidence.quote` is. */
+  readonly statement: string
+  /** `user`, `agent`, or `other`. Only the first two are first-person, and only those are minted. */
+  readonly actor: string
+  readonly dueHint?: string | null | undefined
+  readonly evidence: CandidateEvidenceLike
+  readonly confidence: number
+  /** True when the SAME session shows the work done. Drives the closure arm rather than a mint. */
+  readonly resolved: boolean
+}
+
 /** What one consolidation run produced, what it cost, and which sessions it actually reached. */
 export interface ConsolidationOutcome {
   readonly candidates: ReadonlyArray<CandidateMemoryLike>
+  /**
+   * Commitments the same turn reported: issue #44's surface 2, whose marginal cost is tokens in a call
+   * the night was already making.
+   *
+   * REQUIRED for the reason `analyzedSessionIds` is: an optional field would let a consolidator that
+   * never looked be indistinguishable from one that looked and found none, and the second is what `[]`
+   * says. It is also what keeps the port honest about the real client, whose `ConsolidationResult`
+   * declares the field required as well — a `?? []` here would compile against a consolidator that
+   * silently stopped reporting them.
+   */
+  readonly commitments: ReadonlyArray<CandidateCommitmentLike>
   /**
    * Model calls the run actually made. NOT one: the eve harness loops, so a run that grepped five
    * times made five calls, and the number comes back counted from the stream rather than assumed.

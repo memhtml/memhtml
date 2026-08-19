@@ -20,6 +20,7 @@ export {
 } from "./batch.js"
 export { commitPhase, phaseTrailers } from "./commit.js"
 export type {
+  CandidateCommitmentLike,
   CandidateEvidenceLike,
   CandidateMemoryLike,
   ConsolidationOutcome,
@@ -196,6 +197,7 @@ export type {
 } from "./tasks.js"
 export {
   budgetFor,
+  closeDetectedTask,
   closeVanishedDetections,
   DETECTED_TAG,
   DETECTED_TASK_CAP,

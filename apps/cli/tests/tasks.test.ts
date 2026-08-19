@@ -1,6 +1,10 @@
-import { readFile } from "node:fs/promises"
-import { join } from "node:path"
+import { execFile } from "node:child_process"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { dirname, join } from "node:path"
+import { promisify } from "node:util"
 
+import { renderTemplate } from "@memhtml/html"
+import { detectedTaskPath, detectionKey } from "@memhtml/sleep"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { EXIT_RUNTIME, EXIT_USAGE } from "../src/envelope.js"
@@ -351,5 +355,185 @@ describe("the task lifecycle, end to end", () => {
     expect(open.tasks.map((task) => task.path)).not.toContain(first.path)
     const all = await cli.json<TaskList>(["task", "list", "--include-archived"])
     expect(all.tasks.map((task) => task.path)).toContain(done.archivePath)
+  })
+})
+
+/**
+ * `task list --detected`: issue #44's author separation, as the flag that makes it usable.
+ *
+ * A detected task is a PROPOSAL with evidence and a human-opened task is a decision already made, so
+ * they are two different reading sessions. The filter is what lets a human review the machine's queue
+ * without sorting the two by hand.
+ *
+ * The detected tasks here are written through `@memhtml/sleep`'s OWN `renderTemplate` inputs and its own
+ * `detectedTaskPath`, not through hand-written HTML at a hand-written path. That is the load-bearing
+ * choice in this suite: the filter matches on the PATH SHAPE, so a fixture that spelled the path itself
+ * would pass against a filter and a minter that had drifted apart. Borrowing the minter's own path
+ * function means a change to the digest width, the prefix, or the placement rule moves both sides.
+ */
+const runProcess = promisify(execFile)
+
+/**
+ * Stage and commit whatever a fixture just wrote, as one commit.
+ *
+ * The sleep cycle writes a detected task and COMMITS it on the sleep branch, so a committed file is the
+ * production state rather than a test convenience — and it is load-bearing for the archive arm, because
+ * `task status done` routes through `store.archiveMemory`, whose `git mv` refuses an untracked path.
+ */
+const commitAll = async (cli: Cli, subject: string): Promise<void> => {
+  await runProcess("git", ["add", "-A"], { cwd: cli.root })
+  await runProcess("git", ["commit", "-m", subject], { cwd: cli.root })
+}
+
+describe("task list --detected", () => {
+  let cli: Cli
+  /** The detected task's path, as `@memhtml/sleep` itself would name it. */
+  let detectedPath: string
+  let humanPath: string
+
+  beforeAll(async () => {
+    cli = await makeCli()
+
+    const human = await cli.json<TaskWritten>([
+      "task",
+      "add",
+      "--title",
+      "Rotate the staging credentials before the audit"
+    ])
+    humanPath = human.path
+
+    /**
+     * A detected task, at the path `mintDetectedTask` would give it, with the head it would write.
+     *
+     * Written to disk and picked up by `index update` rather than committed by a command, because
+     * nothing in the CLI mints one — the sleep cycle does, on its own branch, and `index update` reads
+     * the dirty working tree as well as HEAD. What this fixture has to be faithful about is the PATH and
+     * the `memhtml-author`, since those are the two things the filter and the author separation rest on.
+     */
+    const key = detectionKey("trace-commitment", "wire the capture path before the next release")
+    detectedPath = detectedTaskPath(
+      key,
+      "Commitment: wire the capture path before the next release"
+    )
+    const absolute = join(cli.root, detectedPath)
+    await mkdir(dirname(absolute), { recursive: true })
+    await writeFile(
+      absolute,
+      renderTemplate({
+        title: "Commitment: wire the capture path before the next release",
+        claim: "confirm: the agent committed to wire the capture path before the next release",
+        body: ["Detected from a consolidated session; a proposal for a human to decide."],
+        memoryType: "task",
+        taskStatus: "todo",
+        at: "2026-08-08T00:00:00Z",
+        author: "agent:sleep",
+        sessionId: "session-a",
+        tags: ["detected", "trace-commitment"]
+      }),
+      "utf8"
+    )
+    await commitAll(cli, "sleep(trace-consolidation): detect 1 commitments, close 0 completed")
+    await cli.json(["index", "update", "--no-embed"])
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  /**
+   * The fixture is only meaningful if the unfiltered list sees BOTH. A repo where the detected file
+   * never indexed would make every "the filter returns one row" assertion below vacuously true.
+   */
+  it("has both tasks in the unfiltered list, so the filter has something to exclude", async () => {
+    const all = await cli.json<TaskList>(["task", "list"])
+    const paths = all.tasks.map((task) => task.path)
+    expect(paths).toContain(humanPath)
+    expect(paths).toContain(detectedPath)
+  })
+
+  /**
+   * (Mutation: dropping the `f.path GLOB ?` condition returns both tasks and fails the `toEqual` here;
+   * spelling the pattern as `LIKE 'areas/inbox/tasks/det-%'` passes this case and fails the
+   * near-miss case below, which is why both exist.)
+   */
+  it("returns only the detected task, not the human-opened one", async () => {
+    const detected = await cli.json<TaskList>(["task", "list", "--detected"])
+    expect(detected.tasks.map((task) => task.path)).toEqual([detectedPath])
+    // The payload SHAPE is unchanged: a filter, not a new response type, so no consumer's parse moves.
+    const row = detected.tasks[0]
+    expect(row?.taskStatus).toBe("todo")
+    expect(row?.blockedBy).toEqual([])
+    expect(detected.nextCursor).toBeNull()
+  })
+
+  /**
+   * The character class, which is the whole reason this is a `GLOB` and not a `LIKE`.
+   *
+   * Three near misses, each a real filename a corpus could hold: a stem whose digest is not hex, one
+   * whose digest is too short, and a task whose title simply begins with the letters `det`. A
+   * prefix-only `LIKE` matches all three, and each would put a hand-opened task into the machine's queue
+   * — which is the one thing this flag exists to prevent.
+   */
+  it("rejects near misses a prefix-only LIKE would admit", async () => {
+    for (const [stem, title] of [
+      ["det-zzzzzzzzzzzz-not-hex", "A stem whose digest is not hexadecimal"],
+      ["det-0123456789-too-short", "A stem whose digest is too short"],
+      ["detonate-the-staging-database", "A task whose title merely starts with det"]
+    ] as const) {
+      const path = `areas/inbox/tasks/${stem}.html`
+      const absolute = join(cli.root, path)
+      await mkdir(dirname(absolute), { recursive: true })
+      await writeFile(
+        absolute,
+        renderTemplate({
+          title,
+          claim: title,
+          memoryType: "task",
+          taskStatus: "todo",
+          at: "2026-08-08T00:00:00Z",
+          author: "agent:sleep"
+        }),
+        "utf8"
+      )
+    }
+    await commitAll(cli, "test: three near-miss task filenames")
+    await cli.json(["index", "update", "--no-embed"])
+
+    // The near misses ARE in the corpus — asserted, or this case proves nothing about the pattern.
+    const all = await cli.json<TaskList>(["task", "list"])
+    expect(all.tasks.length).toBeGreaterThanOrEqual(5)
+    const detected = await cli.json<TaskList>(["task", "list", "--detected"])
+    expect(detected.tasks.map((task) => task.path)).toEqual([detectedPath])
+  })
+
+  /**
+   * The flag COMPOSES with the others rather than replacing them, which is what makes it a filter. And
+   * `--include-archived` has to reach a CLOSED detected task, or "what did the machine propose and what
+   * happened to it" is unanswerable — a closure archives under `archive/<year>/`, so the pattern is
+   * anchored on the filename rather than the directory for exactly this case.
+   */
+  it("composes with --status and reaches an archived detected task with --include-archived", async () => {
+    const todo = await cli.json<TaskList>(["task", "list", "--detected", "--status", "todo"])
+    expect(todo.tasks.map((task) => task.path)).toEqual([detectedPath])
+    const doing = await cli.json<TaskList>(["task", "list", "--detected", "--status", "doing"])
+    expect(doing.tasks).toEqual([])
+
+    // `done` archives, exactly as `closeDetectedTask` does through sleep's own staging discipline.
+    const closed = await cli.json<TaskUpdated>([
+      "task",
+      "status",
+      detectedPath,
+      "done",
+      "--reason",
+      "completion detected"
+    ])
+    expect(closed.archived).toBe(true)
+    expect(closed.archivePath).toMatch(/^archive\/\d{4}\/areas\/inbox\/tasks\/det-/)
+
+    // Absent by default, because `done` archives; present with the flag, at its archived path.
+    expect((await cli.json<TaskList>(["task", "list", "--detected"])).tasks).toEqual([])
+    const archived = await cli.json<TaskList>(["task", "list", "--detected", "--include-archived"])
+    expect(archived.tasks.map((task) => task.path)).toEqual([closed.archivePath])
+    expect(archived.tasks[0]?.archived).toBe(true)
   })
 })

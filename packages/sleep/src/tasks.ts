@@ -92,6 +92,26 @@ import type { PhaseEnv } from "./env.js"
  * against, and pretending otherwise by quoting an arbitrary claiming memory would manufacture a
  * citation to satisfy a check. The union keeps the difference visible at every call site instead of
  * leaving it to convention.
+ *
+ * A SESSION is the third, and it is the one place issue #44's "body must quote its source verbatim"
+ * is deliberately NOT satisfied, because a stronger invariant refuses it. Surface 2's evidence is a
+ * transcript line, and `.memhtml` holds no session content: the trace plane is a read-only index over
+ * `~/.claude/projects`, and `phases/trace-consolidation.ts` states — with a byte-level test behind it —
+ * that a distilled claim reaches the corpus and its verbatim quote does not. A quote copied into a
+ * task body would be exactly the leak that test exists to catch. So the `session` arm carries the
+ * session ID and no quote: the ID becomes a `memhtml-session` stamp (a projected column, so
+ * `files.session_id` answers "which session opened this"), the body names the session as the place to
+ * look, and the verbatim line goes where every other trace-consolidation quote goes, into the COMMIT
+ * MESSAGE, which is not indexed, not chunked, not embedded, and not retrievable.
+ *
+ * What verifies a `session` quote is therefore not code in this file but the client boundary:
+ * `ungroundedCommitmentReason` (`apps/consolidator/src/contract.ts`) refuses the whole turn when a
+ * commitment cites a session the run did not make readable, and the phase additionally drops a
+ * commitment whose session is outside the batch it asked about. Re-verifying the quote against
+ * transcript bytes here was considered and declined: it would require `MEMHTML_TRACE_ROOT` in
+ * `PhaseEnv`, which `consolidator.ts` records as the thing deliberately kept out of the environment
+ * all sixteen phases share, and it would buy a check against a file that may have rotated away since
+ * the consolidator read it.
  */
 
 /**
@@ -234,6 +254,21 @@ export type DetectionEvidence =
       readonly sourcePath: string
     }
   | { readonly kind: "measurement"; readonly detail: string }
+  | {
+      /**
+       * A transcript line, cited by SESSION and carrying no quote. See the module header: the trace
+       * plane's invariant is that `.memhtml` holds no session content, so the verbatim line goes into
+       * the commit message and this arm carries only what may be stored.
+       */
+      readonly kind: "session"
+      readonly sessionId: string
+      /**
+       * The commitment as the model RESTATED it, which is prose about the session rather than a span
+       * out of it. Distinct from the verbatim quote by construction: the consolidator's contract asks
+       * for `statement` and `evidence.quote` as separate fields precisely so one of them is storable.
+       */
+      readonly statement: string
+    }
 
 /** What {@link mintDetectedTask} is asked to write. */
 export interface DetectionRequest {
@@ -351,6 +386,18 @@ export const mintDetectedTask = (
          * the order given, and {@link openDetections} reads the detector back off the second value.
          */
         tags: [DETECTED_TAG, request.detector],
+        /**
+         * `from_session` provenance, per issue #44, as the ordinary `memhtml-session` meta rather than
+         * anything new. It is already in the closed vocabulary, already projects to
+         * `files.session_id`, and already carries exactly this meaning on a memory an agent wrote
+         * during a session — so a detected task minted from a transcript answers "which session is
+         * this from" through the same column every other provenance query reads. Only the `session`
+         * evidence arm has one; a measurement and a corpus quote are not from a session, and stamping
+         * the run's id there would make the column mean two things.
+         */
+        ...(request.evidence.kind === "session"
+          ? { sessionId: request.evidence.sessionId.trim() }
+          : {}),
         ...(dueOf(request.dueHint) === undefined ? {} : { dueAt: dueOf(request.dueHint) as string })
       })
     )
@@ -407,6 +454,45 @@ export const closeVanishedDetections = (
       if (archived !== null) closed += 1
     }
     return closed
+  })
+
+/**
+ * Close ONE detected task by path: stamp `done` and archive, exactly as {@link closeVanishedDetections}
+ * does per file. Answers `false` and writes nothing when the path is not a detected task's.
+ *
+ * The refusal is the point, and it is a HARD guard rather than a convention. Surface 2 closes a task
+ * because a transcript says the work is done, which is a model's reading of somebody's prose — so this
+ * is the one closure path whose trigger is not a fact the corpus can check. A human-opened task closed
+ * on that basis is work silently taken out of somebody's queue by a sentence they did not write, and
+ * `done` ARCHIVES, so the file also leaves the directory they look in. {@link isDetectedTaskPath} is
+ * the discriminator because it reads the PATH: it needs no parse, no index row, and no meta, so it
+ * cannot be defeated by a file whose head a model influenced.
+ *
+ * A caller that found its path through {@link openDetections} is already inside the guard, since that
+ * function only returns detected paths. The check runs anyway, here, at the write: a second caller
+ * arriving with a path from a query, a report, or a match on a title is the case this exists for, and a
+ * guard that lived at the lookup instead would not cover it.
+ *
+ * The closing REASON goes in the caller's commit body, for the reason
+ * {@link closeVanishedDetections} records: there is no `memhtml-*` name for it and the vocabulary is
+ * closed.
+ */
+export const closeDetectedTask = (
+  env: PhaseEnv,
+  path: string
+): Effect.Effect<boolean, StorageFailure | GitFailure> =>
+  Effect.gen(function* () {
+    if (!isDetectedTaskPath(path)) {
+      yield* Effect.logWarning(
+        `sleep.tasks refused to close ${path}: not a detected task, so no detector may close it`
+      )
+      return false
+    }
+    yield* stampFile(env, path, [
+      meta("memhtml-task-status", "done"),
+      meta("memhtml-updated", env.at)
+    ])
+    return (yield* archiveFile(env, path)) !== null
   })
 
 /** One open detected task, as the tree holds it. */
@@ -480,8 +566,8 @@ const detectedFilenames = (env: PhaseEnv): Effect.Effect<ReadonlyArray<string>, 
   })
 
 /**
- * True when the evidence is admissible: a measurement always, a quote only when the cited file's own
- * article text carries it.
+ * True when the evidence is admissible: a quote only when the cited file's own article text carries it,
+ * a measurement or a session citation whenever it is non-empty.
  *
  * Compared with whitespace collapsed on BOTH sides, and case-sensitively. Whitespace is not content
  * here — the same sentence read out of a `body_text` projection, out of a re-wrapped paragraph, and
@@ -493,6 +579,11 @@ const detectedFilenames = (env: PhaseEnv): Effect.Effect<ReadonlyArray<string>, 
  * system of record and the index is refreshed once per night, so a row can name text an earlier
  * phase's commit has already replaced. A missing file refuses, which is the same posture every
  * other phase takes toward a path the tree no longer holds.
+ *
+ * A `session` citation has no file to read and this function says so rather than pretending to check
+ * one. What stands behind it is `ungroundedCommitmentReason` at the client boundary plus the phase's
+ * own batch-membership check; the module header records why re-reading the transcript here was
+ * declined. The non-empty test is not the guard, it is the same floor the other two arms carry.
  */
 const evidenceHolds = (
   env: PhaseEnv,
@@ -500,6 +591,9 @@ const evidenceHolds = (
 ): Effect.Effect<boolean, StorageFailure> =>
   Effect.gen(function* () {
     if (evidence.kind === "measurement") return evidence.detail.trim() !== ""
+    if (evidence.kind === "session") {
+      return evidence.sessionId.trim() !== "" && evidence.statement.trim() !== ""
+    }
     const quote = flatten(evidence.quote)
     if (quote === "") return false
     const html = yield* readFileBytes(env, evidence.sourcePath)
@@ -544,17 +638,42 @@ const detectedArticle = (env: PhaseEnv, request: DetectionRequest): string => {
   if (request.detail !== undefined && request.detail.trim() !== "") {
     paragraphs.push(`<p>${escapeText(flatten(request.detail))}</p>`)
   }
-  paragraphs.push(
-    request.evidence.kind === "quote"
-      ? `<p>Evidence, verbatim from <code>${escapeText(request.evidence.sourcePath)}</code>: ` +
-          `<q cite="${escapeAttribute(hrefFor(request.evidence.sourcePath))}">` +
-          `${escapeText(flatten(request.evidence.quote))}</q></p>`
-      : `<p>Evidence, measured over the corpus: ${escapeText(flatten(request.evidence.detail))}</p>`
-  )
+  paragraphs.push(evidenceParagraph(request.evidence))
   paragraphs.push(
     `<p>Detected by <code>${escapeText(request.detector)}</code> on run ` +
       `<code>${escapeText(env.runId)}</code>. This is a proposal for a human to decide, not a ` +
       `finding the corpus asserts. It closes itself when the detector stops seeing it.</p>`
   )
   return paragraphs.join("\n")
+}
+
+/**
+ * The one paragraph that states what the finding rests on, per evidence kind.
+ *
+ * Split out of {@link detectedArticle} once the third arm arrived, so the three readings sit beside
+ * each other and the difference between them is legible. Each says out loud what a reader can do with
+ * it: open the file and find the sentence, take the number on the corpus's word, or go back to the
+ * session and read the line in the commit that opened this.
+ *
+ * The `session` arm carries NO quote, which is the trace-plane invariant and not an omission. See the
+ * module header. It also carries no `<q cite>`, because there is nothing to cite: a session is not a
+ * corpus path and `hrefFor` over an id would produce a link that resolves nowhere, which
+ * `integrity`'s dangling-edge repair exists to prevent.
+ */
+const evidenceParagraph = (evidence: DetectionEvidence): string => {
+  if (evidence.kind === "quote") {
+    return (
+      `<p>Evidence, verbatim from <code>${escapeText(evidence.sourcePath)}</code>: ` +
+      `<q cite="${escapeAttribute(hrefFor(evidence.sourcePath))}">` +
+      `${escapeText(flatten(evidence.quote))}</q></p>`
+    )
+  }
+  if (evidence.kind === "session") {
+    return (
+      `<p>Evidence, from session <code>${escapeText(evidence.sessionId)}</code>: ` +
+      `${escapeText(flatten(evidence.statement))} The verbatim line is in the commit that opened ` +
+      `this task; a transcript span is not stored in the corpus.</p>`
+    )
+  }
+  return `<p>Evidence, measured over the corpus: ${escapeText(flatten(evidence.detail))}</p>`
 }

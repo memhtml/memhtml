@@ -514,6 +514,14 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         type: "boolean",
         description: "Include finished tasks. `done` archives, so they are otherwise absent.",
         default: false
+      },
+      {
+        name: "detected",
+        type: "boolean",
+        description:
+          "Only tasks the sleep cycle detected, never ones opened by hand. The machine's " +
+          "queue: each is a proposal carrying the evidence it was detected from.",
+        default: false
       }
     ],
     responseTypes: ["task.list"]
