@@ -193,6 +193,8 @@ export interface MemoryFixture {
   readonly dueAt?: string | undefined
   readonly entities?: ReadonlyArray<string> | undefined
   readonly tags?: ReadonlyArray<string> | undefined
+  /** `memhtml-alias` values: the other names this file's subject is recorded under. */
+  readonly aliases?: ReadonlyArray<string> | undefined
   readonly links?: ReadonlyArray<{ readonly rel: string; readonly href: string }> | undefined
 }
 
@@ -230,6 +232,7 @@ export const memoryHtml = (fixture: MemoryFixture): string => {
       : [`<meta name="memhtml-due" content="${fixture.dueAt}">`]),
     ...(fixture.entities ?? []).map((entity) => `<meta name="memhtml-entity" content="${entity}">`),
     ...(fixture.tags ?? []).map((tag) => `<meta name="memhtml-tag" content="${tag}">`),
+    ...(fixture.aliases ?? []).map((alias) => `<meta name="memhtml-alias" content="${alias}">`),
     ...(fixture.links ?? []).map((one) => `<link rel="${one.rel}" href="${one.href}">`)
   ]
   const body = fixture.body === undefined ? "" : ` ${fixture.body}`
@@ -395,6 +398,181 @@ export const DEDUP_CORPUS: ReadonlyArray<SeedFile> = [
  * from `mergeCandidates` preserving its input order, which is descending similarity.
  */
 export const LAST_DROP_PATH = "areas/oncall/vip-drain-precedes-revert.html"
+
+/**
+ * The entity-resolution corpus: a person recorded under a short name and a full one, plus the controls
+ * that make each of the phase's decisions non-vacuous.
+ *
+ * Every property below exists so one branch of the phase can be reached and can be seen to be WRONG if
+ * the branch is removed:
+ *
+ * - **`laith` and `laith al-saadoon` are one person written two ways.** Character overlap scores them
+ *   0.476, BELOW the 0.75 review band, so the deterministic pre-pass neither merges them nor counts
+ *   them — which is the live defect this corpus reproduces. `laith al-saadoon` carries three memories
+ *   against `laith`'s one, so the file-count rule makes the FULL form the canonical, and a phase that
+ *   let the model choose would be visible as the merge going the other way.
+ * - **`sanju kumar` is a third person on an unrelated subject.** A corpus holding only the one person
+ *   would pass against a phase that merged every person into one, exactly the vacuous-lock the
+ *   metarepo's narrator lesson names. Measured centroid cosines under the deterministic embedder
+ *   (2026-08-19, over the article text the chunker embeds): `laith al-saadoon` against `laith` 0.7788,
+ *   against `sanju kumar` 0.3982, and `laith` against `sanju kumar` 0.3514. So the neighbor list the
+ *   prompt shows really does put the two spellings of one person next to each other.
+ * - **`checkout-api` and `payments-api` are two services whose centroids sit at 0.9333** — HIGHER than
+ *   the two spellings of one person. That is the negative control the whole design rests on: it is why
+ *   a centroid cosine cannot be a merge threshold, and why the phase hands the number to a model and
+ *   keeps the floors deterministic. A test corpus without it would let a naive cosine floor pass.
+ * - **A mixed-case entity NAME** (`person:Laith Al-Saadoon`) reaches pass one, so the normalization arm
+ *   is exercised against a real head rather than only in a unit. The TYPE is lowercase deliberately:
+ *   normalization applies to the name alone, so `Person:…` would land in a separate `Person` type
+ *   bucket and would never fold onto the canonical — a fixture that got this wrong would report the
+ *   normalization arm as broken.
+ */
+export const ENTITY_CORPUS: ReadonlyArray<SeedFile> = [
+  {
+    path: "areas/team/rollout-cadence-signoff.html",
+    html: memoryHtml({
+      title: "Laith Al-Saadoon signs off on the rollout cadence",
+      claim:
+        "Laith Al-Saadoon reviews the rollout cadence each Monday and signs off on the release train.",
+      body: "Laith Al-Saadoon owns the review and the sign off happens before the release train departs.",
+      memoryType: "semantic",
+      createdAt: "2026-04-01T00:00:00Z",
+      entities: ["person:laith al-saadoon"],
+      tags: ["team"]
+    })
+  },
+  {
+    path: "areas/team/cadence-written-down.html",
+    html: memoryHtml({
+      title: "The rollout cadence is written down before the release train",
+      claim:
+        "Laith Al-Saadoon prefers the rollout cadence written down before the release train departs.",
+      body: "Laith Al-Saadoon reviews the sign off and the release train waits on the written cadence.",
+      memoryType: "semantic",
+      createdAt: "2026-04-02T00:00:00Z",
+      entities: ["person:laith al-saadoon"],
+      tags: ["team"]
+    })
+  },
+  {
+    // The mixed-case variant, which pass one folds onto `person:laith al-saadoon` with no model call.
+    // It is what makes the full form outweigh the short one three to one.
+    path: "areas/team/release-train-owner.html",
+    html: memoryHtml({
+      title: "The release train has one named owner",
+      claim: "The release train sign off belongs to one named owner on the rollout cadence.",
+      body: "Laith Al-Saadoon reviews the cadence each Monday before the release train departs.",
+      memoryType: "semantic",
+      createdAt: "2026-04-03T00:00:00Z",
+      entities: ["person:Laith Al-Saadoon"],
+      tags: ["team"]
+    })
+  },
+  {
+    // The SHORT form, one memory, 0.476 character overlap against the full form.
+    path: "areas/team/monday-signoff.html",
+    html: memoryHtml({
+      title: "Monday is the sign-off day",
+      claim: "Laith reviews the rollout cadence on Monday and signs off on the release train.",
+      body: "The sign off happens before the release train departs.",
+      memoryType: "semantic",
+      createdAt: "2026-04-04T00:00:00Z",
+      entities: ["person:laith"],
+      tags: ["team"]
+    })
+  },
+  {
+    // A third person, so "merged everything into one" is a visible failure rather than a pass.
+    path: "areas/team/search-relevance-owner.html",
+    html: memoryHtml({
+      title: "Sanju Kumar owns the search relevance surface",
+      claim: "Sanju Kumar owns the search relevance surface and tunes the ranking weights.",
+      body: "The ranking weights are retuned each quarter on the relevance surface.",
+      memoryType: "semantic",
+      createdAt: "2026-04-05T00:00:00Z",
+      entities: ["person:sanju kumar"],
+      tags: ["search"]
+    })
+  },
+  {
+    // The negative control, half one: centroid 0.9333 against its twin below.
+    path: "areas/services/checkout-token-rejection.html",
+    html: memoryHtml({
+      title: "The checkout API rejects an expired token",
+      claim: "The checkout api rejects an expired token during a rollback of the deploy.",
+      memoryType: "semantic",
+      createdAt: "2026-04-06T00:00:00Z",
+      entities: ["service:checkout-api"],
+      tags: ["deploy"]
+    })
+  },
+  {
+    // The negative control, half two. Two DIFFERENT services whose centroids are closer than the one
+    // person's two spellings are — which is why a centroid threshold would be wrong.
+    path: "areas/services/payments-token-rejection.html",
+    html: memoryHtml({
+      title: "The payments API rejects an expired token",
+      claim: "The payments api rejects an expired token during a rollback of the deploy.",
+      memoryType: "semantic",
+      createdAt: "2026-04-07T00:00:00Z",
+      entities: ["service:payments-api"],
+      tags: ["deploy"]
+    })
+  }
+]
+
+/** The full form, which the file-count rule makes the canonical of the person cluster. */
+export const PERSON_CANONICAL = "laith al-saadoon"
+
+/** The short form, which the merge rewrites away. */
+export const PERSON_ALIAS = "laith"
+
+/**
+ * A person file declaring {@link PERSON_ALIAS} an alias of {@link PERSON_CANONICAL}.
+ *
+ * Written as a memory file under `resources/people/`, which is exactly what `person-links` mints and
+ * what an operator seeding from a corporate directory would hand-edit. The `person:` entity is what the
+ * aliases are aliases OF, so a file without one declares nothing.
+ */
+export const personFile = (input: {
+  readonly canonical: string
+  readonly aliases: ReadonlyArray<string>
+  readonly slug?: string | undefined
+}): SeedFile => ({
+  path: `resources/people/${input.slug ?? input.canonical.replace(/\s+/g, "-")}.html`,
+  html: memoryHtml({
+    title: input.canonical,
+    claim: `${input.canonical} appears in this agent's memory.`,
+    memoryType: "semantic",
+    createdAt: "2026-04-01T00:00:00Z",
+    entities: [`person:${input.canonical}`],
+    aliases: input.aliases
+  })
+})
+
+/** Every pending entity-merge counter, ordered. What a corroboration test reads. */
+export const entityCorroborations = (
+  fixture: Fixture
+): Effect.Effect<
+  ReadonlyArray<{
+    readonly alias_name: string
+    readonly canonical_name: string
+    readonly detections: number
+    readonly promoted: number
+  }>,
+  never
+> =>
+  fixture.db
+    .all<{
+      alias_name: string
+      canonical_name: string
+      detections: number
+      promoted: number
+    }>(
+      `SELECT alias_name, canonical_name, detections, promoted
+       FROM ${STATE_SCHEMA}.entity_corroboration ORDER BY entity_type, alias_name, canonical_name`
+    )
+    .pipe(Effect.orDie)
 
 /**
  * Open tasks seeded BESIDE {@link DEDUP_CORPUS}, built so every sleep exclusion is non-vacuous.

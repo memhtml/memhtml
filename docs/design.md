@@ -755,7 +755,8 @@ leave the busy work behind (`packages/sleep/src/phases/retention-triage.ts:24-28
 | Constant | Value | Location |
 |---|---|---|
 | Near-duplicate cosine / merges per cycle | 0.92 strict / 100 | `packages/domain/src/merge.ts:16-19` |
-| Entity auto-merge / review ratio | 0.85 / 0.75 | `packages/sleep/src/phases/entity-resolution.ts:30-33` |
+| Entity auto-merge / review ratio | 0.85 / 0.75 | `packages/sleep/src/phases/entity-resolution.ts:65-68` |
+| Entity cluster confidence / detections / shard | 0.7 / 2 / 500 | `packages/sleep/src/phases/entity-resolution.ts:77-86` |
 | Mining cosine / k / sample | 0.85 / 5 / 2000 | `packages/sleep/src/phases/relationship-mining.ts:22-28` |
 | Conflict cosine / k / cap / detections | 0.80 / 5 / 200 / 2 | `packages/sleep/src/phases/conflict-detection.ts:43-52` |
 | Confidence commit delta | 0.005 | `packages/domain/src/decay.ts:135` |

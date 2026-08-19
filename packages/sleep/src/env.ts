@@ -52,6 +52,13 @@ export interface SleepDeps {
  */
 export const DEFAULT_MODELS: Readonly<Record<string, ModelKey>> = {
   "conflict-detection": "sonnet-5",
+  /**
+   * Sonnet, and one or two calls a night: the whole of one entity type's name list goes in one call.
+   * The question is a partition over short strings with their evidence inline, not a synthesis, so
+   * the strong model would buy nothing the deterministic floors around the answer do not already
+   * supply.
+   */
+  "entity-resolution": "sonnet-5",
   "arc-synthesis": "opus-5",
   compress: "sonnet-5",
   "trace-consolidation": "opus-5"

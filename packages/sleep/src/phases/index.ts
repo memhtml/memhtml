@@ -59,13 +59,36 @@ export {
   PROMOTION_DETECTIONS
 } from "./conflict-detection.js"
 export { dedupMerge } from "./dedup-merge.js"
+export type {
+  AliasGroup,
+  CentroidNeighbor,
+  CharacterPairs,
+  EntityCentroid,
+  EntityClusters,
+  NamePair,
+  ProposedMerge
+} from "./entity-resolution.js"
 export {
   AUTO_MERGE_THRESHOLD,
+  aliasBacked,
+  characterPairs,
+  decomposeCluster,
+  ENTITY_BATCH_SIZE,
+  ENTITY_CONFIDENCE_FLOOR,
+  ENTITY_MEMBER_CHARS,
+  ENTITY_NEIGHBORS,
+  ENTITY_PROMOTION_DETECTIONS,
+  ENTITY_SAMPLE_TITLES,
+  entityCentroids,
+  entityMemberText,
   entityResolution,
   nameSimilarity,
+  nearestCentroids,
   normalizeEntityName,
+  pairKey,
   REVIEW_THRESHOLD,
-  resolveClusters
+  resolveClusters,
+  unionPairs
 } from "./entity-resolution.js"
 export { ARCHIVE_LOOKBACK_YEARS, archivedFormOf, integrity } from "./integrity.js"
 export { personLinks } from "./person-links.js"

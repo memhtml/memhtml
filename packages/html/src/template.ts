@@ -50,6 +50,11 @@ export interface NewMemoryInput {
   /** `type:name` entity references, e.g. `service:checkout-api`. */
   readonly entities?: ReadonlyArray<string> | undefined
   readonly tags?: ReadonlyArray<string> | undefined
+  /**
+   * Other names this file's subject is recorded under, as `memhtml-alias` metas. A person file's
+   * identity declaration, which sleep's entity resolution reads as merge evidence.
+   */
+  readonly aliases?: ReadonlyArray<string> | undefined
   readonly links?: ReadonlyArray<{ readonly rel: EdgeRel; readonly href: string }> | undefined
   /** Bitemporal validity of the fact. Absent means always-valid. */
   readonly validFrom?: string | undefined
@@ -177,6 +182,7 @@ export const newMemoryDoc = (input: NewMemoryInput): MemoryDoc => {
     },
     entities: input.entities ?? [],
     tags: input.tags ?? [],
+    aliases: input.aliases ?? [],
     links: input.links ?? [],
     article: {
       html,

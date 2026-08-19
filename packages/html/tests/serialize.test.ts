@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import { metaPairs, serializeMemory } from "../src/serialize.js"
-import { META_ORDER } from "../src/vocabulary.js"
+import { META_ORDER, REPEATABLE_META } from "../src/vocabulary.js"
 import { FORMAT_MD_EXAMPLE, fileWith, MINIMAL_ARTICLE, parseOk } from "./fixtures.js"
 
 /**
@@ -112,6 +112,66 @@ describe("round trip", () => {
     expect(again.links).toEqual(doc.links)
     expect(again.entities).toEqual(doc.entities)
     expect(again.tags).toEqual(doc.tags)
+  })
+
+  it("preserves every REPEATABLE meta, including the one the shared example does not carry", () => {
+    /**
+     * The round trip above is asserted against `FORMAT_MD_EXAMPLE`, which carries entities and tags and
+     * no `memhtml-alias` — so a serializer that silently dropped aliases would pass every case in this
+     * file. That is the shape of loss this format's own guarantee exists to refuse: sleep reads a
+     * person file, edits it, and writes it back, and an alias lost on that pass would un-declare an
+     * identity a human wrote down, with no error anywhere.
+     *
+     * The assertion is derived from `REPEATABLE_META` rather than listing the three names, so a fourth
+     * repeatable is covered here the day it is added instead of the day someone remembers.
+     *
+     * (Verified by mutation: removing the `memhtml-alias` entry from `serialize.ts`'s `repeatables` map
+     * fails this case and NOTHING else in the package.)
+     */
+    const html = fileWith(
+      MINIMAL_ARTICLE,
+      [
+        '<meta name="memhtml-entity" content="person:laith al-saadoon">',
+        '<meta name="memhtml-tag" content="team">',
+        '<meta name="memhtml-alias" content="laith">',
+        '<meta name="memhtml-alias" content="l.alsaadoon">'
+      ].join("\n")
+    )
+    const doc = parseOk(html)
+    const again = parseOk(serializeMemory(doc))
+
+    for (const name of REPEATABLE_META) {
+      const emitted = metaPairs(again)
+        .filter(([key]) => key === name)
+        .map(([, value]) => value)
+      const authored = metaPairs(doc)
+        .filter(([key]) => key === name)
+        .map(([, value]) => value)
+      expect(emitted.length, `${name} lost values`).toBeGreaterThan(0)
+      expect(emitted, name).toEqual(authored)
+    }
+    expect(again.aliases).toEqual(["laith", "l.alsaadoon"])
+  })
+
+  it("emits a new repeatable AFTER the established ones, so no existing head line moves", () => {
+    // Position in `META_ORDER` is the diff-stability contract, asserted on the emitted bytes rather than
+    // on the constant: appending `memhtml-alias` must not push `memhtml-entity` or `memhtml-tag` down.
+    const html = serializeMemory(
+      parseOk(
+        fileWith(
+          MINIMAL_ARTICLE,
+          [
+            '<meta name="memhtml-alias" content="laith">',
+            '<meta name="memhtml-entity" content="person:laith al-saadoon">',
+            '<meta name="memhtml-tag" content="team">'
+          ].join("\n")
+        )
+      )
+    )
+    const lines = html.split("\n")
+    const at = (name: string) => lines.findIndex((line) => line.startsWith(`<meta name="${name}"`))
+    expect(at("memhtml-entity")).toBeLessThan(at("memhtml-tag"))
+    expect(at("memhtml-tag")).toBeLessThan(at("memhtml-alias"))
   })
 })
 

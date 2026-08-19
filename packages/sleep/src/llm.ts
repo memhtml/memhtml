@@ -95,6 +95,39 @@ export const CompressSynthesis = Schema.Struct({
 })
 export type CompressSynthesis = typeof CompressSynthesis.Type
 
+/** One proposed identity cluster over the entity names a batch offered. */
+export const EntityCluster = Schema.Struct({
+  /**
+   * The member key the cluster's canonical name was offered under. The phase re-derives the canonical
+   * from ITS OWN weight-then-lexicographic rule, so this names which member the model considers the
+   * fullest form and never which file gets rewritten. A key the batch did not offer resolves to
+   * nothing and drops the cluster.
+   */
+  canonicalKey: Schema.String,
+  /**
+   * Every member key in the cluster, canonical included. A cluster of one is a valid answer meaning
+   * "this name stands alone", and it produces no merge.
+   */
+  memberKeys: Schema.Array(Schema.String),
+  /** Unitless in `[0, 1]`. The merge gate is deterministic and reads this, not the prose. */
+  confidence: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+  /** One sentence naming what makes these one subject: a declared alias, a shared neighborhood. */
+  evidence: Schema.String
+})
+export type EntityCluster = typeof EntityCluster.Type
+
+/**
+ * The whole clustering answer for one batch: a partition of the offered names.
+ *
+ * `clusters: []` is a refusal and a valid answer. A model that cannot tell two short names apart must
+ * be able to say so, because the alternative — inventing a cluster to fill the field — reaches a
+ * permanent rewrite of stored identity.
+ */
+export const EntityClustering = Schema.Struct({
+  clusters: Schema.Array(EntityCluster)
+})
+export type EntityClustering = typeof EntityClustering.Type
+
 /** The stance judge's system prompt. */
 export const STANCE_SYSTEM = `You are a natural-language-inference stance judge for an AI agent's long-term memory system.
 You are given two memories, A and B, that are embedding-near and about the same entity or topic.
@@ -151,6 +184,62 @@ them, and each member you list in absorbedKeys is archived once the canonical is
   member you omit stays active, which is the safe outcome — never list one to be tidy.
 - If the members do not actually describe one thing, return an empty absorbedKeys and say so in the
   claim. Refusing to fold is a valid answer.`
+
+/**
+ * The entity-clustering system prompt: partition one type's names into subjects.
+ *
+ * Names the three evidence kinds a member block carries, because each one supports a different
+ * inference and a model told only "decide if these are the same" would weigh the name string — the
+ * signal that is measurably wrong here. `laith` against `laith al-saadoon` is 0.476 by character
+ * overlap, below even the review band, while their memory centroids are near-identical.
+ *
+ * The refusal instruction is load-bearing rather than polite. A cluster this phase acts on rewrites
+ * every `memhtml-entity` meta naming the alias across the corpus, and no later commit separates two
+ * subjects whose memories were fused.
+ */
+export const ENTITY_CLUSTER_SYSTEM = `You group entity names for an AI agent's long-term memory system. Every name below is the same KIND of
+thing — all people, or all services, or all concepts — and several may be different ways of writing one
+subject. Partition them into subjects.
+
+Each member gives you:
+- the name as the corpus records it, and how many active memories claim it;
+- up to three titles of memories claiming it, which say what that name is ABOUT;
+- its nearest neighbors by MEMORY CENTROID with a cosine — the centroid is the average of the vectors
+  of every memory claiming the name, so a high cosine means two names are written about in the same
+  terms. Two spellings of one person have near-identical centroids; two different services in one
+  domain do not;
+- for a person, aliases DECLARED in that person's own file, which are an authoritative statement of
+  identity rather than a guess.
+
+Rules:
+- Every cluster lists canonicalKey plus every other member key that names the same subject. Set
+  canonicalKey to the fullest, most complete form of the name.
+- A name that stands alone is its own cluster of one, or you may leave it out. Both mean "no merge".
+- Return an empty clusters list when nothing here is the same subject. Refusing to group is a valid
+  and often correct answer.
+- Short name against long name is the case to look for: 'laith' and 'laith al-saadoon' are one person
+  when the evidence supports it. Shared prefix is NOT: 'checkout-api' and 'payments-api' are two
+  services, and 'metrics-api' and 'metrics-cli' are a service and a tool.
+- Never group two names because their strings are similar. Group them because the evidence says one
+  subject, and cite that evidence.
+- Rate confidence honestly. A merge fuses two subjects' memories permanently and nothing separates
+  them again, so answer low when you are unsure and the system will hold the merge back.`
+
+/** The instruction that closes an entity-clustering batch's user turn, after the member list. */
+export const ENTITY_CLUSTER_INSTRUCTION =
+  "Partition these names into subjects. Return one cluster per subject with its canonicalKey, every " +
+  "member key it covers, your confidence, and the specific evidence that makes them one subject."
+
+/**
+ * The entity-clustering user turn for one batch: every member's evidence block under its offered key.
+ *
+ * `batchPrompt` from the kernel builds the list and appends the instruction, so the stable half of the
+ * call is {@link ENTITY_CLUSTER_SYSTEM} plus the tool schema and only the member list is new bytes per
+ * batch. Kept as a named function because the instruction belongs beside the system prompt.
+ */
+export const entityClusterPrompt = (
+  members: ReadonlyArray<{ readonly key: string; readonly text: string }>
+): string => batchPrompt(members, ENTITY_CLUSTER_INSTRUCTION, { label: "entity" })
 
 /** One labelled corpus block, delimited so its prose cannot be read as an instruction. */
 export const dataBlock = (label: string, text: string): string => wrapAsData(label, text)

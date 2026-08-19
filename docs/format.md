@@ -42,13 +42,14 @@ so an omission is completed rather than refused.
 (`serialize.ts:83`): the four required names, then `memhtml-confidence`, `memhtml-importance`,
 `memhtml-content-hash`, `memhtml-author`, `memhtml-session`, `memhtml-prompt`, `memhtml-turn`, `memhtml-valid-from`,
 `memhtml-valid-until`, `memhtml-reprieves`, `memhtml-archived`, `memhtml-superseded-by`, `memhtml-needs-revision`,
-`memhtml-task-status`, `memhtml-due`, and finally the two repeatables `memhtml-entity` and `memhtml-tag`. It is a
-diff-stability contract: a new scalar is APPENDED at the end of the scalar block, because inserting one
-mid-list moves every following line in every file the next edit touches. The surgical head editors
+`memhtml-task-status`, `memhtml-due`, and finally the three repeatables `memhtml-entity`, `memhtml-tag`, and
+`memhtml-alias`. It is a diff-stability contract: a new scalar is APPENDED at the end of the scalar block
+and a new repeatable at the end of the repeatable block, because inserting one mid-list moves every
+following line in every file the next edit touches. The surgical head editors
 insert in this order too (`editors.ts:79`).
 
-Exactly two names are REPEATABLE, `memhtml-entity` and `memhtml-tag` (`vocabulary.ts:20`) — one value per
-element, so a one-tag correction is a one-line diff. Any other name stated twice is a violation
+Exactly three names are REPEATABLE, `memhtml-entity`, `memhtml-tag`, and `memhtml-alias`
+(`vocabulary.ts:26`) — one value per element, so a one-tag correction is a one-line diff. Any other name stated twice is a violation
 (`constraints.ts:302`); a name with an empty `content` contributes nothing (`parse.ts:215`).
 `memhtml-content-hash` is ADVISORY: the parser reports it verbatim and never repairs it (`document.ts:37`),
 so a stale value is visible rather than reconciled. Metas outside `memhtml-` (`description`, `viewport`) are
@@ -111,7 +112,12 @@ states, `gist` = the `<mark>` text, `event_at = 2026-07-28`, two facets (the sec
 | `<div>`, `<span>` | containers a pasted sample carries | permitted only under a `<figure>`; outside one they warn (`vocabulary.ts:142`, `constraints.ts:334`) |
 
 `memhtml-entity` values become `file_entities` rows, split on the first colon; one with no colon is stored
-under type `unknown` rather than dropped (`project.ts:322`). `memhtml-tag` values become `file_tags`. `<link
+under type `unknown` rather than dropped (`project.ts:322`). `memhtml-tag` values become `file_tags`.
+`memhtml-alias` is projected NOWHERE, deliberately: it names the other names a file's subject is recorded
+under, and sleep's entity resolution reads it out of the FILE at phase time
+(`packages/sleep/src/phases/entity-resolution.ts`). A projection would put the declaration behind an
+index refresh, so an alias an operator writes into a person file would not be evidence until the next
+rebuild — and a hand-editable identity surface is the one surface that must not have a stale read. `<link
 rel="memhtml-*">` elements become `edges` rows with the leading slash stripped and a self-loop dropped
 (`project.ts:355`). Facet, citation, entity, and tag rows are deduplicated before insert, so a repeated
 `<dt>`/`<dd>` pair cannot fail the batch (`project.ts:381`).

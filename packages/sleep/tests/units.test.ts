@@ -27,13 +27,22 @@ import {
   unlink,
   yearOf
 } from "../src/edits.js"
+import { DEFAULT_MODELS } from "../src/env.js"
 import { assertsContradiction, dataBlock, STANCE_CONFIDENCE_FLOOR } from "../src/llm.js"
 import {
   AUTO_MERGE_THRESHOLD,
+  aliasBacked,
+  characterPairs,
+  decomposeCluster,
+  ENTITY_NEIGHBORS,
+  entityCentroids,
+  entityMemberText,
   nameSimilarity,
+  nearestCentroids,
   normalizeEntityName,
   REVIEW_THRESHOLD,
-  resolveClusters
+  resolveClusters,
+  unionPairs
 } from "../src/phases/entity-resolution.js"
 import { PHASE_BODIES } from "../src/phases/index.js"
 import { archivedFormOf } from "../src/phases/integrity.js"
@@ -87,11 +96,17 @@ describe("the phase contract", () => {
 
   it("pins which phases call a model and which never commit", () => {
     expect(LLM_PHASES).toEqual([
+      "entity-resolution",
       "conflict-detection",
       "arc-synthesis",
       "compress",
       "trace-consolidation"
     ])
+    // In execution order, so the generated phase table's `callsModel` column reads down the page the
+    // way `SLEEP_PHASES` does rather than in the order phases happened to gain a model.
+    expect(LLM_PHASES.map((phase) => SLEEP_PHASES.indexOf(phase))).toEqual(
+      [...LLM_PHASES.map((phase) => SLEEP_PHASES.indexOf(phase))].sort((a, b) => a - b)
+    )
     /**
      * `trace-consolidation` is deliberately NOT here any more. It was a counting stub; it now
      * synthesizes memories and commits each one, which is what puts a distilled memory behind the
@@ -103,6 +118,18 @@ describe("the phase contract", () => {
     expect(NON_COMMITTING_PHASES).not.toContain("trace-consolidation")
     for (const phase of [...LLM_PHASES, ...NON_COMMITTING_PHASES]) {
       expect(isSleepPhase(phase)).toBe(true)
+    }
+  })
+
+  it("gives every model-calling phase a default model, so none silently falls back", () => {
+    /**
+     * `modelFor` ends in `?? "sonnet-5"`, so a phase missing from `DEFAULT_MODELS` still gets a model
+     * and nothing anywhere reports the omission — a phase that wanted Opus would quietly run on Sonnet.
+     * The map is asserted to COVER `LLM_PHASES` rather than to equal a literal, so the two lists cannot
+     * drift apart.
+     */
+    for (const phase of LLM_PHASES) {
+      expect(DEFAULT_MODELS[phase], `${phase} has no default model`).toBeDefined()
     }
   })
 
@@ -258,10 +285,9 @@ describe("entity resolution", () => {
 
   it("scores a separator or casing change high and two distinct services low", () => {
     /**
-     * This is the reason the phase uses a character ratio and NOT an embedding cosine. An embedding of
-     * a two-token service name is dominated by the domain the tokens evoke, so `checkout-api` and
-     * `payments-api` sit high in vector space — and merging them would fuse two services' memories
-     * permanently. A character ratio cannot make that mistake.
+     * What the character pass is FOR: a separator or casing change, which it settles with no model
+     * call. `checkout-api` against `payments-api` shares only the suffix and sits below both
+     * thresholds, so two distinct services stay separate on the cheap pass.
      */
     expect(nameSimilarity("checkout-api", "checkout api")).toBeGreaterThanOrEqual(
       AUTO_MERGE_THRESHOLD
@@ -270,6 +296,36 @@ describe("entity resolution", () => {
       AUTO_MERGE_THRESHOLD
     )
     expect(nameSimilarity("checkout-api", "payments-api")).toBeLessThan(REVIEW_THRESHOLD)
+  })
+
+  it("is blind to short-name-against-full-name, which is what the model core exists for", () => {
+    /**
+     * The defect the phase's architecture answers, stated as a measurement rather than as prose. These
+     * two numbers are why a character ratio cannot be the decision core: both pairs are one subject on
+     * the live corpus, and both fall BELOW the review band — so the old phase did not merge them, did
+     * not count them for review either, and minted two person files for one person.
+     *
+     * Nothing here is a defect in `nameSimilarity`. It is monotone in shared ordered characters and a
+     * short name shares few of them, so this is the correct answer to the wrong question. The right
+     * question is what is written under each name, which is what the memory centroid carries.
+     */
+    expect(nameSimilarity("laith", "laith al-saadoon")).toBeCloseTo(0.476, 3)
+    expect(nameSimilarity("sanju", "sanju kumar")).toBeCloseTo(0.625, 3)
+    for (const [short, full] of [
+      ["laith", "laith al-saadoon"],
+      ["sanju", "sanju kumar"]
+    ] as ReadonlyArray<readonly [string, string]>) {
+      expect(nameSimilarity(short, full)).toBeLessThan(REVIEW_THRESHOLD)
+      // Below the band, so the pre-pass reports it as neither a merge nor a review candidate.
+      const pass = resolveClusters(
+        new Map([
+          [short, 1],
+          [full, 9]
+        ])
+      )
+      expect(pass.aliasToCanonical.size).toBe(0)
+      expect(pass.reviewCandidates).toBe(0)
+    }
   })
 
   it("is symmetric and 1 on an identical pair", () => {
@@ -332,6 +388,386 @@ describe("entity resolution", () => {
     expect(first.aliasToCanonical.get("oncall")).toBe("on call")
     // And the unrelated name is untouched.
     expect(first.aliasToCanonical.has("beta two")).toBe(false)
+  })
+
+  it("routes every pair source through ONE union-find, so the sources cannot disagree on a root", () => {
+    /**
+     * `A~B` from the character pass and `B~C` from the model land in one cluster with one root. Two
+     * union-finds — one per source — would let the two passes pick different canonicals for one
+     * subject, and which name a file ended up rewritten to would depend on which pass ran first.
+     *
+     * The pairs deliberately reach the same cluster from opposite ends, and the winner is the
+     * 9-memory name that NEITHER pair names as its own first element.
+     */
+    const counts = new Map([
+      ["checkout-api", 1],
+      ["checkout api", 9],
+      ["the checkout service", 2]
+    ])
+    const merged = unionPairs(counts, [
+      // What the character pass finds: 0.92.
+      ["checkout-api", "checkout api"],
+      // What only a model can find: 0.42 by character overlap.
+      ["checkout-api", "the checkout service"]
+    ])
+    expect(merged.get("checkout-api")).toBe("checkout api")
+    expect(merged.get("the checkout service")).toBe("checkout api")
+    expect(merged.has("checkout api")).toBe(false)
+  })
+})
+
+describe("the entity memory centroid", () => {
+  /** One `(entity, path, title)` claim, as `entityClaims` returns them. */
+  const claim = (entityName: string, path: string, title = `Title of ${path}`) => ({
+    entity_type: "person",
+    entity_name: entityName,
+    path,
+    title
+  })
+
+  /**
+   * A vector whose components are exact powers of two at wildly different magnitudes.
+   *
+   * Chosen so the sum is ORDER-SENSITIVE in float64, which is what makes the summation-order assertion
+   * below able to fail at all. Probed on node 24.19.0: `1 + 1e-16 + 1e-16` is `1` while
+   * `1e-16 + 1e-16 + 1` is `1.0000000000000002` — the two small terms are each lost against 1 when they
+   * arrive after it and survive as a representable sum when they arrive first. A pair of dense
+   * random vectors does NOT show this (measured: 0 differing components of 1024), so a test written
+   * over plausible-looking fixtures would assert nothing.
+   */
+  const spike = (values: ReadonlyArray<number>) => Float32Array.from(values)
+
+  it("sums a centroid's members in SORTED PATH order", () => {
+    /**
+     * The order is the phase's own sort, not whatever order the rows arrived in, because float addition
+     * is not associative. A centroid summed differently is different BYTES, and different bytes reorder
+     * the nearest-neighbor list the prompt shows — so two nights over an unchanged corpus would send
+     * different prompt bytes (a cache miss) and could reach a different partition.
+     *
+     * **The fixture is built so the difference SURVIVES L2 normalization**, which is the part that makes
+     * this assertion real. Probed on node 24.19.0 in float64: summing `[1,1] + [0,1e-16] + [0,1e-16]`
+     * a-b-c gives `[1, 1]` because each small term is lost against the 1 already accumulated, while
+     * c-b-a gives `[1, 1.0000000000000002]` because the two small terms add to a representable value
+     * before the 1 arrives. Normalized, those are `0.7071067811865475` and `…76` in the second
+     * component. An earlier draft of this fixture put both spikes in ONE component, where the
+     * normalization divided the difference out and the case passed under the reversed mutation — a test
+     * that asserted nothing.
+     *
+     * The claims are handed over in REVERSE path order and the expectation is the FORWARD sum, so what
+     * is under test is the function's own sort and not the input it happened to receive.
+     *
+     * (Verified by mutation: replacing `[...paths.keys()].sort()` with `[...paths.keys()].reverse()`
+     * makes this case fail on the second component while every other case here still passes.)
+     */
+    const vectors = new Map([
+      ["areas/a.html", spike([1, 1])],
+      ["areas/b.html", spike([0, 1e-16])],
+      ["areas/c.html", spike([0, 1e-16])]
+    ])
+    const centroids = entityCentroids(
+      [
+        claim("laith", "areas/c.html"),
+        claim("laith", "areas/b.html"),
+        claim("laith", "areas/a.html")
+      ],
+      vectors
+    )
+    const centroid = (centroids.get("person") ?? [])[0]
+    expect(centroid?.name).toBe("laith")
+    expect(centroid?.memories).toBe(3)
+
+    /** The normalized forward sum, computed here independently of the code under test. */
+    const normalizedSum = (paths: ReadonlyArray<string>): ReadonlyArray<number> => {
+      const sum = new Float64Array(2)
+      for (const path of paths) {
+        const vector = vectors.get(path) as Float32Array
+        for (let at = 0; at < 2; at += 1) {
+          sum[at] = (sum[at] as number) + (vector[at] as number)
+        }
+      }
+      let norm = 0
+      for (const component of sum) norm += component * component
+      const scale = 1 / Math.sqrt(norm)
+      return [...sum].map((component) => component * scale)
+    }
+
+    const forward = normalizedSum(["areas/a.html", "areas/b.html", "areas/c.html"])
+    const reverse = normalizedSum(["areas/c.html", "areas/b.html", "areas/a.html"])
+    // Non-vacuous by construction: the two orders really do produce different bytes.
+    expect(reverse[1]).not.toBe(forward[1])
+    expect([...(centroid?.vec ?? [])]).toEqual([...forward])
+  })
+
+  it("counts a path claiming one name twice ONCE, so a head quirk cannot double its weight", () => {
+    /**
+     * A file may carry both `Service:Checkout-API` and `service:checkout-api` — two `file_entities`
+     * rows that normalize to one name. Summing that memory twice would let one file's authoring quirk
+     * give it double weight in the centroid, and the centroid is what the model reads as evidence.
+     *
+     * (Verified by mutation: accumulating over `claims` directly instead of over the distinct path set
+     * makes `memories` 3 and moves the vector, failing this case alone.)
+     */
+    const centroids = entityCentroids(
+      [
+        claim("laith", "areas/a.html"),
+        claim("Laith", "areas/a.html"),
+        claim("laith", "areas/b.html")
+      ],
+      new Map([
+        ["areas/a.html", spike([1, 0])],
+        ["areas/b.html", spike([0, 1])]
+      ])
+    )
+    const centroid = (centroids.get("person") ?? [])[0]
+    expect(centroid?.memories).toBe(2)
+    // Two orthogonal unit vectors, each once: the normalized mean is symmetric.
+    expect(centroid?.vec?.[0]).toBe(centroid?.vec?.[1])
+  })
+
+  it("groups by entity TYPE, so two subjects sharing a name keep separate centroids", () => {
+    const centroids = entityCentroids(
+      [
+        { entity_type: "person", entity_name: "api", path: "areas/a.html", title: "A" },
+        { entity_type: "service", entity_name: "api", path: "areas/b.html", title: "B" }
+      ],
+      new Map([
+        ["areas/a.html", spike([1, 0])],
+        ["areas/b.html", spike([0, 1])]
+      ])
+    )
+    expect(centroids.get("person")?.[0]?.vec?.[0]).toBe(1)
+    expect(centroids.get("service")?.[0]?.vec?.[0]).toBe(0)
+  })
+
+  it("leaves a name whose memories have no vector without one, rather than inventing zeros", () => {
+    // A zero centroid would score cosine 0 against everything and read as "unlike every other name",
+    // which is a claim about the corpus rather than the absence of evidence it actually is.
+    const centroids = entityCentroids([claim("ghost", "areas/no-vector.html")], new Map())
+    expect(centroids.get("person")?.[0]?.memories).toBe(1)
+    expect(centroids.get("person")?.[0]?.vec).toBeUndefined()
+  })
+
+  it("samples titles in path order, capped, dropping a blank one", () => {
+    const centroids = entityCentroids(
+      [
+        claim("laith", "areas/c.html", "Third"),
+        claim("laith", "areas/a.html", "First"),
+        claim("laith", "areas/b.html", "   "),
+        claim("laith", "areas/d.html", "Fourth")
+      ],
+      new Map(),
+      { sampleTitles: 3 }
+    )
+    // Paths a, b, c are the first three; b's title is blank and drops out rather than becoming a
+    // blank line in the prompt, and d is beyond the cap.
+    expect(centroids.get("person")?.[0]?.titles).toEqual(["First", "Third"])
+  })
+})
+
+describe("the nearest-centroid neighbor list", () => {
+  const withVec = (name: string, values: ReadonlyArray<number> | undefined) => ({
+    name,
+    memories: 1,
+    titles: [],
+    vec: values === undefined ? undefined : Float64Array.from(values)
+  })
+
+  it("orders sim DESC then name ASC, so an equidistant tie has ONE order", () => {
+    /**
+     * The kernel's own tie-break (`sim` DESC, then the other key ASC), and it is load-bearing here for a
+     * reason the pair arms do not have: this list goes into a PROMPT. Two names whose centroids are
+     * equidistant must appear in one fixed order, or the prompt's bytes depend on the order the rows
+     * came back in and two nights over an unchanged corpus send different bytes.
+     *
+     * `zeta` and `alpha` are constructed exactly equidistant from the subject, so only the name
+     * tie-break can order them. (Verified by mutation: dropping the `name` comparison from the sort
+     * leaves them in input order, `zeta` first, and this case fails.)
+     */
+    const centroids = [
+      withVec("subject", [1, 0]),
+      withVec("zeta", [1, 1]),
+      withVec("alpha", [1, -1]),
+      withVec("far", [-1, 0])
+    ]
+    const neighbors = nearestCentroids(centroids, "subject", 3)
+    expect(neighbors.map((one) => one.name)).toEqual(["alpha", "zeta", "far"])
+    expect(neighbors[0]?.sim).toBe(neighbors[1]?.sim)
+  })
+
+  it("caps at k, keeping the nearest", () => {
+    const centroids = [
+      withVec("subject", [1, 0]),
+      withVec("near", [1, 0.1]),
+      withVec("mid", [1, 1]),
+      withVec("far", [0, 1])
+    ]
+    expect(nearestCentroids(centroids, "subject", 2).map((one) => one.name)).toEqual([
+      "near",
+      "mid"
+    ])
+    expect(nearestCentroids(centroids, "subject", ENTITY_NEIGHBORS)).toHaveLength(3)
+  })
+
+  it("excludes the subject itself and every vectorless candidate", () => {
+    // A name with no centroid is not a neighbor, and it is not a zero-similarity neighbor either: the
+    // absence of evidence must not read as evidence of unrelatedness.
+    const centroids = [
+      withVec("subject", [1, 0]),
+      withVec("vectorless", undefined),
+      withVec("real", [1, 1])
+    ]
+    expect(nearestCentroids(centroids, "subject", 5).map((one) => one.name)).toEqual(["real"])
+  })
+
+  it("gives a vectorless subject no neighbors at all", () => {
+    const centroids = [withVec("subject", undefined), withVec("real", [1, 1])]
+    expect(nearestCentroids(centroids, "subject", 5)).toEqual([])
+    expect(nearestCentroids(centroids, "absent-from-the-batch", 5)).toEqual([])
+  })
+})
+
+describe("cluster decomposition", () => {
+  it("orients a merge by FILE COUNT even when the model named the other member canonical", () => {
+    /**
+     * The one-way-door guard, at the function that owns it. The canonical name is what every
+     * `memhtml-entity` meta in the corpus is rewritten TO, and person-links then makes it a file path,
+     * so letting the model choose it would make a nightly job's write target a model's answer.
+     *
+     * The fixture is the adversarial case: `laith` is the SHORTER, lexicographically smaller name a
+     * model would plausibly nominate, and it is claimed by one memory against the full form's nine. The
+     * code must pick the nine.
+     *
+     * (Verified by mutation: returning `{ alias, canonical: members[0] }` — the model's own first-named
+     * member — inverts the merge and fails this case.)
+     */
+    const counts = new Map([
+      ["laith", 1],
+      ["laith al-saadoon", 9]
+    ])
+    expect(decomposeCluster(["laith", "laith al-saadoon"], counts)).toEqual([
+      { alias: "laith", canonical: "laith al-saadoon" }
+    ])
+    // And the member ORDER the model listed them in does not move the answer.
+    expect(decomposeCluster(["laith al-saadoon", "laith"], counts)).toEqual([
+      { alias: "laith", canonical: "laith al-saadoon" }
+    ])
+  })
+
+  it("breaks a count tie lexicographically, so a tied cluster resolves the same way twice", () => {
+    const counts = new Map([
+      ["on call", 3],
+      ["oncall", 3]
+    ])
+    expect(decomposeCluster(["oncall", "on call"], counts)).toEqual([
+      { alias: "oncall", canonical: "on call" }
+    ])
+  })
+
+  it("fans a cluster of three onto ONE canonical", () => {
+    const counts = new Map([
+      ["l", 1],
+      ["laith", 2],
+      ["laith al-saadoon", 9]
+    ])
+    expect(decomposeCluster(["l", "laith", "laith al-saadoon"], counts)).toEqual([
+      { alias: "l", canonical: "laith al-saadoon" },
+      { alias: "laith", canonical: "laith al-saadoon" }
+    ])
+  })
+
+  it("produces no merge from a cluster of one, which is how a model declines", () => {
+    const counts = new Map([["laith", 1]])
+    expect(decomposeCluster(["laith"], counts)).toEqual([])
+    expect(decomposeCluster([], counts)).toEqual([])
+    // A cluster naming one member twice is still one member.
+    expect(decomposeCluster(["laith", "laith"], counts)).toEqual([])
+  })
+
+  it("treats an unknown name as zero-weight rather than throwing, so it loses the canonical", () => {
+    // Reachable only if a caller passes a name the counts do not hold. Losing is the safe outcome: the
+    // rewrite then targets a name the corpus actually claims.
+    const counts = new Map([["laith al-saadoon", 1]])
+    expect(decomposeCluster(["ghost", "laith al-saadoon"], counts)).toEqual([
+      { alias: "ghost", canonical: "laith al-saadoon" }
+    ])
+  })
+})
+
+describe("the alias oracle and the member block", () => {
+  it("answers symmetrically, because a declaration names a GROUP and not a direction", () => {
+    /**
+     * A person file declaring `laith` as an alias asserts that the two names are one subject. Which of
+     * them survives the merge is the file-count rule's call, so the oracle has to answer the same for
+     * both orientations — a directed map would make an alias-backed merge apply in one direction and
+     * corroborate across two nights in the other.
+     */
+    const groups = [new Set(["laith al-saadoon", "laith", "l.alsaadoon"])]
+    expect(aliasBacked(groups, "laith", "laith al-saadoon")).toBe(true)
+    expect(aliasBacked(groups, "laith al-saadoon", "laith")).toBe(true)
+    // Transitive within one declaration: both are aliases of the same subject.
+    expect(aliasBacked(groups, "laith", "l.alsaadoon")).toBe(true)
+    expect(aliasBacked(groups, "laith", "sanju")).toBe(false)
+    expect(aliasBacked([], "laith", "laith al-saadoon")).toBe(false)
+  })
+
+  it("does not bridge two separate declarations", () => {
+    // Two person files each declaring one alias assert nothing about each other's subjects, and a
+    // union across files would merge two people who happen to share an alias spelling.
+    const groups = [new Set(["laith al-saadoon", "l"]), new Set(["lena ortiz", "l"])]
+    expect(aliasBacked(groups, "laith al-saadoon", "lena ortiz")).toBe(false)
+  })
+
+  it("renders a member block naming the evidence and no path", () => {
+    /**
+     * The prompt-blindness rule, at the one function that builds a member's text. The block carries a
+     * name, counts, titles, centroid neighbors, and declared aliases — and no path, so the model cannot
+     * name a write target, and no similarity from the character pass, so it cannot agree with a verdict
+     * the caller already reached.
+     */
+    const block = entityMemberText({
+      centroid: {
+        name: "laith",
+        memories: 4,
+        titles: ["The rollout review cadence", "Who owns the search surface"],
+        vec: undefined
+      },
+      neighbors: [
+        { name: "laith al-saadoon", sim: 0.9712 },
+        { name: "sanju kumar", sim: 0.41 }
+      ],
+      aliases: ["laith al-saadoon"]
+    })
+    expect(block).toContain("name: laith")
+    expect(block).toContain("memories: 4")
+    expect(block).toContain("- The rollout review cadence")
+    // Two decimals: a corpus whose vectors moved in the sixteenth place must not change the bytes,
+    // because a changed prompt is a cache miss and a possibly different answer.
+    expect(block).toContain("- laith al-saadoon (0.97)")
+    expect(block).toContain("declared aliases: laith al-saadoon")
+    expect(block).not.toContain(".html")
+    expect(block).not.toMatch(/0\.9712/)
+  })
+
+  it("omits an absent section rather than emitting an empty label", () => {
+    const block = entityMemberText({
+      centroid: { name: "solo", memories: 1, titles: [], vec: undefined },
+      neighbors: [],
+      aliases: []
+    })
+    expect(block).toBe("name: solo\nmemories: 1")
+  })
+})
+
+describe("the character pair pass", () => {
+  it("splits the pair space at the two thresholds, in sorted-name order", () => {
+    const pairs = characterPairs(["metrics-cli", "checkout api", "metrics-api", "checkout-api"])
+    expect(pairs.auto).toEqual([["checkout api", "checkout-api"]])
+    expect(pairs.review).toEqual([["metrics-api", "metrics-cli"]])
+  })
+
+  it("is a function of the name SET, not of the order it was given", () => {
+    const names = ["checkout_api", "checkout api", "checkout-api"]
+    expect(characterPairs(names)).toEqual(characterPairs([...names].reverse()))
   })
 })
 

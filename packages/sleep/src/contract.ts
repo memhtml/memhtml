@@ -68,8 +68,22 @@ export const TRAILER_RUN = "Memhtml-Run"
 export const TRAILER_PHASE = "Memhtml-Phase"
 export const TRAILER_COUNTS = "Memhtml-Counts"
 
-/** The four LLM phases. Every other phase is deterministic and costs no model call. */
+/**
+ * The phases that call a model, in execution order. Every other phase is deterministic and costs no
+ * model call.
+ *
+ * **Descriptive, not a gate.** Nothing branches on this list: each phase reads `env.deps.model` itself
+ * and degrades on its own when it is absent. What the list feeds is the generated documentation's
+ * `callsModel` column (`apps/docs/src/loaders/registry.ts`), so an operator reading the phase table
+ * learns which phases a credential-free run gets nothing from. A phase omitted here would still make
+ * its calls and would be documented as deterministic.
+ *
+ * `entity-resolution` is here because its DECISION CORE is a model call, even though it still does real
+ * work without one: the normalization and character-overlap passes run either way, so the phase
+ * degrades rather than skipping. A reader of the table needs to know the call is made.
+ */
 export const LLM_PHASES: ReadonlyArray<SleepPhase> = [
+  "entity-resolution",
   "conflict-detection",
   "arc-synthesis",
   "compress",

@@ -138,10 +138,18 @@ describe("the metadata vocabulary", () => {
     expect(isMemoryMetaName("description")).toBe(false)
   })
 
-  it("marks exactly memhtml-entity and memhtml-tag repeatable", () => {
+  it("marks exactly memhtml-entity, memhtml-tag, and memhtml-alias repeatable", () => {
     expect(isRepeatableMeta("memhtml-entity")).toBe(true)
     expect(isRepeatableMeta("memhtml-tag")).toBe(true)
+    /**
+     * `memhtml-alias` is the third, and repeatability is the point of it. A person file declares each
+     * other name its subject is recorded under as its own `<meta>`, so adding or correcting one alias is
+     * a one-line diff in a file a human edits by hand. Comma-joining them into one value would make
+     * every correction a whole-line rewrite and would put a delimiter inside a name that may contain one.
+     */
+    expect(isRepeatableMeta("memhtml-alias")).toBe(true)
     expect(isRepeatableMeta("memhtml-type")).toBe(false)
+    expect([...REPEATABLE_META]).toEqual(["memhtml-entity", "memhtml-tag", "memhtml-alias"])
   })
 })
 

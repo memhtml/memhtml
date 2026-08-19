@@ -197,6 +197,17 @@ export const MemoryDoc = Schema.Struct({
   entities: Schema.Array(Schema.String),
   /** `memhtml-tag` values as authored, in document order. Open vocabulary. */
   tags: Schema.Array(Schema.String),
+  /**
+   * `memhtml-alias` values as authored, in document order. The other names this file's subject is
+   * recorded under — a person file's declaration that `laith` and `l.alsaadoon` are the same person
+   * as its own `person:` entity.
+   *
+   * Read as EVIDENCE by sleep's entity resolution, which auto-merges an alias-backed pair whatever
+   * the name similarity says. That is why the field is a bare string list rather than a parsed
+   * `type:name`: the declaring file's own `memhtml-entity` already carries the type, and an alias
+   * that restated it could disagree with it.
+   */
+  aliases: Schema.Array(Schema.String),
   links: Schema.Array(MemoryLink),
   article: ArticleExtractions,
   /**

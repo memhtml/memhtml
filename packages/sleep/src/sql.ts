@@ -1,4 +1,5 @@
 import type { StorageFailure } from "@memhtml/contracts/errors"
+import { PEOPLE_DIR } from "@memhtml/contracts/paths"
 import type { KeyedVector } from "@memhtml/domain"
 import { float32View, rankCandidatePairs, topNeighborPairs } from "@memhtml/domain"
 import type { DatabaseShape } from "@memhtml/index"
@@ -265,6 +266,79 @@ export const pathsForEntity = (
 /** `?` per excluded type, so the exclusion binds instead of interpolating a value into SQL. */
 const typePlaceholders = (): string => SLEEP_EXCLUDED_TYPES.map(() => "?").join(", ")
 
+/** One (entity, claiming file) pair, and the title that file carries. */
+export interface EntityClaim {
+  readonly entity_type: string
+  readonly entity_name: string
+  readonly path: string
+  readonly title: string
+}
+
+/**
+ * Every (entity, claiming active non-task file) pair in ONE statement, entity-ordered then path.
+ *
+ * The same corpus {@link activeEntities} counts, enumerated instead of aggregated. Entity resolution
+ * needs both a per-entity memory centroid and a few sample titles per entity, and deriving either from
+ * {@link pathsForEntity} would be one query per entity — 59 entities on the measured corpus, and one
+ * round trip each for a join the database performs once.
+ *
+ * **The `ORDER BY` is for a reader, NOT for the centroid's determinism.** A centroid is a sum over its
+ * members' vectors and float addition is not associative, so the summation order decides the bytes —
+ * but `entityCentroids` re-sorts each entity's paths itself and does not inherit this order. That is
+ * deliberate: the guarantee has to live where the sum happens, so a future caller reading these rows
+ * through a different statement cannot silently lose it. (Confirmed by mutation: replacing this clause
+ * with `ORDER BY e.path DESC` leaves the whole sleep suite green, while dropping the phase's own sort
+ * fails it.)
+ */
+export const entityClaims = (
+  db: DatabaseShape
+): Effect.Effect<ReadonlyArray<EntityClaim>, StorageFailure> =>
+  db.all<EntityClaim>(
+    `SELECT e.entity_type AS entity_type, e.entity_name AS entity_name,
+            e.path AS path, f.title AS title
+     FROM file_entities e JOIN files f ON f.path = e.path
+     WHERE f.archived = 0 AND f.memory_type NOT IN (${typePlaceholders()})
+     ORDER BY e.entity_type ASC, e.entity_name ASC, e.path ASC`,
+    [...SLEEP_EXCLUDED_TYPES]
+  )
+
+/**
+ * Every active file's first-chunk vector, path-keyed and decoded once. The centroid pass's input.
+ *
+ * Exported wrapper over the module-private statement the pair arms use, so entity resolution reads the
+ * SAME vector space they do — `ordinal = 0`, the same drop of a blob that does not decode — instead of
+ * a second SELECT free to disagree about which chunk represents a file.
+ *
+ * Tasks are excluded, matching {@link entityClaims}: a centroid built partly from working state would
+ * describe what the agent intends to do about a subject rather than what it knows about one.
+ */
+export const entityVectors = (
+  db: DatabaseShape
+): Effect.Effect<ReadonlyArray<KeyedVector>, StorageFailure> =>
+  firstChunkVectors(db, SLEEP_EXCLUDED_TYPES)
+
+/**
+ * Every indexed person file, path-ordered. The alias oracle's file list.
+ *
+ * Selected by DIRECTORY, because that is what a person file is: `person-links` mints one per
+ * `person:` entity under `PEOPLE_DIR`, and a hand-authored one placed there by an operator is just as
+ * authoritative. Selecting by entity instead would miss a file whose subject the corpus has since
+ * stopped mentioning, whose declaration is still the truth about those names.
+ *
+ * Archived files are included. Archiving a person file records that the corpus moved on from the
+ * person, not that two of their names stopped being the same name, and an alias declaration losing its
+ * force on archival would silently re-split a person the phase had already merged.
+ *
+ * The phase reads the BYTES of each of these; this statement only says which paths to open, because
+ * `memhtml-alias` is repeatable and lives in the file rather than in any projection.
+ */
+export const peoplePaths = (
+  db: DatabaseShape
+): Effect.Effect<ReadonlyArray<{ readonly path: string }>, StorageFailure> =>
+  db.all<{ path: string }>("SELECT path FROM files WHERE path LIKE ? ORDER BY path ASC", [
+    `${PEOPLE_DIR}/%`
+  ])
+
 /** One memory-class edge between two active files. */
 export interface EdgeRow {
   readonly src_path: string
@@ -407,6 +481,72 @@ export const markPromoted = (
      SET promoted = 1, confirmed = 1, updated_at = ?
      WHERE src_path = ? AND rel = ? AND dst_path = ?`,
     [input.at, input.srcPath, input.rel, input.dstPath]
+  )
+
+/** One corroboration counter on a machine-proposed entity merge. */
+export interface EntityCorroborationRow {
+  readonly entity_type: string
+  readonly alias_name: string
+  readonly canonical_name: string
+  readonly detections: number
+  readonly promoted: number
+}
+
+/**
+ * Bump an entity merge's detection counter and read the result back.
+ *
+ * The same `RETURNING` upsert {@link bumpCorroboration} uses, for the same reason: the promotion
+ * decision is made in the database at the instant of the write, so two runs racing on one merge cannot
+ * both read `detections = 1` and both decline to apply it, leaving a genuinely corroborated merge
+ * pending forever.
+ *
+ * **And the bump is idempotent WITHIN one run's instant**, which entity resolution needs even more than
+ * conflict detection does. This phase commits whenever it rewrites ANY file, so a night whose only work
+ * was a deterministic normalization commits and leaves a trailer, while a night that only bumped
+ * counters does not. `memhtml sleep resume` therefore re-executes this phase on the second pass, and
+ * without the `updated_at` guard that pass would count as a second night's independent sighting and
+ * apply a merge one night's evidence had not earned. `at` comes from the run's own date, so a resume of
+ * the same run reuses it and a genuinely later night does not.
+ *
+ * Names are the NORMALIZED forms, which is what makes one merge one counter: `Checkout API` and
+ * `checkout api` would otherwise be two rows for one merge and neither would reach two detections.
+ */
+export const bumpEntityCorroboration = (
+  db: DatabaseShape,
+  input: {
+    readonly entityType: string
+    readonly aliasName: string
+    readonly canonicalName: string
+    readonly at: string
+  }
+): Effect.Effect<ReadonlyArray<EntityCorroborationRow>, StorageFailure> =>
+  db.all<EntityCorroborationRow>(
+    `INSERT INTO ${STATE_SCHEMA}.entity_corroboration
+       (entity_type, alias_name, canonical_name, detections, updated_at)
+     VALUES (?, ?, ?, 1, ?)
+     ON CONFLICT(entity_type, alias_name, canonical_name) DO UPDATE SET
+       detections = detections + CASE
+         WHEN entity_corroboration.updated_at = excluded.updated_at THEN 0 ELSE 1 END,
+       updated_at = excluded.updated_at
+     RETURNING entity_type, alias_name, canonical_name, detections, promoted`,
+    [input.entityType, input.aliasName, input.canonicalName, input.at]
+  )
+
+/** Mark a corroborated merge applied, so a later night reads it as done instead of pending. */
+export const markEntityPromoted = (
+  db: DatabaseShape,
+  input: {
+    readonly entityType: string
+    readonly aliasName: string
+    readonly canonicalName: string
+    readonly at: string
+  }
+): Effect.Effect<void, StorageFailure> =>
+  db.run(
+    `UPDATE ${STATE_SCHEMA}.entity_corroboration
+     SET promoted = 1, confirmed = 1, updated_at = ?
+     WHERE entity_type = ? AND alias_name = ? AND canonical_name = ?`,
+    [input.at, input.entityType, input.aliasName, input.canonicalName]
   )
 
 /** Sessions with no memory linked to them, which is what trace-consolidation counts in v1. */
