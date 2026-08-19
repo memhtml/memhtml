@@ -17,7 +17,7 @@ any number of readers, `busy_timeout = 5000` is set on every connection
 Three actors share the tree, and Figure 1 shows the cycle they form through `main`. Only one of them
 may settle a contradiction.
 
-```d2 pad=20 src="_figures/three-actors.d2" title="A cycle of five boxes. The agent writes to main. Sleep reads main and puts fifteen commits on a sleep/date branch. The human reviews that branch and merges it back into main, closing the cycle. Sleep never writes to main directly and the branch never reaches main without passing through the human."
+```d2 pad=20 src="_figures/three-actors.d2" title="A cycle of five boxes. The agent writes to main. Sleep reads main and puts sixteen commits on a sleep/date branch. The human reviews that branch and merges it back into main, closing the cycle. Sleep never writes to main directly and the branch never reaches main without passing through the human."
 ```
 
 **Figure 1: the three actors form a cycle through `main`, and the nightly run is never on it.** The agent
@@ -46,7 +46,7 @@ and decide.
 
 An agent write is one commit against one file and can be reconciled after the fact. A curation run
 rewrites metadata across the whole corpus, so starting it against uncommitted work would mix a
-human's in-progress edit into a machine's fifteen commits, with no way to tell them apart in the
+human's in-progress edit into a machine's sixteen commits, with no way to tell them apart in the
 diff.
 
 ## 4. Rerunning is cheap because the phases are idempotent

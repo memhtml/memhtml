@@ -86,11 +86,26 @@ import { memoryHtml } from "./fixture.js"
  */
 
 describe("the phase contract", () => {
-  it("names fifteen distinct phases, preflight first and report last", () => {
-    expect(SLEEP_PHASES).toHaveLength(15)
-    expect(new Set(SLEEP_PHASES).size).toBe(15)
+  it("names sixteen distinct phases, preflight first and report last", () => {
+    expect(SLEEP_PHASES).toHaveLength(16)
+    expect(new Set(SLEEP_PHASES).size).toBe(16)
     expect(SLEEP_PHASES[0]).toBe("preflight")
     expect(SLEEP_PHASES.at(-1)).toBe("report")
+  })
+
+  it("orders task-detection after trace-consolidation and before integrity", () => {
+    /**
+     * Both edges are load-bearing and neither is stated anywhere a compiler checks. The phase scans
+     * the ACTIVE corpus, so it has to run after every phase that changes what is active — including
+     * trace consolidation, whose newly distilled memories are the freshest text of the night and the
+     * likeliest to carry a commitment. And it WRITES task files, so it must precede `integrity`, which
+     * regenerates each directory's `index.html`: a task minted afterwards would be missing from its
+     * own directory listing until the next night.
+     */
+    expect(SLEEP_PHASES.indexOf("task-detection")).toBeGreaterThan(
+      SLEEP_PHASES.indexOf("trace-consolidation")
+    )
+    expect(SLEEP_PHASES.indexOf("task-detection")).toBeLessThan(SLEEP_PHASES.indexOf("integrity"))
   })
 
   it("orders every hard prerequisite before its dependent", () => {
@@ -127,7 +142,8 @@ describe("the phase contract", () => {
       "edge-typing",
       "arc-synthesis",
       "compress",
-      "trace-consolidation"
+      "trace-consolidation",
+      "task-detection"
     ])
     // In execution order, so the generated phase table's `callsModel` column reads down the page the
     // way `SLEEP_PHASES` does rather than in the order phases happened to gain a model.
@@ -175,7 +191,7 @@ describe("the phase contract", () => {
 
   it("numbers phases 1-based for display", () => {
     expect(phaseIndexOf("preflight")).toBe(1)
-    expect(phaseIndexOf("report")).toBe(15)
+    expect(phaseIndexOf("report")).toBe(16)
   })
 
   it("narrows an untrusted phase name", () => {

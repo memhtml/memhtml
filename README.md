@@ -123,7 +123,7 @@ three directly, and that is why every write below lands as a commit:
 - A batch is a commit. `memhtml apply` (JSONL ops) and `memory_write_batch` (MCP) stage N files, make
   one commit, and reindex once. The batch is atomic by default, per-op results come back in input
   order, and a duplicate succeeds with `deduped: true` and the existing path.
-- A nightly curation run is a branch. `memhtml sleep run` walks fifteen phases and commits each one's
+- A nightly curation run is a branch. `memhtml sleep run` walks sixteen phases and commits each one's
   work on its own, so a human reads the curation one phase-shaped diff at a time, and
   `memhtml sleep merge` fast-forwards `main` only after a quality gate that can refuse.
 
@@ -184,7 +184,7 @@ beneath the figure carries the same content in words.
 
 **Figure 2: the three actors form a cycle through `main`, and only one of them may settle a
 contradiction.** Reading top to bottom: the agent writes to `main` at any hour, one fact per file.
-Sleep reads `main` nightly and puts its fifteen commits on a `sleep/<date>` branch, leaving `main`
+Sleep reads `main` nightly and puts its sixteen commits on a `sleep/<date>` branch, leaving `main`
 untouched. Those phases deduplicate, resolve entities, decay confidence, compress, and synthesize arcs,
 and they flag a contradiction without choosing a winner. The human reviews that branch and merges, which
 returns the cycle to `main` and to the agent. The two heavy-bordered boxes are the actors outside the
@@ -320,7 +320,7 @@ reach the model, so a skipped gate reads as skipped rather than as green.
 
 ## Sleep
 
-`memhtml sleep run` executes fifteen curation phases on a `sleep/<date>` branch: dedup-merge, entity
+`memhtml sleep run` executes sixteen curation phases on a `sleep/<date>` branch: dedup-merge, entity
 resolution, edge typing, confidence decay, arc synthesis, retention triage, compress, integrity,
 and the rest. Each committing phase makes its own isolated commit with a machine-readable trailer, so
 `memhtml sleep resume` re-runs only what is missing. Two phases commit nothing by design. `preflight`
@@ -328,6 +328,14 @@ refreshes the index, and `relationship-mining` writes derived edges to the index
 of re-derivable edges would bury every real diff. `trace-consolidation` hands unread session transcripts
 to an agent and lands each distilled memory as its own commit, one per memory, so a reviewer reads one
 claim at a time. A failed phase leaves the phases before it committed.
+
+A run also opens TASKS, for work the corpus records and nobody opened. `task-detection` reads the recent
+memories in batches and asks which of them carry a commitment nobody closed, quoting the sentence it
+found; three other phases do the same for the decisions they decline to make — an alias pair too close to
+ignore and too far to merge, a near-duplicate pair the divergence veto refused, a contradiction seen only
+once. Every detected task is authored `agent:sleep`, cites its evidence verbatim, is capped at ten a
+night across all four detectors, and closes itself when its finding stops appearing. A detection is a
+proposal for a human, never a fact the corpus asserts.
 
 `memhtml sleep review` classifies every touched file. `memhtml sleep merge` re-runs the discrimination gate
 and refuses to move `main` on a regression. Detecting a conflict is nightly and automatic; resolving one
@@ -352,10 +360,10 @@ paragraph beneath the figure, which carries the same content in words.
          +-------------+
                 |
                 v
-         +---------------+
-         |fifteen phases |
-         |               |
-         +---------------+
+        +---------------+
+        |sixteen phases |
+        |               |
+        +---------------+
                 |
              review
                 |
@@ -378,7 +386,7 @@ paragraph beneath the figure, which carries the same content in words.
 <!-- /figure:sleep-branch -->
 
 **Figure 4: `main` moves only after a gate that can refuse says so.** A run branches `main` into
-`sleep/<date>` before any phase executes and walks its fifteen phases there, thirteen of them committing,
+`sleep/<date>` before any phase executes and walks its sixteen phases there, fourteen of them committing,
 each on its own, with `preflight` and `relationship-mining` committing nothing by design. Then it submits
 the branch for review. That review re-runs the discrimination gate and has two outcomes, both drawn: it
 passes and `main` moves, or it refuses and `main` stays exactly where it was. Those are the only two
@@ -456,7 +464,7 @@ bundle.
 | `@memhtml/store` | The git-backed file store. One commit per operation, typed conflicts. |
 | `@memhtml/index` | SQLite schema, the git-driven indexer, four-arm RRF retrieval, the state plane. |
 | `@memhtml/traces` | Streaming JSONL parser over `~/.claude`, with a size+mtime+offset watermark. |
-| `@memhtml/sleep` | The fifteen curation phases, each an isolated commit. |
+| `@memhtml/sleep` | The sixteen curation phases, each an isolated commit. |
 | `@memhtml/llm` | Bedrock: Cohere embeddings and forced-tool structured output. |
 | `@memhtml/eval` | The fixture corpus generator and the refusable discrimination gate. |
 | `@memhtml/cli` | The `memhtml` binary, the envelope contract, and the one composition root. |

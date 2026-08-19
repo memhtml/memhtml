@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 
 import { originalPathFor } from "@memhtml/contracts/paths"
+import { SLEEP_PHASES } from "@memhtml/sleep"
 import { scriptedModel, value } from "@memhtml/sleep/testing"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
@@ -138,9 +139,14 @@ describe("verification item 6 — sleep run, review, and merge through the discr
     await cli.cleanup()
   })
 
-  it("runs all fifteen phases on a branch, with one trailer per commit", async () => {
+  it("runs every phase on a branch, with one trailer per commit", async () => {
     expect(report.runId).toBe(`sleep/${DATE}`)
-    expect(report.phases).toHaveLength(15)
+    /**
+     * Against `SLEEP_PHASES` rather than a literal. A hand-typed count made adding a phase a
+     * two-place edit whose second place is an integration file nobody runs while iterating, so the
+     * gate reported a wrong phase count as a broken run.
+     */
+    expect(report.phases).toHaveLength(SLEEP_PHASES.length)
     expect(report.failedPhases).toEqual([])
 
     // The branch exists in GIT and the run's commits are on it — `main` never moved.

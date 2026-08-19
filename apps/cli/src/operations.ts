@@ -1272,7 +1272,7 @@ export const listMemories = (params: ListParams) =>
 /**
  * The task surface: CRUDL without retrieval.
  *
- * A task is the 10th `memory_type` and it is default-excluded from search, dedup, and all fifteen
+ * A task is the 10th `memory_type` and it is default-excluded from search, dedup, and all sixteen
  * sleep phases, so the working set an agent needs is not reachable by ranking. These three
  * functions are how it becomes reachable: `task add` wraps {@link writeMemory}, `task status` is one
  * head meta edited in place, and {@link listTasks} is a direct indexed scan. Reading a directory,

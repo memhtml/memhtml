@@ -4,8 +4,12 @@ import {
   type MergeDecision,
   type MergePair,
   mergeCandidates,
-  NEAR_DUPLICATE_THRESHOLD
+  NEAR_DUPLICATE_THRESHOLD,
+  negationDivergent,
+  numericTokenDivergent,
+  variantQualifierDivergent
 } from "@memhtml/domain"
+import type { GitFailure } from "@memhtml/store"
 import { Effect } from "effect"
 
 import { batchCall, type KeyedMember, keyMembers, packGroups, resolveKeys } from "../batch.js"
@@ -28,6 +32,7 @@ import {
   neighborPairs,
   SLEEP_EXCLUDED_TYPES
 } from "../sql.js"
+import { budgetFor, closeVanishedDetections, detectionKey, mintDetectedTask } from "../tasks.js"
 
 /**
  * Phase 2, dedup-merge. Fold near-duplicates: the keeper gains `memhtml-supersedes`, the dropped
@@ -85,6 +90,16 @@ import {
  * One commit for the whole batch, not one per pair. A keeper's `memhtml-supersedes` points at its
  * dropped file's ARCHIVE path, which is where that file lives only after this commit lands.
  * Splitting them would create a dangling href in the commit that made it dangle.
+ *
+ * ## A vetoed pair becomes a review task
+ *
+ * Surface 1 of issue #44, second detector. The veto is the phase's strongest signal that something
+ * needs a HUMAN rather than a merge: two memories a cosine says are the same and a divergence
+ * predicate says cannot both be true is either a correction the corpus has not recorded as one, or a
+ * pair of facts about different things that read alike. Neither resolution is a nightly job's to make —
+ * choosing the winner of a contradiction is a one-way door on stored belief — and the count alone told
+ * nobody. {@link mintVetoTasks} opens one task per vetoed pair NAMING THE PREDICATE that fired, in the
+ * same commit as the folds.
  */
 
 /**
@@ -241,12 +256,23 @@ export const dedupMerge: PhaseBody = (env) =>
        * could call a model, which is what makes the existing dedup tests an oracle for the rest.
        */
       const decisions = mergeCandidates(oriented)
-      return yield* commitMerges(env, decisions, {
-        candidates: oriented.length,
-        components: 0,
-        llmGroups: 0,
-        vetoed: oriented.length - decisions.length
-      })
+      return yield* commitMerges(
+        env,
+        decisions,
+        {
+          candidates: oriented.length,
+          components: 0,
+          llmGroups: 0,
+          vetoed: oriented.length - decisions.length
+        },
+        /**
+         * Every mined pair on this arm cleared 0.92, so a vetoed one here is a near-certain duplicate
+         * the divergence predicates refused — which is exactly the pair issue #44 wants a human to
+         * look at. `judged: true`, because this arm makes no model call, so nothing about the night
+         * could have silently failed to evaluate a pair.
+         */
+        { vetoed: vetoedPairs(oriented), judged: true }
+      )
     }
 
     /**
@@ -413,15 +439,155 @@ export const dedupMerge: PhaseBody = (env) =>
     const proposed = [...groupPairs, ...remaining]
     const decisions = mergeCandidates(proposed, { threshold: DEDUP_ADMIT_FLOOR })
 
-    const outcome = yield* commitMerges(env, decisions, {
-      candidates: proposed.length,
-      components: components.length,
-      llmGroups,
-      vetoed: proposed.length - decisions.length,
-      skipped
-    })
+    const outcome = yield* commitMerges(
+      env,
+      decisions,
+      {
+        candidates: proposed.length,
+        components: components.length,
+        llmGroups,
+        vetoed: proposed.length - decisions.length,
+        skipped
+      },
+      /**
+       * On this arm a vetoed pair is one the MODEL grouped as the same memory, or one that cleared
+       * 0.92 with no group claiming it, and the veto then refused it for a divergence. Both readings
+       * are the issue's case: a semantic reader said "same" and a deterministic predicate said "these
+       * differ in a way that matters", and the resolution — is one a correction of the other? — is a
+       * human's.
+       *
+       * `judged` is false when a batch's call failed, because those components were never partitioned:
+       * their pairs reach the veto only through the mined arm, so a night that lost a call cannot say
+       * whether a pair it did not see is still a candidate.
+       */
+      { vetoed: vetoedPairs(proposed), judged: skipped === 0 }
+    )
     return { ...outcome, llmCalls }
   })
+
+/** The detector name every near-duplicate review task is keyed and swept under. */
+export const DEDUP_REVIEW_DETECTOR = "dedup-merge"
+
+/**
+ * The proposed pairs the divergence veto refused, with WHICH predicate fired.
+ *
+ * The three predicates are pure, exported, and independently callable, so the phase can name the one
+ * that fired instead of reporting "vetoed". That distinction is the whole value of the task: "these two
+ * carry different numbers" tells a reviewer to compare the numbers, "exactly one of them is negated"
+ * tells them one is probably a correction of the other, and "vetoed" tells them to read both files from
+ * scratch.
+ *
+ * Re-running the predicates rather than threading a reason out of `mergeCandidates` keeps the domain
+ * filter's signature alone: it returns the decisions it made, and asking it to also return a
+ * per-refusal reason would make every caller carry a channel one caller reads. The predicates are pure
+ * token-set comparisons over text already in memory, and this runs over the proposed set once.
+ *
+ * A pair with either text missing is NOT vetoed — the filter skips the veto for it too, since it cannot
+ * evaluate one — so those are absent here, which is correct: an unevaluated pair is not a divergence
+ * anyone found.
+ */
+const vetoedPairs = (proposed: ReadonlyArray<MergePair>): ReadonlyArray<VetoedPair> =>
+  proposed.flatMap((pair) => {
+    const keepText = pair.keepText
+    const dropText = pair.dropText
+    if (keepText === undefined || dropText === undefined) return []
+    const predicates = [
+      ...(negationDivergent(keepText, dropText)
+        ? ["one side is negated and the other is not"]
+        : []),
+      ...(numericTokenDivergent(keepText, dropText) ? ["the two carry different numbers"] : []),
+      ...(variantQualifierDivergent(keepText, dropText)
+        ? ["the two name different product variants"]
+        : [])
+    ]
+    if (predicates.length === 0) return []
+    return [
+      { keepPath: pair.keepPath, dropPath: pair.dropPath, similarity: pair.similarity, predicates }
+    ]
+  })
+
+/** One vetoed pair and the predicates behind the refusal, in the veto's own disjunction order. */
+interface VetoedPair {
+  readonly keepPath: string
+  readonly dropPath: string
+  readonly similarity: number
+  readonly predicates: ReadonlyArray<string>
+}
+
+/**
+ * Mint one review task per vetoed pair, and sweep the ones that stopped diverging.
+ *
+ * **The key is the two PATHS sorted.** A path is the id of a memory in this corpus, and the question is
+ * about these two files — so unlike the merge itself, which orients keeper-then-drop from corpus dates,
+ * the review question is unordered and sorting is what makes tomorrow's `(b, a)` key with today's
+ * `(a, b)`.
+ *
+ * **The evidence is a MEASUREMENT.** The predicate that fired is a fact about the two token sets, and
+ * no sentence in either file states it. The paths ride in the detail so a reviewer can open both.
+ *
+ * A pair whose veto STOPS firing — because a human corrected one of the two, or because one was
+ * archived — is closed by the sweep, which is right: the divergence was the finding, and it is gone.
+ */
+const mintVetoTasks = (
+  env: PhaseEnv,
+  vetoed: ReadonlyArray<VetoedPair>,
+  judged: boolean
+): Effect.Effect<
+  { readonly minted: number; readonly refreshed: number; readonly closed: number },
+  SleepError | GitFailure
+> =>
+  Effect.gen(function* () {
+    const budget = budgetFor(env)
+    /**
+     * Keyed and de-duplicated before minting, then walked in key order, so which pairs a budget-capped
+     * night surfaces is a function of the pairs rather than of the arm that proposed them.
+     */
+    const byKey = new Map<string, VetoedPair>()
+    for (const pair of vetoed) {
+      const key = detectionKey(DEDUP_REVIEW_DETECTOR, vetoFinding(pair))
+      if (!byKey.has(key)) byKey.set(key, pair)
+    }
+
+    let minted = 0
+    let refreshed = 0
+    for (const key of [...byKey.keys()].sort()) {
+      const pair = byKey.get(key)
+      if (pair === undefined) continue
+      const outcome = yield* mintDetectedTask(env, budget, {
+        detector: DEDUP_REVIEW_DETECTOR,
+        finding: vetoFinding(pair),
+        title: `Review near-duplicates vetoed for divergence: ${basenameOf(pair.keepPath)} and ${basenameOf(pair.dropPath)}`,
+        claim: "review: near-duplicates vetoed for divergence — is one a correction of the other?",
+        detail:
+          `The two memories are ${pair.keepPath} and ${pair.dropPath}. Sleep refused to fold them ` +
+          `because folding keeps the OLDER file, so a blind merge of a correction into the memory it ` +
+          `corrects would restore the error the correction was written to fix.`,
+        evidence: { kind: "measurement", detail: vetoEvidence(pair) }
+      })
+      if (outcome === "minted") minted += 1
+      else if (outcome === "refreshed") refreshed += 1
+    }
+
+    const closed = judged
+      ? yield* closeVanishedDetections(env, DEDUP_REVIEW_DETECTOR, new Set(byKey.keys()))
+      : 0
+    return { minted, refreshed, closed }
+  })
+
+/** The canonical finding string: the two paths, sorted. See {@link mintVetoTasks}. */
+const vetoFinding = (pair: VetoedPair): string =>
+  pair.keepPath < pair.dropPath
+    ? `${pair.keepPath} ${pair.dropPath}`
+    : `${pair.dropPath} ${pair.keepPath}`
+
+/** The evidence line: which predicates fired, and how near the two bodies measured. */
+const vetoEvidence = (pair: VetoedPair): string =>
+  `${pair.predicates.join("; ")} — at cosine ${pair.similarity.toFixed(3)}, ` +
+  `at or above the ${String(DEDUP_COMPONENT_FLOOR)} candidate floor`
+
+/** A path's filename without its extension, for a title that fits `ls` and a commit subject. */
+const basenameOf = (path: string): string =>
+  path.slice(path.lastIndexOf("/") + 1).replace(/\.html$/, "")
 
 /**
  * Archive each drop, stamp each keeper, and commit once.
@@ -445,11 +611,31 @@ export const dedupMerge: PhaseBody = (env) =>
 const commitMerges = (
   env: PhaseEnv,
   decisions: ReadonlyArray<MergeDecision>,
-  base: PhaseCounts
-): Effect.Effect<PhaseOutcome, SleepError> =>
+  base: PhaseCounts,
+  /**
+   * The vetoed pairs to defer to a human, and whether the night judged its whole candidate set.
+   *
+   * Passed in rather than recomputed here, because only the caller knows which arm ran and therefore
+   * which set `proposed` was — and `judged` is a fact about the CALLS, which this function does not
+   * make.
+   */
+  review: { readonly vetoed: ReadonlyArray<VetoedPair>; readonly judged: boolean }
+): Effect.Effect<PhaseOutcome, SleepError | GitFailure> =>
   Effect.gen(function* () {
-    if (decisions.length === 0) return emptyOutcome({ ...base, merged: 0, vanished: 0 })
-    if (env.dryRun) return emptyOutcome({ ...base, merged: decisions.length, vanished: 0 })
+    /**
+     * A dry run counts the folds and the vetoes and mints nothing. Every count above is already real on
+     * a dry run because an operator sizing a night needs them; a TASK is a write, so it waits for a
+     * real night the same way the archives do.
+     */
+    if (env.dryRun) {
+      return emptyOutcome({
+        ...base,
+        merged: decisions.length,
+        vanished: 0,
+        tasksMinted: 0,
+        tasksClosed: 0
+      })
+    }
 
     let merged = 0
     let vanished = 0
@@ -470,12 +656,33 @@ const commitMerges = (
       merged += 1
     }
 
-    const final = { ...base, merged, vanished }
+    /**
+     * The vetoed pairs become tasks in the SAME commit as the folds, and the mint runs even when
+     * nothing folded — which is why the old `decisions.length === 0` early return is gone. A night
+     * whose every candidate was vetoed is precisely the night with the most for a human to decide, and
+     * returning early on it would have made surface 1 unreachable on exactly that night.
+     */
+    const tasks = yield* mintVetoTasks(env, review.vetoed, review.judged)
+
+    const final = {
+      ...base,
+      merged,
+      vanished,
+      tasksMinted: tasks.minted,
+      tasksClosed: tasks.closed
+    }
+    if (merged === 0 && tasks.minted === 0 && tasks.refreshed === 0 && tasks.closed === 0) {
+      return emptyOutcome(final)
+    }
     const commitSha = yield* commitPhase(
       env,
       "dedup-merge",
       `fold ${merged} near-duplicates into canonicals`,
-      final
+      final,
+      tasks.minted + tasks.closed === 0
+        ? undefined
+        : `deferred ${tasks.minted} vetoed pairs to review tasks` +
+            (tasks.closed === 0 ? "" : `; closed ${tasks.closed}: no longer detected`)
     )
     return { counts: final, commitSha, llmCalls: 0 }
   })

@@ -153,7 +153,7 @@ task and decay a person's identity. See [Four-arm retrieval](/internals/four-arm
 
 ### Sleep phase
 
-One of the fifteen ordered curation steps. Each is an isolated commit on a `sleep/<date>` branch
+One of the sixteen ordered curation steps. Each is an isolated commit on a `sleep/<date>` branch
 carrying machine-readable trailers, so a failure stays contained and a resume reads what is already
 done out of `git log`. See [The sleep pipeline](/internals/the-sleep-pipeline/).
 

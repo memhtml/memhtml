@@ -61,7 +61,7 @@ const count = (db: DatabaseShape, sql: string) =>
   )
 
 /**
- * A `--phases` value as a validated phase list, or `undefined` for "all fifteen".
+ * A `--phases` value as a validated phase list, or `undefined` for "all sixteen".
  *
  * An unknown phase is rejected instead of dropped silently. A run asked for `--phases dedup,compress`
  * with a typo in the first name would otherwise execute only the second. `dedup-merge` is a hard

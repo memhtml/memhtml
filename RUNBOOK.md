@@ -161,7 +161,7 @@ Mitigation today is one writer: a second machine that reads the repo should `mem
 ## 7. Sleep
 
 ```bash
-memhtml sleep run                       # 15 phases, each its own commit on sleep/<date>
+memhtml sleep run                       # 16 phases, each its own commit on sleep/<date>
 memhtml sleep run --dry-run             # per-phase counts, no branch, no commits
 memhtml sleep run --phases preflight,dedup-merge,integrity
 memhtml sleep status                    # the latest run and its per-phase outcomes
@@ -170,7 +170,7 @@ memhtml sleep resume <run-id>
 memhtml sleep merge <run-id>
 ```
 
-The 15 phases in order: `preflight`, `dedup-merge`, `entity-resolution`, `person-links`, `relationship-mining`, `edge-typing`, `confidence-decay`, `arc-synthesis`, `retention-triage`, `compress`, `reprieve`, `trace-consolidation`, `integrity`, `state-export`, `report` (`packages/sleep/src/contract.ts:17`). The branch is created BEFORE any phase runs and every commit lands on it, so `main` is never touched by a run (`packages/sleep/src/run.ts:96`). A second run on the same date takes `sleep/<date>-2` and upward (`packages/sleep/src/run.ts:45`). A dry run creates no branch. A real run leaves you checked out on the sleep branch; `memhtml sleep merge` checks out the target itself.
+The 16 phases in order: `preflight`, `dedup-merge`, `entity-resolution`, `person-links`, `relationship-mining`, `edge-typing`, `confidence-decay`, `arc-synthesis`, `retention-triage`, `compress`, `reprieve`, `trace-consolidation`, `task-detection`, `integrity`, `state-export`, `report` (`packages/sleep/src/contract.ts:17`). The branch is created BEFORE any phase runs and every commit lands on it, so `main` is never touched by a run (`packages/sleep/src/run.ts:96`). A second run on the same date takes `sleep/<date>-2` and upward (`packages/sleep/src/run.ts:45`). A dry run creates no branch. A real run leaves you checked out on the sleep branch; `memhtml sleep merge` checks out the target itself.
 
 `review`'s per-file classification is the substance, because `git diff --stat` says a file changed by two lines and says nothing about whether those lines were a confidence stamp or the memory's claim. It compares the two versions' ARTICLE content hashes (`packages/sleep/src/review.ts:170`): `meta-only` is a decay stamp, link promotion, or reprieve extension and is skippable; `body-changed` means the claim moved, so read these; `archived` is an eviction, reaching the tree as a `git mv` into `archive/<YYYY>/`; `created` is a new file, usually a synthesized arc or a compress canonical.
 

@@ -132,8 +132,8 @@ export interface ConsolidatorFailure {
  * the CLI's composition root (`makeConsolidator({ traceRoot })`).
  *
  * Keeping it out of this signature is what stops it becoming a phase's concern. It would otherwise have
- * to reach a phase through `PhaseEnv`, which every one of the fifteen phases shares. One phase's
- * mount detail would then sit in the environment of the fourteen that read no transcript, and the sleep
+ * to reach a phase through `PhaseEnv`, which every one of the sixteen phases shares. One phase's
+ * mount detail would then sit in the environment of the fifteen that read no transcript, and the sleep
  * package would carry a field whose only meaning is inside an eve sandbox it is firewalled from.
  */
 export interface ConsolidatorPort {

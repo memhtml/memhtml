@@ -1,7 +1,7 @@
 # memhtml — architecture
 
 An agent memory store. The system of record is a git repository of semantic HTML5 files, one fact per
-file. Everything else — a SQLite index, a four-arm retrieval fold, an MCP server, a fifteen-phase nightly
+file. Everything else — a SQLite index, a four-arm retrieval fold, an MCP server, a sixteen-phase nightly
 curation pipeline — is a projection of that tree or an operation on it.
 
 Two properties hold the design together:
@@ -23,7 +23,7 @@ Two properties hold the design together:
 | `store` | Git-backed file store: write, read, correct, archive, link, commit. |
 | `index` | SQLite service, migrations, indexer, projection, retrieval. |
 | `traces` | Streaming session-JSONL parser and scanner. |
-| `sleep` | The fifteen curation phases, each a git commit. |
+| `sleep` | The sixteen curation phases, each a git commit. |
 | `llm` | Bedrock embeddings and forced-tool structured output. |
 | `eval` | The discrimination gate and its generated fixture corpus. |
 | `apps/cli`, `apps/mcp` | The `memhtml` binary and the `memhtml-mcp` stdio server. |
@@ -561,7 +561,7 @@ memory, so the read tiers get three different policies:
 |---|---|---|
 | `memory_read` / `memhtml read` of a named path, and the `memhtml://file/{path}` resource | yes | the caller chose THAT memory — the strongest signal short of a write (`apps/cli/src/operations.ts:655`) |
 | a path merely *returned* by `memory_search` / `memory_recall` | no | the ranker's own guess (`apps/cli/src/operations.ts:681`, `:692`) |
-| the fifteen sleep phases | no | a schedule touching the whole corpus converges everything to uniform salience, which is no salience — and sleep bypasses the tool path entirely |
+| the sixteen sleep phases | no | a schedule touching the whole corpus converges everything to uniform salience, which is no salience — and sleep bypasses the tool path entirely |
 | `memory_reinforce` with a named signal | yes, and it moves the outcome EWMA too | the caller is asserting the memory was right or wrong |
 
 Bumping on a hit is what builds the rich-get-richer loop: today's top five rank higher tomorrow purely
@@ -738,7 +738,7 @@ reads the completed set out of `git log base..HEAD` rather than out of `sleep_ph
 would be a second record of what happened, and the two disagree exactly when it matters — a process killed
 after `git commit` and before the row's write. The commit is the fact; the row is a convenience the history
 can regenerate, and a reporting write never fails a run (`packages/sleep/src/run.ts:434-439`). A resume
-reports already-done phases explicitly as `skipped`, so its report accounts for all fifteen
+reports already-done phases explicitly as `skipped`, so its report accounts for all sixteen
 (`packages/sleep/src/run.ts:176-191`).
 
 **Tasks are excluded from every phase** (`packages/sleep/src/sql.ts:36`), for different reasons per phase.

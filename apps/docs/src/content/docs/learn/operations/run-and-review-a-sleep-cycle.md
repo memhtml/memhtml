@@ -4,7 +4,7 @@ description: "Fifteen curation phases on a review branch: how to run them, how t
 ---
 
 ```bash
-memhtml sleep run                       # 15 phases, each its own commit on sleep/<date>
+memhtml sleep run                       # 16 phases, each its own commit on sleep/<date>
 memhtml sleep run --dry-run             # per-phase counts, no branch, no commits
 memhtml sleep run --phases preflight,dedup-merge,integrity
 memhtml sleep status                    # the latest run and its per-phase outcomes
@@ -18,20 +18,26 @@ mines relationships, decays confidence, evicts what has gone stale, and distills
 session transcripts. Each phase makes its own commit on a branch, so nothing reaches `main` until you
 merge.
 
-The fifteen phases, in order (`packages/sleep/src/contract.ts:17`):
+The sixteen phases, in order (`packages/sleep/src/contract.ts:17`):
 
 ```
 preflight            dedup-merge        entity-resolution    person-links
 relationship-mining  edge-typing        confidence-decay     arc-synthesis
 retention-triage     compress           reprieve             trace-consolidation
-integrity            state-export       report
+task-detection       integrity          state-export         report
 ```
 
 `reprieve` gives a memory whose stated validity date has passed another two weeks when its use record
 earns it, and archives it otherwise. `compress` folds several overlapping memories into one canonical
 memory. `edge-typing` reads the pairs relationship mining and the shared-entity scan turned up and names
 the relationship between them — `caused_by`, `leads_to`, `example_of`, `supports`, `part_of`, or
-`contradicts` — promoting the confident ones into the files as authored links.
+`contradicts` — promoting the confident ones into the files as authored links. `task-detection` reads
+the recent corpus for work the text records and nobody opened — a commitment somebody made, a
+follow-up nobody closed — and opens a task file quoting the sentence it found. Three other phases do
+the same for the decisions they decline to make: an alias pair entity resolution would not merge, a
+near-duplicate pair the divergence veto refused, a contradiction below the two-night promotion gate.
+Every detected task is authored `agent:sleep`, capped at ten a night across all four, and closed
+automatically when its finding stops appearing.
 
 The branch is created before any phase runs and every commit lands on it, so a run never touches `main`
 (`packages/sleep/src/run.ts:96`). A second run on the same date takes `sleep/<date>-2` and upward
@@ -125,7 +131,7 @@ both sides of the change and compares the two hashes (`packages/sleep/src/review
 | `archived` | An eviction, reaching the tree as a `git mv` into `archive/<YYYY>/`. | Skim the reasons. |
 | `created` | A new file, usually a synthesized arc or a compress canonical. | Read these. |
 
-That classification is what makes a fifteen-commit night reviewable in minutes, because the `meta-only`
+That classification is what makes a sixteen-commit night reviewable in minutes, because the `meta-only`
 set is usually most of it.
 
 ## A failed phase leaves the rest of the run standing

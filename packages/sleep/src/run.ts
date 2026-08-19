@@ -12,15 +12,16 @@ import type { PhaseBody, PhaseEnv, SleepDeps } from "./env.js"
 import { PHASE_BODIES } from "./phases/index.js"
 import { reportPhase } from "./phases/report.js"
 import { readPhases, readRun, recordPhase, recordRun } from "./sql.js"
+import { makeDetectionBudget } from "./tasks.js"
 
 /**
- * The runner: fifteen phases, each an isolated commit on `sleep/<date>`.
+ * The runner: sixteen phases, each an isolated commit on `sleep/<date>`.
  *
  * **Per-phase isolation drives the design.** The predecessor memory system ran thirteen curation phases
  * inside one Postgres transaction, and four consecutive nights of production curation were lost
  * because one phase raised and the abort rolled back the twelve that had already succeeded. Here every
  * phase is its own commit, a failure is caught with `Effect.result` and recorded as a value, and the
- * phases after it still run, so a night that loses one phase keeps the other fourteen's work.
+ * phases after it still run, so a night that loses one phase keeps the other fifteen's work.
  *
  * The only exception is a declared hard prerequisite: `dedup-merge` failing SKIPS `compress` and
  * `retention-triage`, because both operate on the post-merge set and running them over a corpus that
@@ -35,7 +36,7 @@ import { readPhases, readRun, recordPhase, recordRun } from "./sql.js"
 export interface RunOptions {
   /** `YYYY-MM-DD`. Names the branch and the run, and dates every stamp the run writes. */
   readonly date: string
-  /** Run only these phases, in the canonical order. Absent runs all fifteen. */
+  /** Run only these phases, in the canonical order. Absent runs all sixteen. */
   readonly phases?: ReadonlyArray<SleepPhase> | undefined
   /** Compute and count; write no commit and no row beyond the run row, which is marked dry. */
   readonly dryRun?: boolean | undefined
@@ -89,7 +90,17 @@ export const run = (deps: SleepDeps, options: RunOptions): Effect.Effect<RunRepo
       date: options.date,
       at: instant.at,
       atMillis: instant.millis,
-      dryRun
+      dryRun,
+      /**
+       * ONE budget for the whole run, created here and shared by every phase that mints a detected
+       * task. `DETECTED_TASK_CAP` bounds the NIGHT and not each detector, because how many proposals a
+       * human can review is a property of the human — so a night where entity resolution finds nine
+       * review candidates leaves task detection one, first come.
+       *
+       * Created per run rather than held in a module, which is what keeps two runs in one process (and
+       * two tests in one file) from sharing a counter.
+       */
+      detectionBudget: makeDetectionBudget()
     }
 
     if (!dryRun) {
@@ -165,7 +176,16 @@ export const resume = (
       date,
       at: instant.at,
       atMillis: instant.millis,
-      dryRun: false
+      dryRun: false,
+      /**
+       * A resume gets a FRESH budget, deliberately. The alternative would be reconstructing how much
+       * the interrupted attempt spent by counting detected tasks in the tree, and the count would be
+       * wrong in the direction that matters: a phase that minted three and was then killed would have
+       * its own three counted against it on the retry, so a resume would mint fewer than the run it is
+       * finishing. The cost of a fresh one is bounded by the cap, and the mints a resume repeats are
+       * refreshes rather than duplicates, which cost no budget at all.
+       */
+      detectionBudget: makeDetectionBudget()
     }
 
     const remaining = SLEEP_PHASES.filter((phase) => !completed.has(phase))
@@ -175,7 +195,7 @@ export const resume = (
 
     /**
      * Skipped-because-already-done rows are reported explicitly, so a resume's report accounts for all
-     * fifteen phases. A report that showed only the eight it ran would read as a partial run.
+     * sixteen phases. A report that showed only the eight it ran would read as a partial run.
      */
     const priorRows = yield* ignoreFailureWith(readPhases(deps.db, runId), [])
     const already: ReadonlyArray<PhaseResult> = [...completed].map((phase) => {
