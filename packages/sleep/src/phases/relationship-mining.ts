@@ -24,7 +24,11 @@ export const MINING_COSINE_FLOOR = 0.85
 /** Nearest neighbors considered per source file. */
 export const MINING_PER_SOURCE_K = 5
 
-/** Pairs mined per cycle. The cost guard on a corpus whose pair space is quadratic. */
+/**
+ * Pairs mined per cycle: a cap on what {@link replaceMinedEdges} writes, not on the scan — the
+ * kernel's arithmetic is O(n²·d) whatever this says, and it bounds the edge table so one dense
+ * neighborhood cannot flood the graph the lateral arm and PageRank read.
+ */
 export const MINING_SAMPLE_LIMIT = 2000
 
 export const relationshipMining: PhaseBody = (env) =>

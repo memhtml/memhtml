@@ -254,20 +254,20 @@ rebuild; the row is queryable both directions.
 ## 6. The index
 
 Two databases on one connection. `.memhtml/state.db` is ATTACHed as `state`
-(`packages/index/src/database.ts:294`) so the salience arm can `LEFT JOIN state.access` in the same
+(`packages/index/src/database.ts:286`) so the salience arm can `LEFT JOIN state.access` in the same
 statement as `main.files` with no application-side join; attaching is not idempotent, so it happens once
-per connection in `makeDatabase` (`packages/index/src/database.ts:319`). Each plane keeps its own
-migration ledger (`packages/index/src/database.ts:195`, `packages/index/src/schema-const.ts:10-15`),
+per connection in `makeDatabase` (`packages/index/src/database.ts:311`). Each plane keeps its own
+migration ledger (`packages/index/src/database.ts:187`, `packages/index/src/schema-const.ts:10-15`),
 because rebuilding `index.db` must not mark the state plane's migrations unapplied.
 
 Both planes are plain SQLite through node's built-in `node:sqlite`, so there is no third-party database
 dependency and no driver feature flags to keep in step — `sqlite3` or a GUI browser opens either file
 directly. Every connection sets `journal_mode = WAL`, `busy_timeout = 5000`, `synchronous = NORMAL`, and
 `foreign_keys = ON`, and registers one SQL function, `vector_distance_cos`
-(`packages/index/src/database.ts:342-354`). That function is `@memhtml/domain`'s `cosineDistance` rather
+(`packages/index/src/database.ts:334-346`). That function is `@memhtml/domain`'s `cosineDistance` rather
 than a second implementation, so the vector arm's SQL and the MMR pass cannot disagree about a clamp or a
 zero-magnitude vector. Migrations apply in filename order, each file's statements and its ledger row
-committing in ONE transaction (`packages/index/src/database.ts:215`), so a crash never leaves one
+committing in ONE transaction (`packages/index/src/database.ts:207`), so a crash never leaves one
 half-applied.
 
 ### 6.1 Schema
@@ -889,7 +889,7 @@ code, total by construction: an unrecognized `_tag` becomes `ERR_UNKNOWN` rather
 re-read, two shas to reconcile, a model to check. It never carries the driver's message, the SQL, the git
 argv, or any memory body, because each typed error class already dropped those at its adapter edge
 precisely so a tool response could not carry corpus content (`packages/contracts/src/errors.ts:3-8`,
-`packages/index/src/database.ts:87-91`). Suggestions are part of the contract
+`packages/index/src/database.ts:152-162`). Suggestions are part of the contract
 (`apps/cli/src/errors.ts:111-127`), so an agent receiving `ERR_INDEX_STALE` can recover in one step without
 a round trip to a human; an absent list is `[]`, never null. Per-op batch codes are mapped **once**, in the
 operations layer (`apps/cli/src/operations.ts:367-381`), so `memhtml apply` and `memory_write_batch` cannot
@@ -929,7 +929,7 @@ not, refusing one at decode.
 ## 13. Testing posture
 
 Integration tests drive the **real** driver against `":memory:"` with the real migrations
-(`packages/index/src/database.ts:262-266`) and the **real git binary** against a temp-dir repo
+(`packages/index/src/database.ts:254-258`) and the **real git binary** against a temp-dir repo
 (`packages/store/src/store.ts:331-334`). A fake driver would verify the shape of the calls and miss every
 constraint the database enforces; a fake git would verify that the right strings were assembled and miss
 every state transition that matters. Fakes are `Layer.succeed` values — a deterministic hash-seeded

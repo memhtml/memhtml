@@ -4,7 +4,7 @@ import { dirname, join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 
 import { StorageFailure } from "@memhtml/contracts/errors"
-import { cosineDistance } from "@memhtml/domain"
+import { cosineDistance, float32View } from "@memhtml/domain"
 import { Context, Effect, Schedule } from "effect"
 
 /** The driver handle. Node's own SQLite, so there is no third-party database dependency. */
@@ -22,20 +22,6 @@ type Database = DatabaseSync
 const BUSY_TIMEOUT_MS = 5_000
 
 /**
- * A `Float32Array` over stored bytes, copying only when it must.
- *
- * `Float32Array` requires a 4-byte-aligned `byteOffset`, and a driver row's `Uint8Array` may be
- * a view into a pooled buffer at any offset. Viewing in place is the common case and costs
- * nothing. A misaligned or ragged blob is copied rather than rejected, because the vector arm's
- * job is to rank and a throw here would fail a whole search over one row.
- */
-const float32View = (bytes: Uint8Array): Float32Array | undefined => {
-  if (bytes.byteLength === 0 || bytes.byteLength % 4 !== 0) return undefined
-  const aligned = bytes.byteOffset % 4 === 0 ? bytes : Uint8Array.from(bytes)
-  return new Float32Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 4)
-}
-
-/**
  * Register `vector_distance_cos(a, b)`, the cosine distance over two float32 blobs.
  *
  * SQLite ships no vector functions, so the vector retrieval arm's distance is this. It calls
@@ -49,6 +35,12 @@ const float32View = (bytes: Uint8Array): Float32Array | undefined => {
  * vectors at top-40 (probed 2026-08-12 on node 24.19.0), against a Bedrock query-embedding round
  * trip of a few hundred milliseconds that every vector search pays first. An approximate index buys
  * nothing until the corpus is an order of magnitude larger.
+ *
+ * That measurement is the 1×n shape — one bound query vector against the table, n calls, n blob
+ * copies — and it is the ONLY shape this function serves. Each invocation materializes a fresh
+ * `Uint8Array` per blob argument, so an n×n consumer pays the corpus re-copied n times (probed
+ * 2026-08-18, issue #40: 8.45M calls and an OOM at n = 2,907). The sleep pair scans decode once
+ * and rank in `@memhtml/domain`'s neighbors module instead.
  */
 const registerVectorDistance = (db: Database): void => {
   db.function("vector_distance_cos", { deterministic: true }, (a: unknown, b: unknown) => {
