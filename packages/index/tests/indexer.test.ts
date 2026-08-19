@@ -1416,7 +1416,7 @@ const snapshot = (db: DatabaseShape) =>
               disclosure_text, para, workspace, confidence, importance, archived, origin_path,
               word_count, created_at, updated_at, event_at, archived_at, valid_from, valid_until,
               reprieves, needs_revision, author, session_id, prompt_id, turn_uuid, indexed_at,
-              task_status, due_at, frame_key
+              task_status, due_at, frame_key, finding_key
        FROM files ORDER BY path`
     )
     const tags = yield* db.all<Record<string, unknown>>(

@@ -196,6 +196,92 @@ export const frameKeyPairs = (
      ORDER BY l.path ASC, r.path ASC`
   )
 
+/** One open machine-detected task, as its detector's minting pass reads it. */
+export interface DetectedTaskRow {
+  readonly path: string
+  readonly gist: string
+  /** `<detector>:<digest16>`, never NULL here — the predicate excludes the unkeyed rows. */
+  readonly finding_key: string
+  readonly task_status: string
+}
+
+/**
+ * The keys and paths one detector's OPEN tasks already occupy, so a fresh pass recognizes its own
+ * prior work instead of re-filing it.
+ *
+ * A detected task is exempt from content dedup by design — `files_content_hash_active` (0008) carves
+ * tasks out, because two open tasks with identical bodies are two real work items. That exemption
+ * leaves `finding_key` as a detected task's ONLY stable identity, and this is the read that uses it.
+ *
+ * **The detector filter is an explicit RANGE, never `LIKE`.** `finding_key >= '<d>:'` and
+ * `finding_key < '<d>;'` bracket exactly the keys whose detector segment is `<d>`, because `;` is
+ * `:` plus one in ASCII (0x3B follows 0x3A) — so the upper bound is the first string that sorts past
+ * every `<d>:…` key and before any other detector's. Two consequences, and both are the reason for
+ * the form:
+ *
+ * - **It seeks.** A B-tree on `finding_key` answers a range with one descent and a walk, which is
+ *   what `files_finding_key_open` (0011) is for. `LIKE '<d>:%'` states the same intent and does NOT
+ *   use the index on this driver, since a prefix LIKE is only optimizable under a case-sensitive
+ *   collation the column does not declare. The cost difference is invisible until the corpus is big.
+ * - **It cannot bleed into a neighbor.** A detector name that is a PREFIX of another — `edge` against
+ *   `edge-typing` — is the case that separates a correct filter from a plausible one. `'edge:'` to
+ *   `'edge;'` excludes `edge-typing:…` because `-` (0x2D) sorts below `:` (0x3A), so an
+ *   `edge-typing:` key is below the lower bound entirely. A `LIKE 'edge%'` would have swallowed it.
+ *
+ * `task_status <> 'done'` is stated even though `archived = 0` covers the settled case, and the
+ * redundancy is deliberate: finishing a task stamps `done` AND archives it in one commit, so the two
+ * agree at rest but disagree for the instant between a status edit and its `git mv`. A minting pass
+ * that ran in that window would see a finished task as open and file a duplicate. The clause is NOT
+ * in the index's predicate, for the mirrored reason — a fourth clause there would make the index
+ * refuse to serve this query on any row mid-transition.
+ *
+ * `memory_type = 'task'` is written as the LITERAL the index's predicate uses rather than through
+ * {@link SLEEP_EXCLUDED_TYPES}, on the same reasoning {@link frameKeyPairs} records: a bound or
+ * negated form is a different expression to the planner and would quietly turn the seek into a scan.
+ *
+ * Rows come back in key order, which makes a minting pass's own output stable across runs on an
+ * unchanged corpus.
+ */
+export const openDetectedTasks = (
+  db: DatabaseShape,
+  detector: string
+): Effect.Effect<ReadonlyArray<DetectedTaskRow>, StorageFailure> =>
+  db.all<DetectedTaskRow>(
+    `SELECT path, gist, finding_key, task_status
+     FROM files
+     WHERE archived = 0 AND memory_type = 'task' AND finding_key IS NOT NULL
+       AND task_status <> 'done'
+       AND finding_key >= ? AND finding_key < ?
+     ORDER BY finding_key ASC, path ASC`,
+    [`${detector}:`, `${detector};`]
+  )
+
+/**
+ * The path of the OPEN task already carrying one exact finding key, or nothing.
+ *
+ * The single-finding form of {@link openDetectedTasks}, carrying the identical open-task conditions so
+ * the two cannot disagree about what "already filed" means: a key this returns is a key that helper
+ * lists, and a minting pass that skipped a finding here would otherwise be one that re-files it.
+ *
+ * Equality rather than a range, so the detector segment needs no separate handling — a well-formed key
+ * names its own detector. `@memhtml/html` has already narrowed the key against `FINDING_KEY_PATTERN`
+ * before it reaches the column, so there is nothing to validate here either.
+ */
+export const taskPathForFindingKey = (
+  db: DatabaseShape,
+  findingKey: string
+): Effect.Effect<string | undefined, StorageFailure> =>
+  db
+    .get<{ readonly path: string }>(
+      `SELECT path
+       FROM files
+       WHERE archived = 0 AND memory_type = 'task' AND finding_key IS NOT NULL
+         AND task_status <> 'done'
+         AND finding_key = ?`,
+      [findingKey]
+    )
+    .pipe(Effect.map((row) => row?.path))
+
 /**
  * Candidate pairs for edge typing: embedding-near, sharing an entity, and carrying no
  * AUTHORED edge between them in either direction.

@@ -191,6 +191,11 @@ export interface MemoryFixture {
   readonly reprieves?: string | undefined
   readonly taskStatus?: string | undefined
   readonly dueAt?: string | undefined
+  /**
+   * `memhtml-finding-key`, a detected task's idempotency anchor as `<detector>:<digest16>`. A plain
+   * string rather than a validated one, so a fixture can hand the parser a malformed key.
+   */
+  readonly findingKey?: string | undefined
   readonly entities?: ReadonlyArray<string> | undefined
   readonly tags?: ReadonlyArray<string> | undefined
   /** `memhtml-alias` values: the other names this file's subject is recorded under. */
@@ -230,6 +235,9 @@ export const memoryHtml = (fixture: MemoryFixture): string => {
     ...(fixture.dueAt === undefined
       ? []
       : [`<meta name="memhtml-due" content="${fixture.dueAt}">`]),
+    ...(fixture.findingKey === undefined
+      ? []
+      : [`<meta name="memhtml-finding-key" content="${fixture.findingKey}">`]),
     ...(fixture.entities ?? []).map((entity) => `<meta name="memhtml-entity" content="${entity}">`),
     ...(fixture.tags ?? []).map((tag) => `<meta name="memhtml-tag" content="${tag}">`),
     ...(fixture.aliases ?? []).map((alias) => `<meta name="memhtml-alias" content="${alias}">`),

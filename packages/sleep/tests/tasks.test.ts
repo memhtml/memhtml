@@ -11,9 +11,15 @@ import { personLinks } from "../src/phases/person-links.js"
 import { retentionTriage } from "../src/phases/retention-triage.js"
 import { runRetentionPass } from "../src/retention.js"
 import { instantFor } from "../src/run.js"
-import { minedPairs, neighborPairs, sharedEntityPairs } from "../src/sql.js"
+import {
+  minedPairs,
+  neighborPairs,
+  openDetectedTasks,
+  sharedEntityPairs,
+  taskPathForFindingKey
+} from "../src/sql.js"
 import { scriptedModel, value } from "../src/testing.js"
-import { DEDUP_CORPUS, type Fixture, TASK_CORPUS, withFixture } from "./fixture.js"
+import { DEDUP_CORPUS, type Fixture, memoryHtml, TASK_CORPUS, withFixture } from "./fixture.js"
 
 /**
  * Per-phase task exclusions, each asserted at the phase that owns it.
@@ -334,6 +340,234 @@ describe("edge-typing", () => {
           }
         }),
       { seed: SEED, model }
+    )
+  })
+})
+
+/**
+ * The finding-key helpers, which are the READ half of task-detection idempotency.
+ *
+ * Every other test in this file is about a phase declining to touch a task. These two are the
+ * opposite: they are the only queries in the module that go LOOKING for tasks, and they exist because
+ * a detected task has no other stable identity. `files_content_hash_active` carves tasks out of
+ * content dedup on purpose (two open tasks with identical bodies are two real work items), so nothing
+ * would stop a nightly detector from re-filing the same finding every night.
+ *
+ * The corpus below is built so each condition has something to refuse, and the two `edge` /
+ * `edge-typing` rows are the case that separates a correct filter from a plausible one.
+ */
+const KEY = (detector: string, digest: string) => `${detector}:${digest}`
+
+const OPEN_KEY = KEY("edge", "00112233445566aa")
+const DONE_KEY = KEY("edge", "00112233445566bb")
+const ARCHIVED_KEY = KEY("edge", "00112233445566cc")
+const NEIGHBOR_KEY = KEY("edge-typing", "00112233445566dd")
+const OTHER_KEY = KEY("commitment", "00112233445566ee")
+
+const OPEN_PATH = "areas/inbox/tasks/t-key-open.html"
+const DONE_PATH = "areas/inbox/tasks/t-key-done.html"
+/**
+ * Seeded ALREADY UNDER `archive/`, not archived by a later `UPDATE`. The path is the state — eviction
+ * IS the `git mv`, and the projection reads `archived` from the PARA bucket rather than from a meta
+ * (`packages/index/src/project.ts`) — so seeding it here makes the row archived for EVERY test in this
+ * block by the same mechanism production uses, instead of only for the ones that remember to update it.
+ */
+const ARCHIVED_PATH = "archive/2026/areas/inbox/tasks/t-key-archived.html"
+const NEIGHBOR_PATH = "areas/inbox/tasks/t-key-neighbor.html"
+const OTHER_PATH = "areas/inbox/tasks/t-key-other.html"
+
+const detectedTask = (title: string, claim: string, findingKey: string, taskStatus: string) =>
+  memoryHtml({
+    title,
+    claim,
+    memoryType: "task",
+    taskStatus,
+    findingKey,
+    createdAt: "2026-04-01T00:00:00Z"
+  })
+
+const FINDING_KEY_CORPUS: ReadonlyArray<{ readonly path: string; readonly html: string }> = [
+  {
+    path: OPEN_PATH,
+    html: detectedTask(
+      "Confirm the staging bastion port",
+      "The staging bastion port is unconfirmed.",
+      OPEN_KEY,
+      "todo"
+    )
+  },
+  {
+    // Done but NOT yet archived: the transient between a status edit and its `git mv`, which is the
+    // only window where `task_status <> 'done'` does work `archived = 0` has not already done.
+    path: DONE_PATH,
+    html: detectedTask(
+      "Record the deploy runbook owner",
+      "The deploy runbook owner is unrecorded.",
+      DONE_KEY,
+      "done"
+    )
+  },
+  {
+    path: ARCHIVED_PATH,
+    html: detectedTask(
+      "Chase the expired TLS certificate",
+      "The staging TLS certificate has expired.",
+      ARCHIVED_KEY,
+      "todo"
+    )
+  },
+  {
+    /**
+     * The prefix twin, and the reason the filter is a range rather than a `LIKE`. `edge-typing` starts
+     * with `edge`, so `LIKE 'edge%'` would swallow this row into the `edge` detector's results — and
+     * the two detectors would each keep re-filing findings the other had already recorded.
+     */
+    path: NEIGHBOR_PATH,
+    html: detectedTask(
+      "Type the checkout-to-deploy edge",
+      "The checkout and deploy memories have no typed edge between them.",
+      NEIGHBOR_KEY,
+      "todo"
+    )
+  },
+  {
+    path: OTHER_PATH,
+    html: detectedTask(
+      "Follow up on the capacity commitment",
+      "The capacity commitment has no owner.",
+      OTHER_KEY,
+      "todo"
+    )
+  }
+]
+
+describe("the finding-key helpers", () => {
+  it("returns one detector's OPEN tasks and excludes done, archived, and other detectors", async () => {
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const open = yield* openDetectedTasks(fixture.db, "edge")
+
+          // Exactly the one open `edge` task, with every field the minting kernel reads.
+          expect(open).toHaveLength(1)
+          expect(open[0]?.path).toBe(OPEN_PATH)
+          expect(open[0]?.finding_key).toBe(OPEN_KEY)
+          expect(open[0]?.task_status).toBe("todo")
+          expect(open[0]?.gist).toBe("The staging bastion port is unconfirmed.")
+
+          /**
+           * And each negative is a row that EXISTS and was excluded, not a row the fixture failed to
+           * seed. Without this half the assertion above would hold just as well on an empty corpus.
+           */
+          const seeded = yield* fixture.db.all<{ readonly finding_key: string }>(
+            "SELECT finding_key FROM files WHERE finding_key IS NOT NULL ORDER BY finding_key"
+          )
+          expect(seeded.map((row) => row.finding_key)).toEqual(
+            [OPEN_KEY, DONE_KEY, ARCHIVED_KEY, NEIGHBOR_KEY, OTHER_KEY].toSorted()
+          )
+        }),
+      { seed: [...FINDING_KEY_CORPUS] }
+    )
+  })
+
+  it("does not bleed across a detector whose name is a PREFIX of another", async () => {
+    /**
+     * The range boundary, in BOTH directions — one direction alone would pass on a filter that is
+     * simply too narrow. `edge` must not see `edge-typing`'s task, AND `edge-typing` must see its own.
+     *
+     * The mechanism: `-` is 0x2D and `:` is 0x3A, so `edge-typing:…` sorts BELOW `edge:`'s lower bound
+     * and is outside the bracket entirely.
+     *
+     * **Verified by mutation, and the honest form of that note matters here.** Dropping the SEPARATOR
+     * is what this catches: `finding_key LIKE ? || '%'` fails three cases in this block, because `edge`
+     * then matches `edge-typing:…`. Keeping the separator and only changing the FORM —
+     * `finding_key LIKE ? || ':%'` — passes every case, because it is genuinely result-equivalent to
+     * the range on this data. The range is chosen over that form for the PLAN, not the rows, and the
+     * plan is asserted where a plan can be asserted: `files_finding_key_open`'s seek test in
+     * `packages/index/tests/migrations.test.ts`. Claiming this test covered the LIKE-vs-range choice
+     * would have been the `result-identical-but-wrong` mistake in the note itself.
+     *
+     * A wrong upper BOUND is caught here too: `< '<d>:'` instead of `< '<d>;'` fails two cases.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const edge = yield* openDetectedTasks(fixture.db, "edge")
+          expect(edge.map((row) => row.path)).toEqual([OPEN_PATH])
+
+          const neighbor = yield* openDetectedTasks(fixture.db, "edge-typing")
+          expect(neighbor.map((row) => row.path)).toEqual([NEIGHBOR_PATH])
+
+          // A detector with no tasks at all reads as empty rather than as everything.
+          expect(yield* openDetectedTasks(fixture.db, "decay")).toEqual([])
+        }),
+      { seed: [...FINDING_KEY_CORPUS] }
+    )
+  })
+
+  it("honors an exact key, and excludes the done and archived tasks the range does", async () => {
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          expect(yield* taskPathForFindingKey(fixture.db, OPEN_KEY)).toBe(OPEN_PATH)
+          // The neighbor detector's key resolves to its OWN task, which is the exact-match half of the
+          // prefix case: equality needs no range reasoning, and this pins that it gets it right.
+          expect(yield* taskPathForFindingKey(fixture.db, NEIGHBOR_KEY)).toBe(NEIGHBOR_PATH)
+
+          /**
+           * A done task and an archived one are both ABSENT, which is what makes this lookup mean "is
+           * this finding already open work" rather than "has this finding ever been filed". A detector
+           * whose task was completed and then re-detected files it again, deliberately: the finding
+           * came back, so the work did.
+           */
+          expect(yield* taskPathForFindingKey(fixture.db, DONE_KEY)).toBeUndefined()
+          expect(yield* taskPathForFindingKey(fixture.db, ARCHIVED_KEY)).toBeUndefined()
+          // And both rows are really there, so the two assertions above are about the WHERE clause.
+          const present = yield* fixture.db.all<{ readonly finding_key: string }>(
+            "SELECT finding_key FROM files WHERE finding_key IN (?, ?)",
+            [DONE_KEY, ARCHIVED_KEY]
+          )
+          expect(present).toHaveLength(2)
+
+          // A key nothing carries is undefined, never an empty row.
+          expect(
+            yield* taskPathForFindingKey(fixture.db, KEY("edge", "ffffffffffffffff"))
+          ).toBeUndefined()
+        }),
+      { seed: [...FINDING_KEY_CORPUS] }
+    )
+  })
+
+  it("sees no hand-authored memory, since only a detector writes the meta", async () => {
+    // The helpers are `memory_type = 'task'`-scoped, matching `files_finding_key_open`'s predicate. A
+    // hand-edited semantic memory carrying a key is not work to be re-filed.
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* fixture.db.run("UPDATE files SET memory_type = 'semantic' WHERE path = ?", [
+            OPEN_PATH
+          ])
+          expect(yield* openDetectedTasks(fixture.db, "edge")).toEqual([])
+          expect(yield* taskPathForFindingKey(fixture.db, OPEN_KEY)).toBeUndefined()
+        }),
+      { seed: [...FINDING_KEY_CORPUS] }
+    )
+  })
+
+  it("projects a task with NO finding key as NULL, invisible to both helpers", async () => {
+    // The overwhelmingly common case: a hand-filed task has no anchor, and a NULL is outside the
+    // partial index and outside every range.
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const row = yield* fixture.db.get<{ readonly finding_key: string | null }>(
+            "SELECT finding_key FROM files WHERE path = ?",
+            ["areas/inbox/tasks/t-runbook-review-a.html"]
+          )
+          expect(row?.finding_key).toBeNull()
+          expect(yield* openDetectedTasks(fixture.db, "edge")).toEqual([])
+        }),
+      { seed: [...TASK_CORPUS] }
     )
   })
 })

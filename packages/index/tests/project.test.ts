@@ -377,6 +377,72 @@ describe("projectFile", () => {
     expect(memoryInsert?.params[FILE_COLUMNS.indexOf("due_at")]).toBeNull()
   })
 
+  it("binds a detected task's finding key, and nulls it where the meta is absent", () => {
+    /**
+     * The idempotency anchor reaching the column. It is what lets a detector recognize its own prior
+     * work, and it has to be projected rather than re-derived: tasks are carved out of
+     * `files_content_hash_active` (two open tasks with identical bodies are two real work items), so
+     * this key is a detected task's only stable identity.
+     */
+    const detected = project(
+      "areas/inbox/tasks/t.html",
+      memoryHtml({
+        title: "T",
+        claim: "C.",
+        memoryType: "task",
+        taskStatus: "todo",
+        findingKey: "edge:00112233445566aa"
+      })
+    )
+    const insert = detected.writes.find((write) => write.sql.includes("INSERT INTO files"))
+    expect(insert?.params[FILE_COLUMNS.indexOf("finding_key")]).toBe("edge:00112233445566aa")
+
+    const handAuthored = project("areas/a.html", memoryHtml({ title: "T", claim: "C." }))
+    const plain = handAuthored.writes.find((write) => write.sql.includes("INSERT INTO files"))
+    // NULL, never the empty string: `files_finding_key_open`'s predicate is `IS NOT NULL`, and an
+    // empty string would sit INSIDE the index and inside every detector's range's lower neighborhood.
+    expect(plain?.params[FILE_COLUMNS.indexOf("finding_key")]).toBeNull()
+  })
+
+  it("projects a MALFORMED finding key as NULL, because the parser already dropped it", () => {
+    /**
+     * The graceful-degradation path, at the projection. `@memhtml/html` narrows the meta against
+     * `FINDING_KEY_PATTERN` and reports a malformed value as ABSENT plus a warning rather than as a
+     * violation — the task is a real task whether or not its bookkeeping anchor parses, and refusing
+     * the file would make `memhtml task list` lose a task a human can see in the tree.
+     *
+     * So the projection needs no pattern test of its own, and this asserts that it does not need one:
+     * a mistyped key lands NULL through the parser's narrowing, and the worst outcome is one duplicate
+     * task on the next detection pass, not a vanished one.
+     */
+    const malformed = project(
+      "areas/inbox/tasks/t.html",
+      memoryHtml({
+        title: "T",
+        claim: "C.",
+        memoryType: "task",
+        taskStatus: "todo",
+        // A digest of the wrong length: the shape is right and the value is not.
+        findingKey: "edge:00112233"
+      })
+    )
+    const insert = malformed.writes.find((write) => write.sql.includes("INSERT INTO files"))
+    expect(insert?.params[FILE_COLUMNS.indexOf("finding_key")]).toBeNull()
+    // And the task itself still projects — this is a warning, not a refusal.
+    expect(insert?.params[FILE_COLUMNS.indexOf("task_status")]).toBe("todo")
+  })
+
+  it("still binds one value per named column now that finding_key is among them", () => {
+    // `FILE_COLUMNS` drives the names, the placeholder count, AND the upsert's assignments, so a
+    // column added to one and forgotten in another binds every later value one slot off with every
+    // CHECK still passing.
+    const projection = project("areas/a.html", memoryHtml({ title: "T", claim: "C." }))
+    const insert = projection.writes.find((write) => write.sql.includes("INSERT INTO files"))
+    expect(FILE_COLUMNS).toContain("finding_key")
+    expect(insert?.params).toHaveLength(FILE_COLUMNS.length)
+    expect(insert?.sql).toContain("finding_key = excluded.finding_key")
+  })
+
   it("keeps a task's chunk keyed on its content hash like any other memory", () => {
     // A task is chunked and embeddable exactly as a memory is — the exclusions are in the read
     // path, not the write path, so `memory_search --type task` has vectors to rank when asked.

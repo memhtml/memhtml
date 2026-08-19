@@ -1,0 +1,72 @@
+-- `files` gains `finding_key`: the idempotency anchor a machine-detected task carries, projected from
+-- the head's `memhtml-finding-key` as `<detector>:<digest16>`. NULL on every hand-authored memory.
+--
+-- ── Why a detected task needs its own identity column ────────────────────────────────────────────
+--
+-- Every other memory type is deduplicated by CONTENT: `files_content_hash_active` (0008) refuses a
+-- second active row with the same `content_hash`, so a write that restates an existing fact collides
+-- and is caught. Tasks are carved OUT of that index, deliberately — two open tasks with identical
+-- bodies are two real work items ("review the deploy runbook" twice is two things to do), and 0008
+-- records the reasoning. That carve-out is right for a human filing a task twice, and it leaves a
+-- DETECTOR with no way to recognize its own prior work: a nightly pass that re-reads the same
+-- transcript and re-derives the same finding would file the task again every night, and nothing in
+-- the schema would object.
+--
+-- So this column is the detected task's ONLY stable identity. It is not a second content hash: the
+-- key is derived by the detector from the FINDING (which transcript span, which rule fired), so the
+-- same finding keeps its key even when the task's prose is rewritten, and a genuinely new finding
+-- takes a new key even when it reads almost identically. That is the property a minting kernel needs
+-- and the one a content hash cannot give it.
+--
+-- ── ADDITIVE, following 0009 and NOT 0008 ────────────────────────────────────────────────────────
+--
+-- `ALTER TABLE … ADD COLUMN` plus one index. 0008's recreate-and-copy was forced by a CHECK edit
+-- (SQLite cannot ALTER a CHECK) and it carried real danger: `DROP TABLE files` cascades down to
+-- `embeddings`, so it had to snapshot and restore six tables to avoid re-paying Bedrock for the whole
+-- corpus. A nullable column with no constraint needs none of that.
+--
+-- ── The index is on `finding_key` ALONE, and that is what serves the range ───────────────────────
+--
+-- `openDetectedTasks` (`packages/sleep/src/sql.ts`) asks for one detector's open tasks as an explicit
+-- range, `finding_key >= '<d>:' AND finding_key < '<d>;'` — `;` is `:` plus one in ASCII, so the pair
+-- brackets exactly the keys whose detector segment is `<d>`. A B-tree on the key alone answers that
+-- with one seek and a walk. `LIKE '<d>:%'` would express the same intent and would NOT use the index
+-- on this driver (a leading-wildcard-free LIKE is only optimizable under a case-sensitive collation
+-- the column does not declare), so the range form is the query and this is its index.
+--
+-- The predicate mirrors the lookup's clause for clause, the same discipline
+-- `files_content_hash_active`/`activePathForHash` and `files_frame_key_active`/`activeFramesFor`
+-- follow: the query is the question and the index is the answer, so a predicate on one and not the
+-- other is a seek that silently degrades to a scan.
+--
+--   * `archived = 0`: a finished task is archived by the same `git mv` every eviction uses, and a
+--     detector re-filing work that is already done is the thing this column prevents. The lookup also
+--     excludes `task_status = 'done'`, which is NOT in the predicate — a done-but-not-yet-archived
+--     task is a narrow transient, and putting a fourth clause here would make the index refuse to
+--     serve the query on any row mid-transition.
+--   * `memory_type = 'task'`: equality, not 0009's `<> 'task'`. Only tasks carry a finding key at all,
+--     so this confines the index to the detected work rather than to the corpus.
+--   * `finding_key IS NOT NULL`: most rows have no key, and stating it is what makes the partial index
+--     usable rather than leaving the planner to prove the range excludes NULL.
+--
+-- ── NOT UNIQUE ───────────────────────────────────────────────────────────────────────────────────
+--
+-- A duplicate key means a detector filed the same finding twice, which is a BUG the minting kernel's
+-- lookup exists to catch and report. A unique index would make that write fail instead, turning a
+-- recoverable double-file into a failed sleep phase — and it would refuse legitimate history too,
+-- since an archived task and its re-opened successor may share a key. The lookup decides; the
+-- database records.
+--
+-- ── Existing rows arrive NULL, and self-heal ─────────────────────────────────────────────────────
+--
+-- No backfill, and none is possible: the key lives in the file's head, and this migration cannot read
+-- the git tree. None is needed either, because `index.db` is a disposable projection — `memhtml index
+-- rebuild` recomputes every row from the files, and short of that each file's next update rewrites its
+-- own row through the projection's upsert. Until then a NULL means "not yet projected", and the
+-- minting lookup requires a non-NULL match, so a detector finds fewer prior tasks and never wrong
+-- ones. The failure mode of a stale NULL is one duplicate task, which is a commit a reviewer declines.
+
+ALTER TABLE files ADD COLUMN finding_key TEXT;
+
+CREATE INDEX files_finding_key_open ON files (finding_key)
+  WHERE archived = 0 AND memory_type = 'task' AND finding_key IS NOT NULL;

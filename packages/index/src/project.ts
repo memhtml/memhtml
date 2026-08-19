@@ -127,7 +127,12 @@ export const FILE_COLUMNS = [
    * the heuristic's guards fail closed, and `files_frame_key_active` (0009) indexes only the non-NULL
    * active non-task ones.
    */
-  "frame_key"
+  "frame_key",
+  /**
+   * A machine-detected task's idempotency anchor, from `memhtml-finding-key`. NULL on every
+   * hand-authored memory, and `files_finding_key_open` (0011) indexes only the open detected tasks.
+   */
+  "finding_key"
 ] as const
 
 /**
@@ -198,7 +203,19 @@ export const projectFile = (input: {
      * the same key from the same file by construction, keeping a rebuilt index byte-identical here.
      * NULL is the common case and means "no frame shape", never "not computed".
      */
-    frameKeyOf(doc.article.gist)
+    frameKeyOf(doc.article.gist),
+    /**
+     * Read straight off the parsed metas, with no re-validation. `@memhtml/html` narrows a
+     * `memhtml-finding-key` against `FINDING_KEY_PATTERN` and reports a malformed one as ABSENT plus a
+     * warning, so a value arriving here is already well-formed and a malformed one is already NULL. A
+     * second pattern test would be a consumer restating a producer's rule, free to drift from it.
+     *
+     * NOT type-conditional, on the same reasoning `frame_key` records: the write path stays uniform
+     * and the task restriction is stated once, in `files_finding_key_open`'s predicate and in the
+     * lookup that matches it. Only a detector writes this meta, so a non-task carrying one is a
+     * hand-edit, and projecting it costs a NULL-free column value the index does not admit anyway.
+     */
+    doc.metas.findingKey ?? null
   ]
 
   /**

@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest"
 
 import { FTS_COLUMN, FTS_INDEX_NAME, MEMORY_TABLES, TRACE_TABLES } from "../src/schema-const.js"
 import {
+  migrationNames,
   migrationsAfter,
+  stateMigrationNames,
   stateMigrationsAfter,
   withDb,
   withDbNoState,
@@ -18,11 +20,17 @@ import {
  */
 
 describe("migrations", () => {
-  it("applies all ten index migrations and both state migrations", async () => {
+  it("applies every index migration on disk and both state migrations", async () => {
     const counts = await withDb((db) =>
       Effect.succeed({ index: db.migrationsApplied, state: db.stateMigrationsApplied })
     )
-    expect(counts).toEqual({ index: 10, state: 2 })
+    // Derived from the directory rather than written down, for the reason `migrationsAfter` records:
+    // the count is incidental to what this asserts, and a literal fails here on every new migration
+    // file with an off-by-one that reads like a real regression.
+    expect(counts).toEqual({
+      index: (await migrationNames()).length,
+      state: (await stateMigrationNames()).length
+    })
   })
 
   it("creates every table the truncate lists name", async () => {
@@ -75,7 +83,8 @@ describe("migrations", () => {
       "0007_watermark.sql",
       "0008_tasks.sql",
       "0009_frame_key.sql",
-      "0010_trace_consolidations.sql"
+      "0010_trace_consolidations.sql",
+      "0011_finding_key.sql"
     ])
     expect(ledgers.state).toEqual(["S0001_access.sql", "S0002_entity_corroboration.sql"])
   })
@@ -219,15 +228,17 @@ describe("0008 over a populated 0007 database", () => {
     expect(outcome.after).toEqual(outcome.before)
     expect(outcome.integrity).toEqual([])
 
-    // `files` keeps every row and every old column value; each new one arrives null. `frame_key`
-    // included: 0009 does not backfill, because the key derives from the gist through TypeScript and
-    // SQL cannot call `frameKeyOf` — the rows fill in on the next rebuild or the next touch.
+    // `files` keeps every row and every old column value; each new one arrives null. `frame_key` and
+    // `finding_key` included: neither 0009 nor 0011 backfills, because one key derives from the gist
+    // through TypeScript (SQL cannot call `frameKeyOf`) and the other lives in the file's head where a
+    // migration cannot read it — the rows fill in on the next rebuild or the next touch.
     expect(outcome.afterFiles).toHaveLength(outcome.beforeFiles.length)
     for (const [offset, after] of outcome.afterFiles.entries()) {
-      const { task_status, due_at, frame_key, ...carried } = after
+      const { task_status, due_at, frame_key, finding_key, ...carried } = after
       expect(task_status).toBeNull()
       expect(due_at).toBeNull()
       expect(frame_key).toBeNull()
+      expect(finding_key).toBeNull()
       expect(carried).toEqual(outcome.beforeFiles[offset])
     }
   })
@@ -295,6 +306,7 @@ describe("0008 over a populated 0007 database", () => {
       "files_blob",
       "files_content_hash_active",
       "files_event",
+      "files_finding_key_open",
       "files_frame_key_active",
       "files_para",
       "files_session",
@@ -367,6 +379,8 @@ describe("0009 over a populated 0008 database", () => {
     )
 
   it("adds frame_key as NULL on every existing row without disturbing the rest", async () => {
+    // Every migration after 0008 applies here, so `finding_key` (0011) lands alongside `frame_key` and
+    // is destructured off with it. Both are unbackfillable for their own reasons, stated below.
     const outcome = await withDbThrough("0008_tasks.sql", (db, apply) =>
       Effect.gen(function* () {
         yield* seedRow(db, "areas/oncall/a.html", "sha256:aaa", 0)
@@ -383,10 +397,12 @@ describe("0009 over a populated 0008 database", () => {
     expect(outcome.applied).toBe(await migrationsAfter("0008_tasks.sql"))
     expect(outcome.after).toHaveLength(2)
     for (const [offset, row] of outcome.after.entries()) {
-      const { frame_key, ...carried } = row
+      const { frame_key, finding_key, ...carried } = row
       // Not backfilled by design: SQL cannot call `frameKeyOf`, and a SQL reimplementation of the
       // regex would be a second copy of a measured heuristic, free to drift.
       expect(frame_key).toBeNull()
+      // Nor can a migration read the file's head, which is where `finding_key` lives.
+      expect(finding_key).toBeNull()
       expect(carried).toEqual(outcome.before[offset])
     }
   })
@@ -496,7 +512,16 @@ describe("0010 over a populated 0009 database", () => {
     )
 
     expect(outcome.applied).toBe(await migrationsAfter("0009_frame_key.sql"))
-    expect(outcome.after).toEqual(outcome.before)
+    // Compared column-for-column with the ADDED columns lifted off, because every migration after
+    // 0009 applies here — 0011 gives `files` a nullable `finding_key`. The claim is that 0010 leaves
+    // the existing tables alone, and a bare `toEqual` would restate that as "no later migration ever
+    // adds a column", which is a different and false thing.
+    expect(outcome.after).toHaveLength(outcome.before.length)
+    for (const [offset, row] of outcome.after.entries()) {
+      const { finding_key, ...carried } = row
+      expect(finding_key).toBeNull()
+      expect(carried).toEqual(outcome.before[offset])
+    }
     expect(outcome.watermarks).toEqual([])
   })
 
@@ -569,6 +594,208 @@ describe("0010 over a populated 0009 database", () => {
       ])
     )
     expect(present?.name).toBe("trace_consolidations")
+  })
+})
+
+/**
+ * 0011 adds `files.finding_key` plus `files_finding_key_open`: additive like 0009, so nothing can be
+ * destroyed and the risks are all silent ones. The index could be absent (a detector's range query
+ * degrades to a full scan), unique (a re-detection fails the sleep phase instead of being reported),
+ * or carry a predicate that disagrees with the lookup's (a seek on some rows, a scan on others). Each
+ * is asserted separately below, because a predicate agreeing on two clauses of three still scans.
+ */
+describe("0011 over a populated 0010 database", () => {
+  it("adds finding_key as NULL on every existing row without disturbing the rest", async () => {
+    const outcome = await withDbThrough("0010_trace_consolidations.sql", (db, apply) =>
+      Effect.gen(function* () {
+        const memory = fileRow()
+        yield* db.run(memory.sql, memory.params)
+        const task = fileRow({
+          path: "areas/inbox/tasks/t.html",
+          blob_sha: "sha-t",
+          content_hash: "sha256:ttt",
+          memory_type: "task",
+          task_status: "todo"
+        })
+        yield* db.run(task.sql, task.params)
+        const before = yield* db.all<Record<string, unknown>>("SELECT * FROM files ORDER BY path")
+
+        const applied = yield* Effect.promise(apply)
+
+        return {
+          applied,
+          before,
+          after: yield* db.all<Record<string, unknown>>("SELECT * FROM files ORDER BY path"),
+          integrity: yield* db.all<Record<string, unknown>>("PRAGMA foreign_key_check")
+        }
+      })
+    )
+
+    expect(outcome.applied).toBe(await migrationsAfter("0010_trace_consolidations.sql"))
+    expect(outcome.after).toHaveLength(2)
+    expect(outcome.integrity).toEqual([])
+    for (const [offset, row] of outcome.after.entries()) {
+      const { finding_key, ...carried } = row
+      // Not backfilled, and not backfillable: the key lives in the file's head and a migration cannot
+      // read the git tree. The rows fill in on the next rebuild or the next touch, and until then a
+      // NULL means "not yet projected" — the lookup requires a non-NULL match, so a detector finds
+      // fewer prior tasks and never wrong ones.
+      expect(finding_key).toBeNull()
+      expect(carried).toEqual(outcome.before[offset])
+    }
+  })
+
+  it("creates files_finding_key_open with the lookup's exact predicate, and NOT unique", async () => {
+    const row = await withDbThrough("0010_trace_consolidations.sql", (db, apply) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(apply)
+        return yield* db.get<{ sql: string }>(
+          "SELECT sql FROM sqlite_schema WHERE type = 'index' AND name = 'files_finding_key_open'"
+        )
+      })
+    )
+
+    expect(row?.sql).toBeDefined()
+    expect(row?.sql).toContain("archived = 0")
+    // EQUALITY, unlike 0009's `<> 'task'`: only a detected task carries a finding key, so this index
+    // covers the detected work rather than the corpus. A `<>` here would index every memory.
+    expect(row?.sql).toMatch(/memory_type = 'task'/)
+    expect(row?.sql).toContain("finding_key IS NOT NULL")
+    // `task_status` is deliberately NOT a fourth clause. The lookup excludes `done` to cover the
+    // instant between a status edit and its `git mv`; putting that in the predicate would make the
+    // index refuse to serve the query on exactly the rows mid-transition.
+    expect(row?.sql).not.toContain("task_status")
+    // UNIQUE would turn a detector's double-file — a bug the minting lookup exists to REPORT — into a
+    // failed write, and would refuse an archived task and its re-opened successor sharing a key.
+    expect(row?.sql).not.toContain("UNIQUE")
+  })
+
+  it("serves the detector range as a SEEK on files_finding_key_open, not a scan", async () => {
+    /**
+     * The SHAPE of the query, not only its result — the `result-identical-but-wrong` lesson. A range
+     * planned against the wrong index returns byte-identical rows while reading the corpus, and no
+     * correctness assertion anywhere would notice.
+     *
+     * **Seeded and `ANALYZE`d, deliberately.** On an unmeasured table this planner picks
+     * `files_type_active (memory_type=?)` — probed 2026-08-19, node 24.19.0 — because with no
+     * statistics it cannot know that `memory_type = 'task'` matches most of the table's index while
+     * the key range matches forty rows. That is a statistics question, not a schema one, and asserting
+     * the no-stats plan would pin an artifact of ignorance. `activeFramesFor`'s measurement in
+     * `traces-persist.ts` was taken the same way for the same reason. The seed is deliberately
+     * lopsided (800 memories against 40 detected tasks) because that IS the production ratio the index
+     * exists for: a corpus is mostly remembered facts, and a detector's range is a thin slice of it.
+     */
+    const detail = await withDb((db) =>
+      Effect.gen(function* () {
+        for (let at = 0; at < 800; at += 1) {
+          const memory = fileRow({ path: `areas/m${at}.html`, content_hash: `sha256:m${at}` })
+          yield* db.run(memory.sql, memory.params)
+        }
+        for (let at = 0; at < 40; at += 1) {
+          const task = fileRow({
+            path: `areas/inbox/tasks/t${at}.html`,
+            content_hash: `sha256:t${at}`,
+            memory_type: "task",
+            task_status: "todo",
+            finding_key: `edge:${String(at).padStart(16, "0")}`
+          })
+          yield* db.run(task.sql, task.params)
+        }
+        yield* db.run("ANALYZE")
+        const plan = yield* db.all<{ detail: string }>(
+          `EXPLAIN QUERY PLAN
+           SELECT path, gist, finding_key, task_status
+           FROM files
+           WHERE archived = 0 AND memory_type = 'task' AND finding_key IS NOT NULL
+             AND task_status <> 'done'
+             AND finding_key >= 'edge:' AND finding_key < 'edge;'
+           ORDER BY finding_key ASC, path ASC`
+        )
+        return plan.map((step) => step.detail).join(" | ")
+      })
+    )
+
+    /**
+     * The seek term asserted EXACTLY, with nothing else inside the parentheses — which is what pins
+     * "indexes `finding_key` alone" rather than merely "uses an index named this".
+     *
+     * The looser `SEARCH .*files_finding_key_open` admits two real regressions, both found by mutating
+     * the migration (2026-08-19):
+     *
+     *   * `ON files (task_status, finding_key)` plans as `(ANY(task_status) AND finding_key>? AND
+     *     finding_key<?)` — a SKIP-SCAN. It still says SEARCH and still names the index, while walking
+     *     one sub-range per distinct leading value.
+     *   * `ON files (memory_type, finding_key)` plans as `(memory_type=? AND finding_key>? …)`, whose
+     *     leading column is a CONSTANT under the partial predicate — a wider index buying nothing.
+     *
+     * `ON files (path)` is caught by any form of this assertion: the planner abandons it for
+     * `files_type_active (memory_type=?)`, which is the corpus-reading plan the column exists to avoid.
+     */
+    expect(detail).toContain(
+      "SEARCH files USING INDEX files_finding_key_open (finding_key>? AND finding_key<?)"
+    )
+  })
+
+  it("admits two open tasks sharing a finding key, because a double-file must be observable", async () => {
+    /**
+     * The non-uniqueness at the database. A detector filing one finding twice is a bug the minting
+     * kernel's lookup reports; refusing the write would fail the whole sleep phase instead, and would
+     * also refuse an archived task and its re-opened successor legitimately sharing a key.
+     *
+     * (Verified by mutation: adding `UNIQUE` to 0011's index makes this test fail on the second
+     * update while every other test in this file still passes.)
+     */
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        const first = fileRow({
+          path: "areas/inbox/tasks/a.html",
+          content_hash: "sha256:aaa",
+          memory_type: "task",
+          task_status: "todo",
+          finding_key: "edge:00112233445566aa"
+        })
+        yield* db.run(first.sql, first.params)
+        const second = fileRow({
+          path: "areas/inbox/tasks/b.html",
+          blob_sha: "sha-b",
+          content_hash: "sha256:bbb",
+          memory_type: "task",
+          task_status: "todo",
+          finding_key: "edge:00112233445566aa"
+        })
+        const duplicate = yield* Effect.result(db.run(second.sql, second.params))
+        return {
+          duplicate,
+          n: yield* db.get<{ n: number }>(
+            "SELECT count(*) AS n FROM files WHERE finding_key = 'edge:00112233445566aa'"
+          )
+        }
+      })
+    )
+    expect(Result.isSuccess(outcome.duplicate)).toBe(true)
+    expect(outcome.n?.n).toBe(2)
+  })
+
+  it("takes a NULL finding_key on every memory type, since only a detector writes one", async () => {
+    // No CHECK and no type conditional: the column is nullable with no constraint, and the task
+    // restriction lives in the index's predicate and the lookup's WHERE, stated once each.
+    const outcome = await withDb((db) => {
+      const memory = fileRow({ memory_type: "semantic" })
+      return Effect.result(db.run(memory.sql, memory.params))
+    })
+    expect(Result.isSuccess(outcome)).toBe(true)
+
+    const stored = await withDb((db) =>
+      Effect.gen(function* () {
+        const row = fileRow()
+        yield* db.run(row.sql, row.params)
+        return yield* db.get<{ finding_key: string | null }>(
+          "SELECT finding_key FROM files WHERE path = ?",
+          ["areas/oncall/a.html"]
+        )
+      })
+    )
+    expect(stored?.finding_key).toBeNull()
   })
 })
 

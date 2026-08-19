@@ -287,6 +287,12 @@ export interface MemoryFixture {
   readonly sessionId?: string | undefined
   readonly taskStatus?: string | undefined
   readonly dueAt?: string | undefined
+  /**
+   * `memhtml-finding-key`, a detected task's idempotency anchor. Typed as a plain string rather than
+   * validated here, so a fixture can hand the parser a MALFORMED key — which is the input the
+   * warn-and-drop path exists for.
+   */
+  readonly findingKey?: string | undefined
 }
 
 /**
@@ -328,6 +334,9 @@ export const memoryHtml = (fixture: MemoryFixture): string => {
     ...(fixture.dueAt === undefined
       ? []
       : [`<meta name="memhtml-due" content="${fixture.dueAt}">`]),
+    ...(fixture.findingKey === undefined
+      ? []
+      : [`<meta name="memhtml-finding-key" content="${fixture.findingKey}">`]),
     ...(fixture.entities ?? []).map((entity) => `<meta name="memhtml-entity" content="${entity}">`),
     ...(fixture.tags ?? []).map((tag) => `<meta name="memhtml-tag" content="${tag}">`),
     ...(fixture.links ?? []).map((link) => `<link rel="${link.rel}" href="${link.href}">`)
