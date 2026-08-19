@@ -107,6 +107,17 @@ export {
   MergePartition,
   pairText
 } from "./llm.js"
+export type { DetectedFinding, MintedTask, Minter, MintReport } from "./mint.js"
+export {
+  CLAIM_JACCARD_FLOOR,
+  claimJaccard,
+  closeTask,
+  DETECTED_TAG,
+  findingKeyOf,
+  MINT_AUTHOR,
+  MINT_CAP,
+  makeMinter
+} from "./mint.js"
 export * from "./phases/index.js"
 export type { GeneratedFile } from "./publish.js"
 export {
