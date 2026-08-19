@@ -1,9 +1,10 @@
-import type { LlmContractViolation, ModelUnavailable } from "@memhtml/contracts/errors"
 import { wrapAsData } from "@memhtml/llm"
-import { Effect, Result, Schema } from "effect"
+import { Schema } from "effect"
+
+import { batchPrompt } from "./batch.js"
 
 /**
- * The structured-output schemas the four LLM phases share, and the per-item isolation wrapper.
+ * The structured-output schemas the four LLM phases share, and their prompts.
  *
  * Two rules govern everything here, both of them found by hitting the failure:
  *
@@ -187,32 +188,19 @@ export const arcExecutePrompt = (input: {
     ? "Synthesize a new behavioral principal from this evidence."
     : "Update the arc to incorporate the new evidence, preserving existing knowledge that holds.")
 
-/** The compress user turn for one batch: every member's text, wrapped, under its offered key. */
-export const compressPrompt = (
-  members: ReadonlyArray<{ readonly key: string; readonly text: string }>
-): string =>
-  `${members.map((member) => dataBlock(`member_${member.key}`, member.text)).join("\n\n")}\n\n` +
+/** The instruction that closes a compress batch's user turn, after the member list. */
+export const COMPRESS_INSTRUCTION =
   "Fold these memories into one canonical memory. List in absorbedKeys exactly the members whose " +
   "content the canonical carries forward."
 
-/** Everything a model call can fail with. Both are per-item; neither is per-phase. */
-export type LlmFailure = ModelUnavailable | LlmContractViolation
-
 /**
- * Run one model call in isolation: a failure becomes `undefined` and a counted skip.
+ * The compress user turn for one batch: every member's text, wrapped, under its offered key.
  *
- * This is the per-item posture the packet's §4 requires, expressed with `Effect.result` because
- * `Effect.either` does not exist in this beta. One violation skips its item and leaves
- * the phase running. A night that judged 199 pairs and lost the 200th to a malformed tool payload has
- * done 199 pairs of work, and failing the phase would throw all of it away.
+ * `batchPrompt` from the kernel builds the member list and appends the instruction, so this produces
+ * the same bytes it did when the framing was inline here. Kept as a named function because the
+ * instruction belongs beside {@link COMPRESS_SYSTEM}, which is the other half of what the model is
+ * told.
  */
-export const isolate = <A>(
-  label: string,
-  call: Effect.Effect<A, LlmFailure>
-): Effect.Effect<A | undefined> =>
-  Effect.gen(function* () {
-    const outcome = yield* Effect.result(call)
-    if (Result.isSuccess(outcome)) return outcome.success
-    yield* Effect.logWarning(`sleep.llm ${label} skipped: ${outcome.failure.reason}`)
-    return undefined
-  })
+export const compressPrompt = (
+  members: ReadonlyArray<{ readonly key: string; readonly text: string }>
+): string => batchPrompt(members, COMPRESS_INSTRUCTION)

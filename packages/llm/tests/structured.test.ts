@@ -200,6 +200,35 @@ describe("makeModelClient.generateObject", () => {
     expect(tools[0]?.input_schema).toEqual(override)
   })
 
+  it("carries cacheSystem through to the body as an ephemeral system block", async () => {
+    /**
+     * Asserted on the recorder's bytes rather than on `buildInvokeBody` alone, because the flag has
+     * to survive `generateObject`'s hand-off into `GenerateOptions`. Dropping it there would leave
+     * every `buildInvokeBody` test green while no real call ever cached anything.
+     */
+    const client = recorder(() => toolReply({ keep: "a", drop: [], confidence: 0.5 }))
+    await Effect.runPromise(
+      makeModelClient(client).generateObject({
+        ...request(Verdict),
+        system: "fold these memories",
+        cacheSystem: true
+      })
+    )
+    expect(client.bodies[0]?.system).toEqual([
+      { type: "text", text: "fold these memories", cache_control: { type: "ephemeral" } }
+    ])
+    // The cached prefix is the system prompt only. The member list is new bytes on every call.
+    expect(client.bodies[0]?.messages).toEqual([{ role: "user", content: "fold these" }])
+  })
+
+  it("sends a plain system string when cacheSystem is left unset", async () => {
+    const client = recorder(() => toolReply({ keep: "a", drop: [], confidence: 0.5 }))
+    await Effect.runPromise(
+      makeModelClient(client).generateObject({ ...request(Verdict), system: "fold these memories" })
+    )
+    expect(client.bodies[0]?.system).toBe("fold these memories")
+  })
+
   it("clamps a caller's oversized maxTokens in the structured lane too", async () => {
     const client = recorder(() => toolReply({ keep: "a", drop: [], confidence: 0.5 }))
     await Effect.runPromise(

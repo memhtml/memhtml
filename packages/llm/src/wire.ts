@@ -15,6 +15,17 @@ export interface GenerateOptions {
   readonly system?: string | undefined
   readonly maxTokens?: number | undefined
   readonly effort: Effort
+  /**
+   * Mark the system prompt as a cache breakpoint.
+   *
+   * The batched phases send one system prompt and one tool schema across every batch of a night,
+   * with only the member list changing per call, so the prefix is the same bytes tens of times in a
+   * row. With this set, `system` goes out as a content-block array carrying
+   * `cache_control: {type: "ephemeral"}` instead of a plain string, which is how the Messages API
+   * names a prefix to cache. A plain string carries no place to put the marker, so the shape has to
+   * change and not only gain a field.
+   */
+  readonly cacheSystem?: boolean | undefined
 }
 
 /**
@@ -45,7 +56,9 @@ export interface StructuredTool {
  * `emit` call, and that is the whole structured-output mechanism.
  *
  * `system` is omitted rather than sent empty, because an empty system block is a distinct
- * (and rejected) input from no system block at all.
+ * (and rejected) input from no system block at all. An omitted system also has nothing to cache, so
+ * `cacheSystem` over an absent or empty system emits no `system` key at all instead of an empty
+ * cached block.
  */
 export const buildInvokeBody = (
   key: ModelKey,
@@ -60,7 +73,10 @@ export const buildInvokeBody = (
     output_config: { effort: options.effort }
   }
   if (options.system !== undefined && options.system.length > 0) {
-    body.system = options.system
+    body.system =
+      options.cacheSystem === true
+        ? [{ type: "text", text: options.system, cache_control: { type: "ephemeral" } }]
+        : options.system
   }
   const thinking = thinkingFor(key)
   if (thinking !== null) {

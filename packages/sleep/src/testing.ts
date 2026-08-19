@@ -89,6 +89,12 @@ export interface RecordedCall {
   readonly system: string
   readonly prompt: string
   readonly modelKey: string
+  /**
+   * Whether the call asked for its system prompt to be cached. Recorded because a batched phase
+   * repeats one system prompt across every batch of a night, so an unset flag re-bills the whole
+   * prefix per call and is invisible in the phase's counts and in its written files.
+   */
+  readonly cacheSystem: boolean
 }
 
 /**
@@ -154,7 +160,12 @@ export const scriptedModel = (
     generateObject: (request) => {
       const system = request.system ?? ""
       const offset = calls.length
-      calls.push({ system, prompt: request.prompt, modelKey: request.modelKey })
+      calls.push({
+        system,
+        prompt: request.prompt,
+        modelKey: request.modelKey,
+        cacheSystem: request.cacheSystem === true
+      })
       const scripted = reply({ system, prompt: request.prompt }, offset)
       if (scripted.kind === "violation") {
         return Effect.fail(LlmContractViolation.make({ reason: scripted.reason }))

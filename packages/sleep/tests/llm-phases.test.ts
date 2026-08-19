@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest"
 
 import type { PhaseEnv } from "../src/env.js"
 import { arcSynthesis } from "../src/phases/arc-synthesis.js"
-import { compress } from "../src/phases/compress.js"
+import { COMPRESS_MEMBER_CHARS, compress } from "../src/phases/compress.js"
 import {
   CONFLICT_COSINE_FLOOR,
   conflictDetection,
@@ -416,6 +416,100 @@ describe("compress", () => {
     }
   ]
 
+  /**
+   * The same community with bodies far past {@link COMPRESS_MEMBER_CHARS}, so the per-member budget
+   * actually bites. Every seeded body in the corpus above is a couple of hundred characters, which
+   * would leave the budget's wiring unexercised: it could be dropped entirely and every test stay
+   * green. The filler repeats one sentence, so the memories stay near-neighbors and still form one
+   * community.
+   */
+  const WIDE_COMMUNITY: ReadonlyArray<SeedFile> = COMMUNITY.map((file) => ({
+    path: file.path,
+    html: file.html.replace(
+      "layer store slowly.",
+      `layer store slowly. ${"The warmup reads the shared volume manifest. ".repeat(80)}`
+    )
+  }))
+
+  /**
+   * A SECOND community, disjoint from the first in both vocabulary and edges, so label propagation
+   * separates them and the phase has two communities to walk rather than one. Paths sort AFTER
+   * `areas/cache/*`, which is what makes the walk order observable.
+   */
+  const SECOND_COMMUNITY: ReadonlyArray<SeedFile> = ["one", "two", "three"].map((name, offset) => ({
+    path: `areas/queue/queue-${name}.html`,
+    html: memoryHtml({
+      title: `Queue drain ${name}`,
+      claim: `The queue drain worker leases a visibility window before acknowledging (${name}).`,
+      body: "Draining leases a visibility window per message and acknowledges after the handler returns.",
+      createdAt: `2026-05-1${offset + 3}T00:00:00Z`,
+      confidence: "0.50",
+      importance: "4",
+      links: ["one", "two", "three"]
+        .filter((other) => other !== name)
+        .map((other) => ({
+          rel: "memhtml-relates-to",
+          href: `/areas/queue/queue-${other}.html`
+        }))
+    })
+  }))
+
+  it("walks its communities lexicographically, so a night's call order is reproducible", async () => {
+    /**
+     * One commit per batch means community walk order is also commit order. The kernel preserves the
+     * order it is handed and imposes none of its own, so this ordering is the phase's to state, and
+     * this is the test that makes it observable: two communities whose paths sort in a known order,
+     * asserted on which prompt went out first.
+     */
+    const model = scriptedModel(() =>
+      value({ title: "x", claim: "y", paragraphs: [], absorbedKeys: [] })
+    )
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* compress(envFor(fixture))
+          expect(model.calls).toHaveLength(2)
+          // `areas/cache` sorts before `areas/queue`, and the community labels follow the paths.
+          expect(model.calls[0]?.prompt).toContain("Cache warmup")
+          expect(model.calls[0]?.prompt).not.toContain("Queue drain")
+          expect(model.calls[1]?.prompt).toContain("Queue drain")
+        }),
+      { seed: [...COMMUNITY, ...SECOND_COMMUNITY], model }
+    )
+  })
+
+  it("cuts each member's text at the per-member budget, so one long memory cannot fill a batch", async () => {
+    /**
+     * The budget bounds what one batch costs. Without it, a single memory with a long body would crowd
+     * out the other seven members' facts, and a fold that never saw those facts would archive them.
+     * Asserted on the offered text rather than on a token count, because the slice is where the phase
+     * can actually be wrong.
+     */
+    const model = scriptedModel(() =>
+      value({ title: "x", claim: "y", paragraphs: [], absorbedKeys: [] })
+    )
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* compress(envFor(fixture))
+          expect(model.calls.length).toBeGreaterThan(0)
+          for (const call of model.calls) {
+            const blocks = call.prompt.match(/<member_m\d+>\n([\s\S]*?)\n<\/member_m\d+>/g) ?? []
+            expect(blocks.length).toBeGreaterThan(1)
+            for (const block of blocks) {
+              // The wrapper's own tags are outside the budgeted text, so the block is slightly wider.
+              expect(block.length).toBeLessThan(COMPRESS_MEMBER_CHARS + 100)
+            }
+            // And the untruncated body really was longer, so the assertion above is not vacuous.
+            expect(call.prompt).not.toContain(
+              "The warmup reads the shared volume manifest. ".repeat(80)
+            )
+          }
+        }),
+      { seed: WIDE_COMMUNITY, model }
+    )
+  })
+
   it("archives only the members the model names, and never one it omits", async () => {
     const model = scriptedModel(() =>
       value({
@@ -470,6 +564,126 @@ describe("compress", () => {
           const archivedPaths = new Set(supersedes.map((one) => one.href.slice(1)))
           for (const one of stillLive.filter((candidate) => candidate.html === undefined)) {
             expect(archivedPaths.has(archivePathFor(one.path, 2026))).toBe(true)
+          }
+        }),
+      { seed: COMMUNITY, model }
+    )
+  })
+
+  it("asks for its system prompt to be cached, and repeats it byte-identically per batch", async () => {
+    /**
+     * The system prompt and the tool schema are the same bytes on every batch of a night, so they are
+     * the cacheable prefix and only the member list is new. Asserted at the PHASE, because the flag
+     * lives in the kernel's call helper: a phase that reached `generateObject` directly would compile,
+     * pass every other test, and quietly re-bill its whole prefix on each batch.
+     */
+    const model = scriptedModel(() =>
+      value({
+        title: "Build cache warmup",
+        claim: "Build cache warmup reads the manifest, then hydrates the layer store.",
+        paragraphs: ["A two-step read."],
+        absorbedKeys: ["m1", "m2"]
+      })
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* compress(envFor(fixture))
+          expect(model.calls.length).toBeGreaterThan(0)
+          for (const call of model.calls) {
+            expect(call.cacheSystem).toBe(true)
+            expect(call.system).toBe(model.calls[0]?.system)
+          }
+        }),
+      { seed: COMMUNITY, model }
+    )
+  })
+
+  it("assigns m1..mN by path order, so the same corpus resolves the same keys twice", async () => {
+    /**
+     * The determinism contract the kernel states and the phase owns: the kernel preserves the order it
+     * is handed, and this phase hands over members sorted by `row.path`. So `m1` is `cache-one`, `m2`
+     * is `cache-three`, and `m3` is `cache-two`, and absorbing `m1` and `m2` archives exactly those two.
+     *
+     * Asserted on the RESOLVED PATHS rather than on the prompt, because the keys are what a model's
+     * answer is turned into a write through. Without this, the sort could reverse and every other
+     * compress test would stay green while a night's key assignment moved from under the answer it is
+     * paired with.
+     */
+    const model = scriptedModel(() =>
+      value({
+        title: "Build cache warmup",
+        claim: "Build cache warmup reads the shared volume manifest first.",
+        paragraphs: ["A two-step read."],
+        absorbedKeys: ["m1", "m2"]
+      })
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* compress(envFor(fixture))
+          expect(outcome.counts.archived).toBe(2)
+          // Path order over the three seeded members is one, three, two.
+          expect(yield* atHead(fixture, "areas/cache/cache-one.html")).toBeUndefined()
+          expect(yield* atHead(fixture, "areas/cache/cache-three.html")).toBeUndefined()
+          expect(yield* atHead(fixture, "areas/cache/cache-two.html")).toBeDefined()
+        }),
+      { seed: COMMUNITY, model }
+    )
+  })
+
+  it("offers each member under an opaque key and never under its path", async () => {
+    /**
+     * `absorbedKeys` decides which files are archived, so a prompt that named a path would let the
+     * model answer with a write target instead of choosing among the ones it was offered.
+     */
+    const model = scriptedModel(() =>
+      value({ title: "x", claim: "y", paragraphs: [], absorbedKeys: [] })
+    )
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* compress(envFor(fixture))
+          expect(model.calls.length).toBeGreaterThan(0)
+          for (const call of model.calls) {
+            expect(call.prompt).toContain("<member_m1>")
+            for (const file of COMMUNITY) {
+              expect(call.prompt).not.toContain(file.path)
+            }
+          }
+        }),
+      { seed: COMMUNITY, model }
+    )
+  })
+
+  it("archives nothing when the model names a key the batch never offered", async () => {
+    /**
+     * `m9` is not in a batch of three, and `areas/cache/cache-one.html` is a path rather than a key.
+     * Both resolve to nothing, so the fold falls below its two-member floor and every member stays
+     * live. A phase that treated an unresolvable key as a path would archive a file on a hallucination.
+     */
+    const model = scriptedModel(() =>
+      value({
+        title: "Build cache warmup",
+        claim: "Build cache warmup reads the manifest first.",
+        paragraphs: ["A two-step read."],
+        absorbedKeys: ["m9", "areas/cache/cache-one.html", "m1"]
+      })
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const head = (yield* fixture.raw("rev-parse", "HEAD")).trim()
+          const outcome = yield* compress(envFor(fixture))
+          expect(outcome.counts.canonicals).toBe(0)
+          expect(outcome.counts.archived).toBe(0)
+          expect(outcome.counts.skipped).toBeGreaterThan(0)
+          expect((yield* fixture.raw("rev-parse", "HEAD")).trim()).toBe(head)
+          for (const file of COMMUNITY) {
+            expect(yield* atHead(fixture, file.path)).toBeDefined()
           }
         }),
       { seed: COMMUNITY, model }

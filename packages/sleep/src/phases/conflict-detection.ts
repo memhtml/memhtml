@@ -1,15 +1,10 @@
 import { Effect } from "effect"
 
+import { isolate } from "../batch.js"
 import { commitPhase } from "../commit.js"
 import { hrefFor, link, meta, stampFile } from "../edits.js"
 import { emptyOutcome, modelFor, type PhaseBody } from "../env.js"
-import {
-  assertsContradiction,
-  isolate,
-  STANCE_SYSTEM,
-  StanceJudgment,
-  stancePrompt
-} from "../llm.js"
+import { assertsContradiction, STANCE_SYSTEM, StanceJudgment, stancePrompt } from "../llm.js"
 import {
   activeCorpus,
   bumpCorroboration,

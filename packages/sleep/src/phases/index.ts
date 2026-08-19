@@ -47,6 +47,7 @@ export {
   COMPRESS_BATCH_SIZE,
   COMPRESS_CANDIDATE_LIMIT,
   COMPRESS_MEMBER_CHARS,
+  COMPRESS_MIN_BATCH,
   compress
 } from "./compress.js"
 export { confidenceDecay } from "./confidence-decay.js"

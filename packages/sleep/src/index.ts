@@ -7,6 +7,17 @@
  * later phases run; `git branch -D` is the abort, and `main` never moved.
  */
 
+export type { GroupBatch, KeyedBatch, KeyedMember, LlmFailure } from "./batch.js"
+export {
+  assembleBatches,
+  batchCall,
+  batchPrompt,
+  isolate,
+  keyMembers,
+  memberList,
+  packGroups,
+  resolveKeys
+} from "./batch.js"
 export { commitPhase, phaseTrailers } from "./commit.js"
 export type {
   CandidateEvidenceLike,
@@ -59,7 +70,7 @@ export {
 } from "./edits.js"
 export type { PhaseBody, PhaseEnv, PhaseOutcome, SleepDeps, SleepError } from "./env.js"
 export { DEFAULT_MODELS, emptyOutcome, modelFor } from "./env.js"
-export type { LlmFailure, StanceVerdict } from "./llm.js"
+export type { StanceVerdict } from "./llm.js"
 export {
   ARC_EXECUTE_SYSTEM,
   ARC_TRIAGE_SYSTEM,
@@ -69,11 +80,11 @@ export {
   arcExecutePrompt,
   arcTriagePrompt,
   assertsContradiction,
+  COMPRESS_INSTRUCTION,
   COMPRESS_SYSTEM,
   CompressSynthesis,
   compressPrompt,
   dataBlock,
-  isolate,
   STANCE_CONFIDENCE_FLOOR,
   STANCE_SYSTEM,
   StanceJudgment,

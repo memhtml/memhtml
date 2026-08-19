@@ -1,6 +1,7 @@
 import { addLink, contentHash, parseMemory, setMeta } from "@memhtml/html"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
+import { isolate } from "../src/batch.js"
 import { phaseTrailers } from "../src/commit.js"
 import {
   dependentsOf,
@@ -26,7 +27,7 @@ import {
   unlink,
   yearOf
 } from "../src/edits.js"
-import { assertsContradiction, dataBlock, isolate, STANCE_CONFIDENCE_FLOOR } from "../src/llm.js"
+import { assertsContradiction, dataBlock, STANCE_CONFIDENCE_FLOOR } from "../src/llm.js"
 import {
   AUTO_MERGE_THRESHOLD,
   nameSimilarity,

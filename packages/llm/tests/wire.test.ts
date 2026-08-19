@@ -108,6 +108,35 @@ describe("buildInvokeBody", () => {
     ).toBe("be terse")
   })
 
+  it("sends a plain system string when caching is not asked for", () => {
+    // The default shape, pinned so the cached shape is a deliberate opt-in rather than a drift.
+    const body = parse(buildInvokeBody("sonnet-5", "hi", { effort: "low", system: "be terse" }))
+    expect(body.system).toBe("be terse")
+    expect(JSON.stringify(body)).not.toContain("cache_control")
+  })
+
+  it("sends the system as one ephemeral cache_control text block when caching is asked for", () => {
+    const body = parse(
+      buildInvokeBody("sonnet-5", "hi", { effort: "low", system: "be terse", cacheSystem: true })
+    )
+    // A plain string carries no place for the marker, so the shape changes rather than gains a field.
+    expect(body.system).toEqual([
+      { type: "text", text: "be terse", cache_control: { type: "ephemeral" } }
+    ])
+    // The version string is not a feature flag; cache_control rides the same one.
+    expect(body.anthropic_version).toBe(ANTHROPIC_VERSION)
+  })
+
+  it("omits system entirely under cacheSystem when there is no system to cache", () => {
+    // An empty cached block would be a rejected input carrying nothing worth caching.
+    for (const system of [undefined, ""]) {
+      const body = parse(
+        buildInvokeBody("sonnet-5", "hi", { effort: "low", system, cacheSystem: true })
+      )
+      expect("system" in body).toBe(false)
+    }
+  })
+
   it("carries no tools key when no tool is requested", () => {
     const body = parse(buildInvokeBody("sonnet-5", "hi", { effort: "low" }))
     expect("tools" in body).toBe(false)

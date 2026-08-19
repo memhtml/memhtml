@@ -4,16 +4,23 @@ import { excludeSelfSupersede } from "@memhtml/domain"
 import { renderTemplate } from "@memhtml/html"
 import { Effect } from "effect"
 
+import { assembleBatches, batchCall, keyMembers, resolveKeys } from "../batch.js"
 import { commitPhase } from "../commit.js"
 import { archiveFile, hrefFor, link, meta, stampFile, writeFileBytes } from "../edits.js"
 import { emptyOutcome, modelFor, type PhaseBody } from "../env.js"
-import { COMPRESS_SYSTEM, CompressSynthesis, compressPrompt, isolate } from "../llm.js"
+import { COMPRESS_SYSTEM, CompressSynthesis, compressPrompt } from "../llm.js"
 import { runRetentionPass, type ScoredMemory } from "../retention.js"
 import { isSleepExcluded } from "../sql.js"
 
 /**
  * Phase 10, compress. COMPRESS-band memories grouped by community, folded into a synthesized
  * canonical in batches. ONE COMMIT PER BATCH.
+ *
+ * The batching runs on the shared kernel in `batch.ts`: this phase sorts the communities and their
+ * members, and `assembleBatches`, `keyMembers`, `compressPrompt`, and `resolveKeys` do the slicing,
+ * the opaque keying, the prompt framing, and the key resolution that four other phases also need. The
+ * kernel preserves the order it is handed and does no sorting of its own, so the two sorts below are
+ * what make a night's batch boundaries and member keys reproducible.
  *
  * Grouped by community instead of by similarity, because a community is the graph's own answer to
  * "what belongs together". A similarity group folds two memories that happen to share vocabulary,
@@ -37,6 +44,12 @@ import { isSleepExcluded } from "../sql.js"
 
 /** Members per model call. Small enough that every member's facts fit the answer's attention. */
 export const COMPRESS_BATCH_SIZE = 8
+
+/**
+ * Members a batch needs before it is worth a call. A batch of one is not a fold: it would rewrite a
+ * lone memory into a "canonical" saying the same thing under a new path, and archive the original.
+ */
+export const COMPRESS_MIN_BATCH = 2
 
 /** COMPRESS-band candidates considered per cycle. The model-cost guard. */
 export const COMPRESS_CANDIDATE_LIMIT = 2000
@@ -78,20 +91,22 @@ export const compress: PhaseBody = (env) =>
       else bucket.push(entry)
     }
 
-    const batches: Array<ReadonlyArray<ScoredMemory>> = []
-    for (const [, members] of [...byCommunity.entries()].sort(([left], [right]) =>
-      left < right ? -1 : 1
-    )) {
-      const ordered = [...members].sort((left, right) =>
-        left.row.path < right.row.path ? -1 : left.row.path > right.row.path ? 1 : 0
+    /**
+     * Both sorts are this phase's, and the kernel keeps the order they produce. Communities are
+     * walked lexicographically by label so a night's call order is fixed, and each community's members
+     * by `row.path` so the `m1`..`mN` keys land on the same files twice over.
+     */
+    const groups = [...byCommunity.entries()]
+      .sort(([left], [right]) => (left < right ? -1 : 1))
+      .map(([, members]) =>
+        [...members].sort((left, right) =>
+          left.row.path < right.row.path ? -1 : left.row.path > right.row.path ? 1 : 0
+        )
       )
-      // A batch of one is not a fold. Skipping it is what keeps the phase from rewriting a lone
-      // memory into a "canonical" that says the same thing under a new path.
-      for (let at = 0; at < ordered.length; at += COMPRESS_BATCH_SIZE) {
-        const slice = ordered.slice(at, at + COMPRESS_BATCH_SIZE)
-        if (slice.length >= 2) batches.push(slice)
-      }
-    }
+    const batches = assembleBatches(groups, {
+      maxMembers: COMPRESS_BATCH_SIZE,
+      minMembers: COMPRESS_MIN_BATCH
+    })
 
     const counts = {
       candidates: candidates.length,
@@ -113,42 +128,28 @@ export const compress: PhaseBody = (env) =>
 
     for (const batch of batches) {
       /** Opaque keys again, so `absorbedKeys` cannot name a path. */
-      const keyed = batch.map((entry, offset) => ({
-        key: `m${offset + 1}`,
-        path: entry.row.path,
-        title: entry.row.title,
-        text: `${entry.row.title}\n${entry.row.gist}\n${entry.row.body_text}`.slice(
-          0,
-          COMPRESS_MEMBER_CHARS
-        )
-      }))
-      const pathForKey = new Map(keyed.map((entry) => [entry.key, entry.path]))
+      const keyed = keyMembers(
+        batch,
+        (entry) => `${entry.row.title}\n${entry.row.gist}\n${entry.row.body_text}`,
+        { charBudget: COMPRESS_MEMBER_CHARS }
+      )
 
       llmCalls += 1
-      const synthesis = yield* isolate(
-        `compress batch of ${batch.length}`,
-        model.generateObject({
-          schema: CompressSynthesis,
-          system: COMPRESS_SYSTEM,
-          prompt: compressPrompt(keyed.map((entry) => ({ key: entry.key, text: entry.text }))),
-          modelKey,
-          effort: "high",
-          toolDescription: "Emit the canonical memory and the members whose content it absorbs."
-        })
-      )
+      const synthesis = yield* batchCall(model, `compress batch of ${batch.length}`, {
+        schema: CompressSynthesis,
+        system: COMPRESS_SYSTEM,
+        prompt: compressPrompt(keyed.keyed),
+        modelKey,
+        effort: "high",
+        toolDescription: "Emit the canonical memory and the members whose content it absorbs."
+      })
       if (synthesis === undefined) {
         skipped += 1
         continue
       }
 
-      const absorbed = [
-        ...new Set(
-          synthesis.absorbedKeys.flatMap((key) => {
-            const path = pathForKey.get(key)
-            return path === undefined ? [] : [path]
-          })
-        )
-      ]
+      /** A key the batch never offered resolves to nothing, so a fold reaches only offered files. */
+      const absorbed = resolveKeys(keyed, synthesis.absorbedKeys).map((entry) => entry.row.path)
       if (absorbed.length < 2 || synthesis.title.trim() === "" || synthesis.claim.trim() === "") {
         // A refusal, or a fold of a single member. Both leave every member active.
         skipped += 1
