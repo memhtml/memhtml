@@ -1,4 +1,6 @@
 import type { StorageFailure } from "@memhtml/contracts/errors"
+import type { KeyedVector } from "@memhtml/domain"
+import { float32View, rankCandidatePairs, topNeighborPairs } from "@memhtml/domain"
 import type { DatabaseShape } from "@memhtml/index"
 import { STATE_SCHEMA } from "@memhtml/index"
 import { Effect } from "effect"
@@ -73,12 +75,18 @@ export const activeCorpus = (
 export interface PairRow {
   readonly src: string
   readonly dst: string
-  /** Cosine similarity, unitless in `[-1, 1]`. `1 - vector_distance_cos`. */
+  /** Cosine similarity, unitless in `[-1, 1]`, bit-identical to `@memhtml/domain`'s `cosine`. */
   readonly sim: number
 }
 
+/** A `memory_type NOT IN (…)` clause against alias `f`, or nothing when nothing is excluded. */
+const typeFilterFor = (alias: string, excluded: ReadonlyArray<string>): string =>
+  excluded.length === 0
+    ? ""
+    : ` AND ${alias}.memory_type NOT IN (${excluded.map(() => "?").join(", ")})`
+
 /**
- * Per-source top-`k` nearest neighbors above a similarity floor, over first-chunk vectors.
+ * Every active file's first-chunk vector, decoded ONCE into the shape the pair kernel ranks.
  *
  * `ordinal = 0` collapses a file to its first chunk, not its best chunk. The format is one
  * fact per file, so almost every file is a single chunk. Taking the first keeps the pair set
@@ -86,10 +94,40 @@ export interface PairRow {
  * would make `(a, b)` a candidate while `(b, a)` is not, so which of two files was read first
  * would decide whether they merge.
  *
- * `ROW_NUMBER() OVER (PARTITION BY src ...)` is the per-source cap. `vector_distance_cos` takes two
- * STORED blobs here instead of a blob and a bound parameter. It can, because it is a registered
- * SQL function over two `Uint8Array` arguments (`packages/index/src/database.ts`) and not a driver
- * builtin with a fixed calling shape.
+ * A row whose blob does not decode (empty or ragged) is dropped, the same exclusion the SQL
+ * UDF's NULL produces for it in the retrieval arm.
+ */
+const firstChunkVectors = (
+  db: DatabaseShape,
+  excluded: ReadonlyArray<string>
+): Effect.Effect<ReadonlyArray<KeyedVector>, StorageFailure> =>
+  db
+    .all<{ readonly path: string; readonly vec: Uint8Array }>(
+      `SELECT f.path AS path, e.vec AS vec
+       FROM files f
+       JOIN chunks c ON c.path = f.path AND c.ordinal = 0
+       JOIN embeddings e ON e.chunk_id = c.chunk_id
+       WHERE f.archived = 0${typeFilterFor("f", excluded)}`,
+      [...excluded]
+    )
+    .pipe(
+      Effect.map((rows) =>
+        rows.flatMap((row) => {
+          const vec = float32View(row.vec)
+          return vec === undefined ? [] : [{ key: row.path, vec }]
+        })
+      )
+    )
+
+/**
+ * Per-source top-`k` nearest neighbors above a similarity floor, over first-chunk vectors.
+ *
+ * The corpus filter is SQL, because that is where the index's reading semantics live. The pair
+ * space is n² and ranks in TypeScript (`topNeighborPairs`), because a pair routed through the
+ * `vector_distance_cos` UDF pays a fresh decode of BOTH 4 KB blobs per call — at a ~3k corpus
+ * that is 8.45M calls and an OOM before the first phase records (issue #40), against ~12 MB
+ * decoded once. The kernel reproduces this ordering exactly: floor, then per-source `sim` DESC /
+ * `dst` ASC, then global `sim` DESC / `src` ASC / `dst` ASC, then the cap.
  */
 export const neighborPairs = (
   db: DatabaseShape,
@@ -100,30 +138,16 @@ export const neighborPairs = (
     /** Memory types to exclude, e.g. `arc`, since a synthesis is not a near-duplicate of its members. */
     readonly excludeTypes?: ReadonlyArray<string> | undefined
   }
-): Effect.Effect<ReadonlyArray<PairRow>, StorageFailure> => {
-  const excluded = options.excludeTypes ?? []
-  const typeFilter =
-    excluded.length === 0 ? "" : ` AND f.memory_type NOT IN (${excluded.map(() => "?").join(", ")})`
-  return db.all<PairRow>(
-    `WITH vecs AS (
-       SELECT f.path AS path, e.vec AS vec
-       FROM files f
-       JOIN chunks c ON c.path = f.path AND c.ordinal = 0
-       JOIN embeddings e ON e.chunk_id = c.chunk_id
-       WHERE f.archived = 0${typeFilter}
-     ),
-     pairs AS (
-       SELECT l.path AS src, r.path AS dst, 1 - vector_distance_cos(l.vec, r.vec) AS sim
-       FROM vecs l JOIN vecs r ON r.path <> l.path
-     ),
-     ranked AS (
-       SELECT src, dst, sim, ROW_NUMBER() OVER (PARTITION BY src ORDER BY sim DESC, dst ASC) AS k
-       FROM pairs WHERE sim >= ?
-     )
-     SELECT src, dst, sim FROM ranked WHERE k <= ? ORDER BY sim DESC, src ASC, dst ASC LIMIT ?`,
-    [...excluded, options.floor, options.perSourceK, options.limit]
+): Effect.Effect<ReadonlyArray<PairRow>, StorageFailure> =>
+  firstChunkVectors(db, options.excludeTypes ?? []).pipe(
+    Effect.map((vectors) =>
+      topNeighborPairs(vectors, {
+        floor: options.floor,
+        perSourceK: options.perSourceK,
+        limit: options.limit
+      })
+    )
   )
-}
 
 /**
  * Candidate pairs for conflict detection: embedding-near, sharing an entity, and carrying no
@@ -139,6 +163,12 @@ export const neighborPairs = (
  * pairs above the 0.80 conflict floor. An anti-join over ALL edges therefore excludes every candidate
  * this phase exists to find, and the phase reports `candidates: 0` forever with no error anywhere.
  * A mined edge is a machine suspicion, not a settled relationship; only an authored one closes a pair.
+ *
+ * The statement ENUMERATES pairs from the shared-entity join instead of filtering an n×n vector
+ * self-join, so its cost follows the entity sharing that actually exists. Similarity then ranks in
+ * TypeScript over vectors decoded once (`rankCandidatePairs`), with the enumerated set standing
+ * where the ranking CTE's `WHERE` stood: the predicates run BEFORE per-source top-`k`. `re.path <
+ * le.path` orients each pair once, dst below src.
  */
 export const conflictCandidates = (
   db: DatabaseShape,
@@ -156,37 +186,29 @@ export const conflictCandidates = (
   }
 ): Effect.Effect<ReadonlyArray<PairRow>, StorageFailure> => {
   const excluded = options.excludeTypes ?? []
-  const typeFilter =
-    excluded.length === 0 ? "" : ` AND f.memory_type NOT IN (${excluded.map(() => "?").join(", ")})`
-  return db.all<PairRow>(
-    `WITH vecs AS (
-       SELECT f.path AS path, e.vec AS vec
-       FROM files f
-       JOIN chunks c ON c.path = f.path AND c.ordinal = 0
-       JOIN embeddings e ON e.chunk_id = c.chunk_id
-       WHERE f.archived = 0${typeFilter}
-     ),
-     pairs AS (
-       SELECT l.path AS src, r.path AS dst, 1 - vector_distance_cos(l.vec, r.vec) AS sim
-       FROM vecs l JOIN vecs r ON r.path < l.path
-       WHERE EXISTS (
-         SELECT 1 FROM file_entities le
-         JOIN file_entities re ON re.entity_type = le.entity_type AND re.entity_name = le.entity_name
-         WHERE le.path = l.path AND re.path = r.path
-       )
-       AND NOT EXISTS (
-         SELECT 1 FROM edges e
-         WHERE e.derived = 0
-           AND ((e.src_path = l.path AND e.dst_path = r.path)
-             OR (e.src_path = r.path AND e.dst_path = l.path))
-       )
-     ),
-     ranked AS (
-       SELECT src, dst, sim, ROW_NUMBER() OVER (PARTITION BY src ORDER BY sim DESC, dst ASC) AS k
-       FROM pairs WHERE sim >= ?
-     )
-     SELECT src, dst, sim FROM ranked WHERE k <= ? ORDER BY sim DESC, src ASC, dst ASC LIMIT ?`,
-    [...excluded, options.floor, options.perSourceK, options.limit]
+  const pairs = db.all<{ readonly src: string; readonly dst: string }>(
+    `SELECT DISTINCT le.path AS src, re.path AS dst
+     FROM file_entities le
+     JOIN file_entities re ON re.entity_type = le.entity_type
+       AND re.entity_name = le.entity_name AND re.path < le.path
+     JOIN files fl ON fl.path = le.path AND fl.archived = 0${typeFilterFor("fl", excluded)}
+     JOIN files fr ON fr.path = re.path AND fr.archived = 0${typeFilterFor("fr", excluded)}
+     WHERE NOT EXISTS (
+       SELECT 1 FROM edges e
+       WHERE e.derived = 0
+         AND ((e.src_path = le.path AND e.dst_path = re.path)
+           OR (e.src_path = re.path AND e.dst_path = le.path))
+     )`,
+    [...excluded, ...excluded]
+  )
+  return Effect.all([pairs, firstChunkVectors(db, excluded)]).pipe(
+    Effect.map(([candidatePairs, vectors]) =>
+      rankCandidatePairs(candidatePairs, vectors, {
+        floor: options.floor,
+        perSourceK: options.perSourceK,
+        limit: options.limit
+      })
+    )
   )
 }
 
