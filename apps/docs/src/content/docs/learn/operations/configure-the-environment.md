@@ -35,14 +35,18 @@ degrades every search. An operator reading a manifest needs to tell those two ap
 reports them as different states.
 
 `MEMHTML_LLM=off` is what lets a sleep run finish clean with no credentials at all. Every phase still
-reports `ok`, and the four model-driven ones say why they did nothing:
+reports `ok`, and the four that have nothing to do without a model say why:
 
 ```
-conflict-detection    | ok | no model bound
+edge-typing           | ok | no model bound
 arc-synthesis         | ok | no model bound
 compress              | ok | no model bound
 trace-consolidation   | ok | no consolidator bound
 ```
+
+Six phases call a model, and the other two degrade rather than reporting a reason. `dedup-merge` mines at
+the 0.92 cosine floor, applies the divergence veto, and commits the folds it can prove; `entity-resolution`
+runs its normalization and character-overlap passes. A credential-free night still curates.
 
 ## MEMHTML_EXTRACT_ENTITIES changes what a write stores
 

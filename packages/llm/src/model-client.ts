@@ -45,6 +45,14 @@ export interface StructuredRequest<A, I> {
   readonly inputSchema?: ReturnType<typeof toInputSchema> | undefined
   /** The tool description. Set it, since it is the model's only prose about the shape. */
   readonly toolDescription?: string | undefined
+  /**
+   * Cache the system prompt as a prefix across calls. See {@link GenerateOptions.cacheSystem}.
+   *
+   * Set by callers that repeat one system prompt over many calls, which is every batched sleep
+   * phase. The value only reshapes the request body; the response and the decode are unchanged, so
+   * setting it can change what a call costs and cannot change what it returns.
+   */
+  readonly cacheSystem?: boolean | undefined
 }
 
 export interface ModelClientShape {
@@ -136,7 +144,8 @@ export const makeModelClient = (client: InvokeClient): ModelClientShape => {
           {
             system: request.system,
             maxTokens: request.maxTokens,
-            effort: request.effort
+            effort: request.effort,
+            cacheSystem: request.cacheSystem
           },
           {
             inputSchema: request.inputSchema ?? toInputSchema(request.schema),

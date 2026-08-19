@@ -31,19 +31,29 @@ one-line diff.
 ```
 
 Four metas are required: `memhtml-type`, `memhtml-status`, `memhtml-created`, and `memhtml-updated`
-(`packages/html/src/vocabulary.ts:35`). The rest are optional, and the index's `files` table owns their
+(`packages/html/src/vocabulary.ts:41`). The rest are optional, and the index's `files` table owns their
 defaults, so omitting one completes the row rather than refusing the write.
 
-Exactly two names may repeat, `memhtml-entity` and `memhtml-tag`
-(`packages/html/src/vocabulary.ts:20`), one value per element. Stating any other name twice is a
+Exactly three names may repeat, `memhtml-entity`, `memhtml-tag`, and `memhtml-alias`
+(`packages/html/src/vocabulary.ts:26`), one value per element. Stating any other name twice is a
 violation (`packages/html/src/constraints.ts:302`). `memhtml-content-hash` is advisory: the parser
 reports whatever the file says and never recomputes it (`packages/html/src/document.ts:37`), so a stale
 value stays visible instead of being quietly reconciled.
 
-`META_ORDER` (`packages/html/src/vocabulary.ts:42`) is both the closed list of meta names and the
-order the serializer emits them in (`packages/html/src/serialize.ts:83`), which makes it a
+`memhtml-alias` names the other names a file's subject is recorded under, and it is projected nowhere: it
+lives in the file rather than in any index column. A person file for `laith al-saadoon` carrying
+`<meta name="memhtml-alias" content="laith">` asserts that the two names are one subject, and sleep's
+entity resolution reads that declaration as **evidence** rather than as a similarity — it merges an
+alias-backed pair on the first night it sees it, whatever the character distance says, because a
+declaration is a human's or an authoritative directory's assertion of identity and not a machine's
+suspicion. No string similarity can supply that signal: `laith` against `laith al-saadoon` scores 0.476,
+below even the review band.
+
+`META_ORDER` (`packages/html/src/vocabulary.ts:53`) is both the closed list of meta names and the
+order the serializer emits them in (`packages/html/src/serialize.ts:84`), which makes it a
 diff-stability contract. A new scalar meta is
-appended at the end of the scalar block, because inserting one mid-list would shift every following
+appended at the end of the scalar block, and a new repeatable at the end of the repeatable block, because
+inserting one mid-list would shift every following
 line in every file the next edit touches. The surgical head editors insert in the same order
 (`packages/html/src/editors.ts:79`).
 

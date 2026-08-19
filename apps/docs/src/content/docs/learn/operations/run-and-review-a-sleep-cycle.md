@@ -22,14 +22,16 @@ The fifteen phases, in order (`packages/sleep/src/contract.ts:17`):
 
 ```
 preflight            dedup-merge        entity-resolution    person-links
-relationship-mining  conflict-detection confidence-decay     arc-synthesis
+relationship-mining  edge-typing        confidence-decay     arc-synthesis
 retention-triage     compress           reprieve             trace-consolidation
 integrity            state-export       report
 ```
 
 `reprieve` gives a memory whose stated validity date has passed another two weeks when its use record
 earns it, and archives it otherwise. `compress` folds several overlapping memories into one canonical
-memory.
+memory. `edge-typing` reads the pairs relationship mining and the shared-entity scan turned up and names
+the relationship between them — `caused_by`, `leads_to`, `example_of`, `supports`, `part_of`, or
+`contradicts` — promoting the confident ones into the files as authored links.
 
 The branch is created before any phase runs and every commit lands on it, so a run never touches `main`
 (`packages/sleep/src/run.ts:96`). A second run on the same date takes `sleep/<date>-2` and upward
@@ -94,11 +96,16 @@ system can derive again would bury every real diff.
 With `MEMHTML_LLM=off` every phase still reports `ok` and says why it did nothing:
 
 ```
-conflict-detection    | ok | no model bound
+edge-typing           | ok | no model bound
 arc-synthesis         | ok | no model bound
 compress              | ok | no model bound
 trace-consolidation   | ok | no consolidator bound
 ```
+
+`dedup-merge` and `entity-resolution` are absent from that list on purpose. Both call a model when one is
+bound and both have deterministic work to do when one is not, so they report counts rather than a reason:
+dedup falls back to the 0.92 cosine floor plus the divergence veto and still commits its folds, and entity
+resolution still runs its normalization and character-overlap passes.
 
 ## Review before you merge
 

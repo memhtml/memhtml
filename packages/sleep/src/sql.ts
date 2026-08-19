@@ -1,4 +1,5 @@
 import type { StorageFailure } from "@memhtml/contracts/errors"
+import { ARCHIVE_BUCKET, PEOPLE_DIR } from "@memhtml/contracts/paths"
 import type { KeyedVector } from "@memhtml/domain"
 import { float32View, rankCandidatePairs, topNeighborPairs } from "@memhtml/domain"
 import type { DatabaseShape } from "@memhtml/index"
@@ -19,8 +20,8 @@ import { Effect } from "effect"
  * The memory type no phase of a sleep cycle touches.
  *
  * A task is live working state, and every one of the fifteen phases is a judgment about REMEMBERED
- * FACTS: decay says a claim is fading, dedup says two claims are one, conflict detection says two
- * claims disagree, retention says a claim has stopped earning its place. None of those hold for
+ * FACTS: decay says a claim is fading, dedup says two claims are one, edge typing says one claim
+ * caused or contradicts another, retention says a claim has stopped earning its place. None of those hold for
  * a thing an agent intends to do, and each would be wrong applied to one. A task the agent has
  * not got to yet is not a claim losing confidence, and two open tasks with the same body are two
  * things to do, not one fact stored twice.
@@ -150,19 +151,67 @@ export const neighborPairs = (
   )
 
 /**
- * Candidate pairs for conflict detection: embedding-near, sharing an entity, and carrying no
+ * Active non-task pairs that occupy the SAME frame key. Dedup's component seeds.
+ *
+ * A frame key is a claim's slot as surface grammar states it, so two active memories sharing one are
+ * making a claim about the same thing by the corpus's own indexed evidence — no cosine, no model.
+ * That is signal the vector floor can miss: "the owner of the deploy runbook is Priya" and "the owner
+ * of the deploy runbook is Priya Raman" share a slot while their bodies share almost no vocabulary,
+ * and their measured cosine under the fixture embedder is 0.59, far under any floor a night could
+ * afford to mine at. Seeding components with these pairs puts them in front of the model, which is
+ * the only reader that can say whether one is a rewording of the other.
+ *
+ * **The statement is OUTPUT-SENSITIVE: its cost follows the frame sharing that exists, not the pair
+ * space.** The self-join is an equality on `frame_key`, which `files_frame_key_active` indexes under
+ * exactly this predicate (`archived = 0 AND memory_type <> 'task' AND frame_key IS NOT NULL`,
+ * migration 0009). So each row seeks its own key's bucket and emits one row per co-occupant, and a
+ * corpus where no two memories share a slot emits nothing having read no pairs. `frame_key IS NOT
+ * NULL` is stated even though the join equality already excludes NULL, because it is what makes the
+ * partial index usable rather than leaving the planner to prove it.
+ *
+ * `r.path < l.path` orients each unordered pair once, which keeps the seed set the same size as the
+ * edge set the component builder wants.
+ *
+ * **`memory_type <> 'task'` is written as the LITERAL the index uses, not as this module's
+ * {@link SLEEP_EXCLUDED_TYPES} binding.** It is the same exclusion for the same reason — two open
+ * tasks phrased alike are two things to do — but `NOT IN (?)` and `<> 'task'` are different
+ * expressions to the planner, and only the second one matches `files_frame_key_active`'s predicate.
+ * A bound form here would read as more general while quietly turning the seek into a scan.
+ * `activeFramesFor` writes the literal for the same reason. `tests/units.test.ts` holds the two in
+ * agreement, so a change to the excluded set cannot leave this statement behind silently.
+ *
+ * Measured plan (2026-08-19, node 24.19.0 against the shipped migrations): `SCAN l` then
+ * `SEARCH r USING INDEX files_frame_key_active (frame_key=?)`. One side walks the KEYED rows, which
+ * the partial index confines to the rows with a frame at all, and the other seeks.
+ */
+export const frameKeyPairs = (
+  db: DatabaseShape
+): Effect.Effect<ReadonlyArray<{ readonly src: string; readonly dst: string }>, StorageFailure> =>
+  db.all<{ src: string; dst: string }>(
+    `SELECT l.path AS src, r.path AS dst
+     FROM files l
+     JOIN files r ON r.frame_key = l.frame_key AND r.path < l.path
+       AND r.archived = 0 AND r.memory_type <> 'task' AND r.frame_key IS NOT NULL
+     WHERE l.archived = 0 AND l.memory_type <> 'task' AND l.frame_key IS NOT NULL
+     ORDER BY l.path ASC, r.path ASC`
+  )
+
+/**
+ * Candidate pairs for edge typing: embedding-near, sharing an entity, and carrying no
  * AUTHORED edge between them in either direction.
  *
  * The shared-entity requirement is what keeps the model budget on pairs that could actually be about
- * one thing. The anti-join keeps the phase from re-judging a pair an agent already linked. An
- * authored `contradicts` is a settled fact, and re-asking the model about it would let a `neutral`
- * answer look like new information.
+ * one thing. The anti-join keeps the phase from re-typing a pair an agent already linked. An
+ * authored `contradicts` or `caused_by` is a settled fact, and re-asking the model about it would let
+ * a `none` answer look like new information.
  *
  * **`derived = 0` is what makes the anti-join correct.** Relationship mining runs one phase EARLIER and
  * writes a derived `relates_to` for every pair above 0.85 cosine, a strict superset of the
- * pairs above the 0.80 conflict floor. An anti-join over ALL edges therefore excludes every candidate
- * this phase exists to find, and the phase reports `candidates: 0` forever with no error anywhere.
+ * pairs above the 0.80 typing floor. An anti-join over ALL edges therefore excludes every candidate
+ * this scan exists to find, and the phase reports `candidates: 0` forever with no error anywhere.
  * A mined edge is a machine suspicion, not a settled relationship; only an authored one closes a pair.
+ * {@link minedPairs} reads that same mined set as the OTHER arm of edge typing's candidate union, and
+ * carries the identical anti-join for the identical reason.
  *
  * The statement ENUMERATES pairs from the shared-entity join instead of filtering an n×n vector
  * self-join, so its cost follows the entity sharing that actually exists. Similarity then ranks in
@@ -170,7 +219,7 @@ export const neighborPairs = (
  * where the ranking CTE's `WHERE` stood: the predicates run BEFORE per-source top-`k`. `re.path <
  * le.path` orients each pair once, dst below src.
  */
-export const conflictCandidates = (
+export const sharedEntityPairs = (
   db: DatabaseShape,
   options: {
     readonly floor: number
@@ -178,9 +227,9 @@ export const conflictCandidates = (
     readonly limit: number
     /**
      * Memory types to exclude, the same hole {@link neighborPairs} carries. `task` is excluded
-     * because a task is intended work, not an asserted fact, so "these two contradict" is not a
-     * judgment that can be true of it. Paying for a model call to find out would also spend the
-     * candidate budget on rows no phase acts on.
+     * because a task is intended work, not an asserted fact, so "these two contradict" and "this
+     * one caused that one" are not judgments that can be true of it. Paying for a model call to
+     * find out would also spend the candidate budget on rows no phase acts on.
      */
     readonly excludeTypes?: ReadonlyArray<string> | undefined
   }
@@ -209,6 +258,63 @@ export const conflictCandidates = (
         limit: options.limit
       })
     )
+  )
+}
+
+/**
+ * The MINED edges of one rel, as candidate pairs: edge typing's second arm.
+ *
+ * Relationship mining runs one phase earlier and writes a derived `relates_to` for every pair above
+ * its cosine floor, index-only. Those pairs are the corpus's own answer to "which memories look
+ * related", and they are NOT a subset of {@link sharedEntityPairs}: two memories about one incident
+ * that name no entity in common are invisible to the shared-entity join and obvious to the embedder.
+ * Reading them here is what makes edge typing's recall the union of both signals rather than the
+ * entity-authoring habits of whoever wrote the memories.
+ *
+ * `strength` is the mined edge's own cosine (`replaceMinedEdges` clamps it into `[0, 1]`), so the
+ * caller can rank both arms of the union on one scale without re-decoding a vector. The statement
+ * ORDERS BY it, descending, for the same reason {@link sharedEntityPairs} hands back a ranked list:
+ * the caller's cap is a model-cost bound, and a cap over a path-ordered read would spend the night on
+ * whichever pairs sort alphabetically first. `src_path` then `dst_path` break a tie, which is
+ * `collectRanked`'s ordering, so both arms of the union arrive in one ordering.
+ *
+ * **Deliberately unbounded**, unlike the other arm: the caller ranks the UNION and caps that, so a
+ * limit here would cut candidates before the two arms have been compared. The mined set is one row per
+ * pair above mining's cosine floor (measured 1,498 on the production corpus), which is a read this
+ * phase already performs once a night.
+ *
+ * Three filters, each load-bearing:
+ *
+ * - `derived = 1` restricts this to the machine-mined set. An authored `relates_to` is an agent's
+ *   assertion, and re-typing it would let a nightly job overwrite a human judgment with a narrower rel.
+ * - `edge_class = 'memory'` is the same firewall every graph read carries.
+ * - The `derived = 0` anti-join drops a pair that already carries ANY authored edge either way, which
+ *   is exactly {@link sharedEntityPairs}' rule. Without it a pair typed last night would be re-judged
+ *   every night, because promoting a typed edge does not delete the mined `relates_to` underneath it.
+ */
+export const minedPairs = (
+  db: DatabaseShape,
+  options: {
+    readonly rel: string
+    /** The same `task` hole the rest of this module carries, applied to BOTH endpoints. */
+    readonly excludeTypes?: ReadonlyArray<string> | undefined
+  }
+): Effect.Effect<ReadonlyArray<PairRow>, StorageFailure> => {
+  const excluded = options.excludeTypes ?? []
+  return db.all<PairRow>(
+    `SELECT e.src_path AS src, e.dst_path AS dst, e.strength AS sim
+     FROM edges e
+     JOIN files fs ON fs.path = e.src_path AND fs.archived = 0${typeFilterFor("fs", excluded)}
+     JOIN files fd ON fd.path = e.dst_path AND fd.archived = 0${typeFilterFor("fd", excluded)}
+     WHERE e.derived = 1 AND e.edge_class = 'memory' AND e.rel = ?
+       AND NOT EXISTS (
+         SELECT 1 FROM edges a
+         WHERE a.derived = 0
+           AND ((a.src_path = e.src_path AND a.dst_path = e.dst_path)
+             OR (a.src_path = e.dst_path AND a.dst_path = e.src_path))
+       )
+     ORDER BY e.strength DESC, e.src_path ASC, e.dst_path ASC`,
+    [...excluded, ...excluded, options.rel]
   )
 }
 
@@ -264,6 +370,88 @@ export const pathsForEntity = (
 
 /** `?` per excluded type, so the exclusion binds instead of interpolating a value into SQL. */
 const typePlaceholders = (): string => SLEEP_EXCLUDED_TYPES.map(() => "?").join(", ")
+
+/** One (entity, claiming file) pair, and the title that file carries. */
+export interface EntityClaim {
+  readonly entity_type: string
+  readonly entity_name: string
+  readonly path: string
+  readonly title: string
+}
+
+/**
+ * Every (entity, claiming active non-task file) pair in ONE statement, entity-ordered then path.
+ *
+ * The same corpus {@link activeEntities} counts, enumerated instead of aggregated. Entity resolution
+ * needs both a per-entity memory centroid and a few sample titles per entity, and deriving either from
+ * {@link pathsForEntity} would be one query per entity — 59 entities on the measured corpus, and one
+ * round trip each for a join the database performs once.
+ *
+ * **The `ORDER BY` is for a reader, NOT for the centroid's determinism.** A centroid is a sum over its
+ * members' vectors and float addition is not associative, so the summation order decides the bytes —
+ * but `entityCentroids` re-sorts each entity's paths itself and does not inherit this order. That is
+ * deliberate: the guarantee has to live where the sum happens, so a future caller reading these rows
+ * through a different statement cannot silently lose it. (Confirmed by mutation: replacing this clause
+ * with `ORDER BY e.path DESC` leaves the whole sleep suite green, while dropping the phase's own sort
+ * fails it.)
+ */
+export const entityClaims = (
+  db: DatabaseShape
+): Effect.Effect<ReadonlyArray<EntityClaim>, StorageFailure> =>
+  db.all<EntityClaim>(
+    `SELECT e.entity_type AS entity_type, e.entity_name AS entity_name,
+            e.path AS path, f.title AS title
+     FROM file_entities e JOIN files f ON f.path = e.path
+     WHERE f.archived = 0 AND f.memory_type NOT IN (${typePlaceholders()})
+     ORDER BY e.entity_type ASC, e.entity_name ASC, e.path ASC`,
+    [...SLEEP_EXCLUDED_TYPES]
+  )
+
+/**
+ * Every active file's first-chunk vector, path-keyed and decoded once. The centroid pass's input.
+ *
+ * Exported wrapper over the module-private statement the pair arms use, so entity resolution reads the
+ * SAME vector space they do — `ordinal = 0`, the same drop of a blob that does not decode — instead of
+ * a second SELECT free to disagree about which chunk represents a file.
+ *
+ * Tasks are excluded, matching {@link entityClaims}: a centroid built partly from working state would
+ * describe what the agent intends to do about a subject rather than what it knows about one.
+ */
+export const entityVectors = (
+  db: DatabaseShape
+): Effect.Effect<ReadonlyArray<KeyedVector>, StorageFailure> =>
+  firstChunkVectors(db, SLEEP_EXCLUDED_TYPES)
+
+/**
+ * Every indexed person file, path-ordered. The alias oracle's file list.
+ *
+ * Selected by DIRECTORY, because that is what a person file is: `person-links` mints one per
+ * `person:` entity under `PEOPLE_DIR`, and a hand-authored one placed there by an operator is just as
+ * authoritative. Selecting by entity instead would miss a file whose subject the corpus has since
+ * stopped mentioning, whose declaration is still the truth about those names.
+ *
+ * Archived files are included. Archiving a person file records that the corpus moved on from the
+ * person, not that two of their names stopped being the same name, and an alias declaration losing its
+ * force on archival would silently re-split a person the phase had already merged.
+ *
+ * **Which is why the archive prefix is matched too, and not just `archived = 0` left off.** Eviction is
+ * the `git mv` into `archive/<YYYY>/<original-path>`, so an archived person file's PATH is
+ * `archive/2026/resources/people/…` and no longer matches `resources/people/%` at all. A single
+ * `LIKE` here would have said "archived files are included" while excluding every one of them, and the
+ * re-split above is exactly what would have followed. The second pattern mirrors
+ * `archivePathFor`'s shape (`%` for the year segment, which is four digits the statement need not
+ * verify — a false match would be another file under `resources/people/`, which is a person file).
+ *
+ * The phase reads the BYTES of each of these; this statement only says which paths to open, because
+ * `memhtml-alias` is repeatable and lives in the file rather than in any projection.
+ */
+export const peoplePaths = (
+  db: DatabaseShape
+): Effect.Effect<ReadonlyArray<{ readonly path: string }>, StorageFailure> =>
+  db.all<{ path: string }>(
+    "SELECT path FROM files WHERE path LIKE ? OR path LIKE ? ORDER BY path ASC",
+    [`${PEOPLE_DIR}/%`, `${ARCHIVE_BUCKET}/%/${PEOPLE_DIR}/%`]
+  )
 
 /** One memory-class edge between two active files. */
 export interface EdgeRow {
@@ -365,7 +553,7 @@ export interface CorroborationRow {
  * one pair cannot both read `detections = 1` and both decline to promote.
  *
  * **The bump is idempotent WITHIN one run's instant.** `detections` advances only when `updated_at`
- * differs from `at`. Corroboration means "two DIFFERENT nights saw this", and conflict detection
+ * differs from `at`. Corroboration means "two DIFFERENT nights saw this", and edge typing
  * commits only when something is promoted, so a run that judged pairs and promoted nothing leaves no
  * trailer and `memhtml sleep resume` re-executes it. Without the guard that second pass would count as a
  * second detection and promote a contradiction one night's evidence had not earned. That puts a machine
@@ -407,6 +595,72 @@ export const markPromoted = (
      SET promoted = 1, confirmed = 1, updated_at = ?
      WHERE src_path = ? AND rel = ? AND dst_path = ?`,
     [input.at, input.srcPath, input.rel, input.dstPath]
+  )
+
+/** One corroboration counter on a machine-proposed entity merge. */
+export interface EntityCorroborationRow {
+  readonly entity_type: string
+  readonly alias_name: string
+  readonly canonical_name: string
+  readonly detections: number
+  readonly promoted: number
+}
+
+/**
+ * Bump an entity merge's detection counter and read the result back.
+ *
+ * The same `RETURNING` upsert {@link bumpCorroboration} uses, for the same reason: the promotion
+ * decision is made in the database at the instant of the write, so two runs racing on one merge cannot
+ * both read `detections = 1` and both decline to apply it, leaving a genuinely corroborated merge
+ * pending forever.
+ *
+ * **And the bump is idempotent WITHIN one run's instant**, which entity resolution needs even more than
+ * conflict detection does. This phase commits whenever it rewrites ANY file, so a night whose only work
+ * was a deterministic normalization commits and leaves a trailer, while a night that only bumped
+ * counters does not. `memhtml sleep resume` therefore re-executes this phase on the second pass, and
+ * without the `updated_at` guard that pass would count as a second night's independent sighting and
+ * apply a merge one night's evidence had not earned. `at` comes from the run's own date, so a resume of
+ * the same run reuses it and a genuinely later night does not.
+ *
+ * Names are the NORMALIZED forms, which is what makes one merge one counter: `Checkout API` and
+ * `checkout api` would otherwise be two rows for one merge and neither would reach two detections.
+ */
+export const bumpEntityCorroboration = (
+  db: DatabaseShape,
+  input: {
+    readonly entityType: string
+    readonly aliasName: string
+    readonly canonicalName: string
+    readonly at: string
+  }
+): Effect.Effect<ReadonlyArray<EntityCorroborationRow>, StorageFailure> =>
+  db.all<EntityCorroborationRow>(
+    `INSERT INTO ${STATE_SCHEMA}.entity_corroboration
+       (entity_type, alias_name, canonical_name, detections, updated_at)
+     VALUES (?, ?, ?, 1, ?)
+     ON CONFLICT(entity_type, alias_name, canonical_name) DO UPDATE SET
+       detections = detections + CASE
+         WHEN entity_corroboration.updated_at = excluded.updated_at THEN 0 ELSE 1 END,
+       updated_at = excluded.updated_at
+     RETURNING entity_type, alias_name, canonical_name, detections, promoted`,
+    [input.entityType, input.aliasName, input.canonicalName, input.at]
+  )
+
+/** Mark a corroborated merge applied, so a later night reads it as done instead of pending. */
+export const markEntityPromoted = (
+  db: DatabaseShape,
+  input: {
+    readonly entityType: string
+    readonly aliasName: string
+    readonly canonicalName: string
+    readonly at: string
+  }
+): Effect.Effect<void, StorageFailure> =>
+  db.run(
+    `UPDATE ${STATE_SCHEMA}.entity_corroboration
+     SET promoted = 1, confirmed = 1, updated_at = ?
+     WHERE entity_type = ? AND alias_name = ? AND canonical_name = ?`,
+    [input.at, input.entityType, input.aliasName, input.canonicalName]
   )
 
 /** Sessions with no memory linked to them, which is what trace-consolidation counts in v1. */

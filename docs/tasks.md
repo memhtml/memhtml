@@ -127,10 +127,10 @@ under `projects/<ws>/tasks/` satisfying the format is as real as one the CLI wro
   `packages/index/src/traces-persist.ts:166`), and the store's intra-batch map restates it
   (`packages/store/src/store.ts:316-323`). Two open tasks with identical bodies are two work items, and a
   memory is never deduped onto a task's path.
-- **Sleep skips them.** `SLEEP_EXCLUDED_TYPES` is stated once (`packages/sleep/src/sql.ts:33`) and
-  spread into eight phase sites — dedup-merge, relationship-mining, conflict-detection,
+- **Sleep skips them.** `SLEEP_EXCLUDED_TYPES` is stated once (`packages/sleep/src/sql.ts:36`) and
+  spread into eight phase sites — dedup-merge, relationship-mining, edge-typing,
   retention-triage, reprieve, compress, confidence-decay, arc-synthesis — plus the two entity queries
-  behind person-links and entity-resolution (`:220`, `:239`). Finished tasks need no exclusion: every
+  behind person-links and entity-resolution (`:337`, `:357`). Finished tasks need no exclusion: every
   phase's corpus is `archived = 0`. `HALF_LIVES_DAYS.task` is `null`
   (`packages/domain/src/retention.ts:125`).
 

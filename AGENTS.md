@@ -329,7 +329,7 @@ The memory-session links, from either side.
 The nightly curation cycle: 15 phases, each an isolated commit on a review branch.
 
 - `--date` (string) — The run date, `YYYY-MM-DD`. Defaults to today. Names the branch.
-- `--phases` (string) — Comma-separated subset. All 15 by default: preflight, dedup-merge, entity-resolution, person-links, relationship-mining, conflict-detection, confidence-decay, arc-synthesis, retention-triage, compress, reprieve, trace-consolidation, integrity, state-export, report.
+- `--phases` (string) — Comma-separated subset. All 15 by default: preflight, dedup-merge, entity-resolution, person-links, relationship-mining, edge-typing, confidence-decay, arc-synthesis, retention-triage, compress, reprieve, trace-consolidation, integrity, state-export, report.
 - `--dry-run` (boolean) — Report per-phase counts and commit nothing. _(default `false`)_
 
 ### `memhtml sleep resume`
@@ -434,10 +434,10 @@ Run the `memhtml-mcp` stdio server: 14 tools and 2 resources over this same repo
 |---|---|---|
 | `MEMHTML_ROOT` | `~/memhtml` | The memory repo's root: a git repository holding the corpus and `.memhtml/`. |
 | `MEMHTML_TRACE_ROOT` | `~/.claude` | Where `memhtml trace index` reads Claude Code transcripts from. Read-only; never written. |
-| `MEMHTML_AWS_REGION` | `us-east-1` | The Bedrock region for embeddings and the sleep cycle's four LLM phases. |
+| `MEMHTML_AWS_REGION` | `us-east-1` | The Bedrock region for embeddings and the sleep cycle's model-calling phases. |
 | `AWS_BEARER_TOKEN_BEDROCK` | — | Bedrock bearer token, read by the AWS SDK itself. Absent means the default credential chain; retrieval then degrades to the lexical floor rather than failing. |
 | `MEMHTML_EMBED` | `on` | `off` disables the embedder entirely. An explicit opt-out, distinct from a missing credential: a missing credential degrades one search at call time, `off` degrades every search, and an operator reading this manifest needs those to be different states. |
-| `MEMHTML_LLM` | `on` | `off` makes the four LLM sleep phases report `no model bound` and stay `ok`, so a credential-free run is honest rather than red. |
+| `MEMHTML_LLM` | `on` | `off` makes every model-calling sleep phase report `no model bound` and stay `ok`, so a credential-free run is honest rather than red. `entity-resolution` still runs its deterministic normalization and character-overlap passes; the others do nothing. |
 | `MEMHTML_EXTRACT_ENTITIES` | `off` | `on` adds one GPT-5.6 Luna call per write batch that extracts `memhtml-entity` metas the ops did not declare. Opt-in, unlike MEMHTML_EMBED, because it changes what a write STORES: extracted entities land in the files as if authored, and the write itself never waits on or fails with the model. A failed extraction is a logged warning and an unextracted batch. |
 | `MEMHTML_MCP_BIN` | — | An explicit path to the `memhtml-mcp` entry point, read only by the `memhtml serve mcp` supervisor. Absent means the sibling-path default. The two apps ship as one build, so `apps/cli/dist/serve.js` finds `apps/mcp/dist/bin.js` two directories over. An operator sets it for a split deployment that does not keep the apps side by side; it locates the server rather than configuring the store, so it changes no retrieval behavior. |
 

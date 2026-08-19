@@ -345,7 +345,7 @@ describe("head well-formedness", () => {
     ).toContain("appears 2 times but is not repeatable")
   })
 
-  it("accepts repeated memhtml-entity and memhtml-tag", () => {
+  it("accepts repeated memhtml-entity, memhtml-tag, and memhtml-alias", () => {
     const doc = parseOk(
       fileWith(
         MINIMAL_ARTICLE,
@@ -353,12 +353,27 @@ describe("head well-formedness", () => {
           '<meta name="memhtml-entity" content="service:a">',
           '<meta name="memhtml-entity" content="person:b">',
           '<meta name="memhtml-tag" content="one">',
-          '<meta name="memhtml-tag" content="two">'
+          '<meta name="memhtml-tag" content="two">',
+          '<meta name="memhtml-alias" content="b short">',
+          '<meta name="memhtml-alias" content="b.short">'
         ].join("\n")
       )
     )
     expect(doc.entities).toEqual(["service:a", "person:b"])
     expect(doc.tags).toEqual(["one", "two"])
+    /**
+     * Repeated and in DOCUMENT ORDER, which is what a person file's declaration needs: a subject may be
+     * recorded under several names and each is its own line, so correcting one is a one-line diff in a
+     * file a human edits. A parse that kept only the first would silently discard every alias but one,
+     * and the merges those aliases authorize would then wait two nights instead of applying.
+     */
+    expect(doc.aliases).toEqual(["b short", "b.short"])
+  })
+
+  it("carries no aliases on a file that declares none, rather than an absent field", () => {
+    // Sleep iterates `doc.aliases`, so an absent field would be a crash in a phase reading an ordinary
+    // memory rather than a person file.
+    expect(parseOk(fileWith(MINIMAL_ARTICLE, "")).aliases).toEqual([])
   })
 
   it("rejects a memhtml- meta outside the closed metadata vocabulary", () => {

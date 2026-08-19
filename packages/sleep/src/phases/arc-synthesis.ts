@@ -3,6 +3,7 @@ import { slugify } from "@memhtml/contracts/slug"
 import { renderTemplate } from "@memhtml/html"
 import { Effect } from "effect"
 
+import { isolate } from "../batch.js"
 import { commitPhase } from "../commit.js"
 import { hrefFor, link, meta, readFileBytes, stampFile, writeFileBytes } from "../edits.js"
 import { emptyOutcome, modelFor, type PhaseBody } from "../env.js"
@@ -12,8 +13,7 @@ import {
   ArcContent,
   ArcPlan,
   arcExecutePrompt,
-  arcTriagePrompt,
-  isolate
+  arcTriagePrompt
 } from "../llm.js"
 import { runRetentionPass } from "../retention.js"
 import { isSleepExcluded } from "../sql.js"

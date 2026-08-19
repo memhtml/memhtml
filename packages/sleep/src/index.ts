@@ -7,6 +7,17 @@
  * later phases run; `git branch -D` is the abort, and `main` never moved.
  */
 
+export type { GroupBatch, KeyedBatch, KeyedMember, LlmFailure } from "./batch.js"
+export {
+  assembleBatches,
+  batchCall,
+  batchPrompt,
+  isolate,
+  keyMembers,
+  memberList,
+  packGroups,
+  resolveKeys
+} from "./batch.js"
 export { commitPhase, phaseTrailers } from "./commit.js"
 export type {
   CandidateEvidenceLike,
@@ -59,7 +70,7 @@ export {
 } from "./edits.js"
 export type { PhaseBody, PhaseEnv, PhaseOutcome, SleepDeps, SleepError } from "./env.js"
 export { DEFAULT_MODELS, emptyOutcome, modelFor } from "./env.js"
-export type { LlmFailure, StanceVerdict } from "./llm.js"
+export type { EdgeDirection, EdgeDirectionalRel, EdgeVerdictRel } from "./llm.js"
 export {
   ARC_EXECUTE_SYSTEM,
   ARC_TRIAGE_SYSTEM,
@@ -69,15 +80,32 @@ export {
   arcExecutePrompt,
   arcTriagePrompt,
   assertsContradiction,
+  assertsEdge,
+  COMPRESS_INSTRUCTION,
   COMPRESS_SYSTEM,
   CompressSynthesis,
   compressPrompt,
+  DEDUP_INSTRUCTION,
+  DEDUP_SYSTEM,
   dataBlock,
-  isolate,
-  STANCE_CONFIDENCE_FLOOR,
-  STANCE_SYSTEM,
-  StanceJudgment,
-  stancePrompt
+  dedupPrompt,
+  EDGE_CONFIDENCE_FLOOR,
+  EDGE_DIRECTIONAL_RELS,
+  EDGE_TYPED_RELS,
+  EDGE_TYPING_INSTRUCTION,
+  EDGE_TYPING_SYSTEM,
+  EdgeTyping,
+  EdgeVerdict,
+  ENTITY_CLUSTER_INSTRUCTION,
+  ENTITY_CLUSTER_SYSTEM,
+  EntityCluster,
+  EntityClustering,
+  edgeTypingPrompt,
+  entityClusterPrompt,
+  isDirectionalRel,
+  MergeGroup,
+  MergePartition,
+  pairText
 } from "./llm.js"
 export * from "./phases/index.js"
 export type { GeneratedFile } from "./publish.js"
@@ -128,15 +156,16 @@ export {
   activeEntities,
   allPaths,
   bumpCorroboration,
-  conflictCandidates,
   consolidatedSessionCount,
   corpusSnapshot,
   danglingEdges,
+  frameKeyPairs,
   latestRun,
   linkedSessionCount,
   markPromoted,
   markSessionsConsolidated,
   memoryEdges,
+  minedPairs,
   neighborPairs,
   pathsForEntity,
   publishRows,
@@ -147,6 +176,7 @@ export {
   replaceMinedEdges,
   retentionEdgeCounts,
   sessionManifestRows,
+  sharedEntityPairs,
   unconsolidatedSessions,
   unlinkedSessionCount
 } from "./sql.js"

@@ -448,7 +448,7 @@ Flags:
 - `--phases`: Comma-separated subset. All 15 by default. String. `apps/cli/src/commands.ts:590`
 - `--dry-run`: Report per-phase counts and commit nothing. Boolean, default false. `apps/cli/src/commands.ts:595`
 
-The 15 phase names come from `SLEEP_PHASES`: `preflight`, `dedup-merge`, `entity-resolution`, `person-links`, `relationship-mining`, `conflict-detection`, `confidence-decay`, `arc-synthesis`, `retention-triage`, `compress`, `reprieve`, `trace-consolidation`, `integrity`, `state-export`, `report`. `packages/sleep/src/contract.ts:17-33`
+The 15 phase names come from `SLEEP_PHASES`: `preflight`, `dedup-merge`, `entity-resolution`, `person-links`, `relationship-mining`, `edge-typing`, `confidence-decay`, `arc-synthesis`, `retention-triage`, `compress`, `reprieve`, `trace-consolidation`, `integrity`, `state-export`, `report`. `packages/sleep/src/contract.ts:17-33`
 
 A run holds a checked-out `sleep/<date>` branch. Any write that lands during the run commits onto that branch. `apps/cli/src/commands.ts:872-876`
 
@@ -677,10 +677,10 @@ Every environment variable is declared in one array, which is what `memhtml mani
 
 - `MEMHTML_ROOT`: The memory repo's root: a git repository holding the corpus and `.memhtml/`. Defaults to `~/memhtml`. `apps/cli/src/config.ts:27-31`
 - `MEMHTML_TRACE_ROOT`: Where `memhtml trace index` reads Claude Code transcripts from. Read-only. Defaults to `~/.claude`. `apps/cli/src/config.ts:32-37`
-- `MEMHTML_AWS_REGION`: The Bedrock region for embeddings and the sleep cycle's four LLM phases. Defaults to `us-east-1`. `apps/cli/src/config.ts:38-42`
+- `MEMHTML_AWS_REGION`: The Bedrock region for embeddings and the sleep cycle's model-calling phases. Defaults to `us-east-1`. `apps/cli/src/config.ts:38-42`
 - `AWS_BEARER_TOKEN_BEDROCK`: Bedrock bearer token, read by the AWS SDK itself. When it is absent the SDK falls back to the default credential chain, and retrieval degrades to the lexical floor instead of failing. `apps/cli/src/config.ts:43-48`
 - `MEMHTML_EMBED`: `off` disables the embedder entirely. Defaults to `on`. `apps/cli/src/config.ts:49-54`
-- `MEMHTML_LLM`: `off` makes the four LLM sleep phases report `no model bound` and stay `ok`. Defaults to `on`. `apps/cli/src/config.ts:55-60`
+- `MEMHTML_LLM`: `off` makes every model-calling sleep phase report `no model bound` and stay `ok`; `entity-resolution` still runs its deterministic passes. Defaults to `on`. `apps/cli/src/config.ts:55-60`
 - `MEMHTML_EXTRACT_ENTITIES`: `on` adds one model call per write batch that extracts `memhtml-entity` metas the ops did not declare. It defaults to `off` because it changes what a write stores. `apps/cli/src/config.ts:61-66`
 - `MEMHTML_MCP_BIN`: An explicit path to the `memhtml-mcp` entry point, read only by the `memhtml serve mcp` supervisor. When it is absent the supervisor uses the sibling-path default. `apps/cli/src/config.ts:67-77`
 

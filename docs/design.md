@@ -702,11 +702,11 @@ creates no branch, safe precisely because no phase in dry mode writes a file.
 | # | Phase | Model | Git effect |
 |---|---|---|---|
 | 1 | `preflight` | no | none — `index update`, snapshot counts |
-| 2 | `dedup-merge` | no | one commit: keeper gains `memhtml-supersedes`, dropped files `git mv` to archive |
-| 3 | `entity-resolution` | no | one commit: `memhtml-entity` values normalized and cluster-merged in place |
+| 2 | `dedup-merge` | yes | one commit: keeper gains `memhtml-supersedes`, dropped files `git mv` to archive |
+| 3 | `entity-resolution` | yes | one commit: `memhtml-entity` values normalized and cluster-merged in place |
 | 4 | `person-links` | no | one commit: `memhtml-about-person` links to `resources/people/*` |
 | 5 | `relationship-mining` | no | **no commit** — derived `relates_to` in the index only |
-| 6 | `conflict-detection` | yes | one commit, only for corroborated promotions |
+| 6 | `edge-typing` | yes | one commit: typed edges promoted, and corroborated contradictions |
 | 7 | `confidence-decay` | no | one commit: `memhtml-confidence` rewritten for un-reinforced files |
 | 8 | `arc-synthesis` | yes | **one commit per arc** |
 | 9 | `retention-triage` | no | one commit: EVICT-band files `git mv` to archive |
@@ -741,7 +741,7 @@ can regenerate, and a reporting write never fails a run (`packages/sleep/src/run
 reports already-done phases explicitly as `skipped`, so its report accounts for all fifteen
 (`packages/sleep/src/run.ts:176-191`).
 
-**Tasks are excluded from every phase** (`packages/sleep/src/sql.ts:33`), for different reasons per phase.
+**Tasks are excluded from every phase** (`packages/sleep/src/sql.ts:36`), for different reasons per phase.
 In `relationship-mining` it is the graph firewall: mined edges are written `edge_class = 'memory'`, so a
 task endpoint would put a task into PageRank, MMR, and the bridge count, and the `edges` CHECK cannot
 refuse it because `relates_to` under `memory` is well-formed whatever files sit at its ends
@@ -755,9 +755,12 @@ leave the busy work behind (`packages/sleep/src/phases/retention-triage.ts:24-28
 | Constant | Value | Location |
 |---|---|---|
 | Near-duplicate cosine / merges per cycle | 0.92 strict / 100 | `packages/domain/src/merge.ts:16-19` |
-| Entity auto-merge / review ratio | 0.85 / 0.75 | `packages/sleep/src/phases/entity-resolution.ts:30-33` |
+| Entity auto-merge / review ratio | 0.85 / 0.75 | `packages/sleep/src/phases/entity-resolution.ts:65-68` |
+| Entity cluster confidence / detections / shard | 0.7 / 2 / 500 | `packages/sleep/src/phases/entity-resolution.ts:77-86` |
 | Mining cosine / k / sample | 0.85 / 5 / 2000 | `packages/sleep/src/phases/relationship-mining.ts:22-28` |
-| Conflict cosine / k / cap / detections | 0.80 / 5 / 200 / 2 | `packages/sleep/src/phases/conflict-detection.ts:43-52` |
+| Dedup recall floor / component cap / components per night / members per call | 0.86 / 8 / 300 / 40 | `packages/sleep/src/phases/dedup-merge.ts:103-151` |
+| Edge-typing cosine / k / candidates / detections | 0.80 / 5 / 200 / 2 | `packages/sleep/src/phases/edge-typing.ts:89-112` |
+| Edge-typing pairs per call / promotions per night | 30 / 50 | `packages/sleep/src/phases/edge-typing.ts:86`, `:122` |
 | Confidence commit delta | 0.005 | `packages/domain/src/decay.ts:135` |
 | Compress batch / candidates | 8 / 2000 | `packages/sleep/src/phases/compress.ts:39-42` |
 | Retention bands | keep > 0.7, evict ≤ 0.3 | `packages/domain/src/retention.ts:144-145` |
@@ -773,27 +776,95 @@ boundaries belong to the lower band, so the three bands partition `[0, 1]` with 
 `null` — a working procedure does not stale, and age is actively misleading about intended work
 (`packages/domain/src/retention.ts:110-126`).
 
-**The merge veto** (`packages/domain/src/merge.ts:169`) is the disjunction of three symmetric divergence
+**The merge veto** (`packages/domain/src/merge.ts:175`) is the disjunction of three symmetric divergence
 predicates: negation flip, numeric-token flip, variant-qualifier flip. Cosine is geometric and embedding
 models are weakest on exactly the tokens carrying polarity and discriminators, so "the deploy step is safe"
 and "the deploy step is NOT safe" sit above 0.92. Since the merge keeps the *older* file, a blind
 high-cosine merge folds a newer correction into an older wrong memory — it does not merely lose
 information, it restores the error the correction was written to fix (`packages/domain/src/merge.ts:1-13`).
-The **in-batch role guard** (`packages/domain/src/merge.ts:174-195`) fixes a path's role for the batch: a
+The **in-batch role guard** (`packages/domain/src/merge.ts:202-260`) fixes a path's role for the batch: a
 keeper cannot later be dropped, and vice versa. Both directions are required — recording only the drop side
 leaves the surviving corruption, where given `(gf, a)` then `(b, gf)` both decisions commit, `gf` absorbs
 `a` and is then archived into `b`, so `a`'s content is superseded into a file the same batch destroyed.
 
-**Conflict detection is three stages and the separation is the safety property**
-(`packages/sleep/src/phases/conflict-detection.ts:21-40`): an SQL scan with no model, one isolated model
-call per pair, then a deterministic assertion the model never makes. Only `verdict: "contradicts"` above the
-confidence floor bumps the corroboration counter, and only two detections promote the edge into the files,
-so a single machine detection can never reach the retention penalty. The bump and the promotion decision
-are one statement's `RETURNING` (`packages/sleep/src/phases/conflict-detection.ts:124-135`), because two
-runs racing on one pair would otherwise both read `detections = 1` and both decline to promote. Promotion
-writes **both** directions, since a contradiction is symmetric; `addLink` is idempotent on the pair, so a
-re-promotion writes nothing. The phase **detects and stops** — choosing the winner of a contradiction is a
-one-way door on stored belief and belongs to an agent or a human, not to a nightly job.
+**The guards are a POST-FILTER over every proposal, including a model's**
+(`packages/domain/src/merge.ts:14-18`). With a model bound, `dedup-merge` mines a RECALL-oriented candidate
+set at 0.86, unions it with the frame-key exact matches, builds connected components over that union
+(size-capped at 8, 300 components a night), and asks the model to partition each component into merge
+groups — several components packed into one call, since a typical component is a pair and one call per
+component would spend a model call on two memories. The model answers one question, which of these
+memories are the same memory: it does not choose the canonical, it does not name a write target, and it is
+never asked an n² pair question. Every pair a group implies is routed through `mergeCandidates`, so the set
+of pairs that CAN be committed does not widen when a model is bound — it is the same predicate over a
+different candidate set, and a model that groups a claim with its own negation is refused by the predicate
+that refuses a blind cosine. The 0.86-to-0.92 band is what the model is for: a pair there is one no cosine
+can settle, and the deterministic path cannot see into it at all. Orientation stays arithmetic over corpus
+order, and inside a model-proposed group the keeper is the member with the lowest corpus offset. Model
+groups are offered to the filter FIRST, then the mined pairs above 0.92 no group already claimed, which
+gives two properties: the deterministic floor never regresses, and where the two disagree the semantic
+answer wins the path, because the model read both files and the cosine read neither. **With no model bound
+the phase is the deterministic floor, unchanged** — it mines at 0.92, orients, and hands the pairs to the
+same filter, so a night with no credentials still folds every duplicate a cosine can prove.
+
+**Edge typing is four stages and the separation is the safety property**
+(`packages/sleep/src/phases/edge-typing.ts:27-76`): an SQL scan with no model, a deterministic batching
+step, one isolated model call per BATCH, then a deterministic promotion the model never makes. The scan is
+the union of two arms — mining's derived `relates_to` edges and a shared-entity scan at the cosine floor —
+because neither subsumes the other: a pair about one incident naming no common entity is invisible to the
+join and obvious to the embedder, and a same-entity pair below the mining floor is the reverse. Batching
+sorts pairs by the deepest directory both endpoints share and slices at 30, so the call count is
+`ceil(pairs / 30)` rather than one call per pair; at the measured 1,498 mined pairs a night, per-pair
+judging is 1,498 calls and does not scale. One call judges its whole batch over `{caused_by, leads_to,
+example_of, supports, part_of, contradicts, none}` plus a direction.
+
+Code decides what is written. A **directional** rel above the confidence floor is written into the
+SUBJECT's file alone, per the direction the model named, because a `caused_by` written into the cause
+instead of the effect says the opposite of what the model answered; there is no corroboration gate on
+those, since a `part_of` carries no retention penalty and is cheap for a reviewer to delete. A night
+promotes at most 50 authored edges across every batch and both kinds. **`contradicts` keeps the gate it
+always had**: it is symmetric, so its direction is ignored, and above the floor it bumps the corroboration
+counter and is written into **both** files only at `detections >= 2`, so a single machine detection can
+never reach the retention penalty. The bump and the promotion decision are one statement's `RETURNING`
+(`packages/sleep/src/phases/edge-typing.ts:325-337`), because two runs racing on one pair would otherwise
+both read `detections = 1` and both decline to promote; `addLink` is idempotent on the pair, so a
+re-promotion writes nothing. `none`, or anything below the floor, writes nothing and leaves the pair a
+mined `relates_to` — the answer an unsure model is told to pick. The phase **detects and stops** — choosing
+the winner of a contradiction is a one-way door on stored belief and belongs to an agent or a human, not to
+a nightly job.
+
+**Five phases batch on one kernel** (`packages/sleep/src/batch.ts`): the phase sorts its rows and the
+kernel slices them into batches, mints opaque `m1`..`mN` keys, frames the member list as one prompt, and
+resolves the keys an answer names back to rows. Members are offered under opaque keys and never under
+paths, so a model shown `m3` can answer only `m3` and a key the batch never held resolves to nothing and is
+dropped — when the answer to "which of these do you absorb" could be a path, the answer is a write target
+the model chose. The kernel does no sorting of its own and preserves the order it is handed, which is what
+lets each phase state that its own batch boundaries and prompt bytes are a function of the corpus alone;
+sorting inside the kernel would take that guarantee from the phase that has to state it, because only the
+phase knows which column is its stable key. Caps are per-phase rather than shared, because `maxMembers` is
+how many members fit one answer's attention for that phase's question. `batchCall` sets `cacheSystem`, so
+each phase's system prompt and tool schema form a cache-eligible prefix across every batch of the night and
+only the member list is new bytes per call.
+
+**Entity resolution decides on centroids, not on character overlap.** The deterministic pre-pass still
+normalizes, exact-merges, and auto-merges at 0.85 character overlap, and that pass alone is the whole phase
+with no model bound. But character overlap is measurably wrong on the case the phase exists for: `laith`
+against `laith al-saadoon` scores 0.476 and `sanju` against `sanju kumar` 0.625, below even the 0.75 review
+band, so a short name and its full form are structurally invisible to a character ratio. The signal that
+separates them is what is WRITTEN under each name — the centroid of the vectors of every memory claiming it
+— computed in the same pass at `O(files)` and never per pair. With a model bound, ALL names of one entity
+type go into ONE clustering call sharded at 500, returning a partition into subjects rather than a pair
+verdict; at the measured 59 entities that is one call where the pair space is 1,711. The centroid is
+EVIDENCE handed to the model and never a threshold: on the measured corpus `checkout-api` against
+`payments-api` sits at 0.9333 while one person's two spellings sit at 0.7788, so any cosine floor that
+merged the person would fuse the two services first. Each member is offered with its memory count, up to
+three titles, its three nearest centroid neighbors, and — for a person — the `memhtml-alias` values a
+person file declares. The post-pass stays code: the surviving name follows a weight-then-lexicographic rule
+over the corpus's own file counts and never the model's `canonicalKey` (which is used only to validate that
+a cluster's canonical is one of its own members), and all three pair sources feed ONE union-find so no two
+passes can disagree. An alias-backed merge applies at once; a merge the model alone proposes clears the 0.7
+floor and is then counted in `state.entity_corroboration`
+(`packages/index/state-migrations/S0002_entity_corroboration.sql`), applying only once two different nights
+have reached it.
 
 **Graph analysis runs in TypeScript** (`packages/domain/src/graph.ts:76`,
 `packages/domain/src/graph.ts:164`): PageRank by power iteration, communities by label propagation.
@@ -814,8 +885,8 @@ effort and thinking rules are per-model and exact, and Converse has no field for
 are reached through `global.` inference profiles, with `thinking` sent for two and omitted for the third
 because sending it there is a validation error rather than a no-op (`packages/llm/src/models.ts:27-30`,
 `packages/llm/src/models.ts:57`). Every phase caps its calls and isolates each one, so a single malformed
-response skips its item and is counted — a night that judged 199 pairs and lost the 200th has done 199
-pairs of work (`packages/sleep/src/phases/conflict-detection.ts:105-119`). `arc-synthesis` splits triage
+response skips its BATCH and is counted rather than failing the phase — a night that typed nine batches of
+pairs and lost the tenth has done nine batches of work (`packages/sleep/src/batch.ts:216-233`). `arc-synthesis` splits triage
 from execution, because a single call asked to both choose and write produces content for arcs it should
 have skipped and the writing is the expensive half
 (`packages/sleep/src/phases/arc-synthesis.ts:25-28`). `compress` archives a member only when the model

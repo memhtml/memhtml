@@ -22,9 +22,17 @@ export interface SleepDeps {
   readonly db: DatabaseShape
   readonly indexer: IndexerShape
   /**
-   * The model behind the four LLM phases. Absent makes each of them `skipped` with a reason.
-   * That differs from `failed`, which is what a model that answers badly produces. A deterministic
-   * run (a dry run, a fixture without credentials) is not a broken run.
+   * The model behind the LLM phases. Absent DEGRADES each of them; it never fails a run.
+   *
+   * What degradation means is per phase, and the two shapes are different on purpose. `compress`,
+   * `arc-synthesis`, and `edge-typing` have nothing to do without a model, so they report a reason and
+   * write nothing. `dedup-merge` has a deterministic answer — the 0.92 cosine floor plus the divergence
+   * veto — so with no model it does that work and commits it, and `entity-resolution` likewise runs its
+   * normalization, character, and declared-alias passes. A night with no credentials still folds every
+   * duplicate a cosine can prove and applies every alias a person file declares.
+   *
+   * Either way this differs from `failed`, which is what a model that answers badly produces. A
+   * deterministic run (a dry run, a fixture without credentials) is not a broken run.
    */
   readonly model?: ModelClientShape | undefined
   /**
@@ -42,7 +50,7 @@ export interface SleepDeps {
 }
 
 /**
- * Model assignments per LLM phase: the cheap judge for stance, the strong one for synthesis.
+ * Model assignments per LLM phase: the cheap judge for classification, the strong one for synthesis.
  *
  * `trace-consolidation` names `opus-5` and does not thereby choose it. The consolidator is an eve
  * agent that pins its own model in `apps/consolidator/agent/agent.ts`, and this map cannot reach that
@@ -51,7 +59,22 @@ export interface SleepDeps {
  * the Bedrock global endpoint, high reasoning effort, no cost ceiling.)
  */
 export const DEFAULT_MODELS: Readonly<Record<string, ModelKey>> = {
-  "conflict-detection": "sonnet-5",
+  /**
+   * `dedup-merge` names sonnet for the same reason the edge-typing judge does: the question is a
+   * classification over text the model is shown, not a synthesis it has to write. It partitions a
+   * component into "these are the same memory" groups, and every consequence of that answer — which
+   * file survives, whether the pair diverges, whether either path is already claimed — is decided by
+   * code afterwards. The strong model is spent where prose gets written.
+   */
+  "dedup-merge": "sonnet-5",
+  /**
+   * Sonnet, and one or two calls a night: the whole of one entity type's name list goes in one call.
+   * The question is a partition over short strings with their evidence inline, not a synthesis, so
+   * the strong model would buy nothing the deterministic floors around the answer do not already
+   * supply.
+   */
+  "entity-resolution": "sonnet-5",
+  "edge-typing": "sonnet-5",
   "arc-synthesis": "opus-5",
   compress: "sonnet-5",
   "trace-consolidation": "opus-5"

@@ -97,7 +97,7 @@ const stemOf = (path: string): string => {
 describe("trace-consolidation degradation", () => {
   it("is skipped with a reason, not failed, when no consolidator is bound", async () => {
     /**
-     * INV-3's base case, mirroring `conflict-detection`'s "no model bound" exactly. This is the shape
+     * INV-3's base case, mirroring `edge-typing`'s "no model bound" exactly. This is the shape
      * CI takes — no Bedrock credentials, so `layerConsolidatorPort` binds nothing — and it must read
      * as skipped rather than as a degradation or a failure.
      */
@@ -691,9 +691,9 @@ describe("trace-consolidation conflict assist", () => {
 
           /**
            * NO AUTHORED EDGE, and no archive of either side. This is the mechanical half of the
-           * decision: `conflictCandidates` anti-joins on `derived = 0`, so ANY authored edge between
-           * two paths permanently closes that pair to the NLI phase — stamping one here would silence
-           * the disagreement this lookup just found.
+           * decision: both of edge typing's candidate arms anti-join on `derived = 0`, so ANY authored
+           * edge between two paths permanently closes that pair to the typing phase — stamping one
+           * here would silence the disagreement this lookup just found.
            */
           const existing = yield* atHead(fixture, "areas/deploy/runbook-owner.html")
           expect(existing).toBeDefined()

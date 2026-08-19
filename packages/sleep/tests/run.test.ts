@@ -4,7 +4,7 @@ import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 
 import { SLEEP_PHASES, TRAILER_COUNTS, TRAILER_PHASE, TRAILER_RUN } from "../src/contract.js"
-import { ArcPlan, StanceJudgment } from "../src/llm.js"
+import { ArcPlan, EdgeTyping } from "../src/llm.js"
 import { instantFor, resume, run, runIdFor } from "../src/run.js"
 import { latestRun, readPhases } from "../src/sql.js"
 import {
@@ -52,7 +52,13 @@ const inertModel = () =>
   scriptedModel((request) =>
     request.system.startsWith("You triage")
       ? value({ entries: [] })
-      : value({ verdict: "neutral", confidence: 0.9, rationale: "compatible claims" })
+      : request.system.startsWith("You partition")
+        ? // dedup-merge's partition call. `groups: []` is a refusal, which leaves the phase on its
+          // deterministic arm — the same pairs it folds with no model bound at all.
+          value({ groups: [] })
+        : request.system.startsWith("You type")
+          ? value({ verdicts: [] })
+          : value({ title: "x", claim: "y", paragraphs: [], absorbedKeys: [] })
   )
 
 describe("run", () => {
@@ -152,13 +158,13 @@ describe("run", () => {
 
   it("isolates a failing LLM phase: prior commits intact, later phases still run", async () => {
     /**
-     * The injected failure is a `LlmContractViolation` on every conflict-detection call. Per-item
+     * The injected failure is a `LlmContractViolation` on every edge-typing call. Per-item
      * isolation means the PHASE does not fail — it counts the skips — which is the correct behavior
      * and is asserted below. The phase-level failure path is covered separately by the hard-prereq
      * test, where a real phase failure is provoked.
      */
     const model = scriptedModel((request) =>
-      request.system.startsWith("You are a natural-language-inference")
+      request.system.startsWith("You type relationships")
         ? violation("scripted off-schema answer")
         : value({ entries: [] })
     )
@@ -168,16 +174,16 @@ describe("run", () => {
         Effect.gen(function* () {
           const report = yield* run(fixture.deps, { date: DATE })
 
-          const conflict = report.phases.find((phase) => phase.phase === "conflict-detection")
+          const typing = report.phases.find((phase) => phase.phase === "edge-typing")
           const dedup = report.phases.find((phase) => phase.phase === "dedup-merge")
           const stateExport = report.phases.find((phase) => phase.phase === "state-export")
           const reportPhase = report.phases.find((phase) => phase.phase === "report")
 
-          // Every judged pair was skipped, and the phase counted them rather than aborting.
-          expect(conflict?.status).toBe("ok")
-          expect(conflict?.counts.skipped).toBeGreaterThan(0)
-          expect(conflict?.counts.judged).toBe(0)
-          expect(conflict?.commitSha).toBeNull()
+          // Every candidate pair was skipped, and the phase counted them rather than aborting.
+          expect(typing?.status).toBe("ok")
+          expect(typing?.counts.skipped).toBeGreaterThan(0)
+          expect(typing?.counts.judged).toBe(0)
+          expect(typing?.commitSha).toBeNull()
 
           // The phase BEFORE it committed, and the phases AFTER it ran.
           expect(dedup?.commitSha).not.toBeNull()
@@ -724,12 +730,23 @@ describe("scripted model fidelity", () => {
      * works against a shape the model can never produce.
      */
     const model = scriptedModel(() =>
-      value({ verdict: "contradicts", confidence: 0.9, rationale: "x", extra: 1 })
+      value({
+        verdicts: [
+          {
+            pairKey: "m1",
+            rel: "contradicts",
+            direction: "src_to_dst",
+            confidence: 0.9,
+            rationale: "x",
+            extra: 1
+          }
+        ]
+      })
     )
     const outcome = await Effect.runPromise(
       Effect.result(
         model.generateObject({
-          schema: StanceJudgment,
+          schema: EdgeTyping,
           prompt: "p",
           modelKey: "sonnet-5",
           effort: "low"

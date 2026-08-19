@@ -37,7 +37,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   },
   {
     name: "MEMHTML_AWS_REGION",
-    description: "The Bedrock region for embeddings and the sleep cycle's four LLM phases.",
+    description: "The Bedrock region for embeddings and the sleep cycle's model-calling phases.",
     fallback: "us-east-1"
   },
   {
@@ -55,7 +55,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   {
     name: "MEMHTML_LLM",
     description:
-      "`off` makes the four LLM sleep phases report `no model bound` and stay `ok`, so a credential-free run is honest rather than red.",
+      "`off` makes every model-calling sleep phase report `no model bound` and stay `ok`, so a credential-free run is honest rather than red. `entity-resolution` still runs its deterministic normalization and character-overlap passes; the others do nothing.",
     fallback: "on"
   },
   {

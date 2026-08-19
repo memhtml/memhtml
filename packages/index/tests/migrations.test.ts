@@ -2,7 +2,14 @@ import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
 
 import { FTS_COLUMN, FTS_INDEX_NAME, MEMORY_TABLES, TRACE_TABLES } from "../src/schema-const.js"
-import { migrationsAfter, withDb, withDbNoState, withDbThrough } from "./harness.js"
+import {
+  migrationsAfter,
+  stateMigrationsAfter,
+  withDb,
+  withDbNoState,
+  withDbThrough,
+  withStateDbThrough
+} from "./harness.js"
 
 /**
  * The DDL against the real driver. Every assertion here is about a constraint the schema claims to
@@ -11,11 +18,11 @@ import { migrationsAfter, withDb, withDbNoState, withDbThrough } from "./harness
  */
 
 describe("migrations", () => {
-  it("applies all ten index migrations and the one state migration", async () => {
+  it("applies all ten index migrations and both state migrations", async () => {
     const counts = await withDb((db) =>
       Effect.succeed({ index: db.migrationsApplied, state: db.stateMigrationsApplied })
     )
-    expect(counts).toEqual({ index: 10, state: 1 })
+    expect(counts).toEqual({ index: 10, state: 2 })
   })
 
   it("creates every table the truncate lists name", async () => {
@@ -70,7 +77,7 @@ describe("migrations", () => {
       "0009_frame_key.sql",
       "0010_trace_consolidations.sql"
     ])
-    expect(ledgers.state).toEqual(["S0001_access.sql"])
+    expect(ledgers.state).toEqual(["S0001_access.sql", "S0002_entity_corroboration.sql"])
   })
 
   it("reports no state plane when none is attached", async () => {
@@ -996,5 +1003,145 @@ describe("state plane constraints", () => {
       )
     )
     expect(Result.isFailure(outcome)).toBe(true)
+  })
+})
+
+/**
+ * S0002 adds `state.entity_corroboration`: the second gate on a one-way door, counting a
+ * model-proposed entity merge until two different nights have seen it.
+ *
+ * Additive `CREATE TABLE` plus one index, so nothing can be destroyed. What CAN go wrong is silent in
+ * every case: a key that does not include `entity_type` would let `person:api` and `service:api`
+ * corroborate each other's merges; a key on the pair in one order only would count the mirror as a
+ * second detection; and an absent CHECK would admit a zero-detection row that can never promote.
+ */
+describe("S0002 over a populated S0001 state plane", () => {
+  const AT = "2026-08-19T00:00:00Z"
+
+  it("applies over existing state rows and leaves S0001's tables alone", async () => {
+    const outcome = await withStateDbThrough("S0001_access.sql", (db, apply) =>
+      Effect.gen(function* () {
+        yield* db.run(
+          "INSERT INTO state.access (path, access_count, updated_at) VALUES (?, ?, ?)",
+          ["areas/oncall/a.html", 3, AT]
+        )
+        yield* db.run(
+          `INSERT INTO state.edge_corroboration (src_path, rel, dst_path, detections, updated_at)
+           VALUES (?, 'contradicts', ?, 1, ?)`,
+          ["areas/oncall/a.html", "areas/oncall/b.html", AT]
+        )
+        const beforeAccess = yield* db.all<Record<string, unknown>>(
+          "SELECT * FROM state.access ORDER BY path"
+        )
+        const beforeEdges = yield* db.all<Record<string, unknown>>(
+          "SELECT * FROM state.edge_corroboration ORDER BY src_path, rel, dst_path"
+        )
+
+        const applied = yield* Effect.promise(apply)
+
+        return {
+          applied,
+          beforeAccess,
+          beforeEdges,
+          afterAccess: yield* db.all<Record<string, unknown>>(
+            "SELECT * FROM state.access ORDER BY path"
+          ),
+          afterEdges: yield* db.all<Record<string, unknown>>(
+            "SELECT * FROM state.edge_corroboration ORDER BY src_path, rel, dst_path"
+          ),
+          // The new table is reachable and empty: a fresh migration invents no detection, so the
+          // first night after it counts every proposal as a first sighting.
+          pending: yield* db.all<{ alias_name: string }>(
+            "SELECT alias_name FROM state.entity_corroboration"
+          )
+        }
+      })
+    )
+
+    // Derived, not a literal: the count is incidental to what this asserts, and a literal fails here
+    // on every new state migration with an off-by-one that reads like a real regression.
+    expect(outcome.applied).toBe(await stateMigrationsAfter("S0001_access.sql"))
+    expect(outcome.afterAccess).toEqual(outcome.beforeAccess)
+    expect(outcome.afterEdges).toEqual(outcome.beforeEdges)
+    expect(outcome.pending).toEqual([])
+  })
+
+  it("keys a merge on the type, so one name pair under two types is two counters", async () => {
+    /**
+     * `entity_type` in the key, asserted by varying ONLY it. The same alias-and-canonical STRINGS under
+     * two types is a real shape here, not a contrived one: a `<dfn>` promotes to `concept:<term>` and an
+     * author writes `service:<term>` for the same word, so `api -> api gateway` can be pending under
+     * both at once (`project.ts`'s `entityRowsFor`).
+     *
+     * Without the type in the key the second insert is a conflicting row on the same primary key, so
+     * the concept's night-one sighting and the service's night-one sighting become one counter at two
+     * detections — and the phase promotes BOTH merges on the first night either was seen, which is the
+     * one-way door the counter exists to hold shut.
+     *
+     * (Verified by mutation: `PRIMARY KEY (alias_name, canonical_name)` makes this case fail on the
+     * second insert while every other case in this describe still passes.)
+     */
+    const rows = await withDb((db) =>
+      Effect.gen(function* () {
+        for (const type of ["concept", "service"]) {
+          yield* db.run(
+            `INSERT INTO state.entity_corroboration
+               (entity_type, alias_name, canonical_name, detections, updated_at)
+             VALUES (?, 'api', 'api gateway', 1, ?)`,
+            [type, AT]
+          )
+        }
+        return yield* db.all<{ entity_type: string; detections: number }>(
+          `SELECT entity_type, detections FROM state.entity_corroboration ORDER BY entity_type`
+        )
+      })
+    )
+    expect(rows).toEqual([
+      { entity_type: "concept", detections: 1 },
+      { entity_type: "service", detections: 1 }
+    ])
+  })
+
+  it("refuses a zero-detection row and a promoted value outside {0, 1}", async () => {
+    // A zero-detection row could never reach the promotion floor, so it would be a merge parked
+    // forever with no error anywhere saying why.
+    const outcomes = await withDb((db) =>
+      Effect.gen(function* () {
+        const zero = yield* Effect.result(
+          db.run(
+            `INSERT INTO state.entity_corroboration
+               (entity_type, alias_name, canonical_name, detections, updated_at)
+             VALUES ('person', 'laith', 'laith al-saadoon', 0, ?)`,
+            [AT]
+          )
+        )
+        const badFlag = yield* Effect.result(
+          db.run(
+            `INSERT INTO state.entity_corroboration
+               (entity_type, alias_name, canonical_name, promoted, updated_at)
+             VALUES ('person', 'sanju', 'sanju kumar', 2, ?)`,
+            [AT]
+          )
+        )
+        return [zero, badFlag]
+      })
+    )
+    expect(outcomes.every(Result.isFailure)).toBe(true)
+  })
+
+  it("lands the pending index in the state schema, where an unqualified name resolves", async () => {
+    /**
+     * The syntax fact S0001's header records, asserted rather than trusted:
+     * `CREATE INDEX state.x ON entity_corroboration (...)` puts the index in the attached schema. An
+     * index that landed in `main` instead would turn the pending lookup into a scan of the state table
+     * with nothing anywhere reporting it.
+     */
+    const row = await withDb((db) =>
+      db.get<{ name: string; tbl_name: string }>(
+        `SELECT name, tbl_name FROM state.sqlite_schema
+         WHERE type = 'index' AND name = 'entity_corroboration_pending'`
+      )
+    )
+    expect(row?.tbl_name).toBe("entity_corroboration")
   })
 })
