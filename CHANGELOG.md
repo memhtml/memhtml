@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.5](https://github.com/memhtml/memhtml/compare/memhtml-v0.2.4...memhtml-v0.2.5) (2026-08-19)
+
+
+### Bug Fixes
+
+* **sleep:** rank pair candidates in a decode-once kernel, not an n×n UDF self-join ([e3d5a87](https://github.com/memhtml/memhtml/commit/e3d5a87927d814b81028a7ef0f03d701a30b9f3c))
+* **sleep:** rank pair candidates in a decode-once kernel, not an n×n UDF self-join ([98af023](https://github.com/memhtml/memhtml/commit/98af0239c5fee525751a974b7d6aedb51fb5ff14)), closes [#40](https://github.com/memhtml/memhtml/issues/40)
+
 ## [0.2.4](https://github.com/memhtml/memhtml/compare/memhtml-v0.2.3...memhtml-v0.2.4) (2026-08-18)
 
 
