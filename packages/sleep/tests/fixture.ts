@@ -273,8 +273,8 @@ ${metas.join("\n")}
  * of reaching the dedup phase. Structural dedup and semantic dedup are different mechanisms, and only
  * the second is what this phase is for.
  *
- * `entities` are shared inside each pair, so the conflict-detection scan (which requires a shared
- * entity) finds the same pairs.
+ * `entities` are shared inside each pair, so edge typing's shared-entity scan (which requires a
+ * shared entity) finds the same pairs.
  */
 export const DEDUP_CORPUS: ReadonlyArray<SeedFile> = [
   {
@@ -873,8 +873,8 @@ export const dedupComponentCorpus = (count: number): ReadonlyArray<SeedFile> => 
  *   the 0.92 near-duplicate floor — dedup-merge WOULD fold them, and folding archives real work.
  * - **A task sharing a memory's vocabulary** (`t-drain-runbook`) is embedding-near
  *   `drain-the-vip-first.html`, so relationship-mining would mine a memory-class `relates_to` from a
- *   task into the memory graph, and conflict-detection would judge the pair — both share
- *   `service:checkout-api`, which the conflict scan requires.
+ *   task into the memory graph, and edge typing would type the pair on BOTH of its arms — the mined
+ *   edge itself, and the shared `service:checkout-api` its shared-entity scan requires.
  * - **Old, low-confidence, low-importance, short** on `t-forgotten` puts it squarely in the EVICT
  *   band: retention-triage would archive it, and confidence-decay would rewrite its
  *   `memhtml-confidence` (0.90 is well above the floor, so the delta gate does not save it).

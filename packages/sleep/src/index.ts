@@ -70,7 +70,7 @@ export {
 } from "./edits.js"
 export type { PhaseBody, PhaseEnv, PhaseOutcome, SleepDeps, SleepError } from "./env.js"
 export { DEFAULT_MODELS, emptyOutcome, modelFor } from "./env.js"
-export type { StanceVerdict } from "./llm.js"
+export type { EdgeDirection, EdgeDirectionalRel, EdgeVerdictRel } from "./llm.js"
 export {
   ARC_EXECUTE_SYSTEM,
   ARC_TRIAGE_SYSTEM,
@@ -80,6 +80,7 @@ export {
   arcExecutePrompt,
   arcTriagePrompt,
   assertsContradiction,
+  assertsEdge,
   COMPRESS_INSTRUCTION,
   COMPRESS_SYSTEM,
   CompressSynthesis,
@@ -88,17 +89,23 @@ export {
   DEDUP_SYSTEM,
   dataBlock,
   dedupPrompt,
+  EDGE_CONFIDENCE_FLOOR,
+  EDGE_DIRECTIONAL_RELS,
+  EDGE_TYPED_RELS,
+  EDGE_TYPING_INSTRUCTION,
+  EDGE_TYPING_SYSTEM,
+  EdgeTyping,
+  EdgeVerdict,
   ENTITY_CLUSTER_INSTRUCTION,
   ENTITY_CLUSTER_SYSTEM,
   EntityCluster,
   EntityClustering,
+  edgeTypingPrompt,
   entityClusterPrompt,
+  isDirectionalRel,
   MergeGroup,
   MergePartition,
-  STANCE_CONFIDENCE_FLOOR,
-  STANCE_SYSTEM,
-  StanceJudgment,
-  stancePrompt
+  pairText
 } from "./llm.js"
 export * from "./phases/index.js"
 export type { GeneratedFile } from "./publish.js"
@@ -149,7 +156,6 @@ export {
   activeEntities,
   allPaths,
   bumpCorroboration,
-  conflictCandidates,
   consolidatedSessionCount,
   corpusSnapshot,
   danglingEdges,
@@ -159,6 +165,7 @@ export {
   markPromoted,
   markSessionsConsolidated,
   memoryEdges,
+  minedPairs,
   neighborPairs,
   pathsForEntity,
   publishRows,
@@ -169,6 +176,7 @@ export {
   replaceMinedEdges,
   retentionEdgeCounts,
   sessionManifestRows,
+  sharedEntityPairs,
   unconsolidatedSessions,
   unlinkedSessionCount
 } from "./sql.js"

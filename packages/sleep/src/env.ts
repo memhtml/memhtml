@@ -59,14 +59,13 @@ export interface SleepDeps {
  */
 export const DEFAULT_MODELS: Readonly<Record<string, ModelKey>> = {
   /**
-   * `dedup-merge` names sonnet for the same reason the stance judge does: the question is a
+   * `dedup-merge` names sonnet for the same reason the edge-typing judge does: the question is a
    * classification over text the model is shown, not a synthesis it has to write. It partitions a
    * component into "these are the same memory" groups, and every consequence of that answer — which
    * file survives, whether the pair diverges, whether either path is already claimed — is decided by
    * code afterwards. The strong model is spent where prose gets written.
    */
   "dedup-merge": "sonnet-5",
-  "conflict-detection": "sonnet-5",
   /**
    * Sonnet, and one or two calls a night: the whole of one entity type's name list goes in one call.
    * The question is a partition over short strings with their evidence inline, not a synthesis, so
@@ -74,6 +73,7 @@ export const DEFAULT_MODELS: Readonly<Record<string, ModelKey>> = {
    * supply.
    */
   "entity-resolution": "sonnet-5",
+  "edge-typing": "sonnet-5",
   "arc-synthesis": "opus-5",
   compress: "sonnet-5",
   "trace-consolidation": "opus-5"

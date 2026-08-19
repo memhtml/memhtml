@@ -381,8 +381,8 @@ export const traceConsolidation: PhaseBody = (env) =>
        * change.
        *
        * Nor does the conflict become an authored `<link>`, and the reason is mechanical. Any authored
-       * edge between two paths permanently closes that pair to the NLI phase's scan: `derived = 0` is
-       * the anti-join in `conflictCandidates` (`sql.ts:176-181`), so stamping one here would silence
+       * edge between two paths permanently closes that pair to edge typing's scans: `derived = 0` is
+       * the anti-join in BOTH `sharedEntityPairs` and `minedPairs`, so stamping one here would silence
        * the very disagreement this lookup surfaced. The conflict lives in the counts, in the
        * `Memhtml-Counts` trailer, and in the commit message's context, where a reviewer sees it at merge
        * review and decides.

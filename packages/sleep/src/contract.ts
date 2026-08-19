@@ -20,7 +20,7 @@ export const SLEEP_PHASES = [
   "entity-resolution",
   "person-links",
   "relationship-mining",
-  "conflict-detection",
+  "edge-typing",
   "confidence-decay",
   "arc-synthesis",
   "retention-triage",
@@ -91,7 +91,7 @@ export const TRAILER_COUNTS = "Memhtml-Counts"
 export const LLM_PHASES: ReadonlyArray<SleepPhase> = [
   "dedup-merge",
   "entity-resolution",
-  "conflict-detection",
+  "edge-typing",
   "arc-synthesis",
   "compress",
   "trace-consolidation"

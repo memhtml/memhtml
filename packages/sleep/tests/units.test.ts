@@ -1,3 +1,4 @@
+import { MEMORY_RELS } from "@memhtml/contracts/edges"
 import { MAX_MERGE_PAIRS } from "@memhtml/domain"
 import { addLink, contentHash, parseMemory, setMeta } from "@memhtml/html"
 import { Effect } from "effect"
@@ -29,13 +30,18 @@ import {
   yearOf
 } from "../src/edits.js"
 import { DEFAULT_MODELS } from "../src/env.js"
+import type { EdgeVerdict, EdgeVerdictRel } from "../src/llm.js"
 import {
   assertsContradiction,
+  assertsEdge,
   DEDUP_INSTRUCTION,
   DEDUP_SYSTEM,
   dataBlock,
   dedupPrompt,
-  STANCE_CONFIDENCE_FLOOR
+  EDGE_CONFIDENCE_FLOOR,
+  EDGE_DIRECTIONAL_RELS,
+  EDGE_TYPED_RELS,
+  isDirectionalRel
 } from "../src/llm.js"
 import { COMPRESS_MEMBER_CHARS } from "../src/phases/compress.js"
 import {
@@ -117,7 +123,7 @@ describe("the phase contract", () => {
     expect(LLM_PHASES).toEqual([
       "dedup-merge",
       "entity-resolution",
-      "conflict-detection",
+      "edge-typing",
       "arc-synthesis",
       "compress",
       "trace-consolidation"
@@ -966,7 +972,7 @@ describe("the run report", () => {
           llmCalls: 0
         },
         {
-          phase: "conflict-detection",
+          phase: "edge-typing",
           status: "failed",
           counts: {},
           commitSha: null,
@@ -1014,23 +1020,63 @@ describe("the run report", () => {
 })
 
 describe("the LLM layer", () => {
+  /** One verdict, with the fields these gates do not read filled in. */
+  const verdictOf = (rel: EdgeVerdictRel, confidence: number): EdgeVerdict => ({
+    pairKey: "m1",
+    rel,
+    direction: "src_to_dst",
+    confidence,
+    rationale: "r"
+  })
+
   it("asserts a contradiction only above the confidence floor", () => {
     /**
      * A detected contradiction feeds a retention penalty that can eventually evict a memory, so a false
      * `contradicts` is worse than a missed one — and the gate is deterministic, never the model's own
      * call.
      */
-    const judgment = (verdict: "contradicts" | "entails" | "neutral", confidence: number) => ({
-      verdict,
-      confidence,
-      rationale: "r"
-    })
-    expect(assertsContradiction(judgment("contradicts", STANCE_CONFIDENCE_FLOOR))).toBe(true)
-    expect(assertsContradiction(judgment("contradicts", STANCE_CONFIDENCE_FLOOR - 0.01))).toBe(
-      false
-    )
-    expect(assertsContradiction(judgment("neutral", 1))).toBe(false)
-    expect(assertsContradiction(judgment("entails", 1))).toBe(false)
+    expect(assertsContradiction(verdictOf("contradicts", EDGE_CONFIDENCE_FLOOR))).toBe(true)
+    expect(assertsContradiction(verdictOf("contradicts", EDGE_CONFIDENCE_FLOOR - 0.01))).toBe(false)
+    // Only `contradicts` reaches the corroboration gate: a typed rel is not a contradiction.
+    expect(assertsContradiction(verdictOf("caused_by", 1))).toBe(false)
+    expect(assertsContradiction(verdictOf("none", 1))).toBe(false)
+  })
+
+  it("asserts an edge for every typed rel above the floor, and never for `none`", () => {
+    /**
+     * Asserted over the WHOLE vocabulary rather than a sample, so a rel added to `EDGE_TYPED_RELS`
+     * without a gate is a failure here instead of a rel the phase silently declines to write.
+     */
+    for (const rel of EDGE_TYPED_RELS) {
+      expect(assertsEdge(verdictOf(rel, EDGE_CONFIDENCE_FLOOR))).toBe(true)
+      expect(assertsEdge(verdictOf(rel, EDGE_CONFIDENCE_FLOOR - 0.01))).toBe(false)
+    }
+    // `none` is a refusal, and confidence in a refusal is still a refusal.
+    expect(assertsEdge(verdictOf("none", 1))).toBe(false)
+  })
+
+  it("calls exactly the directional rels directional, and contradicts symmetric", () => {
+    /**
+     * The one distinction that decides how many files a promotion writes: a directional rel goes into
+     * the subject's file alone, `contradicts` into both. Asserted as a partition of the vocabulary,
+     * because a rel that fell on neither side would be typed by the model and written by nothing.
+     */
+    for (const rel of EDGE_DIRECTIONAL_RELS) expect(isDirectionalRel(rel)).toBe(true)
+    expect(isDirectionalRel("contradicts")).toBe(false)
+    expect(isDirectionalRel("none")).toBe(false)
+    expect([...EDGE_DIRECTIONAL_RELS, "contradicts"].sort()).toEqual([...EDGE_TYPED_RELS].sort())
+  })
+
+  it("keeps every typed rel inside the memory-edge vocabulary", () => {
+    /**
+     * The `satisfies` in `llm.ts` proves this at compile time; this proves it at run time against the
+     * contracts array itself, which is what the `edges` table's CHECK constraint is generated from. A
+     * rel the phase proposed and the table refused would fail the whole indexing batch after the
+     * commit had already landed.
+     */
+    for (const rel of EDGE_TYPED_RELS) {
+      expect(MEMORY_RELS as ReadonlyArray<string>).toContain(rel)
+    }
   })
 
   it("delimits corpus text so its own prose cannot read as an instruction", () => {
