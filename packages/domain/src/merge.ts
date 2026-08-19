@@ -10,6 +10,12 @@
  * correction was written to fix. These guards are a deterministic veto. A divergent pair
  * becomes a candidate contradiction for the conflict phase instead of a merge, no matter how
  * high its cosine runs.
+ *
+ * The guards are a POST-FILTER over every proposal, including a model's. `dedup-merge` asks a model
+ * to partition a connected component into merge groups, and each pair that partition implies is
+ * routed through {@link mergeCandidates} before anything is written. A model that groups a claim with
+ * its own negation is refused by the same predicate that refuses a blind cosine, so the set of pairs
+ * that can be committed does not widen when a model is bound.
  */
 
 /** Cosine similarity above which two bodies are the same content. Strict. */
@@ -228,6 +234,70 @@ export const mergeCandidates = (
   }
 
   return decisions
+}
+
+/**
+ * Connected components over an undirected edge list, as sorted member lists.
+ *
+ * The near-duplicate graph's components are dedup's units of work. A component is what "these
+ * memories might all be one memory" looks like before anything has judged them, and it is the right
+ * unit because near-duplication is transitive in practice: three rewordings of one fact produce
+ * three edges, and folding them one pair at a time would ask the same question three times and could
+ * answer it three different ways.
+ *
+ * **The partition is order-INVARIANT, not merely order-stable.** A union always keeps the
+ * lexicographically smaller root, so every set's root is the smallest key it holds no matter which
+ * order the edges arrive in. Members come back sorted, and components come back ordered by root,
+ * which is each component's own smallest member. So the same edge SET produces the same output
+ * whether it arrives mined-first, frame-first, mirrored, or shuffled. That is stronger than sorting
+ * the input would be, and it is why no sort happens here: a caller cannot make this disagree with
+ * itself by changing how it enumerates.
+ *
+ * A "larger root wins" or "first root seen wins" rule would break exactly that, because both make
+ * the surviving root a fact about arrival order rather than about the set.
+ *
+ * Each pair is normalized before it is unioned, so `(a, b)` and `(b, a)` are one edge. A self-edge
+ * introduces its key and joins nothing. Cost is near-linear in the edge count, and no step here ever
+ * enumerates a pair the caller did not hand over.
+ */
+export const connectedComponents = (
+  edges: ReadonlyArray<readonly [string, string]>
+): ReadonlyArray<ReadonlyArray<string>> => {
+  const parent = new Map<string, string>()
+
+  const find = (key: string): string => {
+    let current = key
+    while ((parent.get(current) ?? current) !== current) {
+      const next = parent.get(current) as string
+      // Path compression re-points at the grandparent, which cannot change which key is the root.
+      parent.set(current, parent.get(next) ?? next)
+      current = parent.get(current) as string
+    }
+    return current
+  }
+
+  for (const [left, right] of edges) {
+    if (!parent.has(left)) parent.set(left, left)
+    if (!parent.has(right)) parent.set(right, right)
+    const rootLeft = find(left)
+    const rootRight = find(right)
+    if (rootLeft === rootRight) continue
+    // The smaller key wins, which is what makes the result independent of edge order.
+    if (rootLeft < rootRight) parent.set(rootRight, rootLeft)
+    else parent.set(rootLeft, rootRight)
+  }
+
+  const byRoot = new Map<string, Array<string>>()
+  for (const key of parent.keys()) {
+    const root = find(key)
+    const bucket = byRoot.get(root)
+    if (bucket === undefined) byRoot.set(root, [key])
+    else bucket.push(key)
+  }
+
+  return [...byRoot.entries()]
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([, members]) => members.sort())
 }
 
 /**

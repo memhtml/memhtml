@@ -53,6 +53,10 @@ export const phaseIndexOf = (phase: SleepPhase): number => SLEEP_PHASES.indexOf(
  * `dedup-merge` is the one hard prerequisite, for `compress` and `retention-triage`: both operate
  * on the post-merge set, and running them over a corpus that still holds the duplicates would
  * compress a near-duplicate pair into a canonical while a merge later archives one of its members.
+ *
+ * That is why `dedup-merge` isolates each of its model calls instead of failing on one. It batches
+ * components and a batch whose call comes back malformed is counted and skipped, so a single bad tool
+ * payload cannot take two later phases down with it.
  */
 export const HARD_PREREQUISITES: ReadonlyArray<readonly [SleepPhase, SleepPhase]> = [
   ["dedup-merge", "compress"],
@@ -78,11 +82,14 @@ export const TRAILER_COUNTS = "Memhtml-Counts"
  * learns which phases a credential-free run gets nothing from. A phase omitted here would still make
  * its calls and would be documented as deterministic.
  *
- * `entity-resolution` is here because its DECISION CORE is a model call, even though it still does real
- * work without one: the normalization and character-overlap passes run either way, so the phase
- * degrades rather than skipping. A reader of the table needs to know the call is made.
+ * Membership means "spends model calls when a model is bound", not "needs a model to be useful".
+ * `dedup-merge` and `entity-resolution` both do real deterministic work without one: dedup falls back
+ * to the 0.92 cosine floor plus the divergence veto and still commits, and entity-resolution's
+ * normalization and character-overlap passes run either way. The other three report a reason and
+ * write nothing.
  */
 export const LLM_PHASES: ReadonlyArray<SleepPhase> = [
+  "dedup-merge",
   "entity-resolution",
   "conflict-detection",
   "arc-synthesis",
@@ -137,7 +144,7 @@ export interface RunReport {
   readonly headSha: string
   readonly dryRun: boolean
   readonly phases: ReadonlyArray<PhaseResult>
-  /** Total model calls across the four LLM phases. */
+  /** Total model calls across {@link LLM_PHASES}. */
   readonly llmCalls: number
 }
 

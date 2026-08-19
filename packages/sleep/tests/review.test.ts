@@ -26,7 +26,11 @@ const inertModel = () =>
   scriptedModel((request) =>
     request.system.startsWith("You triage")
       ? value({ entries: [] })
-      : value({ verdict: "neutral", confidence: 0.9, rationale: "compatible" })
+      : request.system.startsWith("You partition")
+        ? // dedup-merge's partition call. `groups: []` is a refusal, which leaves the phase on its
+          // deterministic arm — the same pairs it folds with no model bound at all.
+          value({ groups: [] })
+        : value({ verdict: "neutral", confidence: 0.9, rationale: "compatible" })
   )
 
 const headOf = (fixture: Fixture, ref = "HEAD"): Effect.Effect<string> =>

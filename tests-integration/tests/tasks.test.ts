@@ -30,7 +30,10 @@ const inertModel = () =>
   scriptedModel((request) =>
     request.system.startsWith("You triage")
       ? value({ entries: [] })
-      : value({ verdict: "neutral", confidence: 0.9, rationale: "compatible claims" })
+      : request.system.startsWith("You partition")
+        ? // dedup-merge's partition call. A refusal keeps the phase on its deterministic arm.
+          value({ groups: [] })
+        : value({ verdict: "neutral", confidence: 0.9, rationale: "compatible claims" })
   )
 
 interface TaskWritten {

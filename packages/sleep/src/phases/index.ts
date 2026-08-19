@@ -58,7 +58,17 @@ export {
   conflictDetection,
   PROMOTION_DETECTIONS
 } from "./conflict-detection.js"
-export { dedupMerge } from "./dedup-merge.js"
+export {
+  DEDUP_ADMIT_FLOOR,
+  DEDUP_BATCH_CHARS,
+  DEDUP_BATCH_MEMBERS,
+  DEDUP_COMPONENT_FLOOR,
+  DEDUP_MAX_COMPONENT,
+  DEDUP_MAX_COMPONENTS,
+  DEDUP_MEMBER_CHARS,
+  DEDUP_PAIR_LIMIT,
+  dedupMerge
+} from "./dedup-merge.js"
 export type {
   AliasGroup,
   CentroidNeighbor,
