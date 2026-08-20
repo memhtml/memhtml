@@ -331,6 +331,19 @@ export const quoteAppearsIn = (quote: string, text: string): boolean => {
  * real words, which is precisely the failure the check exists to catch. The caller tests each string
  * on its own.
  *
+ * ## Why this does NOT filter to message-content fields
+ *
+ * Review suggested restricting extraction to speech fields so a quote matching transcript METADATA
+ * (a role, a type, a session id) cannot satisfy containment. Filtering here is inert against that:
+ * a metadata value is escape-free, so its decoded form IS its byte form (measured:
+ * `JSON.stringify(v).slice(1, -1) === v` for every such value), and the caller's RAW arm — the
+ * original contract, searching the whole file's bytes — already accepts it, keys included. The
+ * decoded arm widens acceptance ONLY for strings carrying JSON escapes, which metadata never does.
+ * Tightening against metadata-shaped quotes would mean restricting the raw arm by parsing every
+ * transcript format's field layout, and the schema's floor already bounds the damage: a "quote" that
+ * is one metadata token is a degenerate citation a reviewer sees verbatim in the task body, not a
+ * fabrication this check could have caught.
+ *
  * ## An unparseable line is SKIPPED, and the caller keeps the raw arm
  *
  * These files are written by a live process, so the last line is routinely a half-written object, and

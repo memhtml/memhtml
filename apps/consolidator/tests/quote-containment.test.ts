@@ -274,6 +274,25 @@ describe("fabricatedQuoteReason still REFUSES a fabricated quote", () => {
   })
 })
 
+describe("metadata-shaped quotes are the RAW arm's accepted residual, not the decoded arm's", () => {
+  it("accepts a metadata token through the raw arm alone — the decoded arm adds nothing to it", async () => {
+    /**
+     * Review asked whether the decoded arm lets a quote match transcript METADATA (a role, a type)
+     * rather than speech. It cannot add that acceptance: a metadata value carries no JSON escape, so
+     * its decoded form IS its byte form, and the RAW arm — the original contract, a substring search
+     * over the whole file — already accepts it. This case pins both halves: the token passes
+     * containment (through raw bytes), and the decoded list holds nothing the bytes don't
+     * (`"user"` appears in `decodedTranscriptStrings` output only as itself, byte-identical).
+     * Tightening this means restricting the RAW arm by parsing field layouts, recorded in
+     * `decodedTranscriptStrings`' docs as declined; the schema's min-length floor and the reviewer
+     * seeing the degenerate "quote" verbatim in the task body bound the damage.
+     */
+    expect(await reasonFor(answerQuoting("session-a", "user"), reachable("session-a"))).toBeNull()
+    const bytes = JSON.stringify({ type: "user", message: { role: "user", content: PLAIN } })
+    expect(quoteAppearsIn("user", bytes)).toBe(true)
+  })
+})
+
 describe("the decoded arm does not weaken quoteAppearsIn itself", () => {
   it("leaves case, punctuation, and the empty needle exactly as they were", () => {
     /**
