@@ -62,16 +62,32 @@ export const DETECTED_TAG = "detected"
 export const MINT_AUTHOR = "agent:sleep"
 
 /**
- * The claim overlap at which two findings are one finding.
+ * The claim overlap at which two findings are one finding, for detectors that OPT INTO
+ * restatement dedup.
  *
  * A detector's fingerprint is exact, so the finding key catches only a finding restated
  * IDENTICALLY. The case it misses is the same work item phrased slightly differently between two
- * nights or two detectors' passes over shifted evidence — "I'll update the runbook" against "I'll
- * update the runbook this week" — where the fingerprints differ and the task does not. Token overlap
- * at 0.6 catches that pair (measured 5/7 = 0.714) while leaving unrelated claims far below: two
- * one-line claims about different subjects share little more than their function words.
+ * nights — "I'll update the runbook" against "I'll update the runbook this week" — where the
+ * fingerprints differ and the task does not. Token overlap at 0.6 catches that pair (measured
+ * 5/7 = 0.714) while leaving unrelated free-text claims far below.
+ *
+ * The arm is opt-in ({@link MinterOptions.restatementDedup}) because it is WRONG for templated
+ * claims: a pair detector's claims differ from each other by construction in only the slot values,
+ * and two distinct pairs sharing one endpoint score 0.78-0.90 (measured against the entity
+ * `confirm:` template, 2026-08-19) — above any usable floor. Under a template, distinct
+ * fingerprints ARE distinct work items, and no restatement guard is needed; under free text, the
+ * restatement is the common case. The detector knows which kind of claim it writes.
  */
 export const CLAIM_JACCARD_FLOOR = 0.6
+
+/** Per-detector minting knobs. */
+export interface MinterOptions {
+  /**
+   * Enable the claim-Jaccard restatement arm. For FREE-TEXT claims only (trace-consolidation's
+   * commitments); templated pair claims must leave this off — see {@link CLAIM_JACCARD_FLOOR}.
+   */
+  readonly restatementDedup?: boolean | undefined
+}
 
 /**
  * Collision ordinals tried before a mint is refused.
@@ -268,9 +284,11 @@ export interface Minter {
  */
 export const makeMinter = (
   env: PhaseEnv,
-  detector: string
+  detector: string,
+  options?: MinterOptions
 ): Effect.Effect<Minter, StorageFailure | InvalidMemory> =>
   Effect.gen(function* () {
+    const restatementDedup = options?.restatementDedup === true
     if (!FINDING_KEY_PATTERN.test(findingKeyOf(detector, "probe"))) {
       return yield* Effect.fail(
         InvalidMemory.make({
@@ -361,9 +379,9 @@ export const makeMinter = (
           return
         }
 
-        const restated = openClaims.some(
-          (gist) => claimJaccard(finding.claim, gist) >= CLAIM_JACCARD_FLOOR
-        )
+        const restated =
+          restatementDedup &&
+          openClaims.some((gist) => claimJaccard(finding.claim, gist) >= CLAIM_JACCARD_FLOOR)
         if (restated) {
           bump("taskDeduped")
           return

@@ -288,10 +288,9 @@ describe("submit and finish", () => {
      * INDEX, refreshed once in preflight, so a task minted a moment ago is invisible to it — a second
      * submit of one fingerprint would mint a second file at `…-2.html` every night forever.
      *
-     * (Mutation, both measured: dropping `openKeys.add` after a mint makes this
-     * `{ taskMinted: 1, taskDeduped: 1 }` — the Jaccard arm catches an IDENTICAL claim, so the
-     * count degrades rather than the behavior. Dropping `openClaims.push` as well makes it
-     * `taskMinted: 2`, which is the second file at `…-2.html` every night forever.)
+     * (Mutation, measured: dropping `openKeys.add` after a mint makes this `taskMinted: 2`,
+     * which is the second file at `…-2.html` every night forever — the restatement arm is
+     * opt-in and off here, so nothing else catches the repeat.)
      */
     await withFixture(
       (fixture) =>
@@ -308,11 +307,11 @@ describe("submit and finish", () => {
     )
   })
 
-  it("deduplicates a restatement whose fingerprint differs, in-run and against the tree", async () => {
+  it("deduplicates a restatement whose fingerprint differs, when the detector opts in", async () => {
     await withFixture(
       (fixture) =>
         Effect.gen(function* () {
-          const minter = yield* makeMinter(envFor(fixture), DETECTOR)
+          const minter = yield* makeMinter(envFor(fixture), DETECTOR, { restatementDedup: true })
           yield* minter.submit(finding({ claim: "I'll update the runbook" }))
           yield* minter.submit(
             finding({
@@ -348,7 +347,7 @@ describe("submit and finish", () => {
     await withFixture(
       (fixture) =>
         Effect.gen(function* () {
-          const minter = yield* makeMinter(envFor(fixture), DETECTOR)
+          const minter = yield* makeMinter(envFor(fixture), DETECTOR, { restatementDedup: true })
           yield* minter.submit(finding({ claim }))
           const report = minter.finish()
 
