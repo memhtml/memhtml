@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.2.5...memhtml-v0.3.0) (2026-08-19)
+
+
+### Features
+
+* **sleep:** cluster→batch→structured-list resolution for entity resolution, dedup, and edge typing ([#45](https://github.com/memhtml/memhtml/issues/45)) ([802679f](https://github.com/memhtml/memhtml/commit/802679f45c4fd2942c9b30533559556bdc2803ab))
+
 ## [0.2.5](https://github.com/memhtml/memhtml/compare/memhtml-v0.2.4...memhtml-v0.2.5) (2026-08-19)
 
 
