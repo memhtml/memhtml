@@ -560,6 +560,12 @@ describe("a full run leaves every open task untouched", () => {
           /**
            * And no task MEMORY FILE moved: no archive, no rename under a tasks directory.
            *
+           * `added` entries are NOT violations: the exclusion this block protects is "phases never
+           * act ON tasks as candidates", and a detector MINTING a new task file (dedup-merge filing
+           * a `review:` for a vetoed pair here) is the phases acting on MEMORIES — the seeded task
+           * corpus's byte-identity is what the `taskBlobs` assertion above already pins. What this
+           * filter must catch is a stamp, archive, or rename reaching an EXISTING task.
+           *
            * `index.html` is excluded because it is a generated artifact rather than a memory —
            * `isIndexablePath` refuses the name, so it holds no row and enters no phase's corpus.
            * Integrity generating one for `areas/inbox/tasks/` is the design working: a browsable
@@ -570,6 +576,7 @@ describe("a full run leaves every open task untouched", () => {
             .pipe(Effect.orDie)
           const touched = changes.filter(
             (change) =>
+              change.kind !== "added" &&
               (change.path.includes("/tasks/") || change.fromPath?.includes("/tasks/") === true) &&
               !GENERATED_NAMES.some((name) => change.path.endsWith(`/${name}`))
           )
