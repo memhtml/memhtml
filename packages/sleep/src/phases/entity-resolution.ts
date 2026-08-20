@@ -8,6 +8,7 @@ import { commitPhase } from "../commit.js"
 import { applyHeadEdits, meta, readFileBytes, rewriteEntityMeta, writeFileBytes } from "../edits.js"
 import { emptyOutcome, modelFor, type PhaseBody, type PhaseEnv } from "../env.js"
 import { ENTITY_CLUSTER_SYSTEM, EntityClustering, entityClusterPrompt } from "../llm.js"
+import { type DetectedFinding, makeMinter } from "../mint.js"
 import {
   activeEntities,
   bumpEntityCorroboration,
@@ -457,6 +458,96 @@ export const decomposeCluster = (
   return distinct.flatMap((name) => (name === canonical ? [] : [{ alias: name, canonical }]))
 }
 
+/** The `type:name` form a `memhtml-entity` meta carries. */
+const entityRef = (entityType: string, entityName: string): string => `${entityType}:${entityName}`
+
+/** The detector name this phase mints under, and the first segment of every key it owns. */
+export const ENTITY_DETECTOR = "entity-resolution"
+
+/**
+ * One pair a human has to decide, as this phase hands it to the minting kernel.
+ *
+ * A PAIR and never a cluster, which is the one structural decision in this whole path. A
+ * below-floor cluster of three names is three names tonight and four the night a fourth spelling
+ * lands, so a cluster-membership fingerprint churns and the corpus accumulates one dead task per
+ * night per cluster that grew. Two names are the same two names forever, so the pair is what a
+ * finding key can be stable over. {@link decomposeCluster} is what turns a cluster into pairs, and
+ * it is the phase's OWN orientation function — the same one the merge path uses — so the alias and
+ * the canonical a task names are the alias and the canonical the merge would have written.
+ */
+export interface ConfirmPair {
+  readonly entityType: string
+  /** The name that would be rewritten away. Normalized, from `counts`. */
+  readonly alias: string
+  /** The name that would survive. Normalized, from `counts`. */
+  readonly canonical: string
+  /** Distinct active non-task files claiming each name, from the phase's own folded `counts`. */
+  readonly aliasFiles: number
+  readonly canonicalFiles: number
+  /** Cosine between the two names' memory centroids, absent when either has no vector. */
+  readonly centroidCosine: number | undefined
+  /**
+   * The model's own evidence sentence, when a model proposed this pair.
+   *
+   * UNTRUSTED TEXT, and the reason it is typed as prose here rather than carried anywhere else. It
+   * is a model's sentence about a corpus that stores instructions, so {@link confirmFinding} puts it
+   * in a body PARAGRAPH — escaped by the template's prose path — and never in a `cite`, a `title`,
+   * or a `claim`. A review-band pair the model never saw has none.
+   */
+  readonly modelEvidence: string | undefined
+}
+
+/**
+ * The `entity:<type>\0<a>\0<b>` fingerprint of a pair, names sorted after normalization.
+ *
+ * SORTED, so the fingerprint is a property of the unordered pair. The orientation
+ * {@link decomposeCluster} chooses depends on file counts, and a corpus where the short form gains a
+ * memory flips which name is the alias — a fingerprint carrying that orientation would re-file the
+ * same question as a new task on the night the counts crossed, and the old task would look absent
+ * and be closed. `\0` as the separator for the same reason {@link pairKey} uses it: it cannot occur
+ * in a normalized name, so no two distinct pairs can produce one fingerprint by concatenation.
+ */
+export const confirmFingerprint = (entityType: string, left: string, right: string): string =>
+  `entity:${entityType}\u0000${pairKey(normalizeEntityName(left), normalizeEntityName(right))}`
+
+/**
+ * One `confirm:` finding for a pair: the pinned question, and the evidence a human needs to answer it.
+ *
+ * **The title and the claim are the same pinned sentence**, and the guillemets are what make it
+ * readable when a name contains a space — `are laith and laith al-saadoon the same person` reads as
+ * three names. The orientation shown is `decomposeCluster`'s, so the human sees the merge that would
+ * actually happen rather than an unordered pair they then have to orient themselves.
+ *
+ * **Body is PROSE PARAGRAPHS, not `bodyHtml`.** This finding has nothing to quote: its evidence is
+ * four numbers and possibly a model's sentence, none of which is text lifted from a file. The prose
+ * path escapes every paragraph through the template, which is what keeps the model's sentence from
+ * being markup; the `bodyHtml` path hands markup through untouched and is for the phases whose
+ * evidence is a `<q cite>` of a real file.
+ */
+export const confirmFinding = (pair: ConfirmPair): DetectedFinding => {
+  const question = `confirm: are «${pair.alias}» and «${pair.canonical}» the same ${pair.entityType}?`
+  const similarity = nameSimilarity(pair.alias, pair.canonical)
+  return {
+    detector: ENTITY_DETECTOR,
+    fingerprint: confirmFingerprint(pair.entityType, pair.alias, pair.canonical),
+    title: question,
+    claim: question,
+    body: [
+      `Character overlap between the two names is ${similarity.toFixed(3)}, against the ${AUTO_MERGE_THRESHOLD} auto-merge threshold and the ${REVIEW_THRESHOLD} review floor.`,
+      `«${pair.alias}» is claimed by ${pair.aliasFiles} active file(s) and «${pair.canonical}» by ${pair.canonicalFiles}, so a merge would rewrite «${pair.alias}» onto «${pair.canonical}».`,
+      ...(pair.centroidCosine === undefined
+        ? []
+        : [
+            `The two names' memory centroids sit at ${pair.centroidCosine.toFixed(3)} cosine. A high number is evidence and not a decision: two services in one domain are written about in the same terms.`
+          ]),
+      ...(pair.modelEvidence === undefined || pair.modelEvidence.trim() === ""
+        ? []
+        : [`The model's stated reason, unverified: ${pair.modelEvidence.trim()}`])
+    ],
+    entities: [entityRef(pair.entityType, pair.canonical)]
+  }
+}
+
 /**
  * Names one person file declares to be one person: its own `person:` entities plus its
  * `memhtml-alias` values, all normalized.
@@ -557,9 +648,6 @@ const readAliasGroups = (env: PhaseEnv): Effect.Effect<ReadonlyArray<AliasGroup>
     return groups
   })
 
-/** The `type:name` form a `memhtml-entity` meta carries. */
-const entityRef = (entityType: string, entityName: string): string => `${entityType}:${entityName}`
-
 export const entityResolution: PhaseBody = (env) =>
   Effect.gen(function* () {
     const entities = yield* activeEntities(env.deps.db)
@@ -593,6 +681,27 @@ export const entityResolution: PhaseBody = (env) =>
     let llmCalls = 0
 
     /**
+     * The two signals `universeComplete` needs that the phase did not previously track.
+     *
+     * Neither is a count an operator reads; both are the attestation's own evidence, which is why
+     * they are plain locals rather than entries in the counts trailer. `isolatedFailures` is one per
+     * `batchCall` that came back `undefined` — a batch whose call failed contributes no clusters, so
+     * every pair it would have deferred looks decided tonight. `unaskedPairs` is the pair coverage
+     * `assembleBatches` did not deliver: a type sharded at {@link ENTITY_BATCH_SIZE} asks about pairs
+     * INSIDE each shard and never across them, so a sharded type leaves cross-shard pairs unexamined.
+     *
+     * **`unaskedPairs` counts PAIRS rather than names, and that is the difference between an
+     * attestation and a permanently-false flag.** `assembleBatches` is given `minMembers: 2`, so a
+     * type holding one name has its shard dropped — and a corpus with any singleton entity type
+     * (the common case) would then never be complete. A lone name has no pair for the phase to have
+     * missed, so its dropped shard costs nothing, and stating the shortfall in pairs says so.
+     */
+    let isolatedFailures = 0
+    let unaskedPairs = 0
+    /** Pairs among `n` names: what one shard of `n` members asks about. */
+    const pairsAmong = (n: number): number => (n * (n - 1)) / 2
+
+    /**
      * The model core is skipped entirely on a dry run and when no model is bound, and both leave the
      * deterministic passes running. A dry run must make no model call and bump no counter, because a
      * counter bumped by a run that wrote nothing would be a night of corroboration the corpus never
@@ -624,6 +733,22 @@ export const entityResolution: PhaseBody = (env) =>
      * run count and nothing is written, which is what an operator sizing a night needs.
      */
     const aliasGroups = yield* readAliasGroups(env)
+
+    /**
+     * The minting pass, constructed BEFORE any deferral so its open-task snapshot is taken at phase
+     * start rather than part-way through, and every pair the night defers is offered to the same
+     * dedup state.
+     *
+     * The pairs are collected here and submitted in ONE sorted pass at the end (see below), so this
+     * is only the kernel handle. `makeMinter` reads the index once and validates the detector name.
+     */
+    const minter = yield* makeMinter(env, ENTITY_DETECTOR)
+    /** Every pair to confirm, keyed by fingerprint so one pair reached twice is offered once. */
+    const confirmPairs = new Map<string, ConfirmPair>()
+    const deferPair = (pair: ConfirmPair): void => {
+      const fingerprint = confirmFingerprint(pair.entityType, pair.alias, pair.canonical)
+      if (!confirmPairs.has(fingerprint)) confirmPairs.set(fingerprint, pair)
+    }
 
     /** The centroids the model core needs, gathered once for every type rather than per type. */
     const centroidsByType =
@@ -678,6 +803,39 @@ export const entityResolution: PhaseBody = (env) =>
        * corroborated across nights, or counted for review — the model never writes.
        */
       const clusteredPairs = new Set<string>()
+      /**
+       * The cosine between two names' memory centroids, or absent.
+       *
+       * Absent on a night with no model, because the centroids are only gathered when the model core
+       * runs — they are its evidence, and computing them for a deferral body alone would make a
+       * credential-free night pay for a vector pass it has no other use for. A review-band task
+       * minted on such a night therefore states the numbers it has and not this one, which is honest:
+       * "computable" in AC-3-1 means the phase already holds the vectors.
+       */
+      const centroidCosine = (left: string, right: string): number | undefined => {
+        const centroids = centroidsByType?.get(entityType)
+        if (centroids === undefined) return undefined
+        const leftVec = centroids.find((one) => one.name === left)?.vec
+        const rightVec = centroids.find((one) => one.name === right)?.vec
+        return leftVec === undefined || rightVec === undefined
+          ? undefined
+          : cosine(leftVec, rightVec)
+      }
+      /** One pair's evidence, gathered from what the phase already holds for this type. */
+      const pairFor = (
+        alias: string,
+        canonical: string,
+        modelEvidence?: string | undefined
+      ): ConfirmPair => ({
+        entityType,
+        alias,
+        canonical,
+        aliasFiles: counts.get(alias) ?? 0,
+        canonicalFiles: counts.get(canonical) ?? 0,
+        centroidCosine: centroidCosine(alias, canonical),
+        modelEvidence
+      })
+
       if (model !== undefined && centroidsByType !== undefined) {
         const centroids = centroidsByType.get(entityType) ?? []
         const members = centroids.filter((centroid) => counts.has(centroid.name))
@@ -692,12 +850,28 @@ export const entityResolution: PhaseBody = (env) =>
               ].sort()
             : []
 
-        for (const shard of assembleBatches([members], {
+        const shards = assembleBatches([members], {
           maxMembers: ENTITY_BATCH_SIZE,
           // A lone name has no other name to be the same subject as, so the question is meaningless
           // and a call asking it would spend a model call to be told nothing.
           minMembers: 2
-        })) {
+        })
+
+        /**
+         * The pair coverage this type's shards did NOT deliver, which is the truncation half of
+         * `universeComplete`.
+         *
+         * Two ways a pair goes unexamined and both are counted here: a type sharded at
+         * {@link ENTITY_BATCH_SIZE} never asks about a pair whose two names landed in different
+         * shards, and a name with no centroid is filtered out of `members` entirely so none of its
+         * pairs is asked about at all. Both mean the same thing to the attestation — the phase did
+         * not look everywhere, so absence is not evidence tonight.
+         */
+        unaskedPairs +=
+          pairsAmong(counts.size) -
+          shards.reduce((total, shard) => total + pairsAmong(shard.length), 0)
+
+        for (const shard of shards) {
           const keyed = keyMembers(
             shard,
             (centroid) =>
@@ -723,7 +897,17 @@ export const entityResolution: PhaseBody = (env) =>
                 "Emit one cluster per subject, naming the members that are the same subject."
             }
           )
-          if (clustering === undefined) continue
+          /**
+           * The isolated failure, now COUNTED rather than only skipped. `batchCall` turns a malformed
+           * tool payload into `undefined` so one bad batch does not fail a phase that has already
+           * normalized real files — but a batch that answered nothing deferred nothing, so every open
+           * task the batch would have kept alive looks absent tonight. Recording it is what lets
+           * `closeAbsent` refuse.
+           */
+          if (clustering === undefined) {
+            isolatedFailures += 1
+            continue
+          }
 
           for (const cluster of clustering.clusters) {
             /**
@@ -766,8 +950,19 @@ export const entityResolution: PhaseBody = (env) =>
                 aliasMerges += 1
                 continue
               }
+              /**
+               * Below the floor: the model proposed it and would not stand behind it, so it goes to a
+               * human as a task and never toward a merge.
+               *
+               * Counted AND minted, which is the split AC-3-1 asks for: `reviewCandidates` stays the
+               * night's aggregate an operator reads in the report trailer, and the task is the durable
+               * artifact that survives the report. Deferred as the pair `decomposeCluster` oriented —
+               * one finding per pair, so a three-name cluster becomes two questions and neither
+               * churns when a fourth spelling arrives.
+               */
               if (cluster.confidence < ENTITY_CONFIDENCE_FLOOR) {
                 reviewCandidates += 1
+                deferPair(pairFor(merge.alias, merge.canonical, cluster.evidence))
                 continue
               }
 
@@ -802,9 +997,24 @@ export const entityResolution: PhaseBody = (env) =>
        * the decision is recorded either as a merge or as a below-floor review candidate already counted
        * above. Counting it here as well would report one pair twice.
        */
-      reviewCandidates += character.review.filter(
+      const undecided = character.review.filter(
         ([left, right]) => !clusteredPairs.has(pairKey(left, right))
-      ).length
+      )
+      reviewCandidates += undecided.length
+
+      /**
+       * The band pairs nothing decided tonight, each one a task.
+       *
+       * Oriented through {@link decomposeCluster} rather than by taking `[left, right]` as given.
+       * `characterPairs` walks its names in SORTED order, so its pairs are alphabetical and
+       * `[checkout-api, checkout api]` would show a human the merge backwards half the time. The
+       * merge path's own rule is the one whose answer the human is being asked to approve.
+       */
+      for (const [left, right] of undecided) {
+        for (const merge of decomposeCluster([left, right], counts)) {
+          deferPair(pairFor(merge.alias, merge.canonical))
+        }
+      }
 
       /** One union-find over every accepted pair, so the three sources cannot disagree on a root. */
       const aliasToCanonical = unionPairs(counts, accepted)
@@ -825,6 +1035,47 @@ export const entityResolution: PhaseBody = (env) =>
       }
     }
 
+    /**
+     * The minting pass, run once over every type's deferrals, in FINGERPRINT order.
+     *
+     * **Sorted, and the reason is the cap rather than tidiness.** The kernel's `MINT_CAP` bounds what
+     * one night writes and counts the rest as overflow, so which findings get written is decided by
+     * submission order — and a corpus that grew one entity type would otherwise reshuffle the whole
+     * night's order and write a different ten. Fingerprint order is a function of the pair set alone,
+     * so two nights over an unchanged corpus mint the same tasks and the eleventh pair stays the
+     * eleventh pair until it is decided.
+     *
+     * Submitted AFTER every type's loop rather than at each deferral, which is what makes one order
+     * possible at all: the deferrals arrive per type, and submitting inline would order them by type
+     * and let a new type displace a pair the previous night had already filed.
+     */
+    for (const fingerprint of [...confirmPairs.keys()].sort()) {
+      const pair = confirmPairs.get(fingerprint)
+      if (pair === undefined) continue
+      yield* minter.submit(confirmFinding(pair))
+    }
+    const mintReport = minter.finish()
+
+    /**
+     * The attestation, and every clause of it is a way this night could have failed to look.
+     *
+     * `modelRan` is the whole model core: a dry run and a credential-free run both leave `model`
+     * undefined, and neither examined a single pair — so on those nights every open `confirm:` task
+     * looks absent and closing would archive the entire backlog. `isolatedFailures` is a batch that
+     * answered nothing. `unaskedPairs` is coverage the sharding did not deliver.
+     *
+     * Note the asymmetry with the deterministic passes: the character pass and the alias oracle run
+     * on EVERY night, so a no-model night does produce real review-band findings and mints them. It
+     * still may not CLOSE, because a task minted from a below-floor cluster can only be re-detected
+     * by a model, and the deterministic passes going quiet about it says nothing.
+     */
+    const universeComplete =
+      model !== undefined &&
+      centroidsByType !== undefined &&
+      isolatedFailures === 0 &&
+      unaskedPairs === 0
+    const closureCounts = yield* minter.closeAbsent(universeComplete)
+
     const counts = {
       entities: entities.length,
       namesNormalized: normalized,
@@ -833,9 +1084,20 @@ export const entityResolution: PhaseBody = (env) =>
       aliasMerges,
       pendingCorroboration,
       reviewCandidates,
-      filesRewritten: rewrites.size
+      filesRewritten: rewrites.size,
+      ...mintReport.counts,
+      ...closureCounts
     }
-    if (rewrites.size === 0 || env.dryRun) return { ...emptyOutcome(counts), llmCalls }
+    /**
+     * The mint pass writes task FILES, so a night that rewrote no entity meta may still have staged
+     * something — and the commit gate has to ask the tree rather than `rewrites.size` alone, or a
+     * night whose only output was three `confirm:` tasks would leave them staged and uncommitted for
+     * the next phase's commit to absorb.
+     */
+    const stagedTasks = mintReport.minted.length > 0 || Object.keys(closureCounts).length > 0
+    if ((rewrites.size === 0 && !stagedTasks) || env.dryRun) {
+      return { ...emptyOutcome(counts), llmCalls }
+    }
 
     let rewritten = 0
     for (const [path, pairs] of [...rewrites.entries()].sort(([left], [right]) =>
@@ -856,11 +1118,22 @@ export const entityResolution: PhaseBody = (env) =>
     }
 
     const final = { ...counts, filesRewritten: rewritten }
+    /**
+     * The closure REASON, stated here because there is nowhere else for it to go: no head meta in the
+     * format carries one, so `closeTask` writes the archive and the move and the phase commit is where
+     * a reviewer asking "why did this task disappear" is already reading.
+     *
+     * Named only when a closure happened, so an ordinary night's subject stays the one it was.
+     */
+    const closed = closureCounts.taskClosed ?? 0
     const commitSha = yield* commitPhase(
       env,
       "entity-resolution",
       `normalize ${normalized} entity names, merge ${fuzzyMerges} aliases`,
-      final
+      final,
+      closed === 0
+        ? undefined
+        : `Closed ${closed} confirm task(s): the pair is no longer undecided on a complete pass — it merged, it left the review band, or its names left the corpus.`
     )
     return { counts: final, commitSha, llmCalls }
   })
