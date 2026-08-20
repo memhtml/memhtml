@@ -36,6 +36,14 @@ pre-commit:
       # which is not an error worth blocking a commit over.
       run: mise exec -- biome check --write --no-errors-on-unmatched {staged_files}
       stage_fixed: true
+    - name: dprint-md
+      glob: "*.md"
+      # Markdown is dprint's (textWrap: never); biome has no Markdown formatter. The
+      # excludes in dprint.json exempt the generated files (AGENTS.md, CHANGELOG.md), and
+      # --allow-no-files is dprint's --no-errors-on-unmatched: without it a staged set
+      # containing only exempted files exits 14 (measured on `dprint fmt AGENTS.md`).
+      run: mise exec -- dprint fmt --allow-no-files {staged_files}
+      stage_fixed: true
     - name: leak-staged
       # Scans only the staged diff, which is what makes it fast enough for every commit;
       # the full-history sweep is pre-push and CI. This is the ONE scanner that gates

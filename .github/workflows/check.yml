@@ -1,5 +1,5 @@
 # One job: the definition of done. `mise run check` = `pnpm check` = turbo run lint
-# typecheck test test:integration test:eval — credential-free by construction (eval
+# lint:md typecheck test test:integration test:eval — credential-free by construction (eval
 # defaults to --mode fake; integration tests set MEMHTML_EMBED=off / MEMHTML_LLM=off
 # themselves), so this pipeline needs no secrets.
 #

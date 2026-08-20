@@ -16,6 +16,10 @@
     "lint": {
       "outputs": []
     },
+    "//#lint:md": {
+      "inputs": ["**/*.md", "dprint.json"],
+      "outputs": []
+    },
     "test": {
       "dependsOn": ["build"],
       "outputs": []
