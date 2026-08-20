@@ -1,10 +1,14 @@
 import type { StorageFailure } from "@memhtml/contracts/errors"
+import { MEMORY_EXTENSION, normalizePath } from "@memhtml/contracts/paths"
+import { escapeAttribute, escapeText, parseMemory } from "@memhtml/html"
+import { STATE_SCHEMA } from "@memhtml/index"
+import type { GitFailure } from "@memhtml/store"
 import { Effect } from "effect"
 
 import { assembleBatches, batchCall, keyMembers, resolveKeys } from "../batch.js"
 import { commitPhase } from "../commit.js"
 import { hrefFor, link, meta, readFileBytes, stampFile } from "../edits.js"
-import { emptyOutcome, modelFor, type PhaseBody, type PhaseEnv } from "../env.js"
+import { modelFor, type PhaseBody, type PhaseEnv } from "../env.js"
 import {
   assertsContradiction,
   assertsEdge,
@@ -14,11 +18,13 @@ import {
   isDirectionalRel,
   pairText
 } from "../llm.js"
+import { closeTask, type DetectedFinding, makeMinter } from "../mint.js"
 import {
   activeCorpus,
   bumpCorroboration,
   markPromoted,
   minedPairs,
+  openDetectedTasks,
   type PairRow,
   SLEEP_EXCLUDED_TYPES,
   sharedEntityPairs
@@ -131,12 +137,422 @@ export const PROMOTION_DETECTIONS = 2
  */
 export const EDGE_PROMOTION_CAP = 50
 
+/**
+ * The detector segment of every task this phase mints, and the range `openDetectedTasks` brackets.
+ *
+ * Equal to the phase name deliberately: a finding key names the phase that has to recognize it next
+ * night, and `edge-typing` is also the `Memhtml-Phase` trailer, so one string identifies the detector
+ * in the file, in the index range, and in the commit. It is a PREFIX of nothing and has `edge` as its
+ * own prefix, which is the case `sql.ts:208-244`'s explicit key range exists to keep separate.
+ */
+export const EDGE_DETECTOR = "edge-typing"
+
+/**
+ * Characters of each side's evidence quoted into a `resolve:` task.
+ *
+ * Far narrower than {@link EDGE_PAIR_SIDE_CHARS}, and for a different purpose: the model's budget is
+ * how much text it needs to JUDGE the pair, and this is how much a human needs to SEE to recognize
+ * the conflict. Two paragraphs of ~300 characters is a screenful a reviewer reads at once, and the
+ * task's job is to send them to the two files rather than to reproduce them.
+ *
+ * Cut at a WORD boundary and with NO ellipsis appended, which is a correctness requirement rather
+ * than a nicety: the quote has to remain findable in the source, both for the closer's evidence-gone
+ * arm below and for doctor's stale-quote check. A prefix of the source's collapsed text is contained
+ * in it; a prefix plus `…` is not, so every minted task would report its own evidence as gone.
+ */
+export const EDGE_QUOTE_CHARS = 300
+
 /** One candidate pair with both endpoints' text, ready to be keyed. */
 interface TypingCandidate {
   readonly pair: PairRow
   readonly srcText: string
   readonly dstText: string
+  /**
+   * Each endpoint's ARTICLE TEXT alone, which is what a minted quote is drawn from.
+   *
+   * Separate from {@link TypingCandidate.srcText} because that one is `gist + "\n" + body_text` — and
+   * `files.body_text` is already the whole article's text INCLUDING the gist
+   * (`packages/index/src/project.ts` projects `doc.article.bodyText`). Quoting the prompt's text
+   * would therefore emit `claim claim body…`, a string that does NOT occur in the endpoint file, so
+   * the quote would be unverifiable the instant it was written — stale to the closer's evidence-gone
+   * arm and to doctor's `staleQuotes` at once. `body_text` is exactly `parseMemory`'s
+   * `article.bodyText`, whitespace-collapsed by the same function on both sides of the comparison.
+   */
+  readonly srcBody: string
+  readonly dstBody: string
 }
+
+/** A memory path's filename without its extension, for a claim a human reads in an inbox. */
+const basenameOf = (path: string): string => {
+  const name = normalizePath(path).split("/").pop() ?? path
+  return name.endsWith(MEMORY_EXTENSION) ? name.slice(0, -MEMORY_EXTENSION.length) : name
+}
+
+/**
+ * `edge:<a>\0<b>` with the two paths SORTED — a `resolve:` task's whole identity.
+ *
+ * Sorted because a contradiction is symmetric and the two candidate arms orient their pairs
+ * differently ({@link unionPairs} keeps whichever arm saw the pair first). A fingerprint carrying the
+ * orientation would re-file the same question as a new task on the night the arms' order changed,
+ * while the old task looked absent. `\0` as the separator because it cannot occur in a path, so no
+ * two distinct pairs concatenate into one fingerprint.
+ */
+export const resolveFingerprint = (left: string, right: string): string => {
+  const [a, b] = normalizePath(left) < normalizePath(right) ? [left, right] : [right, left]
+  return `edge:${normalizePath(a)}\u0000${normalizePath(b)}`
+}
+
+/**
+ * One side's evidence quote: its article text, cut at a word boundary inside {@link EDGE_QUOTE_CHARS}.
+ *
+ * Whitespace is collapsed first, so the quote written into the task is already in the form the
+ * containment check compares — the closer and doctor both collapse the source, and a quote carrying
+ * the file's own line breaks would only match after they did.
+ */
+export const evidenceQuote = (text: string): string => {
+  const flat = text.replace(/\s+/g, " ").trim()
+  if (flat.length <= EDGE_QUOTE_CHARS) return flat
+  const cut = flat.slice(0, EDGE_QUOTE_CHARS)
+  const lastSpace = cut.lastIndexOf(" ")
+  return (lastSpace <= 0 ? cut : cut.slice(0, lastSpace)).trim()
+}
+
+/**
+ * True when `quote` occurs in `text` with runs of whitespace collapsed on BOTH sides.
+ *
+ * **A deliberate three-line twin** of `apps/cli/src/doctor.ts`'s `quoteAppearsIn` and
+ * `apps/consolidator/src/contract.ts`'s, not an import: the three live in a package and two apps that
+ * cannot import each other, and the rule is short enough that the copies are cheaper than a shared
+ * door. They must AGREE — a fix to one is ported, never unified — because this one decides whether a
+ * task CLOSES and doctor's decides whether the same task is REPORTED, and a disagreement would show
+ * up as a task doctor flags forever and the closer never reaches.
+ *
+ * Collapsing whitespace is the only normalization. Case and punctuation compare as written, because
+ * each is a way the source could have changed in a way that changes what it says — which is exactly
+ * the human edit the evidence-gone arm is looking for.
+ */
+const quoteAppearsIn = (quote: string, text: string): boolean => {
+  const flatten = (value: string): string => value.replace(/\s+/g, " ").trim()
+  const needle = flatten(quote)
+  /** An empty needle is `includes`-true against anything, which would close nothing honestly. */
+  if (needle === "") return false
+  return flatten(text).includes(needle)
+}
+
+/**
+ * One `resolve:` finding: the pinned claim, both sides quoted with their paths, and the model's own
+ * reason for suspecting the conflict.
+ *
+ * **`bodyHtml`, not prose paragraphs, and the element is `<q cite>`.** A cited quote per side cannot
+ * be expressed as prose, and `<blockquote>` is outside `@memhtml/html`'s closed vocabulary — a task
+ * minted with one carries an `unknown:blockquote` warning forever AND its quoted text never reaches
+ * `article.citations`, which is the projection BOTH the closer below and doctor's stale-quote check
+ * read. The evidence would be unverifiable by the two mechanisms that exist to verify it
+ * (`mint.ts`'s `DetectedFinding.bodyHtml` records the measurement; `tests/mint.test.ts` pins it).
+ *
+ * **The two `cite` attributes are the closer's ONLY route back to the endpoints, which couples this
+ * template to {@link resolveClosure}.** The finding key is a sha256 digest, so the paths cannot be
+ * recovered from it, and no head meta in the format carries a pair. So the closer reads the task's
+ * citations and treats their two hrefs as `src` and `dst`. A change here that dropped a `cite`, cited
+ * something other than an endpoint, or emitted a third citation would silently stop the closer from
+ * recovering the pair — and the task would then never close by any arm.
+ *
+ * **The rationale is UNTRUSTED MODEL TEXT and lands in a prose paragraph, escaped, and nowhere
+ * else** — never in the `cite`, the `title`, or the `claim`. It is a sentence a model wrote about a
+ * corpus that stores instructions.
+ */
+export const resolveFinding = (input: {
+  readonly src: string
+  readonly dst: string
+  readonly srcQuote: string
+  readonly dstQuote: string
+  readonly confidence: number
+  readonly rationale: string | undefined
+}): DetectedFinding => {
+  /**
+   * The claim names the pair in SORTED order, the same order the fingerprint uses, so the claim — and
+   * therefore the title, the slug, and the file path — is a function of the unordered pair. Naming
+   * them in `src`/`dst` order would make the FILENAME depend on which candidate arm saw the pair
+   * first, so the same finding would slug two ways across two nights while its key stayed stable.
+   */
+  const [first, second] =
+    normalizePath(input.src) < normalizePath(input.dst)
+      ? [input.src, input.dst]
+      : [input.dst, input.src]
+  const claim = `resolve: ${basenameOf(first)} and ${basenameOf(second)} may contradict`
+  const cited = (path: string, quote: string): string =>
+    `<p><q cite="${escapeAttribute(hrefFor(path))}">${escapeText(quote)}</q></p>`
+  const rationale = (input.rationale ?? "").replace(/\s+/g, " ").trim()
+  const verdictLine =
+    rationale === ""
+      ? `The model judged these two claims contradictory at ${input.confidence.toFixed(2)} confidence and gave no reason. One machine sighting is not corroboration, so nothing was written into either file.`
+      : `The model judged these two claims contradictory at ${input.confidence.toFixed(2)} confidence, stating, unverified: ${rationale}`
+  return {
+    detector: EDGE_DETECTOR,
+    fingerprint: resolveFingerprint(input.src, input.dst),
+    title: claim,
+    claim,
+    bodyHtml: [
+      `<p><mark>${escapeText(claim)}</mark></p>`,
+      cited(input.src, input.srcQuote),
+      cited(input.dst, input.dstQuote),
+      `<p>${escapeText(verdictLine)}</p>`
+    ].join("\n")
+  }
+}
+
+/** Whether a promoted `contradicts` counter exists for a pair, in EITHER orientation. */
+const contradictionPromoted = (
+  db: PhaseEnv["deps"]["db"],
+  left: string,
+  right: string
+): Effect.Effect<boolean, StorageFailure> =>
+  /**
+   * **BOTH orientations, and nothing makes one enough.** `edge_corroboration` is keyed on
+   * `(src_path, rel, dst_path)` in whatever order the CANDIDATE arm produced — `unionPairs` keeps
+   * whichever arm saw the pair first — while a task's citations are written in the mint's own sorted
+   * order. The two coincide on some corpora and not on others, and a one-sided lookup would answer
+   * `false` for every pair where they disagree, so those tasks would survive their own promotion
+   * forever.
+   *
+   * Found by mutation on 2026-08-19: dropping the second disjunct left all fifteen cases here GREEN,
+   * because the fixture's flip pair happens to orient the same way both times. The reversed-orientation
+   * case now pins it.
+   *
+   * A small SELECT here rather than a new `sql.ts` helper, per this phase's own style for a read no
+   * other caller wants. Guarded on `hasState` the way `accessRows` is: the durable plane is optional,
+   * and a caller that attached only the rebuildable index has no such table to ask.
+   */
+  db.hasState
+    ? db
+        .get<{ readonly n: number }>(
+          `SELECT count(*) AS n FROM ${STATE_SCHEMA}.edge_corroboration
+           WHERE rel = 'contradicts' AND promoted = 1
+             AND ((src_path = ? AND dst_path = ?) OR (src_path = ? AND dst_path = ?))`,
+          [left, right, right, left]
+        )
+        .pipe(Effect.map((row) => (row?.n ?? 0) > 0))
+    : Effect.succeed(false)
+
+/** What one night's closure pass did, for the phase to fold into its counts and its commit. */
+interface ResolveClosure {
+  readonly closed: number
+  /** Reasons in closure order, for the commit body. There is nowhere in the FORMAT for a reason. */
+  readonly reasons: ReadonlyArray<string>
+  /** True when a real archive move was staged, so the phase knows it owes a commit. */
+  readonly staged: boolean
+}
+
+/**
+ * The EXPLICIT closer over this detector's open tasks. Runs every night the phase runs, including a
+ * night with no model at all.
+ *
+ * **This phase never closes by absence, and the closer is why.** `closeAbsent` reads "the detector
+ * did not detect this finding tonight" as evidence the finding is gone, and that inference is sound
+ * only for a detector that looked EVERYWHERE. This one does not: {@link EDGE_TYPING_CANDIDATE_LIMIT}
+ * caps the candidate scan at 200 of a corpus's thousands of pairs, ranked by similarity, so a pair
+ * filed last night is routinely not even offered tonight — a truthful `universeComplete` is
+ * unreachable here, and an untruthful one would archive the whole `resolve:` backlog on the first
+ * night the corpus grew. So closure is decided by asking about EACH OPEN TASK's own pair instead, and
+ * the cost is bounded by the open-task count rather than by the scan.
+ *
+ * **Deterministic, hence its position: BEFORE the model-dependent early returns.** Every one of the
+ * three arms is a SQL read or a file read, so a night with no credentials — which is every CI run and
+ * every unconfigured install — still promotes-and-closes, still notices an archived endpoint, and
+ * still notices a human editing the contradiction away. Wiring it after the `model === undefined`
+ * return would have made a corpus's `resolve:` tasks immortal on exactly the nights nothing else
+ * happens.
+ *
+ * Three closing arms, each with its own reason:
+ *
+ * - **`promoted to edge`.** The corroboration counter says a second night confirmed the pair and both
+ *   files gained the `contradicts` link. The contradiction is now FILE-BORNE, so the task asking a
+ *   human to look at it is moot — the fact is in the corpus where a reader will meet it.
+ * - **`endpoint gone`.** One side is not an active file. Archived counts: eviction is a `git mv`, and
+ *   a contradiction with an evicted memory is not a live conflict a human can resolve. The tree is
+ *   the system of record here as everywhere in this package, so "not active" is `readFileBytes`
+ *   answering nothing at the cited path — which covers an archive move and a deletion with one read.
+ * - **`evidence gone`.** Both endpoints are active and one's cited quote no longer occurs in it. That
+ *   is the human editing the very text the detector flagged, which IS the finding being resolved.
+ *   The Gate-1 critic named this the load-bearing clause and it is: without it, the ordinary way a
+ *   contradiction gets fixed leaves its task open forever, and an inbox nobody can empty is an inbox
+ *   nobody reads.
+ *
+ * **The status guard applies to ONE arm, not to all three**, which is the split the packet's §9
+ * decides and the reason it is not `closeAbsent`'s blanket rule. `promoted` and `endpoint gone` are
+ * facts about the TREE: whoever moved the task to `doing` is working on a question the corpus has
+ * already answered, and leaving it open would have them resolve a conflict that is written down or
+ * gone. `evidence gone` is the opposite — a human mid-fix is the most likely reason a quote stopped
+ * matching, and archiving their task from under them is precisely what the todo-only rule exists to
+ * prevent. So a non-`todo` task closes on the first two arms and is left alone by the third.
+ */
+const resolveClosure = (
+  env: PhaseEnv
+): Effect.Effect<ResolveClosure, StorageFailure | GitFailure> =>
+  Effect.gen(function* () {
+    const open = yield* openDetectedTasks(env.deps.db, EDGE_DETECTOR)
+    let closed = 0
+    const reasons: Array<string> = []
+    let staged = false
+
+    for (const row of open) {
+      /**
+       * The task's own bytes, not the index's row. A task an earlier phase already archived is still
+       * listed open here (the index is refreshed once, in preflight), and the tree decides.
+       */
+      const html = yield* readFileBytes(env, row.path)
+      if (html === undefined) continue
+      const doc = yield* parseMemory(html).pipe(Effect.orElseSucceed(() => undefined))
+      if (doc === undefined) continue
+
+      /**
+       * The endpoints, recovered from the task's `<q cite>` hrefs — see {@link resolveFinding} for
+       * the coupling this depends on. EXACTLY two cited paths, because a `resolve:` task quotes one
+       * side each: fewer means the template changed or a human edited the evidence out, and more
+       * means this is not a pair task. Either way the closer cannot say which two memories the
+       * finding is about, and guessing would close the wrong task, so it leaves this one alone.
+       */
+      const citedPaths = [
+        ...new Set(
+          doc.article.citations.flatMap((one) =>
+            one.href === undefined ? [] : [normalizePath(one.href)]
+          )
+        )
+      ]
+      const [src, dst] = citedPaths
+      if (citedPaths.length !== 2 || src === undefined || dst === undefined) continue
+
+      /** Closed regardless of status: the fact is file-borne now, so the task is moot. */
+      if (yield* contradictionPromoted(env.deps.db, src, dst)) {
+        if (yield* closeOne(env, row.path)) {
+          closed += 1
+          staged = !env.dryRun
+          reasons.push(`${row.path}: promoted to edge`)
+        }
+        continue
+      }
+
+      const srcHtml = yield* readFileBytes(env, src)
+      const dstHtml = yield* readFileBytes(env, dst)
+      /** Closed regardless of status: there is no live conflict left for a human to resolve. */
+      if (srcHtml === undefined || dstHtml === undefined) {
+        if (yield* closeOne(env, row.path)) {
+          closed += 1
+          staged = !env.dryRun
+          reasons.push(`${row.path}: endpoint gone`)
+        }
+        continue
+      }
+
+      /**
+       * Both endpoints parsed, or this arm declines. An unparseable endpoint is `doctor`'s finding,
+       * and reading it as "the quote is gone" would close a task over an unrelated defect.
+       */
+      const srcDoc = yield* parseMemory(srcHtml).pipe(Effect.orElseSucceed(() => undefined))
+      const dstDoc = yield* parseMemory(dstHtml).pipe(Effect.orElseSucceed(() => undefined))
+      if (srcDoc === undefined || dstDoc === undefined) continue
+
+      const textOfCited = new Map([
+        [src, srcDoc.article.bodyText],
+        [dst, dstDoc.article.bodyText]
+      ])
+      const stale = doc.article.citations.some((one) => {
+        if (one.href === undefined) return false
+        const source = textOfCited.get(normalizePath(one.href))
+        return source !== undefined && !quoteAppearsIn(one.text, source)
+      })
+      if (!stale) continue
+
+      /**
+       * The ONE arm the todo-only rule guards. Counted nowhere — `closureSkipped` means "the whole
+       * absence pass was withheld" and this phase has no absence pass — so it is logged, which is
+       * where an operator asking why a `doing` task survived a quote edit will find the answer.
+       */
+      if (row.task_status !== "todo") {
+        yield* Effect.logInfo(
+          `sleep.edge-typing left ${row.path} open: evidence gone but task_status is ${row.task_status}`
+        )
+        continue
+      }
+      if (yield* closeOne(env, row.path)) {
+        closed += 1
+        staged = !env.dryRun
+        reasons.push(`${row.path}: evidence gone`)
+      }
+    }
+
+    return { closed, reasons, staged }
+  })
+
+/**
+ * Close one task through the kernel's primitive, or count the closure without performing it on a dry
+ * run.
+ *
+ * `closeTask` rather than a local `stampFile` + `archiveFile` pair, so this phase's closures and the
+ * three other detectors' are one operation: the `done` stamp rides the `git mv`'s `extraEdits`, and
+ * the tree never holds a task that is archived and still `todo`. Its `null` means the live path held
+ * no file, which is no closure.
+ */
+const closeOne = (
+  env: PhaseEnv,
+  path: string
+): Effect.Effect<boolean, StorageFailure | GitFailure> =>
+  env.dryRun ? Effect.succeed(true) : closeTask(env, path).pipe(Effect.map((at) => at !== null))
+
+/**
+ * Run the closer and fold it into an outcome, on a night that judges nothing.
+ *
+ * **The three degraded returns below have to run the closer themselves**, and this is what makes each
+ * of them one line rather than five: a no-model night, a night whose scan found no candidate, and a
+ * dry run each used to return `emptyOutcome` — which would now skip the whole closure pass on exactly
+ * the nights the phase does nothing else. Those are the nights an operator is least likely to look at
+ * a report, so an immortal `resolve:` backlog would accumulate invisibly.
+ *
+ * A staged closure gets its OWN commit here rather than being left in the index. Leaving it would hand
+ * the move to whichever later phase commits next, and that commit's `Memhtml-Phase` trailer would
+ * attribute this phase's closure to that one — so `memhtml sleep resume` would skip the phase that
+ * actually owns the write.
+ */
+const closureOnly = (
+  env: PhaseEnv,
+  counts: Record<string, number>,
+  detail?: string
+): Effect.Effect<
+  {
+    readonly counts: Record<string, number>
+    readonly commitSha: string | null
+    readonly llmCalls: 0
+  },
+  StorageFailure | GitFailure
+> =>
+  Effect.gen(function* () {
+    const closure = yield* resolveClosure(env)
+    const final = { ...counts, ...(closure.closed === 0 ? {} : { taskClosed: closure.closed }) }
+    const commitSha = closure.staged
+      ? yield* commitPhase(
+          env,
+          "edge-typing",
+          `close ${closure.closed} resolve task(s)`,
+          final,
+          closureBody(closure)
+        )
+      : null
+    return { counts: final, commitSha, llmCalls: 0, ...(detail === undefined ? {} : { detail }) }
+  })
+
+/**
+ * The closure reasons as a commit body.
+ *
+ * **The reason goes in the COMMIT and nowhere else, because there is nowhere else.** No head meta in
+ * the format carries a closure reason, and `closeTask` records exactly that. The commit is also where
+ * a reviewer asking why a task disappeared is already reading. `commitPhase` indents the body, which
+ * is the trailer-injection guard — every path here is this package's own text, but the guard is
+ * unconditional and stays so.
+ */
+const closureBody = (closure: ResolveClosure): string =>
+  [`Closed ${closure.closed} resolve task(s):`, ...closure.reasons.map((one) => `- ${one}`)].join(
+    "\n"
+  )
 
 /**
  * The union of both candidate arms, deduplicated by UNORDERED pair and ranked `sim` DESC.
@@ -238,9 +654,20 @@ export const pairGroupKey = (pair: PairRow): string => {
 
 export const edgeTyping: PhaseBody = (env) =>
   Effect.gen(function* () {
+    /**
+     * **Every terminal path runs the closer, including the three degraded ones.** It is deterministic —
+     * SQL and file reads only — so a no-model night, a candidate-free night, and a dry run all still
+     * close what the corpus says is closed. See {@link resolveClosure} for why this phase closes
+     * explicitly instead of by absence.
+     *
+     * On the FULL path it runs LAST, after the judging, and the ordering is load-bearing: a pair the
+     * model corroborates tonight is promoted into both files tonight, so its `resolve:` task is moot
+     * the moment `markPromoted` lands. A closer that ran first would leave that task open for a whole
+     * extra night, asking a human to resolve a contradiction the same commit just wrote down.
+     */
     const model = env.deps.model
     if (model === undefined) {
-      return { ...emptyOutcome({ candidates: 0, judged: 0 }), detail: "no model bound" }
+      return yield* closureOnly(env, { candidates: 0, judged: 0 }, "no model bound")
     }
 
     /**
@@ -267,11 +694,13 @@ export const edgeTyping: PhaseBody = (env) =>
       capped: 0,
       duplicates: 0
     }
-    if (candidates.length === 0) return emptyOutcome(zero)
-    if (env.dryRun) return emptyOutcome({ ...zero, candidates: candidates.length })
+    if (candidates.length === 0) return yield* closureOnly(env, zero)
+    if (env.dryRun) return yield* closureOnly(env, { ...zero, candidates: candidates.length })
 
     const corpus = yield* activeCorpus(env.deps.db)
     const textOf = new Map(corpus.map((row) => [row.path, `${row.gist}\n${row.body_text}`]))
+    /** The ARTICLE text alone, which is what a minted quote is drawn from. See {@link TypingCandidate}. */
+    const bodyOf = new Map(corpus.map((row) => [row.path, row.body_text]))
 
     /**
      * A pair whose endpoint the corpus no longer holds is dropped before batching rather than inside
@@ -288,7 +717,13 @@ export const edgeTyping: PhaseBody = (env) =>
         skipped += 1
         continue
       }
-      withText.push({ pair, srcText, dstText })
+      withText.push({
+        pair,
+        srcText,
+        dstText,
+        srcBody: bodyOf.get(pair.src) ?? "",
+        dstBody: bodyOf.get(pair.dst) ?? ""
+      })
     }
 
     /**
@@ -314,6 +749,32 @@ export const edgeTyping: PhaseBody = (env) =>
       return left.pair.dst < right.pair.dst ? -1 : left.pair.dst > right.pair.dst ? 1 : 0
     })
     const batches = assembleBatches([sorted], { maxMembers: EDGE_PAIRS_PER_CALL })
+
+    /**
+     * The minting pass, constructed BEFORE the batch loop so its open-task snapshot is taken at phase
+     * start rather than part-way through, and every below-gate contradiction the night finds is
+     * offered to the same dedup state.
+     *
+     * **NO `restatementDedup`, deliberately.** The kernel's claim-Jaccard arm is opt-in
+     * (`mint.ts:84-90`) precisely because it is wrong for TEMPLATED claims, and this phase's claim is
+     * a template: `resolve: a and b may contradict` against `resolve: a and c may contradict` share
+     * every token but one, so two genuinely different contradictions that happen to share an endpoint
+     * would score far above the 0.6 floor and the second would be silently dropped as a restatement.
+     * Under a template the exact finding key IS the identity, and distinct fingerprints are distinct
+     * work items.
+     */
+    const minter = yield* makeMinter(env, EDGE_DETECTOR)
+    /**
+     * Findings collected across every batch, keyed by fingerprint, submitted in ONE sorted pass after
+     * the loop.
+     *
+     * **Sorted submission is required by the cap, not by tidiness.** `MINT_CAP` bounds what one night
+     * writes and counts the rest as `mintOverflow`, so submission ORDER decides which ten findings
+     * become files — and submitting inline would make that order the MODEL's verdict order, which is
+     * not reproducible across two runs over an unchanged corpus. Fingerprint order is a function of
+     * the pair set alone, so the eleventh pair stays the eleventh pair until it is decided.
+     */
+    const deferred = new Map<string, DetectedFinding>()
 
     const modelKey = modelFor(env.deps, "edge-typing")
     let judged = 0
@@ -396,6 +857,44 @@ export const edgeTyping: PhaseBody = (env) =>
           })
           const row = rows[0]
           if (row === undefined || row.detections < PROMOTION_DETECTIONS || row.promoted === 1) {
+            /**
+             * **THE MINT: one machine sighting is not enough to write an edge, and is enough to ask a
+             * human.** This is the branch the phase used to `continue` out of silently — a contradiction
+             * the model asserted above the confidence floor, held back by the two-night corroboration
+             * gate, which then existed only as a counter in the state plane. A reviewer had no way to
+             * see it, and if the pair fell out of the capped candidate scan it was never seen again.
+             * The task is where that sighting becomes visible without becoming an asserted fact.
+             *
+             * Minted only on a genuinely BELOW-GATE row: `promoted === 1` means the edge is already in
+             * both files, so the question is answered and a task asking it would be noise the closer
+             * would archive on its next pass. `row === undefined` is a bump that returned nothing,
+             * which says nothing about the pair.
+             *
+             * Both quotes must be non-empty. An empty quote is `includes`-true against anything, so
+             * the closer's evidence-gone arm could never verify it, and the task would be unclosable
+             * evidence-wise — better not filed. A valid memory always has article text, so this is a
+             * guard against a projection anomaly rather than an ordinary path.
+             */
+            if (row !== undefined && row.promoted === 0) {
+              const srcQuote = evidenceQuote(candidate.srcBody)
+              const dstQuote = evidenceQuote(candidate.dstBody)
+              if (srcQuote !== "" && dstQuote !== "") {
+                const finding = resolveFinding({
+                  src: candidate.pair.src,
+                  dst: candidate.pair.dst,
+                  srcQuote,
+                  dstQuote,
+                  confidence: verdict.confidence,
+                  rationale: verdict.rationale
+                })
+                /**
+                 * DEFERRED, not submitted here — see the sorted pass after the batch loop. One pair
+                 * reached twice keeps the FIRST finding, the same choice `answered` makes about
+                 * repeated verdicts and `unionPairs` makes about a pair in both arms.
+                 */
+                if (!deferred.has(finding.fingerprint)) deferred.set(finding.fingerprint, finding)
+              }
+            }
             continue
           }
           if (promoted + typed >= EDGE_PROMOTION_CAP) {
@@ -496,6 +995,26 @@ export const edgeTyping: PhaseBody = (env) =>
       }
     }
 
+    /** The night's below-gate contradictions, offered in fingerprint order. See {@link deferred}. */
+    for (const fingerprint of [...deferred.keys()].sort()) {
+      const finding = deferred.get(fingerprint)
+      if (finding === undefined) continue
+      yield* minter.submit(finding)
+    }
+    /**
+     * `finish` and NOT `closeAbsent`. This phase closes explicitly instead — the candidate scan is
+     * capped and sampled, so "not detected tonight" is not evidence a finding is gone. See
+     * {@link resolveClosure}.
+     */
+    const mintReport = minter.finish()
+
+    /**
+     * The closure pass, AFTER the judging — see the note at the top of the phase. A pair promoted a few
+     * lines above is promoted in the tree and in the counter, so its task closes on this same night
+     * rather than surviving until the next one.
+     */
+    const closure = yield* resolveClosure(env)
+
     const counts = {
       candidates: candidates.length,
       judged,
@@ -504,15 +1023,32 @@ export const edgeTyping: PhaseBody = (env) =>
       promoted,
       skipped,
       capped,
-      duplicates
+      duplicates,
+      ...mintReport.counts,
+      ...(closure.closed === 0 ? {} : { taskClosed: closure.closed })
     }
-    if (promoted === 0 && typed === 0) return { counts, commitSha: null, llmCalls }
+    /**
+     * The commit gate asks about the MINT and the CLOSURE too, not only the two kinds of edge. A night
+     * whose only output was three `resolve:` tasks, or one closure, has staged files — and returning
+     * `null` here would leave them for whichever later phase commits next, whose `Memhtml-Phase`
+     * trailer would then attribute this phase's writes to that one, so a resume would skip the phase
+     * that owns them.
+     */
+    if (promoted === 0 && typed === 0 && mintReport.minted.length === 0 && !closure.staged) {
+      return { counts, commitSha: null, llmCalls }
+    }
 
     const commitSha = yield* commitPhase(
       env,
       "edge-typing",
       `promote ${typed} typed edges and ${promoted} corroborated contradictions`,
-      counts
+      counts,
+      /**
+       * The closure reasons, in the commit because the format has nowhere else to carry one — the same
+       * decision `entity-resolution` records and `closeTask` states. Absent on a night that closed
+       * nothing, so an ordinary night's commit is the one it was.
+       */
+      closure.closed === 0 ? undefined : closureBody(closure)
     )
     return { counts, commitSha, llmCalls }
   })

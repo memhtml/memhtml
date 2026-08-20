@@ -467,9 +467,16 @@ describe("edge-typing", () => {
           const outcome = yield* edgeTyping(envFor(fixture))
           expect(outcome.counts.contradictions).toBeGreaterThan(0)
           expect(outcome.counts.promoted).toBe(0)
-          // No promotion and no typed edge means no commit at all — the counter lives in state.
           expect(outcome.counts.typed).toBe(0)
-          expect(outcome.commitSha).toBeNull()
+          /**
+           * NO edge reaches either memory — the counter lives in the state plane and the corroboration
+           * gate has not been cleared. What the night DOES produce is a `resolve:` task per
+           * single-detection contradiction (AC-3-3), so the commit is the mint's rather than an edge's;
+           * `tests/edge-typing-mint.test.ts` asserts the task itself. Before task detection this line
+           * read `commitSha` null, which was true only because the sighting was invisible.
+           */
+          expect(outcome.counts.taskMinted).toBe(outcome.counts.contradictions)
+          expect(outcome.commitSha).not.toBeNull()
           expect(yield* atHead(fixture, SAFE)).not.toContain("memhtml-contradicts")
         }),
       { seed: DEDUP_CORPUS, model }
