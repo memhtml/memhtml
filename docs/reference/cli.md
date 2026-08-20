@@ -333,7 +333,7 @@ Flags:
 ## task list
 
 ```
-memhtml task list [--status <status>] [--workspace <ws>] [--due-before <iso>] [--limit 50] [--cursor <path>]
+memhtml task list [--status <status>] [--workspace <ws>] [--due-before <iso>] [--detected] [--limit 50] [--cursor <path>]
 ```
 
 The task working set: a direct indexed scan with blockers, never ranked retrieval.
@@ -344,6 +344,7 @@ Flags:
 - `--status`: One task status. String. `apps/cli/src/commands.ts:495`
 - `--workspace`: One workspace. String. `apps/cli/src/commands.ts:500`
 - `--due-before`: An ISO date. Returns tasks due strictly before it, by calendar day. String. `apps/cli/src/commands.ts:502`
+- `--detected`: Only machine-detected tasks: the ones carrying a `memhtml-finding-key` minted by sleep. Boolean, default false. `apps/cli/src/commands.ts:519`
 - `--limit`: Rows per page. Int, default 50. `apps/cli/src/commands.ts:506`
 - `--cursor`: The `next_cursor` from the previous page: the last path returned. String. `apps/cli/src/commands.ts:508`
 - `--include-archived`: Include finished tasks. `done` archives, so they are otherwise absent. Boolean, default false. `apps/cli/src/commands.ts:513`

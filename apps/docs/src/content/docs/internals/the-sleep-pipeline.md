@@ -25,17 +25,17 @@ moved. The two boxes leaving the gate are the only two outcomes.
 | # | Phase | Model | Git effect |
 |---|---|---|---|
 | 1 | `preflight` | no | none; runs `index update` and snapshots counts |
-| 2 | `dedup-merge` | yes | one commit: keeper gains `memhtml-supersedes`, dropped files `git mv` to archive |
-| 3 | `entity-resolution` | yes | one commit: `memhtml-entity` values normalized and cluster-merged in place |
+| 2 | `dedup-merge` | yes | one commit: keeper gains `memhtml-supersedes`, dropped files `git mv` to archive, `review:` tasks filed |
+| 3 | `entity-resolution` | yes | one commit: `memhtml-entity` values normalized and cluster-merged in place, `confirm:` tasks filed |
 | 4 | `person-links` | no | one commit: `memhtml-about-person` links to `resources/people/*` |
 | 5 | `relationship-mining` | no | no commit; derived `relates_to` rows in the index only |
-| 6 | `edge-typing` | yes | one commit: typed edges promoted, and corroborated contradictions |
+| 6 | `edge-typing` | yes | one commit: typed edges promoted, corroborated contradictions, `resolve:` tasks filed |
 | 7 | `confidence-decay` | no | one commit: `memhtml-confidence` rewritten for un-reinforced files |
 | 8 | `arc-synthesis` | yes | one commit per arc |
 | 9 | `retention-triage` | no | one commit: files in the evict band `git mv` to archive |
 | 10 | `compress` | yes | one commit per batch |
 | 11 | `reprieve` | no | one commit: `memhtml-valid-until` extended, or the file archived |
-| 12 | `trace-consolidation` | yes | one commit per distilled memory |
+| 12 | `trace-consolidation` | yes | one commit per distilled memory, plus one for `commitment:` tasks |
 | 13 | `integrity` | no | one commit: dangling hrefs repaired, artifacts regenerated |
 | 14 | `state-export` | no | one commit: `.memhtml/state/access.jsonl` |
 | 15 | `report` | no | one commit: `.memhtml/sleep/<run-id>.html` |
@@ -118,9 +118,11 @@ reporting write never fails a run (`packages/sleep/src/run.ts:434-439`).
 A resume reports already-done phases explicitly as `skipped`, so its report still accounts for all fifteen
 (`packages/sleep/src/run.ts:176-191`).
 
-## 4. Every phase excludes tasks
+## 4. Every phase excludes tasks from its input
 
-`packages/sleep/src/sql.ts:36` applies the exclusion, and the reason differs by phase.
+`packages/sleep/src/sql.ts:36` applies the exclusion, and the reason differs by phase. Four phases
+nonetheless *write* tasks, which section 10 covers; the exclusion is what keeps that from looping, because
+a task sleep minted is never a candidate any phase reads back.
 
 In `relationship-mining` it is the graph firewall. Mined edges are written with
 `edge_class = 'memory'`, so a task endpoint would put a task into PageRank, the diversification pass, and
@@ -149,6 +151,8 @@ owed. Evicting on that signal would archive the neglected work first and leave t
 | Compress batch / candidates | 8 / 2000 | `packages/sleep/src/phases/compress.ts:46-55` |
 | Retention bands | keep > 0.7, evict ≤ 0.3 | `packages/domain/src/retention.ts:144-145` |
 | Reprieve floor / days / max | 0.5 / 14 / 3 | `packages/domain/src/retention.ts:277-287` |
+| New tasks minted per detector per night / claim-overlap floor | 10 / 0.6 | `packages/sleep/src/mint.ts:53`, `:81` |
+| Commitment confidence floor | 0.7 | `packages/sleep/src/llm.ts:126` |
 
 ## 6. The retention scorer
 
@@ -314,7 +318,102 @@ The phase detects and stops there. A promoted `contradicts` asserts the conflict
 no `memhtml-valid-until` is closed, and neither side is archived. Choosing the winner of a contradiction
 is a one-way door on stored belief, and it belongs to an agent or a human rather than to a nightly job.
 
-## 10. Graph analysis runs in TypeScript
+## 10. Task detection files what a phase may not decide
+
+Four phases end up holding a decision they are not allowed to make. `entity-resolution` has a name pair
+below its cluster-confidence floor or still in the character review band. `dedup-merge` has a pair above
+0.92 that the divergence veto refused. `edge-typing` has a `contradicts` verdict at one detection, held
+back by the two-night corroboration gate. `trace-consolidation` has read a first-person promise out of a
+transcript.
+
+Each of those used to be one number in a commit trailer, `reviewCandidates: 3` or `vetoed: 1`, which no
+human reads and which the next night reports identically forever. Each is now a task file the phase writes
+into its own commit (`packages/sleep/src/mint.ts:15-38`). A minted task is an ordinary `task` memory, so it
+inherits the retrieval default, the dedup carve-out, and the edge-class firewall rather than introducing a
+type. [Tasks](/internals/the-memory-file-format/) covers the file itself.
+
+One kernel does the writing for all four, because the consequence is the part that is easy to get wrong: an
+idempotency key, dedup against what is already open, a bound on how much one night may add, and a closure
+that does not reach a task a human has picked up. Four copies of that would be four chances to file a
+duplicate every night forever. The kernel stages and never commits, so a phase that mints two tasks and
+closes a third produces one reviewable commit rather than three.
+
+Identity is a head meta, `memhtml-finding-key`, holding `<detector>:<first 16 hex of sha256(fingerprint)>`
+(`packages/sleep/src/mint.ts:174`). It exists because a task cannot be deduplicated by content: tasks are
+carved out of the content-hash unique index on purpose, since two open tasks with identical bodies are two
+real work items, and that carve-out leaves a detector with no way to recognize its own prior work
+(`packages/index/migrations/0011_finding_key.sql`). The key is derived from the finding rather than from the
+prose, so rewording a task keeps its key and a genuinely new finding takes a new one. A fingerprint carries
+no timestamp, no run id, and no session id, and the pair detectors sort their two endpoints, so an
+orientation that flipped with the corpus's file counts cannot re-file the same question as a new task.
+
+A night writes at most ten new tasks per detector (`packages/sleep/src/mint.ts:53`). The bound is on the
+diff a human reviews rather than on the detection: a corpus that produced 400 confirm-this-pair findings is
+a corpus problem, and 400 new files in one commit is a night nobody can review. Overflow is counted, and every
+submitted finding still counts as detected for the night, so the same night's closure pass cannot mistake a
+capped finding for a vanished one. Each phase submits in fingerprint order, so two nights over an unchanged
+corpus write the same ten and the eleventh finding stays eleventh until it is decided.
+
+Closure differs per detector, because absence means different things to each. Closing is
+`memhtml-task-status: done` stamped inside the archiving `git mv`, so the tree never holds a task that is
+archived and still `todo`, and the reason goes in the phase commit, since no head meta in the format
+carries one.
+
+| Phase | Closure |
+|---|---|
+| `entity-resolution` | by absence, when the model pass ran, no batch failed in isolation, and no pair went unasked |
+| `dedup-merge` | by absence, and only from the model-bound arm, with every cap on the candidate path a clause of the attestation |
+| `edge-typing` | never by absence; an explicit closer asks about each open task's own pair |
+| `trace-consolidation` | only when a resolution says the work is done |
+
+Absence is evidence only from a detector that looked everywhere, so the shared close-by-absence pass runs
+under an attestation each phase computes about its own completeness, and only over tasks still in `todo`.
+Somebody who moved a task to `doing` or `blocked` owns it now, and a detector going quiet, usually because
+they are mid-fix, is not permission to archive their work item (`packages/sleep/src/mint.ts:248-264`).
+
+`edge-typing` cannot make that attestation truthfully. Its candidate scan is capped at 200 of a corpus's
+thousands of pairs and ranked by similarity, so a pair filed last night is routinely not offered tonight,
+and an untruthful attestation would archive the whole backlog on the first night the corpus grew. So it
+asks about each open task's own pair instead, bounded by the open-task count rather than by the scan, and
+recovers the pair from the task's two `<q cite>` hrefs (`packages/sleep/src/phases/edge-typing.ts:346-424`).
+Three arms close a task: the corroboration counter says a second night confirmed the pair and both files
+gained the link, so the fact is file-borne and the question is answered; one endpoint is no longer an active
+file; or one endpoint's cited quote no longer occurs in it, which is a human editing the flagged text and is
+how a contradiction normally gets fixed. All three are a SQL read or a file read, so the closer runs before
+the model-dependent early returns and works on a night with no credentials. Wiring it after them would make
+those tasks immortal on exactly the nights nothing else happens, which are the nights nobody reads the
+report.
+
+`trace-consolidation` gates each commitment deterministically between the agent and the tree: confidence at
+or above 0.7, `actor` exactly `"user"`, an evidence session id inside the analyzed batch, and a non-empty
+quote (`packages/sleep/src/phases/trace-consolidation.ts:215-251`). The actor arm is the self-referential
+guard. An assistant's "I'll grep for that next" is its own plan for its next tool call, and filing it would
+put the model's intentions on the human's to-do list, where a later session reads them back as work the
+human owes. Closure is resolution-driven only, because sessions are an unbounded universe: a commitment made
+last March is absent from tonight's ten-session batch because the batch is ten files, not because anybody
+did the work.
+
+Evidence is quoted in the task body. A file-borne source is a `<q cite="/path">` inside a paragraph, and
+`<blockquote>` is not an option: it sits outside the closed element vocabulary, so a task minted with one
+would carry a warning forever and its quoted text would never reach the citations projection that both the
+edge-typing closer and `memhtml doctor` read. Quotes are cut at a word boundary with no ellipsis appended,
+because a prefix of the source's collapsed text is contained in it and a prefix plus an ellipsis is not
+(`packages/sleep/src/phases/edge-typing.ts:150-163`). A transcript source is plain text naming the session
+id, with the same id in `memhtml-session`, because a `cite` holds a repo path and a session id is not one.
+Doctor therefore verifies file-borne quotes and not transcript ones; the consolidator client, the one
+process with the transcripts mounted, verifies that containment itself and refuses the whole turn on a
+fabricated quote (`apps/consolidator/src/client.ts:846-935`).
+
+Every minting phase reports the same counts, with zero-valued keys omitted so a commit trailer stays
+readable: `taskMinted`, `taskAlreadyOpen`, `taskDeduped`, `mintOverflow`, `taskClosed`, `closureSkipped`,
+and `pathExhausted`. `trace-consolidation` adds its own gate counts beside them, `commitmentBelowFloor`,
+`commitmentNotUser`, `commitmentUngrounded`, `resolutionClosed`, and `resolutionUnmatched`. Each phase's
+commit gate asks the mint and the closure too, not only its own primary writes: a night whose only output
+was three tasks has staged files, and leaving them for whichever later phase commits next would attribute
+this phase's writes to that one in the `Memhtml-Phase` trailer, so a resume would skip the phase that owns
+them.
+
+## 11. Graph analysis runs in TypeScript
 
 `packages/domain/src/graph.ts:76` and `packages/domain/src/graph.ts:164` implement PageRank by power
 iteration and community detection by label propagation.
@@ -334,7 +433,7 @@ A community below three members collapses to `undefined`
 cross-pair edge look like a bridge. `bridgeCounts` gives a node in no community a count of 0 rather than
 its full degree (`packages/domain/src/graph.ts:236-247`).
 
-## 11. The model phases
+## 12. The model phases
 
 There is one call shape: the native Messages API with a forced tool
 (`packages/llm/src/wire.ts:9-12`, `packages/llm/src/constants.ts:24`), decoded against its schema and
@@ -363,7 +462,7 @@ content for arcs it should have skipped, and the writing is the expensive half
 names it as absorbed, so an omitted member stays active, which is the safe outcome
 (`packages/sleep/src/phases/compress.ts:24-27`).
 
-## 12. Generated artifacts are the one merge-conflict source
+## 13. Generated artifacts are the one merge-conflict source
 
 The per-directory `index.html` files and the root `sitemap.xml` are deterministic given the row set, and
 only `memhtml publish` and the integrity phase regenerate them. An ordinary write never does
@@ -373,7 +472,7 @@ only `memhtml publish` and the integrity phase regenerate them. An ordinary writ
 the `merge.ours.driver` config that `memhtml init` sets. With both in place a conflict in a generated file
 is resolved by regenerating it rather than by editing it.
 
-## 13. The integrity phase distinguishes two kinds of dangling href
+## 14. The integrity phase distinguishes two kinds of dangling href
 
 `packages/sleep/src/phases/integrity.ts:20-34`. An archived target still exists and the edge still says
 something true, so the href is rewritten to the archive path. That path is derived with `archivePathFor`
@@ -385,7 +484,7 @@ a warning. Leaving it would produce a dangling row on every rebuild from then on
 newest-first over a ten-year window (`packages/sleep/src/phases/integrity.ts:127`), so the most recent
 archiving of a twice-archived path wins.
 
-## 14. Review and the merge gate
+## 15. Review and the merge gate
 
 `review` (`packages/sleep/src/review.ts:19`) reports per-phase counts, the commit list with their trailers,
 `git diff --stat base..HEAD`, and a per-file classification: `meta-only`, `body-changed`, `archived`,
