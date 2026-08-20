@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.3.0...memhtml-v0.4.0) (2026-08-20)
+
+
+### Features
+
+* **sleep:** task detection — mint task files from evidence the store already sees ([#48](https://github.com/memhtml/memhtml/issues/48)) ([d647119](https://github.com/memhtml/memhtml/commit/d6471198952c3ae1ac3c1c443dfd96d6309d89cf))
+
+
+### Bug Fixes
+
+* **consolidator:** verify cited quotes against the transcript, decoded arm included ([#52](https://github.com/memhtml/memhtml/issues/52)) ([6547d9c](https://github.com/memhtml/memhtml/commit/6547d9c17fe1a1ffa8d9e12dcc20d9344986b79d))
+
 ## [0.3.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.2.5...memhtml-v0.3.0) (2026-08-19)
 
 
