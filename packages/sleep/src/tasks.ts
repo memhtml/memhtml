@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 
 import type { StorageFailure } from "@memhtml/contracts/errors"
-import { placementFor } from "@memhtml/contracts/paths"
+import { archivePathFor, placementFor } from "@memhtml/contracts/paths"
 import { SLUG_FALLBACK, SLUG_MAX_LENGTH, slugify } from "@memhtml/contracts/slug"
 import { frameKeyOf } from "@memhtml/domain"
 import {
@@ -16,12 +16,14 @@ import { Effect } from "effect"
 
 import {
   absoluteIn,
+  addTag,
   archiveFile,
   hrefFor,
   meta,
   readFileBytes,
   stampFile,
-  writeFileBytes
+  writeFileBytes,
+  yearOf
 } from "./edits.js"
 import type { PhaseEnv } from "./env.js"
 
@@ -63,11 +65,18 @@ import type { PhaseEnv } from "./env.js"
  *   projection plus a migration plus an index, and the lookup it would buy is a lookup the path
  *   already answers. A path also survives `rm index.db && rebuild` with no projection at all, which a
  *   queryable column does not.
- * - **Collision-free by construction.** Every stem begins with a distinct digest, so two different
- *   findings cannot land on one path however their titles slug. This module therefore needs none of
- *   the ordinal-suffix search `trace-consolidation`'s `freePath` performs, and cannot silently
- *   overwrite a file the way that probe exists to prevent: a path that is already taken is BY
- *   DEFINITION the same finding, which is the refresh case rather than a collision.
+ * - **Collision-free by construction, at the LIVE path.** Every stem begins with a distinct digest, so
+ *   two different findings cannot land on one live path however their titles slug. This module therefore
+ *   needs none of the ordinal-suffix search `trace-consolidation`'s `freePath` performs, and cannot
+ *   silently overwrite a file the way that probe exists to prevent: a live path that is already taken is
+ *   BY DEFINITION the same finding, which is the refresh case rather than a collision.
+ *
+ *   The ARCHIVE path is the one place that reasoning inverts, and `archiveFile` owns it. Determinism is
+ *   what makes a mint idempotent and is exactly what makes two archivings of one key collide, because
+ *   `archivePathFor` partitions only by YEAR: mint → sweep-close → the finding reappears → sweep-close
+ *   again lands both closures on one archive path inside one year, and `git mv` exits 128 on a
+ *   destination that exists. So the ordinal search lives in `edits.ts`, where every archiving phase gets
+ *   it, and the dismissal scan below is a PREFIX scan rather than a derived path because of it.
  *
  * ## The TREE is read, never the index
  *
@@ -77,6 +86,32 @@ import type { PhaseEnv } from "./env.js"
  * to cover. Reading the tree makes a mint see the mints before it. The cost is bounded by
  * {@link DETECTED_TASK_CAP} reads of one directory per phase, because self-cleaning keeps that
  * directory the size of the OPEN detected queue rather than of the corpus.
+ *
+ * ## A human's closure is a STANDING DISMISSAL, and it is durable
+ *
+ * A detected task a human closed is a proposal they ANSWERED. `done` archives, so the file leaves the
+ * open queue — and the open queue was the only thing a mint used to consult, so the same finding minted
+ * a fresh task the next night, and the night after, forever. There was no way to say no. That is worse
+ * than noise: a queue whose items cannot be dismissed is a queue a human stops reading, which is the
+ * failure {@link DETECTED_TASK_CAP} and the sweep both exist to prevent from the other direction.
+ *
+ * So {@link mintDetectedTask} also reads the ARCHIVE, and a `done`-stamped detected task under the same
+ * key with NO {@link MACHINE_CLOSED_TAG} is a standing dismissal: the mint is declined and counted
+ * `dismissed`. Three properties of the shape:
+ *
+ * - **The discriminator is a tag on the file, because nothing else told the two closures apart.** See
+ *   {@link MACHINE_CLOSED_TAG}. A SWEPT task must not read as a dismissal — the finding vanishing and a
+ *   human declining it are opposite facts, and a finding that reappears after vanishing is new
+ *   information a reviewer should see.
+ * - **It is a PREFIX SCAN of the year buckets, not a derived path.** `archiveFile`'s ordinal suffixing
+ *   means one key can own `det-<key>-<slug>.html` and `det-<key>-<slug>-2.html` in one year, so there is
+ *   no single path to probe. The scan is a `readdir` per year over
+ *   `archive/<YYYY>/areas/inbox/tasks/`, the same TREE read `openDetections` performs, bounded by
+ *   {@link DISMISSAL_LOOKBACK_YEARS}.
+ * - **Dismissal is durable within the archive's VISIBILITY.** A human who wants the review back deletes
+ *   the archived file (or moves it out of the year buckets), and the next night mints it again. Nothing
+ *   else undoes it, which is the point: a dismissal that expired on a timer would be a queue item that
+ *   came back for no reason a human could name.
  *
  * ## What the code verifies, and what it cannot
  *
@@ -139,6 +174,40 @@ export const DETECTION_DIGEST_CHARS = 12
 
 /** The tag every detected task carries first, so `task list` can filter the machine's queue. */
 export const DETECTED_TAG = "detected"
+
+/**
+ * The tag a MACHINE closure appends, which is the only thing that tells one apart from a human's.
+ *
+ * **It had to be added, because nothing in a file distinguished the two.** Both closure paths write
+ * exactly `memhtml-task-status: done` plus the three archive stamps — `closeVanishedDetections` here and
+ * `memhtml task status done` in `apps/cli/src/operations.ts`, deliberately, so a detected task closes the
+ * same way a human's does. The differing REASON ("no longer detected" against "task done") lives only in
+ * the commit message, and a commit message is not a queryable fact about a file: reading it would mean a
+ * `git log --follow` per archived path per mint, and it says nothing at all after a rebase or a
+ * `git filter-repo`. So the discriminator is a `memhtml-tag`, which is already repeatable, already in the
+ * closed vocabulary, already projects to `file_tags`, and travels with the file's bytes.
+ *
+ * The value of the distinction is {@link mintDetectedTask}'s dismissal check. A HUMAN closing a detected
+ * task is answering the proposal — "I looked, and I do not want this review" — and re-minting it the next
+ * night makes the queue un-dismissable. A MACHINE closing it means the finding stopped appearing or the
+ * system resolved it, and a finding that comes back later is genuinely new information. Without the tag
+ * the two are one archived `done` task, and the check would have to pick one reading and be wrong about
+ * the other half.
+ *
+ * Appended, never set, so it lands AFTER the detector tag and {@link openDetections}' positional read of
+ * `tags[0]`/`tags[1]` is untouched.
+ */
+export const MACHINE_CLOSED_TAG = "machine-closed"
+
+/**
+ * Archive year partitions searched for a standing dismissal.
+ *
+ * Ten, the same span `integrity`'s `ARCHIVE_LOOKBACK_YEARS` chases a dangling href over, and stated here
+ * rather than imported because a module may not depend on a phase. The number is what bounds a
+ * dismissal's DURABILITY: a task dismissed eleven years ago can be re-minted, which is the honest
+ * reading of "durable within the archive's visibility" rather than a promise the code cannot keep.
+ */
+export const DISMISSAL_LOOKBACK_YEARS = 10
 
 /**
  * Detected tasks one night may mint, across every detector.
@@ -290,10 +359,12 @@ export interface DetectionRequest {
 /**
  * What a mint did.
  *
- * `capped` and `unverified` are counted refusals rather than failures: one bad finding must not cost
- * the phase that found it, exactly as one malformed model answer does not cost its batch's siblings.
+ * `capped`, `unverified`, `framed`, and `dismissed` are counted refusals rather than failures: one bad
+ * finding must not cost the phase that found it, exactly as one malformed model answer does not cost its
+ * batch's siblings. Every caller counts every arm, so a phase's task numbers sum against the findings it
+ * offered — a refusal that landed in no counter is a finding that vanished from the operator's view.
  */
-export type MintOutcome = "minted" | "refreshed" | "capped" | "unverified" | "framed"
+export type MintOutcome = "minted" | "refreshed" | "capped" | "unverified" | "framed" | "dismissed"
 
 /**
  * Mint a detected task, or refresh the one this finding already owns.
@@ -303,15 +374,21 @@ export type MintOutcome = "minted" | "refreshed" | "capped" | "unverified" | "fr
  *
  * 1. **The existing open detections are read from the tree.** A key already present is the refresh
  *    case, and refreshing costs no budget.
- * 2. **The evidence is verified before anything is written.** A quote absent from the file it cites
+ * 2. **The archive is read for a standing dismissal**, and a human's closure of this key declines the
+ *    mint. Second rather than first because the open queue is one `readdir` and this is up to
+ *    {@link DISMISSAL_LOOKBACK_YEARS} of them, so the common case — the key is open, refresh it — pays
+ *    for none of them. See the module header for what makes a dismissal durable.
+ * 3. **The evidence is verified before anything is written.** A quote absent from the file it cites
  *    refuses the whole mint. Checking after the write would leave a task in the tree asserting a
  *    citation the corpus does not support, and a later commit removing it would still be in the log.
- * 3. **The frame-key check runs against the OPEN queue only.** Two detectors describing one work
+ * 4. **The frame-key check runs against the OPEN queue only.** Two detectors describing one work
  *    item in different words key differently, so the digest cannot catch them; a shared claim slot
  *    can. It fires rarely by construction, because `frameKeyOf`'s guards fail closed on ordinary
  *    prose — which is the honest scope of this check and the reason it is the second net rather than
- *    the first.
- * 4. **The budget is spent last**, so a refusal at any earlier step does not consume a night's
+ *    the first. **Every caller's claim must be frame-DISTINCT per finding**: a claim whose frame key is
+ *    a constant makes this check cap that detector's whole queue at one task, which is the defect the
+ *    five minters' claim shapes are now measured against.
+ * 5. **The budget is spent last**, so a refusal at any earlier step does not consume a night's
  *    allowance.
  *
  * Staging only. The phase that called this commits, so a detected task lands in the SAME commit as
@@ -337,6 +414,13 @@ export const mintDetectedTask = (
        */
       yield* stampFile(env, existing.path, [meta("memhtml-updated", env.at)])
       return "refreshed"
+    }
+
+    if (yield* humanDismissed(env, key)) {
+      yield* Effect.logInfo(
+        `sleep.tasks ${request.detector} declined a mint: a human closed ${key} and the dismissal stands`
+      )
+      return "dismissed"
     }
 
     if (!(yield* evidenceHolds(env, request.evidence))) {
@@ -421,19 +505,25 @@ export const mintDetectedTask = (
  * destination. `done` is not a resting state on its own; the archive tree plus `git log` is what
  * answers "what did I close".
  *
- * **The reason lives in the commit, not in a meta.** There is no `memhtml-*` name for it and the
- * vocabulary is closed, so the caller's `commitPhase` body carries `no longer detected` — which is
- * also where `store.archiveMemory` puts its own reason.
+ * **The prose reason lives in the commit; the MACHINE/HUMAN distinction lives in a tag.** There is no
+ * `memhtml-*` name for a closing reason and the vocabulary is closed, so the caller's `commitPhase` body
+ * carries `no longer detected` — which is also where `store.archiveMemory` puts its own reason. But that
+ * text is not readable as a fact about the file, and {@link mintDetectedTask}'s dismissal check needs one
+ * bit of it: was this closed by the system or by a person. So every closure here also appends
+ * {@link MACHINE_CLOSED_TAG}, which makes a swept task re-mintable when its finding comes back while a
+ * human's closure stands. See {@link MACHINE_CLOSED_TAG}.
  *
  * **`liveKeys` must be every finding the detector SAW, not every finding it minted.** A finding
  * turned away by the cap is still live, and closing its task because a busy night declined to
- * refresh it would delete a real review the moment the queue got full.
+ * refresh it would delete a real review the moment the queue got full. A finding below a phase's own
+ * CONFIDENCE floor was also seen, so it belongs there too.
  *
  * **Call this only on the night's full-strength path.** A phase that degraded — no model bound, a
  * batch whose call failed, an early return before its scan finished — did not evaluate the candidate
  * set, so its `liveKeys` describes what it managed to look at rather than what exists. Sweeping there
  * would close a human's queue every credential-free night. Each caller states the condition it
- * sweeps under.
+ * sweeps under, and a caller whose degraded arm mines at a DIFFERENT floor than its full-strength one
+ * is degraded even when no call failed — `dedup-merge`'s no-model arm records that reading.
  */
 export const closeVanishedDetections = (
   env: PhaseEnv,
@@ -448,7 +538,8 @@ export const closeVanishedDetections = (
       if (liveKeys.has(detected.key)) continue
       yield* stampFile(env, detected.path, [
         meta("memhtml-task-status", "done"),
-        meta("memhtml-updated", env.at)
+        meta("memhtml-updated", env.at),
+        addTag(MACHINE_CLOSED_TAG)
       ])
       const archived = yield* archiveFile(env, detected.path)
       if (archived !== null) closed += 1
@@ -475,7 +566,9 @@ export const closeVanishedDetections = (
  *
  * The closing REASON goes in the caller's commit body, for the reason
  * {@link closeVanishedDetections} records: there is no `memhtml-*` name for it and the vocabulary is
- * closed.
+ * closed. {@link MACHINE_CLOSED_TAG} rides on the file here too, and it is if anything MORE load-bearing
+ * on this path: a completion detected in a transcript is the machine's reading, so if the commitment is
+ * restated on a later night the task must be re-mintable rather than read as a human's dismissal.
  */
 export const closeDetectedTask = (
   env: PhaseEnv,
@@ -490,7 +583,8 @@ export const closeDetectedTask = (
     }
     yield* stampFile(env, path, [
       meta("memhtml-task-status", "done"),
-      meta("memhtml-updated", env.at)
+      meta("memhtml-updated", env.at),
+      addTag(MACHINE_CLOSED_TAG)
     ])
     return (yield* archiveFile(env, path)) !== null
   })
@@ -525,7 +619,7 @@ export const openDetections = (
   env: PhaseEnv
 ): Effect.Effect<ReadonlyArray<OpenDetection>, StorageFailure> =>
   Effect.gen(function* () {
-    const filenames = yield* detectedFilenames(env)
+    const filenames = yield* detectedFilenames(env, DETECTED_TASK_DIR)
     const out: Array<OpenDetection> = []
     for (const filename of filenames) {
       const path = `${DETECTED_TASK_DIR}/${filename}`
@@ -544,18 +638,61 @@ export const openDetections = (
   })
 
 /**
- * The `.html` filenames under {@link DETECTED_TASK_DIR} carrying the detection prefix, sorted.
+ * True when a HUMAN closed a detected task of this key and the archive still holds it: a standing
+ * dismissal. See the module header for what makes it durable and how a human takes it back.
+ *
+ * A match requires all four, and each rules out a different false positive:
+ *
+ * - the filename carries this exact key, which is a prefix match on the stem rather than one derived
+ *   path, because `archiveFile`'s ordinal suffixing lets one key own several archived files;
+ * - the file parses as a `task` stamped `done`, so an archived task somebody left `todo` (a file moved
+ *   by hand, or a run interrupted between the stamp and the `git mv`) is not read as an answer;
+ * - the first tag is {@link DETECTED_TAG}, so a hand-written task that happened to land on a `det-` name
+ *   cannot dismiss a detector's finding;
+ * - and {@link MACHINE_CLOSED_TAG} is ABSENT, which is the whole discriminator: a swept task carries it
+ *   and must stay re-mintable.
+ *
+ * The scan STOPS at the first match, so the common case on a corpus with archives costs one `readdir`
+ * of the current year. Every year is a separate `readdir` and a missing one is empty, so a corpus with no
+ * archive at all pays {@link DISMISSAL_LOOKBACK_YEARS} ENOENTs and reads no file.
+ */
+const humanDismissed = (env: PhaseEnv, key: string): Effect.Effect<boolean, StorageFailure> =>
+  Effect.gen(function* () {
+    const year = yearOf(env.date)
+    for (let back = 0; back <= DISMISSAL_LOOKBACK_YEARS; back += 1) {
+      const directory = archivePathFor(DETECTED_TASK_DIR, year - back)
+      for (const filename of yield* detectedFilenames(env, directory)) {
+        if (!filename.startsWith(`${key}-`)) continue
+        const html = yield* readFileBytes(env, `${directory}/${filename}`)
+        if (html === undefined) continue
+        const doc = yield* parseMemory(html).pipe(Effect.orElseSucceed(() => undefined))
+        if (doc === undefined) continue
+        if (doc.metas.memoryType !== "task" || doc.metas.taskStatus !== "done") continue
+        if (doc.tags[0] !== DETECTED_TAG) continue
+        if (doc.tags.includes(MACHINE_CLOSED_TAG)) continue
+        return true
+      }
+    }
+    return false
+  })
+
+/**
+ * The `.html` filenames under one directory carrying the detection prefix, sorted.
  *
  * A missing directory is `[]`, not a failure: a corpus that has never had a detected task has no
- * `areas/inbox/tasks` at all, and that is the state every first night starts from. Any OTHER errno
+ * `areas/inbox/tasks` at all, and that is the state every first night starts from. It is the normal case
+ * for the archive year buckets too, where most of the lookback window will never exist. Any OTHER errno
  * still fails, because a permission error on the queue directory is a real fault that must not read
  * as an empty queue and take a sweep through every open detection.
  */
-const detectedFilenames = (env: PhaseEnv): Effect.Effect<ReadonlyArray<string>, StorageFailure> =>
-  attemptIo(`sleep.tasks.list:${DETECTED_TASK_DIR}`, async () => {
+const detectedFilenames = (
+  env: PhaseEnv,
+  directory: string
+): Effect.Effect<ReadonlyArray<string>, StorageFailure> =>
+  attemptIo(`sleep.tasks.list:${directory}`, async () => {
     const { readdir } = await import("node:fs/promises")
     try {
-      const entries = await readdir(absoluteIn(env, DETECTED_TASK_DIR))
+      const entries = await readdir(absoluteIn(env, directory))
       return entries
         .filter((name) => name.startsWith(DETECTION_PREFIX) && name.endsWith(".html"))
         .sort()

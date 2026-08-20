@@ -152,8 +152,12 @@ export const taskDetection: PhaseBody = (env) =>
     let refreshed = 0
     let unverified = 0
     let framed = 0
+    let dismissed = 0
     let skipped = 0
-    /** Every key this night's scan SAW above the floor, whether or not it minted. The sweep's input. */
+    /**
+     * Every key this night's scan SAW, whether or not it minted and whether or not it cleared the floor.
+     * The sweep's input; see the `liveKeys.add` below for why the floor is not a filter here.
+     */
     const liveKeys = new Set<string>()
 
     for (const batch of batches) {
@@ -189,7 +193,6 @@ export const taskDetection: PhaseBody = (env) =>
         if (answered.has(finding.memberKey)) continue
         answered.add(finding.memberKey)
         findings += 1
-        if (finding.confidence < TASK_DETECT_FLOOR) continue
 
         /**
          * The key is the SOURCE PATH plus the normalized sentence, so the same commitment found again
@@ -200,7 +203,24 @@ export const taskDetection: PhaseBody = (env) =>
          * the same.
          */
         const key = detectionKey(TASK_DETECT_DETECTOR, `${row.path} ${finding.sentence}`)
+
+        /**
+         * The key is live BEFORE the floor gate, which is `closeVanishedDetections`' contract verbatim:
+         * `liveKeys` is every finding the detector SAW, not every finding it minted.
+         *
+         * A below-floor finding was SEEN. The sentence is still in the file and the model still reported
+         * it; only the confidence moved. Adding the key after the gate makes a task's life a function of
+         * confidence JITTER across nights — minted at 0.72, swept at 0.68, re-minted at 0.71 — and the
+         * sweep archives, so each cycle takes the file out of the human's directory and back into it
+         * with a fresh `memhtml-created`. The finding VANISHING is what closure is for, and a confidence
+         * that dipped one hundredth is not that.
+         *
+         * A below-floor finding therefore keeps its task open without ever being able to open one, which
+         * is the asymmetry the floor is supposed to buy: the floor guards what enters a human's queue,
+         * not what stays there once they have been shown it.
+         */
         liveKeys.add(key)
+        if (finding.confidence < TASK_DETECT_FLOOR) continue
 
         const outcome = yield* mintDetectedTask(env, budget, {
           detector: TASK_DETECT_DETECTOR,
@@ -217,6 +237,7 @@ export const taskDetection: PhaseBody = (env) =>
         else if (outcome === "refreshed") refreshed += 1
         else if (outcome === "unverified") unverified += 1
         else if (outcome === "framed") framed += 1
+        else if (outcome === "dismissed") dismissed += 1
       }
     }
 
@@ -236,6 +257,7 @@ export const taskDetection: PhaseBody = (env) =>
       refreshed,
       unverified,
       framed,
+      dismissed,
       closed,
       capped: budget.overflow,
       skipped
@@ -274,6 +296,7 @@ const ZERO = {
   refreshed: 0,
   unverified: 0,
   framed: 0,
+  dismissed: 0,
   closed: 0,
   capped: 0,
   skipped: 0

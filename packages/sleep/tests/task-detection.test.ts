@@ -1,10 +1,12 @@
+import { frameKeyOf } from "@memhtml/domain"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 
+import { archiveFile, meta, stampFile, withArchiveOrdinal } from "../src/edits.js"
 import type { PhaseEnv } from "../src/env.js"
-import { dedupMerge } from "../src/phases/dedup-merge.js"
+import { DEDUP_REVIEW_DETECTOR, dedupMerge } from "../src/phases/dedup-merge.js"
 import { edgeTyping } from "../src/phases/edge-typing.js"
-import { entityResolution } from "../src/phases/entity-resolution.js"
+import { ENTITY_REVIEW_DETECTOR, entityResolution } from "../src/phases/entity-resolution.js"
 import {
   TASK_DETECT_DETECTOR,
   TASK_DETECT_FLOOR,
@@ -17,18 +19,26 @@ import {
   DETECTED_TASK_CAP,
   DETECTED_TASK_DIR,
   DETECTION_PREFIX,
+  detectedTaskPath,
   detectionKey,
   isDetectedTaskPath,
+  MACHINE_CLOSED_TAG,
   makeDetectionBudget,
   mintDetectedTask,
   openDetections
 } from "../src/tasks.js"
 import { scriptedModel, value, violation } from "../src/testing.js"
 import {
+  BAND_DROP_PATH,
+  BAND_KEEP_PATH,
+  DEDUP_BAND_CORPUS,
   DEDUP_CORPUS,
+  DEDUP_SECOND_VETO_PAIR,
   DEDUP_VETO_TRIPLE,
   type Fixture,
   memoryHtml,
+  SECOND_VETO_KEEP_PATH,
+  SECOND_VETO_REFUSED_PATH,
   TASK_CORPUS,
   VETO_KEEP_PATH,
   VETO_REFUSED_PATH,
@@ -50,6 +60,8 @@ import {
 
 const DATE = "2026-08-02"
 const LATER = "2026-08-03"
+/** A run in the NEXT archive year, for the dismissal lookback. */
+const NEXT_YEAR = "2027-01-04"
 
 const envFor = (
   fixture: Fixture,
@@ -354,6 +366,234 @@ describe("the minting discipline", () => {
             .pipe(Effect.orDie)
           expect(archived.doc.metas.taskStatus).toBe("done")
           expect(archived.doc.metas.status).toBe("archived")
+          // The MACHINE marker, which is what makes a swept task re-mintable. Asserted here rather
+          // than only in the re-mint test, because it is the discriminator the dismissal check reads.
+          expect(archived.doc.tags).toContain(MACHINE_CLOSED_TAG)
+        }),
+      { seed: [...DEDUP_CORPUS] }
+    )
+  })
+
+  it("archives the SAME detected path twice in one year, at two distinct paths", async () => {
+    /**
+     * Finding 1: `git mv` onto a taken destination exits 128 and takes the whole phase with it, and a
+     * detected task reaches that state on an ORDINARY sequence, because its path is deliberately
+     * deterministic: mint → sweep-close → the finding reappears → sweep-close again, all inside one
+     * archive year.
+     *
+     * MUTATION: delete the `freeArchivePath` probe from `archiveFile` and archive at
+     * `archivePathFor(path, year)` unconditionally — the second `closeVanishedDetections` dies on
+     * `git mv exited 128: fatal: destination exists`, which surfaces here as the `Effect.orDie` raising
+     * a `GitFailure`. (Recorded 2026-08-20.)
+     *
+     * Non-vacuous in both directions: the FIRST archive path carries no ordinal (so the ordinary
+     * single-archiving case is unchanged and every `originalPathFor` inverse assertion elsewhere still
+     * holds), and the SECOND is a different path holding a different file, so a probe that answered the
+     * same path twice would fail the `not.toBe` as well as the `archivedAt` assertions.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const request = {
+            detector: "probe",
+            finding: "a finding that comes and goes and comes back",
+            title: "A finding that recurs",
+            claim: "confirm: a finding that recurs.",
+            evidence: { kind: "measurement" as const, detail: "measured twice" }
+          }
+
+          /** One night: mint the finding, commit it, then sweep it as vanished. */
+          const mintThenSweep = (date: string) =>
+            Effect.gen(function* () {
+              const minted = yield* mintDetectedTask(
+                envFor(fixture, { date }),
+                makeDetectionBudget(),
+                request
+              ).pipe(Effect.orDie)
+              expect(minted, `${date} minted`).toBe("minted")
+              yield* fixture.deps.git.commit(`mint on ${date}`).pipe(Effect.orDie)
+              // An empty `liveKeys`: the finding is gone, so the sweep closes it.
+              const closed = yield* closeVanishedDetections(
+                envFor(fixture, { date }),
+                "probe",
+                new Set<string>()
+              ).pipe(Effect.orDie)
+              expect(closed, `${date} closed`).toBe(1)
+              yield* fixture.deps.git.commit(`sweep on ${date}`).pipe(Effect.orDie)
+            })
+
+          const live = detectedTaskPath(
+            detectionKey(request.detector, request.finding),
+            request.title
+          )
+
+          // Night one closes at the bare archive path.
+          yield* mintThenSweep(DATE)
+          const first = `archive/2026/${live}`
+          expect(yield* bytesAt(fixture, "HEAD", first)).toBeDefined()
+
+          /**
+           * Night two: the SAME key mints again — the archived task carries `machine-closed`, so it is
+           * not a standing dismissal — and its close aims at a path night one already took.
+           */
+          yield* mintThenSweep(LATER)
+          const second = withArchiveOrdinal(first, 2)
+          expect(second, "the ordinal produced a different path").not.toBe(first)
+          expect(yield* bytesAt(fixture, "HEAD", second)).toBeDefined()
+
+          // BOTH archived files survive: nothing was overwritten and nothing was lost.
+          expect(yield* bytesAt(fixture, "HEAD", first)).toBeDefined()
+          const firstDoc = yield* fixture.deps.store.readMemory(first).pipe(Effect.orDie)
+          const secondDoc = yield* fixture.deps.store.readMemory(second).pipe(Effect.orDie)
+          expect(firstDoc.doc.metas.archivedAt).toBe(instantFor(DATE).at)
+          expect(secondDoc.doc.metas.archivedAt).toBe(instantFor(LATER).at)
+          // And the live queue is empty, so neither archiving left a file behind.
+          expect(yield* detectedIn(fixture, LATER)).toHaveLength(0)
+        }),
+      { seed: [...DEDUP_CORPUS] }
+    )
+  })
+
+  it("does not re-mint a detection a HUMAN closed, and does re-mint one the sweep closed", async () => {
+    /**
+     * Finding 4, both directions in one test, which is what makes it a test of the DISCRIMINATOR rather
+     * than of "never re-mint an archived key".
+     *
+     * MUTATION: drop the `humanDismissed` check from `mintDetectedTask` — the dismissed finding mints
+     * again and the first `toBe("dismissed")` goes red. MUTATION: make `closeVanishedDetections` stop
+     * appending `MACHINE_CLOSED_TAG` — the SWEPT finding then reads as a human's dismissal and the
+     * second `toBe("minted")` goes red. Neither half passes without the other, because a check that
+     * keyed on "archived and done" alone satisfies the first and fails the second.
+     *
+     * The two findings are closed by DIFFERENT mechanisms on purpose: `closeVanishedDetections` for the
+     * sweep, and `archiveFile` with the same `done` stamp the CLI's `task status done` writes for the
+     * human — which is the closest a unit can get to a person running that command, and it is the same
+     * two writes (`operations.ts` stamps then routes through `store.archiveMemory`).
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const requestFor = (finding: string) => ({
+            detector: "probe",
+            finding,
+            title: `A finding called ${finding}`,
+            claim: `confirm: the ${finding} finding at ${finding}.`,
+            evidence: { kind: "measurement" as const, detail: `measured ${finding}` }
+          })
+          const dismissed = requestFor("dismissed-by-hand")
+          const swept = requestFor("closed-by-the-sweep")
+
+          for (const request of [dismissed, swept]) {
+            expect(
+              yield* mintDetectedTask(envFor(fixture), makeDetectionBudget(), request).pipe(
+                Effect.orDie
+              )
+            ).toBe("minted")
+          }
+          yield* fixture.deps.git.commit("seed two detected tasks").pipe(Effect.orDie)
+
+          /**
+           * The HUMAN closure: stamp `done` and archive, with NO machine marker. Exactly the two writes
+           * `memhtml task status done` performs.
+           */
+          const dismissedPath = detectedTaskPath(
+            detectionKey(dismissed.detector, dismissed.finding),
+            dismissed.title
+          )
+          yield* stampFile(envFor(fixture), dismissedPath, [
+            meta("memhtml-task-status", "done"),
+            meta("memhtml-updated", instantFor(DATE).at)
+          ]).pipe(Effect.orDie)
+          expect(yield* archiveFile(envFor(fixture), dismissedPath).pipe(Effect.orDie)).toBe(
+            `archive/2026/${dismissedPath}`
+          )
+
+          /** The MACHINE closure, through the sweep, which appends the marker. */
+          const sweptKey = detectionKey(swept.detector, swept.finding)
+          expect(
+            yield* closeVanishedDetections(envFor(fixture), "probe", new Set<string>()).pipe(
+              Effect.orDie
+            )
+          ).toBe(1)
+          yield* fixture.deps.git.commit("close both").pipe(Effect.orDie)
+          expect(yield* detectedIn(fixture)).toHaveLength(0)
+
+          // The marker is on exactly one of the two archived files, which is the whole mechanism.
+          const archivedSwept = yield* fixture.deps.store
+            .readMemory(`archive/2026/${detectedTaskPath(sweptKey, swept.title)}`)
+            .pipe(Effect.orDie)
+          expect(archivedSwept.doc.tags).toContain(MACHINE_CLOSED_TAG)
+          const archivedDismissed = yield* fixture.deps.store
+            .readMemory(`archive/2026/${dismissedPath}`)
+            .pipe(Effect.orDie)
+          expect(archivedDismissed.doc.tags).not.toContain(MACHINE_CLOSED_TAG)
+
+          /** The next night sees BOTH findings again. One is refused; the other is not. */
+          const later = envFor(fixture, { date: LATER })
+          expect(
+            yield* mintDetectedTask(later, makeDetectionBudget(), dismissed).pipe(Effect.orDie),
+            "a human said no, and the dismissal stands"
+          ).toBe("dismissed")
+          expect(
+            yield* mintDetectedTask(later, makeDetectionBudget(), swept).pipe(Effect.orDie),
+            "a finding that vanished and came back is new information"
+          ).toBe("minted")
+
+          // Asserted on the TREE, not only on the outcomes: one task is open, and it is the swept one.
+          const open = yield* detectedIn(fixture, LATER)
+          expect(open.map((one) => one.key)).toEqual([sweptKey])
+        }),
+      { seed: [...DEDUP_CORPUS] }
+    )
+  })
+
+  it("keeps a dismissal that was archived under an EARLIER year", async () => {
+    /**
+     * The lookback window, which the single-year test above cannot reach: a task dismissed in 2026 must
+     * still be dismissed by a run in 2027, or a dismissal would expire every January.
+     *
+     * MUTATION: replace `humanDismissed`'s year loop with the run's year alone — the 2027 mint succeeds
+     * and the `toBe("dismissed")` goes red.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const request = {
+            detector: "probe",
+            finding: "dismissed in one year and seen again in the next",
+            title: "A finding across a year boundary",
+            claim: "confirm: a finding across a year boundary.",
+            evidence: { kind: "measurement" as const, detail: "measured across years" }
+          }
+          expect(
+            yield* mintDetectedTask(envFor(fixture), makeDetectionBudget(), request).pipe(
+              Effect.orDie
+            )
+          ).toBe("minted")
+          yield* fixture.deps.git.commit("seed a detected task").pipe(Effect.orDie)
+
+          const path = detectedTaskPath(
+            detectionKey(request.detector, request.finding),
+            request.title
+          )
+          yield* stampFile(envFor(fixture), path, [
+            meta("memhtml-task-status", "done"),
+            meta("memhtml-updated", instantFor(DATE).at)
+          ]).pipe(Effect.orDie)
+          // Archived under 2026, which is the run date's year.
+          expect(yield* archiveFile(envFor(fixture), path).pipe(Effect.orDie)).toBe(
+            `archive/2026/${path}`
+          )
+          yield* fixture.deps.git.commit("a human closed it").pipe(Effect.orDie)
+
+          expect(
+            yield* mintDetectedTask(
+              envFor(fixture, { date: NEXT_YEAR }),
+              makeDetectionBudget(),
+              request
+            ).pipe(Effect.orDie)
+          ).toBe("dismissed")
+          expect(yield* detectedIn(fixture, NEXT_YEAR)).toHaveLength(0)
         }),
       { seed: [...DEDUP_CORPUS] }
     )
@@ -458,6 +698,61 @@ describe("the task-detection phase", () => {
           expect(outcome.counts.minted).toBe(0)
           expect(outcome.commitSha).toBeNull()
           expect(yield* detectedIn(fixture)).toHaveLength(0)
+        }),
+      { seed: [...SCAN_CORPUS], model }
+    )
+  })
+
+  it("keeps a task open when the SAME finding comes back below the floor", async () => {
+    /**
+     * Finding 5: `liveKeys` is every finding the detector SAW, and a below-floor finding was seen. Adding
+     * its key only after the floor gate made a task's life a function of confidence JITTER — minted at
+     * 0.72, swept at 0.68, re-minted at 0.71 — and the sweep ARCHIVES, so each cycle took the file out
+     * of the human's directory and put a new one back with a fresh `memhtml-created`.
+     *
+     * MUTATION: move `liveKeys.add(key)` back below `if (finding.confidence < TASK_DETECT_FLOOR)
+     * continue` — night two sweeps the task, so `closed` reads 1 and the `toEqual([path])` goes red.
+     *
+     * The two nights answer with the SAME sentence at two confidences straddling the floor, so the key
+     * is identical by construction and the only thing that moved is the number. Non-vacuous in the other
+     * direction too: `findings` reads 1 on night two, which proves the model was asked and answered
+     * rather than the batch having been skipped (a skip would suppress the sweep for a different reason,
+     * and this test would pass while showing nothing).
+     */
+    const model = scriptedModel((request, at) => {
+      if (!request.system.startsWith("You find")) return value({ findings: [] })
+      return value({
+        findings: [
+          {
+            memberKey: "m1",
+            sentence: COMMITMENT_SENTENCE,
+            kind: "commitment",
+            // Call 0 is night one: above the floor. Call 1 is night two: below it, same sentence.
+            confidence: at === 0 ? TASK_DETECT_FLOOR + 0.02 : TASK_DETECT_FLOOR - 0.02
+          }
+        ]
+      })
+    })
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const first = yield* taskDetection(envFor(fixture))
+          expect(first.counts.minted).toBe(1)
+          const open = yield* detectedIn(fixture)
+          expect(open).toHaveLength(1)
+          const path = open[0]?.path as string
+          // Commit, so night two's sweep would have a tracked file to `git mv`.
+          yield* fixture.deps.git.commit("seed a detected task").pipe(Effect.orDie)
+
+          const second = yield* taskDetection(envFor(fixture, { date: LATER }))
+          expect(second.counts.findings, "the model was asked and answered").toBe(1)
+          expect(second.counts.minted, "below the floor, so no new task").toBe(0)
+          expect(second.counts.closed, "and no sweep: the finding was SEEN").toBe(0)
+
+          const after = yield* detectedIn(fixture, LATER)
+          expect(after.map((one) => one.path)).toEqual([path])
+          // Not archived, which is the cost the churn imposed: the file never left the queue.
+          expect(yield* bytesAt(fixture, "HEAD", `archive/2026/${path}`)).toBeUndefined()
         }),
       { seed: [...SCAN_CORPUS], model }
     )
@@ -722,6 +1017,57 @@ describe("surface 1: the review phases mint tasks", () => {
     )
   })
 
+  it("entity-resolution does not sweep on a night with NO MODEL bound", async () => {
+    /**
+     * Finding 3, the entity half, and the sharper of the two: the gate was `callsFailed === 0`, which is
+     * VACUOUSLY TRUE with no model bound. A `below-floor` deferral is by definition a merge a model
+     * proposed under `ENTITY_CONFIDENCE_FLOOR`, so a credential-free night cannot produce one — its
+     * `deferred` omits every below-floor pair a model night opened, and the sweep closed them all on the
+     * first night without credentials.
+     *
+     * MUTATION: drop `model !== undefined` from the `mintReviewTasks` call and pass `callsFailed === 0`
+     * alone — the seeded below-floor task is swept and both assertions go red.
+     *
+     * Non-vacuous: the seeded key is a pair the modelless night's own band pass does NOT reach
+     * (`checkout-api` against `metrics-api` scores 0.5833, below the 0.75 review band, per
+     * {@link ENTITY_BAND_CORPUS}'s measured table), so `liveKeys` genuinely omits it and a sweep would
+     * close it. And the night is not inert: it still mints its own band deferral, asserted below, so the
+     * phase reaching `mintReviewTasks` at all is proven rather than assumed.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const finding = "service checkout-api metrics-api"
+          expect(
+            yield* mintDetectedTask(envFor(fixture), makeDetectionBudget(), {
+              detector: ENTITY_REVIEW_DETECTOR,
+              finding,
+              title: "A below-floor pair a model night deferred",
+              claim: 'confirm: are "checkout-api" and "metrics-api" the same service?',
+              evidence: {
+                kind: "measurement",
+                detail: "the model proposed the merge at confidence 0.55, below the 0.7 floor"
+              }
+            }).pipe(Effect.orDie)
+          ).toBe("minted")
+          yield* fixture.deps.git.commit("seed a below-floor review task").pipe(Effect.orDie)
+
+          const outcome = yield* entityResolution(envFor(fixture, { date: LATER }))
+          expect(outcome.llmCalls, "no model, so no call was made").toBe(0)
+          expect(outcome.counts.tasksClosed, "a credential-free night closes nothing").toBe(0)
+          // The night DID reach the minter: its own band pair is minted beside the seeded one.
+          expect(outcome.counts.tasksMinted).toBe(1)
+
+          const open = yield* detectedIn(fixture, LATER)
+          expect(
+            open.map((one) => one.key),
+            "the below-floor pair's task is still in the human's queue"
+          ).toContain(detectionKey(ENTITY_REVIEW_DETECTOR, finding))
+        }),
+      { seed: [...ENTITY_BAND_CORPUS] }
+    )
+  })
+
   it("entity-resolution mints nothing on a dry run", async () => {
     await withFixture(
       (fixture) =>
@@ -761,23 +1107,125 @@ describe("surface 1: the review phases mint tasks", () => {
           const tasks = yield* Effect.all(
             committed.map((path) => fixture.deps.store.readMemory(path).pipe(Effect.orDie))
           )
-          expect(
-            tasks.every((task) =>
-              task.doc.article.gist.startsWith("review: near-duplicates vetoed for divergence")
-            )
-          ).toBe(true)
+          expect(tasks.every((task) => task.doc.article.gist.startsWith("review: areas/"))).toBe(
+            true
+          )
+          /**
+           * The claim names BOTH PATHS, which is what keeps each pair's frame key its own. Asserted here
+           * as well as in the two-pairs test below, because this is the assertion a future reworder of
+           * the claim will run into first. MUTATION: put the paths back in the `detail` and make the
+           * claim a constant — this goes red before the queue test does.
+           */
+          const gists = tasks.map((task) => task.doc.article.gist).join("\n")
+          expect(gists).toContain(VETO_REFUSED_PATH)
+          expect(gists).toContain(VETO_KEEP_PATH)
           const bodies = tasks.map((task) => task.doc.article.bodyText).join("\n")
           expect(bodies, "the predicate is named, not merely that a veto fired").toContain(
             "one side is negated and the other is not"
           )
-          expect(bodies).toContain(VETO_REFUSED_PATH)
-          expect(bodies).toContain(VETO_KEEP_PATH)
           for (const task of tasks) {
             expect(task.doc.tags).toEqual(["detected", "dedup-merge"])
             expect(task.doc.metas.author).toBe("agent:sleep")
           }
         }),
       { seed: [...DEDUP_CORPUS, ...DEDUP_VETO_TRIPLE] }
+    )
+  })
+
+  it("dedup-merge mints one task per vetoed pair, not one for the whole queue", async () => {
+    /**
+     * Finding 2(a): the frame-key proximity check reads the CLAIM, and the claim used to be a constant —
+     * so `frameKeyOf` returned one non-null key for every vetoed pair, the second pair answered `framed`,
+     * and a night that vetoed nine pairs surfaced ONE task.
+     *
+     * MUTATION: revert `vetoClaim` to the constant
+     * `"review: near-duplicates vetoed for divergence — is one a correction of the other?"` — measured,
+     * that keys on `review: near-duplicates vetoed for divergence — is one a correction of` for every
+     * pair, so `tasksMinted` reads 1 and `tasksFramed` reads 1. (Recorded 2026-08-20.) Both halves of
+     * this test go red, which is why `tasksFramed` is asserted: without it a reader could not tell a
+     * framed pair from a pair the corpus never produced.
+     *
+     * TWO vetoed pairs is the whole point of the corpus and it is measured (see
+     * `DEDUP_SECOND_VETO_PAIR`): both flips sit above 0.92 so the NO-MODEL arm mines them, and
+     * cross-topic cosine is ≤ 0.4961 so they are two components rather than one. Run with no model
+     * bound, so nothing here depends on a scripted partition.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* dedupMerge(envFor(fixture))
+
+          expect(outcome.counts.vetoed, "the corpus really vetoes two pairs").toBe(2)
+          expect(outcome.counts.tasksMinted, "one task per pair").toBe(2)
+          expect(outcome.counts.tasksFramed, "no pair was swallowed by the frame check").toBe(0)
+
+          const committed = yield* detectedAt(fixture, outcome.commitSha as string)
+          expect(committed).toHaveLength(2)
+          const gists = (yield* Effect.all(
+            committed.map((path) => fixture.deps.store.readMemory(path).pipe(Effect.orDie))
+          )).map((task) => task.doc.article.gist)
+
+          // Each task names its OWN pair, so the two are about different files rather than duplicates.
+          expect(gists.filter((gist) => gist.includes(VETO_REFUSED_PATH))).toHaveLength(1)
+          expect(gists.filter((gist) => gist.includes(SECOND_VETO_REFUSED_PATH))).toHaveLength(1)
+          expect(gists.some((gist) => gist.includes(SECOND_VETO_KEEP_PATH))).toBe(true)
+          // And the two claims occupy two frame slots, which is the mechanism under the assertion.
+          expect(new Set(gists.map(frameKeyOf)).size, "two distinct frames").toBe(2)
+        }),
+      { seed: [...DEDUP_CORPUS, ...DEDUP_SECOND_VETO_PAIR] }
+    )
+  })
+
+  it("dedup-merge does not sweep on a night with NO MODEL bound", async () => {
+    /**
+     * Finding 3, the dedup half. The no-model arm mines at `NEAR_DUPLICATE_THRESHOLD` (0.92) and the
+     * model arm at `DEDUP_COMPONENT_FLOOR` (0.86), so a pair vetoed between the two floors is INVISIBLE
+     * to a credential-free night — not gone — and sweeping against its `liveKeys` closed a real review
+     * every night without credentials.
+     *
+     * MUTATION: restore `judged: true` on the no-model arm — the seeded task is swept, so `tasksClosed`
+     * reads 1 and the `toContain(bandKey)` goes red.
+     *
+     * The seeded task is keyed on a pair the corpus does NOT veto and this arm cannot see, which is what
+     * makes this a test of the degraded-arm gate rather than of the sweep: with `judged: true` the
+     * night's `liveKeys` genuinely omits this key, so the sweep would close it — and it must not, because
+     * a modelless night cannot tell "the divergence is gone" from "I mine at a higher floor than the
+     * night that opened this".
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const env = envFor(fixture)
+          expect(
+            yield* mintDetectedTask(env, makeDetectionBudget(), {
+              detector: DEDUP_REVIEW_DETECTOR,
+              /**
+               * A pair in the 0.86-0.92 band: real on a model night, below this arm's floor. The finding
+               * is the two paths SORTED, which is `vetoFinding`'s own canonical form, so this is the key
+               * a model night would really have minted rather than an arbitrary one.
+               */
+              finding: `${BAND_DROP_PATH} ${BAND_KEEP_PATH}`,
+              title: "A band pair a model night vetoed",
+              claim: `review: ${BAND_KEEP_PATH} and ${BAND_DROP_PATH} diverge.`,
+              evidence: { kind: "measurement", detail: "vetoed on a night with a model" }
+            }).pipe(Effect.orDie)
+          ).toBe("minted")
+          yield* fixture.deps.git.commit("seed a band-pair review task").pipe(Effect.orDie)
+
+          const outcome = yield* dedupMerge(envFor(fixture, { date: LATER }))
+          expect(outcome.counts.tasksClosed, "a degraded night closes nothing").toBe(0)
+          /**
+           * The BAND pair's key specifically, not the count of dedup tasks — the same night also mints
+           * one for `DEDUP_CORPUS`'s flip pair, which it CAN see, and that mint is correct. What must not
+           * happen is the seeded band pair leaving the queue.
+           */
+          const bandKey = detectionKey(DEDUP_REVIEW_DETECTOR, `${BAND_DROP_PATH} ${BAND_KEEP_PATH}`)
+          expect(
+            (yield* detectedIn(fixture, LATER)).map((one) => one.key),
+            "the band pair's task is still in the human's queue"
+          ).toContain(bandKey)
+        }),
+      { seed: [...DEDUP_CORPUS, ...DEDUP_BAND_CORPUS] }
     )
   })
 

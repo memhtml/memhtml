@@ -244,9 +244,25 @@ const commitmentRefusalFor = (commitment: CandidateCommitmentLike): string | nul
 const commitmentKey = (commitment: CandidateCommitmentLike): string =>
   detectionKey(COMMITMENT_DETECTOR, commitment.statement)
 
-/** The claim a commitment becomes: the work, stated as work, with the actor who owes it. */
+/**
+ * The claim a commitment becomes: the work, stated as work, with the actor who owes it.
+ *
+ * **The STATEMENT leads, and that is a correctness requirement rather than a style choice.** The claim
+ * is what `mintDetectedTask`'s frame-key proximity check reads, and the earlier wording — `confirm: the
+ * <actor> committed to <statement>` — puts the statement in the rule's VALUE position: measured against
+ * `frameKeyOf`, every commitment whose statement is six tokens or fewer keys on
+ * `confirm: the agent committed to`, so "add the guard" and "ship the fix" shared a frame and the second
+ * one answered `framed` and vanished. Only long statements escaped, by overflowing `MAX_VALUE_TOKENS` to
+ * `null`, which made the collapse depend on statement length.
+ *
+ * With the statement in the frame the key carries it (measured: twelve statements across both actors,
+ * twelve distinct keys, none null), so the check still fires between two DIFFERENT detectors describing
+ * one commitment and never between two commitments of this one — which the statement digest in
+ * {@link commitmentKey} already separates.
+ */
 const commitmentClaim = (commitment: CandidateCommitmentLike): string =>
-  `confirm: the ${commitment.actor} committed to ${flattenOne(commitment.statement)}`
+  `confirm: ${flattenOne(commitment.statement)} is a commitment the ${commitment.actor} ` +
+  `recorded and nothing says it is done.`
 
 /** The title. The statement itself, which is already one sentence; `mintDetectedTask` cuts it to 90. */
 const commitmentTitle = (commitment: CandidateCommitmentLike): string =>
@@ -313,6 +329,28 @@ interface CommitmentOutcome {
   /** Tasks a second reading refreshed rather than duplicated. */
   readonly commitmentsRefreshed: number
   /**
+   * Commitments `mintDetectedTask`'s frame-key proximity check turned away: an open task already
+   * occupies the claim's slot.
+   *
+   * Counted rather than dropped, so `commitments` arithmetic SUMS. Without it a framed commitment left
+   * no trace anywhere — it was neither a task, nor a refresh, nor a skip, nor below the floor, nor
+   * capped — and the honest reading of a night's numbers requires that every commitment the answer
+   * carried is accounted for by exactly one counter.
+   *
+   * It is expected to be near-zero and a nonzero value is a real signal: it means another DETECTOR
+   * already opened a task about this same work item, which is the collision the check exists to find.
+   */
+  readonly commitmentsFramed: number
+  /**
+   * Commitments declined because a HUMAN already closed the task this key owns: a standing dismissal.
+   *
+   * Counted for the same reason `commitmentsFramed` is — every commitment the answer carried lands in
+   * exactly one counter — and because the number answers a real question. A commitment an agent keeps
+   * restating that a human keeps having closed is a disagreement about whether the work is wanted, and
+   * that is visible only if the declined mints are reported. See `tasks.ts`'s module header.
+   */
+  readonly commitmentsDismissed: number
+  /**
    * Commitments the nightly volume cap turned away, measured as THIS PASS's DELTA on the shared
    * budget's overflow.
    *
@@ -344,6 +382,8 @@ const ZERO_COMMITMENTS: CommitmentOutcome = {
   commitmentsSkipped: 0,
   commitmentsBelowFloor: 0,
   commitmentsRefreshed: 0,
+  commitmentsFramed: 0,
+  commitmentsDismissed: 0,
   commitmentsCapped: 0,
   staged: false,
   mintedCommitments: [],
@@ -462,6 +502,8 @@ const consolidateCommitments = (
     const overflowBefore = budget.overflow
     const minted: Array<CandidateCommitmentLike> = []
     let refreshed = 0
+    let framed = 0
+    let dismissed = 0
     for (const commitment of admissible) {
       if (commitment.resolved) continue
       const outcome = yield* mintDetectedTask(env, budget, {
@@ -488,6 +530,8 @@ const consolidateCommitments = (
       })
       if (outcome === "minted") minted.push(commitment)
       else if (outcome === "refreshed") refreshed += 1
+      else if (outcome === "framed") framed += 1
+      else if (outcome === "dismissed") dismissed += 1
     }
 
     return {
@@ -498,6 +542,8 @@ const consolidateCommitments = (
       commitmentsSkipped: skipped,
       commitmentsBelowFloor: belowFloor,
       commitmentsRefreshed: refreshed,
+      commitmentsFramed: framed,
+      commitmentsDismissed: dismissed,
       commitmentsCapped: budget.overflow - overflowBefore,
       staged: minted.length > 0 || refreshed > 0 || closedPaths.length > 0,
       mintedCommitments: minted,
@@ -932,6 +978,8 @@ const commitmentCounts = (outcome: CommitmentOutcome): Record<string, number> =>
   commitmentsSkipped: outcome.commitmentsSkipped,
   commitmentsBelowFloor: outcome.commitmentsBelowFloor,
   commitmentsRefreshed: outcome.commitmentsRefreshed,
+  commitmentsFramed: outcome.commitmentsFramed,
+  commitmentsDismissed: outcome.commitmentsDismissed,
   commitmentsCapped: outcome.commitmentsCapped
 })
 

@@ -55,6 +55,7 @@ export {
 } from "./contract.js"
 export type { HeadEdit } from "./edits.js"
 export {
+  addTag,
   applyHeadEdits,
   archiveFile,
   confidenceOf,
@@ -67,6 +68,7 @@ export {
   rewriteEntityMeta,
   stampFile,
   unlink,
+  withArchiveOrdinal,
   yearOf
 } from "./edits.js"
 export type { PhaseBody, PhaseEnv, PhaseOutcome, SleepDeps, SleepError } from "./env.js"
@@ -204,10 +206,12 @@ export {
   DETECTED_TASK_DIR,
   DETECTION_DIGEST_CHARS,
   DETECTION_PREFIX,
+  DISMISSAL_LOOKBACK_YEARS,
   detectedTaskPath,
   detectionKey,
   detectionKeyOf,
   isDetectedTaskPath,
+  MACHINE_CLOSED_TAG,
   makeDetectionBudget,
   mintDetectedTask,
   openDetections

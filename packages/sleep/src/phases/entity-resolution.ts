@@ -888,6 +888,8 @@ export const entityResolution: PhaseBody = (env) =>
       pendingCorroboration,
       reviewCandidates,
       tasksMinted: 0,
+      tasksFramed: 0,
+      tasksDismissed: 0,
       tasksClosed: 0,
       filesRewritten: rewrites.size
     }
@@ -908,7 +910,7 @@ export const entityResolution: PhaseBody = (env) =>
      * 1. The old early return on `rewrites.size === 0` would have skipped exactly the night this
      * feature exists for: a night whose only outcome was deferrals is a night with no rewrites.
      */
-    const tasks = yield* mintReviewTasks(env, deferred, callsFailed === 0)
+    const tasks = yield* mintReviewTasks(env, deferred, model !== undefined && callsFailed === 0)
 
     let rewritten = 0
     for (const [path, pairs] of [...rewrites.entries()].sort(([left], [right]) =>
@@ -931,6 +933,8 @@ export const entityResolution: PhaseBody = (env) =>
     const final = {
       ...counts,
       tasksMinted: tasks.minted,
+      tasksFramed: tasks.framed,
+      tasksDismissed: tasks.dismissed,
       tasksClosed: tasks.closed,
       filesRewritten: rewritten
     }
@@ -991,19 +995,37 @@ export interface ReviewCandidate {
  * `DetectionEvidence` union makes that difference explicit rather than leaving it to a convention this
  * function could quietly break.
  *
- * **The sweep is gated on a night where every call succeeded**, which `judged` carries. `deferred`
- * holds what the phase actually decided to defer, and a shard whose model call failed left its names
- * unclustered — so its band pairs are reported as review candidates without having been judged. They
- * ARE still live, so they belong in `liveKeys`; but a night that lost a call cannot distinguish "the
- * model decided this pair is fine" from "the model was never asked", and closing on that reading would
- * take a real review out of a human's queue because Bedrock throttled.
+ * **The sweep is gated on a night that had a MODEL and lost no call**, which `judged` carries.
+ * `deferred` holds what the phase actually decided to defer, and a shard whose model call failed left
+ * its names unclustered — so its band pairs are reported as review candidates without having been
+ * judged. They ARE still live, so they belong in `liveKeys`; but a night that lost a call cannot
+ * distinguish "the model decided this pair is fine" from "the model was never asked", and closing on
+ * that reading would take a real review out of a human's queue because Bedrock throttled.
+ *
+ * **`callsFailed === 0` alone was the bug, because it is VACUOUSLY TRUE with no model bound.** The
+ * caller now requires `model !== undefined` as well. A credential-free night runs only the two
+ * deterministic passes, so it produces `character-band` deferrals and CANNOT produce a `below-floor`
+ * one — a below-floor deferral is by definition a merge the model proposed under
+ * `ENTITY_CONFIDENCE_FLOOR`, and there was no model to propose it. Its `deferred` therefore omits every
+ * below-floor pair a model night opened, and sweeping against that closed those tasks on the first
+ * night without credentials. `tasks.ts`'s `closeVanishedDetections` states this precondition as
+ * "a phase that degraded — no model bound, a batch whose call failed — did not evaluate the candidate
+ * set", and no-model is the arm that check had missed.
  */
 const mintReviewTasks = (
   env: PhaseEnv,
   deferred: ReadonlyArray<ReviewCandidate>,
   judged: boolean
 ): Effect.Effect<
-  { readonly minted: number; readonly refreshed: number; readonly closed: number },
+  {
+    readonly minted: number
+    readonly refreshed: number
+    /** The frame-key proximity check's refusals. Counted so the task arithmetic sums. */
+    readonly framed: number
+    /** Pairs a human already closed, whose dismissal stands. See `tasks.ts`'s module header. */
+    readonly dismissed: number
+    readonly closed: number
+  },
   SleepError | GitFailure
 > =>
   Effect.gen(function* () {
@@ -1021,6 +1043,8 @@ const mintReviewTasks = (
 
     let minted = 0
     let refreshed = 0
+    let framed = 0
+    let dismissed = 0
     for (const candidate of byKey.values()) {
       const outcome = yield* mintDetectedTask(env, budget, {
         detector: ENTITY_REVIEW_DETECTOR,
@@ -1034,12 +1058,14 @@ const mintReviewTasks = (
       })
       if (outcome === "minted") minted += 1
       else if (outcome === "refreshed") refreshed += 1
+      else if (outcome === "framed") framed += 1
+      else if (outcome === "dismissed") dismissed += 1
     }
 
     const closed = judged
       ? yield* closeVanishedDetections(env, ENTITY_REVIEW_DETECTOR, new Set(byKey.keys()))
       : 0
-    return { minted, refreshed, closed }
+    return { minted, refreshed, framed, dismissed, closed }
   })
 
 /** The canonical finding string: the type and the two names, sorted. See {@link mintReviewTasks}. */

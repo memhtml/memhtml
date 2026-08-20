@@ -1,4 +1,5 @@
 import { isSlug, SLUG_MAX_LENGTH } from "@memhtml/contracts/slug"
+import { frameKeyOf } from "@memhtml/domain"
 import { parseMemory } from "@memhtml/html"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
@@ -1787,6 +1788,64 @@ describe("trace-consolidation mints tasks from commitments", () => {
     )
   })
 
+  it("mints one task per SHORT commitment, so two do not share a frame slot", async () => {
+    /**
+     * Finding 2(a), the commitment half. `mintDetectedTask`'s frame-key proximity check reads the CLAIM,
+     * and the old wording — `confirm: the <actor> committed to <statement>` — put the statement in the
+     * rule's VALUE position: measured against `frameKeyOf`, any statement of six tokens or fewer keys on
+     * `confirm: the agent committed to`, so the second short commitment answered `framed` and vanished
+     * from every counter. The collapse depended on statement LENGTH, which is why the two statements
+     * here are deliberately short.
+     *
+     * MUTATION: revert `commitmentClaim` to `confirm: the ${actor} committed to ${statement}` — measured,
+     * both statements then key on `confirm: the agent committed to`, so `commitmentTasks` reads 1,
+     * `commitmentsFramed` reads 1, and one file lands. Both halves of this test go red.
+     *
+     * Non-vacuous against the length dependence: `"pin the flaky teardown port"` is five tokens and
+     * `"rotate the signing key"` is four, so BOTH are inside `MAX_VALUE_TOKENS` under the old shape.
+     * A test using long statements would pass against the broken claim, because those overflowed to
+     * `null` and skipped the check entirely.
+     */
+    const consolidator = scriptedConsolidator(() =>
+      withCommitments([
+        commitment({
+          statement: "pin the flaky teardown port",
+          evidence: { sessionId: "session-a", quote: "I'll pin the teardown port" }
+        }),
+        commitment({
+          statement: "rotate the signing key",
+          evidence: { sessionId: "session-a", quote: "I'll rotate the signing key" }
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture, "session-a")
+          const outcome = yield* traceConsolidation(envFor(fixture))
+
+          expect(outcome.counts.commitments).toBe(2)
+          expect(outcome.counts.commitmentTasks, "one task per commitment").toBe(2)
+          expect(outcome.counts.commitmentsFramed, "neither was swallowed by the frame check").toBe(
+            0
+          )
+
+          const open = yield* detectedIn(fixture)
+          expect(open).toHaveLength(2)
+          // Each task's claim leads with its OWN statement, which is what makes the frames distinct.
+          const gists = open.map((one) => one.claim)
+          expect(gists.filter((gist) => gist.startsWith("confirm: pin the flaky"))).toHaveLength(1)
+          expect(
+            gists.filter((gist) => gist.startsWith("confirm: rotate the signing"))
+          ).toHaveLength(1)
+          // The mechanism under the assertion: two claims, two frame slots.
+          expect(new Set(gists.map(frameKeyOf)).size, "two distinct frames").toBe(2)
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
   it("mints nothing on a dry run, however many commitments the answer would carry", async () => {
     /**
      * A dry run stops before the model call, so it cannot see a commitment at all — which is the
@@ -1837,6 +1896,8 @@ describe("trace-consolidation mints tasks from commitments", () => {
             "commitmentsSkipped",
             "commitmentsBelowFloor",
             "commitmentsRefreshed",
+            "commitmentsFramed",
+            "commitmentsDismissed",
             "commitmentsCapped"
           ]) {
             expect(outcome.counts[key], key).toBe(0)

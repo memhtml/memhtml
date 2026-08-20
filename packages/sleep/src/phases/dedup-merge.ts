@@ -268,10 +268,25 @@ export const dedupMerge: PhaseBody = (env) =>
         /**
          * Every mined pair on this arm cleared 0.92, so a vetoed one here is a near-certain duplicate
          * the divergence predicates refused — which is exactly the pair issue #44 wants a human to
-         * look at. `judged: true`, because this arm makes no model call, so nothing about the night
-         * could have silently failed to evaluate a pair.
+         * look at.
+         *
+         * **`judged: false`, so a modelless night MINTS but never SWEEPS.** No model call failed here,
+         * so an earlier reading called this arm full-strength — and that reading closed human queues.
+         * The two arms mine at DIFFERENT floors: this one at `NEAR_DUPLICATE_THRESHOLD` (0.92) and the
+         * model arm at `DEDUP_COMPONENT_FLOOR` (0.86). A pair vetoed between 0.86 and 0.92 on a night
+         * with credentials is INVISIBLE to this arm — not gone, just below the floor it can see — so its
+         * `liveKeys` omits that pair's key and the sweep would archive a real review because the run
+         * happened to have no credentials. That is exactly what `tasks.ts`'s
+         * `closeVanishedDetections` contract forbids: "sweeping there would close a human's queue every
+         * credential-free night."
+         *
+         * The asymmetry is stated rather than repaired, because it cannot be repaired here: mining this
+         * arm at 0.86 would widen what a no-model night MERGES, and the deterministic floor is the one
+         * number this phase's safety rests on. So the degraded night does the half it can do honestly —
+         * open a task for every divergence it can see — and leaves closure to a night that evaluated the
+         * whole candidate set.
          */
-        { vetoed: vetoedPairs(oriented), judged: true }
+        { vetoed: vetoedPairs(oriented), judged: false }
       )
     }
 
@@ -527,15 +542,15 @@ interface VetoedPair {
  *
  * A pair whose veto STOPS firing — because a human corrected one of the two, or because one was
  * archived — is closed by the sweep, which is right: the divergence was the finding, and it is gone.
+ *
+ * **The claim NAMES THE TWO PATHS, and that is a correctness requirement rather than a nicety.** See
+ * {@link vetoClaim}.
  */
 const mintVetoTasks = (
   env: PhaseEnv,
   vetoed: ReadonlyArray<VetoedPair>,
   judged: boolean
-): Effect.Effect<
-  { readonly minted: number; readonly refreshed: number; readonly closed: number },
-  SleepError | GitFailure
-> =>
+): Effect.Effect<VetoTaskOutcome, SleepError | GitFailure> =>
   Effect.gen(function* () {
     const budget = budgetFor(env)
     /**
@@ -550,6 +565,8 @@ const mintVetoTasks = (
 
     let minted = 0
     let refreshed = 0
+    let framed = 0
+    let dismissed = 0
     for (const key of [...byKey.keys()].sort()) {
       const pair = byKey.get(key)
       if (pair === undefined) continue
@@ -557,22 +574,57 @@ const mintVetoTasks = (
         detector: DEDUP_REVIEW_DETECTOR,
         finding: vetoFinding(pair),
         title: `Review near-duplicates vetoed for divergence: ${basenameOf(pair.keepPath)} and ${basenameOf(pair.dropPath)}`,
-        claim: "review: near-duplicates vetoed for divergence — is one a correction of the other?",
+        claim: vetoClaim(pair),
         detail:
-          `The two memories are ${pair.keepPath} and ${pair.dropPath}. Sleep refused to fold them ` +
-          `because folding keeps the OLDER file, so a blind merge of a correction into the memory it ` +
-          `corrects would restore the error the correction was written to fix.`,
+          `Sleep refused to fold them because folding keeps the OLDER file, so a blind merge of a ` +
+          `correction into the memory it corrects would restore the error the correction was written ` +
+          `to fix.`,
         evidence: { kind: "measurement", detail: vetoEvidence(pair) }
       })
       if (outcome === "minted") minted += 1
       else if (outcome === "refreshed") refreshed += 1
+      else if (outcome === "framed") framed += 1
+      else if (outcome === "dismissed") dismissed += 1
     }
 
     const closed = judged
       ? yield* closeVanishedDetections(env, DEDUP_REVIEW_DETECTOR, new Set(byKey.keys()))
       : 0
-    return { minted, refreshed, closed }
+    return { minted, refreshed, framed, dismissed, closed }
   })
+
+/** What the veto-task pass did. `framed` is the proximity check's refusals; see {@link vetoClaim}. */
+interface VetoTaskOutcome {
+  readonly minted: number
+  readonly refreshed: number
+  readonly framed: number
+  /** Pairs a human already closed, whose dismissal stands. See `tasks.ts`'s module header. */
+  readonly dismissed: number
+  readonly closed: number
+}
+
+/**
+ * The claim a vetoed pair becomes: the work stated as work, with THE TWO PATHS IN IT.
+ *
+ * The paths are in the claim because `mintDetectedTask`'s frame-key proximity check reads it, and a
+ * CONSTANT claim caps this detector's queue at one task. The previous wording — "review:
+ * near-duplicates vetoed for divergence — is one a correction of the other?" — keys (measured against
+ * `frameKeyOf`) on `review: near-duplicates vetoed for divergence — is one a correction of`, a non-null
+ * key EVERY vetoed pair shares. So the first pair minted, the second answered `framed`, and a night that
+ * vetoed nine pairs surfaced one. The check exists to catch two DETECTORS describing one work item in
+ * different words; it must never fire between two findings of one detector, which the digest already
+ * separates.
+ *
+ * With the paths in the value position each pair's frame is its own (measured: three pairs, three
+ * distinct keys), so the check still fires against a differently-worded task about the SAME two files
+ * and no longer fires between different pairs. That is the same shape `entity-resolution` and
+ * `edge-typing` already have — both measured `null`, because their claims put the identities in a
+ * position the rule reads as the frame rather than the value.
+ *
+ * The paths left the `detail` when they arrived here, so a reviewer reads them once.
+ */
+const vetoClaim = (pair: VetoedPair): string =>
+  `review: ${pair.keepPath} and ${pair.dropPath} are near-duplicates the divergence veto refused to fold.`
 
 /** The canonical finding string: the two paths, sorted. See {@link mintVetoTasks}. */
 const vetoFinding = (pair: VetoedPair): string =>
@@ -633,6 +685,8 @@ const commitMerges = (
         merged: decisions.length,
         vanished: 0,
         tasksMinted: 0,
+        tasksFramed: 0,
+        tasksDismissed: 0,
         tasksClosed: 0
       })
     }
@@ -669,6 +723,8 @@ const commitMerges = (
       merged,
       vanished,
       tasksMinted: tasks.minted,
+      tasksFramed: tasks.framed,
+      tasksDismissed: tasks.dismissed,
       tasksClosed: tasks.closed
     }
     if (merged === 0 && tasks.minted === 0 && tasks.refreshed === 0 && tasks.closed === 0) {

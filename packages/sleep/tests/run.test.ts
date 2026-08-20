@@ -210,20 +210,27 @@ describe("run", () => {
            * "nothing left staged" assertion below vacuous, and this test's whole subject is that the
            * failed phase's partial work does not ride along in the next phase's commit.
            *
-           * The provocation: the destination of the LAST pair's archive move already exists as a tracked
-           * file, and `git mv` refuses that (probed live 2026-08-02: `fatal: destination exists`,
-           * exit 128). The corpus is read oldest-first, so the oncall pair archives cleanly and stages
-           * its files before the metrics pair fails.
+           * **The provocation is a read-only DESTINATION DIRECTORY**, which makes `git mv` exit 128 with
+           * `fatal: renaming … failed: Permission denied` (probed live 2026-08-20 on the real git). The
+           * corpus is read oldest-first, so the oncall pair archives cleanly and stages its files before
+           * the metrics pair fails.
+           *
+           * It used to squat the destination PATH with a tracked file, which raised
+           * `fatal: destination exists`. That no longer fails the phase and must not: `archiveFile` now
+           * probes the destination and takes the next free ordinal, precisely so a path archived twice in
+           * one year does not cost a whole phase (`packages/sleep/src/edits.ts`). So this test needed a
+           * provocation the probe cannot route around, and a directory the process may not write into is
+           * one — the probe reads ENOENT (the destination really is free), `mkdir -p` succeeds on the
+           * directory that already exists, and the rename is what git refuses. Each of those three was
+           * measured before this test was rewritten around them.
            */
-          yield* fixture.commit(
-            [
-              {
-                path: `archive/2026/${LAST_DROP_PATH}`,
-                html: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>squatter</title></head><body><article><p><mark>Already here.</mark></p></article></body></html>'
-              }
-            ],
-            "squat the archive destination"
-          )
+          yield* Effect.promise(async () => {
+            const { chmod, mkdir } = await import("node:fs/promises")
+            const { dirname, join } = await import("node:path")
+            const parent = join(fixture.root, dirname(`archive/2026/${LAST_DROP_PATH}`))
+            await mkdir(parent, { recursive: true })
+            await chmod(parent, 0o500)
+          })
           yield* fixture.reindex()
 
           const report = yield* run(fixture.deps, { date: DATE })
@@ -282,7 +289,24 @@ describe("run", () => {
             )
             expect(live).toBe(true)
           }
-        }),
+        }).pipe(
+          /**
+           * The mode is restored whatever the body did, so the fixture's temp-dir cleanup can remove the
+           * tree. `ensuring` rather than a trailing statement, because a failed assertion above would
+           * otherwise leave an unremovable directory behind and every later test in the file would fail
+           * on the tmpdir rather than on itself.
+           */
+          Effect.ensuring(
+            Effect.promise(async () => {
+              const { chmod } = await import("node:fs/promises")
+              const { dirname, join } = await import("node:path")
+              await chmod(
+                join(fixture.root, dirname(`archive/2026/${LAST_DROP_PATH}`)),
+                0o700
+              ).catch(() => {})
+            })
+          )
+        ),
       { seed: DEDUP_CORPUS, model: inertModel() }
     )
   })

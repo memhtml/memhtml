@@ -274,7 +274,11 @@ export const edgeTyping: PhaseBody = (env) =>
       promoted: 0,
       skipped: 0,
       capped: 0,
-      duplicates: 0
+      duplicates: 0,
+      tasksMinted: 0,
+      tasksFramed: 0,
+      tasksDismissed: 0,
+      tasksClosed: 0
     }
     if (candidates.length === 0) return emptyOutcome(zero)
     if (env.dryRun) return emptyOutcome({ ...zero, candidates: candidates.length })
@@ -549,6 +553,8 @@ export const edgeTyping: PhaseBody = (env) =>
       capped,
       duplicates,
       tasksMinted: tasks.minted,
+      tasksFramed: tasks.framed,
+      tasksDismissed: tasks.dismissed,
       tasksClosed: tasks.closed
     }
     if (
@@ -612,7 +618,15 @@ const mintContradictionTasks = (
   deferred: ReadonlyArray<PendingContradiction>,
   judged: boolean
 ): Effect.Effect<
-  { readonly minted: number; readonly refreshed: number; readonly closed: number },
+  {
+    readonly minted: number
+    readonly refreshed: number
+    /** The frame-key proximity check's refusals. Counted so the task arithmetic sums. */
+    readonly framed: number
+    /** Pairs a human already closed, whose dismissal stands. See `tasks.ts`'s module header. */
+    readonly dismissed: number
+    readonly closed: number
+  },
   StorageFailure | GitFailure
 > =>
   Effect.gen(function* () {
@@ -625,6 +639,8 @@ const mintContradictionTasks = (
 
     let minted = 0
     let refreshed = 0
+    let framed = 0
+    let dismissed = 0
     /** Key order, so which pairs a budget-capped night surfaces is a function of the pairs. */
     for (const key of [...byKey.keys()].sort()) {
       const pending = byKey.get(key)
@@ -643,12 +659,14 @@ const mintContradictionTasks = (
       })
       if (outcome === "minted") minted += 1
       else if (outcome === "refreshed") refreshed += 1
+      else if (outcome === "framed") framed += 1
+      else if (outcome === "dismissed") dismissed += 1
     }
 
     const closed = judged
       ? yield* closeVanishedDetections(env, EDGE_REVIEW_DETECTOR, new Set(byKey.keys()))
       : 0
-    return { minted, refreshed, closed }
+    return { minted, refreshed, framed, dismissed, closed }
   })
 
 /** The canonical finding string: the rel and the two paths, sorted. */
