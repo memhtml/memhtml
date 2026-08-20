@@ -4,7 +4,14 @@ import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 
 import type { PhaseEnv } from "../src/env.js"
-import { DEDUP_COMPONENT_FLOOR, DEDUP_DETECTOR, dedupMerge } from "../src/phases/dedup-merge.js"
+import {
+  DEDUP_BATCH_MEMBERS,
+  DEDUP_COMPONENT_FLOOR,
+  DEDUP_DETECTOR,
+  DEDUP_MAX_COMPONENT,
+  dedupMerge,
+  dedupPackSliced
+} from "../src/phases/dedup-merge.js"
 import { instantFor } from "../src/run.js"
 import { type ScriptedModel, scriptedModel, value, violation } from "../src/testing.js"
 import { DEDUP_CORPUS, type Fixture, memoryHtml, type SeedFile, withFixture } from "./fixture.js"
@@ -314,6 +321,277 @@ const STALE_TASK: SeedFile = {
     tags: ["detected"]
   })
 }
+
+/**
+ * A frame-key family of {@link TRUNCATING_FAMILY_SIZE} memories: one component larger than
+ * {@link DEDUP_MAX_COMPONENT}, so the night really TRUNCATES.
+ *
+ * The two truncation clauses of the attestation cannot be observed with the file's other corpora,
+ * because none of them builds a component past 8, and a clause whose input never varies is a clause a
+ * mutation cannot break. This one does, and it reaches the component graph through the FRAME SEED arm
+ * rather than through the cosine: every claim states the same slot — `the default retry budget of the
+ * importer is` — so `frameKeyPairs` emits an edge for every pair and the component is the whole family
+ * whatever the embedder says. (Measured 2026-08-20 anyway: intra-family cosine is 0.9730 for every pair,
+ * so the mined arm would find them too.)
+ *
+ * Deliberately **not vetoed and not mergeable-in-one-night**. No body carries a negation marker or a
+ * variant qualifier, and every body is token-identical, so `mergeVetoed` is false for all 36 pairs —
+ * measured, not intended. The value tokens are spelled-out words rather than digits for the same reason:
+ * `numericTokenDivergent` would fire on every pair and the family would mint 36 `review:` tasks, which is
+ * a different behavior from the one under test.
+ *
+ * So the family's ONLY effect on the night is on the attestation, which is what makes the two cases below
+ * about the attestation and nothing else.
+ */
+const TRUNCATING_FAMILY_SIZE = 9
+
+const TRUNCATING_FAMILY: ReadonlyArray<SeedFile> = [
+  "eleven",
+  "twelve",
+  "thirteen",
+  "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen"
+].map((word, offset) => ({
+  path: `areas/importer/retry-budget-${word}.html`,
+  html: memoryHtml({
+    title: `The importer's default retry budget is ${word}`,
+    claim: `The default retry budget of the importer is ${word}.`,
+    body: "Operators tuning the importer read this budget from the shipped configuration file.",
+    memoryType: "semantic",
+    createdAt: `2026-04-${String(offset + 10).padStart(2, "0")}T00:00:00Z`,
+    confidence: "0.80",
+    tags: ["importer"]
+  })
+}))
+
+describe("dedup-merge's truncation attestation is computed from PRE-pack inputs", () => {
+  it("withholds closure on a night whose component EXCEEDED the member cap", async () => {
+    /**
+     * The `memberTruncated` clause, at a corpus that actually trips it. {@link TRUNCATING_FAMILY} is one
+     * frame-key component of nine, cut to its lowest {@link DEDUP_MAX_COMPONENT} paths, so the ninth
+     * member's pairs were never put in front of the veto — and closing an open `review:` task on that
+     * silence would archive a divergence still on disk.
+     *
+     * **The clause has to read the PRE-pack component, and this case is what makes that checkable.** Both
+     * truncation clauses used to inspect `components`, which is `graph.slice(...).map(members =>
+     * members.slice(0, DEDUP_MAX_COMPONENT))` — already truncated — so `memberTruncated` asked whether the
+     * OUTPUT length reached the cap. Two consequences followed and both are wrong in the same direction as
+     * each other and opposite in effect: a component of exactly 8 was nothing to truncate and reported
+     * `>= 8` as truncation, withholding closure forever; and the comparison could no longer distinguish
+     * that from the real case. The clause now compares the PRE-truncation length against the cap with a
+     * strict `>`, so truncation means the input EXCEEDED the cap.
+     *
+     * (Mutation: reverting `memberTruncated` to `components.some((m) => m.length >= DEDUP_MAX_COMPONENT)`
+     * keeps this case green and makes the exactly-at-cap case below fail; reverting it to a post-slice
+     * `> DEDUP_MAX_COMPONENT` makes THIS case fail with `taskClosed: 1`, because no post-slice component
+     * can exceed the cap.)
+     */
+    expect(TRUNCATING_FAMILY_SIZE).toBeGreaterThan(DEDUP_MAX_COMPONENT)
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* dedupMerge(envFor(fixture))
+
+          /** Non-vacuous: the component really was built, and really was cut to the cap. */
+          expect(outcome.counts.components).toBe(1)
+          expect(outcome.counts.skipped).toBe(0)
+
+          expect(outcome.counts.closureSkipped).toBe(1)
+          expect(outcome.counts.taskClosed).toBeUndefined()
+          expect(yield* atHead(fixture, STALE_TASK_PATH)).toBeDefined()
+        }),
+      { seed: [...TRUNCATING_FAMILY, STALE_TASK], model: refusesEveryGroup() }
+    )
+  })
+
+  it("CLOSES on a night whose component sat EXACTLY at the member cap", async () => {
+    /**
+     * The off-by-one, isolated. A component of exactly {@link DEDUP_MAX_COMPONENT} lost nothing —
+     * `members.slice(0, 8)` of eight members is those eight members — so the night DID look everywhere
+     * and its silence about an absent finding is evidence. Under the old `>=` on the post-slice length
+     * this component reported truncation, so any corpus holding one withheld closure permanently and the
+     * `review:` backlog could never be emptied.
+     *
+     * The same family minus one member, so what differs between this case and the one above is one file.
+     *
+     * (Mutation: `>=` in place of `>` makes this `closureSkipped: 1` and leaves the stale task in place.)
+     */
+    const atCap = TRUNCATING_FAMILY.slice(0, DEDUP_MAX_COMPONENT)
+    expect(atCap).toHaveLength(DEDUP_MAX_COMPONENT)
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* dedupMerge(envFor(fixture))
+
+          /** Non-vacuous: one component of exactly the cap, and the model really was called. */
+          expect(outcome.counts.components).toBe(1)
+          expect(outcome.llmCalls).toBeGreaterThan(0)
+          expect(outcome.counts.skipped).toBe(0)
+
+          expect(outcome.counts.taskClosed).toBe(1)
+          expect(outcome.counts.closureSkipped).toBeUndefined()
+          expect(yield* atHead(fixture, STALE_TASK_PATH)).toBeUndefined()
+        }),
+      { seed: [...atCap, STALE_TASK], model: refusesEveryGroup() }
+    )
+  })
+
+  it("withholds closure when a component EXCEEDS the batch member cap, over a lowered cap", async () => {
+    /**
+     * The `packSliced` clause, which was STRUCTURALLY VACUOUS and is the finding this case exists for.
+     *
+     * `packGroups` slices any group longer than `maxMembers` before it returns (`batch.ts:145-181`), so
+     * inspecting its OUTPUT for a group longer than {@link DEDUP_BATCH_MEMBERS} asks whether a function
+     * that guarantees `<= maxMembers` returned something larger. It cannot, so the clause could never
+     * fire — not "does not fire on this corpus", but cannot fire on any corpus, which is the difference
+     * between an untested clause and one that is not a clause at all. It now reads the PRE-pack component
+     * lengths, where a slice is a real possibility.
+     *
+     * Driven through {@link dedupPackSliced} with the cap passed explicitly rather than through a corpus
+     * of 41 memories: what the clause asserts is a property of the two numbers, the real constants make
+     * `DEDUP_MAX_COMPONENT` (8) bind long before `DEDUP_BATCH_MEMBERS` (40) so no corpus can reach it
+     * while that ordering holds, and a fixture of 41 near-duplicates would be forty times the seed cost to
+     * assert the same arithmetic. The phase's own wiring is asserted separately: the constant-ordering
+     * case below proves this clause is unreachable TODAY and says why it is checked anyway.
+     */
+    const lengths = (...counts: ReadonlyArray<number>): ReadonlyArray<ReadonlyArray<unknown>> =>
+      counts.map((count) => new Array<unknown>(count).fill(0))
+
+    /** EXCEEDING the cap is a slice, so the night asked each half in ignorance of the other. */
+    expect(dedupPackSliced(lengths(5), 4)).toBe(true)
+    /** Exactly at the cap is one whole call: nothing was split, so nothing was hidden. */
+    expect(dedupPackSliced(lengths(4), 4)).toBe(false)
+    expect(dedupPackSliced(lengths(1, 4, 2), 4)).toBe(false)
+    /** ONE oversized component among many is enough, and the empty night is complete. */
+    expect(dedupPackSliced(lengths(2, 9, 3), 4)).toBe(true)
+    expect(dedupPackSliced([], 4)).toBe(false)
+  })
+
+  it("is unreachable while the component cap is the smaller number, and is checked anyway", () => {
+    /**
+     * Why the `packSliced` clause survives despite having no reachable corpus: the two caps are
+     * INDEPENDENT constants and either may move. Today {@link DEDUP_MAX_COMPONENT} cuts every component
+     * to 8 before packing, so no component can exceed {@link DEDUP_BATCH_MEMBERS}'s 40 and the clause is
+     * dead code — pinned here so raising the component cap past the batch cap fails this line rather than
+     * silently making an attestation clause live and untested.
+     */
+    expect(DEDUP_MAX_COMPONENT).toBeLessThanOrEqual(DEDUP_BATCH_MEMBERS)
+  })
+})
+
+describe("dedup-merge refuses to mint a task with no evidence in it", () => {
+  /**
+   * Empty `body_text` on ONE side of the pair, written straight into the projection.
+   *
+   * **A SQL write rather than a fixture file, and the reason is a measurement: no valid memory can
+   * produce an empty `body_text`.** `parseMemory` refuses a file with no `<mark>` and refuses one whose
+   * `<mark>` is empty after the code exclusion (`no <mark>: the claim span is required` / `empty <mark>`,
+   * probed 2026-08-20), and `article.bodyText` is `textContent(article)` with code INCLUDED — so it always
+   * carries at least the claim, and a corpus row with an empty one is by construction a projection
+   * anomaly rather than an authorable file. Seeding one as HTML is therefore not possible, and a test that
+   * tried would be asserting the parser's refusal instead of the phase's guard.
+   *
+   * `UPDATE files SET body_text` is exactly that anomaly and nothing more. It is safe to write here:
+   * `files_fts_update` fires `AFTER UPDATE OF fts_text` (`0003_fts.sql:37`) so the lexical index is
+   * untouched, and the vectors live in `chunks`/`embeddings` keyed on path, so the pair still MINES at its
+   * measured cosine. What changes is only the string a quote would be cut from.
+   */
+  const blankBodyText = (fixture: Fixture, path: string) =>
+    fixture.db.run("UPDATE files SET body_text = '' WHERE path = ?", [path]).pipe(Effect.orDie)
+
+  it("counts emptyEvidence and mints NOTHING when one side has no quotable text", async () => {
+    /**
+     * The guard `edge-typing` has carried since the mint arm landed (`edge-typing.ts:878-881`), ported.
+     *
+     * **An empty quote is `includes`-true against anything**, so a task minted with one is unverifiable by
+     * the two mechanisms that exist to verify it: doctor's stale-quote check would report it as present
+     * forever whatever the file said, and an `<q></q>` never even reaches `article.citations` (probed —
+     * `readCitations` drops an element whose text is empty), so the task would carry ONE citation where
+     * the closer and the reviewer both expect two. A finding a human cannot check is worse than no
+     * finding, so the pair is skipped whole rather than filed with half its evidence.
+     *
+     * Counted rather than dropped in silence, because "the night found a divergence and refused to file
+     * it" is a fact about the corpus's projection that an operator has to be able to see — `edge-typing`'s
+     * copy of this guard counts nowhere at all and is invisible in its report, which is the half of that
+     * phase's behavior this one does not mirror.
+     *
+     * (Mutation: deleting the `keepQuote === "" || dropQuote === ""` clause makes this `taskMinted: 1`,
+     * with a task whose `article.citations` holds ONE href instead of two.)
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* blankBodyText(fixture, NOT_SAFE)
+
+          const outcome = yield* dedupMerge(envFor(fixture))
+
+          /** Non-vacuous: the veto really did fire, so a finding really was available to refuse. */
+          expect(outcome.counts.vetoed).toBe(1)
+          expect(outcome.counts.emptyEvidence).toBe(1)
+          expect(outcome.counts.taskMinted).toBeUndefined()
+          expect(yield* mintedTasks(fixture)).toEqual([])
+
+          /** The FOLDS are unaffected: this refuses one task, not the night. */
+          expect(outcome.counts.merged).toBe(2)
+          /** And both vetoed files are still live, exactly as they are when the task IS filed. */
+          expect(yield* atHead(fixture, SAFE)).toBeDefined()
+          expect(yield* atHead(fixture, NOT_SAFE)).toBeDefined()
+        }),
+      { seed: DEDUP_CORPUS, model: refusesEveryGroup() }
+    )
+  })
+
+  it("counts nothing on the ordinary night, so the counter is not a constant", async () => {
+    /**
+     * The other half of the same measurement. Without this, `emptyEvidence: 1` above would also pass
+     * against a phase that counted every vetoed pair — the counter has to be ABSENT on the night the
+     * same corpus mints, which is the night every other case in this file drives.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* dedupMerge(envFor(fixture))
+
+          expect(outcome.counts.taskMinted).toBe(1)
+          expect(outcome.counts.emptyEvidence).toBeUndefined()
+        }),
+      { seed: DEDUP_CORPUS, model: refusesEveryGroup() }
+    )
+  })
+
+  it("does not let a refused pair CLOSE a task, since the divergence is still on disk", async () => {
+    /**
+     * The interaction with the attestation, which is where a silent skip would do real damage. The night
+     * looked everywhere — no cap bound, no batch failed — so `universeComplete` is true and the closure
+     * pass runs. A pair whose finding was refused for want of evidence is a pair whose task, if one were
+     * open, would then be archived on a night that deliberately declined to file it.
+     *
+     * {@link STALE_TASK} names a pair no corpus here holds, so this asserts the mechanism rather than the
+     * one pair: closure is still decided by the attestation, and `emptyEvidence` is a mint-side refusal
+     * that does not claim the corpus is clean.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* blankBodyText(fixture, NOT_SAFE)
+
+          const outcome = yield* dedupMerge(envFor(fixture))
+
+          expect(outcome.counts.emptyEvidence).toBe(1)
+          /** The night WAS complete, so the absent finding's task closes on its own terms. */
+          expect(outcome.counts.taskClosed).toBe(1)
+          expect(yield* atHead(fixture, STALE_TASK_PATH)).toBeUndefined()
+        }),
+      { seed: [...DEDUP_CORPUS, STALE_TASK], model: refusesEveryGroup() }
+    )
+  })
+})
 
 describe("dedup-merge mints review tasks for vetoed near-duplicates", () => {
   it("files ONE task quoting both sides, naming the negation veto and the cosine", async () => {

@@ -291,6 +291,71 @@ export const quoteAppearsIn = (quote: string, text: string): boolean => {
 }
 
 /**
+ * Every string value a JSONL transcript carries, DECODED, one entry per value.
+ *
+ * ## The gap this closes, and why the raw bytes alone made honest answers fail
+ *
+ * {@link quoteAppearsIn} against the file's bytes asks whether the quote is a substring of JSON SOURCE,
+ * and a transcript's message text is JSON-ENCODED in that source. Two ordinary quotes therefore could
+ * not verify, and neither is a fabrication:
+ *
+ * - **A quote carrying a `"` the speaker typed.** The bytes hold `\"`, so the needle's one character is
+ *   two in the file and no amount of whitespace normalization brings them together.
+ * - **A quote spanning a message-internal newline.** The bytes hold the two characters `\` and `n`,
+ *   while the needle holds a real newline that `quoteAppearsIn` collapses to a space. The comparison is
+ *   then a space against a backslash.
+ *
+ * The cost of that mismatch was not one lost commitment. `fabricatedQuoteReason` refuses the WHOLE turn,
+ * so the batch produced nothing, so `markSessionsConsolidated` never ran, so the next night selected the
+ * same batch and failed identically — an honest answer livelocking a nightly job.
+ *
+ * ## Values only, and each value SEPARATELY
+ *
+ * Keys are excluded because a field name is not something a speaker said, so a quote matching one is not
+ * evidence about a session. The result is a LIST rather than a joined blob for a sharper reason: joining
+ * would make the tail of one message and the head of the next a contiguous run, so a model could stitch
+ * a sentence out of two turns and have it verify — a fabricated quote assembled from real words, which
+ * is precisely the failure this whole check exists to catch. The caller tests each string on its own.
+ *
+ * ## An unparseable line is SKIPPED, and the caller keeps the raw arm
+ *
+ * These files are written by a live process, so the last line is routinely a half-written object, and
+ * one torn line must not cost the file. A line that parses to a bare scalar contributes nothing either:
+ * `JSON.parse("3")` succeeds and a number is not a quote. And because the caller accepts a match against
+ * the RAW text OR any decoded string, a file this cannot parse at all is exactly as verifiable as it was
+ * before — the decoded arm only ever adds.
+ *
+ * Pure and synchronous over one string, so the test tier drives it with no file on disk.
+ */
+export const decodedTranscriptStrings = (transcript: string): ReadonlyArray<string> => {
+  const out: Array<string> = []
+  const collect = (value: unknown): void => {
+    if (typeof value === "string") {
+      out.push(value)
+      return
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) collect(item)
+      return
+    }
+    // `null` is `typeof "object"`, and `Object.values(null)` throws rather than answering nothing.
+    if (typeof value === "object" && value !== null) {
+      for (const item of Object.values(value)) collect(item)
+    }
+  }
+  for (const line of transcript.split("\n")) {
+    const trimmed = line.trim()
+    if (trimmed === "") continue
+    try {
+      collect(JSON.parse(trimmed))
+    } catch {
+      // A torn or non-JSON line costs itself. See the note above.
+    }
+  }
+  return out
+}
+
+/**
  * ── The origin validation that used to live here is DELETED, with the parse it defended ──────────
  *
  * `loopbackOriginFrom`, `nonLoopbackOrigin`, `isLoopbackHostname`, `ANSI_ESCAPE`, and

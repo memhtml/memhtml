@@ -228,6 +228,28 @@ export const DEDUP_QUOTE_CHARS = 300
 /** The detector name every `review:` task this phase mints is keyed under. */
 export const DEDUP_DETECTOR = "dedup-merge"
 
+/**
+ * Whether packing these components at `maxMembers` SPLIT one of them across two calls.
+ *
+ * The `packSliced` clause of the attestation, as a pure function of the components handed to
+ * `packGroups` and the cap it is given. Asked of the INPUT, because `packGroups` slices before it
+ * returns — so the same question asked of its output is unanswerable by construction. See the
+ * attestation's own note for the measurement.
+ *
+ * **Strictly greater, and the strictness is the whole rule.** A component of exactly `maxMembers` is one
+ * whole call: `assembleBatches` is only reached when `group.length > maxMembers`, so nothing was split
+ * and nothing was hidden. A component of `maxMembers + 1` becomes two units, and the second is asked
+ * about in ignorance of the first, which is the state the clause exists to refuse closure on.
+ *
+ * Its own exported function rather than an inline `some`, so the arithmetic has a test that does not
+ * need a corpus of forty-one near-duplicates to state it — and so the clause stays checkable while
+ * {@link DEDUP_MAX_COMPONENT} keeps it unreachable through the phase.
+ */
+export const dedupPackSliced = (
+  components: ReadonlyArray<ReadonlyArray<unknown>>,
+  maxMembers: number
+): boolean => components.some((members) => members.length > maxMembers)
+
 /** The text a member is offered under: its claim and its body, the same join compress uses. */
 const textFor = (row: CorpusRow): string => `${row.gist}\n${row.body_text}`
 
@@ -380,6 +402,8 @@ const mintVetoedPairs = (
     const committed = new Set(
       decisions.map((decision) => `${decision.keepPath} ${decision.dropPath}`)
     )
+    /** Pairs whose finding was refused for want of a quotable side. See the guard below. */
+    let emptyEvidence = 0
     const findings = proposed
       .filter((pair) => !committed.has(`${pair.keepPath} ${pair.dropPath}`))
       .flatMap((pair) => {
@@ -389,6 +413,34 @@ const mintVetoedPairs = (
         // and nothing to quote. Every pair either arm builds carries both, from `textOf`.
         if (keepText === undefined || dropText === undefined) return []
         if (!mergeVetoed(keepText, dropText)) return []
+        /**
+         * **BOTH sides must have quotable text, or the pair is skipped WHOLE**, which is `edge-typing`'s
+         * own guard on its `resolve:` mint (`edge-typing.ts:878-881`) ported to this detector.
+         *
+         * An empty quote is `includes`-true against anything, so a task carrying one is unverifiable by
+         * both mechanisms built to verify it: doctor's stale-quote check would report the evidence present
+         * forever whatever the cited file said, and `readCitations` DROPS a `<q>` whose text is empty — so
+         * the task would reach `article.citations` with ONE href where a reviewer and every consumer of a
+         * pair task expect two. A finding a human cannot check is worse than no finding.
+         *
+         * Filtered on {@link quotableText}'s OUTPUT rather than on `body_text` directly, so the test is
+         * over the exact string the `<q>` would carry: the cut collapses whitespace first, and a body of
+         * nothing but whitespace flattens to `""` while being non-empty as stored.
+         *
+         * Not an ordinary path. `parseMemory` refuses a file with no `<mark>` and one whose `<mark>` is
+         * empty, and `article.bodyText` includes the claim — so a corpus row with no quotable text is a
+         * projection anomaly rather than an authorable file, which is why this is a guard and not a branch.
+         * COUNTED anyway, because a night that found a divergence and declined to file it is something an
+         * operator has to be able to see; `edge-typing`'s copy counts nowhere and is invisible in its
+         * report.
+         */
+        if (
+          quotableText(quoteFor(pair.keepPath)) === "" ||
+          quotableText(quoteFor(pair.dropPath)) === ""
+        ) {
+          emptyEvidence += 1
+          return []
+        }
         return [vetoFinding(pair, keepText, dropText, quoteFor)]
       })
       .toSorted((left, right) => (left.fingerprint < right.fingerprint ? -1 : 1))
@@ -405,7 +457,12 @@ const mintVetoedPairs = (
     const report: MintReport = minter.finish()
     const closure = yield* minter.closeAbsent(universeComplete)
     return {
-      counts: { ...report.counts, ...closure },
+      counts: {
+        ...report.counts,
+        ...closure,
+        /** Omitted at zero, matching the kernel's own rule so an ordinary night's trailer stays short. */
+        ...(emptyEvidence === 0 ? {} : { emptyEvidence })
+      },
       receipt: report.minted.map((task) => `filed ${task.path} (${task.findingKey})`)
     }
   })
@@ -513,8 +570,16 @@ export const dedupMerge: PhaseBody = (env) =>
      * function of the corpus rather than of how the edges were enumerated.
      */
     const graph = connectedComponents(edges).filter((members) => members.length >= 2)
-    const components = graph
-      .slice(0, DEDUP_MAX_COMPONENTS)
+    /**
+     * The components this night CONSIDERED, before the member cut — which is the attestation's own input.
+     *
+     * Named rather than inlined because {@link universeComplete} has to ask whether a component was
+     * truncated, and that question is only answerable of the PRE-cut list: the mapped `components` below
+     * has already had `slice(0, DEDUP_MAX_COMPONENT)` applied, so no entry in it can exceed the cap and
+     * an attestation reading it can only ever compare against equality. See the attestation's note.
+     */
+    const considered = graph.slice(0, DEDUP_MAX_COMPONENTS)
+    const components = considered
       .map((members) =>
         members.slice(0, DEDUP_MAX_COMPONENT).flatMap((path) => {
           const row = rowFor.get(path)
@@ -662,19 +727,42 @@ export const dedupMerge: PhaseBody = (env) =>
      * - {@link DEDUP_MAX_COMPONENT} — a large component was truncated to its lowest paths, so its
      *   remaining members' pairs are deferred. Not in the acceptance criterion's list and included
      *   anyway: it hides candidates by exactly the mechanism the other two do.
-     * - `packGroups` — a group longer than {@link DEDUP_BATCH_MEMBERS} is sliced, which asks each half
-     *   in ignorance of the other. Unreachable while {@link DEDUP_MAX_COMPONENT} is the smaller number,
-     *   and checked rather than argued: the two constants are independent and either may move.
+     * - `packGroups` — a component longer than {@link DEDUP_BATCH_MEMBERS} is sliced, which asks each
+     *   half in ignorance of the other. Unreachable while {@link DEDUP_MAX_COMPONENT} is the smaller
+     *   number, and checked rather than argued: the two constants are independent and either may move.
      * - `MAX_MERGE_PAIRS` — the decision pass stopped partway. The mint arm re-derives each veto itself,
      *   so a capped pair is still minted correctly; this clause is conservatism about the CLOSURE, whose
      *   error direction is archiving work a human still owes.
+     *
+     * ## Both truncation clauses read PRE-pack INPUTS, and reading outputs made both of them wrong
+     *
+     * A cap is legible only where the cut has not happened yet, and both clauses used to inspect the
+     * post-cut value:
+     *
+     * - **`packSliced` was structurally vacuous.** `packGroups` slices any group longer than `maxMembers`
+     *   before returning (`batch.ts:145-181`), so asking its OUTPUT for a group longer than
+     *   {@link DEDUP_BATCH_MEMBERS} asks whether a function that guarantees `<= maxMembers` returned
+     *   something larger. It cannot, on any corpus — so the clause was not an untested clause, it was not
+     *   a clause. It now reads `components`, which is what `packGroups` is actually handed.
+     * - **`memberTruncated` used `>=` on the post-slice length**, so a component of exactly the cap —
+     *   which lost NOTHING, since `slice(0, 8)` of eight members is those eight members — reported
+     *   truncation and withheld closure. On a corpus holding one, the `review:` backlog could never be
+     *   emptied. It now compares the pre-slice length with a strict `>`, because truncation happened when
+     *   the input EXCEEDED the cap and not when it sat on it.
+     *
+     * **Each reads the input of ITS OWN cut, and the two inputs are different lists.** `memberTruncated`
+     * asks about the member cut, whose input is {@link considered} — the components before
+     * `slice(0, DEDUP_MAX_COMPONENT)`. `packSliced` asks about packing, whose input is `components` —
+     * already member-cut, because that is literally what `packGroups` is handed two statements below.
+     * Pointing the pack clause at `considered` instead would over-report: a 45-member component is cut to
+     * 8 and packing splits nothing, so the honest answer about the pack is `false` and `memberTruncated`
+     * is what refuses closure. `graph` is the input of neither — its entries past
+     * {@link DEDUP_MAX_COMPONENTS} were dropped whole by the clause above and never reached either cut.
      */
     const minedTruncated = pairs.length >= DEDUP_PAIR_LIMIT
     const componentsTruncated = graph.length > DEDUP_MAX_COMPONENTS
-    const memberTruncated = components.some((members) => members.length >= DEDUP_MAX_COMPONENT)
-    const packSliced = batches.some((batch) =>
-      batch.some((group) => group.length > DEDUP_BATCH_MEMBERS)
-    )
+    const memberTruncated = considered.some((members) => members.length > DEDUP_MAX_COMPONENT)
+    const packSliced = dedupPackSliced(components, DEDUP_BATCH_MEMBERS)
     const universeComplete =
       skipped === 0 &&
       !minedTruncated &&

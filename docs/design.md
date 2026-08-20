@@ -993,7 +993,7 @@ not even offered tonight; a truthful attestation is unreachable and an untruthfu
 whole `resolve:` backlog on the first night the corpus grew. So the closer asks about **each open task's own
 pair**, bounded by the open-task count rather than by the scan, and it recovers the pair from the task's two
 `<q cite>` hrefs — the only route back, since the finding key is a digest and no head meta carries a pair
-(`packages/sleep/src/phases/edge-typing.ts:346-424`). Three arms: `promoted to edge` when the corroboration
+(`packages/sleep/src/phases/edge-typing.ts:347-441`). Three arms: `promoted to edge` when the corroboration
 counter says a second night confirmed the pair and both files gained the link, so the fact is file-borne
 and the task is moot; `endpoint gone` when one side is no longer an active file; `evidence gone` when both
 endpoints are active and one's cited quote no longer occurs in it. All three are a SQL read or a file read,
@@ -1021,7 +1021,7 @@ worst on short statements where the floor already binds hardest (`:190-207`).
 clean (`apps/consolidator/src/contract.ts:184-193`). `ungroundedEvidenceReason` extends to both, and the
 client — the one process with the transcripts mounted — additionally verifies that each quote appears
 whitespace-normalized in the named session's transcript and **refuses the whole turn on a fabricated
-one** (`apps/consolidator/src/client.ts:846-935`). That check is what covers the residual doctor cannot:
+one** (`apps/consolidator/src/client.ts:845-988`). That check is what covers the residual doctor cannot:
 transcript evidence is written as plain text naming a session id, carries no `cite`, and is therefore
 outside the stale-quote check by construction.
 
@@ -1038,8 +1038,14 @@ outside the stale-quote check by construction.
 | `pathExhausted` | a mint refused after 1000 collision ordinals — outside the vocabulary on purpose, since folding a path collision into `taskDeduped` would report a corpus problem as a successful deduplication |
 
 `trace-consolidation` adds its own gate counts beside these: `commitmentBelowFloor`,
-`commitmentNotUser`, `commitmentUngrounded`, `resolutionClosed`, and `resolutionUnmatched`
-(`packages/sleep/src/phases/trace-consolidation.ts:570-575`). Every count flows to the nightly report
+`commitmentNotUser`, `commitmentUngrounded`, `resolutionClosed`, `resolutionBelowFloor`, and
+`resolutionUnmatched`. The last two are separate counters because they carry different operator meanings:
+`resolutionBelowFloor` is the model hedging — the resolution's own confidence is under `COMMITMENT_FLOOR`,
+refused before any task was consulted, which is a fact about the transcript. `resolutionUnmatched` is a
+*confident* completion that matched no open `todo` task, which is a fact about the corpus and, when the
+cause is two wordings drifting past `CLAIM_JACCARD_FLOOR`, the signal that the detector and the resolver
+disagree about a work item. One counter carried both, so a trailer could not distinguish them
+(`packages/sleep/src/phases/trace-consolidation.ts:517-591`). Every count flows to the nightly report
 unchanged.
 
 **A commit is owed whenever a task moved.** Each phase's commit gate asks the mint and the closure too,

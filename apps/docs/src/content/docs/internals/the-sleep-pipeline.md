@@ -375,7 +375,7 @@ they are mid-fix, is not permission to archive their work item (`packages/sleep/
 thousands of pairs and ranked by similarity, so a pair filed last night is routinely not offered tonight,
 and an untruthful attestation would archive the whole backlog on the first night the corpus grew. So it
 asks about each open task's own pair instead, bounded by the open-task count rather than by the scan, and
-recovers the pair from the task's two `<q cite>` hrefs (`packages/sleep/src/phases/edge-typing.ts:346-424`).
+recovers the pair from the task's two `<q cite>` hrefs (`packages/sleep/src/phases/edge-typing.ts:347-441`).
 Three arms close a task: the corroboration counter says a second night confirmed the pair and both files
 gained the link, so the fact is file-borne and the question is answered; one endpoint is no longer an active
 file; or one endpoint's cited quote no longer occurs in it, which is a human editing the flagged text and is
@@ -398,16 +398,20 @@ Evidence is quoted in the task body. A file-borne source is a `<q cite="/path">`
 would carry a warning forever and its quoted text would never reach the citations projection that both the
 edge-typing closer and `memhtml doctor` read. Quotes are cut at a word boundary with no ellipsis appended,
 because a prefix of the source's collapsed text is contained in it and a prefix plus an ellipsis is not
-(`packages/sleep/src/phases/edge-typing.ts:150-163`). A transcript source is plain text naming the session
+(`packages/sleep/src/phases/edge-typing.ts:151-163`). A transcript source is plain text naming the session
 id, with the same id in `memhtml-session`, because a `cite` holds a repo path and a session id is not one.
 Doctor therefore verifies file-borne quotes and not transcript ones; the consolidator client, the one
 process with the transcripts mounted, verifies that containment itself and refuses the whole turn on a
-fabricated quote (`apps/consolidator/src/client.ts:846-935`).
+fabricated quote (`apps/consolidator/src/client.ts:845-988`).
 
 Every minting phase reports the same counts, with zero-valued keys omitted so a commit trailer stays
 readable: `taskMinted`, `taskAlreadyOpen`, `taskDeduped`, `mintOverflow`, `taskClosed`, `closureSkipped`,
 and `pathExhausted`. `trace-consolidation` adds its own gate counts beside them, `commitmentBelowFloor`,
-`commitmentNotUser`, `commitmentUngrounded`, `resolutionClosed`, and `resolutionUnmatched`. Each phase's
+`commitmentNotUser`, `commitmentUngrounded`, `resolutionClosed`, `resolutionBelowFloor`, and
+`resolutionUnmatched` — the last two are separate because they mean different things: a resolution the
+model hedged on is a fact about the transcript, while a confident completion matching no open task is a
+fact about the corpus, and a growing gap between them says the detector and the resolver disagree about a
+work item. Each phase's
 commit gate asks the mint and the closure too, not only its own primary writes: a night whose only output
 was three tasks has staged files, and leaving them for whichever later phase commits next would attribute
 this phase's writes to that one in the `Memhtml-Phase` trailer, so a resume would skip the phase that owns

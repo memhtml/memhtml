@@ -420,7 +420,26 @@ const resolveClosure = (
         )
       ]
       const [src, dst] = citedPaths
-      if (citedPaths.length !== 2 || src === undefined || dst === undefined) continue
+      if (citedPaths.length !== 2 || src === undefined || dst === undefined) {
+        /**
+         * **The IMMORTAL-TASK case, and it is the one skip in this loop that never resolves.** This phase
+         * has no absence pass, so declining here means no arm can ever reach the task: it is not closable
+         * by promotion, by a gone endpoint, or by a stale quote, and it sits in the inbox until a human
+         * deletes it. Every other `continue` above is transient — an unreadable file, a parse failure, an
+         * endpoint that will parse next night.
+         *
+         * So it is LOGGED, which is where somebody asking why one `resolve:` task never leaves finds the
+         * answer, and the cited count is in the line because that is the whole diagnosis: one path means a
+         * hand-edit removed a quote, three means the file is not a pair task. Counted nowhere for the same
+         * reason the todo-only skip below is not — `closureSkipped` means "the absence pass was withheld",
+         * and this phase has no absence pass.
+         */
+        yield* Effect.logInfo(
+          `sleep.edge-typing left ${row.path} open: its citations name ${String(citedPaths.length)} ` +
+            "path(s), not the two endpoints a resolve task is about, so no closing arm can reach it"
+        )
+        continue
+      }
 
       /** Closed regardless of status: the fact is file-borne now, so the task is moot. */
       if (yield* contradictionPromoted(env.deps.db, src, dst)) {
@@ -1041,7 +1060,21 @@ export const edgeTyping: PhaseBody = (env) =>
     const commitSha = yield* commitPhase(
       env,
       "edge-typing",
-      `promote ${typed} typed edges and ${promoted} corroborated contradictions`,
+      /**
+       * A MINT-ONLY night says what it did, mirroring `dedup-merge`'s arm on its own subject.
+       *
+       * The unconditional edge subject read `promote 0 typed edges and 0 corroborated contradictions` on
+       * exactly the commit that filed new findings — and that is the ORDINARY first night for any pair,
+       * because the corroboration gate holds every new sighting back for a second night. So the one line a
+       * human reads in `git log` described a night that did nothing, while the commit carried task files.
+       *
+       * The edge subject wins whenever an edge was written, so this is a branch and not a rename: a night
+       * that promoted one contradiction AND closed a task still reports the promotion, which is the write
+       * a reviewer is auditing. The closure-only subject is `closureOnly`'s and is not reached from here.
+       */
+      promoted === 0 && typed === 0 && mintReport.minted.length > 0
+        ? "file resolve: tasks for detected contradictions"
+        : `promote ${typed} typed edges and ${promoted} corroborated contradictions`,
       counts,
       /**
        * The closure reasons, in the commit because the format has nowhere else to carry one — the same

@@ -516,6 +516,23 @@ const commitmentTasks = (
      */
     const open = yield* openDetectedTasks(env.deps.db, COMMITMENT_DETECTOR)
     let resolutionClosed = 0
+    /**
+     * The two ways a resolution closes nothing, SEPARATED — they mean different things to an operator.
+     *
+     * `resolutionBelowFloor` is the MODEL hedging: the resolution's own confidence is under
+     * {@link COMMITMENT_FLOOR}, so the phase refused to act before it consulted a single task. That is a
+     * fact about the transcript, it is ordinary, and it needs nobody.
+     *
+     * `resolutionUnmatched` is a CONFIDENT completion that matched no open `todo` task — either because no
+     * commitment for it was ever filed, or because the two wordings drifted past
+     * {@link CLAIM_JACCARD_FLOOR}, or because a human already picked the task up. That is a fact about the
+     * corpus, and the middle case is the one worth seeing: it says the detector and the resolver disagree
+     * about a work item, which a growing gap between the two counters is exactly the shape of.
+     *
+     * One counter carried both, so a trailer reading `resolutionUnmatched: 3` gave a reader no way to tell
+     * which they were looking at — and the two want opposite responses.
+     */
+    let resolutionBelowFloor = 0
     let resolutionUnmatched = 0
     const closureLines: Array<string> = []
     /** Paths closed in this pass, so two resolutions naming one task do not double-count it. */
@@ -523,7 +540,7 @@ const commitmentTasks = (
 
     for (const resolution of input.resolutions) {
       if (!(resolution.confidence >= COMMITMENT_FLOOR)) {
-        resolutionUnmatched += 1
+        resolutionBelowFloor += 1
         continue
       }
 
@@ -571,6 +588,7 @@ const commitmentTasks = (
       ...mint.counts,
       ...Object.fromEntries(gateCounts),
       ...(resolutionClosed === 0 ? {} : { resolutionClosed }),
+      ...(resolutionBelowFloor === 0 ? {} : { resolutionBelowFloor }),
       ...(resolutionUnmatched === 0 ? {} : { resolutionUnmatched })
     }
 

@@ -1068,12 +1068,51 @@ export const entityResolution: PhaseBody = (env) =>
      * on EVERY night, so a no-model night does produce real review-band findings and mints them. It
      * still may not CLOSE, because a task minted from a below-floor cluster can only be re-detected
      * by a model, and the deterministic passes going quiet about it says nothing.
+     *
+     * ## A SHARDED type never becomes complete, so its tasks close only by hand
+     *
+     * `unaskedPairs` is the one clause that does not resolve on its own. `isolatedFailures` is a bad
+     * payload that the next night probably does not repeat, and `model === undefined` is a credential
+     * that gets configured — but a type holding more than {@link ENTITY_BATCH_SIZE} names is split, no
+     * call ever spans two shards, and a corpus does not shrink. So every cross-shard pair stays
+     * unexamined for as long as the type stays that large, `universeComplete` stays false, and the
+     * `confirm:` tasks of that detector are closable only by a human marking them done. That is the
+     * honest outcome — closing on a night that never asked would archive a real question — and it is
+     * stated here and in `docs/tasks.md` rather than left for somebody to infer from a `closureSkipped`
+     * that never goes away.
+     *
+     * **Not caused by a corpus with no EMBEDDINGS**, which is the intuitive suspect and is measurably
+     * wrong: `members` filters on `counts.has(centroid.name)` and not on whether a centroid has a
+     * vector, so a vector-less name is still offered, still keyed, and still asked about. Probed
+     * 2026-08-20 by deleting every `embeddings` row and re-running over `ENTITY_CORPUS` — identical
+     * calls, identical counts, identical closure. What such a corpus loses is the model's EVIDENCE:
+     * `nearestCentroids` answers `[]`, so the `nearest by memory centroid` block leaves the prompt (2 of
+     * 2 prompts carried it with vectors, 0 of 2 without) and the model is asked a poorer question about
+     * exactly the case centroids exist for. `tests/entity-resolution-mint.test.ts` pins both halves.
      */
     const universeComplete =
       model !== undefined &&
       centroidsByType !== undefined &&
       isolatedFailures === 0 &&
       unaskedPairs === 0
+    /**
+     * The shortfall NAMED, because `closureSkipped` alone cannot be acted on.
+     *
+     * That count is the same `1` a dry run, a failed batch, and a sharded type all produce, and only the
+     * third is permanent. An operator watching `confirm:` tasks never close needs to know which, and the
+     * number is the pair coverage the clause actually read — so it also says how far from complete the
+     * night was rather than only that it was.
+     *
+     * `logInfo` and not `logWarning`: nothing is broken. A sharded corpus is a large corpus, and the
+     * phase is declining to close rather than failing to work — which is the same level
+     * `edge-typing`'s "left this task open" line uses for the same kind of statement.
+     */
+    if (unaskedPairs > 0) {
+      yield* Effect.logInfo(
+        `sleep.entity-resolution left ${String(unaskedPairs)} pair(s) unasked across shards, ` +
+          "so closure is withheld: a type larger than the shard size never reaches a complete pass"
+      )
+    }
     const closureCounts = yield* minter.closeAbsent(universeComplete)
 
     const counts = {
@@ -1129,7 +1168,20 @@ export const entityResolution: PhaseBody = (env) =>
     const commitSha = yield* commitPhase(
       env,
       "entity-resolution",
-      `normalize ${normalized} entity names, merge ${fuzzyMerges} aliases`,
+      /**
+       * A MINT-ONLY night says what it did, mirroring `dedup-merge`'s arm on its own subject.
+       *
+       * `normalize 0 entity names, merge 0 aliases` was the subject of exactly the commit that filed new
+       * `confirm:` tasks, and that is the ordinary shape of a deferring night rather than an unusual one:
+       * the review band and the confidence floor exist so the phase REFUSES to merge, so its whole output
+       * on those nights is the tasks the subject reported as nothing.
+       *
+       * The rewrite subject wins whenever a file was rewritten, so this is a branch: a night that
+       * normalized a name AND filed a task still reports the rewrite, which is the write a reviewer audits.
+       */
+      rewritten === 0 && mintReport.minted.length > 0
+        ? "file confirm: tasks for undecided entity pairs"
+        : `normalize ${normalized} entity names, merge ${fuzzyMerges} aliases`,
       final,
       closed === 0
         ? undefined

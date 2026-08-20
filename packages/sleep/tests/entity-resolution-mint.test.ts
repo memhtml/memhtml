@@ -1,11 +1,14 @@
+import { createHash } from "node:crypto"
+
 import { parseMemory } from "@memhtml/html"
-import { Effect } from "effect"
+import { Effect, Logger } from "effect"
 import { describe, expect, it } from "vitest"
 
 import type { PhaseEnv } from "../src/env.js"
 import { DETECTED_TAG, findingKeyOf, MINT_AUTHOR } from "../src/mint.js"
 import {
   confirmFingerprint,
+  ENTITY_BATCH_SIZE,
   ENTITY_CONFIDENCE_FLOOR,
   ENTITY_DETECTOR,
   entityResolution,
@@ -752,6 +755,315 @@ describe("a dry run", () => {
           expect(yield* atHead(fixture, STALE.path)).toBe(STALE.html)
         }),
       { seed: [...BAND, STALE], model }
+    )
+  })
+})
+
+/**
+ * The closure discipline itself: when a night's shards do NOT cover every pair, and what the phase says.
+ *
+ * ## A correction to the finding this suite was written for
+ *
+ * The claim under review was that a corpus indexed WITHOUT embeddings leaves every pair unasked, so
+ * `universeComplete` is never true and `confirm:` tasks close only by hand. **Measured 2026-08-20 against
+ * this fixture: that is false, and the mechanism is worth stating because it is the opposite of the
+ * intuition.** `members` filters the centroid list on `counts.has(centroid.name)` and NOT on whether the
+ * centroid carries a vector, so a vector-less name is still offered, still keyed, still shardable, and
+ * still asked about. Dropping every row from `embeddings` and re-running this phase over `ENTITY_CORPUS`
+ * produces the same two model calls, the same counts, and the same closure as a run with vectors.
+ *
+ * What a vector-less corpus really loses is the model's EVIDENCE, not the phase's coverage: with no
+ * vectors `nearestCentroids` answers `[]` for every name, so `entityMemberText` omits its
+ * `nearest by memory centroid` block and the model sees a name plus its titles alone. Measured: 2 of 2
+ * prompts carry that block with vectors and 0 of 2 without. That is a real degradation of the one signal
+ * the phase exists for — a short name and its full form are invisible to a character ratio and separable
+ * only by centroid — and it is invisible in the counts, which is why it is written down here rather than
+ * asserted as a closure property it does not have.
+ *
+ * ## What DOES leave pairs unasked
+ *
+ * The sharding, which is the clause's stated purpose. A type holding more than {@link ENTITY_BATCH_SIZE}
+ * names is split, each shard is asked about its own members, and no call ever spans two shards — so every
+ * cross-shard pair goes unexamined and `universeComplete` is false for as long as the type stays that
+ * large. That is permanent on a growing corpus, not transient, so those `confirm:` tasks really do close
+ * only by hand and the phase now says so in its log rather than reporting an unexplained `closureSkipped`.
+ */
+describe("closure discipline when a type SHARDS", () => {
+  /**
+   * `n` service names that are mutually DISSIMILAR, so the character pass finds nothing.
+   *
+   * Hex digests of a counter rather than sequential strings, and the choice is what makes this fixture
+   * affordable: measured over 501 names, the maximum pairwise `nameSimilarity` is 0.6250 and NO pair
+   * reaches the 0.75 review floor, so the night defers nothing and mints nothing. A sequential set
+   * (`svc-1`, `svc-2`, …) shares almost every character, which put ~19,000 pairs in the review band, minted
+   * the cap, and reported 19,445 `mintOverflow` — a corpus whose every count is noise the assertions would
+   * then have to work around.
+   *
+   * One file per hundred names, so a 501-name corpus is 6 files to seed rather than 501. The entities are
+   * what the phase reads; which file carries them is nothing to this test.
+   */
+  const dissimilar = (n: number): ReadonlyArray<SeedFile> => {
+    const files: Array<SeedFile> = []
+    const NAMES_PER_FILE = 100
+    for (let at = 0; at < n; at += NAMES_PER_FILE) {
+      files.push({
+        path: `areas/services/bulk-${String(at)}.html`,
+        html: memoryHtml({
+          title: `Bulk group ${String(at)}`,
+          claim: `Bulk group ${String(at)} of services is recorded in this note.`,
+          memoryType: "semantic",
+          createdAt: `2026-04-01T00:00:${String(at % 60).padStart(2, "0")}Z`,
+          entities: Array.from(
+            { length: Math.min(NAMES_PER_FILE, n - at) },
+            (_unused, offset) =>
+              `service:${createHash("sha256")
+                .update(`svc-${String(at + offset)}`)
+                .digest("hex")
+                .slice(0, 16)}`
+          )
+        })
+      })
+    }
+    return files
+  }
+
+  const STALE = openConfirmTask({
+    entityType: "service",
+    alias: "queue-workers",
+    canonical: "queue-worker"
+  })
+
+  /**
+   * A log sink plus the lines it collected. Untyped return, deliberately: `Logger.layer`'s own type
+   * carries the requirement it erases, and annotating it here re-widens the `R` channel so
+   * `Effect.provide` no longer proves the effect is fully provided (`exactOptionalPropertyTypes` reports
+   * `any` against `never`). Inference gets it right.
+   */
+  const captured = () => {
+    const lines: Array<string> = []
+    return {
+      lines,
+      layer: Logger.layer([Logger.make((options) => lines.push(String(options.message)))])
+    }
+  }
+
+  it("withholds closure and NAMES the pair shortfall when a type exceeds the shard size", async () => {
+    /**
+     * TWO names past {@link ENTITY_BATCH_SIZE}, which is the smallest corpus that makes TWO REAL CALLS.
+     * At exactly one over, the second shard holds one member and `minMembers: 2` drops it — correctly,
+     * since a lone name has no other name to be the same subject as — so the night makes one call and the
+     * shortfall is the 500 pairs that lone name is in. At two over, both shards are called, neither spans
+     * the boundary, and the 1,000 cross-boundary pairs are never examined — so the attestation is false and
+     * the seeded task survives a night that otherwise did everything right.
+     *
+     * **The log line is the point, not the count.** `closureSkipped: 1` is the same number a dry run and a
+     * failed batch produce, and none of the three says which. Sharding is the one cause that does not
+     * resolve on its own — a corpus does not shrink — so an operator seeing `confirm:` tasks that never
+     * close needs the phase to say that pairs went unasked and how many.
+     *
+     * (Mutation: deleting the `unaskedPairs > 0` log leaves every count assertion here green and fails only
+     * the message assertions, which is the intended split — the counts are the behavior, the line is the
+     * diagnosis.)
+     */
+    const log = captured()
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* entityResolution(envFor(fixture)).pipe(Effect.provide(log.layer))
+
+          /** Non-vacuous: the type really did shard, so more than one call was made. */
+          expect(outcome.llmCalls).toBe(2)
+          expect(outcome.counts.entities).toBe(ENTITY_BATCH_SIZE + 2)
+          /** And nothing else muddies the night: no deferral, no merge, no overflow. */
+          expect(outcome.counts.reviewCandidates).toBe(0)
+          expect(outcome.counts.taskMinted).toBeUndefined()
+
+          expect(outcome.counts.closureSkipped).toBe(1)
+          expect(outcome.counts.taskClosed).toBeUndefined()
+          expect(yield* atHead(fixture, STALE.path)).toBe(STALE.html)
+
+          const said = log.lines.find((line) => line.includes("unasked"))
+          expect(said, log.lines.join(" | ")).toBeDefined()
+          expect(said).toContain("sleep.entity-resolution")
+          /**
+           * The count is in PAIRS, which is what the clause measures: 502 names is 125,751 pairs, and two
+           * shards of 500 and 2 ask about 124,750 + 1 of them, so 1,000 cross-boundary pairs went unasked.
+           * Stating it in NAMES would be the bug the singleton case above pins.
+           */
+          expect(said).toContain("1000")
+        }),
+      {
+        seed: [...dissimilar(ENTITY_BATCH_SIZE + 2), STALE],
+        model: scriptedModel(() => value({ clusters: [] }))
+      }
+    )
+  }, 120_000)
+
+  it("CLOSES and says nothing when the type sits exactly at the shard size", async () => {
+    /**
+     * The off-by-one and the non-vacuity in one case. Exactly {@link ENTITY_BATCH_SIZE} names is ONE shard,
+     * which asks about every pair the type has — so the attestation is true, the absent finding's task
+     * closes, and the phase logs no shortfall. Without this, the log assertion above would also pass
+     * against a phase that named a shortfall on every night.
+     *
+     * The corpus differs from the case above by ONE name.
+     */
+    const log = captured()
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* entityResolution(envFor(fixture)).pipe(Effect.provide(log.layer))
+
+          expect(outcome.counts.entities).toBe(ENTITY_BATCH_SIZE)
+          expect(outcome.llmCalls).toBe(1)
+          expect(outcome.counts.taskClosed).toBe(1)
+          expect(outcome.counts.closureSkipped).toBeUndefined()
+          expect(yield* atHead(fixture, STALE.path)).toBeUndefined()
+          expect(log.lines.filter((line) => line.includes("unasked"))).toEqual([])
+        }),
+      {
+        seed: [...dissimilar(ENTITY_BATCH_SIZE), STALE],
+        model: scriptedModel(() => value({ clusters: [] }))
+      }
+    )
+  }, 120_000)
+
+  it("asks about every pair even with NO vectors in the corpus, and loses the centroid evidence", async () => {
+    /**
+     * The correction, asserted rather than argued — see this block's header.
+     *
+     * A corpus indexed without `--embed` keeps full pair COVERAGE, because `members` filters on
+     * `counts.has(name)` and a vector-less centroid is still a member. What it loses is the
+     * `nearest by memory centroid` block in the prompt, which is the phase's one signal for the case it
+     * exists for. Both halves are driven here, because the first is the claim the finding got backwards and
+     * the second is the real cost that would otherwise be undocumented.
+     */
+    const withVectors: Array<string> = []
+    const withoutVectors: Array<string> = []
+    const NEIGHBOR_BLOCK = "nearest by memory centroid"
+
+    const run = (drop: boolean, prompts: Array<string>) =>
+      withFixture(
+        (fixture) =>
+          Effect.gen(function* () {
+            /** `chunks` stays: `entityVectors` joins through it, so dropping both would hide the cause. */
+            if (drop) yield* fixture.db.run("DELETE FROM embeddings").pipe(Effect.orDie)
+            return yield* entityResolution(envFor(fixture))
+          }),
+        {
+          seed: ENTITY_CORPUS,
+          model: scriptedModel((request) => {
+            prompts.push(request.prompt)
+            return value({ clusters: [] })
+          })
+        }
+      )
+
+    const vectored = await run(false, withVectors)
+    const bare = await run(true, withoutVectors)
+
+    /** Same calls, same counts: coverage is NOT what a vector-less corpus loses. */
+    expect(bare.llmCalls).toBe(vectored.llmCalls)
+    expect(bare.counts).toEqual(vectored.counts)
+    /** And no closure was withheld, which is the specific claim being corrected. */
+    expect(bare.counts.closureSkipped).toBeUndefined()
+
+    /** What it DOES lose: every prompt carried the neighbor block, and now none does. */
+    expect(withVectors.length).toBeGreaterThan(0)
+    expect(withVectors.every((prompt) => prompt.includes(NEIGHBOR_BLOCK))).toBe(true)
+    expect(withoutVectors.some((prompt) => prompt.includes(NEIGHBOR_BLOCK))).toBe(false)
+    /** The rest of the member block survives, so the model is asked a poorer question, not a broken one. */
+    expect(withoutVectors.every((prompt) => prompt.includes("memories:"))).toBe(true)
+  }, 120_000)
+})
+
+/**
+ * The commit SUBJECT on a night whose only output was `confirm:` tasks.
+ *
+ * Same defect and same fix as `edge-typing`'s, mirroring `dedup-merge`'s existing arm. The unconditional
+ * subject reads `normalize 0 entity names, merge 0 aliases` — and that is the ordinary shape of a night
+ * that DEFERRED: the whole point of the review band and the confidence floor is that the phase refuses to
+ * merge, so the night's real output is the tasks and the subject described it as nothing.
+ *
+ * On the SUBJECT LINE alone: the counts trailer carries `taskMinted` either way, so a `toContain` over the
+ * whole message would pass against the old subject.
+ */
+describe("entity-resolution's mint-only commit subject", () => {
+  const subjectOf = (fixture: Fixture): Effect.Effect<string> =>
+    fixture.raw("log", "-1", "--format=%s").pipe(Effect.map((text) => text.trim()))
+
+  /** Two service names in the character review band, which nothing merges and the phase defers. */
+  const BAND: ReadonlyArray<SeedFile> = [
+    {
+      path: "areas/services/metrics-api-band.html",
+      html: memoryHtml({
+        title: "The metrics API serves the scrape endpoint",
+        claim: "The metrics api serves the scrape endpoint on each host.",
+        memoryType: "semantic",
+        createdAt: "2026-04-01T00:00:00Z",
+        entities: ["service:metrics-api"]
+      })
+    },
+    {
+      path: "areas/services/metrics-cli-band.html",
+      html: memoryHtml({
+        title: "The metrics CLI reads the scrape endpoint",
+        claim: "The metrics cli reads the scrape endpoint on each host.",
+        memoryType: "semantic",
+        createdAt: "2026-04-02T00:00:00Z",
+        entities: ["service:metrics-cli"]
+      })
+    }
+  ]
+
+  it("says what it DID on a night that deferred everything and rewrote nothing", async () => {
+    /**
+     * The band pair is the deterministic deferral: character overlap puts it above the review floor and
+     * below the auto floor, so no pass merges it and the night's only write is one task file.
+     *
+     * (Mutation: reverting to the unconditional subject fails the first two assertions and nothing else in
+     * this file, since the closure case reads `Closed 1 confirm task(s)` out of the BODY.)
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* entityResolution(envFor(fixture))
+
+          /** Non-vacuous: a task really was filed and nothing was normalized or merged. */
+          expect(outcome.counts.taskMinted).toBe(1)
+          expect(outcome.counts.namesNormalized).toBe(0)
+          expect(outcome.counts.fuzzyMerges).toBe(0)
+          expect(outcome.commitSha).not.toBeNull()
+
+          const subject = yield* subjectOf(fixture)
+          expect(subject).toContain("file confirm: tasks for undecided entity pairs")
+          expect(subject).not.toContain("normalize 0")
+          expect(subject).toContain("sleep(entity-resolution)")
+        }),
+      { seed: BAND, model: scriptedModel(() => value({ clusters: [] })) }
+    )
+  })
+
+  it("keeps the rewrite subject on a night that DID normalize a name", async () => {
+    /**
+     * The other side, so the arm is a branch. `ENTITY_CORPUS` carries a mixed-case entity name that pass
+     * one folds with no model call, so the night rewrites a file and the subject stays the rewrite subject.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* entityResolution(envFor(fixture))
+
+          expect(outcome.counts.namesNormalized).toBeGreaterThan(0)
+          expect(outcome.counts.filesRewritten).toBeGreaterThan(0)
+
+          const subject = yield* subjectOf(fixture)
+          expect(subject).toContain("normalize 1 entity names")
+          expect(subject).not.toContain("file confirm:")
+        }),
+      { seed: ENTITY_CORPUS, model: scriptedModel(() => value({ clusters: [] })) }
     )
   })
 })

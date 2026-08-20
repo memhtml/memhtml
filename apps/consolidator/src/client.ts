@@ -16,6 +16,7 @@ import {
   ConsolidatorRunFailed,
   ConsolidatorUnavailable,
   credentialsMissingReason,
+  decodedTranscriptStrings,
   hasConsolidatorCredentials,
   MAX_TRANSCRIPTS_PER_RUN,
   quoteAppearsIn,
@@ -276,7 +277,7 @@ const packageRoot = (): string => resolve(dirname(fileURLToPath(import.meta.url)
  * opened, while a file that does not resolve was categorically not opened. `ConsolidationResult`'s
  * `analyzedSessionIds` is built from these and from nothing else.
  */
-interface ReachableTranscript {
+export interface ReachableTranscript {
   readonly entry: TranscriptManifestEntry
   /** Absolute guest path under {@link TRACES_MOUNT}. What the manifest names and the model opens. */
   readonly guestPath: string
@@ -873,8 +874,14 @@ const turnMessage = (reachable: ReadonlyArray<ReachableTranscript>): string =>
  * claimed to have read this file and quoted it, so a file this process cannot read means the claim
  * cannot be checked, and passing an unverifiable commitment through is the same as not checking. The
  * file was reachable minutes ago inside the sandbox, so this is a rotation mid-run, not a normal case.
+ *
+ * Exported so `tests/quote-containment.test.ts` drives it against real JSONL bytes in a temp dir. That
+ * tier is not optional cover: the defect it pins is a mismatch between the form a quote is RENDERED in
+ * and the form the transcript is STORED in, and neither form is visible in a test that types both sides
+ * of the comparison — `contract.test.ts` exercises {@link quoteAppearsIn} as a pure function and cannot
+ * see it. No production caller outside this module reaches this; `runTurn` below is the only one.
  */
-const fabricatedQuoteReason = (
+export const fabricatedQuoteReason = (
   answer: {
     readonly commitments: ReadonlyArray<{
       readonly evidence: { readonly sessionId: string; readonly quote: string }
@@ -905,6 +912,22 @@ const fabricatedQuoteReason = (
     )
     /** `null` marks a file that could not be read, so one failure is not retried per quote. */
     const loaded = new Map<string, string | null>()
+    /**
+     * The DECODED strings of a session, computed on first need and cached for the walk.
+     *
+     * Lazy rather than eager, because the raw arm decides most quotes and the decode is a JSON parse of
+     * every line — at the corpus's measured 37.2 MB maximum transcript that is real work. A session whose
+     * every quote is verbatim in the bytes therefore pays nothing for this arm, and a session that needs
+     * it pays once however many quotes cite it.
+     */
+    const decoded = new Map<string, ReadonlyArray<string>>()
+    const decodedFor = (sessionId: string, transcript: string): ReadonlyArray<string> => {
+      const held = decoded.get(sessionId)
+      if (held !== undefined) return held
+      const strings = decodedTranscriptStrings(transcript)
+      decoded.set(sessionId, strings)
+      return strings
+    }
 
     for (const { label, offset, evidence } of cited) {
       if (!loaded.has(evidence.sessionId)) {
@@ -930,7 +953,27 @@ const fabricatedQuoteReason = (
           "not be re-read to verify the quote"
         )
       }
-      if (!quoteAppearsIn(evidence.quote, transcript)) {
+      /**
+       * **The RAW bytes or any DECODED string, and a quote matching neither refuses the turn.**
+       *
+       * The raw arm is the original check and is tried first, because most quotes are verbatim in the
+       * source and it costs one `includes`. The decoded arm exists because a transcript is JSONL, so a
+       * message's text is JSON-ENCODED on disk: a `"` the speaker typed is `\"` in the file, and a
+       * newline inside one message is the two characters `\` and `n`, which whitespace collapsing turns
+       * into a space-against-backslash comparison. Both of those are honest quotes that the raw arm
+       * refused — and the refusal is of the WHOLE TURN, so the batch produced nothing, was never
+       * watermarked, and came back the next night to fail identically. See
+       * {@link decodedTranscriptStrings} for why the strings are tested individually rather than joined.
+       *
+       * The refusal is UNCHANGED for a quote in neither form, which is the case this check exists for:
+       * a paraphrase of a line that really is in a session the run really read.
+       */
+      if (
+        !quoteAppearsIn(evidence.quote, transcript) &&
+        !decodedFor(evidence.sessionId, transcript).some((text) =>
+          quoteAppearsIn(evidence.quote, text)
+        )
+      ) {
         /**
          * The reason carries a TRUNCATED quote and never the transcript. A failure message is logged
          * and reported by the sleep cycle, so it must not become a channel for session content; 80

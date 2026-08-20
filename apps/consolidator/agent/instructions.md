@@ -147,8 +147,9 @@ after the fact and **a quote that is not in the file fails your entire answer** 
 it. So quote it as it is written; do not tidy the grammar, do not join two lines into one sentence, and
 do not attribute a line to a session it is not in.
 
-`confidence` — 0 to 1, how firmly it was stated. "I'll do it before the review" is firm. "I should
-probably look at that sometime" is barely intent at all; give it a low number or leave it out. This is
+`confidence` — 0 to 1, how firmly it was stated. **Required on every commitment and resolution**, so
+there is no such thing as omitting it. "I'll do it before the review" is firm. "I should probably look at
+that sometime" is barely intent at all; give it a low number, or omit the commitment entirely. This is
 about the statement, not about how likely you think the work is to happen.
 
 `"commitments": []` and `"resolutions": []` are correct and common. Most sessions end without anyone

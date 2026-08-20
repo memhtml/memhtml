@@ -381,6 +381,7 @@ describe("commitment minting", () => {
             "mintOverflow",
             "resolutionClosed",
             "resolutionUnmatched",
+            "resolutionBelowFloor",
             "commitmentBelowFloor",
             "commitmentNotUser",
             "commitmentUngrounded"
@@ -476,7 +477,13 @@ describe("resolution closure", () => {
           const outcome = yield* traceConsolidation(envFor(fixture))
 
           expect(outcome.counts.resolutionClosed).toBeUndefined()
+          /**
+           * UNMATCHED and not below-floor: the resolution was confident, so it cleared the model gate and
+           * was refused by the todo-only guard on the matching side. That is the split's other direction —
+           * the two counters must not be interchangeable on a corpus where only one arm fired.
+           */
           expect(outcome.counts.resolutionUnmatched).toBe(1)
+          expect(outcome.counts.resolutionBelowFloor).toBeUndefined()
           /** Byte-identical at its live path, and no commit was made at all. */
           expect(yield* atHead(fixture, OPEN_TASK_PATH)).toBe(
             commitmentTask({ statement: PROMISE, taskStatus: "doing" })
@@ -496,15 +503,30 @@ describe("resolution closure", () => {
     )
   })
 
-  it("counts a near-miss resolution as unmatched and closes nothing", async () => {
+  it("SPLITS the two refusals: a hedged resolution is below-floor, a near miss is unmatched", async () => {
     /**
-     * The floor as a THRESHOLD. `the VIP drain step is in the rollback runbook now` is about the same
-     * runbook and the same step and scores 0.4615, which is not a statement that the work happened —
-     * the drain step being present is consistent with somebody else having written it, or with the
-     * commitment being about a different edit. Below the floor, nothing closes.
+     * The floor as a THRESHOLD, and the split of the two counters that used to conflate.
      *
-     * A below-floor CONFIDENCE resolution rides in the same run, so both refusal arms are exercised
-     * and both land in `resolutionUnmatched`.
+     * `the VIP drain step is in the rollback runbook now` is about the same runbook and the same step and
+     * scores 0.4615, which is not a statement that the work happened — the drain step being present is
+     * consistent with somebody else having written it, or with the commitment being about a different
+     * edit. Below the floor, nothing closes.
+     *
+     * **Two DIFFERENT operator meanings, and one counter could not carry both.** A resolution the phase
+     * declined because the MODEL hedged (`confidence` below `COMMITMENT_FLOOR`) says something about the
+     * transcript: somebody said the work was probably done, and the phase refused to act on a maybe. A
+     * resolution that cleared the floor and matched NO open task says something about the corpus: a
+     * confident completion arrived for work no task tracks, which is either a commitment that was never
+     * filed or one whose wording drifted past the Jaccard bar. The first is normal and needs nobody; the
+     * second is the signal that the detector and the resolver disagree about a work item — and while both
+     * landed in `resolutionUnmatched`, a night reporting `3` gave an operator no way to tell which they
+     * were looking at.
+     *
+     * All three refusals ride in one run, so both arms are exercised and the split is observable rather
+     * than argued.
+     *
+     * (Mutation: folding `resolutionBelowFloor` back into `resolutionUnmatched` makes this `3` and
+     * `undefined`, failing both counter assertions.)
      */
     const consolidator = spoke({
       resolutions: [
@@ -523,7 +545,10 @@ describe("resolution closure", () => {
 
           const outcome = yield* traceConsolidation(envFor(fixture))
 
-          expect(outcome.counts.resolutionUnmatched).toBe(3)
+          /** The hedged one, refused on the MODEL's own confidence before any task was consulted. */
+          expect(outcome.counts.resolutionBelowFloor).toBe(1)
+          /** The two confident ones that matched nothing open. */
+          expect(outcome.counts.resolutionUnmatched).toBe(2)
           expect(outcome.counts.resolutionClosed).toBeUndefined()
           /** The task is still there and the tree did not move. */
           expect(yield* atHead(fixture, OPEN_TASK_PATH)).toBeDefined()

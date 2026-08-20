@@ -1,7 +1,7 @@
 import { archivePathFor } from "@memhtml/contracts/paths"
 import { parseMemory } from "@memhtml/html"
 import { STATE_SCHEMA } from "@memhtml/index"
-import { Effect } from "effect"
+import { Effect, Logger } from "effect"
 import { describe, expect, it } from "vitest"
 
 import type { PhaseEnv } from "../src/env.js"
@@ -818,6 +818,12 @@ describe("edge-typing closes resolve tasks", () => {
      * taking the first two would pick a pair the finding is not about and archive a task over it. Both
      * quotes are also deliberately STALE against their files, so a closer that skipped this guard would
      * fall through to the evidence-gone arm and close.
+     *
+     * **And the skip is LOGGED, which is the one thing this case did not assert before.** Declining here is
+     * permanent, unlike every other `continue` in the closer: the phase has no absence pass, so no arm can
+     * ever reach these two tasks and they sit in the inbox until somebody deletes them. That is worth a line
+     * an operator can find, and the cited COUNT is the diagnosis — one path means a hand-edit removed a
+     * quote, three means the file is not a pair task at all.
      */
     const ONE_CITE = "areas/inbox/tasks/resolve-hand-edited.html"
     const THREE_CITE = "areas/inbox/tasks/resolve-hand-edited-wide.html"
@@ -848,12 +854,127 @@ describe("edge-typing closes resolve tasks", () => {
           expect(paths).toContain(ONE_CITE)
           expect(paths).toContain(THREE_CITE)
 
-          const outcome = yield* edgeTyping(envFor(fixture, false, "2026-08-20"))
+          const logs: Array<string> = []
+          const capture = Logger.layer([
+            Logger.make((options) => logs.push(String(options.message)))
+          ])
+          const outcome = yield* edgeTyping(envFor(fixture, false, "2026-08-20")).pipe(
+            Effect.provide(capture)
+          )
           expect(outcome.counts.taskClosed).toBeUndefined()
           expect(yield* onDisk(fixture, ONE_CITE)).toBeDefined()
           expect(yield* onDisk(fixture, THREE_CITE)).toBeDefined()
+
+          /** Both skips are named, and each line carries ITS OWN cited count. */
+          const said = logs.filter((line) => line.includes("not the two endpoints"))
+          expect(said, logs.join(" | ")).toHaveLength(2)
+          expect(said.find((line) => line.includes(ONE_CITE))).toContain("name 1 path(s)")
+          expect(said.find((line) => line.includes(THREE_CITE))).toContain("name 3 path(s)")
         }),
       { seed: [...FLIP_PAIR, fileAt(THIRD)] }
+    )
+  })
+})
+
+/**
+ * The commit SUBJECT on a night whose only output was tasks.
+ *
+ * A subject is the one line of a commit a human reads in `git log`, and both of these phases wrote a fixed
+ * one naming their edge or merge work — so a night that promoted nothing and filed three findings said
+ * `promote 0 typed edges and 0 corroborated contradictions`, which reads as a night that did nothing while
+ * three new files sat in the commit. `dedup-merge` already had the arm (`file review tasks for vetoed
+ * near-duplicates` when `merged === 0`), and these two now mirror it.
+ *
+ * Asserted on the SUBJECT LINE alone rather than on the whole message, because the counts trailer carries
+ * `taskMinted` either way and a `toContain` over the full message would pass against the old subject.
+ */
+describe("edge-typing's mint-only commit subject", () => {
+  /** The first line of HEAD's message, which is what a log reader sees. */
+  const subjectOf = (fixture: Fixture): Effect.Effect<string> =>
+    fixture.raw("log", "-1", "--format=%s").pipe(Effect.map((text) => text.trim()))
+
+  it("says what it DID on a night that minted and promoted nothing", async () => {
+    /**
+     * The headline corpus of this whole file: one below-gate contradiction, one task, zero edges written.
+     * That is the ordinary shape of a first night — the corroboration gate holds every new sighting back —
+     * so this subject is what a reviewer meets most often, and `promote 0 typed edges` was actively
+     * misleading about it.
+     *
+     * (Mutation: reverting to the unconditional subject fails the first two assertions here and nothing
+     * else in this file, since every other case reads the BODY for a closure reason.)
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* edgeTyping({
+            ...envFor(fixture),
+            deps: { ...fixture.deps, model: contradictsOn("is not safe") }
+          })
+
+          /** Non-vacuous: a task really was filed and no edge really was written. */
+          expect(outcome.counts.taskMinted).toBe(1)
+          expect(outcome.counts.promoted).toBe(0)
+          expect(outcome.counts.typed).toBe(0)
+          expect(outcome.commitSha).not.toBeNull()
+
+          const subject = yield* subjectOf(fixture)
+          expect(subject).toContain("file resolve: tasks for detected contradictions")
+          expect(subject).not.toContain("promote 0")
+          /** Still a sleep commit of this phase, so `sleep resume` and `sleep review` are unaffected. */
+          expect(subject).toContain("sleep(edge-typing)")
+        }),
+      { seed: FLIP_PAIR }
+    )
+  })
+
+  it("keeps the promotion subject on a night that WROTE an edge", async () => {
+    /**
+     * The other side, so the new arm is a branch rather than a rename. The second night is the
+     * corroborating one, so it promotes into both files — and its subject has to stay the edge subject
+     * even though the same commit also closes the task the first night filed.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const model = contradictsOn("is not safe")
+          yield* edgeTyping({ ...envFor(fixture), deps: { ...fixture.deps, model } })
+          yield* fixture.reindex()
+
+          const two = yield* edgeTyping({
+            ...envFor(fixture, false, "2026-08-20"),
+            deps: { ...fixture.deps, model }
+          })
+          expect(two.counts.promoted).toBe(1)
+
+          const subject = yield* subjectOf(fixture)
+          expect(subject).toContain("promote 0 typed edges and 1 corroborated contradictions")
+          expect(subject).not.toContain("file resolve:")
+        }),
+      { seed: FLIP_PAIR }
+    )
+  })
+
+  it("keeps the closure subject on a night that ONLY closed", async () => {
+    /**
+     * The third subject this phase can write, unchanged. A closure-only night goes through `closureOnly`,
+     * which has always had its own subject — so the new arm must not reach it. Driven with no model bound,
+     * which is the path `closureOnly` owns.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* edgeTyping({
+            ...envFor(fixture),
+            deps: { ...fixture.deps, model: contradictsOn("is not safe") }
+          })
+          yield* fixture.reindex()
+          yield* archiveInTree(fixture, NOT_SAFE)
+
+          const outcome = yield* edgeTyping(envFor(fixture, false, "2026-08-20"))
+          expect(outcome.counts.taskClosed).toBe(1)
+          expect(yield* subjectOf(fixture)).toContain("close 1 resolve task(s)")
+        }),
+      { seed: FLIP_PAIR }
     )
   })
 })

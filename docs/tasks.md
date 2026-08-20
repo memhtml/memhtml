@@ -164,7 +164,7 @@ morning after. Overflow is counted, not lost, and every submitted finding's key 
 *detected* for the night, so the same night's closure pass cannot mistake a capped finding for a vanished
 one (`packages/sleep/src/mint.ts:370-393`). Each phase submits in **fingerprint order**, so two nights
 over an unchanged corpus write the same ten and the eleventh finding stays eleventh until it is decided
-(`packages/sleep/src/phases/entity-resolution.ts:1038-1056`).
+(`packages/sleep/src/phases/entity-resolution.ts:1039-1056`).
 
 Two dedup arms run before the cap. The exact finding key catches a finding restated identically. A
 claim-overlap arm — normalized-token Jaccard at 0.6 against every open task of the same detector — catches
@@ -179,7 +179,7 @@ endpoint measure 0.78-0.90 and the second would be dropped as a restatement
 Closing a task is `memhtml-task-status: done` stamped **inside** the archiving `git mv`, so the tree never
 holds a task that is archived and still `todo` (`packages/sleep/src/mint.ts:230-234`). No head meta in the
 format carries a closure reason, so each phase states it in its own commit — which is where a reviewer
-asking why a task disappeared is already reading (`packages/sleep/src/phases/entity-resolution.ts:1134`).
+asking why a task disappeared is already reading (`packages/sleep/src/phases/entity-resolution.ts:1188`).
 
 Absence is evidence only from a detector that looked everywhere, so the shared close-by-absence pass runs
 only under an attestation the phase computes about its own completeness, and only over tasks still in
@@ -190,9 +190,20 @@ usual reason being that they are mid-fix — is not permission to archive their 
 | Detector | How a task closes |
 |---|---|
 | `entity-resolution` | By absence, when the model pass ran, no batch failed in isolation, and no pair went unasked. The pair merged, left the review band, or its names left the corpus. |
-| `dedup-merge` | By absence, and only from the model-bound arm: the deterministic floor cannot see the recall band, so its silence is not evidence. Every cap on the candidate path is a clause of the attestation (`packages/sleep/src/phases/dedup-merge.ts:648-684`). |
-| `edge-typing` | **Never by absence** — the candidate scan is capped at 200 pairs, so a pair filed last night is routinely not even offered tonight. An explicit closer asks about each open task's own pair instead: `promoted to edge`, `endpoint gone`, or `evidence gone` (`packages/sleep/src/phases/edge-typing.ts:346-485`). |
+| `dedup-merge` | By absence, and only from the model-bound arm: the deterministic floor cannot see the recall band, so its silence is not evidence. Every cap on the candidate path is a clause of the attestation (`packages/sleep/src/phases/dedup-merge.ts:714-772`). |
+| `edge-typing` | **Never by absence** — the candidate scan is capped at 200 pairs, so a pair filed last night is routinely not even offered tonight. An explicit closer asks about each open task's own pair instead: `promoted to edge`, `endpoint gone`, or `evidence gone` (`packages/sleep/src/phases/edge-typing.ts:347-503`). |
 | `trace-consolidation` | Only when a resolution says so. Sessions are an unbounded universe: a commitment made last March is absent from tonight's ten-session batch because the batch is ten files, not because anyone did the work (`packages/sleep/src/phases/trace-consolidation.ts:427-433`). |
+
+One of entity-resolution's clauses never resolves on its own: an entity type holding more than
+`ENTITY_BATCH_SIZE` names is **sharded**, no model call ever spans two shards, and a corpus does not shrink
+— so every cross-shard pair stays unasked, `universeComplete` stays false, and that detector's `confirm:`
+tasks close only by hand. The phase logs the pair shortfall when it withholds closure, because
+`closureSkipped: 1` is also what a dry run and a failed batch report and only this one is permanent. A
+corpus indexed *without* embeddings does **not** cause it — `members` filters on whether a name is in
+`counts`, not on whether its centroid has a vector, so every pair is still asked about (measured: identical
+calls, counts, and closure with `embeddings` emptied). What that corpus loses is the model's evidence, since
+`nearestCentroids` answers nothing and the `nearest by memory centroid` block leaves the prompt
+(`packages/sleep/src/phases/entity-resolution.ts:1059-1122`).
 
 The edge-typing closer runs on every night the phase runs, including a night with no credentials, because
 all three of its arms are a SQL read or a file read. Its `evidence gone` arm — one endpoint's cited quote
@@ -210,7 +221,7 @@ outside the closed vocabulary, so a task minted with one carries an `unknown:blo
 closer and doctor read. The evidence would be unverifiable by the two mechanisms that exist to verify it
 (`packages/sleep/src/mint.ts:120-129`). Quotes are cut at a word boundary with **no ellipsis appended**,
 because a prefix of the source's collapsed text is contained in it and a prefix plus `…` is not — every
-task would otherwise report its own evidence as gone (`packages/sleep/src/phases/edge-typing.ts:150-163`).
+task would otherwise report its own evidence as gone (`packages/sleep/src/phases/edge-typing.ts:151-163`).
 
 Transcript evidence is plain text naming the session, with the same id in `memhtml-session`. A `cite`
 holds a repo path that doctor resolves, and a session id is not a path, so stamping one would produce a
@@ -219,7 +230,7 @@ citation pointing at nothing and fail on every commitment task forever
 accepted rather than hidden: **session-cited quotes are outside doctor's coverage**, and the
 consolidator client — the one process with the transcripts mounted — verifies whitespace-normalized
 containment and refuses the whole turn on a fabricated quote instead
-(`apps/consolidator/src/client.ts:846-935`). A transcript's own due wording reaches the body and never
+(`apps/consolidator/src/client.ts:845-988`). A transcript's own due wording reaches the body and never
 `memhtml-due`: turning "by Friday" into a date needs a reference clock and a parser this phase does not
 have, and a stamped deadline nobody stated is one that retention and `--due-before` would treat as fact.
 
