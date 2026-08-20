@@ -19,7 +19,7 @@ import { Effect } from "effect"
 /**
  * The memory type no phase of a sleep cycle touches.
  *
- * A task is live working state, and every one of the fifteen phases is a judgment about REMEMBERED
+ * A task is live working state, and every one of the sixteen phases is a judgment about REMEMBERED
  * FACTS: decay says a claim is fading, dedup says two claims are one, edge typing says one claim
  * caused or contradicts another, retention says a claim has stopped earning its place. None of those hold for
  * a thing an agent intends to do, and each would be wrong applied to one. A task the agent has
@@ -70,6 +70,41 @@ export const activeCorpus = (
     `SELECT path, memory_type, title, gist, body_text, content_hash, confidence, importance,
             word_count, created_at, updated_at, valid_until, reprieves
      FROM files WHERE archived = 0 ORDER BY created_at ASC, path ASC`
+  )
+
+/**
+ * The most recently touched active NON-TASK memories, newest first, capped.
+ *
+ * Task detection's candidate slice. Issue #44 asks for "recent/high-salience", and this is the RECENT
+ * half alone, which is the deliberate cut. The salience half would mean a retention pass — label
+ * propagation plus PageRank over the whole edge list plus the access plane — for a scan whose job is
+ * to notice text nobody has resolved yet, and salience measures the opposite: how much a memory has
+ * been leaned on since it was written. A commitment made last night has no access history at all, so
+ * ranking by salience would systematically rank the phase's best candidates last.
+ *
+ * `updated_at DESC` and not `created_at`, because a memory CORRECTED yesterday carries yesterday's
+ * text, which is the text a commitment would be in. `path ASC` breaks the tie, so the slice — and
+ * therefore the batch boundaries and the `m1`..`mN` keys — is a function of the corpus rather than of
+ * the order rows came back in.
+ *
+ * Tasks are excluded here, in the statement, matching every other read in this module. That is the
+ * no-self-referential-loop guard issue #44 names, and putting it in SQL rather than in the phase means
+ * a detected task cannot become evidence of another task even if a caller forgot to filter. The phase
+ * carries a second, path-level check for the same invariant, because this one is keyed on a projected
+ * column and the projection is refreshed once per night.
+ */
+export const recentActiveMemories = (
+  db: DatabaseShape,
+  options: { readonly limit: number }
+): Effect.Effect<ReadonlyArray<CorpusRow>, StorageFailure> =>
+  db.all<CorpusRow>(
+    `SELECT path, memory_type, title, gist, body_text, content_hash, confidence, importance,
+            word_count, created_at, updated_at, valid_until, reprieves
+     FROM files
+     WHERE archived = 0 AND memory_type NOT IN (${typePlaceholders()})
+     ORDER BY updated_at DESC, path ASC
+     LIMIT ?`,
+    [...SLEEP_EXCLUDED_TYPES, options.limit]
   )
 
 /** One candidate pair from a vector neighborhood, unoriented. */

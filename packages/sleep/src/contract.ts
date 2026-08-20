@@ -7,12 +7,21 @@
  */
 
 /**
- * The fifteen phases, in execution order.
+ * The sixteen phases, in execution order.
  *
  * The order encodes the predecessor memory system's dependencies (design §6): entity resolution precedes person
  * links so aliases have already merged, confidence decay precedes retention triage so triage
  * scores the decayed value, and dedup-merge precedes compress and retention because both operate
  * on the post-merge set.
+ *
+ * `task-detection` is sixteenth-in-list and thirteenth-in-order, sitting after `trace-consolidation`
+ * and before `integrity`, and both edges are deliberate. It scans the ACTIVE corpus for unresolved
+ * commitments, so it has to run after every phase that changes what is active — after dedup's folds,
+ * after retention's evictions, after compress's canonicals, and after trace consolidation's newly
+ * distilled memories, which are the freshest text of the night and the likeliest to carry one. And it
+ * WRITES files, so it must precede `integrity`, which repairs dangling hrefs and regenerates the
+ * directory artifacts: a task minted afterwards would be absent from its directory's `index.html`
+ * until the next night.
  */
 export const SLEEP_PHASES = [
   "preflight",
@@ -27,6 +36,7 @@ export const SLEEP_PHASES = [
   "compress",
   "reprieve",
   "trace-consolidation",
+  "task-detection",
   "integrity",
   "state-export",
   "report"
@@ -85,8 +95,13 @@ export const TRAILER_COUNTS = "Memhtml-Counts"
  * Membership means "spends model calls when a model is bound", not "needs a model to be useful".
  * `dedup-merge` and `entity-resolution` both do real deterministic work without one: dedup falls back
  * to the 0.92 cosine floor plus the divergence veto and still commits, and entity-resolution's
- * normalization and character-overlap passes run either way. The other three report a reason and
+ * normalization and character-overlap passes run either way. The other four report a reason and
  * write nothing.
+ *
+ * `task-detection` is the newest member and the only one that is net-new model spend rather than a
+ * question a phase was already asking. Issue #44 sizes it that way on purpose: surfaces 1 and 2 cover
+ * the highest-signal sources at no marginal cost, and this one is the batched scan over the active
+ * corpus, capped like every other phase and degrading to `no model bound` with nothing written.
  */
 export const LLM_PHASES: ReadonlyArray<SleepPhase> = [
   "dedup-merge",
@@ -94,7 +109,8 @@ export const LLM_PHASES: ReadonlyArray<SleepPhase> = [
   "edge-typing",
   "arc-synthesis",
   "compress",
-  "trace-consolidation"
+  "trace-consolidation",
+  "task-detection"
 ]
 
 /**
@@ -111,6 +127,9 @@ export const LLM_PHASES: ReadonlyArray<SleepPhase> = [
  * obliged to commit (this one still reports `commitSha: null` on a night with nothing to distill, no
  * consolidator bound, or a dry run), so the list names phases that CANNOT commit, not phases that
  * happened not to.
+ *
+ * `task-detection` is absent for the same reason: it commits the tasks it mints, and mints nothing on
+ * a night with no model, no candidate, or nothing above its floor.
  */
 export const NON_COMMITTING_PHASES: ReadonlyArray<SleepPhase> = ["preflight", "relationship-mining"]
 

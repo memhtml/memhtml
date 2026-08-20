@@ -3,9 +3,9 @@ title: The sleep pipeline
 description: Fifteen curation phases in a fixed order, each an isolated commit on a branch, with commit trailers as the resume mechanism and a quality gate that can refuse the merge.
 ---
 
-## 1. Fifteen phases on a branch
+## 1. Sixteen phases on a branch
 
-The nightly curation run is called sleep. It executes fifteen phases in a fixed order
+The nightly curation run is called sleep. It executes sixteen phases in a fixed order
 (`packages/sleep/src/contract.ts:17`), each producing its own commit on a branch named
 `sleep/<YYYY-MM-DD>`, suffixed `-2` when it runs a second time the same day
 (`packages/sleep/src/run.ts:45`). The branch is created before any phase runs, so `main` is never touched
@@ -15,7 +15,7 @@ file in dry mode.
 Figure 1 shows the shape of a run. Both of the gate's outcomes are drawn, because the refusal is the
 property worth seeing. There is no third outcome and no rollback.
 
-```d2 pad=20 src="_figures/sleep-branch.d2" title="Main branches into sleep/date. The fifteen phases run on that branch and are submitted for review to a gate. The gate has exactly two outgoing arrows: passes, leading to main moves, and refuses, leading to main unmoved. No arrow returns from the branch to main except through the gate."
+```d2 pad=20 src="_figures/sleep-branch.d2" title="Main branches into sleep/date. The sixteen phases run on that branch and are submitted for review to a gate. The gate has exactly two outgoing arrows: passes, leading to main moves, and refuses, leading to main unmoved. No arrow returns from the branch to main except through the gate."
 ```
 
 **Figure 1: `main` moves only when a gate that can refuse says so.** The branch is cut before any phase
@@ -25,24 +25,27 @@ moved. The two boxes leaving the gate are the only two outcomes.
 | # | Phase | Model | Git effect |
 |---|---|---|---|
 | 1 | `preflight` | no | none; runs `index update` and snapshots counts |
-| 2 | `dedup-merge` | yes | one commit: keeper gains `memhtml-supersedes`, dropped files `git mv` to archive |
-| 3 | `entity-resolution` | yes | one commit: `memhtml-entity` values normalized and cluster-merged in place |
+| 2 | `dedup-merge` | yes | one commit: keeper gains `memhtml-supersedes`, dropped files `git mv` to archive, vetoed pairs become review tasks |
+| 3 | `entity-resolution` | yes | one commit: `memhtml-entity` values normalized and cluster-merged in place, review-band pairs become review tasks |
 | 4 | `person-links` | no | one commit: `memhtml-about-person` links to `resources/people/*` |
 | 5 | `relationship-mining` | no | no commit; derived `relates_to` rows in the index only |
-| 6 | `edge-typing` | yes | one commit: typed edges promoted, and corroborated contradictions |
+| 6 | `edge-typing` | yes | one commit: typed edges promoted, corroborated contradictions written, single-detection ones deferred to review tasks |
 | 7 | `confidence-decay` | no | one commit: `memhtml-confidence` rewritten for un-reinforced files |
 | 8 | `arc-synthesis` | yes | one commit per arc |
 | 9 | `retention-triage` | no | one commit: files in the evict band `git mv` to archive |
 | 10 | `compress` | yes | one commit per batch |
 | 11 | `reprieve` | no | one commit: `memhtml-valid-until` extended, or the file archived |
 | 12 | `trace-consolidation` | yes | one commit per distilled memory |
-| 13 | `integrity` | no | one commit: dangling hrefs repaired, artifacts regenerated |
-| 14 | `state-export` | no | one commit: `.memhtml/state/access.jsonl` |
-| 15 | `report` | no | one commit: `.memhtml/sleep/<run-id>.html` |
+| 13 | `task-detection` | yes | one commit: task files for commitments and follow-ups the corpus records |
+| 14 | `integrity` | no | one commit: dangling hrefs repaired, artifacts regenerated |
+| 15 | `state-export` | no | one commit: `.memhtml/state/access.jsonl` |
+| 16 | `report` | no | one commit: `.memhtml/sleep/<run-id>.html` |
 
-The order encodes four dependencies. Entity resolution precedes person links so that aliases have already
+The order encodes five dependencies. Entity resolution precedes person links so that aliases have already
 merged. Confidence decay precedes retention triage so that triage scores the decayed value. Dedup-merge
-precedes both compress and retention triage, because both operate on the post-merge set.
+precedes both compress and retention triage, because both operate on the post-merge set. And task
+detection precedes integrity, because it writes files and integrity regenerates the directory listings
+those files belong in.
 
 Those four constraints are the whole of what the order is for, and Figure 2 draws only them. Every phase
 absent from the figure is order-independent of every other phase, which the table above cannot show.
@@ -50,24 +53,24 @@ absent from the figure is order-independent of every other phase, which the tabl
 ```d2 pad=20 src="_figures/phase-order.d2" title="Four dependency edges among six phases. Phase 2 dedup-merge points at phase 10 compress and at phase 9 retention-triage, both labelled post-merge set. Phase 3 entity-resolution points at phase 4 person-links, labelled aliases merged first. Phase 7 confidence-decay points at phase 9 retention-triage, labelled scores the decayed value. Dedup-merge, entity-resolution and compress are drawn as hexagons because all three call a model; the other three are deterministic."
 ```
 
-**Figure 2: the fixed order exists to satisfy four edges.** Nine of the fifteen phases appear
+**Figure 2: the fixed order exists to satisfy four edges.** Ten of the sixteen phases appear
 nowhere in this graph, so the order among them is arbitrary and could change without consequence.
 The three hexagons mark the phases here that call a model, and each one's edge is about that call:
 `compress` archives a member only when the model names it as absorbed, `dedup-merge` gates both of its
 dependents on a fold the model proposed and the veto allowed, and `person-links` waits on
 `entity-resolution` so a person's aliases have already collapsed before a file is minted for them.
 
-Six phases call a model (`packages/sleep/src/contract.ts:91`). Every other phase is deterministic and
+Seven phases call a model (`packages/sleep/src/contract.ts:91`). Every other phase is deterministic and
 costs no model call.
 
 Two of the six still do real work without one, and they degrade differently from the other four.
 `entity-resolution`'s normalization and character-overlap passes are a pre-stage, so a credential-free
 run still collapses `Checkout API` onto `checkout api`; what an absent model removes is the decision
 core, not the phase. `dedup-merge` falls back to the 0.92 cosine floor plus the divergence veto and
-still commits, so a night with no credentials folds every duplicate a cosine can prove. The other four
+still commits, so a night with no credentials folds every duplicate a cosine can prove. The other five
 report a reason and write nothing.
 
-Every one of the six that judges a group of memories at once shares one batching kernel
+Every one of the seven that judges a group of memories at once shares one batching kernel
 (`packages/sleep/src/batch.ts`): the phase sorts its rows, the kernel slices them into batches, mints
 opaque `m1`..`mN` keys over each batch's members, frames the member list as one prompt, and resolves the
 keys an answer names back to rows. A key the batch never offered resolves to nothing and is dropped, so
@@ -115,7 +118,7 @@ disagree exactly when it matters, namely when a process is killed after `git com
 written. The commit is the fact, the row is a convenience the history can regenerate, and a failed
 reporting write never fails a run (`packages/sleep/src/run.ts:434-439`).
 
-A resume reports already-done phases explicitly as `skipped`, so its report still accounts for all fifteen
+A resume reports already-done phases explicitly as `skipped`, so its report still accounts for all sixteen
 (`packages/sleep/src/run.ts:176-191`).
 
 ## 4. Every phase excludes tasks
@@ -133,6 +136,11 @@ untouched for a month scores at the floor, and that is exactly the task most lik
 owed. Evicting on that signal would archive the neglected work first and leave the busy work behind
 (`packages/sleep/src/phases/retention-triage.ts:24-28`).
 
+Four phases now WRITE tasks, and the exclusion is what makes that safe rather than circular. A detected
+task is an ordinary `task` file, so it inherits every firewall above the moment it lands: no phase scores
+it, no edge reaches it, and `task-detection`'s own scan cannot see it, which is why a detector cannot
+restate its own queue every night (`packages/sleep/src/tasks.ts`).
+
 ## 5. Thresholds and caps
 
 | Constant | Value | Location |
@@ -147,6 +155,8 @@ owed. Evicting on that signal would archive the neglected work first and leave t
 | Edge-typing pairs per call / promotions per night | 30 / 50 | `packages/sleep/src/phases/edge-typing.ts:86`, `:122` |
 | Confidence commit delta | 0.005 | `packages/domain/src/decay.ts:135` |
 | Compress batch / candidates | 8 / 2000 | `packages/sleep/src/phases/compress.ts:46-55` |
+| Task-detection scan / batch / confidence | 200 / 20 / 0.7 | `packages/sleep/src/phases/task-detection.ts` |
+| Detected tasks per night, across detectors | 10 | `packages/sleep/src/tasks.ts` |
 | Retention bands | keep > 0.7, evict ≤ 0.3 | `packages/domain/src/retention.ts:144-145` |
 | Reprieve floor / days / max | 0.5 / 14 / 3 | `packages/domain/src/retention.ts:277-287` |
 
@@ -314,7 +324,49 @@ The phase detects and stops there. A promoted `contradicts` asserts the conflict
 no `memhtml-valid-until` is closed, and neither side is archived. Choosing the winner of a contradiction
 is a one-way door on stored belief, and it belongs to an agent or a human rather than to a nightly job.
 
-## 10. Graph analysis runs in TypeScript
+## 10. Detected tasks are proposals with evidence
+
+Four phases write task files, and one module holds everything they share
+(`packages/sleep/src/tasks.ts`). A task is already a memory type with its own lifecycle, its own edge
+class, and a standing exclusion from every phase, so a detected task needs no new artifact class: it
+inherits every firewall by being a task.
+
+Each detector reads a decision the night declined to make. `entity-resolution` defers an alias pair
+inside the 0.75-0.85 character band or below the model's confidence floor. `dedup-merge` defers a
+near-duplicate pair the divergence veto refused, naming which predicate fired. `edge-typing` defers a
+contradiction at one detection, below the two-night promotion gate. `task-detection` reads the 200
+most-recently-updated memories in batches of 20 and asks which of them record a commitment nobody closed.
+
+Five guards make that safe, and each one is the reason a detected queue is usable rather than noise.
+
+**The key is the path.** A finding's stable digest is the filename stem:
+`areas/inbox/tasks/det-<12 hex>-<slug>.html`, over the detector's name plus a canonical finding string
+the detector sorts. So a second night refreshes the `memhtml-updated` stamp instead of opening a
+duplicate, and the idempotence surface survives `rm index.db && rebuild` with no projection at all. The
+content hash cannot serve here: `files_content_hash_active` deliberately carves out open tasks, because
+two open tasks with identical bodies are two real work items.
+
+**Evidence is verified in code, never asked for.** A detector citing a sentence has that sentence looked
+up in the file it names, whitespace-collapsed, and the mint is REFUSED when it is absent. That is what
+keeps a model's fabricated sentence out of a file a human then reads as a citation. A detector citing a
+MEASUREMENT — a similarity ratio, a veto predicate, a detection count — says so in the type, because no
+sentence in the corpus states one and a quote would have to be manufactured.
+
+**Ten a night, across every detector.** The budget is a mutable value the RUN creates and threads through
+`PhaseEnv`, not a module counter, so two runs in one process hold two budgets. Overflow is counted rather
+than dropped silently: a detector pressing on the cap every night is a detector whose threshold is wrong.
+
+**Author separation.** Every detected task carries `memhtml-author: agent:sleep` and the tags
+`detected` plus the detector's name, so a human's queue and the machine's are told apart by metadata
+rather than by where they sit.
+
+**Self-cleaning.** A finding that stops appearing has its task stamped `done` and archived through the
+same machinery `memhtml task status done` uses, with `no longer detected` in the commit body. The sweep
+runs only on a night that judged its whole candidate set: a phase whose model call was throttled cannot
+distinguish "the finding is gone" from "I was never asked", and closing on that reading would take a real
+review out of a human's queue.
+
+## 11. Graph analysis runs in TypeScript
 
 `packages/domain/src/graph.ts:76` and `packages/domain/src/graph.ts:164` implement PageRank by power
 iteration and community detection by label propagation.
@@ -334,7 +386,7 @@ A community below three members collapses to `undefined`
 cross-pair edge look like a bridge. `bridgeCounts` gives a node in no community a count of 0 rather than
 its full degree (`packages/domain/src/graph.ts:236-247`).
 
-## 11. The model phases
+## 12. The model phases
 
 There is one call shape: the native Messages API with a forced tool
 (`packages/llm/src/wire.ts:9-12`, `packages/llm/src/constants.ts:24`), decoded against its schema and
@@ -352,8 +404,9 @@ typed nine batches of pairs and lost the tenth has done nine batches of work.
 
 Isolation is what makes the batching safe to widen. A batch is the unit a failure costs, so each phase
 sizes its batch for the answer's attention rather than for the context window: thirty pairs for edge
-typing, forty members for dedup, eight for compress, because compress asks the model to write one
-canonical carrying every member's facts while dedup asks only which members restate each other. A batch
+typing, forty members for dedup, twenty for task detection, eight for compress, because compress asks the
+model to write one canonical carrying every member's facts while dedup asks only which members restate
+each other and task detection asks each member for one verbatim sentence. A batch
 twice the right size buys half the calls and invites the model to answer the first few members carefully
 and the rest by pattern.
 
@@ -363,7 +416,7 @@ content for arcs it should have skipped, and the writing is the expensive half
 names it as absorbed, so an omitted member stays active, which is the safe outcome
 (`packages/sleep/src/phases/compress.ts:24-27`).
 
-## 12. Generated artifacts are the one merge-conflict source
+## 13. Generated artifacts are the one merge-conflict source
 
 The per-directory `index.html` files and the root `sitemap.xml` are deterministic given the row set, and
 only `memhtml publish` and the integrity phase regenerate them. An ordinary write never does
@@ -373,7 +426,7 @@ only `memhtml publish` and the integrity phase regenerate them. An ordinary writ
 the `merge.ours.driver` config that `memhtml init` sets. With both in place a conflict in a generated file
 is resolved by regenerating it rather than by editing it.
 
-## 13. The integrity phase distinguishes two kinds of dangling href
+## 14. The integrity phase distinguishes two kinds of dangling href
 
 `packages/sleep/src/phases/integrity.ts:20-34`. An archived target still exists and the edge still says
 something true, so the href is rewritten to the archive path. That path is derived with `archivePathFor`
@@ -385,7 +438,7 @@ a warning. Leaving it would produce a dangling row on every rebuild from then on
 newest-first over a ten-year window (`packages/sleep/src/phases/integrity.ts:127`), so the most recent
 archiving of a twice-archived path wins.
 
-## 14. Review and the merge gate
+## 15. Review and the merge gate
 
 `review` (`packages/sleep/src/review.ts:19`) reports per-phase counts, the commit list with their trailers,
 `git diff --stat base..HEAD`, and a per-file classification: `meta-only`, `body-changed`, `archived`,

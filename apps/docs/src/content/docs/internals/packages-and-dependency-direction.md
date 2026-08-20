@@ -13,7 +13,7 @@ description: The layering, the test that enforces the pure packages' purity, the
 | `store` | Git-backed file store: write, read, correct, archive, link, commit. |
 | `index` | SQLite service, migrations, indexer, projection, retrieval. |
 | `traces` | Streaming session-JSONL parser and scanner. |
-| `sleep` | The fifteen curation phases, each a git commit. |
+| `sleep` | The sixteen curation phases, each a git commit. |
 | `llm` | Bedrock embeddings and forced-tool structured output. |
 | `eval` | The retrieval quality gate and its generated fixture corpus. |
 | `apps/cli`, `apps/mcp` | The `memhtml` binary and the `memhtml-mcp` stdio server. |

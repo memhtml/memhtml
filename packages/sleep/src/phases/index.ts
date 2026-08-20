@@ -14,6 +14,7 @@ import { reportPhase } from "./report.js"
 import { reprieve } from "./reprieve.js"
 import { retentionTriage } from "./retention-triage.js"
 import { stateExport } from "./state-export.js"
+import { taskDetection } from "./task-detection.js"
 import { traceConsolidation } from "./trace-consolidation.js"
 
 /**
@@ -37,6 +38,7 @@ export const PHASE_BODIES: Readonly<Record<SleepPhase, PhaseBody>> = {
   compress,
   reprieve,
   "trace-consolidation": traceConsolidation,
+  "task-detection": taskDetection,
   integrity,
   "state-export": stateExport,
   report: reportPhase([])
@@ -129,6 +131,14 @@ export {
   stateExport,
   toSidecarEntry
 } from "./state-export.js"
+export {
+  TASK_DETECT_BATCH_SIZE,
+  TASK_DETECT_DETECTOR,
+  TASK_DETECT_FLOOR,
+  TASK_DETECT_MEMBER_CHARS,
+  TASK_SCAN_LIMIT,
+  taskDetection
+} from "./task-detection.js"
 export {
   TRACE_MIN_BYTES,
   TRACE_QUIET_MILLIS,

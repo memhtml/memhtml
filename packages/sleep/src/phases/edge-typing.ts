@@ -1,4 +1,5 @@
 import type { StorageFailure } from "@memhtml/contracts/errors"
+import type { GitFailure } from "@memhtml/store"
 import { Effect } from "effect"
 
 import { assembleBatches, batchCall, keyMembers, resolveKeys } from "../batch.js"
@@ -23,6 +24,7 @@ import {
   SLEEP_EXCLUDED_TYPES,
   sharedEntityPairs
 } from "../sql.js"
+import { budgetFor, closeVanishedDetections, detectionKey, mintDetectedTask } from "../tasks.js"
 
 /**
  * Phase 6, edge typing. Candidate pairs grouped and BATCHED, one structured verdict list per call
@@ -76,6 +78,13 @@ import {
  * superseded, no `memhtml-valid-until` is closed, neither side is archived. Choosing the winner of a
  * contradiction is a one-way door on stored belief, and it belongs to an agent or a human, not to a
  * nightly job.
+ *
+ * **A single-detection contradiction becomes a TASK.** Surface 1 of issue #44, third detector, and the
+ * one whose gap was widest: a contradiction at `detections = 1` is written nowhere at all, so a real
+ * conflict is invisible for a night and one the model never repeats is invisible forever. The task
+ * names both files and carries the model's confidence and rationale, and it CLOSES on the second night
+ * when the edge is promoted — the corpus then records the conflict where a reader will find it, which
+ * is a better home for it than a to-do item.
  *
  * This phase replaced `conflict-detection`, which asked one `generateObject` per pair for a stance
  * verdict over `{contradicts, entails, neutral}`. Contradiction is now one more verdict in the same
@@ -265,7 +274,11 @@ export const edgeTyping: PhaseBody = (env) =>
       promoted: 0,
       skipped: 0,
       capped: 0,
-      duplicates: 0
+      duplicates: 0,
+      tasksMinted: 0,
+      tasksFramed: 0,
+      tasksDismissed: 0,
+      tasksClosed: 0
     }
     if (candidates.length === 0) return emptyOutcome(zero)
     if (env.dryRun) return emptyOutcome({ ...zero, candidates: candidates.length })
@@ -324,6 +337,14 @@ export const edgeTyping: PhaseBody = (env) =>
     /** Second-and-later verdicts naming a key their batch had already answered for. */
     let duplicates = 0
     let llmCalls = 0
+    /**
+     * Contradictions this night detected for the FIRST time, so below the promotion gate.
+     *
+     * A value rather than a count, for the same reason `entity-resolution` keeps its review pairs: a
+     * conflict the gate declined to write is a conflict nobody is told about, and a human deciding
+     * which of two claims survives is exactly what the gate is holding the decision open for.
+     */
+    const deferred: Array<PendingContradiction> = []
 
     for (const batch of batches) {
       /** Opaque keys again, so a verdict cannot name a path. Each SIDE is sliced to its budget. */
@@ -395,6 +416,24 @@ export const edgeTyping: PhaseBody = (env) =>
             at: env.at
           })
           const row = rows[0]
+          /**
+           * A first detection is the case issue #44 asks for a task about: the model asserts these two
+           * claims cannot both be true, and the corroboration gate correctly refuses to write it into
+           * the files on one night's evidence — so a real contradiction sits invisible for a night,
+           * and one the model will not see again sits invisible forever. Deferring it to a human is
+           * the third detector on surface 1, and it is the ONLY one of the three where a second night
+           * resolves the finding on its own: at `detections >= 2` the edge is promoted and the task
+           * closes, because the corpus now records the conflict where a reader will find it.
+           */
+          if (row !== undefined && row.detections < PROMOTION_DETECTIONS) {
+            deferred.push({
+              src: candidate.pair.src,
+              dst: candidate.pair.dst,
+              confidence: verdict.confidence,
+              detections: row.detections,
+              ...(verdict.rationale === undefined ? {} : { rationale: verdict.rationale })
+            })
+          }
           if (row === undefined || row.detections < PROMOTION_DETECTIONS || row.promoted === 1) {
             continue
           }
@@ -496,6 +535,14 @@ export const edgeTyping: PhaseBody = (env) =>
       }
     }
 
+    /**
+     * The single-detection contradictions become tasks in the SAME commit as the promotions. The
+     * sweep is gated on a night that judged its whole candidate set: `skipped` counts pairs whose
+     * batch's call failed as well as pairs whose endpoint the tree no longer holds, and a pair the
+     * model was never asked about must not read as a pair the model stopped contradicting.
+     */
+    const tasks = yield* mintContradictionTasks(env, deferred, skipped === 0)
+
     const counts = {
       candidates: candidates.length,
       judged,
@@ -504,15 +551,138 @@ export const edgeTyping: PhaseBody = (env) =>
       promoted,
       skipped,
       capped,
-      duplicates
+      duplicates,
+      tasksMinted: tasks.minted,
+      tasksFramed: tasks.framed,
+      tasksDismissed: tasks.dismissed,
+      tasksClosed: tasks.closed
     }
-    if (promoted === 0 && typed === 0) return { counts, commitSha: null, llmCalls }
+    if (
+      promoted === 0 &&
+      typed === 0 &&
+      tasks.minted === 0 &&
+      tasks.refreshed === 0 &&
+      tasks.closed === 0
+    ) {
+      return { counts, commitSha: null, llmCalls }
+    }
 
     const commitSha = yield* commitPhase(
       env,
       "edge-typing",
       `promote ${typed} typed edges and ${promoted} corroborated contradictions`,
-      counts
+      counts,
+      tasks.minted + tasks.closed === 0
+        ? undefined
+        : `deferred ${tasks.minted} single-detection contradictions to review tasks` +
+            (tasks.closed === 0 ? "" : `; closed ${tasks.closed}: no longer detected`)
     )
     return { counts, commitSha, llmCalls }
   })
+
+/** The detector name every contradiction review task is keyed and swept under. */
+export const EDGE_REVIEW_DETECTOR = "edge-typing"
+
+/** One contradiction the corroboration gate held back this night, with the verdict behind it. */
+interface PendingContradiction {
+  readonly src: string
+  readonly dst: string
+  readonly confidence: number
+  readonly detections: number
+  /** The model's own sentence naming the claims that conflict. Absent when it gave none. */
+  readonly rationale?: string | undefined
+}
+
+/**
+ * Mint one review task per held-back contradiction, and sweep the ones that stopped being held back.
+ *
+ * **The key is the REL plus the two paths sorted.** The rel is in it because `contradicts` is one of
+ * several verdicts a pair could earn and each would be a different question; the paths are sorted
+ * because a contradiction is symmetric — that symmetry is the phase's own stated reason for promoting
+ * it into both files — so the question is unordered and tonight's `(b, a)` must key with last night's
+ * `(a, b)`.
+ *
+ * **The evidence is a MEASUREMENT even though the model supplied a rationale.** The rationale is prose
+ * ABOUT the two claims, not a span copied out of either, so it would fail the verbatim check on every
+ * mint — and rightly, since the check exists to stop a model's sentence from being presented as a
+ * citation. It rides in the measurement's own text, attributed to the model, where a reader can weigh
+ * it as an opinion.
+ *
+ * **The sweep here is the one whose closure is a good outcome.** A pair promoted on its second night
+ * leaves `deferred`, so the task closes — and the corpus now carries the `contradicts` edge in both
+ * files, which is a better place for the conflict to live than a to-do item. The other two detectors
+ * close when a finding evaporates; this one also closes when the system resolves it.
+ */
+const mintContradictionTasks = (
+  env: PhaseEnv,
+  deferred: ReadonlyArray<PendingContradiction>,
+  judged: boolean
+): Effect.Effect<
+  {
+    readonly minted: number
+    readonly refreshed: number
+    /** The frame-key proximity check's refusals. Counted so the task arithmetic sums. */
+    readonly framed: number
+    /** Pairs a human already closed, whose dismissal stands. See `tasks.ts`'s module header. */
+    readonly dismissed: number
+    readonly closed: number
+  },
+  StorageFailure | GitFailure
+> =>
+  Effect.gen(function* () {
+    const budget = budgetFor(env)
+    const byKey = new Map<string, PendingContradiction>()
+    for (const pending of deferred) {
+      const key = detectionKey(EDGE_REVIEW_DETECTOR, contradictionFinding(pending))
+      if (!byKey.has(key)) byKey.set(key, pending)
+    }
+
+    let minted = 0
+    let refreshed = 0
+    let framed = 0
+    let dismissed = 0
+    /** Key order, so which pairs a budget-capped night surfaces is a function of the pairs. */
+    for (const key of [...byKey.keys()].sort()) {
+      const pending = byKey.get(key)
+      if (pending === undefined) continue
+      const outcome = yield* mintDetectedTask(env, budget, {
+        detector: EDGE_REVIEW_DETECTOR,
+        finding: contradictionFinding(pending),
+        title: `Decide a contradiction between ${basenameOf(pending.src)} and ${basenameOf(pending.dst)}`,
+        claim: `decide: ${pending.src} and ${pending.dst} make claims that cannot both be true.`,
+        detail:
+          `Detected once. The edge is written into both files only at ` +
+          `${String(PROMOTION_DETECTIONS)} detections, so nothing in the corpus records this ` +
+          `conflict yet. Sleep never picks the winner of a contradiction: that is a one-way door on ` +
+          `stored belief.`,
+        evidence: { kind: "measurement", detail: contradictionEvidence(pending) }
+      })
+      if (outcome === "minted") minted += 1
+      else if (outcome === "refreshed") refreshed += 1
+      else if (outcome === "framed") framed += 1
+      else if (outcome === "dismissed") dismissed += 1
+    }
+
+    const closed = judged
+      ? yield* closeVanishedDetections(env, EDGE_REVIEW_DETECTOR, new Set(byKey.keys()))
+      : 0
+    return { minted, refreshed, framed, dismissed, closed }
+  })
+
+/** The canonical finding string: the rel and the two paths, sorted. */
+const contradictionFinding = (pending: PendingContradiction): string =>
+  pending.src < pending.dst
+    ? `contradicts ${pending.src} ${pending.dst}`
+    : `contradicts ${pending.dst} ${pending.src}`
+
+/** The evidence line: the confidence, the detection count, and the model's rationale if it gave one. */
+const contradictionEvidence = (pending: PendingContradiction): string =>
+  `the model judged this a contradiction at confidence ${pending.confidence.toFixed(2)}, ` +
+  `detection ${String(pending.detections)} of ${String(PROMOTION_DETECTIONS)}` +
+  (pending.rationale === undefined || pending.rationale.trim() === ""
+    ? ""
+    : `; it said: ${pending.rationale.replace(/\s+/g, " ").trim()}`)
+
+/** A path's filename without its extension, for a title that fits `ls` and a commit subject. */
+const basenameOf = (path: string): string =>
+  path.slice(path.lastIndexOf("/") + 1).replace(/\.html$/, "")

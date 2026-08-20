@@ -1,4 +1,5 @@
 import { isSlug, SLUG_MAX_LENGTH } from "@memhtml/contracts/slug"
+import { frameKeyOf } from "@memhtml/domain"
 import { parseMemory } from "@memhtml/html"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
@@ -6,6 +7,8 @@ import { describe, expect, it } from "vitest"
 import { TRAILER_COUNTS, TRAILER_PHASE, TRAILER_RUN } from "../src/contract.js"
 import type { PhaseEnv } from "../src/env.js"
 import {
+  COMMITMENT_DETECTOR,
+  COMMITMENT_FLOOR,
   TRACE_MIN_BYTES,
   TRACE_SESSIONS_PER_RUN,
   traceConsolidation
@@ -13,11 +16,22 @@ import {
 import { instantFor } from "../src/run.js"
 import { sessionManifestRows } from "../src/sql.js"
 import {
+  closeDetectedTask,
+  DETECTED_TAG,
+  DETECTED_TASK_CAP,
+  DETECTED_TASK_DIR,
+  isDetectedTaskPath,
+  makeDetectionBudget,
+  openDetections
+} from "../src/tasks.js"
+import {
   candidate,
   candidates,
+  commitment,
   consolidatorFailure,
   partiallyRead,
-  scriptedConsolidator
+  scriptedConsolidator,
+  withCommitments
 } from "../src/testing.js"
 import {
   consolidationWatermarks,
@@ -48,18 +62,32 @@ import {
  */
 
 const DATE = "2026-08-08"
+/** A second night, for the refresh and cross-night-closure arms. */
+const LATER = "2026-08-09"
 
-const envFor = (fixture: Fixture, dryRun = false): PhaseEnv => {
-  const instant = instantFor(DATE)
+const envFor = (
+  fixture: Fixture,
+  dryRun = false,
+  options: { readonly date?: string; readonly cap?: number } = {}
+): PhaseEnv => {
+  const date = options.date ?? DATE
+  const instant = instantFor(date)
   return {
     deps: fixture.deps,
-    runId: `sleep/${DATE}`,
-    branch: `sleep/${DATE}`,
+    runId: `sleep/${date}`,
+    branch: `sleep/${date}`,
     baseSha: "",
-    date: DATE,
+    date,
     at: instant.at,
     atMillis: instant.millis,
-    dryRun
+    dryRun,
+    /**
+     * Stated EXPLICITLY on every env this file builds, even at the default cap, because `budgetFor`
+     * falls back to a fresh budget when the field is absent — so a phase driven twice by one test would
+     * silently get two full caps and the overflow arm would be untestable. A run supplies one budget
+     * for the night; this mirrors that.
+     */
+    detectionBudget: makeDetectionBudget(options.cap ?? DETECTED_TASK_CAP)
   }
 }
 
@@ -1352,6 +1380,897 @@ describe("trace-consolidation dry run", () => {
           expect(yield* headSha(fixture)).toBe(before)
           expect(yield* consolidationWatermarks(fixture)).toEqual([])
           expect(yield* fixture.deps.store.dirtyPaths().pipe(Effect.orDie)).toEqual([])
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+})
+
+/**
+ * Surface 2 of issue #44: the same consolidator answer also carries COMMITMENTS, and the phase turns
+ * them into detected tasks or closes the ones a session says are done.
+ *
+ * Every case here asserts against the TREE and against git, for the reason the file header states: a
+ * phase reporting `commitmentTasks: 1` while writing nothing would satisfy a count assertion and none
+ * of the ones that matter. Counts are asserted beside the file they claim to describe.
+ *
+ * Each `it` names the mutation that makes it fail. The recorded runs are in the PR body.
+ */
+
+/** Every detected task in the WORKING TREE, path-ordered, read through the module's own tree read. */
+const detectedIn = (fixture: Fixture, date = DATE) =>
+  openDetections(envFor(fixture, false, { date })).pipe(Effect.orDie)
+
+/** Detected-task paths at a commitish, from git rather than from the working tree. */
+const detectedAt = (fixture: Fixture, commitish: string): Effect.Effect<ReadonlyArray<string>> =>
+  fixture.deps.git.run(["ls-tree", "-r", "--name-only", commitish]).pipe(
+    Effect.map((text) =>
+      text
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => isDetectedTaskPath(line))
+        .sort()
+    ),
+    Effect.orElseSucceed(() => [] as ReadonlyArray<string>)
+  )
+
+/** One session seeded and settled, which is what every case below needs before it can ask. */
+const oneSession = (fixture: Fixture, sessionId = "session-a") => seedTrace(fixture, { sessionId })
+
+describe("trace-consolidation mints tasks from commitments", () => {
+  it("mints one detected task per unresolved commitment, with from_session provenance", async () => {
+    /**
+     * The happy path, asserted on the FILE rather than on the count. Four things have to be true at
+     * once for a detected commitment task to be usable, and each is a separate way this could ship
+     * broken: it is a `task` (so it inherits every sleep exclusion by being one), it is authored
+     * `agent:sleep` (the author separation), its path carries the detection digest (the idempotence
+     * surface `--detected` filters on), and it carries `memhtml-session` (issue #44's `from_session`).
+     *
+     * (Mutation: dropping the `sessionId` spread from `mintDetectedTask`'s `renderTemplate` call leaves
+     * every count and every other assertion here green and fails only the `metas.sessionId` line —
+     * which is exactly how quietly the provenance would have gone missing.)
+     */
+    const QUOTE = "SPECIFIC-VERBATIM-COMMITMENT-SPAN that must never reach the corpus"
+    const consolidator = scriptedConsolidator(() =>
+      withCommitments([
+        commitment({
+          statement: "wire the capture path before the next release",
+          actor: "agent",
+          evidence: { sessionId: "session-a", quote: QUOTE },
+          confidence: 0.9
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture)
+          const base = yield* headSha(fixture)
+
+          const outcome = yield* traceConsolidation(envFor(fixture))
+
+          expect(outcome.counts.commitments).toBe(1)
+          expect(outcome.counts.commitmentTasks).toBe(1)
+          expect(outcome.counts.completionsApplied).toBe(0)
+          expect(outcome.counts.completionsUnmatched).toBe(0)
+          // No candidate memories in this answer, so every file added is the commitment pass's.
+          expect(outcome.counts.written).toBe(0)
+
+          const paths = yield* detectedAt(fixture, "HEAD")
+          expect(paths).toHaveLength(1)
+          const path = paths[0] ?? ""
+          expect(path.startsWith(`${DETECTED_TASK_DIR}/`)).toBe(true)
+
+          const html = yield* atHead(fixture, path)
+          const doc = yield* parseMemory(html ?? "")
+          expect(doc.metas.memoryType).toBe("task")
+          expect(doc.metas.taskStatus).toBe("todo")
+          expect(doc.metas.author).toBe("agent:sleep")
+          // `from_session` provenance, which projects to `files.session_id`.
+          expect(doc.metas.sessionId).toBe("session-a")
+          expect(doc.tags[0]).toBe(DETECTED_TAG)
+          expect(doc.tags[1]).toBe(COMMITMENT_DETECTOR)
+          // The body names the work and the session a reviewer would go back to.
+          expect(doc.article.gist).toContain("wire the capture path")
+          expect(doc.article.bodyText).toContain("session-a")
+
+          /**
+           * The trace plane's central invariant, on the surface most likely to break it: the verbatim
+           * transcript span is NOT in the file, at the byte level, and IS in the commit message. This
+           * is the same assertion the candidate arm carries, because a commitment task's body is a
+           * second place a quote could have been copied to.
+           *
+           * (Mutation: passing `evidence.quote` as the `session` arm's `statement`, or adding a
+           * `quote` field to that arm and rendering it, fails here and nowhere else.)
+           */
+          expect(html).not.toContain(QUOTE)
+          const message = yield* messageOf(fixture, "HEAD")
+          expect(message).toContain(QUOTE)
+          expect(message).toContain("session-a")
+          // The indent is the trailer-injection guard, and this text came from a model.
+          expect(message).toContain(`  commitment session-a: ${QUOTE}`)
+
+          // One commit for the batch, on the phase's own trailer, downstream of the base.
+          expect(outcome.commitSha).not.toBeNull()
+          const trailers = yield* fixture.deps.git
+            .logTrailers(`${base}..HEAD`, TRAILER_PHASE)
+            .pipe(Effect.orDie)
+          expect(trailers).toHaveLength(1)
+          expect(trailers[0]?.values).toEqual(["trace-consolidation"])
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("drops a commitment whose actor is not first-person, minting nothing", async () => {
+    /**
+     * Issue #44 asks for first-person commitments only. The contract keeps `other` in the vocabulary so
+     * a model can report a third party's commitment ACCURATELY instead of mislabelling it as the user's,
+     * and this is the filter that makes that honesty free.
+     *
+     * The fixture carries a first-person commitment BESIDE the `other` one, which is what makes the
+     * case non-vacuous: a phase that minted nothing at all would pass a bare "no task from `other`"
+     * assertion. One task lands, and it is the `agent` one.
+     *
+     * (Mutation: deleting the `FIRST_PERSON_ACTORS` check from `commitmentRefusalFor` mints two tasks
+     * and fails both the count and the tree assertion.)
+     */
+    const consolidator = scriptedConsolidator(() =>
+      withCommitments([
+        commitment({
+          statement: "a colleague said they would ship the migration",
+          actor: "other",
+          evidence: { sessionId: "session-a", quote: "sanju said he'd ship the migration" }
+        }),
+        commitment({
+          statement: "pin the flaky teardown port",
+          actor: "agent",
+          evidence: { sessionId: "session-a", quote: "I'll pin the teardown port" }
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture)
+          const outcome = yield* traceConsolidation(envFor(fixture))
+
+          expect(outcome.counts.commitments).toBe(2)
+          expect(outcome.counts.commitmentTasks).toBe(1)
+          expect(outcome.counts.commitmentsSkipped).toBe(1)
+
+          const open = yield* detectedIn(fixture)
+          expect(open).toHaveLength(1)
+          expect(open[0]?.claim).toContain("pin the flaky teardown port")
+          // The dropped one is nowhere in the tree, and its quote is not in the commit either.
+          expect(yield* messageOf(fixture, "HEAD")).not.toContain("sanju")
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("counts a below-floor commitment and mints nothing for it", async () => {
+    /**
+     * The floor is the guard against a queue nobody reads, and `COMMITMENT_FLOOR` is read from the
+     * module rather than restated, so a change to the number moves this test with it. The pair is
+     * `floor - 0.01` and `floor` exactly, which pins the comparison as `>=` rather than `>`: a
+     * commitment AT the floor is admissible, and a strict comparison would silently discard the
+     * boundary case every model that reports round numbers lands on.
+     *
+     * (Mutation: `<=` instead of `<` in the floor check drops the at-floor commitment and fails this;
+     * deleting the check mints both and fails it too.)
+     */
+    const consolidator = scriptedConsolidator(() =>
+      withCommitments([
+        commitment({
+          statement: "maybe revisit the retry budget",
+          confidence: COMMITMENT_FLOOR - 0.01,
+          evidence: { sessionId: "session-a", quote: "we might revisit the retry budget" }
+        }),
+        commitment({
+          statement: "raise the retry budget to five",
+          confidence: COMMITMENT_FLOOR,
+          evidence: { sessionId: "session-a", quote: "I'll raise the retry budget to five" }
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture)
+          const outcome = yield* traceConsolidation(envFor(fixture))
+
+          expect(outcome.counts.commitmentsBelowFloor).toBe(1)
+          expect(outcome.counts.commitmentTasks).toBe(1)
+          const open = yield* detectedIn(fixture)
+          expect(open).toHaveLength(1)
+          expect(open[0]?.claim).toContain("raise the retry budget")
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("drops a commitment citing a session outside the batch it asked about", async () => {
+    /**
+     * The client already refuses a whole turn citing a session it did not make READABLE. This is the
+     * phase's own, narrower containment: an id outside the BATCH must not become a task whose
+     * `from_session` provenance names a session nobody selected. It is the same posture `analyzedFrom`
+     * takes toward the watermark set — an injected collaborator may narrow what the phase asked about
+     * and never widen it.
+     *
+     * (Mutation: dropping the `batchSessionIds.has(...)` check mints a task stamped `session-elsewhere`,
+     * failing the count and the tree assertion.)
+     */
+    const consolidator = scriptedConsolidator(() =>
+      withCommitments([
+        commitment({
+          statement: "a commitment attributed to a session nobody asked about",
+          evidence: { sessionId: "session-elsewhere", quote: "invented provenance" }
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture)
+          const before = yield* headSha(fixture)
+          const outcome = yield* traceConsolidation(envFor(fixture))
+
+          expect(outcome.counts.commitments).toBe(1)
+          expect(outcome.counts.commitmentTasks).toBe(0)
+          expect(outcome.counts.commitmentsSkipped).toBe(1)
+          expect(yield* detectedIn(fixture)).toEqual([])
+          // No commit at all: nothing was staged, so the commitment pass costs no empty diff.
+          expect(yield* headSha(fixture)).toBe(before)
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("respects the run's SHARED detection budget and counts the overflow", async () => {
+    /**
+     * The budget is the run's, taken once per phase invocation and threaded, so a cap of one turns the
+     * second commitment away rather than handing it a fresh allowance. The cap exists because "a noisy
+     * detector that mints 200 tasks destroys the working set it exists to serve", and the overflow is
+     * COUNTED rather than dropped silently.
+     *
+     * (Mutation: replacing `budgetFor(env)` with `makeDetectionBudget()` — a fresh cap for this phase
+     * rather than the run's shared one — mints both and fails this. Moving `budgetFor` INSIDE the mint
+     * loop does NOT fail it, and that is worth recording: with `detectionBudget` present on the env,
+     * `budgetFor` returns the same object every call, so the mutation is a no-op. The case that made it
+     * matter is a phase driven with no budget on the env, which `budgetFor`'s own contract covers.)
+     */
+    const consolidator = scriptedConsolidator(() =>
+      withCommitments([
+        commitment({
+          statement: "first commitment of the night",
+          evidence: { sessionId: "session-a", quote: "I'll do the first thing" }
+        }),
+        commitment({
+          statement: "second commitment of the night",
+          evidence: { sessionId: "session-a", quote: "I'll do the second thing" }
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture)
+          const outcome = yield* traceConsolidation(envFor(fixture, false, { cap: 1 }))
+
+          expect(outcome.counts.commitments).toBe(2)
+          expect(outcome.counts.commitmentTasks).toBe(1)
+          // The overflow is COUNTED, never silently dropped: a detector pressing against the cap every
+          // night is a detector whose threshold is wrong, and that is only visible in the counts.
+          expect(outcome.counts.commitmentsCapped).toBe(1)
+          expect(yield* detectedIn(fixture)).toHaveLength(1)
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("refreshes rather than duplicating when a second night re-reads the same commitment", async () => {
+    /**
+     * Idempotence, across nights and through the KEY rather than through the content hash — two open
+     * tasks with identical bodies are two real work items, so the structural dedup index cannot answer
+     * "have I already minted this". The second night's re-read has to land on the same path.
+     *
+     * The WATERMARK is what makes this a real second night rather than the same night run twice. The
+     * first run marks `session-a` consolidated, so it leaves the batch permanently; `session-b` is
+     * seeded for the second night and carries the SAME commitment restated, which is the shape a
+     * standing intention actually takes.
+     *
+     * (Mutation: keying on the RUN id, or on the session id, mints a second task and fails this.)
+     */
+    const consolidator = scriptedConsolidator((request) =>
+      withCommitments([
+        commitment({
+          statement: "wire the capture path before the next release",
+          evidence: {
+            sessionId: request.transcripts[0]?.sessionId ?? "session-a",
+            quote: "I'll wire capture before we ship"
+          }
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture, "session-a")
+          const first = yield* traceConsolidation(envFor(fixture))
+          expect(first.counts.commitmentTasks).toBe(1)
+          const [path] = yield* detectedAt(fixture, "HEAD")
+
+          yield* oneSession(fixture, "session-b")
+          const second = yield* traceConsolidation(envFor(fixture, false, { date: LATER }))
+          // The second night really did read a DIFFERENT session, or this proves nothing.
+          expect(second.counts.batch).toBe(1)
+          expect(second.counts.commitmentTasks).toBe(0)
+          expect(second.counts.commitmentsRefreshed).toBe(1)
+
+          // ONE file, at the SAME path: the second night refreshed the stamp rather than duplicating.
+          const paths = yield* detectedAt(fixture, "HEAD")
+          expect(paths).toEqual([path])
+        }),
+      {
+        seed: DEDUP_CORPUS,
+        consolidator
+      }
+    )
+  })
+
+  it("keys on the STATEMENT alone, so one commitment said in two sessions is one task", async () => {
+    /**
+     * The other half of the keying decision, and the one that makes cross-night closure possible at all.
+     * A key carrying the session id would make Monday's task unfindable from Friday's completion, so the
+     * key is the statement — and the consequence, asserted here, is that the same promise made twice is
+     * ONE row in the queue rather than a task and a duplicate.
+     *
+     * Two DIFFERENT statements land beside them, which is what makes this non-vacuous: a phase that
+     * folded every commitment into one task would pass a bare "one task from two identical statements"
+     * assertion. Two files land, from three commitments.
+     *
+     * (Mutation: putting the session id back into `commitmentKey`'s digest mints three tasks and fails
+     * this case, and breaks every cross-night closure case below.)
+     */
+    const consolidator = scriptedConsolidator(() =>
+      withCommitments([
+        commitment({
+          statement: "pin the flaky teardown port",
+          evidence: { sessionId: "session-a", quote: "I'll pin the teardown port" }
+        }),
+        commitment({
+          statement: "pin the flaky teardown port",
+          evidence: { sessionId: "session-b", quote: "still need to pin the teardown port" }
+        }),
+        commitment({
+          statement: "raise the retry budget to five",
+          evidence: { sessionId: "session-b", quote: "I'll raise the retry budget" }
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture, "session-a")
+          yield* oneSession(fixture, "session-b")
+          const outcome = yield* traceConsolidation(envFor(fixture))
+
+          expect(outcome.counts.commitments).toBe(3)
+          expect(outcome.counts.commitmentTasks).toBe(2)
+          /**
+           * The repeat is a REFRESH inside one answer, not a silent drop: the count says the phase saw
+           * it and recognized it as already open, which is the reading an operator needs to tell "one
+           * commitment" from "two the phase folded".
+           */
+          expect(outcome.counts.commitmentsRefreshed).toBe(1)
+
+          const open = yield* detectedIn(fixture)
+          expect(open).toHaveLength(2)
+          expect(new Set(open.map((one) => one.key)).size).toBe(2)
+          /**
+           * The surviving task's provenance is the FIRST session that said it, because a refresh writes
+           * only the `memhtml-updated` stamp — a human may have edited the body or moved the status, and
+           * a detector overwriting that would take the queue away from the person it serves.
+           */
+          const pinned = open.find((one) => one.claim.includes("teardown"))
+          const doc = yield* parseMemory((yield* atHead(fixture, pinned?.path ?? "")) ?? "")
+          expect(doc.metas.sessionId).toBe("session-a")
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("mints one task per SHORT commitment, so two do not share a frame slot", async () => {
+    /**
+     * Finding 2(a), the commitment half. `mintDetectedTask`'s frame-key proximity check reads the CLAIM,
+     * and the old wording — `confirm: the <actor> committed to <statement>` — put the statement in the
+     * rule's VALUE position: measured against `frameKeyOf`, any statement of six tokens or fewer keys on
+     * `confirm: the agent committed to`, so the second short commitment answered `framed` and vanished
+     * from every counter. The collapse depended on statement LENGTH, which is why the two statements
+     * here are deliberately short.
+     *
+     * MUTATION: revert `commitmentClaim` to `confirm: the ${actor} committed to ${statement}` — measured,
+     * both statements then key on `confirm: the agent committed to`, so `commitmentTasks` reads 1,
+     * `commitmentsFramed` reads 1, and one file lands. Both halves of this test go red.
+     *
+     * Non-vacuous against the length dependence: `"pin the flaky teardown port"` is five tokens and
+     * `"rotate the signing key"` is four, so BOTH are inside `MAX_VALUE_TOKENS` under the old shape.
+     * A test using long statements would pass against the broken claim, because those overflowed to
+     * `null` and skipped the check entirely.
+     */
+    const consolidator = scriptedConsolidator(() =>
+      withCommitments([
+        commitment({
+          statement: "pin the flaky teardown port",
+          evidence: { sessionId: "session-a", quote: "I'll pin the teardown port" }
+        }),
+        commitment({
+          statement: "rotate the signing key",
+          evidence: { sessionId: "session-a", quote: "I'll rotate the signing key" }
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture, "session-a")
+          const outcome = yield* traceConsolidation(envFor(fixture))
+
+          expect(outcome.counts.commitments).toBe(2)
+          expect(outcome.counts.commitmentTasks, "one task per commitment").toBe(2)
+          expect(outcome.counts.commitmentsFramed, "neither was swallowed by the frame check").toBe(
+            0
+          )
+
+          const open = yield* detectedIn(fixture)
+          expect(open).toHaveLength(2)
+          // Each task's claim leads with its OWN statement, which is what makes the frames distinct.
+          const gists = open.map((one) => one.claim)
+          expect(gists.filter((gist) => gist.startsWith("confirm: pin the flaky"))).toHaveLength(1)
+          expect(
+            gists.filter((gist) => gist.startsWith("confirm: rotate the signing"))
+          ).toHaveLength(1)
+          // The mechanism under the assertion: two claims, two frame slots.
+          expect(new Set(gists.map(frameKeyOf)).size, "two distinct frames").toBe(2)
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("mints nothing on a dry run, however many commitments the answer would carry", async () => {
+    /**
+     * A dry run stops before the model call, so it cannot see a commitment at all — which is the
+     * cheapest possible version of this guard and the one worth pinning, because a future change that
+     * moved the commitment pass above the `dryRun` return would write task files during a preview.
+     */
+    const consolidator = scriptedConsolidator(() =>
+      withCommitments([commitment({ statement: "a commitment a dry run must never open" })])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture)
+          const before = yield* headSha(fixture)
+          const outcome = yield* traceConsolidation(envFor(fixture, true))
+
+          expect(outcome.counts.commitments).toBe(0)
+          expect(outcome.counts.commitmentTasks).toBe(0)
+          expect(consolidator.calls).toEqual([])
+          expect(yield* headSha(fixture)).toBe(before)
+          expect(yield* detectedIn(fixture)).toEqual([])
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("reports the commitment count SHAPE on every path, including a degraded one", async () => {
+    /**
+     * A report reader comparing two nights reads a MISSING key as a phase that does not have the
+     * concept, not as a night that did none of it. So every count key is present on every return path,
+     * which is the rule `edge-typing`'s `zero` states and `ZERO_COUNTS` here implements.
+     */
+    const consolidator = scriptedConsolidator(() => consolidatorFailure())
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture)
+          const outcome = yield* traceConsolidation(envFor(fixture))
+
+          expect(outcome.detail).toContain("consolidator unavailable")
+          for (const key of [
+            "commitments",
+            "commitmentTasks",
+            "completionsApplied",
+            "completionsUnmatched",
+            "commitmentsSkipped",
+            "commitmentsBelowFloor",
+            "commitmentsRefreshed",
+            "commitmentsFramed",
+            "commitmentsDismissed",
+            "commitmentsCapped"
+          ]) {
+            expect(outcome.counts[key], key).toBe(0)
+          }
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+})
+
+describe("trace-consolidation closes a detected task when a session shows it done", () => {
+  /**
+   * The commitment both nights see, differing only in whether it is resolved and WHICH SESSION reports
+   * it.
+   *
+   * The session differs across nights on purpose, and it is what makes every case here a real
+   * cross-night closure rather than the same night run twice: `markSessionsConsolidated` takes
+   * `session-a` out of the batch after night one, so night two reads `session-b`. A design keyed on the
+   * session could not match the two, which is exactly the property `commitmentKey` argues for.
+   */
+  const SHIPPED = "wire the capture path before the next release"
+  const shipped = (sessionId: string, resolved: boolean, confidence = 0.9) =>
+    commitment({
+      statement: SHIPPED,
+      resolved,
+      confidence,
+      evidence: {
+        sessionId,
+        quote: resolved ? "capture is wired and shipped" : "I'll wire capture before we ship"
+      }
+    })
+
+  it("closes the task the previous night opened, and archives it", async () => {
+    /**
+     * Issue #44's "closure is also detected", across two nights, which is the only reading under which
+     * the arm does any work: night one opens the task from an unresolved commitment, night two sees the
+     * same commitment resolved and closes it.
+     *
+     * `done` plus ARCHIVE, matching `memhtml task status done` exactly — `done` is not a resting state
+     * on its own, and the archive tree plus `git log` is what answers "what did I close". So the
+     * assertion is that the path LEFT the queue and the file exists under `archive/`, not merely that a
+     * meta changed.
+     *
+     * (Mutation: replacing `closeDetectedTask` with a bare `stampFile` leaves the file in
+     * `areas/inbox/tasks` and fails the archive assertion while leaving the count green.)
+     */
+    const consolidator = scriptedConsolidator((request, offset) =>
+      withCommitments([shipped(request.transcripts[0]?.sessionId ?? "session-a", offset > 0)])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture, "session-a")
+          const first = yield* traceConsolidation(envFor(fixture))
+          expect(first.counts.commitmentTasks).toBe(1)
+          const [opened] = yield* detectedAt(fixture, "HEAD")
+          expect(opened).toBeDefined()
+
+          yield* oneSession(fixture, "session-b")
+          const second = yield* traceConsolidation(envFor(fixture, false, { date: LATER }))
+          // A DIFFERENT session reported the completion, which is the whole point of this arm.
+          expect(second.counts.batch).toBe(1)
+          expect(second.counts.completionsApplied).toBe(1)
+          expect(second.counts.completionsUnmatched).toBe(0)
+          // A resolved commitment does not ALSO mint: the close is the whole action.
+          expect(second.counts.commitmentTasks).toBe(0)
+
+          // Out of the open queue, and present under the archive tree at its archived path.
+          expect(yield* detectedIn(fixture, LATER)).toEqual([])
+          const paths = yield* detectedAt(fixture, "HEAD")
+          expect(paths).toHaveLength(1)
+          expect(paths[0]?.startsWith("archive/")).toBe(true)
+          const doc = yield* parseMemory((yield* atHead(fixture, paths[0] ?? "")) ?? "")
+          expect(doc.metas.taskStatus).toBe("done")
+          expect(doc.metas.status).toBe("archived")
+          // The closing reason lives in the commit, because the meta vocabulary is closed.
+          expect(yield* messageOf(fixture, "HEAD")).toContain("completion detected")
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("NEVER closes a human-authored task, however well the completion matches", async () => {
+    /**
+     * The hard guard, and the case the whole surface has to be safe against: a human-opened task
+     * archived because a model read "shipped it" in somebody's scrollback is work silently taken out of
+     * a person's queue by a sentence they did not write — and `done` archives, so the file also leaves
+     * the directory they look in.
+     *
+     * The fixture is built so the guard is the ONLY thing standing between the completion and the file.
+     * A human task is seeded whose title, claim, and detected-task counterpart all describe the same
+     * work, the detected task is opened by night one, and night two resolves it. Both files are then
+     * checked: the detected one closed, the human one BYTE-IDENTICAL.
+     *
+     * The byte comparison is what makes it non-vacuous. A `memhtml-updated` stamp, a status change, or
+     * a re-render would all leave a parsed assertion green.
+     *
+     * (Mutation: replacing `closeDetectedTask`'s `isDetectedTaskPath` guard with `return true` does not
+     * fail this case on its own — the match is keyed, so the human task is never a candidate. What DOES
+     * fail it is the guard's removal combined with a match by title or claim, which is the change this
+     * case exists to make unshippable: it proves the human file survives a night that closed its twin.)
+     */
+    const HUMAN = "areas/inbox/tasks/t-wire-capture.html"
+    const humanHtml = memoryHtml({
+      title: "Wire the capture path before the next release",
+      claim: "The capture path is not wired ahead of the next release.",
+      body: "A human opened this, and no detector may close it.",
+      memoryType: "task",
+      taskStatus: "todo",
+      createdAt: "2026-05-10T00:00:00Z"
+    })
+    const consolidator = scriptedConsolidator((request, offset) =>
+      withCommitments([shipped(request.transcripts[0]?.sessionId ?? "session-a", offset > 0)])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture, "session-a")
+          const humanBefore = yield* atHead(fixture, HUMAN)
+          expect(humanBefore).toBeDefined()
+
+          yield* traceConsolidation(envFor(fixture))
+          yield* oneSession(fixture, "session-b")
+          const second = yield* traceConsolidation(envFor(fixture, false, { date: LATER }))
+          expect(second.counts.completionsApplied).toBe(1)
+
+          // The human task's BLOB is unchanged, and it is still where a human looks for it.
+          expect(yield* atHead(fixture, HUMAN)).toBe(humanBefore)
+          const open = yield* detectedIn(fixture, LATER)
+          expect(open).toEqual([])
+        }),
+      {
+        seed: [...DEDUP_CORPUS, { path: HUMAN, html: humanHtml }],
+        consolidator
+      }
+    )
+  })
+
+  it("refuses to close a human task even when handed its path directly", async () => {
+    /**
+     * The guard itself, exercised at the WRITE rather than through the phase, because the phase's keyed
+     * match means a human path never reaches it — so a test through the phase alone would be the
+     * vacuous lock this repo has paid for. `closeDetectedTask` is a public function and a second caller
+     * arriving with a path from a query, a report, or a title match is precisely what it defends.
+     *
+     * (Mutation: replacing the `isDetectedTaskPath` check with `return true` archives the human task
+     * and fails every assertion below.)
+     */
+    const HUMAN = "areas/inbox/tasks/t-wire-capture.html"
+    const humanHtml = memoryHtml({
+      title: "Wire the capture path before the next release",
+      claim: "The capture path is not wired ahead of the next release.",
+      memoryType: "task",
+      taskStatus: "todo",
+      createdAt: "2026-05-10T00:00:00Z"
+    })
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const before = yield* atHead(fixture, HUMAN)
+          const env = envFor(fixture)
+
+          const closed = yield* closeDetectedTask(env, HUMAN).pipe(Effect.orDie)
+          expect(closed).toBe(false)
+
+          // Nothing staged, nothing written, and the file is byte-identical on disk.
+          expect(yield* fixture.deps.store.dirtyPaths().pipe(Effect.orDie)).toEqual([])
+          expect(yield* atHead(fixture, HUMAN)).toBe(before)
+        }),
+      { seed: [...DEDUP_CORPUS, { path: HUMAN, html: humanHtml }] }
+    )
+  })
+
+  it("counts a resolved commitment that matches no open task as unmatched", async () => {
+    /**
+     * The completion arrives and there is nothing to close: no previous night opened it, or a human
+     * already closed it by hand, or the model reworded the statement so the key moved. The issue asks
+     * for this as a COUNT rather than as a silent drop, and the reason is diagnostic — a night whose
+     * every completion is unmatched is a night where the keying is wrong, and that is invisible unless
+     * the number is reported.
+     *
+     * (Mutation: dropping the `unmatched += 1` in the no-match branch reports zero and fails this.)
+     */
+    const consolidator = scriptedConsolidator(() => withCommitments([shipped("session-a", true)]))
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture)
+          const before = yield* headSha(fixture)
+          const outcome = yield* traceConsolidation(envFor(fixture))
+
+          expect(outcome.counts.completionsUnmatched).toBe(1)
+          expect(outcome.counts.completionsApplied).toBe(0)
+          expect(outcome.counts.commitmentTasks).toBe(0)
+          expect(yield* headSha(fixture)).toBe(before)
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("does NOT close below the floor, and counts the completion as unmatched", async () => {
+    /**
+     * The floor governs the closure arm identically to the mint arm — the same judgement about the same
+     * sentence, made once. A lower floor on closure would mean a commitment too weak to open a task was
+     * strong enough to archive one, which is the more destructive of the two directions.
+     *
+     * Night one opens the task at full confidence; night two reports the completion BELOW the floor. The
+     * task must survive, and the completion must be counted so the operator can see the night tried.
+     *
+     * (Mutation: moving the floor check to apply only to the mint arm closes the task and fails both
+     * the `completionsApplied` assertion and the surviving-task assertion.)
+     */
+    const consolidator = scriptedConsolidator((request, offset) => {
+      const session = request.transcripts[0]?.sessionId ?? "session-a"
+      return withCommitments([
+        offset === 0 ? shipped(session, false) : shipped(session, true, COMMITMENT_FLOOR - 0.01)
+      ])
+    })
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture, "session-a")
+          yield* traceConsolidation(envFor(fixture))
+          const [opened] = yield* detectedAt(fixture, "HEAD")
+
+          yield* oneSession(fixture, "session-b")
+          const second = yield* traceConsolidation(envFor(fixture, false, { date: LATER }))
+          expect(second.counts.completionsApplied).toBe(0)
+          expect(second.counts.commitmentsBelowFloor).toBe(1)
+          expect(second.counts.completionsUnmatched).toBe(1)
+
+          // The task is still open, at the same path, and not archived.
+          expect(yield* detectedAt(fixture, "HEAD")).toEqual([opened])
+          const open = yield* detectedIn(fixture, LATER)
+          expect(open).toHaveLength(1)
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("reports only ITS OWN capped commitments, not an earlier detector's overflow", async () => {
+    /**
+     * `commitmentsCapped` is this pass's DELTA on the shared budget, and this is the only shape that can
+     * tell the difference. The budget is shared across every detector, so by phase twelve it may already
+     * carry entity-resolution's and dedup's overflow — and reporting `budget.overflow` raw would
+     * attribute their turned-away findings to this phase's commitments. An operator would read that as
+     * "the commitment detector is too noisy" about a night where it minted everything it found.
+     *
+     * The budget is constructed with a NON-ZERO overflow already on it, which is the state a real run
+     * reaches and which `makeDetectionBudget` cannot produce — so it is built by hand here rather than
+     * through the helper. Everything else about the shape is the helper's.
+     *
+     * (Mutation: reporting `budget.overflow` instead of `budget.overflow - overflowBefore` returns 4 and
+     * fails this case, and fails no other in this file, because every other case starts from a fresh
+     * budget where the two numbers agree.)
+     */
+    const consolidator = scriptedConsolidator(() =>
+      withCommitments([
+        commitment({
+          statement: "first commitment of the night",
+          evidence: { sessionId: "session-a", quote: "I'll do the first thing" }
+        }),
+        commitment({
+          statement: "second commitment of the night",
+          evidence: { sessionId: "session-a", quote: "I'll do the second thing" }
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture, "session-a")
+          const env = {
+            ...envFor(fixture),
+            /** Three findings an earlier phase already turned away, and no room left. */
+            detectionBudget: { remaining: 0, overflow: 3 }
+          }
+          const outcome = yield* traceConsolidation(env)
+
+          // Two of THIS phase's commitments were capped, not five.
+          expect(outcome.counts.commitmentsCapped).toBe(2)
+          expect(outcome.counts.commitmentTasks).toBe(0)
+          // And the shared counter really did accumulate, or the delta would be trivially right.
+          expect(env.detectionBudget.overflow).toBe(5)
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("does not count a FILTERED completion as unmatched, only a floored or unkeyed one", async () => {
+    /**
+     * The two counters have to mean different things or neither is diagnostic.
+     * `completionsUnmatched` is "a completion this store declined to apply", which points an operator at
+     * the KEYING; `commitmentsSkipped` is "not a first-person commitment at all", which points at the
+     * model's labelling. A third party's completion is the second and must not be reported as the first.
+     *
+     * The fixture carries a resolved `other` commitment ALONE, so the whole answer is one refusal.
+     *
+     * (Mutation: deriving `unmatched` by subtracting the admissible resolved count from every resolved
+     * commitment in the answer — which is what an earlier version did — reports
+     * `completionsUnmatched: 1` here and fails this case, while every other case in the file stays
+     * green. That is precisely the shape of a counter that quietly means the wrong thing.)
+     */
+    const consolidator = scriptedConsolidator(() =>
+      withCommitments([
+        commitment({
+          statement: "a colleague shipped the migration",
+          actor: "other",
+          resolved: true,
+          evidence: { sessionId: "session-a", quote: "sanju shipped the migration" }
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture, "session-a")
+          const outcome = yield* traceConsolidation(envFor(fixture))
+
+          expect(outcome.counts.commitmentsSkipped).toBe(1)
+          expect(outcome.counts.completionsUnmatched).toBe(0)
+          expect(outcome.counts.completionsApplied).toBe(0)
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("closes rather than refreshing when one answer reports a commitment both ways", async () => {
+    /**
+     * The ORDER of the two arms, which is load-bearing and would otherwise be invisible. A model can
+     * report one sentence twice — once as an open commitment and once as resolved — and the two key the
+     * same. Closures run FIRST, so the answer resolves to "closed".
+     *
+     * Mints-first would REFRESH the task and then close it in the same commit, which is worse than
+     * either outcome on its own: the queue loses a task in the same breath that stamped it as freshly
+     * seen, and the `memhtml-updated` stamp says a human was shown something archived before they could
+     * look.
+     *
+     * (Mutation: moving the mint loop above the closure block makes this report
+     * `commitmentsRefreshed: 1` and fails the assertion below.)
+     */
+    const consolidator = scriptedConsolidator((request, offset) => {
+      const session = request.transcripts[0]?.sessionId ?? "session-a"
+      return withCommitments(
+        offset === 0 ? [shipped(session, false)] : [shipped(session, false), shipped(session, true)]
+      )
+    })
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture, "session-a")
+          yield* traceConsolidation(envFor(fixture))
+          expect(yield* detectedIn(fixture)).toHaveLength(1)
+
+          yield* oneSession(fixture, "session-b")
+          const second = yield* traceConsolidation(envFor(fixture, false, { date: LATER }))
+          expect(second.counts.completionsApplied).toBe(1)
+          expect(second.counts.commitmentsRefreshed).toBe(0)
+          /**
+           * The unresolved twin then mints a FRESH task, because the closure took its key out of the
+           * open queue first. That is the intended reading: the night's answer says the work is done, so
+           * the old task closes, and the same answer's open claim opens a new proposal a reviewer can
+           * dismiss in one action. It is churn a model created, not churn the phase invented.
+           */
+          expect(second.counts.commitmentTasks).toBe(1)
         }),
       { seed: DEDUP_CORPUS, consolidator }
     )

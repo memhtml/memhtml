@@ -5,6 +5,7 @@ import { decodeToolInput, EMBED_DIM, EMBED_WATERMARK, type ModelClientShape } fr
 import { Effect } from "effect"
 
 import type {
+  CandidateCommitmentLike,
   CandidateMemoryLike,
   ConsolidatorPort,
   TranscriptManifestEntry
@@ -219,6 +220,16 @@ export type ScriptedConsolidation =
   | {
       readonly kind: "candidates"
       readonly candidates: ReadonlyArray<CandidateMemoryLike>
+      /**
+       * Commitments the same scripted answer carries. Defaults to `[]`, which is what a fake that has
+       * nothing to say about surface 2 honestly reports — and what keeps every pre-existing fixture in
+       * this repo describing the same behavior it did before the field existed.
+       *
+       * The DEFAULT is the only place `[]` is filled in on this path. `ConsolidationOutcome` declares
+       * the field required, so a real consolidator cannot omit it; this is a helper choosing a value on
+       * a test author's behalf, not the phase defaulting a missing one.
+       */
+      readonly commitments?: ReadonlyArray<CandidateCommitmentLike> | undefined
       readonly llmCalls?: number | undefined
       /**
        * The sessions this scripted run claims to have READ. Defaults to every transcript it was handed.
@@ -243,6 +254,51 @@ export const candidates = (
 })
 
 /**
+ * A scripted answer carrying COMMITMENTS, and by default no candidate memories.
+ *
+ * Separate from {@link candidates} rather than a second parameter on it, because the two halves of the
+ * answer are exercised separately: a surface-2 test wants the candidate loop to write nothing so that
+ * every commit and every file in the tree is attributable to the commitment pass. A test needing both
+ * passes `candidates` explicitly.
+ */
+export const withCommitments = (
+  list: ReadonlyArray<CandidateCommitmentLike>,
+  extra: {
+    readonly candidates?: ReadonlyArray<CandidateMemoryLike> | undefined
+    readonly llmCalls?: number | undefined
+    readonly analyzedSessionIds?: ReadonlyArray<string> | undefined
+  } = {}
+): ScriptedConsolidation => ({
+  kind: "candidates",
+  candidates: extra.candidates ?? [],
+  commitments: list,
+  ...(extra.llmCalls === undefined ? {} : { llmCalls: extra.llmCalls }),
+  ...(extra.analyzedSessionIds === undefined
+    ? {}
+    : { analyzedSessionIds: extra.analyzedSessionIds })
+})
+
+/**
+ * One commitment, with the fields a test does not care about filled in plausibly.
+ *
+ * `actor: "agent"` and `confidence: 0.9` by default, which is ADMISSIBLE: the happy path is what most
+ * fixtures want, and a helper defaulting to something the filter refuses would make every test a
+ * refusal and invite an author to loosen the filter to "fix" it. That is the reasoning
+ * {@link candidate}'s two-quote default records. `resolved: false` because an unresolved commitment is
+ * the mint case, which is the arm most tests are about.
+ */
+export const commitment = (
+  input: Partial<CandidateCommitmentLike> & { readonly statement: string }
+): CandidateCommitmentLike => ({
+  statement: input.statement,
+  actor: input.actor ?? "agent",
+  evidence: input.evidence ?? { sessionId: "session-a", quote: `verbatim: ${input.statement}` },
+  confidence: input.confidence ?? 0.9,
+  resolved: input.resolved ?? false,
+  ...(input.dueHint === undefined ? {} : { dueHint: input.dueHint })
+})
+
+/**
  * A scripted answer that read only SOME of the transcripts it was handed.
  *
  * The shape the real client produces when a transcript does not resolve inside the sandbox: rotated
@@ -253,11 +309,13 @@ export const candidates = (
 export const partiallyRead = (input: {
   readonly analyzedSessionIds: ReadonlyArray<string>
   readonly candidates?: ReadonlyArray<CandidateMemoryLike> | undefined
+  readonly commitments?: ReadonlyArray<CandidateCommitmentLike> | undefined
   readonly llmCalls?: number | undefined
 }): ScriptedConsolidation => ({
   kind: "candidates",
   candidates: input.candidates ?? [],
   analyzedSessionIds: input.analyzedSessionIds,
+  ...(input.commitments === undefined ? {} : { commitments: input.commitments }),
   ...(input.llmCalls === undefined ? {} : { llmCalls: input.llmCalls })
 })
 
@@ -319,6 +377,8 @@ export const scriptedConsolidator = (
         }
         return Effect.succeed({
           candidates: scripted.candidates,
+          /** `[]` when unstated: a fake with nothing to say about surface 2 says so. */
+          commitments: scripted.commitments ?? [],
           /**
            * Defaults to one call per transcript plus one. Still a MULTI-call default, because the eve
            * harness loops and a run that grepped five times made five calls. The number comes back

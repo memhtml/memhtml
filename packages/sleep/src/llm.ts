@@ -399,6 +399,107 @@ than once, in different words.
   numbers, and differing product variants before anything is written. Answer only the question of
   sameness.`
 
+/**
+ * What a detected finding is: a commitment somebody made, or a follow-up nobody closed.
+ *
+ * Two values and not more. Issue #44 names both — "an open commitment or unresolved follow-up" — and
+ * they are genuinely different work: a commitment has an actor who said they would do something, and a
+ * follow-up is a question or a defect the text leaves open with nobody attached. The phase renders a
+ * different claim for each, and the pair is closed because a third value would be a category whose
+ * reading nothing downstream could state.
+ */
+export const TaskFindingKind = Schema.Literals(["commitment", "followup"])
+export type TaskFindingKind = typeof TaskFindingKind.Type
+
+/** One finding about one offered member. */
+export const TaskFinding = Schema.Struct({
+  /** The offered key, e.g. `m3`. A key the batch never held resolves to nothing and is dropped. */
+  memberKey: Schema.String,
+  /**
+   * The sentence that carries the finding, copied VERBATIM from the member's text.
+   *
+   * Verbatim is a checked requirement and not a request: the phase looks the sentence up in the cited
+   * file's own article text and refuses the mint when it is not there. So a paraphrase costs the
+   * finding, which is why the system prompt says so in those words.
+   */
+  sentence: Schema.String,
+  kind: TaskFindingKind,
+  /** Unitless in `[0, 1]`. The mint gate is deterministic and reads this, not the prose. */
+  confidence: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }))
+})
+export type TaskFinding = typeof TaskFinding.Type
+
+/**
+ * One batch's whole answer: the findings across every member it was shown.
+ *
+ * `findings: []` is a refusal and the correct answer for most batches. Most memories record a fact and
+ * carry no open work at all, and a model that felt obliged to fill the list would mint tasks out of
+ * ordinary prose — which is precisely the noise the volume cap exists to bound and the reviewer's
+ * attention cannot absorb.
+ */
+export const TaskDetection = Schema.Struct({
+  findings: Schema.Array(TaskFinding)
+})
+export type TaskDetection = typeof TaskDetection.Type
+
+/**
+ * The task-detection system prompt.
+ *
+ * The conservative posture every other judge in this file carries, aimed at the one thing this phase
+ * can get wrong at scale: a memory that MENTIONS work is not a memory that carries an open
+ * commitment. An `error_pattern` describing a defect somebody already fixed reads exactly like one
+ * describing a defect nobody has, and the difference is in whether the text says it was resolved.
+ *
+ * The verbatim rule is stated as a consequence rather than as a style note, because it IS one: the
+ * phase looks the sentence up in the file and drops the finding when it is absent.
+ */
+export const TASK_DETECT_SYSTEM = `You find OPEN WORK recorded in an AI agent's long-term memory system. You are given a NUMBERED LIST
+of memories. For each one, decide whether its text records work that is still open, and if so quote
+the sentence that says so.
+
+Two kinds:
+
+- commitment: somebody stated they would do something and the text does not say it happened. "I'll
+  fix that tomorrow", "we need to wire capture before the next release", "leaving the merge until you
+  review it".
+- followup: the text leaves something unresolved with nobody attached. An unfixed defect a memory
+  describes, a question it ends on, a decision it says is blocked pending something else.
+
+Rules:
+
+- sentence must be copied VERBATIM from the member's own text, character for character. The system
+  looks it up in the file and DISCARDS the finding when it is not found, so a paraphrase, a
+  correction, a stitched-together sentence, or a summary loses the finding entirely.
+- Return findings: [] when nothing here carries open work. That is the ordinary answer: most memories
+  record a fact, not a task. Refusing is correct whenever you are unsure.
+- A memory that DESCRIBES completed work is not open work. "we fixed the flaky teardown by pinning
+  the port" is a record, not a task. Look for work the text leaves undone.
+- Never report a hypothetical, an option considered and rejected, or a general principle. "if the
+  cache misses we would need to warm it" names no work anybody owes.
+- One finding per memory at most, and only for the memories that have one. Omitting a member is
+  always allowed.
+- Rate confidence honestly. A finding above the floor becomes a task file a human is asked to review,
+  and a queue full of things that were never work is a queue nobody reads.`
+
+/** The instruction that closes a task-detection batch's user turn, after the member list. */
+export const TASK_DETECT_INSTRUCTION =
+  "Which of these memories carry open work? For each one that does, name it by its offered key, " +
+  "quote the sentence verbatim, say whether it is a commitment or a followup, and rate your " +
+  "confidence. Return findings: [] if none of them do."
+
+/**
+ * The task-detection user turn for one batch: every member's text under its offered key.
+ *
+ * `batchPrompt` from the kernel builds the list and appends the instruction, so
+ * {@link TASK_DETECT_SYSTEM} plus the tool schema form the cache-eligible prefix and only the member
+ * list is new bytes per batch. The label is `memory` rather than `member`, because what the model is
+ * asked about is whether a MEMORY records open work, and the wrapper's label is the only place the
+ * prompt names the thing.
+ */
+export const taskDetectPrompt = (
+  members: ReadonlyArray<{ readonly key: string; readonly text: string }>
+): string => batchPrompt(members, TASK_DETECT_INSTRUCTION, { label: "memory" })
+
 /** One labelled corpus block, delimited so its prose cannot be read as an instruction. */
 export const dataBlock = (label: string, text: string): string => wrapAsData(label, text)
 

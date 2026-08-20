@@ -1,5 +1,5 @@
 /**
- * `@memhtml/sleep`: the nightly curation cycle as fifteen git commits.
+ * `@memhtml/sleep`: the nightly curation cycle as sixteen git commits.
  *
  * Every phase is its own commit on `sleep/<date>`, carrying a `Memhtml-Run`/`Memhtml-Phase`/`Memhtml-Counts`
  * trailer block. The trailers are what `resume` reads, so no journal table is required and the git
@@ -20,6 +20,7 @@ export {
 } from "./batch.js"
 export { commitPhase, phaseTrailers } from "./commit.js"
 export type {
+  CandidateCommitmentLike,
   CandidateEvidenceLike,
   CandidateMemoryLike,
   ConsolidationOutcome,
@@ -54,6 +55,7 @@ export {
 } from "./contract.js"
 export type { HeadEdit } from "./edits.js"
 export {
+  addTag,
   applyHeadEdits,
   archiveFile,
   confidenceOf,
@@ -66,6 +68,7 @@ export {
   rewriteEntityMeta,
   stampFile,
   unlink,
+  withArchiveOrdinal,
   yearOf
 } from "./edits.js"
 export type { PhaseBody, PhaseEnv, PhaseOutcome, SleepDeps, SleepError } from "./env.js"
@@ -105,7 +108,13 @@ export {
   isDirectionalRel,
   MergeGroup,
   MergePartition,
-  pairText
+  pairText,
+  TASK_DETECT_INSTRUCTION,
+  TASK_DETECT_SYSTEM,
+  TaskDetection,
+  TaskFinding,
+  TaskFindingKind,
+  taskDetectPrompt
 } from "./llm.js"
 export * from "./phases/index.js"
 export type { GeneratedFile } from "./publish.js"
@@ -171,6 +180,7 @@ export {
   publishRows,
   readPhases,
   readRun,
+  recentActiveMemories,
   recordPhase,
   recordRun,
   replaceMinedEdges,
@@ -180,3 +190,29 @@ export {
   unconsolidatedSessions,
   unlinkedSessionCount
 } from "./sql.js"
+export type {
+  DetectionBudget,
+  DetectionEvidence,
+  DetectionRequest,
+  MintOutcome,
+  OpenDetection
+} from "./tasks.js"
+export {
+  budgetFor,
+  closeDetectedTask,
+  closeVanishedDetections,
+  DETECTED_TAG,
+  DETECTED_TASK_CAP,
+  DETECTED_TASK_DIR,
+  DETECTION_DIGEST_CHARS,
+  DETECTION_PREFIX,
+  DISMISSAL_LOOKBACK_YEARS,
+  detectedTaskPath,
+  detectionKey,
+  detectionKeyOf,
+  isDetectedTaskPath,
+  MACHINE_CLOSED_TAG,
+  makeDetectionBudget,
+  mintDetectedTask,
+  openDetections
+} from "./tasks.js"

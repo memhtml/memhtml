@@ -94,7 +94,7 @@ Answering a question that takes MORE THAN ONE HOP through the corpus? Write it a
 | `memhtml list` | — | `--type` `--workspace` `--tag` `--entity` `--para` `--limit` `--cursor` `--include-archived` | `memory.list` |
 | `memhtml task add` | — | `--title`* `--claim` `--body` `--status` `--due` `--workspace` `--tag` `--entity` `--session-id` `--prompt-id` `--turn-uuid` | `task.written` |
 | `memhtml task status` | <path> <status> | `--reason` | `task.updated` |
-| `memhtml task list` | — | `--status` `--workspace` `--due-before` `--limit` `--cursor` `--include-archived` | `task.list` |
+| `memhtml task list` | — | `--status` `--workspace` `--due-before` `--limit` `--cursor` `--include-archived` `--detected` | `task.list` |
 | `memhtml index rebuild` | — | `--embed` | `index.report` |
 | `memhtml index update` | — | `--embed` | `index.report` |
 | `memhtml index status` | — | — | `index.report` |
@@ -286,6 +286,7 @@ The task working set: a direct indexed scan with blockers, never ranked retrieva
 - `--limit` (int) — Rows per page. _(default `50`)_
 - `--cursor` (string) — The `next_cursor` from the previous page: the last path returned.
 - `--include-archived` (boolean) — Include finished tasks. `done` archives, so they are otherwise absent. _(default `false`)_
+- `--detected` (boolean) — Only tasks the sleep cycle detected, never ones opened by hand. The machine's queue: each is a proposal carrying the evidence it was detected from. _(default `false`)_
 
 ### `memhtml index rebuild`
 
@@ -326,10 +327,10 @@ The memory-session links, from either side.
 
 ### `memhtml sleep run`
 
-The nightly curation cycle: 15 phases, each an isolated commit on a review branch.
+The nightly curation cycle: 16 phases, each an isolated commit on a review branch.
 
 - `--date` (string) — The run date, `YYYY-MM-DD`. Defaults to today. Names the branch.
-- `--phases` (string) — Comma-separated subset. All 15 by default: preflight, dedup-merge, entity-resolution, person-links, relationship-mining, edge-typing, confidence-decay, arc-synthesis, retention-triage, compress, reprieve, trace-consolidation, integrity, state-export, report.
+- `--phases` (string) — Comma-separated subset. All 16 by default: preflight, dedup-merge, entity-resolution, person-links, relationship-mining, edge-typing, confidence-decay, arc-synthesis, retention-triage, compress, reprieve, trace-consolidation, task-detection, integrity, state-export, report.
 - `--dry-run` (boolean) — Report per-phase counts and commit nothing. _(default `false`)_
 
 ### `memhtml sleep resume`

@@ -231,7 +231,7 @@ policies.
 |---|---|---|
 | `memory_read` or `memhtml read` of a named path, and the `memhtml://file/{path}` resource | yes | the caller chose that memory, which is the strongest signal short of a write (`apps/cli/src/operations.ts:898`) |
 | a path merely returned by `memory_search` or `memory_recall` | no | that is the ranker's own guess (`apps/cli/src/operations.ts:924`, `:941`) |
-| the fifteen sleep phases | no | a schedule that touches the whole corpus drives everything toward uniform salience, and sleep bypasses the tool path anyway |
+| the sixteen sleep phases | no | a schedule that touches the whole corpus drives everything toward uniform salience, and sleep bypasses the tool path anyway |
 | `memory_reinforce` with a named signal | yes, and it moves the outcome average too | the caller is asserting the memory was right or wrong |
 
 Bumping on a returned hit would build a rich-get-richer loop. Today's top five would rank higher

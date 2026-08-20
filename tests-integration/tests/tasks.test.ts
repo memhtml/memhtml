@@ -2,6 +2,7 @@ import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { originalPathFor } from "@memhtml/contracts/paths"
+import { SLEEP_PHASES } from "@memhtml/sleep"
 import { scriptedModel, value } from "@memhtml/sleep/testing"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
@@ -469,7 +470,7 @@ describe("verification item 2 — the task lifecycle across every plane", () => 
       readonly phases: ReadonlyArray<{ readonly phase: string; readonly status: string }>
       readonly failedPhases: ReadonlyArray<string>
     }>(["sleep", "run", "--date", DATE])
-    expect(report.phases).toHaveLength(15)
+    expect(report.phases).toHaveLength(SLEEP_PHASES.length)
     expect(report.failedPhases).toEqual([])
 
     // Every task file's blob is unchanged: no stamp, no link, no confidence rewrite, no move.

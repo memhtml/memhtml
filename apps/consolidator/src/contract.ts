@@ -52,6 +52,22 @@ export const MAX_CLAIM_CHARS = 300
 export const MAX_GIST_CHARS = 1_500
 
 /**
+ * Who made a commitment, as a closed three-value vocabulary.
+ *
+ * `other` exists so the model has somewhere honest to put a third party's commitment instead of
+ * mislabelling it, and the sleep phase drops it: issue #44 asks for FIRST-PERSON commitments only
+ * ("I will", "we need to"), because a task nobody in this pair owes is not work this store can track.
+ * Leaving the value out of the vocabulary would have made "a colleague said they'd ship it" arrive
+ * tagged `user` or `agent`, which is the failure the third constructor prevents.
+ */
+export const COMMITMENT_ACTORS = ["user", "agent", "other"] as const
+
+export type CommitmentActor = (typeof COMMITMENT_ACTORS)[number]
+
+/** Ceiling on a commitment's statement. One sentence, the same bound a claim carries. */
+export const MAX_STATEMENT_CHARS = 300
+
+/**
  * One transcript line the candidate rests on, tied to the session it came from.
  *
  * Evidence is what makes the TRACE-2 bar checkable by something other than trust: a candidate
@@ -94,6 +110,61 @@ export class CandidateMemory extends Schema.Class<CandidateMemory>("CandidateMem
 }) {}
 
 /**
+ * One commitment a session records: a thing somebody said they would do, and whether the same session
+ * shows it done.
+ *
+ * ## Why this is not a `CandidateMemory` with `kind: "task"`
+ *
+ * {@link CONSOLIDATION_KINDS} excludes `task` on purpose, and that exclusion is still right: "task is
+ * work to do, not something observed to have happened", so a candidate MEMORY asserting a task would
+ * be the consolidator deciding what work exists. A commitment is a different claim — the transcript
+ * SAYS somebody committed, which is an observation — and the decision about whether that becomes a
+ * task file is the sleep phase's, made deterministically above a floor. Two lists, so the model cannot
+ * launder a task through the memory vocabulary and the phase's post-filter has a shape to filter.
+ *
+ * ## ONE evidence quote, against `CandidateMemory`'s two
+ *
+ * The two-quote bar on a memory is the TRACE-2 bar restated as a type: a candidate memory claims a
+ * pattern ACROSS lines or sessions, so a pattern with one line behind it is a restatement of that line
+ * and the schema refuses it. A commitment is the opposite shape. It is exactly one sentence somebody
+ * said, in one place, and the quote IS the finding rather than evidence that a pattern recurs. Asking
+ * for a second quote would force the model to pad — to attach an unrelated line, or to split one
+ * sentence across two quotes — which manufactures the appearance of corroboration for something that
+ * needs none. So the field is a single {@link CandidateEvidence} rather than an array with a minimum,
+ * which makes "exactly one" structural instead of a bound a caller could widen.
+ *
+ * ## `resolved` is a fact about the SAME session, not a judgement
+ *
+ * True only when the transcript the commitment was read from also shows the work done. That narrow
+ * reading is what keeps it checkable: the model has the whole file open, so "did this session later
+ * say it shipped" is a question about text it read. A commitment resolved in a LATER session is not
+ * this field's job — the sleep phase closes that case by matching a live detected task against a
+ * resolved commitment, and it can do so across nights because the task file persists.
+ *
+ * `confidence` is what the phase floors on. It is the model's own statement of how sure it is that
+ * this is a commitment at all, and the floor is `COMMITMENT_FLOOR` in
+ * `packages/sleep/src/phases/trace-consolidation.ts`.
+ */
+export class CandidateCommitment extends Schema.Class<CandidateCommitment>("CandidateCommitment")({
+  /** The commitment in one sentence, as the model states it. Not necessarily verbatim; the quote is. */
+  statement: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_STATEMENT_CHARS)),
+  actor: Schema.Literals(COMMITMENT_ACTORS),
+  /**
+   * When it is due, if the text says. `optionalKey(NullOr(...))` rather than `optional`, which is the
+   * wire fix `apps/mcp/src/tools.ts:73-90` records: a bare `Schema.optional` publishes a JSON Schema
+   * accepting `null` while the DECODER rejects it, so a producer that read the schema and sent
+   * `"dueHint": null` for "no due date" would fail a decode the published contract called valid.
+   * Absent and `null` both mean the text named no date, and the phase drops a value the format refuses.
+   */
+  dueHint: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /** The one verbatim line the commitment was read from, and the session it is in. */
+  evidence: CandidateEvidence,
+  confidence: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+  /** True when THIS session also shows the work done. See the class note. */
+  resolved: Schema.Boolean
+}) {}
+
+/**
  * What one run produced, what it cost in model calls, and WHICH SESSIONS IT ACTUALLY REACHED.
  *
  * `analyzedSessionIds` is the value a caller watermarks from rather than a reporting field. It exists
@@ -115,6 +186,16 @@ export class CandidateMemory extends Schema.Class<CandidateMemory>("CandidateMem
  */
 export class ConsolidationResult extends Schema.Class<ConsolidationResult>("ConsolidationResult")({
   candidates: Schema.Array(CandidateMemory),
+  /**
+   * Commitments the same turn reported. Issue #44's surface 2, and its marginal cost is TOKENS in a
+   * call this run was already making rather than a second call.
+   *
+   * REQUIRED, matching `analyzedSessionIds`' posture and for a weaker but real version of the same
+   * reason: an optional list would let a consolidator that never looked be indistinguishable from one
+   * that looked and found nothing, and `[]` is the honest way to say the second. Nothing downstream
+   * defaults it.
+   */
+  commitments: Schema.Array(CandidateCommitment),
   llmCalls: Schema.Finite,
   analyzedSessionIds: Schema.Array(Schema.String)
 }) {}
@@ -152,14 +233,54 @@ export const ungroundedEvidenceReason = (
   for (const [offset, candidate] of candidates.entries()) {
     const invented = candidate.evidence.find((quote) => !readable.has(quote.sessionId))
     if (invented !== undefined) {
-      return (
-        `candidate ${String(offset)} cites session ${invented.sessionId}, which this run did ` +
-        `not make readable (${String(readable.size)} transcript(s) resolved in the sandbox)`
-      )
+      return ungroundedReason("candidate", offset, invented.sessionId, readable.size)
     }
   }
   return null
 }
+
+/**
+ * The same rule for {@link CandidateCommitment}, whose evidence is ONE quote rather than a list.
+ *
+ * **The whole turn is refused, matching the memory arm exactly**, and the alternative was considered
+ * and declined. Dropping just the offending commitment looks cheaper — five good commitments survive
+ * one bad id — but it is the lenient repair `ConsolidationPayload`'s `onExcessProperty: "error"`
+ * decode already refuses for the reason recorded above {@link ungroundedEvidenceReason}: a filtered
+ * list is indistinguishable downstream from a list the agent returned. And what a fabricated id says
+ * is not "this one commitment is wrong" but "this answer is not grounded in the batch handed over",
+ * which is a fact about the RUN. A model that invented a session id to attribute one commitment to has
+ * given no reason to trust the five beside it.
+ *
+ * The cost of that strictness is one night's commitments, and it is bounded: the transcripts stay
+ * unwatermarked, so the next night reads the same batch and asks again.
+ *
+ * A SIBLING rather than a widened {@link ungroundedEvidenceReason}, because the two shapes differ in
+ * their evidence arity and the reason strings have to name which list the offender is in — an operator
+ * reading `commitment 3 cites session …` in a phase's detail knows which half of the answer to look
+ * at, and `candidate 3` would send them to the wrong one.
+ */
+export const ungroundedCommitmentReason = (
+  commitments: ReadonlyArray<{ readonly evidence: { readonly sessionId: string } }>,
+  readableSessionIds: ReadonlyArray<string>
+): string | null => {
+  const readable = new Set(readableSessionIds)
+  for (const [offset, commitment] of commitments.entries()) {
+    if (!readable.has(commitment.evidence.sessionId)) {
+      return ungroundedReason("commitment", offset, commitment.evidence.sessionId, readable.size)
+    }
+  }
+  return null
+}
+
+/** The one reason string both arms produce, so the two cannot drift in wording. */
+const ungroundedReason = (
+  label: string,
+  offset: number,
+  sessionId: string,
+  readableCount: number
+): string =>
+  `${label} ${String(offset)} cites session ${sessionId}, which this run did ` +
+  `not make readable (${String(readableCount)} transcript(s) resolved in the sandbox)`
 
 /**
  * ── The origin validation that used to live here is DELETED, with the parse it defended ──────────
@@ -197,11 +318,17 @@ export const ungroundedEvidenceReason = (
  * A wrapper object rather than a bare array: eve lowers this to the model's structured-output
  * contract, and a top-level array leaves nowhere to say "I found nothing" that is
  * distinguishable from a truncated answer. `candidates: []` is a real, readable result.
+ *
+ * `commitments` is REQUIRED, so an agent that ignored the second half of its instructions fails the
+ * decode instead of quietly answering only the first. That is the same posture the decode already
+ * takes toward an undeclared extra key: nothing about an off-contract answer is repaired here, because
+ * a defaulted `commitments: []` would be indistinguishable from a turn that looked and found none.
  */
 export class ConsolidationPayload extends Schema.Class<ConsolidationPayload>(
   "ConsolidationPayload"
 )({
-  candidates: Schema.Array(CandidateMemory)
+  candidates: Schema.Array(CandidateMemory),
+  commitments: Schema.Array(CandidateCommitment)
 }) {}
 
 /**

@@ -5,6 +5,12 @@ import type { Effect } from "effect"
 
 import type { ConsolidatorPort } from "./consolidator.js"
 import type { PhaseCounts, SleepPhase } from "./contract.js"
+/**
+ * Type-only, so `verbatimModuleSyntax` erases it and this module's `dist` still imports nothing from
+ * `tasks.js`. `tasks.ts` names `PhaseEnv` in return, and a VALUE import either way would be a real
+ * cycle between the environment and one of its consumers.
+ */
+import type { DetectionBudget } from "./tasks.js"
 
 /**
  * What a sleep run is composed of, and what one phase is handed.
@@ -77,7 +83,15 @@ export const DEFAULT_MODELS: Readonly<Record<string, ModelKey>> = {
   "edge-typing": "sonnet-5",
   "arc-synthesis": "opus-5",
   compress: "sonnet-5",
-  "trace-consolidation": "opus-5"
+  "trace-consolidation": "opus-5",
+  /**
+   * Sonnet, for the same reason `dedup-merge` and the edge-typing judge name it: the question is an
+   * extraction over text the model is shown — which of these memories carries an open commitment,
+   * quote the sentence — and every consequence is decided afterwards by code. The sentence has to be
+   * VERBATIM, which is copying rather than composing, and the confidence floor plus the verbatim
+   * check are what a stronger model would otherwise be buying.
+   */
+  "task-detection": "sonnet-5"
 }
 
 /** The model a phase calls: the caller's override, else {@link DEFAULT_MODELS}, else sonnet. */
@@ -113,6 +127,22 @@ export interface PhaseEnv {
   readonly atMillis: number
   /** True on a dry run: compute and count, write no commit and no row beyond the run row. */
   readonly dryRun: boolean
+  /**
+   * The night's shared detected-task budget, or absent.
+   *
+   * The one MUTABLE member of this interface, and the mutation is the point: four phases mint
+   * detected tasks and `DETECTED_TASK_CAP` is a bound on the whole night, not on each of them,
+   * because how many proposals a human can review is a property of the human. Phases run
+   * sequentially in one process, so a module-level counter inside `tasks.ts` would also work in
+   * production — and would leak between test cases in one file, which is the contaminating-state
+   * failure this repo has paid for repeatedly. A value the RUN creates cannot: two runs hold two
+   * budgets.
+   *
+   * Optional so a test constructing a `PhaseEnv` by hand stays valid; `budgetFor` then hands that
+   * phase a fresh cap of its own. `run.ts` supplies one per run, which is what makes the cap shared
+   * in production.
+   */
+  readonly detectionBudget?: DetectionBudget | undefined
 }
 
 /** What a phase body produces. The runner turns this into a `PhaseResult`. */

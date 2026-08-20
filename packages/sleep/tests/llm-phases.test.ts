@@ -467,10 +467,32 @@ describe("edge-typing", () => {
           const outcome = yield* edgeTyping(envFor(fixture))
           expect(outcome.counts.contradictions).toBeGreaterThan(0)
           expect(outcome.counts.promoted).toBe(0)
-          // No promotion and no typed edge means no commit at all — the counter lives in state.
           expect(outcome.counts.typed).toBe(0)
-          expect(outcome.commitSha).toBeNull()
+          /**
+           * No MEMORY FILE gained anything: the corroboration counter lives in state and the edge is
+           * unwritten, which is the whole point of the gate.
+           *
+           * The phase DOES commit now, and that is issue #44's change rather than a regression here.
+           * A first detection also opens a review task, so the commit carries the deferred decision
+           * and nothing else — asserted below on the paths, because "no commit" was only ever a proxy
+           * for "the files are untouched" and the two have come apart.
+           */
           expect(yield* atHead(fixture, SAFE)).not.toContain("memhtml-contradicts")
+          // One task per contradicting pair the model named: this script answers for every pair.
+          expect(outcome.counts.tasksMinted).toBe(outcome.counts.contradictions)
+          const changed = yield* fixture.deps.git
+            .run(["show", "--name-only", "--format=", outcome.commitSha as string])
+            .pipe(
+              Effect.map((text) =>
+                text
+                  .split("\n")
+                  .map((line) => line.trim())
+                  .filter((line) => line !== "")
+                  .sort()
+              ),
+              Effect.orDie
+            )
+          expect(changed.every((path) => path.startsWith("areas/inbox/tasks/det-"))).toBe(true)
         }),
       { seed: DEDUP_CORPUS, model }
     )

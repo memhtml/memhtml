@@ -1,12 +1,13 @@
 import { PERSON_ENTITY_PREFIX } from "@memhtml/contracts/types"
 import { cosine } from "@memhtml/domain"
 import { parseMemory } from "@memhtml/html"
+import type { GitFailure } from "@memhtml/store"
 import { Effect } from "effect"
 
 import { assembleBatches, batchCall, keyMembers, resolveKeys } from "../batch.js"
 import { commitPhase } from "../commit.js"
 import { applyHeadEdits, meta, readFileBytes, rewriteEntityMeta, writeFileBytes } from "../edits.js"
-import { emptyOutcome, modelFor, type PhaseBody, type PhaseEnv } from "../env.js"
+import { emptyOutcome, modelFor, type PhaseBody, type PhaseEnv, type SleepError } from "../env.js"
 import { ENTITY_CLUSTER_SYSTEM, EntityClustering, entityClusterPrompt } from "../llm.js"
 import {
   activeEntities,
@@ -19,6 +20,7 @@ import {
   pathsForEntity,
   peoplePaths
 } from "../sql.js"
+import { budgetFor, closeVanishedDetections, detectionKey, mintDetectedTask } from "../tasks.js"
 
 /**
  * Phase 3, entity resolution. Cluster one entity type's names into subjects, then rewrite each alias
@@ -60,6 +62,15 @@ import {
  * not cluster, and a cluster below {@link ENTITY_CONFIDENCE_FLOOR}, both land in `reviewCandidates`. An
  * entity merge is a one-way door on stored identity: no later commit separates two subjects whose
  * memories were fused, and the failure mode of an over-eager gate is silent and permanent.
+ *
+ * **And every one of them now also becomes a TASK.** `reviewCandidates: 2` in a report is issue #44's
+ * motivating example of the failure this phase had: a decision the night deliberately deferred to a
+ * human, reported as a number and then never seen again. A deferred decision IS a task, so
+ * {@link mintReviewTasks} opens one per pair with the band, the score, and each name's file count as
+ * its evidence, keyed so tomorrow refreshes rather than duplicates, and closed when the pair stops
+ * being a candidate — because the pair merging, or the names disappearing, means the question is
+ * answered. The counter survives beside it: the count says how many pairs the night deferred and the
+ * tasks are the ones a human can act on.
  */
 
 /** At or above this ratio two names are the same entity. Auto-merged with no model call. */
@@ -591,6 +602,18 @@ export const entityResolution: PhaseBody = (env) =>
     let pendingCorroboration = 0
     let reviewCandidates = 0
     let llmCalls = 0
+    /** Model calls that came back malformed. The sweep's precondition reads this; see below. */
+    let callsFailed = 0
+    /**
+     * Every pair this night deferred to a human, as a value rather than only a count.
+     *
+     * This is issue #44's motivating case in one variable. The phase used to report
+     * `reviewCandidates: 2` and the number was never seen again: a decision the night deliberately
+     * declined to make evaporated, and the human it was deferred TO was never told. Keeping the pairs
+     * lets the phase mint one task per pair after the loop, with the evidence that made it a
+     * candidate.
+     */
+    const deferred: Array<ReviewCandidate> = []
 
     /**
      * The model core is skipped entirely on a dry run and when no model is bound, and both leave the
@@ -723,7 +746,17 @@ export const entityResolution: PhaseBody = (env) =>
                 "Emit one cluster per subject, naming the members that are the same subject."
             }
           )
-          if (clustering === undefined) continue
+          if (clustering === undefined) {
+            /**
+             * Counted, because the detected-task sweep's precondition reads it. A shard whose call
+             * came back malformed left every one of its names unclustered, so the band pairs among
+             * them are counted as review candidates by the pass below — which is correct for the
+             * REPORT and would be wrong as the sweep's input, since the phase did not actually judge
+             * them. See the sweep's own comment.
+             */
+            callsFailed += 1
+            continue
+          }
 
           for (const cluster of clustering.clusters) {
             /**
@@ -768,6 +801,15 @@ export const entityResolution: PhaseBody = (env) =>
               }
               if (cluster.confidence < ENTITY_CONFIDENCE_FLOOR) {
                 reviewCandidates += 1
+                deferred.push({
+                  entityType,
+                  left: merge.alias,
+                  right: merge.canonical,
+                  reason: "below-floor",
+                  score: cluster.confidence,
+                  leftFiles: counts.get(merge.alias) ?? 0,
+                  rightFiles: counts.get(merge.canonical) ?? 0
+                })
                 continue
               }
 
@@ -802,9 +844,21 @@ export const entityResolution: PhaseBody = (env) =>
        * the decision is recorded either as a merge or as a below-floor review candidate already counted
        * above. Counting it here as well would report one pair twice.
        */
-      reviewCandidates += character.review.filter(
+      const bandPairs = character.review.filter(
         ([left, right]) => !clusteredPairs.has(pairKey(left, right))
-      ).length
+      )
+      reviewCandidates += bandPairs.length
+      for (const [left, right] of bandPairs) {
+        deferred.push({
+          entityType,
+          left,
+          right,
+          reason: "character-band",
+          score: nameSimilarity(left, right),
+          leftFiles: counts.get(left) ?? 0,
+          rightFiles: counts.get(right) ?? 0
+        })
+      }
 
       /** One union-find over every accepted pair, so the three sources cannot disagree on a root. */
       const aliasToCanonical = unionPairs(counts, accepted)
@@ -833,9 +887,30 @@ export const entityResolution: PhaseBody = (env) =>
       aliasMerges,
       pendingCorroboration,
       reviewCandidates,
+      tasksMinted: 0,
+      tasksFramed: 0,
+      tasksDismissed: 0,
+      tasksClosed: 0,
       filesRewritten: rewrites.size
     }
-    if (rewrites.size === 0 || env.dryRun) return { ...emptyOutcome(counts), llmCalls }
+    /**
+     * A dry run stops here and mints nothing, matching what the rest of this phase already declines
+     * to do on one. `reviewCandidates` is real on a dry run; the tasks it would open are not.
+     */
+    if (env.dryRun) return { ...emptyOutcome(counts), llmCalls }
+
+    /**
+     * The deferred decisions become task files, keyed and capped, in the SAME commit as the merges.
+     *
+     * One commit rather than two, because the two halves are one night's answer to the same question:
+     * these pairs merged, those the phase declined to merge and handed to you. A reviewer reads the
+     * pair together, and `commitPhase` commits whatever is staged, so the mints ride along.
+     *
+     * Mints happen even when nothing was rewritten, and that reordering is the whole point of surface
+     * 1. The old early return on `rewrites.size === 0` would have skipped exactly the night this
+     * feature exists for: a night whose only outcome was deferrals is a night with no rewrites.
+     */
+    const tasks = yield* mintReviewTasks(env, deferred, model !== undefined && callsFailed === 0)
 
     let rewritten = 0
     for (const [path, pairs] of [...rewrites.entries()].sort(([left], [right]) =>
@@ -855,12 +930,162 @@ export const entityResolution: PhaseBody = (env) =>
       rewritten += 1
     }
 
-    const final = { ...counts, filesRewritten: rewritten }
+    const final = {
+      ...counts,
+      tasksMinted: tasks.minted,
+      tasksFramed: tasks.framed,
+      tasksDismissed: tasks.dismissed,
+      tasksClosed: tasks.closed,
+      filesRewritten: rewritten
+    }
+    /**
+     * Nothing staged, no commit. `commitPhase` already no-ops on an empty index, so this only spares
+     * git the call — and it now has to consider the MINTS as well as the rewrites, because a night
+     * whose only output is deferred-decision tasks must still commit them.
+     */
+    if (rewritten === 0 && tasks.minted === 0 && tasks.refreshed === 0 && tasks.closed === 0) {
+      return { ...emptyOutcome(final), llmCalls }
+    }
     const commitSha = yield* commitPhase(
       env,
       "entity-resolution",
       `normalize ${normalized} entity names, merge ${fuzzyMerges} aliases`,
-      final
+      final,
+      tasks.minted + tasks.closed === 0
+        ? undefined
+        : `deferred ${tasks.minted} alias decisions to review tasks` +
+            (tasks.closed === 0 ? "" : `; closed ${tasks.closed}: no longer detected`)
     )
     return { counts: final, commitSha, llmCalls }
   })
+
+/** The detector name every alias review task is keyed and swept under. */
+export const ENTITY_REVIEW_DETECTOR = "entity-resolution"
+
+/**
+ * One pair this night declined to merge, with the evidence that made it a candidate.
+ *
+ * The two reasons are the two bands issue #43 named and #44 promotes to tasks, and they are kept
+ * apart because the SCORE means different things: a `character-band` score is a longest-common-
+ * subsequence ratio over the two name strings, and a `below-floor` score is the model's own stated
+ * confidence that they are one subject. Rendering both as "similarity" would put two incomparable
+ * numbers under one label in the evidence a human reads.
+ */
+export interface ReviewCandidate {
+  readonly entityType: string
+  readonly left: string
+  readonly right: string
+  readonly reason: "character-band" | "below-floor"
+  readonly score: number
+  readonly leftFiles: number
+  readonly rightFiles: number
+}
+
+/**
+ * Mint one review task per deferred pair, and sweep the ones that stopped being deferred.
+ *
+ * **The key is the entity TYPE plus the two names sorted**, and not the reason. A pair the character
+ * band deferred last night and the model deferred below the floor tonight is ONE question a human has
+ * to answer once — are these the same subject — so it must key the same however the night arrived at
+ * it. Sorting is what makes `(laith, laith al-saadoon)` and the reverse one key; the pair is
+ * unordered, because neither name is the subject of the question.
+ *
+ * **The evidence is a MEASUREMENT and says so.** There is no sentence anywhere in the corpus stating
+ * that two names scored 0.79 against each other, so a quote would have to be manufactured. The
+ * `DetectionEvidence` union makes that difference explicit rather than leaving it to a convention this
+ * function could quietly break.
+ *
+ * **The sweep is gated on a night that had a MODEL and lost no call**, which `judged` carries.
+ * `deferred` holds what the phase actually decided to defer, and a shard whose model call failed left
+ * its names unclustered — so its band pairs are reported as review candidates without having been
+ * judged. They ARE still live, so they belong in `liveKeys`; but a night that lost a call cannot
+ * distinguish "the model decided this pair is fine" from "the model was never asked", and closing on
+ * that reading would take a real review out of a human's queue because Bedrock throttled.
+ *
+ * **`callsFailed === 0` alone was the bug, because it is VACUOUSLY TRUE with no model bound.** The
+ * caller now requires `model !== undefined` as well. A credential-free night runs only the two
+ * deterministic passes, so it produces `character-band` deferrals and CANNOT produce a `below-floor`
+ * one — a below-floor deferral is by definition a merge the model proposed under
+ * `ENTITY_CONFIDENCE_FLOOR`, and there was no model to propose it. Its `deferred` therefore omits every
+ * below-floor pair a model night opened, and sweeping against that closed those tasks on the first
+ * night without credentials. `tasks.ts`'s `closeVanishedDetections` states this precondition as
+ * "a phase that degraded — no model bound, a batch whose call failed — did not evaluate the candidate
+ * set", and no-model is the arm that check had missed.
+ */
+const mintReviewTasks = (
+  env: PhaseEnv,
+  deferred: ReadonlyArray<ReviewCandidate>,
+  judged: boolean
+): Effect.Effect<
+  {
+    readonly minted: number
+    readonly refreshed: number
+    /** The frame-key proximity check's refusals. Counted so the task arithmetic sums. */
+    readonly framed: number
+    /** Pairs a human already closed, whose dismissal stands. See `tasks.ts`'s module header. */
+    readonly dismissed: number
+    readonly closed: number
+  },
+  SleepError | GitFailure
+> =>
+  Effect.gen(function* () {
+    const budget = budgetFor(env)
+    /**
+     * Sorted and de-duplicated by key before minting, so the order tasks are opened in is a function
+     * of the pairs and not of which entity type happened to be walked first — which matters once the
+     * budget bites, because then the ORDER decides which pairs a human sees.
+     */
+    const byKey = new Map<string, ReviewCandidate>()
+    for (const candidate of [...deferred].sort(compareCandidates)) {
+      const key = detectionKey(ENTITY_REVIEW_DETECTOR, findingFor(candidate))
+      if (!byKey.has(key)) byKey.set(key, candidate)
+    }
+
+    let minted = 0
+    let refreshed = 0
+    let framed = 0
+    let dismissed = 0
+    for (const candidate of byKey.values()) {
+      const outcome = yield* mintDetectedTask(env, budget, {
+        detector: ENTITY_REVIEW_DETECTOR,
+        finding: findingFor(candidate),
+        title: `Confirm whether ${candidate.left} and ${candidate.right} are one ${candidate.entityType}`,
+        claim: `confirm: are "${candidate.left}" and "${candidate.right}" the same ${candidate.entityType}?`,
+        detail:
+          `Sleep declined to merge them and deferred the decision. Merging two entities is a ` +
+          `one-way door: no later commit separates two subjects whose memories were fused.`,
+        evidence: { kind: "measurement", detail: evidenceFor(candidate) }
+      })
+      if (outcome === "minted") minted += 1
+      else if (outcome === "refreshed") refreshed += 1
+      else if (outcome === "framed") framed += 1
+      else if (outcome === "dismissed") dismissed += 1
+    }
+
+    const closed = judged
+      ? yield* closeVanishedDetections(env, ENTITY_REVIEW_DETECTOR, new Set(byKey.keys()))
+      : 0
+    return { minted, refreshed, framed, dismissed, closed }
+  })
+
+/** The canonical finding string: the type and the two names, sorted. See {@link mintReviewTasks}. */
+const findingFor = (candidate: ReviewCandidate): string =>
+  candidate.left < candidate.right
+    ? `${candidate.entityType} ${candidate.left} ${candidate.right}`
+    : `${candidate.entityType} ${candidate.right} ${candidate.left}`
+
+/** The evidence line: which band deferred it, at what number, and how much corpus is behind each name. */
+const evidenceFor = (candidate: ReviewCandidate): string =>
+  (candidate.reason === "character-band"
+    ? `character overlap ${candidate.score.toFixed(2)}, inside the ${String(REVIEW_THRESHOLD)}-${String(AUTO_MERGE_THRESHOLD)} review band`
+    : `the model proposed the merge at confidence ${candidate.score.toFixed(2)}, below the ${String(ENTITY_CONFIDENCE_FLOOR)} floor`) +
+  `; "${candidate.left}" is claimed by ${String(candidate.leftFiles)} active memories and ` +
+  `"${candidate.right}" by ${String(candidate.rightFiles)}`
+
+/** Type, then the two names, then the reason. A total order, so the mint sequence is reproducible. */
+const compareCandidates = (left: ReviewCandidate, right: ReviewCandidate): number => {
+  const leftFinding = findingFor(left)
+  const rightFinding = findingFor(right)
+  if (leftFinding !== rightFinding) return leftFinding < rightFinding ? -1 : 1
+  return left.reason < right.reason ? -1 : left.reason > right.reason ? 1 : 0
+}

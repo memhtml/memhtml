@@ -62,6 +62,41 @@ describe("agent/instructions.md", () => {
   })
 
   /**
+   * The commitments half of the output, per issue #44's surface 2. The schema REQUIRES the field, so
+   * instructions that never mentioned it would leave the agent filling a list it was not told the rules
+   * for — which is the case that mints tasks out of hypotheticals.
+   *
+   * Text assertions on the DECISIONS, not on the wording: first-person only, the `other` escape hatch
+   * that keeps the labelling honest, hypotheticals excluded, and `resolved` scoped to the same session.
+   */
+  it("states the commitment rules the phase's post-filter enforces", async () => {
+    const text = await readProse("instructions.md")
+    expect(text).toContain("first person only")
+    // `other` exists so a third party's commitment is reported accurately rather than relabelled.
+    expect(text).toContain('actor: "other"')
+    expect(text).toContain("never a hypothetical")
+    // `resolved` is a fact about the SAME session; a later session's completion is not its job.
+    expect(text).toContain("same session")
+  })
+
+  /** The second list must also read as legitimately empty, or the agent invents commitments. */
+  it("permits an empty commitment list", async () => {
+    const text = await read("instructions.md")
+    expect(text).toContain('"commitments": []')
+    expect(text).toContain('{"candidates": [], "commitments": []}')
+  })
+
+  /**
+   * ONE quote for a commitment, against the candidate bar's two. The distinction has to be in the
+   * instructions or the agent applies the more prominent rule — the "at least two" it read further up —
+   * and then either pads a second quote or drops findings it could have reported.
+   */
+  it("asks for exactly one verbatim quote per commitment, not the candidate bar's two", async () => {
+    const text = await readProse("instructions.md")
+    expect(text).toContain("exactly one quote")
+  })
+
+  /**
    * Transcripts are recordings of other agent sessions and are therefore full of
    * instruction-shaped text — system prompts, tool definitions, earlier agents' rules. The same
    * hazard `packages/llm/src/model-client.ts:68-71` handles with `wrapAsData`.

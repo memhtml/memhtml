@@ -730,6 +730,73 @@ export const VETO_MERGE_DROP_PATH = "areas/deploy/blue-green-safe-restated.html"
 export const VETO_REFUSED_PATH = "areas/deploy/blue-green-is-not-safe.html"
 
 /**
+ * A SECOND negation-flipped pair, on a topic sharing nothing with {@link DEDUP_CORPUS}'s.
+ *
+ * Its only purpose is to make a night produce TWO DISTINCT vetoed pairs, which is the corpus a test
+ * about the dedup detector's QUEUE needs rather than about one veto firing. One vetoed pair passes
+ * against a minter whose claim frame collapses every pair onto one task — measured, that is exactly what
+ * `mintDetectedTask`'s proximity check did to this detector — so the second pair is the neighbor that
+ * makes `tasksMinted === 2` a real assertion.
+ *
+ * **Measured under `fakeVector` (2026-08-20, over the article text the chunker embeds,
+ * `claim + " " + body`), and every number is load-bearing:**
+ *
+ * | quantity | value | why |
+ * |---|---|---|
+ * | the two members | **0.9904** | above `NEAR_DUPLICATE_THRESHOLD` 0.92, so the NO-MODEL arm mines it |
+ * | either member vs any {@link DEDUP_CORPUS} or {@link DEDUP_VETO_TRIPLE} member | ≤ **0.4961** | its own component; nothing chains |
+ * | pairs above 0.92 in the combined corpus | **4** | the two clean duplicates, `DEDUP_CORPUS`'s flip, and this |
+ * | this pair's veto | negation, and ONLY negation | so a test naming the predicate names one thing |
+ *
+ * Above 0.92 rather than in the recall band is deliberate: it makes the pair visible to the
+ * deterministic arm, so the two-vetoed-pairs test runs with NO MODEL BOUND and cannot pass or fail on a
+ * scripted partition.
+ *
+ * **The bodies are BYTE-IDENTICAL and the claims differ by one `not`**, which is the same construction
+ * `DEDUP_CORPUS`'s flip note explains at length: `negationDivergent` is a presence check over the whole
+ * text, so a marker on both sides would MASK the predicate and the pair would merge. Verified: `neg`
+ * true, `num` false, `var` false.
+ *
+ * Both claims carry a frame key and the two are DIFFERENT (`… journal is open to` against
+ * `… journal is not open to`), and neither matches any claim in the other corpora — so seeding this adds
+ * no frame-seed edge anywhere.
+ */
+export const DEDUP_SECOND_VETO_PAIR: ReadonlyArray<SeedFile> = [
+  {
+    path: "areas/ingest/replay-window-is-open.html",
+    html: memoryHtml({
+      title: "The ingest replay window is open during a rebalance",
+      claim:
+        "The replay window on the ingest journal is open to a backfill during a partition rebalance.",
+      body: "Offsets stay addressable while the coordinator reassigns shards across the ingest journal replay path.",
+      memoryType: "semantic",
+      createdAt: "2026-05-08T00:00:00Z",
+      confidence: "0.85",
+      entities: ["service:ingest-journal"],
+      tags: ["ingest"]
+    })
+  },
+  {
+    path: "areas/ingest/replay-window-is-not-open.html",
+    html: memoryHtml({
+      title: "The ingest replay window is not open during a rebalance",
+      claim:
+        "The replay window on the ingest journal is not open to a backfill during a partition rebalance.",
+      body: "Offsets stay addressable while the coordinator reassigns shards across the ingest journal replay path.",
+      memoryType: "semantic",
+      createdAt: "2026-05-09T00:00:00Z",
+      confidence: "0.85",
+      entities: ["service:ingest-journal"],
+      tags: ["ingest"]
+    })
+  }
+]
+
+/** The second flip pair's keeper (older) and refused side, so a test names neither by guessing. */
+export const SECOND_VETO_KEEP_PATH = "areas/ingest/replay-window-is-open.html"
+export const SECOND_VETO_REFUSED_PATH = "areas/ingest/replay-window-is-not-open.html"
+
+/**
  * TEN memories in ONE frame slot: a component larger than `DEDUP_MAX_COMPONENT`, built entirely from
  * frame seeds.
  *

@@ -29,6 +29,7 @@ import {
   type TailMerger
 } from "@memhtml/index"
 import { EMBED_WATERMARK } from "@memhtml/llm"
+import { DETECTION_DIGEST_CHARS, DETECTION_PREFIX } from "@memhtml/sleep"
 import { attemptIo, commitSubject, Store, type WriteInput } from "@memhtml/store"
 import { mergeTailExtract, type SessionExtract, scanTraceRoot } from "@memhtml/traces"
 import { Effect } from "effect"
@@ -1272,7 +1273,7 @@ export const listMemories = (params: ListParams) =>
 /**
  * The task surface: CRUDL without retrieval.
  *
- * A task is the 10th `memory_type` and it is default-excluded from search, dedup, and all fifteen
+ * A task is the 10th `memory_type` and it is default-excluded from search, dedup, and all sixteen
  * sleep phases, so the working set an agent needs is not reachable by ranking. These three
  * functions are how it becomes reachable: `task add` wraps {@link writeMemory}, `task status` is one
  * head meta edited in place, and {@link listTasks} is a direct indexed scan. Reading a directory,
@@ -1402,7 +1403,46 @@ export interface ListTasksParams {
   /** The previous page's `nextCursor`: the last path returned. A keyset rather than an offset. */
   readonly cursor?: string | undefined
   readonly includeArchived?: boolean | undefined
+  /**
+   * Only tasks the sleep cycle DETECTED, never ones a human or an agent opened by hand.
+   *
+   * Issue #44's author separation, as the flag that makes it usable: "a human can review the machine's
+   * queue separately". A detected task is a PROPOSAL with evidence and a human-opened task is a
+   * decision already made, so they are two different reading sessions, and a queue that mixes them
+   * makes the reviewer sort by hand.
+   *
+   * Absent means "both", not "only human-opened". A negative filter would be a second flag, and nobody
+   * has asked for the reading it answers: an agent listing work does not care who noticed it.
+   */
+  readonly detected?: boolean | undefined
 }
+
+/**
+ * The `GLOB` pattern that matches a detected task's path, and nothing else.
+ *
+ * **The PATH is the discriminator, and `author` is deliberately not it.** `packages/sleep/src/tasks.ts`
+ * records why the path carries the detection key: it survives `rm index.db && rebuild` with no
+ * projection, it is collision-free by construction, and it costs no new meta in a CLOSED vocabulary.
+ * `files.author` IS a real column and every detected task carries `agent:sleep` in it — but so does
+ * every memory `trace-consolidation` and `arc-synthesis` write, and so would a task an operator opened
+ * while impersonating the cycle. `author = 'agent:sleep'` is therefore necessary and not sufficient,
+ * while the path is both. Adding the author predicate beside this one would look like defense in depth
+ * and would actually be a second, weaker copy of the same test — and it would break the moment a
+ * detector minted under a different author, which is a change the path would survive.
+ *
+ * `GLOB` rather than `LIKE`, and the character class is the reason. `LIKE 'areas/inbox/tasks/det-%'`
+ * would match `det-nothex…` and `detonate-things.html`; the twelve `[0-9a-f]` positions are the same
+ * shape `detectionKeyOf`'s regex asserts, so the two agree about what a detected path IS. Verified
+ * against node:sqlite: the pattern matches a real detected path and an archived one, and rejects a
+ * human `t-…` task, a non-hex stem, a short digest, and `detonate-`.
+ *
+ * The leading `*` covers the ARCHIVE. `archivePathFor` prefixes `archive/<year>/`, so a closed detected
+ * task's path is `archive/2026/areas/inbox/tasks/det-…`, and `--detected --include-archived` has to
+ * reach it or "what did the machine propose and what happened to it" is unanswerable. It also means the
+ * pattern is anchored on the FILENAME rather than on the directory, which is correct: the digest prefix
+ * is the claim, and `placementFor` owns where a task files.
+ */
+const DETECTED_TASK_GLOB = `*/${DETECTION_PREFIX}${"[0-9a-f]".repeat(DETECTION_DIGEST_CHARS)}-*.html`
 
 /** One task row as `task list` reports it. */
 export interface TaskRow {
@@ -1476,6 +1516,20 @@ export const listTasks = (params: ListTasksParams) =>
     if (params.cursor !== undefined && params.cursor !== "") {
       conditions.push("f.path > ?")
       values.push(normalizePath(params.cursor))
+    }
+    /**
+     * A FILTER on the existing shape, not a new payload. Every row `task list` returns still carries
+     * exactly the {@link TaskRow} fields, so `task.list` keeps its meaning and the append-only
+     * discriminator rule in `envelope.ts` is untouched — nothing was added to a shipped shape and no
+     * consumer's parse changes.
+     *
+     * A `detected: boolean` column per row was the alternative and it was declined. It would put the
+     * same fact in two places (the path already says it) and it would make every caller of `task list`
+     * parse a field only one flag's users read.
+     */
+    if (params.detected === true) {
+      conditions.push("f.path GLOB ?")
+      values.push(DETECTED_TASK_GLOB)
     }
 
     const rows = yield* db.all<{

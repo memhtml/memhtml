@@ -3,13 +3,17 @@ import { Effect, Result, Schema } from "effect"
 import { describe, expect, it } from "vitest"
 
 import {
+  CandidateCommitment,
   CandidateMemory,
+  COMMITMENT_ACTORS,
   CONSOLIDATION_KINDS,
   CONSOLIDATION_OUTPUT_JSON_SCHEMA,
   ConsolidationPayload,
   isConsolidationKind,
   MAX_CLAIM_CHARS,
   MAX_QUOTE_CHARS,
+  MAX_STATEMENT_CHARS,
+  ungroundedCommitmentReason,
   ungroundedEvidenceReason
 } from "../src/contract.js"
 
@@ -22,14 +26,45 @@ import {
  * FAILS rather than being quietly repaired.
  */
 
-const decode = (payload: unknown): Result.Result<ConsolidationPayload, unknown> =>
+/** The payload decode, over the value exactly as given. Nothing is filled in. */
+const decodeRaw = (payload: unknown): Result.Result<ConsolidationPayload, unknown> =>
   Effect.runSync(
     Effect.result(
       Schema.decodeUnknownEffect(ConsolidationPayload, { onExcessProperty: "error" })(payload)
     )
   )
 
+/**
+ * The same decode with `commitments: []` supplied when the case did not state one.
+ *
+ * Every case in the CANDIDATE suite is about the candidate half of the payload, and `commitments` is a
+ * REQUIRED field, so without this each of them would fail for a reason that has nothing to do with what
+ * it asserts. Filling it here keeps each case's subject legible.
+ *
+ * It fills only when the value is a non-array object with no `commitments` key, so the three cases that
+ * turn on the ROOT shape — a missing `candidates`, a bare array, an extra root key — still see exactly
+ * what they passed. And the requirement itself is asserted directly through {@link decodeRaw}, so
+ * nothing about it rests on this convenience.
+ */
+const decode = (payload: unknown): Result.Result<ConsolidationPayload, unknown> =>
+  typeof payload === "object" &&
+  payload !== null &&
+  !Array.isArray(payload) &&
+  !("commitments" in payload)
+    ? decodeRaw({ commitments: [], ...payload })
+    : decodeRaw(payload)
+
 const evidence = (sessionId: string, quote: string) => ({ sessionId, quote })
+
+/** One well-formed commitment, with the fields a case does not care about filled in plausibly. */
+const commitment = (overrides: Record<string, unknown> = {}) => ({
+  statement: "wire the capture path before the next release",
+  actor: "agent",
+  evidence: evidence("session-a", "I'll wire capture before we cut the release"),
+  confidence: 0.9,
+  resolved: false,
+  ...overrides
+})
 
 const candidate = (overrides: Record<string, unknown> = {}) => ({
   kind: "error_pattern",
@@ -156,6 +191,140 @@ describe("CandidateMemory decode", () => {
 })
 
 /**
+ * The commitments half of the payload: issue #44's surface 2.
+ *
+ * Same decode posture as the candidate suite — every assertion is that a bad payload FAILS rather than
+ * being quietly repaired — over a shape that differs from a candidate memory in exactly the places the
+ * contract argues it should: ONE evidence quote instead of two, a closed actor vocabulary, and a
+ * `resolved` flag.
+ */
+describe("CandidateCommitment decode", () => {
+  it("accepts a well-formed commitment", () => {
+    const result = decode({ candidates: [], commitments: [commitment()] })
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result)) {
+      expect(result.success.commitments).toHaveLength(1)
+      expect(result.success.commitments[0]).toBeInstanceOf(CandidateCommitment)
+    }
+  })
+
+  /**
+   * The field the closure arm turns on, so it has to survive the decode as a real boolean.
+   *
+   * (Mutation: dropping `resolved` from the schema fails this and the wire-schema case, and would leave
+   * `phases/trace-consolidation.ts`' closure arm permanently unreachable — every commitment would read
+   * as unresolved and the "completion detected" path would never run.)
+   */
+  it("decodes resolved: true as a real flag, so the closure arm is reachable", () => {
+    const result = decode({ candidates: [], commitments: [commitment({ resolved: true })] })
+    if (!Result.isSuccess(result)) throw new Error("expected success")
+    expect(result.success.commitments[0]?.resolved).toBe(true)
+  })
+
+  it("REJECTS a missing resolved flag rather than defaulting it to false", () => {
+    const { resolved: _dropped, ...withoutResolved } = commitment()
+    expect(Result.isFailure(decode({ candidates: [], commitments: [withoutResolved] }))).toBe(true)
+  })
+
+  it("accepts every actor in the closed vocabulary and REJECTS one outside it", () => {
+    for (const actor of COMMITMENT_ACTORS) {
+      expect(
+        Result.isSuccess(decode({ candidates: [], commitments: [commitment({ actor })] })),
+        actor
+      ).toBe(true)
+    }
+    expect(
+      Result.isFailure(decode({ candidates: [], commitments: [commitment({ actor: "team" })] }))
+    ).toBe(true)
+    expect(
+      Result.isFailure(decode({ candidates: [], commitments: [commitment({ actor: "" })] }))
+    ).toBe(true)
+  })
+
+  /**
+   * ONE evidence object, not a list. The two-quote bar is the TRACE-2 bar for a candidate MEMORY, which
+   * claims a pattern across lines; a commitment is one sentence, so a second quote could only be
+   * padding. Asserting the array form is REFUSED is what makes "exactly one" structural rather than a
+   * minimum a caller could widen.
+   */
+  it("REJECTS an evidence ARRAY, because a commitment cites exactly one line", () => {
+    const result = decode({
+      candidates: [],
+      commitments: [commitment({ evidence: [evidence("session-a", "a quote")] })]
+    })
+    expect(Result.isFailure(result)).toBe(true)
+  })
+
+  it("REJECTS an empty statement, an empty quote, and an empty sessionId", () => {
+    expect(
+      Result.isFailure(decode({ candidates: [], commitments: [commitment({ statement: "" })] }))
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        decode({
+          candidates: [],
+          commitments: [commitment({ evidence: evidence("session-a", "") })]
+        })
+      )
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        decode({ candidates: [], commitments: [commitment({ evidence: evidence("", "a quote") })] })
+      )
+    ).toBe(true)
+  })
+
+  it("REJECTS a statement longer than the ceiling", () => {
+    const result = decode({
+      candidates: [],
+      commitments: [commitment({ statement: "x".repeat(MAX_STATEMENT_CHARS + 1) })]
+    })
+    expect(Result.isFailure(result)).toBe(true)
+  })
+
+  it("REJECTS a confidence outside [0, 1] and a non-finite one", () => {
+    for (const confidence of [-0.1, 1.1, "high"]) {
+      expect(
+        Result.isFailure(decode({ candidates: [], commitments: [commitment({ confidence })] })),
+        String(confidence)
+      ).toBe(true)
+    }
+  })
+
+  /** Absent, a string, and `null` all decode: the three forms a producer can spell "no due date". */
+  it("accepts dueHint absent, as a string, and as null", () => {
+    const { statement, actor, evidence: one, confidence, resolved } = commitment()
+    const base = { statement, actor, evidence: one, confidence, resolved }
+    expect(Result.isSuccess(decode({ candidates: [], commitments: [base] }))).toBe(true)
+    expect(
+      Result.isSuccess(
+        decode({ candidates: [], commitments: [{ ...base, dueHint: "2026-08-20" }] })
+      )
+    ).toBe(true)
+    expect(
+      Result.isSuccess(decode({ candidates: [], commitments: [{ ...base, dueHint: null }] }))
+    ).toBe(true)
+  })
+
+  it("REJECTS an undeclared extra key on a commitment instead of stripping it", () => {
+    const result = decode({ candidates: [], commitments: [commitment({ owner: "laith" })] })
+    expect(Result.isFailure(result)).toBe(true)
+  })
+
+  /**
+   * The field is REQUIRED, so an agent that answered only the candidates half fails the decode rather
+   * than being read as "looked and found no commitments". This is the case {@link decodeRaw} exists
+   * for: the convenience decode fills the field, and this asserts the requirement it fills.
+   *
+   * (Mutation: making `commitments` optional, or defaulting it to `[]` in the schema, fails this.)
+   */
+  it("REJECTS a payload with no commitments field at all", () => {
+    expect(Result.isFailure(decodeRaw({ candidates: [] }))).toBe(true)
+    expect(Result.isSuccess(decodeRaw({ candidates: [], commitments: [] }))).toBe(true)
+  })
+})
+
+/**
  * The grounding check the schema cannot express, exercised as the pure rule the client applies.
  *
  * `sessionId`'s doc comment claimed for one task that an id was "checked on decode" against the
@@ -233,6 +402,53 @@ describe("evidence must be grounded in the READABLE batch", () => {
   it("REJECTS every candidate when nothing was reachable", () => {
     expect(ungroundedEvidenceReason([candidate()], [])).not.toBeNull()
   })
+
+  /**
+   * The same rule over the COMMITMENTS list, which is not covered by the candidate arm: the two shapes
+   * differ in evidence arity, so a single function cannot read both, and a commitment's session id
+   * travels further than a candidate's — it keys a detected task and becomes that task's own
+   * `memhtml-session` provenance, where a human reading the queue treats it as the place to go and
+   * check.
+   *
+   * (Mutation: removing the `ungroundedCommitmentReason` call from `runTurn`, or making the function
+   * return `null` unconditionally, fails the three cases below. Every candidate-arm case stays green,
+   * which is exactly how quietly an ungrounded commitment would have shipped.)
+   */
+  it("REJECTS a commitment citing a session this run never made readable", () => {
+    const reason = ungroundedCommitmentReason(
+      [{ evidence: evidence("session-c", "I'll fix it tomorrow") }],
+      READABLE
+    )
+    expect(reason).not.toBeNull()
+    expect(reason).toContain("session-c")
+    expect(reason).toContain("did not make readable")
+    // It says COMMITMENT, so an operator reading the phase's detail knows which half to look at.
+    expect(reason).toContain("commitment 0")
+  })
+
+  it("accepts commitments citing only readable sessions, and an empty list", () => {
+    expect(
+      ungroundedCommitmentReason([{ evidence: evidence("session-a", "quote") }], READABLE)
+    ).toBeNull()
+    expect(ungroundedCommitmentReason([], READABLE)).toBeNull()
+  })
+
+  it("names the OFFSET of the offending commitment", () => {
+    const reason = ungroundedCommitmentReason(
+      [
+        { evidence: evidence("session-a", "grounded") },
+        { evidence: evidence("session-z", "invented") }
+      ],
+      READABLE
+    )
+    expect(reason).toContain("commitment 1")
+  })
+
+  it("REJECTS every commitment when nothing was reachable", () => {
+    expect(
+      ungroundedCommitmentReason([{ evidence: evidence("session-a", "quote") }], [])
+    ).not.toBeNull()
+  })
 })
 
 describe("the kind vocabulary is a subset of the corpus vocabulary", () => {
@@ -264,11 +480,62 @@ describe("the derived JSON Schema eve is handed", () => {
   it("has a CONCRETE object root, not a bare $ref", () => {
     expect(schema.type).toBe("object")
     expect(schema.properties).toHaveProperty("candidates")
+    expect(schema.properties).toHaveProperty("commitments")
     expect(schema.$ref).toBeUndefined()
   })
 
+  /**
+   * The commitments half has to reach the MODEL, not only the decoder. eve lowers this document to the
+   * model's structured-output contract, so a field absent here is a field the model is never asked
+   * for — and then the required-field decode refuses every turn, which is the loudest possible way to
+   * discover it and still a wasted call.
+   *
+   * (Mutation: dropping `commitments` from `ConsolidationPayload` fails this and the two cases above.)
+   */
+  it("describes the commitment item shape through a resolvable $ref", () => {
+    const properties = schema.properties as Record<string, Record<string, unknown>>
+    const commitments = properties.commitments
+    if (commitments === undefined) throw new Error("schema.properties.commitments is missing")
+    expect(commitments.type).toBe("array")
+    const ref = (commitments.items as Record<string, unknown>).$ref
+    if (typeof ref !== "string") throw new Error(`commitments.items has no $ref: ${String(ref)}`)
+    const defs = schema.$defs as Record<string, Record<string, unknown> | undefined>
+    const target = defs[ref.slice("#/$defs/".length)]
+    if (target === undefined) throw new Error(`commitments.items.$ref does not resolve: ${ref}`)
+    expect(target.type).toBe("object")
+    // Every field the phase's post-filter reads, so a schema that stopped publishing one is caught.
+    for (const field of ["statement", "actor", "evidence", "confidence", "resolved"]) {
+      expect(target.properties).toHaveProperty(field)
+    }
+    // `resolved` and `confidence` are REQUIRED: an omitted `resolved` would default to nothing and the
+    // closure arm would be unreachable, and an omitted confidence has no floor to clear.
+    expect(target.required).toEqual(["statement", "actor", "evidence", "confidence", "resolved"])
+  })
+
+  /**
+   * `dueHint` publishes the FLAT string-or-null union, which is the wire fix `apps/mcp/src/tools.ts`
+   * records: a bare `Schema.optional` publishes a schema accepting `null` that the decoder then
+   * rejects, so a producer doing the obvious thing for "no due date" fails a call the contract called
+   * valid. `optionalKey(NullOr(...))` accepts all three forms and publishes them.
+   */
+  it("publishes dueHint as an optional string-or-null, not a decoder trap", () => {
+    const defs = schema.$defs as Record<string, Record<string, unknown>>
+    const target = Object.values(defs).find((def) =>
+      Object.hasOwn((def.properties ?? {}) as object, "dueHint")
+    )
+    if (target === undefined) throw new Error("no definition carries dueHint")
+    expect(target.required as string[]).not.toContain("dueHint")
+    const dueHint = (target.properties as Record<string, Record<string, unknown>>).dueHint
+    expect(dueHint?.anyOf).toEqual([{ type: "string" }, { type: "null" }])
+  })
+
+  it("carries the closed actor vocabulary", () => {
+    const rendered = JSON.stringify(schema)
+    for (const actor of COMMITMENT_ACTORS) expect(rendered).toContain(`"${actor}"`)
+  })
+
   it("keeps the root's own constraints after inlining", () => {
-    expect(schema.required).toEqual(["candidates"])
+    expect(schema.required).toEqual(["candidates", "commitments"])
     expect(schema.additionalProperties).toBe(false)
   })
 

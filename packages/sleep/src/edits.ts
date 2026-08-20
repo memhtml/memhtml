@@ -1,7 +1,8 @@
 import type { EdgeRel } from "@memhtml/contracts/edges"
 import type { StorageFailure } from "@memhtml/contracts/errors"
 import { archivePathFor, normalizePath } from "@memhtml/contracts/paths"
-import { addLink, escapeAttribute, readMeta, removeLink, setMeta } from "@memhtml/html"
+import { withCollisionOrdinal } from "@memhtml/contracts/slug"
+import { addLink, addMeta, escapeAttribute, readMeta, removeLink, setMeta } from "@memhtml/html"
 import { attemptIo, type GitFailure, readFileOrNull } from "@memhtml/store"
 import { Effect } from "effect"
 
@@ -78,14 +79,28 @@ export const writeFileBytes = (
     await writeFile(absolute, html, "utf8")
   })
 
-/** One head edit: a meta to set, a link to add, or a link to drop. */
+/** One head edit: a meta to set or append, a link to add, or a link to drop. */
 export type HeadEdit =
   | { readonly kind: "meta"; readonly name: string; readonly value: string }
+  | { readonly kind: "addMeta"; readonly name: string; readonly value: string }
   | { readonly kind: "addLink"; readonly rel: EdgeRel; readonly href: string }
   | { readonly kind: "removeLink"; readonly rel: EdgeRel; readonly href?: string | undefined }
 
 /** A meta edit, as a value. */
 export const meta = (name: string, value: string): HeadEdit => ({ kind: "meta", name, value })
+
+/**
+ * An APPEND to a repeatable meta, as a value. `setMeta` writes the first value of a name and cannot
+ * express a second, so a phase adding one more `memhtml-tag` needs this constructor.
+ *
+ * Idempotent, because `addMeta` returns the input unchanged when the value is already present — which is
+ * what keeps a re-run of a phase that appends a tag free, the same property `stampFile` reads.
+ */
+export const addTag = (value: string): HeadEdit => ({
+  kind: "addMeta",
+  name: "memhtml-tag",
+  value
+})
 
 /** A link addition, as a value. */
 export const link = (rel: EdgeRel, href: string): HeadEdit => ({ kind: "addLink", rel, href })
@@ -99,6 +114,7 @@ export const applyHeadEdits = (html: string, edits: ReadonlyArray<HeadEdit>): st
   let out = html
   for (const edit of edits) {
     if (edit.kind === "meta") out = setMeta(out, edit.name, edit.value)
+    else if (edit.kind === "addMeta") out = addMeta(out, edit.name, edit.value)
     else if (edit.kind === "addLink") out = addLink(out, edit.rel, edit.href)
     else out = removeLink(out, edit.rel, edit.href)
   }
@@ -151,6 +167,33 @@ export const stampFile = (
  * `R100` similarity score. Rename similarity is computed tree-to-tree, so a head stamp in the same
  * commit lowers it (measured R059-R087 on real memory files). `originalPathFor` is the authoritative
  * inverse of the archive mapping, and no correctness path here reads the score.
+ *
+ * **The destination is PROBED, and a taken one gets an ordinal.** `git mv` onto a path that already
+ * holds a file exits 128 (`fatal: destination exists`, measured 2026-08-19), which fails the whole
+ * phase rather than the one file. That is reachable — not hypothetically — because one live path can be
+ * archived TWICE INSIDE ONE YEAR, and the year is the only partition the mapping has:
+ *
+ * - A DETECTED task's path is deliberately deterministic (`tasks.ts`: the digest keys the finding, so a
+ *   finding restated tomorrow lands on the same path on purpose). Mint, sweep-close, the finding
+ *   reappears, sweep-close again — and the second close aims at the first close's archive path.
+ * - Any path a human restores out of the archive and lets a later night evict again is the same shape
+ *   with no detector involved.
+ *
+ * So the fix is here rather than in `tasks.ts`: the collision is a property of the ARCHIVE mapping, and
+ * every phase that archives — retention triage, reprieve, dedup's drops, compress's members — has the
+ * same exposure. The ordinal is `-2`, `-3`, … at the first FREE candidate, deterministic given the tree,
+ * and it goes through `withCollisionOrdinal` so it lands inside `SLUG_MAX_LENGTH` exactly as
+ * `trace-consolidation`'s `freePath` and the store's own collision loop do.
+ *
+ * **A suffixed destination is no longer `originalPathFor`'s inverse, and that is the stated cost.** The
+ * first archiving of a path keeps the unsuffixed name, so `integrity`'s dangling-href repair still finds
+ * it and every existing inverse assertion holds; a SECOND archiving of one path is a second file whose
+ * name says so. Nothing reads the inverse to decide a write — `integrity` searches a known-path set and
+ * falls back to dropping the edge — so the alternative (failing the phase) is strictly worse.
+ *
+ * Exhausting the ordinals logs and answers `null`, which leaves the file at its live path. `null`
+ * already means "not archived" to every caller, so an exhausted probe is counted as a file that did not
+ * move rather than one that was destroyed.
  */
 export const archiveFile = (
   env: PhaseEnv,
@@ -159,9 +202,16 @@ export const archiveFile = (
 ): Effect.Effect<string | null, StorageFailure | GitFailure> =>
   Effect.gen(function* () {
     const normalized = normalizePath(path)
-    const target = archivePathFor(normalized, yearOf(env.date))
     const html = yield* readFileBytes(env, normalized)
     if (html === undefined) return null
+
+    const target = yield* freeArchivePath(env, normalized)
+    if (target === undefined) {
+      yield* Effect.logWarning(
+        `sleep.archive refused ${normalized}: every archive ordinal is taken, so the file stays live`
+      )
+      return null
+    }
 
     yield* attemptIo(`sleep.archive.mkdir:${target}`, async () => {
       const { mkdir } = await import("node:fs/promises")
@@ -180,6 +230,51 @@ export const archiveFile = (
     yield* env.deps.git.add([target])
     return target
   })
+
+/**
+ * Archive ordinals tried before a file is left where it is. The store's own ceiling and
+ * `trace-consolidation`'s, verbatim, so the three collision loops in this repo agree on the number.
+ */
+const ARCHIVE_ORDINAL_LIMIT = 1000
+
+/**
+ * The lowest free archive path for a live path, or `undefined` when every ordinal is taken.
+ *
+ * DISK is the only authority, and it is enough: a phase archiving one path twice in one run cannot
+ * happen, because the first `git mv` takes the file away and `archiveFile`'s own missing-source read
+ * answers `null` for the second. So there is no in-run `claimed` set to union in, which is the one
+ * half `trace-consolidation`'s `freePath` needs and this does not.
+ */
+const freeArchivePath = (
+  env: PhaseEnv,
+  normalized: string
+): Effect.Effect<string | undefined, StorageFailure> =>
+  Effect.gen(function* () {
+    const year = yearOf(env.date)
+    for (let ordinal = 1; ordinal <= ARCHIVE_ORDINAL_LIMIT; ordinal += 1) {
+      const candidate = withArchiveOrdinal(archivePathFor(normalized, year), ordinal)
+      if ((yield* readFileBytes(env, candidate)) === undefined) return candidate
+    }
+    return undefined
+  })
+
+/**
+ * A path with a collision ordinal spliced into its filename STEM, before the extension.
+ *
+ * Before the extension rather than after, so the result is still an `.html` path the indexer reads and
+ * the parser accepts. Ordinal 1 is the bare path, matching `withCollisionOrdinal`'s own convention, so
+ * the ordinary single-archiving case produces byte-identical paths to what this function replaced.
+ */
+export const withArchiveOrdinal = (path: string, ordinal: number): string => {
+  if (ordinal <= 1) return path
+  const cut = path.lastIndexOf("/")
+  const directory = path.slice(0, cut + 1)
+  const filename = path.slice(cut + 1)
+  const dot = filename.lastIndexOf(".")
+  const stem = dot <= 0 ? filename : filename.slice(0, dot)
+  const extension = dot <= 0 ? "" : filename.slice(dot)
+  return `${directory}${withCollisionOrdinal(stem, ordinal)}${extension}`
+}
 
 /** The calendar year an archive path partitions under, from the run's own injected date. */
 export const yearOf = (date: string): number => {
