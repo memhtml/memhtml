@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
@@ -16,8 +16,10 @@ import {
   ConsolidatorRunFailed,
   ConsolidatorUnavailable,
   credentialsMissingReason,
+  decodedTranscriptStrings,
   hasConsolidatorCredentials,
   MAX_TRANSCRIPTS_PER_RUN,
+  quoteAppearsIn,
   type TranscriptRef,
   ungroundedCommitmentReason,
   ungroundedEvidenceReason
@@ -276,7 +278,7 @@ const packageRoot = (): string => resolve(dirname(fileURLToPath(import.meta.url)
  * opened, while a file that does not resolve was categorically not opened. `ConsolidationResult`'s
  * `analyzedSessionIds` is built from these and from nothing else.
  */
-interface ReachableTranscript {
+export interface ReachableTranscript {
   readonly entry: TranscriptManifestEntry
   /** Absolute guest path under {@link TRACES_MOUNT}. What the manifest names and the model opens. */
   readonly guestPath: string
@@ -841,6 +843,141 @@ const turnMessage = (reachable: ReadonlyArray<ReachableTranscript>): string =>
   ].join("\n")
 
 /**
+ * The reason a cited quote is not IN the transcript it cites, or `null` when every quote verifies.
+ *
+ * ## The gap this closes: a session id was checked, its CONTENT never was
+ *
+ * `ungroundedEvidenceReason` and `ungroundedCommitmentReason` refuse an id outside the reachable set,
+ * and nothing then checked that the quoted TEXT appears in the file that id names. A model could
+ * attribute a sentence nobody said to a session it really read, and the fabrication would ride into a
+ * commit message as `evidence <id>: "…"` — where a reviewer's whole recourse is to trust it as
+ * provenance. A commitment's quote travels further still: it keys a detected task and lands in the
+ * task's body as the thing a human is asked to confirm.
+ *
+ * ## Both containment arms from day one, because the raw bytes alone livelock
+ *
+ * A quote is accepted when it appears in the RAW bytes or in any single DECODED string, and the order
+ * is cost: most quotes are verbatim in the source and the raw arm is one `includes`. The decoded arm
+ * is not an optimization — PR #47's review gauntlet measured what happens without it: a transcript is
+ * JSONL, so a `"` the speaker typed is `\"` on disk and an in-message newline is the two characters
+ * `\` and `n`; an honest quote of either shape fails a byte comparison, the whole turn refuses, the
+ * batch is never watermarked, and the same batch re-selects and fails identically every night. See
+ * {@link decodedTranscriptStrings} for the arm's exact semantics (values only, each string tested
+ * separately so a quote stitched across two messages still refuses).
+ *
+ * ## The whole TURN refuses, matching the grounding checks
+ *
+ * Same posture, same reason: a filtered list is indistinguishable downstream from a list the agent
+ * returned, and a fabricated quote is a fact about the run's trustworthiness rather than a fault in
+ * one item. The cost is one night's batch, bounded exactly as the grounding checks bound it — the
+ * transcripts stay unwatermarked and the next night asks again.
+ *
+ * ## Cost, and why it is bounded in practice
+ *
+ * Each CITED session's file is read once and cached for the walk, so the bill is bytes-per-cited-
+ * session rather than per-quote, and a run that cited nothing reads nothing at all. Decoding is
+ * lazier still: the raw arm decides most quotes, so a session whose every quote is verbatim in the
+ * bytes never pays for a JSON parse of its lines.
+ *
+ * ## An unreadable file is a REFUSAL, not a skip
+ *
+ * Everywhere else in this module a transcript that cannot be read is skipped, because the files are
+ * written by a live process and one missing transcript should cost that transcript rather than the
+ * run. Here the opposite holds, and the difference is what the answer is used for: the model already
+ * claimed to have read this file and quoted it, so a file this process cannot read means the claim
+ * cannot be checked, and passing an unverifiable quote through is the same as not checking.
+ *
+ * Exported so `tests/quote-containment.test.ts` drives it against real JSONL bytes in a temp dir.
+ * That tier is not optional cover: the defect class it pins is a mismatch between the form a quote is
+ * RENDERED in and the form the transcript is STORED in, and neither form is visible in a test that
+ * types both sides of the comparison — `contract.test.ts` exercises {@link quoteAppearsIn} as a pure
+ * function and cannot see it. No production caller outside this module reaches this; `runTurn` below
+ * is the only one.
+ */
+export const fabricatedQuoteReason = (
+  answer: {
+    readonly candidates: ReadonlyArray<{
+      readonly evidence: ReadonlyArray<{ readonly sessionId: string; readonly quote: string }>
+    }>
+    readonly commitments: ReadonlyArray<{
+      readonly evidence: { readonly sessionId: string; readonly quote: string }
+    }>
+  },
+  reachable: ReadonlyArray<ReachableTranscript>
+): Effect.Effect<string | null> =>
+  Effect.gen(function* () {
+    const cited = [
+      ...answer.candidates.flatMap((item, offset) =>
+        item.evidence.map((evidence) => ({ label: "candidate", offset, evidence }))
+      ),
+      ...answer.commitments.map((item, offset) => ({
+        label: "commitment",
+        offset,
+        evidence: item.evidence
+      }))
+    ]
+    if (cited.length === 0) return null
+
+    const hostPathOf = new Map(
+      reachable.map(({ entry }) => [entry.sessionId, entry.filePath] as const)
+    )
+    /** `null` marks a file that could not be read, so one failure is not retried per quote. */
+    const loaded = new Map<string, string | null>()
+    /** The DECODED strings of a session, computed on first need and cached for the walk. */
+    const decoded = new Map<string, ReadonlyArray<string>>()
+    const decodedFor = (sessionId: string, transcript: string): ReadonlyArray<string> => {
+      const held = decoded.get(sessionId)
+      if (held !== undefined) return held
+      const strings = decodedTranscriptStrings(transcript)
+      decoded.set(sessionId, strings)
+      return strings
+    }
+
+    for (const { label, offset, evidence } of cited) {
+      if (!loaded.has(evidence.sessionId)) {
+        const hostPath = hostPathOf.get(evidence.sessionId)
+        if (hostPath === undefined) {
+          // Unreachable in practice: the grounding checks run first and refuse an id outside this
+          // same set. Handled rather than asserted so a reordering cannot turn it into a crash.
+          return (
+            `${label} ${String(offset)} cites session ${evidence.sessionId}, ` +
+            "which this run did not read"
+          )
+        }
+        const text = yield* Effect.tryPromise({
+          try: () => readFile(hostPath, "utf8"),
+          catch: () => null
+        }).pipe(Effect.orElseSucceed(() => null))
+        loaded.set(evidence.sessionId, text)
+      }
+      const transcript = loaded.get(evidence.sessionId) ?? null
+      if (transcript === null) {
+        return (
+          `${label} ${String(offset)} quotes session ${evidence.sessionId}, whose transcript could ` +
+          "not be re-read to verify the quote"
+        )
+      }
+      if (
+        !quoteAppearsIn(evidence.quote, transcript) &&
+        !decodedFor(evidence.sessionId, transcript).some((text) =>
+          quoteAppearsIn(evidence.quote, text)
+        )
+      ) {
+        /**
+         * The reason carries a TRUNCATED quote and never the transcript. A failure message is logged
+         * and reported by the sleep cycle, so it must not become a channel for session content; 80
+         * characters is enough for an operator to find the claim in the model's answer and no more.
+         */
+        return (
+          `${label} ${String(offset)} quotes session ${evidence.sessionId} with text that does not ` +
+          `appear in that transcript: ${JSON.stringify(evidence.quote.slice(0, 80))}`
+        )
+      }
+    }
+    return null
+  })
+
+/**
  * Run ONE turn against a live server and decode its structured answer.
  *
  * ## One turn, because there is nothing left to seed
@@ -991,6 +1128,17 @@ const runTurn = (
       return yield* Effect.fail(
         ConsolidatorContractViolation.make({ reason: ungroundedCommitment })
       )
+    }
+
+    /**
+     * The quotes themselves, AFTER the id checks: {@link fabricatedQuoteReason} maps each cited id to
+     * a host path, so it runs once every id is known to be in the reachable set. The id checks say
+     * the session was read; this says the words are in it. Both are needed — an id check alone lets a
+     * sentence nobody said ride a real session into a commit message and a detected task's body.
+     */
+    const fabricated = yield* fabricatedQuoteReason(decoded.success, reachable)
+    if (fabricated !== null) {
+      return yield* Effect.fail(ConsolidatorContractViolation.make({ reason: fabricated }))
     }
 
     /**
