@@ -101,6 +101,30 @@ export type EdgeTyping = typeof EdgeTyping.Type
  */
 export const EDGE_CONFIDENCE_FLOOR = 0.7
 
+/**
+ * How firmly an intent must have been stated before it becomes a task file, and how firmly a
+ * completion must be stated before it closes one.
+ *
+ * The consolidator's `confidence` is its reading of how FIRM the statement was, not how likely the
+ * work is (`consolidator.ts`'s `CommitmentLike`), and the two ends of that scale are genuinely
+ * different utterances: "I need to look at that sometime" and "I'll do it before the review" are
+ * both first-person intent, and only the second is a commitment a human would want back on their
+ * list. Below the floor the finding is counted and dropped rather than filed, because a to-do list
+ * that fills up with musings is one nobody reads — and an unread inbox is how every detected task in
+ * it stops being seen.
+ *
+ * **The same number governs CLOSURE**, and that symmetry is deliberate rather than a shared
+ * constant for tidiness. A resolution closes a task, which archives a work item a human may be
+ * relying on seeing; asserting completion is at least as consequential as asserting intent, so it
+ * cannot clear a lower bar. One number also means an operator has one threshold to reason about
+ * instead of two whose relationship they would have to remember.
+ *
+ * 0.7, the same value as {@link EDGE_CONFIDENCE_FLOOR}, and for the same reason that one is 0.7: it
+ * is the point past which a model's stated confidence is a claim rather than a hedge, and a second
+ * distinct number here would be a knob nobody could say the meaning of.
+ */
+export const COMMITMENT_FLOOR = 0.7
+
 /** True when a verdict is a proposal at all, above the floor. Computed here, never by the model. */
 export const assertsEdge = (verdict: EdgeVerdict): boolean =>
   verdict.rel !== "none" && verdict.confidence >= EDGE_CONFIDENCE_FLOOR

@@ -1,19 +1,29 @@
 import { WRITABLE_MEMORY_TYPES } from "@memhtml/contracts"
-import type { StorageFailure } from "@memhtml/contracts/errors"
+import type { InvalidMemory, StorageFailure } from "@memhtml/contracts/errors"
 import { placementFor } from "@memhtml/contracts/paths"
 import { SLUG_FALLBACK, slugify, withCollisionOrdinal } from "@memhtml/contracts/slug"
 import { frameKeyOf } from "@memhtml/domain"
 import { renderTemplate } from "@memhtml/html"
 import { makeIndexRecorder } from "@memhtml/index"
+import type { GitFailure } from "@memhtml/store"
 import { Effect, Result } from "effect"
 
 import { commitPhase } from "../commit.js"
-import type { CandidateMemoryLike, TranscriptManifestEntry } from "../consolidator.js"
+import type {
+  CandidateMemoryLike,
+  CommitmentLike,
+  ResolutionLike,
+  TranscriptManifestEntry
+} from "../consolidator.js"
+import type { PhaseCounts } from "../contract.js"
 import { readFileBytes, writeFileBytes } from "../edits.js"
 import { emptyOutcome, type PhaseBody, type PhaseEnv } from "../env.js"
+import { COMMITMENT_FLOOR } from "../llm.js"
+import { CLAIM_JACCARD_FLOOR, claimJaccard, closeTask, makeMinter } from "../mint.js"
 import {
   linkedSessionCount,
   markSessionsConsolidated,
+  openDetectedTasks,
   type SessionManifestRow,
   sessionManifestRows,
   unconsolidatedSessions,
@@ -111,6 +121,182 @@ const COMMIT_QUOTE_CHARS = 200
 
 /** Where a consolidated memory lands: by kind and tag, exactly as an agent's own write is placed. */
 const CONSOLIDATION_TAG = "trace-consolidation"
+
+/** This phase's detector name, which is also the first segment of every commitment task's key. */
+const COMMITMENT_DETECTOR = "trace-consolidation"
+
+/**
+ * The pinned lead of a commitment task's claim (spec 007's claim template, verbatim).
+ *
+ * A prefix rather than a bare statement, so a human reading `task list` can tell a machine-read
+ * promise from a task they typed, and so the three other detectors' `confirm:`/`review:`/`resolve:`
+ * leads have a fourth sibling that reads the same way.
+ */
+const COMMITMENT_CLAIM_PREFIX = "commitment: "
+
+/**
+ * Characters of one commitment statement kept in a title.
+ *
+ * The claim carries the statement in full; the title is what lands in a FILENAME through `slugify`,
+ * and `SLUG_MAX_LENGTH` truncates past 80 anyway. Cutting here rather than letting the slug do it
+ * keeps the `<title>` a reader can scan next to the path.
+ */
+const COMMITMENT_TITLE_CHARS = 80
+
+/**
+ * Characters of a resolution statement quoted in a closure's commit-message line.
+ *
+ * The reason a task disappeared has nowhere else to go: no head meta in the format carries one, and
+ * `closeTask` says so at its own definition (`../mint.ts`). So it goes in the commit, which is where
+ * a reviewer is already reading when they ask why their task vanished — capped, because a resolution
+ * is a model-supplied sentence and a commit subject is not the place to discover how long it was.
+ */
+const CLOSURE_REASON_CHARS = 120
+
+/**
+ * A commitment statement reduced to its identity: lowercased, whitespace collapsed, trailing
+ * sentence punctuation dropped.
+ *
+ * This is what gets hashed into the finding key, and the omission is the whole point: THE SESSION ID
+ * IS NOT IN IT. A commitment restated in a later session is the same work item — somebody said again
+ * that they would do the thing they have not done — so keying on the statement alone is what makes
+ * the second night recognize the first night's task instead of filing a duplicate beside it. Keying
+ * on `session + statement` would produce one task per retelling, forever, which is the failure mode
+ * a to-do list cannot survive.
+ *
+ * Case and spacing are folded because a transcript is prose: the same sentence typed twice differs by
+ * a capital or a double space often enough that an exact-bytes key would miss the restatement it
+ * exists to catch. Trailing `.`/`!`/`?` go for the same reason.
+ */
+const normalizedStatement = (statement: string): string =>
+  statement
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/, "")
+    .trim()
+
+/** `commit:<normalized statement>` — spec 007's fingerprint for this detector, verbatim. */
+const commitmentFingerprint = (statement: string): string =>
+  `commit:${normalizedStatement(statement)}`
+
+/**
+ * A commitment's claim, and therefore its `<mark>`, its `files.gist`, and the Jaccard input both
+ * dedup arms read.
+ */
+const commitmentClaim = (statement: string): string =>
+  `${COMMITMENT_CLAIM_PREFIX}${statement.replace(/\s+/g, " ").trim()}`
+
+/**
+ * A claim with the pinned prefix removed, for comparing against a RESOLUTION statement.
+ *
+ * **Measured, and it changes outcomes.** `claimJaccard` reads the stored gist, which is the whole
+ * claim including `commitment:` — a token no resolution ever carries, inflating the union by one on
+ * every comparison. `I'll update the rollback runbook this week` against `I updated the rollback
+ * runbook this week` scores 0.6667 stripped and 0.6000 prefixed: exactly ON the floor, with no
+ * headroom left for any wording difference. `I'll wire the retry budget into the checkout client`
+ * against `I wired …` scores 0.7000 stripped and 0.6364 prefixed. The deflation is systematic and
+ * worst on short statements, which is where the floor already binds hardest, and the cost of a miss
+ * is a completed commitment whose task never closes.
+ *
+ * The MINT-side Jaccard arm deliberately does NOT strip, because there both sides are commitment
+ * claims and the shared prefix cancels: two unrelated prefixed claims measure 0.2500 and a
+ * restatement measures 0.8333 (same tokenizer, 2026-08-19).
+ */
+const claimStatement = (claim: string): string =>
+  claim.startsWith(COMMITMENT_CLAIM_PREFIX) ? claim.slice(COMMITMENT_CLAIM_PREFIX.length) : claim
+
+/** A commitment's title: the statement, capped for the filename it becomes. */
+const commitmentTitle = (statement: string): string => {
+  const flat = statement.replace(/\s+/g, " ").trim()
+  return `commitment: ${flat.slice(0, COMMITMENT_TITLE_CHARS).trim()}`
+}
+
+/**
+ * Why this commitment will not be minted, or `null`. The gate, per commitment, deterministic.
+ *
+ * Same posture and same shape as {@link refusalFor}: a model-supplied value is checked between the
+ * agent and the tree, one item at a time, and a refusal is counted rather than fatal. Each arm is a
+ * real failure mode and each is counted under its own name, because they mean different things to an
+ * operator — a night of `commitmentNotUser` is an agent reading its own plans back as the user's
+ * promises, which is a prompt problem, while a night of `commitmentBelowFloor` is a batch of
+ * musings, which is not a problem at all.
+ *
+ * - **Below {@link COMMITMENT_FLOOR}.** A hedge is not a commitment; see that constant.
+ * - **`actor` is not `"user"`.** THE self-referential guard, and the one arm with a loop behind it.
+ *   An assistant's "I'll grep for that next" is its own plan for its next tool call, and filing it
+ *   would put the model's intentions on the human's to-do list — where a later session reads them
+ *   back as work the human owes. `"user"` is compared exactly rather than case-folded, because the
+ *   consolidator's schema is a two-value literal (`apps/consolidator/src/contract.ts`) and a value
+ *   outside it is an off-contract answer this gate should refuse, not repair.
+ * - **A session id outside the ANALYZED batch.** The grounding arm. `evidence.sessionId` is a value
+ *   the agent computed, and a task carrying a session nobody read is worse than one carrying none,
+ *   because `memhtml-session` reads as provenance a reviewer would then go and fail to find. The
+ *   consolidator's own client refuses the turn over an unreachable id, and this is the same rule
+ *   applied where the batch is in scope — deliberately redundant, so a scripted or future
+ *   consolidator that skipped it still does not get past here.
+ * - **An empty quote.** The evidence IS the quote for a commitment (the port carries one, not an
+ *   array, and says why), so a blank one leaves the body asserting a promise with nothing behind it.
+ */
+const commitmentRefusal = (
+  commitment: CommitmentLike,
+  analyzed: ReadonlySet<string>
+): string | null => {
+  if (!(commitment.confidence >= COMMITMENT_FLOOR)) return "commitmentBelowFloor"
+  if (commitment.actor !== "user") return "commitmentNotUser"
+  if (!analyzed.has(commitment.evidence.sessionId)) return "commitmentUngrounded"
+  if (commitment.evidence.quote.trim() === "") return "commitmentUngrounded"
+  if (normalizedStatement(commitment.statement) === "") return "commitmentBelowFloor"
+  return null
+}
+
+/**
+ * A commitment task's body paragraphs: the statement as prose, then the transcript quote, then the
+ * due hint when one was said.
+ *
+ * **The quote is PLAIN TEXT naming the session, and carries no `cite`.** A `cite` attribute in this
+ * corpus holds a repo-relative path that the projection doctor then resolves and verifies the quote
+ * against (spec 007's AC-5-2), and a session id is not a path — stamping one would produce a
+ * citation pointing at nothing, failing the doctor check on every commitment task forever. `<q>`
+ * without a `cite` would be no better: the quoted text would enter `article.citations` with no href
+ * for anything to check. So the session id rides in the prose, where it is provenance a human can
+ * follow, and the same id is stamped into `memhtml-session` for the machine. Session-cited quotes
+ * being outside doctor's coverage is a residual spec 007 records and the consolidator's own
+ * containment check is what covers it instead.
+ *
+ * `<blockquote>` is not an option either, and not merely by preference: it sits outside
+ * `KNOWN_ELEMENTS`, so a task minted with one parses carrying an `unknown:blockquote` warning
+ * (`../mint.ts`'s `DetectedFinding.bodyHtml` pins this).
+ *
+ * Prose paragraphs rather than `bodyHtml`, therefore, because there is no markup to place: the
+ * kernel's own prose path renders the `<mark>` and the paragraphs, and hand-authoring the article
+ * here would take on constraint 1 for no gain. **The statement is restated as the first paragraph on
+ * purpose** — `renderTemplate` joins `body[0]` onto the claim's own paragraph, so what a reader sees
+ * is the claim sentence followed by its context, and the quote lands in a paragraph of its own
+ * rather than inside the claim.
+ *
+ * `dueHint` reaches the body and NOT `memhtml-due`. It is the transcript's own words — "by Friday",
+ * "after the release" — and turning that into a date needs a reference clock and a parser this phase
+ * does not have; a stamped `memhtml-due` would be a deadline nobody stated, which retention and
+ * `task list` would then treat as fact. Recorded as a follow-up in the packet.
+ */
+const commitmentBody = (commitment: CommitmentLike): ReadonlyArray<string> => {
+  const quote = commitment.evidence.quote.replace(/\s+/g, " ").trim()
+  return [
+    `Read out of a transcript by trace consolidation, at confidence ${commitment.confidence.toFixed(2)}.`,
+    `In session ${commitment.evidence.sessionId}, the user said: "${quote}"`,
+    ...(commitment.dueHint === undefined || commitment.dueHint.trim() === ""
+      ? []
+      : [
+          `They said it was due ${commitment.dueHint.trim()} — the transcript's own words, ` +
+            "not a parsed date, so no due date is stamped."
+        ])
+  ]
+}
+
+/** One closure's commit-message line: which task went, and the resolution that closed it. */
+const closureReason = (path: string, statement: string): string =>
+  `closed ${path}: ${statement.replace(/\s+/g, " ").trim().slice(0, CLOSURE_REASON_CHARS)}`
 
 /**
  * A candidate the phase will write, or `null` with the reason it was refused.
@@ -232,6 +418,188 @@ const frameConflicts = (
       if (stored !== undefined) conflicts.set(entry.offset, stored)
     }
     return conflicts
+  })
+
+/**
+ * Mint a task per commitment that clears the gate, and close the open ones a resolution says are
+ * done. The whole of AC-4-2/3/4, as one pass over an outcome the phase already has.
+ *
+ * **No absence closure, and the reason is the universe.** The other three detectors scan a bounded
+ * corpus, so a finding that stops appearing is evidence the thing is gone, and `Minter.closeAbsent`
+ * is how they act on it. This detector reads TEN SESSIONS out of an unbounded and ever-growing
+ * transcript history: a commitment made last March is absent from tonight's batch because tonight's
+ * batch is ten files, not because anybody did the work. Attesting `universeComplete` here would
+ * archive the entire commitment backlog on the first night, every night. So closure is
+ * RESOLUTION-DRIVEN only — something has to say the work is done — and `closeAbsent` is never called.
+ *
+ * **Submission order is by fingerprint**, which is what makes `MINT_CAP` deterministic rather than
+ * dependent on the order a model happened to list its findings. A batch producing twelve commitments
+ * files the same ten every time it is re-run.
+ */
+const commitmentTasks = (
+  env: PhaseEnv,
+  input: {
+    readonly commitments: ReadonlyArray<CommitmentLike>
+    readonly resolutions: ReadonlyArray<ResolutionLike>
+    /** The sessions the agent actually READ, which is what a commitment's evidence is gated against. */
+    readonly analyzed: ReadonlyArray<string>
+  }
+): Effect.Effect<
+  { readonly counts: PhaseCounts; readonly commitSha: string | null },
+  StorageFailure | GitFailure | InvalidMemory
+> =>
+  Effect.gen(function* () {
+    /**
+     * Constructed even when both lists are empty, because `makeMinter` validates the detector name
+     * and reads the open-task snapshot the closure pass below needs — a night with no commitments can
+     * still have a resolution that closes one. The one read serves both.
+     */
+    const minter = yield* makeMinter(env, COMMITMENT_DETECTOR, {
+      /**
+       * OPT IN, and this is the detector the option exists for. A commitment claim is FREE TEXT a
+       * human spoke, so the same promise restated across two nights differs in wording while naming
+       * one work item — the exact case the exact-key arm cannot see. Measured with the kernel's own
+       * tokenizer: two unrelated commitment claims score 0.2500 while a restatement scores 0.8333, so
+       * the floor separates them cleanly. (The templated pair detectors must leave this off; see
+       * `CLAIM_JACCARD_FLOOR`.)
+       */
+      restatementDedup: true
+    })
+
+    const analyzed = new Set(input.analyzed)
+    const gateCounts = new Map<string, number>()
+
+    /**
+     * Fingerprint order, so the cap cuts the same ten every run. Sorted over the FINGERPRINT rather
+     * than the statement, because that is the string the key is computed from — sorting on anything
+     * else would leave two spellings of one commitment ordered by a value the identity ignores.
+     */
+    const gated = input.commitments
+      .map((commitment) => ({
+        commitment,
+        fingerprint: commitmentFingerprint(commitment.statement)
+      }))
+      .sort((left, right) => (left.fingerprint < right.fingerprint ? -1 : 1))
+
+    for (const { commitment, fingerprint } of gated) {
+      const refusal = commitmentRefusal(commitment, analyzed)
+      if (refusal !== null) {
+        yield* Effect.logWarning(
+          `sleep.trace-consolidation commitment skipped: ${refusal}: ` +
+            `${normalizedStatement(commitment.statement).slice(0, 80)}`
+        )
+        gateCounts.set(refusal, (gateCounts.get(refusal) ?? 0) + 1)
+        continue
+      }
+
+      yield* minter.submit({
+        detector: COMMITMENT_DETECTOR,
+        fingerprint,
+        title: commitmentTitle(commitment.statement),
+        claim: commitmentClaim(commitment.statement),
+        body: commitmentBody(commitment),
+        /** The provenance meta, which is the machine-readable half of the body's plain-text citation. */
+        sessionId: commitment.evidence.sessionId
+      })
+    }
+
+    const mint = minter.finish()
+
+    /**
+     * Closure, over the tasks that were open when this pass STARTED.
+     *
+     * Deliberately the minter's own snapshot rather than a fresh read, for the reason `closeAbsent`
+     * states: a re-read returns identical rows, because nothing written tonight has been indexed. It
+     * also means a task minted moments ago is out of reach here, which is correct — a commitment and
+     * its completion arriving in one batch should leave the task filed, so a human sees that the loop
+     * closed, rather than minting a file and archiving it in the same commit.
+     */
+    const open = yield* openDetectedTasks(env.deps.db, COMMITMENT_DETECTOR)
+    let resolutionClosed = 0
+    let resolutionUnmatched = 0
+    const closureLines: Array<string> = []
+    /** Paths closed in this pass, so two resolutions naming one task do not double-count it. */
+    const closed = new Set<string>()
+
+    for (const resolution of input.resolutions) {
+      if (!(resolution.confidence >= COMMITMENT_FLOOR)) {
+        resolutionUnmatched += 1
+        continue
+      }
+
+      const matches = open.filter(
+        (row) =>
+          !closed.has(row.path) &&
+          /**
+           * The todo-only guard, and it is the same rule and the same reasoning `closeAbsent`
+           * carries: a `doing` or `blocked` task is one a HUMAN picked up, and a model's reading that
+           * the work is finished is not permission to archive their work item out from under them.
+           * They will mark it done themselves.
+           */
+          row.task_status === "todo" &&
+          claimJaccard(claimStatement(row.gist), resolution.statement) >= CLAIM_JACCARD_FLOOR
+      )
+      if (matches.length === 0) {
+        resolutionUnmatched += 1
+        continue
+      }
+
+      for (const row of matches) {
+        closed.add(row.path)
+        /**
+         * A dry run counts the closure and moves no file, matching the kernel's own dry-run
+         * asymmetry: everything above ran, so the preview is real, and only the line that touches the
+         * tree is skipped.
+         */
+        if (env.dryRun) {
+          resolutionClosed += 1
+          closureLines.push(closureReason(row.path, resolution.statement))
+          continue
+        }
+        /**
+         * `null` means the live path holds no file — an earlier phase moved it and the TREE is the
+         * system of record — so it is not a closure and is not counted as one.
+         */
+        if ((yield* closeTask(env, row.path)) !== null) {
+          resolutionClosed += 1
+          closureLines.push(closureReason(row.path, resolution.statement))
+        }
+      }
+    }
+
+    const counts: PhaseCounts = {
+      ...mint.counts,
+      ...Object.fromEntries(gateCounts),
+      ...(resolutionClosed === 0 ? {} : { resolutionClosed }),
+      ...(resolutionUnmatched === 0 ? {} : { resolutionUnmatched })
+    }
+
+    /**
+     * ONE commit for the night's task work, after the per-candidate commits.
+     *
+     * The phase has no final commit to fold this into: it commits per candidate (see the module note)
+     * and its last act is a database watermark, which is not a tree change. So a mint or a closure
+     * would otherwise sit staged in the index for whichever later phase committed next, landing a
+     * task file inside `integrity`'s commit under `integrity`'s counts and trailer — invisible to
+     * `sleep review` as this phase's work, and un-resumable as it.
+     *
+     * `commitPhase` no-ops on an empty index, so a night that minted nothing and closed nothing costs
+     * no commit and returns `null`. The closure reasons ride in the body because nothing in the
+     * format carries a closure reason (`closeTask` says so at its definition), and the body is
+     * indented against trailer injection by `commitPhase` — which matters here, since a resolution
+     * statement is model-supplied text.
+     */
+    if (mint.minted.length === 0 && resolutionClosed === 0) return { counts, commitSha: null }
+    if (env.dryRun) return { counts, commitSha: null }
+
+    const commitSha = yield* commitPhase(
+      env,
+      "trace-consolidation",
+      `task detection: mint ${String(mint.minted.length)}, close ${String(resolutionClosed)}`,
+      counts,
+      closureLines.join("\n")
+    )
+    return { counts, commitSha }
   })
 
 export const traceConsolidation: PhaseBody = (env) =>
@@ -468,6 +836,24 @@ export const traceConsolidation: PhaseBody = (env) =>
      * would lose the transcripts silently, marked read with no memory to show for it.
      */
     const analyzed = analyzedFrom(batch, outcome.success.analyzedSessionIds)
+
+    /**
+     * The task pass runs HERE: after the candidate commits, before the watermark, and gated on the
+     * INTERSECTED analyzed set rather than the outcome's own.
+     *
+     * Before the watermark because the watermark is this phase's last act by design and the pass makes
+     * a commit. Gated on the intersection because a commitment's evidence must name a session this
+     * phase both asked about AND the agent reached — the same authority `analyzedFrom` grants the
+     * watermark, for the same reason: a session id is a value the agent computed, and the batch is what
+     * the phase knows.
+     */
+    const tasks = yield* commitmentTasks(env, {
+      commitments: outcome.success.commitments,
+      resolutions: outcome.success.resolutions,
+      analyzed
+    })
+    if (tasks.commitSha !== null) lastCommit = tasks.commitSha
+
     yield* markSessionsConsolidated(env.deps.db, {
       runId: env.runId,
       at: env.at,
@@ -496,7 +882,13 @@ export const traceConsolidation: PhaseBody = (env) =>
         skipped,
         conflicts: conflicted,
         consolidated: analyzed.length,
-        unreachable
+        unreachable,
+        /**
+         * The mint vocabulary and the gate counts, spread LAST and zero-valued keys already omitted by
+         * the pass. A night with no commitments therefore reports exactly the counters it reported
+         * before this change, which is what keeps the trailer readable.
+         */
+        ...tasks.counts
       },
       commitSha: lastCommit,
       llmCalls
