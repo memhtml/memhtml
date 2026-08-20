@@ -3,7 +3,7 @@ import { dirname, join } from "node:path"
 
 import { type EdgeRel, isEdgeRel } from "@memhtml/contracts/edges"
 import { INBOX_DIR, normalizePath, TASKS_SUBDIR } from "@memhtml/contracts/paths"
-import { checkMemory } from "@memhtml/html"
+import { checkMemory, parseMemory } from "@memhtml/html"
 import { DatabaseService, type DatabaseShape, STATE_SCHEMA } from "@memhtml/index"
 import { EMBED_WATERMARK } from "@memhtml/llm"
 import {
@@ -25,7 +25,7 @@ import { Git, Store } from "./api-layer.js"
  * `memhtml doctor`: the corpus's own health check, and `--fix` for the two findings a repair can settle
  * without a judgement call.
  *
- * Eight checks, and each one is a claim the design makes about the corpus rather than a lint:
+ * Nine checks, and each one is a claim the design makes about the corpus rather than a lint:
  *
  * 1. **Dangling `<link>` hrefs**: an authored edge pointing at a path the tree does not hold. Design
  *    §2.3 has no foreign key on `edges` deliberately (a `<link>` may name a file the indexer has not
@@ -49,8 +49,12 @@ import { Git, Store } from "./api-layer.js"
  *    is a task waiting on something that will never move.
  * 8. **Task inbox depth**: a task in `areas/inbox/tasks/` is work with no project, and a task inbox
  *    is meant to be drained rather than accumulated.
+ * 9. **Stale detected-task quotes**: a machine-minted task's `<q cite>` evidence whose cited file left
+ *    the tree or no longer contains the quote. A detected task's whole value is that a reviewer can
+ *    check the finding against the corpus, and the quote is the only thing standing behind it — so a
+ *    quote that stopped being true makes the task unreviewable while it still reads as actionable.
  *
- * **`--fix` repairs exactly two of the eight, and the repair logic is imported from the sleep
+ * **`--fix` repairs exactly two of the nine, and the repair logic is imported from the sleep
  * integrity phase rather than re-ported.** `archivedFormOf` decides whether a dangling target moved
  * to the archive or is genuinely gone, and `applyHeadEdits`/`link`/`unlink`/`meta` are the byte-splice
  * editors that change one head line without touching the article. A parse→serialize round trip drops
@@ -58,11 +62,12 @@ import { Git, Store } from "./api-layer.js"
  * every file it touched. A second implementation of either would be the consumer-side reimplementation
  * of producer semantics the fleet has paid for repeatedly.
  *
- * The other six report and do not repair. An inbox memory or task needs a human or an agent to decide
- * where it belongs, a vocabulary warning needs the author's intent, and a stale index needs
+ * The other seven report and do not repair. An inbox memory or task needs a human or an agent to
+ * decide where it belongs, a vocabulary warning needs the author's intent, and a stale index needs
  * `memhtml index update`, which doctor names in its own suggestions rather than running behind the
- * operator's back. An overdue task needs the work done or the deadline moved, and a stale blocker
- * needs someone to decide whether the blocked task is actually ready.
+ * operator's back. An overdue task needs the work done or the deadline moved, a stale blocker needs
+ * someone to decide whether the blocked task is actually ready, and a stale quote needs a reviewer to
+ * judge whether the finding survived the edit that broke its evidence.
  */
 
 /** How deep the inbox may get before doctor calls it a finding. */
@@ -108,6 +113,19 @@ export interface StaleBlockerFinding {
   readonly blockerState: "archived" | "missing"
 }
 
+/** One detected task whose cited evidence no longer backs it. */
+export interface StaleQuoteFinding {
+  /** The TASK's path: the file carrying the `<q cite>`. */
+  readonly path: string
+  /** The `cite` attribute verbatim as the task wrote it: root-relative, before any archive chase. */
+  readonly citedPath: string
+  /**
+   * `missing`: no file at the cited path, active or archived. `quote-gone`: the file is there and the
+   * quote is not in it.
+   */
+  readonly state: "missing" | "quote-gone"
+}
+
 /** What a doctor pass found. Every list is present and possibly empty, so a parser never branches. */
 export interface DoctorReport {
   readonly root: string
@@ -127,6 +145,8 @@ export interface DoctorReport {
   readonly overdueTasks: ReadonlyArray<OverdueTaskFinding>
   /** Open tasks blocked by a task that is archived or absent from the tree. */
   readonly staleBlockers: ReadonlyArray<StaleBlockerFinding>
+  /** Open DETECTED tasks whose `<q cite>` evidence no longer exists in the cited file. */
+  readonly staleQuotes: ReadonlyArray<StaleQuoteFinding>
   readonly warnings: ReadonlyArray<WarningFinding>
   /** Files the index holds that failed to parse when doctor re-read them. */
   readonly unparseable: ReadonlyArray<string>
@@ -283,6 +303,196 @@ const staleBlockers = (
       ),
       Effect.orElseSucceed(() => [])
     )
+
+/**
+ * True when `quote` appears in `text` with runs of whitespace collapsed to one space on BOTH sides.
+ *
+ * **A deliberate twin of `quoteAppearsIn` in `apps/consolidator/src/contract.ts:285-291`, not an
+ * import**, and the definition is character-for-character the same three lines. The two checks verify
+ * the same property against different substrates — that one there against a mounted transcript, this
+ * one against a memory file — and the consolidator's copy is the one its own tier exercises with no
+ * transcript on disk. Reaching it from here means importing `@memhtml/consolidator`'s barrel, which
+ * re-exports `mount.js` and puts `just-bash`'s ~6 MB bundle on `memhtml doctor`'s module graph; that is
+ * the exact cost `apps/cli/src/exec.ts:314-325` documents keeping on the exec path alone. The two
+ * definitions must AGREE, so a fix to one is ported to the other rather than unified.
+ *
+ * Collapsing whitespace is the only normalization, and that is a concession to markup rather than
+ * leniency: a minting phase writes a quote into a `<q>` where the serializer is free to re-wrap it,
+ * and the parser collapses it back. Case, punctuation, and quote characters compare as written,
+ * because each of those is a way a "quote" could differ from the source in a way that changes what it
+ * says.
+ */
+const quoteAppearsIn = (quote: string, text: string): boolean => {
+  const flatten = (value: string): string => value.replace(/\s+/g, " ").trim()
+  const needle = flatten(quote)
+  /** An empty needle is `includes`-true against anything, which would gate nothing. */
+  if (needle === "") return false
+  return flatten(text).includes(needle)
+}
+
+/** One cited quote of a task: where it points and what it claims is there. */
+interface CitedQuote {
+  readonly citedPath: string
+  readonly text: string
+}
+
+/**
+ * The cited evidence of one memory, from the format's own parse.
+ *
+ * **The evidence element is `<q cite="/path">`, NOT `<blockquote>`, and that is what makes this check
+ * possible at all.** `blockquote` is outside `KNOWN_ELEMENTS`, so a task minted with one carries the
+ * constraint-6 warning `<blockquote> is outside the closed vocabulary` forever AND its quoted text
+ * never reaches `article.citations`, which would leave the evidence unverifiable by anything. `<q>` is
+ * in the closed vocabulary and `packages/html/src/parse.ts:313-319`'s `readCitations` already lifts
+ * `<q cite>` into `article.citations` as `{text, href}` — the same extraction that fills
+ * `file_citations` (`packages/index/src/project.ts:304-309`). `packages/sleep/src/mint.ts:102-113`
+ * pins the element choice on the minting side.
+ *
+ * So doctor reads the citations off `parseMemory` rather than re-parsing with a second library or
+ * re-implementing the extraction. One consequence is deliberate: a citation with no `href` — a bare
+ * `<cite>The Book</cite>` — is not evidence about a repo path and is dropped here, so only a `<q cite>`
+ * is checked.
+ *
+ * `parseMemory` over `file_citations` even though the table holds the same rows, for two reasons. The
+ * `href` is stored but the projection dedupes by TEXT alone, so two quotes of the same sentence from
+ * two files collapse to one row and the second citation's path is lost — a pair mint quoting both
+ * sides of a near-duplicate is exactly that shape. And the index is a projection of a commit: doctor's
+ * whole job includes reporting when the index disagrees with the tree, so a check that read the
+ * projection would go blind precisely when a stale index is the problem.
+ */
+const citedQuotesOf = (html: string): Effect.Effect<ReadonlyArray<CitedQuote>, never, never> =>
+  parseMemory(html).pipe(
+    Effect.map((doc) =>
+      doc.article.citations.flatMap((citation) =>
+        citation.href === undefined || citation.href.trim() === ""
+          ? []
+          : [{ citedPath: citation.href, text: citation.text }]
+      )
+    ),
+    /** An unparseable file is `unparseable`'s finding; it does not also become a quote finding. */
+    Effect.orElseSucceed(() => [])
+  )
+
+/**
+ * The searchable text of a cited file: its article's text, as the format's own parse yields it.
+ *
+ * **Compared as TEXT and never as bytes, and the difference decides most real cases.** A quote is a
+ * run of prose the source renders, and the source renders it through markup: `&amp;` in the file is
+ * `&` in the quote, `&nbsp;` is U+00A0, and a `<strong>` mid-sentence splits the run in the bytes
+ * while a reader sees one sentence. A containment check against raw HTML would report `quote-gone` on
+ * every one of those and be wrong each time.
+ *
+ * `article.bodyText` is the field that already means this — it is whitespace-collapsed article text
+ * with entities decoded, and it is what the FTS index and the embedder tokenize, so "the corpus
+ * contains this sentence" means the same thing here as in a search. Both sides of the comparison come
+ * out of one parser, which is what makes containment mean "this text is in that file" rather than
+ * "two libraries agreed about entity tables".
+ *
+ * An unparseable cited file yields the empty string, so its quote reports `quote-gone` rather than
+ * throwing — and that file is `unparseable`'s own finding on its own line.
+ */
+const searchableTextOf = (html: string): Effect.Effect<string, never, never> =>
+  parseMemory(html).pipe(
+    Effect.map((doc) => doc.article.bodyText),
+    Effect.orElseSucceed(() => "")
+  )
+
+/**
+ * Open DETECTED tasks whose cited evidence no longer backs them.
+ *
+ * The rows are the same open-detected-task set `packages/sleep/src/sql.ts`'s `openDetectedTasks`
+ * reads, minus the detector range: doctor asks about every detector at once, so
+ * `finding_key IS NOT NULL` alone is the filter. **`memory_type = 'task'` and `finding_key IS NOT NULL`
+ * both change the result and neither is decoration.** A hand-authored task quoting a file is not a
+ * detected finding and its author owns its quotes; a non-task memory citing a path is ordinary prose,
+ * and `<q cite>` is a general-purpose vocabulary element every memory may use.
+ * `task_status <> 'done'` rides along beside `archived = 0` for the reason that helper records: the
+ * two agree at rest and disagree for the instant between a status edit and its `git mv`.
+ *
+ * **The archive chase is `archivedFormOf`, the same function `--fix` uses on a dangling href**, so
+ * "the file moved to the archive" means one thing across both checks. An archived cited file is NOT a
+ * finding: eviction is a `git mv` that preserves the bytes, so the quote is still verifiable and the
+ * evidence still stands. Only a path with no file anywhere is `missing`.
+ *
+ * `citedPath` is reported VERBATIM as the task wrote it, not as the archive path the chase found. The
+ * operator's next move is to read the task file and judge the finding, and a rewritten path would not
+ * appear in the bytes they open.
+ *
+ * Report-only, and `healthy` excludes it for the reason `overdueTasks` and `staleBlockers` are
+ * excluded: a stale quote is a fact about DETECTED WORK, not a defect in the corpus. The usual way one
+ * appears is a human editing the very text a detector flagged — which is the finding being resolved,
+ * and turning that into `healthy: false` would punish the fix. Repair is refused for the same reason
+ * one arm is impossible and the other is a judgement: doctor cannot re-derive a quote it did not mint,
+ * and closing the task is a decision about whether the finding survived the edit.
+ *
+ * Session-cited evidence is out of coverage BY CONSTRUCTION rather than by omission, and that is the
+ * accepted residual: transcript-borne evidence is written as plain text naming a session id and
+ * carries no `cite` attribute at all, because a session is not a repo path. The consolidator client,
+ * the one process with the transcripts mounted, verifies that containment before the payload is ever
+ * returned (`apps/consolidator/src/client.ts`).
+ */
+const staleQuotes = (
+  db: DatabaseShape,
+  root: string,
+  known: ReadonlySet<string>,
+  year: number
+): Effect.Effect<ReadonlyArray<StaleQuoteFinding>, never, never> =>
+  Effect.gen(function* () {
+    const tasks = yield* db
+      .all<{ path: string }>(
+        `SELECT path FROM files
+         WHERE memory_type = 'task' AND archived = 0 AND finding_key IS NOT NULL
+           AND task_status <> 'done'
+         ORDER BY path ASC`
+      )
+      .pipe(Effect.orElseSucceed(() => []))
+
+    const findings: Array<StaleQuoteFinding> = []
+    /** One read per cited file however many tasks quote it: a pair mint cites both sides. */
+    const contents = new Map<string, string | null>()
+    const contentOf = (path: string) =>
+      Effect.gen(function* () {
+        const cached = contents.get(path)
+        if (cached !== undefined) return cached
+        const html = yield* readFileOrNull(join(root, path)).pipe(Effect.orElseSucceed(() => null))
+        contents.set(path, html)
+        return html
+      })
+
+    for (const task of tasks) {
+      const html = yield* readFileOrNull(join(root, task.path)).pipe(
+        Effect.orElseSucceed(() => null)
+      )
+      /**
+       * A task file the index names and the tree does not is already `unparseable`'s finding, and
+       * reporting the same missing file twice under two names would double-count one problem.
+       */
+      if (html === null) continue
+
+      for (const quote of yield* citedQuotesOf(html)) {
+        /**
+         * `normalizePath` strips the leading slash of the root-relative href form the format requires
+         * (`isRootRelativeHref`), so a `cite="/areas/x.html"` compares against the `files.path` values
+         * `known` holds. Reported unnormalized, below.
+         */
+        const cited = normalizePath(quote.citedPath)
+        const resolved = known.has(cited) ? cited : archivedFormOf(cited, known, year)
+        if (resolved === undefined) {
+          findings.push({ path: task.path, citedPath: quote.citedPath, state: "missing" })
+          continue
+        }
+        const source = yield* contentOf(resolved)
+        if (source === null) {
+          findings.push({ path: task.path, citedPath: quote.citedPath, state: "missing" })
+          continue
+        }
+        if (!quoteAppearsIn(quote.text, yield* searchableTextOf(source))) {
+          findings.push({ path: task.path, citedPath: quote.citedPath, state: "quote-gone" })
+        }
+      }
+    }
+    return findings
+  })
 
 /**
  * Re-read every active file and collect its format warnings.
@@ -460,6 +670,11 @@ export const doctor = (options: { readonly fix: boolean }) =>
     const taskDepth = yield* inboxTaskDepth(db)
     const overdue = yield* overdueTasks(db, yield* todayDate)
     const stale = yield* staleBlockers(db)
+    /**
+     * `known` and `year` are the ones the dangling-href chase above already computed, so a cited path
+     * and a `<link>` href resolve against one snapshot of the tree and one archive lookback.
+     */
+    const quotes = yield* staleQuotes(db, git.root, known, year)
 
     const active = yield* db
       .all<{ path: string }>("SELECT path FROM files WHERE archived = 0 ORDER BY path ASC")
@@ -487,11 +702,12 @@ export const doctor = (options: { readonly fix: boolean }) =>
         depth <= INBOX_WARN_DEPTH &&
         /**
          * The task inbox counts toward `healthy` for the same reason the memory inbox does: an
-         * unplaced item is a routing signal. `overdueTasks` and `staleBlockers` are excluded, because
-         * those two are facts about the work rather than defects in the corpus. A repo whose owner is
-         * late on a to-do is structurally sound, and folding them in would make `healthy: false` the
-         * normal state and stop anyone reading the flag at all. Every other finding here is a defect
-         * in the corpus; those two describe work that has fallen behind.
+         * unplaced item is a routing signal. `overdueTasks`, `staleBlockers`, and `staleQuotes` are
+         * excluded, because those three are facts about the work rather than defects in the corpus. A
+         * repo whose owner is late on a to-do is structurally sound, and folding them in would make
+         * `healthy: false` the normal state and stop anyone reading the flag at all. Every other
+         * finding here is a defect in the corpus; those three describe work that has fallen behind or
+         * a detected finding whose evidence a human has since edited.
          */
         taskDepth <= INBOX_TASK_WARN_DEPTH &&
         warnings.length === 0 &&
@@ -506,6 +722,7 @@ export const doctor = (options: { readonly fix: boolean }) =>
       inboxTasksCrowded: taskDepth > INBOX_TASK_WARN_DEPTH,
       overdueTasks: overdue,
       staleBlockers: stale,
+      staleQuotes: quotes,
       warnings,
       unparseable,
       indexFresh,

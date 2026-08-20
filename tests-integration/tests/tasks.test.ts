@@ -1,4 +1,4 @@
-import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { originalPathFor } from "@memhtml/contracts/paths"
@@ -768,5 +768,329 @@ describe("verification item 3 — doctor reports the task findings", () => {
     // This one DOES fail `healthy`: an unplaced task is a routing signal, the same claim the memory
     // inbox's depth makes.
     expect(report.healthy).toBe(false)
+  })
+})
+
+describe("staleQuotes — a detected task's evidence, checked against the corpus", () => {
+  /**
+   * Its own fixture repo. `staleQuotes` is asserted as a per-task SET membership, and the
+   * doctor-findings suite above deliberately accumulates overdue tasks, a stale blocker, and eleven
+   * inbox tasks — a corpus where `healthy` is already false and where the archive holds two unrelated
+   * files the year chase would walk. The positive and negative halves of this check need a corpus
+   * where the ONLY reason a task appears is its own quote.
+   */
+  let cli: Cli
+
+  /** `<detector>:<digest16>`, the shape `FINDING_KEY_PATTERN` accepts. One per fixture task. */
+  const keyFor = (ordinal: number): string => `dedup:${ordinal.toString(16).padStart(16, "0")}`
+
+  /**
+   * Seed a task whose evidence quotes `cite` — as RAW BYTES, then indexed.
+   *
+   * Raw bytes rather than `task add`, for the reason `apps/cli/tests/tasks.test.ts:410-419` records:
+   * `memhtml-finding-key` has no CLI flag by design, because only a detector mints one and offering
+   * the flag would let an agent forge a machine identity. Writing the head a detector writes and
+   * letting the real projection read it is what makes this a test of the check rather than of a
+   * fixture.
+   *
+   * **The evidence element is `<q cite>` and that is the whole point of the markup here.**
+   * `<blockquote>` is outside the closed vocabulary, so a task minted with one would carry an
+   * `unknown:blockquote` warning forever AND its text would never reach `article.citations` — the
+   * extraction this check reads. `packages/sleep/src/mint.ts` pins the same element on the minting
+   * side, and this fixture is the consumer half of that contract.
+   */
+  const seedDetectedTask = async (input: {
+    readonly slug: string
+    readonly key: string
+    readonly claim: string
+    readonly quote: string
+    readonly cite: string
+    /** Omitted for the detected case; `false` writes a task with no finding key at all. */
+    readonly detected?: boolean | undefined
+  }): Promise<string> => {
+    const path = `areas/inbox/tasks/${input.slug}.html`
+    // `memhtml init` scaffolds `areas/` and nothing below it, and nothing in this suite calls
+    // `task add`, which is what would otherwise create the task inbox on its way past.
+    await mkdir(join(cli.root, "areas", "inbox", "tasks"), { recursive: true })
+    await writeFile(
+      join(cli.root, path),
+      `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>${input.slug}</title>
+<meta name="memhtml-type" content="task">
+<meta name="memhtml-status" content="active">
+<meta name="memhtml-created" content="2026-08-01T00:00:00Z">
+<meta name="memhtml-updated" content="2026-08-01T00:00:00Z">
+<meta name="memhtml-task-status" content="todo">
+${input.detected === false ? "" : `<meta name="memhtml-finding-key" content="${input.key}">\n`}</head>
+<body>
+<article>
+<p><mark>${input.claim}</mark></p>
+<p><q cite="${input.cite}">${input.quote}</q></p>
+</article>
+</body>
+</html>
+`,
+      "utf8"
+    )
+    await cli.git("add", path)
+    await cli.git("commit", "-m", `memhtml(task): seed ${input.slug}`)
+    return path
+  }
+
+  /**
+   * Edit the `<mark>` claim of a memory so a quote of it stops being true, and PROVE the edit landed.
+   *
+   * The self-check is not ceremony: a plain `html.replace(text, …)` silently rewrote the `<title>`
+   * instead of the claim, because a memory's title and its claim share their wording by construction
+   * and `String.replace` takes the FIRST match. The quote stayed intact in the article, so the two
+   * "the quote is gone" cases below were asserting nothing — found by mutating
+   * `finding_key IS NOT NULL` out of doctor's query and watching the suite stay green. The edit is
+   * scoped to the `<mark>` span and then read back, so a fixture that stops breaking the quote fails
+   * here rather than passing quietly downstream.
+   */
+  const breakTheClaim = async (path: string, from: string, to: string): Promise<void> => {
+    const before = await readFile(join(cli.root, path), "utf8")
+    const after = before.replace(
+      /<mark>([^<]*)<\/mark>/,
+      (_whole, claim: string) => `<mark>${claim.replace(from, to)}</mark>`
+    )
+    expect(after).not.toBe(before)
+    await writeFile(join(cli.root, path), after, "utf8")
+    await cli.git("add", path)
+    await cli.git("commit", "-m", `memhtml(correct): ${to}`)
+  }
+
+  interface QuoteReport {
+    readonly staleQuotes: ReadonlyArray<{
+      readonly path: string
+      readonly citedPath: string
+      readonly state: string
+    }>
+    readonly healthy: boolean
+    readonly unparseable: ReadonlyArray<string>
+  }
+
+  const doctorReport = async (): Promise<QuoteReport> => {
+    await cli.json(["index", "update", "--no-embed"])
+    return cli.json<QuoteReport>(["doctor"])
+  }
+
+  beforeAll(async () => {
+    cli = await makeCli()
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  it("clears a quote that is still in its cited file, and fires on one that is not", async () => {
+    /**
+     * Both halves in one case, over TWO source memories, because the check is a containment test and a
+     * containment test that only ever fails proves nothing about what it accepts. The intact half is
+     * the guard on the extraction itself: a selector that matched nothing would produce an empty
+     * `staleQuotes` and read as "no findings", which is the standing hazard
+     * `.erpaval/solutions/test-failures/a-wrong-count-reads-as-a-finding.md` names.
+     */
+    const intact = await writeMemory(cli, {
+      title: "Prod rollbacks drain the VIP first",
+      claim: "Drain the VIP before reverting the deploy.",
+      body: ["The revert alone leaves in-flight connections pinned to the old target group."]
+    })
+    const edited = await writeMemory(cli, {
+      title: "The staging bastion listens on a nonstandard port",
+      claim: "The staging bastion listens on port 2222.",
+      body: ["Every runbook that says 22 is describing the old host."]
+    })
+
+    const good = await seedDetectedTask({
+      slug: "review-the-vip-drain-claim",
+      key: keyFor(1),
+      claim: "Two memories about the VIP drain look like near-duplicates.",
+      quote: "Drain the VIP before reverting the deploy.",
+      cite: `/${intact.path}`
+    })
+    const stale = await seedDetectedTask({
+      slug: "review-the-bastion-port-claim",
+      key: keyFor(2),
+      claim: "Two memories about the bastion port look like near-duplicates.",
+      quote: "The staging bastion listens on port 2222.",
+      cite: `/${edited.path}`
+    })
+
+    // Both quotes are true right now, which is what makes the edit below the only difference.
+    const before = await doctorReport()
+    expect(before.staleQuotes).toEqual([])
+
+    /**
+     * The human edits the very sentence the detector flagged — 2222 becomes 22022. That is the
+     * ordinary way a stale quote appears, and it is the finding being RESOLVED rather than a defect
+     * appearing, which is why the check is report-only.
+     */
+    await breakTheClaim(edited.path, "port 2222", "port 22022")
+
+    const report = await doctorReport()
+    const finding = report.staleQuotes.find((entry) => entry.path === stale)
+    expect(finding?.state).toBe("quote-gone")
+    expect(finding?.citedPath).toBe(`/${edited.path}`)
+    // The intact task is NOT reported, so the finding above is the edit and not the extraction.
+    expect(report.staleQuotes.map((entry) => entry.path)).not.toContain(good)
+
+    /**
+     * `healthy` stays TRUE with a finding present. A stale quote is a fact about detected work, the
+     * same claim `overdueTasks` and `staleBlockers` make — and the usual cause is a human fixing the
+     * text a detector complained about, so failing the flag would punish the fix. This assertion is
+     * the one that fails if someone folds the list into `healthy`.
+     */
+    expect(report.staleQuotes.length).toBeGreaterThan(0)
+    expect(report.healthy).toBe(true)
+  })
+
+  it("reports a deleted cited file as missing, and follows an ARCHIVED one to its year", async () => {
+    /**
+     * The two halves of path resolution, in one case because they are the same lookup with different
+     * answers. Eviction is a `git mv` into `archive/<YYYY>/` that preserves the bytes, so an archived
+     * source still backs its quote and reporting it would make the check fire on every finding whose
+     * evidence was archived — the common case, since a detected task outlives the memories it cites.
+     * Only a path with no file ANYWHERE is `missing`.
+     */
+    const archived = await writeMemory(cli, {
+      title: "The ingest lambda retries three times",
+      claim: "The ingest lambda retries three times before dead-lettering.",
+      body: ["A fourth attempt would exceed the visibility timeout."]
+    })
+    const deleted = await writeMemory(cli, {
+      title: "The nightly export runs at 0200 UTC",
+      claim: "The nightly export runs at 0200 UTC.",
+      body: ["It is scheduled by an EventBridge rule, not by cron."]
+    })
+
+    const chased = await seedDetectedTask({
+      slug: "review-the-ingest-retry-claim",
+      key: keyFor(3),
+      claim: "Two memories about the ingest retry look like near-duplicates.",
+      quote: "The ingest lambda retries three times before dead-lettering.",
+      cite: `/${archived.path}`
+    })
+    const orphaned = await seedDetectedTask({
+      slug: "review-the-export-schedule-claim",
+      key: keyFor(4),
+      claim: "Two memories about the export schedule look like near-duplicates.",
+      quote: "The nightly export runs at 0200 UTC.",
+      cite: `/${deleted.path}`
+    })
+
+    // Not vacuous: neither task is a finding while both cited files sit where the tasks named them.
+    const before = await doctorReport()
+    expect(before.staleQuotes.map((entry) => entry.path)).not.toContain(chased)
+    expect(before.staleQuotes.map((entry) => entry.path)).not.toContain(orphaned)
+
+    await cli.json(["archive", archived.path, "--reason", "superseded by the retry policy doc"])
+    await rm(join(cli.root, deleted.path))
+    await cli.git("add", "-A")
+    await cli.git("commit", "-m", "chore: drop the export schedule memory by hand")
+
+    const report = await doctorReport()
+
+    /**
+     * The archive chase resolved: the cited path holds no file, and `archive/<YYYY>/<orig>` does. The
+     * quote is still verifiable, so there is no finding — and this is the assertion that fails if the
+     * chase is dropped, since a bare `known.has(cited)` would call this `missing`.
+     */
+    expect(report.staleQuotes.map((entry) => entry.path)).not.toContain(chased)
+    // And the archive move really happened, so the clean result above is not a file that never moved.
+    expect(
+      await cli.json<TaskList>(["task", "list", "--include-archived", "--limit", "500"])
+    ).toBeDefined()
+    const moved = await readFile(
+      join(cli.root, `archive/${new Date().getUTCFullYear()}/${archived.path}`),
+      "utf8"
+    )
+    expect(moved).toContain("The ingest lambda retries three times before dead-lettering.")
+
+    const finding = report.staleQuotes.find((entry) => entry.path === orphaned)
+    expect(finding?.state).toBe("missing")
+    // Reported at the path the TASK wrote, not at an archive path the chase failed to find.
+    expect(finding?.citedPath).toBe(`/${deleted.path}`)
+  })
+
+  it("does not scan a HAND-AUTHORED task, however it quotes a file", async () => {
+    /**
+     * The contaminating neighbor, and without it `finding_key IS NOT NULL` is removable with this
+     * suite still green: a fixture of only detected tasks cannot distinguish "checks every detected
+     * task's quotes" from "checks every task's quotes". A human's task is not a machine finding — its
+     * author owns its quotes, and `<q cite>` is a general vocabulary element any memory may use, so
+     * doctor auditing hand-authored prose would report on writing nobody asked it to police.
+     */
+    const source = await writeMemory(cli, {
+      title: "The canary weight starts at five percent",
+      claim: "The canary weight starts at five percent.",
+      body: ["It doubles every ten minutes once the error rate holds."]
+    })
+    const handAuthored = await seedDetectedTask({
+      slug: "check-the-canary-weight-by-hand",
+      key: keyFor(5),
+      claim: "Someone should confirm the canary ramp against the deploy config.",
+      quote: "The canary weight starts at five percent.",
+      cite: `/${source.path}`,
+      detected: false
+    })
+
+    await breakTheClaim(source.path, "five percent", "ten percent")
+
+    const report = await doctorReport()
+    // The quote is genuinely gone — the same edit that fires on a detected task — and this task is
+    // still not reported, because it carries no finding key.
+    expect(report.staleQuotes.map((entry) => entry.path)).not.toContain(handAuthored)
+    // Not vacuous: the file IS a task the index holds, and it IS in the working set.
+    const tasks = await cli.json<TaskList>(["task", "list", "--limit", "500"])
+    expect(tasks.tasks.map((task) => task.path)).toContain(handAuthored)
+    // And it carries no key, which is the column the exclusion turns on.
+    const detected = await cli.json<TaskList>(["task", "list", "--detected", "--limit", "500"])
+    expect(detected.tasks.map((task) => task.path)).not.toContain(handAuthored)
+  })
+
+  it("stops checking a task once it is DONE, so a closed finding never re-reports", async () => {
+    /**
+     * `archived = 0` and `task_status <> 'done'` are both on the query, mirroring
+     * `openDetectedTasks`. A finished detected task's quote is history: the finding was settled, and
+     * reporting its stale evidence would make the list grow forever and never reach zero — the same
+     * reasoning `overdueTasks` records for its own two filters.
+     */
+    const source = await writeMemory(cli, {
+      title: "The queue depth alarm fires at one thousand",
+      claim: "The queue depth alarm fires at one thousand messages.",
+      body: ["Below that the consumer catches up without paging anyone."]
+    })
+    const task = await seedDetectedTask({
+      slug: "review-the-queue-depth-alarm-claim",
+      key: keyFor(6),
+      claim: "Two memories about the queue depth alarm look like near-duplicates.",
+      quote: "The queue depth alarm fires at one thousand messages.",
+      cite: `/${source.path}`
+    })
+
+    await breakTheClaim(source.path, "one thousand messages", "five thousand messages")
+
+    // Not vacuous: OPEN, the stale quote IS reported. Without this the assertion below would hold on
+    // a task whose quote was never broken.
+    const open = await doctorReport()
+    expect(open.staleQuotes.find((entry) => entry.path === task)?.state).toBe("quote-gone")
+
+    const done = await cli.json<{ readonly archivePath: string | null }>([
+      "task",
+      "status",
+      task,
+      "done",
+      "--reason",
+      "the near-duplicate was merged by hand"
+    ])
+    const report = await doctorReport()
+    // Gone under BOTH of its names: the open path it had and the archive path it moved to.
+    const paths = report.staleQuotes.map((entry) => entry.path)
+    expect(paths).not.toContain(task)
+    expect(paths).not.toContain(done.archivePath)
   })
 })
