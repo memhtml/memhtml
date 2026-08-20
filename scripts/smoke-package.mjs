@@ -181,7 +181,7 @@ const main = async () => {
     await check("the sleep cycle runs every phase", async () => {
       const slept = await envelope(bin, ["sleep", "run", "--dry-run"], env)
       const phases = (slept.data?.phases ?? []).length
-      return { ok: phases === 15, detail: `phases=${String(phases)}` }
+      return { ok: phases === 16, detail: `phases=${String(phases)}` }
     })
 
     for (const [label, target, args] of [
