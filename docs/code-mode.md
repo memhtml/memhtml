@@ -1,60 +1,32 @@
 # Code-mode — navigating the store with code instead of tool calls
 
-The working cookbook for reading the corpus with an HTML parser rather than a chain of
-tool calls. ROADMAP.md carries the sequencing; this file is the code.
+The working cookbook for reading the corpus with an HTML parser rather than a chain of tool calls. ROADMAP.md carries the sequencing; this file is the code.
 
 ## The contract that makes it possible
 
-The format's closed vocabulary (docs/format.md) is a selector API. Every memory file
-guarantees:
+The format's closed vocabulary (docs/format.md) is a selector API. Every memory file guarantees:
 
-| selector | meaning |
-|---|---|
-| `article mark` (exactly one, non-empty) | the claim — what `files.gist` stores |
-| `meta[name="memhtml-type"]` etc. | the typed head plane, one value per element |
-| `link[rel^="memhtml-"]` | an authored edge; the href is a repo-relative path, which is the id |
-| `article dl dt + dd` | facets, the same pairs `file_facets` indexes |
-| `article cite` | citations, the same rows `file_citations` holds |
-| `article time[datetime]` (first) | `event_at` |
+| selector                                | meaning                                                             |
+| --------------------------------------- | ------------------------------------------------------------------- |
+| `article mark` (exactly one, non-empty) | the claim — what `files.gist` stores                                |
+| `meta[name="memhtml-type"]` etc.        | the typed head plane, one value per element                         |
+| `link[rel^="memhtml-"]`                 | an authored edge; the href is a repo-relative path, which is the id |
+| `article dl dt + dd`                    | facets, the same pairs `file_facets` indexes                        |
+| `article cite`                          | citations, the same rows `file_citations` holds                     |
+| `article time[datetime]` (first)        | `event_at`                                                          |
 
-`article mark` is a descendant selector, not a child one: constraint 1 puts the `<mark>`
-inside the first `<p>` or `<li>`, so `article > mark` matches nothing.
+`article mark` is a descendant selector, not a child one: constraint 1 puts the `<mark>` inside the first `<p>` or `<li>`, so `article > mark` matches nothing.
 
-Any HTML parser — cheerio, linkedom, bs4, lxml — reads the corpus with no schema
-negotiation, **as long as it can load in the runtime you are actually in.** The examples below
-use cheerio because they run under bun or node. (`@memhtml/html` itself uses parse5 with strict
-constraint checking — the right tool for the WRITE path. Code-mode is the read path, where
-a lenient parser over already-validated files is fine.)
+Any HTML parser — cheerio, linkedom, bs4, lxml — reads the corpus with no schema negotiation, **as long as it can load in the runtime you are actually in.** The examples below use cheerio because they run under bun or node. (`@memhtml/html` itself uses parse5 with strict constraint checking — the right tool for the WRITE path. Code-mode is the read path, where a lenient parser over already-validated files is fine.)
 
-**In the `memhtml exec` sandbox the parser is `node-html-parser`, and the substitution is not free.**
-The sandbox runs QuickJS, where `Function.prototype.toString` is non-writable, so an
-`Object.assign` onto a function throws whenever the source object carries a `toString` — which is
-exactly what cheerio does at initialization. linkedom fails identically through `cssom`. Two of the
-four parsers named above are therefore unusable there, measured rather than assumed. QuickJS also
-has no base64 builtins, so `node-html-parser` needs a small `atob` shim. Everything else in this
-document carries over unchanged, because the contract is the selectors, not the library.
+**In the `memhtml exec` sandbox the parser is `node-html-parser`, and the substitution is not free.** The sandbox runs QuickJS, where `Function.prototype.toString` is non-writable, so an `Object.assign` onto a function throws whenever the source object carries a `toString` — which is exactly what cheerio does at initialization. linkedom fails identically through `cssom`. Two of the four parsers named above are therefore unusable there, measured rather than assumed. QuickJS also has no base64 builtins, so `node-html-parser` needs a small `atob` shim. Everything else in this document carries over unchanged, because the contract is the selectors, not the library.
 
 ## The rules
 
-1. **Read-only.** A code-mode script never writes into the tree. Writes go through
-   `memhtml apply` / `memory_write*`, which own commits, dedup, conflicts, and validation.
-   A dirty tree after a code-mode run is a bug in the run.
-2. **No salience side effects — automatically, and no longer an exception.** Reading files
-   off disk touches no access row. Since salience bumps only on a CHOSEN open through
-   `memory_read` / `memhtml read`, that makes code-mode the same rule everything else follows —
-   no chosen open, no bump — rather than a carve-out from a rule about reads in general.
-   A script that wants a traversal to count calls `memhtml read` or `memhtml reinforce` on the paths
-   it actually consulted.
-3. **Structural and lexical planes only.** No cosine, no RRF, no salience ranking.
-   For ranked retrieval, shell out to `memhtml search --json` and consume the envelope —
-   every CLI command's one-envelope contract makes it a code-mode API already.
-4. **Search finds entry points; code traverses from there.** The intended opening move for a
-   consuming agent is ranked retrieval first, code-mode second: run `memhtml search` or `memhtml recall`
-   to get a handful of paths the four-arm RRF blend says are relevant, then switch to code-mode to
-   walk edges, count, join, and filter from those paths. Starting in code-mode means starting with
-   a full-corpus scan and no relevance signal, which is the expensive way to find a starting point
-   the ranked planes already know. Starting in RRF and staying there means paying a tool call per
-   hop for traversal that one script does in one pass.
+1. **Read-only.** A code-mode script never writes into the tree. Writes go through `memhtml apply` / `memory_write*`, which own commits, dedup, conflicts, and validation. A dirty tree after a code-mode run is a bug in the run.
+2. **No salience side effects — automatically, and no longer an exception.** Reading files off disk touches no access row. Since salience bumps only on a CHOSEN open through `memory_read` / `memhtml read`, that makes code-mode the same rule everything else follows — no chosen open, no bump — rather than a carve-out from a rule about reads in general. A script that wants a traversal to count calls `memhtml read` or `memhtml reinforce` on the paths it actually consulted.
+3. **Structural and lexical planes only.** No cosine, no RRF, no salience ranking. For ranked retrieval, shell out to `memhtml search --json` and consume the envelope — every CLI command's one-envelope contract makes it a code-mode API already.
+4. **Search finds entry points; code traverses from there.** The intended opening move for a consuming agent is ranked retrieval first, code-mode second: run `memhtml search` or `memhtml recall` to get a handful of paths the four-arm RRF blend says are relevant, then switch to code-mode to walk edges, count, join, and filter from those paths. Starting in code-mode means starting with a full-corpus scan and no relevance signal, which is the expensive way to find a starting point the ranked planes already know. Starting in RRF and staying there means paying a tool call per hop for traversal that one script does in one pass.
 
 ## The helper (~100 lines, cheerio)
 
@@ -159,12 +131,7 @@ export const chain = (memhtmls: Map<string, Memhtml>, start: string, rel: string
 
 ## Five recipes, with the outputs the fixture corpus yields
 
-Corpus: `pnpm gen:fixture --out /tmp/memhtml-fixture`. The generator is a pure function of its
-seed — `DEFAULT_SEED = 20260802` and `DEFAULT_CORPUS_SIZE = 200` in
-`packages/eval/src/corpus.ts` — so the defaults always produce the same 304 files:
-200 base memories, 4 people files, 90 synthetic controls, and a 10-file `archive/2025/`
-tier. Every number below is reproducible rather than observed once. All five recipes run in
-one `bun demo.ts`, corpus load included, in well under a second.
+Corpus: `pnpm gen:fixture --out /tmp/memhtml-fixture`. The generator is a pure function of its seed — `DEFAULT_SEED = 20260802` and `DEFAULT_CORPUS_SIZE = 200` in `packages/eval/src/corpus.ts` — so the defaults always produce the same 304 files: 200 base memories, 4 people files, 90 synthetic controls, and a 10-file `archive/2025/` tier. Every number below is reproducible rather than observed once. All five recipes run in one `bun demo.ts`, corpus load included, in well under a second.
 
 **1. Type census** — no tool enumerates this.
 
@@ -175,8 +142,7 @@ for (const m of memhtmls.values()) byType.set(m.type, (byType.get(m.type) ?? 0) 
 //   user_preference, verdict, agent_insight, error_pattern, arc
 ```
 
-**2. Live contradiction pairs** — sleep's `edge-typing` finds these nightly and
-deliberately never resolves them; nothing lists the open set on demand.
+**2. Live contradiction pairs** — sleep's `edge-typing` finds these nightly and deliberately never resolves them; nothing lists the open set on demand.
 
 ```ts
 const live = [...memhtmls.values()]
@@ -199,9 +165,7 @@ const orphans = [...memhtmls.values()].filter(
 // → 11 of 304
 ```
 
-**4. Entity co-occurrence** — which services get remembered together. Zero pairs on the
-fixture corpus, because the generator stamps one service entity per file. On a real corpus
-this is the "what does checkout-api entangle with" question.
+**4. Entity co-occurrence** — which services get remembered together. Zero pairs on the fixture corpus, because the generator stamps one service entity per file. On a real corpus this is the "what does checkout-api entangle with" question.
 
 **5. Supersedence chain walk** — correction ancestry read from the tree, no git needed.
 
@@ -212,8 +176,7 @@ chain(memhtmls, "/areas/pipelines/refuted-reading-batch-loader-...-65.html", "me
 
 ## Interactive: bun repl and bun -e
 
-Both work with cheerio installed alongside the helper — `bun repl` resolves imports from
-the cwd's `node_modules`:
+Both work with cheerio installed alongside the helper — `bun repl` resolves imports from the cwd's `node_modules`:
 
 ```
 $ cd $MEMHTML_TOOLS && bun repl
@@ -227,28 +190,17 @@ $ cd $MEMHTML_TOOLS && bun repl
   "A cdn-edge frankfurt edge node that revalidates twice in 5 minutes is the failure signature." ]
 ```
 
-For agents, `bun -e '…'` is the better door — one shot, one stdout, no TTY. `bun repl`
-suits a human exploring; note it is REPL-only sugar (top-level await, `_` last result)
-and its transcript interleaves terminal control codes, so an agent capturing output
-should always prefer `bun -e` or a script file.
+For agents, `bun -e '…'` is the better door — one shot, one stdout, no TTY. `bun repl` suits a human exploring; note it is REPL-only sugar (top-level await, `_` last result) and its transcript interleaves terminal control codes, so an agent capturing output should always prefer `bun -e` or a script file.
 
 ## What this is not
 
-- Not a write path. `memory_correct`'s 1→1 shape and sleep's gated N→1 composition are
-  load-bearing; code-mode must never grow a serializer.
-- Not retrieval. The discrimination gate's whole point is that lexical/structural reads
-  cannot distinguish a claim from its negation-flip at a distance — ranked search stays
-  with the four-arm RRF stack.
-- Not an index handle. `memhtml exec` (item 7b) ships without one, deliberately: the ranked
-  planes stay behind `memhtml search`, which a script reaches by shelling out. A read-only
-  `index.db` handle here is a scope decision and not a feasibility one — a second process can open
-  a live store and read it, which `node scripts/probe-sqlite-concurrency.mjs` measures. A
-  `memory_eval` MCP tool (item 7c) is still demand-pulled; ROADMAP.md carries the sequencing.
+- Not a write path. `memory_correct`'s 1→1 shape and sleep's gated N→1 composition are load-bearing; code-mode must never grow a serializer.
+- Not retrieval. The discrimination gate's whole point is that lexical/structural reads cannot distinguish a claim from its negation-flip at a distance — ranked search stays with the four-arm RRF stack.
+- Not an index handle. `memhtml exec` (item 7b) ships without one, deliberately: the ranked planes stay behind `memhtml search`, which a script reaches by shelling out. A read-only `index.db` handle here is a scope decision and not a feasibility one — a second process can open a live store and read it, which `node scripts/probe-sqlite-concurrency.mjs` measures. A `memory_eval` MCP tool (item 7c) is still demand-pulled; ROADMAP.md carries the sequencing.
 
 ## `memhtml exec` — the shipped runtime
 
-The helper above is the HOST version, for `bun` and `node`. Inside `memhtml exec` the same surface is
-preloaded for you and the parser differs for the runtime reason stated at the top:
+The helper above is the HOST version, for `bun` and `node`. Inside `memhtml exec` the same surface is preloaded for you and the parser differs for the runtime reason stated at the top:
 
 ```
 $ memhtml exec --script 'import { corpus, edges } from "/workspace/lib/corpus.mjs"
@@ -266,24 +218,11 @@ $ memhtml exec --script 'import { corpus, edges } from "/workspace/lib/corpus.mj
 
 What the runtime guarantees, each measured rather than declared (`apps/cli/tests/exec.test.ts`):
 
-- **Read-only.** A write from the script answers `EROFS`. Reads are confined to the mount: neither
-  `/etc/hostname` nor a `..` escape resolves.
-- **A pinned commit, never the live tree.** `--sha` defaults to `HEAD` and is materialized as a
-  detached worktree. That is what keeps `.memhtml/index.db` out of reach — it is gitignored, so a
-  checkout omits it. Read-only alone would NOT: the guest's `sqlite3` reads a read-only-mounted
-  database fine.
+- **Read-only.** A write from the script answers `EROFS`. Reads are confined to the mount: neither `/etc/hostname` nor a `..` escape resolves.
+- **A pinned commit, never the live tree.** `--sha` defaults to `HEAD` and is materialized as a detached worktree. That is what keeps `.memhtml/index.db` out of reach — it is gitignored, so a checkout omits it. Read-only alone would NOT: the guest's `sqlite3` reads a read-only-mounted database fine.
 - **No network.** There is no `curl`, and the guest's `fetch` refuses on call.
-- **Bounded.** `--timeout-ms` defaults to 30000 and caps at 600000. A cut-off script is
-  `exitCode: 124` with `timedOut: true`.
-- **A failing script is exit 0.** The report carries `exitCode` and `stderr`; the CLI's exit 1 is
-  reserved for the runtime failing to run the script at all.
-- **A sandbox that fails to answer is the runtime's failure, not the script's.** A guest `fs` call is a
-  synchronous round trip over a shared buffer, and when that handshake does not complete just-bash
-  throws `Error code: <n>` or `Operation timed out` — a phrase of its own, which without classification
-  reads as a script that threw. The script is re-run against the same tree up to three times (sound
-  because the mount is read-only and there is no egress), and only exhaustion answers, as `ERR_STORAGE`.
+- **Bounded.** `--timeout-ms` defaults to 30000 and caps at 600000. A cut-off script is `exitCode: 124` with `timedOut: true`.
+- **A failing script is exit 0.** The report carries `exitCode` and `stderr`; the CLI's exit 1 is reserved for the runtime failing to run the script at all.
+- **A sandbox that fails to answer is the runtime's failure, not the script's.** A guest `fs` call is a synchronous round trip over a shared buffer, and when that handshake does not complete just-bash throws `Error code: <n>` or `Operation timed out` — a phrase of its own, which without classification reads as a script that threw. The script is re-run against the same tree up to three times (sound because the mount is read-only and there is no egress), and only exhaustion answers, as `ERR_STORAGE`.
 
-The helper's `path` keys are root-absolute, matching the `href` convention exactly, so
-`memories.get(link.href)` resolves with no normalization. Generated `index.html` listings are not
-counted as memories, and `.git` is not walked at all — a ref is a file at a name the author chose, so a
-branch called `foo.html` would otherwise be counted as a memory.
+The helper's `path` keys are root-absolute, matching the `href` convention exactly, so `memories.get(link.href)` resolves with no normalization. Generated `index.html` listings are not counted as memories, and `.git` is not walked at all — a ref is a file at a name the author chose, so a branch called `foo.html` would otherwise be counted as a memory.

@@ -8,16 +8,16 @@ Every command writes exactly ONE JSON envelope to stdout and logs to stderr, so 
 
 ## 1. Environment
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `MEMHTML_ROOT` | `~/memhtml` | The memory repo. A leading `~` is expanded — this value arrives from a shell profile, an MCP client config, and a cron line, and only the shell expands tildes. |
-| `MEMHTML_TRACE_ROOT` | `~/.claude` | Where `memhtml trace index` reads transcripts. Read-only; never written. |
-| `MEMHTML_AWS_REGION` | `us-east-1` | Bedrock region for embeddings and the four LLM sleep phases. |
-| `AWS_BEARER_TOKEN_BEDROCK` | — | Read by the AWS SDK itself. Absent means the default credential chain; retrieval degrades to the lexical floor rather than failing. |
-| `MEMHTML_EMBED` | `on` | `off` disables the embedder entirely. Distinct from a missing credential: a missing credential degrades one search at call time, `off` degrades every search. |
-| `MEMHTML_LLM` | `on` | `off` makes the three model-driven sleep phases report `no model bound` and `trace-consolidation` report `no consolidator bound`, all staying `ok`. |
-| `MEMHTML_EXTRACT_ENTITIES` | `off` | `on` adds one model call per write batch that extracts `memhtml-entity` metas the ops did not declare (`apps/cli/src/config.ts:62`). Opt-in, unlike `MEMHTML_EMBED`, because it changes what a write STORES: extracted entities land in the files as if authored. The write never waits on or fails with the model — a failed extraction is a logged warning and an unextracted batch. |
-| `MEMHTML_MCP_BIN` | — | An explicit path to the `memhtml-mcp` entry point, read only by the serve supervisor (`apps/cli/src/serve.ts:58`). Absent means the sibling-path default, since the two apps ship as one build. Set it for a split deployment; it locates the server rather than configuring the store. |
+| Variable                   | Default     | Meaning                                                                                                                                                                                                                                                                                                                                                                                |
+| -------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MEMHTML_ROOT`             | `~/memhtml` | The memory repo. A leading `~` is expanded — this value arrives from a shell profile, an MCP client config, and a cron line, and only the shell expands tildes.                                                                                                                                                                                                                        |
+| `MEMHTML_TRACE_ROOT`       | `~/.claude` | Where `memhtml trace index` reads transcripts. Read-only; never written.                                                                                                                                                                                                                                                                                                               |
+| `MEMHTML_AWS_REGION`       | `us-east-1` | Bedrock region for embeddings and the four LLM sleep phases.                                                                                                                                                                                                                                                                                                                           |
+| `AWS_BEARER_TOKEN_BEDROCK` | —           | Read by the AWS SDK itself. Absent means the default credential chain; retrieval degrades to the lexical floor rather than failing.                                                                                                                                                                                                                                                    |
+| `MEMHTML_EMBED`            | `on`        | `off` disables the embedder entirely. Distinct from a missing credential: a missing credential degrades one search at call time, `off` degrades every search.                                                                                                                                                                                                                          |
+| `MEMHTML_LLM`              | `on`        | `off` makes the three model-driven sleep phases report `no model bound` and `trace-consolidation` report `no consolidator bound`, all staying `ok`.                                                                                                                                                                                                                                    |
+| `MEMHTML_EXTRACT_ENTITIES` | `off`       | `on` adds one model call per write batch that extracts `memhtml-entity` metas the ops did not declare (`apps/cli/src/config.ts:62`). Opt-in, unlike `MEMHTML_EMBED`, because it changes what a write STORES: extracted entities land in the files as if authored. The write never waits on or fails with the model — a failed extraction is a logged warning and an unextracted batch. |
+| `MEMHTML_MCP_BIN`          | —           | An explicit path to the `memhtml-mcp` entry point, read only by the serve supervisor (`apps/cli/src/serve.ts:58`). Absent means the sibling-path default, since the two apps ship as one build. Set it for a split deployment; it locates the server rather than configuring the store.                                                                                                |
 
 These eight are declared in `apps/cli/src/config.ts:26` and are what `memhtml manifest` reports. `MEMHTML_EMBED` and `MEMHTML_LLM` compare case-insensitively against `off` (`apps/cli/src/api-layer.ts:250`, `apps/cli/src/api-layer.ts:313`). `MEMHTML_MCP_BIN` is the one that configures no store behavior at all, and it is disclosed anyway: an operator debugging a split deployment reads the manifest, and a variable the binary reads but does not declare is one they cannot discover. `--repo <path>` overrides `MEMHTML_ROOT` per call.
 
@@ -39,19 +39,14 @@ memhtml index rebuild --embed
 
 `memhtml init` is convergent: each step asks the repo what is already true and supplies only what is missing, so it reaches the same end state from an empty directory, from a fully scaffolded repo, and from one left half-initialized by an interrupted run (`packages/store/src/layout.ts:183`).
 
-**A git identity is a precondition, and its absence surfaces as `ERR_GIT` exit 128.** `memhtml init`
-commits the scaffold, and `git commit` refuses without one — so on a fresh container, a CI runner, or any
-sandbox with no `~/.gitconfig`, the very first command fails with `git commit failed (exit 128)` while
-git's own "Please tell me who you are" goes to stderr. Nothing is lost: `init` is convergent, so setting
-an identity and re-running carries the staged scaffold to a commit. Either configure it:
+**A git identity is a precondition, and its absence surfaces as `ERR_GIT` exit 128.** `memhtml init` commits the scaffold, and `git commit` refuses without one — so on a fresh container, a CI runner, or any sandbox with no `~/.gitconfig`, the very first command fails with `git commit failed (exit 128)` while git's own "Please tell me who you are" goes to stderr. Nothing is lost: `init` is convergent, so setting an identity and re-running carries the staged scaffold to a commit. Either configure it:
 
 ```bash
 git config --global user.name "You"
 git config --global user.email "you@example.com"
 ```
 
-or supply it per-process, which needs no repository and no config file and is what an unattended agent
-should prefer:
+or supply it per-process, which needs no repository and no config file and is what an unattended agent should prefer:
 
 ```bash
 export GIT_AUTHOR_NAME="memhtml" GIT_AUTHOR_EMAIL="memhtml@localhost"
@@ -184,12 +179,12 @@ Every phase is its own commit and a failure is caught as a VALUE: the phase reco
 
 Phase 12 hands unread session transcripts to the consolidator agent and commits one memory per candidate that clears the bar. It reports `ok` in four different situations, and the `detail` is what tells them apart:
 
-| `detail` | Meaning | What to do |
-|---|---|---|
-| `no consolidator bound` | `MEMHTML_LLM=off`, or no Bedrock credentials in the environment. The phase was never able to run. | Nothing, if that was intended. Otherwise export `AWS_BEARER_TOKEN_BEDROCK` (or the SigV4 pair). |
-| `consolidator unavailable: ConsolidatorUnavailable` | The agent server could not be built, started, or reached. Usually its output is missing. | **From a checkout**: `pnpm --filter @memhtml/consolidator build:agent`. That build is deliberately outside the turbo graph, so a fresh clone has not run it. **From an installed package**: nothing to run — the first consolidation builds the agent into `~/.cache/memhtml/eve/<version>/` itself and reports this only if that build fails, so read the `reason`, which carries eve's own stderr. Never build it inside `node_modules`: nitro externalizes what it resolves there and the server exits 13 on an unsettled top-level await (`apps/consolidator/src/agent-build.ts`). |
-| `consolidator unavailable: ConsolidatorRunFailed` | The turn reached the model and came back with nothing usable — a throttle, a timeout, an unentitled key. | Re-run. No session was watermarked, so nothing was lost. |
-| absent, with `candidates: 0` | The agent read the batch and found nothing above the bar. **A successful night.** | Nothing. The sessions are watermarked and will not be re-read. |
+| `detail`                                            | Meaning                                                                                                  | What to do                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `no consolidator bound`                             | `MEMHTML_LLM=off`, or no Bedrock credentials in the environment. The phase was never able to run.        | Nothing, if that was intended. Otherwise export `AWS_BEARER_TOKEN_BEDROCK` (or the SigV4 pair).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `consolidator unavailable: ConsolidatorUnavailable` | The agent server could not be built, started, or reached. Usually its output is missing.                 | **From a checkout**: `pnpm --filter @memhtml/consolidator build:agent`. That build is deliberately outside the turbo graph, so a fresh clone has not run it. **From an installed package**: nothing to run — the first consolidation builds the agent into `~/.cache/memhtml/eve/<version>/` itself and reports this only if that build fails, so read the `reason`, which carries eve's own stderr. Never build it inside `node_modules`: nitro externalizes what it resolves there and the server exits 13 on an unsettled top-level await (`apps/consolidator/src/agent-build.ts`). |
+| `consolidator unavailable: ConsolidatorRunFailed`   | The turn reached the model and came back with nothing usable — a throttle, a timeout, an unentitled key. | Re-run. No session was watermarked, so nothing was lost.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| absent, with `candidates: 0`                        | The agent read the batch and found nothing above the bar. **A successful night.**                        | Nothing. The sessions are watermarked and will not be re-read.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 The distinction matters because only the last one means the transcripts have been dealt with. Read `counts.batch` to see how many sessions were handed over and `counts.consolidated` for how many were watermarked: a failed call leaves `consolidated: 0` with `batch` nonzero, which is the shape that says "these transcripts are still waiting".
 
@@ -201,11 +196,11 @@ Each commit's body carries the evidence quotes the claim rests on, which is the 
 
 The refusal is a value on the report, never an error (`packages/sleep/src/contract.ts:169`, `packages/sleep/src/review.ts:226`).
 
-| `refusal` | Meaning | What to do |
-|---|---|---|
-| `no-run` | No such run id. | `memhtml sleep status`. |
-| `main-advanced` | `main` moved past the run's `base_sha`, so the run curated a corpus that no longer exists. Also the refusal when the fast-forward itself fails. | Re-run the sleep. Every phase is idempotent, so it is cheap. |
-| `gate-failed` | The discrimination gate refused: this run degrades retrieval. | `memhtml eval discriminate` to see which probes inverted, then `git branch -D <run-id>`. |
+| `refusal`       | Meaning                                                                                                                                         | What to do                                                                               |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `no-run`        | No such run id.                                                                                                                                 | `memhtml sleep status`.                                                                  |
+| `main-advanced` | `main` moved past the run's `base_sha`, so the run curated a corpus that no longer exists. Also the refusal when the fast-forward itself fails. | Re-run the sleep. Every phase is idempotent, so it is cheap.                             |
+| `gate-failed`   | The discrimination gate refused: this run degrades retrieval.                                                                                   | `memhtml eval discriminate` to see which probes inverted, then `git branch -D <run-id>`. |
 
 `--skip-gate` merges without re-running discrimination and logs a warning (`apps/cli/src/run.ts:497`) — a deliberate override, never a default. The gate always runs in FAKE mode (`apps/cli/src/run.ts:514`), precisely so a nightly merge is not conditional on a token being valid at 3am.
 
@@ -233,18 +228,18 @@ memhtml doctor --fix    # repairs the two that need no judgement call
 memhtml publish         # regenerate index.html listings and sitemap.xml, and commit
 ```
 
-| Finding | Meaning | Fix |
-|---|---|---|
-| `dangling` | A `<link>` points at a path the tree does not hold. | `--fix` rewrites it to the archive path, or drops it when the target is gone. |
-| `orphanAccessRows` | A `state.access` row whose path left the tree. | `--fix` prunes it. |
-| `inboxCrowded` | Over 20 active memories in `areas/inbox/`: the placement rules stopped matching what agents write. | Re-place them, or revisit the rules. |
-| `inboxTasksCrowded` | Over 10 open tasks in `areas/inbox/tasks/`: work with no project. | Drain it. A task inbox is meant to be drained, not accumulated. |
-| `overdueTasks` | An open task whose `memhtml-due` has passed. | Doctor is the ONLY surface reading `due_at` — a task is default-excluded from search and skipped by every sleep phase. |
-| `staleBlockers` | A `blocks` edge whose blocker is archived or absent. | Decide whether the blocked task is ready. Each file alone is valid; only the pair is wrong. |
-| `warnings` | An element outside the closed vocabulary. The file still indexes. | Author's intent — doctor will not guess. |
-| `unparseable` | A file the parser refuses. It is NOT in the index. | Read the violations with `memhtml read <path>`. |
-| `indexFresh: false` | The index describes an older commit. | `memhtml index update --embed`. |
-| `embedModelMatches: false` | Stored vectors are in a different space from the configured one. | §5 — delete the database and rebuild. |
+| Finding                    | Meaning                                                                                            | Fix                                                                                                                    |
+| -------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `dangling`                 | A `<link>` points at a path the tree does not hold.                                                | `--fix` rewrites it to the archive path, or drops it when the target is gone.                                          |
+| `orphanAccessRows`         | A `state.access` row whose path left the tree.                                                     | `--fix` prunes it.                                                                                                     |
+| `inboxCrowded`             | Over 20 active memories in `areas/inbox/`: the placement rules stopped matching what agents write. | Re-place them, or revisit the rules.                                                                                   |
+| `inboxTasksCrowded`        | Over 10 open tasks in `areas/inbox/tasks/`: work with no project.                                  | Drain it. A task inbox is meant to be drained, not accumulated.                                                        |
+| `overdueTasks`             | An open task whose `memhtml-due` has passed.                                                       | Doctor is the ONLY surface reading `due_at` — a task is default-excluded from search and skipped by every sleep phase. |
+| `staleBlockers`            | A `blocks` edge whose blocker is archived or absent.                                               | Decide whether the blocked task is ready. Each file alone is valid; only the pair is wrong.                            |
+| `warnings`                 | An element outside the closed vocabulary. The file still indexes.                                  | Author's intent — doctor will not guess.                                                                               |
+| `unparseable`              | A file the parser refuses. It is NOT in the index.                                                 | Read the violations with `memhtml read <path>`.                                                                        |
+| `indexFresh: false`        | The index describes an older commit.                                                               | `memhtml index update --embed`.                                                                                        |
+| `embedModelMatches: false` | Stored vectors are in a different space from the configured one.                                   | §5 — delete the database and rebuild.                                                                                  |
 
 Thresholds are `INBOX_WARN_DEPTH` 20 and `INBOX_TASK_WARN_DEPTH` 10 (`apps/cli/src/doctor.ts:69`, `apps/cli/src/doctor.ts:78`). `--fix` reuses the sleep integrity phase's byte-splicing repair logic rather than a second implementation, because a repair routed through the serializer would move the content hash of every file it touched. `memhtml publish` is deterministic to the byte, so two runs over an unchanged corpus write nothing and commit nothing (`apps/cli/src/publish.ts:10`); it is also the resolution for a `merge=ours` conflict in a generated artifact — regenerate rather than hand-edit.
 

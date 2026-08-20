@@ -54,6 +54,10 @@ trivy = "latest"                         # filesystem misconfiguration + vulnera
 # renderer, and the same .d2 source has to emit both the site's SVG and the monospace figure
 # GitHub can display, since GitHub renders Mermaid and does not render D2 at all.
 "aqua:terrastruct/d2" = "0.7.1"          # diagram renderer for apps/docs
+# Markdown formatter, exact-pinned like d2: dprint.json pins the markdown plugin by URL +
+# checksum, and the binary version is half of that reproducibility story. Markdown ONLY —
+# biome owns ts/json, and dprint.json's `excludes` keeps the two apart.
+dprint = "0.56.0"                        # markdown formatter (textWrap: never)
 # External-link checker for the built docs site, used ONLY by the scheduled `links` workflow. It is
 # not in `check` and must not be: an outbound 404 appears when somebody else edits their site, so
 # gating on it would fail whichever commit happened to be pushed that day.
@@ -121,11 +125,25 @@ raw_args = true
 run = "pnpm lint"
 
 [tasks.format]
-description = "Apply biome formatting across the repo"
+description = "Apply biome formatting across the repo, then dprint over the Markdown"
 # No `dir`: mise runs tasks from config_root, and the `.` in `biome check --write .` IS
 # the write set — a dir would silently narrow or widen it.
 raw_args = true
 run = "pnpm format"
+
+[tasks."format:md"]
+description = "Reflow every Markdown file with dprint (textWrap: never — no mid-sentence hard wraps)"
+# Markdown only; biome owns ts/json and has no Markdown formatter (2.5.x). Generated
+# Markdown (AGENTS.md, CHANGELOG.md) is excluded in dprint.json because each already has
+# an owner and a drift gate, and the README's ASCII figures sit inside
+# dprint-ignore-start/end markers because readme-figures.mjs owns those bytes.
+raw_args = true
+run = "pnpm format:md"
+
+[tasks."lint:md"]
+description = "Fail if any Markdown file is not dprint-formatted (also runs inside `check`)"
+raw_args = true
+run = "pnpm lint:md"
 
 [tasks.typecheck]
 description = "Strict tsc --noEmit per package, tests included"

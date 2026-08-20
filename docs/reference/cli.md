@@ -28,8 +28,7 @@ The parser accepts `--flag value`, `--flag=value`, `--no-flag`, and bare `--flag
 memhtml manifest
 ```
 
-Emit this CLI's full machine-readable contract.
-`apps/cli/src/run.ts:842-844`
+Emit this CLI's full machine-readable contract. `apps/cli/src/run.ts:842-844`
 
 This command takes no arguments and no flags. It answers without building the app layer, so it works on a machine with no root, no database, and no credentials, which makes it usable as a liveness check as well as a discovery call. `apps/cli/src/run.ts:829-841`
 
@@ -41,8 +40,7 @@ A bare `memhtml` and `memhtml help` return the same manifest envelope. `apps/cli
 memhtml init
 ```
 
-Scaffold a memory repo at `--repo`/`$MEMHTML_ROOT`: git init, PARA dirs, merge driver.
-`apps/cli/src/run.ts:194-199`
+Scaffold a memory repo at `--repo`/`$MEMHTML_ROOT`: git init, PARA dirs, merge driver. `apps/cli/src/run.ts:194-199`
 
 This command takes no arguments and no command-specific flags. `apps/cli/src/commands.ts:120-125`
 
@@ -52,8 +50,7 @@ This command takes no arguments and no command-specific flags. `apps/cli/src/com
 memhtml write --title <title> --type <type> [--claim <sentence> | --article-html <markup>]
 ```
 
-Write one memory. Content-hash duplicates return the existing path, uncommitted.
-`apps/cli/src/run.ts:201-221`
+Write one memory. Content-hash duplicates return the existing path, uncommitted. `apps/cli/src/run.ts:201-221`
 
 Flags:
 
@@ -83,8 +80,7 @@ memhtml apply [--file ops.jsonl]
 memhtml apply -
 ```
 
-Write many memories from a JSONL op stream: one commit, one index update, per-op results.
-`apps/cli/src/run.ts:229-243`
+Write many memories from a JSONL op stream: one commit, one index update, per-op results. `apps/cli/src/run.ts:229-243`
 
 Flags:
 
@@ -104,8 +100,7 @@ The whole stream is read and shape-validated before any service is built. A malf
 memhtml read <path>
 ```
 
-Read one memory: its metas, links, article, and format warnings.
-`apps/cli/src/run.ts:245-264`
+Read one memory: its metas, links, article, and format warnings. `apps/cli/src/run.ts:245-264`
 
 Arguments:
 
@@ -121,8 +116,7 @@ Flags:
 memhtml search <query> [--limit 10]
 ```
 
-Ranked search: four RRF arms plus MMR. Degrades to the lexical floor.
-`apps/cli/src/run.ts:266-274`
+Ranked search: four RRF arms plus MMR. Degrades to the lexical floor. `apps/cli/src/run.ts:266-274`
 
 Arguments:
 
@@ -146,8 +140,7 @@ The first six flags are `SCOPE_FLAGS`, declared once and spread into this comman
 memhtml recall <query> [--budget 16000]
 ```
 
-A disclosure pack under a character budget: arcs and memories folded separately.
-`apps/cli/src/run.ts:276-284`
+A disclosure pack under a character budget: arcs and memories folded separately. `apps/cli/src/run.ts:276-284`
 
 Arguments:
 
@@ -169,8 +162,7 @@ Flags:
 memhtml correct <target> --title <title> [--claim <sentence> | --article-html <markup>]
 ```
 
-Supersede a memory: write the new file and archive the target in one commit.
-`apps/cli/src/run.ts:286-299`
+Supersede a memory: write the new file and archive the target in one commit. `apps/cli/src/run.ts:286-299`
 
 Arguments:
 
@@ -194,8 +186,7 @@ The claim-or-markup rule from `write` applies here too. Both commands are named 
 memhtml link <src> <rel> <dst>
 ```
 
-Add an authored edge to the source file and commit it. Idempotent.
-`apps/cli/src/run.ts:301-309`
+Add an authored edge to the source file and commit it. Idempotent. `apps/cli/src/run.ts:301-309`
 
 Arguments:
 
@@ -213,8 +204,7 @@ The rel vocabulary is `AUTHORABLE_RELS`, the nine `MEMORY_RELS` plus the two `TA
 memhtml neighbors <path> [--depth 1] [--rel <rel>]
 ```
 
-The memory graph around one path, to a fixed depth of at most two hops.
-`apps/cli/src/run.ts:311-319`
+The memory graph around one path, to a fixed depth of at most two hops. `apps/cli/src/run.ts:311-319`
 
 Arguments:
 
@@ -233,8 +223,7 @@ The nine memory rels are `supersedes`, `contradicts`, `caused_by`, `leads_to`, `
 memhtml archive <path> --reason <reason>
 ```
 
-Soft-evict: `git mv` into `archive/<YYYY>/` with the archive stamps. Never a delete.
-`apps/cli/src/run.ts:321-328`
+Soft-evict: `git mv` into `archive/<YYYY>/` with the archive stamps. Never a delete. `apps/cli/src/run.ts:321-328`
 
 Arguments:
 
@@ -250,8 +239,7 @@ Flags:
 memhtml reinforce <path> [<path>...] [--signal neutral]
 ```
 
-Bump access bookkeeping, gated by a 900-second per-path cooldown.
-`apps/cli/src/run.ts:330-339`
+Bump access bookkeeping, gated by a 900-second per-path cooldown. `apps/cli/src/run.ts:330-339`
 
 Arguments:
 
@@ -271,8 +259,7 @@ The signal vocabulary is `REINFORCE_SIGNALS`. `packages/domain/src/reinforce.ts:
 memhtml list [--type <type>] [--workspace <ws>] [--tag <tag>] [--entity <ref>] [--para <bucket>] [--limit 50] [--cursor <path>]
 ```
 
-Page through the corpus by type, workspace, tag, entity, or PARA bucket.
-`apps/cli/src/run.ts:341-354`
+Page through the corpus by type, workspace, tag, entity, or PARA bucket. `apps/cli/src/run.ts:341-354`
 
 Flags:
 
@@ -291,8 +278,7 @@ Flags:
 memhtml task add --title <title> [--status todo] [--due <iso>]
 ```
 
-Open a task: a `task` memory in `projects/<ws>/tasks/` or `areas/inbox/tasks/`.
-`apps/cli/src/run.ts:356-388`
+Open a task: a `task` memory in `projects/<ws>/tasks/` or `areas/inbox/tasks/`. `apps/cli/src/run.ts:356-388`
 
 Flags:
 
@@ -318,8 +304,7 @@ The status vocabulary is `TASK_STATUSES`. `packages/contracts/src/types.ts:82`
 memhtml task status <path> <status> [--reason <reason>]
 ```
 
-Move a task's status. `done` stamps and archives it, in one commit.
-`apps/cli/src/run.ts:390-398`
+Move a task's status. `done` stamps and archives it, in one commit. `apps/cli/src/run.ts:390-398`
 
 Arguments:
 
@@ -336,8 +321,7 @@ Flags:
 memhtml task list [--status <status>] [--workspace <ws>] [--due-before <iso>] [--detected] [--limit 50] [--cursor <path>]
 ```
 
-The task working set: a direct indexed scan with blockers, never ranked retrieval.
-`apps/cli/src/run.ts:400-411`
+The task working set: a direct indexed scan with blockers, never ranked retrieval. `apps/cli/src/run.ts:400-411`
 
 Flags:
 
@@ -355,8 +339,7 @@ Flags:
 memhtml index rebuild [--no-embed]
 ```
 
-Rebuild `index.db` from the git tree at HEAD. Destroys nothing outside `.memhtml/`.
-`apps/cli/src/run.ts:413-418`
+Rebuild `index.db` from the git tree at HEAD. Destroys nothing outside `.memhtml/`. `apps/cli/src/run.ts:413-418`
 
 Flags:
 
@@ -368,8 +351,7 @@ Flags:
 memhtml index update [--no-embed]
 ```
 
-Index only what moved since the recorded watermark, plus the dirty working tree.
-`apps/cli/src/run.ts:420-425`
+Index only what moved since the recorded watermark, plus the dirty working tree. `apps/cli/src/run.ts:420-425`
 
 Flags:
 
@@ -383,8 +365,7 @@ This command indexes uncommitted working-tree changes as well as committed ones.
 memhtml index status
 ```
 
-The index watermark, the vector space it was built in, and its row counts.
-`apps/cli/src/run.ts:427-431`
+The index watermark, the vector space it was built in, and its row counts. `apps/cli/src/run.ts:427-431`
 
 This command takes no arguments and no flags. `apps/cli/src/commands.ts:545-550`
 
@@ -394,8 +375,7 @@ This command takes no arguments and no flags. `apps/cli/src/commands.ts:545-550`
 memhtml trace index
 ```
 
-Scan `$MEMHTML_TRACE_ROOT` for Claude Code transcripts, reading only what changed.
-`apps/cli/src/run.ts:433-437`
+Scan `$MEMHTML_TRACE_ROOT` for Claude Code transcripts, reading only what changed. `apps/cli/src/run.ts:433-437`
 
 This command takes no arguments and no flags. `apps/cli/src/commands.ts:552-557`
 
@@ -407,8 +387,7 @@ This command takes no arguments and no flags. `apps/cli/src/commands.ts:552-557`
 memhtml trace search <query> [--cwd <dir>] [--since <iso>] [--limit 20]
 ```
 
-FTS over session first-prompts and AI titles. Never enters memory retrieval.
-`apps/cli/src/run.ts:439-448`
+FTS over session first-prompts and AI titles. Never enters memory retrieval. `apps/cli/src/run.ts:439-448`
 
 Arguments:
 
@@ -426,8 +405,7 @@ Flags:
 memhtml trace links [--session-id <id>] [--path <path>]
 ```
 
-The memory-session links, from either side.
-`apps/cli/src/run.ts:450-457`
+The memory-session links, from either side. `apps/cli/src/run.ts:450-457`
 
 Flags:
 
@@ -440,8 +418,7 @@ Flags:
 memhtml sleep run [--date YYYY-MM-DD] [--phases <list>] [--dry-run]
 ```
 
-The nightly curation cycle: 15 phases, each an isolated commit on a review branch.
-`apps/cli/src/run.ts:459-469`
+The nightly curation cycle: 15 phases, each an isolated commit on a review branch. `apps/cli/src/run.ts:459-469`
 
 Flags:
 
@@ -459,8 +436,7 @@ A run holds a checked-out `sleep/<date>` branch. Any write that lands during the
 memhtml sleep resume <run-id>
 ```
 
-Re-run only the phases with no `Memhtml-Phase` trailer on the branch.
-`apps/cli/src/run.ts:471-476`
+Re-run only the phases with no `Memhtml-Phase` trailer on the branch. `apps/cli/src/run.ts:471-476`
 
 Arguments:
 
@@ -474,8 +450,7 @@ This command takes no flags. `apps/cli/src/commands.ts:607`
 memhtml sleep review <run-id> [--diff]
 ```
 
-Per-phase counts, the commit list, `diff --stat`, and a per-file classification.
-`apps/cli/src/run.ts:478-492`
+Per-phase counts, the commit list, `diff --stat`, and a per-file classification. `apps/cli/src/run.ts:478-492`
 
 Arguments:
 
@@ -493,8 +468,7 @@ The raw diff is fetched only when asked for. Its size is unbounded, so a default
 memhtml sleep merge <run-id> [--skip-gate]
 ```
 
-Fast-forward main to the run's branch, after the discrimination gate passes.
-`apps/cli/src/run.ts:494-524`
+Fast-forward main to the run's branch, after the discrimination gate passes. `apps/cli/src/run.ts:494-524`
 
 Arguments:
 
@@ -512,8 +486,7 @@ The gate is composed here rather than defaulted inside the sleep package. A fail
 memhtml sleep status
 ```
 
-The latest sleep run and its per-phase outcomes.
-`apps/cli/src/run.ts:550-565`
+The latest sleep run and its per-phase outcomes. `apps/cli/src/run.ts:550-565`
 
 This command takes no arguments and no flags. `apps/cli/src/commands.ts:635-640`
 
@@ -523,8 +496,7 @@ This command takes no arguments and no flags. `apps/cli/src/commands.ts:635-640`
 memhtml status
 ```
 
-Corpus health: HEAD, dirty state, counts by type, edges, index freshness.
-`apps/cli/src/run.ts:567-571`
+Corpus health: HEAD, dirty state, counts by type, edges, index freshness. `apps/cli/src/run.ts:567-571`
 
 This command takes no arguments and no flags. `apps/cli/src/commands.ts:642-647`
 
@@ -534,8 +506,7 @@ This command takes no arguments and no flags. `apps/cli/src/commands.ts:642-647`
 memhtml publish
 ```
 
-Regenerate the per-directory `index.html` listings and `sitemap.xml`, and commit them.
-`apps/cli/src/run.ts:526-530`
+Regenerate the per-directory `index.html` listings and `sitemap.xml`, and commit them. `apps/cli/src/run.ts:526-530`
 
 This command takes no arguments and no flags. `apps/cli/src/commands.ts:649-654`
 
@@ -545,8 +516,7 @@ This command takes no arguments and no flags. `apps/cli/src/commands.ts:649-654`
 memhtml doctor [--fix]
 ```
 
-Corpus health: dangling hrefs, orphan state rows, inbox depth, vocabulary, staleness.
-`apps/cli/src/run.ts:532-536`
+Corpus health: dangling hrefs, orphan state rows, inbox depth, vocabulary, staleness. `apps/cli/src/run.ts:532-536`
 
 Flags:
 
@@ -558,8 +528,7 @@ Flags:
 memhtml eval discriminate [--mode fake] [--seed <n>] [--size 200] [--probes 36] [--mrr-floor 0.85]
 ```
 
-The refusable retrieval gate: every probe must outrank its own wrong-fact twins.
-`apps/cli/src/run.ts:901-927`
+The refusable retrieval gate: every probe must outrank its own wrong-fact twins. `apps/cli/src/run.ts:901-927`
 
 Flags:
 
@@ -581,8 +550,7 @@ memhtml exec --script <source>
 cat script.mjs | memhtml exec
 ```
 
-Run a read-only traversal script over the corpus in a sandbox: multi-hop in one execution.
-`apps/cli/src/run.ts:947-992`
+Run a read-only traversal script over the corpus in a sandbox: multi-hop in one execution. `apps/cli/src/run.ts:947-992`
 
 Flags:
 
@@ -605,8 +573,7 @@ The sandbox's own capabilities have no flag. Python and network access are off, 
 memhtml state export
 ```
 
-Write `.memhtml/state/access.jsonl`, the only durable copy of the state plane, and commit.
-`apps/cli/src/run.ts:538-542`
+Write `.memhtml/state/access.jsonl`, the only durable copy of the state plane, and commit. `apps/cli/src/run.ts:538-542`
 
 This command takes no arguments and no flags. `apps/cli/src/commands.ts:769-776`
 
@@ -616,8 +583,7 @@ This command takes no arguments and no flags. `apps/cli/src/commands.ts:769-776`
 memhtml state import
 ```
 
-Replay the committed sidecar into `state.db`. Counters merge by max, never last-wins.
-`apps/cli/src/run.ts:544-548`
+Replay the committed sidecar into `state.db`. Counters merge by max, never last-wins. `apps/cli/src/run.ts:544-548`
 
 This command takes no arguments and no flags. `apps/cli/src/commands.ts:778-783`
 
@@ -627,8 +593,7 @@ This command takes no arguments and no flags. `apps/cli/src/commands.ts:778-783`
 memhtml agents-doc [--check] [--out AGENTS.md]
 ```
 
-Regenerate `AGENTS.md` from this command table. `--check` fails on drift.
-`apps/cli/src/run.ts:846-854`
+Regenerate `AGENTS.md` from this command table. `--check` fails on drift. `apps/cli/src/run.ts:846-854`
 
 Flags:
 
@@ -647,8 +612,7 @@ This command builds no app layer, so running it in CI does not scaffold a memhtm
 memhtml serve mcp
 ```
 
-Run the `memhtml-mcp` stdio server: 14 tools and 2 resources over this same repo.
-`apps/cli/src/run.ts:869-888`
+Run the `memhtml-mcp` stdio server: 14 tools and 2 resources over this same repo. `apps/cli/src/run.ts:869-888`
 
 This command takes no arguments and no command-specific flags. `apps/cli/src/commands.ts:799-805`
 
