@@ -1,22 +1,15 @@
 # Releasing
 
-Versions are cut by [release-please][rp] from Conventional Commit subjects, and published to npm as
-**one package, `memhtml`**, using [npm Trusted Publishing][tp]: OIDC, with no long-lived token in any
-secret.
+Versions are cut by [release-please][rp] from Conventional Commit subjects, and published to npm as **one package, `memhtml`**, using [npm Trusted Publishing][tp]: OIDC, with no long-lived token in any secret.
 
 [rp]: https://github.com/googleapis/release-please
 [tp]: https://docs.npmjs.com/trusted-publishers
 
 ## One package, two binaries
 
-`memhtml` is the whole system. Installing it gives `memhtml` and `memhtml-mcp`, and with them the CLI,
-code mode, the fifteen-phase sleep cycle, the trace indexer, the discrimination gate, and the MCP
-server. There is no `@memhtml/*` package on npm: the twelve workspace packages are `private`, and
-`npm publish` refuses a private package, so the assembled artifact is the only thing that can ship.
+`memhtml` is the whole system. Installing it gives `memhtml` and `memhtml-mcp`, and with them the CLI, code mode, the fifteen-phase sleep cycle, the trace indexer, the discrimination gate, and the MCP server. There is no `@memhtml/*` package on npm: the twelve workspace packages are `private`, and `npm publish` refuses a private package, so the assembled artifact is the only thing that can ship.
 
-The JS API is not part of the contract yet. The published surface is the two binaries and the JSON
-envelope they write. Adding an importable subpath later is a minor bump; removing one would be a
-major, so the cheap direction stays available.
+The JS API is not part of the contract yet. The published surface is the two binaries and the JSON envelope they write. Adding an importable subpath later is a minor bump; removing one would be a major, so the cheap direction stays available.
 
 ```bash
 npm i -g memhtml     # or: npx memhtml manifest
@@ -24,106 +17,59 @@ npm i -g memhtml     # or: npx memhtml manifest
 
 ## How the artifact is built
 
-`mise run package:assemble` runs [tsdown][td] against `tsdown.config.ts` and writes `dist-package/`:
-two bundled entry points in `dist/`, the run-time assets beside them, and a generated `package.json`
-from `scripts/package-manifest.mjs`. tsdown is the library bundler this ecosystem settled on — Rolldown
-and Oxc underneath, and the foundation of Rolldown Vite's library mode. tsup, the tool it succeeded, is
-unmaintained and cannot emit declarations under the TypeScript 7 this repo pins.
+`mise run package:assemble` runs [tsdown][td] against `tsdown.config.ts` and writes `dist-package/`: two bundled entry points in `dist/`, the run-time assets beside them, and a generated `package.json` from `scripts/package-manifest.mjs`. tsdown is the library bundler this ecosystem settled on — Rolldown and Oxc underneath, and the foundation of Rolldown Vite's library mode. tsup, the tool it succeeded, is unmaintained and cannot emit declarations under the TypeScript 7 this repo pins.
 
 [td]: https://tsdown.dev
 
-The twelve `@memhtml/*` packages are the bundle. **Every real dependency stays external**, and two of
-them must, because their FILES are read rather than imported:
+The twelve `@memhtml/*` packages are the bundle. **Every real dependency stays external**, and two of them must, because their FILES are read rather than imported:
 
-| What | How it resolves | Consequence |
-|---|---|---|
-| `node-html-parser` | `createRequire().resolve()`, then read as BYTES into QuickJS | inlined, code mode has no file to read |
-| `highlight.js` | `createRequire()` on the first detection | inlined, language detection cannot load |
-| `eve` | its bin is SPAWNED, located via `eve/package.json` | inlined, the consolidator has nothing to spawn |
+| What               | How it resolves                                              | Consequence                                    |
+| ------------------ | ------------------------------------------------------------ | ---------------------------------------------- |
+| `node-html-parser` | `createRequire().resolve()`, then read as BYTES into QuickJS | inlined, code mode has no file to read         |
+| `highlight.js`     | `createRequire()` on the first detection                     | inlined, language detection cannot load        |
+| `eve`              | its bin is SPAWNED, located via `eve/package.json`           | inlined, the consolidator has nothing to spawn |
 
-Externals are derived from the workspace manifests, as patterns that also match **subpaths**. A bare
-name is not enough: this repo imports `effect/unstable/cli` and `@effect/platform-node`'s subpaths, and
-externalizing only `"effect"` inlined the rest and took `memhtml-mcp.mjs` from 192 kB to 1.45 MB with
-no warning — tsdown's bundled-dependency hint reports top-level names, so it stayed silent.
+Externals are derived from the workspace manifests, as patterns that also match **subpaths**. A bare name is not enough: this repo imports `effect/unstable/cli` and `@effect/platform-node`'s subpaths, and externalizing only `"effect"` inlined the rest and took `memhtml-mcp.mjs` from 192 kB to 1.45 MB with no warning — tsdown's bundled-dependency hint reports top-level names, so it stayed silent.
 
-Five things resolve a path from their own module location at run time, and after bundling that location
-is `dist/`. So each is copied to the **package root**, one level above the bundle, which is exactly
-where `../migrations` and `../guest` land from a module in `dist/`:
+Five things resolve a path from their own module location at run time, and after bundling that location is `dist/`. So each is copied to the **package root**, one level above the bundle, which is exactly where `../migrations` and `../guest` land from a module in `dist/`:
 
-| Asset | Resolved by | Copied from |
-|---|---|---|
-| `migrations/`, `state-migrations/` | `new URL("../migrations", import.meta.url)` | `packages/index/` |
-| `guest/corpus.mjs` | `"..", "guest", "corpus.mjs"` | `apps/cli/` |
-| `agent/`, `src/` | eve compiles these; `agent/` reaches `../../src/*.js` | `apps/consolidator/` |
+| Asset                              | Resolved by                                           | Copied from          |
+| ---------------------------------- | ----------------------------------------------------- | -------------------- |
+| `migrations/`, `state-migrations/` | `new URL("../migrations", import.meta.url)`           | `packages/index/`    |
+| `guest/corpus.mjs`                 | `"..", "guest", "corpus.mjs"`                         | `apps/cli/`          |
+| `agent/`, `src/`                   | eve compiles these; `agent/` reaches `../../src/*.js` | `apps/consolidator/` |
 
-The copies use a **directory** `from` with `to: OUT_DIR`, not a glob. A glob with `flatten: false`
-preserves each match's path relative to the glob's own base, so `packages/index/migrations/**` lands as
-`migrations/index/migrations/0001_files.sql` — a directory that exists, holds no `.sql` at its top
-level, and applies zero migrations. The symptom was `no such table: files` on the first write, three
-steps from the cause.
+The copies use a **directory** `from` with `to: OUT_DIR`, not a glob. A glob with `flatten: false` preserves each match's path relative to the glob's own base, so `packages/index/migrations/**` lands as `migrations/index/migrations/0001_files.sql` — a directory that exists, holds no `.sql` at its top level, and applies zero migrations. The symptom was `no such table: files` on the first write, three steps from the cause.
 
-`publint --strict` runs over the staged package before the smoke tier. There is no `attw` step: the
-package ships no types, so there is nothing for it to check.
+`publint --strict` runs over the staged package before the smoke tier. There is no `attw` step: the package ships no types, so there is nothing for it to check.
 
-`publishConfig` carries `access` and nothing else. It must NOT carry `provenance: false`: trusted
-publishing generates a SLSA attestation automatically, and an explicit `false` suppresses the one thing
-OIDC gives for free. The manual bootstrap needs no opt-out either — provenance requires a cloud-hosted
-runner, so a laptop publish produces none unless `--provenance` is passed.
+`publishConfig` carries `access` and nothing else. It must NOT carry `provenance: false`: trusted publishing generates a SLSA attestation automatically, and an explicit `false` suppresses the one thing OIDC gives for free. The manual bootstrap needs no opt-out either — provenance requires a cloud-hosted runner, so a laptop publish produces none unless `--provenance` is passed.
 
 ## The gate that matters
 
-`mise run package:smoke` assembles, lints with publint, packs, installs into a throwaway directory, and
-drives **62 checks** through the installed binary: all 36 commands and all 14 MCP tools, plus the
-consolidator agent building outside `node_modules` and answering `/eve/v1/health`. The surface is
-enumerated from the artifact itself — `memhtml manifest` for commands, `tools/list` for tools — so a new
-command or tool fails a census rather than going untested. Writes are asserted against `git log`, not
-against the report, and `sleep merge` is proven to move `main` on a corpus of its own.
+`mise run package:smoke` assembles, lints with publint, packs, installs into a throwaway directory, and drives **62 checks** through the installed binary: all 36 commands and all 14 MCP tools, plus the consolidator agent building outside `node_modules` and answering `/eve/v1/health`. The surface is enumerated from the artifact itself — `memhtml manifest` for commands, `tools/list` for tools — so a new command or tool fails a census rather than going untested. Writes are asserted against `git log`, not against the report, and `sleep merge` is proven to move `main` on a corpus of its own.
 
-`mise run package:smoke:live` adds three checks for the edges nothing else can reach from an install:
-Bedrock embeddings, the sleep phases that call a model, and the consolidator distilling a transcript
-through eve. It spends real tokens and needs `AWS_BEARER_TOKEN_BEDROCK` (or SigV4 keys); the credential
-check FAILS rather than skips, because `--live` was asked for. lefthook's pre-push runs it when a
-credential is present and prints what goes unproven when it cannot. Roughly 60s credential-free, 105s
-live.
+`mise run package:smoke:live` adds three checks for the edges nothing else can reach from an install: Bedrock embeddings, the sleep phases that call a model, and the consolidator distilling a transcript through eve. It spends real tokens and needs `AWS_BEARER_TOKEN_BEDROCK` (or SigV4 keys); the credential check FAILS rather than skips, because `--live` was asked for. lefthook's pre-push runs it when a credential is present and prints what goes unproven when it cannot. Roughly 60s credential-free, 105s live.
 
-**`mise run check` cannot replace it.** Check resolves `@memhtml/*` through pnpm's links, where every
-asset is on disk whether or not a manifest names it. Three assets shipped broken under exactly that
-blindness. Smoke is a separate CI job because it needs the registry to resolve the twelve external
-dependencies, while check is offline. Its default mode is credential-free too (`MEMHTML_EMBED=off`,
-`MEMHTML_LLM=off`), which is what CI gates on; `--live` is the mode that spends tokens, and it runs
-pre-push rather than in CI.
+**`mise run check` cannot replace it.** Check resolves `@memhtml/*` through pnpm's links, where every asset is on disk whether or not a manifest names it. Three assets shipped broken under exactly that blindness. Smoke is a separate CI job because it needs the registry to resolve the twelve external dependencies, while check is offline. Its default mode is credential-free too (`MEMHTML_EMBED=off`, `MEMHTML_LLM=off`), which is what CI gates on; `--live` is the mode that spends tokens, and it runs pre-push rather than in CI.
 
 ## The normal path
 
-1. Merge Conventional Commits to `main`. `feat:` moves the minor, `fix:` the patch, and a `!` or a
-   `BREAKING CHANGE:` footer moves the major.
-2. release-please opens (and keeps updating) a release PR bumping the version and writing
-   `CHANGELOG.md`.
-3. Merge that PR. release-please tags the release — `memhtml-v0.2.0`, component-prefixed because the
-   package is named in the config — and the `publish` job in the same workflow run re-runs
-   `pnpm check`, then `pnpm package:smoke` on the tag, then `npm publish` from `dist-package/`.
+1. Merge Conventional Commits to `main`. `feat:` moves the minor, `fix:` the patch, and a `!` or a `BREAKING CHANGE:` footer moves the major.
+2. release-please opens (and keeps updating) a release PR bumping the version and writing `CHANGELOG.md`.
+3. Merge that PR. release-please tags the release — `memhtml-v0.2.0`, component-prefixed because the package is named in the config — and the `publish` job in the same workflow run re-runs `pnpm check`, then `pnpm package:smoke` on the tag, then `npm publish` from `dist-package/`.
 
-**A publish that fails for an environment reason is retryable without cutting another version.** The
-workflow takes a `workflow_dispatch` with a `tag` input for exactly that:
+**A publish that fails for an environment reason is retryable without cutting another version.** The workflow takes a `workflow_dispatch` with a `tag` input for exactly that:
 
 ```bash
 gh workflow run release-please.yml -f tag=memhtml-v0.2.0
 ```
 
-This exists because the first real release failed that way: the publish job had no mise, so the `d2`
-binary was absent, and the docs build inside `pnpm check` died in `astro:config:setup` — nothing to do
-with the bytes being published.
+This exists because the first real release failed that way: the publish job had no mise, so the `d2` binary was absent, and the docs build inside `pnpm check` died in `astro:config:setup` — nothing to do with the bytes being published.
 
-The version lives in **fifteen** places and release-please updates all of them from the one root
-manifest: the root `package.json`, the twelve workspace manifests via `json` extra-files, and two
-source constants carrying an `x-release-please-version` comment on the version's own line
-(`apps/cli/src/commands.ts` `buildManifest`, `apps/mcp/src/server.ts` `SERVER_VERSION`). The generic
-updater is a per-line substring match, so those comments must stay on the version's line.
+The version lives in **fifteen** places and release-please updates all of them from the one root manifest: the root `package.json`, the twelve workspace manifests via `json` extra-files, and two source constants carrying an `x-release-please-version` comment on the version's own line (`apps/cli/src/commands.ts` `buildManifest`, `apps/mcp/src/server.ts` `SERVER_VERSION`). The generic updater is a per-line substring match, so those comments must stay on the version's line.
 
-The workspace manifests still move even though none of them publishes and the bundle carries none of
-them. Keeping them in lockstep is bookkeeping, not a runtime requirement: a reader who opens
-`packages/index/package.json` sees which release that code belongs to, and a version that never moved
-would read as an unreleased package rather than as a private one.
+The workspace manifests still move even though none of them publishes and the bundle carries none of them. Keeping them in lockstep is bookkeeping, not a runtime requirement: a reader who opens `packages/index/package.json` sees which release that code belongs to, and a version that never moved would read as an unreleased package rather than as a private one.
 
 ## Cutting a specific version
 
@@ -135,18 +81,13 @@ chore: cut the first minor
 Release-As: 0.2.0
 ```
 
-Squash-merge and confirm the trailer survived with `git log -1 --format=%B`. GitHub's default *merge*
-commit message drops footers, and the trailer is what release-please reads.
+Squash-merge and confirm the trailer survived with `git log -1 --format=%B`. GitHub's default _merge_ commit message drops footers, and the trailer is what release-please reads.
 
 ## First publish: the one manual sequence
 
-Trusted publishing cannot bootstrap a package that does not exist — npm requires the package on the
-registry before a trusted publisher can be configured for it (npm/cli#8544). So the first release
-needs a human, exactly once. With one package this is one publish and one `npm trust`, not twelve.
+Trusted publishing cannot bootstrap a package that does not exist — npm requires the package on the registry before a trusted publisher can be configured for it (npm/cli#8544). So the first release needs a human, exactly once. With one package this is one publish and one `npm trust`, not twelve.
 
-**The package cannot be reserved ahead of time.** A trusted publisher is configured at
-`npmjs.com/package/<name>/access`, which does not exist until the package does, so the ordering is
-forced: publish once by hand, then configure OIDC, then never touch a credential again.
+**The package cannot be reserved ahead of time.** A trusted publisher is configured at `npmjs.com/package/<name>/access`, which does not exist until the package does, so the ordering is forced: publish once by hand, then configure OIDC, then never touch a credential again.
 
 Until it is done the `publish` job fails, and the log is the useful part:
 
@@ -156,12 +97,7 @@ GET .../idtoken/...?audience=npm%3Aregistry.npmjs.org  200
 [E404] 404 Not Found - PUT https://registry.npmjs.org/memhtml - Not found
 ```
 
-Read it top to bottom: GitHub issued the OIDC token (`200`, so `id-token: write` is scoped correctly
-and the workflow side is fine), **npm** refused the exchange with a 404 because no trusted publisher
-exists for a package that does not exist, and the unauthenticated `PUT` then 404s too. That pair on a
-first release means "the bootstrap has not happened yet", not "the workflow is wrong". The same pair
-AFTER bootstrapping means the trusted publisher does not match: check the workflow filename and that
-`repository.url` matches the GitHub repo case-sensitively.
+Read it top to bottom: GitHub issued the OIDC token (`200`, so `id-token: write` is scoped correctly and the workflow side is fine), **npm** refused the exchange with a 404 because no trusted publisher exists for a package that does not exist, and the unauthenticated `PUT` then 404s too. That pair on a first release means "the bootstrap has not happened yet", not "the workflow is wrong". The same pair AFTER bootstrapping means the trusted publisher does not match: check the workflow filename and that `repository.url` matches the GitHub repo case-sensitively.
 
 ```bash
 # 0. 2FA must be enabled on the account: npm profile enable-2fa auth-and-writes
@@ -193,18 +129,13 @@ npm trust ls memhtml
 #    Nothing to revoke, because nothing long-lived was created.
 ```
 
-That first publish carries no provenance attestation: provenance requires a cloud-hosted CI runner and
-cannot be generated from a laptop. Every release after it gets one automatically, per version.
+That first publish carries no provenance attestation: provenance requires a cloud-hosted CI runner and cannot be generated from a laptop. Every release after it gets one automatically, per version.
 
 ## Repository settings this depends on
 
-- **Allow GitHub Actions to create and approve pull requests** must be ON, or release-please fails
-  with `GitHub Actions is not permitted to create or approve pull requests`.
-  `default_workflow_permissions` stays `read`: every workflow here declares its own per-job
-  permissions.
+- **Allow GitHub Actions to create and approve pull requests** must be ON, or release-please fails with `GitHub Actions is not permitted to create or approve pull requests`. `default_workflow_permissions` stays `read`: every workflow here declares its own per-job permissions.
 
-  It is set in **two** places and the outer one wins, which is the part worth knowing before debugging
-  the inner one (probed 2026-08-14, on this repo's first release run):
+  It is set in **two** places and the outer one wins, which is the part worth knowing before debugging the inner one (probed 2026-08-14, on this repo's first release run):
 
   ```
   # Repository — refused while the org forbids it, with a 409 that names the reason:
@@ -219,26 +150,15 @@ cannot be generated from a laptop. Every release after it gets one automatically
     -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
   ```
 
-  The failure is not destructive and loses no work: release-please computes every bump, pushes
-  `release-please--branches--main`, and fails only on the PR call, so flipping the setting and
-  re-running the workflow opens the PR from the branch already there.
-- The npm trusted publisher must name `release-please.yml`, because that is the workflow whose
-  `publish` job runs `npm publish`.
+  The failure is not destructive and loses no work: release-please computes every bump, pushes `release-please--branches--main`, and fails only on the PR call, so flipping the setting and re-running the workflow opens the PR from the branch already there.
+- The npm trusted publisher must name `release-please.yml`, because that is the workflow whose `publish` job runs `npm publish`.
 
 ## The release PR runs no CI, and cannot
 
-release-please creates its release PR with the default `GITHUB_TOKEN`, and GitHub does not start
-workflow runs from `GITHUB_TOKEN` events. This is why the `publish` job runs `pnpm check` and
-`pnpm package:smoke` on the tag before publishing: those steps are the ONLY gate on a release PR's
-contents. Do not remove them to save minutes.
+release-please creates its release PR with the default `GITHUB_TOKEN`, and GitHub does not start workflow runs from `GITHUB_TOKEN` events. This is why the `publish` job runs `pnpm check` and `pnpm package:smoke` on the tag before publishing: those steps are the ONLY gate on a release PR's contents. Do not remove them to save minutes.
 
 ## Why one workflow with two jobs
 
-A second workflow keyed on `release: [published]` would never fire: GitHub does not start workflow runs
-from events raised by the default `GITHUB_TOKEN`, and release-please tags with that token. Keeping
-release-please and publish as two jobs of one `push`-triggered workflow sidesteps the whole class of
-problem, and keeps `id-token: write` scoped to the one job that publishes.
+A second workflow keyed on `release: [published]` would never fire: GitHub does not start workflow runs from events raised by the default `GITHUB_TOKEN`, and release-please tags with that token. Keeping release-please and publish as two jobs of one `push`-triggered workflow sidesteps the whole class of problem, and keeps `id-token: write` scoped to the one job that publishes.
 
-The publish job carries no `mise`, deliberately: `actions/setup-node` owns the node that writes the
-OIDC `.npmrc`, and a second node on PATH is a way for the wrong `npm` to run the publish. It calls the
-pnpm scripts that the mise tasks delegate to.
+The publish job carries no `mise`, deliberately: `actions/setup-node` owns the node that writes the OIDC `.npmrc`, and a second node on PATH is a way for the wrong `npm` to run the publish. It calls the pnpm scripts that the mise tasks delegate to.

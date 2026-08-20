@@ -1,45 +1,32 @@
 # memhtml — architecture
 
-An agent memory store. The system of record is a git repository of semantic HTML5 files, one fact per
-file. Everything else — a SQLite index, a four-arm retrieval fold, an MCP server, a sixteen-phase nightly
-curation pipeline — is a projection of that tree or an operation on it.
+An agent memory store. The system of record is a git repository of semantic HTML5 files, one fact per file. Everything else — a SQLite index, a four-arm retrieval fold, an MCP server, a sixteen-phase nightly curation pipeline — is a projection of that tree or an operation on it.
 
 Two properties hold the design together:
 
-- **The tree is authoritative and the index is disposable.** `.memhtml/index.db` is gitignored and
-  reproducible from `git ls-tree` (`packages/store/src/layout.ts:25`, `packages/store/src/layout.ts:55`).
-  Anything that must survive `rm index.db` lives in a file.
-- **Every corpus change is one git commit.** `git log` is the history of what the agent learned and
-  `diff base..HEAD` is a reviewable curation run (`packages/store/src/store.ts:37-44`). The store owns
-  staging, because a caller that staged its own files could bundle two unrelated writes into one commit.
+- **The tree is authoritative and the index is disposable.** `.memhtml/index.db` is gitignored and reproducible from `git ls-tree` (`packages/store/src/layout.ts:25`, `packages/store/src/layout.ts:55`). Anything that must survive `rm index.db` lives in a file.
+- **Every corpus change is one git commit.** `git log` is the history of what the agent learned and `diff base..HEAD` is a reviewable curation run (`packages/store/src/store.ts:37-44`). The store owns staging, because a caller that staged its own files could bundle two unrelated writes into one commit.
 
 ## 1. Packages and dependency direction
 
-| Package | Role |
-|---|---|
-| `contracts` | Schemas, enums, errors, path algebra. Zero I/O. |
-| `domain` | Pure math: retention, decay, RRF, MMR, graph, merge guards. |
-| `html` | Parse, serialize, hash, and byte-splice the memory file format. |
-| `store` | Git-backed file store: write, read, correct, archive, link, commit. |
-| `index` | SQLite service, migrations, indexer, projection, retrieval. |
-| `traces` | Streaming session-JSONL parser and scanner. |
-| `sleep` | The sixteen curation phases, each a git commit. |
-| `llm` | Bedrock embeddings and forced-tool structured output. |
-| `eval` | The discrimination gate and its generated fixture corpus. |
-| `apps/cli`, `apps/mcp` | The `memhtml` binary and the `memhtml-mcp` stdio server. |
+| Package                | Role                                                                |
+| ---------------------- | ------------------------------------------------------------------- |
+| `contracts`            | Schemas, enums, errors, path algebra. Zero I/O.                     |
+| `domain`               | Pure math: retention, decay, RRF, MMR, graph, merge guards.         |
+| `html`                 | Parse, serialize, hash, and byte-splice the memory file format.     |
+| `store`                | Git-backed file store: write, read, correct, archive, link, commit. |
+| `index`                | SQLite service, migrations, indexer, projection, retrieval.         |
+| `traces`               | Streaming session-JSONL parser and scanner.                         |
+| `sleep`                | The sixteen curation phases, each a git commit.                     |
+| `llm`                  | Bedrock embeddings and forced-tool structured output.               |
+| `eval`                 | The discrimination gate and its generated fixture corpus.           |
+| `apps/cli`, `apps/mcp` | The `memhtml` binary and the `memhtml-mcp` stdio server.            |
 
-Arrows point inward: `contracts` imports only `effect`; `domain` and `html` import `contracts`; `store`
-adds `html`; `index` adds `domain` and `llm`; `traces`, `sleep`, and `eval` sit above `index`. `apps/mcp`
-depends on `@memhtml/cli` rather than re-composing the service graph, so there is one answer to which
-database, which git root, which vector space (`apps/mcp/src/server.ts:13-18`).
+Arrows point inward: `contracts` imports only `effect`; `domain` and `html` import `contracts`; `store` adds `html`; `index` adds `domain` and `llm`; `traces`, `sleep`, and `eval` sit above `index`. `apps/mcp` depends on `@memhtml/cli` rather than re-composing the service graph, so there is one answer to which database, which git root, which vector space (`apps/mcp/src/server.ts:13-18`).
 
-`@memhtml/domain`'s purity is enforced, not documented: `packages/domain/tests/layering.test.ts` greps the
-emitted `dist/*.js` for a runtime import of `node:sqlite`, `@aws-sdk`, or `node:fs`. Math that needed
-infrastructure to test would let a caller's I/O failure surface as a scoring bug.
+`@memhtml/domain`'s purity is enforced, not documented: `packages/domain/tests/layering.test.ts` greps the emitted `dist/*.js` for a runtime import of `node:sqlite`, `@aws-sdk`, or `node:fs`. Math that needed infrastructure to test would let a caller's I/O failure surface as a scoring bug.
 
-`AppLive` (`apps/cli/src/api-layer.ts:67-90`) wires every service. The design's one cycle is broken
-there: the store needs a SQL lookup to answer "does this content already exist" and `@memhtml/store` is
-SQL-free, so the lookup arrives as an injected function.
+`AppLive` (`apps/cli/src/api-layer.ts:67-90`) wires every service. The design's one cycle is broken there: the store needs a SQL lookup to answer "does this content already exist" and `@memhtml/store` is SQL-free, so the lookup arrives as an injected function.
 
 ## 2. Store layout and path algebra
 
@@ -57,1034 +44,353 @@ $MEMHTML_ROOT/                         a git repo, one global memory store
   sitemap.xml, index.html          generated by publish, committed
 ```
 
-PARA is fixed at four buckets (`packages/contracts/src/types.ts:63`). `archive` is a bucket rather than a
-status because the path itself records the state.
+PARA is fixed at four buckets (`packages/contracts/src/types.ts:63`). `archive` is a bucket rather than a status because the path itself records the state.
 
-**Placement is a pure total function.** `placementFor` (`packages/contracts/src/paths.ts:103`) applies six
-rules in order: an explicit valid path; `arc` → `areas/arcs`; `task` → by workspace alone, *before* the
-person and topic rules, so a task about a person does not land in the durable identity surface
-(`packages/contracts/src/paths.ts:116-120`); a `person:` entity on a `semantic` memory →
-`resources/people`; a named workspace → `projects/<slug>`; `semantic`/`procedural`/`precedent` with a
-primary tag → `resources/<tag>`; otherwise `areas/inbox`. It always returns a directory rooted in a
-bucket, so the write path never guesses twice and never fails. `memoryPathFor`
-(`packages/contracts/src/paths.ts:142`) adds the filename, date-prefixing an episodic entry because time
-is part of its identity while every other type must be correctable in place.
+**Placement is a pure total function.** `placementFor` (`packages/contracts/src/paths.ts:103`) applies six rules in order: an explicit valid path; `arc` → `areas/arcs`; `task` → by workspace alone, _before_ the person and topic rules, so a task about a person does not land in the durable identity surface (`packages/contracts/src/paths.ts:116-120`); a `person:` entity on a `semantic` memory → `resources/people`; a named workspace → `projects/<slug>`; `semantic`/`procedural`/`precedent` with a primary tag → `resources/<tag>`; otherwise `areas/inbox`. It always returns a directory rooted in a bucket, so the write path never guesses twice and never fails. `memoryPathFor` (`packages/contracts/src/paths.ts:142`) adds the filename, date-prefixing an episodic entry because time is part of its identity while every other type must be correctable in place.
 
-**The archive mapping is injective and invertible.** `archivePathFor`
-(`packages/contracts/src/paths.ts:165`) mirrors the original path whole beneath `archive/<YYYY>/`, and
-`originalPathFor` (`packages/contracts/src/paths.ts:173`) strips exactly one such prefix, so it is a left
-inverse even for a memory archived twice. `git log --follow` reads through the move and `diff -M` reports
-`R100` rather than a delete plus an add. Nothing is ever deleted.
+**The archive mapping is injective and invertible.** `archivePathFor` (`packages/contracts/src/paths.ts:165`) mirrors the original path whole beneath `archive/<YYYY>/`, and `originalPathFor` (`packages/contracts/src/paths.ts:173`) strips exactly one such prefix, so it is a left inverse even for a memory archived twice. `git log --follow` reads through the move and `diff -M` reports `R100` rather than a delete plus an add. Nothing is ever deleted.
 
-Path validation refuses `.` and `..` segments (`packages/contracts/src/paths.ts:63`), keeping a
-caller-supplied path inside the repo. A path is the id of a memory — there is no separate uuid anywhere
-(`packages/contracts/src/types.ts:102-107`).
+Path validation refuses `.` and `..` segments (`packages/contracts/src/paths.ts:63`), keeping a caller-supplied path inside the repo. A path is the id of a memory — there is no separate uuid anywhere (`packages/contracts/src/types.ts:102-107`).
 
-`memhtml init` (`packages/store/src/layout.ts:183`) is the only path that creates the root, and it is
-convergent rather than merely idempotent: each step asks the repo what is already true, so it converges
-from an empty directory, from a live repo, and from one an interrupted run left half-staged. It re-sets
-`merge.ours.driver` every run (`packages/store/src/layout.ts:197`) because that config is per-clone and
-the `.gitattributes` a fresh clone inherits is inert without it.
+`memhtml init` (`packages/store/src/layout.ts:183`) is the only path that creates the root, and it is convergent rather than merely idempotent: each step asks the repo what is already true, so it converges from an empty directory, from a live repo, and from one an interrupted run left half-staged. It re-sets `merge.ours.driver` every run (`packages/store/src/layout.ts:197`) because that config is per-clone and the `.gitattributes` a fresh clone inherits is inert without it.
 
 ## 3. The memory file format
 
-`docs/format.md` specifies the format — element vocabulary, body structure, constraints, task files. What
-matters architecturally is the machine plane.
+`docs/format.md` specifies the format — element vocabulary, body structure, constraints, task files. What matters architecturally is the machine plane.
 
-**A flat `memhtml-*` token space**, hyphenated rather than colon-prefixed, because `rel` tokens cannot hold a
-colon and the same convention carries to `<link rel="memhtml-supersedes">`
-(`packages/contracts/src/edges.ts:101-110`). Repeatable keys are repeated elements, so a one-tag
-correction is a one-line diff. `META_ORDER` (`packages/html/src/vocabulary.ts:42`) is a diff-stability
-contract: a new scalar meta is appended, because inserting one mid-list moves every following line in
-every file the next edit touches.
+**A flat `memhtml-*` token space**, hyphenated rather than colon-prefixed, because `rel` tokens cannot hold a colon and the same convention carries to `<link rel="memhtml-supersedes">` (`packages/contracts/src/edges.ts:101-110`). Repeatable keys are repeated elements, so a one-tag correction is a one-line diff. `META_ORDER` (`packages/html/src/vocabulary.ts:42`) is a diff-stability contract: a new scalar meta is appended, because inserting one mid-list moves every following line in every file the next edit touches.
 
-**Two hashes, two jobs.** `memhtml-content-hash` is `sha256` over the whitespace-normalized text of
-`<article>` alone, `<pre>` verbatim (`packages/html/src/hash.ts:7-19`). It is the dedup key and it is
-invariant under head edits by construction — which is what keeps confidence decay, access bookkeeping, and
-every sleep stamp from looking like content changes. Without that invariance the nightly decay pass would
-present the whole corpus as new content and dedup would collapse. The git blob sha of the whole file is
-the indexer's change key, a separate thing.
+**Two hashes, two jobs.** `memhtml-content-hash` is `sha256` over the whitespace-normalized text of `<article>` alone, `<pre>` verbatim (`packages/html/src/hash.ts:7-19`). It is the dedup key and it is invariant under head edits by construction — which is what keeps confidence decay, access bookkeeping, and every sleep stamp from looking like content changes. Without that invariance the nightly decay pass would present the whole corpus as new content and dedup would collapse. The git blob sha of the whole file is the indexer's change key, a separate thing.
 
-**Head edits go through byte-splice editors, never parse-then-serialize** — `setMeta`
-(`packages/html/src/editors.ts:154`), `addLink` (`packages/html/src/editors.ts:216`), `readMeta`
-(`packages/html/src/editors.ts:261`). A serializer round trip drops a `<pre>` newline, moving the content
-hash of every file a bookkeeping pass touched (`packages/store/src/store.ts:417-419`).
+**Head edits go through byte-splice editors, never parse-then-serialize** — `setMeta` (`packages/html/src/editors.ts:154`), `addLink` (`packages/html/src/editors.ts:216`), `readMeta` (`packages/html/src/editors.ts:261`). A serializer round trip drops a `<pre>` newline, moving the content hash of every file a bookkeeping pass touched (`packages/store/src/store.ts:417-419`).
 
-**The render gate.** `renderTemplate` (`packages/html/src/template.ts:203`) places the `<mark>` claim
-itself, so the ordinary write path cannot violate the claim-leads-the-article constraint — but
-`articleHtml` passes a caller's markup through verbatim (`packages/html/src/template.ts:120-123`). So the
-store runs `checkMemory` (`packages/html/src/parse.ts:349`) over the rendered bytes and refuses before
-anything is written (`packages/store/src/store.ts:455-462`). Without the gate a bad file lands in a commit
-and the indexer then declines to project it: present in the tree, absent from every search, visible only
-as a log line.
+**The render gate.** `renderTemplate` (`packages/html/src/template.ts:203`) places the `<mark>` claim itself, so the ordinary write path cannot violate the claim-leads-the-article constraint — but `articleHtml` passes a caller's markup through verbatim (`packages/html/src/template.ts:120-123`). So the store runs `checkMemory` (`packages/html/src/parse.ts:349`) over the rendered bytes and refuses before anything is written (`packages/store/src/store.ts:455-462`). Without the gate a bad file lands in a commit and the indexer then declines to project it: present in the tree, absent from every search, visible only as a log line.
 
 ## 4. Edge encoding
 
-**Authored edges live in the HTML; derived edges live only in the index.** An agent asserting "this
-supersedes that" is authorship — small, reviewable in a diff, and exactly what git is for. A sleep-mined
-`relates_to` at cosine 0.87 is a re-derivable function of the corpus and the embedder; committing
-thousands would bury every real diff in machine noise for zero recoverable information
-(`packages/sleep/src/phases/relationship-mining.ts:6-19`).
+**Authored edges live in the HTML; derived edges live only in the index.** An agent asserting "this supersedes that" is authorship — small, reviewable in a diff, and exactly what git is for. A sleep-mined `relates_to` at cosine 0.87 is a re-derivable function of the corpus and the embedder; committing thousands would bury every real diff in machine noise for zero recoverable information (`packages/sleep/src/phases/relationship-mining.ts:6-19`).
 
-The `derived` column is the firewall: the retention `contestedStatus` signal counts only authored
-(`derived = 0`) contradictions (`packages/contracts/src/edges.ts:122-128`,
-`packages/domain/src/retention.ts:164-166`), so an uncorroborated machine suspicion can never evict a
-memory. The one fact that does not survive a rebuild — the corroboration counter — lives in the state
-plane, and the conflict phase promotes a corroborated contradiction into both files, after which the
-counter is decoration and the fact is file-borne.
+The `derived` column is the firewall: the retention `contestedStatus` signal counts only authored (`derived = 0`) contradictions (`packages/contracts/src/edges.ts:122-128`, `packages/domain/src/retention.ts:164-166`), so an uncorroborated machine suspicion can never evict a memory. The one fact that does not survive a rebuild — the corroboration counter — lives in the state plane, and the conflict phase promotes a corroborated contradiction into both files, after which the counter is decoration and the fact is file-borne.
 
-**Four non-mixing edge classes** (`packages/contracts/src/edges.ts:9`): nine memory rels, two person, one
-provenance, two task. The class is *derived* from the rel (`packages/contracts/src/edges.ts:70`) rather
-than carried alongside it, so the two cannot disagree. SQL CHECKs pair each class with its vocabulary
-(`packages/index/migrations/0008_tasks.sql:168-174`) and every memory-graph query filters
-`edge_class = 'memory'`, so a person or task edge is structurally incapable of entering PageRank, MMR, or
-the retention bridge count.
+**Four non-mixing edge classes** (`packages/contracts/src/edges.ts:9`): nine memory rels, two person, one provenance, two task. The class is _derived_ from the rel (`packages/contracts/src/edges.ts:70`) rather than carried alongside it, so the two cannot disagree. SQL CHECKs pair each class with its vocabulary (`packages/index/migrations/0008_tasks.sql:168-174`) and every memory-graph query filters `edge_class = 'memory'`, so a person or task edge is structurally incapable of entering PageRank, MMR, or the retention bridge count.
 
-SQL cannot enforce the *type* of the files at either end, so the store refuses an edge whose class
-disagrees with its endpoints (`packages/store/src/store.ts:838-870`). Both directions are refusals with
-distinct failure modes: a memory rel with a task endpoint would let a to-do list reweight the retention of
-knowledge; a task rel with a memory endpoint claims a memory `blocks` something nothing can close.
+SQL cannot enforce the _type_ of the files at either end, so the store refuses an edge whose class disagrees with its endpoints (`packages/store/src/store.ts:838-870`). Both directions are refusals with distinct failure modes: a memory rel with a task endpoint would let a to-do list reweight the retention of knowledge; a task rel with a memory endpoint claims a memory `blocks` something nothing can close.
 
-`href` values are repo-root-relative with a leading slash — a document-reference form converted at the
-HTML boundary and never stored (`packages/index/src/project.ts:336-344`). Root-relative survives a
-`git mv` of the source, is greppable as a fixed string, and resolves without knowing the referrer's depth.
+`href` values are repo-root-relative with a leading slash — a document-reference form converted at the HTML boundary and never stored (`packages/index/src/project.ts:336-344`). Root-relative survives a `git mv` of the source, is greppable as a fixed string, and resolves without knowing the referrer's depth.
 
-There is deliberately **no foreign key on `edges.src_path`/`dst_path`**: a `<link>` may name a file the
-indexer has not reached, or an archived path, and a hard FK would make indexing order-dependent
-(`packages/index/src/indexer.ts:470-473`). Dangling hrefs are found by a LEFT JOIN
-(`packages/sleep/src/sql.ts:524`) and repaired in a commit by the integrity phase.
+There is deliberately **no foreign key on `edges.src_path`/`dst_path`**: a `<link>` may name a file the indexer has not reached, or an archived path, and a hard FK would make indexing order-dependent (`packages/index/src/indexer.ts:470-473`). Dangling hrefs are found by a LEFT JOIN (`packages/sleep/src/sql.ts:524`) and repaired in a commit by the integrity phase.
 
 ## 5. The write path
 
-**Singular write** (`packages/store/src/store.ts:464`): render through the gate, hash, ask the dedupe
-question, claim a free path, write, stage, commit. The order *is* the mechanism — a duplicate leaves the
-tree byte-identical with nothing for the next `git status` to report, whereas a write-then-check order
-would need a rollback, and rolling back a git operation is a second failure mode.
+**Singular write** (`packages/store/src/store.ts:464`): render through the gate, hash, ask the dedupe question, claim a free path, write, stage, commit. The order _is_ the mechanism — a duplicate leaves the tree byte-identical with nothing for the next `git status` to report, whereas a write-then-check order would need a rollback, and rolling back a git operation is a second failure mode.
 
-**Content-hash dedup is enforced twice.** The write path asks an injected `dedupeLookup`
-(`packages/store/src/store.ts:156`, wired to `activePathForHash` at
-`packages/index/src/traces-persist.ts:162`) and returns the existing path with `deduped: true`, creating
-no file and no commit. Structurally a partial unique index refuses it anyway:
-`… ON files (content_hash) WHERE archived = 0 AND memory_type <> 'task'`
-(`packages/index/migrations/0008_tasks.sql:123-124`). The lookup carries the same `task` exclusion as the
-index, so the question and the answer agree by construction rather than by discipline.
+**Content-hash dedup is enforced twice.** The write path asks an injected `dedupeLookup` (`packages/store/src/store.ts:156`, wired to `activePathForHash` at `packages/index/src/traces-persist.ts:162`) and returns the existing path with `deduped: true`, creating no file and no commit. Structurally a partial unique index refuses it anyway: `… ON files (content_hash) WHERE archived = 0 AND memory_type <> 'task'` (`packages/index/migrations/0008_tasks.sql:123-124`). The lookup carries the same `task` exclusion as the index, so the question and the answer agree by construction rather than by discipline.
 
-**Tasks are carved out of dedup in both directions** (`packages/store/src/store.ts:316-335`). Two open
-tasks with identical bodies are two real work items; and a memory whose article matches a task's must not
-be deduped onto that task, or the caller is handed a task's path as the home of its fact. One predicate,
-not a `memoryType !== "task"` test at each of the three places the batch touches its hash map.
+**Tasks are carved out of dedup in both directions** (`packages/store/src/store.ts:316-335`). Two open tasks with identical bodies are two real work items; and a memory whose article matches a task's must not be deduped onto that task, or the caller is handed a task's path as the home of its fact. One predicate, not a `memoryType !== "task"` test at each of the three places the batch touches its hash map.
 
-**Batch write is ONE commit and ONE reindex** (`packages/store/src/store.ts:633`,
-`apps/cli/src/operations.ts:494`) — the whole reason the primitive exists rather than being a loop at the
-caller, since N singular writes are N commits and, because the indexer diffs per commit, N index passes.
-The reindex goes through `update()` rather than `indexPaths()` (`apps/cli/src/operations.ts:209-224`)
-because `indexPaths` cannot express a rename and never records the watermark, and it is gated on a file
-having been written — moving the watermark for a commit that never happened is the bug that guard avoids.
+**Batch write is ONE commit and ONE reindex** (`packages/store/src/store.ts:633`, `apps/cli/src/operations.ts:494`) — the whole reason the primitive exists rather than being a loop at the caller, since N singular writes are N commits and, because the indexer diffs per commit, N index passes. The reindex goes through `update()` rather than `indexPaths()` (`apps/cli/src/operations.ts:209-224`) because `indexPaths` cannot express a rename and never records the watermark, and it is gated on a file having been written — moving the watermark for a commit that never happened is the bug that guard avoids.
 
-Atomicity comes from a two-phase fold. Phase 1 validates every op and writes nothing
-(`packages/store/src/store.ts:662-685`), so an atomic abort has nothing to roll back. The failed op is
-reported with its own code and every other op reports `skipped: true`, **including ones that already
-validated** (`packages/store/src/store.ts:687-705`) — reporting a validated-but-unwritten op as `ok` with
-a path would hand the caller a path with no file behind it. Phase 2 writes, stages, and commits once; a
-failure there triggers `rollbackBatch` (`packages/store/src/store.ts:524`), which uses
-`git reset -- <paths>` rather than `git rm --cached` because `rm --cached` exits 128 as soon as one listed
-path was never staged — precisely the state a partly-failed `git.add` leaves.
+Atomicity comes from a two-phase fold. Phase 1 validates every op and writes nothing (`packages/store/src/store.ts:662-685`), so an atomic abort has nothing to roll back. The failed op is reported with its own code and every other op reports `skipped: true`, **including ones that already validated** (`packages/store/src/store.ts:687-705`) — reporting a validated-but-unwritten op as `ok` with a path would hand the caller a path with no file behind it. Phase 2 writes, stages, and commits once; a failure there triggers `rollbackBatch` (`packages/store/src/store.ts:524`), which uses `git reset -- <paths>` rather than `git rm --cached` because `rm --cached` exits 128 as soon as one listed path was never staged — precisely the state a partly-failed `git.add` leaves.
 
-The batch's dedupe oracle consults **itself first, then the store**
-(`packages/store/src/store.ts:565-599`), because the store's lookup reads the index, which does not yet
-know about anything this batch wrote. A `claimed` set does the same job for path collisions
-(`packages/store/src/store.ts:352-374`) — without it two ops sharing a title would both be handed the
-unsuffixed path and the second write would silently overwrite the first. One instant is read for the whole
-batch (`packages/store/src/store.ts:642-646`), or two episodic ops written either side of midnight would
-get different date prefixes and one indivisible operation's stamps would disagree about when it happened.
+The batch's dedupe oracle consults **itself first, then the store** (`packages/store/src/store.ts:565-599`), because the store's lookup reads the index, which does not yet know about anything this batch wrote. A `claimed` set does the same job for path collisions (`packages/store/src/store.ts:352-374`) — without it two ops sharing a title would both be handed the unsuffixed path and the second write would silently overwrite the first. One instant is read for the whole batch (`packages/store/src/store.ts:642-646`), or two episodic ops written either side of midnight would get different date prefixes and one indivisible operation's stamps would disagree about when it happened.
 
-**The conflict assist is propose-only, and that is a decision rather than a v1 limitation**
-(`apps/cli/src/operations.ts:394`, AC-1-2). With `detect_conflicts` on, each op's claim is keyed by
-`frameKeyOf` (`packages/domain/src/frame.ts`, the eval harness's measured port) and matched against ACTIVE
-non-task memories plus the batch's own earlier ops; a match surfaces as a per-op `conflict` naming the
-other claim and where it lives. **Nothing about the write changes.** No auto-archive, no last-wins, no
-refusal — because sometimes the contradiction IS the answer: a memory recording that a runbook step
-changed necessarily contradicts the memory stating the old step, and a resolver would destroy the pair a
-later reader needs in order to see the change at all. The caller decides: keep both, `memory_correct` the
-match, or skip.
+**The conflict assist is propose-only, and that is a decision rather than a v1 limitation** (`apps/cli/src/operations.ts:394`, AC-1-2). With `detect_conflicts` on, each op's claim is keyed by `frameKeyOf` (`packages/domain/src/frame.ts`, the eval harness's measured port) and matched against ACTIVE non-task memories plus the batch's own earlier ops; a match surfaces as a per-op `conflict` naming the other claim and where it lives. **Nothing about the write changes.** No auto-archive, no last-wins, no refusal — because sometimes the contradiction IS the answer: a memory recording that a runbook step changed necessarily contradicts the memory stating the old step, and a resolver would destroy the pair a later reader needs in order to see the change at all. The caller decides: keep both, `memory_correct` the match, or skip.
 
-Three properties fall out of that, each load-bearing. **The assist is structurally unable to block a
-write** — `detectFrameConflicts` returns `Effect<…, never>` and swallows a lookup failure into an empty map
-with a logged warning, mirroring `bumpAccess` and `recordLink`, so a broken index degrades the report and
-never the commit. **The degradation is partial rather than total**: only the store half needs the database,
-so the intra-batch fold keeps answering when the query cannot. And **ONE query per batch, never one per
-op** — `activeFramesFor` takes an array precisely so a caller cannot loop
-(`packages/index/src/traces-persist.ts:197`), which is the quadratic-write-cost lesson expressed as a
-signature.
+Three properties fall out of that, each load-bearing. **The assist is structurally unable to block a write** — `detectFrameConflicts` returns `Effect<…, never>` and swallows a lookup failure into an empty map with a logged warning, mirroring `bumpAccess` and `recordLink`, so a broken index degrades the report and never the commit. **The degradation is partial rather than total**: only the store half needs the database, so the intra-batch fold keeps answering when the query cannot. And **ONE query per batch, never one per op** — `activeFramesFor` takes an array precisely so a caller cannot loop (`packages/index/src/traces-persist.ts:197`), which is the quadratic-write-cost lesson expressed as a signature.
 
-Two asymmetries in the fold are deliberate. A store match **outranks** an earlier op in the same batch,
-because a stored memory is a fact already in the corpus while the earlier op is one this call is about to
-create — and `memory_correct`, the usual action, needs a path that exists. And only the LATER op reports:
-op 3 matching op 1 tells a caller it is about to restate itself, which is actionable with op 3 in hand,
-while reporting it on op 1 too would name a conflict with something that did not exist when op 1 was
-written and would double one finding into two. The map records the FIRST claimant of a slot, so a chain of
-restatements all point at the claim that has to be reconciled rather than each one step back.
+Two asymmetries in the fold are deliberate. A store match **outranks** an earlier op in the same batch, because a stored memory is a fact already in the corpus while the earlier op is one this call is about to create — and `memory_correct`, the usual action, needs a path that exists. And only the LATER op reports: op 3 matching op 1 tells a caller it is about to restate itself, which is actionable with op 3 in hand, while reporting it on op 1 too would name a conflict with something that did not exist when op 1 was written and would double one finding into two. The map records the FIRST claimant of a slot, so a chain of restatements all point at the claim that has to be reconciled rather than each one step back.
 
-The `article_html` path reports nothing, and the boundary is stated in the tool description and the guide
-rather than hidden. On that path `claim` is `""` by construction — the `<mark>` inside the caller's markup
-is the claim and the parser extracts it on the first index pass — so `frameKeyOf` has nothing to key.
-Deriving one at the ops layer would mean parsing every op's article before the store renders it, a second
-parse of the same bytes and a second place the gist rule could drift from `parse.ts`.
+The `article_html` path reports nothing, and the boundary is stated in the tool description and the guide rather than hidden. On that path `claim` is `""` by construction — the `<mark>` inside the caller's markup is the claim and the parser extracts it on the first index pass — so `frameKeyOf` has nothing to key. Deriving one at the ops layer would mean parsing every op's article before the store renders it, a second parse of the same bytes and a second place the gist rule could drift from `parse.ts`.
 
-`summary` deliberately does not count conflicts. Its five numbers partition the ops exactly, and a
-conflict is not an outcome — the op wrote. A v2 field is possible; a sixth number a client cannot
-reconcile with the other five is not.
+`summary` deliberately does not count conflicts. Its five numbers partition the ops exactly, and a conflict is not an outcome — the op wrote. A v2 field is possible; a sixth number a client cannot reconcile with the other five is not.
 
-**Correction** (`packages/store/src/store.ts:830`) reads the target first, or the tree gains an orphan
-superseding file with nothing to supersede. Its `memhtml-supersedes` points at the target's *archive* path,
-where the file lives only after this commit lands; pointing at the pre-archive path would create a
-dangling href in the same commit that made it dangle. Both files land in one commit.
+**Correction** (`packages/store/src/store.ts:830`) reads the target first, or the tree gains an orphan superseding file with nothing to supersede. Its `memhtml-supersedes` points at the target's _archive_ path, where the file lives only after this commit lands; pointing at the pre-archive path would create a dangling href in the same commit that made it dangle. Both files land in one commit.
 
-**Archive** (`packages/store/src/store.ts:808`) is `git mv` plus stamps. `stageArchive`
-(`packages/store/src/store.ts:397`) creates the destination's parent first, because `git mv` refuses a
-destination whose parent does not exist and the year partition is new every January.
+**Archive** (`packages/store/src/store.ts:808`) is `git mv` plus stamps. `stageArchive` (`packages/store/src/store.ts:397`) creates the destination's parent first, because `git mv` refuses a destination whose parent does not exist and the year partition is new every January.
 
-**Provenance is recorded in both planes.** The writer stamps `memhtml-session`/`memhtml-prompt`/`memhtml-turn` into
-the head and attaches `Memhtml-Session`/`Memhtml-Prompt` commit trailers
-(`packages/store/src/plumbing.ts:367-389`); the operations layer records a `memory_session_links` row with
-its `link_kind` — `wrote`, `read`, `corrected`, `reinforced` (`apps/cli/src/operations.ts:293`,
-`apps/cli/src/operations.ts:659`, `apps/cli/src/operations.ts:768`). File-borne provenance survives a
-rebuild; the row is queryable both directions.
+**Provenance is recorded in both planes.** The writer stamps `memhtml-session`/`memhtml-prompt`/`memhtml-turn` into the head and attaches `Memhtml-Session`/`Memhtml-Prompt` commit trailers (`packages/store/src/plumbing.ts:367-389`); the operations layer records a `memory_session_links` row with its `link_kind` — `wrote`, `read`, `corrected`, `reinforced` (`apps/cli/src/operations.ts:293`, `apps/cli/src/operations.ts:659`, `apps/cli/src/operations.ts:768`). File-borne provenance survives a rebuild; the row is queryable both directions.
 
 ## 6. The index
 
-Two databases on one connection. `.memhtml/state.db` is ATTACHed as `state`
-(`packages/index/src/database.ts:286`) so the salience arm can `LEFT JOIN state.access` in the same
-statement as `main.files` with no application-side join; attaching is not idempotent, so it happens once
-per connection in `makeDatabase` (`packages/index/src/database.ts:311`). Each plane keeps its own
-migration ledger (`packages/index/src/database.ts:187`, `packages/index/src/schema-const.ts:10-15`),
-because rebuilding `index.db` must not mark the state plane's migrations unapplied.
+Two databases on one connection. `.memhtml/state.db` is ATTACHed as `state` (`packages/index/src/database.ts:286`) so the salience arm can `LEFT JOIN state.access` in the same statement as `main.files` with no application-side join; attaching is not idempotent, so it happens once per connection in `makeDatabase` (`packages/index/src/database.ts:311`). Each plane keeps its own migration ledger (`packages/index/src/database.ts:187`, `packages/index/src/schema-const.ts:10-15`), because rebuilding `index.db` must not mark the state plane's migrations unapplied.
 
-Both planes are plain SQLite through node's built-in `node:sqlite`, so there is no third-party database
-dependency and no driver feature flags to keep in step — `sqlite3` or a GUI browser opens either file
-directly. Every connection sets `journal_mode = WAL`, `busy_timeout = 5000`, `synchronous = NORMAL`, and
-`foreign_keys = ON`, and registers one SQL function, `vector_distance_cos`
-(`packages/index/src/database.ts:334-346`). That function is `@memhtml/domain`'s `cosineDistance` rather
-than a second implementation, so the vector arm's SQL and the MMR pass cannot disagree about a clamp or a
-zero-magnitude vector. Migrations apply in filename order, each file's statements and its ledger row
-committing in ONE transaction (`packages/index/src/database.ts:207`), so a crash never leaves one
-half-applied.
+Both planes are plain SQLite through node's built-in `node:sqlite`, so there is no third-party database dependency and no driver feature flags to keep in step — `sqlite3` or a GUI browser opens either file directly. Every connection sets `journal_mode = WAL`, `busy_timeout = 5000`, `synchronous = NORMAL`, and `foreign_keys = ON`, and registers one SQL function, `vector_distance_cos` (`packages/index/src/database.ts:334-346`). That function is `@memhtml/domain`'s `cosineDistance` rather than a second implementation, so the vector arm's SQL and the MMR pass cannot disagree about a clamp or a zero-magnitude vector. Migrations apply in filename order, each file's statements and its ledger row committing in ONE transaction (`packages/index/src/database.ts:207`), so a crash never leaves one half-applied.
 
 ### 6.1 Schema
 
-`files` (`packages/index/migrations/0008_tasks.sql:28`) projects one memory file: identity, classification
-under a ten-value `memory_type` CHECK, three text surfaces, the scoring inputs, the bitemporal fields,
-provenance, and two task columns. Child tables (`packages/index/migrations/0001_files.sql:73-110`) each
-declare **`ON UPDATE CASCADE` as well as `ON DELETE CASCADE`**, because `files.path` is the primary key
-*and* it moves — eviction is a `git mv` — and foreign keys are immediate, so without it the rename's
-`UPDATE` fails outright.
+`files` (`packages/index/migrations/0008_tasks.sql:28`) projects one memory file: identity, classification under a ten-value `memory_type` CHECK, three text surfaces, the scoring inputs, the bitemporal fields, provenance, and two task columns. Child tables (`packages/index/migrations/0001_files.sql:73-110`) each declare **`ON UPDATE CASCADE` as well as `ON DELETE CASCADE`**, because `files.path` is the primary key _and_ it moves — eviction is a `git mv` — and foreign keys are immediate, so without it the rename's `UPDATE` fails outright.
 
 Three text columns, three jobs:
 
 - `body_text` — the full search surface.
-- `fts_text` — title, gist, and body newline-joined (`packages/index/src/project.ts:48`). One
-  denormalized column, because a multi-column FTS index on this driver returns rowid order rather than
-  relevance order and scopes MATCH to the named column alone
-  (`packages/index/src/schema-const.ts:28-38`). Newline- rather than space-joined, so a term ending the
-  title cannot fuse with one starting the gist into a phrase neither states.
-- `disclosure_text` — what recall may *quote*, as opposed to what it may search
-  (`packages/index/src/project.ts:51-83`): the `<mark>` claim, `<summary>` headlines, `<dl>` facets,
-  citations. `<details>` bodies never appear (Tier 3 provenance reaches an agent only through
-  `memory_read`), and neither do `<aside>` texts, because an aside is a scope caveat and a disclosure line
-  has no room to say "this is the exception". Composed from the parser's separated extraction fields
-  rather than re-derived from markup.
+- `fts_text` — title, gist, and body newline-joined (`packages/index/src/project.ts:48`). One denormalized column, because a multi-column FTS index on this driver returns rowid order rather than relevance order and scopes MATCH to the named column alone (`packages/index/src/schema-const.ts:28-38`). Newline- rather than space-joined, so a term ending the title cannot fuse with one starting the gist into a phrase neither states.
+- `disclosure_text` — what recall may _quote_, as opposed to what it may search (`packages/index/src/project.ts:51-83`): the `<mark>` claim, `<summary>` headlines, `<dl>` facets, citations. `<details>` bodies never appear (Tier 3 provenance reaches an agent only through `memory_read`), and neither do `<aside>` texts, because an aside is a scope caveat and a disclosure line has no room to say "this is the exception". Composed from the parser's separated extraction fields rather than re-derived from markup.
 
-`chunks` and `embeddings` key on `content_hash`, not `path`:
-`chunk_id = sha256(content_hash + ":" + ordinal)` (`packages/index/src/chunking.ts:27`), so an identical
-body anywhere in the tree shares one chunk row and one vector and a `git mv` costs zero Bedrock calls.
-`edges` (`packages/index/migrations/0008_tasks.sql:147`) carries the four classes, the `derived` firewall,
-a strength, a provenance, and CHECKs refusing a cross-class rel, a self-loop, and `derived = 1` outside
-`provenance = 'sleep'`. `index_state` (`packages/index/migrations/0007_watermark.sql:5`) is a single-row
-table by CHECK holding the watermark and the vector-space identity. The state plane
-(`packages/index/state-migrations/S0001_access.sql`) holds `access` and `edge_corroboration`; its DDL
-names its own schema and puts that name on the INDEX rather than the table, which is the form this driver
-accepts.
+`chunks` and `embeddings` key on `content_hash`, not `path`: `chunk_id = sha256(content_hash + ":" + ordinal)` (`packages/index/src/chunking.ts:27`), so an identical body anywhere in the tree shares one chunk row and one vector and a `git mv` costs zero Bedrock calls. `edges` (`packages/index/migrations/0008_tasks.sql:147`) carries the four classes, the `derived` firewall, a strength, a provenance, and CHECKs refusing a cross-class rel, a self-loop, and `derived = 1` outside `provenance = 'sleep'`. `index_state` (`packages/index/migrations/0007_watermark.sql:5`) is a single-row table by CHECK holding the watermark and the vector-space identity. The state plane (`packages/index/state-migrations/S0001_access.sql`) holds `access` and `edge_corroboration`; its DDL names its own schema and puts that name on the INDEX rather than the table, which is the form this driver accepts.
 
-Migration `0008_tasks.sql` widens both CHECK-bearing tables by recreate-and-copy, and its load-bearing
-detail is that it **snapshots every child table first**
-(`packages/index/migrations/0008_tasks.sql:85-92`). `DROP TABLE files` cascades away every row of every
-child — including `embeddings` behind `chunks` — inside the same transaction the runner wraps the file in,
-so a migration that copied only `files` would report success and silently destroy every embedding in the
-database. The snapshot does not depend on foreign-key state at all: children are copied out, the cascade
-fires against a table of no consequence, and the rows are copied back under the new parent.
+Migration `0008_tasks.sql` widens both CHECK-bearing tables by recreate-and-copy, and its load-bearing detail is that it **snapshots every child table first** (`packages/index/migrations/0008_tasks.sql:85-92`). `DROP TABLE files` cascades away every row of every child — including `embeddings` behind `chunks` — inside the same transaction the runner wraps the file in, so a migration that copied only `files` would report success and silently destroy every embedding in the database. The snapshot does not depend on foreign-key state at all: children are copied out, the cascade fires against a table of no consequence, and the rows are copied back under the new parent.
 
 ### 6.2 Projection
 
-`projectFile` (`packages/index/src/project.ts:141`) is pure: given a doc, a path, and a blob sha the row
-set is fully determined, which makes "a fresh rebuild reproduces the incremental row set" true by
-construction rather than by two implementations agreeing.
+`projectFile` (`packages/index/src/project.ts:141`) is pure: given a doc, a path, and a blob sha the row set is fully determined, which makes "a fresh rebuild reproduces the incremental row set" true by construction rather than by two implementations agreeing.
 
-`archived` is read from the path's PARA bucket, not `memhtml-status`
-(`packages/index/src/project.ts:133-140`) — the path *is* the state, so a file whose head says `active`
-while sitting under `archive/` is stale metadata, and trusting the meta would let a mis-stamped file
-re-enter retrieval and break the dedup index's guarantee.
+`archived` is read from the path's PARA bucket, not `memhtml-status` (`packages/index/src/project.ts:133-140`) — the path _is_ the state, so a file whose head says `active` while sitting under `archive/` is stale metadata, and trusting the meta would let a mis-stamped file re-enter retrieval and break the dedup index's guarantee.
 
 Four narrow write rules, each avoiding a specific loss:
 
-- The `files` write is an **upsert on `path`** (`packages/index/src/project.ts:204-214`), so one statement
-  serves a rebuild into an emptied table and an in-place rewrite. Rewriting in place preserves the row's
-  chunks; deleting and re-inserting would cascade them away with their embeddings. A `content_hash`
-  collision against a *different* active path is deliberately not absorbed — that is the structural dedup.
-- Chunk deletion is narrowed to `content_hash <> ?` (`packages/index/src/project.ts:232-235`), because a
-  blanket delete would re-embed the whole file on any meta-only edit.
-- Edges are cleared by `src_path` only (`packages/index/src/project.ts:236-241`), because an inbound edge
-  is another file's authored assertion.
-- `FILE_COLUMNS` (`packages/index/src/project.ts:93`) drives the insert, the placeholder count, and the
-  upsert's assignment clause from one list, since a column added to one and forgotten in another binds
-  every subsequent value to the wrong column while every CHECK still passes.
+- The `files` write is an **upsert on `path`** (`packages/index/src/project.ts:204-214`), so one statement serves a rebuild into an emptied table and an in-place rewrite. Rewriting in place preserves the row's chunks; deleting and re-inserting would cascade them away with their embeddings. A `content_hash` collision against a _different_ active path is deliberately not absorbed — that is the structural dedup.
+- Chunk deletion is narrowed to `content_hash <> ?` (`packages/index/src/project.ts:232-235`), because a blanket delete would re-embed the whole file on any meta-only edit.
+- Edges are cleared by `src_path` only (`packages/index/src/project.ts:236-241`), because an inbound edge is another file's authored assertion.
+- `FILE_COLUMNS` (`packages/index/src/project.ts:93`) drives the insert, the placeholder count, and the upsert's assignment clause from one list, since a column added to one and forgotten in another binds every subsequent value to the wrong column while every CHECK still passes.
 
-Entity rows come from three sources (`packages/index/src/project.ts:315`): `memhtml-entity` metas, one
-`concept:<term>` per `<dfn>`, one `lang:<value>` per `<code data-lang>` — so a memory that *defines* a term
-is findable by it without the author restating it as a meta. Row deduplication happens in TypeScript
-(`packages/index/src/project.ts:381`) rather than in the database, because these rows go in through
-`writeAll` as one atomic batch and a duplicate facet would fail the primary key and roll back every other
-row, taking the whole rebuild down over one repeated `<dt>`/`<dd>` pair.
+Entity rows come from three sources (`packages/index/src/project.ts:315`): `memhtml-entity` metas, one `concept:<term>` per `<dfn>`, one `lang:<value>` per `<code data-lang>` — so a memory that _defines_ a term is findable by it without the author restating it as a meta. Row deduplication happens in TypeScript (`packages/index/src/project.ts:381`) rather than in the database, because these rows go in through `writeAll` as one atomic batch and a duplicate facet would fail the primary key and roll back every other row, taking the whole rebuild down over one repeated `<dt>`/`<dd>` pair.
 
 ### 6.3 Rebuild and incremental update
 
-Both paths call `projectFile`, which is the reproducibility contract
-(`packages/index/src/indexer.ts:20-27`).
+Both paths call `projectFile`, which is the reproducibility contract (`packages/index/src/indexer.ts:20-27`).
 
-**Rebuild** (`packages/index/src/indexer.ts:389`): `rev-parse HEAD`, one `ls-tree -r` over the four PARA
-prefixes, one `cat-file --batch` for the whole corpus — one subprocess for the tree instead of N
-`readFile` calls, working on a bare or detached checkout. Generated `index.html` and `sitemap.xml` are
-excluded by name (`packages/index/src/indexer.ts:130-137`): indexing them would feed every directory
-listing back into retrieval as a memory whose body is the titles of other memories, so the corpus would
-rank its own table of contents above its content.
+**Rebuild** (`packages/index/src/indexer.ts:389`): `rev-parse HEAD`, one `ls-tree -r` over the four PARA prefixes, one `cat-file --batch` for the whole corpus — one subprocess for the tree instead of N `readFile` calls, working on a bare or detached checkout. Generated `index.html` and `sitemap.xml` are excluded by name (`packages/index/src/indexer.ts:130-137`): indexing them would feed every directory listing back into retrieval as a memory whose body is the titles of other memories, so the corpus would rank its own table of contents above its content.
 
-The FTS index is **dropped for the bulk load and rebuilt after** (`packages/index/src/indexer.ts:406`,
-`packages/index/src/indexer.ts:426`). Writing through a live FTS index costs 10-25 ms per row and degrades
-superlinearly in table size, while building it over a finished table is linear at roughly 6.6 µs per row
-(`packages/index/src/schema-const.ts:20-26`) — keeping it up during a rebuild would make a 10k-memory
-corpus unindexable in practice. Tables empty children-first
-(`packages/index/src/schema-const.ts:47-56`) so the statements are correct with foreign keys enforced
-rather than relying on cascade. A parse failure is a counted skip
-(`packages/index/src/indexer.ts:209-226`): one bad hand-authored file must be reported by `memhtml doctor`,
-not stop the indexing of every other file in the tree.
+The FTS index is **dropped for the bulk load and rebuilt after** (`packages/index/src/indexer.ts:406`, `packages/index/src/indexer.ts:426`). Writing through a live FTS index costs 10-25 ms per row and degrades superlinearly in table size, while building it over a finished table is linear at roughly 6.6 µs per row (`packages/index/src/schema-const.ts:20-26`) — keeping it up during a rebuild would make a 10k-memory corpus unindexable in practice. Tables empty children-first (`packages/index/src/schema-const.ts:47-56`) so the statements are correct with foreign keys enforced rather than relying on cascade. A parse failure is a counted skip (`packages/index/src/indexer.ts:209-226`): one bad hand-authored file must be reported by `memhtml doctor`, not stop the indexing of every other file in the tree.
 
-**Update** (`packages/index/src/indexer.ts:565`) reads `index_state.head_sha` as its watermark; an absent
-watermark falls through to a full rebuild rather than diffing against nothing
-(`packages/index/src/indexer.ts:572-586`). Otherwise it takes `git diff --name-status -M` from the
-watermark to HEAD plus `git status --porcelain=v2` for uncommitted edits — the ordinary agent flow, where
-the agent edited with a text tool and has not committed. Committed changes apply first and the working
-tree second (`packages/index/src/indexer.ts:645-649`), so a path that both moved in a commit and was then
-edited uncommitted ends at the working tree's content by *ordering* rather than by a precedence rule that
-could disagree.
+**Update** (`packages/index/src/indexer.ts:565`) reads `index_state.head_sha` as its watermark; an absent watermark falls through to a full rebuild rather than diffing against nothing (`packages/index/src/indexer.ts:572-586`). Otherwise it takes `git diff --name-status -M` from the watermark to HEAD plus `git status --porcelain=v2` for uncommitted edits — the ordinary agent flow, where the agent edited with a text tool and has not committed. Committed changes apply first and the working tree second (`packages/index/src/indexer.ts:645-649`), so a path that both moved in a commit and was then edited uncommitted ends at the working tree's content by _ordering_ rather than by a precedence rule that could disagree.
 
-Every committed diff target's blob is fetched in **two subprocesses, not two per file**
-(`packages/index/src/indexer.ts:596-623`): a per-file `lsTreeR(ref, [path])` walks the whole tree to
-answer one path, so N writes cost 2N tree walks — the store-scaled per-op term that makes bulk ingest
-quadratic. One full-tree walk costs the same as one single-path walk, so batching is strictly cheaper from
-the second changed file on.
+Every committed diff target's blob is fetched in **two subprocesses, not two per file** (`packages/index/src/indexer.ts:596-623`): a per-file `lsTreeR(ref, [path])` walks the whole tree to answer one path, so N writes cost 2N tree walks — the store-scaled per-op term that makes bulk ingest quadratic. One full-tree walk costs the same as one single-path walk, so batching is strictly cheaper from the second changed file on.
 
-A rename is `movePath` (`packages/index/src/indexer.ts:480`) — an `UPDATE`, never a delete plus an insert.
-`ON UPDATE CASCADE` carries tags, entities, facets, citations, and chunks along; the `edges` row updates
-explicitly because it holds no foreign key. This is the whole reason `chunks` keys on `content_hash`: a
-delete-and-re-add would cascade the source's chunks away with their embeddings, and the next embed pass
-would pay Bedrock again for text that did not change.
+A rename is `movePath` (`packages/index/src/indexer.ts:480`) — an `UPDATE`, never a delete plus an insert. `ON UPDATE CASCADE` carries tags, entities, facets, citations, and chunks along; the `edges` row updates explicitly because it holds no foreign key. This is the whole reason `chunks` keys on `content_hash`: a delete-and-re-add would cascade the source's chunks away with their embeddings, and the next embed pass would pay Bedrock again for text that did not change.
 
-Every pass writes through the live lexical index, bulk or interactive alike
-(`packages/index/src/indexer.ts:171-181`). `files_fts` is an external-content FTS5 table maintained by
-three triggers on `files`, and its write cost is linear rather than accumulating: probed 2026-08-12 on
-node 24.19.0, six consecutive 256-op batches against a constant 10k-file store cost 6, 5, 6, 5, 5, 5 ms,
-and inserting a whole store costs 20 ms at 800 files, 101 ms at 5k, and 234 ms at 10k. Beside the
-thousands of Bedrock embedding calls a bulk pass makes, that is not a number worth a drop/recreate bracket
-— and a bracket would open a window where a crash leaves the store with no lexical index at all.
+Every pass writes through the live lexical index, bulk or interactive alike (`packages/index/src/indexer.ts:171-181`). `files_fts` is an external-content FTS5 table maintained by three triggers on `files`, and its write cost is linear rather than accumulating: probed 2026-08-12 on node 24.19.0, six consecutive 256-op batches against a constant 10k-file store cost 6, 5, 6, 5, 5, 5 ms, and inserting a whole store costs 20 ms at 800 files, 101 ms at 5k, and 234 ms at 10k. Beside the thousands of Bedrock embedding calls a bulk pass makes, that is not a number worth a drop/recreate bracket — and a bracket would open a window where a crash leaves the store with no lexical index at all.
 
 ### 6.4 Chunking and embeddings
 
-`chunkText` (`packages/index/src/chunking.ts:41`) returns the whole article as chunk 0 below 1,800
-characters — the overwhelmingly common case, since the format is one fact per file — so the embedding is a
-function of the article rather than of an arbitrary window. Longer text splits on sentence boundaries and
-packs greedily; a sentence over the ceiling is hard-cut rather than dropped, so the function is total and
-no text leaves the index.
+`chunkText` (`packages/index/src/chunking.ts:41`) returns the whole article as chunk 0 below 1,800 characters — the overwhelmingly common case, since the format is one fact per file — so the embedding is a function of the article rather than of an arbitrary window. Longer text splits on sentence boundaries and packs greedily; a sentence over the ceiling is hard-cut rather than dropped, so the function is total and no text leaves the index.
 
-`embedMissing` (`packages/index/src/indexer.ts`) requests vectors only for chunks with none or with a
-vector from another model. On the update path the pending scan is scoped to the batch's own chunk ids
-(the unscoped scan was the last store-scaled per-batch cost), so `update --embed` embeds only its own
-batch; a store-wide gap — from `--no-embed` runs or failed embed calls — is closed by `rebuild --embed`,
-whose scan stays unscoped. A model failure is **not fatal**: the lexical floor is a working index, and
-refusing to leave the vector lane partly filled would let a throttled Bedrock turn a complete FTS index
-into no index at all. Embedding is Cohere Embed v4 at 1,024 dimensions over `invoke_model`, batched
-at Cohere's 96-text ceiling (`packages/llm/src/constants.ts:7-11`, `packages/llm/src/embeddings.ts:110`),
-with **different `input_type` values for documents and queries**
-(`packages/llm/src/embeddings.ts:11-14`) — reusing one silently degrades every cosine.
+`embedMissing` (`packages/index/src/indexer.ts`) requests vectors only for chunks with none or with a vector from another model. On the update path the pending scan is scoped to the batch's own chunk ids (the unscoped scan was the last store-scaled per-batch cost), so `update --embed` embeds only its own batch; a store-wide gap — from `--no-embed` runs or failed embed calls — is closed by `rebuild --embed`, whose scan stays unscoped. A model failure is **not fatal**: the lexical floor is a working index, and refusing to leave the vector lane partly filled would let a throttled Bedrock turn a complete FTS index into no index at all. Embedding is Cohere Embed v4 at 1,024 dimensions over `invoke_model`, batched at Cohere's 96-text ceiling (`packages/llm/src/constants.ts:7-11`, `packages/llm/src/embeddings.ts:110`), with **different `input_type` values for documents and queries** (`packages/llm/src/embeddings.ts:11-14`) — reusing one silently degrades every cosine.
 
-**A vector-space mismatch is a hard refusal, never a silent reindex**
-(`packages/index/src/indexer.ts:103-116`, `packages/index/src/indexer.ts:241`). `index_state.embed_model` is
-checked before any write and before the *first* write records a watermark, so an index built under one
-model can never accumulate rows under another. A half-migrated vector space degrades every cosine while
-every individual vector stays well-formed, which is invisible in tests.
+**A vector-space mismatch is a hard refusal, never a silent reindex** (`packages/index/src/indexer.ts:103-116`, `packages/index/src/indexer.ts:241`). `index_state.embed_model` is checked before any write and before the _first_ write records a watermark, so an index built under one model can never accumulate rows under another. A half-migrated vector space degrades every cosine while every individual vector stays well-formed, which is invisible in tests.
 
 ## 7. Retrieval
 
-`search` and `recall` sit on the same fused SQL and the same MMR pass
-(`packages/index/src/retrieval.ts:16-23`), so a ranking change cannot apply to one and not the other.
+`search` and `recall` sit on the same fused SQL and the same MMR pass (`packages/index/src/retrieval.ts:16-23`), so a ranking change cannot apply to one and not the other.
 
-**Arms are data** — a registry folded over by `buildRrfSql` (`packages/index/src/retrieval-sql.ts:198`,
-`packages/index/src/retrieval-sql.ts:237`) — so adding a fifth is a table entry and dropping one is a
-filter. Each returns exactly `(path, rank)`, 1-based.
+**Arms are data** — a registry folded over by `buildRrfSql` (`packages/index/src/retrieval-sql.ts:198`, `packages/index/src/retrieval-sql.ts:237`) — so adding a fifth is a table entry and dropping one is a filter. Each returns exactly `(path, rank)`, 1-based.
 
-| Arm | Weight | Needs | Rank source |
-|---|---|---|---|
-| `fts` | 1.0 | query terms | `ROW_NUMBER() OVER ()` over a `LIMIT`ed MATCH subquery |
-| `vector` | 1.0 | query vector | `ROW_NUMBER() OVER (ORDER BY dist)` over `min(cos)` grouped by path |
-| `recency` | 0.5 | — | `coalesce(event_at, updated_at) DESC, path ASC` |
-| `salience` | 0.4 | state plane | three terms over `state.access`, DESC — no task, no `resources/people/` |
+| Arm        | Weight | Needs        | Rank source                                                             |
+| ---------- | ------ | ------------ | ----------------------------------------------------------------------- |
+| `fts`      | 1.0    | query terms  | `ROW_NUMBER() OVER ()` over a `LIMIT`ed MATCH subquery                  |
+| `vector`   | 1.0    | query vector | `ROW_NUMBER() OVER (ORDER BY dist)` over `min(cos)` grouped by path     |
+| `recency`  | 0.5    | —            | `coalesce(event_at, updated_at) DESC, path ASC`                         |
+| `salience` | 0.4    | state plane  | three terms over `state.access`, DESC — no task, no `resources/people/` |
 
-- **fts** (`packages/index/src/retrieval-sql.ts:71`). `ROW_NUMBER() OVER ()` with no `ORDER BY` captures
-  MATCH's own row order, the only relevance signal this driver exposes — there is no `rank` column and no
-  `bm25()`. The window sits *outside* the `LIMIT`ed subquery, or it would number the pre-limit scan.
-- **vector** (`packages/index/src/retrieval-sql.ts:94`). Exact brute force. `GROUP BY c.path` with
-  `min(distance)` collapses a file to its best chunk — without it a three-chunk file contributes three
-  ranks, consumes three slots of the arm's budget, and has three reciprocal-rank contributions summed, so
-  being long would outrank being relevant.
-- **recency** (`packages/index/src/retrieval-sql.ts:118`). Event time first, so an episodic memory sorts by
-  when the incident happened rather than by when someone wrote it down.
-- **salience** (`packages/index/src/retrieval-sql.ts:154`). `exp(-0.01·hours)` + `ln(1 + access_count)` +
-  `max(outcome_score, 0.0)`, read over the ATTACH. The clamp is the negative-outcome guard: no boost, but
-  no penalty either — the retention scorer owns punishment, and double-counting it here would let one bad
-  outcome bury a memory that is still the best answer.
+- **fts** (`packages/index/src/retrieval-sql.ts:71`). `ROW_NUMBER() OVER ()` with no `ORDER BY` captures MATCH's own row order, the only relevance signal this driver exposes — there is no `rank` column and no `bm25()`. The window sits _outside_ the `LIMIT`ed subquery, or it would number the pre-limit scan.
+- **vector** (`packages/index/src/retrieval-sql.ts:94`). Exact brute force. `GROUP BY c.path` with `min(distance)` collapses a file to its best chunk — without it a three-chunk file contributes three ranks, consumes three slots of the arm's budget, and has three reciprocal-rank contributions summed, so being long would outrank being relevant.
+- **recency** (`packages/index/src/retrieval-sql.ts:118`). Event time first, so an episodic memory sorts by when the incident happened rather than by when someone wrote it down.
+- **salience** (`packages/index/src/retrieval-sql.ts:154`). `exp(-0.01·hours)` + `ln(1 + access_count)` + `max(outcome_score, 0.0)`, read over the ATTACH. The clamp is the negative-outcome guard: no boost, but no penalty either — the retention scorer owns punishment, and double-counting it here would let one bad outcome bury a memory that is still the best answer.
 
-  **Two exclusions, and they are this arm's alone.** A `task` row and anything under `resources/people/`
-  emit no salience row at all (`SALIENCE_EXCLUDED_TYPE`, `SALIENCE_EXCLUDED_PREFIX`). Salience ranks
-  interchangeable candidates; a task is reached by `task_status`/`due_at` and salience there would reward
-  STALENESS — the stuck task re-read at every triage outranking the fresh urgent one — while a
-  person-reference record is reached by entity key and decay is wrong for identity, since a colleague
-  unmentioned for six months is not less themselves. Memories *about* a person live outside
-  `resources/people/` and keep their salience, which is the signal that answers "which five of fifty
-  entries about this person do we actually consult". A path prefix rather than a type because there is no
-  `person` memory type — a person file is a `semantic` record `placementFor` routes there
-  (`packages/contracts/src/paths.ts:122`). The predicates sit INSIDE the arm and never in the shared
-  `fileFilter` (`packages/index/src/scope.ts:12-22`): an excluded row still earns its FTS, vector, and
-  recency ranks, so the arm has no opinion rather than the query being narrowed.
+  **Two exclusions, and they are this arm's alone.** A `task` row and anything under `resources/people/` emit no salience row at all (`SALIENCE_EXCLUDED_TYPE`, `SALIENCE_EXCLUDED_PREFIX`). Salience ranks interchangeable candidates; a task is reached by `task_status`/`due_at` and salience there would reward STALENESS — the stuck task re-read at every triage outranking the fresh urgent one — while a person-reference record is reached by entity key and decay is wrong for identity, since a colleague unmentioned for six months is not less themselves. Memories _about_ a person live outside `resources/people/` and keep their salience, which is the signal that answers "which five of fifty entries about this person do we actually consult". A path prefix rather than a type because there is no `person` memory type — a person file is a `semantic` record `placementFor` routes there (`packages/contracts/src/paths.ts:122`). The predicates sit INSIDE the arm and never in the shared `fileFilter` (`packages/index/src/scope.ts:12-22`): an excluded row still earns its FTS, vector, and recency ranks, so the arm has no opinion rather than the query being narrowed.
 
-Fusion is one statement: each active arm a CTE, weighted `1/(rank + 60)` contributions `UNION ALL`ed, then
-summed per path (`packages/index/src/retrieval-sql.ts:246-248`, `packages/domain/src/ranking.ts:8`). Ties
-break on `path ASC`, so the ordering is total and two runs over an unchanged corpus produce the same list —
-what the discrimination gate compares against. `buildRrfSql` returns `undefined` when no arm is active, so
-a caller must treat that as an empty result rather than assemble `SELECT … FROM ()`. The pure arithmetic
-has a twin in `@memhtml/domain` (`packages/domain/src/rrf.ts:37`), so a weight change is testable without a
-database.
+Fusion is one statement: each active arm a CTE, weighted `1/(rank + 60)` contributions `UNION ALL`ed, then summed per path (`packages/index/src/retrieval-sql.ts:246-248`, `packages/domain/src/ranking.ts:8`). Ties break on `path ASC`, so the ordering is total and two runs over an unchanged corpus produce the same list — what the discrimination gate compares against. `buildRrfSql` returns `undefined` when no arm is active, so a caller must treat that as an empty result rather than assemble `SELECT … FROM ()`. The pure arithmetic has a twin in `@memhtml/domain` (`packages/domain/src/rrf.ts:37`), so a weight change is testable without a database.
 
-**Numbered placeholders and degraded mode.** The prefix is fixed at four positions
-(`packages/index/src/retrieval-sql.ts:24-27`): `?1` query text, `?2` per-arm limit, `?3` final limit, `?4`
-query vector. Scope values bind from `?5` up (`packages/index/src/scope.ts:95`), and the caller **always**
-binds a four-value prefix with `null` at `?4` even when the assembled SQL references no `?4`
-(`packages/index/src/retrieval.ts:196-203`). That is what keeps scope values at fixed positions whether or
-not the vector arm fired — with positional `?` the numbering would shift and every remaining arm would
-silently read the wrong parameter. Weights are inlined as literals: trusted configuration, and inlining
-keeps the tuple stable at four regardless of how many arms fire.
+**Numbered placeholders and degraded mode.** The prefix is fixed at four positions (`packages/index/src/retrieval-sql.ts:24-27`): `?1` query text, `?2` per-arm limit, `?3` final limit, `?4` query vector. Scope values bind from `?5` up (`packages/index/src/scope.ts:95`), and the caller **always** binds a four-value prefix with `null` at `?4` even when the assembled SQL references no `?4` (`packages/index/src/retrieval.ts:196-203`). That is what keeps scope values at fixed positions whether or not the vector arm fired — with positional `?` the numbering would shift and every remaining arm would silently read the wrong parameter. Weights are inlined as literals: trusted configuration, and inlining keeps the tuple stable at four regardless of how many arms fire.
 
-Degradation is a filter, not an error path. `activeArms` (`packages/index/src/retrieval-sql.ts:218`) drops
-any arm whose `needsEmbedding`, `needsState`, or `needsQueryTerms` precondition is unmet; an embedder
-failure is caught, logged, and turned into `undefined` (`packages/index/src/retrieval.ts:173-194`), so
-retrieval never errors because Bedrock is down — it gets narrower, and `degraded` says so on the response.
+Degradation is a filter, not an error path. `activeArms` (`packages/index/src/retrieval-sql.ts:218`) drops any arm whose `needsEmbedding`, `needsState`, or `needsQueryTerms` precondition is unmet; an embedder failure is caught, logged, and turned into `undefined` (`packages/index/src/retrieval.ts:173-194`), so retrieval never errors because Bedrock is down — it gets narrower, and `degraded` says so on the response.
 
-`needsQueryTerms` exists because several forms an agent writes are **hard driver errors rather than empty
-results**: an apostrophe, a colon (the system's own entity notation), a leading hyphen, a bare boolean
-operator (`packages/index/src/fts-query.ts:1-26`). `sanitizeFtsQuery`
-(`packages/index/src/fts-query.ts:35`) reduces a query to runs of Unicode letters and digits and returns
-`""` when nothing survives, and the arm then leaves the fold. Dropping rather than escaping is deliberate:
-`query` is prose, not a query language, and supporting negation would mean an agent invokes it accidentally
-by writing a hyphenated word. `\p{L}\p{N}` rather than `[a-z0-9]` keeps `déployé` one token.
+`needsQueryTerms` exists because several forms an agent writes are **hard driver errors rather than empty results**: an apostrophe, a colon (the system's own entity notation), a leading hyphen, a bare boolean operator (`packages/index/src/fts-query.ts:1-26`). `sanitizeFtsQuery` (`packages/index/src/fts-query.ts:35`) reduces a query to runs of Unicode letters and digits and returns `""` when nothing survives, and the arm then leaves the fold. Dropping rather than escaping is deliberate: `query` is prose, not a query language, and supporting negation would mean an agent invokes it accidentally by writing a hyphenated word. `\p{L}\p{N}` rather than `[a-z0-9]` keeps `déployé` one token.
 
-**Scoping** is assembled **once** and every arm receives the same string, differing only in the alias its
-`files` row goes by via a `{alias}` token (`packages/index/src/scope.ts:92`); per-arm filters would let a
-scope apply to three arms and not the fourth, a leak no type catches. Defaults exclude archived files and
-`memory_type <> 'task'` (`packages/index/src/scope.ts:102-122`), because a corpus with fifty open to-do
-items would put fifty of them in front of every recall, crowding out the knowledge an agent asked for with
-a list it can read by `ls`-ing a directory. A caller-named type list is honored verbatim, `task` included
-— filtering it back out would make the opt-in unreachable, so this is a default and not a firewall. That
-default is inlined rather than bound, because binding it would consume a placeholder number and shift
-every scope parameter below it. Workspace is **strict equality**: an unplaced memory is not "in every
-workspace", and returning it would make a project-scoped recall quietly global.
+**Scoping** is assembled **once** and every arm receives the same string, differing only in the alias its `files` row goes by via a `{alias}` token (`packages/index/src/scope.ts:92`); per-arm filters would let a scope apply to three arms and not the fourth, a leak no type catches. Defaults exclude archived files and `memory_type <> 'task'` (`packages/index/src/scope.ts:102-122`), because a corpus with fifty open to-do items would put fifty of them in front of every recall, crowding out the knowledge an agent asked for with a list it can read by `ls`-ing a directory. A caller-named type list is honored verbatim, `task` included — filtering it back out would make the opt-in unreachable, so this is a default and not a firewall. That default is inlined rather than bound, because binding it would consume a placeholder number and shift every scope parameter below it. Workspace is **strict equality**: an unplaced memory is not "in every workspace", and returning it would make a project-scoped recall quietly global.
 
-The `entity` scope is **one** reference in `type:name` form, and the predicate REBUILDS that form from
-`file_entities`' two columns rather than making the caller know where the split falls
-(`packages/index/src/scope.ts:151-155`). It is `EXISTS` rather than a `JOIN`, matching the tag predicate: a
-file carrying one name under two types would multiply its rows through a join, and a duplicated row inside
-an arm's `LIMIT` spends the candidate budget on one file. Singular where `tags` is a list, and the asymmetry
-is the point — the scope exists so a caller can chain a hop off a hit's own `entities` list, which is one
-reference at a time, so a list would raise the question of whether it broadens or narrows before anyone has
-asked for either. A scope matching nothing returns no hits and says so through `scope_empty` rather than
-widening.
+The `entity` scope is **one** reference in `type:name` form, and the predicate REBUILDS that form from `file_entities`' two columns rather than making the caller know where the split falls (`packages/index/src/scope.ts:151-155`). It is `EXISTS` rather than a `JOIN`, matching the tag predicate: a file carrying one name under two types would multiply its rows through a join, and a duplicated row inside an arm's `LIMIT` spends the candidate budget on one file. Singular where `tags` is a list, and the asymmetry is the point — the scope exists so a caller can chain a hop off a hit's own `entities` list, which is one reference at a time, so a list would raise the question of whether it broadens or narrows before anyone has asked for either. A scope matching nothing returns no hits and says so through `scope_empty` rather than widening.
 
-**MMR.** `search` fetches `limit × 3` fused candidates (`packages/index/src/retrieval.ts:31-35`), because
-diversification can only reorder what it was given. `applyMmr` (`packages/domain/src/mmr.ts:36`) is greedy
-`λ·relevance − (1−λ)·max_sim_to_selected` at λ = 0.5. Fusion *rank* stands in for relevance
-(`packages/index/src/retrieval.ts:327-337`): RRF scores are rank-derived and incomparable across queries,
-so a monotone substitute is the honest input — MMR needs only the order to be right. A vectorless candidate
-takes penalty 0, the honest reading of unknown similarity, so vectorless candidates keep their relative
-fusion order rather than being shuffled by a fabricated distance. At λ ≥ 1 the function short-circuits
-rather than burning O(n²) cosines to reproduce the order it was given.
+**MMR.** `search` fetches `limit × 3` fused candidates (`packages/index/src/retrieval.ts:31-35`), because diversification can only reorder what it was given. `applyMmr` (`packages/domain/src/mmr.ts:36`) is greedy `λ·relevance − (1−λ)·max_sim_to_selected` at λ = 0.5. Fusion _rank_ stands in for relevance (`packages/index/src/retrieval.ts:327-337`): RRF scores are rank-derived and incomparable across queries, so a monotone substitute is the honest input — MMR needs only the order to be right. A vectorless candidate takes penalty 0, the honest reading of unknown similarity, so vectorless candidates keep their relative fusion order rather than being shuffled by a fabricated distance. At λ ≥ 1 the function short-circuits rather than burning O(n²) cosines to reproduce the order it was given.
 
-Each hit carries a `snippet`: its best-matching chunk for this query, capped at 700 characters with a `…`
-that fits *inside* the ceiling (`packages/index/src/retrieval-sql.ts:294`). It is one statement over the
-final paths only — after MMR, not after fusion — so the fused CTE never changes shape
-(`packages/index/src/retrieval.ts:286`). A NULL distance loses to any scored chunk and ordinal breaks ties,
-so the winner is deterministic (`packages/index/src/retrieval.ts:457-467`).
+Each hit carries a `snippet`: its best-matching chunk for this query, capped at 700 characters with a `…` that fits _inside_ the ceiling (`packages/index/src/retrieval-sql.ts:294`). It is one statement over the final paths only — after MMR, not after fusion — so the fused CTE never changes shape (`packages/index/src/retrieval.ts:286`). A NULL distance loses to any scored chunk and ordinal breaks ties, so the winner is deterministic (`packages/index/src/retrieval.ts:457-467`).
 
-**The disclosure fold.** `recall` returns a budgeted pack whose three tiers map onto the HTML structure
-rather than onto a truncation of prose (`packages/index/src/disclosure.ts:1-17`). `foldDisclosure`
-(`packages/index/src/disclosure.ts:93`) spends the budget in rank order and **continues past a candidate
-that does not fit**, turning it into an index line: the budget is a character budget and not a position
-cut-off, so one long memory mid-list does not silently truncate every shorter one after it.
-`MAX_PER_ENTITY = 2` caps full quotes per **entity name**, not per path
-(`packages/index/src/disclosure.ts:25-32`) — per-path would be no cap at all, since twelve memories about
-one service are twelve paths. A capped memory still gets its index line, so the cap narrows depth rather
-than dropping the memory. Arcs fold under their **own** 9,000-character envelope rather than competing with
-memories' 16,000 (`packages/index/src/retrieval.ts:408-421`): an arc is a synthesis of many memories, so
-letting the two compete would make one arc crowd out every concrete memory behind it, and the pack would
-explain the pattern while citing none of the evidence.
+**The disclosure fold.** `recall` returns a budgeted pack whose three tiers map onto the HTML structure rather than onto a truncation of prose (`packages/index/src/disclosure.ts:1-17`). `foldDisclosure` (`packages/index/src/disclosure.ts:93`) spends the budget in rank order and **continues past a candidate that does not fit**, turning it into an index line: the budget is a character budget and not a position cut-off, so one long memory mid-list does not silently truncate every shorter one after it. `MAX_PER_ENTITY = 2` caps full quotes per **entity name**, not per path (`packages/index/src/disclosure.ts:25-32`) — per-path would be no cap at all, since twelve memories about one service are twelve paths. A capped memory still gets its index line, so the cap narrows depth rather than dropping the memory. Arcs fold under their **own** 9,000-character envelope rather than competing with memories' 16,000 (`packages/index/src/retrieval.ts:408-421`): an arc is a synthesis of many memories, so letting the two compete would make one arc crowd out every concrete memory behind it, and the pack would explain the pattern while citing none of the evidence.
 
-**Reinforcement.** `reinforce` (`packages/index/src/reinforce.ts:45`) is the **one** call site that moves
-`state.access`, because the cooldown is the invariant: `access_count` feeds the salience arm, so a second
-writer would let a loop in an agent replay one query and rewrite the corpus's ranking, and a cooldown
-enforced in two places is enforced in neither. The guard is expressed twice by necessity — as the SQL
-`WHERE` and as a pure twin — so the shared source of truth is `REINFORCE_COOLDOWN_S = 900`
-(`packages/domain/src/ranking.ts:17`) and a property test pins the two at the boundary. The conditional
-upsert's `RETURNING` makes the bumped/cooled split authoritative rather than inferred
-(`packages/index/src/reinforce.ts:30-43`): reading `last_accessed_at` first and deciding in TypeScript
-would race a concurrent reinforce and report a bump that never happened. Only a non-neutral signal moves
-`reinforcement_count` and the outcome EWMA — being read is evidence of relevance, not of correctness.
+**Reinforcement.** `reinforce` (`packages/index/src/reinforce.ts:45`) is the **one** call site that moves `state.access`, because the cooldown is the invariant: `access_count` feeds the salience arm, so a second writer would let a loop in an agent replay one query and rewrite the corpus's ranking, and a cooldown enforced in two places is enforced in neither. The guard is expressed twice by necessity — as the SQL `WHERE` and as a pure twin — so the shared source of truth is `REINFORCE_COOLDOWN_S = 900` (`packages/domain/src/ranking.ts:17`) and a property test pins the two at the boundary. The conditional upsert's `RETURNING` makes the bumped/cooled split authoritative rather than inferred (`packages/index/src/reinforce.ts:30-43`): reading `last_accessed_at` first and deciding in TypeScript would race a concurrent reinforce and report a bump that never happened. Only a non-neutral signal moves `reinforcement_count` and the outcome EWMA — being read is evidence of relevance, not of correctness.
 
-**What bumps, and what deliberately does not.** Salience accumulates evidence that someone *chose* a
-memory, so the read tiers get three different policies:
+**What bumps, and what deliberately does not.** Salience accumulates evidence that someone _chose_ a memory, so the read tiers get three different policies:
 
-| Read | Bumps | Why |
-|---|---|---|
-| `memory_read` / `memhtml read` of a named path, and the `memhtml://file/{path}` resource | yes | the caller chose THAT memory — the strongest signal short of a write (`apps/cli/src/operations.ts:655`) |
-| a path merely *returned* by `memory_search` / `memory_recall` | no | the ranker's own guess (`apps/cli/src/operations.ts:681`, `:692`) |
-| the sixteen sleep phases | no | a schedule touching the whole corpus converges everything to uniform salience, which is no salience — and sleep bypasses the tool path entirely |
-| `memory_reinforce` with a named signal | yes, and it moves the outcome EWMA too | the caller is asserting the memory was right or wrong |
+| Read                                                                                     | Bumps                                  | Why                                                                                                                                             |
+| ---------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory_read` / `memhtml read` of a named path, and the `memhtml://file/{path}` resource | yes                                    | the caller chose THAT memory — the strongest signal short of a write (`apps/cli/src/operations.ts:655`)                                         |
+| a path merely _returned_ by `memory_search` / `memory_recall`                            | no                                     | the ranker's own guess (`apps/cli/src/operations.ts:681`, `:692`)                                                                               |
+| the sixteen sleep phases                                                                 | no                                     | a schedule touching the whole corpus converges everything to uniform salience, which is no salience — and sleep bypasses the tool path entirely |
+| `memory_reinforce` with a named signal                                                   | yes, and it moves the outcome EWMA too | the caller is asserting the memory was right or wrong                                                                                           |
 
-Bumping on a hit is what builds the rich-get-richer loop: today's top five rank higher tomorrow purely
-for having been listed, while the memory that should displace them never appears and so never earns a
-first bump. The cooldown does not save it — 900 seconds bounds one query replayed inside a session, and
-the drift operates across days. Reading files off disk (docs/code-mode.md) touches no access row and so
-obeys the same rule for free rather than as an exception.
+Bumping on a hit is what builds the rich-get-richer loop: today's top five rank higher tomorrow purely for having been listed, while the memory that should displace them never appears and so never earns a first bump. The cooldown does not save it — 900 seconds bounds one query replayed inside a session, and the drift operates across days. Reading files off disk (docs/code-mode.md) touches no access row and so obeys the same rule for free rather than as an exception.
 
 ## 8. The state plane and its committed sidecar
 
-Access counts, reinforcement counts, the outcome EWMA, reprieve bookkeeping, and edge corroboration are the
-only state git cannot reproduce, and they are high-churn: a commit per access bump would be a commit per
-memory an agent opens. So `state.db` is gitignored and its durability story is an append-only JSONL
-sidecar committed once per night by the sleep cycle (`packages/store/src/layout.ts:27-31`,
-`packages/sleep/src/phases/state-export.ts:9-25`).
+Access counts, reinforcement counts, the outcome EWMA, reprieve bookkeeping, and edge corroboration are the only state git cannot reproduce, and they are high-churn: a commit per access bump would be a commit per memory an agent opens. So `state.db` is gitignored and its durability story is an append-only JSONL sidecar committed once per night by the sleep cycle (`packages/store/src/layout.ts:27-31`, `packages/sleep/src/phases/state-export.ts:9-25`).
 
-The sidecar is **byte-stable or it commits nothing**: rows arrive path-ordered from SQL, floats round to
-four decimals, keys are written in fixed order, and an unchanged plane produces an identical file whose
-commit is empty (`packages/sleep/src/phases/state-export.ts:65`,
-`packages/sleep/src/phases/state-export.ts:75-78`). Four decimals is the grid the outcome EWMA lives on
-(`packages/domain/src/decay.ts:13`), so a fifth digit would be float noise that changes the file's bytes
-without changing its meaning; `-0` normalizes to `0` so two equal planes render identically.
-`parseSidecar` (`packages/sleep/src/phases/state-export.ts:97`) skips and counts an unparseable line rather
-than failing the import — this is the only durable copy of the plane, and refusing a file truncated by an
-interrupted write would turn a partial loss into a total one.
+The sidecar is **byte-stable or it commits nothing**: rows arrive path-ordered from SQL, floats round to four decimals, keys are written in fixed order, and an unchanged plane produces an identical file whose commit is empty (`packages/sleep/src/phases/state-export.ts:65`, `packages/sleep/src/phases/state-export.ts:75-78`). Four decimals is the grid the outcome EWMA lives on (`packages/domain/src/decay.ts:13`), so a fifth digit would be float noise that changes the file's bytes without changing its meaning; `-0` normalizes to `0` so two equal planes render identically. `parseSidecar` (`packages/sleep/src/phases/state-export.ts:97`) skips and counts an unparseable line rather than failing the import — this is the only durable copy of the plane, and refusing a file truncated by an interrupted write would turn a partial loss into a total one.
 
-Cross-database foreign keys do not exist, so a path move is mirrored by an explicit `onMove` hook the store
-calls at the one place a path can change (`packages/store/src/store.ts:160-168`,
-`apps/cli/src/api-layer.ts:203`), and `memhtml doctor` reports orphaned rows.
-`tests-integration/tests/clone.test.ts` exercises the whole claim: clone the memory repo, assert neither
-database came with it, then `memhtml init` + `state import` + `index rebuild` and check that the origin's
-access *counts* — not merely the rows' existence — come back.
+Cross-database foreign keys do not exist, so a path move is mirrored by an explicit `onMove` hook the store calls at the one place a path can change (`packages/store/src/store.ts:160-168`, `apps/cli/src/api-layer.ts:203`), and `memhtml doctor` reports orphaned rows. `tests-integration/tests/clone.test.ts` exercises the whole claim: clone the memory repo, assert neither database came with it, then `memhtml init` + `state import` + `index rebuild` and check that the origin's access _counts_ — not merely the rows' existence — come back.
 
 ## 9. The trace indexer and its firewall
 
-`.memhtml` never holds session content. The trace tables are a read-only index over `~/.claude/projects`, and
-the root is a parameter rather than a constant so the scan is drivable against a fixture tree
-(`packages/traces/src/scan.ts:48-57`).
+`.memhtml` never holds session content. The trace tables are a read-only index over `~/.claude/projects`, and the root is a parameter rather than a constant so the scan is drivable against a fixture tree (`packages/traces/src/scan.ts:48-57`).
 
-**Watermark: size, mtime, and a byte offset** (`packages/traces/src/watermark.ts:66`). Matching size and
-mtime skips the file unopened; growth *tails* from the stored offset; a shrink, a backward mtime, or an
-offset past the current size rescans from 0, because a rewrite invalidates the offset's meaning.
+**Watermark: size, mtime, and a byte offset** (`packages/traces/src/watermark.ts:66`). Matching size and mtime skips the file unopened; growth _tails_ from the stored offset; a shrink, a backward mtime, or an offset past the current size rescans from 0, because a rewrite invalidates the offset's meaning.
 
-**Streaming parse** (`packages/traces/src/parse.ts:117`) splits lines on the raw buffer rather than handing
-the stream to `readline`, and the reason is the byte count: `readline` strips the terminator without saying
-whether the final line had one, so a scan racing a live append would count the partial tail as consumed,
-the watermark would advance past it, and the completed record would be read next time with its head
-missing. Here an unterminated trailing line is neither folded nor counted, so the next tail re-reads it
-whole. Peak memory is one chunk plus one line whatever the file's size. The parse cannot fail: a missing
-file, a permission rejection, a truncated line, and binary garbage all degrade to counters
-(`packages/traces/src/parse.ts:56-67`).
+**Streaming parse** (`packages/traces/src/parse.ts:117`) splits lines on the raw buffer rather than handing the stream to `readline`, and the reason is the byte count: `readline` strips the terminator without saying whether the final line had one, so a scan racing a live append would count the partial tail as consumed, the watermark would advance past it, and the completed record would be read next time with its head missing. Here an unterminated trailing line is neither folded nor counted, so the next tail re-reads it whole. Peak memory is one chunk plus one line whatever the file's size. The parse cannot fail: a missing file, a permission rejection, a truncated line, and binary garbage all degrade to counters (`packages/traces/src/parse.ts:56-67`).
 
-**A type allowlist is applied before any field access** (`packages/traces/src/extract.ts:11-38`). Seven
-types are read; six are counted and skipped, and two of those carry **no envelope and no `sessionId` at
-all** — so reaching for `record.cwd` on one would be reading a field that does not exist on a record that
-is not about a session. A record with no session key is dropped, not treated as malformed input. A type in
-neither list increments `unknownTypeLines`, the counter to watch when a new runtime release lands. Every
-line falls into exactly one counter. Timestamps are canonicalized to ISO-8601 UTC
-(`packages/traces/src/extract.ts:144-150`) because `traces.started_at` is `TEXT` under an index, so
-ordering is lexicographic and an offset timestamp would sort as later than a `Z` instant hours after it.
+**A type allowlist is applied before any field access** (`packages/traces/src/extract.ts:11-38`). Seven types are read; six are counted and skipped, and two of those carry **no envelope and no `sessionId` at all** — so reaching for `record.cwd` on one would be reading a field that does not exist on a record that is not about a session. A record with no session key is dropped, not treated as malformed input. A type in neither list increments `unknownTypeLines`, the counter to watch when a new runtime release lands. Every line falls into exactly one counter. Timestamps are canonicalized to ISO-8601 UTC (`packages/traces/src/extract.ts:144-150`) because `traces.started_at` is `TEXT` under an index, so ordering is lexicographic and an offset timestamp would sort as later than a `Z` instant hours after it.
 
-**A tail's extract describes the appended slice, not the session**, so merging it is producer-owned reading
-semantics and lives in `@memhtml/traces` (`packages/traces/src/scan.ts:109-152`): identity fields take the
-older side, current-state fields the newer, `startedAt`/`endedAt` are min/max, `turnCount` sums, and
-`promptCount` is **derived from the merged set rather than summed**, because a prompt straddling the
-boundary appears in both extracts. Tail ordinals are renumbered from the end of the stored list
-(`packages/traces/src/scan.ts:163`), or every tail would collide with ordinal 0 and the ordinal would stop
-being an order. A rescan replaces the row outright. `text_head` caps at 200 characters and `first_prompt`
-at 500 (`packages/traces/src/extract.ts:48-51`): this is an index, not a copy.
+**A tail's extract describes the appended slice, not the session**, so merging it is producer-owned reading semantics and lives in `@memhtml/traces` (`packages/traces/src/scan.ts:109-152`): identity fields take the older side, current-state fields the newer, `startedAt`/`endedAt` are min/max, `turnCount` sums, and `promptCount` is **derived from the merged set rather than summed**, because a prompt straddling the boundary appears in both extracts. Tail ordinals are renumbered from the end of the stored list (`packages/traces/src/scan.ts:163`), or every tail would collide with ordinal 0 and the ordinal would stop being an order. A rescan replaces the row outright. `text_head` caps at 200 characters and `first_prompt` at 500 (`packages/traces/src/extract.ts:48-51`): this is an index, not a copy.
 
-**The firewall is a table-name firewall and the enforcement is a test.** Nothing in the retrieval SQL
-assembler names `traces` or `trace_prompts` — asserted by grepping every statement the module can assemble,
-in both the default and the scoped form, because a firewall that holds for one and leaks for the other is
-not a firewall (`packages/index/tests/retrieval-sql.test.ts:204-211`).
+**The firewall is a table-name firewall and the enforcement is a test.** Nothing in the retrieval SQL assembler names `traces` or `trace_prompts` — asserted by grepping every statement the module can assemble, in both the default and the scoped form, because a firewall that holds for one and leaks for the other is not a firewall (`packages/index/tests/retrieval-sql.test.ts:204-211`).
 
 ### 9a. What the plane is FOR, and who consumes it
 
-The sections above describe how the plane is built. This one says why it exists, because the three tables
-divide a question that reads as one.
+The sections above describe how the plane is built. This one says why it exists, because the three tables divide a question that reads as one.
 
-**`traces` answers "what session was this."** One row per session, keyed on `session_id`
-(`packages/index/migrations/0005_traces.sql:8`): the cwd-derived `slug`, `cwd`, `git_branch`, `entrypoint`,
-`model`, `version`, `started_at`/`ended_at`, the prompt/turn/agent counts, `first_prompt`, an `ai_title`,
-and — the load-bearing three — `file_path`, `file_size`, `file_mtime` pointing at the transcript on disk.
-`search_text` is `first_prompt` and `ai_title` newline-joined under an FTS index, single-column for the
-same reason `files.fts_text` is.
+**`traces` answers "what session was this."** One row per session, keyed on `session_id` (`packages/index/migrations/0005_traces.sql:8`): the cwd-derived `slug`, `cwd`, `git_branch`, `entrypoint`, `model`, `version`, `started_at`/`ended_at`, the prompt/turn/agent counts, `first_prompt`, an `ai_title`, and — the load-bearing three — `file_path`, `file_size`, `file_mtime` pointing at the transcript on disk. `search_text` is `first_prompt` and `ai_title` newline-joined under an FTS index, single-column for the same reason `files.fts_text` is.
 
-**`trace_prompts` answers "what was asked, in what order."** One row per distinct prompt with a
-`text_head` the extractor caps at 200 characters, and an `ordinal` that is 0-based **within one session**
-and comparable only there.
+**`trace_prompts` answers "what was asked, in what order."** One row per distinct prompt with a `text_head` the extractor caps at 200 characters, and an `ordinal` that is 0-based **within one session** and comparable only there.
 
-**`memory_session_links` answers "which memory came from which session, and how."** Its `link_kind` is
-CHECK-constrained to `wrote`, `read`, `corrected`, `reinforced`. Three properties are deliberate and easy
-to misread:
+**`memory_session_links` answers "which memory came from which session, and how."** Its `link_kind` is CHECK-constrained to `wrote`, `read`, `corrected`, `reinforced`. Three properties are deliberate and easy to misread:
 
-- It is written **at memory-write time by the store's injected recorder**, not by the trace scanner. The
-  provenance is recorded by the act that created it.
-- The same link is **also file-borne** as `memhtml-session` / `memhtml-prompt` / `memhtml-turn` metas, so it survives a
-  rebuild. This table exists to make the link queryable in **both** directions, not to hold it.
-- There is **no foreign key to `traces`**, on purpose: a memory can be written in a session whose
-  transcript has not been scanned yet, and refusing the link would discard provenance the file already
-  carries.
+- It is written **at memory-write time by the store's injected recorder**, not by the trace scanner. The provenance is recorded by the act that created it.
+- The same link is **also file-borne** as `memhtml-session` / `memhtml-prompt` / `memhtml-turn` metas, so it survives a rebuild. This table exists to make the link queryable in **both** directions, not to hold it.
+- There is **no foreign key to `traces`**, on purpose: a memory can be written in a session whose transcript has not been scanned yet, and refusing the link would discard provenance the file already carries.
 
-**Consumers, and the shape of each.** `memhtml trace index` (hourly cron) is the producer. `memhtml trace search`
-and `memhtml trace links` are the read surfaces, mirrored over MCP as `trace_search` and `trace_links`
-(`apps/mcp/src/tools.ts:616,642`). The firewall means these are a **separate query surface** rather than
-another retrieval arm — a trace row is structurally incapable of entering RRF, so "search my memories"
-and "search my sessions" cannot be conflated by accident.
+**Consumers, and the shape of each.** `memhtml trace index` (hourly cron) is the producer. `memhtml trace search` and `memhtml trace links` are the read surfaces, mirrored over MCP as `trace_search` and `trace_links` (`apps/mcp/src/tools.ts:616,642`). The firewall means these are a **separate query surface** rather than another retrieval arm — a trace row is structurally incapable of entering RRF, so "search my memories" and "search my sessions" cannot be conflated by accident.
 
-**The consumer that motivates the plane** is trace-consolidation v2 (§10, phase 12). Anything an agent
-learned mid-session and did not explicitly write is otherwise lost: the transcripts hold it, the corpus
-does not. The phase selects sessions carrying no `trace_consolidations` watermark, hands the agent their
-`file_path` values, and the agent reads transcripts **at their source** — distilling claims into ordinary
-memories through the store, never copying transcript text into the corpus. That is why `traces` stores a
-pointer rather than content.
+**The consumer that motivates the plane** is trace-consolidation v2 (§10, phase 12). Anything an agent learned mid-session and did not explicitly write is otherwise lost: the transcripts hold it, the corpus does not. The phase selects sessions carrying no `trace_consolidations` watermark, hands the agent their `file_path` values, and the agent reads transcripts **at their source** — distilling claims into ordinary memories through the store, never copying transcript text into the corpus. That is why `traces` stores a pointer rather than content.
 
-The distillation has to be checkable, so a candidate must cite at least two verbatim evidence quotes
-(`apps/consolidator/src/contract.ts:93`, `MAX_QUOTE_CHARS = 600` so a "quote" cannot smuggle a
-transcript). **Those quotes go into the commit message and nowhere else**
-(`packages/sleep/src/phases/trace-consolidation.ts:158-165`). The reason is that a commit message is
-not part of the corpus: it is not indexed, not chunked, not embedded, and not retrievable. The memory
-body carries the claim; the commit carries the receipt a reviewer needs to decide whether the claim
-earned its place. Every cited `sessionId` is checked for membership in the batch actually seeded, and
-an invented one fails the turn rather than landing an unfalsifiable citation
-(`apps/consolidator/src/contract.ts:133`).
+The distillation has to be checkable, so a candidate must cite at least two verbatim evidence quotes (`apps/consolidator/src/contract.ts:93`, `MAX_QUOTE_CHARS = 600` so a "quote" cannot smuggle a transcript). **Those quotes go into the commit message and nowhere else** (`packages/sleep/src/phases/trace-consolidation.ts:158-165`). The reason is that a commit message is not part of the corpus: it is not indexed, not chunked, not embedded, and not retrievable. The memory body carries the claim; the commit carries the receipt a reviewer needs to decide whether the claim earned its place. Every cited `sessionId` is checked for membership in the batch actually seeded, and an invented one fails the turn rather than landing an unfalsifiable citation (`apps/consolidator/src/contract.ts:133`).
 
-Joining `traces` to `memory_session_links` yields the manifest shape that turns the consolidator's first
-move from "read everything" into "read the sessions that touch the memories in question" — paths, date
-ranges, session ids, tied to the memory files they relate to.
+Joining `traces` to `memory_session_links` yields the manifest shape that turns the consolidator's first move from "read everything" into "read the sessions that touch the memories in question" — paths, date ranges, session ids, tied to the memory files they relate to.
 
 ## 10. The sleep pipeline
 
-Fifteen phases in a fixed order (`packages/sleep/src/contract.ts:17`), each an isolated commit on
-`sleep/<YYYY-MM-DD>`, suffixed `-2` on a same-day rerun (`packages/sleep/src/run.ts:45`). The branch is
-created before any phase runs, so `main` is never touched (`packages/sleep/src/run.ts:95-97`). A dry run
-creates no branch, safe precisely because no phase in dry mode writes a file.
+Fifteen phases in a fixed order (`packages/sleep/src/contract.ts:17`), each an isolated commit on `sleep/<YYYY-MM-DD>`, suffixed `-2` on a same-day rerun (`packages/sleep/src/run.ts:45`). The branch is created before any phase runs, so `main` is never touched (`packages/sleep/src/run.ts:95-97`). A dry run creates no branch, safe precisely because no phase in dry mode writes a file.
 
-| # | Phase | Model | Git effect |
-|---|---|---|---|
-| 1 | `preflight` | no | none — `index update`, snapshot counts |
-| 2 | `dedup-merge` | yes | one commit: keeper gains `memhtml-supersedes`, dropped files `git mv` to archive |
-| 3 | `entity-resolution` | yes | one commit: `memhtml-entity` values normalized and cluster-merged in place |
-| 4 | `person-links` | no | one commit: `memhtml-about-person` links to `resources/people/*` |
-| 5 | `relationship-mining` | no | **no commit** — derived `relates_to` in the index only |
-| 6 | `edge-typing` | yes | one commit: typed edges promoted, and corroborated contradictions |
-| 7 | `confidence-decay` | no | one commit: `memhtml-confidence` rewritten for un-reinforced files |
-| 8 | `arc-synthesis` | yes | **one commit per arc** |
-| 9 | `retention-triage` | no | one commit: EVICT-band files `git mv` to archive |
-| 10 | `compress` | yes | **one commit per batch** |
-| 11 | `reprieve` | no | one commit: `memhtml-valid-until` extended, or the file archived |
-| 12 | `trace-consolidation` | yes | **one commit per distilled memory** |
-| 13 | `integrity` | no | one commit: dangling hrefs repaired, artifacts regenerated |
-| 14 | `state-export` | no | one commit: `.memhtml/state/access.jsonl` |
-| 15 | `report` | no | one commit: `.memhtml/sleep/<run-id>.html` |
+| #  | Phase                 | Model | Git effect                                                                       |
+| -- | --------------------- | ----- | -------------------------------------------------------------------------------- |
+| 1  | `preflight`           | no    | none — `index update`, snapshot counts                                           |
+| 2  | `dedup-merge`         | yes   | one commit: keeper gains `memhtml-supersedes`, dropped files `git mv` to archive |
+| 3  | `entity-resolution`   | yes   | one commit: `memhtml-entity` values normalized and cluster-merged in place       |
+| 4  | `person-links`        | no    | one commit: `memhtml-about-person` links to `resources/people/*`                 |
+| 5  | `relationship-mining` | no    | **no commit** — derived `relates_to` in the index only                           |
+| 6  | `edge-typing`         | yes   | one commit: typed edges promoted, and corroborated contradictions                |
+| 7  | `confidence-decay`    | no    | one commit: `memhtml-confidence` rewritten for un-reinforced files               |
+| 8  | `arc-synthesis`       | yes   | **one commit per arc**                                                           |
+| 9  | `retention-triage`    | no    | one commit: EVICT-band files `git mv` to archive                                 |
+| 10 | `compress`            | yes   | **one commit per batch**                                                         |
+| 11 | `reprieve`            | no    | one commit: `memhtml-valid-until` extended, or the file archived                 |
+| 12 | `trace-consolidation` | yes   | **one commit per distilled memory**                                              |
+| 13 | `integrity`           | no    | one commit: dangling hrefs repaired, artifacts regenerated                       |
+| 14 | `state-export`        | no    | one commit: `.memhtml/state/access.jsonl`                                        |
+| 15 | `report`              | no    | one commit: `.memhtml/sleep/<run-id>.html`                                       |
 
-`PHASE_BODIES` is a total `Record<SleepPhase, PhaseBody>` (`packages/sleep/src/phases/index.ts:27`), so a
-name added to `SLEEP_PHASES` without a body is a compile error rather than a run that silently skips it.
+`PHASE_BODIES` is a total `Record<SleepPhase, PhaseBody>` (`packages/sleep/src/phases/index.ts:27`), so a name added to `SLEEP_PHASES` without a body is a compile error rather than a run that silently skips it.
 
-**Per-phase isolation is the whole design.** A phase that throws is caught with `Effect.result`, recorded as
-a value, and the phases after it still run (`packages/sleep/src/run.ts:231`,
-`packages/sleep/src/run.ts:258`) — thirteen phases inside one transaction means one raise discards the
-twelve that already succeeded. `dedup-merge` is the one **hard prerequisite**, for `compress` and
-`retention-triage` (`packages/sleep/src/contract.ts:57-60`), because both operate on the post-merge set and
-running them over a corpus that still holds its duplicates would compress a pair the merge then archives
-half of. A failed phase's staged files are unstaged (`packages/sleep/src/run.ts:283-290`), which keeps the
-failure isolated in the *tree* as well as the report: a partial stage would make the next phase's commit
-carry the failed phase's half-finished work. **Nothing is ever rolled back** — `git branch -D` is the abort
-and `main` never moved (`packages/sleep/src/run.ts:29-31`).
+**Per-phase isolation is the whole design.** A phase that throws is caught with `Effect.result`, recorded as a value, and the phases after it still run (`packages/sleep/src/run.ts:231`, `packages/sleep/src/run.ts:258`) — thirteen phases inside one transaction means one raise discards the twelve that already succeeded. `dedup-merge` is the one **hard prerequisite**, for `compress` and `retention-triage` (`packages/sleep/src/contract.ts:57-60`), because both operate on the post-merge set and running them over a corpus that still holds its duplicates would compress a pair the merge then archives half of. A failed phase's staged files are unstaged (`packages/sleep/src/run.ts:283-290`), which keeps the failure isolated in the _tree_ as well as the report: a partial stage would make the next phase's commit carry the failed phase's half-finished work. **Nothing is ever rolled back** — `git branch -D` is the abort and `main` never moved (`packages/sleep/src/run.ts:29-31`).
 
-**Commit trailers are the resume mechanism.** Every phase commit carries `Memhtml-Run`, `Memhtml-Phase`, and
-`Memhtml-Counts` (`packages/sleep/src/contract.ts:67-69`, `packages/sleep/src/commit.ts:22-30`), and `resume`
-reads the completed set out of `git log base..HEAD` rather than out of `sleep_phases`
-(`packages/sleep/src/run.ts:138-145`, `packages/sleep/src/run.ts:334`). A journal table a resume depended on
-would be a second record of what happened, and the two disagree exactly when it matters — a process killed
-after `git commit` and before the row's write. The commit is the fact; the row is a convenience the history
-can regenerate, and a reporting write never fails a run (`packages/sleep/src/run.ts:434-439`). A resume
-reports already-done phases explicitly as `skipped`, so its report accounts for all sixteen
-(`packages/sleep/src/run.ts:176-191`).
+**Commit trailers are the resume mechanism.** Every phase commit carries `Memhtml-Run`, `Memhtml-Phase`, and `Memhtml-Counts` (`packages/sleep/src/contract.ts:67-69`, `packages/sleep/src/commit.ts:22-30`), and `resume` reads the completed set out of `git log base..HEAD` rather than out of `sleep_phases` (`packages/sleep/src/run.ts:138-145`, `packages/sleep/src/run.ts:334`). A journal table a resume depended on would be a second record of what happened, and the two disagree exactly when it matters — a process killed after `git commit` and before the row's write. The commit is the fact; the row is a convenience the history can regenerate, and a reporting write never fails a run (`packages/sleep/src/run.ts:434-439`). A resume reports already-done phases explicitly as `skipped`, so its report accounts for all sixteen (`packages/sleep/src/run.ts:176-191`).
 
-**Tasks are excluded from every phase** (`packages/sleep/src/sql.ts:36`), for different reasons per phase.
-In `relationship-mining` it is the graph firewall: mined edges are written `edge_class = 'memory'`, so a
-task endpoint would put a task into PageRank, MMR, and the bridge count, and the `edges` CHECK cannot
-refuse it because `relates_to` under `memory` is well-formed whatever files sit at its ends
-(`packages/sleep/src/phases/relationship-mining.ts:32-38`). In `retention-triage` it is sharper: the score
-is dominated by recency and access, so a task untouched for a month scores at the *floor* — exactly the
-task most likely to still be owed, so evicting on that signal would archive the neglected work first and
-leave the busy work behind (`packages/sleep/src/phases/retention-triage.ts:24-28`).
+**Tasks are excluded from every phase** (`packages/sleep/src/sql.ts:36`), for different reasons per phase. In `relationship-mining` it is the graph firewall: mined edges are written `edge_class = 'memory'`, so a task endpoint would put a task into PageRank, MMR, and the bridge count, and the `edges` CHECK cannot refuse it because `relates_to` under `memory` is well-formed whatever files sit at its ends (`packages/sleep/src/phases/relationship-mining.ts:32-38`). In `retention-triage` it is sharper: the score is dominated by recency and access, so a task untouched for a month scores at the _floor_ — exactly the task most likely to still be owed, so evicting on that signal would archive the neglected work first and leave the busy work behind (`packages/sleep/src/phases/retention-triage.ts:24-28`).
 
 ### 10.1 Thresholds and caps
 
-| Constant | Value | Location |
-|---|---|---|
-| Near-duplicate cosine / merges per cycle | 0.92 strict / 100 | `packages/domain/src/merge.ts:16-19` |
-| Entity auto-merge / review ratio | 0.85 / 0.75 | `packages/sleep/src/phases/entity-resolution.ts:65-68` |
-| Entity cluster confidence / detections / shard | 0.7 / 2 / 500 | `packages/sleep/src/phases/entity-resolution.ts:77-86` |
-| Mining cosine / k / sample | 0.85 / 5 / 2000 | `packages/sleep/src/phases/relationship-mining.ts:22-28` |
-| Dedup recall floor / component cap / components per night / members per call | 0.86 / 8 / 300 / 40 | `packages/sleep/src/phases/dedup-merge.ts:103-151` |
-| Edge-typing cosine / k / candidates / detections | 0.80 / 5 / 200 / 2 | `packages/sleep/src/phases/edge-typing.ts:89-112` |
-| Edge-typing pairs per call / promotions per night | 30 / 50 | `packages/sleep/src/phases/edge-typing.ts:86`, `:122` |
-| Confidence commit delta | 0.005 | `packages/domain/src/decay.ts:135` |
-| Compress batch / candidates | 8 / 2000 | `packages/sleep/src/phases/compress.ts:39-42` |
-| Retention bands | keep > 0.7, evict ≤ 0.3 | `packages/domain/src/retention.ts:144-145` |
-| Reprieve floor / days / max | 0.5 / 14 / 3 | `packages/domain/src/retention.ts:277-287` |
+| Constant                                                                     | Value                   | Location                                                 |
+| ---------------------------------------------------------------------------- | ----------------------- | -------------------------------------------------------- |
+| Near-duplicate cosine / merges per cycle                                     | 0.92 strict / 100       | `packages/domain/src/merge.ts:16-19`                     |
+| Entity auto-merge / review ratio                                             | 0.85 / 0.75             | `packages/sleep/src/phases/entity-resolution.ts:65-68`   |
+| Entity cluster confidence / detections / shard                               | 0.7 / 2 / 500           | `packages/sleep/src/phases/entity-resolution.ts:77-86`   |
+| Mining cosine / k / sample                                                   | 0.85 / 5 / 2000         | `packages/sleep/src/phases/relationship-mining.ts:22-28` |
+| Dedup recall floor / component cap / components per night / members per call | 0.86 / 8 / 300 / 40     | `packages/sleep/src/phases/dedup-merge.ts:103-151`       |
+| Edge-typing cosine / k / candidates / detections                             | 0.80 / 5 / 200 / 2      | `packages/sleep/src/phases/edge-typing.ts:89-112`        |
+| Edge-typing pairs per call / promotions per night                            | 30 / 50                 | `packages/sleep/src/phases/edge-typing.ts:86`, `:122`    |
+| Confidence commit delta                                                      | 0.005                   | `packages/domain/src/decay.ts:135`                       |
+| Compress batch / candidates                                                  | 8 / 2000                | `packages/sleep/src/phases/compress.ts:39-42`            |
+| Retention bands                                                              | keep > 0.7, evict ≤ 0.3 | `packages/domain/src/retention.ts:144-145`               |
+| Reprieve floor / days / max                                                  | 0.5 / 14 / 3            | `packages/domain/src/retention.ts:277-287`               |
 
-**The retention scorer** (`packages/domain/src/retention.ts:267`) is eight normalized signals under a
-per-type weight profile. Every profile's eight weights sum to exactly 1.0 under compensated summation
-(`packages/domain/src/retention.ts:199`), the convexity fact the composite's `[0, 1]` range rests on. Band
-boundaries belong to the lower band, so the three bands partition `[0, 1]` with no gap and no overlap
-(`packages/domain/src/retention.ts:260`). `LN2` rather than a `0.693` literal makes the half-life the
-*definition* of the recency curve, so a test asserts an equality instead of a tolerance
-(`packages/domain/src/retention.ts:131-137`). Half-lives are per type, with `procedural` and `task` set to
-`null` — a working procedure does not stale, and age is actively misleading about intended work
-(`packages/domain/src/retention.ts:110-126`).
+**The retention scorer** (`packages/domain/src/retention.ts:267`) is eight normalized signals under a per-type weight profile. Every profile's eight weights sum to exactly 1.0 under compensated summation (`packages/domain/src/retention.ts:199`), the convexity fact the composite's `[0, 1]` range rests on. Band boundaries belong to the lower band, so the three bands partition `[0, 1]` with no gap and no overlap (`packages/domain/src/retention.ts:260`). `LN2` rather than a `0.693` literal makes the half-life the _definition_ of the recency curve, so a test asserts an equality instead of a tolerance (`packages/domain/src/retention.ts:131-137`). Half-lives are per type, with `procedural` and `task` set to `null` — a working procedure does not stale, and age is actively misleading about intended work (`packages/domain/src/retention.ts:110-126`).
 
-**The merge veto** (`packages/domain/src/merge.ts:175`) is the disjunction of three symmetric divergence
-predicates: negation flip, numeric-token flip, variant-qualifier flip. Cosine is geometric and embedding
-models are weakest on exactly the tokens carrying polarity and discriminators, so "the deploy step is safe"
-and "the deploy step is NOT safe" sit above 0.92. Since the merge keeps the *older* file, a blind
-high-cosine merge folds a newer correction into an older wrong memory — it does not merely lose
-information, it restores the error the correction was written to fix (`packages/domain/src/merge.ts:1-13`).
-The **in-batch role guard** (`packages/domain/src/merge.ts:202-260`) fixes a path's role for the batch: a
-keeper cannot later be dropped, and vice versa. Both directions are required — recording only the drop side
-leaves the surviving corruption, where given `(gf, a)` then `(b, gf)` both decisions commit, `gf` absorbs
-`a` and is then archived into `b`, so `a`'s content is superseded into a file the same batch destroyed.
+**The merge veto** (`packages/domain/src/merge.ts:175`) is the disjunction of three symmetric divergence predicates: negation flip, numeric-token flip, variant-qualifier flip. Cosine is geometric and embedding models are weakest on exactly the tokens carrying polarity and discriminators, so "the deploy step is safe" and "the deploy step is NOT safe" sit above 0.92. Since the merge keeps the _older_ file, a blind high-cosine merge folds a newer correction into an older wrong memory — it does not merely lose information, it restores the error the correction was written to fix (`packages/domain/src/merge.ts:1-13`). The **in-batch role guard** (`packages/domain/src/merge.ts:202-260`) fixes a path's role for the batch: a keeper cannot later be dropped, and vice versa. Both directions are required — recording only the drop side leaves the surviving corruption, where given `(gf, a)` then `(b, gf)` both decisions commit, `gf` absorbs `a` and is then archived into `b`, so `a`'s content is superseded into a file the same batch destroyed.
 
-**The guards are a POST-FILTER over every proposal, including a model's**
-(`packages/domain/src/merge.ts:14-18`). With a model bound, `dedup-merge` mines a RECALL-oriented candidate
-set at 0.86, unions it with the frame-key exact matches, builds connected components over that union
-(size-capped at 8, 300 components a night), and asks the model to partition each component into merge
-groups — several components packed into one call, since a typical component is a pair and one call per
-component would spend a model call on two memories. The model answers one question, which of these
-memories are the same memory: it does not choose the canonical, it does not name a write target, and it is
-never asked an n² pair question. Every pair a group implies is routed through `mergeCandidates`, so the set
-of pairs that CAN be committed does not widen when a model is bound — it is the same predicate over a
-different candidate set, and a model that groups a claim with its own negation is refused by the predicate
-that refuses a blind cosine. The 0.86-to-0.92 band is what the model is for: a pair there is one no cosine
-can settle, and the deterministic path cannot see into it at all. Orientation stays arithmetic over corpus
-order, and inside a model-proposed group the keeper is the member with the lowest corpus offset. Model
-groups are offered to the filter FIRST, then the mined pairs above 0.92 no group already claimed, which
-gives two properties: the deterministic floor never regresses, and where the two disagree the semantic
-answer wins the path, because the model read both files and the cosine read neither. **With no model bound
-the phase is the deterministic floor, unchanged** — it mines at 0.92, orients, and hands the pairs to the
-same filter, so a night with no credentials still folds every duplicate a cosine can prove.
+**The guards are a POST-FILTER over every proposal, including a model's** (`packages/domain/src/merge.ts:14-18`). With a model bound, `dedup-merge` mines a RECALL-oriented candidate set at 0.86, unions it with the frame-key exact matches, builds connected components over that union (size-capped at 8, 300 components a night), and asks the model to partition each component into merge groups — several components packed into one call, since a typical component is a pair and one call per component would spend a model call on two memories. The model answers one question, which of these memories are the same memory: it does not choose the canonical, it does not name a write target, and it is never asked an n² pair question. Every pair a group implies is routed through `mergeCandidates`, so the set of pairs that CAN be committed does not widen when a model is bound — it is the same predicate over a different candidate set, and a model that groups a claim with its own negation is refused by the predicate that refuses a blind cosine. The 0.86-to-0.92 band is what the model is for: a pair there is one no cosine can settle, and the deterministic path cannot see into it at all. Orientation stays arithmetic over corpus order, and inside a model-proposed group the keeper is the member with the lowest corpus offset. Model groups are offered to the filter FIRST, then the mined pairs above 0.92 no group already claimed, which gives two properties: the deterministic floor never regresses, and where the two disagree the semantic answer wins the path, because the model read both files and the cosine read neither. **With no model bound the phase is the deterministic floor, unchanged** — it mines at 0.92, orients, and hands the pairs to the same filter, so a night with no credentials still folds every duplicate a cosine can prove.
 
-**Edge typing is four stages and the separation is the safety property**
-(`packages/sleep/src/phases/edge-typing.ts:27-76`): an SQL scan with no model, a deterministic batching
-step, one isolated model call per BATCH, then a deterministic promotion the model never makes. The scan is
-the union of two arms — mining's derived `relates_to` edges and a shared-entity scan at the cosine floor —
-because neither subsumes the other: a pair about one incident naming no common entity is invisible to the
-join and obvious to the embedder, and a same-entity pair below the mining floor is the reverse. Batching
-sorts pairs by the deepest directory both endpoints share and slices at 30, so the call count is
-`ceil(pairs / 30)` rather than one call per pair; at the measured 1,498 mined pairs a night, per-pair
-judging is 1,498 calls and does not scale. One call judges its whole batch over `{caused_by, leads_to,
+**Edge typing is four stages and the separation is the safety property** (`packages/sleep/src/phases/edge-typing.ts:27-76`): an SQL scan with no model, a deterministic batching step, one isolated model call per BATCH, then a deterministic promotion the model never makes. The scan is the union of two arms — mining's derived `relates_to` edges and a shared-entity scan at the cosine floor — because neither subsumes the other: a pair about one incident naming no common entity is invisible to the join and obvious to the embedder, and a same-entity pair below the mining floor is the reverse. Batching sorts pairs by the deepest directory both endpoints share and slices at 30, so the call count is `ceil(pairs / 30)` rather than one call per pair; at the measured 1,498 mined pairs a night, per-pair judging is 1,498 calls and does not scale. One call judges its whole batch over `{caused_by, leads_to,
 example_of, supports, part_of, contradicts, none}` plus a direction.
 
-Code decides what is written. A **directional** rel above the confidence floor is written into the
-SUBJECT's file alone, per the direction the model named, because a `caused_by` written into the cause
-instead of the effect says the opposite of what the model answered; there is no corroboration gate on
-those, since a `part_of` carries no retention penalty and is cheap for a reviewer to delete. A night
-promotes at most 50 authored edges across every batch and both kinds. **`contradicts` keeps the gate it
-always had**: it is symmetric, so its direction is ignored, and above the floor it bumps the corroboration
-counter and is written into **both** files only at `detections >= 2`, so a single machine detection can
-never reach the retention penalty. The bump and the promotion decision are one statement's `RETURNING`
-(`packages/sleep/src/phases/edge-typing.ts:325-337`), because two runs racing on one pair would otherwise
-both read `detections = 1` and both decline to promote; `addLink` is idempotent on the pair, so a
-re-promotion writes nothing. `none`, or anything below the floor, writes nothing and leaves the pair a
-mined `relates_to` — the answer an unsure model is told to pick. The phase **detects and stops** — choosing
-the winner of a contradiction is a one-way door on stored belief and belongs to an agent or a human, not to
-a nightly job.
+Code decides what is written. A **directional** rel above the confidence floor is written into the SUBJECT's file alone, per the direction the model named, because a `caused_by` written into the cause instead of the effect says the opposite of what the model answered; there is no corroboration gate on those, since a `part_of` carries no retention penalty and is cheap for a reviewer to delete. A night promotes at most 50 authored edges across every batch and both kinds. **`contradicts` keeps the gate it always had**: it is symmetric, so its direction is ignored, and above the floor it bumps the corroboration counter and is written into **both** files only at `detections >= 2`, so a single machine detection can never reach the retention penalty. The bump and the promotion decision are one statement's `RETURNING` (`packages/sleep/src/phases/edge-typing.ts:325-337`), because two runs racing on one pair would otherwise both read `detections = 1` and both decline to promote; `addLink` is idempotent on the pair, so a re-promotion writes nothing. `none`, or anything below the floor, writes nothing and leaves the pair a mined `relates_to` — the answer an unsure model is told to pick. The phase **detects and stops** — choosing the winner of a contradiction is a one-way door on stored belief and belongs to an agent or a human, not to a nightly job.
 
-**Five phases batch on one kernel** (`packages/sleep/src/batch.ts`): the phase sorts its rows and the
-kernel slices them into batches, mints opaque `m1`..`mN` keys, frames the member list as one prompt, and
-resolves the keys an answer names back to rows. Members are offered under opaque keys and never under
-paths, so a model shown `m3` can answer only `m3` and a key the batch never held resolves to nothing and is
-dropped — when the answer to "which of these do you absorb" could be a path, the answer is a write target
-the model chose. The kernel does no sorting of its own and preserves the order it is handed, which is what
-lets each phase state that its own batch boundaries and prompt bytes are a function of the corpus alone;
-sorting inside the kernel would take that guarantee from the phase that has to state it, because only the
-phase knows which column is its stable key. Caps are per-phase rather than shared, because `maxMembers` is
-how many members fit one answer's attention for that phase's question. `batchCall` sets `cacheSystem`, so
-each phase's system prompt and tool schema form a cache-eligible prefix across every batch of the night and
-only the member list is new bytes per call.
+**Five phases batch on one kernel** (`packages/sleep/src/batch.ts`): the phase sorts its rows and the kernel slices them into batches, mints opaque `m1`..`mN` keys, frames the member list as one prompt, and resolves the keys an answer names back to rows. Members are offered under opaque keys and never under paths, so a model shown `m3` can answer only `m3` and a key the batch never held resolves to nothing and is dropped — when the answer to "which of these do you absorb" could be a path, the answer is a write target the model chose. The kernel does no sorting of its own and preserves the order it is handed, which is what lets each phase state that its own batch boundaries and prompt bytes are a function of the corpus alone; sorting inside the kernel would take that guarantee from the phase that has to state it, because only the phase knows which column is its stable key. Caps are per-phase rather than shared, because `maxMembers` is how many members fit one answer's attention for that phase's question. `batchCall` sets `cacheSystem`, so each phase's system prompt and tool schema form a cache-eligible prefix across every batch of the night and only the member list is new bytes per call.
 
-**Entity resolution decides on centroids, not on character overlap.** The deterministic pre-pass still
-normalizes, exact-merges, and auto-merges at 0.85 character overlap, and that pass alone is the whole phase
-with no model bound. But character overlap is measurably wrong on the case the phase exists for: `laith`
-against `laith al-saadoon` scores 0.476 and `sanju` against `sanju kumar` 0.625, below even the 0.75 review
-band, so a short name and its full form are structurally invisible to a character ratio. The signal that
-separates them is what is WRITTEN under each name — the centroid of the vectors of every memory claiming it
-— computed in the same pass at `O(files)` and never per pair. With a model bound, ALL names of one entity
-type go into ONE clustering call sharded at 500, returning a partition into subjects rather than a pair
-verdict; at the measured 59 entities that is one call where the pair space is 1,711. The centroid is
-EVIDENCE handed to the model and never a threshold: on the measured corpus `checkout-api` against
-`payments-api` sits at 0.9333 while one person's two spellings sit at 0.7788, so any cosine floor that
-merged the person would fuse the two services first. Each member is offered with its memory count, up to
-three titles, its three nearest centroid neighbors, and — for a person — the `memhtml-alias` values a
-person file declares. The post-pass stays code: the surviving name follows a weight-then-lexicographic rule
-over the corpus's own file counts and never the model's `canonicalKey` (which is used only to validate that
-a cluster's canonical is one of its own members), and all three pair sources feed ONE union-find so no two
-passes can disagree. An alias-backed merge applies at once; a merge the model alone proposes clears the 0.7
-floor and is then counted in `state.entity_corroboration`
-(`packages/index/state-migrations/S0002_entity_corroboration.sql`), applying only once two different nights
-have reached it.
+**Entity resolution decides on centroids, not on character overlap.** The deterministic pre-pass still normalizes, exact-merges, and auto-merges at 0.85 character overlap, and that pass alone is the whole phase with no model bound. But character overlap is measurably wrong on the case the phase exists for: `laith` against `laith al-saadoon` scores 0.476 and `sanju` against `sanju kumar` 0.625, below even the 0.75 review band, so a short name and its full form are structurally invisible to a character ratio. The signal that separates them is what is WRITTEN under each name — the centroid of the vectors of every memory claiming it — computed in the same pass at `O(files)` and never per pair. With a model bound, ALL names of one entity type go into ONE clustering call sharded at 500, returning a partition into subjects rather than a pair verdict; at the measured 59 entities that is one call where the pair space is 1,711. The centroid is EVIDENCE handed to the model and never a threshold: on the measured corpus `checkout-api` against `payments-api` sits at 0.9333 while one person's two spellings sit at 0.7788, so any cosine floor that merged the person would fuse the two services first. Each member is offered with its memory count, up to three titles, its three nearest centroid neighbors, and — for a person — the `memhtml-alias` values a person file declares. The post-pass stays code: the surviving name follows a weight-then-lexicographic rule over the corpus's own file counts and never the model's `canonicalKey` (which is used only to validate that a cluster's canonical is one of its own members), and all three pair sources feed ONE union-find so no two passes can disagree. An alias-backed merge applies at once; a merge the model alone proposes clears the 0.7 floor and is then counted in `state.entity_corroboration` (`packages/index/state-migrations/S0002_entity_corroboration.sql`), applying only once two different nights have reached it.
 
-**Graph analysis runs in TypeScript** (`packages/domain/src/graph.ts:76`,
-`packages/domain/src/graph.ts:164`): PageRank by power iteration, communities by label propagation.
-Determinism is a correctness requirement — these scores feed the `pagerank` and `bridgeImportance` signals,
-so a run-to-run reordering would change which memories get evicted on a corpus that did not change
-(`packages/domain/src/graph.ts:1-11`). Every order source is pinned: nodes sorted before iteration so the
-floating-point summation order is fixed, parallel edges folded to their maximum strength, label propagation
-visiting in sorted order with lexicographic tie-breaking rather than a random seed. Community labels are
-canonicalized to the smallest member path, so the *partition* is reproducible and not just the grouping.
-Communities below three members collapse to `undefined` (`packages/domain/src/graph.ts:29-30`) — a pair
-passed off as a community would make every cross-pair edge look like a bridge — and `bridgeCounts` gives a
-node in no community a count of 0 rather than its full degree (`packages/domain/src/graph.ts:236-247`).
+**Graph analysis runs in TypeScript** (`packages/domain/src/graph.ts:76`, `packages/domain/src/graph.ts:164`): PageRank by power iteration, communities by label propagation. Determinism is a correctness requirement — these scores feed the `pagerank` and `bridgeImportance` signals, so a run-to-run reordering would change which memories get evicted on a corpus that did not change (`packages/domain/src/graph.ts:1-11`). Every order source is pinned: nodes sorted before iteration so the floating-point summation order is fixed, parallel edges folded to their maximum strength, label propagation visiting in sorted order with lexicographic tie-breaking rather than a random seed. Community labels are canonicalized to the smallest member path, so the _partition_ is reproducible and not just the grouping. Communities below three members collapse to `undefined` (`packages/domain/src/graph.ts:29-30`) — a pair passed off as a community would make every cross-pair edge look like a bridge — and `bridgeCounts` gives a node in no community a count of 0 rather than its full degree (`packages/domain/src/graph.ts:236-247`).
 
-**The model phases** use one call shape: the native Messages API with a forced tool
-(`packages/llm/src/wire.ts:9-12`, `packages/llm/src/constants.ts:24`), decoded against its schema and
-failing typed on any violation rather than coercing (`packages/llm/src/structured.ts:64`). Not Converse: the
-effort and thinking rules are per-model and exact, and Converse has no field for either. Three Claude models
-are reached through `global.` inference profiles, with `thinking` sent for two and omitted for the third
-because sending it there is a validation error rather than a no-op (`packages/llm/src/models.ts:27-30`,
-`packages/llm/src/models.ts:57`). Every phase caps its calls and isolates each one, so a single malformed
-response skips its BATCH and is counted rather than failing the phase — a night that typed nine batches of
-pairs and lost the tenth has done nine batches of work (`packages/sleep/src/batch.ts:216-233`). `arc-synthesis` splits triage
-from execution, because a single call asked to both choose and write produces content for arcs it should
-have skipped and the writing is the expensive half
-(`packages/sleep/src/phases/arc-synthesis.ts:25-28`). `compress` archives a member only when the model
-names it as absorbed; an omitted member stays active, which is the safe outcome
-(`packages/sleep/src/phases/compress.ts:24-27`).
+**The model phases** use one call shape: the native Messages API with a forced tool (`packages/llm/src/wire.ts:9-12`, `packages/llm/src/constants.ts:24`), decoded against its schema and failing typed on any violation rather than coercing (`packages/llm/src/structured.ts:64`). Not Converse: the effort and thinking rules are per-model and exact, and Converse has no field for either. Three Claude models are reached through `global.` inference profiles, with `thinking` sent for two and omitted for the third because sending it there is a validation error rather than a no-op (`packages/llm/src/models.ts:27-30`, `packages/llm/src/models.ts:57`). Every phase caps its calls and isolates each one, so a single malformed response skips its BATCH and is counted rather than failing the phase — a night that typed nine batches of pairs and lost the tenth has done nine batches of work (`packages/sleep/src/batch.ts:216-233`). `arc-synthesis` splits triage from execution, because a single call asked to both choose and write produces content for arcs it should have skipped and the writing is the expensive half (`packages/sleep/src/phases/arc-synthesis.ts:25-28`). `compress` archives a member only when the model names it as absorbed; an omitted member stays active, which is the safe outcome (`packages/sleep/src/phases/compress.ts:24-27`).
 
-**Generated artifacts are the one merge-conflict source.** Per-directory `index.html` and root
-`sitemap.xml` are deterministic given the row set and regenerated only by `memhtml publish` and the integrity
-phase, never on an ordinary write (`packages/sleep/src/publish.ts:159`,
-`packages/sleep/src/phases/integrity.ts:31-34`). `.gitattributes` marks them `merge=ours`
-(`packages/store/src/layout.ts:70`), inert without the `merge.ours.driver` config `memhtml init` sets — so a
-conflict is resolved by regeneration, never by hand.
+**Generated artifacts are the one merge-conflict source.** Per-directory `index.html` and root `sitemap.xml` are deterministic given the row set and regenerated only by `memhtml publish` and the integrity phase, never on an ordinary write (`packages/sleep/src/publish.ts:159`, `packages/sleep/src/phases/integrity.ts:31-34`). `.gitattributes` marks them `merge=ours` (`packages/store/src/layout.ts:70`), inert without the `merge.ours.driver` config `memhtml init` sets — so a conflict is resolved by regeneration, never by hand.
 
-The integrity phase distinguishes two kinds of dangling href
-(`packages/sleep/src/phases/integrity.ts:20-34`): an archived target still exists and the edge still says
-something true, so the href is rewritten to the archive path — *derived* with `archivePathFor` rather than
-searched for, since the mapping is injective and no rename-similarity score is consulted anywhere. A target
-that is simply gone means the edge asserts a relationship to nothing, so it is dropped with a warning;
-leaving it would produce a dangling row on every rebuild forever. Years are tried newest-first over a
-ten-year window (`packages/sleep/src/phases/integrity.ts:127`), so the most recent archiving of a
-twice-archived path wins.
+The integrity phase distinguishes two kinds of dangling href (`packages/sleep/src/phases/integrity.ts:20-34`): an archived target still exists and the edge still says something true, so the href is rewritten to the archive path — _derived_ with `archivePathFor` rather than searched for, since the mapping is injective and no rename-similarity score is consulted anywhere. A target that is simply gone means the edge asserts a relationship to nothing, so it is dropped with a warning; leaving it would produce a dangling row on every rebuild forever. Years are tried newest-first over a ten-year window (`packages/sleep/src/phases/integrity.ts:127`), so the most recent archiving of a twice-archived path wins.
 
-**Review and the merge gate.** `review` (`packages/sleep/src/review.ts:19`) reports per-phase counts, the
-commit list with their trailers, `git diff --stat base..HEAD`, and a per-file classification —
-`meta-only`, `body-changed`, `archived`, `created`, `deleted` (`packages/sleep/src/contract.ts:131`).
-`merge` has **two refusals, both before anything moves** (`packages/sleep/src/review.ts:214-221`): `main`
-having advanced past `base_sha` refuses as `main-advanced`, and a failing pre-merge gate refuses as
-`gate-failed`. `@memhtml/sleep` takes the gate as a parameter and **supplies no default**
-(`packages/sleep/src/review.ts:196-206`) — a package that cannot import the eval must not be able to
-silently default it, so the composition is visible in the CLI's own wiring or it does not exist
-(`apps/cli/src/run.ts:496-515`). The gate runs in `fake` mode (`packages/eval/src/run.ts:174`) because it
-measures the ranking stack against a generated fixture corpus, and a live-Bedrock gate would make a nightly
-merge conditional on a network call and on credentials being present at 3am.
+**Review and the merge gate.** `review` (`packages/sleep/src/review.ts:19`) reports per-phase counts, the commit list with their trailers, `git diff --stat base..HEAD`, and a per-file classification — `meta-only`, `body-changed`, `archived`, `created`, `deleted` (`packages/sleep/src/contract.ts:131`). `merge` has **two refusals, both before anything moves** (`packages/sleep/src/review.ts:214-221`): `main` having advanced past `base_sha` refuses as `main-advanced`, and a failing pre-merge gate refuses as `gate-failed`. `@memhtml/sleep` takes the gate as a parameter and **supplies no default** (`packages/sleep/src/review.ts:196-206`) — a package that cannot import the eval must not be able to silently default it, so the composition is visible in the CLI's own wiring or it does not exist (`apps/cli/src/run.ts:496-515`). The gate runs in `fake` mode (`packages/eval/src/run.ts:174`) because it measures the ranking stack against a generated fixture corpus, and a live-Bedrock gate would make a nightly merge conditional on a network call and on credentials being present at 3am.
 
 ## 11. Concurrency and conflict surfacing
 
 Git is the optimistic-concurrency mechanism. Two agents editing different files never interact.
 
-Two agents editing the *same* file surface as a merge conflict, and the recovery belongs to the caller.
-`mergeBranch` (`packages/store/src/store.ts:924`) reads both competing blob shas out of the unmerged index —
-stage 2 is ours, stage 3 is theirs — **before** aborting, because `merge --abort` discards the unmerged
-index. It then fails with a typed `WriteConflict` carrying the path and both shas
-(`packages/contracts/src/errors.ts:19`), which reaches an agent as `ERR_WRITE_CONFLICT` plus the suggestion
-to re-read and reapply (`apps/cli/src/errors.ts:130-133`).
+Two agents editing the _same_ file surface as a merge conflict, and the recovery belongs to the caller. `mergeBranch` (`packages/store/src/store.ts:924`) reads both competing blob shas out of the unmerged index — stage 2 is ours, stage 3 is theirs — **before** aborting, because `merge --abort` discards the unmerged index. It then fails with a typed `WriteConflict` carrying the path and both shas (`packages/contracts/src/errors.ts:19`), which reaches an agent as `ERR_WRITE_CONFLICT` plus the suggestion to re-read and reapply (`apps/cli/src/errors.ts:130-133`).
 
-Sleep is stricter: `preflight` refuses on a dirty tree (`packages/store/src/store.ts:918`,
-`packages/contracts/src/errors.ts:56`) and `merge` refuses if `main` moved. Rerunning is cheap because the
-phases are idempotent — an already-merged duplicate no longer surfaces as a candidate, an already-decayed
-confidence is a fixed point (`packages/domain/src/decay.ts:116`), and an already-archived file is not a
-candidate.
+Sleep is stricter: `preflight` refuses on a dirty tree (`packages/store/src/store.ts:918`, `packages/contracts/src/errors.ts:56`) and `merge` refuses if `main` moved. Rerunning is cheap because the phases are idempotent — an already-merged duplicate no longer surfaces as a candidate, an already-decayed confidence is a fixed point (`packages/domain/src/decay.ts:116`), and an already-archived file is not a candidate.
 
 ## 12. The envelope contract and the tool surface
 
-Every command writes one JSON envelope to stdout and nothing else; logs go to stderr. `AGENTS.md` is
-generated from the same `COMMANDS` array that drives parsing (`apps/cli/src/agents-doc.ts:24`), so it is
-the reference for the command list and cannot drift from the live answer.
+Every command writes one JSON envelope to stdout and nothing else; logs go to stderr. `AGENTS.md` is generated from the same `COMMANDS` array that drives parsing (`apps/cli/src/agents-doc.ts:24`), so it is the reference for the command list and cannot drift from the live answer.
 
-`apiVersion` lets the envelope evolve without silently breaking parsers, and `type` is a discriminator an
-agent reads to know the shape of `data` before parsing it (`apps/cli/src/envelope.ts:1-6`). Both
-`RESPONSE_TYPES` (`apps/cli/src/envelope.ts:12`) and `ERROR_CODES` (`apps/cli/src/envelope.ts:66`) are
-**append-only**: once shipped, a code's meaning never changes and a code is never removed, because agents
-branch on `code` and never on the human `error` string, which changes freely as wording improves. Exit
-codes are 0 / 2 / 1 (`apps/cli/src/envelope.ts:87-89`). `--dense` strips nulls and indentation
-(`apps/cli/src/envelope.ts:143`), and an unknown argument comes back with Levenshtein-nearest candidates
-(`apps/cli/src/envelope.ts:124`) rather than a dead end.
+`apiVersion` lets the envelope evolve without silently breaking parsers, and `type` is a discriminator an agent reads to know the shape of `data` before parsing it (`apps/cli/src/envelope.ts:1-6`). Both `RESPONSE_TYPES` (`apps/cli/src/envelope.ts:12`) and `ERROR_CODES` (`apps/cli/src/envelope.ts:66`) are **append-only**: once shipped, a code's meaning never changes and a code is never removed, because agents branch on `code` and never on the human `error` string, which changes freely as wording improves. Exit codes are 0 / 2 / 1 (`apps/cli/src/envelope.ts:87-89`). `--dense` strips nulls and indentation (`apps/cli/src/envelope.ts:143`), and an unknown argument comes back with Levenshtein-nearest candidates (`apps/cli/src/envelope.ts:124`) rather than a dead end.
 
-`failureFor` (`apps/cli/src/errors.ts:154`) is the **one** translation from a typed domain failure to a
-code, total by construction: an unrecognized `_tag` becomes `ERR_UNKNOWN` rather than an empty response
-(`apps/cli/src/errors.ts:41`). The human message is deliberately narrow
-(`apps/cli/src/errors.ts:69-77`) — every payload field it names is one a caller can act on: a path to
-re-read, two shas to reconcile, a model to check. It never carries the driver's message, the SQL, the git
-argv, or any memory body, because each typed error class already dropped those at its adapter edge
-precisely so a tool response could not carry corpus content (`packages/contracts/src/errors.ts:3-8`,
-`packages/index/src/database.ts:152-162`). Suggestions are part of the contract
-(`apps/cli/src/errors.ts:111-127`), so an agent receiving `ERR_INDEX_STALE` can recover in one step without
-a round trip to a human; an absent list is `[]`, never null. Per-op batch codes are mapped **once**, in the
-operations layer (`apps/cli/src/operations.ts:367-381`), so `memhtml apply` and `memory_write_batch` cannot
-report different codes for one refused op.
+`failureFor` (`apps/cli/src/errors.ts:154`) is the **one** translation from a typed domain failure to a code, total by construction: an unrecognized `_tag` becomes `ERR_UNKNOWN` rather than an empty response (`apps/cli/src/errors.ts:41`). The human message is deliberately narrow (`apps/cli/src/errors.ts:69-77`) — every payload field it names is one a caller can act on: a path to re-read, two shas to reconcile, a model to check. It never carries the driver's message, the SQL, the git argv, or any memory body, because each typed error class already dropped those at its adapter edge precisely so a tool response could not carry corpus content (`packages/contracts/src/errors.ts:3-8`, `packages/index/src/database.ts:152-162`). Suggestions are part of the contract (`apps/cli/src/errors.ts:111-127`), so an agent receiving `ERR_INDEX_STALE` can recover in one step without a round trip to a human; an absent list is `[]`, never null. Per-op batch codes are mapped **once**, in the operations layer (`apps/cli/src/operations.ts:367-381`), so `memhtml apply` and `memory_write_batch` cannot report different codes for one refused op.
 
-Fourteen MCP tools are built with `Tool.make` and collected by `Toolkit.make`
-(`apps/mcp/src/tools.ts:774`), plus two resources — `memhtml://file/{path}` for citation-grade drill-down and
-`memhtml://sleep/{run-id}` for a run report (`apps/mcp/src/resources.ts:90`). Sleep is not an agent tool: it is
-an operator action producing a reviewable branch. Two things about the server are forced by the transport
-and the SDK rather than chosen:
+Fourteen MCP tools are built with `Tool.make` and collected by `Toolkit.make` (`apps/mcp/src/tools.ts:774`), plus two resources — `memhtml://file/{path}` for citation-grade drill-down and `memhtml://sleep/{run-id}` for a run report (`apps/mcp/src/resources.ts:90`). Sleep is not an agent tool: it is an operator action producing a reviewable branch. Two things about the server are forced by the transport and the SDK rather than chosen:
 
-- **`Logger.LogToStderr` is mandatory** (`apps/mcp/src/server.ts:20-22`). Effect's default logger writes to
-  stdout, and stdout here is the NDJSON-RPC stream — one log line corrupts the frame a client is mid-parse
-  on.
-- **Tool descriptions are the only server-level guidance channel** (`apps/mcp/src/server.ts:24-38`). MCP
-  defines an `instructions` field on the initialize response and the SDK's handler does not emit it, so
-  `BATCH_GUIDANCE` and `ARTICLE_HTML_CONTRACT` are shared constants appended to every description they
-  apply to (`apps/mcp/src/tools.ts:124`, `apps/mcp/src/tools.ts:155`), which is why they read as prose to an
-  agent rather than as notes to a maintainer.
+- **`Logger.LogToStderr` is mandatory** (`apps/mcp/src/server.ts:20-22`). Effect's default logger writes to stdout, and stdout here is the NDJSON-RPC stream — one log line corrupts the frame a client is mid-parse on.
+- **Tool descriptions are the only server-level guidance channel** (`apps/mcp/src/server.ts:24-38`). MCP defines an `instructions` field on the initialize response and the SDK's handler does not emit it, so `BATCH_GUIDANCE` and `ARTICLE_HTML_CONTRACT` are shared constants appended to every description they apply to (`apps/mcp/src/tools.ts:124`, `apps/mcp/src/tools.ts:155`), which is why they read as prose to an agent rather than as notes to a maintainer.
 
-Tool failures are a declared `Schema.ErrorClass` (`apps/mcp/src/failure.ts:31`), and that is load-bearing:
-of the SDK's three catch branches for a failed `tools/call`, only the one reached by a value the tool's own
-`failureSchema` accepts passes prose through verbatim — a generic error is rewritten to an
-internal-server-error sentence, which is the difference between an agent that can recover and an agent that
-reads a sentence with no content in it. Code, message, and suggestions fold into `.message` at construction
-because MCP's tool-error channel is one text block, with the `ERR_*` code first so a consumer can read it
-back off the prefix.
+Tool failures are a declared `Schema.ErrorClass` (`apps/mcp/src/failure.ts:31`), and that is load-bearing: of the SDK's three catch branches for a failed `tools/call`, only the one reached by a value the tool's own `failureSchema` accepts passes prose through verbatim — a generic error is rewritten to an internal-server-error sentence, which is the difference between an agent that can recover and an agent that reads a sentence with no content in it. Code, message, and suggestions fold into `.message` at construction because MCP's tool-error channel is one text block, with the `ERR_*` code first so a consumer can read it back off the prefix.
 
-The CLI's own guidance lives in the manifest's `guide` blocks (`apps/cli/src/commands.ts:762`), rendered
-into `AGENTS.md` by the same generator (`apps/cli/src/agents-doc.ts:52`), so the doc and the live answer
-cannot disagree. The `memhtml task` family is sugar over the same use cases: `task add` is `write --type task`,
-`task status` edits one head meta and routes `done` through the archive machinery, and `task list` is a
-direct indexed scan that never enters retrieval, backed by a partial index over live tasks
-(`packages/index/migrations/0008_tasks.sql:136-137`). `memhtml link` accepts the task rels; `memory_link` does
-not, refusing one at decode.
+The CLI's own guidance lives in the manifest's `guide` blocks (`apps/cli/src/commands.ts:762`), rendered into `AGENTS.md` by the same generator (`apps/cli/src/agents-doc.ts:52`), so the doc and the live answer cannot disagree. The `memhtml task` family is sugar over the same use cases: `task add` is `write --type task`, `task status` edits one head meta and routes `done` through the archive machinery, and `task list` is a direct indexed scan that never enters retrieval, backed by a partial index over live tasks (`packages/index/migrations/0008_tasks.sql:136-137`). `memhtml link` accepts the task rels; `memory_link` does not, refusing one at decode.
 
 ## 13. Testing posture
 
-Integration tests drive the **real** driver against `":memory:"` with the real migrations
-(`packages/index/src/database.ts:254-258`) and the **real git binary** against a temp-dir repo
-(`packages/store/src/store.ts:331-334`). A fake driver would verify the shape of the calls and miss every
-constraint the database enforces; a fake git would verify that the right strings were assembled and miss
-every state transition that matters. Fakes are `Layer.succeed` values — a deterministic hash-seeded
-embedder whose cosine relations are a pure function of the text (`packages/eval/src/harness.ts:52`), a
-failing embedder for the degraded path (`packages/eval/src/harness.ts:99`), and a scripted model.
+Integration tests drive the **real** driver against `":memory:"` with the real migrations (`packages/index/src/database.ts:254-258`) and the **real git binary** against a temp-dir repo (`packages/store/src/store.ts:331-334`). A fake driver would verify the shape of the calls and miss every constraint the database enforces; a fake git would verify that the right strings were assembled and miss every state transition that matters. Fakes are `Layer.succeed` values — a deterministic hash-seeded embedder whose cosine relations are a pure function of the text (`packages/eval/src/harness.ts:52`), a failing embedder for the degraded path (`packages/eval/src/harness.ts:99`), and a scripted model.
 
-Property tests with `fast-check` cover `@memhtml/domain` and `@memhtml/html`. The load-bearing ones: the content
-hash is invariant under any meta-only mutation; `originalPathFor(archivePathFor(p, y)) === p`; every weight
-profile sums to exactly 1.0 under compensated summation; each retention band boundary is owned by the lower
-band; decay is unconditionally non-increasing and floor-respecting; RRF is strictly decreasing in rank and
-order-insensitive across arms; MMR's output is a duplicate-free subsequence of its input; each divergence
-predicate is symmetric; label propagation yields the same partition for the same edge list; and the pure
-cooldown twin agrees with the SQL at the boundary.
+Property tests with `fast-check` cover `@memhtml/domain` and `@memhtml/html`. The load-bearing ones: the content hash is invariant under any meta-only mutation; `originalPathFor(archivePathFor(p, y)) === p`; every weight profile sums to exactly 1.0 under compensated summation; each retention band boundary is owned by the lower band; decay is unconditionally non-increasing and floor-respecting; RRF is strictly decreasing in rank and order-insensitive across arms; MMR's output is a duplicate-free subsequence of its input; each divergence predicate is symmetric; label propagation yields the same partition for the same edge list; and the pure cooldown twin agrees with the SQL at the boundary.
 
-**The discrimination gate** (`packages/eval/src/discriminate.ts:224`) asks whether the retrieval stack
-ranks a memory above its own high-similarity *wrong* twin — controls derived mechanically from the target
-by the three divergence families and each validated against its own family's predicate, so a control that
-failed to diverge is discarded rather than scored (`packages/eval/src/controls.ts:25`,
-`packages/eval/src/controls.ts:163`).
+**The discrimination gate** (`packages/eval/src/discriminate.ts:224`) asks whether the retrieval stack ranks a memory above its own high-similarity _wrong_ twin — controls derived mechanically from the target by the three divergence families and each validated against its own family's predicate, so a control that failed to diverge is discarded rather than scored (`packages/eval/src/controls.ts:25`, `packages/eval/src/controls.ts:163`).
 
-Two numbers, and **the strict one is the gate** (`packages/eval/src/discriminate.ts:18-21`). `mrr` is
-measured in the space of `{target} ∪ controls` alone against a floor of 0.85
-(`packages/eval/src/discriminate.ts:103`), while the refusal is per-probe and absolute: a single target
-ranked at or below any of its own controls is an inversion, and one inversion fails the run regardless of
-what MRR says, because an aggregate alone can be bought by thirty easy probes covering one broken one. A
-control the search never returned counts as outranked, since being absent is worse than being last.
-`corpusMrr` is measured against the whole corpus and is **reported, not gated**: it is low by construction
-on a fixture holding many near-identical memories, and reading it as a retrieval defect would confuse the
-two coordinate spaces the two field names exist to keep apart
-(`packages/eval/src/discriminate.ts:76-88`).
+Two numbers, and **the strict one is the gate** (`packages/eval/src/discriminate.ts:18-21`). `mrr` is measured in the space of `{target} ∪ controls` alone against a floor of 0.85 (`packages/eval/src/discriminate.ts:103`), while the refusal is per-probe and absolute: a single target ranked at or below any of its own controls is an inversion, and one inversion fails the run regardless of what MRR says, because an aggregate alone can be bought by thirty easy probes covering one broken one. A control the search never returned counts as outranked, since being absent is worse than being last. `corpusMrr` is measured against the whole corpus and is **reported, not gated**: it is low by construction on a fixture holding many near-identical memories, and reading it as a retrieval defect would confuse the two coordinate spaces the two field names exist to keep apart (`packages/eval/src/discriminate.ts:76-88`).
 
-**A skipped quality gate never looks like a passing one** (`packages/eval/src/run.ts:15-23`). `fake` mode
-runs everywhere and is what CI measures; `live` mode without credentials reports `skipped: true` and
-`passed: false` with a loud stderr line, never a green report — a caller asking for live and getting a
-silent fake would be told the real vector space discriminates when nothing measured it.
+**A skipped quality gate never looks like a passing one** (`packages/eval/src/run.ts:15-23`). `fake` mode runs everywhere and is what CI measures; `live` mode without credentials reports `skipped: true` and `passed: false` with a loud stderr line, never a green report — a caller asking for live and getting a silent fake would be told the real vector space discriminates when nothing measured it.
 
-The gate is wired in three places: `memhtml eval discriminate` exits non-zero on any inversion, `pnpm check`
-runs it as a `test:eval` turbo task, and `memhtml sleep merge` re-runs it and refuses the merge on failure. The
-refusal is the point — a sleep run that degrades retrieval quality does not land.
+The gate is wired in three places: `memhtml eval discriminate` exits non-zero on any inversion, `pnpm check` runs it as a `test:eval` turbo task, and `memhtml sleep merge` re-runs it and refuses the merge on failure. The refusal is the point — a sleep run that degrades retrieval quality does not land.
 
 ## 14. The published artifact
 
-Twelve workspace packages, one published package. All twelve are `private`, so `npm publish` refuses
-them, and `mise run package:assemble` bundles them into a single `memhtml` carrying two binaries,
-`memhtml` and `memhtml-mcp` (`tsdown.config.ts`, `scripts/package-manifest.mjs`). The layering in §1 is
-the shape of the source; it is not a distribution surface, and nine of the eleven libraries had no
-consumer outside this repository to be a surface for.
+Twelve workspace packages, one published package. All twelve are `private`, so `npm publish` refuses them, and `mise run package:assemble` bundles them into a single `memhtml` carrying two binaries, `memhtml` and `memhtml-mcp` (`tsdown.config.ts`, `scripts/package-manifest.mjs`). The layering in §1 is the shape of the source; it is not a distribution surface, and nine of the eleven libraries had no consumer outside this repository to be a surface for.
 
-**The published contract is the two binaries and their envelope**, not an import. There is no `exports`
-map, deliberately: declaring an entry point would promise a surface no test covers, and adding one later
-is a minor bump while removing one is a major, so the cheap direction stays available.
+**The published contract is the two binaries and their envelope**, not an import. There is no `exports` map, deliberately: declaring an entry point would promise a surface no test covers, and adding one later is a minor bump while removing one is a major, so the cheap direction stays available.
 
-**Nothing that resolves a path at run time may be bundled with the code that resolves it.** Five things
-do, and after bundling the resolving module lives in `dist/`, so each asset is copied to the package
-root one level above:
+**Nothing that resolves a path at run time may be bundled with the code that resolves it.** Five things do, and after bundling the resolving module lives in `dist/`, so each asset is copied to the package root one level above:
 
-| Asset | Resolved by | From |
-|---|---|---|
-| `migrations/`, `state-migrations/` | `new URL("../migrations", import.meta.url)` (`packages/index/src/schema-const.ts:8`) | `packages/index/` |
-| `guest/corpus.mjs` | `resolve(dirname(fileURLToPath(import.meta.url)), "..", "guest", …)` (`apps/cli/src/exec.ts:108`) | `apps/cli/` |
-| `agent/`, `src/` | eve compiles them; `agent/` reaches `../../src/*.js` | `apps/consolidator/` |
+| Asset                              | Resolved by                                                                                       | From                 |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------- |
+| `migrations/`, `state-migrations/` | `new URL("../migrations", import.meta.url)` (`packages/index/src/schema-const.ts:8`)              | `packages/index/`    |
+| `guest/corpus.mjs`                 | `resolve(dirname(fileURLToPath(import.meta.url)), "..", "guest", …)` (`apps/cli/src/exec.ts:108`) | `apps/cli/`          |
+| `agent/`, `src/`                   | eve compiles them; `agent/` reaches `../../src/*.js`                                              | `apps/consolidator/` |
 
-Two dependencies must additionally stay OUTSIDE the bundle, because their files are read rather than
-imported: `node-html-parser`, whose published `dist/index.mjs` is read as bytes into the QuickJS guest
-(`apps/cli/src/exec.ts:136`), and `highlight.js`, loaded through `createRequire` on the first detection
-(`packages/html/src/detect.ts:51`). A third, `eve`, is spawned rather than imported and is located
-through `eve/package.json` because its `exports` map declares no `./bin/*` subpath
-(`apps/consolidator/src/agent-build.ts`). Externals are derived from the workspace manifests as patterns
-that match subpaths, since `effect` alone does not match `effect/unstable/cli`.
+Two dependencies must additionally stay OUTSIDE the bundle, because their files are read rather than imported: `node-html-parser`, whose published `dist/index.mjs` is read as bytes into the QuickJS guest (`apps/cli/src/exec.ts:136`), and `highlight.js`, loaded through `createRequire` on the first detection (`packages/html/src/detect.ts:51`). A third, `eve`, is spawned rather than imported and is located through `eve/package.json` because its `exports` map declares no `./bin/*` subpath (`apps/consolidator/src/agent-build.ts`). Externals are derived from the workspace manifests as patterns that match subpaths, since `effect` alone does not match `effect/unstable/cli`.
 
-**Where eve's agent is built decides whether it can boot.** nitro externalizes any module it resolves
-from inside `node_modules`, so building the agent in an installed package produces `eve build` exit 0
-followed by `eve start` exit 13 on an unsettled top-level await — a build that looks fine and a server
-that dies. `resolveAgentAppRoot` copies `agent/` plus `src/` to `~/.cache/memhtml/eve/<version>/` and
-builds there, outside `node_modules`, where the emitted `index.mjs` is ~316 kB inlined rather than ~17 kB
-beside a traced `_libs/@memhtml/…` chunk. Shipping a prebuilt `.output/` is refused: the build traces
-platform-specific native binaries into it.
+**Where eve's agent is built decides whether it can boot.** nitro externalizes any module it resolves from inside `node_modules`, so building the agent in an installed package produces `eve build` exit 0 followed by `eve start` exit 13 on an unsettled top-level await — a build that looks fine and a server that dies. `resolveAgentAppRoot` copies `agent/` plus `src/` to `~/.cache/memhtml/eve/<version>/` and builds there, outside `node_modules`, where the emitted `index.mjs` is ~316 kB inlined rather than ~17 kB beside a traced `_libs/@memhtml/…` chunk. Shipping a prebuilt `.output/` is refused: the build traces platform-specific native binaries into it.
 
-**The artifact has its own gate, because no other tier can see it.** Every suite in §13 resolves
-`@memhtml/*` through pnpm's links, where each asset is on disk whether or not anything declares it —
-three assets shipped absent from every tarball under exactly that blindness. `mise run package:smoke`
-installs the tarball into a throwaway directory and drives all 36 commands and all 14 MCP tools through
-the installed binary, enumerating both surfaces from the artifact itself (`memhtml manifest`,
-`tools/list`) so a new command or tool fails a census rather than going untested. It is outside `pnpm
-check` because it needs the registry, and `check` is offline by construction. `--live` adds the three
-edges the credential-free run cannot reach: Bedrock embeddings, the sleep phases that call a model, and
-the consolidator distilling a transcript through eve.
+**The artifact has its own gate, because no other tier can see it.** Every suite in §13 resolves `@memhtml/*` through pnpm's links, where each asset is on disk whether or not anything declares it — three assets shipped absent from every tarball under exactly that blindness. `mise run package:smoke` installs the tarball into a throwaway directory and drives all 36 commands and all 14 MCP tools through the installed binary, enumerating both surfaces from the artifact itself (`memhtml manifest`, `tools/list`) so a new command or tool fails a census rather than going untested. It is outside `pnpm
+check` because it needs the registry, and `check` is offline by construction. `--live` adds the three edges the credential-free run cannot reach: Bedrock embeddings, the sleep phases that call a model, and the consolidator distilling a transcript through eve.

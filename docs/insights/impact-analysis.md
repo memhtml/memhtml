@@ -18,21 +18,21 @@ Defined at: `packages/contracts/src/errors.ts:9-64`
 
 Nine `Schema.TaggedError` classes: `StorageFailure`, `WriteConflict`, `ModelUnavailable`, `InvalidMemory`, `PathNotFound`, `DuplicateContent`, `DirtyTree`, `LlmContractViolation` (`packages/contracts/src/errors.ts:9-64`). This is the most widely reached surface in the repository, with 51 importing files across 13 workspace packages. That is every package and app except `apps/docs`.
 
-| Downstream | Type | Touch on change | Citation |
-|---|---|---|---|
-| `apps/cli/src/errors.ts` maps each `_tag` to an `ErrorCode` and to prose | direct import | yes | `apps/cli/src/errors.ts:41-67` |
-| `apps/mcp/src/failure.ts` folds `codeFor`/`messageFor` into the one MCP wire failure | indirect | yes | `apps/mcp/src/failure.ts:1,32-38` |
-| `packages/store/src/store.ts` fails writes with `InvalidMemory` and `DuplicateContent` | direct import | yes | `packages/store/src/store.ts:478,524` |
-| `packages/index/src/database.ts` wraps every driver rejection as `StorageFailure` | direct import | yes | `packages/index/src/database.ts:6,165-170` |
-| `packages/store/src/layout.ts` returns `StorageFailure` from every filesystem edge | direct import | yes | `packages/store/src/layout.ts:4,149-158` |
-| `packages/traces/src/discover.ts`, `scan.ts` | direct import | yes | `packages/traces/src/discover.ts:5`, `packages/traces/src/scan.ts:1` |
-| `packages/llm/src/client.ts`, `embeddings.ts`, `model-client.ts`, `structured.ts` | direct import | yes | `packages/llm/src/client.ts:2`, `packages/llm/src/model-client.ts:2`, `packages/llm/src/structured.ts:1` |
-| `packages/sleep/src/edits.ts`, `llm.ts`, `retention.ts`, `sql.ts`, `phases/trace-consolidation.ts` | direct import | yes | `packages/sleep/src/edits.ts:2` |
-| `apps/consolidator/src/contract.ts` | direct import | yes | `apps/consolidator/src/contract.ts:1` |
-| `apps/cli/src/envelope.ts` publishes the `ERROR_CODES` vocabulary each tag maps into | indirect | likely | `apps/cli/src/envelope.ts:67-83` |
-| `packages/contracts/tests/errors.test.ts` asserts every tag is distinct | test | yes | `packages/contracts/tests/errors.test.ts:14-27` |
-| `apps/mcp/tests/failure.test.ts` | test | yes | `apps/mcp/tests/failure.test.ts:11` |
-| `packages/domain/src/index.ts` re-exports `InvalidMemory` as a type only | indirect | no | `packages/domain/src/index.ts:6` |
+| Downstream                                                                                         | Type          | Touch on change | Citation                                                                                                 |
+| -------------------------------------------------------------------------------------------------- | ------------- | --------------- | -------------------------------------------------------------------------------------------------------- |
+| `apps/cli/src/errors.ts` maps each `_tag` to an `ErrorCode` and to prose                           | direct import | yes             | `apps/cli/src/errors.ts:41-67`                                                                           |
+| `apps/mcp/src/failure.ts` folds `codeFor`/`messageFor` into the one MCP wire failure               | indirect      | yes             | `apps/mcp/src/failure.ts:1,32-38`                                                                        |
+| `packages/store/src/store.ts` fails writes with `InvalidMemory` and `DuplicateContent`             | direct import | yes             | `packages/store/src/store.ts:478,524`                                                                    |
+| `packages/index/src/database.ts` wraps every driver rejection as `StorageFailure`                  | direct import | yes             | `packages/index/src/database.ts:6,165-170`                                                               |
+| `packages/store/src/layout.ts` returns `StorageFailure` from every filesystem edge                 | direct import | yes             | `packages/store/src/layout.ts:4,149-158`                                                                 |
+| `packages/traces/src/discover.ts`, `scan.ts`                                                       | direct import | yes             | `packages/traces/src/discover.ts:5`, `packages/traces/src/scan.ts:1`                                     |
+| `packages/llm/src/client.ts`, `embeddings.ts`, `model-client.ts`, `structured.ts`                  | direct import | yes             | `packages/llm/src/client.ts:2`, `packages/llm/src/model-client.ts:2`, `packages/llm/src/structured.ts:1` |
+| `packages/sleep/src/edits.ts`, `llm.ts`, `retention.ts`, `sql.ts`, `phases/trace-consolidation.ts` | direct import | yes             | `packages/sleep/src/edits.ts:2`                                                                          |
+| `apps/consolidator/src/contract.ts`                                                                | direct import | yes             | `apps/consolidator/src/contract.ts:1`                                                                    |
+| `apps/cli/src/envelope.ts` publishes the `ERROR_CODES` vocabulary each tag maps into               | indirect      | likely          | `apps/cli/src/envelope.ts:67-83`                                                                         |
+| `packages/contracts/tests/errors.test.ts` asserts every tag is distinct                            | test          | yes             | `packages/contracts/tests/errors.test.ts:14-27`                                                          |
+| `apps/mcp/tests/failure.test.ts`                                                                   | test          | yes             | `apps/mcp/tests/failure.test.ts:11`                                                                      |
+| `packages/domain/src/index.ts` re-exports `InvalidMemory` as a type only                           | indirect      | no              | `packages/domain/src/index.ts:6`                                                                         |
 
 ### Blast-radius notes
 
@@ -46,24 +46,24 @@ Defined at: `packages/contracts/src/types.ts:18-131`
 
 This file holds the closed vocabularies: `MEMORY_TYPES` (ten values), `WRITABLE_MEMORY_TYPES` (nine, excluding `arc`), `PARA_BUCKETS` (four), `MemoryStatus`, `TASK_STATUSES` (four), `Importance`, `Confidence`, `MemoryPath`, and the entity-reference helpers. 21 importing files across 8 workspace packages.
 
-| Downstream | Type | Touch on change | Citation |
-|---|---|---|---|
-| `packages/index/migrations/0001_files.sql` restates `MEMORY_TYPES` as a SQL CHECK | config | yes | `packages/index/migrations/0001_files.sql:18-20` |
-| `packages/index/migrations/0008_tasks.sql` restates it again, widened by `task` | config | yes | `packages/index/migrations/0008_tasks.sql:38-40` |
-| `packages/index/migrations/0001_files.sql` restates `PARA_BUCKETS` as a CHECK | config | yes | `packages/index/migrations/0001_files.sql:34` |
-| `packages/index/migrations/0008_tasks.sql` restates `PARA_BUCKETS` and `TASK_STATUSES` | config | yes | `packages/index/migrations/0008_tasks.sql:46,72` |
-| `apps/cli/src/commands.ts` publishes `WRITABLE_MEMORY_TYPES` and `TASK_STATUSES` as flag enums | direct import | yes | `apps/cli/src/commands.ts:2,63` |
-| `apps/mcp/src/tools.ts` publishes `WRITABLE_MEMORY_TYPES` and `PARA_BUCKETS` as tool parameters | direct import | yes | `apps/mcp/src/tools.ts:10,44-45` |
-| `packages/contracts/src/paths.ts` routes on `PARA_BUCKETS` and on the `arc`/`task` type values | direct import | yes | `packages/contracts/src/paths.ts:2,50-56,109-120` |
-| `packages/html/src/document.ts`, `template.ts`, `parse.ts` type the parsed metas | direct import | yes | `packages/html/src/template.ts:2` |
-| `packages/index/src/project.ts` splits entity references with `parseEntity` | direct import | yes | `packages/index/src/project.ts:3` |
-| `packages/index/src/indexer.ts`, `scope.ts` | direct import | yes | `packages/index/src/indexer.ts:7`, `packages/index/src/scope.ts:1` |
-| `apps/consolidator/src/contract.ts` imports `MEMORY_TYPES` through the barrel | direct import | yes | `apps/consolidator/src/contract.ts:1` |
-| `packages/sleep/src/phases/person-links.ts`, `trace-consolidation.ts` | direct import | likely | `packages/sleep/src/phases/person-links.ts:3`, `packages/sleep/src/phases/trace-consolidation.ts:1` |
-| `packages/store/src/index.ts` re-exports `PARA_BUCKETS` rather than restating it | indirect | no | `packages/store/src/index.ts:16` |
-| `AGENTS.md` publishes the type enum in the generated agent doc | config | yes | `AGENTS.md:135` |
-| `packages/contracts/tests/types.test.ts` pins the count and the writable/guard agreement | test | yes | `packages/contracts/tests/types.test.ts:22-76` |
-| `packages/contracts/tests/paths.test.ts`, `apps/mcp/tests/tools.test.ts`, `packages/html/tests/property.test.ts` | test | likely | `packages/contracts/tests/paths.test.ts:20`, `apps/mcp/tests/tools.test.ts:3`, `packages/html/tests/property.test.ts:3-4` |
+| Downstream                                                                                                       | Type          | Touch on change | Citation                                                                                                                  |
+| ---------------------------------------------------------------------------------------------------------------- | ------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `packages/index/migrations/0001_files.sql` restates `MEMORY_TYPES` as a SQL CHECK                                | config        | yes             | `packages/index/migrations/0001_files.sql:18-20`                                                                          |
+| `packages/index/migrations/0008_tasks.sql` restates it again, widened by `task`                                  | config        | yes             | `packages/index/migrations/0008_tasks.sql:38-40`                                                                          |
+| `packages/index/migrations/0001_files.sql` restates `PARA_BUCKETS` as a CHECK                                    | config        | yes             | `packages/index/migrations/0001_files.sql:34`                                                                             |
+| `packages/index/migrations/0008_tasks.sql` restates `PARA_BUCKETS` and `TASK_STATUSES`                           | config        | yes             | `packages/index/migrations/0008_tasks.sql:46,72`                                                                          |
+| `apps/cli/src/commands.ts` publishes `WRITABLE_MEMORY_TYPES` and `TASK_STATUSES` as flag enums                   | direct import | yes             | `apps/cli/src/commands.ts:2,63`                                                                                           |
+| `apps/mcp/src/tools.ts` publishes `WRITABLE_MEMORY_TYPES` and `PARA_BUCKETS` as tool parameters                  | direct import | yes             | `apps/mcp/src/tools.ts:10,44-45`                                                                                          |
+| `packages/contracts/src/paths.ts` routes on `PARA_BUCKETS` and on the `arc`/`task` type values                   | direct import | yes             | `packages/contracts/src/paths.ts:2,50-56,109-120`                                                                         |
+| `packages/html/src/document.ts`, `template.ts`, `parse.ts` type the parsed metas                                 | direct import | yes             | `packages/html/src/template.ts:2`                                                                                         |
+| `packages/index/src/project.ts` splits entity references with `parseEntity`                                      | direct import | yes             | `packages/index/src/project.ts:3`                                                                                         |
+| `packages/index/src/indexer.ts`, `scope.ts`                                                                      | direct import | yes             | `packages/index/src/indexer.ts:7`, `packages/index/src/scope.ts:1`                                                        |
+| `apps/consolidator/src/contract.ts` imports `MEMORY_TYPES` through the barrel                                    | direct import | yes             | `apps/consolidator/src/contract.ts:1`                                                                                     |
+| `packages/sleep/src/phases/person-links.ts`, `trace-consolidation.ts`                                            | direct import | likely          | `packages/sleep/src/phases/person-links.ts:3`, `packages/sleep/src/phases/trace-consolidation.ts:1`                       |
+| `packages/store/src/index.ts` re-exports `PARA_BUCKETS` rather than restating it                                 | indirect      | no              | `packages/store/src/index.ts:16`                                                                                          |
+| `AGENTS.md` publishes the type enum in the generated agent doc                                                   | config        | yes             | `AGENTS.md:135`                                                                                                           |
+| `packages/contracts/tests/types.test.ts` pins the count and the writable/guard agreement                         | test          | yes             | `packages/contracts/tests/types.test.ts:22-76`                                                                            |
+| `packages/contracts/tests/paths.test.ts`, `apps/mcp/tests/tools.test.ts`, `packages/html/tests/property.test.ts` | test          | likely          | `packages/contracts/tests/paths.test.ts:20`, `apps/mcp/tests/tools.test.ts:3`, `packages/html/tests/property.test.ts:3-4` |
 
 ### Blast-radius notes
 
@@ -77,24 +77,24 @@ Defined at: `packages/contracts/src/edges.ts:9-149`
 
 This file defines four edge classes that do not mix, along with their rels: `MEMORY_RELS` (nine), `PERSON_RELS` (two), `PROVENANCE_RELS` (one), and `TASK_RELS` (two). It also holds `relClassFor`, `relsForClass`, `isEdgeRel`, the `<link rel>` token codec (`relTokenFor` / `relForToken`), and the `Edge` schema. 22 importing files across 8 workspace packages.
 
-| Downstream | Type | Touch on change | Citation |
-|---|---|---|---|
-| `packages/index/migrations/0004_edges.sql` restates all four classes as CHECK constraints | config | yes | `packages/index/migrations/0004_edges.sql:30-35` |
-| `packages/index/migrations/0008_tasks.sql` restates the memory rels again | config | yes | `packages/index/migrations/0008_tasks.sql:195` |
-| `packages/store/src/store.ts` derives an edge's class with `relClassFor` before writing | direct import | yes | `packages/store/src/store.ts:4,999` |
-| `packages/html/src/serialize.ts` writes the `<link rel>` token with `relTokenFor` | direct import | yes | `packages/html/src/serialize.ts:1` |
-| `packages/html/src/constraints.ts` validates a link token with `relForToken` | direct import | yes | `packages/html/src/constraints.ts:1` |
-| `packages/html/src/editors.ts` adds and removes links by token | direct import | yes | `packages/html/src/editors.ts:1-2` |
-| `packages/html/src/document.ts`, `template.ts` type a link's rel | direct import | yes | `packages/html/src/document.ts:1`, `packages/html/src/template.ts:1` |
-| `packages/index/src/project.ts` projects a doc's links onto `edges` rows by class | direct import | yes | `packages/index/src/project.ts:1` |
-| `apps/cli/src/operations.ts` gates authored links on `isEdgeRel` and the two rel sets | direct import | yes | `apps/cli/src/operations.ts:1` |
-| `apps/cli/src/commands.ts` publishes `MEMORY_RELS` as the `memhtml neighbors --rel` enum | direct import | yes | `apps/cli/src/commands.ts:1` |
-| `apps/mcp/src/tools.ts` publishes `MEMORY_RELS` as a tool parameter | direct import | yes | `apps/mcp/src/tools.ts:9` |
-| `apps/cli/src/doctor.ts` classifies a dangling href by rel | direct import | likely | `apps/cli/src/doctor.ts:4` |
-| `packages/sleep/src/edits.ts`, `phases/integrity.ts`, `phases/trace-consolidation.ts` | direct import | yes | `packages/sleep/src/edits.ts:1`, `packages/sleep/src/phases/integrity.ts:1` |
-| `apps/consolidator/src/contract.ts` | direct import | likely | `apps/consolidator/src/contract.ts:439` |
-| `AGENTS.md` publishes the rel vocabulary in the generated agent doc | config | yes | `AGENTS.md:213` |
-| `packages/contracts/tests/edges.test.ts`, `packages/html/tests/format.test.ts`, `packages/html/tests/property.test.ts`, `apps/mcp/tests/tools.test.ts` | test | yes | `packages/contracts/tests/edges.test.ts:19`, `packages/html/tests/format.test.ts:1`, `packages/html/tests/property.test.ts:1-2`, `apps/mcp/tests/tools.test.ts:2` |
+| Downstream                                                                                                                                             | Type          | Touch on change | Citation                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/index/migrations/0004_edges.sql` restates all four classes as CHECK constraints                                                              | config        | yes             | `packages/index/migrations/0004_edges.sql:30-35`                                                                                                                  |
+| `packages/index/migrations/0008_tasks.sql` restates the memory rels again                                                                              | config        | yes             | `packages/index/migrations/0008_tasks.sql:195`                                                                                                                    |
+| `packages/store/src/store.ts` derives an edge's class with `relClassFor` before writing                                                                | direct import | yes             | `packages/store/src/store.ts:4,999`                                                                                                                               |
+| `packages/html/src/serialize.ts` writes the `<link rel>` token with `relTokenFor`                                                                      | direct import | yes             | `packages/html/src/serialize.ts:1`                                                                                                                                |
+| `packages/html/src/constraints.ts` validates a link token with `relForToken`                                                                           | direct import | yes             | `packages/html/src/constraints.ts:1`                                                                                                                              |
+| `packages/html/src/editors.ts` adds and removes links by token                                                                                         | direct import | yes             | `packages/html/src/editors.ts:1-2`                                                                                                                                |
+| `packages/html/src/document.ts`, `template.ts` type a link's rel                                                                                       | direct import | yes             | `packages/html/src/document.ts:1`, `packages/html/src/template.ts:1`                                                                                              |
+| `packages/index/src/project.ts` projects a doc's links onto `edges` rows by class                                                                      | direct import | yes             | `packages/index/src/project.ts:1`                                                                                                                                 |
+| `apps/cli/src/operations.ts` gates authored links on `isEdgeRel` and the two rel sets                                                                  | direct import | yes             | `apps/cli/src/operations.ts:1`                                                                                                                                    |
+| `apps/cli/src/commands.ts` publishes `MEMORY_RELS` as the `memhtml neighbors --rel` enum                                                               | direct import | yes             | `apps/cli/src/commands.ts:1`                                                                                                                                      |
+| `apps/mcp/src/tools.ts` publishes `MEMORY_RELS` as a tool parameter                                                                                    | direct import | yes             | `apps/mcp/src/tools.ts:9`                                                                                                                                         |
+| `apps/cli/src/doctor.ts` classifies a dangling href by rel                                                                                             | direct import | likely          | `apps/cli/src/doctor.ts:4`                                                                                                                                        |
+| `packages/sleep/src/edits.ts`, `phases/integrity.ts`, `phases/trace-consolidation.ts`                                                                  | direct import | yes             | `packages/sleep/src/edits.ts:1`, `packages/sleep/src/phases/integrity.ts:1`                                                                                       |
+| `apps/consolidator/src/contract.ts`                                                                                                                    | direct import | likely          | `apps/consolidator/src/contract.ts:439`                                                                                                                           |
+| `AGENTS.md` publishes the rel vocabulary in the generated agent doc                                                                                    | config        | yes             | `AGENTS.md:213`                                                                                                                                                   |
+| `packages/contracts/tests/edges.test.ts`, `packages/html/tests/format.test.ts`, `packages/html/tests/property.test.ts`, `apps/mcp/tests/tools.test.ts` | test          | yes             | `packages/contracts/tests/edges.test.ts:19`, `packages/html/tests/format.test.ts:1`, `packages/html/tests/property.test.ts:1-2`, `apps/mcp/tests/tools.test.ts:2` |
 
 ### Blast-radius notes
 
@@ -108,22 +108,22 @@ Defined at: `packages/contracts/src/paths.ts:10-186`
 
 This file holds the path algebra for the memhtml root. Every function in it is pure and total. It defines the fixed directory names (`ARCS_DIR`, `PEOPLE_DIR`, `INBOX_DIR`, `TASKS_SUBDIR`, `ARCHIVE_BUCKET`, `MEMORY_EXTENSION`) plus `normalizePath`, `paraBucketOf`, `isValidMemoryPath`, `placementFor`, `memoryPathFor`, `archivePathFor`, `originalPathFor`, `isArchivePath`, and `archiveYearOf`. 24 importing files across 8 workspace packages.
 
-| Downstream | Type | Touch on change | Citation |
-|---|---|---|---|
-| `packages/store/src/layout.ts` builds `SCAFFOLD_DIRS` from three of the constants | direct import | yes | `packages/store/src/layout.ts:5,41-48` |
-| `packages/store/src/store.ts` resolves every write path and archive move | direct import | yes | `packages/store/src/store.ts:18` |
-| `packages/index/src/project.ts` derives the `files.para` column with `paraBucketOf` | direct import | yes | `packages/index/src/project.ts:2` |
-| `packages/index/src/indexer.ts` normalizes tree paths before projecting | direct import | yes | `packages/index/src/indexer.ts:6` |
-| `apps/cli/src/operations.ts` places a write and validates a caller path | direct import | yes | `apps/cli/src/operations.ts:3` |
-| `apps/cli/src/doctor.ts` reports inbox depth and task placement | direct import | yes | `apps/cli/src/doctor.ts:5` |
-| `packages/sleep/src/edits.ts` and `phases/integrity.ts` compute archive paths | direct import | yes | `packages/sleep/src/edits.ts:3`, `packages/sleep/src/phases/integrity.ts:2` |
-| `packages/sleep/src/phases/arc-synthesis.ts`, `compress.ts`, `person-links.ts`, `trace-consolidation.ts`, `review.ts` | direct import | yes | `packages/sleep/src/phases/arc-synthesis.ts:1`, `packages/sleep/src/phases/compress.ts:1`, `packages/sleep/src/review.ts:1` |
-| `packages/eval/src/corpus.ts` generates fixture paths through the same algebra | direct import | yes | `packages/eval/src/corpus.ts:1` |
-| `apps/consolidator/src/contract.ts` | direct import | likely | `apps/consolidator/src/contract.ts:41` |
-| Every existing memhtml root's directory tree | runtime dispatch | likely | `packages/store/src/layout.ts:41-48` |
-| `packages/contracts/tests/paths.test.ts` pins placement and the archive inverse | test | yes | `packages/contracts/tests/paths.test.ts:19` |
-| `packages/store/tests/store.test.ts`, `packages/sleep/tests/dedup.test.ts`, `llm-phases.test.ts`, `run.test.ts` | test | yes | `packages/store/tests/store.test.ts:5`, `packages/sleep/tests/dedup.test.ts:1`, `packages/sleep/tests/llm-phases.test.ts:1`, `packages/sleep/tests/run.test.ts:1` |
-| `tests-integration/tests/sleep.test.ts`, `tasks.test.ts` | test | likely | `tests-integration/tests/sleep.test.ts:4`, `tests-integration/tests/tasks.test.ts:4` |
+| Downstream                                                                                                            | Type             | Touch on change | Citation                                                                                                                                                          |
+| --------------------------------------------------------------------------------------------------------------------- | ---------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/store/src/layout.ts` builds `SCAFFOLD_DIRS` from three of the constants                                     | direct import    | yes             | `packages/store/src/layout.ts:5,41-48`                                                                                                                            |
+| `packages/store/src/store.ts` resolves every write path and archive move                                              | direct import    | yes             | `packages/store/src/store.ts:18`                                                                                                                                  |
+| `packages/index/src/project.ts` derives the `files.para` column with `paraBucketOf`                                   | direct import    | yes             | `packages/index/src/project.ts:2`                                                                                                                                 |
+| `packages/index/src/indexer.ts` normalizes tree paths before projecting                                               | direct import    | yes             | `packages/index/src/indexer.ts:6`                                                                                                                                 |
+| `apps/cli/src/operations.ts` places a write and validates a caller path                                               | direct import    | yes             | `apps/cli/src/operations.ts:3`                                                                                                                                    |
+| `apps/cli/src/doctor.ts` reports inbox depth and task placement                                                       | direct import    | yes             | `apps/cli/src/doctor.ts:5`                                                                                                                                        |
+| `packages/sleep/src/edits.ts` and `phases/integrity.ts` compute archive paths                                         | direct import    | yes             | `packages/sleep/src/edits.ts:3`, `packages/sleep/src/phases/integrity.ts:2`                                                                                       |
+| `packages/sleep/src/phases/arc-synthesis.ts`, `compress.ts`, `person-links.ts`, `trace-consolidation.ts`, `review.ts` | direct import    | yes             | `packages/sleep/src/phases/arc-synthesis.ts:1`, `packages/sleep/src/phases/compress.ts:1`, `packages/sleep/src/review.ts:1`                                       |
+| `packages/eval/src/corpus.ts` generates fixture paths through the same algebra                                        | direct import    | yes             | `packages/eval/src/corpus.ts:1`                                                                                                                                   |
+| `apps/consolidator/src/contract.ts`                                                                                   | direct import    | likely          | `apps/consolidator/src/contract.ts:41`                                                                                                                            |
+| Every existing memhtml root's directory tree                                                                          | runtime dispatch | likely          | `packages/store/src/layout.ts:41-48`                                                                                                                              |
+| `packages/contracts/tests/paths.test.ts` pins placement and the archive inverse                                       | test             | yes             | `packages/contracts/tests/paths.test.ts:19`                                                                                                                       |
+| `packages/store/tests/store.test.ts`, `packages/sleep/tests/dedup.test.ts`, `llm-phases.test.ts`, `run.test.ts`       | test             | yes             | `packages/store/tests/store.test.ts:5`, `packages/sleep/tests/dedup.test.ts:1`, `packages/sleep/tests/llm-phases.test.ts:1`, `packages/sleep/tests/run.test.ts:1` |
+| `tests-integration/tests/sleep.test.ts`, `tasks.test.ts`                                                              | test             | likely          | `tests-integration/tests/sleep.test.ts:4`, `tests-integration/tests/tasks.test.ts:4`                                                                              |
 
 ### Blast-radius notes
 
@@ -137,22 +137,22 @@ Defined at: `packages/html/src/hash.ts:115-185`
 
 `contentHash`, plus `canonicalText`, `canonicalArticleText`, `isContentHash`, and `HASH_ALGORITHM`. The content hash is the dedup key, and it has to stay the same when only the head of a document is edited (`packages/html/src/hash.ts:7-16`). 18 importing files across 5 workspace packages. The surface reaches further through SQL, where two unique indexes key on it.
 
-| Downstream | Type | Touch on change | Citation |
-|---|---|---|---|
-| `packages/index/migrations/0001_files.sql` makes `content_hash` a unique index over active files | config | yes | `packages/index/migrations/0001_files.sql:61` |
-| `packages/index/migrations/0002_chunks.sql` keys `chunks` and its unique ordinal index on it | config | yes | `packages/index/migrations/0002_chunks.sql:10,17-18` |
-| `packages/index/src/chunking.ts` derives every `chunk_id` from it | indirect | yes | `packages/index/src/chunking.ts:21-28` |
-| `packages/index/migrations/0002_chunks.sql` `embeddings.chunk_id` references `chunks.chunk_id` | config | yes | `packages/index/migrations/0002_chunks.sql:21` |
-| `packages/store/src/store.ts` computes the hash on every write and dedups on it | direct import | yes | `packages/store/src/store.ts:24,535,629,844` |
-| `packages/index/src/indexer.ts` recomputes it from the parsed article | direct import | yes | `packages/index/src/indexer.ts:8,195` |
-| `packages/html/src/parse.ts`, `constraints.ts`, `template.ts` | direct import | yes | `packages/html/src/constraints.ts:4` |
-| `packages/sleep/src/review.ts` classifies a per-file change by hash | direct import | yes | `packages/sleep/src/review.ts:1` |
-| Every existing memhtml root's stored `memhtml-content-hash` metas | runtime dispatch | likely | `packages/html/src/vocabulary.ts:54` |
-| `packages/html/tests/hash.test.ts`, `editors.test.ts`, `property.test.ts`, `template.test.ts` | test | yes | `packages/html/tests/hash.test.ts:4`, `packages/html/tests/editors.test.ts:4`, `packages/html/tests/property.test.ts:9`, `packages/html/tests/template.test.ts:3` |
-| `packages/index/tests/chunking.test.ts`, `project.test.ts` | test | yes | `packages/index/tests/chunking.test.ts:1`, `packages/index/tests/project.test.ts:1` |
-| `packages/sleep/tests/decay.test.ts`, `dedup.test.ts`, `units.test.ts` | test | yes | `packages/sleep/tests/decay.test.ts:7`, `packages/sleep/tests/dedup.test.ts:2`, `packages/sleep/tests/units.test.ts:1` |
-| `packages/store/tests/store.test.ts`, `packages/eval/tests/corpus.test.ts` | test | yes | `packages/store/tests/store.test.ts:6`, `packages/eval/tests/corpus.test.ts:1,42-44` |
-| `tests-integration/tests/contracts.test.ts` proves a double write leaves the tree byte-identical | test | yes | `tests-integration/tests/contracts.test.ts:22-31` |
+| Downstream                                                                                       | Type             | Touch on change | Citation                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------ | ---------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/index/migrations/0001_files.sql` makes `content_hash` a unique index over active files | config           | yes             | `packages/index/migrations/0001_files.sql:61`                                                                                                                     |
+| `packages/index/migrations/0002_chunks.sql` keys `chunks` and its unique ordinal index on it     | config           | yes             | `packages/index/migrations/0002_chunks.sql:10,17-18`                                                                                                              |
+| `packages/index/src/chunking.ts` derives every `chunk_id` from it                                | indirect         | yes             | `packages/index/src/chunking.ts:21-28`                                                                                                                            |
+| `packages/index/migrations/0002_chunks.sql` `embeddings.chunk_id` references `chunks.chunk_id`   | config           | yes             | `packages/index/migrations/0002_chunks.sql:21`                                                                                                                    |
+| `packages/store/src/store.ts` computes the hash on every write and dedups on it                  | direct import    | yes             | `packages/store/src/store.ts:24,535,629,844`                                                                                                                      |
+| `packages/index/src/indexer.ts` recomputes it from the parsed article                            | direct import    | yes             | `packages/index/src/indexer.ts:8,195`                                                                                                                             |
+| `packages/html/src/parse.ts`, `constraints.ts`, `template.ts`                                    | direct import    | yes             | `packages/html/src/constraints.ts:4`                                                                                                                              |
+| `packages/sleep/src/review.ts` classifies a per-file change by hash                              | direct import    | yes             | `packages/sleep/src/review.ts:1`                                                                                                                                  |
+| Every existing memhtml root's stored `memhtml-content-hash` metas                                | runtime dispatch | likely          | `packages/html/src/vocabulary.ts:54`                                                                                                                              |
+| `packages/html/tests/hash.test.ts`, `editors.test.ts`, `property.test.ts`, `template.test.ts`    | test             | yes             | `packages/html/tests/hash.test.ts:4`, `packages/html/tests/editors.test.ts:4`, `packages/html/tests/property.test.ts:9`, `packages/html/tests/template.test.ts:3` |
+| `packages/index/tests/chunking.test.ts`, `project.test.ts`                                       | test             | yes             | `packages/index/tests/chunking.test.ts:1`, `packages/index/tests/project.test.ts:1`                                                                               |
+| `packages/sleep/tests/decay.test.ts`, `dedup.test.ts`, `units.test.ts`                           | test             | yes             | `packages/sleep/tests/decay.test.ts:7`, `packages/sleep/tests/dedup.test.ts:2`, `packages/sleep/tests/units.test.ts:1`                                            |
+| `packages/store/tests/store.test.ts`, `packages/eval/tests/corpus.test.ts`                       | test             | yes             | `packages/store/tests/store.test.ts:6`, `packages/eval/tests/corpus.test.ts:1,42-44`                                                                              |
+| `tests-integration/tests/contracts.test.ts` proves a double write leaves the tree byte-identical | test             | yes             | `tests-integration/tests/contracts.test.ts:22-31`                                                                                                                 |
 
 ### Blast-radius notes
 
@@ -166,21 +166,21 @@ Defined at: `packages/index/src/database.ts:69-407`
 
 `DatabaseShape`, the `DatabaseService` tag, `makeDatabase`, `attachState`, `runStateMigrations`, `isBusyCause`, and the `SqlValue` / `Write` types. This is the only connection factory for the rebuildable index and for the state plane. 28 importing files across 5 workspace packages.
 
-| Downstream | Type | Touch on change | Citation |
-|---|---|---|---|
-| `apps/cli/src/api-layer.ts` builds the one production connection, both planes attached | direct import | yes | `apps/cli/src/api-layer.ts:9-27,131-141` |
-| `apps/mcp/src/tools.ts` reads `DatabaseService` through the CLI composition root | indirect | yes | `apps/mcp/src/tools.ts:1-8` |
-| `packages/index/src/retrieval.ts` issues every ranked query through the shape | direct import | yes | `packages/index/src/retrieval.ts:5,149` |
-| `packages/index/src/indexer.ts` batches projection writes through `writeAll` | direct import | yes | `packages/index/src/database.ts:374-397` |
-| `packages/index/src/index-state.ts`, `reinforce.ts`, `traces-persist.ts` | direct import | yes | `packages/index/src/index-state.ts:20`, `packages/index/src/reinforce.ts:5`, `packages/index/src/traces-persist.ts:4` |
-| `packages/sleep/src/env.ts`, `sql.ts`, `retention.ts` reach every phase's SQL | direct import | yes | `packages/sleep/src/env.ts:1`, `packages/sleep/src/sql.ts:2`, `packages/sleep/src/retention.ts:10` |
-| `apps/cli/src/doctor.ts`, `operations.ts`, `publish.ts`, `state.ts`, `views.ts` | direct import | yes | `apps/cli/src/doctor.ts:7`, `apps/cli/src/operations.ts:15-16`, `apps/cli/src/publish.ts:3`, `apps/cli/src/state.ts:4`, `apps/cli/src/views.ts:2` |
-| `packages/index/migrations/*.sql` are applied by `runMigrations` in filename order | config | likely | `packages/index/src/database.ts:215-256` |
-| `packages/index/state-migrations/S0001_access.sql` is applied against the `state.` ledger | config | likely | `packages/index/src/database.ts:305-307` |
-| `packages/eval/src/harness.ts` builds a real database for the discrimination gate | direct import | yes | `packages/eval/src/harness.ts:7,18` |
-| Nine `packages/index/tests/*` files drive the real driver against `":memory:"` | test | yes | `packages/index/src/database.ts:309-312` |
-| `tests-integration/tests/rebuild.test.ts` compares whole table row sets across a rebuild | test | yes | `tests-integration/tests/rebuild.test.ts:11-22` |
-| `tests-integration/tests/rebuild.test.ts` reads `STATE_SCHEMA` over the same connection | test | likely | `tests-integration/tests/rebuild.test.ts:4` |
+| Downstream                                                                                | Type          | Touch on change | Citation                                                                                                                                          |
+| ----------------------------------------------------------------------------------------- | ------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/cli/src/api-layer.ts` builds the one production connection, both planes attached    | direct import | yes             | `apps/cli/src/api-layer.ts:9-27,131-141`                                                                                                          |
+| `apps/mcp/src/tools.ts` reads `DatabaseService` through the CLI composition root          | indirect      | yes             | `apps/mcp/src/tools.ts:1-8`                                                                                                                       |
+| `packages/index/src/retrieval.ts` issues every ranked query through the shape             | direct import | yes             | `packages/index/src/retrieval.ts:5,149`                                                                                                           |
+| `packages/index/src/indexer.ts` batches projection writes through `writeAll`              | direct import | yes             | `packages/index/src/database.ts:374-397`                                                                                                          |
+| `packages/index/src/index-state.ts`, `reinforce.ts`, `traces-persist.ts`                  | direct import | yes             | `packages/index/src/index-state.ts:20`, `packages/index/src/reinforce.ts:5`, `packages/index/src/traces-persist.ts:4`                             |
+| `packages/sleep/src/env.ts`, `sql.ts`, `retention.ts` reach every phase's SQL             | direct import | yes             | `packages/sleep/src/env.ts:1`, `packages/sleep/src/sql.ts:2`, `packages/sleep/src/retention.ts:10`                                                |
+| `apps/cli/src/doctor.ts`, `operations.ts`, `publish.ts`, `state.ts`, `views.ts`           | direct import | yes             | `apps/cli/src/doctor.ts:7`, `apps/cli/src/operations.ts:15-16`, `apps/cli/src/publish.ts:3`, `apps/cli/src/state.ts:4`, `apps/cli/src/views.ts:2` |
+| `packages/index/migrations/*.sql` are applied by `runMigrations` in filename order        | config        | likely          | `packages/index/src/database.ts:215-256`                                                                                                          |
+| `packages/index/state-migrations/S0001_access.sql` is applied against the `state.` ledger | config        | likely          | `packages/index/src/database.ts:305-307`                                                                                                          |
+| `packages/eval/src/harness.ts` builds a real database for the discrimination gate         | direct import | yes             | `packages/eval/src/harness.ts:7,18`                                                                                                               |
+| Nine `packages/index/tests/*` files drive the real driver against `":memory:"`            | test          | yes             | `packages/index/src/database.ts:309-312`                                                                                                          |
+| `tests-integration/tests/rebuild.test.ts` compares whole table row sets across a rebuild  | test          | yes             | `tests-integration/tests/rebuild.test.ts:11-22`                                                                                                   |
+| `tests-integration/tests/rebuild.test.ts` reads `STATE_SCHEMA` over the same connection   | test          | likely          | `tests-integration/tests/rebuild.test.ts:4`                                                                                                       |
 
 ### Blast-radius notes
 
@@ -194,23 +194,23 @@ Defined at: `packages/store/src/layout.ts:22-211`
 
 This file defines the memhtml root's on-disk shape and the one operation that creates it. It holds `MEMHTML_DIR`, `INDEX_DB_PATH`, `STATE_DB_PATH`, `STATE_SIDECAR_PATH`, `SLEEP_REPORTS_DIR`, `SCAFFOLD_DIRS`, `GITIGNORE`, `GITATTRIBUTES`, `MERGE_OURS_DRIVER`, `README`, and `initRepo`, plus the `attemptIo` and `readFileOrNull` filesystem edges. 17 importing files across 6 workspace packages.
 
-| Downstream | Type | Touch on change | Citation |
-|---|---|---|---|
-| Every existing memhtml root's `.memhtml/`, `.gitignore`, and `.gitattributes` | runtime dispatch | likely | `packages/store/src/layout.ts:41-76` |
-| `apps/cli/src/api-layer.ts` joins the root with `INDEX_DB_PATH` and `STATE_DB_PATH` | direct import | yes | `apps/cli/src/api-layer.ts:43,46,136-137` |
-| `apps/cli/src/run.ts` runs `initRepo` for `memhtml init` | direct import | yes | `apps/cli/src/run.ts:2,197` |
-| `apps/cli/src/state.ts` reads and writes the sidecar for `state export` / `state import` | direct import | yes | `apps/cli/src/state.ts:6,60-157` |
-| `apps/cli/src/doctor.ts`, `operations.ts`, `publish.ts` use the `attemptIo` and `readFileOrNull` edges | direct import | yes | `apps/cli/src/doctor.ts:19`, `apps/cli/src/operations.ts:32`, `apps/cli/src/publish.ts:5` |
-| `apps/mcp/src/resources.ts` resolves a sleep report under `SLEEP_REPORTS_DIR` | direct import | yes | `apps/mcp/src/resources.ts:5,78` |
-| `packages/sleep/src/phases/report.ts` writes the committed run report | direct import | yes | `packages/sleep/src/phases/report.ts:1,25` |
-| `packages/sleep/src/phases/state-export.ts` writes and stages the sidecar | direct import | yes | `packages/sleep/src/phases/state-export.ts:1,75-79` |
-| `packages/store/src/store.ts`, `testing.ts` | direct import | yes | `packages/store/src/testing.ts:8,65` |
-| `packages/eval/src/fixture.ts` calls the real `initRepo` so the fixture carries the real scaffold | direct import | yes | `packages/eval/src/fixture.ts:6,135,151` |
-| `packages/store/tests/layout.test.ts` pins every scaffold directory and both generated files | test | yes | `packages/store/tests/layout.test.ts:9-15,57-61` |
-| `packages/store/tests/buckets.test.ts` asserts `MEMHTML_DIR` is not a PARA bucket | test | yes | `packages/store/tests/buckets.test.ts:3,12` |
-| `tests-integration/tests/clone.test.ts` proves a fresh clone plus init plus import plus rebuild restores everything | test | yes | `tests-integration/tests/clone.test.ts:11-24` |
-| `tests-integration/tests/rebuild.test.ts` asserts the sidecar is tracked | test | yes | `tests-integration/tests/rebuild.test.ts:5,193-201` |
-| `packages/index/tests/git-adapter.test.ts` asserts no scaffold file is ever indexed | test | likely | `packages/index/tests/git-adapter.test.ts:487` |
+| Downstream                                                                                                          | Type             | Touch on change | Citation                                                                                  |
+| ------------------------------------------------------------------------------------------------------------------- | ---------------- | --------------- | ----------------------------------------------------------------------------------------- |
+| Every existing memhtml root's `.memhtml/`, `.gitignore`, and `.gitattributes`                                       | runtime dispatch | likely          | `packages/store/src/layout.ts:41-76`                                                      |
+| `apps/cli/src/api-layer.ts` joins the root with `INDEX_DB_PATH` and `STATE_DB_PATH`                                 | direct import    | yes             | `apps/cli/src/api-layer.ts:43,46,136-137`                                                 |
+| `apps/cli/src/run.ts` runs `initRepo` for `memhtml init`                                                            | direct import    | yes             | `apps/cli/src/run.ts:2,197`                                                               |
+| `apps/cli/src/state.ts` reads and writes the sidecar for `state export` / `state import`                            | direct import    | yes             | `apps/cli/src/state.ts:6,60-157`                                                          |
+| `apps/cli/src/doctor.ts`, `operations.ts`, `publish.ts` use the `attemptIo` and `readFileOrNull` edges              | direct import    | yes             | `apps/cli/src/doctor.ts:19`, `apps/cli/src/operations.ts:32`, `apps/cli/src/publish.ts:5` |
+| `apps/mcp/src/resources.ts` resolves a sleep report under `SLEEP_REPORTS_DIR`                                       | direct import    | yes             | `apps/mcp/src/resources.ts:5,78`                                                          |
+| `packages/sleep/src/phases/report.ts` writes the committed run report                                               | direct import    | yes             | `packages/sleep/src/phases/report.ts:1,25`                                                |
+| `packages/sleep/src/phases/state-export.ts` writes and stages the sidecar                                           | direct import    | yes             | `packages/sleep/src/phases/state-export.ts:1,75-79`                                       |
+| `packages/store/src/store.ts`, `testing.ts`                                                                         | direct import    | yes             | `packages/store/src/testing.ts:8,65`                                                      |
+| `packages/eval/src/fixture.ts` calls the real `initRepo` so the fixture carries the real scaffold                   | direct import    | yes             | `packages/eval/src/fixture.ts:6,135,151`                                                  |
+| `packages/store/tests/layout.test.ts` pins every scaffold directory and both generated files                        | test             | yes             | `packages/store/tests/layout.test.ts:9-15,57-61`                                          |
+| `packages/store/tests/buckets.test.ts` asserts `MEMHTML_DIR` is not a PARA bucket                                   | test             | yes             | `packages/store/tests/buckets.test.ts:3,12`                                               |
+| `tests-integration/tests/clone.test.ts` proves a fresh clone plus init plus import plus rebuild restores everything | test             | yes             | `tests-integration/tests/clone.test.ts:11-24`                                             |
+| `tests-integration/tests/rebuild.test.ts` asserts the sidecar is tracked                                            | test             | yes             | `tests-integration/tests/rebuild.test.ts:5,193-201`                                       |
+| `packages/index/tests/git-adapter.test.ts` asserts no scaffold file is ever indexed                                 | test             | likely          | `packages/index/tests/git-adapter.test.ts:487`                                            |
 
 ### Blast-radius notes
 
@@ -224,21 +224,21 @@ Defined at: `apps/cli/src/envelope.ts:6-157`
 
 This file defines the machine contract every agent parses: `API_VERSION`, `RESPONSE_TYPES` (32 values), `ResponseType`, `Success`, `Failure`, `ERROR_CODES` (15 values), `ErrorCode`, the three exit codes, `succeed`, `fail`, `nearest`, and `render`. 15 importing files across 3 workspace packages. It is the widest external surface in the repository, because it is what a calling agent reads.
 
-| Downstream | Type | Touch on change | Citation |
-|---|---|---|---|
-| `apps/cli/src/run.ts` emits every command's envelope and picks the exit code | direct import | yes | `apps/cli/src/run.ts:823,842-843` |
-| `apps/cli/src/commands.ts` declares each command's `responseTypes` from `ResponseType` | direct import | yes | `apps/cli/src/commands.ts:7,31` |
-| `apps/cli/src/errors.ts` maps every error tag onto an `ErrorCode` | direct import | yes | `apps/cli/src/errors.ts:41-67` |
-| `apps/mcp/src/failure.ts` reuses the same code vocabulary on the MCP wire | indirect | yes | `apps/mcp/src/failure.ts:1,32-38` |
-| `apps/cli/src/index.ts` re-exports the whole contract as the package's public surface | direct import | yes | `apps/cli/src/index.ts:71-86` |
-| `apps/cli/src/agents-doc.ts` renders every code into the committed `AGENTS.md` | indirect | yes | `apps/cli/src/agents-doc.ts:7,116` |
-| `AGENTS.md` publishes the envelope shapes, codes, and exit codes verbatim | config | yes | `AGENTS.md:8-24,413-429` |
-| `apps/cli/src/apply.ts`, `exec.ts`, `operations.ts` construct failures with `fail` and `ErrorCode` | direct import | yes | `apps/cli/src/apply.ts:3`, `apps/cli/src/exec.ts:10`, `apps/cli/src/operations.ts:37` |
-| `apps/docs/src/loaders/registry.ts` reads `RESPONSE_TYPES` and its doc comment by source path | runtime dispatch | likely | `apps/docs/src/loaders/registry.ts:57,438` |
-| `apps/cli/tests/cli.test.ts` asserts both vocabularies are duplicate-free | test | yes | `apps/cli/tests/cli.test.ts:6-12,63-64` |
-| `apps/cli/tests/agents-doc.test.ts` asserts every code appears in the generated doc | test | yes | `apps/cli/tests/agents-doc.test.ts:9,35` |
-| `apps/cli/tests/tasks.test.ts`, `apply.test.ts`, `e2e.test.ts` branch on the exit codes | test | yes | `apps/cli/tests/tasks.test.ts:6,72-94` |
-| `tests-integration/tests/clone.test.ts` reads `RESPONSE_TYPES` and `buildManifest` together | test | yes | `tests-integration/tests/clone.test.ts:4` |
+| Downstream                                                                                         | Type             | Touch on change | Citation                                                                              |
+| -------------------------------------------------------------------------------------------------- | ---------------- | --------------- | ------------------------------------------------------------------------------------- |
+| `apps/cli/src/run.ts` emits every command's envelope and picks the exit code                       | direct import    | yes             | `apps/cli/src/run.ts:823,842-843`                                                     |
+| `apps/cli/src/commands.ts` declares each command's `responseTypes` from `ResponseType`             | direct import    | yes             | `apps/cli/src/commands.ts:7,31`                                                       |
+| `apps/cli/src/errors.ts` maps every error tag onto an `ErrorCode`                                  | direct import    | yes             | `apps/cli/src/errors.ts:41-67`                                                        |
+| `apps/mcp/src/failure.ts` reuses the same code vocabulary on the MCP wire                          | indirect         | yes             | `apps/mcp/src/failure.ts:1,32-38`                                                     |
+| `apps/cli/src/index.ts` re-exports the whole contract as the package's public surface              | direct import    | yes             | `apps/cli/src/index.ts:71-86`                                                         |
+| `apps/cli/src/agents-doc.ts` renders every code into the committed `AGENTS.md`                     | indirect         | yes             | `apps/cli/src/agents-doc.ts:7,116`                                                    |
+| `AGENTS.md` publishes the envelope shapes, codes, and exit codes verbatim                          | config           | yes             | `AGENTS.md:8-24,413-429`                                                              |
+| `apps/cli/src/apply.ts`, `exec.ts`, `operations.ts` construct failures with `fail` and `ErrorCode` | direct import    | yes             | `apps/cli/src/apply.ts:3`, `apps/cli/src/exec.ts:10`, `apps/cli/src/operations.ts:37` |
+| `apps/docs/src/loaders/registry.ts` reads `RESPONSE_TYPES` and its doc comment by source path      | runtime dispatch | likely          | `apps/docs/src/loaders/registry.ts:57,438`                                            |
+| `apps/cli/tests/cli.test.ts` asserts both vocabularies are duplicate-free                          | test             | yes             | `apps/cli/tests/cli.test.ts:6-12,63-64`                                               |
+| `apps/cli/tests/agents-doc.test.ts` asserts every code appears in the generated doc                | test             | yes             | `apps/cli/tests/agents-doc.test.ts:9,35`                                              |
+| `apps/cli/tests/tasks.test.ts`, `apply.test.ts`, `e2e.test.ts` branch on the exit codes            | test             | yes             | `apps/cli/tests/tasks.test.ts:6,72-94`                                                |
+| `tests-integration/tests/clone.test.ts` reads `RESPONSE_TYPES` and `buildManifest` together        | test             | yes             | `tests-integration/tests/clone.test.ts:4`                                             |
 
 ### Blast-radius notes
 

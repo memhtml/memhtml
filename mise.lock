@@ -30,6 +30,20 @@ checksum = "sha256:80de85f3b0ac7d9569acac0780ed65dd994ea78969b6b230c58bbb2c61134
 url = "https://github.com/d2lang/d2/releases/download/v0.7.1/d2-v0.7.1-macos-arm64.tar.gz"
 url_api = "https://api.github.com/repos/d2lang/d2/releases/assets/284023623"
 
+[[tools.dprint]]
+version = "0.56.0"
+backend = "aqua:dprint/dprint"
+
+[tools.dprint."platforms.linux-x64"]
+checksum = "sha256:e958bfa3fec5256e72c2e4e028fa5674e43023eaff80d704ca96827af2eba240"
+url = "https://github.com/dprint/dprint/releases/download/0.56.0/dprint-x86_64-unknown-linux-musl.zip"
+url_api = "https://api.github.com/repos/dprint/dprint/releases/assets/519466719"
+
+[tools.dprint."platforms.macos-arm64"]
+checksum = "sha256:79f5c80a3ddebb4717a89a25a79ec1c50947d4cef141df243757925cb47d32e1"
+url = "https://github.com/dprint/dprint/releases/download/0.56.0/dprint-aarch64-apple-darwin.zip"
+url_api = "https://api.github.com/repos/dprint/dprint/releases/assets/519466721"
+
 [[tools.grype]]
 version = "0.111.1"
 backend = "aqua:anchore/grype"

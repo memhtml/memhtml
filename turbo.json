@@ -16,6 +16,15 @@
     "lint": {
       "outputs": []
     },
+    // Root-package task: the `//#` prefix IS how turbo names a task that runs from the
+    // workspace root (the root package.json's own `lint:md` script). `turbo run lint:md`
+    // resolves it with these inputs applied — measured via `--dry=json`:
+    // taskId `//#lint:md`, inputs `["**/*.md", "dprint.json"]`. A bare `"lint:md"` key
+    // would instead address a per-package task no package defines.
+    "//#lint:md": {
+      "inputs": ["**/*.md", "dprint.json"],
+      "outputs": []
+    },
     "test": {
       "dependsOn": ["build"],
       "outputs": []

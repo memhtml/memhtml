@@ -1,0 +1,34 @@
+{
+  // dprint formats ONLY Markdown here — one plugin, pinned by URL + checksum. TypeScript
+  // and JSON belong to biome, and two formatters over one file is a fight nobody wins.
+  //
+  // textWrap "never" is the point of adopting it: every paragraph becomes one line, so a
+  // sentence is never hard-wrapped mid-thought and a diff touches the sentence that
+  // changed rather than the reflowed neighborhood around it.
+  "markdown": {
+    "textWrap": "never"
+  },
+  "excludes": [
+    // Generated Markdown, each with its own owner and drift gate: AGENTS.md is written by
+    // `memhtml agents-doc` (gated by apps/cli/tests/agents-doc.test.ts), CHANGELOG.md by
+    // release-please. Reformatting either would make the generator and the formatter
+    // disagree forever. Anchored to the root so the docs site's lowercase agents.md —
+    // which is authored — stays in scope.
+    "/AGENTS.md",
+    "/CHANGELOG.md",
+    // The markdown plugin does not parse the JSX expressions MDX carries.
+    "**/*.mdx",
+    // Build outputs, mirrored from biome.json's excludes. dprint reads these
+    // gitignore-style, so a bare directory pattern excludes the directory AND its
+    // contents — measured: with exactly this config, `dprint output-file-paths` over a
+    // tree holding sub/dist/inner.md and node_modules/pkg/README.md lists neither.
+    "**/dist",
+    "**/dist-check",
+    "**/dist-package",
+    "**/coverage",
+    "**/node_modules"
+  ],
+  "plugins": [
+    "https://plugins.dprint.dev/markdown-0.20.0.wasm@5eb4e23248231ce0fc6b6379229b3bf7e0f649b337eacf47764ee8fe2c062257"
+  ]
+}

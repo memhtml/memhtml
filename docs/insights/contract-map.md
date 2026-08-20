@@ -293,10 +293,10 @@ export const TASK_STATUSES = ["todo", "doing", "blocked", "done"] as const
 And the SQL restatement:
 
 ```sql
-  memory_type     TEXT NOT NULL CHECK (memory_type IN (
-                    'episodic','semantic','procedural','agent_insight',
-                    'user_preference','error_pattern','verdict','precedent','arc','task')),
-  para            TEXT NOT NULL CHECK (para IN ('projects','areas','resources','archive')),
+memory_type     TEXT NOT NULL CHECK (memory_type IN (
+                  'episodic','semantic','procedural','agent_insight',
+                  'user_preference','error_pattern','verdict','precedent','arc','task')),
+para            TEXT NOT NULL CHECK (para IN ('projects','areas','resources','archive')),
 ```
 
 **Assumptions consumers make:**
