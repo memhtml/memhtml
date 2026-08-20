@@ -178,7 +178,7 @@ describe("fabricatedQuoteReason accepts the RENDERED form of a stored line", () 
     ).toBeNull()
     expect(
       await reasonFor(
-        answerQuoting("session-a", MULTILINE.replace("\n", " ")),
+        answerQuoting("session-a", MULTILINE.replaceAll("\n", " ")),
         reachable("session-a")
       )
     ).toBeNull()
