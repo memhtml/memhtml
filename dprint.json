@@ -18,7 +18,10 @@
     "/CHANGELOG.md",
     // The markdown plugin does not parse the JSX expressions MDX carries.
     "**/*.mdx",
-    // Build outputs, mirrored from biome.json's excludes.
+    // Build outputs, mirrored from biome.json's excludes. dprint reads these
+    // gitignore-style, so a bare directory pattern excludes the directory AND its
+    // contents — measured: with exactly this config, `dprint output-file-paths` over a
+    // tree holding sub/dist/inner.md and node_modules/pkg/README.md lists neither.
     "**/dist",
     "**/dist-check",
     "**/dist-package",

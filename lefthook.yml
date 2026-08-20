@@ -37,6 +37,10 @@ pre-commit:
       run: mise exec -- biome check --write --no-errors-on-unmatched {staged_files}
       stage_fixed: true
     - name: dprint-md
+      # `*.md` matches by basename at any depth, exactly like the biome job's
+      # `*.{ts,json}` above — measured: a staged docs/deep/nested.md matches. Do not
+      # "fix" this to `**/*.md`, which stops matching root-level files (also measured:
+      # a staged README.md falls out of the set).
       glob: "*.md"
       # Markdown is dprint's (textWrap: never); biome has no Markdown formatter. The
       # excludes in dprint.json exempt the generated files (AGENTS.md, CHANGELOG.md), and
