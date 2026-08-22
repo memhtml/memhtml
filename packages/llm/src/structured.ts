@@ -12,6 +12,13 @@ import type { JsonSchemaObject } from "./wire.js"
  * default for an omitted field, and no accepted extra key. Downstream code cannot tell a
  * coerced object from a real one, and the phases that consume these objects archive and
  * rewrite files.
+ *
+ * ONE repair is the exception, because it recovers the payload the model meant rather than
+ * inventing one: a top-level field the schema declares as an array or object sometimes
+ * arrives double-encoded as a JSON STRING. That string is parsed once and the SAME strict
+ * decode re-runs on the result, so nothing an off-schema answer carries can slip through —
+ * a payload the repair cannot make satisfy the schema still fails with the original
+ * violation. See {@link decodeToolInput}.
  */
 
 /** Cap on the raw payload carried on a violation, so a runaway response cannot bloat it. */
@@ -49,6 +56,55 @@ const preview = (payload: unknown): string => {
   return rendered.length <= MAX_RAW ? rendered : `${rendered.slice(0, MAX_RAW)}…`
 }
 
+/** True when a property's derived JSON schema declares a container: an array, an object, or a
+ * `$ref` (every hoisted definition is a struct). A string-typed property is NOT a container,
+ * which is what keeps a field that legitimately holds JSON-looking text out of the repair. */
+const expectsContainer = (property: unknown): boolean => {
+  if (typeof property !== "object" || property === null) return false
+  const record = property as Record<string, unknown>
+  return typeof record.$ref === "string" || record.type === "array" || record.type === "object"
+}
+
+/**
+ * Undo ONE level of JSON-string double-encoding on the top-level fields of a tool payload.
+ *
+ * The shape this repairs was observed on the wire: a field the schema declares as an array
+ * arrives as `"{\"groups\":[…]}"` — the whole answer serialized as a string under its own
+ * key — or as the array itself serialized. So a string sitting where the derived
+ * `input_schema` declares a container is parsed once; when the parsed value is an object
+ * carrying the SAME key, the value at that key is taken, otherwise the parsed value stands.
+ *
+ * Returns `undefined` when there is nothing to repair: no field qualified, or no parse
+ * succeeded. The caller then reports the ORIGINAL violation, and a repaired payload still
+ * re-runs the same strict decode, so this never widens what the schema accepts.
+ */
+const unwrapDoubleEncoded = (schema: Schema.Top, input: unknown): unknown => {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return undefined
+  const properties = (toInputSchema(schema) as { properties?: Record<string, unknown> }).properties
+  if (properties === undefined) return undefined
+  let repairedAField = false
+  const repaired: Record<string, unknown> = {}
+  for (const [key, received] of Object.entries(input)) {
+    repaired[key] = received
+    if (typeof received !== "string" || !expectsContainer(properties[key])) continue
+    const parsed = (() => {
+      try {
+        return { value: JSON.parse(received) as unknown }
+      } catch {
+        return undefined
+      }
+    })()
+    if (parsed === undefined) continue
+    const wrapper =
+      typeof parsed.value === "object" && parsed.value !== null && !Array.isArray(parsed.value)
+        ? (parsed.value as Record<string, unknown>)
+        : undefined
+    repaired[key] = wrapper !== undefined && key in wrapper ? wrapper[key] : parsed.value
+    repairedAField = true
+  }
+  return repairedAField ? repaired : undefined
+}
+
 /**
  * Decode a forced-tool payload against its schema.
  *
@@ -56,6 +112,12 @@ const preview = (payload: unknown): string => {
  * strips an undeclared key and SUCCEEDS (verified against effect 4.0.0-beta.102), which
  * would let a model answer a schema next to the one it was given and have the extra field
  * vanish. croq's judge rules out the same drift by enumerating its allowed keys.
+ *
+ * One failure shape is repaired before the violation is constructed: a top-level container
+ * field double-encoded as a JSON string ({@link unwrapDoubleEncoded}). The repaired payload
+ * goes through the SAME strict decode, and a repair that still does not satisfy the schema
+ * reports the original payload's violation, so the repair cannot mask a genuinely off-schema
+ * answer.
  *
  * `undefined` input means the model produced no `emit` call at all. That is the same class
  * of failure as a malformed one, and the reason text names it so a caller can tell the two
@@ -72,14 +134,22 @@ export const decodeToolInput = <A, I>(
         })
       )
     : Effect.gen(function* () {
-        const decoded = yield* Effect.result(
-          Schema.decodeUnknownEffect(schema, { onExcessProperty: "error" })(input)
-        )
-        return Result.isSuccess(decoded)
-          ? decoded.success
-          : yield* Effect.fail(
-              LlmContractViolation.make({
-                reason: `tool payload does not satisfy its schema: ${String(decoded.failure)} (raw: ${preview(input)})`
-              })
+        const strictDecode = Schema.decodeUnknownEffect(schema, { onExcessProperty: "error" })
+        const decoded = yield* Effect.result(strictDecode(input))
+        if (Result.isSuccess(decoded)) return decoded.success
+        const repaired = unwrapDoubleEncoded(schema, input)
+        if (repaired !== undefined) {
+          const redecoded = yield* Effect.result(strictDecode(repaired))
+          if (Result.isSuccess(redecoded)) {
+            yield* Effect.logWarning(
+              "llm.structured repaired a double-encoded tool field before decoding"
             )
+            return redecoded.success
+          }
+        }
+        return yield* Effect.fail(
+          LlmContractViolation.make({
+            reason: `tool payload does not satisfy its schema: ${String(decoded.failure)} (raw: ${preview(input)})`
+          })
+        )
       })

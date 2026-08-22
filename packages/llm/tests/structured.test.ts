@@ -123,6 +123,73 @@ describe("decodeToolInput", () => {
       expect(result.failure.reason.length).toBeLessThan(MAX_RAW * 2)
     }
   })
+
+  describe("double-encoded container fields", () => {
+    /** The shape the sleep phases ask for: one top-level array of structs. */
+    const Partition = Schema.Struct({
+      groups: Schema.Array(Schema.Struct({ memberKeys: Schema.Array(Schema.String) }))
+    })
+    const decodePartition = (input: unknown) =>
+      Effect.runPromise(Effect.result(decodeToolInput(Partition, input)))
+
+    it("unwraps an array field serialized as a string carrying a same-key wrapper object", async () => {
+      // The whole answer arrives as a JSON string under its own key — the failure shape
+      // observed on the wire that motivated the repair.
+      const result = await decodePartition({
+        groups: '{"groups":[{"memberKeys":["m1","m2"]},{"memberKeys":["m3","m4"]}]}'
+      })
+      expect(Result.isSuccess(result)).toBe(true)
+      if (Result.isSuccess(result)) {
+        expect(result.success.groups).toEqual([
+          { memberKeys: ["m1", "m2"] },
+          { memberKeys: ["m3", "m4"] }
+        ])
+      }
+    })
+
+    it("unwraps an array field serialized as a bare JSON-string array", async () => {
+      const result = await decodePartition({ groups: '[{"memberKeys":["m1","m2"]}]' })
+      expect(Result.isSuccess(result)).toBe(true)
+      if (Result.isSuccess(result)) {
+        expect(result.success.groups).toEqual([{ memberKeys: ["m1", "m2"] }])
+      }
+    })
+
+    it("falls through to the violation when the string is not valid JSON", async () => {
+      const result = await decodePartition({ groups: "not json at all" })
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure).toBeInstanceOf(LlmContractViolation)
+        expect(result.failure.reason).toContain("tool payload does not satisfy its schema")
+      }
+    })
+
+    it("never parses a field the schema declares as a string, even while repairing another", async () => {
+      // `keep` legitimately holds a JSON-looking string; only `drop` (a declared array)
+      // may be unwrapped. A repair that parsed `keep` would silently rewrite a value the
+      // model meant literally.
+      const literal = '{"keep":"areas/other.html"}'
+      const result = await decode({ keep: literal, drop: '["areas/y.html"]', confidence: 0.8 })
+      expect(Result.isSuccess(result)).toBe(true)
+      if (Result.isSuccess(result)) {
+        expect(result.success.keep).toBe(literal)
+        expect(result.success.drop).toEqual(["areas/y.html"])
+      }
+    })
+
+    it("reports the ORIGINAL payload's violation when the repaired payload still fails", async () => {
+      // The string parses, but its content is off-schema (numbers where strings belong),
+      // so the repair cannot save it and the error must describe what actually arrived.
+      const raw = '{"groups":[{"memberKeys":[1,2]}]}'
+      const result = await decodePartition({ groups: raw })
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure).toBeInstanceOf(LlmContractViolation)
+        // The preview carries the original double-encoded string, not the parsed object.
+        expect(result.failure.reason).toContain('memberKeys\\":[1,2]')
+      }
+    })
+  })
 })
 
 describe("makeModelClient.generateObject", () => {

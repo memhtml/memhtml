@@ -352,6 +352,44 @@ describe("dedup-merge with a model", () => {
     )
   })
 
+  it("still MERGES when the model double-encodes the partition as a JSON string", async () => {
+    /**
+     * The wire shape issue #53 names: the declared `groups` array arrives as a JSON STRING carrying a
+     * same-key wrapper object. The scripted value routes through the real `decodeToolInput`, so this
+     * asserts the whole recovery end to end — a batch that used to degrade to skipped-not-failed now
+     * folds its pair. The assertions are the headline test's; only the encoding differs.
+     */
+    const model = scriptedModel((request) =>
+      value({
+        groups: JSON.stringify({
+          groups: [
+            {
+              memberKeys: keysMatching(request.prompt, [
+                "nightly index rebuild",
+                "read by the nightly"
+              ])
+            }
+          ]
+        })
+      })
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* dedupMerge(envFor(fixture))
+
+          expect(outcome.counts.llmGroups).toBe(1)
+          const archived = archivePathFor(BAND_DROP_PATH, 2026)
+          expect(yield* atHead(fixture, archived)).toBeDefined()
+          expect(yield* atHead(fixture, BAND_KEEP_PATH)).toContain(
+            `<link rel="memhtml-supersedes" href="/${archived}">`
+          )
+        }),
+      { seed: [...DEDUP_CORPUS, ...DEDUP_BAND_CORPUS], model }
+    )
+  })
+
   it("leaves that same 0.8673 pair alone with NO model, which is what makes the merge the model's", async () => {
     /**
      * The control for the test above. Without it, "the model merged it" would hold just as well against
