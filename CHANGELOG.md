@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.4.0...memhtml-v0.5.0) (2026-08-23)
+
+
+### Features
+
+* **llm:** route structured sleep phases through gpt-5.6-sol strict json_schema ([#55](https://github.com/memhtml/memhtml/issues/55)) ([1dcd320](https://github.com/memhtml/memhtml/commit/1dcd32012941c82aec9d92b72fbc26d129063241))
+
+
+### Bug Fixes
+
+* **llm:** unwrap one level of JSON-string double-encoding in decodeToolInput ([#54](https://github.com/memhtml/memhtml/issues/54)) ([d17ef98](https://github.com/memhtml/memhtml/commit/d17ef983b0eb03df50b543ca47303d7d6970a88c)), closes [#53](https://github.com/memhtml/memhtml/issues/53)
+
 ## [0.4.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.3.0...memhtml-v0.4.0) (2026-08-20)
 
 

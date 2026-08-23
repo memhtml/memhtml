@@ -7,7 +7,7 @@ import { Resources } from "./resources.js"
 import { MemhtmlToolkit } from "./tools.js"
 
 export const SERVER_NAME = "memhtml"
-export const SERVER_VERSION = "0.4.0" // x-release-please-version
+export const SERVER_VERSION = "0.5.0" // x-release-please-version
 
 /**
  * The server as one layer: fourteen tools, two resources, over the CLI's own `AppLive`.
