@@ -2,7 +2,7 @@ import type { StorageFailure } from "@memhtml/contracts/errors"
 import type { GitFailure } from "@memhtml/store"
 import { Effect } from "effect"
 
-import { assembleBatches, batchCall, keyMembers, resolveKeys } from "../batch.js"
+import { assembleBatches, batchCall, keyMembers, offeredKeyFor, resolveKeys } from "../batch.js"
 import { commitPhase } from "../commit.js"
 import { hrefFor, link, meta, readFileBytes, stampFile } from "../edits.js"
 import { emptyOutcome, modelFor, type PhaseBody, type PhaseEnv } from "../env.js"
@@ -389,15 +389,18 @@ export const edgeTyping: PhaseBody = (env) =>
       for (const verdict of answer.verdicts) {
         /**
          * The key is resolved through the kernel, so an invented key yields no candidate and no
-         * write.
+         * write. The CANONICAL key feeds the repeat guard, so `m1` and its label-prefixed spelling
+         * `pair_m1` in one answer are one pair answered twice, not two pairs.
          */
-        const [candidate] = resolveKeys(keyed, [verdict.pairKey])
+        const pairKey = offeredKeyFor(keyed, verdict.pairKey)
+        if (pairKey === undefined) continue
+        const [candidate] = resolveKeys(keyed, [pairKey])
         if (candidate === undefined) continue
-        if (answered.has(verdict.pairKey)) {
+        if (answered.has(pairKey)) {
           duplicates += 1
           continue
         }
-        answered.add(verdict.pairKey)
+        answered.add(pairKey)
         judged += 1
         if (!assertsEdge(verdict)) continue
 
