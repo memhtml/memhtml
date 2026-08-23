@@ -1037,7 +1037,7 @@ export const GUIDE_TOPICS = GUIDE.map((block) => block.topic)
  */
 export const buildManifest = () => ({
   name: "memhtml",
-  version: "0.4.0", // x-release-please-version
+  version: "0.5.0", // x-release-please-version
   summary: "Read, write, and curate the git-backed memory repo.",
   apiVersion: "1",
   /**
