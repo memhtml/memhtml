@@ -114,7 +114,9 @@ export const compress: PhaseBody = (env) =>
       batches: batches.length,
       canonicals: 0,
       archived: 0,
-      skipped: 0
+      skipped: 0,
+      failed: 0,
+      refused: 0
     }
     if (batches.length === 0) return emptyOutcome(counts)
     if (env.dryRun) return emptyOutcome(counts)
@@ -123,7 +125,16 @@ export const compress: PhaseBody = (env) =>
     let llmCalls = 0
     let canonicals = 0
     let archived = 0
+    /**
+     * `skipped` stays the total, and `failed` + `refused` partition it. The two are different
+     * diagnoses with different fixes — a failed call is the model or the wire (already logged by
+     * `isolate`), a refusal is an answer the phase declined to act on (logged below) — and a night
+     * reporting only their sum cannot say which one it had. 47 of 47 batches once skipped as
+     * refusals with nothing on stderr, and the sum read as flaky calls.
+     */
     let skipped = 0
+    let failed = 0
+    let refused = 0
     let lastCommit: string | null = null
 
     for (const batch of batches) {
@@ -144,7 +155,9 @@ export const compress: PhaseBody = (env) =>
         toolDescription: "Emit the canonical memory and the members whose content it absorbs."
       })
       if (synthesis === undefined) {
+        // The call itself failed; `isolate` already logged the reason.
         skipped += 1
+        failed += 1
         continue
       }
 
@@ -153,6 +166,14 @@ export const compress: PhaseBody = (env) =>
       if (absorbed.length < 2 || synthesis.title.trim() === "" || synthesis.claim.trim() === "") {
         // A refusal, or a fold of a single member. Both leave every member active.
         skipped += 1
+        refused += 1
+        yield* Effect.logWarning(
+          `sleep.llm compress batch of ${batch.length} refused: the model absorbed ` +
+            `${absorbed.length} of ${synthesis.absorbedKeys.length} named keys` +
+            (synthesis.absorbedKeys.length > 0 && absorbed.length === 0
+              ? ` (none of the named keys resolved: ${synthesis.absorbedKeys.slice(0, 3).join(", ")}${synthesis.absorbedKeys.length > 3 ? ", …" : ""})`
+              : "")
+        )
         continue
       }
 
@@ -167,6 +188,10 @@ export const compress: PhaseBody = (env) =>
       const members = excludeSelfSupersede(canonicalPath, absorbed)
       if (members.length === 0) {
         skipped += 1
+        refused += 1
+        yield* Effect.logWarning(
+          `sleep.llm compress batch of ${batch.length} refused: every absorbed member was the canonical itself`
+        )
         continue
       }
 
@@ -184,6 +209,10 @@ export const compress: PhaseBody = (env) =>
       }
       if (archivedPaths.length === 0) {
         skipped += 1
+        refused += 1
+        yield* Effect.logWarning(
+          `sleep.llm compress batch of ${batch.length} refused: every member was already gone from the tree`
+        )
         continue
       }
 
@@ -210,11 +239,11 @@ export const compress: PhaseBody = (env) =>
         env,
         "compress",
         `fold ${members.length} memories into ${synthesis.title}`,
-        { ...counts, canonicals, archived, skipped }
+        { ...counts, canonicals, archived, skipped, failed, refused }
       )
       if (commitSha !== null) lastCommit = commitSha
     }
 
-    const final = { ...counts, canonicals, archived, skipped }
+    const final = { ...counts, canonicals, archived, skipped, failed, refused }
     return { counts: final, commitSha: lastCommit, llmCalls }
   })
