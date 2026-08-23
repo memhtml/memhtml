@@ -550,6 +550,9 @@ describe("dedup-merge with a model", () => {
         Effect.gen(function* () {
           const outcome = yield* dedupMerge(envFor(fixture))
           expect(outcome.counts.llmGroups).toBe(0)
+          // The three unofferable keys are COUNTED, not silently absorbed (issue #58): a model
+          // systematically naming keys the resolver refuses must be visible in a night's report.
+          expect(outcome.counts.unresolved).toBe(3)
           expect(yield* atHead(fixture, BAND_DROP_PATH)).toBeDefined()
           expect(yield* atHead(fixture, BAND_KEEP_PATH)).not.toContain("memhtml-supersedes")
         }),
@@ -582,6 +585,7 @@ describe("dedup-merge with a model", () => {
 
           expect(outcome.counts.llmGroups).toBe(1)
           expect(outcome.counts.merged).toBe(1)
+          expect(outcome.counts.unresolved).toBe(1)
           // The invented key named no file, so nothing outside the offered pair was touched.
           const archived = archivePathFor(BAND_DROP_PATH, 2026)
           expect(yield* atHead(fixture, archived)).toBeDefined()
