@@ -1513,6 +1513,38 @@ describe("compress", () => {
     )
   })
 
+  it("partitions skipped into failed and refused, so a night's report can say which it had", async () => {
+    /**
+     * A failed call and a refused answer are different diagnoses with different fixes — the wire
+     * versus the answer — and a `skipped` that conflates them once read 47 refusals as flaky calls.
+     * Two communities, one of each outcome: the sum stays `skipped`, and the parts name the split.
+     */
+    let call = 0
+    const model = scriptedModel(() => {
+      call += 1
+      return call === 1
+        ? violation("scripted: malformed tool payload")
+        : value({
+            title: "Unrelated memories",
+            claim: "These memories do not describe one thing.",
+            paragraphs: ["No fold is warranted."],
+            absorbedKeys: []
+          })
+    })
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* compress(envFor(fixture))
+          expect(outcome.counts.skipped).toBe(2)
+          expect(outcome.counts.failed).toBe(1)
+          expect(outcome.counts.refused).toBe(1)
+          expect(outcome.counts.canonicals).toBe(0)
+        }),
+      { seed: [...COMMUNITY, ...SECOND_COMMUNITY], model }
+    )
+  })
+
   it("counts on a dry run and writes nothing", async () => {
     const model = scriptedModel(() =>
       value({ title: "x", claim: "y", paragraphs: ["z"], absorbedKeys: ["m1", "m2"] })
