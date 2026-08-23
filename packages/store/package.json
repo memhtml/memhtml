@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/store",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "Git-backed file store: read, write, move, commit, status.",
   "type": "module",
