@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.1](https://github.com/memhtml/memhtml/compare/memhtml-v0.5.0...memhtml-v0.5.1) (2026-08-23)
+
+
+### Bug Fixes
+
+* **sleep:** count unresolved model-named keys in the four sibling phases and hold their sweeps back ([7d238ea](https://github.com/memhtml/memhtml/commit/7d238eacf1cd8d1e807c985999c2e36f11bb041a))
+* **sleep:** count unresolved model-named keys in the four sibling phases and hold their sweeps back ([bb32af7](https://github.com/memhtml/memhtml/commit/bb32af77ce09c004e98267509e2efbcb3412046e))
+* **sleep:** partition compress's skipped count into failed and refused, and log each refusal ([c6dcfea](https://github.com/memhtml/memhtml/commit/c6dcfea272e4be3735ea790ef6f721c9054c67da))
+* **sleep:** partition compress's skipped count into failed and refused, and log each refusal ([4a134d7](https://github.com/memhtml/memhtml/commit/4a134d7925126e26c84f1238b5a5a71dd8af3dd1))
+* **sleep:** resolve the label-prefixed member-key spelling the batch prompt displays ([9de2b3b](https://github.com/memhtml/memhtml/commit/9de2b3b12be23950862b9078141705c14a63a0ac))
+* **sleep:** resolve the label-prefixed member-key spelling the batch prompt displays ([1ec5a32](https://github.com/memhtml/memhtml/commit/1ec5a3275a77597121f20d35089892ac8247443c))
+
 ## [0.5.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.4.0...memhtml-v0.5.0) (2026-08-23)
 
 
