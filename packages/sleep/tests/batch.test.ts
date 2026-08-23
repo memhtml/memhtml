@@ -5,6 +5,7 @@ import {
   batchPrompt,
   keyMembers,
   memberList,
+  offeredKeyFor,
   packGroups,
   resolveKeys
 } from "../src/batch.js"
@@ -102,6 +103,48 @@ describe("resolveKeys", () => {
     // compress gates on `absorbed.length < 2`. A repeat that survived would let one member pass a
     // gate that exists to require two.
     expect(resolveKeys(batch, ["m1", "m1", "m1"]).map((item) => item.path)).toEqual(["a.html"])
+  })
+
+  it("resolves the label-prefixed spelling the prompt itself displays", () => {
+    /**
+     * `memberList` shows each key only as `<label>_<key>` wrapper tags, so `member_m1` is the
+     * spelling the prompt teaches. Measured live 2026-08-23: `gpt-5.6-sol` answers that spelling on
+     * every call and Claude Sonnet 5 on most, so a resolver that takes only the bare key drops
+     * every member of every batch — compress's 47/47 skipped night.
+     */
+    expect(resolveKeys(batch, ["member_m1", "pair_m2"]).map((item) => item.path)).toEqual([
+      "a.html",
+      "b.html"
+    ])
+  })
+
+  it("collapses the two spellings of one key to one member", () => {
+    expect(resolveKeys(batch, ["m1", "member_m1"]).map((item) => item.path)).toEqual(["a.html"])
+  })
+
+  it("still drops a prefixed key whose suffix the batch never offered", () => {
+    // The prefix strip must not widen what resolves: `member_m9` denotes nothing in a batch of
+    // three, and a path is not a key under any spelling.
+    expect(resolveKeys(batch, ["member_m9", "member_areas/other.html", "_m1_"])).toEqual([])
+  })
+})
+
+describe("offeredKeyFor", () => {
+  const batch = keyMembers([row("a.html"), row("b.html")], (item) => item.text)
+
+  it("canonicalizes both spellings to the offered key and refuses everything else", () => {
+    expect(offeredKeyFor(batch, "m2")).toBe("m2")
+    expect(offeredKeyFor(batch, "member_m2")).toBe("m2")
+    expect(offeredKeyFor(batch, "entity_m1")).toBe("m1")
+    expect(offeredKeyFor(batch, "m9")).toBeUndefined()
+    expect(offeredKeyFor(batch, "member_m9")).toBeUndefined()
+    expect(offeredKeyFor(batch, "areas/a.html")).toBeUndefined()
+    expect(offeredKeyFor(batch, "")).toBeUndefined()
+  })
+
+  it("strips only the LAST underscore segment, so a nested prefix cannot smuggle a key", () => {
+    expect(offeredKeyFor(batch, "member_extra_m1")).toBe("m1")
+    expect(offeredKeyFor(batch, "m1_member")).toBeUndefined()
   })
 })
 

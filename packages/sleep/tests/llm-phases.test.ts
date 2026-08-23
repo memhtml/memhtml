@@ -1451,6 +1451,37 @@ describe("compress", () => {
     )
   })
 
+  it("folds when the model answers the label-prefixed spelling the prompt displays", async () => {
+    /**
+     * The prompt shows each key only as `<member_m1>` wrapper tags, and a model that echoes that
+     * spelling into `absorbedKeys` is answering the members it was offered. Before the resolver
+     * canonicalized the spelling, every such answer resolved to zero members and the whole batch
+     * skipped — 47 of 47 on a real corpus the night compress moved to a model that echoes the
+     * wrapper name consistently.
+     */
+    const model = scriptedModel(() =>
+      value({
+        title: "Build cache warmup",
+        claim: "Build cache warmup reads the shared volume manifest first.",
+        paragraphs: ["A two-step read."],
+        absorbedKeys: ["member_m1", "member_m2", "member_m3"]
+      })
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* compress(envFor(fixture))
+          expect(outcome.counts.canonicals).toBe(1)
+          expect(outcome.counts.skipped).toBe(0)
+          // Path order over the three seeded members is one, three, two; the canonical's slug
+          // matches none of them, so all three archive.
+          expect(outcome.counts.archived).toBe(3)
+        }),
+      { seed: COMMUNITY, model }
+    )
+  })
+
   it("archives nothing when the model refuses to fold", async () => {
     /**
      * `absorbedKeys: []` is a valid answer — "these do not describe one thing". A phase that folded

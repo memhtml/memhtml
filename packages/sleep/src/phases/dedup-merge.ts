@@ -12,7 +12,14 @@ import {
 import type { GitFailure } from "@memhtml/store"
 import { Effect } from "effect"
 
-import { batchCall, type KeyedMember, keyMembers, packGroups, resolveKeys } from "../batch.js"
+import {
+  batchCall,
+  type KeyedMember,
+  keyMembers,
+  offeredKeyFor,
+  packGroups,
+  resolveKeys
+} from "../batch.js"
 import { commitPhase } from "../commit.js"
 import type { PhaseCounts } from "../contract.js"
 import { archiveFile, hrefFor, link, meta, stampFile } from "../edits.js"
@@ -401,12 +408,15 @@ export const dedupMerge: PhaseBody = (env) =>
          * Dropping leaves every member active, which is the safe outcome, and any pair inside the
          * intended component is still reachable through the mined arm when a cosine can prove it.
          *
-         * Read off the RESOLVED keys, so a key the model invented cannot decide containment: an
-         * unknown key is absent from `componentOfKey` and would otherwise count as a second component.
+         * Read off the CANONICAL keys, so a key the model invented cannot decide containment: an
+         * unknown key is absent from `componentOfKey` and would otherwise count as a second
+         * component. Canonicalizing first keeps a label-prefixed spelling (`member_m3`) inside the
+         * component check instead of reading as unknown.
          */
         const componentIds = new Set(
           group.memberKeys.flatMap((key) => {
-            const id = componentOfKey.get(key)
+            const canonical = offeredKeyFor(keyed, key)
+            const id = canonical === undefined ? undefined : componentOfKey.get(canonical)
             return id === undefined ? [] : [id]
           })
         )
