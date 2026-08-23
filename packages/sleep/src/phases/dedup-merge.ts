@@ -270,7 +270,9 @@ export const dedupMerge: PhaseBody = (env) =>
           candidates: oriented.length,
           components: 0,
           llmGroups: 0,
-          vetoed: oriented.length - decisions.length
+          vetoed: oriented.length - decisions.length,
+          skipped: 0,
+          unresolved: 0
         },
         /**
          * Every mined pair on this arm cleared 0.92, so a vetoed one here is a near-certain duplicate
@@ -353,6 +355,12 @@ export const dedupMerge: PhaseBody = (env) =>
     let llmCalls = 0
     let llmGroups = 0
     let skipped = 0
+    /**
+     * Model-named member keys that resolved to no offered member, dropped unacted. The drop is the
+     * safe outcome and stays; the count makes a systematic naming pattern visible instead of reading
+     * as a night in which the model proposed no merges (issue #58).
+     */
+    let unresolved = 0
     /** Group-implied pairs, in batch then component then group order. */
     const groupPairs: Array<MergePair> = []
     /** Every path a surviving group claimed, so the mined arm cannot re-propose one. */
@@ -396,7 +404,13 @@ export const dedupMerge: PhaseBody = (env) =>
         continue
       }
 
+      /** This batch's unresolvable keys, so the warning below can name the spellings that failed. */
+      const unresolvedKeys: Array<string> = []
+
       for (const group of partition.groups) {
+        const dropped = group.memberKeys.filter((key) => offeredKeyFor(keyed, key) === undefined)
+        unresolved += dropped.length
+        unresolvedKeys.push(...dropped)
         const members = resolveKeys(keyed, group.memberKeys)
         if (members.length < 2) continue
 
@@ -447,6 +461,14 @@ export const dedupMerge: PhaseBody = (env) =>
         }
         grouped.add(keeper.path)
       }
+
+      if (unresolvedKeys.length > 0) {
+        yield* Effect.logWarning(
+          `sleep.llm dedup batch of ${batch.length} components dropped ${unresolvedKeys.length} ` +
+            `member keys naming no offered member (${unresolvedKeys.slice(0, 3).join(", ")}` +
+            `${unresolvedKeys.length > 3 ? ", …" : ""})`
+        )
+      }
     }
 
     /**
@@ -472,7 +494,8 @@ export const dedupMerge: PhaseBody = (env) =>
         components: components.length,
         llmGroups,
         vetoed: proposed.length - decisions.length,
-        skipped
+        skipped,
+        unresolved
       },
       /**
        * On this arm a vetoed pair is one the MODEL grouped as the same memory, or one that cleared
@@ -483,9 +506,11 @@ export const dedupMerge: PhaseBody = (env) =>
        *
        * `judged` is false when a batch's call failed, because those components were never partitioned:
        * their pairs reach the veto only through the mined arm, so a night that lost a call cannot say
-       * whether a pair it did not see is still a candidate.
+       * whether a pair it did not see is still a candidate. An unresolved member key is the same
+       * hazard from the answer side — a group the phase could not fully map was not fully judged —
+       * so it holds the sweep back the same way.
        */
-      { vetoed: vetoedPairs(proposed), judged: skipped === 0 }
+      { vetoed: vetoedPairs(proposed), judged: skipped === 0 && unresolved === 0 }
     )
     return { ...outcome, llmCalls }
   })

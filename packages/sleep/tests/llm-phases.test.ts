@@ -880,6 +880,49 @@ describe("edge-typing", () => {
     )
   })
 
+  it("counts a verdict naming no offered pair as unresolved and holds the sweep back", async () => {
+    /**
+     * The drop is the safe outcome and stays; what this pins is its VISIBILITY and its effect on the
+     * sweep. A verdict named by a key the batch cannot map is a pair that was never judged, so it
+     * must be counted (`unresolved`), and the vanished-detection sweep must not run — closing a
+     * held-back contradiction because the model misspelled a key would take a live review out of a
+     * human's queue (issue #58). Two nights make the gate decide something: night one detects the
+     * contradiction and mints its review task; night two's only verdict names `m99`, and the task
+     * must survive it. MUTATION: drop `unresolved === 0` from the sweep gate — night two closes the
+     * task and `tasksClosed` reads 1.
+     */
+    const model = scriptedModel((request, at) =>
+      at === 0
+        ? value({
+            verdicts: offeredKeys(request.prompt).map((key) =>
+              verdict({ pairKey: key, rel: "contradicts" })
+            )
+          })
+        : value({ verdicts: [verdict({ pairKey: "m99", rel: "caused_by" })] })
+    )
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const nightOne = yield* edgeTyping(envFor(fixture))
+          expect(nightOne.counts.contradictions).toBe(1)
+          expect(nightOne.counts.tasksMinted).toBe(1)
+
+          const later = instantFor("2026-08-03")
+          const nightTwo = yield* edgeTyping({
+            ...envFor(fixture),
+            date: "2026-08-03",
+            at: later.at,
+            atMillis: later.millis
+          })
+          expect(nightTwo.counts.unresolved, "the dropped verdict is counted").toBe(1)
+          expect(nightTwo.counts.judged, "and it never became a judgment").toBe(0)
+          expect(nightTwo.counts.skipped).toBe(0)
+          expect(nightTwo.counts.tasksClosed, "no sweep: part of the answer was unmappable").toBe(0)
+        }),
+      { seed: [SAFE_FILE, NOT_SAFE_FILE], model }
+    )
+  })
+
   it("batches in a deterministic order, so a night's keys land on the same pairs twice", async () => {
     /**
      * The determinism contract the kernel states and the phase owns: the kernel preserves the order it

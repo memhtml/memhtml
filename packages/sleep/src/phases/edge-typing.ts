@@ -273,6 +273,7 @@ export const edgeTyping: PhaseBody = (env) =>
       contradictions: 0,
       promoted: 0,
       skipped: 0,
+      unresolved: 0,
       capped: 0,
       duplicates: 0,
       tasksMinted: 0,
@@ -336,6 +337,13 @@ export const edgeTyping: PhaseBody = (env) =>
     let capped = 0
     /** Second-and-later verdicts naming a key their batch had already answered for. */
     let duplicates = 0
+    /**
+     * Verdicts whose key resolved to no offered pair, so they were dropped unacted. Dropping is the
+     * safe outcome and stays; the count is what makes a SYSTEMATIC pattern visible — a model naming
+     * keys in a spelling the resolver refuses drops every verdict of every batch, and a night that
+     * judged nothing looked identical to a night whose model answered nothing (issue #58).
+     */
+    let unresolved = 0
     let llmCalls = 0
     /**
      * Contradictions this night detected for the FIRST time, so below the promotion gate.
@@ -385,6 +393,8 @@ export const edgeTyping: PhaseBody = (env) =>
        * rather than silently swallowed, so a model doing this is visible in a night's report.
        */
       const answered = new Set<string>()
+      /** This batch's dropped verdicts, so the warning below can name the spellings that failed. */
+      const unresolvedKeys: Array<string> = []
 
       for (const verdict of answer.verdicts) {
         /**
@@ -393,7 +403,11 @@ export const edgeTyping: PhaseBody = (env) =>
          * `pair_m1` in one answer are one pair answered twice, not two pairs.
          */
         const pairKey = offeredKeyFor(keyed, verdict.pairKey)
-        if (pairKey === undefined) continue
+        if (pairKey === undefined) {
+          unresolved += 1
+          unresolvedKeys.push(verdict.pairKey)
+          continue
+        }
         const [candidate] = resolveKeys(keyed, [pairKey])
         if (candidate === undefined) continue
         if (answered.has(pairKey)) {
@@ -536,6 +550,14 @@ export const edgeTyping: PhaseBody = (env) =>
         // `false` means the link was already there, or the file is gone. Neither is a new edge.
         if (wrote) typed += 1
       }
+
+      if (unresolvedKeys.length > 0) {
+        yield* Effect.logWarning(
+          `sleep.llm edge-typing batch of ${batch.length} dropped ${unresolvedKeys.length} ` +
+            `verdicts naming no offered pair (${unresolvedKeys.slice(0, 3).join(", ")}` +
+            `${unresolvedKeys.length > 3 ? ", …" : ""})`
+        )
+      }
     }
 
     /**
@@ -543,8 +565,11 @@ export const edgeTyping: PhaseBody = (env) =>
      * sweep is gated on a night that judged its whole candidate set: `skipped` counts pairs whose
      * batch's call failed as well as pairs whose endpoint the tree no longer holds, and a pair the
      * model was never asked about must not read as a pair the model stopped contradicting.
+     * `unresolved` is the same hazard from the answer side — a verdict the phase could not map to a
+     * pair is a pair that was never judged, so its held-back contradiction must not close as "no
+     * longer detected" over a misspelled key.
      */
-    const tasks = yield* mintContradictionTasks(env, deferred, skipped === 0)
+    const tasks = yield* mintContradictionTasks(env, deferred, skipped === 0 && unresolved === 0)
 
     const counts = {
       candidates: candidates.length,
@@ -553,6 +578,7 @@ export const edgeTyping: PhaseBody = (env) =>
       contradictions,
       promoted,
       skipped,
+      unresolved,
       capped,
       duplicates,
       tasksMinted: tasks.minted,

@@ -155,6 +155,12 @@ export const taskDetection: PhaseBody = (env) =>
     let dismissed = 0
     let skipped = 0
     /**
+     * Findings whose key resolved to no offered member, dropped unacted. The drop is the safe
+     * outcome and stays; the count makes a systematic pattern visible, because a night whose every
+     * finding named an unresolvable key otherwise reads as a night with no open work (issue #58).
+     */
+    let unresolved = 0
+    /**
      * Every key this night's scan SAW, whether or not it minted and whether or not it cleared the floor.
      * The sweep's input; see the `liveKeys.add` below for why the floor is not a filter here.
      */
@@ -186,11 +192,17 @@ export const taskDetection: PhaseBody = (env) =>
        * because it is called one key at a time here — a finding names one member.
        */
       const answered = new Set<string>()
+      /** This batch's dropped findings, so the warning below can name the spellings that failed. */
+      const unresolvedKeys: Array<string> = []
 
       for (const finding of answer.findings) {
         /** The CANONICAL key feeds the repeat guard, same as edge-typing's, and for the same reason. */
         const memberKey = offeredKeyFor(keyed, finding.memberKey)
-        if (memberKey === undefined) continue
+        if (memberKey === undefined) {
+          unresolved += 1
+          unresolvedKeys.push(finding.memberKey)
+          continue
+        }
         const [row] = resolveKeys(keyed, [memberKey])
         if (row === undefined) continue
         if (answered.has(memberKey)) continue
@@ -242,15 +254,28 @@ export const taskDetection: PhaseBody = (env) =>
         else if (outcome === "framed") framed += 1
         else if (outcome === "dismissed") dismissed += 1
       }
+
+      if (unresolvedKeys.length > 0) {
+        yield* Effect.logWarning(
+          `sleep.llm task-detection batch of ${batch.length} dropped ${unresolvedKeys.length} ` +
+            `findings naming no offered member (${unresolvedKeys.slice(0, 3).join(", ")}` +
+            `${unresolvedKeys.length > 3 ? ", …" : ""})`
+        )
+      }
     }
 
     /**
      * The sweep, only from a full-strength scan. `skipped > 0` means at least one batch's memories
      * went unread, so a finding of theirs is missing from `liveKeys` because the phase could not look
-     * rather than because it is gone.
+     * rather than because it is gone. `unresolved > 0` is the same hazard from the answer side: the
+     * model reported a finding the phase could not map to a member, so its detection key was never
+     * constructed, and sweeping against that would close a live task because the model misspelled a
+     * key rather than because the finding vanished.
      */
     const closed =
-      skipped === 0 ? yield* closeVanishedDetections(env, TASK_DETECT_DETECTOR, liveKeys) : 0
+      skipped === 0 && unresolved === 0
+        ? yield* closeVanishedDetections(env, TASK_DETECT_DETECTOR, liveKeys)
+        : 0
 
     const counts = {
       candidates: candidates.length,
@@ -263,7 +288,8 @@ export const taskDetection: PhaseBody = (env) =>
       dismissed,
       closed,
       capped: budget.overflow,
-      skipped
+      skipped,
+      unresolved
     }
     /**
      * A refresh writes a `memhtml-updated` stamp, which is a staged file, so it commits — the queue's
@@ -302,5 +328,6 @@ const ZERO = {
   dismissed: 0,
   closed: 0,
   capped: 0,
-  skipped: 0
+  skipped: 0,
+  unresolved: 0
 }

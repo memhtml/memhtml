@@ -758,6 +758,61 @@ describe("the task-detection phase", () => {
     )
   })
 
+  it("counts a finding naming no offered member as unresolved and holds the sweep back", async () => {
+    /**
+     * A finding named by a key the batch cannot map is a member that was never really judged: its
+     * detection key is never constructed, so it is absent from `liveKeys` for a reason that has
+     * nothing to do with the finding having vanished. A sweep that ran anyway would archive a live
+     * task because the model misspelled a key (issue #58). Night one mints normally; night two's
+     * only finding names `m99`, and the task must survive it.
+     *
+     * MUTATION: drop `unresolved === 0` from the sweep gate — `closed` reads 1 on night two and the
+     * task is archived out of the human's queue.
+     */
+    const model = inertUnless((_request, at) =>
+      at === 0
+        ? {
+            findings: [
+              {
+                memberKey: "m1",
+                sentence: COMMITMENT_SENTENCE,
+                kind: "commitment",
+                confidence: 0.9
+              }
+            ]
+          }
+        : {
+            findings: [
+              {
+                memberKey: "m99",
+                sentence: COMMITMENT_SENTENCE,
+                kind: "commitment",
+                confidence: 0.9
+              }
+            ]
+          }
+    )
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const first = yield* taskDetection(envFor(fixture))
+          expect(first.counts.minted).toBe(1)
+          const open = yield* detectedIn(fixture)
+          const path = open[0]?.path as string
+          yield* fixture.deps.git.commit("seed a detected task").pipe(Effect.orDie)
+
+          const second = yield* taskDetection(envFor(fixture, { date: LATER }))
+          expect(second.counts.unresolved, "the dropped finding is counted").toBe(1)
+          expect(second.counts.findings, "and it never became a finding").toBe(0)
+          expect(second.counts.closed, "no sweep: part of the answer was unmappable").toBe(0)
+
+          const after = yield* detectedIn(fixture, LATER)
+          expect(after.map((one) => one.path)).toEqual([path])
+        }),
+      { seed: [...SCAN_CORPUS], model }
+    )
+  })
+
   it("never scans a detected task, so a task is not evidence of another task", async () => {
     /**
      * The no-self-scan guard. MUTATION: drop `SLEEP_EXCLUDED_TYPES` from `recentActiveMemories` — the

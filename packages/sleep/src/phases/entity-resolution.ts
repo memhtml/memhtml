@@ -4,7 +4,7 @@ import { parseMemory } from "@memhtml/html"
 import type { GitFailure } from "@memhtml/store"
 import { Effect } from "effect"
 
-import { assembleBatches, batchCall, keyMembers, resolveKeys } from "../batch.js"
+import { assembleBatches, batchCall, keyMembers, offeredKeyFor, resolveKeys } from "../batch.js"
 import { commitPhase } from "../commit.js"
 import { applyHeadEdits, meta, readFileBytes, rewriteEntityMeta, writeFileBytes } from "../edits.js"
 import { emptyOutcome, modelFor, type PhaseBody, type PhaseEnv, type SleepError } from "../env.js"
@@ -605,6 +605,12 @@ export const entityResolution: PhaseBody = (env) =>
     /** Model calls that came back malformed. The sweep's precondition reads this; see below. */
     let callsFailed = 0
     /**
+     * Cluster member keys (or canonical keys) resolving to no offered member, dropped unacted. The
+     * drop is the safe outcome and stays; the count makes a systematic naming pattern visible
+     * instead of reading as a night in which the model proposed no merges (issue #58).
+     */
+    let unresolved = 0
+    /**
      * Every pair this night deferred to a human, as a value rather than only a count.
      *
      * This is issue #44's motivating case in one variable. The phase used to report
@@ -758,6 +764,9 @@ export const entityResolution: PhaseBody = (env) =>
             continue
           }
 
+          /** This shard's unresolvable keys, so the warning below names the spellings that failed. */
+          const unresolvedKeys: Array<string> = []
+
           for (const cluster of clustering.clusters) {
             /**
              * A key the batch never offered resolves to nothing, so an invented member cannot become a
@@ -765,6 +774,11 @@ export const entityResolution: PhaseBody = (env) =>
              * canonical is outside it contradicts itself, and guessing which half was meant would be
              * the caller inventing a merge.
              */
+            const droppedKeys = [...cluster.memberKeys, cluster.canonicalKey].filter(
+              (key) => offeredKeyFor(keyed, key) === undefined
+            )
+            unresolved += droppedKeys.length
+            unresolvedKeys.push(...droppedKeys)
             const memberNames = resolveKeys(keyed, cluster.memberKeys).map(
               (centroid) => centroid.name
             )
@@ -836,6 +850,14 @@ export const entityResolution: PhaseBody = (env) =>
               }
             }
           }
+
+          if (unresolvedKeys.length > 0) {
+            yield* Effect.logWarning(
+              `sleep.llm entity-resolution ${entityType} batch of ${shard.length} dropped ` +
+                `${unresolvedKeys.length} cluster keys naming no offered member ` +
+                `(${unresolvedKeys.slice(0, 3).join(", ")}${unresolvedKeys.length > 3 ? ", …" : ""})`
+            )
+          }
         }
       }
 
@@ -887,6 +909,8 @@ export const entityResolution: PhaseBody = (env) =>
       aliasMerges,
       pendingCorroboration,
       reviewCandidates,
+      callsFailed,
+      unresolved,
       tasksMinted: 0,
       tasksFramed: 0,
       tasksDismissed: 0,
@@ -910,7 +934,16 @@ export const entityResolution: PhaseBody = (env) =>
      * 1. The old early return on `rewrites.size === 0` would have skipped exactly the night this
      * feature exists for: a night whose only outcome was deferrals is a night with no rewrites.
      */
-    const tasks = yield* mintReviewTasks(env, deferred, model !== undefined && callsFailed === 0)
+    /**
+     * `unresolved === 0` joins the sweep gate for the reason `callsFailed === 0` is already in it: a
+     * cluster key the phase could not map to a member is a name that was never judged, and sweeping
+     * against a night that lost part of an answer closes reviews over a misspelling.
+     */
+    const tasks = yield* mintReviewTasks(
+      env,
+      deferred,
+      model !== undefined && callsFailed === 0 && unresolved === 0
+    )
 
     let rewritten = 0
     for (const [path, pairs] of [...rewrites.entries()].sort(([left], [right]) =>
