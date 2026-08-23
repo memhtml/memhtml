@@ -80,18 +80,48 @@ export const keyMembers = <T>(
 }
 
 /**
+ * The offered key a model's answer denotes, or `undefined` when it denotes none.
+ *
+ * A model shown `<member_m3>` answers `member_m3` at least as readily as `m3`: the wrapper tag is
+ * the only place most batch prompts DISPLAY a key, so the label-prefixed form is the one the prompt
+ * itself teaches (measured live 2026-08-23: `gpt-5.6-sol` answers the prefixed form on every call,
+ * Claude Sonnet 5 on most). So a key that does not match directly is retried once with everything
+ * up to its last `_` stripped, and only a suffix the batch actually offered resolves — `member_m9`
+ * in a batch of three still denotes nothing, and a path or an invented name still drops. The
+ * canonical form is returned so two spellings of one member collapse to one key everywhere a phase
+ * keeps per-key state.
+ */
+export const offeredKeyFor = <T>(batch: KeyedBatch<T>, key: string): string | undefined => {
+  if (batch.itemForKey.has(key)) return key
+  const at = key.lastIndexOf("_")
+  if (at === -1) return undefined
+  const suffix = key.slice(at + 1)
+  return batch.itemForKey.has(suffix) ? suffix : undefined
+}
+
+/**
  * Resolve the keys a model named back to items: unknown keys are dropped, repeats collapse.
  *
  * A key the batch never offered is a member the model invented, and every phase on this kernel turns
  * a named member into a write, so an unresolvable key must not reach that write. Dropping it leaves
  * the corresponding file untouched, which is the safe outcome for every one of the five phases.
+ * Resolution goes through {@link offeredKeyFor}, so the label-prefixed spelling of an offered key
+ * (`member_m3` for `m3`) resolves rather than reading as an invention.
  *
  * The result keeps the order the model named the keys in, and a key named twice appears once.
- * De-duplication is on the KEY rather than on the resolved item, so the count a phase gates on
- * ("at least two members absorbed") counts distinct offered members.
+ * De-duplication is on the CANONICAL key rather than on the spelling or the resolved item, so `m1`
+ * and `member_m1` in one answer count as one member, and the count a phase gates on ("at least two
+ * members absorbed") counts distinct offered members.
  */
 export const resolveKeys = <T>(batch: KeyedBatch<T>, keys: ReadonlyArray<string>): Array<T> =>
-  [...new Set(keys)].flatMap((key) => {
+  [
+    ...new Set(
+      keys.flatMap((key) => {
+        const canonical = offeredKeyFor(batch, key)
+        return canonical === undefined ? [] : [canonical]
+      })
+    )
+  ].flatMap((key) => {
     const item = batch.itemForKey.get(key)
     return item === undefined ? [] : [item]
   })

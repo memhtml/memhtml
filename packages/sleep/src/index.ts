@@ -15,6 +15,7 @@ export {
   isolate,
   keyMembers,
   memberList,
+  offeredKeyFor,
   packGroups,
   resolveKeys
 } from "./batch.js"

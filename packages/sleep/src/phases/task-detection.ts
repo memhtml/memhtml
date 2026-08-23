@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 
-import { assembleBatches, batchCall, keyMembers, resolveKeys } from "../batch.js"
+import { assembleBatches, batchCall, keyMembers, offeredKeyFor, resolveKeys } from "../batch.js"
 import { commitPhase } from "../commit.js"
 import { emptyOutcome, modelFor, type PhaseBody } from "../env.js"
 import { TASK_DETECT_SYSTEM, TaskDetection, taskDetectPrompt } from "../llm.js"
@@ -188,10 +188,13 @@ export const taskDetection: PhaseBody = (env) =>
       const answered = new Set<string>()
 
       for (const finding of answer.findings) {
-        const [row] = resolveKeys(keyed, [finding.memberKey])
+        /** The CANONICAL key feeds the repeat guard, same as edge-typing's, and for the same reason. */
+        const memberKey = offeredKeyFor(keyed, finding.memberKey)
+        if (memberKey === undefined) continue
+        const [row] = resolveKeys(keyed, [memberKey])
         if (row === undefined) continue
-        if (answered.has(finding.memberKey)) continue
-        answered.add(finding.memberKey)
+        if (answered.has(memberKey)) continue
+        answered.add(memberKey)
         findings += 1
 
         /**
