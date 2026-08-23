@@ -192,6 +192,92 @@ describe("decodeToolInput", () => {
   })
 })
 
+describe("makeModelClient.generateObject on the openai lane", () => {
+  /** A chat-completions reply whose content is the schema-constrained JSON. */
+  const openAiReply = (content: string, finish = "stop") => ({
+    choices: [{ finish_reason: finish, message: { content } }],
+    usage: { prompt_tokens: 68, completion_tokens: 34 }
+  })
+
+  it("sends strict json_schema and decodes the content through the same schema gate", async () => {
+    const client = recorder(() =>
+      openAiReply('{"keep":"areas/x.html","drop":["areas/y.html"],"confidence":0.9}')
+    )
+    const value = await Effect.runPromise(
+      makeModelClient(client).generateObject({ ...request(Verdict), modelKey: "gpt-5.6-sol" })
+    )
+
+    expect(value.keep).toBe("areas/x.html")
+    expect(client.modelIds[0]).toBe("global.openai.gpt-5.6-sol")
+    const format = client.bodies[0]?.response_format as {
+      type: string
+      json_schema: { name: string; strict: boolean }
+    }
+    expect(format.type).toBe("json_schema")
+    expect(format.json_schema.name).toBe(STRUCTURED_TOOL_NAME)
+    expect(format.json_schema.strict).toBe(true)
+  })
+
+  it("still refuses an off-schema answer: the decode gate is provider-blind", async () => {
+    // strict mode makes this shape unreachable from the real model; the gate stays
+    // because the decode is the contract, not a trust in any provider's enforcement.
+    const client = recorder(() => openAiReply('{"keep":"a","drop":[],"confidence":4}'))
+    const result = await Effect.runPromise(
+      Effect.result(
+        makeModelClient(client).generateObject({ ...request(Verdict), modelKey: "gpt-5.6-sol" })
+      )
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(LlmContractViolation)
+      expect(result.failure.reason).toContain("between 0 and 1")
+    }
+  })
+
+  it("fails ModelUnavailable on finish_reason=length, before reading any content", async () => {
+    const client = recorder(() => openAiReply('{"keep":"part', "length"))
+    const result = await Effect.runPromise(
+      Effect.result(
+        makeModelClient(client).generateObject({ ...request(Verdict), modelKey: "gpt-5.6-sol" })
+      )
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(ModelUnavailable)
+      expect(result.failure.reason).toContain("stop_reason=max_tokens")
+    }
+  })
+
+  it("violates with the no-tool reason when the content is not parseable JSON", async () => {
+    const client = recorder(() => openAiReply("<html>gateway timeout</html>"))
+    const result = await Effect.runPromise(
+      Effect.result(
+        makeModelClient(client).generateObject({ ...request(Verdict), modelKey: "gpt-5.6-sol" })
+      )
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(LlmContractViolation)
+      expect(result.failure.reason).toContain("no tool_use block")
+    }
+  })
+})
+
+describe("makeModelClient.generate on the openai lane", () => {
+  it("returns the joined text with usage mapped from the chat-completions names", async () => {
+    const client = recorder(() => ({
+      choices: [{ finish_reason: "stop", message: { content: "the answer" } }],
+      usage: { prompt_tokens: 7, completion_tokens: 11 }
+    }))
+    const generation = await Effect.runPromise(
+      makeModelClient(client).generate("gpt-5.6-sol", "ask", { effort: "medium" })
+    )
+    expect(generation.text).toBe("the answer")
+    expect(generation.inputTokens).toBe(7)
+    expect(generation.outputTokens).toBe(11)
+  })
+})
+
 describe("makeModelClient.generateObject", () => {
   it("forces the emit tool with the derived input schema and decodes its input", async () => {
     const client = recorder(() =>

@@ -56,7 +56,16 @@ export interface SleepDeps {
 }
 
 /**
- * Model assignments per LLM phase: the cheap judge for classification, the strong one for synthesis.
+ * Model assignments per LLM phase.
+ *
+ * Every structured phase names `gpt-5.6-sol`, and the reason is one wire property rather
+ * than a model-quality judgment: its strict `json_schema` mode does constrained decoding
+ * on Bedrock today, so an off-schema answer — including the double-encoded-string shape
+ * that skipped 13 batches in one Claude-5 run (issue #53) — cannot be generated at all.
+ * The Claude 5 models reject `strict` and `output_config.format` on every Bedrock surface
+ * (probed live 2026-08-22), so with them the schema is a request the decode enforces
+ * after the fact, and a violated batch is work lost. When Claude 5 structured outputs
+ * land on Bedrock, re-deciding this map is a quality question again; today it is not.
  *
  * `trace-consolidation` names `opus-5` and does not thereby choose it. The consolidator is an eve
  * agent that pins its own model in `apps/consolidator/agent/agent.ts`, and this map cannot reach that
@@ -65,33 +74,13 @@ export interface SleepDeps {
  * the Bedrock global endpoint, high reasoning effort, no cost ceiling.)
  */
 export const DEFAULT_MODELS: Readonly<Record<string, ModelKey>> = {
-  /**
-   * `dedup-merge` names sonnet for the same reason the edge-typing judge does: the question is a
-   * classification over text the model is shown, not a synthesis it has to write. It partitions a
-   * component into "these are the same memory" groups, and every consequence of that answer — which
-   * file survives, whether the pair diverges, whether either path is already claimed — is decided by
-   * code afterwards. The strong model is spent where prose gets written.
-   */
-  "dedup-merge": "sonnet-5",
-  /**
-   * Sonnet, and one or two calls a night: the whole of one entity type's name list goes in one call.
-   * The question is a partition over short strings with their evidence inline, not a synthesis, so
-   * the strong model would buy nothing the deterministic floors around the answer do not already
-   * supply.
-   */
-  "entity-resolution": "sonnet-5",
-  "edge-typing": "sonnet-5",
-  "arc-synthesis": "opus-5",
-  compress: "sonnet-5",
+  "dedup-merge": "gpt-5.6-sol",
+  "entity-resolution": "gpt-5.6-sol",
+  "edge-typing": "gpt-5.6-sol",
+  "arc-synthesis": "gpt-5.6-sol",
+  compress: "gpt-5.6-sol",
   "trace-consolidation": "opus-5",
-  /**
-   * Sonnet, for the same reason `dedup-merge` and the edge-typing judge name it: the question is an
-   * extraction over text the model is shown — which of these memories carries an open commitment,
-   * quote the sentence — and every consequence is decided afterwards by code. The sentence has to be
-   * VERBATIM, which is copying rather than composing, and the confidence floor plus the verbatim
-   * check are what a stronger model would otherwise be buying.
-   */
-  "task-detection": "sonnet-5"
+  "task-detection": "gpt-5.6-sol"
 }
 
 /** The model a phase calls: the caller's override, else {@link DEFAULT_MODELS}, else sonnet. */

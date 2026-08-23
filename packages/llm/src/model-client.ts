@@ -10,6 +10,7 @@ import {
   buildInvokeBody,
   type GenerateOptions,
   incompleteReason,
+  normalizeOpenAiResponse,
   readText,
   readToolInput
 } from "./wire.js"
@@ -100,7 +101,12 @@ export const makeModelClient = (client: InvokeClient): ModelClientShape => {
         )
       )
       const finished = yield* Effect.clockWith((clock) => clock.currentTimeMillis)
-      const parsed = asResponseBody(payload)
+      // Both dialects converge on one response shape here, so everything below this
+      // line — the incompleteness gate, the readers, the decode — is provider-blind.
+      const parsed =
+        model.provider === "openai"
+          ? normalizeOpenAiResponse(payload, tool !== undefined)
+          : asResponseBody(payload)
 
       // Truncation and refusal are checked before any content is read, so a severed answer
       // cannot reach a caller as a value.

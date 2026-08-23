@@ -17,6 +17,7 @@ import {
   clampTokens,
   INCOMPLETE_STOP_REASONS,
   incompleteReason,
+  normalizeOpenAiResponse,
   readText,
   readToolInput
 } from "../src/wire.js"
@@ -45,17 +46,27 @@ describe("bedrock wire constants", () => {
 })
 
 describe("MODELS", () => {
-  it("carries the three Claude 5 global inference profiles and no other vendor", () => {
-    expect(MODELS.map((model) => model.key)).toEqual(["sonnet-5", "opus-5", "fable-5"])
+  it("carries the global inference profiles for both providers", () => {
+    expect(MODELS.map((model) => model.key)).toEqual([
+      "sonnet-5",
+      "opus-5",
+      "fable-5",
+      "gpt-5.6-sol"
+    ])
+    // The global. prefix is mandatory for every entry: the bare openai ids reject
+    // on-demand invocation outright, and the anthropic ones would lose cross-region routing.
     for (const model of MODELS) {
-      expect(model.modelId).toMatch(/^global\.anthropic\.claude-/)
+      expect(model.modelId).toMatch(/^global\./)
     }
   })
 
-  it("resolves every key in the union", () => {
+  it("resolves every key in the union with its provider", () => {
     expect(modelByKey("sonnet-5").modelId).toBe("global.anthropic.claude-sonnet-5")
     expect(modelByKey("opus-5").modelId).toBe("global.anthropic.claude-opus-5")
     expect(modelByKey("fable-5").modelId).toBe("global.anthropic.claude-fable-5")
+    expect(modelByKey("gpt-5.6-sol").modelId).toBe("global.openai.gpt-5.6-sol")
+    expect(modelByKey("gpt-5.6-sol").provider).toBe("openai")
+    expect(modelByKey("sonnet-5").provider).toBe("anthropic")
   })
 })
 
@@ -157,6 +168,66 @@ describe("buildInvokeBody", () => {
   })
 })
 
+describe("buildInvokeBody for the openai dialect", () => {
+  const inputSchema = {
+    type: "object",
+    properties: { groups: { type: "array" } },
+    required: ["groups"],
+    additionalProperties: false
+  }
+
+  it("speaks chat-completions: system message, completion budget, reasoning_effort", () => {
+    const body = parse(
+      buildInvokeBody("gpt-5.6-sol", "fold these", { effort: "high", system: "you judge" })
+    )
+    expect(body.messages).toEqual([
+      { role: "system", content: "you judge" },
+      { role: "user", content: "fold these" }
+    ])
+    expect(body.reasoning_effort).toBe("high")
+    expect(body.max_completion_tokens).toBe(MAX_TOKENS_DEFAULT)
+    // The anthropic-only keys must be absent: this dialect rejects unknown fields.
+    expect("anthropic_version" in body).toBe(false)
+    expect("max_tokens" in body).toBe(false)
+    expect("output_config" in body).toBe(false)
+    expect("thinking" in body).toBe(false)
+    expect("system" in body).toBe(false)
+  })
+
+  it("omits the system message entirely when there is none", () => {
+    const body = parse(buildInvokeBody("gpt-5.6-sol", "ask", { effort: "low" }))
+    expect(body.messages).toEqual([{ role: "user", content: "ask" }])
+  })
+
+  it("asks for strict json_schema named emit when a tool is given", () => {
+    const body = parse(
+      buildInvokeBody(
+        "gpt-5.6-sol",
+        "fold these",
+        { effort: "high" },
+        { inputSchema, description: "emit it" }
+      )
+    )
+    // strict: true is the whole point of this lane: constrained decoding, so the
+    // double-encoded-string shape of issue #53 cannot be generated at all.
+    expect(body.response_format).toEqual({
+      type: "json_schema",
+      json_schema: {
+        name: STRUCTURED_TOOL_NAME,
+        strict: true,
+        schema: { description: "emit it", ...inputSchema }
+      }
+    })
+    expect("tools" in body).toBe(false)
+    expect("tool_choice" in body).toBe(false)
+  })
+
+  it("clamps the completion budget at the same ceiling as the anthropic lane", () => {
+    const body = parse(buildInvokeBody("gpt-5.6-sol", "ask", { effort: "low", maxTokens: 999_999 }))
+    expect(body.max_completion_tokens).toBe(MAX_TOKENS_CEILING)
+  })
+})
+
 describe("incompleteReason", () => {
   it("names both incomplete stop reasons and nothing else", () => {
     expect([...INCOMPLETE_STOP_REASONS].sort()).toEqual(["max_tokens", "refusal"])
@@ -211,5 +282,51 @@ describe("readToolInput", () => {
     expect(
       readToolInput(asResponseBody({ content: [{ type: "text", text: "sure!" }] }))
     ).toBeUndefined()
+  })
+})
+
+describe("normalizeOpenAiResponse", () => {
+  const reply = (content: string | null, finish = "stop") => ({
+    choices: [{ finish_reason: finish, message: { content } }],
+    usage: { prompt_tokens: 68, completion_tokens: 34 }
+  })
+
+  it("presents a structured answer as the emit tool's input with mapped usage", () => {
+    const parsed = normalizeOpenAiResponse(reply('{"groups":[]}'), true)
+    expect(readToolInput(parsed)).toEqual({ groups: [] })
+    expect(parsed.stop_reason).toBe("stop")
+    expect(incompleteReason(parsed)).toBeNull()
+    expect(parsed.usage).toEqual({ input_tokens: 68, output_tokens: 34 })
+  })
+
+  it("presents a prose answer as a text block", () => {
+    const parsed = normalizeOpenAiResponse(reply("the answer"), false)
+    expect(readText(parsed)).toBe("the answer")
+    expect(readToolInput(parsed)).toBeUndefined()
+  })
+
+  it("maps length onto max_tokens and content_filter onto refusal, both incomplete", () => {
+    // The severed-answer gate downstream keys on the anthropic vocabulary, so the
+    // openai reasons have to land on it or a truncated answer would read as complete.
+    expect(incompleteReason(normalizeOpenAiResponse(reply("x", "length"), false))).toBe(
+      "max_tokens"
+    )
+    expect(incompleteReason(normalizeOpenAiResponse(reply("x", "content_filter"), false))).toBe(
+      "refusal"
+    )
+  })
+
+  it("yields NO tool block when structured content is not parseable JSON", () => {
+    // Constrained decoding makes this a broken response rather than an off-schema one,
+    // so it surfaces as the existing "no tool_use block" violation class downstream.
+    const parsed = normalizeOpenAiResponse(reply("not json"), true)
+    expect(readToolInput(parsed)).toBeUndefined()
+    expect(readText(parsed)).toBe("")
+  })
+
+  it("is defensive over an empty or alien payload", () => {
+    expect(readToolInput(normalizeOpenAiResponse({}, true))).toBeUndefined()
+    expect(readToolInput(normalizeOpenAiResponse(null, true))).toBeUndefined()
+    expect(normalizeOpenAiResponse(reply(null), true).content).toEqual([])
   })
 })
