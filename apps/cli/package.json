@@ -47,14 +47,14 @@
     "@memhtml/store": "workspace:*",
     "@memhtml/traces": "workspace:*",
     "effect": "catalog:",
-    "just-bash": "3.3.0",
+    "just-bash": "3.4.1",
     "node-html-parser": "9.0.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.8",
+    "@biomejs/biome": "2.5.9",
     "@effect/vitest": "catalog:",
     "@types/node": "26.2.0",
     "typescript": "7.0.2",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   }
 }
