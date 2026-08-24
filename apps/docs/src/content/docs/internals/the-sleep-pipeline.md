@@ -1,15 +1,15 @@
 ---
 title: The sleep pipeline
-description: Fifteen curation phases in a fixed order, each an isolated commit on a branch, with commit trailers as the resume mechanism and a quality gate that can refuse the merge.
+description: Seventeen curation phases in a fixed order, each an isolated commit on a branch, with commit trailers as the resume mechanism and a quality gate that can refuse the merge.
 ---
 
-## 1. Sixteen phases on a branch
+## 1. Seventeen phases on a branch
 
-The nightly curation run is called sleep. It executes sixteen phases in a fixed order (`packages/sleep/src/contract.ts:17`), each producing its own commit on a branch named `sleep/<YYYY-MM-DD>`, suffixed `-2` when it runs a second time the same day (`packages/sleep/src/run.ts:45`). The branch is created before any phase runs, so `main` is never touched (`packages/sleep/src/run.ts:95-97`). A dry run creates no branch, which is safe because no phase writes a file in dry mode.
+The nightly curation run is called sleep. It executes seventeen phases in a fixed order (`packages/sleep/src/contract.ts:17`), each producing its own commit on a branch named `sleep/<YYYY-MM-DD>`, suffixed `-2` when it runs a second time the same day (`packages/sleep/src/run.ts:45`). The branch is created before any phase runs, so `main` is never touched (`packages/sleep/src/run.ts:95-97`). A dry run creates no branch, which is safe because no phase writes a file in dry mode.
 
 Figure 1 shows the shape of a run. Both of the gate's outcomes are drawn, because the refusal is the property worth seeing. There is no third outcome and no rollback.
 
-```d2 pad=20 src="_figures/sleep-branch.d2" title="Main branches into sleep/date. The sixteen phases run on that branch and are submitted for review to a gate. The gate has exactly two outgoing arrows: passes, leading to main moves, and refuses, leading to main unmoved. No arrow returns from the branch to main except through the gate."
+```d2 pad=20 src="_figures/sleep-branch.d2" title="Main branches into sleep/date. The seventeen phases run on that branch and are submitted for review to a gate. The gate has exactly two outgoing arrows: passes, leading to main moves, and refuses, leading to main unmoved. No arrow returns from the branch to main except through the gate."
 ```
 
 **Figure 1: `main` moves only when a gate that can refuse says so.** The branch is cut before any phase executes, so a failed run needs no compensating writes: the abort is `git branch -D` and `main` never moved. The two boxes leaving the gate are the only two outcomes.
@@ -29,9 +29,10 @@ Figure 1 shows the shape of a run. Both of the gate's outcomes are drawn, becaus
 | 11 | `reprieve`            | no    | one commit: `memhtml-valid-until` extended, or the file archived                                                      |
 | 12 | `trace-consolidation` | yes   | one commit per distilled memory                                                                                       |
 | 13 | `task-detection`      | yes   | one commit: task files for commitments and follow-ups the corpus records                                              |
-| 14 | `integrity`           | no    | one commit: dangling hrefs repaired, artifacts regenerated                                                            |
-| 15 | `state-export`        | no    | one commit: `.memhtml/state/access.jsonl`                                                                             |
-| 16 | `report`              | no    | one commit: `.memhtml/sleep/<run-id>.html`                                                                            |
+| 14 | `placement-triage`    | yes   | deep-only (`--deep`): one commit re-filing inbox singletons into topic directories; a nightly run does nothing        |
+| 15 | `integrity`           | no    | one commit: dangling hrefs repaired, artifacts regenerated                                                            |
+| 16 | `state-export`        | no    | one commit: `.memhtml/state/access.jsonl`                                                                             |
+| 17 | `report`              | no    | one commit: `.memhtml/sleep/<run-id>.html`                                                                            |
 
 The order encodes five dependencies. Entity resolution precedes person links so that aliases have already merged. Confidence decay precedes retention triage so that triage scores the decayed value. Dedup-merge precedes both compress and retention triage, because both operate on the post-merge set. And task detection precedes integrity, because it writes files and integrity regenerates the directory listings those files belong in.
 
@@ -40,7 +41,7 @@ Those four constraints are the whole of what the order is for, and Figure 2 draw
 ```d2 pad=20 src="_figures/phase-order.d2" title="Four dependency edges among six phases. Phase 2 dedup-merge points at phase 10 compress and at phase 9 retention-triage, both labelled post-merge set. Phase 3 entity-resolution points at phase 4 person-links, labelled aliases merged first. Phase 7 confidence-decay points at phase 9 retention-triage, labelled scores the decayed value. Dedup-merge, entity-resolution and compress are drawn as hexagons because all three call a model; the other three are deterministic."
 ```
 
-**Figure 2: the fixed order exists to satisfy four edges.** Ten of the sixteen phases appear nowhere in this graph, so the order among them is arbitrary and could change without consequence. The three hexagons mark the phases here that call a model, and each one's edge is about that call: `compress` archives a member only when the model names it as absorbed, `dedup-merge` gates both of its dependents on a fold the model proposed and the veto allowed, and `person-links` waits on `entity-resolution` so a person's aliases have already collapsed before a file is minted for them.
+**Figure 2: the fixed order exists to satisfy four edges.** Eleven of the seventeen phases appear nowhere in this graph, so the order among them is arbitrary and could change without consequence. The three hexagons mark the phases here that call a model, and each one's edge is about that call: `compress` archives a member only when the model names it as absorbed, `dedup-merge` gates both of its dependents on a fold the model proposed and the veto allowed, and `person-links` waits on `entity-resolution` so a person's aliases have already collapsed before a file is minted for them.
 
 Seven phases call a model (`packages/sleep/src/contract.ts:91`). Every other phase is deterministic and costs no model call.
 
@@ -70,7 +71,7 @@ Every phase commit carries `Memhtml-Run`, `Memhtml-Phase`, and `Memhtml-Counts` 
 
 A journal table that a resume depended on would be a second record of what happened, and the two records disagree exactly when it matters, namely when a process is killed after `git commit` and before the row is written. The commit is the fact, the row is a convenience the history can regenerate, and a failed reporting write never fails a run (`packages/sleep/src/run.ts:434-439`).
 
-A resume reports already-done phases explicitly as `skipped`, so its report still accounts for all sixteen (`packages/sleep/src/run.ts:176-191`).
+A resume reports already-done phases explicitly as `skipped`, so its report still accounts for all seventeen (`packages/sleep/src/run.ts:176-191`).
 
 ## 4. Every phase excludes tasks
 
@@ -225,3 +226,18 @@ A target that is simply gone means the edge asserts a relationship to nothing, s
 `@memhtml/sleep` takes the gate as a parameter and supplies no default (`packages/sleep/src/review.ts:196-206`). A package that cannot import the eval package must not be able to default it silently, so the composition is visible in the CLI's own wiring or it does not exist (`apps/cli/src/run.ts:496-515`).
 
 The gate runs with the fake embedder (`packages/eval/src/run.ts:174`), because it measures the ranking stack against a generated fixture corpus. A gate that needed live embeddings would make a nightly merge conditional on a network call and on credentials being present at 3am. [Testing posture](/internals/testing-posture/) develops the gate itself, and the run-and-review procedure is an operations how-to under [Learn](/learn/).
+
+## 16. Deep sleep: the occasional, budgeted cycle
+
+`memhtml sleep run --deep` trades model cost for reach (issue #63). The nightly cycle's community gate is the right cost guard for every-night operation, and it has a structural blind spot: `compress` selects only memories with a graph community, communities come from label propagation over mined edges, and mining is floored at 0.85 cosine. On a measured bulk-import inbox of 3,079 files, 8% had a neighbor at that floor and 84% touched no edge at all — no community, so no compress candidacy, at any frequency. Deep sleep is for exactly those corpus states: bulk imports, migrations, any stretch where writes outpaced curation.
+
+Under the flag, four mechanisms turn on, and nothing else changes — the same branch lifecycle, the same review and merge gate, the same degradation posture:
+
+- **A grouping-tier mining band.** `relationship-mining` additionally mines [0.72, 0.85) as derived `laterally_related` edges (`packages/sleep/src/phases/relationship-mining.ts`). Their one consumer is label propagation's partition for the deep phases; `memoryEdges` excludes the band, so nightly retention scoring, PageRank, and bridge counts never see it.
+- **Entity-keyed grouping.** Compress candidates the widened graph still leaves communityless are grouped by shared `file_entities` reference — the pair class whose prose diverges while the subject is identical, invisible to any cosine. Hub entities (more than 64 active claimants) are stop-words and are skipped.
+- **Placement triage.** A deep-only phase proposes an existing `areas/<topic>` or `resources/<topic>` directory — or at most five new ones per run — for each inbox memory even deep grouping could not attach, and `git mv`s the confident placements, rewriting inbound hrefs in the same commit. `keep-inbox` is the model's refusal and the ordinary answer.
+- **Iterate-until-quiet compress.** A pass that folded something re-indexes, re-mines, re-scores, and folds again, up to three passes, because a canonical is a new neighbor and a new community member.
+
+`--max-llm-calls <n>` is one budget every deep phase shares. Exhaustion skips remaining batches with the distinct count `budgetSkipped` — a budget stop and a model outage need different mornings-after — and the run stays green. `--dry-run` composes with `--deep`: mining and grouping counts are computed deterministically with no model call and no write.
+
+What deep sleep will not do: it never changes what happens to a fold or a move (everything lands on the review branch behind the same discrimination gate), it never lets the grouping band touch eviction decisions, and it never re-files a task, an arc, or anything outside the inbox.

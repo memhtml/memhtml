@@ -1,6 +1,6 @@
 # memhtml — architecture
 
-An agent memory store. The system of record is a git repository of semantic HTML5 files, one fact per file. Everything else — a SQLite index, a four-arm retrieval fold, an MCP server, a sixteen-phase nightly curation pipeline — is a projection of that tree or an operation on it.
+An agent memory store. The system of record is a git repository of semantic HTML5 files, one fact per file. Everything else — a SQLite index, a four-arm retrieval fold, an MCP server, a seventeen-phase nightly curation pipeline — is a projection of that tree or an operation on it.
 
 Two properties hold the design together:
 
@@ -17,7 +17,7 @@ Two properties hold the design together:
 | `store`                | Git-backed file store: write, read, correct, archive, link, commit. |
 | `index`                | SQLite service, migrations, indexer, projection, retrieval.         |
 | `traces`               | Streaming session-JSONL parser and scanner.                         |
-| `sleep`                | The sixteen curation phases, each a git commit.                     |
+| `sleep`                | The seventeen curation phases, each a git commit.                   |
 | `llm`                  | Bedrock embeddings and forced-tool structured output.               |
 | `eval`                 | The discrimination gate and its generated fixture corpus.           |
 | `apps/cli`, `apps/mcp` | The `memhtml` binary and the `memhtml-mcp` stdio server.            |
@@ -215,7 +215,7 @@ Each hit carries a `snippet`: its best-matching chunk for this query, capped at 
 | ---------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `memory_read` / `memhtml read` of a named path, and the `memhtml://file/{path}` resource | yes                                    | the caller chose THAT memory — the strongest signal short of a write (`apps/cli/src/operations.ts:655`)                                         |
 | a path merely _returned_ by `memory_search` / `memory_recall`                            | no                                     | the ranker's own guess (`apps/cli/src/operations.ts:681`, `:692`)                                                                               |
-| the sixteen sleep phases                                                                 | no                                     | a schedule touching the whole corpus converges everything to uniform salience, which is no salience — and sleep bypasses the tool path entirely |
+| the seventeen sleep phases                                                               | no                                     | a schedule touching the whole corpus converges everything to uniform salience, which is no salience — and sleep bypasses the tool path entirely |
 | `memory_reinforce` with a named signal                                                   | yes, and it moves the outcome EWMA too | the caller is asserting the memory was right or wrong                                                                                           |
 
 Bumping on a hit is what builds the rich-get-richer loop: today's top five rank higher tomorrow purely for having been listed, while the memory that should displace them never appears and so never earns a first bump. The cooldown does not save it — 900 seconds bounds one query replayed inside a session, and the drift operates across days. Reading files off disk (docs/code-mode.md) touches no access row and so obeys the same rule for free rather than as an exception.
@@ -266,7 +266,7 @@ Joining `traces` to `memory_session_links` yields the manifest shape that turns 
 
 ## 10. The sleep pipeline
 
-Fifteen phases in a fixed order (`packages/sleep/src/contract.ts:17`), each an isolated commit on `sleep/<YYYY-MM-DD>`, suffixed `-2` on a same-day rerun (`packages/sleep/src/run.ts:45`). The branch is created before any phase runs, so `main` is never touched (`packages/sleep/src/run.ts:95-97`). A dry run creates no branch, safe precisely because no phase in dry mode writes a file.
+Seventeen phases in a fixed order (`packages/sleep/src/contract.ts:17`), each an isolated commit on `sleep/<YYYY-MM-DD>`, suffixed `-2` on a same-day rerun (`packages/sleep/src/run.ts:45`). The branch is created before any phase runs, so `main` is never touched (`packages/sleep/src/run.ts:95-97`). A dry run creates no branch, safe precisely because no phase in dry mode writes a file.
 
 | #  | Phase                 | Model | Git effect                                                                       |
 | -- | --------------------- | ----- | -------------------------------------------------------------------------------- |
@@ -290,7 +290,7 @@ Fifteen phases in a fixed order (`packages/sleep/src/contract.ts:17`), each an i
 
 **Per-phase isolation is the whole design.** A phase that throws is caught with `Effect.result`, recorded as a value, and the phases after it still run (`packages/sleep/src/run.ts:231`, `packages/sleep/src/run.ts:258`) — thirteen phases inside one transaction means one raise discards the twelve that already succeeded. `dedup-merge` is the one **hard prerequisite**, for `compress` and `retention-triage` (`packages/sleep/src/contract.ts:57-60`), because both operate on the post-merge set and running them over a corpus that still holds its duplicates would compress a pair the merge then archives half of. A failed phase's staged files are unstaged (`packages/sleep/src/run.ts:283-290`), which keeps the failure isolated in the _tree_ as well as the report: a partial stage would make the next phase's commit carry the failed phase's half-finished work. **Nothing is ever rolled back** — `git branch -D` is the abort and `main` never moved (`packages/sleep/src/run.ts:29-31`).
 
-**Commit trailers are the resume mechanism.** Every phase commit carries `Memhtml-Run`, `Memhtml-Phase`, and `Memhtml-Counts` (`packages/sleep/src/contract.ts:67-69`, `packages/sleep/src/commit.ts:22-30`), and `resume` reads the completed set out of `git log base..HEAD` rather than out of `sleep_phases` (`packages/sleep/src/run.ts:138-145`, `packages/sleep/src/run.ts:334`). A journal table a resume depended on would be a second record of what happened, and the two disagree exactly when it matters — a process killed after `git commit` and before the row's write. The commit is the fact; the row is a convenience the history can regenerate, and a reporting write never fails a run (`packages/sleep/src/run.ts:434-439`). A resume reports already-done phases explicitly as `skipped`, so its report accounts for all sixteen (`packages/sleep/src/run.ts:176-191`).
+**Commit trailers are the resume mechanism.** Every phase commit carries `Memhtml-Run`, `Memhtml-Phase`, and `Memhtml-Counts` (`packages/sleep/src/contract.ts:67-69`, `packages/sleep/src/commit.ts:22-30`), and `resume` reads the completed set out of `git log base..HEAD` rather than out of `sleep_phases` (`packages/sleep/src/run.ts:138-145`, `packages/sleep/src/run.ts:334`). A journal table a resume depended on would be a second record of what happened, and the two disagree exactly when it matters — a process killed after `git commit` and before the row's write. The commit is the fact; the row is a convenience the history can regenerate, and a reporting write never fails a run (`packages/sleep/src/run.ts:434-439`). A resume reports already-done phases explicitly as `skipped`, so its report accounts for all seventeen (`packages/sleep/src/run.ts:176-191`).
 
 **Tasks are excluded from every phase** (`packages/sleep/src/sql.ts:36`), for different reasons per phase. In `relationship-mining` it is the graph firewall: mined edges are written `edge_class = 'memory'`, so a task endpoint would put a task into PageRank, MMR, and the bridge count, and the `edges` CHECK cannot refuse it because `relates_to` under `memory` is well-formed whatever files sit at its ends (`packages/sleep/src/phases/relationship-mining.ts:32-38`). In `retention-triage` it is sharper: the score is dominated by recency and access, so a task untouched for a month scores at the _floor_ — exactly the task most likely to still be owed, so evicting on that signal would archive the neglected work first and leave the busy work behind (`packages/sleep/src/phases/retention-triage.ts:24-28`).
 
