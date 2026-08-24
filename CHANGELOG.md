@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.5.1...memhtml-v0.6.0) (2026-08-24)
+
+
+### Features
+
+* **cli:** --deep and --max-llm-calls on sleep run ([702d029](https://github.com/memhtml/memhtml/commit/702d029c8febfabaaf5c282ec8c6671449bf4c1c)), closes [#63](https://github.com/memhtml/memhtml/issues/63)
+* **sleep:** deep-sleep cycle — memhtml sleep run --deep ([673e921](https://github.com/memhtml/memhtml/commit/673e921ce1708b2ac8cc5caa6af22f39b1addf18))
+* **sleep:** deep-sleep cycle — reach the inbox tail the community gate excludes ([6c0a4d0](https://github.com/memhtml/memhtml/commit/6c0a4d0f808771e173711f02061bfe93f4ff398c)), closes [#63](https://github.com/memhtml/memhtml/issues/63)
+
 ## [0.5.1](https://github.com/memhtml/memhtml/compare/memhtml-v0.5.0...memhtml-v0.5.1) (2026-08-23)
 
 
