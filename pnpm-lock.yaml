@@ -13,8 +13,8 @@ catalogs:
       specifier: 4.0.0-rc.109
       version: 4.0.0-rc.109
     '@effect/vitest':
-      specifier: 4.0.0-rc.109
-      version: 4.0.0-rc.109
+      specifier: 4.0.0-rc.111
+      version: 4.0.0-rc.111
     effect:
       specifier: 4.0.0-rc.109
       version: 4.0.0-rc.109
@@ -97,7 +97,7 @@ importers:
         version: 2.5.8
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.109(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.111(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.2.0
         version: 26.2.0
@@ -137,7 +137,7 @@ importers:
         version: 2.5.8
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.109(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.111(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.2.0
         version: 26.2.0
@@ -283,7 +283,7 @@ importers:
         version: 2.5.8
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.109(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.111(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.2.0
         version: 26.2.0
@@ -305,7 +305,7 @@ importers:
         version: 2.5.8
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.109(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.111(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.2.0
         version: 26.2.0
@@ -333,7 +333,7 @@ importers:
         version: 2.5.8
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.109(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.111(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.2.0
         version: 26.2.0
@@ -376,7 +376,7 @@ importers:
         version: 2.5.8
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.109(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.111(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.2.0
         version: 26.2.0
@@ -407,7 +407,7 @@ importers:
         version: 2.5.8
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.109(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.111(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.2.0
         version: 26.2.0
@@ -444,7 +444,7 @@ importers:
         version: 2.5.8
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.109(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.111(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
       '@memhtml/store':
         specifier: workspace:*
         version: link:../store
@@ -481,7 +481,7 @@ importers:
         version: 2.5.8
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.109(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.111(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.2.0
         version: 26.2.0
@@ -521,7 +521,7 @@ importers:
         version: 2.5.8
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.109(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.111(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.2.0
         version: 26.2.0
@@ -549,7 +549,7 @@ importers:
         version: 2.5.8
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.109(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.111(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.2.0
         version: 26.2.0
@@ -577,7 +577,7 @@ importers:
         version: 2.5.8
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.109(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.111(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.2.0
         version: 26.2.0
@@ -632,7 +632,7 @@ importers:
         version: 2.5.8
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.109(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.111(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.2.0
         version: 26.2.0
@@ -1372,10 +1372,10 @@ packages:
       effect: ^4.0.0-rc.109
       redis: '>=5.0.0 <7.0.0'
 
-  '@effect/vitest@4.0.0-rc.109':
-    resolution: {integrity: sha512-vu5ZkidJ/gM/+a0M07Jnq1PV4duFlYc+4Vj9TsJysK4Us7LL5bwV6uXiT7mi1/IM/3HgfAwc7Q9ROj8M65G4pA==}
+  '@effect/vitest@4.0.0-rc.111':
+    resolution: {integrity: sha512-YDaEVT+grREBVMzykRNFtJwGxy02achzT0WXZYwMJA4ukzuB9krkgQ5roc3N6zhC3NQq/j4IyM32/Pcov7AhHw==}
     peerDependencies:
-      effect: ^4.0.0-rc.109
+      effect: ^4.0.0-rc.111
       vitest: '>=4.1.0 <5.0.0'
 
   '@emmetio/abbreviation@2.3.3':
@@ -7016,7 +7016,7 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@effect/vitest@4.0.0-rc.109(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))':
+  '@effect/vitest@4.0.0-rc.111(effect@4.0.0-rc.109)(vitest@4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)))':
     dependencies:
       effect: 4.0.0-rc.109
       vitest: 4.1.10(@types/node@26.2.0)(vite@8.2.0(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0))
