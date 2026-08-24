@@ -80,7 +80,8 @@ export const DEFAULT_MODELS: Readonly<Record<string, ModelKey>> = {
   "arc-synthesis": "gpt-5.6-sol",
   compress: "gpt-5.6-sol",
   "trace-consolidation": "opus-5",
-  "task-detection": "gpt-5.6-sol"
+  "task-detection": "gpt-5.6-sol",
+  "placement-triage": "gpt-5.6-sol"
 }
 
 /** The model a phase calls: the caller's override, else {@link DEFAULT_MODELS}, else sonnet. */
@@ -116,6 +117,14 @@ export interface PhaseEnv {
   readonly atMillis: number
   /** True on a dry run: compute and count, write no commit and no row beyond the run row. */
   readonly dryRun: boolean
+  /**
+   * The deep-sleep switches, or absent on a nightly run (issue #63).
+   *
+   * ABSENT is the nightly cycle, byte-identical to what it did before this field existed: every deep
+   * behavior in every phase is behind an `env.deep !== undefined` gate, so a `PhaseEnv` built without
+   * the field — every existing test, every nightly cron — takes the exact code paths it always took.
+   */
+  readonly deep?: DeepOptions | undefined
   /**
    * The night's shared detected-task budget, or absent.
    *
@@ -153,3 +162,50 @@ export const emptyOutcome = (counts: PhaseCounts = {}): PhaseOutcome => ({
   commitSha: null,
   llmCalls: 0
 })
+
+/**
+ * The deep-sleep switches (issue #63): absent on a nightly run, present under `--deep`.
+ *
+ * One OBJECT rather than a boolean beside a number, because the two travel together or not at all: a
+ * budget with no deep run has nothing to bound (the nightly phases carry their own per-phase caps),
+ * and a deep run with no stated budget still needs a place for the shared counter to live. Every
+ * deep behavior in every phase gates on `env.deep !== undefined`, which is what makes the no-flag
+ * regression test a one-field assertion.
+ */
+export interface DeepOptions {
+  /**
+   * The run-wide model-call budget, or absent for an unbounded deep run.
+   *
+   * MUTABLE, exactly as {@link PhaseEnv.detectionBudget} is and for the same reason: the phases run
+   * sequentially in one process and the cap bounds the RUN, not each phase. Created per run by
+   * `run.ts`, so two runs in one process (and two tests in one file) cannot share a counter.
+   */
+  readonly budget?: LlmBudget | undefined
+}
+
+/** The shared deep-run model-call budget. `spent` only ever grows; the cap never moves. */
+export interface LlmBudget {
+  readonly maxCalls: number
+  spent: number
+}
+
+/** A fresh budget. A non-positive or fractional cap clamps to a usable whole number. */
+export const makeLlmBudget = (maxCalls: number): LlmBudget => ({
+  maxCalls: Math.max(0, Math.trunc(maxCalls)),
+  spent: 0
+})
+
+/**
+ * Take one call from the budget, or report exhaustion.
+ *
+ * `true` means the caller may make the call and the budget has been charged. Charging BEFORE the
+ * call rather than after means a crash mid-call cannot under-count, which errs on the side the
+ * budget exists for. No budget bound means every call is allowed.
+ */
+export const takeLlmCall = (deep: DeepOptions | undefined): boolean => {
+  const budget = deep?.budget
+  if (budget === undefined) return true
+  if (budget.spent >= budget.maxCalls) return false
+  budget.spent += 1
+  return true
+}

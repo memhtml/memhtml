@@ -63,7 +63,7 @@ const inertModel = () =>
   )
 
 describe("run", () => {
-  it("creates sleep/<date>, executes all fifteen phases, and stamps one trailer per commit", async () => {
+  it("creates sleep/<date>, executes all seventeen phases, and stamps one trailer per commit", async () => {
     await withFixture(
       (fixture) =>
         Effect.gen(function* () {
@@ -506,10 +506,10 @@ describe("trace-consolidation inside a full run", () => {
     )
   })
 
-  it("is skipped rather than failed on a run with no consolidator, all fifteen still green", async () => {
+  it("is skipped rather than failed on a run with no consolidator, all seventeen still green", async () => {
     /**
      * The CI shape, at the RUNNER rather than at the phase: no credentials, so nothing is bound, and
-     * the run must still report fifteen phases with none failed. This is the case that would break if
+     * the run must still report seventeen phases with none failed. This is the case that would break if
      * the phase's degradation ever became a failure.
      */
     await withFixture(
@@ -698,7 +698,7 @@ describe("resume", () => {
 
           const resumed = yield* resume(fixture.deps, partial.runId, { date: DATE })
 
-          // All fifteen are accounted for. A resume that reported only the ten it ran would read as a
+          // All seventeen are accounted for. A resume that reported only the ten it ran would read as a
           // partial run.
           expect(resumed.phases.map((phase) => phase.phase)).toEqual([...SLEEP_PHASES])
 

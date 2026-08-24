@@ -86,9 +86,9 @@ import { memoryHtml } from "./fixture.js"
  */
 
 describe("the phase contract", () => {
-  it("names sixteen distinct phases, preflight first and report last", () => {
-    expect(SLEEP_PHASES).toHaveLength(16)
-    expect(new Set(SLEEP_PHASES).size).toBe(16)
+  it("names seventeen distinct phases, preflight first and report last", () => {
+    expect(SLEEP_PHASES).toHaveLength(17)
+    expect(new Set(SLEEP_PHASES).size).toBe(17)
     expect(SLEEP_PHASES[0]).toBe("preflight")
     expect(SLEEP_PHASES.at(-1)).toBe("report")
   })
@@ -106,6 +106,22 @@ describe("the phase contract", () => {
       SLEEP_PHASES.indexOf("trace-consolidation")
     )
     expect(SLEEP_PHASES.indexOf("task-detection")).toBeLessThan(SLEEP_PHASES.indexOf("integrity"))
+  })
+
+  it("orders placement-triage after compress and task-detection, before integrity", () => {
+    /**
+     * Three edges, each stated in the contract's own comment (issue #63): after `compress` so
+     * folding has had its chance before anything is re-filed, after `task-detection` so a move
+     * cannot invalidate a path mid-scan, and before `integrity` because it MOVES files and the
+     * directory artifacts regenerate there.
+     */
+    expect(SLEEP_PHASES.indexOf("placement-triage")).toBeGreaterThan(
+      SLEEP_PHASES.indexOf("compress")
+    )
+    expect(SLEEP_PHASES.indexOf("placement-triage")).toBeGreaterThan(
+      SLEEP_PHASES.indexOf("task-detection")
+    )
+    expect(SLEEP_PHASES.indexOf("placement-triage")).toBeLessThan(SLEEP_PHASES.indexOf("integrity"))
   })
 
   it("orders every hard prerequisite before its dependent", () => {
@@ -143,7 +159,8 @@ describe("the phase contract", () => {
       "arc-synthesis",
       "compress",
       "trace-consolidation",
-      "task-detection"
+      "task-detection",
+      "placement-triage"
     ])
     // In execution order, so the generated phase table's `callsModel` column reads down the page the
     // way `SLEEP_PHASES` does rather than in the order phases happened to gain a model.
@@ -191,7 +208,7 @@ describe("the phase contract", () => {
 
   it("numbers phases 1-based for display", () => {
     expect(phaseIndexOf("preflight")).toBe(1)
-    expect(phaseIndexOf("report")).toBe(16)
+    expect(phaseIndexOf("report")).toBe(17)
   })
 
   it("narrows an untrusted phase name", () => {

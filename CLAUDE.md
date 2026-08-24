@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-`memhtml` is an agent's long-term memory store: a git repository of semantic HTML5 files (one fact per file) with a rebuildable SQLite index, four-arm RRF retrieval, and a fifteen-phase nightly curation pipeline. A pnpm + turbo TypeScript monorepo on Effect v4 (beta, pinned via catalog), Node 24, driven through `mise`.
+`memhtml` is an agent's long-term memory store: a git repository of semantic HTML5 files (one fact per file) with a rebuildable SQLite index, four-arm RRF retrieval, and a seventeen-phase nightly curation pipeline. A pnpm + turbo TypeScript monorepo on Effect v4 (beta, pinned via catalog), Node 24, driven through `mise`.
 
 Read first, in this order: `README.md` (the system in one page), `docs/design.md` (every architectural decision with the file:line that implements it), `.erpaval/INDEX.md` (prior-session lessons — grep `.erpaval/solutions/**` before related work). `AGENTS.md` is **generated** — never hand-edit it.
 

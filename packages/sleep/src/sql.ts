@@ -19,7 +19,7 @@ import { Effect } from "effect"
 /**
  * The memory type no phase of a sleep cycle touches.
  *
- * A task is live working state, and every one of the sixteen phases is a judgment about REMEMBERED
+ * A task is live working state, and every one of the seventeen phases is a judgment about REMEMBERED
  * FACTS: decay says a claim is fading, dedup says two claims are one, edge typing says one claim
  * caused or contradicts another, retention says a claim has stopped earning its place. None of those hold for
  * a thing an agent intends to do, and each would be wrong applied to one. A task the agent has
@@ -503,6 +503,16 @@ export interface EdgeRow {
  * `edge_class = 'memory'` is the firewall. A person or provenance edge cannot enter PageRank, label
  * propagation, or the retention bridge count, and this query is what makes that true. The CHECK
  * constraint alone does not.
+ *
+ * **The deep grouping band is excluded, and the exclusion is what keeps nightly scoring stable
+ * across deep runs (issue #63).** Deep mining writes machine-mined `laterally_related` edges at a
+ * floor (0.72) far below the nightly one, purely so label propagation can partition the inbox tail
+ * for compress. Those edges persist in the index after the deep run, so without this predicate the
+ * FIRST deep run would permanently change every subsequent nightly run's PageRank, communities, and
+ * bridge counts — and therefore its eviction decisions — on a corpus whose files did not change.
+ * The filter names `derived = 1` as well as the rel, so an AUTHORED `laterally_related` (an agent's
+ * own assertion, addable through `memhtml link`) keeps exactly the graph standing it had.
+ * {@link deepGroupingEdges} is the one reader of the band.
  */
 export const memoryEdges = (
   db: DatabaseShape
@@ -514,6 +524,30 @@ export const memoryEdges = (
      JOIN files s ON s.path = e.src_path AND s.archived = 0
      JOIN files d ON d.path = e.dst_path AND d.archived = 0
      WHERE e.edge_class = 'memory'
+       AND NOT (e.derived = 1 AND e.rel = 'laterally_related')
+     ORDER BY e.src_path ASC, e.rel ASC, e.dst_path ASC`
+  )
+
+/**
+ * The deep grouping band: machine-mined `laterally_related` edges over active files (issue #63).
+ *
+ * The mirror of {@link memoryEdges}' exclusion, and deliberately a separate read instead of a flag on
+ * it: the band has exactly one consumer intent — widening label propagation's partition for the deep
+ * compress and placement phases — and a parameterized `memoryEdges` would let any caller widen the
+ * retention graph by passing a boolean. `provenance = 'sleep'` is implied by `derived = 1` (the
+ * table CHECK pins the pair) and stated anyway so the statement reads as what it is.
+ */
+export const deepGroupingEdges = (
+  db: DatabaseShape
+): Effect.Effect<ReadonlyArray<EdgeRow>, StorageFailure> =>
+  db.all<EdgeRow>(
+    `SELECT e.src_path AS src_path, e.rel AS rel, e.dst_path AS dst_path,
+            e.strength AS strength, e.derived AS derived
+     FROM edges e
+     JOIN files s ON s.path = e.src_path AND s.archived = 0
+     JOIN files d ON d.path = e.dst_path AND d.archived = 0
+     WHERE e.edge_class = 'memory' AND e.derived = 1 AND e.rel = 'laterally_related'
+       AND e.provenance = 'sleep'
      ORDER BY e.src_path ASC, e.rel ASC, e.dst_path ASC`
   )
 
@@ -904,6 +938,30 @@ export const linkedSessionCount = (db: DatabaseShape): Effect.Effect<number, Sto
        JOIN memory_session_links l ON l.session_id = t.session_id`
     )
     .pipe(Effect.map((row) => row?.n ?? 0))
+
+/**
+ * Authored memory-class edges POINTING AT one path: which files hold a `<link>` a move must rewrite.
+ *
+ * Placement triage's read (issue #63). `derived = 0` because a mined edge lives only in the index
+ * and the next re-mine follows the moved vectors on its own; only a file-borne link needs a splice.
+ * Both memory and task classes are included — a task may `blocks`-link a memory it waits on, and a
+ * move that left that href dangling would break the task surface — but provenance and person edges
+ * cannot point at an inbox memory by construction.
+ */
+export const inboundAuthoredEdges = (
+  db: DatabaseShape,
+  dstPath: string
+): Effect.Effect<
+  ReadonlyArray<{ readonly src_path: string; readonly rel: string }>,
+  StorageFailure
+> =>
+  db.all<{ src_path: string; rel: string }>(
+    `SELECT e.src_path AS src_path, e.rel AS rel
+     FROM edges e
+     WHERE e.derived = 0 AND e.dst_path = ?
+     ORDER BY e.src_path ASC, e.rel ASC`,
+    [dstPath]
+  )
 
 /** A `<link rel="memhtml-*">` whose target is not in the tree. The integrity phase's input. */
 export interface DanglingEdge {

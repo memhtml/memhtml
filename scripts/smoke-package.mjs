@@ -181,7 +181,9 @@ const main = async () => {
     await check("the sleep cycle runs every phase", async () => {
       const slept = await envelope(bin, ["sleep", "run", "--dry-run"], env)
       const phases = (slept.data?.phases ?? []).length
-      return { ok: phases === 16, detail: `phases=${String(phases)}` }
+      // The count is SLEEP_PHASES.length, restated here because this script drives the installed
+      // tarball and cannot import the workspace. A new phase moves both, or this check catches it.
+      return { ok: phases === 17, detail: `phases=${String(phases)}` }
     })
 
     for (const [label, target, args] of [

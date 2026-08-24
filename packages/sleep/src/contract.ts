@@ -7,21 +7,31 @@
  */
 
 /**
- * The sixteen phases, in execution order.
+ * The seventeen phases, in execution order.
  *
  * The order encodes the predecessor memory system's dependencies (design §6): entity resolution precedes person
  * links so aliases have already merged, confidence decay precedes retention triage so triage
  * scores the decayed value, and dedup-merge precedes compress and retention because both operate
  * on the post-merge set.
  *
- * `task-detection` is sixteenth-in-list and thirteenth-in-order, sitting after `trace-consolidation`
- * and before `integrity`, and both edges are deliberate. It scans the ACTIVE corpus for unresolved
+ * `task-detection` sits after `trace-consolidation` and before `integrity`, and both edges are
+ * deliberate. It scans the ACTIVE corpus for unresolved
  * commitments, so it has to run after every phase that changes what is active — after dedup's folds,
  * after retention's evictions, after compress's canonicals, and after trace consolidation's newly
  * distilled memories, which are the freshest text of the night and the likeliest to carry one. And it
  * WRITES files, so it must precede `integrity`, which repairs dangling hrefs and regenerates the
  * directory artifacts: a task minted afterwards would be absent from its directory's `index.html`
  * until the next night.
+ *
+ * `placement-triage` is deep-only (issue #63): on a run without `--deep` it returns immediately,
+ * writes nothing, and commits nothing, so the nightly cycle's behavior is unchanged by its presence
+ * in this list. Its slot has the same two edges task-detection's does, plus one more on each side:
+ * it must run after `compress` (it re-files only what even deep grouping could not fold, so folding
+ * has to have had its chance first) and after `task-detection` (a move mid-scan would hand the
+ * detector paths that no longer hold files), and it must precede `integrity` because it MOVES files —
+ * integrity regenerates each directory's `index.html`, and it rewrites inbound hrefs itself because
+ * integrity's dangling-href repair only knows how to chase a target into the ARCHIVE, not into a
+ * topic directory.
  */
 export const SLEEP_PHASES = [
   "preflight",
@@ -37,6 +47,7 @@ export const SLEEP_PHASES = [
   "reprieve",
   "trace-consolidation",
   "task-detection",
+  "placement-triage",
   "integrity",
   "state-export",
   "report"
@@ -98,10 +109,14 @@ export const TRAILER_COUNTS = "Memhtml-Counts"
  * normalization and character-overlap passes run either way. The other four report a reason and
  * write nothing.
  *
- * `task-detection` is the newest member and the only one that is net-new model spend rather than a
+ * `task-detection` was the first member that is net-new model spend rather than a
  * question a phase was already asking. Issue #44 sizes it that way on purpose: surfaces 1 and 2 cover
  * the highest-signal sources at no marginal cost, and this one is the batched scan over the active
  * corpus, capped like every other phase and degrading to `no model bound` with nothing written.
+ *
+ * `placement-triage` spends model calls only under `--deep` (issue #63). On a nightly run it returns
+ * immediately with a reason, so its membership here reads "spends calls when deep AND a model is
+ * bound" — the same two-condition degradation `trace-consolidation` has for its consolidator.
  */
 export const LLM_PHASES: ReadonlyArray<SleepPhase> = [
   "dedup-merge",
@@ -110,7 +125,8 @@ export const LLM_PHASES: ReadonlyArray<SleepPhase> = [
   "arc-synthesis",
   "compress",
   "trace-consolidation",
-  "task-detection"
+  "task-detection",
+  "placement-triage"
 ]
 
 /**
