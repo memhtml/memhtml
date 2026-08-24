@@ -101,7 +101,7 @@ Answering a question that takes MORE THAN ONE HOP through the corpus? Write it a
 | `memhtml trace index` | — | — | `trace.report` |
 | `memhtml trace search` | <query> | `--cwd` `--since` `--limit` | `trace.sessions` |
 | `memhtml trace links` | — | `--session-id` `--path` | `trace.links` |
-| `memhtml sleep run` | — | `--date` `--phases` `--dry-run` | `sleep.report` |
+| `memhtml sleep run` | — | `--date` `--phases` `--dry-run` `--deep` `--max-llm-calls` | `sleep.report` |
 | `memhtml sleep resume` | <run-id> | — | `sleep.report` |
 | `memhtml sleep review` | <run-id> | `--diff` | `sleep.review` |
 | `memhtml sleep merge` | <run-id> | `--skip-gate` | `sleep.merge` |
@@ -327,11 +327,13 @@ The memory-session links, from either side.
 
 ### `memhtml sleep run`
 
-The nightly curation cycle: 16 phases, each an isolated commit on a review branch.
+The nightly curation cycle: 17 phases, each an isolated commit on a review branch.
 
 - `--date` (string) — The run date, `YYYY-MM-DD`. Defaults to today. Names the branch.
-- `--phases` (string) — Comma-separated subset. All 16 by default: preflight, dedup-merge, entity-resolution, person-links, relationship-mining, edge-typing, confidence-decay, arc-synthesis, retention-triage, compress, reprieve, trace-consolidation, task-detection, integrity, state-export, report.
+- `--phases` (string) — Comma-separated subset. All 17 by default: preflight, dedup-merge, entity-resolution, person-links, relationship-mining, edge-typing, confidence-decay, arc-synthesis, retention-triage, compress, reprieve, trace-consolidation, task-detection, placement-triage, integrity, state-export, report.
 - `--dry-run` (boolean) — Report per-phase counts and commit nothing. _(default `false`)_
+- `--deep` (boolean) — The deep-sleep cycle: mine a lower grouping band, group by shared entity, re-file inbox singletons, and iterate compress until a pass folds nothing. Reaches the inbox tail the nightly community gate cannot; costs more model calls. Same branch, review, and merge gate as a nightly run. _(default `false`)_
+- `--max-llm-calls` (int) — Cap on model calls the deep mechanisms may spend, shared across all deep phases. Exhaustion skips remaining batches with reason `budget` and the run stays green. Read only with --deep; absent means uncapped.
 
 ### `memhtml sleep resume`
 

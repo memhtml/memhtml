@@ -610,6 +610,24 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         type: "boolean",
         description: "Report per-phase counts and commit nothing.",
         default: false
+      },
+      {
+        name: "deep",
+        type: "boolean",
+        description:
+          "The deep-sleep cycle: mine a lower grouping band, group by shared entity, re-file " +
+          "inbox singletons, and iterate compress until a pass folds nothing. Reaches the inbox " +
+          "tail the nightly community gate cannot; costs more model calls. Same branch, review, " +
+          "and merge gate as a nightly run.",
+        default: false
+      },
+      {
+        name: "max-llm-calls",
+        type: "int",
+        description:
+          "Cap on model calls the deep mechanisms may spend, shared across all deep phases. " +
+          "Exhaustion skips remaining batches with reason `budget` and the run stays green. " +
+          "Read only with --deep; absent means uncapped."
       }
     ],
     responseTypes: ["sleep.report"]

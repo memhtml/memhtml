@@ -461,10 +461,13 @@ const dispatch = (
       return Effect.gen(function* () {
         const sleep = yield* Sleep
         const phases = yield* sleepPhases(str(parsed, "phases"))
+        const maxLlmCalls = int(parsed, "max-llm-calls")
         const report = yield* sleep.run({
           date: str(parsed, "date") ?? (yield* today),
           ...(phases === undefined ? {} : { phases }),
-          dryRun: bool(parsed, "dry-run", false)
+          dryRun: bool(parsed, "dry-run", false),
+          deep: bool(parsed, "deep", false),
+          ...(maxLlmCalls === undefined ? {} : { maxLlmCalls })
         })
         return ["sleep.report", sleepRunReport(report)] as const
       })
