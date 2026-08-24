@@ -8,20 +8,20 @@ import {
   SLEEP_PHASES,
   TRAILER_PHASE
 } from "./contract.js"
-import type { PhaseBody, PhaseEnv, SleepDeps } from "./env.js"
+import { makeLlmBudget, type PhaseBody, type PhaseEnv, type SleepDeps } from "./env.js"
 import { PHASE_BODIES } from "./phases/index.js"
 import { reportPhase } from "./phases/report.js"
 import { readPhases, readRun, recordPhase, recordRun } from "./sql.js"
 import { makeDetectionBudget } from "./tasks.js"
 
 /**
- * The runner: sixteen phases, each an isolated commit on `sleep/<date>`.
+ * The runner: seventeen phases, each an isolated commit on `sleep/<date>`.
  *
  * **Per-phase isolation drives the design.** The predecessor memory system ran thirteen curation phases
  * inside one Postgres transaction, and four consecutive nights of production curation were lost
  * because one phase raised and the abort rolled back the twelve that had already succeeded. Here every
  * phase is its own commit, a failure is caught with `Effect.result` and recorded as a value, and the
- * phases after it still run, so a night that loses one phase keeps the other fifteen's work.
+ * phases after it still run, so a night that loses one phase keeps the other sixteen's work.
  *
  * The only exception is a declared hard prerequisite: `dedup-merge` failing SKIPS `compress` and
  * `retention-triage`, because both operate on the post-merge set and running them over a corpus that
@@ -36,10 +36,23 @@ import { makeDetectionBudget } from "./tasks.js"
 export interface RunOptions {
   /** `YYYY-MM-DD`. Names the branch and the run, and dates every stamp the run writes. */
   readonly date: string
-  /** Run only these phases, in the canonical order. Absent runs all sixteen. */
+  /** Run only these phases, in the canonical order. Absent runs all of them. */
   readonly phases?: ReadonlyArray<SleepPhase> | undefined
   /** Compute and count; write no commit and no row beyond the run row, which is marked dry. */
   readonly dryRun?: boolean | undefined
+  /**
+   * The deep-sleep cycle (issue #63): mine a lower grouping band, group by shared entity, triage
+   * inbox singletons into topic directories, and iterate compress until a pass folds nothing.
+   * Same branch, same review, same merge gate as a nightly run — deep changes what the phases
+   * REACH, never what happens to what they produce.
+   */
+  readonly deep?: boolean | undefined
+  /**
+   * A run-wide cap on model calls the DEEP mechanisms may spend. Read only when `deep` is set.
+   * When it runs out, remaining deep batches are skipped with reason `budget` and counted per
+   * phase — the run stays green, exactly as a model outage does.
+   */
+  readonly maxLlmCalls?: number | undefined
 }
 
 /** The branch and run id for a date, given which branches already exist. */
@@ -100,7 +113,22 @@ export const run = (deps: SleepDeps, options: RunOptions): Effect.Effect<RunRepo
        * Created per run rather than held in a module, which is what keeps two runs in one process (and
        * two tests in one file) from sharing a counter.
        */
-      detectionBudget: makeDetectionBudget()
+      detectionBudget: makeDetectionBudget(),
+      /**
+       * The deep switches, shaped once here so every phase reads one field. The LLM budget is the
+       * same created-per-run discipline as the detection budget above, and it exists only when the
+       * caller stated a cap: an uncapped deep run is a valid ask, and a phantom cap of zero (or of
+       * some default nobody chose) would silently skip work the operator paid for the flag to reach.
+       */
+      ...(options.deep === true
+        ? {
+            deep: {
+              ...(options.maxLlmCalls === undefined
+                ? {}
+                : { budget: makeLlmBudget(options.maxLlmCalls) })
+            }
+          }
+        : {})
     }
 
     if (!dryRun) {
@@ -157,7 +185,19 @@ export const run = (deps: SleepDeps, options: RunOptions): Effect.Effect<RunRepo
 export const resume = (
   deps: SleepDeps,
   runId: string,
-  options: { readonly date?: string | undefined } = {}
+  options: {
+    readonly date?: string | undefined
+    /**
+     * Resume the remaining phases as a DEEP run. NOT inferred from the interrupted run — the run row
+     * does not record the flag, and the commits a nightly phase leaves are indistinguishable from a
+     * deep phase's — so the caller restates it, exactly as the caller restates nothing else because
+     * everything else is on the branch. A deep run resumed without the flag finishes as a nightly
+     * one: already-completed deep phases keep their commits, and the remaining phases do nightly
+     * work, which is safe because every deep mechanism is additive.
+     */
+    readonly deep?: boolean | undefined
+    readonly maxLlmCalls?: number | undefined
+  } = {}
 ): Effect.Effect<RunReport, never, never> =>
   Effect.gen(function* () {
     const row = yield* ignoreFailureWith(readRun(deps.db, runId), undefined)
@@ -185,7 +225,17 @@ export const resume = (
        * finishing. The cost of a fresh one is bounded by the cap, and the mints a resume repeats are
        * refreshes rather than duplicates, which cost no budget at all.
        */
-      detectionBudget: makeDetectionBudget()
+      detectionBudget: makeDetectionBudget(),
+      /** A fresh LLM budget too, for the same reason the detection budget above is fresh. */
+      ...(options.deep === true
+        ? {
+            deep: {
+              ...(options.maxLlmCalls === undefined
+                ? {}
+                : { budget: makeLlmBudget(options.maxLlmCalls) })
+            }
+          }
+        : {})
     }
 
     const remaining = SLEEP_PHASES.filter((phase) => !completed.has(phase))
@@ -195,7 +245,7 @@ export const resume = (
 
     /**
      * Skipped-because-already-done rows are reported explicitly, so a resume's report accounts for all
-     * sixteen phases. A report that showed only the eight it ran would read as a partial run.
+     * seventeen phases. A report that showed only the eight it ran would read as a partial run.
      */
     const priorRows = yield* ignoreFailureWith(readPhases(deps.db, runId), [])
     const already: ReadonlyArray<PhaseResult> = [...completed].map((phase) => {

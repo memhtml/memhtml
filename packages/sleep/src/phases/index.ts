@@ -8,6 +8,7 @@ import { edgeTyping } from "./edge-typing.js"
 import { entityResolution } from "./entity-resolution.js"
 import { integrity } from "./integrity.js"
 import { personLinks } from "./person-links.js"
+import { placementTriage } from "./placement-triage.js"
 import { preflight } from "./preflight.js"
 import { relationshipMining } from "./relationship-mining.js"
 import { reportPhase } from "./report.js"
@@ -39,6 +40,7 @@ export const PHASE_BODIES: Readonly<Record<SleepPhase, PhaseBody>> = {
   reprieve,
   "trace-consolidation": traceConsolidation,
   "task-detection": taskDetection,
+  "placement-triage": placementTriage,
   integrity,
   "state-export": stateExport,
   report: reportPhase([])
@@ -46,11 +48,16 @@ export const PHASE_BODIES: Readonly<Record<SleepPhase, PhaseBody>> = {
 
 export { arcSynthesis } from "./arc-synthesis.js"
 export {
+  assignEntityLabels,
   COMPRESS_BATCH_SIZE,
   COMPRESS_CANDIDATE_LIMIT,
   COMPRESS_MEMBER_CHARS,
   COMPRESS_MIN_BATCH,
-  compress
+  compress,
+  DEEP_COMPRESS_MAX_PASSES,
+  DEEP_ENTITY_HUB_LIMIT,
+  deepCommunityLabels,
+  ENTITY_LABEL_PREFIX
 } from "./compress.js"
 export { confidenceDecay } from "./confidence-decay.js"
 export {
@@ -112,11 +119,22 @@ export {
 } from "./entity-resolution.js"
 export { ARCHIVE_LOOKBACK_YEARS, archivedFormOf, integrity } from "./integrity.js"
 export { personLinks } from "./person-links.js"
+export {
+  PLACEMENT_BATCH_SIZE,
+  PLACEMENT_CANDIDATE_LIMIT,
+  PLACEMENT_MEMBER_CHARS,
+  PLACEMENT_NEW_DIR_CAP,
+  placementTriage
+} from "./placement-triage.js"
 export { preflight } from "./preflight.js"
 export {
+  DEEP_GROUPING_REL,
+  DEEP_MINING_COSINE_FLOOR,
+  DEEP_MINING_SAMPLE_LIMIT,
   MINING_COSINE_FLOOR,
   MINING_PER_SOURCE_K,
   MINING_SAMPLE_LIMIT,
+  mineAllBands,
   relationshipMining
 } from "./relationship-mining.js"
 export { reportFilename, reportPhase } from "./report.js"

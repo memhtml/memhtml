@@ -559,6 +559,87 @@ export const arcExecutePrompt = (input: {
     ? "Synthesize a new behavioral principal from this evidence."
     : "Update the arc to incorporate the new evidence, preserving existing knowledge that holds.")
 
+/**
+ * One inbox memory's proposed destination, under the opaque key it was offered as (issue #63).
+ *
+ * `destination` is a STRING the phase validates, never trusts: only `keep-inbox`, a directory the
+ * corpus already has, or one of a capped handful of new topic directories survives the code gate.
+ * A model-invented path outside those is a refused placement, counted and logged, because a
+ * destination is a write target and the model does not choose write targets anywhere in this
+ * pipeline.
+ */
+export const Placement = Schema.Struct({
+  /** The offered key, e.g. `m3`. A key the batch never held resolves to nothing and is dropped. */
+  memberKey: Schema.String,
+  /**
+   * `keep-inbox`, or a bucket-rooted directory like `areas/deploys` or `resources/sqlite`.
+   * `keep-inbox` is the refusal and the ordinary answer for a memory whose topic is not clear.
+   */
+  destination: Schema.String,
+  /** Unitless in `[0, 1]`. The move gate is deterministic and reads this, not the prose. */
+  confidence: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }))
+})
+export type Placement = typeof Placement.Type
+
+/** One batch's whole answer: a placement list. An omitted member keeps its inbox path. */
+export const PlacementTriage = Schema.Struct({
+  placements: Schema.Array(Placement)
+})
+export type PlacementTriage = typeof PlacementTriage.Type
+
+/**
+ * The confidence a placement must clear before the phase moves a file. The same 0.7 the edge and
+ * entity gates use, for the same reason one number serves them: a second knob would be a threshold
+ * nobody could state the meaning of. A move is cheap to reverse (`git mv` back, reviewable on the
+ * branch), so the floor matches the mild gates rather than the corroboration-backed ones.
+ */
+export const PLACEMENT_CONFIDENCE_FLOOR = 0.7
+
+/** The literal a placement answer uses to decline. */
+export const PLACEMENT_KEEP = "keep-inbox"
+
+/**
+ * The placement-triage system prompt (issue #63).
+ *
+ * The refusal is stated as the ordinary answer, because for a bulk-imported inbox it is: most
+ * singletons are distinct facts whose topic directory does not exist yet, and a model that felt
+ * obliged to place everything would scatter the inbox across invented directories nobody asked for.
+ */
+export const PLACEMENT_SYSTEM = `You file inbox memories into topic directories for an AI agent's long-term memory system. You are
+given the list of directories the corpus already has, and a NUMBERED LIST of memories currently
+sitting in the inbox. For each memory, propose where it belongs.
+
+- destination is one of the existing directories, verbatim from the list, when the memory clearly
+  belongs to that topic.
+- destination may be a NEW directory (areas/<topic> for ongoing concerns, resources/<topic> for
+  reference material) when several of THESE memories share a topic no existing directory covers.
+  Use a short lowercase hyphenated topic name. New directories are rationed, so propose one only
+  when it would hold more than a stray file.
+- destination is keep-inbox when you are unsure, when the memory's topic is ambiguous, or when no
+  directory fits. This is the ordinary answer, not a failure.
+- Never propose archive/, areas/inbox itself, areas/arcs, or resources/people. Those are managed
+  surfaces.
+- Rate confidence honestly. A placement above the floor moves the file on a review branch.
+- Omitting a member means keep-inbox.`
+
+/** The instruction that closes a placement batch's user turn, after the member list. */
+export const PLACEMENT_INSTRUCTION =
+  "Propose a destination for each memory above: an existing directory from the list, a new " +
+  "areas/<topic> or resources/<topic> directory, or keep-inbox. Name each memory by its offered " +
+  "key and rate your confidence."
+
+/**
+ * The placement user turn for one batch: the existing directories, then every member under its
+ * offered key, then the instruction. The directory list is corpus-derived text, so it is wrapped as
+ * data exactly as the member texts are.
+ */
+export const placementPrompt = (
+  directories: ReadonlyArray<string>,
+  members: ReadonlyArray<{ readonly key: string; readonly text: string }>
+): string =>
+  `${dataBlock("existing_directories", directories.join("\n"))}\n\n` +
+  batchPrompt(members, PLACEMENT_INSTRUCTION, { label: "memory" })
+
 /** The instruction that closes a compress batch's user turn, after the member list. */
 export const COMPRESS_INSTRUCTION =
   "Fold these memories into one canonical memory. List in absorbedKeys exactly the members whose " +

@@ -1,16 +1,23 @@
 import { INBOX_DIR } from "@memhtml/contracts/paths"
 import { slugify } from "@memhtml/contracts/slug"
-import { excludeSelfSupersede } from "@memhtml/domain"
+import { excludeSelfSupersede, labelPropagation } from "@memhtml/domain"
 import { renderTemplate } from "@memhtml/html"
 import { Effect } from "effect"
 
 import { assembleBatches, batchCall, keyMembers, resolveKeys } from "../batch.js"
 import { commitPhase } from "../commit.js"
 import { archiveFile, hrefFor, link, meta, stampFile, writeFileBytes } from "../edits.js"
-import { emptyOutcome, modelFor, type PhaseBody } from "../env.js"
+import { emptyOutcome, modelFor, type PhaseBody, type PhaseEnv, takeLlmCall } from "../env.js"
 import { COMPRESS_SYSTEM, CompressSynthesis, compressPrompt } from "../llm.js"
 import { runRetentionPass, type ScoredMemory } from "../retention.js"
-import { isSleepExcluded } from "../sql.js"
+import {
+  activeCorpus,
+  deepGroupingEdges,
+  entityClaims,
+  isSleepExcluded,
+  memoryEdges
+} from "../sql.js"
+import { mineAllBands } from "./relationship-mining.js"
 
 /**
  * Phase 10, compress. COMPRESS-band memories grouped by community, folded into a synthesized
@@ -40,6 +47,28 @@ import { isSleepExcluded } from "../sql.js"
  *
  * `dedup-merge` is a HARD prerequisite. Compressing before duplicates are folded would synthesize a
  * canonical over a pair the merge phase then archives one half of.
+ *
+ * ## Deep mode (issue #63)
+ *
+ * Under `--deep` three things change about WHICH memories a fold can reach, and nothing about what
+ * happens to a fold:
+ *
+ * 1. **Communities come from the widened graph.** Label propagation runs over the nightly memory
+ *    edges PLUS the deep grouping band (`laterally_related`, mined at 0.72), so inbox files whose
+ *    best neighbor sits under the nightly 0.85 floor get a partition. Retention SCORES stay the
+ *    nightly function — the band decides grouping, never eviction.
+ * 2. **Entity groups are a second community source.** Candidates the widened graph still leaves
+ *    communityless are grouped by shared `file_entities` reference under a synthetic
+ *    `entity:<type>:<name>` label, because two memories about one subject can share no vocabulary at
+ *    all. Hub entities (more than {@link DEEP_ENTITY_HUB_LIMIT} active claimants) are stop-words and
+ *    are skipped.
+ * 3. **The phase iterates until quiet.** A pass that produced canonicals re-indexes the branch,
+ *    re-mines both bands, recomputes retention, and folds again — a canonical is a new neighbor and
+ *    a new community member — until a pass folds nothing or {@link DEEP_COMPRESS_MAX_PASSES} hits.
+ *
+ * Every model call in deep mode is charged against the run's shared `--max-llm-calls` budget first;
+ * an exhausted budget skips the batch with reason `budget` and the run stays green, the same
+ * degradation posture a model outage has.
  */
 
 /** Members per model call. Small enough that every member's facts fit the answer's attention. */
@@ -57,6 +86,121 @@ export const COMPRESS_CANDIDATE_LIMIT = 2000
 /** Characters of each member shown. A fold must see the facts, so this is wider than arc evidence. */
 export const COMPRESS_MEMBER_CHARS = 1200
 
+/**
+ * Deep compress passes before the loop stops regardless of yield (issue #63). Each extra pass costs
+ * a full re-index, a re-mine, and another round of model calls, and the third pass's yield on any
+ * real corpus is folds of folds — past that the loop is spending calls to rename its own output.
+ */
+export const DEEP_COMPRESS_MAX_PASSES = 3
+
+/**
+ * Active files an entity may be claimed by before deep grouping treats it as a stop-word
+ * (issue #63). An entity on sixty-plus files ("service:api", a person who appears everywhere) says
+ * which corpus this is, not which memories are one topic, and batching its claimants would fold
+ * unrelated facts for sharing a byline. Groups under the limit still slice to
+ * {@link COMPRESS_BATCH_SIZE} through the same kernel as every other group.
+ */
+export const DEEP_ENTITY_HUB_LIMIT = 64
+
+/** The synthetic community-label prefix entity groups use. No git path starts with this. */
+export const ENTITY_LABEL_PREFIX = "entity:"
+
+/** One pass's outcome, folded into the phase totals by the loop. */
+interface PassTally {
+  candidates: number
+  communities: number
+  entityGroups: number
+  batches: number
+  canonicals: number
+  archived: number
+  skipped: number
+  failed: number
+  refused: number
+  budget: number
+  llmCalls: number
+}
+
+/**
+ * The community label of every active path under the WIDENED graph: nightly memory edges plus the
+ * deep grouping band, one label-propagation pass (issue #63).
+ *
+ * Computed here rather than inside `runRetentionPass`, deliberately: retention's partition feeds
+ * eviction scoring and must not move when a deep band is present in the index, so the widened
+ * partition is a second, compress-only computation over reads this module already owns.
+ */
+export const deepCommunityLabels = (
+  env: PhaseEnv
+): Effect.Effect<ReadonlyMap<string, string | undefined>, never> =>
+  Effect.gen(function* () {
+    const corpus = yield* activeCorpus(env.deps.db)
+    const nightly = yield* memoryEdges(env.deps.db)
+    const band = yield* deepGroupingEdges(env.deps.db)
+    return labelPropagation(
+      corpus.map((row) => row.path),
+      [...nightly, ...band].map((edge) => ({
+        src: edge.src_path,
+        dst: edge.dst_path,
+        strength: edge.strength
+      }))
+    )
+  }).pipe(Effect.orElseSucceed(() => new Map<string, string | undefined>()))
+
+/**
+ * Assign an `entity:<type>:<name>` label to every candidate the graph left communityless, greedily,
+ * one label per file (issue #63). PURE, so the hub cap and the one-label rule are unit-assertable
+ * without a corpus.
+ *
+ * Entities are walked in lexicographic (type, name) order and each claims its unclaimed candidates,
+ * so the assignment is a pure function of the corpus: a file naming two entities lands with the
+ * lexicographically first, and the run makes the same batches twice over. A group needs two members
+ * to mean anything, matching {@link COMPRESS_MIN_BATCH}.
+ *
+ * **The hub cap reads the entity's ACTIVE claimant count, not its needing count.** An entity on a
+ * hundred files whose tail happens to leave only three in the inbox band is still a stop-word:
+ * what those three share is a byline, not a topic.
+ */
+export const assignEntityLabels = (
+  claims: ReadonlyArray<{
+    readonly entity_type: string
+    readonly entity_name: string
+    readonly path: string
+  }>,
+  needing: ReadonlySet<string>
+): { readonly labels: ReadonlyMap<string, string>; readonly hubsSkipped: number } => {
+  const byEntity = new Map<string, Array<string>>()
+  for (const claim of claims) {
+    const key = `${claim.entity_type}:${claim.entity_name}`
+    const bucket = byEntity.get(key)
+    if (bucket === undefined) byEntity.set(key, [claim.path])
+    else bucket.push(claim.path)
+  }
+
+  const labels = new Map<string, string>()
+  let hubsSkipped = 0
+  for (const [key, paths] of [...byEntity.entries()].sort(([left], [right]) =>
+    left < right ? -1 : 1
+  )) {
+    if (paths.length > DEEP_ENTITY_HUB_LIMIT) {
+      hubsSkipped += 1
+      continue
+    }
+    const members = paths.filter((path) => needing.has(path) && !labels.has(path))
+    if (members.length < COMPRESS_MIN_BATCH) continue
+    for (const member of members) labels.set(member, `${ENTITY_LABEL_PREFIX}${key}`)
+  }
+  return { labels, hubsSkipped }
+}
+
+/** {@link assignEntityLabels} over the index's own claim rows. */
+const entityLabelsFor = (
+  env: PhaseEnv,
+  needing: ReadonlySet<string>
+): Effect.Effect<{ readonly labels: ReadonlyMap<string, string>; readonly hubsSkipped: number }> =>
+  entityClaims(env.deps.db).pipe(
+    Effect.map((claims) => assignEntityLabels(claims, needing)),
+    Effect.orElseSucceed(() => ({ labels: new Map<string, string>(), hubsSkipped: 0 }))
+  )
+
 export const compress: PhaseBody = (env) =>
   Effect.gen(function* () {
     const model = env.deps.model
@@ -67,183 +211,262 @@ export const compress: PhaseBody = (env) =>
       }
     }
 
-    const pass = yield* runRetentionPass(env.deps.db, env.at)
-    const candidates = pass.scored
-      .filter(
+    const modelKey = modelFor(env.deps, "compress")
+    const passes: Array<PassTally> = []
+    let lastCommit: string | null = null
+
+    for (let passAt = 0; passAt < (env.deep === undefined ? 1 : DEEP_COMPRESS_MAX_PASSES); ) {
+      passAt += 1
+      const pass = yield* runRetentionPass(env.deps.db, env.at)
+      const banded = pass.scored.filter(
         (entry) =>
           entry.score.action === "compress" &&
           entry.row.memory_type !== "arc" &&
           // A fold rewrites several memories into one canonical claim. Three tasks cannot become
           // one task: each is a separate thing an agent owes, and a synthesis would archive two of
           // them behind a claim that does neither.
-          !isSleepExcluded(entry.row.memory_type) &&
-          entry.community !== undefined
+          !isSleepExcluded(entry.row.memory_type)
       )
-      .slice(0, COMPRESS_CANDIDATE_LIMIT)
 
-    /** Community -> its COMPRESS-band members, both orders fixed so batching is reproducible. */
-    const byCommunity = new Map<string, Array<ScoredMemory>>()
-    for (const entry of candidates) {
-      const label = entry.community
-      if (label === undefined) continue
-      const bucket = byCommunity.get(label)
-      if (bucket === undefined) byCommunity.set(label, [entry])
-      else bucket.push(entry)
-    }
+      /**
+       * Which label a candidate folds under. Nightly: the retention pass's own community, and a
+       * memory without one is not a candidate — the exact selection this phase has always made.
+       * Deep: the widened partition first, then an entity label for what the graph still missed.
+       */
+      const widened = env.deep === undefined ? undefined : yield* deepCommunityLabels(env)
+      const communityOf = (entry: ScoredMemory): string | undefined =>
+        widened === undefined ? entry.community : widened.get(entry.row.path)
 
-    /**
-     * Both sorts are this phase's, and the kernel keeps the order they produce. Communities are
-     * walked lexicographically by label so a night's call order is fixed, and each community's members
-     * by `row.path` so the `m1`..`mN` keys land on the same files twice over.
-     */
-    const groups = [...byCommunity.entries()]
-      .sort(([left], [right]) => (left < right ? -1 : 1))
-      .map(([, members]) =>
-        [...members].sort((left, right) =>
-          left.row.path < right.row.path ? -1 : left.row.path > right.row.path ? 1 : 0
+      const graphLabelled = banded.filter((entry) => communityOf(entry) !== undefined)
+      const needing =
+        env.deep === undefined
+          ? new Set<string>()
+          : new Set(
+              banded
+                .filter((entry) => communityOf(entry) === undefined)
+                .map((entry) => entry.row.path)
+            )
+      const entities =
+        env.deep === undefined
+          ? { labels: new Map<string, string>(), hubsSkipped: 0 }
+          : yield* entityLabelsFor(env, needing)
+
+      const candidates = [
+        ...graphLabelled,
+        ...banded.filter((entry) => entities.labels.has(entry.row.path))
+      ].slice(0, COMPRESS_CANDIDATE_LIMIT)
+
+      /** Community -> its COMPRESS-band members, both orders fixed so batching is reproducible. */
+      const byCommunity = new Map<string, Array<ScoredMemory>>()
+      for (const entry of candidates) {
+        const label = communityOf(entry) ?? entities.labels.get(entry.row.path)
+        if (label === undefined) continue
+        const bucket = byCommunity.get(label)
+        if (bucket === undefined) byCommunity.set(label, [entry])
+        else bucket.push(entry)
+      }
+
+      /**
+       * Both sorts are this phase's, and the kernel keeps the order they produce. Communities are
+       * walked lexicographically by label so a night's call order is fixed, and each community's members
+       * by `row.path` so the `m1`..`mN` keys land on the same files twice over.
+       */
+      const groups = [...byCommunity.entries()]
+        .sort(([left], [right]) => (left < right ? -1 : 1))
+        .map(([, members]) =>
+          [...members].sort((left, right) =>
+            left.row.path < right.row.path ? -1 : left.row.path > right.row.path ? 1 : 0
+          )
         )
-      )
-    const batches = assembleBatches(groups, {
-      maxMembers: COMPRESS_BATCH_SIZE,
-      minMembers: COMPRESS_MIN_BATCH
-    })
-
-    const counts = {
-      candidates: candidates.length,
-      communities: byCommunity.size,
-      batches: batches.length,
-      canonicals: 0,
-      archived: 0,
-      skipped: 0,
-      failed: 0,
-      refused: 0
-    }
-    if (batches.length === 0) return emptyOutcome(counts)
-    if (env.dryRun) return emptyOutcome(counts)
-
-    const modelKey = modelFor(env.deps, "compress")
-    let llmCalls = 0
-    let canonicals = 0
-    let archived = 0
-    /**
-     * `skipped` stays the total, and `failed` + `refused` partition it. The two are different
-     * diagnoses with different fixes — a failed call is the model or the wire (already logged by
-     * `isolate`), a refusal is an answer the phase declined to act on (logged below) — and a night
-     * reporting only their sum cannot say which one it had. 47 of 47 batches once skipped as
-     * refusals with nothing on stderr, and the sum read as flaky calls.
-     */
-    let skipped = 0
-    let failed = 0
-    let refused = 0
-    let lastCommit: string | null = null
-
-    for (const batch of batches) {
-      /** Opaque keys again, so `absorbedKeys` cannot name a path. */
-      const keyed = keyMembers(
-        batch,
-        (entry) => `${entry.row.title}\n${entry.row.gist}\n${entry.row.body_text}`,
-        { charBudget: COMPRESS_MEMBER_CHARS }
-      )
-
-      llmCalls += 1
-      const synthesis = yield* batchCall(model, `compress batch of ${batch.length}`, {
-        schema: CompressSynthesis,
-        system: COMPRESS_SYSTEM,
-        prompt: compressPrompt(keyed.keyed),
-        modelKey,
-        effort: "high",
-        toolDescription: "Emit the canonical memory and the members whose content it absorbs."
+      const batches = assembleBatches(groups, {
+        maxMembers: COMPRESS_BATCH_SIZE,
+        minMembers: COMPRESS_MIN_BATCH
       })
-      if (synthesis === undefined) {
-        // The call itself failed; `isolate` already logged the reason.
-        skipped += 1
-        failed += 1
-        continue
-      }
 
-      /** A key the batch never offered resolves to nothing, so a fold reaches only offered files. */
-      const absorbed = resolveKeys(keyed, synthesis.absorbedKeys).map((entry) => entry.row.path)
-      if (absorbed.length < 2 || synthesis.title.trim() === "" || synthesis.claim.trim() === "") {
-        // A refusal, or a fold of a single member. Both leave every member active.
-        skipped += 1
-        refused += 1
-        yield* Effect.logWarning(
-          `sleep.llm compress batch of ${batch.length} refused: the model absorbed ` +
-            `${absorbed.length} of ${synthesis.absorbedKeys.length} named keys` +
-            (synthesis.absorbedKeys.length > 0 && absorbed.length === 0
-              ? ` (none of the named keys resolved: ${synthesis.absorbedKeys.slice(0, 3).join(", ")}${synthesis.absorbedKeys.length > 3 ? ", …" : ""})`
-              : "")
+      const tally: PassTally = {
+        candidates: candidates.length,
+        communities: byCommunity.size,
+        entityGroups: new Set(entities.labels.values()).size,
+        batches: batches.length,
+        canonicals: 0,
+        archived: 0,
+        skipped: 0,
+        failed: 0,
+        refused: 0,
+        budget: 0,
+        llmCalls: 0
+      }
+      passes.push(tally)
+      if (batches.length === 0 || env.dryRun) break
+
+      for (const batch of batches) {
+        /** Opaque keys again, so `absorbedKeys` cannot name a path. */
+        const keyed = keyMembers(
+          batch,
+          (entry) => `${entry.row.title}\n${entry.row.gist}\n${entry.row.body_text}`,
+          { charBudget: COMPRESS_MEMBER_CHARS }
         )
-        continue
-      }
 
-      /**
-       * The canonical is placed in the batch's own directory when the members agree on one, and in the
-       * inbox otherwise. Placing it under a member's directory keeps a compressed group where a reader
-       * would look for it, and `memhtml doctor` reports inbox depth so a disagreeing batch is visible.
-       */
-      const directories = new Set(absorbed.map((path) => path.slice(0, path.lastIndexOf("/"))))
-      const directory = directories.size === 1 ? [...directories][0] : INBOX_DIR
-      const canonicalPath = `${directory ?? INBOX_DIR}/${slugify(synthesis.title)}.html`
-      const members = excludeSelfSupersede(canonicalPath, absorbed)
-      if (members.length === 0) {
-        skipped += 1
-        refused += 1
-        yield* Effect.logWarning(
-          `sleep.llm compress batch of ${batch.length} refused: every absorbed member was the canonical itself`
-        )
-        continue
-      }
+        /**
+         * The deep budget is charged BEFORE the call, and an exhausted budget is its own skip
+         * reason: a night that stopped because the operator's cap ran out and a night whose model
+         * fell over need different mornings-after, and `skipped` alone cannot say which this was.
+         */
+        if (!takeLlmCall(env.deep)) {
+          tally.skipped += 1
+          tally.budget += 1
+          continue
+        }
 
-      /**
-       * The members are archived FIRST, and the canonical is written only if at least one member was
-       * actually moved. A batch whose members an earlier phase already evicted would otherwise leave a
-       * canonical behind claiming to supersede files it never absorbed.
-       */
-      const archivedPaths: Array<string> = []
-      for (const member of members) {
-        const archivedPath = yield* archiveFile(env, member, [
-          meta("memhtml-superseded-by", hrefFor(canonicalPath))
-        ])
-        if (archivedPath !== null) archivedPaths.push(archivedPath)
-      }
-      if (archivedPaths.length === 0) {
-        skipped += 1
-        refused += 1
-        yield* Effect.logWarning(
-          `sleep.llm compress batch of ${batch.length} refused: every member was already gone from the tree`
-        )
-        continue
-      }
-
-      yield* writeFileBytes(
-        env,
-        canonicalPath,
-        renderTemplate({
-          title: synthesis.title.trim(),
-          claim: synthesis.claim,
-          body: synthesis.paragraphs,
-          memoryType: "semantic",
-          at: env.at,
-          author: "agent:sleep"
+        tally.llmCalls += 1
+        const synthesis = yield* batchCall(model, `compress batch of ${batch.length}`, {
+          schema: CompressSynthesis,
+          system: COMPRESS_SYSTEM,
+          prompt: compressPrompt(keyed.keyed),
+          modelKey,
+          effort: "high",
+          toolDescription: "Emit the canonical memory and the members whose content it absorbs."
         })
-      )
-      for (const archivedPath of archivedPaths) {
-        yield* stampFile(env, canonicalPath, [link("supersedes", hrefFor(archivedPath))])
-      }
-      yield* env.deps.git.add([canonicalPath])
-      archived += archivedPaths.length
-      canonicals += 1
+        if (synthesis === undefined) {
+          // The call itself failed; `isolate` already logged the reason.
+          tally.skipped += 1
+          tally.failed += 1
+          continue
+        }
 
-      const commitSha = yield* commitPhase(
-        env,
-        "compress",
-        `fold ${members.length} memories into ${synthesis.title}`,
-        { ...counts, canonicals, archived, skipped, failed, refused }
-      )
-      if (commitSha !== null) lastCommit = commitSha
+        /** A key the batch never offered resolves to nothing, so a fold reaches only offered files. */
+        const absorbed = resolveKeys(keyed, synthesis.absorbedKeys).map((entry) => entry.row.path)
+        if (absorbed.length < 2 || synthesis.title.trim() === "" || synthesis.claim.trim() === "") {
+          // A refusal, or a fold of a single member. Both leave every member active.
+          tally.skipped += 1
+          tally.refused += 1
+          yield* Effect.logWarning(
+            `sleep.llm compress batch of ${batch.length} refused: the model absorbed ` +
+              `${absorbed.length} of ${synthesis.absorbedKeys.length} named keys` +
+              (synthesis.absorbedKeys.length > 0 && absorbed.length === 0
+                ? ` (none of the named keys resolved: ${synthesis.absorbedKeys.slice(0, 3).join(", ")}${synthesis.absorbedKeys.length > 3 ? ", …" : ""})`
+                : "")
+          )
+          continue
+        }
+
+        /**
+         * The canonical is placed in the batch's own directory when the members agree on one, and in the
+         * inbox otherwise. Placing it under a member's directory keeps a compressed group where a reader
+         * would look for it, and `memhtml doctor` reports inbox depth so a disagreeing batch is visible.
+         */
+        const directories = new Set(absorbed.map((path) => path.slice(0, path.lastIndexOf("/"))))
+        const directory = directories.size === 1 ? [...directories][0] : INBOX_DIR
+        const canonicalPath = `${directory ?? INBOX_DIR}/${slugify(synthesis.title)}.html`
+        const members = excludeSelfSupersede(canonicalPath, absorbed)
+        if (members.length === 0) {
+          tally.skipped += 1
+          tally.refused += 1
+          yield* Effect.logWarning(
+            `sleep.llm compress batch of ${batch.length} refused: every absorbed member was the canonical itself`
+          )
+          continue
+        }
+
+        /**
+         * The members are archived FIRST, and the canonical is written only if at least one member was
+         * actually moved. A batch whose members an earlier phase already evicted would otherwise leave a
+         * canonical behind claiming to supersede files it never absorbed.
+         */
+        const archivedPaths: Array<string> = []
+        for (const member of members) {
+          const archivedPath = yield* archiveFile(env, member, [
+            meta("memhtml-superseded-by", hrefFor(canonicalPath))
+          ])
+          if (archivedPath !== null) archivedPaths.push(archivedPath)
+        }
+        if (archivedPaths.length === 0) {
+          tally.skipped += 1
+          tally.refused += 1
+          yield* Effect.logWarning(
+            `sleep.llm compress batch of ${batch.length} refused: every member was already gone from the tree`
+          )
+          continue
+        }
+
+        yield* writeFileBytes(
+          env,
+          canonicalPath,
+          renderTemplate({
+            title: synthesis.title.trim(),
+            claim: synthesis.claim,
+            body: synthesis.paragraphs,
+            memoryType: "semantic",
+            at: env.at,
+            author: "agent:sleep"
+          })
+        )
+        for (const archivedPath of archivedPaths) {
+          yield* stampFile(env, canonicalPath, [link("supersedes", hrefFor(archivedPath))])
+        }
+        yield* env.deps.git.add([canonicalPath])
+        tally.archived += archivedPaths.length
+        tally.canonicals += 1
+
+        const commitSha = yield* commitPhase(
+          env,
+          "compress",
+          `fold ${members.length} memories into ${synthesis.title}`,
+          totalsOf(passes)
+        )
+        if (commitSha !== null) lastCommit = commitSha
+      }
+
+      /**
+       * Iterate-until-quiet, deep only (issue #63). A pass that folded nothing has reached the
+       * fixed point; one that folded something changed the neighbor structure, so the branch is
+       * re-indexed (renames tracked, new canonicals embedded), both bands are re-mined over the new
+       * vectors, and the next pass sees the canonicals as members. The nightly cycle exits here
+       * unconditionally, which is what keeps its behavior single-pass and byte-identical.
+       */
+      if (env.deep === undefined || tally.canonicals === 0) break
+      if (passAt >= DEEP_COMPRESS_MAX_PASSES) break
+      yield* env.deps.indexer.update({ embed: true })
+      yield* mineAllBands(env)
     }
 
-    const final = { ...counts, canonicals, archived, skipped, failed, refused }
-    return { counts: final, commitSha: lastCommit, llmCalls }
+    return {
+      counts: totalsOf(passes),
+      commitSha: lastCommit,
+      llmCalls: passes.reduce((total, tally) => total + tally.llmCalls, 0)
+    }
   })
+
+/**
+ * The pass tallies as one counts record. Work counters SUM across passes; `candidates` and
+ * `communities` describe the corpus the run STARTED from (the first pass), because a sum of
+ * re-scans of one shrinking corpus counts nothing a reviewer can reconcile. On a nightly
+ * single-pass run every key and every number is byte-identical to what this phase has always
+ * reported — the deep-only keys appear only when a deep quantity is nonzero or a second pass ran,
+ * which cannot happen without the flag. Response counts are append-only, so the deep keys are
+ * additions and no shipped key changes meaning.
+ */
+const totalsOf = (passes: ReadonlyArray<PassTally>): Record<string, number> => {
+  const first = passes[0]
+  const sum = (of: (tally: PassTally) => number): number =>
+    passes.reduce((total, tally) => total + of(tally), 0)
+  const deepish =
+    passes.length > 1 || (first?.entityGroups ?? 0) > 0 || sum((tally) => tally.budget) > 0
+  return {
+    candidates: first?.candidates ?? 0,
+    communities: first?.communities ?? 0,
+    batches: sum((tally) => tally.batches),
+    canonicals: sum((tally) => tally.canonicals),
+    archived: sum((tally) => tally.archived),
+    skipped: sum((tally) => tally.skipped),
+    failed: sum((tally) => tally.failed),
+    refused: sum((tally) => tally.refused),
+    ...(deepish
+      ? {
+          passes: passes.length,
+          entityGroups: first?.entityGroups ?? 0,
+          budgetSkipped: sum((tally) => tally.budget)
+        }
+      : {})
+  }
+}

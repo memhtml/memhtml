@@ -1,5 +1,5 @@
 /**
- * `@memhtml/sleep`: the nightly curation cycle as sixteen git commits.
+ * `@memhtml/sleep`: the nightly curation cycle as seventeen git commits.
  *
  * Every phase is its own commit on `sleep/<date>`, carrying a `Memhtml-Run`/`Memhtml-Phase`/`Memhtml-Counts`
  * trailer block. The trailers are what `resume` reads, so no journal table is required and the git
@@ -72,8 +72,16 @@ export {
   withArchiveOrdinal,
   yearOf
 } from "./edits.js"
-export type { PhaseBody, PhaseEnv, PhaseOutcome, SleepDeps, SleepError } from "./env.js"
-export { DEFAULT_MODELS, emptyOutcome, modelFor } from "./env.js"
+export type {
+  DeepOptions,
+  LlmBudget,
+  PhaseBody,
+  PhaseEnv,
+  PhaseOutcome,
+  SleepDeps,
+  SleepError
+} from "./env.js"
+export { DEFAULT_MODELS, emptyOutcome, makeLlmBudget, modelFor, takeLlmCall } from "./env.js"
 export type { EdgeDirection, EdgeDirectionalRel, EdgeVerdictRel } from "./llm.js"
 export {
   ARC_EXECUTE_SYSTEM,
@@ -109,7 +117,14 @@ export {
   isDirectionalRel,
   MergeGroup,
   MergePartition,
+  PLACEMENT_CONFIDENCE_FLOOR,
+  PLACEMENT_INSTRUCTION,
+  PLACEMENT_KEEP,
+  PLACEMENT_SYSTEM,
+  Placement,
+  PlacementTriage,
   pairText,
+  placementPrompt,
   TASK_DETECT_INSTRUCTION,
   TASK_DETECT_SYSTEM,
   TaskDetection,
@@ -169,7 +184,10 @@ export {
   consolidatedSessionCount,
   corpusSnapshot,
   danglingEdges,
+  deepGroupingEdges,
+  entityClaims,
   frameKeyPairs,
+  inboundAuthoredEdges,
   latestRun,
   linkedSessionCount,
   markPromoted,
