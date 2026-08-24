@@ -88,7 +88,7 @@ overrides:
 # override and a mixed Effect RC set the gates never ran against.
 catalog:
   effect: 4.0.0-rc.109
-  "@effect/platform-node": 4.0.0-rc.109
+  "@effect/platform-node": 4.0.0-rc.111
   "@effect/platform-node-shared": 4.0.0-rc.109
   "@effect/vitest": 4.0.0-rc.109
   fast-check: 4.9.0
