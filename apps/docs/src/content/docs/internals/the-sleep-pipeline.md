@@ -5,7 +5,7 @@ description: Seventeen curation phases in a fixed order, each an isolated commit
 
 ## 1. Seventeen phases on a branch
 
-The nightly curation run is called sleep. It executes seventeen phases in a fixed order (`packages/sleep/src/contract.ts:17`), each producing its own commit on a branch named `sleep/<YYYY-MM-DD>`, suffixed `-2` when it runs a second time the same day (`packages/sleep/src/run.ts:45`). The branch is created before any phase runs, so `main` is never touched (`packages/sleep/src/run.ts:95-97`). A dry run creates no branch, which is safe because no phase writes a file in dry mode.
+The nightly curation run is called sleep. It executes the phases of `SLEEP_PHASES` in a fixed order — seventeen as of v0.6.0 (`packages/sleep/src/contract.ts:43`) — each producing its own commit on a branch named `sleep/<YYYY-MM-DD>`, suffixed `-2` when it runs a second time the same day (`packages/sleep/src/run.ts:45`). The branch is created before any phase runs, so `main` is never touched (`packages/sleep/src/run.ts:95-97`). A dry run creates no branch, which is safe because no phase writes a file in dry mode.
 
 Figure 1 shows the shape of a run. Both of the gate's outcomes are drawn, because the refusal is the property worth seeing. There is no third outcome and no rollback.
 
@@ -34,20 +34,20 @@ Figure 1 shows the shape of a run. Both of the gate's outcomes are drawn, becaus
 | 16 | `state-export`        | no    | one commit: `.memhtml/state/access.jsonl`                                                                             |
 | 17 | `report`              | no    | one commit: `.memhtml/sleep/<run-id>.html`                                                                            |
 
-The order encodes five dependencies. Entity resolution precedes person links so that aliases have already merged. Confidence decay precedes retention triage so that triage scores the decayed value. Dedup-merge precedes both compress and retention triage, because both operate on the post-merge set. And task detection precedes integrity, because it writes files and integrity regenerates the directory listings those files belong in.
+The order encodes six dependencies. Entity resolution precedes person links so that aliases have already merged. Confidence decay precedes retention triage so that triage scores the decayed value. Dedup-merge precedes both compress and retention triage, because both operate on the post-merge set. Task detection precedes integrity, because it writes files and integrity regenerates the directory listings those files belong in. And placement triage sits between the two, after compress and task detection and before integrity: it re-files only what deep grouping could not fold, a move mid-scan would hand the detector paths that no longer hold files, and it moves files whose inbound hrefs it rewrites itself, which integrity's archive-chasing repair cannot do.
 
-Those four constraints are the whole of what the order is for, and Figure 2 draws only them. Every phase absent from the figure is order-independent of every other phase, which the table above cannot show.
+Figure 2 draws the four edges among the six phases that carry them. Every phase absent from the figure is order-independent of every other phase, which the table above cannot show.
 
 ```d2 pad=20 src="_figures/phase-order.d2" title="Four dependency edges among six phases. Phase 2 dedup-merge points at phase 10 compress and at phase 9 retention-triage, both labelled post-merge set. Phase 3 entity-resolution points at phase 4 person-links, labelled aliases merged first. Phase 7 confidence-decay points at phase 9 retention-triage, labelled scores the decayed value. Dedup-merge, entity-resolution and compress are drawn as hexagons because all three call a model; the other three are deterministic."
 ```
 
-**Figure 2: the fixed order exists to satisfy four edges.** Eleven of the seventeen phases appear nowhere in this graph, so the order among them is arbitrary and could change without consequence. The three hexagons mark the phases here that call a model, and each one's edge is about that call: `compress` archives a member only when the model names it as absorbed, `dedup-merge` gates both of its dependents on a fold the model proposed and the veto allowed, and `person-links` waits on `entity-resolution` so a person's aliases have already collapsed before a file is minted for them.
+**Figure 2: four of the ordering edges, drawn over the six phases that carry them.** Eleven of the seventeen phases appear nowhere in this graph, so the order among them is arbitrary and could change without consequence. The three hexagons mark the phases here that call a model, and each one's edge is about that call: `compress` archives a member only when the model names it as absorbed, `dedup-merge` gates both of its dependents on a fold the model proposed and the veto allowed, and `entity-resolution` runs before `person-links` so a person's aliases have already collapsed before a file is minted for them.
 
-Seven phases call a model (`packages/sleep/src/contract.ts:91`). Every other phase is deterministic and costs no model call.
+The phases of `LLM_PHASES` call a model — eight as of v0.6.0 (`packages/sleep/src/contract.ts:168`). The other nine are deterministic and cost no model call.
 
-Two of the six still do real work without one, and they degrade differently from the other four. `entity-resolution`'s normalization and character-overlap passes are a pre-stage, so a credential-free run still collapses `Checkout API` onto `checkout api`; what an absent model removes is the decision core, not the phase. `dedup-merge` falls back to the 0.92 cosine floor plus the divergence veto and still commits, so a night with no credentials folds every duplicate a cosine can prove. The other five report a reason and write nothing.
+Two of the eight still do real work without one, and they degrade differently from the other six. `entity-resolution`'s normalization and character-overlap passes are a pre-stage, so a credential-free run still collapses `Checkout API` onto `checkout api`; what an absent model removes is the decision core, not the phase. `dedup-merge` falls back to the 0.92 cosine floor plus the divergence veto and still commits, so a night with no credentials folds every duplicate a cosine can prove. The other six report a reason and write nothing. `placement-triage` carries a second condition on top of the model: it spends calls only under `--deep`, and a nightly run returns immediately with a reason.
 
-Every one of the seven that judges a group of memories at once shares one batching kernel (`packages/sleep/src/batch.ts`): the phase sorts its rows, the kernel slices them into batches, mints opaque `m1`..`mN` keys over each batch's members, frames the member list as one prompt, and resolves the keys an answer names back to rows. A key the batch never offered resolves to nothing and is dropped, so a model can only ever name a member it was shown, never a path it inferred. The kernel does no sorting of its own and preserves the order it is handed, which is what lets each phase state that its own batch boundaries and prompt bytes are a function of the corpus alone.
+Seven of the eight judge a group of memories at once and share one batching kernel (`packages/sleep/src/batch.ts`): the phase sorts its rows, the kernel slices them into batches, mints opaque `m1`..`mN` keys over each batch's members, frames the member list as one prompt, and resolves the keys an answer names back to rows. A key the batch never offered resolves to nothing and is dropped, so a model can only ever name a member it was shown, never a path it inferred. The kernel does no sorting of its own and preserves the order it is handed, which is what lets each phase state that its own batch boundaries and prompt bytes are a function of the corpus alone. `trace-consolidation` is the eighth, and it reaches its model through the consolidator rather than through this kernel.
 
 Each batch's call goes out with `cacheSystem` set, so the phase's system prompt and tool schema form a cache-eligible prefix across every batch of the night and only the member list is new bytes per call (`packages/sleep/src/batch.ts:241-248`, `packages/llm/src/wire.ts:76-80`).
 
@@ -57,17 +57,33 @@ Each batch's call goes out with `cacheSystem` set, so the phase's system prompt 
 
 A phase that throws is caught with `Effect.result`, recorded as a value, and the phases after it still run (`packages/sleep/src/run.ts:231`, `packages/sleep/src/run.ts:258`). Thirteen phases inside one transaction would mean one raise discards the twelve that already succeeded.
 
-`dedup-merge` is the one hard prerequisite, for `compress` and `retention-triage` (`packages/sleep/src/contract.ts:44-64`). Both operate on the post-merge set, and running them over a corpus that still holds its duplicates would compress a pair the merge then archives half of.
+`HARD_PREREQUISITES` spells the exceptions out one literal pair at a time (`packages/sleep/src/contract.ts:107`), and there are two shapes of them.
+
+**`preflight` gates the whole run: every one of the sixteen phases after it.** A failed preflight therefore commits nothing. It establishes the three preconditions the rest of the night reads, and each failure makes every later commit wrong rather than merely unhelpful: a dirty tree means a later phase commits the operator's own uncommitted bytes under sleep's trailers, an `EmbedModelMismatch` is a half-migrated vector space that degrades every cosine while each individual vector stays well-formed, and an `IndexStale` is an index a rebuild emptied and did not finish repopulating, so every later phase's counts describe a corpus fragment. All three end in the one outcome per-phase isolation is no defense against, a corrupt night with a green report.
+
+`dedup-merge` gates `compress` and `retention-triage`. Both operate on the post-merge set, and running them over a corpus that still holds its duplicates would compress a pair the merge then archives half of.
 
 That prerequisite is why `dedup-merge` isolates each of its model calls rather than failing on one. It batches components, and a batch whose call comes back malformed is counted and skipped, so a single bad tool payload cannot take two later phases down with it.
 
 A failed phase's staged files are unstaged (`packages/sleep/src/run.ts:283-290`), which isolates the failure in the tree as well as in the report. A partial stage would make the next phase's commit carry the failed phase's half-finished work.
 
+A run whose selected phases all failed exits 1, and so does a run that lost only some of them, while the envelope stays the `sleep.report` success shape carrying the full per-phase report (`apps/cli/src/run.ts:284`). A caller reading the exit code is asking one question — did the curation this invocation was for happen — and both answers are no; the difference between them is already stated precisely in the payload, an abort being every selected phase `failed` with `headSha === baseSha` and no commits. `sleep status` and `sleep review` are excluded, because a read that exited non-zero over a run it merely describes would make "tell me what happened" indistinguishable from "I could not tell you".
+
 Nothing is rolled back. `git branch -D` is the abort, and `main` never moved (`packages/sleep/src/run.ts:29-31`).
+
+### The pending-mark ledger
+
+Two writes escape that abort by their nature, so they are deferred rather than performed. `.memhtml/state.db` is not rebuildable from the tree and `trace_consolidations` survives an index rebuild by construction, so a state-plane row written DURING a phase outlives the branch that earned it. For the consolidation watermark that is data loss rather than bookkeeping: the watermark is an anti-join, so a session it covers is never selected again, and a discarded branch would leave the transcript gone behind a row asserting it was handled.
+
+So a phase records the write instead of making it, in `.memhtml/sleep/<run-id>.pending.jsonl` — a committed artifact on the run's own branch, one JSON line per earned write, appended and deduplicated by the rendered line so a resume re-recording a mark it already earned appends nothing (`packages/sleep/src/contract.ts:306`, `:351`). Three kinds land there: `session-consolidated` (a `trace-consolidation` watermark), `edge-promoted`, and `entity-promoted`. The ledger is a committed file rather than a table for the reason the trailers are the resume mechanism: a run's facts are its commits, and a table would be a second record that disagrees exactly when it matters, on a branch that was reviewed and thrown away.
+
+`merge` reads that ledger as a blob at the branch tip — not off the working tree, which would also honor a file a discarded run of the same date left behind — and applies it after the fast-forward succeeds, reporting both `marksPending` and `marksApplied` on the `sleep.merge` envelope (`packages/sleep/src/review.ts`). Two numbers rather than one, because they answer different questions: the branch earned the first and the plane took the second, so a merge where they disagree is the operator-visible reading of a plane write that did not land. A failed apply does not fail the merge — `main` has already moved and the memories are landed — so the shortfall is reported and logged instead, and the sessions in it stay unconsolidated and are re-read on the next cycle at the price of a model call.
+
+Corroboration counters deliberately stay at phase time. `detections` counts nights on which a model read the corpus and proposed the merge, and a discarded night did both, so deferring that bump would undercount the evidence the two-night gate exists to accumulate.
 
 ## 3. Commit trailers are the resume mechanism
 
-Every phase commit carries `Memhtml-Run`, `Memhtml-Phase`, and `Memhtml-Counts` trailers (`packages/sleep/src/contract.ts:71-73`, `packages/sleep/src/commit.ts:22-30`), and `resume` reads the set of completed phases out of `git log base..HEAD` rather than out of the `sleep_phases` table (`packages/sleep/src/run.ts:138-145`, `packages/sleep/src/run.ts:334`).
+Every phase commit carries `Memhtml-Run`, `Memhtml-Phase`, and `Memhtml-Counts` trailers (`packages/sleep/src/contract.ts:139-141`, `packages/sleep/src/commit.ts:22-30`), and `resume` reads the set of completed phases out of `git log base..HEAD` rather than out of the `sleep_phases` table (`packages/sleep/src/run.ts:138-145`, `packages/sleep/src/run.ts:334`).
 
 A journal table that a resume depended on would be a second record of what happened, and the two records disagree exactly when it matters, namely when a process is killed after `git commit` and before the row is written. The commit is the fact, the row is a convenience the history can regenerate, and a failed reporting write never fails a run (`packages/sleep/src/run.ts:434-439`).
 
@@ -81,7 +97,7 @@ In `relationship-mining` it is the graph firewall. Mined edges are written with 
 
 In `retention-triage` the reason is the score itself. Recency and access dominate it, so a task untouched for a month scores at the floor, and that is exactly the task most likely to still be owed. Evicting on that signal would archive the neglected work first and leave the busy work behind (`packages/sleep/src/phases/retention-triage.ts:24-28`).
 
-Four phases now WRITE tasks, and the exclusion is what makes that safe rather than circular. A detected task is an ordinary `task` file, so it inherits every firewall above the moment it lands: no phase scores it, no edge reaches it, and `task-detection`'s own scan cannot see it, which is why a detector cannot restate its own queue every night (`packages/sleep/src/tasks.ts`).
+Four phases WRITE tasks, and the exclusion is what makes that safe rather than circular. A detected task is an ordinary `task` file, so it inherits every firewall above the moment it lands: no phase scores it, no edge reaches it, and `task-detection`'s own scan cannot see it, which is why a detector cannot restate its own queue every night (`packages/sleep/src/tasks.ts`).
 
 ## 5. Thresholds and caps
 
@@ -219,11 +235,11 @@ A target that is simply gone means the edge asserts a relationship to nothing, s
 
 ## 15. Review and the merge gate
 
-`review` (`packages/sleep/src/review.ts:19`) reports per-phase counts, the commit list with their trailers, `git diff --stat base..HEAD`, and a per-file classification: `meta-only`, `body-changed`, `archived`, `created`, or `deleted` (`packages/sleep/src/contract.ts:131`).
+`review` (`packages/sleep/src/review.ts:53`) reports per-phase counts, the commit list with their trailers, `git diff --stat base..HEAD`, and a per-file classification: `meta-only`, `body-changed`, `archived`, `created`, or `deleted` (`packages/sleep/src/contract.ts:234`).
 
-`merge` has two refusals, and both happen before anything moves (`packages/sleep/src/review.ts:214-221`). If `main` has advanced past `base_sha` it refuses as `main-advanced`. If the pre-merge gate fails it refuses as `gate-failed`.
+`merge` has two refusals, and both happen before anything moves (`packages/sleep/src/review.ts:271`, `:284`). If `main` has advanced past `base_sha` it refuses as `main-advanced`. If the pre-merge gate fails it refuses as `gate-failed`. A run id naming nothing refuses as `no-run` (`:252`), which is a lookup failure rather than a precondition. A refusal applies no pending marks and reports neither count.
 
-`@memhtml/sleep` takes the gate as a parameter and supplies no default (`packages/sleep/src/review.ts:196-206`). A package that cannot import the eval package must not be able to default it silently, so the composition is visible in the CLI's own wiring or it does not exist (`apps/cli/src/run.ts:496-515`).
+`@memhtml/sleep` takes the gate as a parameter and supplies no default (`packages/sleep/src/review.ts:238`). A package that cannot import the eval package must not be able to default it silently, so the composition is visible in the CLI's own wiring or it does not exist (`apps/cli/src/run.ts:496-515`).
 
 The gate runs with the fake embedder (`packages/eval/src/run.ts:174`), because it measures the ranking stack against a generated fixture corpus. A gate that needed live embeddings would make a nightly merge conditional on a network call and on credentials being present at 3am. [Testing posture](/internals/testing-posture/) develops the gate itself, and the run-and-review procedure is an operations how-to under [Learn](/learn/).
 

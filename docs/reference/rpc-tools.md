@@ -2,7 +2,7 @@
 
 This repository ships an MCP server, `memhtml-mcp`, over stdio. It publishes fourteen tools and two resource templates, and a coding agent calls it to operate a memhtml root. The repository stores no memory of its own. The server acts on whatever root `$MEMHTML_ROOT` points the process at, and the same binary serves many roots.
 
-The server is one Effect layer that merges `McpServer.toolkit(MemhtmlToolkit)` with the two resources, over the CLI's own app layer, on the stdio transport at protocol revision `v2025_06_18` (`apps/mcp/src/server.ts:39-54`). The server shares the CLI's layer, so an agent's `memory_write` and an operator's `memhtml search` resolve to one database, one git root, and one vector space (`apps/mcp/src/server.ts:12-19`). Logs are pinned to stderr because stdout carries the NDJSON-RPC frames (`apps/mcp/src/server.ts:20-22`, `apps/mcp/src/bin.ts:7-13`).
+The server is one Effect layer that merges `McpServer.toolkit(MemhtmlToolkit)` with the two resources, over the CLI's own app layer, on the stdio transport at protocol revision `v2025_06_18`, the only adapter this dependency ships (`apps/mcp/src/server.ts:40-53`). The server shares the CLI's layer, so an agent's `memory_write` and an operator's `memhtml search` resolve to one database, one git root, and one vector space (`apps/mcp/src/server.ts:12-19`). Logs are pinned to stderr with `Logger.LogToStderr` because stdout carries the NDJSON-RPC frames, and Effect's default logger writes to stdout (`apps/mcp/src/server.ts:20-22`, `apps/mcp/src/server.ts:53`, `apps/mcp/src/bin.ts:7-13`).
 
 Every tool binds its handler by name in `MemhtmlToolkit.toLayer({...})` (`apps/mcp/src/handlers.ts:309`). A handler decodes the snake_case wire parameters, calls the same operation function the matching CLI command calls, and renames the result back to snake_case (`apps/mcp/src/handlers.ts:33-43`).
 
@@ -12,19 +12,36 @@ Three conventions apply to every entry below.
 
 `Optional(X)` in a signature is `Schema.optionalKey(Schema.NullOr(X))`, so a client may omit the key, send a value, or send `null`, and the handler normalizes `null` and absence to the same thing (`apps/mcp/src/tools.ts:91`, `apps/mcp/src/handlers.ts:102`). `MemoryPath` is `Schema.String` holding a path relative to the root's git tree with no leading slash, such as `areas/oncall/rollback-order.html` (`apps/mcp/src/tools.ts:51-57`). `Count` is `Schema.Int` and `Finite` is `Schema.Finite`, chosen over `Schema.Number` so the published JSON Schema is a plain `{"type":"number"}` rather than a union with a string branch (`apps/mcp/src/tools.ts:59-71`).
 
-Signatures are quoted verbatim from the registration site with two mechanical elisions, both marked where they occur. `description: /* … */,` stands for the description string, which for the write tools runs to several paragraphs assembled from shared constants (`apps/mcp/src/tools.ts:133-211`). `// …` stands for a nested doc comment explaining a schema choice. No identifier, schema, or punctuation is altered. Each entry's citation points at the full block.
+Signatures are quoted verbatim from the registration site with two mechanical elisions, both marked where they occur. `description: /* … */,` stands for the description string, which for the write tools runs to several paragraphs assembled from shared constants (`apps/mcp/src/tools.ts:143-211`). `// …` stands for a nested doc comment explaining a schema choice. No identifier, schema, or punctuation is altered. Each entry's citation points at the full block.
+
+### How both resources route
+
+Both templates are registered by one helper, `templateLayer` (`apps/mcp/src/resources.ts:118`), which calls `McpServer.addResourceTemplate` directly rather than using the `McpServer.resource` tagged template. The reason is the router. `McpServer` matches a `resources/read` URI with find-my-way (`effect/unstable/http/FindMyWay`, effect `4.0.0-rc.109`), and two of that router's rules decide the pattern each resource registers, `memhtml:://<section>/*` (`apps/mcp/src/resources.ts:42`):
+
+- A single `:` opens a NAMED PARAMETER and `::` is the escape for a literal colon, so the scheme's colon has to be doubled — left single, `memhtml:` registers a parameter named `""`.
+- A named parameter's value ENDS AT THE NEXT `/`, so it matches exactly one segment. Every memory path has at least two segments and an archived one has at least four, so a single-segment route would leave the file resource unreachable in normal use. `*` is the rest parameter, the only construct that matches across `/`, and the router requires it to be the pattern's LAST character. The tagged template compiles its parameters to named parameters, which is why it is not used here.
+
+The captured value does not arrive through the parameter array: `McpServer` folds a matched route's parameters into a POSITIONAL array by `Number(name)`, and `Number("*")` is `NaN`, so the slot is never filled. Each handler reads its one parameter back out of the URI with `capturedOf` (`apps/mcp/src/resources.ts:63`), which requires the `memhtml://<section>/` prefix VERBATIM — the router tolerates repeated slashes and this does not, so `memhtml:///file/x.html` matches the route and is then refused, rather than being sliced at an offset a character away from the one that matched. One `decodeURIComponent` covers both spellings a client can send, so `areas/oncall/x.html` and `areas%2Foncall%2Fx.html` name the same resource.
+
+The RFC 6570 templates `resources/templates` publishes are LITERALS on each spec (`RESOURCE_TEMPLATES`, `apps/mcp/src/resources.ts:250`) rather than composed from the route, so the template a client reads and the route the server matches are two independent readings of one URI shape. `tests/resources.test.ts` builds its request URI out of the PUBLISHED template and expects the read to resolve, so a template that drifted from its route fails a read rather than a literal comparison.
+
+**Every failure is sanitized, and no handler dies.** A defect becomes a stated refusal through `catchDefect` and a typed failure becomes one through `toResourceFailure`, both after `tapCause` has put the real cause on stderr where an operator reads it (`apps/mcp/src/resources.ts:130-146`). An `Effect.orDie` in their place hands the client `Cause.prettyErrors(cause)[0].message`: an absolute filesystem path for a missing sleep report, and a `PathNotFound` stripped of its `ERR_*` code and its suggestions.
 
 ## `memhtml://file/{path}`
 
 ```ts
-export const FileResource = McpServer.resource`memhtml://file/${pathParam}`({
+export const FileResource = templateLayer({
+  section: "file",
+  uriTemplate: "memhtml://file/{path}",
   name: "Memory file",
   description:
     "One memory's title, claim, and body text, by repo-root-relative path. For showing a human the file behind an answer.",
   mimeType: "text/plain",
-  content: (_uri, path) =>
+  refuse: fileRefusal,
+  read: (uri, captured) =>
     Effect.gen(function* () {
-      const result = yield* readMemory(path)
+      if (!isValidMemoryPath(captured)) return yield* Effect.fail(fileRefusal(uri))
+      const result = yield* readMemory(normalizePath(captured))
       return [
         `# ${result.doc.title}`,
         "",
@@ -32,47 +49,51 @@ export const FileResource = McpServer.resource`memhtml://file/${pathParam}`({
         "",
         result.doc.article.bodyText
       ].join("\n")
-    }).pipe(Effect.orDie)
+    })
 })
 ```
 
-Returns one memory's readable text by path, for a client that holds a path from `memory_search` and wants to show a human the file behind an answer without spending a tool call.
+Returns one memory's readable text by path, for a client that holds a path from `memory_search` and wants to show a human the file behind an answer without spending a tool call. The rest parameter is what makes a multi-segment PARA path such as `areas/oncall/rollback-order.html` resolve.
 
-**Input:** one template parameter, `path`, declared as `McpSchema.param("path", Schema.String)` so `resources/templates` publishes it as a named hole rather than a positional one (`apps/mcp/src/resources.ts:21`).
+**Input:** the whole tail after `memhtml://file/`, as a repo-root-relative path. `isValidMemoryPath` gates it before the store sees it, and that gate is CONTAINMENT rather than validation: the rest parameter accepts `/`, so it also accepts `../../etc/passwd`, and the store's reader joins a repo-relative path onto the git root with no traversal check of its own. The gate refuses any path carrying a `.` or `..` segment, any path outside the four PARA buckets, and anything not ending in `.html` — which is every memory path and nothing else.
 
-**Output:** a `text/plain` body holding an H1 of the title, the gist, then the article body text, joined by newlines. The markup is not returned, and head metadata is `memory_read`'s job (`apps/mcp/src/resources.ts:28-32`). A missing path fails the read rather than resolving to an empty resource. This read bumps salience through the same `readMemory` the `memory_read` tool calls, because naming one path counts as a deliberate open (`apps/mcp/src/resources.ts:36-40`).
+**Output:** a `text/plain` body holding an H1 of the title, the gist, then the article body text, joined by newlines. The BODY is returned and not the raw HTML file: a client asking a resource for a citation wants the text a human reads, and handing back a full document with a head full of `memhtml-*` metas would spend the client's rendering budget on bookkeeping. Head metadata is `memory_read`'s job. A missing path fails the read rather than resolving to an empty resource, because a citation that silently resolves to nothing is worse than one that says the file is gone. This read bumps salience through the same `readMemory` the `memory_read` tool calls: the caller named one specific path, which is a chosen open, and the plane should not be able to tell the two surfaces apart.
 
-`apps/mcp/src/resources.ts:42-58`
+**Refusal:** `ERR_PATH_NOT_FOUND`, whose suggestions name the published template form and point at `memory_search` / `memory_list` for a path this corpus holds (`apps/mcp/src/resources.ts:153`).
+
+`apps/mcp/src/resources.ts:182-226`
 
 ## `memhtml://sleep/{run-id}`
 
 ```ts
-export const SleepResource = McpServer.resource`memhtml://sleep/${runIdParam}`({
+export const SleepResource = templateLayer({
+  section: "sleep",
+  uriTemplate: "memhtml://sleep/{run-id}",
   name: "Sleep run report",
   description:
     "One sleep run's committed HTML report: per-phase counts, commits, and what the run changed.",
   mimeType: "text/html",
-  content: (_uri, runId) =>
+  refuse: sleepRefusal,
+  read: (uri, runId) =>
     Effect.gen(function* () {
       const roots = yield* Roots
-      // …
-      const name = runId.split("/").at(-1) ?? runId
-      const path = join(roots.memhtmlRoot, SLEEP_REPORTS_DIR, `${name}.html`)
-      return yield* Effect.tryPromise({
-        try: () => readFile(path, "utf8"),
-        catch: (cause) => cause
-      })
-    }).pipe(Effect.orDie)
+      const html = yield* readFileOrNull(
+        join(roots.memhtmlRoot, SLEEP_REPORTS_DIR, reportFilename(runId))
+      )
+      return html === null ? yield* Effect.fail(sleepRefusal(uri)) : html
+    })
 })
 ```
 
 Returns one sleep run's committed HTML report: per-phase counts, commits, and what the run changed.
 
-**Input:** one template parameter, `run-id`, declared as `McpSchema.param("run-id", Schema.String)` (`apps/mcp/src/resources.ts:24`). A run id arrives in the form `sleep/2026-08-02`, and only its last segment names the file.
+**Input:** the run id, taken VERBATIM in the `sleep/<date>` spelling `memory_status.last_sleep.run_id` publishes, so the value a client copies out of a status call is the value this resource takes.
 
-**Output:** a `text/html` body read from the root's tree at `<memhtmlRoot>/<SLEEP_REPORTS_DIR>/<date>.html`. The resource reads the tree rather than the database, because the committed report is the durable artifact of a run and the `sleep_runs` row exists for reporting convenience (`apps/mcp/src/resources.ts:60-66`).
+**Output:** a `text/html` body read from the root's tree under `.memhtml/sleep/`. The filename comes from `reportFilename`, imported from `@memhtml/sleep` — the same function the report phase writes the file with, which folds each `/` in the run id to a hyphen so `sleep/2026-08-02` is `sleep-2026-08-02.html`. Deriving that rule here a second time would be the consumer-side reimplementation of a producer's naming semantics this repo forbids; importing it means the two cannot disagree, and it contains the read for free, since folding every `/` leaves a caller no way to name a directory. The resource reads the tree rather than the database, because the committed report is the durable artifact of a run and the `sleep_runs` row exists for reporting convenience.
 
-`apps/mcp/src/resources.ts:67-84`
+**Refusal:** `ERR_PATH_NOT_FOUND`, suggesting `memory_status` for the id and status of the last run, and noting that a run `memory_status` does name whose report is absent never committed one (`apps/mcp/src/resources.ts:205`).
+
+`apps/mcp/src/resources.ts:228-248`
 
 ## `memory_archive`
 
@@ -216,7 +237,8 @@ const MemoryNeighbors = Tool.make("memory_neighbors", {
   parameters: Schema.Struct({
     path: MemoryPath,
     depth: Optional(Count),
-    rels: Optional(Schema.Array(MemoryRelSchema))
+    rels: Optional(Schema.Array(MemoryRelSchema)),
+    limit: Optional(Count)
   }),
   failure: ToolFailure,
   success: Schema.Struct({
@@ -226,21 +248,33 @@ const MemoryNeighbors = Tool.make("memory_neighbors", {
         title: Schema.String,
         /** 1-based distance from the center: 1 or 2, never 0. */
         hop: Count,
-        rel: Schema.String
+        rel: Schema.String,
+        derived: Schema.Boolean
       })
     ),
-    edges: Count
+    edges: Count,
+    node_limit: Count,
+    dropped_node_count: Count,
+    scan_saturated: Schema.Boolean
   })
 })
 ```
 
-Returns the memory graph around one path, to at most two hops, in both directions, and includes sleep-mined edges.
+Returns the memory graph around one path, to at most two hops, in both directions, and includes sleep-mined edges. Lateral retrieval is what those mined edges are for, which is why each node says whether one reached it.
 
-**Input:** `path` required; `depth` optional and clamped to 1..2 with a default of 1 (`apps/cli/src/operations.ts:1097`); `rels` an optional array drawn from the same nine MEMORY-class rels `memory_link` accepts.
+**Input:** `path` required; `depth` optional and clamped to 1..2 with a default of 1 (`apps/cli/src/operations.ts:1218`); `rels` an optional array drawn from the same nine MEMORY-class rels `memory_link` accepts; `limit` the ceiling on distinct paths in `nodes`, clamped into `1..NEIGHBORS_LIMIT` (200) rather than refused, which is the shape `memory_list` and `trace_search` already have (`apps/cli/src/operations.ts:1090`, `apps/cli/src/operations.ts:1219-1221`).
 
-**Output:** `nodes`, each carrying `path`, `title`, `hop` (1 or 2, never 0), and `rel`, plus `edges` as a count. The handler returns the operation's `nodes` and `edges` unchanged (`apps/mcp/src/handlers.ts:642-652`).
+**Output:** `nodes`, each carrying `path`, `title`, `hop` (1 or 2, never 0), `rel`, and `derived`, plus four scalars: `edges`, `node_limit`, `dropped_node_count`, and `scan_saturated`. `apps/mcp/src/handlers.ts:645-665`
 
-`apps/mcp/src/tools.ts:591-613`
+`derived` is true when a SLEEP-MINED edge reaches the node and false when only authored `<link>` edges do. It is the max over every edge that reached the node rather than `rel`'s companion, because the question a caller asks of it is whether the connection may be a machine's suspicion, and one mined route is enough for that answer to be yes. Without the field a caller cannot tell a suspicion from an assertion, which is exactly what it needs in order to decide how far to trust a lateral hop.
+
+**`edges` is not a node count and must not be read as one.** It counts DISTINCT edges the walk enumerated, keyed on `(src, rel, dst)`, over both hops and both directions — so two memories joined by two rels are one node and two edges, and an edge landing on a path the node clamp dropped is counted here and absent from `nodes`. Its scope is this one call's walk, not the corpus: `memory_status.edges` is the corpus total, and the two are different coordinate spaces.
+
+**Two markers report truncation, because the recoveries differ.** `dropped_node_count` is the distinct paths the walk reached and `node_limit` turned away, so `nodes.length + dropped_node_count` is every path the walk found and a larger `limit` returns them; `0` is how a client tells a complete neighborhood from a clamped one. `scan_saturated` is the walk stopping at its own 10000-edge-row cap, so edges past the cap were never enumerated and no `limit` recovers them — narrow with `rels` or `depth: 1` instead. It is a plain boolean rather than a nullable one, because an absent marker cannot be told from a server that does not report saturation.
+
+`node_limit` echoes the ceiling the answer was built under — the SERVER's clamp, not the raw ask — so a client that sent 10000 reads back 200 and knows the bound is a ceiling rather than a corpus fact. It is named `node_limit` and not `limit` because the answer carries two bounds that are not interchangeable: this one governs `nodes`, and the 10000-row scan cap governs everything. `dropped_node_count` carries the `_count` suffix because it is a quantity, and this repo's four numeric suffixes are not interchangeable; `edges` keeps its bare name because it is already a published field clients branch on.
+
+`apps/mcp/src/tools.ts:631-717`
 
 ## `memory_read`
 

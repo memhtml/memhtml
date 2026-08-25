@@ -47,4 +47,4 @@ These pages cover the assumptions the codebase makes, the ways it fails, and the
 
 ## Omissions
 
-`analysis/risk-hotspots.md`, `analysis/ownership.md`, and `analysis/dead-code.md` were intentionally not generated. The git history spans four days with one author, so activity and ownership signals carry no information, and no dead-code analysis tool is configured in the repo.
+`analysis/risk-hotspots.md`, `analysis/ownership.md`, and `analysis/dead-code.md` are intentionally not generated. The git history carries one human author beside Dependabot, release-please, and the agent that writes under `Bonk`, so per-file activity and ownership signals distinguish nothing an ordinary `git log` does not, and no dead-code analysis tool is configured in the repo. Re-derive the numbers from `git log` rather than reading them here; a count committed to prose is stale by the next commit.

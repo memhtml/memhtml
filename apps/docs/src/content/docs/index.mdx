@@ -82,7 +82,7 @@ write tools on the MCP server, and your own file tools against the checkout. The
 staging, so one call becomes exactly one commit and a caller cannot bundle two unrelated writes into
 it.
 
-`memhtml sleep run` is the curation pass you schedule overnight. It walks fifteen ordered phases on
+`memhtml sleep run` is the curation pass you schedule overnight. It walks seventeen ordered phases on
 a `sleep/<date>` branch and commits each phase's work on its own, so a reviewer reads the night one
 phase-shaped diff at a time. It detects contradictions and leaves the choice of a winner to a writer
 or a human, because that choice is a one-way door. `memhtml sleep merge` then refuses to move `main`

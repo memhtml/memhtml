@@ -4,6 +4,8 @@ Written 2026-08-06, at the close of the first benchmark campaign (memhtml-evals:
 
 **Status 2026-08-07: Horizon 1 COMPLETE** — items 1–3 and the tech-debt block shipped via spec 005, merged to main at `5decd60` and pushed. Struck items below keep their original text as the record of what was asked; each carries a `SHIPPED` line saying what landed.
 
+**How to read a `SHIPPED` commit reference here.** Every SHA in this file that predates publication — `5decd60`, `6d8b7bb`, `07f4c6e`, `1ca44f4`, `a05723e`, `82c2600`..`133408a`, `623d7d3`, `009430e`, `d216015`, `bdc468a` — is a pre-publication-history SHA and does not resolve in this repository (checked 2026-08-25: `git cat-file -t` fails on all eleven). They are a record of the order work landed in, not a reference you can `git show`. The evidence that a `SHIPPED` line is true is the code and the tests it names, which do resolve; the same annotation and the same reason apply to `docs/backlog.md`'s pre-publication SHAs and to the `7c22c69` in the `spec/ops-*.jsonl` headers.
+
 ## Where the system stands (measured, 2026-08-06)
 
 | benchmark                                             | memhtml    | published reference                     |
@@ -21,7 +23,7 @@ What the campaign proved about the ARCHITECTURE, as opposed to any one fix: git-
 
 One published package, `memhtml`, carrying two binaries — `memhtml` and `memhtml-mcp`. Every workspace package is `private`; the libraries had no consumer outside this repository, and none of them was ever published, which is what made collapsing them free. `RELEASING.md` carries the flow, `docs/design.md` §14 the decisions.
 
-The artifact has a gate of its own because no other tier can see it: `mise run package:smoke` installs the tarball and drives all 36 commands and all 14 MCP tools through the installed binary, and `--live` adds the three edges the credential-free run cannot reach (Bedrock embeddings, the sleep phases that call a model, the consolidator distilling through eve). It found four packaging defects that a green `pnpm check` could not, cataloged in `.erpaval/solutions/build-errors/the-published-artifact-is-not-the-workspace.md`.
+The artifact has a gate of its own because no other tier can see it: `mise run package:smoke` installs the tarball and drives every command, every MCP tool, and every published MCP resource template through the installed binary — 66 checks as of v0.6.0, enumerated from `memhtml manifest`, `tools/list`, and `resources/templates/list` rather than from a list, so a new one fails a census. `--live` adds the three edges the credential-free run cannot reach (Bedrock embeddings, the sleep phases that call a model, the consolidator distilling through eve). It found four packaging defects that a green `pnpm check` could not, cataloged in `.erpaval/solutions/build-errors/the-published-artifact-is-not-the-workspace.md`.
 
 **Published.** The package is on npm as `memhtml` (0.2.2 at time of writing), released by release-please on merge to main and authenticated with OIDC trusted publishing — no long-lived token anywhere. The two external blockers resolved as designed: the org-level "Allow GitHub Actions to create and approve pull requests" setting was granted, and the first publish used a one-time token to bootstrap the package trusted publishing could not create.
 
