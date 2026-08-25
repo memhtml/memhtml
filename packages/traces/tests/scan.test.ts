@@ -1,4 +1,4 @@
-import { appendFile, mkdir, stat, writeFile } from "node:fs/promises"
+import { appendFile, chmod, mkdir, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -16,7 +16,10 @@ const ALPHA = "11111111-1111-4111-8111-111111111111"
 /** Fails the test on an unexpected `StorageFailure`, which is what a rejected promise does. */
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
 
-/** The watermark table as a map — T7 owns the SQL; the scan only needs the read callback. */
+/**
+ * The watermark table as a map — `@memhtml/index`'s trace persister owns the SQL; the scan only
+ * needs the read callback.
+ */
 const watermarkStore = (initial: ReadonlyMap<string, Watermark> = new Map()) => {
   const rows = new Map(initial)
   const read: WatermarkReader = (filePath) => Effect.succeed(rows.get(filePath) ?? null)
@@ -24,6 +27,15 @@ const watermarkStore = (initial: ReadonlyMap<string, Watermark> = new Map()) => 
 }
 
 const FILE = { filePath: "/fixtures/projects/-tmp-x/s1.jsonl", slug: "-tmp-x" }
+
+/**
+ * `chmod(path, 0o000)` is how these tests deny a read, and uid 0 IGNORES the mode bits — root
+ * opens a mode-000 file. Under root the denial never happens, so the read SUCCEEDS and every
+ * assertion about a failed read would be describing the wrong thing. Skipped there with the reason
+ * on the record, because a green run that measured nothing is worse than a visibly absent one.
+ */
+const RUNNING_AS_ROOT = process.getuid?.() === 0
+const CHMOD_INEFFECTIVE = "chmod 000 does not deny a read to uid 0, so the denial cannot be staged"
 
 const userLine = (uuid: string, promptId: string, at: string, content: unknown) =>
   JSON.stringify({
@@ -146,7 +158,103 @@ describe("scanTraceRoot", () => {
   it("scans an empty tree as a successful run of nothing", async () => {
     const root = await mkdtempRoot()
     const report = await run(scanTraceRoot(root, watermarkStore().read))
-    expect(report).toEqual({ files: [], skipped: 0, tailed: 0, rescanned: 0, bytesRead: 0 })
+    expect(report).toEqual({
+      files: [],
+      skipped: 0,
+      tailed: 0,
+      rescanned: 0,
+      failed: 0,
+      bytesRead: 0
+    })
+  })
+
+  it("holds the stored watermark through a failed tail so the next run indexes the append", async (ctx) => {
+    ctx.skip(RUNNING_AS_ROOT, CHMOD_INEFFECTIVE)
+    const root = await mkdtempRoot()
+    const slugDir = join(root, PROJECTS_DIR, "-tmp-fail")
+    await mkdir(slugDir, { recursive: true })
+    const path = join(slugDir, "sess-1.jsonl")
+    await writeFile(path, `${userLine("u1", "p1", "2026-08-01T10:00:00.000Z", "first")}\n`)
+
+    const first = await run(scanTraceRoot(root, watermarkStore().read))
+    const rows = new Map(first.files.map((scanned) => [scanned.file.filePath, scanned.watermark]))
+    const stored = rows.get(path)
+
+    await appendFile(path, `${userLine("u2", "p2", "2026-08-01T10:00:05.000Z", "second")}\n`)
+    await bumpMtime(path)
+
+    // The append is visible in the stat, so the plan is a tail — but the read itself fails.
+    await chmod(path, 0o000)
+    const failed = await run(scanTraceRoot(root, watermarkStore(rows).read))
+    await chmod(path, 0o644)
+
+    // The failed read consumed nothing: no extract to persist, watermark exactly as stored.
+    // Advancing it would stamp the file's current size+mtime and the next run would skip forever.
+    expect(failed.files[0]?.extract).toBeNull()
+    expect(failed.files[0]?.watermark).toEqual(stored)
+
+    // It is counted as failed and NOT as tailed. `tailed` names what was read, so a downstream
+    // report that adds `tailed` up would otherwise claim a transcript nobody read was indexed.
+    expect({ tailed: failed.tailed, rescanned: failed.rescanned, failed: failed.failed }).toEqual({
+      tailed: 0,
+      rescanned: 0,
+      failed: 1
+    })
+    expect(failed.bytesRead).toBe(0)
+
+    // Retry against what the failed run reported, the store a persister would have written.
+    const afterFailure = new Map(
+      failed.files.map((scanned) => [scanned.file.filePath, scanned.watermark])
+    )
+    const retry = await run(scanTraceRoot(root, watermarkStore(afterFailure).read))
+    expect(retry.tailed).toBe(1)
+    expect(retry.files[0]?.extract?.prompts.map((row) => row.promptId)).toEqual(["p2"])
+    expect(retry.files[0]?.watermark.byteOff).toBe((await stat(path)).size)
+  })
+
+  it("retries a file whose first-ever read failed instead of skipping it forever", async (ctx) => {
+    ctx.skip(RUNNING_AS_ROOT, CHMOD_INEFFECTIVE)
+    const root = await mkdtempRoot()
+    const slugDir = join(root, PROJECTS_DIR, "-tmp-firstfail")
+    await mkdir(slugDir, { recursive: true })
+    const path = join(slugDir, "sess-1.jsonl")
+    await writeFile(path, `${userLine("u1", "p1", "2026-08-01T10:00:00.000Z", "only")}\n`)
+
+    await chmod(path, 0o000)
+    const failed = await run(scanTraceRoot(root, watermarkStore().read))
+    await chmod(path, 0o644)
+
+    expect(failed.files[0]?.extract).toBeNull()
+    // A first-ever read that fails is a failure, not a rescan: the plan said rescan and the read
+    // achieved nothing.
+    expect({ rescanned: failed.rescanned, failed: failed.failed }).toEqual({
+      rescanned: 0,
+      failed: 1
+    })
+    const rows = new Map(failed.files.map((scanned) => [scanned.file.filePath, scanned.watermark]))
+
+    // The failure watermark must not describe the current file, or this run would skip it.
+    const retry = await run(scanTraceRoot(root, watermarkStore(rows).read))
+    expect(retry.skipped).toBe(0)
+    expect(retry.failed).toBe(0)
+    expect(retry.files[0]?.extract?.prompts.map((row) => row.promptId)).toEqual(["p1"])
+  })
+
+  /**
+   * The census the four counters exist to support. A report whose numbers do not add up cannot tell
+   * an operator whether a missing session was skipped, unreadable, or never discovered — and this
+   * repo has twice shipped a probe whose number WAS the bug, so the total is derived from `files`
+   * rather than copied from the report.
+   */
+  it("partitions every discovered file across the four action counters", async () => {
+    const report = await run(scanTraceRoot(FIXTURE_ROOT, watermarkStore().read))
+    expect(report.skipped + report.tailed + report.rescanned + report.failed).toBe(
+      report.files.length
+    )
+    // Independently derived: a file carries an extract exactly when its read succeeded.
+    expect(report.files.filter((scanned) => scanned.extract === null)).toHaveLength(
+      report.skipped + report.failed
+    )
   })
 })
 

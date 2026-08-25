@@ -1,4 +1,4 @@
-import { mkdtemp, stat, writeFile } from "node:fs/promises"
+import { chmod, mkdtemp, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -22,6 +22,14 @@ const SIDECAR_FILE = join(
 )
 
 const run = <A>(effect: Effect.Effect<A, never>) => Effect.runPromise(effect)
+
+/**
+ * `chmod(path, 0o000)` is how the permission probe denies a read, and uid 0 IGNORES the mode bits —
+ * root opens a mode-000 file. Under root the denial never happens, the read SUCCEEDS, and the
+ * assertion would be describing a successful read. Skipped there with the reason on the record.
+ */
+const RUNNING_AS_ROOT = process.getuid?.() === 0
+const CHMOD_INEFFECTIVE = "chmod 000 does not deny a read to uid 0, so the denial cannot be staged"
 
 const tempFile = async (name: string, content: string): Promise<string> => {
   const dir = await mkdtemp(join(tmpdir(), "memhtml-traces-parse-"))
@@ -139,16 +147,43 @@ describe("parseSessionFile over the checked-in fixture", () => {
 })
 
 describe("parseSessionFile failure degradation", () => {
-  it("returns an empty extract for a file that does not exist", async () => {
-    const { extract, bytesRead } = await run(parseSessionFile("/nonexistent/sess.jsonl"))
+  it("returns an empty extract flagged readFailed for a file that does not exist", async () => {
+    const { extract, bytesRead, readFailed } = await run(
+      parseSessionFile("/nonexistent/sess.jsonl")
+    )
     expect(extract.sessionId).toBeNull()
     expect(extract.counters.parsedLines).toBe(0)
     expect(bytesRead).toBe(0)
+    expect(readFailed).toBe(true)
   })
 
-  it("returns an empty extract for a directory handed to it as a file", async () => {
-    const { extract } = await run(parseSessionFile(FIXTURE_ROOT))
+  it("returns an empty extract flagged readFailed for a directory handed to it as a file", async () => {
+    const { extract, readFailed } = await run(parseSessionFile(FIXTURE_ROOT))
     expect(extract.counters.parsedLines).toBe(0)
+    expect(readFailed).toBe(true)
+  })
+
+  it("flags a permission rejection as readFailed rather than an empty file", async (ctx) => {
+    ctx.skip(RUNNING_AS_ROOT, CHMOD_INEFFECTIVE)
+    const path = await tempFile(
+      "denied.jsonl",
+      `${JSON.stringify({ type: "mode", mode: "default", sessionId: "s1" })}\n`
+    )
+    await chmod(path, 0o000)
+    const { extract, bytesRead, readFailed } = await run(parseSessionFile(path))
+    await chmod(path, 0o644)
+
+    expect(readFailed).toBe(true)
+    expect(bytesRead).toBe(0)
+    expect(extract.counters.parsedLines).toBe(0)
+  })
+
+  it("does not flag a successful read of a genuinely empty file", async () => {
+    const path = await tempFile("empty.jsonl", "")
+    const { bytesRead, readFailed } = await run(parseSessionFile(path))
+    // Empty and unreadable are different facts: this watermark MAY advance.
+    expect(readFailed).toBe(false)
+    expect(bytesRead).toBe(0)
   })
 
   it("survives a line of binary garbage", async () => {

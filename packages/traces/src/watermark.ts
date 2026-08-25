@@ -9,7 +9,7 @@
 
 /**
  * What a previous scan recorded about a file, mirroring the `trace_watermarks` row
- * (design §3.3). T7 owns the table; this module owns the arithmetic.
+ * (design §3.3). `@memhtml/index`'s trace persister owns the table; this module owns the arithmetic.
  *
  * - `size`: file length in bytes at scan time.
  * - `mtimeMs`: modification time in **milliseconds since the Unix epoch**, the unit
