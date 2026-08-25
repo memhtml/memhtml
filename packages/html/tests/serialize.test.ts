@@ -208,6 +208,21 @@ describe("escaping", () => {
     expect(parseOk(html).article.gist).toBe("A claim.")
   })
 
+  it("keeps a meta whose value carries a newline on one emitted line", () => {
+    // One meta per line is the contract the byte-splicing head editors depend on, so a line
+    // break inside an attribute value is emitted as a character reference, never as bytes.
+    const doc = parseOk(
+      fileWith(MINIMAL_ARTICLE, '<meta name="memhtml-tag" content="two&#10;lines">')
+    )
+    expect(doc.tags).toEqual(["two\nlines"])
+    const html = serializeMemory(doc)
+    for (const line of html.split("\n")) {
+      // A line that opens a meta closes it: no tag straddles a line boundary.
+      if (line.includes("<meta")) expect(line, line).toMatch(/<meta [^>]*>/)
+    }
+    expect(parseOk(html).tags).toEqual(["two\nlines"])
+  })
+
   it("round-trips article text carrying markup characters", () => {
     const doc = parseOk(fileWith("<p><mark>Use 3 &lt; 5 &amp;&amp; 7 &gt; 2.</mark></p>"))
     expect(doc.article.gist).toBe("Use 3 < 5 && 7 > 2.")

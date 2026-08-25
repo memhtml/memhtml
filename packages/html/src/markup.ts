@@ -40,9 +40,20 @@ export const escapeText = (text: string): string =>
     .replaceAll(">", "&gt;")
     .replaceAll(" ", "&nbsp;")
 
-/** Escape an attribute value. Double quotes are the fixed quote style, so `<` and `>` need no escape. */
+/**
+ * Escape an attribute value. Double quotes are the fixed quote style, so `<` and `>` need no
+ * escape. Line breaks become character references so an emitted `<meta>` or `<link>` is always
+ * one source line: the head editors splice by line boundaries, so a literal newline inside an
+ * attribute would split one head entry across two of their lines. `\r` is referenced too,
+ * because the HTML preprocessor folds a literal one into `\n` on re-parse.
+ */
 export const escapeAttribute = (value: string): string =>
-  value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll(" ", "&nbsp;")
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll(" ", "&nbsp;")
+    .replaceAll("\r", "&#13;")
+    .replaceAll("\n", "&#10;")
 
 const isElement = (node: Node): node is Element =>
   "tagName" in node && typeof node.tagName === "string"

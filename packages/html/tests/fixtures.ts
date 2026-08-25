@@ -119,6 +119,37 @@ ${articleHtml}
 </html>
 `
 
+/**
+ * A memory file carrying the given `memhtml-created` / `memhtml-updated` stamps, for the rules that
+ * govern a required meta's VALUE rather than its presence.
+ *
+ * A whole head rather than a splice over {@link REQUIRED_HEAD}, for the reason {@link fileOfType} is
+ * one: a spliced second `memhtml-created` is itself a duplicate-meta violation and would mask the
+ * rule under test.
+ */
+export const fileWithStamps = (
+  created: string,
+  updated: string,
+  articleHtml = MINIMAL_ARTICLE
+): string =>
+  `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>A test memory</title>
+<meta name="memhtml-type" content="semantic">
+<meta name="memhtml-status" content="active">
+<meta name="memhtml-created" content="${created}">
+<meta name="memhtml-updated" content="${updated}">
+</head>
+<body>
+<article>
+${articleHtml}
+</article>
+</body>
+</html>
+`
+
 /** A minimal valid memory file. */
 export const MINIMAL_FILE = fileWith(MINIMAL_ARTICLE)
 

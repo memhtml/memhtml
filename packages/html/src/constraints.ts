@@ -46,27 +46,35 @@ export interface CheckResult {
 }
 
 /**
- * ISO date `YYYY-MM-DD`, optionally with a time and a zone. What `<time datetime>` must match.
+ * ISO date `YYYY-MM-DD`, or the canonical UTC instant `YYYY-MM-DDThh:mm:ssZ`. What
+ * `<time datetime>` must match.
+ *
+ * Exactly these two forms, because `files.event_at`, `files.due_at`, and `files.valid_until`
+ * are compared and ordered as raw strings, so every admitted value must sort lexicographically
+ * as it sorts chronologically. Only a fixed grammar guarantees that: a space separator sorts
+ * before `T` (`"2026-08-24 13:00" < "2026-08-24T12:00"`), a non-UTC offset sorts by its clock
+ * face rather than its instant, and optional seconds or fractions make `…T13:00:30Z` sort
+ * before the `…T13:00Z` it extends. A bare date is a prefix of every instant on its day, so
+ * the two forms mix safely.
  *
  * The time components carry their ranges in the character classes rather than being checked
  * afterwards: an hour of `25` is not a time at all, and a value that is not a time cannot be
  * compared with one that is. `60` seconds is admitted, because a leap second is a real instant.
  */
-const ISO_DATETIME =
-  /^\d{4}-\d{2}-\d{2}(?:[T ](?:[01]\d|2[0-3]):[0-5]\d(?::(?:[0-5]\d|60)(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d)?)?$/
+const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}(?:T(?:[01]\d|2[0-3]):[0-5]\d:(?:[0-5]\d|60)Z)?$/
 
 /**
  * True when a `datetime` value is one this format accepts: a calendar date, or a date with a
- * time. Narrower than HTML's own `datetime` grammar (which admits durations, weeks, and bare
- * times) because `files.event_at` and `files.due_at` are compared and ordered as strings. A
- * value that does not sort lexicographically alongside the others would corrupt the recency arm
- * and the overdue query alike.
+ * UTC time. Narrower than HTML's own `datetime` grammar (which admits durations, weeks, bare
+ * times, offsets, and variable precision) because `files.event_at` and `files.due_at` are
+ * compared and ordered as strings. A value that does not sort lexicographically alongside the
+ * others would corrupt the recency arm and the overdue query alike.
  *
  * Range is checked too, so `2026-13-45` is refused rather than stored as an unsortable date.
  */
 export const isValidDatetime = (value: string): boolean => {
   if (!ISO_DATETIME.test(value)) return false
-  const [datePart] = value.split(/[T ]/, 1)
+  const [datePart] = value.split("T", 1)
   if (datePart === undefined) return false
   const [year, month, day] = datePart.split("-").map(Number)
   if (year === undefined || month === undefined || day === undefined) return false
@@ -156,11 +164,10 @@ const isEmptyClaim = (mark: Element): boolean =>
  * something the author chose to hide.
  *
  * The non-empty rule closes the hole those two leave open. An empty `<mark>` satisfies the count
- * and the placement, so `<p><mark></mark> the prose</p>` used to pass the store's render gate and
- * land a committed, indexed file with an empty `files.gist`. Such a file is absent from every
- * disclosure tier and from the recall pack's quoted body, so it is invisible. Both write doors
- * already derived a claim from prose to route around it (`apps/cli/src/prose.ts`); with the rule
- * here, the gate owns the invariant and the doors are defense in depth.
+ * and the placement, and without this rule `<p><mark></mark> the prose</p>` would commit and
+ * index with an empty `files.gist`. Such a file is absent from every disclosure tier and from
+ * the recall pack's quoted body, so it is invisible. Both write doors derive a claim from prose
+ * (`apps/cli/src/prose.ts`); the gate owns the invariant and the doors are defense in depth.
  */
 const checkMark = (article: Element): ReadonlyArray<string> => {
   const marks = elementsNamed(article, "mark")

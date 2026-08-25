@@ -4,6 +4,7 @@ import {
   FORMAT_MD_EXAMPLE,
   fileOfType,
   fileWith,
+  fileWithStamps,
   MINIMAL_ARTICLE,
   parseErr,
   parseOk
@@ -122,6 +123,31 @@ describe("<dl>/<dt>/<dd> and <data value> — facets", () => {
       )
     )
     expect(doc.article.facets[0]?.numericValue).toBeUndefined()
+  })
+
+  /**
+   * `Number("")` and `Number(" ")` are both `0`, and zero is a finite number, so a blank `value`
+   * would store a measured quantity the file never claimed. `numericValue` is present only for a
+   * `<data value>` that parses as a finite number, which a blank attribute does not.
+   */
+  it.each(["", " ", "\t"])("omits numericValue for a blank data value (%j)", (blank) => {
+    const doc = parseOk(
+      fileWith(
+        `<p><mark>A claim.</mark></p><dl><dt>N</dt><dd><data value="${blank}">unstated</data></dd></dl>`
+      )
+    )
+    expect(doc.article.facets[0]?.value).toBe("unstated")
+    expect(doc.article.facets[0]?.numericValue).toBeUndefined()
+    expect("numericValue" in (doc.article.facets[0] ?? {})).toBe(false)
+  })
+
+  it("takes the first data value that parses, skipping a blank one before it", () => {
+    const doc = parseOk(
+      fileWith(
+        '<p><mark>A claim.</mark></p><dl><dt>N</dt><dd><data value=""></data><data value="42">forty-two</data></dd></dl>'
+      )
+    )
+    expect(doc.article.facets[0]?.numericValue).toBe(42)
   })
 
   it("gives one facet row per dd when a dt governs several", () => {
@@ -303,6 +329,35 @@ describe("head metas", () => {
     expect(doc.metas.importance).toBeUndefined()
   })
 
+  /**
+   * `Number("")` and `Number("   ")` are both `0`, so a blank content is the trap: a confidence of
+   * 0.00 is an in-range assertion of "certainly false", not the stated-nothing the blank means.
+   *
+   * Both probes sit on metas whose range ADMITS zero — `confidence` is `[0, 1]` and `reprieves` is
+   * `[0, MAX_SAFE_INTEGER]` — because that is the only place the blank guard is the thing under
+   * test. A blank `memhtml-importance` reads as 0, which is already below its own minimum of 1, so
+   * the range check drops it whether the guard exists or not and an assertion there would pass
+   * against the bug.
+   */
+  it.each(["", " ", "   "])(
+    "drops a blank numeric value (%j) rather than reading it as zero",
+    (blank) => {
+      const doc = parseOk(
+        fileWith(
+          MINIMAL_ARTICLE,
+          [
+            `<meta name="memhtml-confidence" content="${blank}">`,
+            `<meta name="memhtml-reprieves" content="${blank}">`
+          ].join("\n")
+        )
+      )
+      expect(doc.metas.confidence).toBeUndefined()
+      expect("confidence" in doc.metas).toBe(false)
+      expect(doc.metas.reprieves).toBeUndefined()
+      expect("reprieves" in doc.metas).toBe(false)
+    }
+  )
+
   it("drops a non-integral importance, which is an ordinal", () => {
     const doc = parseOk(fileWith(MINIMAL_ARTICLE, '<meta name="memhtml-importance" content="7.5">'))
     expect(doc.metas.importance).toBeUndefined()
@@ -341,6 +396,90 @@ describe("head metas", () => {
   it("drops an empty repeatable value rather than storing a blank entity", () => {
     const doc = parseOk(fileWith(MINIMAL_ARTICLE, '<meta name="memhtml-tag" content="">'))
     expect(doc.tags).toEqual([])
+  })
+})
+
+/**
+ * The five datetime metas share `<time datetime>`'s grammar because they share its consumer: SQL
+ * compares and orders every one of them as a raw string, so an admitted value that does not sort
+ * lexicographically as it sorts chronologically silently reorders a result set.
+ */
+describe("the datetime metas, which SQL compares as raw strings", () => {
+  it("refuses a space-separated required stamp, which sorts before an EARLIER T-form instant", () => {
+    // The inversion the grammar exists to make unconstructible, asserted on the strings first so
+    // the test states the hazard rather than trusting the reader to see it.
+    expect("2026-08-24 13:00:00Z" < "2026-08-24T12:00:00Z").toBe(true)
+
+    const reason = parseErr(fileWithStamps("2026-08-24T13:00:00Z", "2026-08-24 13:00:00Z"))
+    expect(reason).toContain('<meta name="memhtml-updated" content="2026-08-24 13:00:00Z">')
+    expect(reason).toContain("is not an ISO date or datetime")
+  })
+
+  it("refuses a non-UTC offset, which sorts by its clock face rather than its instant", () => {
+    const reason = parseErr(fileWithStamps("2026-08-24T13:00:00Z", "2026-08-24T13:00:00+05:00"))
+    expect(reason).toContain('<meta name="memhtml-updated" content="2026-08-24T13:00:00+05:00">')
+  })
+
+  it("refuses a required stamp that is not a datetime at all", () => {
+    const reason = parseErr(fileWithStamps("not a date", "2026-08-24T13:00:00Z"))
+    expect(reason).toContain('<meta name="memhtml-created" content="not a date">')
+  })
+
+  it("refuses an out-of-range date on a required stamp", () => {
+    expect(parseErr(fileWithStamps("2026-13-45", "2026-08-24T13:00:00Z"))).toContain(
+      "memhtml-created"
+    )
+  })
+
+  /**
+   * A REFUSAL and not a dropped optional, which is the one place these three diverge from every
+   * other malformed optional. Dropping an unsortable `memhtml-valid-until` widens the validity
+   * window to always-valid, so the file answers an as-of query for instants it said the fact was
+   * already dead — the drop is fail-open on stored belief, and the refusal is visible.
+   */
+  it.each(["memhtml-valid-from", "memhtml-valid-until", "memhtml-archived"])(
+    "refuses an unsortable %s rather than dropping it",
+    (name) => {
+      const reason = parseErr(
+        fileWith(MINIMAL_ARTICLE, `<meta name="${name}" content="2026-08-24 13:00:00Z">`)
+      )
+      expect(reason).toContain(`<meta name="${name}" content="2026-08-24 13:00:00Z">`)
+    }
+  )
+
+  it("admits a bare calendar date, which is a prefix of every instant on its day", () => {
+    const doc = parseOk(
+      fileWith(
+        MINIMAL_ARTICLE,
+        [
+          '<meta name="memhtml-valid-from" content="2026-08-24">',
+          '<meta name="memhtml-valid-until" content="2027-01-01T00:00:00Z">',
+          '<meta name="memhtml-archived" content="2026-09-01T00:00:00Z">'
+        ].join("\n")
+      )
+    )
+    expect(doc.metas.validFrom).toBe("2026-08-24")
+    expect(doc.metas.validUntil).toBe("2027-01-01T00:00:00Z")
+    expect(doc.metas.archivedAt).toBe("2026-09-01T00:00:00Z")
+  })
+
+  it("carries a stated stamp through verbatim", () => {
+    const doc = parseOk(fileWithStamps("2026-08-02T00:00:00Z", "2026-08-24T13:00:00Z"))
+    expect(doc.metas.createdAt).toBe("2026-08-02T00:00:00Z")
+    expect(doc.metas.updatedAt).toBe("2026-08-24T13:00:00Z")
+  })
+
+  it("reports the missing-meta violation, not the grammar one, for an absent stamp", () => {
+    // A meta stated badly and a meta not stated at all are different mistakes, and `checkHead`
+    // already owns the second. Reporting both for one absent line would name it twice.
+    const reason = parseErr(
+      fileOfType("semantic").replace(
+        '<meta name="memhtml-updated" content="2026-08-02T00:00:00Z">',
+        ""
+      )
+    )
+    expect(reason).toContain('missing required <meta name="memhtml-updated">')
+    expect(reason).not.toContain("is not an ISO date or datetime")
   })
 })
 
@@ -387,7 +526,15 @@ describe("the task metas, which the type governs in both directions", () => {
   })
 
   it("refuses a memhtml-due that does not sort lexicographically with the others", () => {
-    for (const due of ["next friday", "2026-13-45", "08/09/2026", "2026-08-09T25:00:00Z"]) {
+    for (const due of [
+      "next friday",
+      "2026-13-45",
+      "08/09/2026",
+      "2026-08-09T25:00:00Z",
+      // Real instants whose raw-string order disagrees with their chronological order.
+      "2026-08-09 13:00:00Z",
+      "2026-08-09T13:00:00+05:00"
+    ]) {
       expect(
         parseErr(
           fileOfType(

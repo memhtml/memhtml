@@ -120,8 +120,8 @@ describe("constraint 2 — <time> carries a sortable datetime", () => {
     ).toContain("is not an ISO date")
   })
 
-  it("accepts a bare date and a full instant", () => {
-    for (const value of ["2026-07-28", "2026-07-28T14:03:11Z", "2026-07-28T14:03+02:00"]) {
+  it("accepts a bare date and a canonical UTC instant", () => {
+    for (const value of ["2026-07-28", "2026-07-28T14:03:11Z"]) {
       expect(isValidDatetime(value), value).toBe(true)
     }
   })
@@ -130,6 +130,36 @@ describe("constraint 2 — <time> carries a sortable datetime", () => {
     for (const value of ["2026-W31", "14:03", "P3D", "2026-07", "2026"]) {
       expect(isValidDatetime(value), value).toBe(false)
     }
+  })
+
+  /**
+   * `files.event_at`, `files.due_at`, and `files.valid_until` are compared as RAW strings, so
+   * every admitted value must sort lexicographically as it sorts chronologically. Each of these
+   * is a real ISO-8601 or HTML `datetime` form whose admission would corrupt that ordering:
+   * the space separator sorts before `T` (`"2026-08-24 13:00" < "2026-08-24T12:00"` while being
+   * an hour later), an offset sorts by clock face rather than instant, and variable precision
+   * makes a longer string sort after the shorter one it merely refines.
+   */
+  it("refuses the ISO variants whose string order disagrees with their instant order", () => {
+    for (const value of [
+      "2026-08-24 13:00:00Z", // space separator sorts before every T-form on the same day
+      "2026-07-28T14:03+02:00", // non-UTC offset sorts by clock face, not instant
+      "2026-07-28T14:03:11+05:00",
+      "2026-07-28T14:03:11-0500",
+      "2026-07-28T14:03Z", // minute precision sorts before its own :00 second
+      "2026-07-28T14:03:11", // zoneless is not comparable with a Z instant
+      "2026-07-28T14:03:11.500Z" // fractional seconds sort after the instant they refine
+    ]) {
+      expect(isValidDatetime(value), value).toBe(false)
+    }
+  })
+
+  it("refuses a mis-sorting variant end to end, through the <time> constraint", () => {
+    expect(
+      parseErr(
+        fileWith('<p><mark>A claim.</mark> <time datetime="2026-08-24 13:00:00Z">x</time></p>')
+      )
+    ).toContain("is not an ISO date")
   })
 
   it("refuses a day that does not exist in its month", () => {
