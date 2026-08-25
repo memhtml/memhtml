@@ -70,9 +70,7 @@ const probeCurl = async (label, bash) => {
     return
   }
 
-  const pub = await bash.exec(
-    `curl -s -m ${TIMEOUT} -o /dev/null -w '%{http_code}' ${PUBLIC}`
-  )
+  const pub = await bash.exec(`curl -s -m ${TIMEOUT} -o /dev/null -w '%{http_code}' ${PUBLIC}`)
   console.log(`  curl ${PUBLIC}: exit ${pub.exitCode}, HTTP ${String(pub.stdout ?? "").trim()}`)
 
   // IMDSv2 is a two-step protocol: PUT for a token, then GET carrying it. A v1-shaped GET returns

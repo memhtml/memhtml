@@ -1,7 +1,7 @@
 # Git hooks via lefthook, installed by `mise run install` (or `mise run hooks:install`).
 #
 # Every job goes through `mise exec` / `mise run`, so the tool that runs is the version
-# this repo pins — biome 2.5.6 from node_modules/.bin (reached via mise.toml's `_.path`),
+# this repo pins — biome 2.5.8 from node_modules/.bin (reached via mise.toml's `_.path`),
 # betterleaks 1.7.4 from mise. Never a bare `biome`, whose resolution depends on the
 # committer's shell.
 #
@@ -30,7 +30,12 @@ pre-commit:
   parallel: true
   jobs:
     - name: biome
-      glob: "*.{ts,json}"
+      # The extension set mirrors biome.json's files.includes, and the pair is gated by
+      # tests-integration/tests/lint-surface.test.ts rather than left as a convention. Either
+      # direction of drift breaks the loop: an extension `mise run lint` checks and this job does
+      # not format arrives unformatted at a gate that refuses it, and an extension this job
+      # rewrites that no include names is edited by a tool no gate reads.
+      glob: "*.{ts,mjs,json}"
       # --no-errors-on-unmatched because biome.json excludes spec/*.symspec.json and
       # every dist/, so a staged set can legitimately contain nothing biome handles —
       # which is not an error worth blocking a commit over.

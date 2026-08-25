@@ -57,7 +57,10 @@ const renderAscii = (name) => {
         : `d2 exited ${cause.status ?? "abnormally"} on ${name}.d2`
     throw new Error(`cannot render ${name}: ${hint}`)
   }
-  const lines = stdout.replace(/\n+$/, "").split("\n").map((line) => line.replace(/\s+$/, ""))
+  const lines = stdout
+    .replace(/\n+$/, "")
+    .split("\n")
+    .map((line) => line.replace(/\s+$/, ""))
   return lines.join("\n")
 }
 

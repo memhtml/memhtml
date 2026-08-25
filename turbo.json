@@ -16,6 +16,20 @@
     "lint": {
       "outputs": []
     },
+    // Root-package task: one `biome check .` over the whole workspace, which is what keeps the
+    // lint set equal to the format set. `pnpm format` writes with `biome check --write .`, while
+    // every per-package `lint` names narrow paths (`biome check src tests`), so a file biome
+    // formats and no package's lint reads is checked by no gate at all — that describes
+    // scripts/*.mjs, apps/cli/guest/corpus.mjs, tests-integration/probe-*.mjs, tsdown.config.ts,
+    // and every package's vitest.config.ts. biome.json's `files.includes` is then the ONE
+    // declaration of the surface, which is the point.
+    //
+    // `cache: false` because the honest `inputs` for this task are every file in every workspace
+    // package, and a lint that skips the file that changed is exactly the drift it closes. The
+    // whole pass is ~270 ms over 373 files, so there is nothing worth caching.
+    "//#lint:repo": {
+      "cache": false
+    },
     // Root-package task: the `//#` prefix IS how turbo names a task that runs from the
     // workspace root (the root package.json's own `lint:md` script). `turbo run lint:md`
     // resolves it with these inputs applied — measured via `--dry=json`:

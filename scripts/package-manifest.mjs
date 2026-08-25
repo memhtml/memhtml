@@ -35,7 +35,8 @@ const WORKSPACE_PACKAGES = [
   "packages/traces"
 ]
 
-const manifestOf = async (dir) => JSON.parse(await readFile(join(REPO_ROOT, dir, "package.json"), "utf8"))
+const manifestOf = async (dir) =>
+  JSON.parse(await readFile(join(REPO_ROOT, dir, "package.json"), "utf8"))
 
 /**
  * The version of a dependency as installed, resolved from the package that declares it outward.
@@ -57,7 +58,7 @@ const installedVersion = async (name, fromDir) => {
 const dependencies = {}
 for (const dir of WORKSPACE_PACKAGES) {
   const manifest = await manifestOf(dir)
-  for (const [name, range] of Object.entries(manifest.dependencies ?? {})) {
+  for (const name of Object.keys(manifest.dependencies ?? {})) {
     if (name.startsWith("@memhtml/")) continue
     const version = await installedVersion(name, dir)
     if (dependencies[name] !== undefined && dependencies[name] !== version) {
@@ -69,7 +70,14 @@ for (const dir of WORKSPACE_PACKAGES) {
   }
 }
 
-for (const required of ["dist/memhtml.mjs", "dist/memhtml-mcp.mjs", "migrations", "guest", "agent", "src"]) {
+for (const required of [
+  "dist/memhtml.mjs",
+  "dist/memhtml-mcp.mjs",
+  "migrations",
+  "guest",
+  "agent",
+  "src"
+]) {
   if (!existsSync(join(STAGING, required))) {
     throw new Error(`dist-package/${required} is missing; run \`pnpm package:assemble\``)
   }
@@ -98,8 +106,19 @@ await writeFile(
        * importable, so declaring an entry point would promise a surface no test covers and no
        * consumer asked for. Adding one later is a minor bump — removing one would be a major.
        */
-      files: ["dist", "migrations", "state-migrations", "guest", "agent", "src", "README.md", "LICENSE"],
-      dependencies: Object.fromEntries(Object.entries(dependencies).sort(([a], [b]) => a.localeCompare(b))),
+      files: [
+        "dist",
+        "migrations",
+        "state-migrations",
+        "guest",
+        "agent",
+        "src",
+        "README.md",
+        "LICENSE"
+      ],
+      dependencies: Object.fromEntries(
+        Object.entries(dependencies).sort(([a], [b]) => a.localeCompare(b))
+      ),
       /**
        * `access` only. No `provenance` key, in either direction.
        *
