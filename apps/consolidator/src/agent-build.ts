@@ -13,7 +13,7 @@ import {
 } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { homedir } from "node:os"
-import { basename, dirname, join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { Effect } from "effect"
 
 import { appendStderrTail, stderrMessageTail } from "./child-stderr.js"
@@ -41,6 +41,33 @@ import { ConsolidatorUnavailable } from "./contract.js"
  * (`server/node_modules/node-liblzma/build/Release/node_lzma.node`) and eve says so itself — "Ensure
  * your production environment matches the builder OS and architecture (linux-x64)". A published
  * artifact cannot carry one platform's binaries.
+ *
+ * ## A finished build belongs to the directory it was built in
+ *
+ * `eve build` writes the ABSOLUTE path of its build directory into its own output: `appRoot` and
+ * `agentRoot` in the `manifest` literal inside `.output/server/index.mjs`, taken from the process cwd
+ * (eve offers no root flag — `dist/src/cli/application-root.js` derives the root from
+ * `process.cwd()`). And `eve start` does not merely carry those strings: it RE-BUNDLES the authored
+ * TypeScript found at `<agentRoot>/agent.ts` on first load
+ * (`dist/src/internal/authored-module-loader.js`) and writes the resulting bundle into a cache
+ * directory it creates under that same root. Three constraints follow, and the third is the one a
+ * reader is likeliest to break:
+ *
+ * 1. The directory `eve build` ran in is the only directory `eve start` can serve. A finished build
+ *    that is moved or renamed makes eve's `resolveAuthoredPackageRoot` walk the vanished path looking
+ *    for a `package.json`, reach `/`, and exit 1 on `Failed to resolve the authored package root for
+ *    "…/agent/agent.ts"`.
+ * 2. That directory must still hold the agent SOURCE, not just `.output/`. A tree published with
+ *    `.output/` alone fails identically, because the source is what gets re-bundled.
+ * 3. That directory must stay WRITABLE for the server's whole life, since the bundle cache is written
+ *    on first load rather than at build time.
+ *
+ * Probed live 2026-08-25 against eve 0.38.3: a build that answered `/eve/v1/health` where it was built
+ * exited 1 with that message after nothing but a `rename` of its directory, its baked `appRoot` still
+ * naming the old path.
+ *
+ * So the build runs AT the cache root and is never built elsewhere and moved in. What makes an
+ * unfinished build detectable without a move is {@link BUILD_COMPLETE_MARKER}, written last.
  */
 
 /**
@@ -76,14 +103,17 @@ const cacheRootFor = (version: string): string =>
 /**
  * The file whose PRESENCE says the cache directory holds a COMPLETED build.
  *
- * `.output/` existing cannot say that: `eve build` writes it in place over seconds, so a process
- * killed mid-build leaves a partial `.output/` that an existence check reads as complete — forever,
- * because nothing would ever rebuild it, and `eve start` over a partial output is a server that
- * fails in whatever way the missing half implies. This marker is written into the STAGING directory
- * only after `eve build` exits 0 with its output verified, and the staging directory is then
- * `rename`d to the cache root in one atomic step — so the marker can only ever be observed beside
- * the finished build it certifies. A cache directory without it, whatever else it holds, is a
- * partial to discard and rebuild.
+ * `.output/` existing cannot say that: a process killed while the tree was being staged or built
+ * leaves a partial directory that an existence check reads as complete — forever, because nothing
+ * would ever rebuild it, and `eve start` over a partial tree is a server that fails in whatever way
+ * the missing half implies. This marker is written LAST, only after `eve build` exits 0 with its
+ * {@link BUILT_SERVER_ENTRY} verified on disk, and it is the ONLY thing {@link cacheBuildComplete}
+ * trusts. A cache directory without it, whatever else it holds, is a partial to discard and rebuild.
+ *
+ * Writing it last is what a publishing `rename` would otherwise buy, and it is the shape that is
+ * compatible with an output which cannot be relocated (see the note at the top of this file). It is
+ * also the finalizer's discriminator: a markerless cache root is this build's own wreckage and gets
+ * removed, a marked one is a finished build and never does.
  */
 const BUILD_COMPLETE_MARKER = ".memhtml-build-complete"
 
@@ -101,24 +131,6 @@ const buildMarkerPath = (cacheRoot: string): string => join(cacheRoot, BUILD_COM
  * would discover.
  */
 const BUILT_SERVER_ENTRY = join(".output", "server", "index.mjs")
-
-/**
- * The staging directory's suffix, named once so the stage path and its sweep cannot drift.
- *
- * `<cacheRoot>.staging-<pid>` — a SIBLING of the cache root, so publishing is one `rename` on one
- * filesystem, and pid-suffixed so a dead process's tree is never mistaken for a live one's.
- */
-const STAGING_SUFFIX = ".staging-"
-
-const stagingPathFor = (cacheRoot: string, pid: number): string =>
-  `${cacheRoot}${STAGING_SUFFIX}${String(pid)}`
-
-/**
- * How stale an orphaned staging tree must be before the sweep reclaims it. A build holds the lock for
- * tens of seconds and cannot hold it past {@link BUILD_WAIT_BUDGET_MS}, so a day is two orders of
- * magnitude of margin, and a tree younger than that may belong to a live builder.
- */
-const ORPHAN_STAGING_MAX_AGE_MS = 24 * 60 * 60 * 1000
 
 /**
  * How old a build lock may be before another process takes it over.
@@ -317,37 +329,6 @@ const runEveBuild = (input: {
 export const cacheBuildComplete = (cacheRoot: string): boolean =>
   existsSync(buildMarkerPath(cacheRoot)) && existsSync(join(cacheRoot, ".output"))
 
-/**
- * Remove staging trees a PAST process left beside this cache root. Best-effort; never fails a build.
- *
- * `${cacheRoot}.staging-<pid>` is removed by its own builder's finalizer on every path an Effect
- * finalizer runs on, and SIGKILL runs none of them — so a killed build strands ~17 MB with nothing else
- * in reach of it: that finalizer knows only its own pid's path, and the temp-dir sweep in `client.ts`
- * covers a different prefix under a different root. This is the one thing that can reclaim them, and it
- * runs under the build lock so it cannot race a live stager.
- *
- * Age-gated by {@link ORPHAN_STAGING_MAX_AGE_MS}, and this process's own staging path is never a
- * candidate whatever its mtime says.
- */
-export const sweepOrphanedStagingTrees = async (cacheRoot: string): Promise<void> => {
-  const parent = dirname(cacheRoot)
-  const prefix = `${basename(cacheRoot)}${STAGING_SUFFIX}`
-  const own = stagingPathFor(cacheRoot, process.pid)
-  const cutoff = Date.now() - ORPHAN_STAGING_MAX_AGE_MS
-  const names = await readdir(parent).catch((): ReadonlyArray<string> => [])
-  for (const name of names) {
-    if (!name.startsWith(prefix)) continue
-    const path = join(parent, name)
-    if (path === own) continue
-    const mtime = await stat(path).then(
-      (stats) => stats.mtimeMs,
-      () => null
-    )
-    if (mtime === null || mtime > cutoff) continue
-    await rm(path, { recursive: true, force: true }).catch(() => {})
-  }
-}
-
 /** A held build lock: the directory to remove when done. */
 interface BuildLock {
   readonly release: () => Promise<void>
@@ -460,20 +441,26 @@ export const acquireBuildLock = async (cacheRoot: string): Promise<BuildLock> =>
  * development behavior byte-identical. Only the remaining case — an installed package with no output —
  * materializes the cache directory, and it costs one ~17 MB build per version rather than one per run.
  *
- * ## Completion is a RENAME, not a file count
+ * ## Completion is the MARKER, written last
  *
- * The build is staged and run in a TEMP SIBLING of the cache root and moved into place with one
- * `rename` after `eve build` exits 0 and its {@link BUILT_SERVER_ENTRY} is on disk — the file a boot
- * needs, rather than the directory it sits in. `rename` on one filesystem is
- * atomic, so the cache root either holds a whole completed build (marker included, see
- * {@link BUILD_COMPLETE_MARKER}) or does not exist — a process killed anywhere in the middle leaves
- * only a staging directory nothing consults, which the next run removes and redoes. A cache root
- * WITHOUT the marker (the shape a pre-marker build, or a directly-killed in-place build, leaves) is
- * treated as partial: removed and rebuilt.
+ * The build runs AT the cache root, because that is the only directory its output works from — a
+ * finished build cannot be relocated, and the note at the top of this file is the measurement. So a
+ * cache root holding no marker is discarded whole before staging rather than built over, and the
+ * marker is written after `eve build` exits 0 and its {@link BUILT_SERVER_ENTRY} is on disk: the file
+ * a boot needs, rather than the directory it sits in. Since {@link cacheBuildComplete} consults the
+ * marker and nothing else, a process killed anywhere in the middle leaves a markerless root that the
+ * next run removes and redoes — which is the property a publishing `rename` would have bought, at a
+ * price the artifact cannot pay.
  *
- * The build itself runs under a `mkdir`-based lock with stale-age takeover
- * ({@link acquireBuildLock}), because two processes staging into the same version's cache
- * concurrently would interleave their trees.
+ * A caller might still reach for a temp directory to get atomicity, and `eve build` already provides
+ * it where it counts: it compiles in an invocation-owned directory under `.eve/builds/`, publishes the
+ * completed output from there, and leaves the last successful `.output/` untouched when it fails (eve
+ * 0.38.3, `docs/reference/cli.md`). What eve cannot cover is THIS module's staging copy, which happens
+ * before eve is spawned — and that is what the lock and the marker are for.
+ *
+ * The build runs under a `mkdir`-based lock with stale-age takeover ({@link acquireBuildLock}),
+ * because two processes staging into the same version's cache concurrently would interleave their
+ * trees; eve's own `.eve/locks` starts too late to cover that copy.
  */
 export const resolveAgentAppRoot = (input: {
   readonly packageRoot: string
@@ -503,13 +490,8 @@ export const resolveAgentAppRoot = (input: {
             reason: `could not lock the consolidator agent build: ${String(cause)}`
           })
       }),
-      () => {
-        /**
-         * Suffixed with the pid so a stale staging directory from a dead process is never mistaken
-         * for this one's; the lock means at most one LIVE process stages per version at a time.
-         */
-        const staging = stagingPathFor(cacheRoot, process.pid)
-        return Effect.gen(function* () {
+      () =>
+        Effect.gen(function* () {
           // Another process may have completed the build while this one waited on the lock.
           if (cacheBuildComplete(cacheRoot)) return cacheRoot
 
@@ -518,50 +500,50 @@ export const resolveAgentAppRoot = (input: {
           )
           yield* Effect.tryPromise({
             try: async () => {
-              // Under the lock, so a sibling staging tree here belongs to a dead builder.
-              await sweepOrphanedStagingTrees(cacheRoot)
-              await rm(staging, { recursive: true, force: true })
-              await stageAgentTree({ packageRoot, cacheRoot: staging, version })
+              // Reaching here means the root carries no marker, so whatever it holds is an
+              // unfinished build. Discarded whole rather than staged over: a half-copied tree plus a
+              // fresh copy is a tree with no single version's shape.
+              await rm(cacheRoot, { recursive: true, force: true })
+              await stageAgentTree({ packageRoot, cacheRoot, version })
             },
             catch: (cause) =>
               ConsolidatorUnavailable.make({
-                reason: `could not stage the consolidator agent in ${staging}: ${String(cause)}`
+                reason: `could not stage the consolidator agent in ${cacheRoot}: ${String(cause)}`
               })
           })
 
-          yield* runEveBuild({ eveBin, cwd: staging })
+          yield* runEveBuild({ eveBin, cwd: cacheRoot })
 
-          if (!existsSync(join(staging, BUILT_SERVER_ENTRY))) {
+          if (!existsSync(join(cacheRoot, BUILT_SERVER_ENTRY))) {
             return yield* Effect.fail(
               ConsolidatorUnavailable.make({
-                reason: `eve build wrote no ${BUILT_SERVER_ENTRY} in ${staging}`
+                reason: `eve build wrote no ${BUILT_SERVER_ENTRY} in ${cacheRoot}`
               })
             )
           }
 
           yield* Effect.tryPromise({
-            try: async () => {
-              await writeFile(buildMarkerPath(staging), `${new Date().toISOString()}\n`, "utf8")
-              // A markerless cache root is a partial from an interrupted pre-rename (or killed
-              // in-place) build; replace it.
-              await rm(cacheRoot, { recursive: true, force: true })
-              await rename(staging, cacheRoot)
-            },
+            try: () =>
+              writeFile(buildMarkerPath(cacheRoot), `${new Date().toISOString()}\n`, "utf8"),
             catch: (cause) =>
               ConsolidatorUnavailable.make({
-                reason: `could not publish the built agent to ${cacheRoot}: ${String(cause)}`
+                reason: `could not mark the built agent complete in ${cacheRoot}: ${String(cause)}`
               })
           })
           return cacheRoot
         }).pipe(
-          // A failed build's staging tree is ~17 MB nothing will consult; remove it while the lock
-          // still excludes a concurrent stager. After the success rename this path no longer exists
-          // and the forced rm is a no-op.
+          // The build's own wreckage, reclaimed while the lock still excludes a concurrent stager: an
+          // unfinished build is ~17 MB nothing will ever consult, and the next run would discard it
+          // anyway. The MARKER is what makes this safe to run on every exit path, success included —
+          // it is written only beside a verified build, so a marked root is a finished one and is
+          // never a candidate, while every path that ends without it left a partial.
           Effect.ensuring(
-            Effect.promise(() => rm(staging, { recursive: true, force: true }).catch(() => {}))
+            Effect.promise(async () => {
+              if (cacheBuildComplete(cacheRoot)) return
+              await rm(cacheRoot, { recursive: true, force: true }).catch(() => {})
+            })
           )
-        )
-      },
+        ),
       (lock) => Effect.promise(lock.release)
     )
   })

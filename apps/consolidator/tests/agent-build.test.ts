@@ -12,8 +12,7 @@ import {
   cacheBuildComplete,
   claimStaleLock,
   resolveAgentAppRoot,
-  stageAgentTree,
-  sweepOrphanedStagingTrees
+  stageAgentTree
 } from "../src/agent-build.js"
 import type { ConsolidatorUnavailable } from "../src/contract.js"
 
@@ -275,11 +274,14 @@ describe("completion is the marker plus the output, never the directory alone", 
 
 /**
  * A stand-in for `eve build`, spawned exactly as the real one is: `process.execPath <path> build`, with
- * the staging directory as its cwd.
+ * the build directory as its cwd.
  *
- * None of the behavior driven through it is eve's — it is what THIS module does with an exit code and a
- * cwd, and a real build is ~17 MB of nitro output. The fake is what makes the publish path drivable at
- * all: every case above returns before the spawn, so staging → verify → marker → rename had no cover.
+ * Most of what it drives is not eve's behavior but what THIS module does with an exit code and a cwd,
+ * and a real build is ~17 MB of nitro output. The fake is what makes the publish path drivable at all:
+ * every case above returns before the spawn, so staging → verify → marker had no cover.
+ *
+ * The ONE piece of eve's behavior it does reproduce is the load-bearing one — see
+ * {@link EVE_WRITES_SERVER_ENTRY}.
  */
 const fakeEve = async (label: string, body: string): Promise<string> => {
   const bin = join(scratch, `eve-${label}.mjs`)
@@ -287,13 +289,25 @@ const fakeEve = async (label: string, body: string): Promise<string> => {
   return bin
 }
 
-/** Writes the server entry a real build writes, then exits 0. */
+/**
+ * Writes the server entry a real build writes, then exits 0 — and BAKES ITS BUILD-TIME CWD into it, in
+ * the shape eve uses.
+ *
+ * That one detail is what lets an offline fake catch a relocated build. eve writes the absolute
+ * `appRoot`/`agentRoot` of the directory it built in into `.output/server/index.mjs` and re-bundles the
+ * authored source from that path at boot, so a finished build serves nothing from anywhere else
+ * (`agent-build.ts` carries the measurement). A fake that emitted a constant string cannot express
+ * that: a resolver which built the tree somewhere and moved it into place would satisfy every other
+ * assertion in this file — entry present, output present, marker present — and hand back a directory
+ * whose server exits 1.
+ */
 const EVE_WRITES_SERVER_ENTRY = `
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 const server = join(process.cwd(), ".output", "server")
 mkdirSync(server, { recursive: true })
-writeFileSync(join(server, "index.mjs"), "// a built server\\n")
+const baked = JSON.stringify({ appRoot: process.cwd(), agentRoot: join(process.cwd(), "agent") })
+writeFileSync(join(server, "index.mjs"), "const manifest = " + baked + "\\n")
 `
 
 /** Exits 0 having created `.output/` and put nothing in it: exit 0, produced nothing. */
@@ -303,7 +317,7 @@ import { join } from "node:path"
 mkdirSync(join(process.cwd(), ".output"), { recursive: true })
 `
 
-/** Writes a complete-looking output and is then SIGKILLed, which is the death the rename exists for. */
+/** Writes a complete-looking output and is then SIGKILLed, which is the death the marker exists for. */
 const EVE_DIES_AFTER_WRITING_OUTPUT = `
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -373,23 +387,33 @@ const probeCacheRoot = (): string => {
   }
 }
 
-/** Sibling staging trees beside a cache root, which is where a killed build's ~17 MB is stranded. */
-const stagingSiblings = async (cacheRoot: string): Promise<ReadonlyArray<string>> => {
-  const names = await readdir(dirname(cacheRoot)).catch((): ReadonlyArray<string> => [])
-  return names.filter((name) => name.startsWith(`${basename(cacheRoot)}.staging-`))
+/**
+ * The build-time root a build baked into its own output, which is what eve's boot resolves against.
+ *
+ * Read back out of the emitted entry rather than assumed, because the assertion this serves is an
+ * EQUALITY between where the build ran and where the resolver says to serve from, and a helper that
+ * returned the directory it was handed would make that equality vacuous.
+ */
+const bakedAppRoot = async (appRoot: string): Promise<string> => {
+  const emitted = await readFile(join(appRoot, ".output", "server", "index.mjs"), "utf8")
+  const found = /const manifest = (\{.*\})/.exec(emitted)
+  expect(found).not.toBeNull()
+  const manifest = JSON.parse(found?.[1] ?? "{}") as { readonly appRoot?: string }
+  return manifest.appRoot ?? ""
 }
 
-describe("a build is published by rename, and only once it produced a server", () => {
+describe("a build is complete when it is marked, and only once it produced a server", () => {
   /**
-   * THE publish path, which no case could reach before a fake eve existed: stage into a pid-suffixed
-   * sibling, verify the entry, write the marker, `rename` into place. The marker and the output have to
-   * arrive TOGETHER, because `cacheBuildComplete` is the answer every later run reads.
+   * THE publish path, which no case could reach before a fake eve existed: stage into the cache root,
+   * verify the entry, write the marker. The marker and the output have to be readable TOGETHER, because
+   * `cacheBuildComplete` is the answer every later run reads.
    *
-   * (Mutation: dropping the `writeFile(buildMarkerPath(staging))` line leaves a cache root whose
+   * (Mutation: dropping the `writeFile(buildMarkerPath(cacheRoot))` line leaves a cache root whose
    * `.output/` is complete and which `cacheBuildComplete` reads as partial, failing the third
-   * assertion — and the next run would rebuild forever.)
+   * assertion — and in production the finalizer would then delete a good build and the next run would
+   * rebuild forever.)
    */
-  it("renames a verified staging tree into the cache root, marker and output together", async () => {
+  it("marks a verified build, so the marker and the output are read together", async () => {
     const packageRoot = await probePackageRoot()
     const eveBin = await fakeEve("ok", EVE_WRITES_SERVER_ENTRY)
     const cacheRoot = probeCacheRoot()
@@ -398,17 +422,47 @@ describe("a build is published by rename, and only once it produced a server", (
     expect(Result.getOrThrow(result)).toBe(cacheRoot)
     expect(existsSync(join(cacheRoot, ".output", "server", "index.mjs"))).toBe(true)
     expect(cacheBuildComplete(cacheRoot)).toBe(true)
-    // The staging tree is a temporary, and after the rename there is nothing left of it.
-    expect(await stagingSiblings(cacheRoot)).toEqual([])
   })
 
   /**
-   * A build that dies between writing its output and the rename leaves NOTHING a later run consults.
-   * That is the whole reason completion is a rename rather than a file count: the killed process's
-   * output is complete, and it is in a directory nothing reads.
+   * THE relocation lock, and the one case in this file that is about eve's behavior rather than this
+   * module's. eve bakes the absolute path of the directory it built in into `.output/`, and at boot it
+   * re-bundles the authored source from that path — so the directory a build ran in is the only
+   * directory it can be served from, and a finished build is not a movable artifact. The check is the
+   * one eve's own boot performs: the root this resolver hands back IS the root the build ran in.
    *
-   * (Mutation: replacing the `rename` with a `cp` into `cacheRoot` before the marker write would let
-   * this case's cache root exist and read as complete.)
+   * Nothing cheaper can hold this. A resolver that built the tree in a temp sibling and moved it into
+   * place satisfies every other assertion here — entry present, output present, marker present, cache
+   * root returned — and yields a server that exits 1 on `Failed to resolve the authored package root`,
+   * which only a real `eve start` would show. Reproducing eve's baked path in the fake is what brings
+   * the failure inside the offline tier.
+   *
+   * (Mutation: building in a `${cacheRoot}.staging-<pid>` sibling and `rename`ing it into place makes
+   * the baked path the staging path, so the first assertion compares two different directories and
+   * fails. Publishing `.output/` without `agent/` beside it fails the third.)
+   */
+  it("serves the build from the directory it was built in, which is what eve bakes", async () => {
+    const packageRoot = await probePackageRoot()
+    const eveBin = await fakeEve("ok-baked", EVE_WRITES_SERVER_ENTRY)
+
+    const appRoot = Result.getOrThrow(await resolveWithCache({ packageRoot, eveBin }))
+
+    expect(await bakedAppRoot(appRoot)).toBe(appRoot)
+    // Non-vacuity: an equality between two empty strings would also pass the line above.
+    expect(await bakedAppRoot(appRoot)).toContain(join("memhtml", "eve", "0.0.1"))
+    // eve re-bundles the SOURCE at the baked path, so `agent/` has to still be there beside the output.
+    expect(existsSync(join(appRoot, "agent"))).toBe(true)
+  })
+
+  /**
+   * A build that dies after writing its output leaves NOTHING a later run consults. The killed
+   * process's `.output/` is complete and it carries no marker, so `cacheBuildComplete` reads it as the
+   * partial it is and the finalizer reclaims the whole root under the lock, rather than leaving ~17 MB
+   * for a sweep that would have to exist.
+   *
+   * (Mutation: dropping the `Effect.ensuring` finalizer leaves the killed build's cache root on disk
+   * and fails the third assertion. Writing the marker BEFORE verifying the entry makes
+   * `cacheBuildComplete` true for that wreckage, so the finalizer spares it and the fourth fails.)
    */
   it("leaves no cache root when the build dies after writing its output", async () => {
     const packageRoot = await probePackageRoot()
@@ -422,8 +476,6 @@ describe("a build is published by rename, and only once it produced a server", (
     if (Result.isFailure(killed)) expect(killed.failure.reason).toContain("eve build")
     expect(existsSync(cacheRoot)).toBe(false)
     expect(cacheBuildComplete(cacheRoot)).toBe(false)
-    // And the ~17 MB it staged is gone, rather than waiting for a sweep.
-    expect(await stagingSiblings(cacheRoot)).toEqual([])
 
     // The next run rebuilds and succeeds, which is what "nothing consultable" has to mean.
     const retried = await resolveWithCache({
@@ -480,64 +532,6 @@ describe("a build is published by rename, and only once it produced a server", (
       expect(result.failure.reason).toContain("TAIL_MARKER")
       expect(result.failure.reason).not.toContain("HEAD_MARKER")
     }
-  })
-})
-
-describe("a killed build's staging tree is reclaimed by the next one", () => {
-  /**
-   * `${cacheRoot}.staging-<pid>` is removed by its own builder's finalizer, and SIGKILL runs no
-   * finalizer — so without a sweep every killed build strands ~17 MB permanently: that finalizer knows
-   * only its own pid's path, and the temp-dir sweep in `client.ts` covers a different prefix under a
-   * different root. A YOUNG sibling may belong to a live builder and must survive.
-   *
-   * (Mutation: dropping the `sweepOrphanedStagingTrees(cacheRoot)` call leaves the stale tree on disk
-   * and fails the first assertion.)
-   */
-  it("sweeps a stale sibling staging tree during a build, and spares a fresh one", async () => {
-    const packageRoot = await probePackageRoot()
-    const cacheRoot = probeCacheRoot()
-    await mkdir(dirname(cacheRoot), { recursive: true })
-
-    const stale = `${cacheRoot}.staging-424242`
-    const fresh = `${cacheRoot}.staging-313131`
-    for (const tree of [stale, fresh]) await mkdir(tree, { recursive: true })
-    const twoDaysAgo = (Date.now() - 2 * 24 * 60 * 60 * 1000) / 1000
-    await utimes(stale, twoDaysAgo, twoDaysAgo)
-
-    const result = await resolveWithCache({
-      packageRoot,
-      eveBin: await fakeEve("ok-sweep", EVE_WRITES_SERVER_ENTRY)
-    })
-    expect(Result.getOrThrow(result)).toBe(cacheRoot)
-    expect(existsSync(stale)).toBe(false)
-    expect(existsSync(fresh)).toBe(true)
-  })
-
-  /** This process's OWN staging path is never a candidate, whatever an mtime says about it. */
-  it("never sweeps the staging path this process would use", async () => {
-    const cacheRoot = join(scratch, "own-staging", "0.0.1")
-    await mkdir(dirname(cacheRoot), { recursive: true })
-    const own = `${cacheRoot}.staging-${String(process.pid)}`
-    await mkdir(own, { recursive: true })
-    const twoDaysAgo = (Date.now() - 2 * 24 * 60 * 60 * 1000) / 1000
-    await utimes(own, twoDaysAgo, twoDaysAgo)
-
-    await sweepOrphanedStagingTrees(cacheRoot)
-    expect(existsSync(own)).toBe(true)
-  })
-
-  /** A neighbouring VERSION's staging tree is a different cache root's business, stale or not. */
-  it("leaves another version's staging tree alone", async () => {
-    const versions = join(scratch, "versions")
-    await mkdir(versions, { recursive: true })
-    const mine = join(versions, "1.0.0")
-    const neighbour = `${join(versions, "2.0.0")}.staging-424242`
-    await mkdir(neighbour, { recursive: true })
-    const twoDaysAgo = (Date.now() - 2 * 24 * 60 * 60 * 1000) / 1000
-    await utimes(neighbour, twoDaysAgo, twoDaysAgo)
-
-    await sweepOrphanedStagingTrees(mine)
-    expect(existsSync(neighbour)).toBe(true)
   })
 })
 
