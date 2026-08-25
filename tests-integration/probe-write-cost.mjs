@@ -1,6 +1,10 @@
 /**
  * Probe: where does the per-op store-scaled write cost live?
  *
+ * MANUAL measurement rig — no task, workflow, or test tier runs this; a human runs it by
+ * hand when the write path's cost model is in question, and the docs cite its numbers.
+ * Lint covers it; typecheck and CI do not.
+ *
  * Seeds a temp store with N files CHEAPLY (direct file writes, one commit, one rebuild),
  * then drives 256-op batches through the REAL composition — makeStore over an instrumented
  * GitShape, makeIndexer over an instrumented git port — and times each suspect separately:
@@ -16,8 +20,7 @@
  * Safe to run beside a live `memhtml serve mcp`: it builds its own temp store and never touches
  * yours. What it must not share is a store, since its numbers are of an uncontended writer.
  */
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
-import { readFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -25,14 +28,21 @@ import { StorageFailure } from "@memhtml/contracts/errors"
 import { renderTemplate } from "@memhtml/html"
 import {
   MIGRATIONS_DIR,
-  STATE_MIGRATIONS_DIR,
   makeDatabase,
   makeGitPort,
+  makeIndexer,
   makeIndexRecorder,
-  makeIndexer
+  STATE_MIGRATIONS_DIR
 } from "@memhtml/index"
 import { EMBED_DIM, EMBED_WATERMARK } from "@memhtml/llm"
-import { INDEX_DB_PATH, STATE_DB_PATH, initRepo, isoSecond, makeGit, makeStore } from "@memhtml/store"
+import {
+  INDEX_DB_PATH,
+  initRepo,
+  isoSecond,
+  makeGit,
+  makeStore,
+  STATE_DB_PATH
+} from "@memhtml/store"
 import { configureIdentity } from "@memhtml/store/testing"
 import { Effect } from "effect"
 
@@ -59,7 +69,8 @@ const diffSince = (before) => {
 }
 const ms = (ns) => Number(ns) / 1e6
 
-const wrapEffect = (name, fn) =>
+const wrapEffect =
+  (name, fn) =>
   (...args) =>
     Effect.suspend(() => {
       const t0 = process.hrtime.bigint()
@@ -178,8 +189,7 @@ const runSize = (storeSize, batchSizes) =>
       const gitAdd = pick(writeStats, "git.add")
       const gitCommit = pick(writeStats, "git.commit")
       const dedupe = pick(writeStats, "dedupeLookup")
-      const residual =
-        writeMs - ms(gitAdd.ns) - ms(gitCommit.ns) - ms(dedupe.ns)
+      const residual = writeMs - ms(gitAdd.ns) - ms(gitCommit.ns) - ms(dedupe.ns)
 
       console.log(
         `\n--- batch=${batchSize} written=${batch.summary.written} indexed(a/m)=${report.added}/${report.modified} ---`
@@ -238,7 +248,7 @@ const arg = (name, fallback) => {
 const sizes = arg("sizes", "1000,5000,10000").split(",").map(Number)
 const batch = Number(arg("batch", "256"))
 // Middle size also runs batch/4 and batch*4 to separate per-op from per-batch scaling.
-const batchesFor = (size, index) =>
+const batchesFor = (_size, index) =>
   sizes.length >= 2 && index === Math.floor(sizes.length / 2)
     ? [batch, Math.max(16, batch / 4), batch * 4]
     : [batch]
@@ -255,7 +265,7 @@ const program = Effect.gen(function* () {
   )
   for (const r of all) {
     console.log(
-      `${String(r.store).padEnd(6)} ${String(r.batch).padEnd(6)} ${r.writeMs.toFixed(0).padEnd(6)} ${r.updateMs.toFixed(0).padEnd(7)} |  ${r.gitAddMs.toFixed(0).padEnd(7)} ${r.gitCommitMs.toFixed(0).padEnd(10)} ${r.dedupeMs.toFixed(0).padEnd(7)} ${r.residualMs.toFixed(0).padEnd(9)} |  ${(r.updateLsTreeMs.toFixed(0) + " (" + r.updateLsTreeCalls + ")").padEnd(18)} ${r.updateCatFileMs.toFixed(0).padEnd(12)} ${r.updateStatusMs.toFixed(0).padEnd(11)} ${r.updateDiffMs.toFixed(0).padEnd(9)} ${r.updateDbMs.toFixed(0)}`
+      `${String(r.store).padEnd(6)} ${String(r.batch).padEnd(6)} ${r.writeMs.toFixed(0).padEnd(6)} ${r.updateMs.toFixed(0).padEnd(7)} |  ${r.gitAddMs.toFixed(0).padEnd(7)} ${r.gitCommitMs.toFixed(0).padEnd(10)} ${r.dedupeMs.toFixed(0).padEnd(7)} ${r.residualMs.toFixed(0).padEnd(9)} |  ${`${r.updateLsTreeMs.toFixed(0)} (${r.updateLsTreeCalls})`.padEnd(18)} ${r.updateCatFileMs.toFixed(0).padEnd(12)} ${r.updateStatusMs.toFixed(0).padEnd(11)} ${r.updateDiffMs.toFixed(0).padEnd(9)} ${r.updateDbMs.toFixed(0)}`
     )
   }
 })

@@ -144,7 +144,8 @@ describe("verification item 6 — rm index.db, rebuild, state import reproduces 
 
     await cli.json(["link", first.path, "caused_by", second.path])
 
-    // A correction: an add AND a rename in one commit, which is the case `indexPaths` cannot express.
+    // A correction: an add AND a rename in one commit. The index re-derives from the commit diff, so
+    // the rename's source is retired rather than left live beside its destination.
     await cli.json([
       "correct",
       first.path,

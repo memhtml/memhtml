@@ -385,8 +385,8 @@ describe("verification item 2 — the task lifecycle across every plane", () => 
         .filter((line) => line !== "").length
     ).toBeGreaterThan(1)
 
-    // The index FOLLOWED the move rather than leaving the live row behind — the reason the write path
-    // calls `indexer.update()` and never `indexPaths`.
+    // The index FOLLOWED the move rather than leaving the live row behind: `indexer.update()` reads
+    // the commit diff, where a `git mv` is one rename record and not an unrelated delete plus add.
     const open = await cli.json<TaskList>(["task", "list"])
     expect(open.tasks.map((task) => task.path)).not.toContain(runbookTask.path)
     const all = await cli.json<TaskList>(["task", "list", "--include-archived"])

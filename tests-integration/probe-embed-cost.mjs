@@ -1,9 +1,13 @@
 /**
  * Probe: where does the embed lane's store-scaled per-batch cost live?
  *
+ * MANUAL measurement rig — no task, workflow, or test tier runs this; a human runs it by
+ * hand when the embed lane's cost model is in question, and the docs cite its numbers.
+ * Lint covers it; typecheck and CI do not.
+ *
  * The 2026-08-05 eval ingest (embeddings ON) grew 45s → ~5.5min per 256-op batch over
  * 72 batches while the same path with embeddings OFF measured flat after bd54b6b. The
- * suspect list, in NEXT-SESSION.md order:
+ * suspects, in the order that ingest implicated them:
  *
  *   1. embedMissing's pending scan — `chunks LEFT JOIN embeddings WHERE e.chunk_id IS
  *      NULL OR e.model <> ?`, a full chunks-table scan per batch
@@ -19,8 +23,7 @@
  * yours. What it must not share is a store, since its numbers are of an uncontended writer.
  */
 import { createHash } from "node:crypto"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
-import { readFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -28,14 +31,21 @@ import { StorageFailure } from "@memhtml/contracts/errors"
 import { renderTemplate } from "@memhtml/html"
 import {
   MIGRATIONS_DIR,
-  STATE_MIGRATIONS_DIR,
   makeDatabase,
   makeGitPort,
+  makeIndexer,
   makeIndexRecorder,
-  makeIndexer
+  STATE_MIGRATIONS_DIR
 } from "@memhtml/index"
 import { EMBED_DIM, EMBED_WATERMARK } from "@memhtml/llm"
-import { INDEX_DB_PATH, STATE_DB_PATH, initRepo, isoSecond, makeGit, makeStore } from "@memhtml/store"
+import {
+  INDEX_DB_PATH,
+  initRepo,
+  isoSecond,
+  makeGit,
+  makeStore,
+  STATE_DB_PATH
+} from "@memhtml/store"
 import { configureIdentity } from "@memhtml/store/testing"
 import { Effect } from "effect"
 
@@ -61,7 +71,8 @@ const diffSince = (before) => {
 }
 const ms = (ns) => Number(ns) / 1e6
 
-const wrapEffect = (name, fn) =>
+const wrapEffect =
+  (name, fn) =>
   (...args) =>
     Effect.suspend(() => {
       const t0 = process.hrtime.bigint()
@@ -106,7 +117,9 @@ const seedFile = (i) =>
 
 const runSize = (storeSize, batchSize, rounds) =>
   Effect.gen(function* () {
-    const root = yield* Effect.promise(() => mkdtemp(join(tmpdir(), `memhtml-eprobe-${storeSize}-`)))
+    const root = yield* Effect.promise(() =>
+      mkdtemp(join(tmpdir(), `memhtml-eprobe-${storeSize}-`))
+    )
     const git = makeGit(root)
     yield* initRepo(git)
     yield* configureIdentity(git)
@@ -143,7 +156,9 @@ const runSize = (storeSize, batchSize, rounds) =>
         )(sql, params),
       get: (sql, params) =>
         wrapEffect(
-          sql.includes("count(*)") && sql.includes("embeddings") ? "db.get.gapcount" : "db.get.other",
+          sql.includes("count(*)") && sql.includes("embeddings")
+            ? "db.get.gapcount"
+            : "db.get.other",
           db.get
         )(sql, params)
     }
@@ -239,9 +254,9 @@ const program = Effect.gen(function* () {
   for (const r of all) {
     console.log(
       `${String(r.store).padEnd(7)} ${r.updateMs.toFixed(0).padEnd(8)} ` +
-        `${(r.pendingMs.toFixed(0) + " (" + r.pendingCalls + ")").padEnd(15)} ` +
-        `${(r.projMs.toFixed(0) + " (" + r.projCalls + ")").padEnd(15)} ` +
-        `${(r.embedLaneMs.toFixed(0) + " (" + r.embedLaneCalls + ")").padEnd(17)} ` +
+        `${`${r.pendingMs.toFixed(0)} (${r.pendingCalls})`.padEnd(15)} ` +
+        `${`${r.projMs.toFixed(0)} (${r.projCalls})`.padEnd(15)} ` +
+        `${`${r.embedLaneMs.toFixed(0)} (${r.embedLaneCalls})`.padEnd(17)} ` +
         `${r.embedMs.toFixed(0)}`
     )
   }
