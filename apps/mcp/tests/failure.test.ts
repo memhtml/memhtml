@@ -14,7 +14,14 @@ import { GitFailure } from "@memhtml/store"
 import { Schema } from "effect"
 import { describe, expect, it } from "vitest"
 
-import { batchAbortFailure, mcpSuggestionsFor, ToolFailure, toToolFailure } from "../src/failure.js"
+import {
+  batchAbortFailure,
+  mcpSuggestionsFor,
+  resourceFailure,
+  ToolFailure,
+  toResourceFailure,
+  toToolFailure
+} from "../src/failure.js"
 import { MemhtmlToolkit, TOOL_NAMES } from "../src/tools.js"
 
 /**
@@ -24,9 +31,10 @@ import { MemhtmlToolkit, TOOL_NAMES } from "../src/tools.js"
  * tool-error channel is a single text block and `McpServer` reads `.message` and nothing else. The
  * SECOND is the `failure:` declaration on each tool, which is what selects the branch that passes that
  * string through instead of rewriting it to "Tool execution failed due to an internal server error"
- * (`McpServer.ts:831-847`). Either half alone produces a server whose failures are content-free, and
- * neither half's absence is visible in a response shape — only in the text — so both are asserted here
- * and again over real stdio in `tests-integration/tests/mcp-stdio.test.ts`.
+ * (`INTERNAL_TOOL_ERROR_MESSAGE`, effect 4.0.0-rc.109). Either half alone produces a server whose
+ * failures are content-free, and neither half's absence is visible in a response shape — only in the
+ * text — so both are asserted here and again over real stdio in
+ * `tests-integration/tests/mcp-stdio.test.ts`.
  */
 
 /**
@@ -191,7 +199,7 @@ describe("the wire failure a tool call produces", () => {
      * passes back through this function. Without the identity branch its `_tag` is `"ToolFailure"`,
      * which is in no error vocabulary, so `codeFor` falls through to `ERR_UNKNOWN` and the whole
      * composed message is replaced by `unexpected failure: ToolFailure` — the tool's own class name
-     * where the reason used to be.
+     * standing where the reason belongs.
      *
      * Asserted as reference identity, not field equality: a rebuild that happened to produce the same
      * fields would still be a second composition of a message that is already final.
@@ -415,11 +423,11 @@ describe("the suggestions, as an MCP agent can act on them", () => {
 describe("the declared failure schema on every tool", () => {
   it("declares a failure schema on all fourteen, which is what un-masks the message", () => {
     /**
-     * `Schema.is(tool.failureSchema)` IS `McpServer`'s branch-2 predicate, built once per tool at
-     * registration (`McpServer.ts:793`) and consulted on every failed call (:839). So this assertion is
-     * the mechanism itself rather than a proxy for it: a tool that declared nothing gets
-     * `Schema.Never` (`Tool.ts:1265`), the predicate rejects the value, and the response is the internal
-     * -error string no matter how good `toToolFailure`'s prose was.
+     * `Schema.is(tool.failureSchema)` IS `McpServer`'s branch-2 predicate: `isDeclaredFailure`, built
+     * once per tool at registration and consulted on every failed call (effect 4.0.0-rc.109). So this
+     * assertion is the mechanism itself rather than a proxy for it: a tool that declared nothing gets
+     * `Schema.Never`, the predicate rejects the value, and the response is the internal-error string no
+     * matter how good `toToolFailure`'s prose was.
      */
     const failure = toToolFailure(new PathNotFound({ path: "areas/x.html" }))
     expect(TOOL_NAMES).toHaveLength(14)
@@ -445,9 +453,9 @@ describe("the declared failure schema on every tool", () => {
 
   it("leaves failureMode at 'error', which is the channel McpServer catches", () => {
     /**
-     * `"return"` would fold the failure into the tool's success union (`Toolkit.ts:249-250`) — the
-     * server would see a SUCCESSFUL call whose payload is a failure no MCP client knows to read, so
-     * `isError` would be false and the agent would parse the error as a result.
+     * `"return"` would fold the failure into the tool's success union (`Toolkit`, effect 4.0.0-rc.109)
+     * — the server would see a SUCCESSFUL call whose payload is a failure no MCP client knows to read,
+     * so `isError` would be false and the agent would parse the error as a result.
      */
     for (const name of TOOL_NAMES) {
       expect(MemhtmlToolkit.tools[name].failureMode).toBe("error")
@@ -456,8 +464,8 @@ describe("the declared failure schema on every tool", () => {
 
   it("is an Error whose message is the whole wire text, since that is all McpServer reads", () => {
     /**
-     * Branch 2 is `error instanceof Error ? error.message : INTERNAL_TOOL_ERROR_MESSAGE`
-     * (`McpServer.ts:840-842`), so a failure value that is not an `Error` is masked as thoroughly as one
+     * Branch 2 is `error instanceof Error ? error.message : INTERNAL_TOOL_ERROR_MESSAGE` (effect
+     * 4.0.0-rc.109), so a failure value that is not an `Error` is masked as thoroughly as one
      * with no declared schema — and `code` and `suggestions` are invisible to the protocol. Everything
      * an agent reads has to already be inside `.message`, which is why it is composed at construction.
      */
@@ -468,5 +476,57 @@ describe("the declared failure schema on every tool", () => {
     expect(failure).toBeInstanceOf(ToolFailure)
     expect(failure.message).toContain(failure.code)
     for (const suggestion of failure.suggestions) expect(failure.message).toContain(suggestion)
+  })
+})
+
+/**
+ * The RESOURCE channel's half of the same contract.
+ *
+ * `resources/read` has no per-resource failure schema to declare, so the branch selection above does
+ * not apply and a failed read reaches the client as a JSON-RPC error object instead. What survives is
+ * the same string — code, reason, suggestions — and the only decision left is which error class carries
+ * it. Asserted here rather than only end to end in `resources.test.ts`, because the split is one
+ * predicate and a resource read cannot exercise both sides of it without a broken database.
+ */
+describe("the wire failure a resource read produces", () => {
+  it("carries a missing path as InvalidParams, the code McpServer uses for an unmatched URI", () => {
+    const error = toResourceFailure(new PathNotFound({ path: "areas/oncall/gone.html" }))
+    expect(error.code).toBe(-32602)
+    expect(error.message).toBe(
+      toToolFailure(new PathNotFound({ path: "areas/oncall/gone.html" })).message
+    )
+    // The whole point of routing through `toToolFailure`: the code and the suggestions survive.
+    expect(error.message).toContain("ERR_PATH_NOT_FOUND")
+    expect(error.message).toContain("Try: ")
+  })
+
+  it("carries every other failure as InternalError, still with its code and suggestions", () => {
+    /**
+     * A storage failure is not the caller's bad parameter, so it takes `-32603` — but it must not
+     * therefore lose its prose. This is the case an `Effect.orDie` handler answers with the driver's
+     * own sentence and an absolute path, so the assertion is that the reason is `messageFor`'s.
+     */
+    const error = toResourceFailure(new StorageFailure({ operation: "read" }))
+    expect(error.code).toBe(-32603)
+    expect(error.message).toContain("ERR_STORAGE")
+    expect(error.message).toContain("read")
+    expect(error.message).toContain("memory_status")
+  })
+
+  it("composes a refusal the resource surface owns into the same shape a tool failure has", () => {
+    /**
+     * `resourceFailure` is the resource counterpart of `batchAbortFailure`: a refusal no use case
+     * raised, so there is no typed error for `toToolFailure` to translate. The shape has to match
+     * anyway, because an agent reads one format across both surfaces.
+     */
+    const failure = resourceFailure("ERR_PATH_NOT_FOUND", "no sleep report at memhtml://sleep/x", [
+      "call memory_status"
+    ])
+    expect(failure).toBeInstanceOf(ToolFailure)
+    expect(failure.message).toBe(
+      "ERR_PATH_NOT_FOUND: no sleep report at memhtml://sleep/x. Try: call memory_status"
+    )
+    // Already composed, so it passes through the handler-wide translation unchanged.
+    expect(toToolFailure(failure)).toBe(failure)
   })
 })

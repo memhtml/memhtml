@@ -1,19 +1,21 @@
 import { codeFor, messageFor } from "@memhtml/cli"
 import { Schema } from "effect"
+import { McpSchema } from "effect/unstable/ai"
 
 /**
  * The MCP wire failure: one error class, declared on every tool, whose `.message` IS the response an
  * agent reads.
  *
- * **Why a declared class at all.** `McpServer` has three catch branches for a failed `tools/call`
- * (`McpServer.ts:831-847`, effect 4.0.0-beta.102) and only ONE of them lets prose through. An
- * `AiError`, which is what this module replaced, takes branch 1 and is rewritten to "Tool execution
- * failed due to an internal server error" unless its reason is a parameter-validation error. A value
- * the tool's own `failureSchema` accepts takes branch 2, where `error instanceof Error ? error.message`
- * passes the text through verbatim. The schema declaration is therefore the whole
- * difference between an agent that can recover and an agent that reads a sentence with no content in
- * it. `Effect.tapCause(Effect.logError)` runs before all three branches, so stderr logging is
- * unaffected either way.
+ * **Why a declared class at all.** `McpServer`'s registration of a toolkit tool wraps the handler in
+ * ONE `Effect.catch` with three branches (effect 4.0.0-rc.109), and only one of them lets prose
+ * through. An `AiError` takes branch 1 and is rewritten to `INTERNAL_TOOL_ERROR_MESSAGE`, "Tool
+ * execution failed due to an internal server error", unless its reason is
+ * `ToolParameterValidationError`. A value the tool's own `failureSchema` accepts takes branch 2,
+ * where `error instanceof Error ? error.message` passes the text through verbatim. Anything else
+ * takes branch 3 and is rewritten. The schema declaration is therefore the whole difference between
+ * an agent that can recover and an agent that reads a sentence with no content in it.
+ * `Effect.tapCause(Effect.logError)` runs before all three branches, so stderr logging is unaffected
+ * either way.
  *
  * **Why the message is composed at construction.** `McpServer` reads `.message` and nothing else.
  * `code` and `suggestions` are not on the wire as fields, because MCP's tool-error channel is one
@@ -133,6 +135,22 @@ export const mcpSuggestionsFor = (error: unknown): ReadonlyArray<string> => {
 const sentence = (reason: string): string => (/[.!?]$/.test(reason) ? reason : `${reason}.`)
 
 /**
+ * The three parts as the one string the protocol carries: code, then reason, then suggestions.
+ *
+ * One function so the shape is one shape. Every caller here folds the same three parts, and the
+ * `ERR_*` prefix followed by a colon is what lets a consumer read the code back out of prose.
+ */
+const compose = (code: string, reason: string, suggestions: ReadonlyArray<string>): ToolFailure =>
+  new ToolFailure({
+    code,
+    suggestions,
+    message:
+      suggestions.length === 0
+        ? `${code}: ${sentence(reason)}`
+        : `${code}: ${sentence(reason)} Try: ${suggestions.join("; ")}`
+  })
+
+/**
  * A typed domain failure as the wire failure.
  *
  * Total by construction, three times over: `codeFor` maps an unknown `_tag` to `ERR_UNKNOWN`,
@@ -162,17 +180,51 @@ export const toToolFailure = (error: unknown): ToolFailure => {
    */
   if (error instanceof ToolFailure) return error
 
-  const code = codeFor(error)
-  const suggestions = mcpSuggestionsFor(error)
-  const reason = sentence(messageFor(error))
-  return new ToolFailure({
-    code,
-    suggestions,
-    message:
-      suggestions.length === 0
-        ? `${code}: ${reason}`
-        : `${code}: ${reason} Try: ${suggestions.join("; ")}`
-  })
+  return compose(codeFor(error), messageFor(error), mcpSuggestionsFor(error))
+}
+
+/**
+ * A refusal the RESOURCE surface owns, composed into the same wire failure a tool call produces.
+ *
+ * Three refusals belong to that surface and to no use case: a URI outside the published template, a
+ * run id with no committed report behind it, and a defect at the boundary. None is a typed error a
+ * use case raised, so `toToolFailure` has nothing to translate, and each is composed here for the
+ * reason `batchAbortFailure` is — the message shape is one shape, and a second hand-written copy of
+ * it drifts the first time the format moves.
+ *
+ * The reason and the suggestions come from the caller because a resource read's recovery depends on
+ * WHICH resource refused, while `mcpSuggestionsFor` answers a different question (what to do about a
+ * given error tag). The rule they hold to is the same one: every string names a tool in the toolkit
+ * or an action inside the caller's own control.
+ */
+export const resourceFailure = (
+  code: string,
+  reason: string,
+  suggestions: ReadonlyArray<string>
+): ToolFailure => compose(code, reason, suggestions)
+
+/**
+ * A failure as the JSON-RPC error the RESOURCE surface has, carrying the tool surface's own prose.
+ *
+ * `resources/read` has no per-resource failure schema to declare, so a failed read reaches the client
+ * as a JSON-RPC error object whose `message` is the only field an agent reads. `toToolFailure`
+ * composes that string — same code vocabulary, same reason discipline, same executable suggestions —
+ * and this function decides only which error class carries it: `InvalidParams` when the URI names
+ * something that is not there, which is the code `McpServer.findResource` itself returns for a URI no
+ * template matched, and `InternalError` for every other failure.
+ *
+ * Nothing here reads the cause's own text. `Effect.orDie` on a resource handler is what puts
+ * `Cause.prettyErrors(cause)[0].message` on the wire, and that message carries the ABSOLUTE
+ * filesystem path the read was attempted at, plus the stack that reached it. A resource is the one
+ * surface with no tool-response envelope to hide behind, so the sanitizing has to happen here.
+ */
+export const toResourceFailure = (
+  error: unknown
+): McpSchema.InvalidParams | McpSchema.InternalError => {
+  const failure = toToolFailure(error)
+  return failure.code === "ERR_PATH_NOT_FOUND"
+    ? new McpSchema.InvalidParams({ message: failure.message })
+    : new McpSchema.InternalError({ message: failure.message })
 }
 
 /**

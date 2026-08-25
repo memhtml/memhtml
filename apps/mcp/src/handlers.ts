@@ -55,17 +55,17 @@ type AppServices = Layer.Success<ReturnType<typeof layerApp>>
  * or a memory body, because the reason is `messageFor`'s and each error class dropped those at its
  * adapter edge precisely so a tool response could not carry corpus content.
  *
- * This used to build an `AiError`, which was the bug. `McpServer` catches `AiError` FIRST and
- * rewrites it to a generic internal-error sentence unless its reason is a parameter-validation error
- * (`McpServer.ts:831-838`), so every typed failure this server produced reached its agent with the
- * content removed. A `ToolFailure` is what each tool's `failure:` schema declares, which puts it on the
- * branch that passes `.message` through verbatim. The two halves only work together: dropping the
- * declaration in `tools.ts` re-masks everything this function builds, and the wire test in
- * `tests-integration` is what holds that pair honest.
+ * **It has to be a `ToolFailure` and not an `AiError`.** `McpServer` catches an `AiError` FIRST and
+ * rewrites it to a generic internal-error sentence unless its reason is `ToolParameterValidationError`
+ * (effect 4.0.0-rc.109), so a typed failure delivered that way reaches its agent with the content
+ * removed. A `ToolFailure` is what each tool's `failure:` schema declares, which puts it on the branch
+ * that passes `.message` through verbatim. The two halves only work together: dropping the declaration
+ * in `tools.ts` re-masks everything this function builds, and the wire test in `tests-integration` is
+ * what holds that pair honest.
  *
- * The error type is now `ToolFailure` for every handler, and `kit.toLayer` checks it, so a handler
- * that failed with a raw domain error would be a compile error rather than a masked response. This is
- * the single place the wire failure is produced.
+ * The error type is `ToolFailure` for every handler and `kit.toLayer` checks it, so a handler that
+ * failed with a raw domain error is a compile error rather than a masked response. `failure.ts` is the
+ * single place the wire failure is produced.
  */
 const handled = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, ToolFailure, R> =>
   effect.pipe(Effect.mapError(toToolFailure))
@@ -645,9 +645,25 @@ export const ToolHandlers: Layer.Layer<
         const result = yield* neighborsOf({
           path: params.path,
           depth: opt(params.depth),
-          rels: opt(params.rels)
+          rels: opt(params.rels),
+          limit: opt(params.limit)
         })
-        return { nodes: result.nodes, edges: result.edges }
+        /**
+         * Both truncation markers cross the boundary, and the rename is the only work here.
+         *
+         * The operation reports the clamped ceiling as `limit` and this surface publishes it as
+         * `node_limit`, because a tool response that spelled it `limit` would put the caller's ask and
+         * the walk's 10000-edge-row cap under one word. Dropping either marker would leave a clamped
+         * neighborhood indistinguishable from a complete one, which is the whole reason the operation
+         * counts them.
+         */
+        return {
+          nodes: result.nodes,
+          edges: result.edges,
+          node_limit: result.limit,
+          dropped_node_count: result.nodesDropped,
+          scan_saturated: result.scanSaturated
+        }
       })
     ),
 
