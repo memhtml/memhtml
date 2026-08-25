@@ -156,6 +156,58 @@ describe("withCollisionOrdinal", () => {
   })
 
   /**
+   * The fixed point below the cap: at slug length {@link SLUG_MAX_LENGTH} − 1, the single-width
+   * cut already trims a trailing hyphen away, so cutting one MORE character rebuilds the same
+   * stem and the function returns its input for EVERY ordinal. Reproduced 2026-08-24 by
+   * execution: `"a".repeat(77) + "-2"` (79 chars) came back unchanged from ordinal 2, and the
+   * matching shape did at every ordinal 2..12. The re-cut must iterate until the stem genuinely
+   * shrinks, not step a fixed width once.
+   *
+   * (Mutation: restoring the single `stemAt(room - 1)` re-cut makes the 79-char shapes below
+   * return their input, failing the `not.toBe(slug)` assertion.)
+   */
+  it("never returns its input for any ordinal at any length near the cap", () => {
+    for (let length = 60; length <= 90; length += 1) {
+      for (let ordinal = 2; ordinal <= 12; ordinal += 1) {
+        const tail = `-${ordinal}`
+        const slug = `${"a".repeat(length - tail.length)}${tail}`.slice(0, length)
+        const outputs = new Set<string>()
+        for (let ord = 1; ord <= 12; ord += 1) {
+          const candidate = withCollisionOrdinal(slug, ord)
+          // Ordinal 1 is the unsuffixed first claimant and returns its input verbatim, so the
+          // cap and shape assertions apply to the suffixed outputs; the 81..90 inputs are
+          // outside slugify's image and exercise only the suffixing arm.
+          if (ord > 1) {
+            expect(candidate, `len ${length} tail ${tail} ord ${ord}`).not.toBe(slug)
+            expect(candidate.length).toBeLessThanOrEqual(SLUG_MAX_LENGTH)
+            expect(isSlug(candidate), `len ${length} tail ${tail} ord ${ord}: ${candidate}`).toBe(
+              true
+            )
+          }
+          outputs.add(candidate)
+        }
+        expect(outputs.size, `len ${length} tail ${tail}`).toBe(12)
+      }
+    }
+  })
+
+  it("produces 12 distinct names for any slugified title, whatever its length", () => {
+    fc.assert(
+      fc.property(anyTitle, (title) => {
+        const slug = slugify(title)
+        const outputs = new Set<string>()
+        for (let ordinal = 1; ordinal <= 12; ordinal += 1) {
+          const candidate = withCollisionOrdinal(slug, ordinal)
+          expect(candidate.length).toBeLessThanOrEqual(SLUG_MAX_LENGTH)
+          outputs.add(candidate)
+        }
+        expect(outputs.size).toBe(12)
+      }),
+      { numRuns: 1000 }
+    )
+  })
+
+  /**
    * Every ordinal the store can reach names a DIFFERENT file, on the slugs where that is hardest.
    *
    * The store walks 1..1000 (`pathFor`) and treats each candidate as a fresh name, so distinctness

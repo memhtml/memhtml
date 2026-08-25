@@ -1,10 +1,16 @@
 /**
  * Cosine similarity of two vectors, unitless and clamped to `[-1, 1]`.
  *
- * A zero-magnitude input yields `0` instead of `NaN`. MMR takes a `max` over the similarities
- * to the already-selected set, and one `NaN` there poisons every comparison after it, so a
- * degenerate embedding would silently collapse diversification instead of contributing
- * nothing.
+ * Total: every input maps to a number in range, and `NaN` is never returned. A zero-magnitude
+ * input yields `0`, and so does a vector carrying a `NaN` or infinite component — the two
+ * conditions the arithmetic below cannot answer. `0` is the reading a vectorless candidate
+ * already gets in MMR: no usable direction, so no demonstrable duplication, so no penalty.
+ *
+ * Returning `NaN` would be worse than returning a wrong number. MMR folds a `max` over the
+ * similarities to the already-selected set, and the two equivalent ways of writing that fold
+ * disagree on `NaN` — `Math.max(penalty, NaN)` is `NaN` while `NaN > penalty` is `false` — so a
+ * single degenerate embedding would make the result depend on which fold runs, not on the
+ * corpus.
  *
  * The result is clamped because the unclamped ratio does not stay in range. Verified in node
  * 2026-08-02: two vectors whose squared magnitudes fall into the subnormal range return
@@ -35,6 +41,9 @@ export const cosine = (a: ArrayLike<number>, b: ArrayLike<number>): number => {
   }
   if (normA === 0 || normB === 0) return 0
   const similarity = dot / (Math.sqrt(normA) * Math.sqrt(normB))
+  // A `NaN` component propagates into all three accumulators, and an infinite one makes the
+  // ratio `Infinity / Infinity`. Both land here as `NaN`, and both mean "no usable direction".
+  if (Number.isNaN(similarity)) return 0
   return Math.max(-1, Math.min(1, similarity))
 }
 

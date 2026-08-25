@@ -9,6 +9,20 @@ const component = fc.double({ min: -10, max: 10, noNaN: true })
 const vector = fc.array(component, { minLength: 4, maxLength: 8 })
 
 /**
+ * Components including the two an embedder can emit that ordinary arithmetic cannot answer: a
+ * `NaN` from a degenerate vector and an infinity from an overflowed one. `cosine` is total over
+ * both, and that is what keeps the MMR penalty fold order-insensitive, so the arbitraries that
+ * carry them are the ones reaching the case the pinned behavior exists for.
+ */
+const unrulyComponent = fc.oneof(
+  { arbitrary: component, weight: 6 },
+  { arbitrary: fc.constant(Number.NaN), weight: 2 },
+  { arbitrary: fc.constant(Number.POSITIVE_INFINITY), weight: 1 },
+  { arbitrary: fc.constant(Number.NEGATIVE_INFINITY), weight: 1 }
+)
+const unrulyVector = fc.array(unrulyComponent, { minLength: 4, maxLength: 8 })
+
+/**
  * A vector with a representable magnitude. Filtering on "some component is non-zero" is not
  * enough: a subnormal like `5e-324` squares to exactly 0, so the magnitude underflows and the
  * zero-magnitude guard correctly fires — which is the behavior the underflow test below pins.
@@ -29,6 +43,24 @@ const candidates = fc
   .uniqueArray(candidate, { minLength: 0, maxLength: 10, selector: (c) => c.path })
   .map((list) => [...list].sort((left, right) => right.score - left.score))
 
+/**
+ * Pools where a vector may carry a NaN or infinite component. `candidate` above rules those out,
+ * so this is the only arm that reaches the inputs where the cached penalty fold and the
+ * from-scratch one could rank a candidate differently.
+ */
+const unrulyCandidates = fc
+  .uniqueArray(
+    fc
+      .tuple(
+        fc.stringMatching(/^[a-z]{1,6}$/),
+        fc.double({ min: 0, max: 1, noNaN: true }),
+        fc.option(fc.array(unrulyComponent, { minLength: 4, maxLength: 4 }), { nil: undefined })
+      )
+      .map(([path, score, vec]): MmrCandidate => ({ path, score, vector: vec })),
+    { minLength: 0, maxLength: 10, selector: (c) => c.path }
+  )
+  .map((list) => [...list].sort((left, right) => right.score - left.score))
+
 describe("cosine", () => {
   it("returns 0 rather than NaN for a zero-magnitude vector", () => {
     fc.assert(
@@ -42,13 +74,31 @@ describe("cosine", () => {
     )
   })
 
-  it("never returns NaN for any pair of vectors", () => {
+  it("never returns NaN for any pair of vectors, including unruly components", () => {
     fc.assert(
-      fc.property(vector, vector, (a, b) => {
-        expect(Number.isNaN(cosine(a, b))).toBe(false)
+      fc.property(unrulyVector, unrulyVector, (a, b) => {
+        const similarity = cosine(a, b)
+        expect(Number.isNaN(similarity)).toBe(false)
+        expect(similarity).toBeGreaterThanOrEqual(-1)
+        expect(similarity).toBeLessThanOrEqual(1)
       }),
-      { numRuns: 1000 }
+      { numRuns: 2000 }
     )
+  })
+
+  it("reads a NaN or infinite component as no usable direction, scoring it 0", () => {
+    /**
+     * The zero-magnitude guard cannot answer these: `NaN !== 0` and `Infinity !== 0`, so both
+     * reach the ratio, where a NaN accumulator and `Infinity / Infinity` alike produce NaN. 0 is
+     * the same reading a vectorless MMR candidate gets — no direction, so no demonstrable
+     * duplication — and it is what makes `max` over a set of similarities order-insensitive.
+     */
+    expect(cosine([Number.NaN, 0, 0, 0], [1, 0, 0, 0])).toBe(0)
+    expect(cosine([1, 0, 0, 0], [Number.NaN, 0, 0, 0])).toBe(0)
+    expect(cosine([Number.NaN, 1, 2, 3], [Number.NaN, 1, 2, 3])).toBe(0)
+    expect(cosine([Number.POSITIVE_INFINITY, 0, 0, 0], [1, 0, 0, 0])).toBe(0)
+    expect(cosine([Number.NEGATIVE_INFINITY, 1, 0, 0], [0, 1, 0, 0])).toBe(0)
+    expect(cosineDistance([Number.NaN, 0, 0, 0], [1, 0, 0, 0])).toBe(1)
   })
 
   it("is symmetric and bounded by [-1, 1] exactly, not approximately", () => {
@@ -311,6 +361,102 @@ describe("applyMmr", () => {
       1
     )
     expect(selected.map((c) => c.path)).toEqual(["first", "clone"])
+  })
+
+  /**
+   * The shipped fold caches each candidate's max-similarity-to-selected and updates it against
+   * only the newest selection per round. This oracle recomputes that max from scratch against
+   * the WHOLE selected set every round — the O(k²·n) definition the cache must agree with.
+   * `Math.max` over one set of cosines is order-insensitive, so the two are equal by
+   * construction; this pins that the cache's splice bookkeeping preserves it.
+   */
+  const naiveMmr = (
+    pool: ReadonlyArray<MmrCandidate>,
+    limit: number,
+    lambda: number
+  ): ReadonlyArray<MmrCandidate> => {
+    if (limit <= 0) return []
+    if (lambda >= 1 || pool.length <= 1) return pool.slice(0, limit)
+    const remaining = [...pool]
+    const selected: Array<MmrCandidate> = []
+    while (remaining.length > 0 && selected.length < limit) {
+      let bestIndex = 0
+      let bestValue = Number.NEGATIVE_INFINITY
+      for (const [index, candidate] of remaining.entries()) {
+        let penalty = 0
+        if (candidate.vector !== undefined) {
+          for (const chosen of selected) {
+            if (chosen.vector === undefined) continue
+            penalty = Math.max(penalty, cosine(candidate.vector, chosen.vector))
+          }
+        }
+        const value = lambda * candidate.score - (1 - lambda) * penalty
+        if (value > bestValue) {
+          bestValue = value
+          bestIndex = index
+        }
+      }
+      const [chosen] = remaining.splice(bestIndex, 1)
+      if (chosen !== undefined) selected.push(chosen)
+    }
+    return selected
+  }
+
+  it("selects in exactly the order the from-scratch fold does, on random inputs", () => {
+    fc.assert(
+      fc.property(
+        candidates,
+        fc.integer({ min: 1, max: 12 }),
+        fc.double({ min: 0, max: 1, noNaN: true }),
+        (pool, limit, lambda) => {
+          expect(applyMmr(pool, limit, lambda).map((c) => c.path)).toEqual(
+            naiveMmr(pool, limit, lambda).map((c) => c.path)
+          )
+        }
+      ),
+      { numRuns: 1000 }
+    )
+  })
+
+  it("selects in the same order as the from-scratch fold when a vector carries NaN", () => {
+    /**
+     * The one input class where the two folds could part company. The cached fold updates a
+     * running max with `similarity > cached`, which is `false` for NaN; the from-scratch fold
+     * takes `Math.max(penalty, similarity)`, which is NaN and then loses every comparison — so a
+     * NaN similarity would rank the same candidate second in one fold and last in the other.
+     * `cosine` never returns NaN, which is what collapses the two back onto each other here.
+     */
+    fc.assert(
+      fc.property(
+        unrulyCandidates,
+        fc.integer({ min: 1, max: 12 }),
+        fc.double({ min: 0, max: 1, noNaN: true }),
+        (pool, limit, lambda) => {
+          expect(applyMmr(pool, limit, lambda).map((c) => c.path)).toEqual(
+            naiveMmr(pool, limit, lambda).map((c) => c.path)
+          )
+        }
+      ),
+      { numRuns: 2000 }
+    )
+  })
+
+  it("reads a NaN-carrying vector as unknown similarity rather than sinking it", () => {
+    // The concrete three-candidate pool behind the property above: `poison` outranks `clean` on
+    // relevance and keeps that rank, because carrying no usable direction earns no penalty —
+    // exactly what a vectorless candidate gets.
+    const anchor = [1, 0, 0, 0]
+    const poison = [Number.NaN, 0, 0, 0]
+    const pool = [
+      { path: "anchor", score: 1, vector: anchor },
+      { path: "poison", score: 0.6, vector: poison },
+      { path: "clean", score: 0.5, vector: [0, 1, 0, 0] }
+    ]
+    expect(cosine(poison, anchor)).toBe(0)
+    expect(applyMmr(pool, 3, 0.5).map((c) => c.path)).toEqual(["anchor", "poison", "clean"])
+    expect(applyMmr(pool, 3, 0.5).map((c) => c.path)).toEqual(
+      naiveMmr(pool, 3, 0.5).map((c) => c.path)
+    )
   })
 
   it("defaults lambda to the pinned relevance/diversity split", () => {

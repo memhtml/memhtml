@@ -1,5 +1,5 @@
 import { filenameFor, slugify } from "./slug.js"
-import { PARA_BUCKETS, type ParaBucket } from "./types.js"
+import { isPersonEntity, PARA_BUCKETS, type ParaBucket } from "./types.js"
 
 /**
  * Path algebra. Every function here is pure and total, and a path is always the
@@ -129,7 +129,13 @@ export const placementFor = (input: PlacementInput): string => {
       : `${INBOX_DIR}/${TASKS_SUBDIR}`
   }
 
-  const namesPerson = (input.entities ?? []).some((entity) => entity.startsWith("person:"))
+  /**
+   * `isPersonEntity` is the one predicate that decides personhood, so a `person:` prefix whose
+   * name is empty or only whitespace is not a person here either and cannot route a memory into
+   * `resources/people/`. That is the same filter the tag rule below applies, and the same one the
+   * sleep phase that mints the person file applies, so the three cannot disagree on a boundary.
+   */
+  const namesPerson = (input.entities ?? []).some(isPersonEntity)
   if (namesPerson && input.memoryType === "semantic") return PEOPLE_DIR
 
   if (input.workspace !== undefined && input.workspace !== "") {

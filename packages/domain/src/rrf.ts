@@ -1,9 +1,11 @@
 import { RRF_K } from "./ranking.js"
 
 /**
- * The pure reciprocal-rank-fusion fold. The SQL that produces each arm's ranked list is the
- * index layer's; the arithmetic that combines them lives here, so a fusion-weight change is
- * testable without a database.
+ * The pure reciprocal-rank-fusion fold — the REFERENCE implementation, not the production
+ * path. The index layer inlines the fusion arithmetic in SQL (`packages/index/src/
+ * retrieval-sql.ts`, sharing only `RRF_K`), and this fold is what that SQL is checked
+ * against: it states the model in testable form, so a fusion-weight question is answerable
+ * without a database.
  */
 
 /**

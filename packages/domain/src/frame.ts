@@ -71,7 +71,8 @@ export const frameKeyOf = (gist: string): string | null => {
   const value = match[2]
   if (frame === undefined || value === undefined) return null
   if (frame.split(" ").length < MIN_FRAME_TOKENS) return null
-  const valueTokens = value.split(" ").length
-  if (valueTokens < 1 || valueTokens > MAX_VALUE_TOKENS) return null
+  // `value` matched `(.+?)`, so it is non-empty and splits to at least one token; only the
+  // upper bound needs checking.
+  if (value.split(" ").length > MAX_VALUE_TOKENS) return null
   return frame.toLowerCase()
 }
