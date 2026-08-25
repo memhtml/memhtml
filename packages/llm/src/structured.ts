@@ -27,10 +27,15 @@ export const MAX_RAW = 800
 /**
  * Derive the tool's `input_schema` from an effect schema.
  *
- * `Schema.toJsonSchemaDocument` hoists nested structs into a separate `definitions` map and
- * leaves `$ref: "#/$defs/<name>"` behind, so the definitions are folded back under the root
- * as `$defs`, the pointer the refs already name. Verified live 2026-08-02 that Bedrock
- * resolves a `$ref` into a root-level `$defs` inside `input_schema`.
+ * `Schema.toJsonSchemaDocument` returns its `definitions` map separately from the schema while
+ * emitting `$ref: "#/$defs/<name>"` into the schema, so the map is folded back under the root as
+ * `$defs` — the pointer those refs already name. Verified live 2026-08-02 that Bedrock resolves a
+ * `$ref` into a root-level `$defs` inside `input_schema`.
+ *
+ * A RECURSIVE schema is what makes this load-bearing, and it is the only thing that does: probed
+ * 2026-08-25 on effect 4.0.0-rc.111, a struct reused from two places is emitted inline at each,
+ * while a self-reference is hoisted because it has no finite expansion. So the fold is a narrow
+ * repair for recursion rather than the general case, and `definitions` is usually empty.
  *
  * A numeric field should be declared `Schema.Finite`, not `Schema.Number`: the latter emits
  * an `anyOf` with a string branch for `Infinity`/`NaN`, which invites the model to answer a

@@ -40,9 +40,17 @@ describe("toInputSchema", () => {
   })
 
   it("folds hoisted definitions back under $defs so the emitted $refs resolve", () => {
-    const Inner = Schema.Struct({ path: Schema.String })
-    const Outer = Schema.Struct({ inner: Inner, members: Schema.Array(Inner) })
-    const schema = toInputSchema(Outer) as Record<string, unknown>
+    /**
+     * A RECURSIVE schema is the fixture, because recursion is the shape that cannot be inlined:
+     * a self-reference has no finite expansion, so `toJsonSchemaDocument` must hoist it and leave
+     * a `$ref` behind. A struct merely reused twice is inlined instead (see the case below), so it
+     * cannot exercise the fold and would assert nothing.
+     */
+    const Node = Schema.Struct({
+      name: Schema.String,
+      children: Schema.Array(Schema.suspend((): Schema.Codec<unknown> => Node))
+    })
+    const schema = toInputSchema(Node) as Record<string, unknown>
 
     const refs = JSON.stringify(schema).match(/#\/\$defs\/[A-Za-z0-9_]+/g) ?? []
     expect(refs.length).toBeGreaterThan(0)
@@ -51,6 +59,24 @@ describe("toInputSchema", () => {
     for (const ref of refs) {
       expect(defs[ref.slice("#/$defs/".length)]).toBeDefined()
     }
+  })
+
+  it("inlines a struct reused twice, so no $ref crosses the wire for it", () => {
+    /**
+     * Probed 2026-08-25 on effect 4.0.0-rc.111: a struct referenced from two places is emitted
+     * inline at each. Inline is what this surface wants — a schema with no pointer to resolve is
+     * one fewer thing a provider can decline to follow — so this pins the property rather than
+     * the mechanism that used to be needed to repair its absence.
+     */
+    const Inner = Schema.Struct({ path: Schema.String })
+    const Outer = Schema.Struct({ inner: Inner, members: Schema.Array(Inner) })
+    const schema = toInputSchema(Outer) as Record<string, unknown>
+
+    expect(JSON.stringify(schema)).not.toContain("$ref")
+    expect("$defs" in schema).toBe(false)
+    const properties = schema.properties as Record<string, Record<string, unknown>>
+    expect(properties.inner).toMatchObject({ type: "object" })
+    expect(properties.members).toMatchObject({ items: { type: "object" } })
   })
 
   it("omits $defs entirely for a flat schema", () => {
