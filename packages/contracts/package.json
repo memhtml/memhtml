@@ -53,11 +53,11 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.8",
+    "@biomejs/biome": "2.5.10",
     "@effect/vitest": "catalog:",
     "@types/node": "26.2.0",
     "fast-check": "catalog:",
     "typescript": "7.0.2",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   }
 }
