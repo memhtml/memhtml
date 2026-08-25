@@ -209,20 +209,20 @@ export interface WriteParams extends Provenance {
 /**
  * Bring the index up to the commit a write just made.
  *
- * `indexer.update()` rather than `indexPaths([…])`, and the difference changes behavior twice:
+ * The whole COMMIT, never a list of paths the caller happens to know about, and two properties of the
+ * index rest on that:
  *
- * 1. **`indexPaths` cannot express a rename.** Every correction and every archive is a `git mv`, and
- *    an index that handled one as "index the destination" leaves the source row live. The archived
- *    memory stays in `memhtml list`, `files` gains a row the tree does not have, and the chunk rows the
- *    move exists to preserve are duplicated under two paths. `update()` reads `diff --name-status -M`,
- *    sees the `R`, and re-points the row, which keeps the embedding and drops nothing.
- * 2. **`indexPaths` never records the watermark.** `index_state.head_sha` is what makes
- *    "the index describes the current commit" answerable at all, so a write path that skipped it
- *    would leave `memhtml status` reporting `index_fresh: false` forever and `index update` re-deriving
- *    from a stale base.
+ * 1. **A rename is only expressible as a diff.** Every correction and every archive is a `git mv`.
+ *    `update()` reads `diff --name-status -M`, sees the `R`, and re-points the row, which keeps the
+ *    embedding. Indexing the destination alone leaves the source row live: the archived memory stays
+ *    in `memhtml list`, `files` carries a row the tree does not have, and the chunk rows the move
+ *    exists to preserve end up duplicated under two paths.
+ * 2. **The watermark is what makes freshness answerable.** `update()` records
+ *    `index_state.head_sha`, and without it `memhtml status` reports `index_fresh: false` forever
+ *    while `index update` re-derives from a stale base.
  *
  * The cost is one `git diff` over one commit, which is what the watermark exists to bound. On the
- * very first write the watermark is absent and `update()` falls through to a full rebuild. That is
+ * very first write there is no watermark row and `update()` falls through to a full rebuild. That is
  * correct, and cheap on a corpus that has one file in it.
  */
 const reindex = () =>
@@ -236,8 +236,8 @@ const reindex = () =>
  *
  * Shared by {@link writeMemory} and {@link batchWrite}, and the sharing matters. A batch that
  * re-derived this would be a second decode of the same vocabulary, and the two would agree today
- * and drift the first time a field is added. This is `symspec`'s lesson stated as code: the batch
- * folds the singular's own decode rather than a parallel one.
+ * and drift the first time a field is added. The batch folds the singular's own decode rather
+ * than a parallel one.
  *
  * The two task metas are decoded here, before any file is rendered, and only for a task.
  * `@memhtml/html`'s parser refuses `memhtml-task-status` on a non-task and refuses a `memhtml-due` that is not
@@ -1061,6 +1061,12 @@ export interface NeighborsParams {
   /** 1 or 2. Clamped rather than refused: a caller asking for 5 wants "as much as you'll give". */
   readonly depth?: number | undefined
   readonly rels?: ReadonlyArray<string> | undefined
+  /**
+   * Distinct nodes to return, 1 to {@link NEIGHBORS_LIMIT}. Clamped rather than refused, like
+   * `memory_list`'s 500 and `trace_search`'s 200, because a caller asking for more than the ceiling
+   * wants the ceiling.
+   */
+  readonly limit?: number | undefined
 }
 
 /** One node in a neighborhood. `hop` is 1-based distance from the center: 1 or 2, never 0. */
@@ -1068,7 +1074,112 @@ export interface NeighborNode {
   readonly path: string
   readonly title: string
   readonly hop: number
+  /** The rel of an edge at this node's minimal hop, so the pair describes one real edge. */
   readonly rel: string
+  /** True when ANY edge reaching this node is sleep-mined rather than authored. */
+  readonly derived: boolean
+}
+
+/**
+ * The ceiling on nodes per neighborhood, and the default when a caller names none.
+ *
+ * A caller-supplied `limit` is clamped into `1..NEIGHBORS_LIMIT`, which is the shape both sibling
+ * reads have (`memory_list` `Math.min(500, …)`, `trace_search` `Math.min(200, …)`). A clamp with no
+ * flag behind it is a ceiling a caller can neither ask for nor lower.
+ */
+export const NEIGHBORS_LIMIT = 200
+
+/**
+ * Edge rows the statement may RETURN before it stops.
+ *
+ * **This bounds the answer, not the join.** Measured 2026-08-25 on node 24.19.0 against the shipped
+ * schema: `EXPLAIN QUERY PLAN` on {@link neighborsQuery}'s depth-2 statement yields `MERGE
+ * (UNION ALL)` with `USE TEMP B-TREE FOR ORDER BY` on every arm, so SQLite enumerates the union and
+ * sorts the whole row set in a temp b-tree BEFORE the `LIMIT` takes its prefix. A hub of degree
+ * 150/300/450 generates 22.5k/90k/202k rows either way, and the limited statement runs in
+ * 47/92/155 ms against 66/253/591 ms unlimited — so the cap buys real time and memory downstream of
+ * the sort while the join's work and the temp b-tree still grow with the center's degree squared.
+ *
+ * What the cap does bound: the rows that cross into JS, the fold below, and the size of one answer.
+ * A neighborhood that reaches it is truncated rather than exhaustive, and `scanSaturated` says so
+ * instead of leaving the caller to infer it — raising a caller's `limit` cannot recover an edge the
+ * walk never returned.
+ *
+ * Bounding each arm before the union WOULD bound the join, and is not done: an arm-level `LIMIT`
+ * takes an arbitrary prefix of one direction's edges, so the hop-1 nodes that survive decide which
+ * hop-2 nodes exist at all, and the answer would change with the planner's row order rather than
+ * only shrink.
+ */
+const NEIGHBORS_SCAN_LIMIT = 10_000
+
+/**
+ * The neighborhood walk as one statement plus its bind list.
+ *
+ * Exported so a cost assertion can `EXPLAIN QUERY PLAN` the string this function actually issues.
+ * A plan asserted against a copy pasted into a test explains the copy, and the two drift the first
+ * time an arm moves.
+ *
+ * Hop 1 is the center's own edges, either direction. Hop 2 walks one further from each hop-1 node and
+ * excludes the center, so a two-cycle does not report the center as its own neighbor at distance 2.
+ * Each arm carries the edge's own endpoints (`a`, `b`) so an edge can be counted as an edge, not
+ * inferred from a node count.
+ *
+ * The join onto `files` is an inner join, so an edge pointing at a path the tree does not hold
+ * contributes nothing. A dangling href is `memhtml doctor`'s finding rather than a titleless node.
+ *
+ * The rel list binds once per occurrence of the filter, in textual order: hop 1 uses it twice, hop 2
+ * uses it four more times. Getting this count wrong is a bind mismatch rather than a wrong answer, so
+ * it fails loudly.
+ */
+export const neighborsQuery = (input: {
+  readonly center: string
+  readonly depth: number
+  readonly rels: ReadonlyArray<string>
+}): { readonly sql: string; readonly params: ReadonlyArray<string> } => {
+  const { center, depth, rels } = input
+  const relFilter = rels.length > 0 ? ` AND e.rel IN (${rels.map(() => "?").join(", ")})` : ""
+  const relFilter2 = rels.length > 0 ? ` AND e2.rel IN (${rels.map(() => "?").join(", ")})` : ""
+
+  const hopOne = `
+      SELECT e.dst_path AS path, e.rel AS rel, e.derived AS derived, 1 AS hop,
+             e.src_path AS a, e.dst_path AS b
+      FROM edges e
+      WHERE e.src_path = ?1 AND e.edge_class = 'memory'${relFilter}
+      UNION ALL
+      SELECT e.src_path AS path, e.rel AS rel, e.derived AS derived, 1 AS hop,
+             e.src_path AS a, e.dst_path AS b
+      FROM edges e
+      WHERE e.dst_path = ?1 AND e.edge_class = 'memory'${relFilter}`
+
+  const hopTwo = `
+      SELECT e2.dst_path AS path, e2.rel AS rel, e2.derived AS derived, 2 AS hop,
+             e2.src_path AS a, e2.dst_path AS b
+      FROM edges e
+      JOIN edges e2 ON e2.src_path = e.dst_path
+      WHERE e.src_path = ?1 AND e.edge_class = 'memory' AND e2.edge_class = 'memory'
+        AND e2.dst_path <> ?1${relFilter}${relFilter2}
+      UNION ALL
+      SELECT e2.src_path AS path, e2.rel AS rel, e2.derived AS derived, 2 AS hop,
+             e2.src_path AS a, e2.dst_path AS b
+      FROM edges e
+      JOIN edges e2 ON e2.dst_path = e.src_path
+      WHERE e.dst_path = ?1 AND e.edge_class = 'memory' AND e2.edge_class = 'memory'
+        AND e2.src_path <> ?1${relFilter}${relFilter2}`
+
+  const walk = depth === 1 ? hopOne : `${hopOne}\n      UNION ALL${hopTwo}`
+
+  return {
+    sql: `SELECT w.path AS path, f.title AS title, w.rel AS rel, w.derived AS derived,
+              w.hop AS hop, w.a AS a, w.b AS b
+       FROM (${walk}) w
+       JOIN files f ON f.path = w.path
+       ORDER BY w.hop ASC, w.path ASC
+       LIMIT ${NEIGHBORS_SCAN_LIMIT}`,
+    params: [
+      center,
+      ...(depth === 1 ? [...rels, ...rels] : [...rels, ...rels, ...rels, ...rels, ...rels, ...rels])
+    ]
+  }
 }
 
 /**
@@ -1077,8 +1188,17 @@ export interface NeighborNode {
  * **Two fixed-depth joins in a `UNION ALL`, deliberately not a recursive CTE.** The depth is
  * bounded at 2 by the tool's contract, so recursion buys nothing and costs the one thing a graph
  * query must not have here: an unbounded worst case on a corpus whose `relates_to` edges are
- * mined by the sleep cycle and can be dense. A fixed join is also index-covered by `edges_src`
- * and `edges_dst`, which a recursive walk is not.
+ * mined by the sleep cycle and can be dense.
+ *
+ * **Only the forward direction is index-probed, and `edges_src`/`edges_dst` are not what probes it.**
+ * Measured 2026-08-25 on node 24.19.0 (locked by the plan assertion in `apps/cli/tests/e2e.test.ts`):
+ * both of those indexes are PARTIAL — `WHERE derived = 0` (`0008_tasks.sql`) — and this walk includes
+ * derived edges on purpose, so neither is available to it. The `src_path = ?1` arms probe
+ * `sqlite_autoindex_edges_1` instead, the implicit index behind `PRIMARY KEY (src_path, rel,
+ * dst_path)`, whose leftmost column is the one they filter on. The `dst_path = ?1` arms have no such
+ * luck and are a full SCAN of `edges`, so a neighborhood costs one table scan per reverse arm on top
+ * of the degree² row set. A `rels` filter changes that: `edges_rel` carries no predicate, so a
+ * rel-scoped walk probes on every arm.
  *
  * **Both directions, and `derived = 0 ∪ derived = 1`.** An edge is an assertion about a pair, and
  * which file happens to hold the `<link>` is authorship rather than direction of meaning. A
@@ -1096,80 +1216,95 @@ export const neighborsOf = (params: NeighborsParams) =>
     const db = yield* DatabaseService
     const center = normalizePath(params.path)
     const depth = Math.min(2, Math.max(1, Math.trunc(params.depth ?? 1)))
+    const limit = Math.min(
+      NEIGHBORS_LIMIT,
+      Math.max(1, Math.trunc(params.limit ?? NEIGHBORS_LIMIT))
+    )
 
     const rels = (params.rels ?? []).filter(
       (rel) => isEdgeRel(rel) && relClassFor(rel) === "memory"
     )
-    const relFilter = rels.length > 0 ? ` AND e.rel IN (${rels.map(() => "?").join(", ")})` : ""
-    const relFilter2 = rels.length > 0 ? ` AND e2.rel IN (${rels.map(() => "?").join(", ")})` : ""
 
     /**
-     * Hop 1 is the center's own edges, either direction. Hop 2 walks one further from each hop-1
-     * node and excludes the center, so a two-cycle does not report the center as its own neighbor
-     * at distance 2.
+     * Edge rows, hop-1 first, folded per path below rather than `GROUP BY` in SQL. A `GROUP BY`
+     * with `min(hop)` and `min(rel)` aggregates the two columns independently, so a node reachable
+     * as `supersedes` at hop 1 and `contradicts` at hop 2 would report `(hop 1, contradicts)`, a
+     * pairing no edge holds. The fold keeps the rel of an edge AT the minimal hop.
      */
-    const hopOne = `
-      SELECT e.dst_path AS path, e.rel AS rel, e.derived AS derived, 1 AS hop
-      FROM edges e
-      WHERE e.src_path = ?1 AND e.edge_class = 'memory'${relFilter}
-      UNION ALL
-      SELECT e.src_path AS path, e.rel AS rel, e.derived AS derived, 1 AS hop
-      FROM edges e
-      WHERE e.dst_path = ?1 AND e.edge_class = 'memory'${relFilter}`
-
-    const hopTwo = `
-      SELECT e2.dst_path AS path, e2.rel AS rel, e2.derived AS derived, 2 AS hop
-      FROM edges e
-      JOIN edges e2 ON e2.src_path = e.dst_path
-      WHERE e.src_path = ?1 AND e.edge_class = 'memory' AND e2.edge_class = 'memory'
-        AND e2.dst_path <> ?1${relFilter}${relFilter2}
-      UNION ALL
-      SELECT e2.src_path AS path, e2.rel AS rel, e2.derived AS derived, 2 AS hop
-      FROM edges e
-      JOIN edges e2 ON e2.dst_path = e.src_path
-      WHERE e.dst_path = ?1 AND e.edge_class = 'memory' AND e2.edge_class = 'memory'
-        AND e2.src_path <> ?1${relFilter}${relFilter2}`
-
-    const walk = depth === 1 ? hopOne : `${hopOne}\n      UNION ALL${hopTwo}`
-
-    /**
-     * `min(hop)` per path: a node reachable both directly and via a detour is a 1-hop neighbor,
-     * and reporting it twice would let one memory occupy two slots in a bounded answer.
-     *
-     * The join onto `files` is an inner join, so an edge pointing at a path the tree does not hold
-     * contributes nothing. A dangling href is `memhtml doctor`'s finding rather than a titleless node.
-     */
+    const statement = neighborsQuery({ center, depth, rels })
     const rows = yield* db.all<{
       path: string
       title: string
       rel: string
       derived: number
       hop: number
-    }>(
-      `SELECT w.path AS path, f.title AS title, min(w.hop) AS hop,
-              min(w.rel) AS rel, max(w.derived) AS derived
-       FROM (${walk}) w
-       JOIN files f ON f.path = w.path
-       GROUP BY w.path
-       ORDER BY hop ASC, w.path ASC`,
-      // The rel list binds once per occurrence of the filter, in textual order: hop 1 uses it
-      // twice, hop 2 uses it four times. Getting this count wrong is a bind mismatch rather than a
-      // wrong answer, so it fails loudly.
-      [
-        center,
-        ...(depth === 1
-          ? [...rels, ...rels]
-          : [...rels, ...rels, ...rels, ...rels, ...rels, ...rels])
-      ]
-    )
+      a: string
+      b: string
+    }>(statement.sql, statement.params)
 
-    const nodes: ReadonlyArray<NeighborNode> = rows.map((row) => ({
-      path: row.path,
-      title: row.title,
-      hop: row.hop,
-      rel: row.rel
+    /**
+     * One node per path at its minimal hop: a node reachable both directly and via a detour is a
+     * 1-hop neighbor, and reporting it twice would let one memory occupy two slots in a bounded
+     * answer. The rows arrive hop-first, so a path's first row IS an edge at its minimal hop and
+     * its rel is kept verbatim. `derived` is the max over every edge reaching the node, so one
+     * sleep-mined route marks the node as carrying a mined suspicion even when an authored edge
+     * also reaches it. `edges` counts distinct edges the walk enumerated, which is what the MCP
+     * schema's `edges` field claims to be.
+     *
+     * A path the clamp turns away is still counted, in `nodesDropped`, and its edges still count
+     * toward `edges`: the two numbers live in different coordinate spaces on purpose, and an `edges`
+     * total that quietly excluded a dropped path's edges would agree with `nodes` while describing
+     * a walk that never happened.
+     */
+    const byPath = new Map<string, { title: string; hop: number; rel: string; derived: boolean }>()
+    const edgeKeys = new Set<string>()
+    const dropped = new Set<string>()
+    for (const row of rows) {
+      edgeKeys.add(JSON.stringify([row.a, row.rel, row.b]))
+      const existing = byPath.get(row.path)
+      if (existing === undefined) {
+        if (byPath.size < limit) {
+          byPath.set(row.path, {
+            title: row.title,
+            hop: row.hop,
+            rel: row.rel,
+            derived: row.derived === 1
+          })
+        } else {
+          dropped.add(row.path)
+        }
+      } else if (row.derived === 1) {
+        byPath.set(row.path, { ...existing, derived: true })
+      }
+    }
+
+    const nodes: ReadonlyArray<NeighborNode> = [...byPath.entries()].map(([path, node]) => ({
+      path,
+      title: node.title,
+      hop: node.hop,
+      rel: node.rel,
+      derived: node.derived
     }))
-    return { center, depth, nodes, edges: nodes.length }
+    return {
+      center,
+      depth,
+      /** The node ceiling this answer was built under, after clamping the caller's ask. */
+      limit,
+      nodes,
+      edges: edgeKeys.size,
+      /**
+       * Distinct paths the walk reached and `limit` turned away. `0` means `nodes` holds every path
+       * the walk found, so a caller can tell a saturated neighborhood from a complete one. Raising
+       * `limit` toward {@link NEIGHBORS_LIMIT} returns them.
+       */
+      nodesDropped: dropped.size,
+      /**
+       * True when the walk returned {@link NEIGHBORS_SCAN_LIMIT} rows, so edges past the cap were
+       * never enumerated and no `limit` recovers them. Distinct from `nodesDropped`, which a bigger
+       * `limit` fixes.
+       */
+      scanSaturated: rows.length >= NEIGHBORS_SCAN_LIMIT
+    }
   })
 
 export interface ListParams {
@@ -1273,8 +1408,8 @@ export const listMemories = (params: ListParams) =>
 /**
  * The task surface: CRUDL without retrieval.
  *
- * A task is the 10th `memory_type` and it is default-excluded from search, dedup, and all sixteen
- * sleep phases, so the working set an agent needs is not reachable by ranking. These three
+ * A task is the 10th `memory_type` and it is default-excluded from search, dedup, and every sleep
+ * phase, so the working set an agent needs is not reachable by ranking. These three
  * functions are how it becomes reachable: `task add` wraps {@link writeMemory}, `task status` is one
  * head meta edited in place, and {@link listTasks} is a direct indexed scan. Reading a directory,
  * grepping a meta, and editing one line remain equally valid, and nothing here is the only path.
@@ -1313,9 +1448,9 @@ export interface TaskStatusResult {
  * fifth value every archive, correction, and publish path would have to learn. The stamp is written
  * before the move so both land in one commit and `git log --follow` reads through it.
  *
- * `indexer.update()` afterwards rather than `indexPaths`, because the `done` transition is a rename and
- * `indexPaths` cannot express one. It would leave the pre-archive row live, duplicate the chunks
- * under two paths, and skip the watermark (finding from T9, stated at {@link reindex}).
+ * Reindexed through {@link reindex}, which diffs the whole commit. The `done` transition is a rename,
+ * and only a diff expresses one: indexing the destination path alone leaves the pre-archive row live,
+ * duplicates the chunks under two paths, and records no watermark.
  */
 export const setTaskStatus = (params: TaskStatusParams) =>
   Effect.gen(function* () {
@@ -1473,7 +1608,7 @@ export interface TaskRow {
  * memory-graph query filters on, and a reader who saw this one query trust the rel alone would learn
  * the wrong rule about how the firewall is enforced.
  *
- * `group_concat` over an ordered subselect, probed 2026-08-12 on node 24.19.0. The inner `ORDER BY`
+ * `group_concat` over an ordered subselect, probed 2026-08-12 on node 24.19.0: the inner `ORDER BY`
  * is preserved, and `char(10)` is the separator because a path cannot contain a newline while it can
  * contain a comma.
  *
@@ -1621,7 +1756,18 @@ export const indexTraces = () =>
     let merged = 0
     for (const scanned of report.files) {
       const outcome = yield* persistScanned(db, scanned, tailMerger, at)
-      if (outcome.action !== "skip") sessionsWritten += 1
+      /**
+       * `sessionsWritten` counts files for which a `traces` ROW was written, which is exactly the
+       * files `persistScanned` returns a session id for. It writes a row only for a non-skip
+       * carrying an extract and a session id, so the three files it declines — a skip, a failed
+       * read (a null extract), and a `file-history-*`-only file with no session to be about — are
+       * each not a session written.
+       *
+       * The action alone cannot answer this. A failed read keeps the action the PLAN named, `tail`
+       * or `rescan`, because the watermark logic needs to know what was attempted; a report that
+       * read the action as the write would claim a session for a transcript that errored.
+       */
+      if (outcome.sessionId !== null) sessionsWritten += 1
       if (outcome.merged) merged += 1
       promptsWritten += outcome.promptsWritten
     }
@@ -1632,6 +1778,9 @@ export const indexTraces = () =>
       skipped: report.skipped,
       tailed: report.tailed,
       rescanned: report.rescanned,
+      // Files the scan planned to read and could not. `skipped + tailed + rescanned + filesFailed`
+      // is `filesSeen`, so an operator can tell an unreadable transcript from an unchanged one.
+      filesFailed: report.failed,
       bytesRead: report.bytesRead,
       sessionsWritten,
       promptsWritten,
@@ -1720,6 +1869,13 @@ export const searchTraces = (params: TraceSearchParams) =>
   })
 
 /**
+ * Rows one `trace links` answer may carry. Every sibling read clamps (`memory_list` 500,
+ * `trace_search` 200), and a long-lived session accretes links without bound, so an unclamped
+ * answer grows forever. Newest first, so the truncation costs the oldest links.
+ */
+const TRACE_LINKS_LIMIT = 500
+
+/**
  * The memory-session links, from either side.
  *
  * Both parameters absent is a refusal rather than an unbounded scan of every link ever recorded. A
@@ -1761,7 +1917,8 @@ export const traceLinks = (params: {
       `SELECT l.path, l.session_id, l.prompt_id, l.turn_uuid, l.link_kind, l.at
        FROM memory_session_links l
        WHERE ${conditions.join(" AND ")}
-       ORDER BY l.at DESC, l.path ASC`,
+       ORDER BY l.at DESC, l.path ASC
+       LIMIT ${TRACE_LINKS_LIMIT}`,
       values
     )
 

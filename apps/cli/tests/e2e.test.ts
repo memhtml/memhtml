@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { DatabaseService } from "../src/api-layer.js"
 import { EXIT_OK, EXIT_RUNTIME } from "../src/envelope.js"
+import { neighborsQuery } from "../src/operations.js"
 import { type Cli, failingEmbedder, makeCli, noEmbedder } from "./harness.js"
 
 /**
@@ -273,6 +274,23 @@ describe("the write path, end to end", () => {
     }>(["list", "--include-archived"])
     const archivedRow = withArchived.files.find((file) => file.path === corrected.archivedPath)
     expect(archivedRow?.archived).toBe(true)
+  })
+
+  it("answers a point-in-time search for each form --as-of admits", async () => {
+    /**
+     * The positive leg of the `--as-of` grammar, through the real stack: validation admits the
+     * value, `scope.ts` binds it twice into `coalesce(valid_from, event_at, created_at) <= ? AND
+     * (valid_until IS NULL OR valid_until > ?)`, and the query answers. `cli.test.ts` owns the
+     * refusals, because those must be decided before any layer is built.
+     *
+     * Runs after the correction above, so the corpus actually carries a closed validity window for
+     * the lens to read rather than a corpus where every memory is unbounded.
+     */
+    for (const asOf of ["2026-08-24", "2026-08-24T13:00:00Z", "2099-01-01T00:00:00Z"]) {
+      const result = await cli.run(["search", "vip drain", "--as-of", asOf])
+      expect(result.exitCode, asOf).toBe(0)
+      expect((JSON.parse(result.stdout) as { type: string }).type, asOf).toBe("memory.hits")
+    }
   })
 
   it("reinforces a path, then holds the second bump behind the cooldown", async () => {
@@ -878,4 +896,420 @@ describe("the entity scope and the two-hop chain", () => {
     expect(unscopedBody.data.scopeEmpty).toBe(false)
     expect("scopeEmpty" in unscopedBody.data).toBe(true)
   })
+})
+
+/**
+ * `memhtml neighbors` reports real edges, not aggregates that no edge holds.
+ *
+ * Its own fixture repo, because the graph shape is the whole subject: one node reachable on TWO
+ * paths at different hops under different rels, plus one sleep-mined edge. The suite above only
+ * ever grows single-path neighborhoods, which is exactly the shape under which the two bugs pinned
+ * here are invisible.
+ */
+describe("neighbors reports the edge at the minimal hop, and marks mined edges", () => {
+  let cli: Cli
+  const paths: Record<"center" | "twice" | "middle" | "mined", string> = {
+    center: "",
+    twice: "",
+    middle: "",
+    mined: ""
+  }
+
+  interface Neighborhood {
+    readonly nodes: ReadonlyArray<{
+      readonly path: string
+      readonly hop: number
+      readonly rel: string
+      readonly derived: boolean
+    }>
+    readonly edges: number
+    /** The node ceiling the answer was built under, after clamping the caller's ask. */
+    readonly limit: number
+    /** Distinct paths the walk reached and `limit` turned away. */
+    readonly nodesDropped: number
+    /** True when the walk stopped at its own row cap, which no `limit` recovers. */
+    readonly scanSaturated: boolean
+  }
+
+  beforeAll(async () => {
+    cli = await makeCli()
+    const write = async (title: string, claim: string): Promise<string> =>
+      (
+        await cli.json<Written>([
+          "write",
+          "--type",
+          "semantic",
+          "--title",
+          title,
+          "--claim",
+          claim,
+          "--workspace",
+          "graph-fixture"
+        ])
+      ).path
+
+    paths.center = await write("The center memory", "The neighborhood is measured from here.")
+    paths.twice = await write(
+      "Reachable twice at different hops",
+      "One hop as supersedes, two hops as contradicts."
+    )
+    paths.middle = await write("The detour node", "The hop-2 path runs through this memory.")
+    paths.mined = await write("The sleep-mined neighbor", "Only a derived edge reaches this one.")
+
+    /**
+     * The authored triangle. `contradicts` sorts before `supersedes`, which is what makes the
+     * fixture able to fail: a `min(rel)` aggregated independently of `min(hop)` reports the
+     * hop-2 edge's rel against the hop-1 distance.
+     */
+    await cli.json(["link", paths.center, "supersedes", paths.twice])
+    await cli.json(["link", paths.center, "caused_by", paths.middle])
+    await cli.json(["link", paths.middle, "contradicts", paths.twice])
+
+    // The derived edge lives only in the index — that is what `derived` MEANS — so it is seeded
+    // where the sleep cycle writes it, not through a CLI door.
+    await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const db = yield* DatabaseService
+          yield* db.run(
+            `INSERT INTO edges (src_path, rel, dst_path, edge_class, derived, strength, provenance, created_at)
+             VALUES (?, 'relates_to', ?, 'memory', 1, 0.82, 'sleep', '2026-08-20T00:00:00Z')`,
+            [paths.center, paths.mined]
+          )
+        }),
+        cli.layer
+      )
+    )
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  it("pairs the minimal hop with the rel of an edge AT that hop", async () => {
+    /**
+     * The regression: `GROUP BY path` with `min(hop), min(rel)` reported `(hop 1, contradicts)`
+     * for the twice-reachable node — a pairing no edge holds, since `contradicts` only reaches it
+     * at hop 2. The pair must describe one real edge: `(hop 1, supersedes)`.
+     */
+    const result = await cli.json<Neighborhood>(["neighbors", paths.center, "--depth", "2"])
+    const twice = result.nodes.find((node) => node.path === paths.twice)
+    expect(twice).toBeDefined()
+    expect(twice?.hop).toBe(1)
+    expect(twice?.rel).toBe("supersedes")
+    // And each path appears once: the detour must not let one memory occupy two slots.
+    expect(result.nodes.filter((node) => node.path === paths.twice).length).toBe(1)
+  })
+
+  it("marks the mined neighbor as derived and the authored ones as not", async () => {
+    const result = await cli.json<Neighborhood>(["neighbors", paths.center, "--depth", "2"])
+    expect(result.nodes.find((node) => node.path === paths.mined)?.derived).toBe(true)
+    expect(result.nodes.find((node) => node.path === paths.twice)?.derived).toBe(false)
+    expect(result.nodes.find((node) => node.path === paths.middle)?.derived).toBe(false)
+  })
+
+  it("counts edges as edges, not as nodes", async () => {
+    /**
+     * Four distinct edges reach three neighbors: center→twice, center→middle, center→mined, and
+     * middle→twice. An `edges` field computed as `nodes.length` said 3 — and the MCP schema
+     * documents the field as an edge count.
+     */
+    const result = await cli.json<Neighborhood>(["neighbors", paths.center, "--depth", "2"])
+    expect(result.nodes.length).toBe(3)
+    expect(result.edges).toBe(4)
+  })
+
+  it("honors a caller's --limit and REPORTS what the limit turned away", async () => {
+    /**
+     * The node clamp used to be a constant with no flag behind it and no marker in the envelope, so a
+     * saturated neighborhood was indistinguishable from a complete one — unlike the two sibling reads
+     * whose clamp its own comment cited, both of which clamp a CALLER-supplied limit
+     * (`memory_list` `Math.min(500, …)`, `trace_search` `Math.min(200, …)`).
+     *
+     * `--limit 1` is the smallest saturating ask against this fixture's three neighbors, so the
+     * assertion is exact rather than "some number smaller than before". `edges` is deliberately
+     * UNCHANGED: it counts the distinct edges the walk enumerated, including edges to paths the clamp
+     * dropped, which is what the MCP schema publishes it as.
+     *
+     * (Mutation: replacing `limit` with `NEIGHBORS_LIMIT` in the fold leaves `nodes.length` at 3 and
+     * `nodesDropped` at 0. Observed: `expected 3 to be 1`.)
+     */
+    const clamped = await cli.json<Neighborhood>([
+      "neighbors",
+      paths.center,
+      "--depth",
+      "2",
+      "--limit",
+      "1"
+    ])
+    expect(clamped.limit).toBe(1)
+    expect(clamped.nodes.length).toBe(1)
+    expect(clamped.nodesDropped).toBe(2)
+    expect(clamped.edges).toBe(4)
+    // The walk returned four rows, nowhere near its 10000-row cap, so nothing saturated.
+    expect(clamped.scanSaturated).toBe(false)
+
+    // And an unclamped answer says so, rather than leaving a caller to infer completeness.
+    const full = await cli.json<Neighborhood>(["neighbors", paths.center, "--depth", "2"])
+    expect(full.limit).toBe(200)
+    expect(full.nodesDropped).toBe(0)
+  })
+
+  it("clamps an over-large --limit to the ceiling rather than refusing it", async () => {
+    // The sibling shape: a caller asking for more than the ceiling wants the ceiling.
+    const result = await cli.json<Neighborhood>(["neighbors", paths.center, "--limit", "10000"])
+    expect(result.limit).toBe(200)
+  })
+
+  describe("what the walk's LIMIT does and does not bound", () => {
+    /**
+     * The cost claims, asserted from a real `EXPLAIN QUERY PLAN` over the string `neighborsOf` issues.
+     * `neighborsQuery` is exported for exactly this, so the plan explains the SHIPPED statement rather
+     * than a copy pasted here, which would drift the first time an arm moves.
+     *
+     * Why a plan and not a timing: the rows come back either way, so cost is invisible in the output —
+     * the same reason the repo asserts `EXPLAIN` shape wherever correctness and cost diverge. Nothing
+     * here runs `ANALYZE`, because production does not, so this is the plan that matters.
+     */
+    const planFor = async (rels: ReadonlyArray<string>): Promise<ReadonlyArray<string>> =>
+      await Effect.runPromise(
+        Effect.provide(
+          Effect.gen(function* () {
+            const db = yield* DatabaseService
+            const statement = neighborsQuery({ center: paths.center, depth: 2, rels })
+            const plan = yield* db.all<{ detail: string }>(
+              `EXPLAIN QUERY PLAN ${statement.sql}`,
+              statement.params
+            )
+            return plan.map((row) => row.detail)
+          }),
+          cli.layer
+        )
+      )
+
+    it("sorts the whole union in a temp b-tree, so the LIMIT bounds the ANSWER and not the join", async () => {
+      /**
+       * `NEIGHBORS_SCAN_LIMIT`'s comment claimed the cap bounds the join's work. It does not: `MERGE
+       * (UNION ALL)` with `USE TEMP B-TREE FOR ORDER BY` on every arm means SQLite enumerates the union
+       * and sorts the full row set before the `LIMIT` takes its prefix, so the work and the temp-b-tree
+       * memory still grow with the center's degree squared. What the cap bounds is the rows that cross
+       * into JS, the fold, and the size of one answer.
+       *
+       * (Mutation: removing the statement's `ORDER BY` leaves a plan with neither step. Observed:
+       * `expected 0 to be greater than 0`.)
+       */
+      const steps = await planFor([])
+      expect(steps.length).toBeGreaterThan(0)
+      expect(steps.filter((step) => step === "MERGE (UNION ALL)").length).toBeGreaterThan(0)
+      expect(steps.filter((step) => step.includes("USE TEMP B-TREE FOR ORDER BY")).length).toBe(
+        // One per arm of the depth-2 union: two hop-1 directions and two hop-2 directions.
+        4
+      )
+    })
+
+    it("cannot use the two partial edge indexes, so the reverse arms are full scans", async () => {
+      /**
+       * The measured half of the claim, and it corrects the docstring rather than confirming it.
+       * `edges_src` and `edges_dst` are declared `WHERE derived = 0` (`0008_tasks.sql`), and this walk
+       * includes derived edges on purpose — lateral retrieval is what they are for — so neither index
+       * is available to it at all.
+       *
+       * The `src_path = ?1` arms still probe, through `sqlite_autoindex_edges_1`, because `src_path` is
+       * the leftmost column of `PRIMARY KEY (src_path, rel, dst_path)`. The `dst_path = ?1` arms have
+       * no index leading with `dst_path` and SCAN the table, so each costs one pass over `edges`.
+       *
+       * If a full (non-partial) index on `dst_path` lands, this case fails — and the comment on
+       * `neighborsOf` moves with it. That is the point: the claim and the plan are locked together.
+       *
+       * (Mutation: pointing both reverse arms forward, which is the "only outbound edges" bug the
+       * docstring warns about, removes every SCAN. Observed: `expected false to be true`. The two
+       * index-name assertions are a ratchet rather than a measurement of today's plan: adding
+       * `derived = 0` to an arm makes the planner reach for `edges_derived`, measured 2026-08-25, not
+       * for either partial index — so they fail only when the partial predicate itself moves.)
+       */
+      const steps = await planFor([])
+      for (const step of steps) {
+        expect(step, step).not.toContain("edges_src")
+        expect(step, step).not.toContain("edges_dst")
+      }
+      // The forward arms probe; the reverse arms scan.
+      expect(
+        steps.some((step) => step.includes("SEARCH e USING") && step.includes("src_path=?"))
+      ).toBe(true)
+      expect(steps.some((step) => step.startsWith("SCAN e"))).toBe(true)
+    })
+
+    it("probes on every arm once a rel filter is named, because that index carries no predicate", async () => {
+      // `edges_rel` is `(rel, edge_class)` with no `WHERE`, so a rel-scoped walk is index-probed in both
+      // directions and the scan disappears. The flag is a cost lever as well as a filter.
+      const steps = await planFor(["supersedes"])
+      expect(steps.some((step) => step.includes("edges_rel"))).toBe(true)
+      for (const step of steps) expect(step, step).not.toMatch(/^SCAN /)
+    })
+  })
+})
+
+/**
+ * The provenance triple threads through every command whose arm stamps one.
+ *
+ * The regression this pins is a table-versus-arm mismatch: `read` and `correct` spread
+ * `provenanceOf(parsed)` into their use case while declaring only `session-id`, so per-command flag
+ * validation turned two working invocations into exit 2 — breaking a caller carrying one triple through
+ * a write, a read, and the correction that follows.
+ */
+describe("one provenance triple, threaded through write, read, and correct", () => {
+  let cli: Cli
+  const SESSION = "3f1a8c7e-2b44-4d6f-9a11-0c5e7d3b2a90"
+  const PROMPT = "prompt-17"
+  const TURN = "turn-4d6f9a11"
+
+  beforeAll(async () => {
+    cli = await makeCli()
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  interface Links {
+    readonly links: ReadonlyArray<{
+      readonly path: string
+      readonly sessionId: string
+      readonly promptId: string | null
+      readonly turnUuid: string | null
+      readonly linkKind: string
+    }>
+  }
+
+  it("accepts the triple on all four write-path commands and records it on both link kinds", async () => {
+    const written = await cli.json<Written>([
+      "write",
+      "--type",
+      "semantic",
+      "--title",
+      "The provenance triple survives a read",
+      "--claim",
+      "A read link carries the prompt and the turn, not the session alone.",
+      "--session-id",
+      SESSION,
+      "--prompt-id",
+      PROMPT,
+      "--turn-uuid",
+      TURN
+    ])
+
+    const read = await cli.run([
+      "read",
+      written.path,
+      "--session-id",
+      SESSION,
+      "--prompt-id",
+      PROMPT,
+      "--turn-uuid",
+      TURN
+    ])
+    expect(read.exitCode).toBe(EXIT_OK)
+
+    const corrected = await cli.json<{ readonly path: string }>([
+      "correct",
+      written.path,
+      "--title",
+      "The provenance triple survives a correction",
+      "--claim",
+      "A corrected link carries the prompt and the turn too.",
+      "--reason",
+      "threading the triple",
+      "--session-id",
+      SESSION,
+      "--prompt-id",
+      PROMPT,
+      "--turn-uuid",
+      TURN
+    ])
+    expect(corrected.path).not.toBe(written.path)
+
+    /**
+     * The link rows are the point: a `read` link carrying a null prompt would be a coarser record than
+     * the write made for the same turn, which is the asymmetry the missing declarations produced.
+     */
+    const links = await cli.json<Links>(["trace", "links", "--session-id", SESSION])
+    const kinds = new Set(links.links.map((link) => link.linkKind))
+    expect(kinds.has("read")).toBe(true)
+    for (const link of links.links) {
+      expect(link.sessionId, link.linkKind).toBe(SESSION)
+      expect(link.promptId, link.linkKind).toBe(PROMPT)
+      expect(link.turnUuid, link.linkKind).toBe(TURN)
+    }
+  })
+})
+
+/**
+ * A sleep run that did not do its work exits non-zero.
+ *
+ * `@memhtml/sleep` types `run` and `resume` with error channel `never` on purpose — a failed phase is a
+ * normal terminal state with a report row — so the report is a SUCCESS envelope. Nothing here changes
+ * that; what changes is the process's own answer, because a cron that checks only the exit code saw
+ * success for a run that entered no branch and committed nothing.
+ */
+describe("sleep run exit codes", () => {
+  let cli: Cli
+
+  beforeAll(async () => {
+    cli = await makeCli()
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  interface SleepReport {
+    readonly runId: string
+    readonly baseSha: string
+    readonly headSha: string
+    readonly failedPhases: ReadonlyArray<string>
+    readonly phases: ReadonlyArray<{ readonly phase: string; readonly status: string }>
+    readonly commits: ReadonlyArray<string>
+  }
+
+  it("exits 1 on an aborted run, with the report intact", async () => {
+    /**
+     * `resume` of a run id nothing recorded is the reachable abort: no run row, so the whole phase list
+     * comes back `failed` with one shared reason, `headSha === baseSha`, and no commits. The abort
+     * exists so a run that cannot enter its own branch never commits to `main`, and reporting it at
+     * exit 0 gave that back to any caller that only checks the code.
+     *
+     * The envelope shape is unchanged — a success `sleep.report` carrying every failed phase — because
+     * the failures ARE the data and a failure envelope cannot carry them.
+     *
+     * (Mutation: making the arm return the report with no exit code, so `run` defaults it to EXIT_OK,
+     * turns this into `expected 0 to be 1`.)
+     */
+    const result = await cli.run(["sleep", "resume", "sleep/2020-01-01"])
+    expect(result.exitCode).toBe(EXIT_RUNTIME)
+    const body = JSON.parse(result.stdout) as { type: string; data: SleepReport }
+    expect(body.type).toBe("sleep.report")
+    expect(body.data.failedPhases.length).toBeGreaterThan(0)
+    expect(body.data.commits).toEqual([])
+    expect(body.data.phases.every((phase) => phase.status === "failed")).toBe(true)
+  }, 120_000)
+
+  it("exits 0 when every selected phase lands, so the code is conditional", async () => {
+    /**
+     * The other side of the boundary, and it is what makes the case above an assertion about
+     * `failedPhases` rather than about the command. Two deterministic phases under `--dry-run`: no
+     * model is bound in this harness, and neither of these needs one.
+     */
+    const result = await cli.run([
+      "sleep",
+      "run",
+      "--date",
+      "2026-08-20",
+      "--phases",
+      "confidence-decay,integrity",
+      "--dry-run"
+    ])
+    const body = JSON.parse(result.stdout) as { type: string; data: SleepReport }
+    expect(body.data.failedPhases).toEqual([])
+    expect(result.exitCode).toBe(EXIT_OK)
+  }, 120_000)
 })

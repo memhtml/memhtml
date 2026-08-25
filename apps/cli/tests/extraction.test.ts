@@ -45,7 +45,8 @@ const opsFile = async (ops: ReadonlyArray<Record<string, unknown>>): Promise<str
   const dir = await mkdtemp(join(tmpdir(), "memhtml-extract-"))
   tempDirs.push(dir)
   const path = join(dir, "ops.jsonl")
-  await writeFile(path, ops.map((op) => JSON.stringify({ op: "write", ...op })).join("\n") + "\n")
+  const lines = ops.map((op) => JSON.stringify({ op: "write", ...op })).join("\n")
+  await writeFile(path, `${lines}\n`)
   return path
 }
 

@@ -1,10 +1,23 @@
-import { discriminationGate, type EvalMode, runDiscrimination } from "@memhtml/eval"
+import {
+  DiscriminationFailed,
+  discriminationGate,
+  type EvalMode,
+  runDiscrimination
+} from "@memhtml/eval"
+import { isValidDatetime } from "@memhtml/html"
 import { initRepo } from "@memhtml/store"
 import { Effect, type Layer, Logger } from "effect"
 import { runAgentsDoc } from "./agents-doc.js"
 import { Git, Indexer, layerApp, Sleep } from "./api-layer.js"
 import { applyPayload, applyText, decodeApply, readStdin } from "./apply.js"
-import { buildManifest, COMMAND_NAMES, COMMANDS, GLOBAL_FLAGS } from "./commands.js"
+import {
+  buildManifest,
+  COMMAND_NAMES,
+  COMMANDS,
+  type CommandSpec,
+  type FlagSpec,
+  GLOBAL_FLAGS
+} from "./commands.js"
 import { MemhtmlRoot } from "./config.js"
 import { doctor } from "./doctor.js"
 import {
@@ -31,12 +44,58 @@ export interface Parsed {
   readonly command: string
   readonly positional: ReadonlyArray<string>
   readonly flags: ReadonlyMap<string, ReadonlyArray<string | boolean>>
+  /**
+   * Each bare boolean flag a value-shaped token followed as a separate argv word, as a
+   * `[flag, token]` pair.
+   *
+   * A boolean flag does not consume the next token, so `--embed false` parses as `embed: true` plus
+   * a positional `"false"` — the INVERSE of what the caller asked for, on a flag whose whole purpose
+   * is to turn work off. The pair is carried here rather than resolved in the parser because
+   * {@link validate} owns refusals and the exit code they carry; `--embed=false` and `--no-embed` are
+   * the spellings that work.
+   */
+  readonly strayBooleanValues: ReadonlyArray<readonly [string, string]>
 }
 
 const KNOWN_FLAGS = new Set([
   ...GLOBAL_FLAGS.map((flag) => flag.name),
   ...COMMANDS.flatMap((command) => command.flags.map((flag) => flag.name))
 ])
+
+/**
+ * Every flag name the spec table declares, mapped to the type it declares.
+ *
+ * **Only a `string` or `int` flag consumes the next argv token as its value**, and the two kinds it
+ * excludes are excluded for different reasons:
+ *
+ * - A `boolean` flag takes `--flag`, `--flag=value`, or `--no-flag`, so the token after it stays
+ *   positional and can be the command: `memhtml --dense list` is the `list` command, not an empty
+ *   command carrying `dense: "list"`.
+ * - A flag the table does not declare has no type to consult, and eating the token would swallow the
+ *   command name — `memhtml --nope list` would answer the manifest at exit 0 instead of refusing an
+ *   unknown flag. Leaving the token positional lets the command reach {@link validate}, which is
+ *   where an unknown flag becomes exit 2.
+ *
+ * The map is name-keyed across every command even though validation is per-command, because the
+ * parser runs before the command is known. That is sound only while one name carries ONE type
+ * everywhere, which is a property of the table `cli.test.ts` enforces rather than a hope.
+ */
+const FLAG_TYPES: ReadonlyMap<string, FlagSpec["type"]> = new Map(
+  [...GLOBAL_FLAGS, ...COMMANDS.flatMap((command) => command.flags)].map((flag) => [
+    flag.name,
+    flag.type
+  ])
+)
+
+/**
+ * The tokens {@link bool} would have read as a boolean value.
+ *
+ * A boolean flag followed by one of these is a caller spelling `--flag <value>`, which parses as the
+ * opposite value. Any other token after a boolean flag is a positional the caller meant — the
+ * command name, a path, a query — so the set is exactly the vocabulary `bool` interprets and not
+ * "any following token".
+ */
+const BOOLEAN_VALUE_TOKENS: ReadonlySet<string> = new Set(["true", "false", "yes", "no", "0", "1"])
 
 /**
  * The two-word command names, longest first.
@@ -51,16 +110,22 @@ const COMPOUND_NAMES = COMMAND_NAMES.filter((name) => name.includes(" ")).sort(
 )
 
 /**
- * `--flag value`, `--flag=value`, `--no-flag`, and bare `--flag`.
+ * `--flag value`, `--flag=value`, `--no-flag`, and bare `--flag`, parsed against the spec table.
  *
  * Every flag's value is an array, because several flags are repeatable (`--tag`, `--entity`,
  * `--body`) and a map of scalars would silently keep only the last occurrence, so a write with three
  * entities would store one. Non-repeatable flags read `.at(-1)`, so a duplicate is last-wins rather
  * than an error, which is what a shell user retyping a flag expects.
+ *
+ * Only a flag the table types `string` or `int` consumes the next token as its value; a boolean flag
+ * and an undeclared flag both leave it positional, for the two reasons {@link FLAG_TYPES} states.
+ * A boolean flag followed by a value-shaped token is recorded as a stray so {@link validate} can
+ * refuse it rather than silently inverting the caller's ask.
  */
 export const parseArgv = (argv: ReadonlyArray<string>): Parsed => {
   const positional: Array<string> = []
   const flags = new Map<string, Array<string | boolean>>()
+  const strayBooleanValues: Array<readonly [string, string]> = []
 
   const push = (name: string, value: string | boolean): void => {
     const existing = flags.get(name)
@@ -87,10 +152,18 @@ export const parseArgv = (argv: ReadonlyArray<string>): Parsed => {
         continue
       }
       const next = argv[index + 1]
-      if (next !== undefined && !next.startsWith("--")) {
+      const type = FLAG_TYPES.get(body)
+      if ((type === "string" || type === "int") && next !== undefined && !next.startsWith("--")) {
         push(body, next)
         index += 2
         continue
+      }
+      if (
+        type === "boolean" &&
+        next !== undefined &&
+        BOOLEAN_VALUE_TOKENS.has(next.toLowerCase())
+      ) {
+        strayBooleanValues.push([body, next])
       }
       push(body, true)
       index += 1
@@ -104,10 +177,20 @@ export const parseArgv = (argv: ReadonlyArray<string>): Parsed => {
   const compound = COMPOUND_NAMES.find((name) => joined === name || joined.startsWith(`${name} `))
   if (compound !== undefined) {
     const consumed = compound.split(" ").length
-    return { command: compound, positional: positional.slice(consumed), flags }
+    return {
+      command: compound,
+      positional: positional.slice(consumed),
+      flags,
+      strayBooleanValues
+    }
   }
 
-  return { command: positional[0] ?? "", positional: positional.slice(1), flags }
+  return {
+    command: positional[0] ?? "",
+    positional: positional.slice(1),
+    flags,
+    strayBooleanValues
+  }
 }
 
 /** A flag's last value as a string, or `undefined` when it was not given. */
@@ -168,8 +251,38 @@ export interface RunResult {
   readonly exitCode: number
 }
 
-/** What a handler returns: a response type and its payload. The envelope is added once, below. */
-type Handled = readonly [Success<unknown>["type"], unknown]
+/**
+ * What a handler returns: a response type, its payload, and optionally the exit code that payload
+ * implies. The envelope is added once, below, and an absent third element is {@link EXIT_OK}.
+ *
+ * The third element exists for the two commands whose own failures are DATA. `@memhtml/sleep` types
+ * `run` and `resume` with error channel `never` on purpose — a phase that failed is a normal terminal
+ * state with a report row — so the report is a success envelope and the process still has to say the
+ * curation did not happen. Everywhere else a returned payload is success, so the element is absent
+ * rather than restated on every other arm.
+ */
+type Handled = readonly [Success<unknown>["type"], unknown, number?]
+
+/**
+ * Exit 1 when a sleep run has a failed phase.
+ *
+ * **A partially-failed run and a fully-aborted run exit the same**, and that is a decision rather
+ * than an omission. A caller reading the exit code is asking one question — did the curation this
+ * invocation was for happen — and both answers are no. The difference between them is already stated
+ * in the payload, precisely: an abort is every selected phase `failed` with `headSha === baseSha` and
+ * no commits, while a partial run names the phases that landed. A second exit code would be a
+ * second, weaker copy of that, and a caller would have to learn it to recover a fact the envelope
+ * already carries.
+ *
+ * Exit 1 rather than 2: the call was well-formed, so this is a runtime failure an operator fixes by
+ * changing the repo or the environment ({@link EXIT_USAGE} is reserved for fixing the call).
+ *
+ * `sleep status` and `sleep review` are deliberately not routed through here. They REPORT a run they
+ * did not perform, and a read that exited non-zero because the thing it describes failed would make
+ * "tell me what happened" indistinguishable from "I could not tell you".
+ */
+const sleepExit = (report: { readonly failedPhases: ReadonlyArray<string> }): number =>
+  report.failedPhases.length > 0 ? EXIT_RUNTIME : EXIT_OK
 
 /**
  * Dispatch one parsed invocation against the provided services.
@@ -313,6 +426,7 @@ const dispatch = (
         const result = yield* ops.neighborsOf({
           path: parsed.positional[0] ?? "",
           depth: int(parsed, "depth"),
+          limit: int(parsed, "limit"),
           rels: list(parsed, "rel")
         })
         return ["memory.neighbors", result] as const
@@ -469,14 +583,16 @@ const dispatch = (
           deep: bool(parsed, "deep", false),
           ...(maxLlmCalls === undefined ? {} : { maxLlmCalls })
         })
-        return ["sleep.report", sleepRunReport(report)] as const
+        const payload = sleepRunReport(report)
+        return ["sleep.report", payload, sleepExit(payload)] as const
       })
 
     case "sleep resume":
       return Effect.gen(function* () {
         const sleep = yield* Sleep
         const report = yield* sleep.resume(parsed.positional[0] ?? "")
-        return ["sleep.report", sleepRunReport(report)] as const
+        const payload = sleepRunReport(report)
+        return ["sleep.report", payload, sleepExit(payload)] as const
       })
 
     case "sleep review":
@@ -637,10 +753,13 @@ const EITHER_CLAIM_OR_ARTICLE: ReadonlySet<string> = new Set(["write", "correct"
  *
  * Here for the reason `claimOrArticle` is: `validate`'s return becomes exit 2 and a failure raised in
  * `dispatch` becomes exit 1, so "you passed the wrong flags" must be decided before any service is
- * built. `.erpaval/solutions/api-patterns/xor-params-and-mcp-error-masking.md` records the rule.
+ * built. Mutually exclusive parameters are refused at this edge, before dispatch, because a refusal
+ * raised any later is masked as a runtime error
+ * (`.erpaval/solutions/api-patterns/xor-params-and-mcp-error-masking.md`).
  *
  * At most one rather than exactly one, because zero doors is legal and means stdin, the same shape
- * `memhtml apply` has, where a bare invocation drains the pipe. A missing script is not a usage error
+ * `memhtml apply` has, where a bare invocation drains the pipe. `--file -` is the flag spelling of
+ * stdin and counts as no door at all. A missing script is not a usage error
  * here. An empty one is, and that check sits beside the read in {@link run} because reading is async.
  *
  * `--timeout-ms` is checked for a positive integer within the cap. Zero and negatives are refused
@@ -650,8 +769,10 @@ const EITHER_CLAIM_OR_ARTICLE: ReadonlySet<string> = new Set(["write", "correct"
 const execFlags = (parsed: Parsed): Failure | undefined => {
   if (parsed.command !== "exec") return undefined
 
+  const file = str(parsed, "file")
   const doors = [
-    str(parsed, "file") === undefined ? undefined : "--file",
+    // `--file -` is the flag spelling of stdin, not a file door.
+    file === undefined || file === "-" ? undefined : "--file",
     str(parsed, "script") === undefined ? undefined : "--script"
   ].filter((door) => door !== undefined)
   if (doors.length > 1) {
@@ -665,8 +786,8 @@ const execFlags = (parsed: Parsed): Failure | undefined => {
       ]
     )
   }
-  // A `-` positional is the explicit stdin spelling, so it cannot sit beside a door either.
-  if (doors.length === 1 && parsed.positional[0] === "-") {
+  // `-`, positional or as `--file -`, is the explicit stdin spelling, so it cannot sit beside a door.
+  if (doors.length === 1 && (parsed.positional[0] === "-" || file === "-")) {
     return fail(
       "ERR_INVALID_FLAG",
       `exec cannot read stdin and ${doors[0]} in the same call: \`-\` names stdin as the script source`,
@@ -686,6 +807,27 @@ const execFlags = (parsed: Parsed): Failure | undefined => {
     }
   }
 
+  return undefined
+}
+
+/**
+ * `memhtml apply` takes at most one op-stream source.
+ *
+ * The same rule `execFlags` holds for a script, on the same two spellings: `-` (positional or as
+ * `--file -`) names stdin, and stdin beside a real `--file` is two streams claiming to be the one
+ * that applies. Refused here so the answer is exit 2, matching exec, rather than one of the
+ * sources being silently ignored.
+ */
+const applyFlags = (parsed: Parsed): Failure | undefined => {
+  if (parsed.command !== "apply") return undefined
+  const file = str(parsed, "file")
+  if (file !== undefined && file !== "-" && parsed.positional[0] === "-") {
+    return fail(
+      "ERR_INVALID_FLAG",
+      "apply cannot read stdin and --file in the same call: `-` names stdin as the op stream",
+      ["cat ops.jsonl | memhtml apply", "memhtml apply --file ops.jsonl"]
+    )
+  }
   return undefined
 }
 
@@ -729,6 +871,100 @@ const claimOrArticle = (parsed: Parsed): Failure | undefined => {
 }
 
 /**
+ * `--as-of` must be a value the point-in-time comparison can order.
+ *
+ * The flag binds twice into `coalesce(valid_from, event_at, created_at) <= ? AND (valid_until IS
+ * NULL OR valid_until > ?)` (`packages/index/src/scope.ts`), where SQLite compares TEXT to TEXT.
+ * Nothing there parses the value, so an unsortable one does not error — it silently answers a
+ * DIFFERENT question. `--as-of "2026-08-24 13:00"` sorts after every `T`-form instant on that day
+ * and before none of them, so the window it selects is not the window the caller asked for, and the
+ * result set looks like a plausible point-in-time view. A usage error is the only visible answer.
+ *
+ * The same {@link isValidDatetime} the format enforces on `<time datetime>` and on every datetime
+ * meta, so the values a caller may ASK ABOUT are exactly the values a file may STATE. Two grammars
+ * here would let a caller name an instant no memory can carry.
+ *
+ * `ERR_INVALID_FLAG`, this function's existing code for a flag present but unusable as given, and
+ * exit 2 rather than a runtime error, because `validate`'s return is the usage path. A bare
+ * `--as-of` with no value is refused for the same reason a bad one is: it reads as a scoped query
+ * and would return an unscoped answer.
+ */
+const asOfFlag = (parsed: Parsed): Failure | undefined => {
+  if (parsed.flags.get("as-of") === undefined) return undefined
+  const value = str(parsed, "as-of")
+  if (value !== undefined && isValidDatetime(value)) return undefined
+  return fail(
+    "ERR_INVALID_FLAG",
+    `--as-of must be an ISO date or datetime (YYYY-MM-DD or YYYY-MM-DDThh:mm:ssZ)${value === undefined ? "" : `, not "${value}"`}: the point-in-time window compares it as a string, so a value outside that grammar selects a different window rather than failing`,
+    [
+      `memhtml ${parsed.command} --as-of 2026-08-24`,
+      `memhtml ${parsed.command} --as-of 2026-08-24T13:00:00Z`
+    ]
+  )
+}
+
+/**
+ * A boolean flag spelled with a space-separated value.
+ *
+ * `--embed false` parses as `embed: true` plus a positional `"false"`, so a caller asking to SKIP
+ * embedding would get embedding on and a stray token nothing reads. That is a silent wrong answer,
+ * which is the one outcome this surface may not produce, so the pair is exit 2 and the message names
+ * both spellings that work.
+ *
+ * `ERR_INVALID_FLAG`, the code for a flag present but unusable as given, and the same code the
+ * closed-vocabulary and `--as-of` checks return.
+ */
+const strayBooleanFlags = (parsed: Parsed): Failure | undefined => {
+  const stray = parsed.strayBooleanValues[0]
+  if (stray === undefined) return undefined
+  const [name, token] = stray
+  return fail(
+    "ERR_INVALID_FLAG",
+    `--${name} is a boolean flag and takes no separate value, so \`--${name} ${token}\` reads as --${name} with a stray "${token}" argument`,
+    [`memhtml ${parsed.command} --${name}=${token}`, `memhtml ${parsed.command} --no-${name}`]
+  )
+}
+
+/**
+ * The commands where a bare `-` positional names stdin rather than an argument.
+ *
+ * Both declare no positional argument and both document `-` as the spelling that reads the stream
+ * from a pipe, so the dash is the caller doing what the flag description says rather than a surplus
+ * token. Their own mutual-exclusion checks (`execFlags`, `applyFlags`) refuse a dash beside a real
+ * `--file`.
+ */
+const STDIN_MARKER_COMMANDS: ReadonlySet<string> = new Set(["apply", "exec"])
+
+/**
+ * Positionals past what the command declares.
+ *
+ * The counterpart to the missing-argument check below: "absent" and "surplus" are both wrong calls
+ * and both answer. Without this one a surplus positional is silently dropped — `memhtml read
+ * a.html b.html` reads ONE memory and reports nothing about the second, and every mis-spelled
+ * boolean value (`--embed false`) leaves one behind.
+ *
+ * A `repeatable` last argument turns the check off, because a variadic tail is what
+ * `memhtml reinforce a.html b.html` is. That is declared in the table rather than listed here, so
+ * the manifest states it and a future variadic command needs no edit to this function.
+ */
+const surplusArgs = (parsed: Parsed, spec: CommandSpec): Failure | undefined => {
+  if (spec.args.at(-1)?.repeatable === true) return undefined
+  const extra = parsed.positional
+    .slice(spec.args.length)
+    .filter((token) => !(token === "-" && STDIN_MARKER_COMMANDS.has(spec.name)))
+  if (extra.length === 0) return undefined
+  const shape =
+    spec.args.length === 0
+      ? `${spec.name} takes no arguments`
+      : `${spec.name} takes ${spec.args.length}: ${spec.args.map((arg) => arg.name).join(", ")}`
+  return fail(
+    "ERR_UNEXPECTED_ARGUMENT",
+    `unexpected argument: ${extra.map((token) => `"${token}"`).join(", ")}. ${shape}`,
+    [`memhtml ${spec.name}${spec.args.map((arg) => ` <${arg.name}>`).join("")}`, "memhtml manifest"]
+  )
+}
+
+/**
  * Validate a parsed invocation against its spec. Usage errors only; nothing here touches a service.
  *
  * Returning the failure rather than throwing keeps the exit code decision in one place. A usage
@@ -736,14 +972,43 @@ const claimOrArticle = (parsed: Parsed): Failure | undefined => {
  * have to know that too.
  */
 const validate = (parsed: Parsed): Failure | undefined => {
+  const spec = COMMANDS.find((command) => command.name === parsed.command)
+  if (spec === undefined) return unknownCommand(parsed)
+
+  /**
+   * Flags are validated against THIS command's spec plus the true globals, not the union of every
+   * command's flags. A flag that is valid somewhere else is still a usage error here: an agent that
+   * typed `memhtml list --status todo` meant `task list`, and silently ignoring the flag would
+   * return an unfiltered answer that looks filtered. The suggestions are drawn from the whole known
+   * set, so a flag that belongs to another command still points somewhere.
+   */
+  const allowed = new Set([
+    ...GLOBAL_FLAGS.map((flag) => flag.name),
+    ...spec.flags.map((flag) => flag.name)
+  ])
   for (const name of parsed.flags.keys()) {
-    if (!KNOWN_FLAGS.has(name)) {
-      return fail("ERR_INVALID_FLAG", `unknown flag: --${name}`, nearest(name, [...KNOWN_FLAGS]))
+    if (!allowed.has(name)) {
+      // A flag that is real elsewhere gets the commands that take it; a flag that is real nowhere
+      // gets the nearest spellings this command does take.
+      return KNOWN_FLAGS.has(name)
+        ? fail(
+            "ERR_INVALID_FLAG",
+            `--${name} is not a flag of ${spec.name}`,
+            COMMANDS.filter((command) => command.flags.some((flag) => flag.name === name))
+              .slice(0, 3)
+              .map((command) => `memhtml ${command.name} --${name}`)
+          )
+        : fail("ERR_INVALID_FLAG", `unknown flag: --${name}`, nearest(name, [...allowed]))
     }
   }
 
-  const spec = COMMANDS.find((command) => command.name === parsed.command)
-  if (spec === undefined) return unknownCommand(parsed)
+  // Before the presence checks below, because a boolean flag given a space-separated value produces
+  // BOTH a wrong flag value and a surplus positional, and the flag is the mistake worth naming.
+  const strayBoolean = strayBooleanFlags(parsed)
+  if (strayBoolean !== undefined) return strayBoolean
+
+  const surplus = surplusArgs(parsed, spec)
+  if (surplus !== undefined) return surplus
 
   const missingArgs = spec.args.filter(
     (arg, position) => arg.required && parsed.positional[position] === undefined
@@ -774,6 +1039,14 @@ const validate = (parsed: Parsed): Failure | undefined => {
 
   const exec = execFlags(parsed)
   if (exec !== undefined) return exec
+
+  const apply = applyFlags(parsed)
+  if (apply !== undefined) return apply
+
+  // After the unknown-flag loop above, so reaching this with `--as-of` present means this command
+  // declares it. The value check therefore needs no command list of its own.
+  const asOf = asOfFlag(parsed)
+  if (asOf !== undefined) return asOf
 
   /**
    * A closed-vocabulary flag is checked here rather than at the service, so a typo answers with the
@@ -898,9 +1171,12 @@ export const run = async (
    * would open and migrate a store this command never queries, and an operator checking the gate is
    * typically doing it while `memhtml-mcp` serves that store.
    *
-   * **Exit 1 on a failed gate**, with `ERR_DISCRIMINATION_FAILED`. A gate that exited 0 and
-   * left the verdict inside the payload would be a gate every shell caller forgets to read. The
-   * exit code is what stops a pipeline.
+   * **Exit 1 on a failed gate**, with the `ERR_DISCRIMINATION_FAILED` FAILURE envelope. A gate
+   * that exited 0 and left the verdict inside the payload would be a gate every shell caller
+   * forgets to read, and a gate that exited 1 inside a success envelope would be one an agent
+   * branching on `code` never sees fail. The failure travels through `failureFor` like every other
+   * typed failure, so the code, the one-line reason, and the recovery suggestions are the
+   * documented ones.
    */
   if (parsed.command === "eval discriminate") {
     const requested = (str(parsed, "mode") ?? "fake") as EvalMode
@@ -908,6 +1184,9 @@ export const run = async (
       runDiscrimination({
         mode: requested,
         ...(int(parsed, "seed") === undefined ? {} : { seed: int(parsed, "seed") }),
+        // `--seed` alone does not reproduce a run: the fixture corpus is a function of `(seed, now)`
+        // and its stamps are what the recency arm ranks on, so the instant is the other half.
+        ...(int(parsed, "now") === undefined ? {} : { now: int(parsed, "now") }),
         ...(int(parsed, "size") === undefined ? {} : { size: int(parsed, "size") }),
         ...(int(parsed, "probes") === undefined ? {} : { probes: int(parsed, "probes") }),
         ...(num(parsed, "mrr-floor") === undefined ? {} : { mrrFloor: num(parsed, "mrr-floor") })
@@ -915,10 +1194,7 @@ export const run = async (
         Effect.map((outcome) =>
           outcome.passed
             ? emit(succeed("eval.discrimination", outcome), EXIT_OK)
-            : {
-                stdout: render(succeed("eval.discrimination", outcome), dense),
-                exitCode: EXIT_RUNTIME
-              }
+            : emit(failureFor(new DiscriminationFailed(outcome)), EXIT_RUNTIME)
         ),
         Effect.catchCause((cause) =>
           Effect.succeed(
@@ -950,7 +1226,9 @@ export const run = async (
    */
   if (parsed.command === "exec") {
     const inline = str(parsed, "script")
-    const file = parsed.positional[0] === "-" ? undefined : str(parsed, "file")
+    // `-` names stdin in both spellings: the positional and `--file -`. Neither is a path.
+    const flagFile = str(parsed, "file")
+    const file = parsed.positional[0] === "-" || flagFile === "-" ? undefined : flagFile
     const script =
       inline !== undefined ? inline : file === undefined ? await stdin() : await readScript(file)
     if (typeof script !== "string") return emit(script, EXIT_USAGE)
@@ -1009,8 +1287,10 @@ export const run = async (
    */
   let applyOps: ReadonlyArray<ops.WriteParams> = []
   if (parsed.command === "apply") {
-    // `memhtml apply -` is the explicit "read stdin" spelling, and the dash is not a path.
-    const file = parsed.positional[0] === "-" ? undefined : str(parsed, "file")
+    // `-` is the explicit "read stdin" spelling in both positions — `memhtml apply -` and
+    // `memhtml apply --file -` — and the dash is never a path.
+    const flagFile = str(parsed, "file")
+    const file = parsed.positional[0] === "-" || flagFile === "-" ? undefined : flagFile
     const text = await applyText(file, stdin)
     if (typeof text !== "string") return emit(text, EXIT_USAGE)
     const decoded = decodeApply(text)
@@ -1019,7 +1299,7 @@ export const run = async (
   }
 
   const program = dispatch(parsed, applyOps).pipe(
-    Effect.map(([type, data]) => emit(succeed(type, data), EXIT_OK)),
+    Effect.map(([type, data, exitCode]) => emit(succeed(type, data), exitCode ?? EXIT_OK)),
     Effect.catch((error) => Effect.succeed(emit(failureFor(error), EXIT_RUNTIME))),
     // A defect is still an answer. An unexpected throw anywhere below would otherwise reach the
     // process as an unhandled rejection and print a stack trace onto stdout. Stdout is a parse

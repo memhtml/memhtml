@@ -63,13 +63,12 @@ Every write authors the article in exactly one of two ways, and supplying both o
 
 ### `code-mode`
 
-Answering a question that takes MORE THAN ONE HOP through the corpus? Write it as a script and run `memhtml exec` once, instead of spending a tool call per hop. Supersedence ancestry, live contradiction pairs, orphan census, entity co-occurrence, 'which of these 40 paths has no backlink': each of those is one traversal in code and N round trips through `memhtml read` and `memhtml neighbors`. Measured on a 305-file corpus: a full census in 598ms, and 410 edges resolved into 201 chains, longest 8 hops, in one execution at 430ms. The script runs under QuickJS in a sandbox with the corpus mounted READ-ONLY at `/mnt/memhtml`, and a helper is already seeded for you at `/workspace/lib/corpus.mjs`. Import it: `import { corpus, backlinks, chain, edges } from "/workspace/lib/corpus.mjs"`. `corpus()` returns a Map keyed by root-absolute path (the SAME string an edge's href holds, so `memories.get(link.href)` resolves with no path juggling) and each value carries `claim`, `memoryType`, `status`, `tags`, `entities`, `links`, `facets`, `citations`, `eventAt`, and a `document` escape hatch for any selector the fields do not cover. Print your answer as JSON on stdout with `console.log`; it comes back verbatim in `data.stdout`, so keep it small and structured rather than dumping the corpus. THREE THINGS IT CANNOT DO, by design. It cannot write: the corpus is read-only and a write answers EROFS, so every write still goes through `memhtml write` / `memhtml apply`, which own commits, dedup, and conflict detection. It cannot rank: no cosine, no RRF, no salience, and no index database. For ranked retrieval shell out to `memhtml search --json` and parse its envelope, which the one-envelope-per-command contract already makes a code-mode API. And it cannot reach the network: there is no curl and the guest's `fetch` refuses on call. The intended opening move is ranked retrieval FIRST, code-mode second: `memhtml search` or `memhtml recall` to get the handful of paths the ranking stack says matter, then `memhtml exec` to walk, join, count, and filter from there. Starting in code-mode means starting with a full-corpus scan and no relevance signal. A non-zero `exitCode` in the response is YOUR script failing, not the command failing. Read `data.stderr` for the diagnostic and the exit code is still 0. A script that runs past `--timeout-ms` (default 30000) comes back `exitCode: 124` with `timedOut: true`. The tree you get is a pinned commit, HEAD by default, named in `data.sha`, so an answer is reproducible with `--sha`, and an uncommitted edit is NOT visible to the script.
+Answering a question that takes MORE THAN ONE HOP through the corpus? Write it as a script and run `memhtml exec` once, instead of spending a tool call per hop. Supersedence ancestry, live contradiction pairs, orphan census, entity co-occurrence, 'which of these 40 paths has no backlink': each of those is one traversal in code and N round trips through `memhtml read` and `memhtml neighbors`. Measured on a 305-file corpus: a full census in 598ms, and 410 edges resolved into 201 chains, longest 8 hops, in one execution at 430ms. The script runs under QuickJS in a sandbox with the corpus mounted READ-ONLY at `/mnt/memhtml`, and a helper is already seeded for you at `/workspace/lib/corpus.mjs`. Import it: `import { corpus, backlinks, chain, edges } from "/workspace/lib/corpus.mjs"`. `corpus()` returns a Map keyed by root-absolute path (the SAME string an edge's href holds, so `memories.get(link.href)` resolves with no path juggling) and each value carries `claim`, `memoryType`, `status`, `tags`, `entities`, `links`, `facets`, `citations`, `eventAt`, and a `document` escape hatch for any selector the fields do not cover. Print your answer as JSON on stdout with `console.log`; it comes back verbatim in `data.stdout`, so keep it small and structured rather than dumping the corpus. THREE THINGS IT CANNOT DO, by design. It cannot write: the corpus is read-only and a write answers EROFS, so every write still goes through `memhtml write` / `memhtml apply`, which own commits, dedup, and conflict detection. It cannot rank: no cosine, no RRF, no salience, and no index database. For ranked retrieval shell out to `memhtml search` and parse its envelope, which the one-envelope-per-command contract already makes a code-mode API. And it cannot reach the network: there is no curl and the guest's `fetch` refuses on call. The intended opening move is ranked retrieval FIRST, code-mode second: `memhtml search` or `memhtml recall` to get the handful of paths the ranking stack says matter, then `memhtml exec` to walk, join, count, and filter from there. Starting in code-mode means starting with a full-corpus scan and no relevance signal. A non-zero `exitCode` in the response is YOUR script failing, not the command failing. Read `data.stderr` for the diagnostic and the exit code is still 0. A script that runs past `--timeout-ms` (default 30000) comes back `exitCode: 124` with `timedOut: true`. The tree you get is a pinned commit, HEAD by default, named in `data.sha`, so an answer is reproducible with `--sha`, and an uncommitted edit is NOT visible to the script.
 
 ## Global flags
 
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
-| `--json` | boolean | true | Emit the typed JSON envelope on stdout (default; logs go to stderr). |
 | `--dense` | boolean | false | Minify JSON and drop null fields, for pasting into a context window. |
 | `--repo` | string | — | Path to the memory repo. Defaults to $MEMHTML_ROOT. |
 
@@ -83,12 +82,12 @@ Answering a question that takes MORE THAN ONE HOP through the corpus? Write it a
 | `memhtml init` | — | — | `repo.init` |
 | `memhtml write` | — | `--title`* `--claim` `--body` `--article-html` `--type`* `--path` `--workspace` `--tag` `--entity` `--importance` `--confidence` `--session-id` `--prompt-id` `--turn-uuid` | `memory.written` |
 | `memhtml apply` | — | `--file` `--continue-on-error` `--detect-conflicts` `--consolidate` `--session-id` `--prompt-id` `--turn-uuid` | `batch.applied` |
-| `memhtml read` | <path> | `--session-id` | `memory.detail` |
+| `memhtml read` | <path> | `--session-id` `--prompt-id` `--turn-uuid` | `memory.detail` |
 | `memhtml search` | <query> | `--type` `--workspace` `--tag` `--entity` `--include-archived` `--as-of` `--limit` | `memory.hits` |
 | `memhtml recall` | <query> | `--type` `--workspace` `--tag` `--entity` `--include-archived` `--as-of` `--budget` | `recall.pack` |
-| `memhtml correct` | <target> | `--title`* `--claim` `--body` `--article-html` `--type` `--reason` `--session-id` | `memory.corrected` |
+| `memhtml correct` | <target> | `--title`* `--claim` `--body` `--article-html` `--type` `--reason` `--session-id` `--prompt-id` `--turn-uuid` | `memory.corrected` |
 | `memhtml link` | <src> <rel> <dst> | — | `memory.linked` |
-| `memhtml neighbors` | <path> | `--depth` `--rel` | `memory.neighbors` |
+| `memhtml neighbors` | <path> | `--depth` `--limit` `--rel` | `memory.neighbors` |
 | `memhtml archive` | <path> | `--reason`* | `memory.archived` |
 | `memhtml reinforce` | <path> | `--signal` | `memory.reinforced` |
 | `memhtml list` | — | `--type` `--workspace` `--tag` `--entity` `--para` `--limit` `--cursor` `--include-archived` | `memory.list` |
@@ -109,7 +108,7 @@ Answering a question that takes MORE THAN ONE HOP through the corpus? Write it a
 | `memhtml status` | — | — | `status.health` |
 | `memhtml publish` | — | — | `publish.report` |
 | `memhtml doctor` | — | `--fix` | `doctor.report` |
-| `memhtml eval discriminate` | — | `--mode` `--seed` `--size` `--probes` `--mrr-floor` | `eval.discrimination` |
+| `memhtml eval discriminate` | — | `--mode` `--seed` `--now` `--size` `--probes` `--mrr-floor` | `eval.discrimination` |
 | `memhtml exec` | — | `--file` `--script` `--timeout-ms` `--sha` | `exec.report` |
 | `memhtml state export` | — | — | `state.export` |
 | `memhtml state import` | — | — | `state.import` |
@@ -133,7 +132,7 @@ Write one memory. Content-hash duplicates return the existing path, uncommitted.
 - `--body` (string) — A prose paragraph after the claim. Repeatable, one <p> each. _(repeatable)_
 - `--article-html` (string) — Raw <article> markup used verbatim in place of --claim/--body. Must contain exactly one <mark> in the first <p> or <li>; the first <time datetime> becomes the memory's event time. The store refuses format violations before any commit. Exactly one of --claim or --article-html.
 - `--type` (string) — The memory type. `arc` is absent: an arc is synthesized by sleep. _(**required**; one of: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `task`)_
-- `--path` (string) — An explicit path override. Ignored when it is not a valid memory path.
+- `--path` (string) — An explicit path override. One that is not a usable memory path (rooted in a PARA bucket, ending in .html, no `.` or `..` segment) is IGNORED and the placement rule decides instead, so a malformed override lands the memory somewhere you did not name. One a file ALREADY occupies is REFUSED with ERR_WRITE_CONFLICT and nothing is written or committed: this corpus overwrites nothing, and an explicit path gets no `-2` suffix because you named one path. To replace what a memory says, use `memhtml correct <path>`.
 - `--workspace` (string) — Routes the memory to projects/<slug>/.
 - `--tag` (string) — A tag. Repeatable; the first one routes an unplaced resource memory.
 - `--entity` (string) — A `type:name` entity reference, e.g. service:checkout-api. Repeatable. _(repeatable)_
@@ -147,7 +146,7 @@ Write one memory. Content-hash duplicates return the existing path, uncommitted.
 
 Write many memories from a JSONL op stream: ONE commit, ONE index update, per-op results.
 
-- `--file` (string) — The JSONL file to read. One complete JSON object per line. Omit it (or pass `-`) to read the stream from stdin.
+- `--file` (string) — The JSONL file to read. One complete JSON object per line. Omit it, pass `--file -`, or pass a positional `-` to read the stream from stdin; stdin beside a real --file is refused.
 - `--continue-on-error` (boolean) — Best-effort: a refused op is reported and skipped while every surviving op lands in the one commit. Atomic by default. The first refused op aborts the batch and nothing is written. _(default `false`)_
 - `--detect-conflicts` (boolean) — Report each op's frame-matches as a per-op `conflict`: the ACTIVE memory (or the earlier op) whose claim occupies the same subject-and-relation slot. PROPOSE-ONLY: every op still writes exactly as it would have, because sometimes the contradiction is the answer. You decide: write anyway, `memhtml correct` the match, or drop the line. _(default `false`)_
 - `--consolidate` (string) — Resolve frame-key matches instead of only reporting them: `--consolidate last-wins` makes the LATER op's value win a shared claim slot (one file, written at the FIRST index that claimed the slot, with each later restatement reporting `consolidated_into` naming that slot) and archives a stored ACTIVE memory a surviving slot displaces, reported as `superseded_path`. Off by default; claims with no frame shape are never consolidated. _(one of: `last-wins`)_
@@ -162,6 +161,8 @@ Read one memory: its metas, links, article, and format warnings.
 - `<path>` — Repo-root-relative path to the memory.
 
 - `--session-id` (string) — Records a `read` session link, so provenance is queryable both ways.
+- `--prompt-id` (string) — The prompt within that session.
+- `--turn-uuid` (string) — The turn within that session.
 
 ### `memhtml search`
 
@@ -204,6 +205,8 @@ Supersede a memory: write the new file and archive the target in ONE commit.
 - `--type` (string) — The new memory's type. Defaults to the target's. _(one of: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `task`)_
 - `--reason` (string) — Why the correction was made.
 - `--session-id` (string) — Records a `corrected` session link.
+- `--prompt-id` (string) — The prompt within that session.
+- `--turn-uuid` (string) — The turn within that session.
 
 ### `memhtml link`
 
@@ -220,6 +223,7 @@ The memory graph around one path, to a fixed depth of at most two hops.
 - `<path>` — The center of the neighborhood.
 
 - `--depth` (int) — 1 or 2. Never more. _(default `1`)_
+- `--limit` (int) — Distinct nodes to return, clamped to 200. `nodesDropped` counts the paths the walk reached and this limit turned away, and `scanSaturated` says the walk stopped at its own 10000-row cap, which no limit recovers. _(default `200`)_
 - `--rel` (string) — Restrict to these rels. Repeatable. _(repeatable; one of: `supersedes`, `contradicts`, `caused_by`, `leads_to`, `part_of`, `relates_to`, `example_of`, `supports`, `laterally_related`)_
 
 ### `memhtml archive`
@@ -381,6 +385,7 @@ The refusable retrieval gate: every probe must outrank its own wrong-fact twins.
 
 - `--mode` (string) — `fake` is the deterministic embedder CI measures; `live` needs AWS_BEARER_TOKEN_BEDROCK and refuses loudly without it. _(default `fake`; one of: `fake`, `live`)_
 - `--seed` (int) — The fixture corpus seed. A failing run is reproducible from this number.
+- `--now` (int) — The run instant the fixture corpus anchors its stamps behind, UTC milliseconds since the epoch. The other half of reproducing a failing run: the corpus is a function of (seed, now), and the recency arm ranks on those stamps. Defaults to the clock, and rides back in the report.
 - `--size` (int) — Base memories to generate. _(default `200`)_
 - `--probes` (int) — Probes to run. Design §5 wants ≥30. _(default `36`)_
 - `--mrr-floor` (string) — Mean-reciprocal-rank floor. Lowering it is a deliberate, visible choice. _(default `0.85`)_
@@ -389,7 +394,7 @@ The refusable retrieval gate: every probe must outrank its own wrong-fact twins.
 
 Run a read-only traversal script over the corpus in a sandbox: multi-hop in ONE execution.
 
-- `--file` (string) — The script to run, as a path on the HOST. Omit it (or pass `-`) to read the script from stdin. Mutually exclusive with `--script`.
+- `--file` (string) — The script to run, as a path on the HOST. Omit it, pass `--file -`, or pass a positional `-` to read the script from stdin. Mutually exclusive with `--script`.
 - `--script` (string) — The script source, inline. Mutually exclusive with `--file` and with reading stdin.
 - `--timeout-ms` (int) — Wall-clock bound on the script. Exceeding it is `exitCode` 124 with `timedOut: true`, not an error envelope. Capped at 600000. _(default `30000`)_
 - `--sha` (string) — The commit to mount, materialized as a detached worktree. Defaults to HEAD. Never the live working tree, whose gitignored .memhtml/index.db a worktree omits.
@@ -418,6 +423,7 @@ Run the `memhtml-mcp` stdio server: 14 tools and 2 resources over this same repo
 - `ERR_UNKNOWN_COMMAND`
 - `ERR_MISSING_ARGUMENT`
 - `ERR_INVALID_FLAG`
+- `ERR_UNEXPECTED_ARGUMENT`
 - `ERR_PATH_NOT_FOUND`
 - `ERR_INVALID_MEMORY`
 - `ERR_DUPLICATE_CONTENT`
@@ -441,6 +447,6 @@ Run the `memhtml-mcp` stdio server: 14 tools and 2 resources over this same repo
 | `AWS_BEARER_TOKEN_BEDROCK` | — | Bedrock bearer token, read by the AWS SDK itself. Absent means the default credential chain; retrieval then degrades to the lexical floor rather than failing. |
 | `MEMHTML_EMBED` | `on` | `off` disables the embedder entirely. An explicit opt-out, distinct from a missing credential: a missing credential degrades one search at call time, `off` degrades every search, and an operator reading this manifest needs those to be different states. |
 | `MEMHTML_LLM` | `on` | `off` makes every model-calling sleep phase report `no model bound` and stay `ok`, so a credential-free run is honest rather than red. `entity-resolution` still runs its deterministic normalization and character-overlap passes; the others do nothing. |
-| `MEMHTML_EXTRACT_ENTITIES` | `off` | `on` adds one GPT-5.6 Luna call per write batch that extracts `memhtml-entity` metas the ops did not declare. Opt-in, unlike MEMHTML_EMBED, because it changes what a write STORES: extracted entities land in the files as if authored, and the write itself never waits on or fails with the model. A failed extraction is a logged warning and an unextracted batch. |
+| `MEMHTML_EXTRACT_ENTITIES` | `off` | `on` adds one `openai.gpt-5.6-luna` call per write batch that extracts `memhtml-entity` metas the ops did not declare. Opt-in, unlike MEMHTML_EMBED, because it changes what a write STORES: extracted entities land in the files as if authored, and the write itself never waits on or fails with the model. A failed extraction is a logged warning and an unextracted batch. |
 | `MEMHTML_MCP_BIN` | — | An explicit path to the `memhtml-mcp` entry point, read only by the `memhtml serve mcp` supervisor. Absent means the sibling-path default. The two apps ship as one build, so `apps/cli/dist/serve.js` finds `apps/mcp/dist/bin.js` two directories over. An operator sets it for a split deployment that does not keep the apps side by side; it locates the server rather than configuring the store, so it changes no retrieval behavior. |
 

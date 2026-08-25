@@ -1,9 +1,11 @@
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { appendFile, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 
+import { Effect } from "effect"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
+import { DatabaseService } from "../src/api-layer.js"
 import { type Cli, makeCli } from "./harness.js"
 
 /**
@@ -45,6 +47,14 @@ const assistantLine = (uuid: string, parentUuid: string, at: string, model: stri
 
 /** A `file-history-snapshot`: no sessionId, no envelope at all. Counted and skipped, never an error. */
 const snapshotLine = () => `${JSON.stringify({ type: "file-history-snapshot", messageId: "m1" })}\n`
+
+/**
+ * `chmod(path, 0o000)` is how the unreadable-transcript probe denies a read, and uid 0 IGNORES the
+ * mode bits — root opens a mode-000 file. Under root the read SUCCEEDS, so the assertions would be
+ * describing an indexed file rather than a failed one. Skipped there with the reason on the record.
+ */
+const RUNNING_AS_ROOT = process.getuid?.() === 0
+const CHMOD_INEFFECTIVE = "chmod 000 does not deny a read to uid 0, so the denial cannot be staged"
 
 describe("memhtml trace index", () => {
   let cli: Cli
@@ -184,6 +194,52 @@ describe("memhtml trace index", () => {
     expect(session?.startedAt).toBe("2026-08-01T10:00:00.000Z")
   })
 
+  it("reports a transcript it could not read as failed, never as a session written", async (ctx) => {
+    ctx.skip(RUNNING_AS_ROOT, CHMOD_INEFFECTIVE)
+    /**
+     * The wrong count that reads as a finding. A failed read keeps the action the PLAN named —
+     * `tail` or `rescan`, because the watermark logic needs to know what was attempted — so an
+     * envelope that counted "not a skip" as a session written claimed a `traces` row for a
+     * transcript that errored, with a stderr warning as the only contrary signal.
+     *
+     * A SECOND transcript, so the four action counters have to partition two files rather than one:
+     * the already-indexed one is skipped by its watermark and the new one fails.
+     */
+    const denied = join(dirname(transcript), "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb.jsonl")
+    await writeFile(
+      denied,
+      userLine("u9", "pr_09", "2026-08-02T09:00:00.000Z", "unreadable"),
+      "utf8"
+    )
+    await chmod(denied, 0o000)
+    try {
+      const report = await cli.json<{
+        readonly filesSeen: number
+        readonly skipped: number
+        readonly tailed: number
+        readonly rescanned: number
+        readonly filesFailed: number
+        readonly sessionsWritten: number
+        readonly promptsWritten: number
+        readonly bytesRead: number
+      }>(["trace", "index"])
+
+      expect(report.filesSeen).toBe(2)
+      expect(report.filesFailed).toBe(1)
+      // The counters partition the files seen, derived rather than copied from the report.
+      expect(report.skipped + report.tailed + report.rescanned + report.filesFailed).toBe(
+        report.filesSeen
+      )
+      // Nothing was written for either file: one was skipped, the other could not be opened.
+      expect(report.sessionsWritten).toBe(0)
+      expect(report.promptsWritten).toBe(0)
+      expect(report.bytesRead).toBe(0)
+    } finally {
+      await chmod(denied, 0o644)
+      await rm(denied, { force: true })
+    }
+  })
+
   it("links a memory to a session in both directions", async () => {
     const written = await cli.json<{ readonly path: string }>([
       "write",
@@ -214,6 +270,43 @@ describe("memhtml trace index", () => {
       readonly links: ReadonlyArray<{ readonly sessionId: string }>
     }>(["trace", "links", "--path", written.path])
     expect(byPath.links.some((entry) => entry.sessionId === SESSION)).toBe(true)
+  })
+
+  it("clamps a links answer at 500 rows, newest first", async () => {
+    /**
+     * The regression: `trace links` was the one read here with no LIMIT, so a long-lived session
+     * that accreted links without bound grew its answer without bound too — the sibling reads all
+     * clamp (`memory_list` 500, `trace_search` 200). Newest-first is what makes the clamp lose the
+     * OLDEST links, so the rows are seeded with distinct `at` stamps and the cut is asserted by
+     * which side of the boundary survived.
+     */
+    const seeded = "cccccccc-3333-4333-8333-cccccccccccc"
+    await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const db = yield* DatabaseService
+          for (let at = 0; at < 520; at += 1) {
+            const stamp = `2026-07-01T00:00:${String(at % 60).padStart(2, "0")}.${String(at).padStart(3, "0")}Z`
+            yield* db.run(
+              `INSERT INTO memory_session_links (path, session_id, prompt_id, turn_uuid, link_kind, at)
+               VALUES (?, ?, NULL, NULL, 'read', ?)`,
+              [`areas/inbox/seeded-${String(at).padStart(4, "0")}.html`, seeded, stamp]
+            )
+          }
+        }),
+        cli.layer
+      )
+    )
+
+    const result = await cli.json<{
+      readonly links: ReadonlyArray<{ readonly path: string; readonly at: string }>
+    }>(["trace", "links", "--session-id", seeded])
+    expect(result.links.length).toBe(500)
+    // Newest first: the 20 OLDEST rows (at 0..19) are the ones the clamp dropped.
+    expect(result.links.some((link) => link.path.includes("seeded-0519"))).toBe(true)
+    expect(result.links.some((link) => link.path.includes("seeded-0000"))).toBe(false)
+    const stamps = result.links.map((link) => link.at)
+    expect([...stamps].sort().reverse()).toEqual(stamps)
   })
 
   it("keeps the trace plane out of memory retrieval", async () => {

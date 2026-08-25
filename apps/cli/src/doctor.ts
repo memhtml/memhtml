@@ -142,12 +142,18 @@ export interface DoctorReport {
   readonly repaired?: RepairReport | undefined
 }
 
-/** What `--fix` changed. */
+/** What `--fix` changed. Only writes that reached disk count as repairs. */
 export interface RepairReport {
   /** Dangling hrefs rewritten to the target's archive path. */
   readonly rewritten: number
   /** Dangling hrefs dropped because the target has no file anywhere. */
   readonly dropped: number
+  /**
+   * Source paths whose repaired bytes could not be written. These findings are still open: they
+   * appear in `dangling`, are absent from the counts above, and are not staged or committed, so a
+   * re-run retries them.
+   */
+  readonly failedWrites: ReadonlyArray<string>
   /** Orphan `state.access` rows deleted. */
   readonly prunedAccessRows: number
   /** The commit the href repairs landed in, or `null` when nothing was rewritten. */
@@ -211,8 +217,8 @@ const inboxTaskDepth = (db: DatabaseShape): Effect.Effect<number, never, never> 
  * "overdue" meaning the same thing in the two places an operator reads it.
  *
  * **`archived = 0` and `task_status <> 'done'` both change the result** (mutation-verified
- * 2026-08-02). A finished task's deadline is history, and reporting it would make the finding grow
- * forever and never reach zero.
+ * 2026-08-02: dropping either predicate makes the count include finished tasks). A finished task's
+ * deadline is history, and reporting it would make the finding grow forever and never reach zero.
  */
 const overdueTasks = (
   db: DatabaseShape,
@@ -356,6 +362,7 @@ const repair = (
     let rewritten = 0
     let dropped = 0
     const touched: Array<string> = []
+    const failedWrites: Array<string> = []
 
     for (const finding of findings) {
       if (!isEdgeRel(finding.rel)) continue
@@ -380,10 +387,23 @@ const repair = (
           `doctor dropped a dangling ${rel} from ${finding.srcPath}: target has no file`
         )
       }
-      yield* attemptIo(`doctor.write:${finding.srcPath}`, async () => {
+      /**
+       * A repair counts only when its bytes reached disk. A failed write is reported under
+       * `failedWrites` and never staged: staging the unchanged file would put the pre-repair bytes
+       * into a commit whose subject claims they were repaired, and counting it would report a
+       * finding as settled while it is still open.
+       */
+      const written = yield* attemptIo(`doctor.write:${finding.srcPath}`, async () => {
         await mkdir(dirname(absolute), { recursive: true })
         await writeFile(absolute, edited, "utf8")
-      }).pipe(Effect.orElseSucceed(() => undefined))
+      }).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false)
+      )
+      if (!written) {
+        failedWrites.push(finding.srcPath)
+        continue
+      }
       touched.push(finding.srcPath)
       if (finding.rewriteTo === null) dropped += 1
       else rewritten += 1
@@ -409,13 +429,15 @@ const repair = (
     let commitSha: string | null = null
     if (touched.length > 0) {
       yield* git.add(touched)
+      // The subject counts only the writes that landed, so the history never claims more repairs
+      // than the tree holds.
       const commit = yield* git.commit(
         commitSubject("link", `repair ${rewritten + dropped} dangling links`)
       )
       commitSha = commit.sha
     }
 
-    return { rewritten, dropped, prunedAccessRows, commitSha } satisfies RepairReport
+    return { rewritten, dropped, failedWrites, prunedAccessRows, commitSha } satisfies RepairReport
   })
 
 /**

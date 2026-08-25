@@ -14,8 +14,7 @@ import { type Failure, fail } from "./envelope.js"
  *
  * ROADMAP item 7 is the requirement. A multi-hop traversal written as code answers in one execution
  * what the tool path answers in one round trip per hop, and the closed vocabulary is what makes the
- * tree queryable without a new surface per question. Measured in the 2026-08 spike and
- * re-probed here on 2026-08-09: a 305-file
+ * tree queryable without a new surface per question. Measured here: a 305-file
  * census in 598ms, and an edge walk resolving 410/410 edges into 201 chains, the longest 8 hops, in one
  * execution at 430ms.
  *
@@ -52,7 +51,7 @@ export const DEFAULT_TIMEOUT_MS = 30_000
  *
  * `maxJsTimeoutMs` is the only thing standing between a runaway guest loop and a `memhtml exec` that
  * never returns. The guest is a QuickJS worker with no host-side reaper of its own, and an unbounded
- * script would hold the CLI process open indefinitely. Probed 2026-08-09 with `maxJsTimeoutMs: 700`
+ * script would hold the CLI process open indefinitely. Measured with `maxJsTimeoutMs: 700`
  * against `for(;;){n++}`: exit 124 at 724ms, "js-exec: Execution timeout: exceeded 700ms limit".
  */
 export const MAX_TIMEOUT_MS = 600_000
@@ -71,7 +70,7 @@ const SHELL_TIMEOUT_GRACE_MS = 2_000
  *
  * QuickJS ships no base64 builtins and `node-html-parser` decodes a base64 entity table at load time,
  * so without this the parser throws "'atob' is not defined" at import and every script fails before
- * its first selector. Probed all three placements 2026-08-09: `bootstrap` works, prepending the shim
+ * its first selector. Of the three possible placements, `bootstrap` works, prepending the shim
  * to the parser's own bytes works, and omitting it fails at `decodeBase64`. `bootstrap` is chosen
  * because it leaves the vendored parser byte-identical to the published artifact. A shim spliced into
  * the bundle would make the seeded file something no `pnpm` install reproduces.
@@ -147,14 +146,14 @@ const parserSourcePath = (): string =>
  * through the command and therefore a claim rather than a guard. As a function it is testable against
  * both strings just-bash actually produces.
  *
- * Both wordings, measured 2026-08-09 on `for(;;)` at a 400ms bound:
+ * Both wordings, measured on `for(;;)` at a 400ms bound:
  *
  * - `maxJsTimeoutMs` fires: `js-exec: Execution timeout: exceeded 400ms limit`
  * - `maxExecutionTimeMs` fires: `bash: js-exec exceeded its execution deadline`, with no "timeout" in it
  *
  * A pattern matching only `/timeout/` therefore reports `timedOut: false` on a script that was cut off,
  * which is what the first version of this did. `aborted` covers `bash: execution aborted`, which is what
- * an `AbortSignal` produces (probed). This module takes no such path today, and classifying it correctly
+ * an `AbortSignal` produces. This module takes no such path today, and classifying it correctly
  * now is cheap if it ever does.
  *
  * The exit code is required as well as the wording. 124 alone is reachable from a script that exits 124
@@ -178,8 +177,8 @@ export const cutOffByTheRuntime = (exitCode: number, stderr: string): boolean =>
  *
  * Neither is a fact about the corpus or the script. Both reach `stderr` as a thrown guest error, which
  * without this check is reported as the SCRIPT's non-zero exit — telling an agent its selector is wrong
- * when the sandbox merely failed to hand back a `stat`. Observed once on a 4-vCPU CI runner (2026-08-14,
- * `memhtml/memhtml` run 31830358200) on a walk of ~900 entries: `at isDirectory
+ * when the sandbox merely failed to hand back a `stat`. Observed once on a 4-vCPU CI runner
+ * on a walk of ~900 entries: `at isDirectory
  * (/workspace/lib/corpus.mjs:45:28): Error code: 0`, on a commit whose tree was byte-identical to one
  * that had passed minutes earlier. The bridge kept working afterwards — the guest's own `stderr` write
  * and exit both landed — so the fault is one operation, not a torn-down sandbox, which is what makes
@@ -211,8 +210,8 @@ export const BRIDGE_ATTEMPTS = 3
  * Run one attempt at a time until a report is the script's own answer, or fail as the runtime.
  *
  * Exported and parameterized by `attempt` because that is the only shape this loop can be tested in: a
- * bridge fault is a rare race — 72 executions under 3x CPU oversubscription did not produce one
- * (measured 2026-08-14) — so a test driving the real sandbox could not distinguish a working retry from
+ * bridge fault is a rare race — 72 executions under 3x CPU oversubscription did not produce one —
+ * so a test driving the real sandbox could not distinguish a working retry from
  * a fault that never fired. The injected attempt makes the loop's three claims falsifiable: a faulting
  * attempt is re-run, a script's own failure is NOT, and exhaustion is a typed failure.
  *
@@ -292,7 +291,7 @@ export interface ExecInput {
  *
  * `new Bash()` is constructed with no `network` and no `fetch` option, so just-bash never registers its
  * network commands at all. Per `Bash.d.ts:80`: "Network commands (curl, wget) are registered when either
- * `fetch` or `network` is provided." Probed 2026-08-09 (`scripts/probe-sandbox-egress.mjs`): `curl` is
+ * `fetch` or `network` is provided." `scripts/probe-sandbox-egress.mjs` demonstrates it: `curl` is
  * exit 127 "command not found", and the guest's `fetch` refuses on call with "Network access not
  * configured." `fetch` is a function there, so a `typeof` check on the global proves nothing. Eve
  * passes `dangerouslyAllowFullInternetAccess`, so the consolidator's sandbox does reach the network.
@@ -372,7 +371,7 @@ export const runExec = (
          *
          * `maxJsTimeoutMs` bounds the `js-exec` call and `maxExecutionTimeMs` bounds the whole shell
          * invocation, so both are needed. A script cannot outlive its budget by spending the time
-         * outside the JS worker. Which one fires first changes the diagnostic, probed 2026-08-09 on a
+         * outside the JS worker. Which one fires first changes the diagnostic, measured on a
          * `for(;;)` loop at a 400ms bound:
          *
          * | limits | exit | stderr |
@@ -459,8 +458,8 @@ export const readScript = async (file: string): Promise<string | Failure> => {
  *
  * ## Why a pinned worktree and not `$MEMHTML_ROOT` itself
  *
- * A live `$MEMHTML_ROOT` contains `.memhtml/index.db`, and the guest ships `sqlite3`. Probed 2026-08-09
- * against a read-only `OverlayFs` over a directory holding a real database: `sqlite3
+ * A live `$MEMHTML_ROOT` contains `.memhtml/index.db`, and the guest ships `sqlite3`. Against a
+ * read-only `OverlayFs` over a directory holding a real database: `sqlite3
  * /mnt/memhtml/.memhtml/index.db 'select count(*) …'` returned the row, exit 0. Read-only is therefore no
  * barrier to a reader, and mounting the live root would hand every script the ranked planes this command
  * is scoped to exclude, through a door no `memhtml exec` flag opens.

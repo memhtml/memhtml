@@ -68,6 +68,10 @@ export const ERROR_CODES = [
   "ERR_UNKNOWN_COMMAND",
   "ERR_MISSING_ARGUMENT",
   "ERR_INVALID_FLAG",
+  // A positional past what the command declares. Distinct from `ERR_INVALID_FLAG` because the
+  // offending token is not a flag, and distinct from `ERR_MISSING_ARGUMENT` because it is surplus
+  // rather than absent: the caller drops a word instead of adding one.
+  "ERR_UNEXPECTED_ARGUMENT",
   "ERR_PATH_NOT_FOUND",
   "ERR_INVALID_MEMORY",
   "ERR_DUPLICATE_CONTENT",
