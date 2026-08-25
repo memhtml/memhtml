@@ -1,12 +1,14 @@
 import { execFile } from "node:child_process"
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { promisify } from "node:util"
 import { Bash, type IFileSystem, MountableFs, OverlayFs, ReadWriteFs } from "just-bash"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import {
+  CORPUS_SNAPSHOT_TMPDIR_PREFIX,
   decodeSandboxMounts,
   encodeSandboxMounts,
   mountReadOnlyRoots,
@@ -401,6 +403,48 @@ describe("the corpus snapshot is pinned, not live", () => {
       await snapshot.release()
       await snapshot.release()
       expect((await git("worktree", "list")).stdout).not.toContain(snapshot.hostPath)
+    } finally {
+      await rm(repo, { recursive: true, force: true })
+    }
+  })
+
+  /**
+   * The mkdtemp PARENT goes with the worktree, and it is a second step: `git worktree remove` deletes
+   * only the tree it was handed, so a release that stopped there leaves an empty
+   * `memhtml-corpus-snapshot-*` directory in `tmpdir()` on the CLEAN path — every `memhtml exec`, with
+   * nothing failing and nothing to look at.
+   *
+   * The census across two cycles is what makes it a leak assertion rather than a path assertion: the
+   * name is a random suffix, and one-per-run is exactly what an unswept prefix looks like.
+   *
+   * (Mutation: dropping the `rm(parent)` from `release` leaves both parents and fails the count.)
+   */
+  it("removes the temp parent it created, not only the worktree", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "consolidator-repo-parent-"))
+    const countSnapshots = async (): Promise<number> =>
+      (await readdir(tmpdir())).filter((name) => name.startsWith(CORPUS_SNAPSHOT_TMPDIR_PREFIX))
+        .length
+    try {
+      const git = (...args: string[]) => run("git", ["-C", repo, ...args])
+      await git("init", "--initial-branch=main")
+      await git("config", "user.email", "t@example.com")
+      await git("config", "user.name", "t")
+      await writeFile(join(repo, "a.html"), "<mark>a</mark>")
+      await git("add", "a.html")
+      await git("commit", "-m", "base")
+      const sha = (await git("rev-parse", "HEAD")).stdout.trim()
+
+      const before = await countSnapshots()
+      for (let cycle = 0; cycle < 2; cycle += 1) {
+        const snapshot = await pinCorpusSnapshot({ repoRoot: repo, sha })
+        const parent = dirname(snapshot.hostPath)
+        // The prefix is the one the sweep in `client.ts` matches; a mkdtemp under any other name would
+        // be unreachable by it.
+        expect(parent.startsWith(join(tmpdir(), CORPUS_SNAPSHOT_TMPDIR_PREFIX))).toBe(true)
+        await snapshot.release()
+        expect(existsSync(parent)).toBe(false)
+      }
+      expect(await countSnapshots()).toBe(before)
     } finally {
       await rm(repo, { recursive: true, force: true })
     }

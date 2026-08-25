@@ -10,11 +10,17 @@ import {
   CONSOLIDATION_OUTPUT_JSON_SCHEMA,
   ConsolidationPayload,
   isConsolidationKind,
+  MAX_CANDIDATES_PER_RESULT,
   MAX_CLAIM_CHARS,
+  MAX_COMMITMENTS_PER_RESULT,
+  MAX_ENTITIES_PER_CANDIDATE,
+  MAX_EVIDENCE_PER_CANDIDATE,
   MAX_QUOTE_CHARS,
   MAX_STATEMENT_CHARS,
+  underCitedWatermarkWarning,
   ungroundedCommitmentReason,
-  ungroundedEvidenceReason
+  ungroundedEvidenceReason,
+  watermarkableSessionIds
 } from "../src/contract.js"
 
 /**
@@ -448,6 +454,222 @@ describe("evidence must be grounded in the READABLE batch", () => {
     expect(
       ungroundedCommitmentReason([{ evidence: evidence("session-a", "quote") }], [])
     ).not.toBeNull()
+  })
+})
+
+describe("one answer is finite by contract", () => {
+  /**
+   * Every scalar field carries a ceiling and the LISTS have to as well, or one turn's answer is as
+   * large as the model chooses: each evidence quote also costs a containment walk over the cited
+   * transcript in `fabricatedQuoteReason`, so an unbounded list is unbounded verification work too.
+   * The bounds are far above what the instructions ask for (six candidates, a handful of
+   * commitments), so tripping one is an off-contract answer rather than a thorough one.
+   *
+   * (Mutation: removing any `isMaxLength` from the contract's list fields fails the matching case.)
+   */
+  it("REJECTS a payload with more candidates than the ceiling", () => {
+    const many = Array.from({ length: MAX_CANDIDATES_PER_RESULT + 1 }, () => candidate())
+    expect(Result.isFailure(decode({ candidates: many }))).toBe(true)
+    expect(
+      Result.isSuccess(decode({ candidates: Array.from({ length: 3 }, () => candidate()) }))
+    ).toBe(true)
+  })
+
+  it("REJECTS a payload with more commitments than the ceiling", () => {
+    const many = Array.from({ length: MAX_COMMITMENTS_PER_RESULT + 1 }, () => commitment())
+    expect(Result.isFailure(decode({ candidates: [], commitments: many }))).toBe(true)
+  })
+
+  it("REJECTS a candidate with more evidence quotes than the ceiling", () => {
+    const quotes = Array.from({ length: MAX_EVIDENCE_PER_CANDIDATE + 1 }, (_, i) =>
+      evidence("session-a", `quote number ${String(i)}`)
+    )
+    expect(Result.isFailure(decode({ candidates: [candidate({ evidence: quotes })] }))).toBe(true)
+  })
+
+  it("REJECTS a candidate with more entities than the ceiling", () => {
+    const entities = Array.from(
+      { length: MAX_ENTITIES_PER_CANDIDATE + 1 },
+      (_, i) => `entity-${String(i)}`
+    )
+    expect(Result.isFailure(decode({ candidates: [candidate({ entities })] }))).toBe(true)
+  })
+
+  /**
+   * The other side of every ceiling: EXACTLY the bound decodes.
+   *
+   * A cap tested only at MAX+1 pins the direction and not the value, so a later edit that tightened any
+   * of these — to `MAX - 1`, or from `isMaxLength` to an exclusive check — would keep every rejection
+   * case green while refusing answers the contract's own constants call legal. The instructions ask for
+   * far less than these bounds, so the value that matters is not the model's typical answer but the
+   * boundary the decode advertises.
+   *
+   * (Mutation: `isMaxLength(MAX_CANDIDATES_PER_RESULT - 1)` — or the same on any of the four — fails
+   * here and nowhere else.)
+   */
+  it("ACCEPTS exactly the ceiling on all four lists", () => {
+    const quotes = Array.from({ length: MAX_EVIDENCE_PER_CANDIDATE }, (_, i) =>
+      evidence("session-a", `quote number ${String(i)}`)
+    )
+    const entities = Array.from(
+      { length: MAX_ENTITIES_PER_CANDIDATE },
+      (_, i) => `entity-${String(i)}`
+    )
+    expect(
+      Result.isSuccess(
+        decode({
+          candidates: Array.from({ length: MAX_CANDIDATES_PER_RESULT }, () => candidate()),
+          commitments: []
+        })
+      )
+    ).toBe(true)
+    expect(
+      Result.isSuccess(
+        decode({
+          candidates: [],
+          commitments: Array.from({ length: MAX_COMMITMENTS_PER_RESULT }, () => commitment())
+        })
+      )
+    ).toBe(true)
+    expect(Result.isSuccess(decode({ candidates: [candidate({ evidence: quotes })] }))).toBe(true)
+    expect(Result.isSuccess(decode({ candidates: [candidate({ entities })] }))).toBe(true)
+  })
+})
+
+describe("watermarkableSessionIds gates the watermark on evidence of reading", () => {
+  const READABLE = ["session-a", "session-b", "session-c"]
+
+  /**
+   * Reachability is measured by this process BEFORE the model runs, so it can never prove reading.
+   * The only receipt an answer carries is its quotes — verified against the real files by
+   * `fabricatedQuoteReason` — so an answer with no candidates AND no commitments proves nothing and
+   * must advance nothing. Without this rule, a misrouted or hollow turn watermarks the whole batch
+   * and those sessions are never read again.
+   *
+   * (Mutation: returning `readableSessionIds` unconditionally fails the first case.)
+   */
+  it("advances NOTHING for an answer with zero candidates and zero commitments", () => {
+    expect(watermarkableSessionIds({ candidates: [], commitments: [] }, READABLE)).toEqual([])
+  })
+
+  it("advances EVERY readable session on one finding's receipt — a KNOWN residual, not a proof", () => {
+    /**
+     * The guarantee, stated as what it is rather than as what would be safe. One finding advances the
+     * WHOLE readable set, cited or not, and the receipt behind it is per-RUN: the quote-containment gate
+     * proves some file was opened and quoted, and a `ConsolidationPayload` says nothing about the
+     * others. So a turn that opened 1 of 32 reachable transcripts and returned one candidate with two
+     * real quotes advances all 32, and `trace_consolidations` is an anti-join, so the 31 it never read
+     * are lost rather than delayed.
+     *
+     * That is deliberate and it is not free. The alternative — advancing only cited sessions — re-reads
+     * every quiet transcript at full model cost every night forever, and "the agent read it and found
+     * nothing above the bar" is what the watermark means. Closing the hole needs a per-session read
+     * receipt in the payload; until then {@link underCitedWatermarkWarning} makes the narrow-receipt
+     * shape visible in the log, and this case pins the residual so nobody reads it as a checked
+     * guarantee.
+     */
+    expect(
+      watermarkableSessionIds({ candidates: [candidate()], commitments: [] }, READABLE)
+    ).toEqual(READABLE)
+    expect(
+      watermarkableSessionIds({ candidates: [], commitments: [commitment()] }, READABLE)
+    ).toEqual(READABLE)
+    // The uncited sessions advance: `session-b` and `session-c` are named by nothing in the answer.
+    const cited = candidate().evidence.map((quote) => quote.sessionId)
+    expect(cited).not.toContain("session-c")
+    expect(
+      watermarkableSessionIds({ candidates: [candidate()], commitments: [] }, READABLE)
+    ).toContain("session-c")
+  })
+
+  it("advances nothing when nothing was reachable, whatever the answer claims", () => {
+    expect(watermarkableSessionIds({ candidates: [candidate()], commitments: [] }, [])).toEqual([])
+  })
+})
+
+describe("a narrow receipt is logged rather than silently watermarked", () => {
+  /** Enough sessions for the ratio to carry signal; below eight the rule declines to speak. */
+  const batchOf = (count: number): ReadonlyArray<string> =>
+    Array.from({ length: count }, (_, i) => `session-${String(i)}`)
+
+  /** One candidate quoting one session twice: the answer a truncated or lazy turn returns. */
+  const oneSessionCandidate = (sessionId: string) =>
+    candidate({
+      evidence: [evidence(sessionId, "the first line"), evidence(sessionId, "the second line")]
+    })
+
+  /**
+   * THE observability gap. A turn that opened 1 of 32 reachable transcripts, returned one candidate with
+   * two real quotes from that one session, and watermarked all 32 passed every gate WITHOUT a log line
+   * distinguishable from a thorough run's — and the 31 it never read are gone, because the selection is
+   * an anti-join. The warning does not change the advance; it makes the advance's breadth visible.
+   *
+   * (Mutation: returning `null` unconditionally, or counting evidence QUOTES rather than distinct
+   * sessions, fails this case — two quotes from one session is one session's receipt.)
+   */
+  it("warns when a whole batch advances on quotes from a small fraction of it", () => {
+    const readable = batchOf(32)
+    const warning = underCitedWatermarkWarning(
+      { candidates: [oneSessionCandidate("session-0")], commitments: [] },
+      readable
+    )
+    expect(warning).not.toBeNull()
+    // The three counts an operator acts on: what advanced, what cited, and what advanced uncited.
+    expect(warning).toContain("watermarking 32")
+    expect(warning).toContain("only 1 of them")
+    expect(warning).toContain("other 31")
+  })
+
+  /**
+   * A thorough turn is silent. The threshold is a quarter of the advancing batch, and a run citing nine
+   * of 32 sessions is the shape the instructions ask for — a warning there teaches an operator to
+   * ignore the line by the time a one-session receipt arrives.
+   */
+  it("says nothing when a quarter or more of the batch is cited", () => {
+    const readable = batchOf(32)
+    const candidates = Array.from({ length: 8 }, (_, i) =>
+      oneSessionCandidate(`session-${String(i)}`)
+    )
+    expect(underCitedWatermarkWarning({ candidates, commitments: [] }, readable)).toBeNull()
+  })
+
+  /** Commitments are receipts too: a commitment's session is cited exactly as a candidate's is. */
+  it("counts cited sessions across BOTH lists", () => {
+    const readable = batchOf(12)
+    const commitments = Array.from({ length: 3 }, (_, i) =>
+      commitment({
+        evidence: evidence(`session-${String(i)}`, "I'll wire capture before we cut the release")
+      })
+    )
+    expect(
+      underCitedWatermarkWarning(
+        { candidates: [oneSessionCandidate("session-9")], commitments },
+        readable
+      )
+    ).toBeNull()
+    // The same four sessions cited against a batch three times the size does warn.
+    expect(
+      underCitedWatermarkWarning(
+        { candidates: [oneSessionCandidate("session-9")], commitments },
+        batchOf(32)
+      )
+    ).not.toBeNull()
+  })
+
+  /**
+   * Two arms that must stay quiet, for different reasons. An answer with NO findings advances nothing at
+   * all — {@link watermarkableSessionIds} already returns `[]` and the client logs that arm itself, so a
+   * second warning about a watermark that is not happening would be noise. And a small batch carries no
+   * ratio: one citation out of two is both the floor and the ordinary shape of a two-transcript night.
+   */
+  it("is silent for an answer that advances nothing, and for a small batch", () => {
+    expect(underCitedWatermarkWarning({ candidates: [], commitments: [] }, batchOf(32))).toBeNull()
+    expect(
+      underCitedWatermarkWarning(
+        { candidates: [oneSessionCandidate("session-0")], commitments: [] },
+        batchOf(4)
+      )
+    ).toBeNull()
   })
 })
 

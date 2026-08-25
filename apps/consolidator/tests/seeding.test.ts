@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -7,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { guestPathFor, makeConsolidator } from "../src/client.js"
 import { type ConsolidatorError, ConsolidatorUnavailable } from "../src/contract.js"
+import { CORPUS_SNAPSHOT_TMPDIR_PREFIX } from "../src/mount.js"
 
 /**
  * The seeding tier: transcripts reach the sandbox through a READ-ONLY MOUNT, and a transcript that
@@ -346,6 +348,38 @@ describe("transcripts never enter the model's context", () => {
   })
 })
 
+describe("the watermark is gated on evidence of reading", () => {
+  /**
+   * The rule itself — an answer with zero candidates AND zero commitments advances nothing — is
+   * `watermarkableSessionIds`, tested as a pure function in `contract.test.ts`. What this tier owns
+   * is the WIRING: `runTurn` must route `analyzedSessionIds` through the gate rather than assigning
+   * the reachable set directly, because the reachable set is measured before the model runs and
+   * proves nothing about reading. Asserted as code shape for the same reason the `clientContext`
+   * case above is: the behavioral route needs a live model turn.
+   *
+   * (Mutation: restoring `analyzedSessionIds: readableIds` in `runTurn` fails both assertions.)
+   */
+  it("routes analyzedSessionIds through watermarkableSessionIds, never the raw reachable set", async () => {
+    const code = codeOnly(await clientSource())
+    expect(code).toContain("watermarkableSessionIds(decoded.success, readableIds)")
+    expect(code).not.toMatch(/analyzedSessionIds:\s*readableIds/)
+  })
+
+  /**
+   * The breadth of the receipt is logged at the same place the watermark is decided, and the wiring is
+   * asserted here for the same reason as above: the rule is pure and tested in `contract.test.ts`, while
+   * reaching the log line behaviorally needs a live model turn. Without the call, a turn that read one
+   * transcript of thirty-two watermarks all thirty-two and says nothing an operator can see.
+   *
+   * (Mutation: deleting the `underCitedWatermarkWarning` call from `runTurn` fails both assertions.)
+   */
+  it("logs the narrow-receipt warning beside the watermark it describes", async () => {
+    const code = codeOnly(await clientSource())
+    expect(code).toContain("underCitedWatermarkWarning(decoded.success, readableIds)")
+    expect(code).toMatch(/Effect\.logWarning\(underCited\)/)
+  })
+})
+
 describe("nothing is left behind, and nothing extra is written", () => {
   /**
    * The manifest's temp directory is REMOVED even though the run failed at the spawn.
@@ -383,5 +417,59 @@ describe("nothing is left behind, and nothing extra is written", () => {
     const before = (await readdir(projects)).sort()
     await failureOf({ transcripts: reachable() })
     expect((await readdir(projects)).sort()).toEqual(before)
+  })
+
+  /**
+   * A run directory a PAST process was SIGKILLed out of is unreachable by any finalizer — in-process
+   * cleanup is code, and the process is gone. The next run sweeps this app's own temp prefix for
+   * entries older than a day; a YOUNG sibling may belong to a live concurrent run and must survive.
+   * Ages are forged with `utimes` rather than waited out.
+   *
+   * (Mutation: dropping the `sweepOrphanedTempDirectories()` call from `consolidate` leaves the stale
+   * orphan on disk and fails the first assertion.)
+   */
+  it("sweeps a stale orphaned run directory on startup, and spares a fresh one", async () => {
+    const stale = await mkdtemp(join(tmpdir(), "memhtml-consolidator-run-"))
+    await writeFile(join(stale, "MANIFEST.json"), "{}\n")
+    const twoDaysAgo = (Date.now() - 2 * 24 * 60 * 60 * 1000) / 1000
+    await utimes(stale, twoDaysAgo, twoDaysAgo)
+
+    const fresh = await mkdtemp(join(tmpdir(), "memhtml-consolidator-run-"))
+    try {
+      await failureOf({ transcripts: reachable() })
+      expect(existsSync(stale)).toBe(false)
+      expect(existsSync(fresh)).toBe(true)
+    } finally {
+      await rm(stale, { recursive: true, force: true })
+      await rm(fresh, { recursive: true, force: true })
+    }
+  })
+
+  /**
+   * The sweep's SCOPE is every temp prefix this app creates, not only the one this file's code writes.
+   *
+   * `memhtml exec` pins a corpus snapshot under `memhtml-corpus-snapshot-*` (`mount.ts`) and dies the
+   * same way a run does, and nothing else on the box sweeps that prefix — a sweep of the wrong scope is
+   * the same defect as no sweep, one prefix at a time. The age gate is the same one, so a young snapshot
+   * that may belong to a live `exec` survives.
+   *
+   * (Mutation: narrowing the sweep back to `RUN_TMPDIR_PREFIX` leaves the stale snapshot and fails the
+   * first assertion.)
+   */
+  it("sweeps a stale pinned corpus snapshot too, and spares a fresh one", async () => {
+    const stale = await mkdtemp(join(tmpdir(), CORPUS_SNAPSHOT_TMPDIR_PREFIX))
+    await mkdir(join(stale, "tree"), { recursive: true })
+    const twoDaysAgo = (Date.now() - 2 * 24 * 60 * 60 * 1000) / 1000
+    await utimes(stale, twoDaysAgo, twoDaysAgo)
+
+    const fresh = await mkdtemp(join(tmpdir(), CORPUS_SNAPSHOT_TMPDIR_PREFIX))
+    try {
+      await failureOf({ transcripts: reachable() })
+      expect(existsSync(stale)).toBe(false)
+      expect(existsSync(fresh)).toBe(true)
+    } finally {
+      await rm(stale, { recursive: true, force: true })
+      await rm(fresh, { recursive: true, force: true })
+    }
   })
 })

@@ -1,11 +1,22 @@
 import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
-import { cp, mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises"
+import {
+  cp,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from "node:fs/promises"
 import { createRequire } from "node:module"
 import { homedir } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import { Effect } from "effect"
 
+import { appendStderrTail, stderrMessageTail } from "./child-stderr.js"
 import { ConsolidatorUnavailable } from "./contract.js"
 
 /**
@@ -41,8 +52,9 @@ import { ConsolidatorUnavailable } from "./contract.js"
  *
  * Resolution goes through the MANIFEST, not the bin. `resolve("eve/bin/eve.js")` raises
  * `ERR_PACKAGE_PATH_NOT_EXPORTED`: eve's `exports` map declares no `./bin/*` subpath, so node refuses
- * the deep path even though the file is there (probed against eve 0.33.0). `./package.json` IS
- * exported, and the `bin` field beside it names the entry point.
+ * the deep path even though the file is there. `tests/start-port.test.ts` re-proves both halves
+ * against the INSTALLED eve on every run — the deep path refused, `./package.json` exported with a
+ * real `bin` beside it — so an eve release that changes either fails there.
  */
 export const eveBinPath = (): string | null => {
   const require = createRequire(import.meta.url)
@@ -60,6 +72,72 @@ export const eveBinPath = (): string | null => {
 /** Per-version, so an upgrade builds fresh instead of serving the previous release's output. */
 const cacheRootFor = (version: string): string =>
   join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "memhtml", "eve", version)
+
+/**
+ * The file whose PRESENCE says the cache directory holds a COMPLETED build.
+ *
+ * `.output/` existing cannot say that: `eve build` writes it in place over seconds, so a process
+ * killed mid-build leaves a partial `.output/` that an existence check reads as complete — forever,
+ * because nothing would ever rebuild it, and `eve start` over a partial output is a server that
+ * fails in whatever way the missing half implies. This marker is written into the STAGING directory
+ * only after `eve build` exits 0 with its output verified, and the staging directory is then
+ * `rename`d to the cache root in one atomic step — so the marker can only ever be observed beside
+ * the finished build it certifies. A cache directory without it, whatever else it holds, is a
+ * partial to discard and rebuild.
+ */
+const BUILD_COMPLETE_MARKER = ".memhtml-build-complete"
+
+/** Where a completed build's marker sits. Exported logic's one source of the path. */
+const buildMarkerPath = (cacheRoot: string): string => join(cacheRoot, BUILD_COMPLETE_MARKER)
+
+/**
+ * The file `eve start` serves, relative to a built root.
+ *
+ * A build is verified against THIS PATH rather than against `.output/`, because `eve build` exiting 0
+ * is not the same claim as `eve build` having emitted a server. An empty-but-present `.output/` earns
+ * the completion marker under a directory check, and the marker is permanent — so the box would serve
+ * an app with no entry point for that version's whole life. It is the "a scanner can exit 0 having
+ * produced nothing" hazard in build form, and the entry file is the artifact whose absence a boot
+ * would discover.
+ */
+const BUILT_SERVER_ENTRY = join(".output", "server", "index.mjs")
+
+/**
+ * The staging directory's suffix, named once so the stage path and its sweep cannot drift.
+ *
+ * `<cacheRoot>.staging-<pid>` — a SIBLING of the cache root, so publishing is one `rename` on one
+ * filesystem, and pid-suffixed so a dead process's tree is never mistaken for a live one's.
+ */
+const STAGING_SUFFIX = ".staging-"
+
+const stagingPathFor = (cacheRoot: string, pid: number): string =>
+  `${cacheRoot}${STAGING_SUFFIX}${String(pid)}`
+
+/**
+ * How stale an orphaned staging tree must be before the sweep reclaims it. A build holds the lock for
+ * tens of seconds and cannot hold it past {@link BUILD_WAIT_BUDGET_MS}, so a day is two orders of
+ * magnitude of margin, and a tree younger than that may belong to a live builder.
+ */
+const ORPHAN_STAGING_MAX_AGE_MS = 24 * 60 * 60 * 1000
+
+/**
+ * How old a build lock may be before another process takes it over.
+ *
+ * The lock (a `mkdir`-ed sibling directory) is held for one stage-plus-build, measured in tens of
+ * seconds for the ~17 MB output. Ten minutes says its holder is dead — killed between `mkdir` and
+ * the `finally` that removes it — rather than slow, and a dead holder's lock would otherwise block
+ * every future run on this box for this version.
+ */
+const BUILD_LOCK_STALE_MS = 10 * 60_000
+
+/** How often a waiting process re-checks the marker and the lock. */
+const BUILD_LOCK_POLL_MS = 500
+
+/**
+ * How long a process waits on another's build before giving up. Stale takeover happens well before
+ * this; the budget only binds when a LIVE holder builds for longer than the stale age plus a poll.
+ */
+const BUILD_WAIT_BUDGET_MS = BUILD_LOCK_STALE_MS + 60_000
 
 /** A bare specifier's package name: two segments when scoped, one otherwise. */
 const packageOf = (specifier: string): string => {
@@ -201,10 +279,12 @@ const runEveBuild = (input: {
       cwd: input.cwd,
       stdio: ["ignore", "ignore", "pipe"]
     })
+    // Only a bounded TAIL is retained, and the failure message below renders the END of it. Both
+    // rules are `child-stderr.ts`'s, shared with the `eve start` child in `client.ts`.
     let stderr = ""
     child.stderr.setEncoding("utf8")
     child.stderr.on("data", (chunk: string) => {
-      stderr += chunk
+      stderr = appendStderrTail(stderr, chunk)
     })
     child.once("error", (cause) => {
       resume(
@@ -219,7 +299,7 @@ const runEveBuild = (input: {
           ? Effect.void
           : Effect.fail(
               ConsolidatorUnavailable.make({
-                reason: `eve build exited with code ${String(code)} in ${input.cwd}. ${stderr.slice(-400)}`
+                reason: `eve build exited with code ${String(code)} in ${input.cwd}. ${stderrMessageTail(stderr)}`
               })
             )
       )
@@ -230,12 +310,170 @@ const runEveBuild = (input: {
   })
 
 /**
+ * Whether a cache directory holds a COMPLETED build. The marker is the answer; `.output/` alone is
+ * not, because a killed `eve build` leaves a partial `.output/` behind. See
+ * {@link BUILD_COMPLETE_MARKER}, which is written only beside a verified {@link BUILT_SERVER_ENTRY}.
+ */
+export const cacheBuildComplete = (cacheRoot: string): boolean =>
+  existsSync(buildMarkerPath(cacheRoot)) && existsSync(join(cacheRoot, ".output"))
+
+/**
+ * Remove staging trees a PAST process left beside this cache root. Best-effort; never fails a build.
+ *
+ * `${cacheRoot}.staging-<pid>` is removed by its own builder's finalizer on every path an Effect
+ * finalizer runs on, and SIGKILL runs none of them — so a killed build strands ~17 MB with nothing else
+ * in reach of it: that finalizer knows only its own pid's path, and the temp-dir sweep in `client.ts`
+ * covers a different prefix under a different root. This is the one thing that can reclaim them, and it
+ * runs under the build lock so it cannot race a live stager.
+ *
+ * Age-gated by {@link ORPHAN_STAGING_MAX_AGE_MS}, and this process's own staging path is never a
+ * candidate whatever its mtime says.
+ */
+export const sweepOrphanedStagingTrees = async (cacheRoot: string): Promise<void> => {
+  const parent = dirname(cacheRoot)
+  const prefix = `${basename(cacheRoot)}${STAGING_SUFFIX}`
+  const own = stagingPathFor(cacheRoot, process.pid)
+  const cutoff = Date.now() - ORPHAN_STAGING_MAX_AGE_MS
+  const names = await readdir(parent).catch((): ReadonlyArray<string> => [])
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue
+    const path = join(parent, name)
+    if (path === own) continue
+    const mtime = await stat(path).then(
+      (stats) => stats.mtimeMs,
+      () => null
+    )
+    if (mtime === null || mtime > cutoff) continue
+    await rm(path, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+/** A held build lock: the directory to remove when done. */
+interface BuildLock {
+  readonly release: () => Promise<void>
+}
+
+/**
+ * Move a lock believed stale out of the way, and refuse to move any other lock.
+ *
+ * ## `rename` is the arbitration; an `rm` is not
+ *
+ * Two waiters can measure the same stale lock and both decide to take it over. An unconditional
+ * `rm(lockDir)` there is not an arbitration at all — it says nothing about WHICH directory it removed,
+ * so the ordering `stat(A), stat(B), rm(A), mkdir(A), rm(B), mkdir(B)` leaves A and B both holding: B's
+ * `rm` deleted the fresh lock A had just created, and B's `mkdir` then succeeded. `rename` narrows
+ * that: for one directory instance exactly one racer's rename can succeed, so the loser gets ENOENT and
+ * returns to the `mkdir`, where the winner's fresh lock excludes it.
+ *
+ * ## The inode is what binds the rename to the lock that was MEASURED
+ *
+ * `rename` alone still moves whatever sits at the path. A waiter's staleness reading is taken before
+ * its rename, and in between the takeover winner can have released and a third process can have created
+ * a fresh lock at the same path — renaming THAT aside would delete a live holder's lock and hand this
+ * waiter a second, concurrent hold, which is the same defect one step later. So a claim whose renamed
+ * directory is not the inode the staleness was read from is put straight back and this waiter acquires
+ * nothing; only the measured directory is ever discarded.
+ *
+ * The residual is the moment between such a mistaken rename and its restore, during which the path is
+ * empty and a waiter arriving at the top of the loop can `mkdir` it. That window is microseconds of
+ * filesystem calls and it costs at most what the previous shape cost always.
+ *
+ * Exported for `tests/agent-build.test.ts`, which drives both arms directly: the interleaving above
+ * cannot be forced through {@link acquireBuildLock} from one process.
+ */
+export const claimStaleLock = async (lockDir: string, staleIno: number): Promise<void> => {
+  const aside = `${lockDir}.stale-${String(process.pid)}`
+  await rm(aside, { recursive: true, force: true }).catch(() => {})
+  const claimed = await rename(lockDir, aside).then(
+    () => true,
+    () => false
+  )
+  if (!claimed) return
+  const moved = await stat(aside).then(
+    (stats) => stats.ino,
+    () => null
+  )
+  if (moved !== staleIno) {
+    await rename(aside, lockDir).catch(() => {})
+    return
+  }
+  await rm(aside, { recursive: true, force: true }).catch(() => {})
+}
+
+/**
+ * Take the per-version build lock, waiting out or taking over another holder.
+ *
+ * `mkdir` without `recursive` is the primitive: it either creates the directory (the lock is ours)
+ * or throws `EEXIST` (someone holds it), atomically, on every filesystem node runs on. Two runs on
+ * one box CAN race here — the sleep cycle and a hand-driven `memhtml` both resolving the same
+ * unbuilt version — and without the lock both would build into the shared cache root at once,
+ * interleaving two `eve build`s' output.
+ *
+ * A holder that died between its `mkdir` and its `release` (SIGKILL leaves no `finally`) is detected
+ * by the lock directory's AGE: past {@link BUILD_LOCK_STALE_MS} it cannot be a live build, so the
+ * waiter claims it through {@link claimStaleLock} and retries the `mkdir`. The claim is a `rename`
+ * bound to the inode the staleness was measured on, and that binding is what keeps two waiters from
+ * both ending up holding: see that function for the interleaving an unconditional `rm` admits.
+ *
+ * Exported for `tests/agent-build.test.ts`, which proves the lock excludes and the stale takeover
+ * fires; no production caller outside {@link resolveAgentAppRoot} reaches it.
+ */
+export const acquireBuildLock = async (cacheRoot: string): Promise<BuildLock> => {
+  const lockDir = `${cacheRoot}.lock`
+  // The lock is taken before anything else touches the cache tree, so its parent may not exist yet.
+  // Created separately from the lock itself: `recursive: true` on the lock mkdir would report
+  // success on an ALREADY-EXISTING directory, which is exactly the case the lock must refuse.
+  await mkdir(dirname(lockDir), { recursive: true })
+  const deadline = Date.now() + BUILD_WAIT_BUDGET_MS
+  for (;;) {
+    try {
+      await mkdir(lockDir)
+      return { release: () => rm(lockDir, { recursive: true, force: true }).catch(() => {}) }
+    } catch (cause) {
+      if ((cause as { readonly code?: string }).code !== "EEXIST") throw cause
+    }
+    // The inode travels with the age, because the claim below acts on the directory this reading
+    // describes and not merely on the path it sits at.
+    const held = await stat(lockDir).then(
+      (stats) => ({ age: Date.now() - stats.mtimeMs, ino: stats.ino }),
+      () => null
+    )
+    if (held !== null && held.age > BUILD_LOCK_STALE_MS) {
+      await claimStaleLock(lockDir, held.ino)
+      continue
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `another process has held the build lock ${lockDir} past the wait budget; ` +
+          "remove it if no eve build is running"
+      )
+    }
+    await new Promise((done) => setTimeout(done, BUILD_LOCK_POLL_MS))
+  }
+}
+
+/**
  * The directory `eve start` will be run in, building the agent first when nothing has.
  *
  * Order is deliberate. An explicit `appRoot` is an operator's choice and is never second-guessed. A
  * package that already holds `.output/` is a checkout where `build:agent` has run, and reusing it keeps
  * development behavior byte-identical. Only the remaining case — an installed package with no output —
  * materializes the cache directory, and it costs one ~17 MB build per version rather than one per run.
+ *
+ * ## Completion is a RENAME, not a file count
+ *
+ * The build is staged and run in a TEMP SIBLING of the cache root and moved into place with one
+ * `rename` after `eve build` exits 0 and its {@link BUILT_SERVER_ENTRY} is on disk — the file a boot
+ * needs, rather than the directory it sits in. `rename` on one filesystem is
+ * atomic, so the cache root either holds a whole completed build (marker included, see
+ * {@link BUILD_COMPLETE_MARKER}) or does not exist — a process killed anywhere in the middle leaves
+ * only a staging directory nothing consults, which the next run removes and redoes. A cache root
+ * WITHOUT the marker (the shape a pre-marker build, or a directly-killed in-place build, leaves) is
+ * treated as partial: removed and rebuilt.
+ *
+ * The build itself runs under a `mkdir`-based lock with stale-age takeover
+ * ({@link acquireBuildLock}), because two processes staging into the same version's cache
+ * concurrently would interleave their trees.
  */
 export const resolveAgentAppRoot = (input: {
   readonly packageRoot: string
@@ -255,25 +493,77 @@ export const resolveAgentAppRoot = (input: {
         })
     })
     const cacheRoot = cacheRootFor(version)
-    if (existsSync(join(cacheRoot, ".output"))) return cacheRoot
+    if (cacheBuildComplete(cacheRoot)) return cacheRoot
 
-    yield* Effect.logInfo(`building the consolidator agent into ${cacheRoot} (once per version)`)
-    yield* Effect.tryPromise({
-      try: () => stageAgentTree({ packageRoot, cacheRoot, version }),
-      catch: (cause) =>
-        ConsolidatorUnavailable.make({
-          reason: `could not stage the consolidator agent in ${cacheRoot}: ${String(cause)}`
-        })
-    })
+    return yield* Effect.acquireUseRelease(
+      Effect.tryPromise({
+        try: () => acquireBuildLock(cacheRoot),
+        catch: (cause) =>
+          ConsolidatorUnavailable.make({
+            reason: `could not lock the consolidator agent build: ${String(cause)}`
+          })
+      }),
+      () => {
+        /**
+         * Suffixed with the pid so a stale staging directory from a dead process is never mistaken
+         * for this one's; the lock means at most one LIVE process stages per version at a time.
+         */
+        const staging = stagingPathFor(cacheRoot, process.pid)
+        return Effect.gen(function* () {
+          // Another process may have completed the build while this one waited on the lock.
+          if (cacheBuildComplete(cacheRoot)) return cacheRoot
 
-    yield* runEveBuild({ eveBin, cwd: cacheRoot })
+          yield* Effect.logInfo(
+            `building the consolidator agent into ${cacheRoot} (once per version)`
+          )
+          yield* Effect.tryPromise({
+            try: async () => {
+              // Under the lock, so a sibling staging tree here belongs to a dead builder.
+              await sweepOrphanedStagingTrees(cacheRoot)
+              await rm(staging, { recursive: true, force: true })
+              await stageAgentTree({ packageRoot, cacheRoot: staging, version })
+            },
+            catch: (cause) =>
+              ConsolidatorUnavailable.make({
+                reason: `could not stage the consolidator agent in ${staging}: ${String(cause)}`
+              })
+          })
 
-    if (!existsSync(join(cacheRoot, ".output"))) {
-      return yield* Effect.fail(
-        ConsolidatorUnavailable.make({ reason: `eve build wrote no .output/ in ${cacheRoot}` })
-      )
-    }
-    return cacheRoot
+          yield* runEveBuild({ eveBin, cwd: staging })
+
+          if (!existsSync(join(staging, BUILT_SERVER_ENTRY))) {
+            return yield* Effect.fail(
+              ConsolidatorUnavailable.make({
+                reason: `eve build wrote no ${BUILT_SERVER_ENTRY} in ${staging}`
+              })
+            )
+          }
+
+          yield* Effect.tryPromise({
+            try: async () => {
+              await writeFile(buildMarkerPath(staging), `${new Date().toISOString()}\n`, "utf8")
+              // A markerless cache root is a partial from an interrupted pre-rename (or killed
+              // in-place) build; replace it.
+              await rm(cacheRoot, { recursive: true, force: true })
+              await rename(staging, cacheRoot)
+            },
+            catch: (cause) =>
+              ConsolidatorUnavailable.make({
+                reason: `could not publish the built agent to ${cacheRoot}: ${String(cause)}`
+              })
+          })
+          return cacheRoot
+        }).pipe(
+          // A failed build's staging tree is ~17 MB nothing will consult; remove it while the lock
+          // still excludes a concurrent stager. After the success rename this path no longer exists
+          // and the forced rm is a no-op.
+          Effect.ensuring(
+            Effect.promise(() => rm(staging, { recursive: true, force: true }).catch(() => {}))
+          )
+        )
+      },
+      (lock) => Effect.promise(lock.release)
+    )
   })
 
 /** Exported for the tests that assert the location, which is the part a reader can get wrong. */

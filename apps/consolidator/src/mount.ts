@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process"
 import { mkdtempSync, statSync } from "node:fs"
+import { rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, normalize } from "node:path"
 import { promisify } from "node:util"
@@ -12,13 +13,16 @@ import { InMemoryFs, MountableFs, OverlayFs } from "just-bash"
  * Two consumers need the SAME shape and it is built once here: this app's consolidator, which
  * mounts the transcript root so the agent reads transcripts off a filesystem, and `memhtml exec`, which
  * mounts the memory corpus so a sandboxed script can traverse it. The module lives in
- * `apps/consolidator` because that is where `just-bash` is a real dependency, pinned to 3.2.0,
- * the version eve 0.33.0 loads through its own optional-package path
- * (node_modules/eve/dist/src/execution/sandbox/bindings/just-bash-runtime.js). `memhtml exec` imports it
- * from `@memhtml/consolidator`.
+ * `apps/consolidator` because that is where `just-bash` is a real dependency (pinned in
+ * `package.json`, inside the `^3.0.0` range eve loads through its own optional-package path,
+ * node_modules/eve/dist/src/execution/sandbox/bindings/just-bash-runtime.js). `memhtml exec` imports
+ * it from `@memhtml/consolidator`.
  *
- * Every fact below was measured against just-bash 3.2.0 on 2026-08-09, re-probing the 2026-08
- * spike's findings rather than citing them.
+ * The facts below were first measured against just-bash 3.2.0 (2026-08-09). The load-bearing ones —
+ * EROFS on write, symlinks not followed, the mountPoint spellings, nesting/trailing-slash refusals,
+ * the base surviving — are re-proven against the INSTALLED just-bash on every run of
+ * `tests/mount.test.ts`, so a behavior change in an upgrade fails there rather than aging in this
+ * comment.
  */
 
 /**
@@ -231,6 +235,17 @@ export const decodeSandboxMounts = (
   return roots
 }
 
+/**
+ * The temp directory prefix a pinned snapshot lives under, named once so the `mkdtemp` and the sweep
+ * that reclaims an orphan cannot drift.
+ *
+ * Exported because the sweep is `client.ts`'s — one startup sweep covers every temp prefix this app
+ * creates, and it matches literal prefixes rather than a glob, so each prefix has to be a value it can
+ * import. {@link pinCorpusSnapshot} is reached on the `memhtml exec` path, where a SIGKILL leaves the
+ * mkdtemp parent behind with no finalizer able to reach it.
+ */
+export const CORPUS_SNAPSHOT_TMPDIR_PREFIX = "memhtml-corpus-snapshot-"
+
 /** A materialized commit, and how to remove it. */
 export interface CorpusSnapshot {
   /** The detached worktree's directory, suitable as a {@link ReadOnlyRoot} `hostPath`. */
@@ -259,7 +274,7 @@ export const pinCorpusSnapshot = async (input: {
   readonly repoRoot: string
   readonly sha: string
 }): Promise<CorpusSnapshot> => {
-  const parent = mkdtempSync(join(tmpdir(), "memhtml-corpus-snapshot-"))
+  const parent = mkdtempSync(join(tmpdir(), CORPUS_SNAPSHOT_TMPDIR_PREFIX))
   const hostPath = join(parent, "tree")
   await run("git", ["-C", input.repoRoot, "worktree", "add", "--detach", hostPath, input.sha])
 
@@ -274,6 +289,15 @@ export const pinCorpusSnapshot = async (input: {
       await run("git", ["-C", input.repoRoot, "worktree", "remove", "--force", hostPath]).catch(
         () => {}
       )
+      /**
+       * The mkdtemp PARENT is this function's to remove, and it is a second step because `git worktree
+       * remove` deletes only the tree it was handed. Releasing without it leaves one empty
+       * `${CORPUS_SNAPSHOT_TMPDIR_PREFIX}*` directory per `memhtml exec` on the CLEAN path, where
+       * nothing failed and nothing looks wrong. Unconditional on the git call's outcome: a worktree
+       * that could not be removed is a stale administrative entry `git worktree prune` reclaims, and
+       * keeping the directory around does not fix it.
+       */
+      await rm(parent, { recursive: true, force: true }).catch(() => {})
     }
   }
 }

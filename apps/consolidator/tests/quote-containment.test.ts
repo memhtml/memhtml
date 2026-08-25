@@ -1,11 +1,39 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import { Effect } from "effect"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 
 import { fabricatedQuoteReason, type ReachableTranscript } from "../src/client.js"
-import { decodedTranscriptStrings, quoteAppearsIn } from "../src/contract.js"
+import {
+  decodedTranscriptStrings,
+  quoteAppearsIn,
+  transcriptQuoteChecker
+} from "../src/contract.js"
+
+/**
+ * Every `readFile` this module's graph performs, by path.
+ *
+ * A module mock rather than a spy, because an ESM namespace is not configurable and `vi.spyOn` cannot
+ * reach a named import of a builtin. Everything passes through: the only added behavior is the count,
+ * which is what makes "one open per cited session" a behavioral assertion instead of a source-text one.
+ */
+const reads = vi.hoisted(() => ({ paths: [] as string[] }))
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>()
+  return {
+    ...actual,
+    readFile: (path: unknown, ...rest: ReadonlyArray<unknown>) => {
+      reads.paths.push(String(path))
+      return (actual.readFile as (...args: ReadonlyArray<unknown>) => Promise<unknown>)(
+        path,
+        ...rest
+      )
+    }
+  }
+})
 
 /**
  * The one grounding check that OPENS A FILE, driven against real JSONL bytes on disk.
@@ -303,5 +331,149 @@ describe("the decoded arm does not weaken quoteAppearsIn itself", () => {
     expect(quoteAppearsIn(QUOTED.toLowerCase(), QUOTED)).toBe(false)
     expect(quoteAppearsIn(`${QUOTED}!`, QUOTED)).toBe(false)
     expect(quoteAppearsIn("", QUOTED)).toBe(false)
+  })
+})
+
+describe("transcriptQuoteChecker pays a transcript's normalization once, not once per quote", () => {
+  /** The same JSONL bytes the files above hold, as one in-memory transcript. */
+  const transcript = [
+    JSON.stringify({ type: "user", message: { role: "user", content: QUOTED } }),
+    JSON.stringify({ type: "user", message: { role: "user", content: MULTILINE } }),
+    JSON.stringify({
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: PLAIN }] }
+    })
+  ].join("\n")
+
+  it("answers exactly as the two-arm composition does, on every arm", () => {
+    /**
+     * Semantics first, because the checker replaces a composition: raw-arm pass, decoded-arm pass
+     * (the `\"` and `\n` livelock shapes), fabrication refusal, stitched refusal, empty refusal.
+     * A checker that differed from `quoteAppearsIn` + `decodedTranscriptStrings` on any of these
+     * would be a silent gate change dressed as an optimization.
+     */
+    const checker = transcriptQuoteChecker(transcript)
+    expect(checker.contains(PLAIN)).toBe(true)
+    expect(checker.contains(QUOTED)).toBe(true)
+    expect(checker.contains(MULTILINE)).toBe(true)
+    expect(checker.contains(MULTILINE.replaceAll("\n", " "))).toBe(true)
+    expect(checker.contains("a sentence nobody said in any session")).toBe(false)
+    expect(checker.contains(`${MULTILINE.split("\n")[1] ?? ""} ${PLAIN}`)).toBe(false)
+    expect(checker.contains("")).toBe(false)
+  })
+
+  /**
+   * THE efficiency regression. The old shape called `quoteAppearsIn(quote, transcript)` per quote,
+   * which re-runs `transcript.replace(/\s+/g, " ")` — megabytes of regex work on a p99 file — once
+   * per cited quote. The checker must flatten the transcript at CONSTRUCTION and never again.
+   * Counted through a `String.prototype.replace` spy, filtered to calls whose receiver is the whole
+   * transcript, because that is the exact work being deduplicated.
+   *
+   * (Mutation: reimplementing `contains` as `quoteAppearsIn(quote, transcript)` makes the count the
+   * number of quotes and fails the assertion.)
+   */
+  it("runs the whole-transcript replace once across many contains() calls", () => {
+    const replace = vi.spyOn(String.prototype, "replace")
+    try {
+      const checker = transcriptQuoteChecker(transcript)
+      // Five raw-arm quotes: none may re-flatten the file.
+      for (let i = 0; i < 5; i += 1) expect(checker.contains(PLAIN)).toBe(true)
+      const wholeFileFlattens = replace.mock.contexts.filter(
+        (receiver) => String(receiver) === transcript
+      ).length
+      expect(wholeFileFlattens).toBe(1)
+    } finally {
+      replace.mockRestore()
+    }
+  })
+
+  it("decodes the transcript lazily, and only once", () => {
+    /**
+     * The decode arm parses every line; a checker whose every decoded-arm quote re-parsed would be
+     * the same bill in JSON.parse. `JSON.parse` calls carrying this transcript's lines are counted:
+     * zero before the first decoded-arm quote, one batch after, and no growth on the second.
+     */
+    const parse = vi.spyOn(JSON, "parse")
+    try {
+      const checker = transcriptQuoteChecker(transcript)
+      expect(checker.contains(PLAIN)).toBe(true)
+      expect(parse).not.toHaveBeenCalled()
+
+      expect(checker.contains(QUOTED)).toBe(true)
+      const afterFirst = parse.mock.calls.length
+      expect(afterFirst).toBeGreaterThan(0)
+
+      expect(checker.contains(MULTILINE)).toBe(true)
+      expect(parse.mock.calls.length).toBe(afterFirst)
+    } finally {
+      parse.mockRestore()
+    }
+  })
+
+  it("is what fabricatedQuoteReason walks with, so the per-quote bill is one includes", async () => {
+    /**
+     * The wiring half, asserted as code shape the way `seeding.test.ts` asserts `clientContext`'s
+     * absence: the client must build ONE checker per cited session rather than calling the pure
+     * two-sided rule per quote.
+     */
+    const source = await readFile(
+      resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "client.ts"),
+      "utf8"
+    )
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
+    expect(code).toContain("transcriptQuoteChecker(")
+    expect(code).not.toMatch(/quoteAppearsIn\(/)
+  })
+
+  /**
+   * The same claim, made BEHAVIORALLY: one `readFile` per cited session, however many quotes cite it.
+   *
+   * The source assertion above cannot see this. A `transcriptQuoteChecker(text).contains(quote)` written
+   * inside the per-quote loop satisfies every one of its patterns and re-reads the file — and re-reading
+   * is the expensive half against this corpus's measured p99 of 4.68 MB and 37.2 MB maximum, since it
+   * pays the open, the decode of megabytes, and the flatten once per quote instead of once per session.
+   * Counting opens is what discriminates the two shapes.
+   *
+   * A CACHE is what the count proves, so a neighbour's file is seeded into the same answer: with one
+   * session cited the assertion would also pass against an implementation that read the first path and
+   * ignored the rest, which is the vacuous shape.
+   *
+   * (Mutation: moving the `readFile` inside the per-quote loop makes the count 3 for `session-a` and
+   * fails the first assertion.)
+   */
+  it("opens each cited transcript once, however many quotes cite it", async () => {
+    reads.paths.length = 0
+    const reason = await reasonFor(
+      {
+        candidates: [
+          {
+            evidence: [
+              { sessionId: "session-a", quote: QUOTED },
+              { sessionId: "session-a", quote: PLAIN },
+              { sessionId: "session-torn", quote: QUOTED }
+            ]
+          }
+        ],
+        commitments: [{ evidence: { sessionId: "session-a", quote: MULTILINE } }]
+      },
+      reachable("session-a", "session-torn")
+    )
+    expect(reason).toBeNull()
+
+    const opens = (sessionId: string): number =>
+      reads.paths.filter((path) => path === paths.get(sessionId)).length
+    // Three quotes from `session-a`, spanning both lists and both containment arms: one open.
+    expect(opens("session-a")).toBe(1)
+    // And the neighbour is really read, so the count above is a cache and not a skip.
+    expect(opens("session-torn")).toBe(1)
+  })
+
+  /** A session nothing cites is never opened: the containment walk costs only what the answer claims. */
+  it("opens nothing for a reachable session the answer never cites", async () => {
+    reads.paths.length = 0
+    expect(
+      await reasonFor(answerQuoting("session-a", PLAIN), reachable("session-a", "session-torn"))
+    ).toBeNull()
+    expect(reads.paths.filter((path) => path === paths.get("session-torn")).length).toBe(0)
   })
 })
