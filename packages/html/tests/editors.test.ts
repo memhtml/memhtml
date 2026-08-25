@@ -93,6 +93,18 @@ describe("setMeta — replace in place", () => {
     const after = setMeta(FORMAT_MD_EXAMPLE, "memhtml-author", 'human:a"b')
     expect(parseOk(after).metas.author).toBe('human:a"b')
   })
+
+  it("keeps a value carrying a newline on one line, which the byte splicers depend on", () => {
+    // The editors locate a meta by its line boundaries, so a literal newline inside an
+    // attribute would split one head entry across two of their lines and the next splice
+    // would cut a line in half.
+    const after = setMeta(FORMAT_MD_EXAMPLE, "memhtml-author", "human:a\nb")
+    for (const line of after.split("\n")) {
+      expect(line.split("<meta").length - 1).toBeLessThanOrEqual(1)
+    }
+    expect(lineDelta(FORMAT_MD_EXAMPLE, after).added).toBe(0)
+    expect(parseOk(after).metas.author).toBe("human:a\nb")
+  })
 })
 
 describe("addMeta — append a repeatable value", () => {

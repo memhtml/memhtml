@@ -15,12 +15,12 @@ import { configureIdentity, type FixtureRepo, makeFixtureRepo } from "../src/tes
  * There is no fake git in this package and there will not be one. Its subject is git's own
  * behavior — what rename detection scores, what the index holds mid-conflict, what `mv`
  * refuses — and a fake would verify that the right argv was assembled while missing every one
- * of those. The fleet's standing lesson, applied where the "real adapter" IS the feature.
+ * of those. The standing lesson about fakes, applied where the "real adapter" IS the feature.
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
 
-/** Run and require a failure, returning it. `Effect.result`, not `Effect.either` (T1 finding 1). */
+/** Run and require a failure, returning it. `Effect.result`, since `Effect.either` does not exist. */
 const runErr = async <A, E>(effect: Effect.Effect<A, E>): Promise<E> => {
   const result = await Effect.runPromise(Effect.result(effect))
   if (Result.isSuccess(result)) throw new Error("expected a failure, got a value")
@@ -443,7 +443,7 @@ describe("GitFailure", () => {
  * Count actual OS process spawns while a thunk runs, via `node:diagnostics_channel`'s
  * `child_process` channel.
  *
- * Counting method invocations instead would be the mistake this fleet keeps paying for: a
+ * Counting method invocations instead would be the recurring mistake in this class of test: a
  * wrapper that increments once per `catFileBatch` call passes identically whether the
  * implementation runs one `cat-file --batch` or fifty `cat-file -p`, which is the exact claim
  * under test. The channel observes the spawn itself, so only the real thing satisfies it.

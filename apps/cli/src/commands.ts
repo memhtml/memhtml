@@ -22,6 +22,14 @@ export interface ArgSpec {
   readonly name: string
   readonly description: string
   readonly required: boolean
+  /**
+   * True when this argument may repeat, each occurrence adding one value.
+   *
+   * Only legal on the LAST argument, and it is what tells `validate` that a positional past the
+   * declared count belongs to the command rather than being a surplus token. Without it a variadic
+   * command is indistinguishable from a caller who typed one word too many.
+   */
+  readonly repeatable?: boolean
 }
 
 export interface CommandSpec {
@@ -32,14 +40,13 @@ export interface CommandSpec {
   readonly responseTypes: ReadonlyArray<ResponseType>
 }
 
-/** Flags every command accepts. Listed once so the manifest cannot drift from behavior. */
+/**
+ * Flags every command accepts. Listed once so the manifest cannot drift from behavior.
+ *
+ * There is no `--json` flag: the typed JSON envelope is the only output the binary has, on every
+ * command, so a flag for it would be parsed, advertised, and read by nothing. Logs go to stderr.
+ */
 export const GLOBAL_FLAGS: ReadonlyArray<FlagSpec> = [
-  {
-    name: "json",
-    type: "boolean",
-    description: "Emit the typed JSON envelope on stdout (default; logs go to stderr).",
-    default: true
-  },
   {
     name: "dense",
     type: "boolean",
@@ -162,7 +169,8 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       {
         name: "path",
         type: "string",
-        description: "An explicit path override. Ignored when it is not a valid memory path."
+        description:
+          "An explicit path override. One that is not a usable memory path (rooted in a PARA bucket, ending in .html, no `.` or `..` segment) is IGNORED and the placement rule decides instead, so a malformed override lands the memory somewhere you did not name. One a file ALREADY occupies is REFUSED with ERR_WRITE_CONFLICT and nothing is written or committed: this corpus overwrites nothing, and an explicit path gets no `-2` suffix because you named one path. To replace what a memory says, use `memhtml correct <path>`."
       },
       { name: "workspace", type: "string", description: "Routes the memory to projects/<slug>/." },
       {
@@ -202,7 +210,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "file",
         type: "string",
         description:
-          "The JSONL file to read. One complete JSON object per line. Omit it (or pass `-`) to read the stream from stdin."
+          "The JSONL file to read. One complete JSON object per line. Omit it, pass `--file -`, or pass a positional `-` to read the stream from stdin; stdin beside a real --file is refused."
       },
       {
         name: "continue-on-error",
@@ -240,12 +248,22 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     name: "read",
     summary: "Read one memory: its metas, links, article, and format warnings.",
     args: [{ name: "path", description: "Repo-root-relative path to the memory.", required: true }],
+    /**
+     * The whole provenance triple, because the `read` arm stamps the whole triple.
+     * `memory_session_links` carries `prompt_id` and `turn_uuid` beside `session_id`, so a command
+     * that declared only the session would record a coarser link for a read than the write path
+     * records for the same turn, and one triple could not be threaded through a write-then-read
+     * flow. MCP's `memory_read` narrows to `session_id`; this surface is the one an agent threads a
+     * triple through.
+     */
     flags: [
       {
         name: "session-id",
         type: "string",
         description: "Records a `read` session link, so provenance is queryable both ways."
-      }
+      },
+      { name: "prompt-id", type: "string", description: "The prompt within that session." },
+      { name: "turn-uuid", type: "string", description: "The turn within that session." }
     ],
     responseTypes: ["memory.detail"]
   },
@@ -304,7 +322,9 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         values: WRITABLE_MEMORY_TYPES
       },
       { name: "reason", type: "string", description: "Why the correction was made." },
-      { name: "session-id", type: "string", description: "Records a `corrected` session link." }
+      { name: "session-id", type: "string", description: "Records a `corrected` session link." },
+      { name: "prompt-id", type: "string", description: "The prompt within that session." },
+      { name: "turn-uuid", type: "string", description: "The turn within that session." }
     ],
     responseTypes: ["memory.corrected"]
   },
@@ -332,6 +352,13 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     flags: [
       { name: "depth", type: "int", description: "1 or 2. Never more.", default: 1 },
       {
+        name: "limit",
+        type: "int",
+        description:
+          "Distinct nodes to return, clamped to 200. `nodesDropped` counts the paths the walk reached and this limit turned away, and `scanSaturated` says the walk stopped at its own 10000-row cap, which no limit recovers.",
+        default: 200
+      },
+      {
         name: "rel",
         type: "string",
         description: "Restrict to these rels. Repeatable.",
@@ -352,7 +379,12 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     name: "reinforce",
     summary: "Bump access bookkeeping, gated by a 900-second per-path cooldown.",
     args: [
-      { name: "path", description: "A memory path. Repeat the argument for more.", required: true }
+      {
+        name: "path",
+        description: "A memory path. Repeat the argument for more.",
+        required: true,
+        repeatable: true
+      }
     ],
     flags: [
       {
@@ -587,10 +619,11 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   {
     name: "sleep run",
     /**
-     * The count is DERIVED from `SLEEP_PHASES`, not typed. Both strings used to spell `15` by hand,
-     * and adding a sixteenth phase left `AGENTS.md` and `memhtml manifest` asserting a number the list
-     * beside them contradicted — visible only because the doc drift gate compares generated bytes, and
-     * only for the one of the two that also prints the names.
+     * Both counts are `SLEEP_PHASES.length`, never typed. A phase added to that list moves this
+     * summary and the `--phases` description below together, so neither can assert a number the list
+     * printed beside it contradicts. A hand-typed count is not symmetrically caught: the doc drift
+     * gate compares generated bytes, so it fails only on the string that also prints the names, and a
+     * stale number in the other one ships.
      */
     summary: `The nightly curation cycle: ${SLEEP_PHASES.length} phases, each an isolated commit on a review branch.`,
     args: [],
@@ -718,6 +751,12 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         type: "int",
         description: "The fixture corpus seed. A failing run is reproducible from this number."
       },
+      {
+        name: "now",
+        type: "int",
+        description:
+          "The run instant the fixture corpus anchors its stamps behind, UTC milliseconds since the epoch. The other half of reproducing a failing run: the corpus is a function of (seed, now), and the recency arm ranks on those stamps. Defaults to the clock, and rides back in the report."
+      },
       { name: "size", type: "int", description: "Base memories to generate.", default: 200 },
       {
         name: "probes",
@@ -774,7 +813,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "file",
         type: "string",
         description:
-          "The script to run, as a path on the HOST. Omit it (or pass `-`) to read the script from stdin. Mutually exclusive with `--script`."
+          "The script to run, as a path on the HOST. Omit it, pass `--file -`, or pass a positional `-` to read the script from stdin. Mutually exclusive with `--script`."
       },
       {
         name: "script",
@@ -1031,7 +1070,7 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "THREE THINGS IT CANNOT DO, by design. It cannot write: the corpus is read-only and a write " +
       "answers EROFS, so every write still goes through `memhtml write` / `memhtml apply`, which own commits, " +
       "dedup, and conflict detection. It cannot rank: no cosine, no RRF, no salience, and no index " +
-      "database. For ranked retrieval shell out to `memhtml search --json` and parse its envelope, which " +
+      "database. For ranked retrieval shell out to `memhtml search` and parse its envelope, which " +
       "the one-envelope-per-command contract already makes a code-mode API. And it cannot reach the " +
       "network: there is no curl and the guest's `fetch` refuses on call. " +
       "The intended opening move is ranked retrieval FIRST, code-mode second: `memhtml search` or " +
@@ -1060,8 +1099,9 @@ export const buildManifest = () => ({
   apiVersion: "1",
   /**
    * The prose an agent needs before the command table means anything, so it is listed before it.
-   * A manifest that opened with 33 command specifications makes an agent infer the workflow from a
-   * surface, while `guide` states it.
+   * A manifest that opens with the command specifications makes an agent infer the workflow from a
+   * surface, while `guide` states it. No count appears here: `commands` is `COMMANDS` walked, so the
+   * only honest quantity is its `length`.
    */
   guide: GUIDE,
   globalFlags: GLOBAL_FLAGS,

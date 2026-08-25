@@ -73,10 +73,10 @@ holder.prepare("INSERT INTO t VALUES (2)").run()
 console.log("\n— while the holder HOLDS a write transaction —")
 console.log("  default open, timeout=1 (gives up at once):", JSON.stringify(child("default", 1)))
 console.log("  readOnly open, timeout=1:", JSON.stringify(child("readonly", 1)))
+console.log("\n  ^ a reader still reads its pre-transaction snapshot; a writer reports errcode=5")
 console.log(
-  "\n  ^ a reader still reads its pre-transaction snapshot; a writer reports errcode=5"
+  "    (SQLITE_BUSY), which is the code `isBusyCause` matches and the retry policy waits on."
 )
-console.log("    (SQLITE_BUSY), which is the code `isBusyCause` matches and the retry policy waits on.")
 
 holder.exec("COMMIT")
 console.log("\n— after the holder COMMITS —")

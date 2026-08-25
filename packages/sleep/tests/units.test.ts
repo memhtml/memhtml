@@ -58,6 +58,7 @@ import { unionPairs as candidateUnion } from "../src/phases/edge-typing.js"
 import {
   AUTO_MERGE_THRESHOLD,
   aliasBacked,
+  capQuadraticNames,
   characterPairs,
   decomposeCluster,
   ENTITY_NEIGHBORS,
@@ -129,10 +130,32 @@ describe("the phase contract", () => {
       expect(SLEEP_PHASES.indexOf(before)).toBeLessThan(SLEEP_PHASES.indexOf(after))
     }
     expect(dependentsOf("dedup-merge")).toEqual(["compress", "retention-triage"])
-    // Every other phase is SOFT: its failure blocks nothing.
-    for (const phase of SLEEP_PHASES.filter((one) => one !== "dedup-merge")) {
+    // Every other phase but preflight is SOFT: its failure blocks nothing.
+    for (const phase of SLEEP_PHASES.filter(
+      (one) => one !== "dedup-merge" && one !== "preflight"
+    )) {
       expect(dependentsOf(phase)).toEqual([])
     }
+  })
+
+  it("gates the whole run on preflight, naming every later phase", () => {
+    /**
+     * A CENSUS rather than a list: the pairs are literal (the generated phase table parses them as
+     * literals), so a phase added to `SLEEP_PHASES` without a `["preflight", …]` pair would run after
+     * a failed preflight and commit over a dirty tree, a mixed vector space, or a half-built index.
+     * That omission is this assertion's whole subject, so it is derived from `SLEEP_PHASES` and never
+     * spelled out.
+     */
+    expect(dependentsOf("preflight")).toEqual(SLEEP_PHASES.slice(1))
+    expect(dependentsOf("preflight")).toHaveLength(SLEEP_PHASES.length - 1)
+    expect(dependentsOf("preflight")).not.toContain("preflight")
+    /**
+     * `compress` therefore has TWO prerequisites, which is why the runner records the prerequisite
+     * that actually failed instead of looking one up in this table.
+     */
+    expect(
+      HARD_PREREQUISITES.filter(([, after]) => after === "compress").map(([before]) => before)
+    ).toEqual(["preflight", "dedup-merge"])
   })
 
   it("names the trailer keys without a trailing colon", () => {
@@ -841,6 +864,44 @@ describe("the character pair pass", () => {
   it("is a function of the name SET, not of the order it was given", () => {
     const names = ["checkout_api", "checkout api", "checkout-api"]
     expect(characterPairs(names)).toEqual(characterPairs([...names].reverse()))
+  })
+})
+
+describe("the quadratic name cap", () => {
+  it("returns the map untouched at or below the limit, so the cap is invisible under it", () => {
+    const counts = new Map([
+      ["alpha", 3],
+      ["beta", 1]
+    ])
+    const capped = capQuadraticNames(counts, 2)
+    expect(capped.kept).toBe(counts)
+    expect(capped.dropped).toBe(0)
+  })
+
+  it("keeps the highest-file-count names and reports the drops", () => {
+    const capped = capQuadraticNames(
+      new Map([
+        ["one-file", 1],
+        ["ten-files", 10],
+        ["five-files", 5]
+      ]),
+      2
+    )
+    expect([...capped.kept.keys()].sort()).toEqual(["five-files", "ten-files"])
+    expect(capped.dropped).toBe(1)
+  })
+
+  it("breaks a file-count tie lexicographically, so the kept set is a function of the counts", () => {
+    const capped = capQuadraticNames(
+      new Map([
+        ["zeta", 2],
+        ["alpha", 2],
+        ["mid", 2]
+      ]),
+      2
+    )
+    expect([...capped.kept.keys()].sort()).toEqual(["alpha", "mid"])
+    expect(capped.dropped).toBe(1)
   })
 })
 

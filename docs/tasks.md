@@ -11,7 +11,7 @@ Everything in `docs/format.md` holds: one `<mark>` claim leading the article, th
 |                       |                                                                                                                                |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `memhtml-task-status` | **Required on a task, forbidden on anything else.** `todo \| doing \| blocked \| done` (`packages/contracts/src/types.ts:82`). |
-| `memhtml-due`         | Optional. An ISO date or datetime deadline.                                                                                    |
+| `memhtml-due`         | Optional. A deadline as `YYYY-MM-DD` or `YYYY-MM-DDThh:mm:ssZ`, the two forms `files.due_at` can string-order.                 |
 | Directory             | `projects/<slug>/tasks/` with a workspace, `areas/inbox/tasks/` without (`packages/contracts/src/paths.ts:116`).               |
 
 Both metas serialize after `memhtml-needs-revision` and before the repeatable keys (`packages/html/src/vocabulary.ts:65`), and project to `files.task_status` and `files.due_at` (`packages/index/src/project.ts:123`). The status meta's agreement with the type is a **parse violation in both directions**, not a dropped optional (`packages/html/src/parse.ts:166`): a task with no `memhtml-task-status` is refused (`:185`), and a non-task carrying one is refused (`:176`). A refused file never reaches the index — it sits in the tree, absent from every listing. So the template defaults the status rather than requiring it (`DEFAULT_TASK_STATUS`, `packages/html/src/template.ts:73`) and stamps it only for a task (`:173`).
@@ -28,9 +28,9 @@ Every other transition is one head line plus the `memhtml-updated` stamp — `se
 
 ## `memhtml-due` is string-ordered, so the format is the contract
 
-`files.due_at` is compared and ordered **as a string**, never parsed per row (`packages/index/migrations/0008_tasks.sql:73-75`). A value that does not sort lexicographically alongside the others makes an overdue query silently wrong rather than empty, so `memhtml-due` reuses the format's own `<time datetime>` validator (`packages/html/src/constraints.ts:67`) at three points: the parser reports a violation (`packages/html/src/parse.ts:188`), `decodeDueAt` refuses the write (`apps/cli/src/operations.ts:132`), and `--due-before` refuses the query bound (`:1462`).
+`files.due_at` is compared and ordered **as a string**, never parsed per row (`packages/index/migrations/0008_tasks.sql:73-75`). A value that does not sort lexicographically alongside the others makes an overdue query silently wrong rather than empty, so `memhtml-due` reuses the format's own `<time datetime>` validator (`isValidDatetime`, `packages/html/src/constraints.ts:75`) at three points: the parser reports a violation (`packages/html/src/parse.ts:247`), `decodeDueAt` refuses the write (`apps/cli/src/operations.ts:133`), and `--due-before` refuses the query bound through that same `decodeDueAt` (`apps/cli/src/operations.ts:1637`).
 
-Accepted: `YYYY-MM-DD`, optionally `T` or a space plus `hh:mm`, optional `:ss` with fractional seconds, optional `Z` or `±hh:mm`. Refused: `2026-8-9`, `Aug 9 2026`, `2026-13-45` (the day is round-tripped through `Date.UTC`), a bare time, a duration, a week — `Date.parse` accepts several of those and none sorts alongside a padded date. Both overdue queries truncate to `substr(…, 1, 10)` on both sides, stating the comparison is one of **calendar days** (`apps/cli/src/operations.ts:1473`, `apps/cli/src/doctor.ts:225`): a task due sometime on the 25th is not late at 09:00 on the 25th.
+**Exactly two forms are accepted:** the calendar date `YYYY-MM-DD`, or the canonical UTC instant `YYYY-MM-DDThh:mm:ssZ` (`ISO_DATETIME`, `packages/html/src/constraints.ts:64`). A bare date is a prefix of every instant on its day, so the two mix safely. Everything else is refused, and each rejected form breaks string ordering on its own: a space separator sorts before `T` (`"2026-08-24 13:00" < "2026-08-24T12:00"`), a non-UTC offset sorts by its clock face rather than its instant, and `hh:mm` without seconds or with a fraction makes `…T13:00:30Z` sort before the `…T13:00Z` it extends. So `2026-08-20 09:00`, `2026-08-20T09:00Z`, `2026-08-20T09:00:00.500Z`, and `2026-08-20T09:00:00+02:00` are all refused, as are `2026-8-9`, `Aug 9 2026`, `2026-13-45` (the day is round-tripped through `Date.UTC`), a bare time, a duration, and a week — `Date.parse` accepts several of those and none sorts alongside a padded date. `23:59:60` seconds is admitted, because a leap second is a real instant. Both overdue queries truncate to `substr(…, 1, 10)`, stating the comparison is one of **calendar days** (`apps/cli/src/operations.ts:1648`, `apps/cli/src/doctor.ts:231`): a task due sometime on the 25th is not late at 09:00 on the 25th.
 
 ## Edges: `blocks` and `subtask_of`
 
@@ -79,7 +79,7 @@ The first two do not affect `healthy` (`:488`): they are facts about the work, n
 
 ## MCP status: read and create, never advance
 
-The toolkit is fourteen tools and none is a task tool (`apps/mcp/src/tools.ts:774`).
+The toolkit is fourteen tools and none is a task tool (`apps/mcp/src/tools.ts:881`).
 
 - `memory_write` takes `memory_type: "task"` — the enum derives from `WRITABLE_MEMORY_TYPES` (`:45`). There is no `status` or `due` field in the write parameters (`:237-246`), so a task authored over MCP opens in `todo` with no deadline.
 - `memory_list` filters `memory_type: "task"` and `memory_search` opts in through `memory_types: ["task"]` (`:650`, `:444`). `memory_recall` takes no type parameter at all (`:514-518`), so over MCP a task is unreachable through recall with no opt-in available.

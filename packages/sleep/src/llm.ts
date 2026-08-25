@@ -5,7 +5,8 @@ import { Schema } from "effect"
 import { batchPrompt, memberList } from "./batch.js"
 
 /**
- * The structured-output schemas the four LLM phases share, and their prompts.
+ * The structured-output schemas the model-calling phases share, and their prompts. `LLM_PHASES` in
+ * `contract.ts` is the roster; naming a count here would rot the next time a phase joins it.
  *
  * Two rules govern everything here, both of them found by hitting the failure:
  *

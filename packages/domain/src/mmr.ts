@@ -42,21 +42,38 @@ export const applyMmr = (
   if (lambda >= 1 || candidates.length <= 1) return candidates.slice(0, limit)
 
   const pool = [...candidates]
+  /**
+   * `penalties[i]` is pool[i]'s max cosine against every selection so far, spliced in lockstep
+   * with `pool`. The max over a growing set only ever gains one element per round, so each round
+   * folds in the NEWEST selection alone — O(k·n) dot products total rather than the O(k²·n) of
+   * recomputing every candidate's max from scratch against the whole selected set. At n = 1000
+   * and k = 100 that is 94,050 cosines against 4,621,650.
+   *
+   * The equivalence rests on `cosine` being total: over a set of real numbers `max` is
+   * order-insensitive, so the cached max equals the from-scratch recomputation exactly and the
+   * selection order is identical to that fold's. A `NaN` similarity is what would break it,
+   * since `Math.max(cached, NaN)` is `NaN` where `NaN > cached` is `false`; `cosine` returns 0
+   * for every input that cannot produce a real similarity, which is why that case cannot arise.
+   * `packages/domain/tests/mmr-cost.test.ts` locks the count, `mmr.test.ts` the equivalence.
+   */
+  const penalties = pool.map(() => 0)
   const selected: Array<MmrCandidate> = []
 
   while (pool.length > 0 && selected.length < limit) {
+    const newest = selected[selected.length - 1]
+    if (newest?.vector !== undefined) {
+      for (const [index, candidate] of pool.entries()) {
+        if (candidate.vector === undefined) continue
+        const similarity = cosine(candidate.vector, newest.vector)
+        const cached = penalties[index] ?? 0
+        if (similarity > cached) penalties[index] = similarity
+      }
+    }
+
     let bestIndex = 0
     let bestValue = Number.NEGATIVE_INFINITY
-
     for (const [index, candidate] of pool.entries()) {
-      let penalty = 0
-      if (candidate.vector !== undefined) {
-        for (const chosen of selected) {
-          if (chosen.vector === undefined) continue
-          penalty = Math.max(penalty, cosine(candidate.vector, chosen.vector))
-        }
-      }
-      const value = lambda * candidate.score - (1 - lambda) * penalty
+      const value = lambda * candidate.score - (1 - lambda) * (penalties[index] ?? 0)
       if (value > bestValue) {
         bestValue = value
         bestIndex = index
@@ -64,6 +81,7 @@ export const applyMmr = (
     }
 
     const [chosen] = pool.splice(bestIndex, 1)
+    penalties.splice(bestIndex, 1)
     if (chosen !== undefined) selected.push(chosen)
   }
 

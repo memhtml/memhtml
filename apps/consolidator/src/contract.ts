@@ -68,6 +68,23 @@ export type CommitmentActor = (typeof COMMITMENT_ACTORS)[number]
 export const MAX_STATEMENT_CHARS = 300
 
 /**
+ * Ceilings on the LIST fields, so one answer is finite by contract rather than by good behavior.
+ *
+ * Every scalar field above is bounded and the lists were not, so a single turn could return an answer
+ * whose size only the model chose: each candidate is up to ~21 KB of prose plus its evidence, and each
+ * evidence quote costs a containment walk over the cited transcript in `fabricatedQuoteReason`. The
+ * bounds are generous against the instructions — `agent/instructions.md` calls six candidates plenty
+ * and asks for a handful of commitments — so a decode that trips one is an off-contract answer, not a
+ * thorough one.
+ */
+export const MAX_CANDIDATES_PER_RESULT = 200
+export const MAX_COMMITMENTS_PER_RESULT = 200
+/** Per candidate. Two is the floor (the TRACE-2 bar); this is the matching ceiling. */
+export const MAX_EVIDENCE_PER_CANDIDATE = 32
+/** Per candidate. Concrete names, not an inventory of every file a session touched. */
+export const MAX_ENTITIES_PER_CANDIDATE = 64
+
+/**
  * One transcript line the candidate rests on, tied to the session it came from.
  *
  * Evidence is what makes the TRACE-2 bar checkable by something other than trust: a candidate
@@ -105,8 +122,13 @@ export class CandidateMemory extends Schema.Class<CandidateMemory>("CandidateMem
   /** The supporting detail: what recurs, where, and what it implies. */
   gist: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_GIST_CHARS)),
   /** Tools, files, commands, packages, people the claim is about. May be empty. */
-  entities: Schema.Array(Schema.String.check(Schema.isMinLength(1))),
-  evidence: Schema.Array(CandidateEvidence).check(Schema.isMinLength(2))
+  entities: Schema.Array(Schema.String.check(Schema.isMinLength(1))).check(
+    Schema.isMaxLength(MAX_ENTITIES_PER_CANDIDATE)
+  ),
+  evidence: Schema.Array(CandidateEvidence).check(
+    Schema.isMinLength(2),
+    Schema.isMaxLength(MAX_EVIDENCE_PER_CANDIDATE)
+  )
 }) {}
 
 /**
@@ -179,10 +201,14 @@ export class CandidateCommitment extends Schema.Class<CandidateCommitment>("Cand
  * `packages/sleep/src/phases/trace-consolidation.ts`.
  *
  * It is the set of transcripts whose files RESOLVE AT THEIR GUEST PATH inside the sandbox's
- * read-only mount, not the set the model chose to open. Those are different claims and only the
- * first is checkable: nothing outside the model can prove a file was read, while a file that does
- * not resolve was categorically not read. The pre-existing semantics of a watermark, "the agent saw
- * this session and correctly found nothing above the bar", needs exactly the first.
+ * read-only mount — never the batch that was asked about, and never merely the ids the answer
+ * cites — GATED on the answer carrying at least one finding. Resolution is checkable where "the
+ * model opened it" is not; but resolution alone is measured before the model runs, so an answer
+ * with zero candidates AND zero commitments carries no receipt that anything was read, and the set
+ * is `[]` for that case. {@link watermarkableSessionIds} holds the rule, and the client logs the
+ * empty arm loudly. The watermark's meaning, "the agent saw this session and correctly found
+ * nothing above the bar", still advances quiet sessions whenever the same answer proves the run
+ * read ANY of the batch.
  */
 export class ConsolidationResult extends Schema.Class<ConsolidationResult>("ConsolidationResult")({
   candidates: Schema.Array(CandidateMemory),
@@ -283,6 +309,117 @@ const ungroundedReason = (
   `not make readable (${String(readableCount)} transcript(s) resolved in the sandbox)`
 
 /**
+ * Which of the reachable sessions a caller may WATERMARK from this answer.
+ *
+ * The reachable set alone is not enough evidence of reading: reachability is decided by this process
+ * before the model runs, so a turn that read nothing — a misrouted server that returned an empty
+ * structured answer, or a model that skipped the files — would still watermark the whole batch, and
+ * every one of those sessions would be recorded as consolidated without a byte of it having been
+ * opened. Quotes are the only reading receipt the answer carries, so an answer with NO candidates and
+ * NO commitments proves nothing and advances nothing; the batch stays unwatermarked and the next
+ * night asks again.
+ *
+ * ## What one finding actually proves, stated as the guarantee it is
+ *
+ * An answer with at least ONE finding advances EVERY readable session, cited or not. The receipt is
+ * per-RUN and not per-session: the quote-containment gate (`fabricatedQuoteReason` in `client.ts`)
+ * proves that SOME file in the batch was opened and quoted verbatim, and nothing in a
+ * `ConsolidationPayload` says which of the others were read. A barren-but-read session must still
+ * advance — "the agent read it and found nothing above the bar" is the watermark's meaning, and gating
+ * each session on its own citation would re-read every quiet transcript at full model cost every night
+ * forever.
+ *
+ * The residual that buys is exact and worth naming: a turn that opens 1 of 32 reachable transcripts and
+ * returns one candidate with two real quotes clears every gate here and advances all 32, and because
+ * `trace_consolidations` is an anti-join the other 31 are never selected again. That is the shape a
+ * step-budget-truncated or lazy turn takes, and it is permanent loss rather than a delay. Closing it
+ * needs a per-session READ RECEIPT in the payload — a field naming which sessions the agent opened,
+ * which the model can state and the caller can intersect — and until the payload carries one,
+ * {@link underCitedWatermarkWarning} makes the shape visible in the log rather than silent.
+ *
+ * The cost of the empty arm is that a genuinely-barren whole batch is re-read the next night. That
+ * is bounded (one batch) and it is the honest direction to be wrong in: re-reading a quiet batch
+ * costs a model call, while watermarking an unread one loses those sessions permanently. The caller
+ * logs the empty arm loudly for exactly that reason.
+ *
+ * In the contract rather than inline in `client.ts`, matching {@link ungroundedEvidenceReason}: the
+ * rule is pure over the answer and the reachable ids, and the test tier exercises it with no server.
+ */
+export const watermarkableSessionIds = (
+  answer: {
+    readonly candidates: ReadonlyArray<unknown>
+    readonly commitments: ReadonlyArray<unknown>
+  },
+  readableSessionIds: ReadonlyArray<string>
+): ReadonlyArray<string> =>
+  answer.candidates.length === 0 && answer.commitments.length === 0 ? [] : readableSessionIds
+
+/**
+ * The share of an advancing batch that must be CITED for the advance to pass without a warning.
+ *
+ * A quarter. The instructions call six candidates plenty for a batch of up to
+ * {@link MAX_TRANSCRIPTS_PER_RUN} transcripts, and each candidate cites at least two quotes, so an
+ * honest thorough turn over 32 sessions cites somewhere around 4 to 12 of them and sits near this line;
+ * the shape this exists to surface — one candidate quoting one session while 31 advance — is at 3%.
+ * Set to fire rather than to stay quiet, because the log line is the only place today where the
+ * per-run receipt's breadth is visible at all, and a warning costs a line while the residual it
+ * describes costs transcripts.
+ */
+const WATERMARK_CITED_SHARE_FLOOR = 0.25
+
+/**
+ * Batches smaller than this never warn.
+ *
+ * Below eight sessions the ratio carries no signal: a two-session batch with one citation is at the
+ * floor and is also the ordinary shape of a night with two transcripts, so warning there would train
+ * an operator to ignore the line by the time a batch of 32 advancing on one citation arrives.
+ */
+const WATERMARK_WARN_MIN_READABLE = 8
+
+/**
+ * The warning for a watermark that advances a whole batch on the citations of a small fraction of it,
+ * or `null` when the advance is unremarkable.
+ *
+ * This is OBSERVABILITY over the residual {@link watermarkableSessionIds} documents, not a second gate.
+ * It changes no semantics: the advance happens either way, because the alternative — refusing to
+ * watermark the uncited sessions — re-reads every quiet transcript at full model cost every night, and
+ * the fix that actually closes the hole is a per-session read receipt in {@link ConsolidationPayload}.
+ * What this adds is that the lossy shape stops being silent, which is the state it was in: a turn that
+ * read 1 of 32 and watermarked all 32 produced no log line distinguishable from a thorough run's.
+ *
+ * The count is of DISTINCT cited session ids, because a candidate citing one session twice is one
+ * session's receipt and a per-quote count would read as breadth. Pure over the answer and the readable
+ * ids, in the contract for the reason {@link ungroundedEvidenceReason} records: the test tier drives it
+ * with no server.
+ */
+export const underCitedWatermarkWarning = (
+  answer: {
+    readonly candidates: ReadonlyArray<{
+      readonly evidence: ReadonlyArray<{ readonly sessionId: string }>
+    }>
+    readonly commitments: ReadonlyArray<{ readonly evidence: { readonly sessionId: string } }>
+  },
+  readableSessionIds: ReadonlyArray<string>
+): string | null => {
+  const advancing = watermarkableSessionIds(answer, readableSessionIds).length
+  if (advancing < WATERMARK_WARN_MIN_READABLE) return null
+
+  const cited = new Set<string>()
+  for (const candidate of answer.candidates) {
+    for (const quote of candidate.evidence) cited.add(quote.sessionId)
+  }
+  for (const commitment of answer.commitments) cited.add(commitment.evidence.sessionId)
+  if (cited.size >= advancing * WATERMARK_CITED_SHARE_FLOOR) return null
+
+  return (
+    `consolidation is watermarking ${String(advancing)} readable session(s) on quotes from only ` +
+    `${String(cited.size)} of them; the other ${String(advancing - cited.size)} advance on this run's ` +
+    "receipt without a citation of their own, and a watermarked session is never selected again. " +
+    "Check the turn's step budget if it should have read more."
+  )
+}
+
+/**
  * Whether a quote appears in a text, compared after collapsing whitespace runs on BOTH sides.
  *
  * The collapse is the only normalization: case, punctuation, and word order all still have to match,
@@ -295,11 +432,48 @@ const ungroundedReason = (
  * strings — see {@link decodedTranscriptStrings} for why either alone fails honest quotes.
  */
 export const quoteAppearsIn = (quote: string, text: string): boolean => {
-  const flatten = (value: string): string => value.replace(/\s+/g, " ").trim()
-  const needle = flatten(quote)
+  const needle = flattenWhitespace(quote)
   /** An empty needle is `includes`-true against anything, which would gate nothing. */
   if (needle === "") return false
-  return flatten(text).includes(needle)
+  return flattenWhitespace(text).includes(needle)
+}
+
+/** The one normalization both sides get. See {@link quoteAppearsIn} for why nothing else is. */
+const flattenWhitespace = (value: string): string => value.replace(/\s+/g, " ").trim()
+
+/**
+ * Containment checks for many quotes against ONE transcript, paying its normalization once.
+ *
+ * {@link quoteAppearsIn} flattens BOTH sides per call, so checking a transcript's quotes through it
+ * directly re-flattens the whole file once per quote — against the corpus's measured p99 of 4.68 MB
+ * and a 37.2 MB maximum, that is megabytes of regex work multiplied by however many quotes the model
+ * cited from one session. This closure flattens the raw bytes at construction and the decoded strings
+ * on the first quote that needs them, so the per-quote cost is one `includes` (plus one more per
+ * decoded string when the raw arm misses).
+ *
+ * Same two arms, same semantics as the caller composing {@link quoteAppearsIn} with
+ * {@link decodedTranscriptStrings}: raw bytes first because most quotes are verbatim in the source,
+ * decoded strings each tested SEPARATELY so a quote stitched across two messages still refuses.
+ * `fabricatedQuoteReason` (`client.ts`) builds one of these per cited session; a run that cites
+ * nothing builds none.
+ */
+export interface TranscriptQuoteChecker {
+  readonly contains: (quote: string) => boolean
+}
+
+export const transcriptQuoteChecker = (transcript: string): TranscriptQuoteChecker => {
+  const flatRaw = flattenWhitespace(transcript)
+  /** Decoded lazily: a session whose every quote is verbatim in the bytes never pays for a parse. */
+  let flatDecoded: ReadonlyArray<string> | null = null
+  return {
+    contains: (quote) => {
+      const needle = flattenWhitespace(quote)
+      if (needle === "") return false
+      if (flatRaw.includes(needle)) return true
+      flatDecoded ??= decodedTranscriptStrings(transcript).map(flattenWhitespace)
+      return flatDecoded.some((text) => text.includes(needle))
+    }
+  }
 }
 
 /**
@@ -383,32 +557,19 @@ export const decodedTranscriptStrings = (transcript: string): ReadonlyArray<stri
 }
 
 /**
- * ── The origin validation that used to live here is DELETED, with the parse it defended ──────────
+ * ── This module holds NO origin validation, and nothing may parse a child's stdout for one ───────
  *
- * `loopbackOriginFrom`, `nonLoopbackOrigin`, `isLoopbackHostname`, `ANSI_ESCAPE`, and
- * `URL_CANDIDATE` existed for one caller: `startServer` spawned `eve start --port 0` and read the
- * bound port back off the child's stdout, so the address this process posted transcripts to was a
- * string a child wrote, and validating it as loopback was the only thing standing between "eve
- * printed a URL" and "the batch was posted to it".
+ * The server's origin is composed in `client.ts` from `LOOPBACK_HOST` and a port this process
+ * obtained from the kernel (`reserveLoopbackPort`), then passed to `eve start --port <n>`. No string
+ * a child process writes is ever on the path that decides where a transcript or a run token is sent,
+ * so there is no untrusted origin to validate here. The readiness poll covers the reachable hazard
+ * (something else on the port) by refusing any listener that does not answer `/eve/v1/health` with
+ * eve's own body.
  *
- * `client.ts` now chooses the port itself (`reserveLoopbackPort`) and passes it to
- * `eve start --port <n>`, so the origin is composed from a constant and an integer this process got
- * from the kernel. There is no untrusted string in the path any more, and nothing left to validate:
- * a "defense" over a value we constructed asserts that we typed our own constant correctly.
- *
- * Kept as belt-and-braces it would have been WORSE than deleted, because it would have kept
- * asserting a threat model that no longer holds. The deletion also costs nothing in practice:
- * the readiness poll now refuses any listener that does not answer `/eve/v1/health` as eve, which
- * covers the reachable case (something else on the port) more directly than a hostname check on a
- * self-composed URL ever did.
- *
- * One measured correction to leave behind, since the old comment asserted the opposite. It claimed
- * eve's piped stdout carries zero ANSI escape bytes. It does not: probed 2026-08-09 with stdout
- * redirected to a file and no TTY, a failing `eve start` emitted
- * `ESC[90mStopping server gracefully (5s)... Press ESC[1mCtrl+CESC[22m again…ESC[39m`. So an escape
- * on that stream is real rather than theoretical. It is simply no longer on any path that decides an
- * address. If anything ever parses that stream again it needs the strip, and it needs the ESC byte
- * built via `String.fromCharCode` because biome's `noControlCharactersInRegex` refuses a control
+ * A constraint on anything that ever parses eve's stdout again: the stream carries ANSI escapes even
+ * when piped with no TTY (measured 2026-08-09, eve 0.33.0: a failing `eve start` emitted
+ * `ESC[90m…ESC[39m` into a redirected file). Such a parser needs an escape strip, with the ESC byte
+ * built via `String.fromCharCode`, because biome's `noControlCharactersInRegex` refuses a control
  * character in regex source however it is spelled.
  */
 
@@ -427,8 +588,10 @@ export const decodedTranscriptStrings = (transcript: string): ReadonlyArray<stri
 export class ConsolidationPayload extends Schema.Class<ConsolidationPayload>(
   "ConsolidationPayload"
 )({
-  candidates: Schema.Array(CandidateMemory),
-  commitments: Schema.Array(CandidateCommitment)
+  candidates: Schema.Array(CandidateMemory).check(Schema.isMaxLength(MAX_CANDIDATES_PER_RESULT)),
+  commitments: Schema.Array(CandidateCommitment).check(
+    Schema.isMaxLength(MAX_COMMITMENTS_PER_RESULT)
+  )
 }) {}
 
 /**
@@ -507,36 +670,28 @@ export const toJsonSchema = (schema: Schema.Top): JsonObject => {
 export const CONSOLIDATION_OUTPUT_JSON_SCHEMA = toJsonSchema(ConsolidationPayload)
 
 /**
- * ── `DEFAULT_TAIL_BYTES` is DELETED, and so is the reason it existed ──────────────────────────────
+ * ── There is deliberately NO per-file byte cap on what a transcript exposes to the sandbox ───────
  *
- * It was a 256 KiB per-file cap on how much of each transcript reached the sandbox, and the cap
- * bounded a mechanism that is gone: the client SEEDED transcripts, so every seeded byte was
- * resident in the server process for the session's lifetime (just-bash is a pure-JS VFS holding file
- * content in memory), and 256 KiB x 32 files was what bounded that at 8 MiB.
+ * Transcripts arrive on a read-only `OverlayFs` mount that reads THROUGH to the host on demand
+ * (`src/mount.ts`), so nothing is resident in the server process and there is no seeded byte count
+ * to bound. A large transcript costs whatever the model actually reads of it, and eve bounds each
+ * `read_file` at 2000 lines or 50 KB
+ * (node_modules/eve/dist/src/execution/sandbox/truncate-output.js), so the budget sits with the
+ * reader, spent deliberately per call.
  *
- * Transcripts now arrive on a read-only `OverlayFs` mount that reads THROUGH to the host on demand
- * (`src/mount.ts`), so nothing is resident because nothing is copied. A 37.2 MB transcript, the
- * measured maximum over the live corpus, now costs whatever the model actually reads of it, and eve
- * bounds each `read_file` at 2000 lines or 50 KB
- * (node_modules/eve/dist/src/execution/sandbox/truncate-output.js). The budget moved from the seeding
- * path to the reader, where the model spends it deliberately.
- *
- * Keeping the constant would have been worse than deleting it: a 256 KiB number labelled "how many
- * bytes reach the sandbox" is now FALSE, and a future reader would have taken it as a live limit.
- * The distribution it was measured against is still recorded (11,360 transcripts, 6.59 GB, p50
- * 332 KB, p90 915 KB, p99 4.68 MB, max 37.2 MB, 2026-08-08) because
- * `packages/traces/src/parse.ts:16-21` reasons about the same shape.
+ * The corpus distribution this holds against, measured 2026-08-08: 11,360 transcripts, 6.59 GB, p50
+ * 332 KB, p90 915 KB, p99 4.68 MB, max 37.2 MB. `packages/traces/src/parse.ts:16-21` reasons about
+ * the same shape.
  */
 
 /**
  * Ceiling on transcripts per run.
  *
- * This one SURVIVES the seeding path's removal, and its justification changes rather than
- * disappearing. It no longer bounds resident bytes, since the mount does not copy, but it bounds
- * how many files one agent session is asked to hold in attention, and it is the guard against a
- * caller handing over five thousand sessions, which is well within what one sleep cycle could find
- * unconsolidated. The sleep phase's own `TRACE_SESSIONS_PER_RUN` is lower and binds first; this is
- * the client's independent backstop against a different caller.
+ * Not a bound on resident bytes — the mount does not copy — but on how many files one agent session
+ * is asked to hold in attention, and the guard against a caller handing over five thousand sessions,
+ * which is well within what one sleep cycle could find unconsolidated. The sleep phase's own
+ * `TRACE_SESSIONS_PER_RUN` is lower and binds first; this is the client's independent backstop
+ * against a different caller.
  */
 export const MAX_TRANSCRIPTS_PER_RUN = 32
 

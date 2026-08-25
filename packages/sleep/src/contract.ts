@@ -1,9 +1,16 @@
+import type { StorageFailure } from "@memhtml/contracts/errors"
+import { attemptIo, readFileOrNull, SLEEP_REPORTS_DIR } from "@memhtml/store"
+import { Effect } from "effect"
+
 /**
- * The phase vocabulary, the trailer keys, and the dependency graph between phases.
+ * The phase vocabulary, the trailer keys, the dependency graph between phases, and the pending-mark
+ * ledger a run hands its own merge.
  *
  * These constants are the contract the runner, the resume read, and the report all key on, so
  * they live apart from every phase body: a phase name appears in a commit trailer, in a
- * `sleep_phases` row, and in a `--phases` flag, and three copies of the string would drift.
+ * `sleep_phases` row, and in a `--phases` flag, and three copies of the string would drift. The
+ * ledger is here for the same reason and one more: two phases WRITE it and `merge` READS it, so a
+ * copy of its filename or its line shape in either place would be a copy free to disagree.
  */
 
 /**
@@ -71,20 +78,60 @@ export const phaseIndexOf = (phase: SleepPhase): number => SLEEP_PHASES.indexOf(
  * production curation were lost to a single phase raising, because the abort rolled back the
  * twelve that had already succeeded.
  *
- * `dedup-merge` is the one hard prerequisite, for `compress` and `retention-triage`: both operate
- * on the post-merge set, and running them over a corpus that still holds the duplicates would
- * compress a near-duplicate pair into a canonical while a merge later archives one of its members.
+ * **`preflight` gates the WHOLE run: every one of the sixteen phases after it.** It establishes the
+ * three preconditions the rest of the night reads, and each of its failures makes every later phase's
+ * commit wrong rather than merely unhelpful. `requireCleanTree` failing means the operator has
+ * uncommitted work in the tree, so a later phase stages and commits the operator's bytes under
+ * sleep's own trailers. `EmbedModelMismatch` is a half-migrated vector space, which degrades every
+ * cosine in the run while each individual vector stays well-formed — dedup, mining, and conflict
+ * detection all come back plausible and wrong. `IndexStale` is an index a rebuild emptied and did not
+ * finish repopulating, and every later phase reads the index, so their counts describe a corpus
+ * fragment. All three end in the one outcome per-phase isolation is not a defense against: a corrupt
+ * night with a green report.
+ *
+ * `dedup-merge` gates `compress` and `retention-triage`: both operate on the post-merge set, and
+ * running them over a corpus that still holds the duplicates would compress a near-duplicate pair
+ * into a canonical while a merge later archives one of its members.
  *
  * That is why `dedup-merge` isolates each of its model calls instead of failing on one. It batches
  * components and a batch whose call comes back malformed is counted and skipped, so a single bad tool
  * payload cannot take two later phases down with it.
+ *
+ * **The edges are spelled out one literal pair at a time, including preflight's sixteen.** The
+ * generated phase table parses this array as a literal (`apps/docs/src/loaders/registry.ts` reads it
+ * through `stringPairArrayConst`), so a computed or spread member would publish a page saying
+ * preflight blocks nothing while the runner blocks everything after it. `units.test.ts` asserts
+ * `dependentsOf("preflight")` is every later phase, so a phase added to {@link SLEEP_PHASES} without
+ * a pair here fails a test instead of silently running after a failed preflight.
  */
 export const HARD_PREREQUISITES: ReadonlyArray<readonly [SleepPhase, SleepPhase]> = [
+  ["preflight", "dedup-merge"],
+  ["preflight", "entity-resolution"],
+  ["preflight", "person-links"],
+  ["preflight", "relationship-mining"],
+  ["preflight", "edge-typing"],
+  ["preflight", "confidence-decay"],
+  ["preflight", "arc-synthesis"],
+  ["preflight", "retention-triage"],
+  ["preflight", "compress"],
+  ["preflight", "reprieve"],
+  ["preflight", "trace-consolidation"],
+  ["preflight", "task-detection"],
+  ["preflight", "placement-triage"],
+  ["preflight", "integrity"],
+  ["preflight", "state-export"],
+  ["preflight", "report"],
   ["dedup-merge", "compress"],
   ["dedup-merge", "retention-triage"]
 ]
 
-/** The phases blocked by `phase` failing. */
+/**
+ * The phases blocked by `phase` failing.
+ *
+ * A phase may appear as the dependent of more than one prerequisite — `compress` declares both — so
+ * the runner records WHICH prerequisite failed rather than looking a blocker up here. This direction
+ * of the relation is the only one a failure can be read forward through.
+ */
 export const dependentsOf = (phase: SleepPhase): ReadonlyArray<SleepPhase> =>
   HARD_PREREQUISITES.flatMap(([before, after]) => (before === phase ? [after] : []))
 
@@ -106,8 +153,8 @@ export const TRAILER_COUNTS = "Memhtml-Counts"
  * Membership means "spends model calls when a model is bound", not "needs a model to be useful".
  * `dedup-merge` and `entity-resolution` both do real deterministic work without one: dedup falls back
  * to the 0.92 cosine floor plus the divergence veto and still commits, and entity-resolution's
- * normalization and character-overlap passes run either way. The other four report a reason and
- * write nothing.
+ * normalization and character-overlap passes run either way. Every other member reports a reason and
+ * writes nothing.
  *
  * `task-detection` was the first member that is net-new model spend rather than a
  * question a phase was already asking. Issue #44 sizes it that way on purpose: surfaces 1 and 2 cover
@@ -162,7 +209,7 @@ export interface PhaseResult {
   readonly counts: PhaseCounts
   /** The commit this phase produced, or `null` when it staged nothing or does not commit. */
   readonly commitSha: string | null
-  /** Model calls this phase made. Zero for the eleven deterministic phases. */
+  /** Model calls this phase made. Zero for every phase outside {@link LLM_PHASES}. */
   readonly llmCalls: number
   /** Why it failed, or why it was skipped. Absent on `ok`. */
   readonly detail?: string | undefined
@@ -223,4 +270,250 @@ export interface MergeReport {
   readonly headSha: string
   /** Set on a refusal: which precondition failed. */
   readonly refusal?: "main-advanced" | "gate-failed" | "no-run" | undefined
+  /**
+   * Pending state-plane marks the run's ledger carried, and how many of them this merge applied.
+   * Present only on a merge that happened; a refusal applies nothing and reports neither.
+   *
+   * TWO numbers rather than one, and they answer different questions. `marksPending` is what the
+   * branch earned, `marksApplied` is what the plane took. They agree on every ordinary merge, so a
+   * merge where they disagree is the operator-visible reading of a plane write that did not land —
+   * the sessions in the shortfall stay unconsolidated and are re-read on the next cycle, which costs
+   * a model call and loses nothing. One number could not distinguish that from a run that earned no
+   * marks at all.
+   */
+  readonly marksPending?: number | undefined
+  readonly marksApplied?: number | undefined
 }
+
+/**
+ * ONE pending state-plane write a run has earned, recorded on its branch and applied by `merge`.
+ *
+ * **Why these writes are deferred at all.** `git branch -D` is this design's abort and `main` never
+ * moves during a run, so discarding a branch has to discard everything the run decided. A write into
+ * the state plane escapes that: `.memhtml/state.db` is not rebuildable from the tree and
+ * `trace_consolidations` survives an index rebuild by construction (migration 0010), so a row written
+ * DURING a phase outlives the branch that earned it. For the consolidation watermark that is
+ * data loss and not merely bookkeeping — the watermark is an ANTI-JOIN, so a session it covers is
+ * never selected again, and the transcript is gone with a row asserting it was handled.
+ *
+ * So a phase records the write here instead of performing it, `merge` applies the ledger after the
+ * fast-forward succeeds, and a discarded branch takes its pending marks with it.
+ *
+ * **The ledger is a committed artifact and not a table**, for the reason the trailers are the resume
+ * mechanism: a run's facts are its commits. A table would be a second record of what a run earned,
+ * and the two disagree exactly when it matters — on a branch that was reviewed and thrown away.
+ */
+export type PendingMark =
+  | {
+      readonly kind: "session-consolidated"
+      readonly sessionId: string
+      readonly runId: string
+      readonly at: string
+    }
+  | {
+      readonly kind: "edge-promoted"
+      readonly srcPath: string
+      readonly rel: string
+      readonly dstPath: string
+      readonly at: string
+    }
+  /**
+   * An entity merge recorded as applied: `state.entity_corroboration.promoted`/`confirmed`.
+   *
+   * The three fields ARE the counter row's primary key, `(entity_type, alias_name, canonical_name)`,
+   * and the pair is ORIENTED — `alias_name` is the name rewritten away and `canonical_name` the one
+   * that survives, two roles the table keeps apart on purpose (`S0002_entity_corroboration.sql`
+   * records that a merge whose direction flips restarts the counter). A mark that sorted the two names
+   * would address a row the table does not hold. `entity_type` is in the key because `person:api` and
+   * `service:api` are different subjects whose names collide.
+   *
+   * Deferred for the reason the edge promotion is, one step further along the same door: setting
+   * `promoted = 1` asserts that the corpus already carries the rewrite, and an entity merge rewrites
+   * `memhtml-entity` metas across every file claiming the alias. A branch discarded after the flag was
+   * set leaves the plane claiming a corpus-wide rename that no file carries — a provenance record that
+   * is false and not rebuildable, since `.memhtml/state.db` is not derived from the tree.
+   */
+  | {
+      readonly kind: "entity-promoted"
+      readonly entityType: string
+      readonly aliasName: string
+      readonly canonicalName: string
+      readonly at: string
+    }
+
+/**
+ * Where a run's ledger lives: beside its report, under the same run-id-to-filename rule.
+ *
+ * `/` is not legal in a filename and a run id is `sleep/<date>`, so the separator becomes a hyphen —
+ * the same transformation `reportFilename` makes, stated the same way, so a run's two artifacts sort
+ * next to each other in `.memhtml/sleep/`.
+ */
+export const pendingMarksPath = (runId: string): string =>
+  `${SLEEP_REPORTS_DIR}/${runId.replaceAll("/", "-")}.pending.jsonl`
+
+/**
+ * One mark as its ledger line, with the keys in a FIXED order.
+ *
+ * Fixed order is what makes the rendered line the mark's identity, which is what
+ * {@link appendPendingMarks} deduplicates on: two recordings of one mark must render byte-identically
+ * or a resume would append a second copy of a write it already earned. It also makes the file
+ * byte-stable, so a phase that records nothing new writes nothing and stages nothing.
+ */
+const renderPendingMark = (mark: PendingMark): string => {
+  switch (mark.kind) {
+    case "session-consolidated":
+      return JSON.stringify({
+        kind: mark.kind,
+        sessionId: mark.sessionId,
+        runId: mark.runId,
+        at: mark.at
+      })
+    case "edge-promoted":
+      return JSON.stringify({
+        kind: mark.kind,
+        srcPath: mark.srcPath,
+        rel: mark.rel,
+        dstPath: mark.dstPath,
+        at: mark.at
+      })
+    case "entity-promoted":
+      return JSON.stringify({
+        kind: mark.kind,
+        entityType: mark.entityType,
+        aliasName: mark.aliasName,
+        canonicalName: mark.canonicalName,
+        at: mark.at
+      })
+  }
+}
+
+/**
+ * The ledger's bytes with `marks` appended, dropping any that are already recorded.
+ *
+ * APPEND order is preserved and is the order `merge` applies in, because a promotion mark presumes
+ * the counter row its own phase created and an ordering that reversed them would apply an update to
+ * a row that is not there yet.
+ *
+ * JSONL rather than one JSON array, the same shape and the same reason as the access sidecar: the
+ * file appends cleanly, a truncated write costs one mark instead of the whole ledger, and `git diff`
+ * reads as one line per earned write.
+ */
+export const appendPendingMarks = (
+  existing: string | undefined,
+  marks: ReadonlyArray<PendingMark>
+): string => {
+  const lines = (existing ?? "").split("\n").filter((line) => line.trim() !== "")
+  const seen = new Set(lines)
+  for (const mark of marks) {
+    const line = renderPendingMark(mark)
+    if (seen.has(line)) continue
+    seen.add(line)
+    lines.push(line)
+  }
+  return lines.length === 0 ? "" : `${lines.join("\n")}\n`
+}
+
+/**
+ * Parse a ledger back into marks, reporting how many lines it could not read.
+ *
+ * Defensive per line, exactly as the access sidecar's parse is: the ledger is the only record of what
+ * a branch earned, so a file whose tail an interrupted write mangled must still yield every mark it
+ * does hold. `skipped` is REPORTED rather than swallowed, because a skipped line is a write the merge
+ * will not make — the caller logs it, and the session it named is simply re-read next cycle.
+ */
+export const parsePendingMarks = (
+  contents: string
+): {
+  readonly marks: ReadonlyArray<PendingMark>
+  readonly skipped: number
+} => {
+  const marks: Array<PendingMark> = []
+  let skipped = 0
+  for (const line of contents.split("\n")) {
+    if (line.trim() === "") continue
+    const mark = parseOne(line)
+    if (mark === undefined) skipped += 1
+    else marks.push(mark)
+  }
+  return { marks, skipped }
+}
+
+/** One line as a mark, or `undefined` when any field it needs is absent or not a string. */
+const parseOne = (line: string): PendingMark | undefined => {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(line)
+  } catch {
+    return undefined
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined
+  const fields = parsed as Record<string, unknown>
+  const at = text(fields.at)
+  if (at === undefined) return undefined
+  if (fields.kind === "session-consolidated") {
+    const sessionId = text(fields.sessionId)
+    const runId = text(fields.runId)
+    return sessionId === undefined || runId === undefined
+      ? undefined
+      : { kind: "session-consolidated", sessionId, runId, at }
+  }
+  if (fields.kind === "edge-promoted") {
+    const srcPath = text(fields.srcPath)
+    const rel = text(fields.rel)
+    const dstPath = text(fields.dstPath)
+    return srcPath === undefined || rel === undefined || dstPath === undefined
+      ? undefined
+      : { kind: "edge-promoted", srcPath, rel, dstPath, at }
+  }
+  if (fields.kind === "entity-promoted") {
+    const entityType = text(fields.entityType)
+    const aliasName = text(fields.aliasName)
+    const canonicalName = text(fields.canonicalName)
+    return entityType === undefined || aliasName === undefined || canonicalName === undefined
+      ? undefined
+      : { kind: "entity-promoted", entityType, aliasName, canonicalName, at }
+  }
+  return undefined
+}
+
+/** A non-empty string field, or `undefined`. A blank id is not an id. */
+const text = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim() !== "" ? value : undefined
+
+/** The marks a run has already recorded. Empty when it has recorded none. */
+export const readPendingMarks = (
+  root: string,
+  runId: string
+): Effect.Effect<ReadonlyArray<PendingMark>, StorageFailure> =>
+  readFileOrNull(`${root}/${pendingMarksPath(runId)}`).pipe(
+    Effect.map((contents) => (contents === null ? [] : parsePendingMarks(contents).marks))
+  )
+
+/**
+ * Record marks in the run's ledger. `true` when the file changed, which is when the caller must
+ * stage it — a phase that leaves the ledger unstaged has earned a write no merge will find.
+ *
+ * Read-modify-write against DISK rather than an accumulator in the run's environment, and that is
+ * forced: the ledger is one file per run and phases three, six and twelve all write it, sequentially,
+ * in separate phase bodies. Disk is the carrier they share, and it is also the carrier that survives
+ * the process — a resume re-recording a mark it already earned appends nothing.
+ */
+export const recordPendingMarks = (
+  root: string,
+  runId: string,
+  marks: ReadonlyArray<PendingMark>
+): Effect.Effect<boolean, StorageFailure> =>
+  Effect.gen(function* () {
+    if (marks.length === 0) return false
+    const absolute = `${root}/${pendingMarksPath(runId)}`
+    const existing = yield* readFileOrNull(absolute)
+    const next = appendPendingMarks(existing ?? undefined, marks)
+    if (next === existing) return false
+    yield* attemptIo(`sleep.pending-marks:${runId}`, async () => {
+      const { mkdir, writeFile } = await import("node:fs/promises")
+      const { dirname } = await import("node:path")
+      await mkdir(dirname(absolute), { recursive: true })
+      await writeFile(absolute, next, "utf8")
+    })
+    return true
+  })

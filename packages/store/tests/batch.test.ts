@@ -1,12 +1,12 @@
-import { readdir } from "node:fs/promises"
+import { readdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
-import { InvalidMemory } from "@memhtml/contracts/errors"
+import { InvalidMemory, WriteConflict } from "@memhtml/contracts/errors"
 import { Effect, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { PROMPT_TRAILER, SESSION_TRAILER } from "../src/plumbing.js"
-import type { BatchWriteResult } from "../src/store.js"
+import { type BatchWriteResult, makeStore, type StoreHooks } from "../src/store.js"
 import { type FixtureRepo, makeFixtureRepo, mapDedupeLookup, writeInput } from "../src/testing.js"
 
 /**
@@ -83,6 +83,17 @@ const violationOf = (result: BatchWriteResult, index: number): string => {
     )
   }
   return error.reason
+}
+
+/** One op's path conflict, or a throw naming what it actually held. */
+const conflictOf = (result: BatchWriteResult, index: number): WriteConflict => {
+  const error = result.results[index]?.error
+  if (!(error instanceof WriteConflict)) {
+    throw new Error(
+      `op ${index} carried no WriteConflict: ${JSON.stringify(result.results[index])}`
+    )
+  }
+  return error
 }
 
 /** Article markup with prose but no claim span — constraint 1's exact violation. */
@@ -493,7 +504,6 @@ describe("a commit failure rolls the whole batch back", () => {
       ...repo.git,
       commit: () => repo.git.run(["commit", "--this-is-not-a-flag"]).pipe(Effect.asVoid) as never
     }
-    const { makeStore } = await import("../src/store.js")
     const store = makeStore(failingGit)
 
     await runErr(
@@ -540,7 +550,6 @@ describe("a commit failure rolls the whole batch back", () => {
           : repo.git.add(paths)
       }
     }
-    const { makeStore } = await import("../src/store.js")
     const store = makeStore(flakyGit)
 
     await runErr(
@@ -555,6 +564,168 @@ describe("a commit failure rolls the whole batch back", () => {
     expect(await htmlOnDisk(repo)).toEqual(before.disk)
     expect(await run(repo.store.dirtyPaths())).toEqual([])
     expect(await commitCount(repo)).toBe(before.commits)
+  })
+
+  it("RESTORES a file that appeared at a claimed path rather than deleting it", async () => {
+    /**
+     * The race the in-process permit cannot close, and the one that makes the compensation a
+     * journal rather than an unlink: another process commits a file at a path this batch already
+     * claimed. The batch's write pass replaces those bytes, git then refuses the commit, and undoing
+     * the batch means putting the OTHER writer's memory back — an unlink would delete a file that is
+     * in HEAD, in a corpus whose whole premise is that nothing is ever deleted.
+     *
+     * The intruding commit is made from the dedupe hook, which the batch calls once per op during
+     * validation, so it lands after op 0 claimed its path and before the write pass reaches it. Real
+     * hook, real git, real commit.
+     */
+    const repo = await fixture()
+    const claimed = "areas/inbox/racing-title.html"
+    const outsider = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Written by the other process</title>
+<meta name="memhtml-type" content="semantic">
+</head>
+<body>
+<article>
+<p><mark>The other writer got here first.</mark></p>
+</article>
+</body>
+</html>
+`
+    let lookups = 0
+    const hooks: StoreHooks = {
+      dedupeLookup: () =>
+        Effect.gen(function* () {
+          lookups += 1
+          if (lookups === 2) {
+            yield* Effect.promise(() => writeFile(join(repo.root, claimed), outsider, "utf8"))
+            yield* repo.git.add([claimed])
+            yield* repo.git.commit("memhtml(write): the other process")
+          }
+          return null
+        })
+    }
+    const failingGit = {
+      ...repo.git,
+      commit: () => repo.git.run(["commit", "--this-is-not-a-flag"]).pipe(Effect.asVoid) as never
+    }
+    const store = makeStore(failingGit, hooks)
+
+    await runErr(
+      store.writeMemories([
+        writeInput({ title: "Racing title", claim: "This batch's fact." }),
+        writeInput({ title: "Second op", claim: "Whatever the second op says." })
+      ])
+    )
+
+    // The other writer's memory is still there, byte for byte, and the tree it committed is clean.
+    expect(await readFile(join(repo.root, claimed), "utf8")).toBe(outsider)
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+    expect(await run(repo.store.requireCleanTree())).toBeUndefined()
+    expect(await htmlOnDisk(repo)).toEqual([claimed])
+  })
+})
+
+describe("an explicit path a batch cannot have", () => {
+  it("refuses the op whose explicit path an active memory holds, per op", async () => {
+    /**
+     * The same refusal the singular write makes, reported the way the batch contract requires: a
+     * rejected OP is a per-op result, never an error-channel failure, so the caller still gets its
+     * array back. The occupant's bytes are the assertion that matters — an overwrite here would
+     * delete a memory with no archive and no supersedes link.
+     */
+    const repo = await fixture()
+    const occupied = await run(
+      repo.store.writeMemory(
+        writeInput({ path: "areas/oncall/held.html", claim: "The fact already here." })
+      )
+    )
+    const before = await readFile(join(repo.root, occupied.path), "utf8")
+
+    const result = await run(
+      repo.store.writeMemories(
+        [
+          writeInput({ title: "Would replace it", claim: "A newer fact.", path: occupied.path }),
+          writeInput({ title: "A free path", claim: "Lands fine." })
+        ],
+        { continueOnError: true }
+      )
+    )
+
+    expect(result.results[0]?.ok).toBe(false)
+    expect(conflictOf(result, 0).path).toBe(occupied.path)
+    expect(result.summary).toEqual({ total: 2, written: 1, deduped: 0, failed: 1, skipped: 0 })
+    // The survivor still lands in the one commit, and the occupant is untouched.
+    expect(result.results[1]).toMatchObject({ ok: true, path: "areas/inbox/a-free-path.html" })
+    expect(await readFile(join(repo.root, occupied.path), "utf8")).toBe(before)
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+  })
+
+  it("refuses the SECOND of two ops naming one explicit path", async () => {
+    /**
+     * Neither file exists when either op is validated, so disk cannot separate them — the claimed
+     * set is the only thing that can. Without it both ops are handed the path and the second write
+     * replaces the first inside one commit, which reports two successes for one file.
+     */
+    const repo = await fixture()
+    const result = await run(
+      repo.store.writeMemories(
+        [
+          writeInput({ title: "First", claim: "One.", path: "areas/oncall/one-slot.html" }),
+          writeInput({ title: "Second", claim: "Two.", path: "areas/oncall/one-slot.html" })
+        ],
+        { continueOnError: true }
+      )
+    )
+
+    expect(result.results[0]).toMatchObject({ ok: true, path: "areas/oncall/one-slot.html" })
+    expect(result.results[1]?.ok).toBe(false)
+    expect(conflictOf(result, 1).path).toBe("areas/oncall/one-slot.html")
+    expect(result.summary).toEqual({ total: 2, written: 1, deduped: 0, failed: 1, skipped: 0 })
+    // ONE file, holding the FIRST op's fact.
+    expect(await htmlOnDisk(repo)).toEqual(["areas/oncall/one-slot.html"])
+    expect((await run(repo.store.readMemory("areas/oncall/one-slot.html"))).doc.article.gist).toBe(
+      "One."
+    )
+  })
+
+  it("aborts the whole batch on that refusal in atomic mode", async () => {
+    // Atomic is the default, so a path conflict aborts exactly like a render-gate violation: nothing
+    // written, every other op reported as skipped rather than as ok with a path.
+    const repo = await fixture()
+    const before = await snapshot(repo)
+    const result = await run(
+      repo.store.writeMemories([
+        writeInput({ title: "First", claim: "One.", path: "areas/oncall/contended.html" }),
+        writeInput({ title: "Second", claim: "Two.", path: "areas/oncall/contended.html" })
+      ])
+    )
+
+    expect(result.results[0]).toEqual({ index: 0, ok: false, skipped: true })
+    expect(conflictOf(result, 1).path).toBe("areas/oncall/contended.html")
+    expect(result.summary).toEqual({ total: 2, written: 0, deduped: 0, failed: 1, skipped: 1 })
+    expect(result.commitSha).toBeNull()
+    expect(await htmlOnDisk(repo)).toEqual(before.disk)
+    expect(await commitCount(repo)).toBe(before.commits)
+  })
+
+  it("keeps writing an explicit path nothing holds", async () => {
+    // The mutation-proof pair: only an OCCUPIED or twice-claimed path is refused. A guard that
+    // refused every explicit path would satisfy all three cases above and none of this one.
+    const repo = await fixture()
+    const result = await run(
+      repo.store.writeMemories([
+        writeInput({ title: "One", claim: "One.", path: "areas/oncall/first-slot.html" }),
+        writeInput({ title: "Two", claim: "Two.", path: "areas/oncall/second-slot.html" })
+      ])
+    )
+    expect(result.summary).toEqual({ total: 2, written: 2, deduped: 0, failed: 0, skipped: 0 })
+    expect(await htmlOnDisk(repo)).toEqual([
+      "areas/oncall/first-slot.html",
+      "areas/oncall/second-slot.html"
+    ])
   })
 })
 

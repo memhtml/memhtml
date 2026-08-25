@@ -23,6 +23,7 @@ import { ENTITY_CONFIDENCE_FLOOR, entityResolution } from "../src/phases/entity-
 import { instantFor } from "../src/run.js"
 import { minedPairs, sharedEntityPairs } from "../src/sql.js"
 import { type ScriptedReply, scriptedModel, unavailable, value, violation } from "../src/testing.js"
+import { pendingMarks } from "./abort-fixture.js"
 import {
   DEDUP_CORPUS,
   ENTITY_CORPUS,
@@ -1119,6 +1120,121 @@ describe("arc-synthesis", () => {
     )
   })
 
+  it("treats a create whose title slugs onto a live arc as an UPDATE of that arc", async () => {
+    /**
+     * An arc file is written whole, so a `create` landing on an existing arc's path would replace
+     * weeks of synthesis with a version that never read it. A slug collision with an arc the triage
+     * call was OFFERED means the model re-derived an arc it failed to recognize, so the entry folds
+     * onto the existing path — and the execute call must receive the CURRENT content, which is the
+     * observable difference between an update and a blind create.
+     */
+    const EXISTING_ARC = "areas/arcs/drain-before-reverting.html"
+    const existingArcHtml = memoryHtml({
+      title: "Drain before reverting",
+      claim: "Drain a load balancer before reverting the change behind it.",
+      body: "Weeks of accumulated nuance about VIP draining live in this paragraph.",
+      memoryType: "arc",
+      createdAt: "2026-06-01T00:00:00Z"
+    })
+    const prompts: Array<string> = []
+    const model = scriptedModel((request): ScriptedReply => {
+      if (request.system.startsWith("You triage")) {
+        return value({
+          entries: [
+            {
+              // A CREATE, not an update: the collision is the model's failure to recognize its own arc.
+              slug: "",
+              title: "Drain before reverting",
+              action: "create",
+              rationale: "Looks new to the model.",
+              evidenceKeys: ["e1"]
+            }
+          ]
+        })
+      }
+      prompts.push(request.prompt)
+      return value({
+        title: "Drain before reverting",
+        claim: "Drain a load balancer before reverting the change behind it.",
+        paragraphs: ["The updated synthesis, carrying the evidence forward."]
+      })
+    })
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* arcSynthesis(envFor(fixture))
+          expect(outcome.counts.written).toBe(1)
+
+          // The execute call saw the existing arc's content: it was an update, not a blind create.
+          expect(prompts[0]).toContain("existing_arc")
+          expect(prompts[0]).toContain("Weeks of accumulated nuance")
+
+          // ONE arc under that slug — no ordinal twin was minted beside it.
+          const arc = yield* atHead(fixture, EXISTING_ARC)
+          expect(arc).toBeDefined()
+          expect(arc).toContain("The updated synthesis")
+          expect(yield* atHead(fixture, "areas/arcs/drain-before-reverting-2.html")).toBeUndefined()
+        }),
+      { seed: [...DEDUP_CORPUS, { path: EXISTING_ARC, html: existingArcHtml }], model }
+    )
+  })
+
+  it("never overwrites a non-arc occupant of the slug's path with a whole-file write", async () => {
+    /**
+     * The disk half of the same collision: the path holds a FILE the triage call was never offered
+     * — a demoted arc, a hand-written note — so the "update, not create" fold does not apply and the
+     * write must take an ordinal instead of replacing bytes the phase never read.
+     */
+    const SQUATTER = "areas/arcs/first-arc.html"
+    const squatterHtml = memoryHtml({
+      title: "A note squatting the arc slug",
+      claim: "This file is not an arc and was never offered to the triage call.",
+      createdAt: "2026-06-01T00:00:00Z"
+    })
+    const model = scriptedModel(
+      (request): ScriptedReply =>
+        request.system.startsWith("You triage")
+          ? value({
+              entries: [
+                {
+                  slug: "",
+                  title: "First arc",
+                  action: "create",
+                  rationale: "r1",
+                  evidenceKeys: ["e1"]
+                }
+              ]
+            })
+          : value({ title: "First arc", claim: "The first principle.", paragraphs: ["Because."] })
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* arcSynthesis(envFor(fixture))
+          expect(outcome.counts.written).toBe(1)
+
+          /**
+           * The squatter SURVIVED as itself: same title, same claim, still a semantic memory and not
+           * the arc template. Not asserted byte-identical, because the squatter is also part of the
+           * evidence corpus and legitimately gains a `memhtml-part-of` HEAD stamp toward the arc —
+           * the head-editor rule keeps that stamp outside the article's bytes.
+           */
+          const squatter = yield* atHead(fixture, SQUATTER)
+          expect(squatter).toContain("<title>A note squatting the arc slug</title>")
+          expect(squatter).toContain("never offered to the triage call")
+          expect(squatter).toContain('content="semantic"')
+          expect(squatter).not.toContain("The first principle.")
+          // The arc landed at the first free ordinal instead.
+          const arc = yield* atHead(fixture, "areas/arcs/first-arc-2.html")
+          expect(arc).toBeDefined()
+          expect(arc).toContain("The first principle.")
+        }),
+      { seed: [...DEDUP_CORPUS, { path: SQUATTER, html: squatterHtml }], model }
+    )
+  })
+
   it("commits the arcs it wrote before a later arc's call fails", async () => {
     /**
      * Per-item isolation reaching the GIT HISTORY, not only the counters: two arcs planned, the second
@@ -1588,6 +1704,106 @@ describe("compress", () => {
     )
   })
 
+  it("never overwrites an on-disk file the synthesized title slugs onto", async () => {
+    /**
+     * The slug is a pure function of the model's title, so a fold can land on a path already
+     * holding a file OUTSIDE the batch — a memory a human hand-corrected is the live case. Before
+     * the probe, the canonical write silently replaced it as a MODIFY no report line mentioned.
+     * The squatter here shares no links and no vocabulary with the community, so it is not a
+     * member of the fold; only its PATH collides.
+     */
+    const SQUATTER = "areas/cache/build-cache-warmup.html"
+    const squatterHtml = memoryHtml({
+      title: "A hand-corrected note that happens to hold this path",
+      claim: "The bastion host rotates its keypair every ninety days.",
+      body: "Rotation is manual and the runbook names the operator on call.",
+      createdAt: "2026-05-01T00:00:00Z"
+    })
+    const model = scriptedModel(() =>
+      value({
+        title: "Build cache warmup",
+        claim: "Build cache warmup reads the shared volume manifest first.",
+        paragraphs: ["A two-step read."],
+        absorbedKeys: ["m1", "m2", "m3"]
+      })
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* compress(envFor(fixture))
+          expect(outcome.counts.canonicals).toBe(1)
+          expect(outcome.counts.archived).toBe(3)
+
+          // The squatter's bytes survived, byte-identically.
+          expect(yield* atHead(fixture, SQUATTER)).toBe(squatterHtml)
+          // And it was not archived under any name: only the three members moved.
+          expect(yield* atHead(fixture, archivePathFor(SQUATTER, 2026))).toBeUndefined()
+
+          // The canonical took the first free ordinal instead.
+          const canonical = yield* atHead(fixture, "areas/cache/build-cache-warmup-2.html")
+          expect(canonical).toBeDefined()
+          const doc = yield* parseMemory(canonical ?? "")
+          expect(doc.links.filter((one) => one.rel === "supersedes")).toHaveLength(3)
+        }),
+      { seed: [...COMMUNITY, { path: SQUATTER, html: squatterHtml }], model }
+    )
+  })
+
+  it("gives two batches whose canonicals share a title two paths, not one write over the other", async () => {
+    /**
+     * The in-run half of the collision: the same night's second batch slugs onto the first
+     * batch's canonical, and before the claimed set the second write replaced the first fold's
+     * output — every member of batch one archived behind a canonical that then vanished.
+     * Both communities live in ONE directory so the placement rule sends both canonicals there.
+     */
+    const CACHE_QUEUE: ReadonlyArray<SeedFile> = ["one", "two", "three"].map((name, offset) => ({
+      path: `areas/cache/queue-${name}.html`,
+      html: memoryHtml({
+        title: `Queue drain ${name}`,
+        claim: `The queue drain worker leases a visibility window before acknowledging (${name}).`,
+        body: "Draining leases a visibility window per message and acknowledges after the handler returns.",
+        createdAt: `2026-05-1${offset + 3}T00:00:00Z`,
+        confidence: "0.50",
+        importance: "4",
+        links: ["one", "two", "three"]
+          .filter((other) => other !== name)
+          .map((other) => ({
+            rel: "memhtml-relates-to",
+            href: `/areas/cache/queue-${other}.html`
+          }))
+      })
+    }))
+    const model = scriptedModel((_request, offset) =>
+      value({
+        title: "One shared canonical title",
+        claim:
+          offset === 0
+            ? "The canonical of the first community."
+            : "The canonical of the second community.",
+        paragraphs: ["Folded."],
+        absorbedKeys: ["m1", "m2", "m3"]
+      })
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* compress(envFor(fixture))
+          expect(outcome.counts.canonicals).toBe(2)
+          expect(outcome.counts.archived).toBe(6)
+
+          // The first batch's canonical still carries the FIRST claim.
+          const first = yield* atHead(fixture, "areas/cache/one-shared-canonical-title.html")
+          expect(first).toContain("The canonical of the first community.")
+          // The second landed beside it at the next ordinal.
+          const second = yield* atHead(fixture, "areas/cache/one-shared-canonical-title-2.html")
+          expect(second).toContain("The canonical of the second community.")
+        }),
+      { seed: [...COMMUNITY, ...CACHE_QUEUE], model }
+    )
+  })
+
   it("counts on a dry run and writes nothing", async () => {
     const model = scriptedModel(() =>
       value({ title: "x", claim: "y", paragraphs: ["z"], absorbedKeys: ["m1", "m2"] })
@@ -1738,9 +1954,25 @@ describe("entity-resolution", () => {
           // orientation is inverted, and the unit tier is where the inversion is caught.
           expect(yield* personNames(fixture)).not.toContain(PERSON_ALIAS)
 
+          /**
+           * The counter reads TWO detections and `promoted = 0`, because the flag is a merge-time write:
+           * it asserts the corpus carries the rename, and the rename is on a branch until `merge` lands
+           * it. What the night earned is the LEDGER line, asserted here so this case cannot go green
+           * against a phase that reached the gate and recorded nothing. `tests/entity-abort.test.ts`
+           * owns the two ends of that: the discard, and the merge that applies it.
+           */
           const promoted = yield* entityCorroborations(fixture)
-          expect(promoted[0]?.promoted).toBe(1)
+          expect(promoted[0]?.promoted).toBe(0)
           expect(promoted[0]?.detections).toBe(2)
+          expect(yield* pendingMarks(fixture, `sleep/2026-08-03`)).toEqual([
+            {
+              kind: "entity-promoted",
+              entityType: "person",
+              aliasName: PERSON_ALIAS,
+              canonicalName: PERSON_CANONICAL,
+              at: instantFor("2026-08-03").at
+            }
+          ])
         }),
       { seed: ENTITY_CORPUS, model: clusterModel() }
     )

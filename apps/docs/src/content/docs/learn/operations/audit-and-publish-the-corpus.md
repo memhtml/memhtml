@@ -66,7 +66,9 @@ Search excludes a `task` memory by default and every sleep phase skips it, so `m
 
 `--fix` reuses the repair the sleep integrity phase already implements, which splices the changed bytes in place instead of writing the file out again through the serializer. The reason goes past avoiding a second implementation: a repair routed through the serializer would move the content hash of every file it touched, which would then read as a body change in the next `memhtml sleep review` and would re-embed the file for nothing.
 
-Under `--fix` the report gains a `repaired` object counting hrefs `rewritten` (pointed at the target's archive path) and `dropped` (the target has no file anywhere).
+Under `--fix` the report gains a `repaired` object: hrefs `rewritten` (pointed at the target's archive path), hrefs `dropped` (the target has no file anywhere), `failedWrites`, `prunedAccessRows`, and the `commitSha` the href repairs landed in — `null` when nothing was rewritten (`apps/cli/src/doctor.ts:156`).
+
+A repair counts only when its bytes reached disk. `failedWrites` lists the source paths whose repaired bytes could not be written, and those findings are still open: they stay in `dangling`, they are absent from `rewritten` and `dropped`, and they are never staged, so a re-run retries them. Both halves of that matter — staging an unchanged file would put the pre-repair bytes into a commit whose subject claims they were repaired, and counting it would report a finding as settled while it is still open. A non-empty `failedWrites` is the one part of a `--fix` report that needs a second look, usually at permissions on the paths it names.
 
 ## Publish
 

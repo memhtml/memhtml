@@ -1,12 +1,17 @@
 /**
  * Probe 3: decompose db.writeAll inside indexer.update by SQL statement shape.
  *
+ * MANUAL measurement rig — no task, workflow, or test tier runs this; a human runs it by
+ * hand when db.writeAll's per-statement cost is in question, and the docs cite its
+ * numbers. Lint covers it; typecheck and CI do not.
+ *
  * Same harness as probe-write-cost.mjs at one store size, but the database's writeAll
  * executes each write individually (db.run) with time bucketed by statement prefix.
  * Transaction semantics differ from db.batch — the point is the RELATIVE scaling of
  * statement kinds across store sizes, not the absolute total.
  *
- * node tests-integration/probe-db-decompose.mjs [--sizes 1000,5000] [--batch 256]
+ * Run from repo root after `pnpm build`:
+ *   node tests-integration/probe-db-decompose.mjs [--sizes 1000,5000] [--batch 256]
  */
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -16,14 +21,21 @@ import { StorageFailure } from "@memhtml/contracts/errors"
 import { renderTemplate } from "@memhtml/html"
 import {
   MIGRATIONS_DIR,
-  STATE_MIGRATIONS_DIR,
   makeDatabase,
   makeGitPort,
+  makeIndexer,
   makeIndexRecorder,
-  makeIndexer
+  STATE_MIGRATIONS_DIR
 } from "@memhtml/index"
 import { EMBED_DIM, EMBED_WATERMARK } from "@memhtml/llm"
-import { INDEX_DB_PATH, STATE_DB_PATH, initRepo, isoSecond, makeGit, makeStore } from "@memhtml/store"
+import {
+  INDEX_DB_PATH,
+  initRepo,
+  isoSecond,
+  makeGit,
+  makeStore,
+  STATE_DB_PATH
+} from "@memhtml/store"
 import { configureIdentity } from "@memhtml/store/testing"
 import { Effect } from "effect"
 
@@ -41,7 +53,9 @@ const seedFile = (i) =>
 
 const runSize = (storeSize, batchSize) =>
   Effect.gen(function* () {
-    const root = yield* Effect.promise(() => mkdtemp(join(tmpdir(), `memhtml-probe3-${storeSize}-`)))
+    const root = yield* Effect.promise(() =>
+      mkdtemp(join(tmpdir(), `memhtml-probe3-${storeSize}-`))
+    )
     const git = makeGit(root)
     yield* initRepo(git)
     yield* configureIdentity(git)
@@ -110,10 +124,14 @@ const runSize = (storeSize, batchSize) =>
     yield* indexer.update({ embed: false })
     const total = ms(process.hrtime.bigint() - t0)
 
-    console.log(`\n=== store=${storeSize} batch=${batchSize}  update total ${total.toFixed(0)}ms (per-stmt txns) ===`)
+    console.log(
+      `\n=== store=${storeSize} batch=${batchSize}  update total ${total.toFixed(0)}ms (per-stmt txns) ===`
+    )
     const sorted = [...buckets].sort((a, b) => Number(b[1].ns - a[1].ns))
     for (const [key, entry] of sorted.slice(0, 12)) {
-      console.log(`  ${ms(entry.ns).toFixed(0).padStart(7)}ms x${String(entry.calls).padEnd(5)} ${key}`)
+      console.log(
+        `  ${ms(entry.ns).toFixed(0).padStart(7)}ms x${String(entry.calls).padEnd(5)} ${key}`
+      )
     }
     buckets.clear()
     yield* Effect.promise(() => rm(root, { recursive: true, force: true }))

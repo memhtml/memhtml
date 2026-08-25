@@ -1,5 +1,6 @@
 import { Effect } from "effect"
 
+import { DEFAULT_SEED } from "./corpus.js"
 import {
   type DiscriminationReport,
   describeFailure,
@@ -44,10 +45,16 @@ export interface EvalOutcome extends DiscriminationReport {
   readonly skipReason?: string | undefined
   /** The seed the corpus was generated at, so a failing run is reproducible. */
   readonly seed: number
+  /**
+   * The quantized run instant the corpus's stamps were anchored behind, UTC millis. The other half
+   * of reproducing a failing run, since the corpus is a function of `(seed, now)`. `0` on a skipped
+   * run, where no corpus was generated.
+   */
+  readonly now: number
   readonly corpusSize: number
 }
 
-/** True when the rotated Bedrock bearer token is present in the environment. */
+/** True when a Bedrock bearer token is present in the environment. */
 export const hasBedrockCredentials = (
   env: Readonly<Record<string, string | undefined>> = process.env
 ): boolean => {
@@ -62,6 +69,8 @@ export interface EvalOptions {
   readonly seed?: number | undefined
   readonly size?: number | undefined
   readonly probes?: number | undefined
+  /** The run instant to anchor the corpus's stamps behind, UTC millis. The clock when absent. */
+  readonly now?: number | undefined
   readonly mrrFloor?: number | undefined
   /** Injected for tests, so the credential branch is drivable without touching the environment. */
   readonly env?: Readonly<Record<string, string | undefined>> | undefined
@@ -80,7 +89,7 @@ export const runDiscrimination = (
   Effect.gen(function* () {
     const requested = options.mode ?? "fake"
     const mrrFloor = options.mrrFloor ?? MRR_FLOOR
-    const seed = options.seed ?? 20_260_802
+    const seed = options.seed ?? DEFAULT_SEED
 
     if (requested === "live" && !hasBedrockCredentials(options.env)) {
       const reason =
@@ -108,6 +117,7 @@ export const runDiscrimination = (
         degradedProbes: 0,
         results: [],
         seed,
+        now: 0,
         corpusSize: 0
       }
     }
@@ -130,12 +140,14 @@ export const runDiscrimination = (
             requested,
             skipped: false,
             seed: stack.fixture.spec.seed,
+            now: stack.fixture.spec.now,
             corpusSize: stack.indexed
           }
         }),
       {
         embedder,
         seed,
+        ...(options.now === undefined ? {} : { now: options.now }),
         ...(options.size === undefined ? {} : { size: options.size }),
         ...(options.probes === undefined ? {} : { probes: options.probes })
       }

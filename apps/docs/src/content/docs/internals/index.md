@@ -42,7 +42,7 @@ The chapters run in dependency order: the layers first, then the paths through t
 | [Four-arm retrieval](/internals/four-arm-retrieval/)                               | The arm registry, rank fusion, degraded mode, diversification, the disclosure fold             |
 | [The index plane and the state plane](/internals/index-plane-and-state-plane/)     | What git cannot reproduce, and the byte-stable committed sidecar that saves it                 |
 | [The trace indexer](/internals/the-trace-indexer/)                                 | A read-only index over session transcripts, and the table-name firewall around it              |
-| [The sleep pipeline](/internals/the-sleep-pipeline/)                               | Fifteen phases, per-phase isolation, commit trailers as the resume mechanism                   |
+| [The sleep pipeline](/internals/the-sleep-pipeline/)                               | Seventeen phases, per-phase isolation, commit trailers as the resume mechanism                 |
 | [Concurrency and conflicts](/internals/concurrency-and-conflicts/)                 | Git as the concurrency mechanism, and typed conflict surfacing                                 |
 | [The envelope contract](/internals/the-envelope-contract/)                         | One JSON envelope, append-only codes, the tool surface and its forced choices                  |
 | [Testing posture](/internals/testing-posture/)                                     | Real driver, real git, two fakes, and the quality gate that can refuse a merge                 |

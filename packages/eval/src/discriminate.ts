@@ -80,10 +80,11 @@ export interface DiscriminationReport {
    * Mean reciprocal rank over the WHOLE hit list, unitless in `[0, 1]`, four decimals.
    *
    * Reported rather than gated, because corpus size dominates it more than ranking quality does.
-   * `DEFAULT_ARM_LIMIT` is 40, which is 13% of a 300-file fixture and under 1% of a real corpus, so the
-   * two query-blind arms cover a far larger share of a fixture than of production. Measured on this
-   * generator at one seed: 0.21 at 304 files, 0.49 at 711, 0.58 at 1323, with the inversion count
-   * unchanged at every scale. A gate on this number would be a gate on how big the fixture is.
+   * `DEFAULT_ARM_LIMIT` is 40, which is 13% of a 300-file fixture and under 1% of a real corpus, so
+   * the two query-blind arms cover a far larger share of a fixture than of production. The value is
+   * seed- and parameter-dependent — it moves with the corpus size, the probe count, and the seed —
+   * but it rises with corpus size on this generator while the inversion count stays flat, which is
+   * exactly why a gate on this number would be a gate on how big the fixture is.
    */
   readonly corpusMrr: number
   /** The floor {@link mrr} was measured against. */

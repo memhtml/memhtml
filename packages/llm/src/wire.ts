@@ -41,10 +41,24 @@ export interface GenerateOptions {
 /**
  * Bound a requested budget to what Bedrock accepts. Above the ceiling the service raises a
  * `ValidationException` rather than clamping, so an unbounded caller value would fail the
- * call instead of shortening the answer.
+ * call instead of shortening the answer. The floor is 1 for the same reason one axis down:
+ * `max_tokens` must be a positive integer, so a zero or negative request would also fail
+ * the call at the service — the floor turns it into the smallest budget the wire accepts,
+ * where the truncation gate then reports the response as incomplete rather than the
+ * request as malformed.
+ *
+ * "Positive integer" is the whole contract, so the clamp also has to answer the two values a
+ * min/max pair passes through unchanged. `NaN` loses every comparison, so it survives both
+ * bounds and `JSON.stringify` writes it as `max_tokens: null` — the malformed request this
+ * function exists to prevent — and it is not a budget at all, so it resolves to the default
+ * rather than to a bound. A fractional request IS a budget, so it truncates toward zero and
+ * then meets the floor; `Infinity` truncates to itself and meets the ceiling.
  */
-export const clampTokens = (requested: number | undefined): number =>
-  Math.min(requested ?? MAX_TOKENS_DEFAULT, MAX_TOKENS_CEILING)
+export const clampTokens = (requested: number | undefined): number => {
+  const asked = requested ?? MAX_TOKENS_DEFAULT
+  const budget = Number.isNaN(asked) ? MAX_TOKENS_DEFAULT : asked
+  return Math.max(1, Math.min(Math.trunc(budget), MAX_TOKENS_CEILING))
+}
 
 /**
  * A JSON Schema object for the forced tool's `input_schema`. Open-keyed because JSON

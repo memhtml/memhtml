@@ -861,8 +861,9 @@ describe("the manifest guide, as the BUILT binary emits it with no repo and no a
    * The one thing `apps/cli/tests/apply.test.ts` structurally cannot assert.
    *
    * That suite calls `run([])` in-process and proves the manifest ARM carries the guide. It cannot prove
-   * that the shipped binary reaches that arm from a bare argv — `bin.ts`, the argv slice, the default
-   * `--json`, the exit code, and the guide surviving the build all sit outside it. And the guide's own
+   * that the shipped binary reaches that arm from a bare argv — `bin.ts`, the argv slice, the single
+   * JSON envelope on stdout (the binary's only output, with no flag to ask for it), the exit code, and
+   * the guide surviving the build all sit outside it. And the guide's own
    * first claim is that it answers "on a machine with no repo, no database, and no credentials", which
    * is only testable by not giving it one: no `--repo`, no temp dir, no `memhtml init`.
    */

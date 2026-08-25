@@ -59,6 +59,10 @@ export const codeFor = (error: unknown): ErrorCode => {
       return "ERR_MODEL_UNAVAILABLE"
     case "EmbedModelMismatch":
       return "ERR_EMBED_MODEL_MISMATCH"
+    // The index describes a commit it is not on, or a rebuild that did not finish. The published
+    // recovery is a re-index, carried in SUGGESTIONS below, so an agent recovers in one step.
+    case "IndexStale":
+      return "ERR_INDEX_STALE"
     case "DiscriminationFailed":
       return "ERR_DISCRIMINATION_FAILED"
     default:
@@ -96,6 +100,8 @@ export const messageFor = (error: unknown): string => {
       return `bedrock refused ${text(error.modelId) ?? "the model"}: ${text(error.reason) ?? "no reason given"}`
     case "EmbedModelMismatch":
       return `the index was built in vector space ${text(error.stored) ?? "?"}, configured is ${text(error.configured) ?? "?"}`
+    case "IndexStale":
+      return `the index is stale: ${text(error.reason) ?? "it does not describe the current commit"}`
     case "LlmContractViolation":
       return `the model broke its structured-output contract: ${text(error.reason) ?? "no reason given"}`
     case "DiscriminationFailed":
@@ -112,12 +118,14 @@ type SuggestionsFor = (error: TaggedError) => ReadonlyArray<string>
  * What to do about a failure, as commands the caller can run.
  *
  * A suggestion is part of the contract. An agent that receives `ERR_INDEX_STALE` and a
- * `memhtml index update` suggestion can recover in one step without a round trip to a human. Absent
- * suggestions are an empty array rather than a null, so a parser never branches on presence.
+ * `memhtml index rebuild` suggestion can recover in one step without a round trip to a human, which
+ * also means a suggestion has to be a call that MOVES the failure: naming the command that raised the
+ * tag would loop. Absent suggestions are an empty array rather than a null, so a parser never
+ * branches on presence.
  *
  * A record rather than a `switch`, which is what closes the drift class. Every `memhtml …` string
- * below names a command from the table in `commands.ts`, and a rename there used to leave a stale
- * suggestion here that nothing failed on. A record's keys and arms are both walkable, so the suite
+ * below names a command from the table in `commands.ts`, and a rename there would otherwise leave a
+ * stale suggestion here that nothing fails on. A record's keys and arms are both walkable, so the suite
  * can enumerate every tag, run every suggestion through the real `parseArgv`, and fail on a name the
  * table does not hold. A `switch` cannot expose any of that to a test.
  *
@@ -127,17 +135,31 @@ type SuggestionsFor = (error: TaggedError) => ReadonlyArray<string>
  */
 export const SUGGESTIONS: Readonly<Record<string, SuggestionsFor>> = {
   PathNotFound: () => ["memhtml search <what you were looking for>", "memhtml list"],
+  /**
+   * Two branches produce this tag and they recover differently, so both are offered.
+   *
+   * An occupied EXPLICIT `--path` is refused rather than overwritten — nothing in this corpus is
+   * deleted — and the recovery is `memhtml correct <path>`, which writes the superseding memory and
+   * archives what it replaces in one commit. A merge conflict on a sleep branch carries two blob
+   * shas instead, and there the recovery is to read the current content and re-apply. The read is
+   * first because it is the step both branches start with.
+   */
   WriteConflict: (error) => [
     `memhtml read ${text(error.path) ?? "<path>"}`,
+    `memhtml correct ${text(error.path) ?? "<path>"} --title <title> --claim <sentence>`,
     "re-apply the change to current content"
   ],
   DirtyTree: () => ["git -C $MEMHTML_ROOT status", "commit or stash the changes, then retry"],
   DuplicateContent: (error) => [`memhtml read ${text(error.existingPath) ?? "<path>"}`],
   EmbedModelMismatch: () => ["memhtml index rebuild --embed"],
+  // `index rebuild` only. `index update` is what RAISES this tag — it refuses a watermark row with no
+  // commit on it rather than diffing from nothing — so suggesting it would send the operator in a
+  // circle. A rebuild is the one call that repopulates the tables the interrupted pass left partial.
+  IndexStale: () => ["memhtml index rebuild"],
   ModelUnavailable: () => ["retry: search still works on the lexical floor", "memhtml status"],
   InvalidMemory: () => ["memhtml manifest"],
-  // No `--json`: it is a global flag defaulting to true (commands.ts:36-42), so naming it here only
-  // gave the suggestion a second way to go stale.
+  // No `--json`: there is no such flag — the JSON envelope is the binary's only output — so naming
+  // it here would make the suggestion itself a usage error.
   DiscriminationFailed: () => [
     "memhtml eval discriminate",
     "memhtml sleep review",

@@ -609,7 +609,7 @@ const mcpResourcesPage = (registry: Registry): ReferencePage => ({
     },
     provenance(
       SOURCES.mcpResources,
-      `the templates are reassembled from the resource declarations and checked against ${code("RESOURCE_TEMPLATES")}; a disagreement fails this build.`
+      `each row is read from the resource declaration's own ${code("uriTemplate")} and checked against ${code("RESOURCE_TEMPLATES")}; a disagreement fails this build.`
     )
   ])
 })

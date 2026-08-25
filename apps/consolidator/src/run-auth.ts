@@ -3,19 +3,19 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 /**
  * The per-run credential the agent server demands and the client presents.
  *
- * ## What this replaces, and why the composition was worse than either half
+ * ## Why loopback alone is not the boundary
  *
- * `agent/channels/eve.ts` used to authenticate every caller anonymously with `none()`, and the only
- * thing keeping the agent off the network was the bind address. Loopback is not an authorization
- * boundary on a shared host: any local UID could drive the session endpoint for a run's duration,
- * which is free Opus tokens plus a bash sandbox. That alone was rated MEDIUM (CWE-306).
+ * An anonymous channel — `none()` in `agent/channels/eve.ts` — leaves the bind address as the only
+ * thing keeping the agent off the network, and loopback is not an authorization boundary on a shared
+ * host: any local UID can drive the session endpoint for a run's duration, which is free Opus tokens
+ * plus a bash sandbox. That alone rates MEDIUM (CWE-306).
  *
  * The sandbox half is what makes it more than that. The sandbox has FULL network egress and this app
  * cannot turn it off: `network:{dangerouslyAllowFullInternetAccess:!0}` is a hardcoded literal in
  * node_modules/eve/dist/src/execution/sandbox/bindings/just-bash-runtime.js, and
  * `justBashSetNetworkPolicyUnsupported()` throws by design. Measured 2026-08-09
  * (`node scripts/probe-sandbox-egress.mjs`): `curl` reaches example.com, an IMDSv2 token PUT returns
- * 56 bytes, and the instance-role name comes back. So the unauthenticated endpoint was a handle on a
+ * 56 bytes, and the instance-role name comes back. So an unauthenticated endpoint is a handle on a
  * sandbox that reaches IMDS. `agent/sandbox/sandbox.ts` records that egress cannot be closed here;
  * this module closes the handle.
  *
@@ -32,11 +32,12 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
  * eve out of `src/`'s import graph so the test tier stays server-free. TypeScript is structural, so
  * the value {@link runVerifierConfig} returns is assignable to `jwtHmac`'s parameter with no cast.
  *
- * Every claim and bound below was verified against the installed eve 0.33.0 by driving
- * `verifyJwtHmac` directly (2026-08-14): a token from {@link signRunToken} verifies as
- * `principalType: "service"`, and `null`, a non-JWT string, a token signed with a different secret,
- * an expired token, one with no `sub`, one with a foreign `sub`, and one with a foreign `aud` each
- * return `{ ok: false }`. `tests/run-auth.test.ts` is that probe kept as a test.
+ * Every claim and bound below is re-proven against the INSTALLED eve on every run of
+ * `tests/run-auth.test.ts`, which drives eve's own `verifyJwtHmac` directly: a token from
+ * {@link signRunToken} verifies as `principalType: "service"`, and `null`, a non-JWT string, a token
+ * signed with a different secret, an expired token, one with no `sub`, one with a foreign `sub`, and
+ * one with a foreign `aud` each return `{ ok: false }`. An eve upgrade that changes any of it fails
+ * there rather than aging in this comment.
  */
 
 /**
@@ -193,10 +194,12 @@ const segment = (value: unknown): string =>
  * Sign one short-lived bearer token for the run.
  *
  * Hand-rolled over `node:crypto` because eve exports NO signer: `jwtHmac`, `verifyJwtHmac`, and the
- * jose bundle behind them are verify-only on the public surface (checked across every subpath export
- * of eve 0.33.0, 46 of them), so the alternative to these six lines is a new dependency for one HMAC. The claims
- * are the ones {@link runVerifierConfig} matches, which is the whole correctness condition and the
- * reason both live in this module.
+ * jose bundle behind them are verify-only on the public surface (measured on eve 0.33.0 across all
+ * 46 subpath exports; not re-checked per upgrade — if a later eve ships a signer this stays merely
+ * redundant, not wrong, and `tests/run-auth.test.ts` keeps proving the verifier accepts these
+ * tokens). The alternative to these six lines is a new dependency for one HMAC. The claims are the
+ * ones {@link runVerifierConfig} matches, which is the whole correctness condition and the reason
+ * both live in this module.
  *
  * `exp` is derived from the call, not from the spawn, so each call produces a token valid
  * {@link TOKEN_TTL_SECONDS} from now, which is what makes the per-request function form work.

@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { expandRoot } from "@memhtml/store"
 import { Config } from "effect"
 
+import { EXTRACTION_MODEL_ID } from "./extraction.js"
 import { MCP_BIN_VAR } from "./serve.js"
 
 /**
@@ -60,8 +61,14 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   },
   {
     name: "MEMHTML_EXTRACT_ENTITIES",
-    description:
-      "`on` adds one GPT-5.6 Luna call per write batch that extracts `memhtml-entity` metas the ops did not declare. Opt-in, unlike MEMHTML_EMBED, because it changes what a write STORES: extracted entities land in the files as if authored, and the write itself never waits on or fails with the model. A failed extraction is a logged warning and an unextracted batch.",
+    /**
+     * The model id is interpolated from `extraction.ts`, never spelled here. That constant is the
+     * one the transport calls and the one the strict output schema beside it is tested against, so a
+     * second spelling in this row is a manifest that can name a model the code does not call. The
+     * lane is also not `@memhtml/llm`'s: the extractor speaks the Bedrock mantle Responses API, which
+     * is why this id is absent from `ModelKey`.
+     */
+    description: `\`on\` adds one \`${EXTRACTION_MODEL_ID}\` call per write batch that extracts \`memhtml-entity\` metas the ops did not declare. Opt-in, unlike MEMHTML_EMBED, because it changes what a write STORES: extracted entities land in the files as if authored, and the write itself never waits on or fails with the model. A failed extraction is a logged warning and an unextracted batch.`,
     fallback: "off"
   },
   {

@@ -238,10 +238,10 @@ const opAt = (record: Record<string, unknown>, line: number): WriteParams | Fail
    * has no `claim` field, so a prose line's claim is derived rather than restated by its author (see
    * {@link claimFromProse}, the one copy both doors share).
    *
-   * Skipping this no longer lands a bad file. `@memhtml/html` constraint 1 rejects an empty `<mark>`, so
-   * the render gate would stop the op instead of committing a file with an empty `files.gist`. The
-   * derivation is what makes a prose line valid in the first place. It is no longer the only thing
-   * standing between a missing claim and a silent write.
+   * Skipping this cannot land a bad file. `@memhtml/html` constraint 1 rejects an empty `<mark>`,
+   * so the render gate would stop the op instead of committing a file with an empty `files.gist`.
+   * The derivation is what makes a prose line valid in the first place; the render gate is the
+   * guard between a missing claim and a silent write.
    */
   const prose = typeof params.body === "string" ? (params.body as string) : undefined
   if (prose !== undefined && prose.trim() !== "") {

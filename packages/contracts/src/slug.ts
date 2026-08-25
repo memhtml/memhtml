@@ -53,15 +53,14 @@ export const isSlug = (value: string): boolean =>
  * convention. The suffix is added inside the length budget, so a maximum-length slug is
  * shortened rather than overflowed.
  *
- * **Two ordinals never name one file.** That is what makes the store's collision loop
- * (`packages/store/src/store.ts`, `pathFor`) terminate rather than re-propose the name that
- * collided, and it is not free at the length cap: a slug of exactly {@link SLUG_MAX_LENGTH}
- * characters whose own tail IS the suffix comes back UNCHANGED from the cut-and-append, because
- * cutting `…-0aa000aa-0-2` to 78 characters and appending `-2` rebuilds it. Reproduced
- * 2026-08-14 from a `fast-check` counterexample; ordinals 1 and 2 both named
- * `a00aa0a-…-0aa000aa-0-2`. Taking one character less resolves it for every ordinal, because the
- * result is then shorter than {@link SLUG_MAX_LENGTH} and only a slug OF that length can be
- * rebuilt this way.
+ * **The result never equals the input, at any slug length.** That is what makes the store's
+ * collision loop (`packages/store/src/store.ts`, `pathFor`) terminate rather than re-propose
+ * the name that collided. It is not free near the length cap: for a slug whose own tail IS the
+ * suffix, cutting to make room and appending the suffix can rebuild the slug — and because the
+ * cut also trims any hyphen it exposes, the rebuild can recur at MORE than one cut width. The
+ * stem is therefore re-cut from its own post-trim length until appending the suffix no longer
+ * reproduces the input; each re-cut strictly shortens the stem, so the loop terminates and the
+ * result stays inside the budget.
  */
 export const withCollisionOrdinal = (slug: string, ordinal: number): string => {
   if (ordinal <= 1) return slug
@@ -69,9 +68,14 @@ export const withCollisionOrdinal = (slug: string, ordinal: number): string => {
   /** The slug cut to `upTo` characters, with any hyphen the cut exposed trimmed off. */
   const stemAt = (upTo: number): string =>
     slug.length <= upTo ? slug : slug.slice(0, upTo).replace(/-+$/, "")
-  const room = SLUG_MAX_LENGTH - suffix.length
-  const widest = stemAt(room)
-  const stem = `${widest}${suffix}` === slug ? stemAt(room - 1) : widest
+  let stem = stemAt(SLUG_MAX_LENGTH - suffix.length)
+  while (stem.length > 0 && `${stem}${suffix}` === slug) {
+    stem = stemAt(stem.length - 1)
+  }
+  /**
+   * An empty stem takes the fallback, which keeps the function total over arbitrary strings:
+   * even for a degenerate input equal to the bare suffix, the fallback stem differs from it.
+   */
   return `${stem || SLUG_FALLBACK}${suffix}`
 }
 

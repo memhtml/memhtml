@@ -380,9 +380,9 @@ export const layerExtractorFrom = (
  * adapter and no cast, because TypeScript is structural and `ConsolidatorShape` satisfies
  * `ConsolidatorPort` field for field.
  *
- * **There is no host option, by construction.** The consolidator's eve channel now demands a bearer
- * JWT signed with a per-run secret (`apps/consolidator/agent/channels/eve.ts` via `jwtHmac`), so the
- * bind address is no longer the only thing keeping the agent off the network. It is still not optional,
+ * **There is no host option, by construction.** The consolidator's eve channel demands a bearer
+ * JWT signed with a per-run secret (`apps/consolidator/agent/channels/eve.ts` via `jwtHmac`), and
+ * the loopback bind is the second layer keeping the agent off the network. Neither is optional,
  * because two layers are only depth while both are in place. `makeConsolidator` exposes no `host`
  * option at all and pins loopback itself (`apps/consolidator/src/client.ts`, `LOOPBACK_HOST`). Nothing
  * here may reintroduce one, and the absence of an option is the mechanism.
@@ -410,22 +410,21 @@ export const ConsolidatorPortService = Context.Service<ConsolidatorPortShape>(
  *
  * The check cannot be skipped in favor of the client's own, because the provider is lazy.
  * `createAmazonBedrock` and `provider(modelId)` both succeed with zero credentials and nothing fails
- * until the first request (verified in T-EVE-1's probe, recorded at
- * `apps/consolidator/src/contract.ts:301-319`).
+ * until the first request (the contract suite in `apps/consolidator/src/contract.ts` pins this).
  *
  * **`env` is a parameter, and it has to be.** `Config` reads its values through a `ConfigProvider`,
  * which a test substitutes, while `hasConsolidatorCredentials` reads `process.env` directly, and
- * effect's default provider snapshots `process.env` at module load (probed 2026-08-08: mutating
- * `process.env.MEMHTML_LLM` after importing `effect` changes nothing `Config.string` returns). A test
+ * effect's default provider snapshots `process.env` at module load, so mutating
+ * `process.env.MEMHTML_LLM` after importing `effect` changes nothing `Config.string` returns. A test
  * that set both by mutation would read a stale snapshot for one gate and a live object for the other,
  * and the two gates would disagree about which environment they are in. Threading the credential
  * environment through as an argument makes both injectable from one call. See
  * `apps/cli/tests/consolidator-wiring.test.ts`, where that disagreement produced a false defect
  * before this parameter existed.
  *
- * **It now requires `RootsShape`, for `traceRoot`.** That is how transcripts reach the agent. The
+ * **It requires `RootsShape`, for `traceRoot`.** That is how transcripts reach the agent. The
  * consolidator mounts the trace root read-only rather than sending transcripts as a model message
- * (`apps/consolidator/src/client.ts`, `manifestFor`, records what the superseded path actually did).
+ * (`apps/consolidator/src/client.ts`, `manifestFor`).
  * The root is `MEMHTML_TRACE_ROOT` and this file is where config becomes services, so it is read from the
  * same `Roots` service `memhtml trace index` scans with. One resolution of one variable is what
  * keeps the mounted tree and the indexed `traces` rows describing the same directory. A second

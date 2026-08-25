@@ -86,6 +86,57 @@ describe("clampTokens", () => {
     expect(clampTokens(999_999)).toBe(MAX_TOKENS_CEILING)
     expect(MAX_TOKENS_CEILING).toBe(128_000)
   })
+
+  it("floors a zero or negative budget at 1 rather than passing it to the wire", () => {
+    // `max_tokens` must be a positive integer, so an unfloored 0 would raise a
+    // ValidationException at the service — a malformed request instead of a bounded one.
+    expect(clampTokens(0)).toBe(1)
+    expect(clampTokens(-5)).toBe(1)
+    expect(clampTokens(1)).toBe(1)
+  })
+
+  it("resolves NaN to the default, because NaN survives both bounds", () => {
+    // NaN loses every comparison, so a min/max pair passes it through unchanged and
+    // `JSON.stringify` writes it as `null` — the malformed request the floor exists to
+    // prevent. It is also not a budget, so it resolves to the default rather than to a bound.
+    expect(clampTokens(Number.NaN)).toBe(MAX_TOKENS_DEFAULT)
+  })
+
+  it("truncates a fractional budget, since the field takes an integer", () => {
+    expect(clampTokens(1.5)).toBe(1)
+    expect(clampTokens(4096.9)).toBe(4096)
+    // Truncation toward zero then meets the floor.
+    expect(clampTokens(0.5)).toBe(1)
+    expect(clampTokens(-0.5)).toBe(1)
+  })
+
+  it("meets a bound for either infinity", () => {
+    expect(clampTokens(Number.POSITIVE_INFINITY)).toBe(MAX_TOKENS_CEILING)
+    expect(clampTokens(Number.NEGATIVE_INFINITY)).toBe(1)
+  })
+})
+
+describe("the emitted token budget", () => {
+  it("is a positive integer on both dialects, whatever the caller asked", () => {
+    /**
+     * The clamp is the only guard between `StructuredRequest.maxTokens` /
+     * `GenerateOptions.maxTokens` and the wire, and the failure is invisible in the clamp's
+     * return type: `JSON.stringify({max_tokens: NaN})` emits `"max_tokens":null` and a
+     * fractional value emits itself. So the assertion is over the BYTES, per dialect, since
+     * each names the field differently.
+     */
+    const asked = [Number.NaN, 1.5, 0, -5, 4096.9, Number.POSITIVE_INFINITY]
+    for (const maxTokens of asked) {
+      const anthropic = parse(buildInvokeBody("sonnet-5", "hi", { effort: "low", maxTokens }))
+      const openai = parse(buildInvokeBody("gpt-5.6-sol", "hi", { effort: "low", maxTokens }))
+      for (const budget of [anthropic.max_tokens, openai.max_completion_tokens]) {
+        expect(typeof budget).toBe("number")
+        expect(Number.isSafeInteger(budget)).toBe(true)
+        expect(budget as number).toBeGreaterThan(0)
+        expect(budget as number).toBeLessThanOrEqual(MAX_TOKENS_CEILING)
+      }
+    }
+  })
 })
 
 describe("buildInvokeBody", () => {

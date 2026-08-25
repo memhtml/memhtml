@@ -1,4 +1,4 @@
-import { claimFromProse, proseTail } from "@memhtml/cli"
+import { claimFromProse, NEIGHBORS_LIMIT, proseTail } from "@memhtml/cli"
 import { MEMORY_RELS } from "@memhtml/contracts/edges"
 import { WRITABLE_MEMORY_TYPES } from "@memhtml/contracts/types"
 import { Effect, Schema } from "effect"
@@ -76,8 +76,8 @@ describe("tool surface", () => {
   it("exposes no sleep tool: sleep is an operator action, not an agent one", () => {
     /**
      * A sleep run rewrites confidence across the corpus, archives memories, and produces a branch a
-     * human is expected to read. `memhtml sleep run` is the entry point; if the fleet ever wants one here
-     * it is `sleep_status` (read-only), and the write side stays behind an operator.
+     * human is expected to read. `memhtml sleep run` is the entry point; a read-only `sleep_status` is
+     * the only shape this surface could ever take for it, and the write side stays behind an operator.
      */
     for (const name of TOOL_NAMES) {
       expect(name.startsWith("sleep_")).toBe(false)
@@ -159,6 +159,33 @@ describe("tool surface", () => {
     expect(batch).toContain(shared)
   })
 
+  it("states both branches of the path override in every tool that accepts one", () => {
+    /**
+     * The two branches are surprising in OPPOSITE directions, which is why neither can be left to a
+     * refusal. An unusable `path` is silently re-derived, so an agent expecting a refusal gets a memory
+     * somewhere it did not name. An OCCUPIED `path` is refused, so an agent expecting last-write-wins
+     * gets `ERR_WRITE_CONFLICT` and no file at all. The store's `freePathFor` owns both rules; this
+     * asserts the published description tells a caller about them before it sends the parameter.
+     *
+     * Asserted on both write tools because `writeFields` is shared, so an op in a batch accepts the same
+     * parameter under the same rules — and a batch whose description omitted them would let an agent
+     * abort twenty ops on the one it could have predicted.
+     */
+    for (const name of ["memory_write", "memory_write_batch"] as const) {
+      const description = MemhtmlToolkit.tools[name].description ?? ""
+      expect(description).toContain("IGNORED")
+      expect(description).toContain("ERR_WRITE_CONFLICT")
+      expect(description).toMatch(/already occupies|ALREADY occupies/)
+      // The recovery, because a second write is not it: nothing in this corpus is overwritten.
+      expect(description).toContain("memory_correct")
+    }
+    // Not on `memory_correct`, which takes `target_path` and no override: a paragraph about a
+    // parameter a tool does not accept is one that makes an agent try to send it.
+    expect(MemhtmlToolkit.tools.memory_correct.description ?? "").not.toContain(
+      "ERR_WRITE_CONFLICT"
+    )
+  })
+
   it("tells the singular's reader when to reach for the batch, and names it", () => {
     /**
      * The pointer sentence (D9). An agent about to write its fourth memory in a task is reading
@@ -191,7 +218,7 @@ describe("tool surface", () => {
 
   it("states the conflict assist's PROPOSE-ONLY contract and its reason, in the batch only", () => {
     /**
-     * Tool descriptions are this server's only guidance channel — effect 4.0.0-beta.102 never emits MCP's
+     * Tool descriptions are this server's only guidance channel — effect 4.0.0-rc.109 never emits MCP's
      * server-level `instructions` (see the note in `server.ts`) — so a semantics not stated in one is a
      * semantics no agent reads. That makes each clause below a behavior lock, not documentation polish.
      *
@@ -303,7 +330,7 @@ describe("the derived JSON Schema", () => {
      * edit — and an agent that learned `tags` from `memory_write` cannot have it silently dropped by a
      * batch op, which would file a memory under a facet it is then unfindable by.
      *
-     * The `items` schema is asserted to be INLINE: probed on effect 4.0.0-beta.102, a nested
+     * The `items` schema is asserted to be INLINE: probed on effect 4.0.0-rc.109, a nested
      * `Schema.Struct` inside `Schema.Array` derives under `items` rather than being hoisted into a
      * `$defs` the client would have to resolve — so an agent reading `tools/list` sees the op's fields
      * as directly as it sees the singular's.
@@ -504,6 +531,7 @@ describe("the derived JSON Schema", () => {
       ["memory_write", "confidence"],
       ["memory_write", "importance"],
       ["memory_neighbors", "depth"],
+      ["memory_neighbors", "limit"],
       ["memory_search", "limit"],
       ["memory_recall", "budget_chars"]
     ] as const) {
@@ -685,6 +713,68 @@ describe("the derived JSON Schema", () => {
     const supersededBy = (hit.properties ?? {}).superseded_by as JsonSchemaObject
     expect(supersededBy.anyOf).toEqual([{ type: "string" }, { type: "null" }])
     expect(hit.required ?? []).toContain("superseded_by")
+  })
+
+  it("publishes memory_neighbors' limit as an optional null union, and BOTH truncation markers", () => {
+    /**
+     * Parity with `memhtml neighbors`, at the published contract. The operation clamps a caller's
+     * `limit` and reports `limit` / `nodesDropped` / `scanSaturated`; a tool schema that stopped at
+     * `nodes` and `edges` would leave an agent holding a truncated neighborhood it cannot tell from an
+     * exhaustive one — and no `limit` at all would make the ceiling something a caller can neither ask
+     * for nor lower.
+     *
+     * `limit` follows the `Optional` contract every other optional parameter has (flat null union,
+     * never required), because a client with the field in its template sends `null` for "no ceiling of
+     * my own" and must be served rather than refused at decode.
+     */
+    const limit = schemaFor("memory_neighbors").properties?.limit as JsonSchemaObject
+    expect(limit.anyOf).toEqual([{ type: "integer" }, { type: "null" }])
+    expect(schemaFor("memory_neighbors").required ?? []).not.toContain("limit")
+
+    const parameters = MemhtmlToolkit.tools.memory_neighbors.parametersSchema
+    for (const input of [
+      { path: "areas/oncall/a.html" },
+      { path: "areas/oncall/a.html", limit: null },
+      { path: "areas/oncall/a.html", limit: 1 }
+    ]) {
+      const decoded = Effect.runSync(Effect.result(Schema.decodeUnknownEffect(parameters)(input)))
+      expect(decoded._tag).toBe("Success")
+    }
+
+    const success = Tool.getJsonSchemaFromSchema(
+      MemhtmlToolkit.tools.memory_neighbors.successSchema
+    ) as unknown as JsonSchemaObject
+    const properties = success.properties ?? {}
+    /**
+     * Present-and-required, all three. An absent key cannot be told from "nothing was dropped", which
+     * is the same reason `memory_search`'s `scope_empty` is required and non-nullable.
+     */
+    for (const field of ["node_limit", "dropped_node_count", "scan_saturated"]) {
+      expect(properties[field], `${field} is absent from the success schema`).toBeDefined()
+      expect(success.required ?? []).toContain(field)
+    }
+    const saturated = properties.scan_saturated as JsonSchemaObject
+    expect(saturated.type).toBe("boolean")
+    expect(saturated.anyOf).toBeUndefined()
+  })
+
+  it("names both markers in memory_neighbors' description, and which one a bigger limit fixes", () => {
+    /**
+     * TWO markers rather than one, and the description is the only place a caller learns why: a larger
+     * `limit` recovers a dropped node and cannot recover a saturated scan, so one boolean over both
+     * would conflate a recoverable truncation with an unrecoverable one. `tools/list` publishes this
+     * string and an agent fills the call from it, so a description that claimed the numbers were silent
+     * would send it re-asking with a bigger `limit` against a cap no `limit` moves.
+     */
+    const description = MemhtmlToolkit.tools.memory_neighbors.description ?? ""
+    expect(description).toContain("limit")
+    expect(description).toContain("node_limit")
+    expect(description).toContain("dropped_node_count")
+    expect(description).toContain("scan_saturated")
+    // The ceiling is the operation's own constant, so the number an agent reads cannot drift from the
+    // one the clamp applies.
+    expect(description).toContain(String(NEIGHBORS_LIMIT))
+    expect(description).toContain("no `limit` recovers")
   })
 
   it("states the point-in-time contract in memory_search's description", () => {

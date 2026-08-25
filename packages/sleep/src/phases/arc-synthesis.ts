@@ -7,6 +7,7 @@ import { isolate } from "../batch.js"
 import { commitPhase } from "../commit.js"
 import { hrefFor, link, meta, readFileBytes, stampFile, writeFileBytes } from "../edits.js"
 import { emptyOutcome, modelFor, type PhaseBody } from "../env.js"
+import { freePathIn } from "../free-path.js"
 import {
   ARC_EXECUTE_SYSTEM,
   ARC_TRIAGE_SYSTEM,
@@ -129,9 +130,18 @@ export const arcSynthesis: PhaseBody = (env) =>
     let skipped = plan.entries.length - actionable.length
     let lastCommit: string | null = null
 
+    /** The live arcs by path, so a colliding `create` can be recognized as an update in disguise. */
+    const offeredArcPaths = new Set(pathForArcKey.values())
+    /**
+     * Every arc path this RUN has written. Two `create` entries in one plan can carry titles that
+     * slug to one path, and the second whole-file write would silently replace the first — a
+     * collision the disk probe alone cannot refuse before the first write has landed.
+     */
+    const claimedArcPaths = new Set<string>()
+
     for (const entry of actionable) {
-      const existingPath = pathForArcKey.get(entry.slug)
-      if (entry.action === "update" && existingPath === undefined) {
+      const namedArcPath = pathForArcKey.get(entry.slug)
+      if (entry.action === "update" && namedArcPath === undefined) {
         // An `update` naming an arc the phase did not offer is a model error, not an instruction.
         skipped += 1
         continue
@@ -141,6 +151,20 @@ export const arcSynthesis: PhaseBody = (env) =>
         skipped += 1
         continue
       }
+
+      /**
+       * A `create` whose title slugs onto a LIVE arc the triage call was offered is an UPDATE of
+       * that arc, whatever the plan called it. An arc file is written whole (see below), so taking
+       * the model's `create` at its word would replace the existing arc's entire content with a
+       * synthesis that never read it. Folding the entry onto the existing path hands the execute
+       * call the current content, whose prompt then preserves what still holds.
+       */
+      const plannedCreatePath = `${ARCS_DIR}/${slugify(title)}.html`
+      const existingPath =
+        namedArcPath ??
+        (offeredArcPaths.has(plannedCreatePath) && !claimedArcPaths.has(plannedCreatePath)
+          ? plannedCreatePath
+          : undefined)
 
       const current =
         existingPath === undefined
@@ -178,7 +202,24 @@ export const arcSynthesis: PhaseBody = (env) =>
         continue
       }
 
-      const arcPath = existingPath ?? `${ARCS_DIR}/${slugify(content.title || title)}.html`
+      /**
+       * A genuine create's path is PROBED, never assumed free. The slug comes from the model's own
+       * title, so it can land on a file the phase was never offered — an arc a human demoted out of
+       * the index, a non-arc file, another create this run already wrote — and an unprobed
+       * whole-file write would replace it silently. A taken path gets a collision ordinal; an
+       * exhausted probe skips the arc, because every member of the plan is still live either way.
+       */
+      const arcPath =
+        existingPath ??
+        (yield* freePathIn(env, ARCS_DIR, slugify(content.title.trim() || title), claimedArcPaths))
+      if (arcPath === undefined) {
+        skipped += 1
+        yield* Effect.logWarning(
+          `sleep.llm arc-synthesis skipped ${title}: every collision ordinal for its slug is taken`
+        )
+        continue
+      }
+      claimedArcPaths.add(arcPath)
       /**
        * An arc file is written whole, not stamped. Its BODY is what this phase produces, so the
        * head-editor rule does not apply: there is no bookkeeping edit to keep surgical, and

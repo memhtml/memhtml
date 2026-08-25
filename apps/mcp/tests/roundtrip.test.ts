@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 
-import { type EmbedderShape, layerAppWith } from "@memhtml/cli"
+import { type EmbedderShape, layerAppWith, NEIGHBORS_LIMIT } from "@memhtml/cli"
 import { makeFixtureRepo } from "@memhtml/store/testing"
 import { Effect, Layer, Stream } from "effect"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
@@ -55,6 +55,11 @@ describe("a tool call through the toolkit layer", () => {
     name: N,
     params: unknown
   ) => Promise<Record<string, unknown>>
+  /** Two calls started together under one service graph, for the concurrency case. */
+  let callBoth: (
+    first: readonly [keyof typeof MemhtmlToolkit.tools, unknown],
+    second: readonly [keyof typeof MemhtmlToolkit.tools, unknown]
+  ) => Promise<ReadonlyArray<Record<string, unknown>>>
   /**
    * The number of commits on HEAD.
    *
@@ -96,19 +101,18 @@ describe("a tool call through the toolkit layer", () => {
      * tool's parameter schema, runs the handler, and streams back both the typed and the ENCODED
      * result. Taking the encoded half is deliberate — it is the JSON a client receives, so a success
      * schema that disagrees with what the handler returned surfaces here rather than at a client.
+     *
+     * The requirement set is erased at this one boundary, deliberately and with a comment.
+     *
+     * `kit.handle`'s stream carries `Tool.HandlerServices` — the union of every tool's declared
+     * `dependencies` — and TypeScript cannot see that `layer` provides exactly that union, because
+     * the two are computed by different type-level paths (a `Layer.Success` of the app graph on one
+     * side, a mapped type over thirteen tool definitions on the other). The RUNTIME check is real:
+     * a missing service is a defect the first call raises, so every assertion below would fail
+     * rather than pass vacuously.
      */
-    call = async (name, params) => {
-      /**
-       * The requirement set is erased at this one boundary, deliberately and with a comment.
-       *
-       * `kit.handle`'s stream carries `Tool.HandlerServices` — the union of every tool's declared
-       * `dependencies` — and TypeScript cannot see that `layer` provides exactly that union, because
-       * the two are computed by different type-level paths (a `Layer.Success` of the app graph on one
-       * side, a mapped type over thirteen tool definitions on the other). The RUNTIME check is real:
-       * a missing service is a defect the first call raises, so every assertion below would fail
-       * rather than pass vacuously.
-       */
-      const program = Effect.gen(function* () {
+    const invoke = (name: keyof typeof MemhtmlToolkit.tools, params: unknown) =>
+      Effect.gen(function* () {
         const kit = yield* MemhtmlToolkit
         const stream = yield* kit.handle(name, params as never)
         const results = yield* Stream.runCollect(stream)
@@ -120,8 +124,29 @@ describe("a tool call through the toolkit layer", () => {
         >
       }) as Effect.Effect<Record<string, unknown>, unknown, Layer.Success<typeof layer>>
 
-      return Effect.runPromise(Effect.scoped(Effect.provide(program, layer)))
-    }
+    call = async (name, params) =>
+      Effect.runPromise(Effect.scoped(Effect.provide(invoke(name, params), layer)))
+
+    /**
+     * Two calls under ONE layer build, which is the only shape in which concurrency means anything
+     * here.
+     *
+     * `call` provides `layer` per invocation, so two overlapping `call`s construct two independent
+     * service graphs — two `Store` instances, two databases opened on the same files, and any
+     * in-process serialization inside the store scoped to one of them. That is a faithful model of two
+     * PROCESSES and a misleading model of two tool calls: a server builds its layer once at startup and
+     * serves every `tools/call` from it. Sharing the build here is what makes the assertion be about the
+     * server.
+     */
+    callBoth = (first, second) =>
+      Effect.runPromise(
+        Effect.scoped(
+          Effect.provide(
+            Effect.all([invoke(...first), invoke(...second)], { concurrency: "unbounded" }),
+            layer
+          )
+        )
+      )
   })
 
   afterAll(async () => {
@@ -379,17 +404,102 @@ describe("a tool call through the toolkit layer", () => {
     expect(linked.ok).toBe(true)
     expect(linked.rel).toBe("relates_to")
 
+    /**
+     * A SECOND rel over the same pair, which is what makes the `edges` assertion below able to fail.
+     *
+     * `edges` is a distinct-`(src, rel, dst)` count and `nodes` is one entry per path at its minimal
+     * hop, so two rels between two files are ONE node and TWO edges. With a single link the two numbers
+     * agree, and a build that published `nodes.length` under the name `edges` would pass.
+     */
+    const second = await call("memory_link", {
+      src_path: source,
+      rel: "supports",
+      dst_path: target
+    })
+    expect(second.ok).toBe(true)
+
     const neighbors = await call("memory_neighbors", { path: source, depth: 1 })
-    const nodes = neighbors.nodes as ReadonlyArray<{ path: string; hop: number }>
+    const nodes = neighbors.nodes as ReadonlyArray<{
+      path: string
+      hop: number
+      rel: string
+      derived: boolean
+    }>
     expect(nodes.some((node) => node.path === target)).toBe(true)
     expect(nodes.every((node) => node.hop === 1)).toBe(true)
-    expect(neighbors.edges).toBe(nodes.length)
+    // One node, two edges: the field's name and its value agree only on a real edge count.
+    expect(nodes.filter((node) => node.path === target)).toHaveLength(1)
+    expect(neighbors.edges).toBe(2)
+    expect(neighbors.edges).not.toBe(nodes.length)
+    /**
+     * `derived` THROUGH THE WIRE, false for an authored `<link>`. The tool's description advertises
+     * sleep-mined edges as the point of the tool, so a success schema that dropped this field would
+     * publish a graph in which an agent cannot tell a machine's suspicion from a human's assertion.
+     */
+    expect(nodes.every((node) => node.derived === false)).toBe(true)
 
     const archived = await call("memory_archive", {
       path: target,
       reason: "written only to exercise the null path"
     })
     expect(archived.archive_path).toMatch(/^archive\/\d{4}\//)
+  })
+
+  it("memory_neighbors clamps the caller's limit and reports both truncation markers", async () => {
+    /**
+     * Parity with `memhtml neighbors`, THROUGH THE WIRE: the parameter has to survive decode and the
+     * three fields have to survive encode, so a `limit` the schema does not publish is silently stripped
+     * and a marker the success schema does not describe never reaches a client.
+     *
+     * A neighborhood of TWO paths joined by THREE edges, which is what makes each assertion able to
+     * fail: `limit: 1` drops exactly one path, and `edges` is unchanged by the clamp because it counts
+     * the edges the walk enumerated — including the dropped path's.
+     */
+    const writeOne = async (title: string, body: string): Promise<string> =>
+      String((await call("memory_write", { title, body, memory_type: "semantic" })).path)
+
+    const center = await writeOne(
+      "The center of a clamped neighborhood",
+      "A neighborhood answer states the ceiling it was built under."
+    )
+    const left = await writeOne(
+      "The first neighbor of the clamped center",
+      "Two rels over one pair are one node and two edges."
+    )
+    const right = await writeOne(
+      "The second neighbor of the clamped center",
+      "A second neighbor is what a limit of one can turn away."
+    )
+    for (const [rel, dst] of [
+      ["relates_to", left],
+      ["supports", left],
+      ["relates_to", right]
+    ] as const) {
+      expect((await call("memory_link", { src_path: center, rel, dst_path: dst })).ok).toBe(true)
+    }
+
+    const full = await call("memory_neighbors", { path: center })
+    expect((full.nodes as ReadonlyArray<unknown>).length).toBe(2)
+    expect(full.edges).toBe(3)
+    // The default ceiling is the operation's own constant, and an unclamped answer says so rather than
+    // leaving a caller to infer completeness.
+    expect(full.node_limit).toBe(NEIGHBORS_LIMIT)
+    expect(full.dropped_node_count).toBe(0)
+    // Three rows, nowhere near the walk's 10000-row cap.
+    expect(full.scan_saturated).toBe(false)
+
+    const clamped = await call("memory_neighbors", { path: center, limit: 1 })
+    expect(clamped.node_limit).toBe(1)
+    expect((clamped.nodes as ReadonlyArray<unknown>).length).toBe(1)
+    expect(clamped.dropped_node_count).toBe(1)
+    // Deliberately UNCHANGED: an `edges` total that excluded the dropped path's edges would agree with
+    // `nodes` while describing a walk that never happened.
+    expect(clamped.edges).toBe(3)
+    expect(clamped.scan_saturated).toBe(false)
+
+    // Over the ceiling is clamped, not refused: a caller asking for more than the ceiling wants it.
+    const asked = await call("memory_neighbors", { path: center, limit: 10_000 })
+    expect(asked.node_limit).toBe(NEIGHBORS_LIMIT)
   })
 
   it("memory_reinforce partitions bumped from cooled-down", async () => {
@@ -918,7 +1028,7 @@ describe("a tool call through the toolkit layer", () => {
        *    index an agent holding N ops knows only that one of them was wrong.
        * 3. The code is ERR_INVALID_MEMORY and the text is NOT the internal-error string — which is what
        *    the `failure: ToolFailure` declaration on the new tool buys, and it is invisible in any
-       *    response SHAPE (see the failure.test.ts note on `McpServer.ts:831-847`).
+       *    response SHAPE (see the failure.test.ts note on the three catch branches).
        */
       const before = (await call("memory_status", {})).head_sha as string
       const commitsBefore = await commitCount()
@@ -1576,6 +1686,70 @@ describe("a tool call through the toolkit layer", () => {
 
     const status = await call("memory_status", {})
     // The refusal left the tree clean: no partial file, staged or otherwise.
+    expect(status.dirty).toBe(false)
+  })
+
+  /**
+   * Two `memory_write` calls started together land as TWO commits, each carrying its own file.
+   *
+   * An MCP server is the surface where this actually happens: one client, one process, many tool calls
+   * in flight. Two writes racing share a git index, and the loser's staged file lands inside the
+   * winner's commit while its own commit finds nothing to make — one path reported to a caller with no
+   * commit of its own behind it, in a store whose whole contract is one corpus change per commit.
+   *
+   * The serialization lives in `makeStore`'s own semaphore, which is the only correct place for it: a
+   * lock here would guard this door and leave `memhtml apply` racing the same index, and two locks over
+   * one resource is a deadlock waiting for an ordering. So this asserts the OUTCOME an agent depends on
+   * and nothing about the mechanism.
+   *
+   * Two commits and two distinct paths are both required. Two paths with one commit is exactly the
+   * swallowed-file failure; one path would mean a dedupe, which these two bodies rule out.
+   */
+  it("serializes two concurrent writes into two commits, each with its own file", async () => {
+    const before = await commitCount()
+    const [first, second] = await callBoth(
+      [
+        "memory_write",
+        {
+          title: "Concurrent write one",
+          body: "The first racer drains the VIP. It exists to collide with the second.",
+          memory_type: "semantic",
+          workspace: "concurrency-probe"
+        }
+      ],
+      [
+        "memory_write",
+        {
+          title: "Concurrent write two",
+          body: "The second racer reverts the deploy. It exists to collide with the first.",
+          memory_type: "semantic",
+          workspace: "concurrency-probe"
+        }
+      ]
+    )
+    expect(first).toBeDefined()
+    expect(second).toBeDefined()
+    if (first === undefined || second === undefined) return
+
+    expect(first.created).toBe(true)
+    expect(second.created).toBe(true)
+    expect(first.deduped).toBe(false)
+    expect(second.deduped).toBe(false)
+    expect(first.path).not.toBe(second.path)
+    // Exactly two, not "at least two": a third would mean one call committed twice.
+    expect(await commitCount()).toBe(before + 2)
+
+    /**
+     * And each file is really in the tree, which the commit count alone does not say. A commit that
+     * staged nothing still moves HEAD, so reading both paths back is what proves neither write was
+     * swallowed by the other's commit.
+     */
+    for (const path of [first.path, second.path]) {
+      const read = await call("memory_read", { path })
+      expect(read.path).toBe(path)
+      expect(String(read.body).length + String(read.gist).length).toBeGreaterThan(0)
+    }
+    const status = await call("memory_status", {})
     expect(status.dirty).toBe(false)
   })
 })

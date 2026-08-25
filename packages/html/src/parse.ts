@@ -63,14 +63,20 @@ const textExcludingCode = (root: Node): string =>
 const asMemoryType = (value: string): MemoryType | undefined =>
   (MEMORY_TYPES as ReadonlyArray<string>).includes(value) ? (value as MemoryType) : undefined
 
-/** Parse a `[0, 1]` or `[1, 10]` meta value, rejecting a non-finite or out-of-range one. */
+/**
+ * Parse a `[0, 1]` or `[1, 10]` meta value, rejecting a non-finite or out-of-range one.
+ *
+ * A blank value is malformed, not zero: `Number("")` is `0`, and a `<meta>` whose `content` is
+ * empty or whitespace stated no number, so it is dropped and the `files` default applies —
+ * a blank `memhtml-confidence` must not index as `0.00`.
+ */
 const boundedNumber = (
   value: string | undefined,
   minimum: number,
   maximum: number,
   integral: boolean
 ): number | undefined => {
-  if (value === undefined) return undefined
+  if (value === undefined || value.trim() === "") return undefined
   const parsed = Number(value)
   if (!Number.isFinite(parsed) || parsed < minimum || parsed > maximum) return undefined
   if (integral && !Number.isInteger(parsed)) return undefined
@@ -92,8 +98,8 @@ const readMetas = (
   const memoryType = rawType === undefined ? undefined : asMemoryType(rawType)
   const rawStatus = single("memhtml-status")
   const status = rawStatus === "active" || rawStatus === "archived" ? rawStatus : undefined
-  const createdAt = single("memhtml-created")
-  const updatedAt = single("memhtml-updated")
+  const createdAt = asDatetime(single("memhtml-created"))
+  const updatedAt = asDatetime(single("memhtml-updated"))
 
   const violations: Array<string> = []
   if (rawType !== undefined && memoryType === undefined) {
@@ -109,6 +115,7 @@ const readMetas = (
   violations.push(
     ...taskViolations(memoryType, single("memhtml-task-status"), single("memhtml-due"))
   )
+  violations.push(...datetimeViolations(metas))
 
   if (
     memoryType === undefined ||
@@ -152,6 +159,55 @@ const readMetas = (
 /** Narrow a `memhtml-task-status` content string to the closed status vocabulary. */
 const asTaskStatus = (value: string | undefined): TaskStatus | undefined =>
   value !== undefined && isTaskStatus(value) ? value : undefined
+
+/**
+ * Every meta whose content is an instant, so every meta whose value has to sort.
+ *
+ * The five are one list because they share one hazard, not because they share a shape: each lands
+ * in a `files` column that SQL compares and orders as a raw string. `created_at` and `updated_at`
+ * order the recency arm (`packages/index/src/retrieval-sql.ts`), `valid_from` and `valid_until`
+ * bound the as-of window (`packages/index/src/scope.ts`), and `archived_at` dates an eviction in
+ * the retention reads. `memhtml-due` is the sixth and is checked in {@link taskViolations}, beside
+ * the type rule it belongs to.
+ */
+const DATETIME_METAS = [
+  "memhtml-created",
+  "memhtml-updated",
+  "memhtml-valid-from",
+  "memhtml-valid-until",
+  "memhtml-archived"
+] as const
+
+/** A datetime meta's value when it matches the format's grammar, `undefined` when it does not. */
+const asDatetime = (value: string | undefined): string | undefined =>
+  value !== undefined && isValidDatetime(value) ? value : undefined
+
+/**
+ * Every stated datetime meta outside the `<time datetime>` grammar, as violations.
+ *
+ * A violation and not a dropped optional, for all five, which is `memhtml-due`'s discipline rather
+ * than {@link boundedNumber}'s. A drop is only safe where the `files` table owns a default: a blank
+ * `memhtml-confidence` has one, and an instant does not. Dropping an unsortable `memhtml-valid-until`
+ * WIDENS the window to always-valid, so the file would answer an as-of query for instants it said
+ * the fact was already dead — a wrong point-in-time view where a refusal is a visible one. The two
+ * required stamps take the same rule for a plainer reason: a value that sorts by its spelling
+ * instead of its instant ranks a newer memory below an older one, because
+ * `"2026-08-24 13:00:00Z" < "2026-08-24T12:00:00Z"` is true of the strings and false of the
+ * moments.
+ *
+ * Refusing at the parse boundary is what keeps the column clean. Every consumer downstream compares
+ * these values without re-parsing them, so the grammar is the only thing standing between an
+ * unsortable string and a silently reordered result set.
+ */
+const datetimeViolations = (
+  metas: ReadonlyArray<{ name: string; content: string }>
+): ReadonlyArray<string> =>
+  DATETIME_METAS.flatMap((name) => {
+    const raw = metas.find((meta) => meta.name === name)?.content
+    return raw === undefined || isValidDatetime(raw)
+      ? []
+      : [`<meta name="${name}" content="${raw}"> is not an ISO date or datetime`]
+  })
 
 /**
  * The task metas' agreement with the type, reported as violations, not as dropped optionals.
@@ -257,11 +313,18 @@ const readFacets = (article: Element): ReadonlyArray<Facet> => {
   return facets
 }
 
-/** The first `<data value>` inside a `<dd>`, as a finite number. Absent when there is none. */
+/**
+ * The first `<data value>` inside a `<dd>`, as a finite number. Absent when there is none.
+ *
+ * A blank `value` stated no number, the same trap {@link boundedNumber} guards: `Number("")` and
+ * `Number(" ")` are both `0`, and `file_facets.numeric_value` is present only when the `<dd>`
+ * carries a `<data value>` that parses as a finite number. A blank one therefore leaves the column
+ * NULL rather than storing a measured zero the file never claimed.
+ */
 const readDataValue = (definition: Element): number | undefined => {
   for (const data of elementsNamed(definition, "data")) {
     const raw = attr(data, "value")
-    if (raw === undefined) continue
+    if (raw === undefined || raw.trim() === "") continue
     const parsed = Number(raw)
     if (Number.isFinite(parsed)) return parsed
   }

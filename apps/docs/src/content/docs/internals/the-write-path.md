@@ -27,7 +27,9 @@ Duplicate detection skips tasks in both directions (`packages/store/src/store.ts
 
 `writeMemories` (`packages/store/src/store.ts:699`, surfaced as `batchWrite` at `apps/cli/src/operations.ts:641`) exists as a primitive rather than as a loop in the caller for one reason: N singular writes are N commits, and because the indexer diffs one commit at a time, they are also N index passes.
 
-The reindex goes through `update()` rather than `indexPaths()` (`apps/cli/src/operations.ts:209-224`), because `indexPaths` cannot express a rename and never records the watermark. The watermark is the commit sha the index has caught up to, stored in the database, and the reindex is gated on a file having actually been written. Moving the watermark for a commit that never happened is the bug that guard prevents.
+The reindex takes the whole COMMIT and never a list of paths the caller happens to know about (`apps/cli/src/operations.ts:228`). Two properties of the index rest on that. **A rename is only expressible as a diff:** every correction and every archive is a `git mv`, and `update()` reads `diff --name-status -M`, sees the `R`, and re-points the row, which keeps the embedding — where indexing the destination alone would leave the source row live, so the archived memory stays in `memhtml list`, `files` carries a row the tree does not have, and the chunk rows the move exists to preserve end up duplicated under two paths. **And the watermark is what makes freshness answerable:** `update()` records `index_state.head_sha`, without which `memhtml status` reports `index_fresh: false` forever while `index update` re-derives from a stale base.
+
+The cost is one `git diff` over one commit, which is what the watermark exists to bound. The reindex is gated on a file having actually been written, because moving the watermark for a commit that never happened is the bug that guard prevents. On the very first write there is no watermark row at all and `update()` falls through to a full rebuild, which is correct and cheap on a corpus holding one file.
 
 ## 4. A batch validates everything before it writes anything
 

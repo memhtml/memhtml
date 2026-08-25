@@ -3,9 +3,10 @@
 # What Dependabot deliberately does NOT own here:
 # - mise.lock — scanners and toolchain move through `mise run tools:bump`, where the
 #   lock diff is the review artifact.
-# - The 7-day pnpm `minimumReleaseAge` in pnpm-workspace.yaml still applies to what
-#   Dependabot proposes; a fresh release inside the soak window will not resolve, which
-#   is the intended supply-chain tradeoff (see the exclude-newer note in that file).
+# - The 3-day (4320-minute) pnpm `minimumReleaseAge` in pnpm-workspace.yaml still
+#   applies to what Dependabot proposes; a fresh release inside the soak window will not
+#   resolve, which is the intended supply-chain tradeoff (see that file's
+#   `minimumReleaseAgeExclude` note for the per-package escape hatch).
 version: 2
 updates:
   - package-ecosystem: npm
@@ -15,9 +16,10 @@ updates:
       day: monday
       time: "08:00"
       timezone: America/Los_Angeles
-    # 72-hour soak on top of pnpm's own 7-day minimumReleaseAge: Dependabot will not
-    # even PROPOSE a release younger than this, so a compromised-then-yanked version
-    # never reaches a PR. Security updates bypass cooldown by design.
+    # The same 72-hour soak pnpm's minimumReleaseAge enforces, stated on Dependabot's
+    # side: it will not even PROPOSE a release younger than this, so a
+    # compromised-then-yanked version never reaches a PR. Security updates bypass
+    # cooldown by design.
     cooldown:
       default-days: 3
     open-pull-requests-limit: 10

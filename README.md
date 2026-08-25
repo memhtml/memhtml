@@ -93,7 +93,7 @@ A memory an agent can be trusted with has to be reviewable, diffable, and recove
 
 - A correction is a commit. `memhtml correct` writes the new file and archives the old one in one commit, so an interrupted run cannot leave two live memories contradicting each other.
 - A batch is a commit. `memhtml apply` (JSONL ops) and `memory_write_batch` (MCP) stage N files, make one commit, and reindex once. The batch is atomic by default, per-op results come back in input order, and a duplicate succeeds with `deduped: true` and the existing path.
-- A nightly curation run is a branch. `memhtml sleep run` walks sixteen phases and commits each one's work on its own, so a human reads the curation one phase-shaped diff at a time, and `memhtml sleep merge` fast-forwards `main` only after a quality gate that can refuse.
+- A nightly curation run is a branch. `memhtml sleep run` walks the phases of `SLEEP_PHASES` — seventeen as of v0.6.0 — and commits each one's work on its own, so a human reads the curation one phase-shaped diff at a time, and `memhtml sleep merge` fast-forwards `main` only after a quality gate that can refuse.
 
 ## Who does what
 
@@ -149,7 +149,7 @@ Figure 2 draws the cycle they form. A screen reader reads its box characters as 
 <!-- /figure:three-actors -->
 <!-- dprint-ignore-end -->
 
-**Figure 2: the three actors form a cycle through `main`, and only one of them may settle a contradiction.** Reading top to bottom: the agent writes to `main` at any hour, one fact per file. Sleep reads `main` nightly and puts its sixteen commits on a `sleep/<date>` branch, leaving `main` untouched. Those phases deduplicate, resolve entities, decay confidence, compress, and synthesize arcs, and they flag a contradiction without choosing a winner. The human reviews that branch and merges, which returns the cycle to `main` and to the agent. The two heavy-bordered boxes are the actors outside the system, and `main` and the branch are double-bordered because they are the system of record.
+**Figure 2: the three actors form a cycle through `main`, and only one of them may settle a contradiction.** Reading top to bottom: the agent writes to `main` at any hour, one fact per file. Sleep reads `main` nightly and puts its fifteen commits on a `sleep/<date>` branch, leaving `main` untouched. Those phases deduplicate, resolve entities, decay confidence, compress, and synthesize arcs, and they flag a contradiction without choosing a winner. The human reviews that branch and merges, which returns the cycle to `main` and to the agent. The two heavy-bordered boxes are the actors outside the system, and `main` and the branch are double-bordered because they are the system of record.
 
 ## The file format
 
@@ -166,7 +166,7 @@ One fact per file, in standard HTML5 that a browser displays and a person can re
 </article>
 ```
 
-The single `<mark>` is the claim. It becomes the gist every listing shows, and it is the span a correction targets. `<time datetime>` records when the fact happened in the world, so an episodic memory ranks by that date instead of by its write time. `<dl>` pairs index as facets and `<cite>` as citations. `<details>` folds elaboration behind a summary, and recall always discloses that a fold is there. `docs/format.md` is the full vocabulary. `docs/tasks.md` covers the task type (`memhtml-task-status`, `memhtml-due`), which rides the same format.
+The single `<mark>` is the claim. It becomes the gist every listing shows, and it is the span a correction targets. `<time datetime>` records when the fact happened in the world, so an episodic memory ranks by that date instead of by its write time; it takes a calendar date or the canonical UTC instant `YYYY-MM-DDThh:mm:ssZ` and nothing else, because those values are compared and ordered as raw strings and only a fixed grammar sorts lexicographically the way it sorts chronologically. The datetime metas in the head — `memhtml-created`, `memhtml-updated`, `memhtml-valid-from`, `memhtml-valid-until`, `memhtml-archived`, `memhtml-due` — take that same grammar, and a value outside it is a document violation rather than a dropped optional: dropping an unsortable `memhtml-valid-until` would widen the validity window to always-valid. `<dl>` pairs index as facets and `<cite>` as citations. `<details>` folds elaboration behind a summary, and recall always discloses that a fold is there. `docs/format.md` is the full vocabulary. `docs/tasks.md` covers the task type (`memhtml-task-status`, `memhtml-due`), which rides the same format.
 
 ## Writing
 
@@ -239,7 +239,9 @@ Two places run it. `pnpm check` runs it, and CI runs `pnpm check`. `memhtml slee
 
 ## Sleep
 
-`memhtml sleep run` executes sixteen curation phases on a `sleep/<date>` branch: dedup-merge, entity resolution, edge typing, confidence decay, arc synthesis, retention triage, compress, integrity, and the rest. Each committing phase makes its own isolated commit with a machine-readable trailer, so `memhtml sleep resume` re-runs only what is missing. Two phases commit nothing by design. `preflight` refreshes the index, and `relationship-mining` writes derived edges to the index alone, because thousands of re-derivable edges would bury every real diff. `trace-consolidation` hands unread session transcripts to an agent and lands each distilled memory as its own commit, one per memory, so a reviewer reads one claim at a time. A failed phase leaves the phases before it committed.
+`memhtml sleep run` executes the curation phases of `SLEEP_PHASES` — seventeen as of v0.6.0 — on a `sleep/<date>` branch: dedup-merge, entity resolution, edge typing, confidence decay, arc synthesis, retention triage, compress, task detection, integrity, and the rest. Each committing phase makes its own isolated commit with a machine-readable trailer, so `memhtml sleep resume` re-runs only what is missing. Two phases commit nothing by design. `preflight` refreshes the index, and `relationship-mining` writes derived edges to the index alone, because thousands of re-derivable edges would bury every real diff. `trace-consolidation` hands unread session transcripts to an agent and lands each distilled memory as its own commit, one per memory, so a reviewer reads one claim at a time. A failed phase leaves the phases before it committed, and the run exits 1 while still writing its full per-phase report, so a cron line reading only the exit code sees that the curation did not happen.
+
+`preflight` is the one phase whose failure stops everything after it. Its three preconditions — a clean tree, a matching embed model, an index a rebuild did not leave half-populated — are what every later phase reads, so each of its failures makes a later commit wrong rather than merely unhelpful, and per-phase isolation is no defense against a corrupt night with a green report. `--deep` adds the deep-sleep cycle: a lower mining band, grouping by shared entity, re-filing inbox singletons, and `compress` iterated until a pass folds nothing, with `--max-llm-calls` capping the extra model spend.
 
 A run also opens TASKS, for work the corpus records and nobody opened. `task-detection` reads the recent memories in batches and asks which of them carry a commitment nobody closed, quoting the sentence it found; three other phases do the same for the decisions they decline to make — an alias pair too close to ignore and too far to merge, a near-duplicate pair the divergence veto refused, a contradiction seen only once. Every detected task is authored `agent:sleep`, cites its evidence verbatim, is capped at ten a night across all four detectors, and closes itself when its finding stops appearing. A detection is a proposal for a human, never a fact the corpus asserts.
 
@@ -264,10 +266,10 @@ Figure 4 draws the branch and the gate. A screen reader sounds out its box chara
          +-------------+
                 |
                 v
-        +---------------+
-        |sixteen phases |
-        |               |
-        +---------------+
+       +-----------------+
+       |seventeen phases |
+       |                 |
+       +-----------------+
                 |
              review
                 |
@@ -290,7 +292,9 @@ Figure 4 draws the branch and the gate. A screen reader sounds out its box chara
 <!-- /figure:sleep-branch -->
 <!-- dprint-ignore-end -->
 
-**Figure 4: `main` moves only after a gate that can refuse says so.** A run branches `main` into `sleep/<date>` before any phase executes and walks its sixteen phases there, fourteen of them committing, each on its own, with `preflight` and `relationship-mining` committing nothing by design. Then it submits the branch for review. That review re-runs the discrimination gate and has two outcomes, both drawn: it passes and `main` moves, or it refuses and `main` stays exactly where it was. Those are the only two outcomes, and neither needs a rollback, because nothing on `main` ever moved. The abort is `git branch -D`.
+**Figure 4: `main` moves only after a gate that can refuse says so.** A run branches `main` into `sleep/<date>` before any phase executes and walks all seventeen phases there, fifteen of them committing, each on its own, with `preflight` and `relationship-mining` committing nothing by design. Then it submits the branch for review. That review re-runs the discrimination gate and has two outcomes, both drawn: it passes and `main` moves, or it refuses and `main` stays exactly where it was. Those are the only two outcomes, and neither needs a rollback, because nothing on `main` ever moved. The abort is `git branch -D`.
+
+`git branch -D` discards everything the run decided, including its writes into `state.db`, which git cannot reproduce. A phase that needs one records it as a mark in a committed ledger, `.memhtml/sleep/<run-id>.pending.jsonl`, instead of performing it, and `memhtml sleep merge` applies the ledger after the fast-forward succeeds — so a discarded branch takes its pending consolidation watermarks, edge promotions, and entity promotions with it. That matters most for the consolidation watermark: it is an anti-join, so a session it covers is never selected again, and a row written during a night that was thrown away would assert a transcript was handled after the memory was dropped. The merge reports `marksPending` beside `marksApplied`, and a shortfall between them means those sessions are simply re-read next cycle.
 
 ## Code-mode
 
@@ -342,7 +346,7 @@ None of them is published. Every workspace package is `private`, and `mise run p
 | `@memhtml/store`        | The git-backed file store. One commit per operation, typed conflicts.           |
 | `@memhtml/index`        | SQLite schema, the git-driven indexer, four-arm RRF retrieval, the state plane. |
 | `@memhtml/traces`       | Streaming JSONL parser over `~/.claude`, with a size+mtime+offset watermark.    |
-| `@memhtml/sleep`        | The sixteen curation phases, each an isolated commit.                           |
+| `@memhtml/sleep`        | The curation phases of `SLEEP_PHASES`, each an isolated commit.                 |
 | `@memhtml/llm`          | Bedrock: Cohere embeddings and forced-tool structured output.                   |
 | `@memhtml/eval`         | The fixture corpus generator and the refusable discrimination gate.             |
 | `@memhtml/cli`          | The `memhtml` binary, the envelope contract, and the one composition root.      |
@@ -357,27 +361,28 @@ None of them is published. Every workspace package is `private`, and `mise run p
 ```bash
 mise install        # node 24, pnpm 11.21.0, lefthook, scanners, from mise.lock
 mise run install    # dependencies from the lockfile + the git hooks
-mise run check      # the definition of done: lint, typecheck, tests, integration, eval, a11y, budget
+mise run check      # the definition of done: lint, lint:repo, lint:md, typecheck, tests, integration, eval, a11y, budget
 ```
 
 CI runs that same `mise run check`, so the gate cannot drift from the one you run locally. Every task delegates to the pnpm script underneath it, and turbo owns the task graph and the cache. No mise task declares `sources` or `outputs`, because mise decides freshness by mtime and turbo by content hash, so a mise-level skip would preempt turbo's per-package hashing.
 
 `check` includes the discrimination gate in fake mode, so a change that degrades retrieval fails the build. Tests run against a real temp-dir git repo and a real SQLite database with the shipped migrations. Fakes are limited to the two edges that reach the network, the embedder and the model, because a stateless fake verifies the shape of a call and misses the state semantics behind it, which is where the defects in this system have actually lived.
 
-| Command                     | Delegates to            | What it runs                                                     |
-| --------------------------- | ----------------------- | ---------------------------------------------------------------- |
-| `mise run build`            | `pnpm build`            | `tsc -b` across the project graph                                |
-| `mise run lint`             | `pnpm lint`             | biome                                                            |
-| `mise run typecheck`        | `pnpm typecheck`        | strict `tsc --noEmit`, tests included                            |
-| `mise run test`             | `pnpm test`             | every package's unit and property suites                         |
-| `mise run test:integration` | `pnpm test:integration` | the cross-package contracts over a real repo and a real database |
-| `mise run test:eval`        | `pnpm test:eval`        | the discrimination gate (fake mode)                              |
-| `mise run test:a11y`        | `pnpm test:a11y`        | WCAG 2.2 AA over the built docs site, in a real browser          |
-| `mise run test:budget`      | `pnpm test:budget`      | Lighthouse category floors and the byte budget for that site     |
-| `mise run gen:fixture`      | `pnpm gen:fixture`      | write a browsable fixture corpus (pure function of a seed)       |
-| `mise run agents-doc`       | none                    | regenerate `AGENTS.md` from the built CLI's own table            |
-| `mise run security`         | none                    | osv-scanner + semgrep + betterleaks, SARIF into `.sarif/`        |
-| `mise run tools:bump`       | none                    | re-resolve every `latest` tool in `mise.lock`                    |
+| Command                     | Delegates to            | What it runs                                                                   |
+| --------------------------- | ----------------------- | ------------------------------------------------------------------------------ |
+| `mise run build`            | `pnpm build`            | `tsc -b` across the project graph                                              |
+| `mise run lint`             | `pnpm lint`             | biome per package, plus `lint:repo` (`biome check .`) over the repo            |
+| `mise run lint:md`          | `pnpm lint:md`          | dprint over every authored Markdown file                                       |
+| `mise run typecheck`        | `pnpm typecheck`        | strict `tsc --noEmit`, tests included                                          |
+| `mise run test`             | `pnpm test`             | every package's unit and property suites                                       |
+| `mise run test:integration` | `pnpm test:integration` | the cross-package contracts over a real repo and a real database               |
+| `mise run test:eval`        | `pnpm test:eval`        | the discrimination gate (fake mode)                                            |
+| `mise run test:a11y`        | `pnpm test:a11y`        | WCAG 2.2 AA over the built docs site, in a real browser                        |
+| `mise run test:budget`      | `pnpm test:budget`      | Lighthouse category floors and the byte budget for that site                   |
+| `mise run gen:fixture`      | `pnpm gen:fixture`      | write a browsable fixture corpus (pure function of a seed)                     |
+| `mise run agents-doc`       | none                    | regenerate `AGENTS.md` from the built CLI's own table                          |
+| `mise run security`         | none                    | osv-scanner + semgrep + betterleaks + syft/grype + trivy, SARIF into `.sarif/` |
+| `mise run tools:bump`       | none                    | re-resolve every `latest` tool in `mise.lock`                                  |
 
 To narrow a run to one package, use `mise run test-pkg <package> [vitest args]`. The package name takes either spelling, and everything after it goes to vitest:
 

@@ -1,6 +1,13 @@
 /**
  * Confidence decay and the outcome EWMA, both on a fixed-point grid.
  *
+ * The confidence-decay half IS the production path: sleep's confidence-decay phase calls
+ * `decayConfidence` directly. The outcome-EWMA half is the REFERENCE implementation the
+ * production SQL is checked against: `packages/index/src/reinforce.ts` computes the outcome
+ * EWMA in float SQL with its own `OUTCOME_EWMA_ALPHA = 0.3` twin of
+ * {@link DEFAULT_EWMA_ALPHA}, and the two constants are pinned to agree by each package's
+ * tests.
+ *
  * Every invariant here is a boundary claim. Decay stops *at* the floor, `alpha = 1` snaps
  * *exactly* to it, and `alpha = 0` is *exactly* a fixed point. In float arithmetic a convex
  * combination of two equal values can land one ulp below them, so the boundary cases would
@@ -16,7 +23,11 @@ export const SCALE = 10_000
 export const POS_ONE_FP = SCALE
 export const NEG_ONE_FP = -SCALE
 
-/** The outcome EWMA's weight on an incoming signal. */
+/**
+ * The outcome EWMA's weight on an incoming signal. Its production twin is
+ * `OUTCOME_EWMA_ALPHA` in `packages/index/src/reinforce.ts`, the value the reinforce SQL
+ * binds; both packages' tests pin their constant to 0.3 so a fork fails loudly.
+ */
 export const DEFAULT_EWMA_ALPHA = 0.3
 
 /**

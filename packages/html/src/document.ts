@@ -123,8 +123,8 @@ export const Citation = Schema.Struct({
 export type Citation = typeof Citation.Type
 
 /**
- * What the indexer reads out of `<article>`. Field names are the indexer's own, so T7 consumes
- * this struct without a translation layer.
+ * What the indexer reads out of `<article>`. Field names are the indexer's own, so the indexing
+ * pipeline consumes this struct without a translation layer.
  */
 export const ArticleExtractions = Schema.Struct({
   /**

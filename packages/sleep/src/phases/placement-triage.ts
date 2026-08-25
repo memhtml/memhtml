@@ -167,7 +167,7 @@ export const placementTriage: PhaseBody = (env) =>
       })
 
       if (!takeLlmCall(env.deep)) {
-        counts["budgetSkipped"] = (counts["budgetSkipped"] ?? 0) + 1
+        counts.budgetSkipped = (counts.budgetSkipped ?? 0) + 1
         continue
       }
       llmCalls += 1
@@ -180,7 +180,7 @@ export const placementTriage: PhaseBody = (env) =>
         toolDescription: "Propose a destination directory (or keep-inbox) per offered memory."
       })
       if (answer === undefined) {
-        counts["failed"] = (counts["failed"] ?? 0) + 1
+        counts.failed = (counts.failed ?? 0) + 1
         continue
       }
 
@@ -205,15 +205,15 @@ export const placementTriage: PhaseBody = (env) =>
         const rows = resolveKeys(keyed, [placement.memberKey])
         const row = rows[0]
         if (row === undefined) continue
-        counts["proposed"] = (counts["proposed"] ?? 0) + 1
+        counts.proposed = (counts.proposed ?? 0) + 1
 
         const destination = normalizePath(placement.destination.trim())
         if (destination === PLACEMENT_KEEP) {
-          counts["keptInbox"] = (counts["keptInbox"] ?? 0) + 1
+          counts.keptInbox = (counts.keptInbox ?? 0) + 1
           continue
         }
         const refuse = (reason: string): Effect.Effect<void> => {
-          counts["refused"] = (counts["refused"] ?? 0) + 1
+          counts.refused = (counts.refused ?? 0) + 1
           return Effect.logWarning(
             `sleep.placement refused ${row.path} -> ${destination}: ${reason}`
           )
@@ -276,10 +276,10 @@ export const placementTriage: PhaseBody = (env) =>
         yield* stampFile(env, target, [meta("memhtml-updated", env.at)])
         if (isNew) {
           mintedDirs.add(destination)
-          counts["newDirs"] = (counts["newDirs"] ?? 0) + 1
+          counts.newDirs = (counts.newDirs ?? 0) + 1
         }
         movedFrom.set(row.path, target)
-        counts["applied"] = (counts["applied"] ?? 0) + 1
+        counts.applied = (counts.applied ?? 0) + 1
       }
     }
 
@@ -304,12 +304,12 @@ export const placementTriage: PhaseBody = (env) =>
         if (changed) rewritten += 1
       }
     }
-    counts["hrefsRewritten"] = rewritten
+    counts.hrefsRewritten = rewritten
 
     const commitSha = yield* commitPhase(
       env,
       "placement-triage",
-      `re-file ${counts["applied"] ?? 0} inbox memories into topic directories`,
+      `re-file ${counts.applied ?? 0} inbox memories into topic directories`,
       counts
     )
     return { counts, commitSha, llmCalls }

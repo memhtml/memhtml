@@ -13,10 +13,10 @@ import { makeStore, type StoreHooks, type StoreShape } from "./store.js"
  * downstream. Exported at the `@memhtml/store/testing` subpath so `@memhtml/index` and `@memhtml/sleep`
  * build their fixtures the same way this package does.
  *
- * Deliberately not a fake. The fleet has now had five bugs where a stateless fake verified the
- * shape of a call and missed the state semantics behind it, and this package's entire subject
- * is git's state semantics: what rename detection scores, what the index holds mid-merge, what
- * `mv` rejects. A fake git would pass a suite that a real one fails.
+ * Deliberately not a fake. A stateless fake verifies the shape of a call and misses the state
+ * semantics behind it, which is where this system's defects have actually lived — and this
+ * package's entire subject IS git's state semantics: what rename detection scores, what the index
+ * holds mid-merge, what `mv` rejects. A fake git would pass a suite that a real one fails.
  */
 
 /** A fixture repo and the services over it. `cleanup` removes the whole temp tree. */

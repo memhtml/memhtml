@@ -26,7 +26,6 @@ classDiagram
     class Indexer {
         +rebuild()
         +update()
-        +indexPaths()
         +embedMissing()
     }
     class Retrieval {

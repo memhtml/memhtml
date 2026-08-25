@@ -99,7 +99,7 @@ The arm that reads the state plane over the ATTACH: decayed recency of use, log 
 
 ### Sleep phase
 
-One of the sixteen ordered curation steps. Each is an isolated commit on a `sleep/<date>` branch carrying machine-readable trailers, so a failure stays contained and a resume reads what is already done out of `git log`. See [The sleep pipeline](/internals/the-sleep-pipeline/).
+One of the ordered curation steps named by `SLEEP_PHASES` — seventeen as of v0.6.0. Each is an isolated commit on a `sleep/<date>` branch carrying machine-readable trailers, so a failure stays contained and a resume reads what is already done out of `git log`. See [The sleep pipeline](/internals/the-sleep-pipeline/).
 
 ### State plane
 

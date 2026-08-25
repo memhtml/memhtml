@@ -1,4 +1,4 @@
-import type { DatabaseShape, EmbedModelMismatch, IndexerShape } from "@memhtml/index"
+import type { DatabaseShape, EmbedModelMismatch, IndexerShape, IndexStale } from "@memhtml/index"
 import type { ModelClientShape, ModelKey } from "@memhtml/llm"
 import type { GitShape, StoreError, StoreShape } from "@memhtml/store"
 import type { Effect } from "effect"
@@ -96,7 +96,7 @@ export const modelFor = (deps: SleepDeps, phase: SleepPhase): ModelKey =>
  * typed. A phase that could fail with something outside it would be a phase whose failure the runner
  * cannot describe in a report line.
  */
-export type SleepError = StoreError | EmbedModelMismatch
+export type SleepError = StoreError | EmbedModelMismatch | IndexStale
 
 /** One phase's environment: the run's identity, the injected clock reading, and the deps. */
 export interface PhaseEnv {

@@ -13,11 +13,11 @@ import type {
   CandidateMemoryLike,
   TranscriptManifestEntry
 } from "../consolidator.js"
+import { pendingMarksPath, recordPendingMarks } from "../contract.js"
 import { readFileBytes, writeFileBytes } from "../edits.js"
 import { emptyOutcome, type PhaseBody, type PhaseEnv, type SleepError } from "../env.js"
 import {
   linkedSessionCount,
-  markSessionsConsolidated,
   type SessionManifestRow,
   sessionManifestRows,
   unconsolidatedSessions,
@@ -33,7 +33,7 @@ import {
 
 /**
  * Phase 12, trace consolidation. Unread transcripts go to the injected agent; each candidate it
- * clears becomes ONE REVIEWABLE COMMIT. Watermarks land last.
+ * clears becomes ONE REVIEWABLE COMMIT. Watermarks are PROPOSED on the branch and land at merge.
  *
  * **`.memhtml` holds no session content, and this phase does not change that.** The trace tables are a
  * read-only index over `~/.claude/projects`, so the transcripts are read AT THEIR SOURCE, by the
@@ -46,9 +46,16 @@ import {
  *
  * **A watermark means a transcript was READ, not that one was requested.** The phase asks about a
  * batch and watermarks only what the agent reports having reached, intersected with that batch. See
- * `markSessionsConsolidated`'s call site. The distinction matters because
- * `trace_consolidations` is an anti-join. A watermark on a session whose transcript did not arrive
- * removes it from every future batch, so the transcript is lost with a row asserting it was handled.
+ * {@link analyzedFrom}. The distinction matters because `trace_consolidations` is an anti-join. A
+ * watermark on a session whose transcript did not arrive removes it from every future batch, so the
+ * transcript is lost with a row asserting it was handled.
+ *
+ * **And a watermark means a transcript was read BY A RUN THAT LANDED.** The row is not written here at
+ * all: this phase records a `session-consolidated` `PendingMark` in the run's committed ledger, and
+ * `merge` writes the row once the branch is on `main`. The anti-join's row survives `git branch -D`
+ * and `memhtml index rebuild` alike, so writing it during the phase would make a discard partial in the
+ * one direction that costs content — the distilled memories go away with the branch and the row saying
+ * the transcript was handled stays behind, so no later cycle ever reads it again.
  *
  * **Structurally firewalled from retrieval.** This is the one phase that reads the trace tables, and
  * what it WRITES is an ordinary memory through the ordinary template. Nothing in the retrieval SQL
@@ -763,6 +770,57 @@ export const traceConsolidation: PhaseBody = (env) =>
 
     const candidates = outcome.success.candidates
     const llmCalls = outcome.success.llmCalls
+
+    /**
+     * The watermark, recorded as a PENDING MARK on the branch and applied by `merge`. It covers exactly
+     * the sessions the agent ACTUALLY READ; {@link analyzedFrom} is that set, and it is not `batch`.
+     *
+     * ## Only a session whose transcript arrived
+     *
+     * `batch` is the set the phase ASKED ABOUT, and the two differ whenever a transcript does not reach
+     * the agent: rotated away since `memhtml trace index` ran, moved outside `MEMHTML_TRACE_ROOT`, or
+     * behind a symlink the read-only mount will not follow (measured; see `partitionReachable` in
+     * `apps/consolidator/src/client.ts`). Marking such a session records it consolidated when nothing
+     * read it, and `trace_consolidations` is an ANTI-JOIN, so the session is then never selected again.
+     *
+     * **The guard is structural, not a check placed here.** `ConsolidationOutcome` cannot be constructed
+     * without `analyzedSessionIds` (`../consolidator.ts`), so no shape a consolidator returns leaves this
+     * phase with only the batch to fall back on. A `?? batch` default, or an optional field, would have
+     * reintroduced that.
+     *
+     * {@link analyzedFrom} then INTERSECTS with the batch, so the outcome's set can only ever narrow what
+     * is marked and never widen it. A consolidator naming a session nobody asked about is a bug in the
+     * consolidator; it must not become a watermark on an unread session.
+     *
+     * ## Still the whole READ batch, including the barren ones
+     *
+     * A session that yielded no candidate HAS been consolidated: the agent read it and correctly found
+     * nothing above the bar. Marking only the productive sessions would re-read every quiet transcript at
+     * full Opus cost every night forever, and the batch would never advance past them. So the narrowing
+     * is by REACHABILITY and never by productivity.
+     *
+     * ## Recorded FIRST, and safe because it is only a proposal
+     *
+     * The mark is written and staged before the candidate loop, so the first candidate's commit carries
+     * the ledger and a night that distils two memories still lands two commits. Nothing rides on the
+     * ORDER any more, which is the property the merge-time application buys: a process killed anywhere in
+     * this phase leaves a branch nobody merged, so the marks are never applied and the batch is re-read.
+     * A run whose ledger commits and whose candidates then fail is the same case — the branch is
+     * discarded or resumed, and either way no session is recorded read on the strength of nothing.
+     */
+    const analyzed = analyzedFrom(batch, outcome.success.analyzedSessionIds)
+    const pendingRecorded = yield* recordPendingMarks(
+      env.deps.git.root,
+      env.runId,
+      analyzed.map((sessionId) => ({
+        kind: "session-consolidated" as const,
+        sessionId,
+        runId: env.runId,
+        at: env.at
+      }))
+    )
+    if (pendingRecorded) yield* env.deps.git.add([pendingMarksPath(env.runId)])
+
     const conflicts = yield* frameConflicts(env, candidates)
 
     let written = 0
@@ -859,12 +917,10 @@ export const traceConsolidation: PhaseBody = (env) =>
     }
 
     /**
-     * Surface 2, AFTER every candidate commit and BEFORE the watermark.
+     * Surface 2, AFTER every candidate commit.
      *
      * After the candidates, so a commitment task cannot ride into a `distill …` commit and confuse what
-     * that commit decided; each half of the answer gets its own reviewable commit. Before the watermark,
-     * for the reason the watermark's own note gives: it goes last, so a process killed mid-phase
-     * re-reads the batch rather than recording it read with nothing to show.
+     * that commit decided; each half of the answer gets its own reviewable commit.
      *
      * The batch is the grounding set, `analyzedFrom` is not. A commitment cites a session whose
      * TRANSCRIPT was read, and `analyzedSessionIds` is the reachable set the CLIENT computed — which is
@@ -890,52 +946,9 @@ export const traceConsolidation: PhaseBody = (env) =>
     }
 
     /**
-     * The watermark is written LAST, after every commit, and covers exactly the sessions the agent
-     * ACTUALLY READ. {@link analyzedFrom} is that set, and it is not `batch`.
-     *
-     * ## Only a session whose transcript arrived
-     *
-     * This is the invariant the phase exists to hold on to, and it used to be broken here in one line:
-     * the watermark covered `batch`, the set the phase ASKED ABOUT. The two differ whenever a
-     * transcript does not reach the agent: rotated away since `memhtml trace index` ran, moved outside
-     * `MEMHTML_TRACE_ROOT`, or behind a symlink the read-only mount will not follow (measured; see
-     * `partitionReachable` in `apps/consolidator/src/client.ts`). Each of those recorded a session as
-     * consolidated that nothing had read, and `trace_consolidations` is an ANTI-JOIN, so the session
-     * was then never selected again. The transcript was lost silently, with a row asserting otherwise.
-     *
-     * **The guard is structural, not a check placed here.** `ConsolidationOutcome` cannot be
-     * constructed without `analyzedSessionIds` (`../consolidator.ts`), so no shape a
-     * consolidator returns leaves this phase with only the batch to fall back on. A `?? batch`
-     * default, or an optional field, would have reintroduced that.
-     *
-     * {@link analyzedFrom} then INTERSECTS with the batch, so the outcome's set can only ever narrow
-     * what is watermarked and never widen it. A consolidator naming a session nobody asked about is a
-     * bug in the consolidator; it must not become a watermark on an unread session.
-     *
-     * ## Still the whole READ batch, including the barren ones
-     *
-     * A session that yielded no candidate HAS been consolidated: the agent read it and correctly found
-     * nothing above the bar. Watermarking only the productive sessions would re-read every quiet
-     * transcript at full Opus cost every night forever, and the batch would never advance past them.
-     * So the narrowing is by REACHABILITY and never by productivity.
-     *
-     * ## Last, not first
-     *
-     * A process killed between the commits and this write reconsolidates those sessions next night, at
-     * the cost of a wasted model call and a duplicate candidate a reviewer declines. The reverse order
-     * would lose the transcripts silently, marked read with no memory to show for it.
-     */
-    const analyzed = analyzedFrom(batch, outcome.success.analyzedSessionIds)
-    yield* markSessionsConsolidated(env.deps.db, {
-      runId: env.runId,
-      at: env.at,
-      sessionIds: analyzed
-    })
-
-    /**
      * `consolidated` is the ANALYZED count and `batch` the requested one, so the two disagreeing in a
-     * report is the operator-visible signal that transcripts went missing. That state previously
-     * had no reading at all, since a watermark over the batch made the two equal by construction.
+     * report is the operator-visible signal that transcripts went missing. A mark over the batch would
+     * make the two equal by construction and leave that state with no reading at all.
      */
     const unreachable = batch.length - analyzed.length
     if (unreachable > 0) {
@@ -945,21 +958,40 @@ export const traceConsolidation: PhaseBody = (env) =>
       )
     }
 
-    return {
-      counts: {
-        ...base,
-        batch: batch.length,
-        candidates: candidates.length,
-        written,
-        skipped,
-        conflicts: conflicted,
-        consolidated: analyzed.length,
-        unreachable,
-        ...commitmentCounts(commitments)
-      },
-      commitSha: lastCommit,
-      llmCalls
+    const counts = {
+      ...base,
+      batch: batch.length,
+      candidates: candidates.length,
+      written,
+      skipped,
+      conflicts: conflicted,
+      consolidated: analyzed.length,
+      unreachable,
+      ...commitmentCounts(commitments)
     }
+
+    /**
+     * A night that read transcripts and distilled nothing from them still has to COMMIT its ledger, so
+     * it gets a commit of its own.
+     *
+     * That night is the ordinary one, not an edge case: the bar in `agent/instructions.md` refuses a
+     * candidate that restates one line, so a batch of quiet sessions correctly yields nothing. The marks
+     * are what advance the batch past those sessions, and a ledger left staged and uncommitted would
+     * either be swept into the NEXT phase's commit or discarded with the index — so the reading would
+     * either be wrong or absent. A commit whenever `lastCommit` is still null covers both, and adds no
+     * second commit to a night that already committed a candidate, because that commit carried the
+     * ledger with it.
+     */
+    if (pendingRecorded && lastCommit === null) {
+      lastCommit = yield* commitPhase(
+        env,
+        "trace-consolidation",
+        `record ${String(analyzed.length)} consolidated sessions pending review`,
+        counts
+      )
+    }
+
+    return { counts, commitSha: lastCommit, llmCalls }
   })
 
 /**

@@ -8,9 +8,9 @@
  * eval harness would invert that. The arrow still points inward, since this package depends on the six
  * below it, and `apps/cli` depends on this one.
  *
- * The corpus is never committed. `corpus.ts` is a pure function of a seed, so a fixture is regenerated
- * on demand and two runs at one seed are byte-identical. That is what makes a change in the gate's
- * numbers mean the ranking changed rather than the corpus.
+ * The corpus is never committed. `corpus.ts` is a pure function of `(seed, now)`, so a fixture is
+ * regenerated on demand and two runs at one seed on one day are byte-identical. That is what makes a
+ * change in the gate's numbers mean the ranking changed rather than the corpus.
  */
 
 export type { ClaimText, DerivedControl, DivergenceFamily, VariantOptions } from "./controls.js"
@@ -30,6 +30,7 @@ export {
   DEFAULT_CORPUS_SIZE,
   DEFAULT_PROBE_COUNT,
   DEFAULT_SEED,
+  quantizeNow,
   queryFor
 } from "./corpus.js"
 export type {

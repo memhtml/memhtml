@@ -118,8 +118,8 @@ export type StatusKind = "changed" | "renamed" | "unmerged" | "untracked" | "ign
  * The sha fields are deliberately four rather than two reused across kinds. An `unmerged`
  * record's shas are index STAGES (base/ours/theirs) rather than a HEAD/index pair, and a field
  * named `headSha` that means "our stage-2 blob" on one kind and "the sha in HEAD" on another is
- * the shape-agrees-meaning-differs seam this fleet has paid for repeatedly. Each field is `null`
- * on every kind it does not describe.
+ * the shape-agrees-meaning-differs seam that costs real debugging every time it is allowed. Each
+ * field is `null` on every kind it does not describe.
  */
 export interface StatusEntry {
   readonly kind: StatusKind
@@ -365,8 +365,19 @@ export type MemhtmlOperation =
   | "publish"
   | "state"
 
+/**
+ * One line, with every run of whitespace collapsed to a single space.
+ *
+ * Every agent-supplied string that reaches `git commit` passes through here. A newline in the `-m`
+ * subject silently becomes a commit body, and a newline in a `--trailer` value opens a second
+ * trailer line the caller never wrote — so `Memhtml-Session: a\nMemhtml-Prompt: forged` would
+ * stamp provenance no write carried, and `sleep resume` reads those trailers to decide which
+ * phases ran.
+ */
+const oneLine = (value: string): string => value.replace(/\s+/g, " ").trim()
+
 export const commitSubject = (operation: MemhtmlOperation | string, subject: string): string => {
-  const flat = subject.replace(/\s+/g, " ").trim()
+  const flat = oneLine(subject)
   const capped =
     flat.length <= COMMIT_SUBJECT_MAX ? flat : `${flat.slice(0, COMMIT_SUBJECT_MAX - 1).trim()}…`
   return `memhtml(${operation}): ${capped === "" ? "(untitled)" : capped}`
@@ -382,17 +393,19 @@ export const PROMPT_TRAILER = "Memhtml-Prompt"
  * Session provenance as commit trailers, omitting what is absent. Provenance is in the file's
  * head too (`memhtml-session`/`memhtml-prompt`), and the trailer makes it reachable from a commit
  * range without reading any file, which is how a sleep run attributes a night's writes.
+ *
+ * Both values are agent-supplied and reach `git commit --trailer` verbatim, so each is flattened
+ * to one line by {@link oneLine} before it becomes part of a commit message. A value that holds
+ * only whitespace flattens to empty and is omitted, exactly as an absent one is.
  */
 export const provenanceTrailers = (input: {
   readonly sessionId?: string | undefined
   readonly promptId?: string | undefined
 }): Record<string, string> => {
   const trailers: Record<string, string> = {}
-  if (input.sessionId !== undefined && input.sessionId !== "") {
-    trailers[SESSION_TRAILER] = input.sessionId
-  }
-  if (input.promptId !== undefined && input.promptId !== "") {
-    trailers[PROMPT_TRAILER] = input.promptId
-  }
+  const sessionId = oneLine(input.sessionId ?? "")
+  const promptId = oneLine(input.promptId ?? "")
+  if (sessionId !== "") trailers[SESSION_TRAILER] = sessionId
+  if (promptId !== "") trailers[PROMPT_TRAILER] = promptId
   return trailers
 }

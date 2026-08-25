@@ -28,9 +28,9 @@ import {
   setMeta,
   VIOLATION_SEPARATOR
 } from "@memhtml/html"
-import { Config, Context, Effect, Layer } from "effect"
+import { Context, Effect, Semaphore } from "effect"
 
-import { Git, type GitFailure, type GitShape, makeGit } from "./git.js"
+import type { GitFailure, GitShape } from "./git.js"
 import { attemptIo, readFileOrNull } from "./layout.js"
 import { commitSubject, provenanceTrailers } from "./plumbing.js"
 
@@ -53,7 +53,12 @@ export interface WriteProvenance {
 /** What `memory_write` supplies, which is the format's own input plus placement and provenance. */
 export type WriteInput = NewMemoryInput &
   WriteProvenance & {
-    /** An explicit path override. Ignored when it is not a usable memory path. */
+    /**
+     * An explicit path override. Ignored when it is not a usable memory path, and refused with
+     * `WriteConflict` when a file already sits there: nothing in this corpus is overwritten, so a
+     * revision is `correctMemory` (which archives the file it replaces) and never a second write
+     * to the same path.
+     */
     readonly path?: string | undefined
     readonly workspace?: string | undefined
   }
@@ -162,9 +167,9 @@ export interface SupersedeResult {
  * Asks whether an active file already holds this content hash, answering its path or `null`.
  *
  * An injected function rather than a repository method, because the answer lives in SQL and
- * this package is SQL-free by design. T7 wires it to the `files_content_hash_active` partial
- * unique index, and a test wires it to a Map. The store's only knowledge is that a non-null
- * answer means "do not write".
+ * this package is SQL-free by design. The composition root wires it to the
+ * `files_content_hash_active` partial unique index, and a test wires it to a Map. The store's only
+ * knowledge is that a non-null answer means "do not write".
  */
 export type DedupeLookup = (
   contentHash: string
@@ -280,16 +285,13 @@ export interface StoreShape {
 export const Store = Context.Service<StoreShape>("memhtml/Store")
 
 /**
- * `MEMHTML_ROOT`, defaulting to `~/memhtml`. A leading `~` is expanded, because this value
- * reaches the process from a shell profile, an MCP client config, and a cron line. Only
- * the shell expands tildes, so the other two would otherwise create a literal `./~` directory.
+ * Expand `~` and resolve to an absolute path.
+ *
+ * The root reaches a process from a shell profile, an MCP client config, and a cron line. Only the
+ * shell expands a tilde, so the other two would otherwise create a literal `./~` directory. The
+ * `MEMHTML_ROOT` config that reads it lives in the composition root, which owns every environment
+ * lookup; this package is handed a root rather than resolving one.
  */
-export const MemhtmlRootConfig = Config.string("MEMHTML_ROOT").pipe(
-  Config.withDefault(join("~", "memhtml")),
-  Config.map(expandRoot)
-)
-
-/** Expand `~` and resolve to an absolute path. */
 export function expandRoot(raw: string): string {
   const trimmed = raw.trim()
   const expanded =
@@ -371,25 +373,52 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
   const now = Effect.clockWith((clock) => clock.currentTimeMillis)
 
   /**
-   * A free path for a title. The placement rule's own path, then `-2`, `-3`, … until one is
-   * absent from disk. The collision suffix belongs here rather than in `@memhtml/contracts`
-   * because deciding "taken" requires touching the filesystem, and the path algebra is pure.
+   * A FREE path for a title, meaning one no file and no sibling op already holds. The placement
+   * rule's own path, then `-2`, `-3`, … until one is absent. The collision suffix belongs here
+   * rather than in `@memhtml/contracts` because deciding "taken" requires touching the filesystem,
+   * and the path algebra is pure.
    *
    * `claimed` is the set of paths a caller has already promised to write but has not written yet.
    * It exists for exactly one caller, {@link writeMemories}, which validates every op before
    * touching disk. Without it two ops sharing a title in one batch would both be handed the
    * unsuffixed path, and the second write would silently overwrite the first. Disk is authoritative
    * for everything else, and a path is taken if EITHER source says so.
+   *
+   * An explicit path is subject to BOTH of those checks and gets no collision suffix: the caller
+   * named one path, so an occupied one is a refusal (`WriteConflict`) rather than a quiet write to
+   * `…-2.html` that would leave the caller holding a path with no file behind it — and rather than
+   * a quiet overwrite, which would delete a memory in a corpus where eviction is a `git mv` into
+   * `archive/` and nothing is ever removed. `vacating` is the one path exempt from the disk check:
+   * {@link correctMemory} moves its target into the archive inside the same commit, so the target's
+   * own path is free by the time the correction's bytes are written.
    */
   const freePathFor = (
     input: PlacementInput & { readonly title: string; readonly at: Date },
-    claimed: ReadonlySet<string> = new Set()
-  ): Effect.Effect<string, StorageFailure> =>
+    claimed: ReadonlySet<string> = new Set(),
+    vacating?: string | undefined
+  ): Effect.Effect<string, StorageFailure | GitFailure | WriteConflict> =>
     Effect.gen(function* () {
       const first = memoryPathFor(input)
-      // An explicit valid path is authoritative. The caller named it, and silently writing to
-      // `…-2.html` instead would leave the caller holding a path with no file behind it.
-      if (input.path !== undefined && isValidMemoryPath(input.path)) return first
+      if (input.path !== undefined && isValidMemoryPath(input.path)) {
+        // A sibling op in the same batch named it. No blob exists for either side yet, so there is
+        // no sha to report on either end of the conflict.
+        if (claimed.has(first)) {
+          return yield* Effect.fail(WriteConflict.make({ path: first, ourSha: "", theirSha: "" }))
+        }
+        if (first !== vacating && (yield* readFileOrNull(absolute(first))) !== null) {
+          // `ourSha` is empty because this write has no base: it did not read the file it would
+          // have replaced. `theirSha` is what is there now, so a caller can read exactly the blob
+          // that refused it. `mergeBranch` reports an absent stage the same way.
+          return yield* Effect.fail(
+            WriteConflict.make({
+              path: first,
+              ourSha: "",
+              theirSha: yield* git.hashObject(first)
+            })
+          )
+        }
+        return first
+      }
       const directory = first.slice(0, first.lastIndexOf("/"))
       const base = slugify(input.title)
       const episodic = input.memoryType === "episodic"
@@ -420,6 +449,95 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       const html = yield* readFileOrNull(absolute(normalized))
       return html === null ? yield* Effect.fail(PathNotFound.make({ path: normalized })) : html
     })
+
+  /**
+   * What every path an operation is about to touch held before it touched it, so a failure part-way
+   * through has something exact to put back.
+   *
+   * `note` is called BEFORE the mutation and keeps only the FIRST reading per path: an operation
+   * that writes one path twice must still restore what was there before the first write. `null`
+   * bytes mean the path held no file, so undoing that write means removing it.
+   *
+   * A journal rather than a path list, because `rm --force` over the paths an operation touched
+   * deletes a file that was already in the tree the moment any operation writes to an occupied
+   * path. Recording the bytes makes the compensation the inverse of what actually happened rather
+   * than a guess about it.
+   */
+  const makeJournal = (): {
+    readonly touched: ReadonlyMap<string, string | null>
+    readonly note: (path: string) => Effect.Effect<void, StorageFailure>
+  } => {
+    const touched = new Map<string, string | null>()
+    return {
+      touched,
+      note: (path) =>
+        Effect.gen(function* () {
+          if (touched.has(path)) return
+          touched.set(path, yield* readFileOrNull(absolute(path)))
+        })
+    }
+  }
+
+  /**
+   * Undo a partial operation: unstage every path it touched, then put each one back — removing what
+   * the operation created and rewriting the bytes it replaced or moved away.
+   *
+   * `git reset -- <paths>` rather than `git rm --cached -- <paths>`. Probed live 2026-08-04: `rm
+   * --cached` exits 128 with `fatal: pathspec … did not match any files` as soon as ONE path in the
+   * list was never staged. That is the state a `git.add` which failed part-way leaves, and the state
+   * a `git mv` that never ran leaves, so the compensation would fail on exactly the input it exists
+   * for. `reset` exits 0 for an unstaged path and exits 0 against an unborn HEAD, both verified.
+   *
+   * The worktree pass is second and covers every path the operation touched, because a file that was
+   * written but never staged is invisible to git and would otherwise survive as an untracked file,
+   * which is not a byte-identical tree. Its absence is what wedges every later sleep run:
+   * `requireCleanTree` is sleep's preflight, so one uncompensated failure blocks curation until a
+   * human intervenes.
+   */
+  const restore = (touched: ReadonlyMap<string, string | null>): Effect.Effect<void, StoreError> =>
+    Effect.gen(function* () {
+      if (touched.size === 0) return
+      yield* git.run(["reset", "-q", "--", ...touched.keys()])
+      yield* attemptIo("restore", async () => {
+        const { mkdir, rm, writeFile } = await import("node:fs/promises")
+        const { dirname } = await import("node:path")
+        for (const [path, before] of touched) {
+          if (before === null) {
+            await rm(absolute(path), { force: true })
+            continue
+          }
+          await mkdir(dirname(absolute(path)), { recursive: true })
+          await writeFile(absolute(path), before, "utf8")
+        }
+      })
+    })
+
+  /**
+   * Run the steps that touch disk and git with their compensation attached.
+   *
+   * `Effect.onError` rather than `Effect.tapError`, because not every cause that leaves a half-written
+   * tree is a typed failure: a caller that times out or drops its connection INTERRUPTS the fiber,
+   * and the MCP server does exactly that to a tool call. The compensation runs uninterruptibly, so it
+   * finishes even then.
+   *
+   * A compensation that cannot itself complete is LOGGED rather than raised. The caller needs the
+   * failure that actually happened, and raising the cleanup's failure in its place would hide it —
+   * while the dirty tree it leaves is reported by `requireCleanTree` and `memhtml doctor`, which is
+   * where an operator looks for it.
+   */
+  const compensated = <A, E>(
+    journal: { readonly touched: ReadonlyMap<string, string | null> },
+    steps: Effect.Effect<A, E>
+  ): Effect.Effect<A, E> =>
+    steps.pipe(
+      Effect.onError(() =>
+        restore(journal.touched).pipe(
+          Effect.catch((failure) =>
+            Effect.logError(`store.restore left the tree dirty: ${failure._tag}`)
+          )
+        )
+      )
+    )
 
   /**
    * Move a file to its archive path with the archive stamps applied, staged but not committed.
@@ -560,11 +678,25 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
         tags: input.tags
       })
 
-      yield* writeFileAt(path, html)
-      yield* git.add([path])
-      const commit = yield* git.commit(commitSubject("write", input.title), {
-        trailers: provenanceTrailers(input)
-      })
+      /**
+       * The write, the stage, and the commit are the only steps that can leave state behind, so
+       * they run under a journal: a failure or an interruption here is compensated instead of leaving
+       * a written, possibly staged file for the next `requireCleanTree` to refuse. Nothing before
+       * this point has touched disk.
+       */
+      const journal = makeJournal()
+      const commit = yield* compensated(
+        journal,
+        Effect.gen(function* () {
+          yield* journal.note(path)
+          yield* writeFileAt(path, html)
+          yield* git.add([path])
+          return yield* git.commit(commitSubject("write", input.title), {
+            trailers: provenanceTrailers(input)
+          })
+        })
+      )
+
       return {
         path,
         created: true,
@@ -573,29 +705,6 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
         contentHash: hash
       }
     }).pipe(Effect.withSpan("store.writeMemory"))
-
-  /**
-   * Undo a partial batch: unstage every path the batch claimed and remove the files it wrote.
-   *
-   * `git reset -- <paths>` rather than `git rm --cached -- <paths>`. Probed live 2026-08-04: `rm
-   * --cached` exits 128 with `fatal: pathspec … did not match any files` as soon as ONE path in the
-   * list was never staged. That is the state a `git.add` which failed part-way leaves,
-   * so the rollback would fail on exactly the input it exists for. `reset` exits 0 for an unstaged
-   * path and exits 0 against an unborn HEAD, both verified.
-   *
-   * The unlink is second and unconditional, because a file that was written but never staged is
-   * invisible to git and would otherwise survive the rollback as an untracked file, which is not a
-   * byte-identical tree.
-   */
-  const rollbackBatch = (paths: ReadonlyArray<string>): Effect.Effect<void, StoreError> =>
-    Effect.gen(function* () {
-      if (paths.length === 0) return
-      yield* git.run(["reset", "-q", "--", ...paths])
-      yield* attemptIo("batch.rollback", async () => {
-        const { rm } = await import("node:fs/promises")
-        for (const path of paths) await rm(absolute(path), { force: true })
-      })
-    })
 
   /**
    * Validate one op against the batch's FOLDED state, answering either the pending write it earned
@@ -664,19 +773,34 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
         }
       }
 
-      const path = yield* freePathFor(
-        {
-          title: input.title,
-          memoryType: input.memoryType,
-          at: new Date(millis),
-          path: input.path,
-          workspace: input.workspace,
-          entities: input.entities,
-          tags: input.tags
-        },
-        claimed
+      /**
+       * A refused path is THIS op's failure, so it is a per-op result like the render gate's, and a
+       * continue-mode batch keeps its survivors. Two ops naming one explicit path, and an explicit
+       * path an active memory already holds, both land here. Every other failure `freePathFor` can
+       * produce is a mechanism failure (a filesystem read, a git call) and stays in the error
+       * channel, where the batch contract puts it.
+       */
+      const placed = yield* Effect.result(
+        freePathFor(
+          {
+            title: input.title,
+            memoryType: input.memoryType,
+            at: new Date(millis),
+            path: input.path,
+            workspace: input.workspace,
+            entities: input.entities,
+            tags: input.tags
+          },
+          claimed
+        )
       )
-      return { pending: { index, path, html, input, contentHash: hash } }
+      if (placed._tag === "Failure") {
+        if (placed.failure instanceof WriteConflict) {
+          return { result: { index, ok: false, error: placed.failure, contentHash: hash } }
+        }
+        return yield* Effect.fail(placed.failure)
+      }
+      return { pending: { index, path: placed.success, html, input, contentHash: hash } }
     })
 
   /** The counts, derived from the results in one pass so they cannot disagree with them. */
@@ -780,22 +904,28 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       }
 
       const paths = pending.map((entry) => entry.path)
-      const commit = yield* Effect.gen(function* () {
-        for (const entry of pending) yield* writeFileAt(entry.path, entry.html)
-        yield* git.add(paths)
-        return yield* git.commit(commitSubject("batch", subjectFor(pending)), {
-          // The trailers come from the FIRST op that carries provenance. A batch is one commit, so
-          // it gets one `Memhtml-Session`. Every op's own `memhtml-session` head meta is already in
-          // its file, which is where per-op provenance lives.
-          trailers: provenanceTrailers(pending.find(hasProvenance)?.input ?? {})
+      /**
+       * A failure anywhere in the write/stage/commit sequence rolls the whole batch back and
+       * re-fails. The observable contract is the same as an atomic abort's, a byte-identical tree, so
+       * the compensation has to cover the case where SOME files exist and SOME are staged — and it
+       * covers only the paths the write pass actually reached, since the journal is built as it goes.
+       */
+      const journal = makeJournal()
+      const commit = yield* compensated(
+        journal,
+        Effect.gen(function* () {
+          for (const entry of pending) {
+            yield* journal.note(entry.path)
+            yield* writeFileAt(entry.path, entry.html)
+          }
+          yield* git.add(paths)
+          return yield* git.commit(commitSubject("batch", subjectFor(pending)), {
+            // The trailers come from the FIRST op that carries provenance. A batch is one commit, so
+            // it gets one `Memhtml-Session`. Every op's own `memhtml-session` head meta is already in
+            // its file, which is where per-op provenance lives.
+            trailers: provenanceTrailers(pending.find(hasProvenance)?.input ?? {})
+          })
         })
-      }).pipe(
-        /**
-         * A failure anywhere in the write/stage/commit sequence rolls the whole batch back and
-         * re-fails. The observable contract is the same as an atomic abort's, a byte-identical
-         * tree, so the mechanism has to cover the case where SOME files exist and SOME are staged.
-         */
-        Effect.tapError(() => rollbackBatch(paths))
       )
 
       const final = results.map((result, index) => {
@@ -850,39 +980,78 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
        */
       const validFrom = yield* validFromOf(html, at)
 
-      const path = yield* freePathFor({
-        title: input.title,
-        memoryType: input.memoryType,
-        at: new Date(millis),
-        path: input.path,
-        workspace: input.workspace,
-        entities: input.entities,
-        tags: input.tags
-      })
+      /**
+       * The target's own path is `vacating`: this commit moves it into the archive, so a caller may
+       * name it as the correction's explicit path and have the corrected fact land where the old one
+       * lived. Any OTHER occupied path is refused, which is what keeps a correction from silently
+       * replacing a third memory.
+       */
+      const path = yield* freePathFor(
+        {
+          title: input.title,
+          memoryType: input.memoryType,
+          at: new Date(millis),
+          path: input.path,
+          workspace: input.workspace,
+          entities: input.entities,
+          tags: input.tags
+        },
+        new Set(),
+        normalizedTarget
+      )
       // The supersedes link points at the target's ARCHIVE path, which is where the file will
       // be once this commit lands. Pointing at the pre-archive path would create a dangling
       // href in the same commit that made it dangle.
       const linked = addLink(html, "supersedes", hrefFor(archivePath))
-      yield* writeFileAt(
-        path,
+      const corrected =
         readMeta(linked, "memhtml-valid-from") === undefined
           ? setMeta(linked, "memhtml-valid-from", validFrom)
           : linked
+
+      /**
+       * A failure between the `git mv` and the commit would otherwise leave the worst state this
+       * package can produce: the target archived and staged, the corrected file half-written, and
+       * `requireCleanTree` refusing every sleep run from then on. The journal holds the target's
+       * original bytes, so the compensation puts the memory back where it was.
+       */
+      const journal = makeJournal()
+      const outcome = yield* compensated(
+        journal,
+        Effect.gen(function* () {
+          yield* journal.note(normalizedTarget)
+          yield* journal.note(archivePath)
+          yield* journal.note(path)
+
+          /**
+           * The archive move runs BEFORE the correction's bytes are written, because the two paths
+           * are the same one when a caller corrects a memory in place: writing first would hand
+           * `git mv` the correction's bytes and the original fact would be the thing that got
+           * archived. The order is invisible in every other case, since both halves land in one
+           * commit.
+           */
+          const archivedPath = yield* stageArchive(normalizedTarget, millis, [
+            ["memhtml-status", "archived"],
+            ["memhtml-updated", at],
+            ["memhtml-archived", at],
+            ["memhtml-superseded-by", hrefFor(path)],
+            ...validUntilStampFor(targetHtml, validFrom)
+          ])
+          yield* writeFileAt(path, corrected)
+          yield* git.add([path])
+
+          const commit = yield* git.commit(commitSubject("correct", input.title), {
+            trailers: provenanceTrailers(input)
+          })
+          return { archivedPath, commitSha: commit.sha }
+        })
       )
-      yield* git.add([path])
 
-      const archivedPath = yield* stageArchive(normalizedTarget, millis, [
-        ["memhtml-status", "archived"],
-        ["memhtml-updated", at],
-        ["memhtml-archived", at],
-        ["memhtml-superseded-by", hrefFor(path)],
-        ...validUntilStampFor(targetHtml, validFrom)
-      ])
-
-      const commit = yield* git.commit(commitSubject("correct", input.title), {
-        trailers: provenanceTrailers(input)
-      })
-      return { path, archivedPath, commitSha: commit.sha, contentHash: hash }
+      return {
+        path,
+        archivedPath: outcome.archivedPath,
+        commitSha: outcome.commitSha,
+        contentHash: hash
+      }
     }).pipe(Effect.withSpan("store.correctMemory"))
 
   const archiveMemory = (path: string, reason: string): Effect.Effect<ArchiveResult, StoreError> =>
@@ -890,13 +1059,27 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       const millis = yield* now
       const at = isoSecond(millis)
       const normalized = normalizePath(path)
-      const archivePath = yield* stageArchive(normalized, millis, [
-        ["memhtml-status", "archived"],
-        ["memhtml-updated", at],
-        ["memhtml-archived", at]
-      ])
-      const commit = yield* git.commit(commitSubject("archive", `${normalized} — ${reason}`))
-      return { path: normalized, archivePath, commitSha: commit.sha }
+      // Read first, so a path with no file fails before `stageArchive` makes a year partition — and
+      // so the journal below has the bytes an interrupted move has to put back.
+      yield* readRaw(normalized)
+
+      const journal = makeJournal()
+      const outcome = yield* compensated(
+        journal,
+        Effect.gen(function* () {
+          yield* journal.note(normalized)
+          yield* journal.note(archivePathFor(normalized, yearOf(millis)))
+          const archivePath = yield* stageArchive(normalized, millis, [
+            ["memhtml-status", "archived"],
+            ["memhtml-updated", at],
+            ["memhtml-archived", at]
+          ])
+          const commit = yield* git.commit(commitSubject("archive", `${normalized} — ${reason}`))
+          return { archivePath, commitSha: commit.sha }
+        })
+      )
+
+      return { path: normalized, archivePath: outcome.archivePath, commitSha: outcome.commitSha }
     }).pipe(Effect.withSpan("store.archiveMemory"))
 
   const supersedeMemories = (
@@ -933,44 +1116,58 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       }
 
       const archived: Array<{ readonly loserPath: string; readonly archivePath: string }> = []
-      for (const pair of normalized) {
-        /**
-         * The validity window this supersede closes. The loser was valid over
-         * [its own valid-from|created, the winner's valid-from). Min-wins on a pre-existing
-         * bound, because a fact cannot outlive its earliest stated `memhtml-valid-until`. The
-         * winner's own valid-from is stamped below so an as-of query reads both ends of the
-         * hand-off from the files rather than inferring one from the commit.
-         */
-        const validFrom = winnerValidFrom.get(pair.winner) ?? at
-        const archivePath = yield* stageArchive(pair.loser, millis, [
-          ["memhtml-status", "archived"],
-          ["memhtml-updated", at],
-          ["memhtml-archived", at],
-          ["memhtml-superseded-by", hrefFor(pair.winner)],
-          ...validUntilStampFor(loserHtml.get(pair.loser) ?? "", validFrom)
-        ])
-        // The supersedes link points at the loser's ARCHIVE path, where the file is once this
-        // commit lands. Pointing at the pre-archive path would create a dangling href in the
-        // same commit that made it dangle, correctMemory's exact rule.
-        const html = winnerHtml.get(pair.winner) ?? (yield* readRaw(pair.winner))
-        const linked = addLink(html, "supersedes", hrefFor(archivePath))
-        const stamped =
-          readMeta(linked, "memhtml-valid-from") === undefined
-            ? setMeta(linked, "memhtml-valid-from", validFrom)
-            : linked
-        if (stamped !== html) {
-          winnerHtml.set(pair.winner, stamped)
-          yield* writeFileAt(pair.winner, stamped)
-          yield* git.add([pair.winner])
-        }
-        archived.push({ loserPath: pair.loser, archivePath })
-      }
+      /**
+       * One commit for all pairs means one compensation for all pairs: a failure on pair three puts
+       * pairs one and two back too, so a half-consolidated tree never reaches a commit and never
+       * reaches `requireCleanTree`.
+       */
+      const journal = makeJournal()
+      const commit = yield* compensated(
+        journal,
+        Effect.gen(function* () {
+          for (const pair of normalized) {
+            /**
+             * The validity window this supersede closes. The loser was valid over
+             * [its own valid-from|created, the winner's valid-from). Min-wins on a pre-existing
+             * bound, because a fact cannot outlive its earliest stated `memhtml-valid-until`. The
+             * winner's own valid-from is stamped below so an as-of query reads both ends of the
+             * hand-off from the files rather than inferring one from the commit.
+             */
+            const validFrom = winnerValidFrom.get(pair.winner) ?? at
+            yield* journal.note(pair.loser)
+            yield* journal.note(archivePathFor(pair.loser, yearOf(millis)))
+            yield* journal.note(pair.winner)
+            const archivePath = yield* stageArchive(pair.loser, millis, [
+              ["memhtml-status", "archived"],
+              ["memhtml-updated", at],
+              ["memhtml-archived", at],
+              ["memhtml-superseded-by", hrefFor(pair.winner)],
+              ...validUntilStampFor(loserHtml.get(pair.loser) ?? "", validFrom)
+            ])
+            // The supersedes link points at the loser's ARCHIVE path, where the file is once this
+            // commit lands. Pointing at the pre-archive path would create a dangling href in the
+            // same commit that made it dangle, correctMemory's exact rule.
+            const html = winnerHtml.get(pair.winner) ?? (yield* readRaw(pair.winner))
+            const linked = addLink(html, "supersedes", hrefFor(archivePath))
+            const stamped =
+              readMeta(linked, "memhtml-valid-from") === undefined
+                ? setMeta(linked, "memhtml-valid-from", validFrom)
+                : linked
+            if (stamped !== html) {
+              winnerHtml.set(pair.winner, stamped)
+              yield* writeFileAt(pair.winner, stamped)
+              yield* git.add([pair.winner])
+            }
+            archived.push({ loserPath: pair.loser, archivePath })
+          }
 
-      const subject =
-        normalized.length === 1 && normalized[0] !== undefined
-          ? `${normalized[0].winner} supersedes ${normalized[0].loser}`
-          : `${normalized.length} memories superseded`
-      const commit = yield* git.commit(commitSubject("consolidate", subject))
+          const subject =
+            normalized.length === 1 && normalized[0] !== undefined
+              ? `${normalized[0].winner} supersedes ${normalized[0].loser}`
+              : `${normalized.length} memories superseded`
+          return yield* git.commit(commitSubject("consolidate", subject))
+        })
+      )
       return { commitSha: commit.sha, archived }
     }).pipe(Effect.withSpan("store.supersedeMemories"))
 
@@ -1055,9 +1252,19 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       // commits nothing. That is what makes the sleep conflict phase's repeated promotion of
       // one corroborated edge cost one commit in total rather than one per night.
       if (linked === html) return { commitSha: null }
-      yield* writeFileAt(src, linked)
-      yield* git.add([src])
-      const commit = yield* git.commit(commitSubject("link", `${rel} ${src} -> ${dst}`))
+
+      // A link is a head-plane edit to a file that already exists, so the compensation rewrites the
+      // pre-link bytes rather than removing anything.
+      const journal = makeJournal()
+      const commit = yield* compensated(
+        journal,
+        Effect.gen(function* () {
+          yield* journal.note(src)
+          yield* writeFileAt(src, linked)
+          yield* git.add([src])
+          return yield* git.commit(commitSubject("link", `${rel} ${src} -> ${dst}`))
+        })
+      )
       return { commitSha: commit.sha }
     }).pipe(Effect.withSpan("store.linkMemories"))
 
@@ -1098,41 +1305,39 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       )
     }).pipe(Effect.withSpan("store.mergeBranch"))
 
+  /**
+   * One permit for every operation that changes the corpus, so two concurrent callers in this
+   * process take turns instead of racing.
+   *
+   * Two races need it and neither is hypothetical: `freePathFor` decides "taken" by reading disk,
+   * so two writes interleaved between that read and their own `writeFileAt` are handed the same
+   * path and the second silently replaces the first; and git holds ONE `.git/index`, so a second
+   * `add`/`mv`/`commit` running inside another operation's staging window either fails on the index
+   * lock or commits the other operation's half-staged files under its own subject. The MCP server
+   * runs its tools concurrently over one store, which is exactly that shape of caller.
+   *
+   * Read paths are deliberately outside the lock: git and the filesystem both admit any number of
+   * concurrent readers, and serializing reads behind a commit would make a search wait on a write.
+   *
+   * In-process only. Two PROCESSES sharing a root (a CLI invocation beside a running MCP server)
+   * still contend, and git's own index lock is what refuses the loser there — which is why a git
+   * failure has to be compensated rather than merely reported.
+   */
+  const oneWriterAtATime = Semaphore.makeUnsafe(1)
+
   return {
     root: git.root,
     git,
-    writeMemory,
-    writeMemories,
+    writeMemory: (input) => oneWriterAtATime.withPermit(writeMemory(input)),
+    writeMemories: (inputs, options) => oneWriterAtATime.withPermit(writeMemories(inputs, options)),
     readMemory,
-    correctMemory,
-    archiveMemory,
-    supersedeMemories,
-    linkMemories,
+    correctMemory: (target, input) => oneWriterAtATime.withPermit(correctMemory(target, input)),
+    archiveMemory: (path, reason) => oneWriterAtATime.withPermit(archiveMemory(path, reason)),
+    supersedeMemories: (pairs) => oneWriterAtATime.withPermit(supersedeMemories(pairs)),
+    linkMemories: (srcPath, rel, dstPath) =>
+      oneWriterAtATime.withPermit(linkMemories(srcPath, rel, dstPath)),
     dirtyPaths,
     requireCleanTree,
-    mergeBranch
+    mergeBranch: (commitish) => oneWriterAtATime.withPermit(mergeBranch(commitish))
   }
 }
-
-/**
- * The live store, rooted at `MEMHTML_ROOT`. The hooks are absent here on purpose. `dedupeLookup`
- * needs a database and `onMove` needs the state plane, and both live one layer out. A
- * store layer that reached for them would invert the dependency direction and drag SQL into
- * this package. T7 composes `makeStore(makeGit(root), { dedupeLookup, onMove })` instead.
- */
-export const StoreLive = Layer.effect(
-  Store,
-  Effect.gen(function* () {
-    const root = yield* MemhtmlRootConfig
-    return makeStore(makeGit(root))
-  })
-)
-
-/** The git layer for the configured root, for a caller that wants plumbing without the store. */
-export const GitLive = Layer.effect(
-  Git,
-  Effect.gen(function* () {
-    const root = yield* MemhtmlRootConfig
-    return makeGit(root)
-  })
-)

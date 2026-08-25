@@ -3,6 +3,7 @@ import {
   ExtractorPort,
   Indexer,
   IndexRecorder,
+  NEIGHBORS_LIMIT,
   Retrieval,
   Store
 } from "@memhtml/cli"
@@ -24,21 +25,29 @@ import { ToolFailure } from "./failure.js"
  * **Sleep is deliberately absent.** It is a cron/operator action producing a reviewable branch, not
  * something an agent fires mid-conversation: a sleep run rewrites confidence across the corpus,
  * archives memories, and creates a branch a human is expected to read. `memhtml sleep run` is the
- * entry point, and if the fleet ever wants one here it is `sleep_status` (read-only). The write
- * side stays behind an operator.
+ * entry point. A read-only `sleep_status` is the only shape this surface could ever take for it; the
+ * write side stays behind an operator.
  *
  * Every `success` schema is also a `Schema.Struct`, so `tools/list` publishes a JSON Schema the
  * client can validate a response against rather than an opaque object.
  *
+ * **A `description` has to FOLD to a string by AST**, so it is built from string literals, `+`, and
+ * identifiers declared in this file — never a template literal with a substitution and never an
+ * imported value. The docs site reads each description straight out of this source
+ * (`foldString` in `apps/docs/src/loaders/repo-sources.ts`) so the reference page and the published
+ * bytes are the same string; an expression it cannot fold throws at that build instead of rendering
+ * a paraphrase. A number that must not drift from a constant is asserted in `tests/tools.test.ts`
+ * against the constant, which is the check a literal cannot make for itself.
+ *
  * **Every tool declares `failure: ToolFailure`, and the omission is a silent wire bug.** A tool with
- * no declared failure schema gets `Schema.Never` (`Tool.ts:1265`), so `McpServer`'s declared-failure
- * predicate rejects everything and every failure, typed domain error included, is rewritten to
- * "Tool execution failed due to an internal server error" before it reaches the caller
- * (`McpServer.ts:831-847`). The declaration is what puts a tool's failures on the branch that passes
- * prose through; see `failure.ts` for the mechanism. `failureMode` is left at its `"error"` default
- * on purpose: the error CHANNEL is what `McpServer` catches, and `"return"` would instead fold the
- * failure into the success union, where the server would see a successful call carrying a failure
- * payload no MCP client knows to read.
+ * no declared failure schema gets `Schema.Never` (`Tool.make`'s `options?.failure ?? Schema.Never`,
+ * effect 4.0.0-rc.109), so `McpServer`'s `isDeclaredFailure` predicate rejects everything and every
+ * failure, typed domain error included, is rewritten to `INTERNAL_TOOL_ERROR_MESSAGE`, "Tool
+ * execution failed due to an internal server error", before it reaches the caller. The declaration is
+ * what puts a tool's failures on the branch that passes prose through; see `failure.ts` for the
+ * mechanism. `failureMode` is left at its `"error"` default on purpose: the error CHANNEL is what
+ * `McpServer` catches, and `"return"` would instead fold the failure into the success union, where the
+ * server would see a successful call carrying a failure payload no MCP client knows to read.
  */
 
 /** The eight types an agent may write. `arc` is system-written by the sleep cycle. */
@@ -60,10 +69,10 @@ const MemoryPath = Schema.String
  * `Schema.Finite`, not `Schema.Number`, for every numeric field.
  *
  * `Number` derives a JSON Schema with an `anyOf` carrying a STRING branch, because `Infinity` and
- * `NaN` are not JSON numbers and the codec represents them as strings. Probed on this beta,
- * `Schema.Number` derives `{"anyOf":[{"type":"number"},{"type":"string","enum":["Infinity",
- * "-Infinity","NaN"]}]}`. A client reading that sees a union where the tool wants a number. `Finite`
- * derives a clean `{"type":"number"}`.
+ * `NaN` are not JSON numbers and the codec represents them as strings. Probed on effect
+ * 4.0.0-rc.109, `Schema.Number` derives `{"anyOf":[{"type":"number"},{"type":"string","enum":
+ * ["Infinity","-Infinity","NaN"]}]}`. A client reading that sees a union where the tool wants a
+ * number. `Finite` derives a clean `{"type":"number"}`.
  */
 const Finite = Schema.Finite
 
@@ -76,7 +85,7 @@ const Count = Schema.Int
  * A bare `Schema.optional(X)` is a WIRE BUG here, and it is the kind a byte-comparison fixture
  * cannot see: the derived JSON Schema publishes `{"anyOf":[{"type":"string"},{"type":"null"}]}` , telling
  * every client that `null` is acceptable, while the decoder rejects it with "Expected string |
- * undefined, got null" (both probed on effect 4.0.0-beta.102). So a client that read the schema and
+ * undefined, got null" (both probed on effect 4.0.0-rc.109). So a client that read the schema and
  * did the obvious thing, sending `{"workspace": null}` for "no workspace", would get a decode error
  * on a call the published contract said was valid. Many clients serialize an absent optional exactly
  * that way.
@@ -119,10 +128,11 @@ const RETRIEVES = () => [Retrieval, DatabaseService]
  * A description, not a doc comment on the parameter: `tools/list` publishes `description` and an
  * agent chooses and fills a tool from it, so a contract stated anywhere else is a contract the
  * caller never reads. And it has to be stated HERE rather than left to the store's refusal, because
- * `article_html` is the one parameter where the caller owns a format constraint. Every other
- * parameter is a value the template places itself. An agent that learns the `<mark>` rule from an
- * `InvalidMemory` on its first write has already spent a round trip on something the tool could
- * have told it.
+ * `article_html` is the one parameter whose CONTENT the caller has to get right; every other value is
+ * one the template places itself, and the only other parameter carrying a rule of its own is `path`
+ * (see `PATH_OVERRIDE_CONTRACT`, which is about placement rather than format). An agent that learns
+ * the `<mark>` rule from an `InvalidMemory` on its first write has already spent a round trip on
+ * something the tool could have told it.
  *
  * The four clauses are the ones a caller can actually violate: format.md constraint 1 (exactly one
  * `<mark>`, inside the first `<p>` or `<li>`), constraint 3 (no `class`, `style`, or `<script>`),
@@ -144,6 +154,27 @@ const ARTICLE_HTML_CONTRACT =
   "data-lang, never class (forbidden) and never lang= (that names human languages)."
 
 /**
+ * What an explicit `path` does, stated in the description of every tool that accepts one.
+ *
+ * A description rather than a doc comment for `ARTICLE_HTML_CONTRACT`'s reason: `tools/list` publishes
+ * `description`, and a rule stated anywhere else is a rule the caller never reads. This one belongs
+ * there because BOTH of its branches are surprising, and each is surprising in the opposite direction.
+ * An unusable path is silently re-derived rather than refused, so an agent that expected a refusal gets
+ * a memory somewhere it did not choose. An OCCUPIED path is refused rather than overwritten, so an
+ * agent that expected last-write-wins gets `ERR_WRITE_CONFLICT` and no file. Learning either from a
+ * response costs a round trip, and learning the second one wrong costs the corpus a memory.
+ *
+ * The recovery is named, because a write is not it: eviction here is a `git mv` into `archive/` and
+ * nothing is ever removed, so replacing a memory is `memory_correct`, which archives what it supersedes
+ * in the same commit.
+ */
+const PATH_OVERRIDE_CONTRACT =
+  "`path` is optional and rarely worth sending: without it the placement rule picks the directory from the memory's type, workspace, and entities, and the title becomes the filename. " +
+  "A `path` that is not a usable memory path (rooted in a PARA bucket, ending in .html, no . or .. segment) is IGNORED, and the placement rule decides instead — so a malformed override lands the memory somewhere you did not name. " +
+  "A `path` that a file ALREADY occupies is REFUSED with ERR_WRITE_CONFLICT, and nothing is written or committed: this corpus overwrites nothing, and an explicit path gets no -2 suffix because you named one path. " +
+  "To replace what a memory says, call memory_correct on it — that archives the file it supersedes in the same commit and leaves it readable under archive/."
+
+/**
  * When to batch and what a batch does, stated in the description of BOTH write tools.
  *
  * A shared constant for the same reason `ARTICLE_HTML_CONTRACT` is one: `memory_write` has to point at
@@ -151,7 +182,7 @@ const ARTICLE_HTML_CONTRACT =
  * one workflow drift the first time the semantics move. Written once, appended twice.
  *
  * And it lives in a DESCRIPTION because this server has nowhere else to put it. MCP has a server-level
- * `instructions` field for exactly this kind of cross-tool guidance, and effect 4.0.0-beta.102 never
+ * `instructions` field for exactly this kind of cross-tool guidance, and effect 4.0.0-rc.109 never
  * emits it. See the comment in `server.ts` next to `layerStdio`. Tool descriptions are the only
  * channel, so a workflow rule that is not in one is a rule no agent reads.
  *
@@ -235,6 +266,11 @@ const writeFields = () => ({
   /** Pre-authored article markup, used verbatim in place of `body`. See the description's contract. */
   article_html: Optional(Schema.String),
   memory_type: WritableType,
+  /**
+   * An explicit placement override. Unusable values are re-derived and occupied ones are refused;
+   * `PATH_OVERRIDE_CONTRACT` states both branches in the description, which is where a caller reads
+   * them. The refusal is `@memhtml/store`'s `freePathFor`, so this door and `memhtml apply` share it.
+   */
   path: Optional(MemoryPath),
   workspace: Optional(Schema.String),
   tags: Optional(Schema.Array(Schema.String)),
@@ -250,6 +286,8 @@ const MemoryWrite = Tool.make("memory_write", {
   description:
     "Write one memory to the corpus. Returns the existing path with deduped=true when an active memory already holds this exact content. A duplicate creates no file and no commit. " +
     ARTICLE_HTML_CONTRACT +
+    " " +
+    PATH_OVERRIDE_CONTRACT +
     " " +
     BATCH_GUIDANCE,
   dependencies: WRITES(),
@@ -268,7 +306,7 @@ const MemoryWrite = Tool.make("memory_write", {
  * discriminator.
  *
  * A nested `Schema.Struct`, which is what makes the array's `items` a published object schema with its
- * own `required`. Probed on effect 4.0.0-beta.102, `Schema.Array(Schema.Struct({…}))` derives the
+ * own `required`. Probed on effect 4.0.0-rc.109, `Schema.Array(Schema.Struct({…}))` derives the
  * struct INLINE under `items` rather than hoisting it into a `$defs` a client would have to resolve.
  * So `ops[].title` is as legible to a caller reading `tools/list` as `memory_write`'s own `title`, and
  * the `Optional` discipline carries in unchanged: an optional inside an op publishes the same FLAT
@@ -351,6 +389,8 @@ const MemoryWriteBatch = Tool.make("memory_write_batch", {
      * which reads as a repetition rather than as two sections.
      */
     ARTICLE_HTML_CONTRACT +
+    " " +
+    PATH_OVERRIDE_CONTRACT +
     " " +
     BATCH_GUIDANCE +
     /**
@@ -590,12 +630,23 @@ const MemoryLink = Tool.make("memory_link", {
 
 const MemoryNeighbors = Tool.make("memory_neighbors", {
   description:
-    "The memory graph around one path, to at most two hops, in both directions. Includes sleep-mined edges: lateral retrieval is what they are for.",
+    "The memory graph around one path, to at most two hops, in both directions. Includes sleep-mined edges: lateral retrieval is what they are for, and each node's `derived` says which kind of edge reached it. " +
+    "`nodes` holds at most 200 distinct paths, each at its minimal hop. `limit` chooses that ceiling and an ask outside 1..200 is clamped into it rather than refused, the same shape `memory_list` and `trace_search` have; `node_limit` echoes the bound the answer was built under. " +
+    "`edges` counts something DIFFERENT and is not a node count: it is the distinct edges the walk enumerated, including edges to paths the node clamp dropped, so it can exceed what the returned nodes account for. " +
+    "TWO markers report truncation, because they need different answers: `dropped_node_count` is the paths the walk reached and `limit` turned away, which a larger `limit` returns, while `scan_saturated` is the walk stopping at its own 10000-edge-row cap, which no `limit` recovers — narrow that one with `rels` or `depth: 1` instead.",
   dependencies: READS(),
   parameters: Schema.Struct({
     path: MemoryPath,
     depth: Optional(Count),
-    rels: Optional(Schema.Array(MemoryRelSchema))
+    rels: Optional(Schema.Array(MemoryRelSchema)),
+    /**
+     * Distinct paths `nodes` may hold, 1 to {@link NEIGHBORS_LIMIT}, defaulting to the ceiling.
+     *
+     * Clamped rather than refused, because a caller asking for more than the ceiling wants the
+     * ceiling — `memory_list`'s 500 and `trace_search`'s 200 are the same shape. The value the server
+     * actually used comes back as `node_limit`, so a clamped ask is visible rather than silent.
+     */
+    limit: Optional(Count)
   }),
   failure: ToolFailure,
   success: Schema.Struct({
@@ -605,10 +656,66 @@ const MemoryNeighbors = Tool.make("memory_neighbors", {
         title: Schema.String,
         /** 1-based distance from the center: 1 or 2, never 0. */
         hop: Count,
-        rel: Schema.String
+        rel: Schema.String,
+        /**
+         * True when a SLEEP-MINED edge reaches this node, false when only authored `<link>` edges do.
+         *
+         * The max over every edge that reached the node, not the `rel` field's companion: a node an
+         * authored edge and a mined edge both reach is `derived: true`, because the question a caller
+         * asks of this field is "may this connection be a machine's suspicion", and one mined route is
+         * enough for the answer to be yes.
+         *
+         * Published because the description advertises mined edges as the point of the tool, and
+         * without this field a caller cannot tell a suspicion from an assertion — which is exactly the
+         * distinction it needs in order to decide how much to trust a lateral hop.
+         */
+        derived: Schema.Boolean
       })
     ),
-    edges: Count
+    /**
+     * DISTINCT edges the walk enumerated, keyed on `(src, rel, dst)`, over both hops and both
+     * directions. Scope: this one call's walk, not the corpus — `memory_status.edges` is the corpus
+     * total and the two are different coordinate spaces.
+     *
+     * It is NOT `nodes.length` and must not be read as one: two memories joined by two rels are one
+     * node and two edges, and an edge landing on a path the node clamp dropped is counted here and
+     * absent there. Bounded by the walk's own 10000-row scan cap, which `scan_saturated` reports.
+     */
+    edges: Count,
+    /**
+     * The node ceiling this answer was built under: the SERVER's clamp of the caller's `limit` into
+     * `1..200` ({@link NEIGHBORS_LIMIT}), not the raw ask, so a client that sent 10000 reads back 200
+     * and knows the answer is a ceiling rather than a corpus fact. A quantity of distinct paths, scoped
+     * to this one call.
+     *
+     * `node_limit` and not `limit`, because this answer carries TWO bounds and they are not
+     * interchangeable: this one governs `nodes`, and the walk's own 10000-edge-row cap governs
+     * everything, which is what `scan_saturated` reports.
+     */
+    node_limit: Count,
+    /**
+     * Distinct paths the walk reached and `node_limit` turned away, filled by the server.
+     *
+     * A COUNT of paths absent from `nodes`, scoped to this call, so `nodes.length +
+     * dropped_node_count` is every path the walk found. `0` means `nodes` holds all of them, which is
+     * how a client tells a complete neighborhood from a clamped one. A larger `limit`, up to
+     * {@link NEIGHBORS_LIMIT}, returns them.
+     *
+     * `_count` because it is a quantity, and this repo's four numeric suffixes are not
+     * interchangeable — an `_offset`, a `_seq`, and an `_index` are all different things. `edges`
+     * keeps its bare name because it is already a published field a client branches on.
+     */
+    dropped_node_count: Count,
+    /**
+     * True when the walk stopped at its own 10000-edge-row cap, so edges past the cap were never
+     * enumerated and NO `limit` recovers them — the truncation `dropped_node_count` cannot describe.
+     * Narrow the walk with `rels` or `depth: 1` to get an exhaustive answer.
+     *
+     * A plain boolean, never a null union: an absent or null marker cannot be told from a server that
+     * does not report saturation, and this is the field that says whether `nodes` and `edges` describe
+     * the whole neighborhood.
+     */
+    scan_saturated: Schema.Boolean
   })
 })
 
@@ -731,7 +838,7 @@ const MemoryStatus = Tool.make("memory_status", {
   /**
    * `Tool.EmptyParams`, not `Schema.Struct({})`.
    *
-   * Probed on effect 4.0.0-beta.102: an empty `Schema.Struct` derives
+   * Probed on effect 4.0.0-rc.109: an empty `Schema.Struct` derives
    * `{"anyOf":[{"type":"object"},{"type":"array"}]}`, a union with an ARRAY branch, because a struct
    * with no fields constrains nothing and the codec's encoded form admits both. A client reading that
    * cannot tell it should send `{}`, and a strict one may refuse to call the tool at all.

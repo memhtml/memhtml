@@ -30,6 +30,17 @@ export interface ParseResult {
    * `startByte + bytesRead`, so this is what keeps a tail landing on a record boundary.
    */
   readonly bytesRead: number
+  /**
+   * True when the stream itself could not be read: an absent file, a permission rejection, a
+   * transient IO error. The extract is empty and `bytesRead` is 0 however far the read got before
+   * breaking, because a partial fold ends on no boundary a watermark could stand on.
+   *
+   * A caller holding a watermark must leave it untouched on a failed read. Stamping the file's
+   * current size and mtime over a read that consumed nothing makes the next run's comparison see
+   * an unchanged file and skip it, which turns one transient error into a transcript that is
+   * never indexed.
+   */
+  readonly readFailed: boolean
 }
 
 /** How the reader learns a file's `slug` when the caller has not already discovered it. */
@@ -56,10 +67,12 @@ export const slugFromPath = (filePath: string): string => {
 /**
  * Stream a transcript from `startByte` and fold it into a {@link SessionExtract}.
  *
- * Cannot fail. A missing file, a permission rejection, a truncated line, and a line of binary
- * garbage all degrade to counters on the extract. This runs over thousands of files written by a
- * live process, so one unreadable transcript costs that transcript's rows and not the whole run.
- * The counters are what an operator reads in place of an error.
+ * Cannot fail. A truncated line and a line of binary garbage degrade to counters on the extract,
+ * while a read the filesystem refuses outright (absent file, permission rejection, transient IO
+ * error) degrades to an empty result flagged `readFailed`. This runs over thousands of files
+ * written by a live process, so one unreadable transcript costs that transcript's rows and not
+ * the whole run. The counters and the flag are what an operator reads in place of an error, and
+ * the flag is what lets a caller hold its watermark still so the next run retries.
  *
  * `startByte` is a 0-based byte offset and must be one {@link watermarkPlan} produced. A
  * caller-invented offset can land mid-line, and that first partial line is then counted as
@@ -74,22 +87,23 @@ export const parseSessionFile = (
     try: async () => {
       const accumulator = emptyAccumulator()
       const bytesRead = await foldStream(filePath, startByte, accumulator)
-      return { accumulator, bytesRead }
+      return { accumulator, bytesRead, readFailed: false }
     },
     catch: (cause) => cause
   }).pipe(
     Effect.catch((cause) =>
       Effect.logWarning(`traces.parse could not read ${filePath}: ${describe(cause)}`).pipe(
-        Effect.as({ accumulator: emptyAccumulator(), bytesRead: 0 })
+        Effect.as({ accumulator: emptyAccumulator(), bytesRead: 0, readFailed: true })
       )
     ),
-    Effect.map(({ accumulator, bytesRead }) => ({
+    Effect.map(({ accumulator, bytesRead, readFailed }) => ({
       extract: finalizeExtract(accumulator, {
         filePath,
         slug: identity?.slug ?? slugFromPath(filePath)
       }),
       startByte,
-      bytesRead
+      bytesRead,
+      readFailed
     })),
     Effect.withSpan("traces.parseSessionFile")
   )

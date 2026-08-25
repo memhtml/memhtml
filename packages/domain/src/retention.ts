@@ -219,12 +219,17 @@ const signalReinforcement = (reinforcementCount: number): number =>
   Math.min(1, reinforcementCount / 5)
 
 /**
- * Word count as a density proxy: 100 words saturates, and a body under 10 words is
- * penalized into `[0, 0.5)`, because a one-line memory carries less recoverable content
- * than its raw length suggests.
+ * Word count as a density proxy: 100 words saturates, and a body under 10 words is penalized
+ * BELOW the main `wordCount / 100` line, because a one-line memory carries less recoverable
+ * content than its raw length suggests. The short-body arm is `wordCount² / 1000`: quadratic,
+ * so 9 words scores 0.081 against the line's 0.09, joining the line exactly at 10 words
+ * (`100 / 1000 == 10 / 100`). The whole signal is monotone nondecreasing in `wordCount`, so a
+ * terse memory can never out-score a longer one on this signal.
  */
-const signalContentDensity = (wordCount: number): number =>
-  wordCount < 10 ? Math.max(0, wordCount) / 20 : Math.min(1, wordCount / 100)
+const signalContentDensity = (wordCount: number): number => {
+  const words = Math.max(0, wordCount)
+  return words < 10 ? words ** 2 / 1000 : Math.min(1, words / 100)
+}
 
 /** Three or more contradictions floors the signal at 0. Inverted: more contested is worse. */
 const signalContested = (contradictionCount: number): number =>

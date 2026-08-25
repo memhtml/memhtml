@@ -7,7 +7,7 @@ Versions are cut by [release-please][rp] from Conventional Commit subjects, and 
 
 ## One package, two binaries
 
-`memhtml` is the whole system. Installing it gives `memhtml` and `memhtml-mcp`, and with them the CLI, code mode, the fifteen-phase sleep cycle, the trace indexer, the discrimination gate, and the MCP server. There is no `@memhtml/*` package on npm: the twelve workspace packages are `private`, and `npm publish` refuses a private package, so the assembled artifact is the only thing that can ship.
+`memhtml` is the whole system. Installing it gives `memhtml` and `memhtml-mcp`, and with them the CLI, code mode, the sleep cycle (the phases of `SLEEP_PHASES` — seventeen as of v0.6.0), the trace indexer, the discrimination gate, and the MCP server. There is no `@memhtml/*` package on npm: the twelve workspace packages are `private`, and `npm publish` refuses a private package, so the assembled artifact is the only thing that can ship.
 
 The JS API is not part of the contract yet. The published surface is the two binaries and the JSON envelope they write. Adding an importable subpath later is a minor bump; removing one would be a major, so the cheap direction stays available.
 
@@ -47,7 +47,9 @@ The copies use a **directory** `from` with `to: OUT_DIR`, not a glob. A glob wit
 
 ## The gate that matters
 
-`mise run package:smoke` assembles, lints with publint, packs, installs into a throwaway directory, and drives **62 checks** through the installed binary: all 36 commands and all 14 MCP tools, plus the consolidator agent building outside `node_modules` and answering `/eve/v1/health`. The surface is enumerated from the artifact itself — `memhtml manifest` for commands, `tools/list` for tools — so a new command or tool fails a census rather than going untested. Writes are asserted against `git log`, not against the report, and `sleep merge` is proven to move `main` on a corpus of its own.
+`mise run package:smoke` assembles, lints with publint, packs, installs into a throwaway directory, and drives every command, every MCP tool, and every published MCP resource template through the installed binary — 66 checks as of v0.6.0 — plus the consolidator agent building outside `node_modules` and answering `/eve/v1/health`. The count is not written down anywhere in the script, which reports its own `checks: results.length`, so this sentence is the only place it can drift. The surface is enumerated from the artifact itself — `memhtml manifest` for commands, `tools/list` for tools, `resources/templates/list` for resources — so a new command, tool, or template fails a census rather than going untested. Writes are asserted against `git log`, not against the report, and `sleep merge` is proven to move `main` on a corpus of its own.
+
+`resources/read` earns its own coverage because it is a second RPC family with a router of its own that no tool check reaches: a resource route can be wholly unreachable while every tool check is green. The specific hazard the census answers is depth — a named router parameter's value stops at the next `/`, every memory path has at least two segments, and an archived one has at least four.
 
 `mise run package:smoke:live` adds three checks for the edges nothing else can reach from an install: Bedrock embeddings, the sleep phases that call a model, and the consolidator distilling a transcript through eve. It spends real tokens and needs `AWS_BEARER_TOKEN_BEDROCK` (or SigV4 keys); the credential check FAILS rather than skips, because `--live` was asked for. lefthook's pre-push runs it when a credential is present and prints what goes unproven when it cannot. Roughly 60s credential-free, 105s live.
 

@@ -143,4 +143,15 @@ describe("entity references", () => {
     expect(isPersonEntity("person:")).toBe(false)
     expect(isPersonEntity("service:checkout-api")).toBe(false)
   })
+
+  it("refuses a whitespace-only name, the boundary the person-file phase filters on", () => {
+    // `person-links` keys on `entity_name.trim() !== ""`, so a name that is only whitespace never
+    // gets a person file. Reading it as a person here would route memories at a file nothing mints.
+    expect(isPersonEntity("person: ")).toBe(false)
+    expect(isPersonEntity("person:   ")).toBe(false)
+    expect(isPersonEntity("person:\t")).toBe(false)
+    expect(isPersonEntity("person:\n")).toBe(false)
+    // A name with surrounding whitespace is still a name.
+    expect(isPersonEntity("person: sanju ")).toBe(true)
+  })
 })

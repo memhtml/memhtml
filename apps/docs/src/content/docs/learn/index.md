@@ -22,7 +22,7 @@ The operations pages are task-shaped how-tos, one per section of the runbook. Th
 | [Share one store between a CLI and a server](/learn/operations/share-one-store/)  | Whether a command and a running server can touch one database at once                 |
 | [Rebuild the index](/learn/operations/rebuild-the-index/)                         | When `update` is not enough, and how to clear a vector-space mismatch                 |
 | [Preserve the state plane](/learn/operations/preserve-the-state-plane/)           | The one set of facts the git tree cannot reproduce                                    |
-| [Run and review a sleep cycle](/learn/operations/run-and-review-a-sleep-cycle/)   | Fifteen phases on a branch, how to read them, when the merge refuses                  |
+| [Run and review a sleep cycle](/learn/operations/run-and-review-a-sleep-cycle/)   | Seventeen phases on a branch, how to read them, when the merge refuses                |
 | [Check the discrimination gate](/learn/operations/check-the-discrimination-gate/) | The gated number that says whether retrieval still tells a fact from its own negation |
 | [Audit and publish the corpus](/learn/operations/audit-and-publish-the-corpus/)   | Every `memhtml doctor` finding and its fix                                            |
 | [Index session transcripts](/learn/operations/index-session-transcripts/)         | The trace plane, and the firewall between it and memory retrieval                     |

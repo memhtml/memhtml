@@ -15,7 +15,8 @@
  *
  * By DEFAULT every command runs with `MEMHTML_EMBED=off` and `MEMHTML_LLM=off`, so nothing needs a
  * credential and CI can gate on it. Everything else is real: a real git repository, real migrations, a
- * real QuickJS sandbox, a real MCP handshake.
+ * real QuickJS sandbox, and a real MCP session carrying `tools/call` and `resources/read` traffic over
+ * stdio.
  *
  * With `--live` it additionally drives the two edges that reach the network, which is the only way to
  * prove them from an install: Bedrock embeddings, the sleep phases that call a model, and the
@@ -40,7 +41,9 @@ const LIVE = process.argv.includes("--live") || process.env.MEMHTML_SMOKE_LIVE =
 const results = []
 const record = (name, ok, detail) => {
   results.push({ name, ok, detail })
-  process.stderr.write(`${ok ? "ok  " : "FAIL"} ${name}${detail === undefined ? "" : ` — ${detail}`}\n`)
+  process.stderr.write(
+    `${ok ? "ok  " : "FAIL"} ${name}${detail === undefined ? "" : ` — ${detail}`}\n`
+  )
 }
 
 /**
@@ -59,10 +62,45 @@ const check = async (name, body) => {
 }
 
 /** One envelope per command, on stdout, and nothing else. That contract is what makes this parseable. */
+/**
+ * One command's JSON envelope.
+ *
+ * A NONZERO exit needs nothing added here: `execFile`'s rejection already carries the child's whole
+ * stderr in `error.message` (`Command failed: <cmd>\n<stderr>` — probed 2026-08-25 against node 24, a
+ * 60 KiB stderr arriving intact), so letting it propagate reports the cause. What this shape cannot
+ * carry is a command that exits 0 having logged why it degraded, which is {@link envelopeWithLog}.
+ */
 const envelope = async (bin, args, env) => {
   const { stdout } = await exec(bin, args, { env, maxBuffer: 32 * 1024 * 1024 })
   return JSON.parse(stdout)
 }
+
+/**
+ * A command's envelope AND what it logged, for a check whose failure mode is a run that SUCCEEDED.
+ *
+ * `envelope` is the right shape for the other checks: the envelope is the contract, stderr is a log,
+ * and a broken command throws with its stderr attached. It is the wrong shape for a phase that reports
+ * `ok` with zero counts and puts the cause in a log line — the process exits 0, so nothing throws, and
+ * `execFile` resolves with a `stderr` that is then dropped. A sleep run whose consolidator was
+ * unreachable is exactly that: `candidates: 0` on stdout, and
+ * `sleep.trace-consolidation degraded: <tag>: <reason>` — naming the child's own last words — on the
+ * stream the caller discarded.
+ */
+const envelopeWithLog = async (bin, args, env) => {
+  const { stdout, stderr } = await exec(bin, args, { env, maxBuffer: 32 * 1024 * 1024 })
+  return { data: JSON.parse(stdout).data, stderr }
+}
+
+/** How much of a child's stderr a check's detail carries: enough for a stack, not for a log. */
+const STDERR_TAIL_CHARS = 400
+
+/**
+ * The END of what a child wrote, which is where a dying one says why.
+ *
+ * The same rule `apps/consolidator/src/child-stderr.ts` states for the two children the consolidator
+ * spawns: a message rendered from the HEAD of a child's output shows its banner.
+ */
+const tail = (text) => text.slice(-STDERR_TAIL_CHARS).trim()
 
 const main = async () => {
   const work = await mkdtemp(join(tmpdir(), "memhtml-smoke-"))
@@ -197,8 +235,9 @@ const main = async () => {
     }
 
     await checkEveryCommand({ bin, work, env })
-    await checkSleepLifecycle({ bin, work, env })
+    const sleep = await checkSleepLifecycle({ bin, work, env })
     await checkEveryMcpTool({ mcpBin, env })
+    await checkEveryResource({ mcpBin, env, sleep })
     await checkAgentBuild({ consumer, env })
     if (LIVE) await checkLiveBedrock({ bin, work, env })
   } finally {
@@ -244,15 +283,32 @@ const checkEveryCommand = async ({ bin, work, env }) => {
     (
       await envelope(
         bin,
-        ["write", "--title", title, "--claim", claim, "--type", "semantic", "--workspace", "checkout-api"],
+        [
+          "write",
+          "--title",
+          title,
+          "--claim",
+          claim,
+          "--type",
+          "semantic",
+          "--workspace",
+          "checkout-api"
+        ],
         env
       )
     ).data.path
 
   const pathA = await writeTwo("A drain precedes every revert", "Drain, then revert.")
-  const pathB = await writeTwo("A revert without a drain keeps serving", "Reverting alone does not drain.")
+  const pathB = await writeTwo(
+    "A revert without a drain keeps serving",
+    "Reverting alone does not drain."
+  )
 
-  const task = await envelope(bin, ["task", "add", "--title", "Drain the VIP before the next revert"], env)
+  const task = await envelope(
+    bin,
+    ["task", "add", "--title", "Drain the VIP before the next revert"],
+    env
+  )
   const taskPath = task.data?.path
 
   const applyFile = join(work, "ops.jsonl")
@@ -264,7 +320,10 @@ const checkEveryCommand = async ({ bin, work, env }) => {
   )
 
   const execFile_ = join(work, "census.mjs")
-  await writeFile(execFile_, 'import { corpus } from "/workspace/lib/corpus.mjs"\nconsole.log(corpus().size)\n')
+  await writeFile(
+    execFile_,
+    'import { corpus } from "/workspace/lib/corpus.mjs"\nconsole.log(corpus().size)\n'
+  )
 
   const sleepRun = await envelope(bin, ["sleep", "run", "--dry-run"], env)
   const runId = sleepRun.data?.runId
@@ -285,7 +344,17 @@ const checkEveryCommand = async ({ bin, work, env }) => {
     ["link", ["link", pathA, "relates_to", pathB]],
     ["neighbors", ["neighbors", pathA]],
     ["reinforce", ["reinforce", pathA]],
-    ["correct", ["correct", pathB, "--title", "A revert without a drain keeps serving", "--claim", "Reverting alone leaves the old group serving."]],
+    [
+      "correct",
+      [
+        "correct",
+        pathB,
+        "--title",
+        "A revert without a drain keeps serving",
+        "--claim",
+        "Reverting alone leaves the old group serving."
+      ]
+    ],
     ["list", ["list"]],
     ["task add", ["task", "add", "--title", "Second task"]],
     ["task list", ["task", "list"]],
@@ -304,7 +373,10 @@ const checkEveryCommand = async ({ bin, work, env }) => {
     ["status", ["status"]],
     ["publish", ["publish"]],
     ["doctor", ["doctor"]],
-    ["eval discriminate", ["eval", "discriminate", "--mode", "fake", "--probes", "4", "--size", "12"]],
+    [
+      "eval discriminate",
+      ["eval", "discriminate", "--mode", "fake", "--probes", "4", "--size", "12"]
+    ],
     ["exec", ["exec", "--file", execFile_]],
     ["state export", ["state", "export"]],
     ["state import", ["state", "import"]],
@@ -359,6 +431,11 @@ const checkEveryCommand = async ({ bin, work, env }) => {
  * generates its own ~300-file fixture corpus with its own database — which is why the merge's log names
  * a file count and a sha belonging to neither the corpus nor this repo. It passes in fake mode, so this
  * asserts `merged: true` and that `main` actually moved.
+ *
+ * Returns the corpus and the run id, which is the ONE place a committed sleep report exists: the report
+ * phase writes `.memhtml/sleep/<run-id>.html` on the run's branch and skips the write entirely on a dry
+ * run, so `memhtml://sleep/{run-id}` is readable only where a real run has been fast-forwarded onto
+ * `main`. `checkEveryResource` reads it from here.
  */
 const checkSleepLifecycle = async ({ bin, work, env }) => {
   const corpus = join(work, "sleep-corpus")
@@ -367,7 +444,17 @@ const checkSleepLifecycle = async ({ bin, work, env }) => {
   await envelope(bin, ["init"], sleepEnv)
   await envelope(
     bin,
-    ["write", "--title", "The only memory this corpus holds", "--claim", "One fact.", "--type", "semantic", "--workspace", "checkout-api"],
+    [
+      "write",
+      "--title",
+      "The only memory this corpus holds",
+      "--claim",
+      "One fact.",
+      "--type",
+      "semantic",
+      "--workspace",
+      "checkout-api"
+    ],
     sleepEnv
   )
   await envelope(bin, ["sleep", "run"], sleepEnv)
@@ -376,7 +463,10 @@ const checkSleepLifecycle = async ({ bin, work, env }) => {
 
   await check("sleep resume answers from the installed binary", async () => {
     const resumed = await envelope(bin, ["sleep", "resume", runId], sleepEnv)
-    return { ok: resumed.type === "sleep.report", detail: `phases=${String((resumed.data?.phases ?? []).length)}` }
+    return {
+      ok: resumed.type === "sleep.report",
+      detail: `phases=${String((resumed.data?.phases ?? []).length)}`
+    }
   })
 
   await check("sleep merge lands the run on main", async () => {
@@ -385,18 +475,119 @@ const checkSleepLifecycle = async ({ bin, work, env }) => {
     // Both halves: the envelope says it merged, and git agrees that main moved.
     return {
       ok: merged.type === "sleep.merge" && merged.data?.merged === true && after !== beforeMerge,
-      detail: merged.data?.merged === true ? `main moved to ${after.slice(0, 8)}` : `refusal=${String(merged.data?.refusal)}`
+      detail:
+        merged.data?.merged === true
+          ? `main moved to ${after.slice(0, 8)}`
+          : `refusal=${String(merged.data?.refusal)}`
     }
   })
+
+  return { corpus, runId }
+}
+
+/**
+ * Every resource template the server advertises, READ over stdio against the installed artifact.
+ *
+ * `resources/read` is a second RPC family with a ROUTER of its own, and no tool check reaches it: a
+ * complete `tools/list` census says nothing about whether a URI a real client sends resolves to anything.
+ * A route's named parameter stops at the next `/` while every memory path is multi-segment, so the whole
+ * resource surface can be unreachable from an install with every other check here green.
+ *
+ * So the templates are enumerated from `resources/templates/list`, the discipline the command and tool
+ * censuses use, and the census below asserts the published set and the READ set are the same set — a new
+ * template fails it rather than going unread.
+ *
+ * Against the SLEEP corpus, because it is the only one holding a committed sleep report (see
+ * {@link checkSleepLifecycle}), and it also holds memories, so one session covers both templates.
+ */
+const checkEveryResource = async ({ mcpBin, env, sleep }) => {
+  const session = await mcpSession(mcpBin, { ...env, MEMHTML_ROOT: sleep.corpus })
+  try {
+    const listed = await session.request("resources/templates/list", {})
+    const templates = (listed.result?.resourceTemplates ?? []).map((entry) => entry.uriTemplate)
+
+    /**
+     * One memory written through this same session, so the file read addresses a path the SERVER named
+     * rather than one this script composed — the same reason the tool census writes its own targets.
+     */
+    const written = await session.request("tools/call", {
+      name: "memory_write",
+      arguments: {
+        title: "Written to be read back through a resource",
+        body: "A resource read and a tool call address one path.",
+        memory_type: "semantic",
+        workspace: "checkout-api"
+      }
+    })
+    const memoryPath = JSON.parse(written.result?.content?.[0]?.text ?? "{}").path ?? ""
+
+    /**
+     * `[hole, value, expected]` per published template. A template with no entry fails the census.
+     *
+     * Every value carries a `/` — a memory path is `projects/<workspace>/<slug>.html` and a run id is
+     * `sleep/<date>` — and that is the point rather than a coincidence: a named route parameter stops at
+     * the next `/`, so a single-segment URI resolves under a route no real path can reach and proves
+     * nothing. The check below refuses a single-segment value before any read is believed.
+     */
+    const READS = {
+      "memhtml://file/{path}": ["{path}", memoryPath, "Written to be read back through a resource"],
+      "memhtml://sleep/{run-id}": ["{run-id}", sleep.runId, sleep.runId]
+    }
+
+    const unread = templates.filter((template) => READS[template] === undefined)
+    const unpublished = Object.keys(READS).filter((template) => !templates.includes(template))
+    await check("every advertised resource template is read", async () => ({
+      ok:
+        templates.length === Object.keys(READS).length &&
+        unread.length === 0 &&
+        unpublished.length === 0,
+      detail: `${String(templates.length)} published, ${String(Object.keys(READS).length)} read${unread.length > 0 ? `, UNREAD: ${unread.join(", ")}` : ""}${unpublished.length > 0 ? `, NOT PUBLISHED: ${unpublished.join(", ")}` : ""}`
+    }))
+
+    await check("every resource read names a MULTI-SEGMENT value", async () => {
+      const single = Object.entries(READS).flatMap(([template, [, value]]) =>
+        String(value).includes("/") ? [] : [template]
+      )
+      return {
+        ok: single.length === 0,
+        detail:
+          single.length > 0
+            ? `SINGLE SEGMENT: ${single.join(", ")}`
+            : `${memoryPath}, ${sleep.runId}`
+      }
+    })
+
+    for (const template of templates) {
+      const spec = READS[template]
+      if (spec === undefined) continue
+      const [hole, value, expected] = spec
+      await check(`resources/read resolves ${template}`, async () => {
+        const uri = template.replace(hole, value)
+        const answer = await session.request("resources/read", { uri })
+        const contents = answer.result?.contents ?? []
+        const text = contents[0]?.text ?? ""
+        // The BODY, not just a non-error: a refusal arrives as a JSON-RPC error, and an empty resource
+        // would otherwise read as a resolved read.
+        return {
+          ok: answer.error === undefined && contents.length === 1 && text.includes(expected),
+          detail:
+            answer.error?.message ??
+            `${String(text.length)} chars as ${String(contents[0]?.mimeType)}`
+        }
+      })
+    }
+  } finally {
+    session.stop()
+  }
 }
 
 /**
  * Every MCP tool the server advertises, called over stdio against the installed artifact.
  *
- * `initialize` proves the transport and nothing else. The tools are the MCP surface, and until each one
- * is called from an install, "the MCP server works" means "it answered a handshake". The list comes from
- * `tools/list` rather than from a literal, so a new tool is covered the day it is registered — or fails
- * the census for want of arguments.
+ * `initialize` proves the transport and nothing else. The tools are ONE of the server's two surfaces —
+ * {@link checkEveryResource} drives the other — and until each tool is called from an install, "the MCP
+ * server works" means "it answered a handshake". The list comes from `tools/list` rather than from a
+ * literal, so a new tool is covered the day it is registered — or fails the census for want of arguments.
  */
 const checkEveryMcpTool = async ({ mcpBin, env }) => {
   /**
@@ -480,9 +671,18 @@ const checkEveryMcpTool = async ({ mcpBin, env }) => {
       return JSON.parse(answer.result?.content?.[0]?.text ?? "{}").path
     }
     const target = await writeOne("Written through the MCP door", "The first body, distinct.")
-    const second = await writeOne("A second memory through the MCP door", "The second body, also distinct.")
-    const doomed = await writeOne("A memory written to be archived", "The third body, distinct again.")
-    const corrected = await writeOne("A memory written to be corrected", "The fourth body, distinct too.")
+    const second = await writeOne(
+      "A second memory through the MCP door",
+      "The second body, also distinct."
+    )
+    const doomed = await writeOne(
+      "A memory written to be archived",
+      "The third body, distinct again."
+    )
+    const corrected = await writeOne(
+      "A memory written to be corrected",
+      "The fourth body, distinct too."
+    )
 
     for (const tool of tools) {
       if (tool.name === "memory_write") continue
@@ -546,16 +746,34 @@ const writeQualifyingTranscript = async (traceRoot) => {
     userType: "external"
   }
   const turns = [
-    ["user", "The checkout-api deploy rolled back again. Connections kept landing on the old target group after we reverted."],
-    ["assistant", "The revert alone does not drain the VIP. In-flight connections stay pinned to the old target group until the VIP is drained, so reverting while the VIP still points at the old group keeps serving stale pods."],
+    [
+      "user",
+      "The checkout-api deploy rolled back again. Connections kept landing on the old target group after we reverted."
+    ],
+    [
+      "assistant",
+      "The revert alone does not drain the VIP. In-flight connections stay pinned to the old target group until the VIP is drained, so reverting while the VIP still points at the old group keeps serving stale pods."
+    ],
     ["user", "So what is the right order of operations?"],
-    ["assistant", "Drain the VIP first, wait for connections to bleed off, then revert the deploy. Reversing that order is what produced the rollback: the deploy reverted while the VIP still routed to the old target group."],
+    [
+      "assistant",
+      "Drain the VIP first, wait for connections to bleed off, then revert the deploy. Reversing that order is what produced the rollback: the deploy reverted while the VIP still routed to the old target group."
+    ],
     ["user", "We also saw the health check pass while real requests were failing."],
-    ["assistant", "The health check probes the pod directly rather than through the VIP, so it reports healthy while the VIP still routes to drained pods. A check that bypasses the VIP cannot observe VIP-level routing failures."],
+    [
+      "assistant",
+      "The health check probes the pod directly rather than through the VIP, so it reports healthy while the VIP still routes to drained pods. A check that bypasses the VIP cannot observe VIP-level routing failures."
+    ],
     ["user", "Anything else worth recording about this incident?"],
-    ["assistant", "Two durable facts: draining the VIP must precede a revert, because the revert does not move connections; and a health check that bypasses the VIP cannot detect VIP-level routing failures, so a green check during an outage is expected."],
+    [
+      "assistant",
+      "Two durable facts: draining the VIP must precede a revert, because the revert does not move connections; and a health check that bypasses the VIP cannot detect VIP-level routing failures, so a green check during an outage is expected."
+    ],
     ["user", "Good. Note it against checkout-api."],
-    ["assistant", "Recorded against checkout-api: the drain-before-revert ordering, and the health-check blind spot. Both are procedural rather than incidental, so they should outlive the incident."]
+    [
+      "assistant",
+      "Recorded against checkout-api: the drain-before-revert ordering, and the health-check blind spot. Both are procedural rather than incidental, so they should outlive the incident."
+    ]
   ]
   const lines = [JSON.stringify({ type: "mode", mode: "default", sessionId })]
   let at = Date.parse("2026-08-14T10:00:00.000Z")
@@ -575,7 +793,12 @@ const writeQualifyingTranscript = async (traceRoot) => {
         message:
           role === "user"
             ? { role: "user", content: body }
-            : { role: "assistant", id: `msg${String(index + 1)}`, model: "claude-opus-5", content: [{ type: "text", text: body }] }
+            : {
+                role: "assistant",
+                id: `msg${String(index + 1)}`,
+                model: "claude-opus-5",
+                content: [{ type: "text", text: body }]
+              }
       })
     )
   })
@@ -614,7 +837,17 @@ const checkLiveBedrock = async ({ bin, work, env }) => {
   await envelope(bin, ["init"], live)
   await envelope(
     bin,
-    ["write", "--title", "Draining the VIP precedes a revert", "--claim", "Drain the VIP before reverting a deploy.", "--type", "semantic", "--workspace", "checkout-api"],
+    [
+      "write",
+      "--title",
+      "Draining the VIP precedes a revert",
+      "--claim",
+      "Drain the VIP before reverting a deploy.",
+      "--type",
+      "semantic",
+      "--workspace",
+      "checkout-api"
+    ],
     live
   )
 
@@ -631,13 +864,23 @@ const checkLiveBedrock = async ({ bin, work, env }) => {
   await envelope(bin, ["trace", "index"], live)
 
   await check("the sleep cycle calls the model and distills a transcript", async () => {
-    const slept = (await envelope(bin, ["sleep", "run"], live)).data
+    const { data: slept, stderr } = await envelopeWithLog(bin, ["sleep", "run"], live)
     const phase = (slept.phases ?? []).find((entry) => entry.phase === "trace-consolidation")
     const counts = phase?.counts ?? {}
-    // `batch` proves the transcript qualified, `candidates` proves eve ran and the model answered.
+    /**
+     * `batch` proves the transcript qualified, `candidates` proves eve ran and the model answered.
+     *
+     * Two channels ride along, because every way this check fails reports `candidates=0` and the counts
+     * alone cannot say which: the phase's own `detail` separates "the agent found nothing" from "the
+     * agent could not be asked", and the run's log tail carries the REASON behind the second — the
+     * typed tag is in the envelope, but the sentence naming what the spawned server said is only ever
+     * on stderr.
+     */
+    const ok = slept.llmCalls >= 1 && counts.batch >= 1 && counts.candidates >= 1
+    const why = phase?.detail === undefined ? "" : ` — ${String(phase.detail)}`
     return {
-      ok: slept.llmCalls >= 1 && counts.batch >= 1 && counts.candidates >= 1,
-      detail: `llmCalls=${String(slept.llmCalls)} batch=${String(counts.batch)} candidates=${String(counts.candidates)} written=${String(counts.written)}`
+      ok,
+      detail: `llmCalls=${String(slept.llmCalls)} batch=${String(counts.batch)} candidates=${String(counts.candidates)} written=${String(counts.written)}${why}${ok ? "" : `\n     ${tail(stderr)}`}`
     }
   })
 }
@@ -662,8 +905,9 @@ const checkAgentBuild = async ({ consumer, env }) => {
   const installed = join(consumer, "node_modules", "memhtml")
   let appRoot
   await check("the agent builds outside node_modules", async () => {
-    const { Effect } = await import(join(consumer, "node_modules", "effect", "dist", "index.js"))
-      .catch(() => import("effect"))
+    const { Effect } = await import(
+      join(consumer, "node_modules", "effect", "dist", "index.js")
+    ).catch(() => import("effect"))
     // The bundle exports nothing, so the staged SOURCE is imported instead. It is the same file eve
     // compiles, and importing it is how this tier reaches a path no CLI command can (the credential
     // preflight returns before consolidation).
@@ -685,7 +929,10 @@ const checkAgentBuild = async ({ consumer, env }) => {
       if (before === undefined) delete process.env.XDG_CACHE_HOME
       else process.env.XDG_CACHE_HOME = before
     }
-    return { ok: !appRoot.includes("node_modules") && appRoot.startsWith(env.XDG_CACHE_HOME), detail: appRoot }
+    return {
+      ok: !appRoot.includes("node_modules") && appRoot.startsWith(env.XDG_CACHE_HOME),
+      detail: appRoot
+    }
   })
 
   if (appRoot === undefined) {
@@ -699,27 +946,69 @@ const checkAgentBuild = async ({ consumer, env }) => {
     const traces = join(consumer, "traces")
     await exec("mkdir", ["-p", join(traces, "projects", "-smoke")])
     await writeFile(join(traces, "projects", "-smoke", "s1.jsonl"), "{}\n")
-    const child = spawn(process.execPath, [eveBin, "start", "--host", "127.0.0.1", "--port", String(port)], {
-      cwd: appRoot,
-      stdio: ["ignore", "ignore", "pipe"],
-      env: {
-        ...env,
-        MEMHTML_SANDBOX_MOUNTS: JSON.stringify([{ mountPath: "/mnt/traces", hostPath: traces }]),
-        MEMHTML_CONSOLIDATOR_RUN_SECRET: "smoke-secret-not-a-credential",
-        AWS_REGION: env.AWS_REGION ?? "us-east-1"
+    const child = spawn(
+      process.execPath,
+      [eveBin, "start", "--host", "127.0.0.1", "--port", String(port)],
+      {
+        cwd: appRoot,
+        stdio: ["ignore", "ignore", "pipe"],
+        env: {
+          ...env,
+          MEMHTML_SANDBOX_MOUNTS: JSON.stringify([{ mountPath: "/mnt/traces", hostPath: traces }]),
+          MEMHTML_CONSOLIDATOR_RUN_SECRET: "smoke-secret-not-a-credential",
+          AWS_REGION: env.AWS_REGION ?? "us-east-1"
+        }
       }
+    )
+    /**
+     * eve's own stderr, which is the only place a failed boot says why.
+     *
+     * A `pipe` nobody reads is worse than `ignore` twice over: the reason is lost, and a child that
+     * wrote past the pipe's ~64 KiB buffer would BLOCK on the write and read as a hang. `eve start`
+     * failing on a relocated build writes one line and exits 1, so a check that reported only the exit
+     * code sent an operator to look for a cause the child had already handed over. Production does not
+     * have this hole — `startFailureReason` in `apps/consolidator/src/client.ts` carries the tail into
+     * its typed failure — so this is the script catching up to the client.
+     */
+    let stderr = ""
+    child.stderr.setEncoding("utf8")
+    child.stderr.on("data", (chunk) => {
+      stderr = (stderr + chunk).slice(-64 * 1024)
     })
     try {
       const deadline = Date.now() + 120_000
       while (Date.now() < deadline) {
-        if (child.exitCode !== null) return { ok: false, detail: `eve start exited ${String(child.exitCode)}` }
+        if (child.exitCode !== null)
+          return {
+            ok: false,
+            detail: `eve start exited ${String(child.exitCode)} — ${tail(stderr)}`
+          }
         const answer = await fetch(`http://127.0.0.1:${String(port)}/eve/v1/health`)
           .then((response) => response.json())
           .catch(() => null)
-        if (answer !== null) return { ok: answer.ok === true, detail: `status=${String(answer.status)}` }
+        if (answer !== null) {
+          /**
+           * The WHOLE documented body, which is what `healthy()` in
+           * `apps/consolidator/src/client.ts` enforces in production: `ok` alone is a field any
+           * generic HTTP server can return, so a check that stopped there would pass this gate on a
+           * listener that is not eve — and this is the one gate whose subject is the artifact. The
+           * `workflowId` VALUE is not pinned; it embeds eve's own package and entry names.
+           */
+          const ready =
+            answer.ok === true &&
+            answer.status === "ready" &&
+            typeof answer.workflowId === "string" &&
+            answer.workflowId !== ""
+          return {
+            ok: ready,
+            detail: `status=${String(answer.status)} workflowId=${String(answer.workflowId)}`
+          }
+        }
         await new Promise((done) => setTimeout(done, 1_000))
       }
-      return { ok: false, detail: "never became healthy" }
+      // A server that is alive and not answering says so on stderr too, or says nothing — and
+      // "nothing" is itself the finding, so the tail is carried either way.
+      return { ok: false, detail: `never became healthy — ${tail(stderr)}` }
     } finally {
       child.kill("SIGKILL")
     }

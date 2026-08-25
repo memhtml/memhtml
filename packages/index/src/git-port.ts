@@ -39,6 +39,12 @@ export interface StatusEntry {
   readonly path: string
   /** True when the path is gone from the working tree. */
   readonly deleted: boolean
+  /**
+   * The source of a staged rename, carried so the indexer can retire the source row. A staged
+   * `git mv` is one status entry whose `path` is the destination; without the source, the old row
+   * stays active and the destination's projection collides with it on `files_content_hash_active`.
+   */
+  readonly fromPath?: string | undefined
 }
 
 export interface GitPort {

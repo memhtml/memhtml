@@ -149,10 +149,10 @@ describe("memhtml apply: the JSONL door", () => {
     expect((await htmlOnDisk(cli.root)).length).toBe(3)
   })
 
-  it("reads the same stream from stdin, via `apply -` and via a bare `apply`", async () => {
-    // Both spellings, because the guide promises both. A dash that fell through to `--file` parsing
-    // would try to open a file named `-`.
-    for (const argv of [["apply", "-"], ["apply"]]) {
+  it("reads the same stream from stdin, via `apply -`, `apply --file -`, and a bare `apply`", async () => {
+    // All three spellings, because the flag docs promise all three. A dash that fell through to
+    // `--file` parsing would try to open a file named `-`.
+    for (const argv of [["apply", "-"], ["apply", "--file", "-"], ["apply"]]) {
       const cli = await withApply()
       const result = await cli.piped(argv, `${THREE.join("\n")}\n`)
       expect(result.exitCode, argv.join(" ")).toBe(EXIT_OK)
@@ -160,6 +160,19 @@ describe("memhtml apply: the JSONL door", () => {
       expect(data.summary.written, argv.join(" ")).toBe(3)
       expect(data.commit_sha, argv.join(" ")).not.toBeNull()
     }
+  })
+
+  it("refuses a positional `-` beside a real --file, as exit 2 before any op runs", async () => {
+    /**
+     * Two streams claiming to be the one that applies. The refusal must be a usage error (exit 2,
+     * decided in `validate`) rather than one source silently winning: a caller who piped ops AND
+     * named a file cannot be given a commit built from only one of them.
+     */
+    const result = await run(["apply", "-", "--file", "ops.jsonl"], undefined, () =>
+      Promise.reject(new Error("stdin was read on a refused invocation"))
+    )
+    expect(result.exitCode).toBe(EXIT_USAGE)
+    expect((parse(result.stdout) as { code: string }).code).toBe("ERR_INVALID_FLAG")
   })
 
   it("emits snake_case with absent fields as null, never as a missing key", async () => {

@@ -146,8 +146,8 @@ describe("batchWrite: one commit, one reindex", () => {
   it("makes every written memory findable, so the ONE reindex really projected all three", async () => {
     /**
      * The assertion a fake indexer could not make. One `indexer.update()` has to project all three
-     * files, not just the last — and `update()` reads the whole commit's diff, which is exactly why
-     * it is the right call here and `indexPaths([lastPath])` would not be.
+     * files, not just the last, and it does because it reads the whole commit's diff rather than a
+     * list of paths the batch handed it.
      */
     const cli = await withCounter()
     const result = await cli.run(

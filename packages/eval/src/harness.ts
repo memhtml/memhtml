@@ -170,9 +170,10 @@ export const buildStack = (
       embedWatermark: EMBED_WATERMARK,
       embedDim: EMBED_DIM,
       embeddings: embedder,
-      // A fixed instant: `indexed_at` has no bearing on ranking, and a clock read would make two
-      // runs over one corpus differ in a column the gate is not about.
-      now: () => "2026-08-02T00:00:00Z"
+      // The corpus's own quantized anchor: `indexed_at` has no bearing on ranking, and a second
+      // clock read would make two runs over one corpus differ in a column the gate is not about.
+      // Second precision, the same shape every other stamp in the fixture carries.
+      now: () => `${new Date(fixture.spec.now).toISOString().slice(0, 19)}Z`
     })
 
     const report = yield* indexer.rebuild({ embed: true }).pipe(Effect.orDie)

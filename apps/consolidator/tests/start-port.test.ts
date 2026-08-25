@@ -8,7 +8,13 @@ import { fileURLToPath } from "node:url"
 import { Effect, Result } from "effect"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
-import { makeConsolidator } from "../src/client.js"
+import {
+  appendStderrTail,
+  STDERR_MESSAGE_CHARS,
+  STDERR_TAIL_CHARS,
+  stderrMessageTail
+} from "../src/child-stderr.js"
+import { makeConsolidator, startFailureReason } from "../src/client.js"
 import { ConsolidatorUnavailable } from "../src/contract.js"
 
 /**
@@ -292,6 +298,77 @@ describe("the port this process reserves is actually free", () => {
       second.listen(probed, "127.0.0.1", () => second.close(() => settle(true)))
     })
     expect(rebound).toBe(true)
+  })
+})
+
+describe("a dying child's stderr is retained AND rendered as a tail", () => {
+  /** The head line, the bulk, and the last thing the child said — the three parts of a real death. */
+  const BANNER = "eve 0.38.3 loading nitro preset"
+  const FATAL = "FATAL: Detected unsettled top-level await"
+
+  /** Folded exactly as the `data` handler folds it, so the buffer under test is the retained one. */
+  const retained = (): string =>
+    [`${BANNER}\n`, `${"noise ".repeat(20_000)}\n`, `${FATAL}\n`].reduce(appendStderrTail, "")
+
+  /**
+   * Retention is bounded and it keeps the END. An unbounded accumulator grows for the child's whole
+   * life, and the start child's handle lives for a full turn — ten minutes — so a chatty server would
+   * hold every byte it ever logged in this process's heap.
+   *
+   * (Mutation: `(retained + chunk).slice(0, STDERR_TAIL_CHARS)` keeps the head; the buffer then holds
+   * the banner and not the fatal line, failing the last two assertions.)
+   */
+  it("keeps the last STDERR_TAIL_CHARS characters and drops what came before", () => {
+    const buffer = retained()
+    expect(buffer.length).toBe(STDERR_TAIL_CHARS)
+    expect(buffer).toContain(FATAL)
+    expect(buffer).not.toContain(BANNER)
+  })
+
+  /**
+   * THE diagnostic defect this pair exists for: a cap that works and a message rendered from the head
+   * of it. For any child that wrote past the cap, the head of the retained buffer is a window ending
+   * 64 KiB BEFORE the line that killed it — so an operator reading the failure sees whatever the child
+   * happened to be logging a moment earlier, and never the cause. A dying process says why last.
+   *
+   * (Mutation: `stderr.slice(0, 400)` in `startFailureReason` fails all three assertions.)
+   */
+  it("renders the failure message from the END of what the child wrote", () => {
+    const reason = startFailureReason({
+      url: "http://127.0.0.1:47500",
+      code: 13,
+      stderr: retained()
+    })
+    expect(reason).toContain(FATAL)
+    // The discriminating shape: the message ENDS with the child's last line.
+    expect(reason.trimEnd().endsWith(FATAL)).toBe(true)
+    expect(reason.length).toBeLessThan(600)
+  })
+
+  /** The rendered slice is the tail of the retained tail, and it is a bound rather than a target. */
+  it("renders at most STDERR_MESSAGE_CHARS of it", () => {
+    expect(stderrMessageTail("x".repeat(STDERR_TAIL_CHARS)).length).toBe(STDERR_MESSAGE_CHARS)
+    expect(stderrMessageTail("short")).toBe("short")
+    // And it is the END, which is the whole point of the helper existing.
+    expect(stderrMessageTail(`${"x".repeat(STDERR_MESSAGE_CHARS)}${FATAL}`)).toContain(FATAL)
+  })
+
+  /**
+   * BOTH spawned children obey the rule, asserted as code shape for the reason the `clientContext`
+   * case is: the accumulate step is a stream handler, and observing what a long-lived buffer did not
+   * retain needs a live child that logs for minutes. `eve build`'s child had the uncapped shape while
+   * `eve start`'s was capped, so a per-file constant is exactly how they drifted.
+   *
+   * (Mutation: restoring `stderr += chunk` in either file fails the matching assertion.)
+   */
+  it("has no unbounded stderr accumulator in either spawn path", async () => {
+    for (const source of [await clientSource(), await agentBuildSource()]) {
+      const code = codeOnly(source)
+      expect(code).toContain("appendStderrTail(stderr, chunk)")
+      expect(code).not.toMatch(/stderr \+= chunk/)
+      // Neither renders from the head of the buffer it capped.
+      expect(code).not.toMatch(/stderr\.slice\(0,/)
+    }
   })
 })
 

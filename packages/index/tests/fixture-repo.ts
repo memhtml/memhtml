@@ -41,6 +41,14 @@ export interface FixtureRepo {
   readonly writeDirty: (files: ReadonlyArray<SeedFile>) => Promise<void>
   /** `git mv` plus a commit — the archive move, which `diff -M` reports as `R100`. */
   readonly move: (from: string, to: string, message: string) => Promise<string>
+  /**
+   * `git mv` WITHOUT a commit, so `status --porcelain=v2` reports one `2 R.` record.
+   *
+   * That record names only the destination; the source arrives as its own NUL field. An indexer that
+   * sees the destination alone leaves the source row live, and the destination's projection then
+   * collides with it on `files_content_hash_active`.
+   */
+  readonly moveStaged: (from: string, to: string) => Promise<void>
   readonly remove: (path: string, message: string) => Promise<string>
   readonly head: () => Promise<string>
   /** Raw plumbing, for a test that needs to assert on git's own output. */
@@ -86,6 +94,10 @@ export const makeFixtureRepo = async (): Promise<FixtureRepo> => {
       await raw("mv", from, to)
       await raw("commit", "-m", message)
       return (await raw("rev-parse", "HEAD")).trim()
+    },
+    moveStaged: async (from, to) => {
+      await mkdir(dirname(join(root, to)), { recursive: true })
+      await raw("mv", from, to)
     },
     remove: async (path, message) => {
       await raw("rm", path)
@@ -204,26 +216,43 @@ const makeFixtureGit = (
     }),
 
   /**
-   * `--porcelain=v2 -z`: `1 <XY> ... <path>` for a tracked change, `? <path>` for an untracked file.
-   * The `XY` pair is the index and worktree status; `D` in either position means the path is gone,
-   * which is how an uncommitted archive or delete is distinguished from an edit.
+   * `--porcelain=v2 -z`: `1 <XY> ... <path>` for a tracked change, `? <path>` for an untracked file,
+   * and `2 <XY> ... <X><score> <path>\0<origPath>\0` for a rename. The `XY` pair is the index and
+   * worktree status; `D` in either position means the path is gone, which is how an uncommitted
+   * archive or delete is distinguished from an edit.
+   *
+   * A rename's ORIGINAL path is its own NUL field, and that is the trap: a reader that takes one
+   * field per record consumes the next record's data as this one's path, and a reader that ignores
+   * the field entirely reports the destination with no source. A `2 ` record also carries one MORE
+   * space-delimited field than a `1 ` record — the `R<score>` — so the path starts one field later.
    */
   statusPorcelainV2: () =>
     attempt("statusPorcelainV2", async () => {
       const stdout = await raw("status", "--porcelain=v2", "-z", "--untracked-files=all")
+      const records = stdout.split("\0").filter((record) => record !== "")
       const entries: Array<StatusEntry> = []
-      for (const record of stdout.split("\0")) {
-        if (record === "") continue
+      let at = 0
+      while (at < records.length) {
+        const record = records[at] ?? ""
+        at += 1
         if (record.startsWith("? ")) {
           entries.push({ path: record.slice(2), deleted: false })
           continue
         }
-        if (!record.startsWith("1 ") && !record.startsWith("2 ")) continue
+        const renamed = record.startsWith("2 ")
+        if (!record.startsWith("1 ") && !renamed) continue
         const fields = record.split(" ")
         const xy = fields[1] ?? ""
-        const path = fields.slice(8).join(" ")
-        if (path === "") continue
-        entries.push({ path, deleted: xy.includes("D") })
+        const path = fields.slice(renamed ? 9 : 8).join(" ")
+        if (!renamed) {
+          if (path !== "") entries.push({ path, deleted: xy.includes("D") })
+          continue
+        }
+        // Consumed here whether or not the entry is kept, so the loop stays aligned.
+        const fromPath = records[at]
+        at += 1
+        if (path === "" || fromPath === undefined) continue
+        entries.push({ path, deleted: xy.includes("D"), fromPath })
       }
       return entries
     }),

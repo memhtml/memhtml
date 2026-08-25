@@ -65,7 +65,7 @@ lychee = "latest"
 
 [env]
 # Puts the workspace's own binaries on PATH so a lefthook job reaching for `biome` gets
-# the pinned 2.5.6 from devDependencies rather than needing a fifteenth declaration
+# the pinned 2.5.8 from devDependencies rather than needing a fifteenth declaration
 # under [tools]. PATH only — see the header on why no value-bearing var is set.
 _.path = ["{{config_root}}/node_modules/.bin"]
 
@@ -120,7 +120,12 @@ raw_args = true
 run = "pnpm build"
 
 [tasks.lint]
-description = "biome, per package"
+description = "biome: each package's own pass, plus one repo-wide pass"
+# Two tiers, and the second is not redundant. Each package lints narrow paths (`biome check src
+# tests`), while `format` writes over `.` — so turbo's root `lint:repo` task runs `biome check .`
+# and keeps the checked set equal to the written one. Without it, scripts/*.mjs,
+# apps/cli/guest/corpus.mjs, tests-integration/probe-*.mjs, tsdown.config.ts, and every
+# vitest.config.ts are formatted by a command a developer runs and read by no gate.
 raw_args = true
 run = "pnpm lint"
 
@@ -240,11 +245,27 @@ description = "Remove the lefthook git hooks"
 run = "lefthook uninstall"
 
 # --- security -----------------------------------------------------------------------
-# Report-only by design: each scanner always emits SARIF and always exits 0, and the
+# Report-only ON FINDINGS by design: a scanner's own exit code is swallowed and the
 # gating happens through GitHub code scanning. A scanner that exits non-zero kills the
 # workflow step before the SARIF uploads, which loses the finding detail that made the
-# scan worth running. The one place a scanner DOES gate is lefthook's pre-commit leak
-# job, because a staged secret must never become a commit.
+# scan worth running. But report-only stops at the report itself. Each of the five scan
+# tasks does two things around its scanner, and the task fails if either one refuses:
+#
+#   rm -f <report>   `.sarif/` is gitignored, so it survives between local runs — without
+#                    this, a scanner that crashes leaves a PREVIOUS run's report standing
+#                    in for a scan that never happened, and the task goes green.
+#   node scripts/verify-sarif.mjs <report>   the report parses, carries a run, and that run
+#                    carries results[] and a tool name. ONE definition for five callers:
+#                    a check that can drift from the thing it checks is the defect it was
+#                    written to prevent, and `[ -s file ]` is not the check — a truncated
+#                    SARIF is non-empty, which is how the 2026-08-18 incident below got
+#                    through.
+#
+# A sweep that produced no usable report is the one result that must not be mistaken for a
+# clean one, so failing is right: an unusable SARIF carries no finding detail to lose, and
+# the workflow's upload step is `if: always()` so the reports that DID land still ship.
+# The one place a scanner gates on findings is lefthook's pre-commit leak job, because a
+# staged secret must never become a commit.
 
 [tasks."security:vex"]
 description = "Render osv-scanner.toml from the OpenVEX ledger (security/memhtml.openvex.json)"
@@ -260,21 +281,31 @@ description = "Vulnerability scan of pnpm-lock.yaml via osv-scanner (SARIF, repo
 # `--config` carries the VEX-derived suppressions; osv-scanner names the justification in its own
 # output ("... filtered out because: not_affected: vulnerable_code_not_in_execute_path"), so a
 # suppression is legible where it applies rather than only where it is declared.
+# The `|| true` swallows the findings exit code only; the `rm -f` and the verifier around it are
+# what separate "scanned and reported" from "crashed" and from "read a previous run's file".
 run = """
 mkdir -p .sarif
+rm -f .sarif/osv.sarif
 osv-scanner scan source --lockfile=pnpm-lock.yaml --config=osv-scanner.toml \
   --format=sarif --output=.sarif/osv.sarif || true
+node scripts/verify-sarif.mjs .sarif/osv.sarif security:osv
 """
 
 [tasks."security:semgrep"]
 description = "SAST via semgrep p/auto + p/owasp-top-ten (SARIF, report-only)"
+# The `|| true` swallows the findings exit code only; the `rm -f` and the verifier around it are
+# what separate "scanned and reported" from "crashed" and from "read a previous run's file".
+# semgrep needs the parse check specifically: when the RPC that renders SARIF returns nothing its
+# formatter emits the literal string `<ERROR: no SARIF output>`, a non-empty file that is not JSON.
 run = """
 mkdir -p .sarif
+rm -f .sarif/semgrep.sarif
 semgrep scan \
   --config p/auto \
   --config p/owasp-top-ten \
   --sarif --output=.sarif/semgrep.sarif \
   --metrics=off || true
+node scripts/verify-sarif.mjs .sarif/semgrep.sarif security:semgrep
 """
 
 [tasks."security:leaks"]
@@ -291,26 +322,18 @@ description = "Secrets sweep over git history via betterleaks (SARIF, report-onl
 # So the report is verified rather than assumed, and retried once before the task fails.
 # Failing loses nothing here that report-only exists to protect: an invalid SARIF carries no
 # finding detail to throw away, and a sweep that produced no report is the one result that
-# must not be mistaken for a clean one.
+# must not be mistaken for a clean one. This is the only scan that retries, because its defect
+# is intermittent; the verifier is the same one the other four call, and it prints which
+# property failed so an unusable report is diagnosable from the log alone.
 run = """
 mkdir -p .sarif
-verify() {
-  node -e '
-    const { readFileSync } = require("node:fs")
-    const sarif = JSON.parse(readFileSync(".sarif/betterleaks.sarif", "utf8"))
-    if (!Array.isArray(sarif.runs) || sarif.runs.length === 0) throw new Error("no runs[]")
-    if (!sarif.runs.every((r) => Array.isArray(r.results))) throw new Error("a run has no results[]")
-  ' 2>/dev/null
-}
+rm -f .sarif/betterleaks.sarif
 betterleaks git . -f sarif -r .sarif/betterleaks.sarif --exit-code=0
-if ! verify; then
+if ! node scripts/verify-sarif.mjs .sarif/betterleaks.sarif security:leaks; then
   echo "security:leaks: betterleaks exited 0 but its SARIF is unusable; retrying once" >&2
   rm -f .sarif/betterleaks.sarif
   betterleaks git . -f sarif -r .sarif/betterleaks.sarif --exit-code=0
-  if ! verify; then
-    echo "security:leaks: betterleaks produced no usable SARIF twice — the secrets sweep did NOT run" >&2
-    exit 1
-  fi
+  node scripts/verify-sarif.mjs .sarif/betterleaks.sarif "security:leaks (retry)"
 fi
 """
 
@@ -319,20 +342,36 @@ description = "CycloneDX SBOM of the workspace via syft, then grype scans it (SA
 # One syft pass feeds both outputs: the SBOM artifact CI uploads, and the input grype
 # scans. Scanning the SBOM instead of re-walking the tree keeps the two views of the
 # dependency set identical by construction.
+#
+# The `|| true` swallows grype's findings exit code only; the `rm -f` and the verifier
+# around it are what separate "scanned and reported" from "crashed" and from "read a
+# previous run's file".
+#
+# syft keeps its own exit code, so a failed SBOM stops the task before grype runs. The SBOM
+# needs no separate content check: grype refuses an SBOM it cannot parse, its refusal is
+# swallowed like a finding, and the deleted-then-verified grype.sarif is what surfaces it.
 run = """
 mkdir -p .sarif .sbom
+rm -f .sbom/sbom.cyclonedx.json .sarif/grype.sarif
 syft scan dir:. --source-name memhtml -o cyclonedx-json=.sbom/sbom.cyclonedx.json
 grype sbom:.sbom/sbom.cyclonedx.json --vex security/memhtml.openvex.json \
   -o sarif --file .sarif/grype.sarif || true
+node scripts/verify-sarif.mjs .sarif/grype.sarif security:sbom
 """
 
 [tasks."security:trivy"]
 description = "Filesystem vuln + misconfig scan via trivy (SARIF, report-only)"
+# `--exit-code 0` is trivy's own findings swallow, so its exit status says nothing about whether a
+# report landed; the delete and the verifier are what do. trivy always emits one run
+# naming `Trivy` with a `results[]` array (go-sarif v2.3.3 seeds `Results: []*Result{}` and tags it
+# without `omitempty`), so the verifier reads a clean scan as clean.
 run = """
 mkdir -p .sarif
+rm -f .sarif/trivy.sarif
 trivy fs . --scanners vuln,misconfig --severity HIGH,CRITICAL \
   --vex security/memhtml.openvex.json \
   --format sarif --output .sarif/trivy.sarif --exit-code 0
+node scripts/verify-sarif.mjs .sarif/trivy.sarif security:trivy
 """
 
 [tasks.security]

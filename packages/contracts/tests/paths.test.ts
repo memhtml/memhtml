@@ -209,6 +209,24 @@ describe("placementFor", () => {
     expect(placementFor({ memoryType: "episodic", entities: ["person:sanju"] })).toBe(INBOX_DIR)
   })
 
+  it("refuses a bare person: entity, agreeing with isPersonEntity at the empty-name boundary", () => {
+    // A nameless prefix names nobody, so it cannot route a memory into the identity surface.
+    expect(placementFor({ memoryType: "semantic", entities: ["person:"] })).toBe(INBOX_DIR)
+    expect(placementFor({ memoryType: "semantic", entities: ["person:", "person:sanju"] })).toBe(
+      PEOPLE_DIR
+    )
+  })
+
+  it("refuses a whitespace-named person, matching the phase that mints the person file", () => {
+    // The person rule filters exactly as hard as the tag rule below it, and as hard as
+    // `person-links`' `entity_name.trim() !== ""`: a name of only whitespace routes nobody.
+    expect(placementFor({ memoryType: "semantic", entities: ["person:   "] })).toBe(INBOX_DIR)
+    expect(placementFor({ memoryType: "semantic", entities: ["person:\t"] })).toBe(INBOX_DIR)
+    expect(placementFor({ memoryType: "semantic", entities: ["person: ", "person:sanju"] })).toBe(
+      PEOPLE_DIR
+    )
+  })
+
   it("prefers a workspace over a topic directory", () => {
     expect(placementFor({ memoryType: "semantic", workspace: "Memhtml", tags: ["deploy"] })).toBe(
       "projects/memhtml"

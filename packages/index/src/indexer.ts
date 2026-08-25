@@ -80,10 +80,7 @@ export interface IndexerShape {
   }) => Effect.Effect<RebuildReport, StorageFailure | EmbedModelMismatch>
   readonly update: (opts: {
     readonly embed: boolean
-  }) => Effect.Effect<UpdateReport, StorageFailure | EmbedModelMismatch>
-  readonly indexPaths: (
-    paths: ReadonlyArray<string>
-  ) => Effect.Effect<UpdateReport, StorageFailure | EmbedModelMismatch>
+  }) => Effect.Effect<UpdateReport, StorageFailure | EmbedModelMismatch | IndexStale>
   /**
    * Fill vectors for chunks that have none, or whose vector belongs to another model.
    *
@@ -102,7 +99,9 @@ export const Indexer = Context.Service<IndexerShape>("memhtml/Indexer")
  *
  * A hard failure rather than a silent reindex. A half-migrated vector space degrades every
  * cosine while every test still passes, because each vector is well-formed. `memhtml index rebuild
- * --embed-model=<new>` is the only path that rewrites vectors, and it truncates `embeddings` first.
+ * --embed` is the one path allowed past this guard: a rebuild empties `embeddings` with the other
+ * memory tables and records the configured model before any vector is written, so it migrates the
+ * whole space rather than mixing two.
  */
 export class EmbedModelMismatch {
   readonly _tag = "EmbedModelMismatch"
@@ -110,6 +109,22 @@ export class EmbedModelMismatch {
     readonly stored: string,
     readonly configured: string
   ) {}
+}
+
+/**
+ * The index is a partial state `update` cannot diff from: a rebuild emptied the tables and did not
+ * finish repopulating them.
+ *
+ * A rebuild clears `index_state.head_sha` in the same transaction as its truncate and writes the
+ * commit back only after every projection landed, so an EXISTING row whose `head_sha` is NULL is
+ * exactly a rebuild that died inside that window. That is a different state from no row at all,
+ * which is a store nothing has indexed yet and which `update` answers with a full rebuild. Here the
+ * tables are half-empty and there is no watermark to diff from, so a diff would report
+ * `unchanged: true` over rows the tree still holds. The CLI maps this tag to `ERR_INDEX_STALE`.
+ */
+export class IndexStale {
+  readonly _tag = "IndexStale"
+  constructor(readonly reason: string) {}
 }
 
 /** How an indexer is built. `embedWatermark` is `@memhtml/llm`'s `EMBED_WATERMARK`, never re-derived. */
@@ -193,7 +208,7 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
    * constant 10k-file store cost 6, 5, 6, 5, 5, 5 ms. Inserting a whole store through the live index
    * costs 20 ms at 800 files, 101 ms at 5k, 234 ms at 10k. Beside the thousands of Bedrock
    * embedding calls a bulk pass makes, that is not a number worth bracketing for, and a bracket
-   * would reintroduce a window where a crash leaves the store with no lexical index.
+   * would open a window where a crash leaves the store with no lexical index.
    */
   const applyProjectionWrites = (writes: ReadonlyArray<Write>) => applyWrites(writes)
 
@@ -222,8 +237,10 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
   /**
    * Fail when the stored vector space is not the configured one.
    *
-   * Checked before any write, and before the *first* write records a watermark, so an index built
-   * under one model can never accumulate rows under another.
+   * Checked before any write, so an index built under one model can never accumulate rows under
+   * another. `rebuild --embed` is the one caller that does NOT consult this, because it empties
+   * `embeddings` and records the configured space before any vector is written — see
+   * {@link EmbedModelMismatch} and {@link truncateForRebuild}.
    */
   const guardEmbedModel = () =>
     Effect.gen(function* () {
@@ -232,6 +249,34 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
         return yield* Effect.fail(new EmbedModelMismatch(state.embed_model, deps.embedWatermark))
       }
     })
+
+  /**
+   * Empty every memory table and clear the watermark, in ONE transaction, before a rebuild
+   * repopulates.
+   *
+   * Atomic with the truncate on purpose: `index_state.head_sha` is NULL for exactly as long as the
+   * tables are half-populated, which is what makes {@link IndexStale} detectable. A failure inside
+   * this transaction leaves the previous index whole; a failure after it commits and before the
+   * projections land leaves the row `update` refuses to diff from.
+   *
+   * The configured vector space is recorded here too, and that is what makes `--embed` the migration
+   * path: `embeddings` is emptied and the new space is on the row before any vector is written, so
+   * the store never carries two spaces at once.
+   */
+  const truncateForRebuild = () => {
+    const at = deps.now()
+    return db.writeAll([
+      {
+        sql: `INSERT INTO index_state (id, head_sha, embed_model, embed_dim, rebuilt_at, updated_at)
+              VALUES (?, NULL, ?, ?, ?, ?)
+              ON CONFLICT(id) DO UPDATE SET head_sha = NULL, embed_model = excluded.embed_model,
+                embed_dim = excluded.embed_dim, updated_at = excluded.updated_at`,
+        params: [INDEX_STATE_ID, deps.embedWatermark, deps.embedDim, at, at]
+      },
+      /** Children before parents. Correct with foreign keys enforced, not merely via cascade. */
+      ...MEMORY_TABLES.map((table) => ({ sql: `DELETE FROM ${table}`, params: [] }))
+    ])
+  }
 
   const writeState = (headSha: string, rebuilt: boolean) => {
     const at = deps.now()
@@ -273,8 +318,8 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
        * Parenthesized, and that is not cosmetic. SQL binds `AND` tighter than `OR`, so appending
        * `AND c.chunk_id IN (…)` to a bare `e.chunk_id IS NULL OR e.model <> ?` parses as
        * `IS NULL OR (model <> ? AND IN (…))`. The vector-less disjunct escapes the scoping and the
-       * statement silently reads the whole table again. Caught by the candidate-list test, which
-       * embedded three chunks where one was owed.
+       * statement silently reads the whole table again. The candidate-list test is what holds it:
+       * unparenthesized, a one-chunk batch embeds every vector-less chunk in the store.
        */
       const predicate = "WHERE (e.chunk_id IS NULL OR e.model <> ?)"
 
@@ -345,10 +390,10 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
       /**
        * Embed and persist in SLICES rather than one all-or-nothing pass. Vectors key on chunk_id
        * (that is, on content hash), so every slice that lands is progress the next invocation
-       * does not re-pay for. Under a Bedrock token throttle the old shape starved: each retry
-       * re-embedded from zero, failed partway, and wrote nothing, so a large corpus could never
-       * complete. Measured on a 4,219-chunk import (2026-08-16): `rebuild --embed` failed whole
-       * five times running while a sliced backfill finished in one pass.
+       * does not re-pay for. That is what lets a store larger than one Bedrock throttle window
+       * finish at all: an all-or-nothing pass re-embeds from zero on every retry, fails partway, and
+       * writes nothing. Measured on a 4,219-chunk import (2026-08-16): five consecutive
+       * `rebuild --embed` runs failed whole where a sliced backfill finished in one pass.
        *
        * A slice that fails stops the pass (the throttle that killed it will kill the next slice
        * too) and reports what already landed. The caller re-runs; `pendingChunks` finds only the
@@ -395,15 +440,22 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
 
   const rebuild = (opts: { readonly embed: boolean }) =>
     Effect.gen(function* () {
-      yield* guardEmbedModel()
+      /**
+       * `--embed` passes where the guard refuses, and that is the vector-space migration: the
+       * truncate below empties `embeddings` and records the configured space before any vector is
+       * written, so no pass can mix two spaces. `--no-embed` still refuses, because it would leave
+       * the recorded space with no vectors under it while the published remedy
+       * (`memhtml index rebuild --embed`) went unrun.
+       */
+      if (!opts.embed) yield* guardEmbedModel()
       const headSha = yield* git.revParseHead()
       const entries = (yield* git.lsTreeR(headSha, TREE_PREFIXES)).filter((entry) =>
         isIndexablePath(entry.path)
       )
       const blobs = yield* git.catFileBatch(entries.map((entry) => entry.blobSha))
 
-      /** Children before parents. Correct with foreign keys enforced, not merely via cascade. */
-      for (const table of MEMORY_TABLES) yield* db.run(`DELETE FROM ${table}`)
+      /** Every read above happens first, so a git failure cannot leave the index truncated. */
+      yield* truncateForRebuild()
 
       const projections: Array<FileProjection> = []
       const skipped: Array<{ path: string; reason: string }> = []
@@ -448,9 +500,10 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
    * Remove one path entirely. `files` cascades to tags, entities, facets, citations, and chunks, and
    * the embeddings hanging off those chunks go with them.
    *
-   * This is for a path that LEFT the tree. A rename is handled by the projection's content-keyed
-   * chunk upsert rather than as a delete plus an add, so calling this on a rename's source would
-   * destroy the embedding the rename exists to preserve.
+   * For a path that LEFT the corpus: deleted from the tree, or renamed to a destination
+   * `isIndexablePath` refuses, where there is no destination row for the memory to become. A rename
+   * that STAYS in the corpus goes through {@link movePath} instead, because this call would destroy
+   * the embedding the content-keyed chunk row exists to preserve.
    *
    * `edges` is cleared by `src_path` only, for the same reason the projection is. An inbound edge is
    * another file's authored assertion.
@@ -478,11 +531,24 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
    * picks up the `memhtml-status`/`memhtml-archived` stamps the move added. That re-projection's `files`
    * upsert then hits the row this `UPDATE` just moved, and its chunk upsert hits the same
    * `chunk_id`s. `ON CONFLICT` absorbs both.
+   *
+   * The two guarded `DELETE`s make the move total over a destination row that ALREADY exists. A bare
+   * `UPDATE files SET path = <to>` against a live `<to>` row is a primary-key violation, and it fails
+   * the whole pass and every pass after it until a rebuild, because the watermark never advances past
+   * the diff that carries the rename. The SOURCE row retires in that case rather than the
+   * destination: `chunks` keys on `content_hash` and its rows carry ONE path, and in a store holding
+   * both the chunk row and its vector sit under `<to>` — the path the tree agrees with. Guarded on
+   * the DESTINATION's existence, so the ordinary rename is two no-op deletes and the two `UPDATE`s.
    */
-  const movePath = (from: string, to: string): ReadonlyArray<Write> => [
-    { sql: "UPDATE files SET path = ? WHERE path = ?", params: [to, from] },
-    { sql: "UPDATE edges SET src_path = ? WHERE src_path = ?", params: [to, from] }
-  ]
+  const movePath = (from: string, to: string): ReadonlyArray<Write> => {
+    const moving = "EXISTS (SELECT 1 FROM files WHERE path = ?2)"
+    return [
+      { sql: `DELETE FROM edges WHERE src_path = ?1 AND ${moving}`, params: [from, to] },
+      { sql: `DELETE FROM files WHERE path = ?1 AND ${moving}`, params: [from, to] },
+      { sql: "UPDATE files SET path = ?1 WHERE path = ?2", params: [to, from] },
+      { sql: "UPDATE edges SET src_path = ?1 WHERE src_path = ?2", params: [to, from] }
+    ]
+  }
 
   /** Read one path's current blob and project it, preferring the working tree over the commit. */
   const projectFromTree = (path: string, ref: string, useWorkingTree: boolean) =>
@@ -510,69 +576,14 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
         : yield* projectOne(path, entry.blobSha, html)
     })
 
-  /**
-   * Re-index an explicit set of paths from the working tree.
-   *
-   * The write path calls this right after a commit, so the working tree and HEAD agree and reading
-   * from disk is both correct and cheaper than a `cat-file` round trip. A path that no longer exists
-   * is treated as a deletion rather than an error. A caller listing a path it just archived is the
-   * normal case rather than a mistake.
-   */
-  const indexPaths = (paths: ReadonlyArray<string>) =>
-    Effect.gen(function* () {
-      yield* guardEmbedModel()
-      const headSha = yield* git.revParseHead()
-      const targets = paths.map(normalizePath).filter(isIndexablePath)
-      const status = yield* git.statusPorcelainV2()
-      const deleted = new Set(status.filter((entry) => entry.deleted).map((entry) => entry.path))
-
-      const writes: Array<Write> = []
-      const skipped: Array<{ path: string; reason: string }> = []
-      let added = 0
-      let removed = 0
-
-      for (const path of targets) {
-        if (deleted.has(path)) {
-          writes.push(...deletePath(path))
-          removed += 1
-          continue
-        }
-        const projected = yield* projectFromTree(path, headSha, true).pipe(
-          Effect.catch(() =>
-            Effect.result(Effect.fail(InvalidMemory.make({ reason: "path is unreadable" })))
-          )
-        )
-        if (projected._tag === "Failure") skipped.push({ path, reason: projected.failure.reason })
-        else {
-          writes.push(...projected.success.writes)
-          added += 1
-        }
-      }
-
-      yield* applyProjectionWrites(writes)
-      const embeddingsWritten = yield* embedMissing()
-      return {
-        headSha,
-        unchanged: targets.length === 0,
-        added,
-        modified: 0,
-        removed,
-        renamed: 0,
-        dirty: targets.length,
-        embeddingsWritten,
-        skipped
-      }
-    }).pipe(Effect.withSpan("indexer.indexPaths"))
-
   const update = (opts: { readonly embed: boolean }) =>
     Effect.gen(function* () {
       yield* guardEmbedModel()
       const headSha = yield* git.revParseHead()
       const state = yield* readState()
-      const watermark = state?.head_sha ?? null
 
-      /** No watermark means no index. Falling through to a diff would index the delta of nothing. */
-      if (watermark === null) {
+      /** No row means no index. Falling through to a diff would index the delta of nothing. */
+      if (state === undefined) {
         const report = yield* rebuild(opts)
         return {
           headSha: report.headSha,
@@ -587,13 +598,29 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
         }
       }
 
+      /**
+       * A row with no commit on it is a rebuild that died between its truncate and its watermark
+       * write. There is nothing to diff from and the tables hold whatever the interrupted pass got
+       * to, so refusing is the only answer that does not report a half-index as agreeing with the
+       * tree. See {@link IndexStale}.
+       */
+      if (state.head_sha === null) {
+        return yield* Effect.fail(
+          new IndexStale("a rebuild emptied the index and did not finish repopulating it")
+        )
+      }
+      const watermark = state.head_sha
+
+      /**
+       * Both filters admit an entry whose SOURCE is a memory even when its destination is not.
+       * A rename out of the corpus has to reach the loops below, because it retires an indexed row;
+       * dropping it here would leave that row active at a path no rebuild would ever project.
+       */
+      const admits = (entry: { readonly path: string; readonly fromPath?: string | undefined }) =>
+        isIndexablePath(entry.path) || isIndexablePath(entry.fromPath ?? "")
       const diffs =
-        watermark === headSha
-          ? []
-          : (yield* git.diffNameStatus(watermark, headSha)).filter(
-              (entry) => isIndexablePath(entry.path) || isIndexablePath(entry.fromPath ?? "")
-            )
-      const status = (yield* git.statusPorcelainV2()).filter((entry) => isIndexablePath(entry.path))
+        watermark === headSha ? [] : (yield* git.diffNameStatus(watermark, headSha)).filter(admits)
+      const status = (yield* git.statusPorcelainV2()).filter(admits)
 
       /**
        * Every committed diff target's blob, read in TWO subprocesses rather than two PER FILE.
@@ -656,6 +683,16 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
           continue
         }
         if (diff.status === "R" && diff.fromPath !== undefined) {
+          /**
+           * A rename OUT of the corpus retires the source instead of moving it. `movePath` would
+           * re-point the row at a destination the projection then skips, leaving it active at a path
+           * a rebuild would never produce — the state that makes the two paths disagree.
+           */
+          if (!isIndexablePath(diff.path)) {
+            writes.push(...deletePath(diff.fromPath))
+            removed += 1
+            continue
+          }
           writes.push(...movePath(diff.fromPath, diff.path))
           renamed += 1
         }
@@ -685,8 +722,26 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
       for (const entry of status) {
         if (entry.deleted) {
           writes.push(...deletePath(entry.path))
+          /** A staged rename whose destination is then gone retires BOTH sides of the move. */
+          if (entry.fromPath !== undefined) writes.push(...deletePath(entry.fromPath))
           removed += 1
           continue
+        }
+        /**
+         * A STAGED rename is one porcelain-v2 record carrying both paths, and the source has to
+         * retire in the same pass. Leaving it live makes the destination's projection collide with it
+         * on `files_content_hash_active` — the two paths hold identical bodies until one is edited —
+         * which fails the whole update rather than one file.
+         */
+        if (entry.fromPath !== undefined && entry.fromPath !== entry.path) {
+          if (isIndexablePath(entry.path)) {
+            writes.push(...movePath(entry.fromPath, entry.path))
+            renamed += 1
+          } else {
+            writes.push(...deletePath(entry.fromPath))
+            removed += 1
+            continue
+          }
         }
         const projected = yield* projectFromTree(entry.path, headSha, true).pipe(
           Effect.catch(() =>
@@ -705,9 +760,9 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
       yield* writeState(headSha, false)
       /**
        * Scoped to this pass's own chunks, which is what keeps an incremental update's cost flat in
-       * store size. The unscoped scan is a full `chunks` table read per batch, at 11 ms for 1k chunks
-       * and 60 ms at 10k, and multiplying that by one call per batch is the residual store-scaled
-       * term the 2026-08-05 quadratic-ingest fix left behind.
+       * store size. The unscoped scan is a full `chunks` table read, at 11 ms for 1k chunks and
+       * 60 ms at 10k (probed 2026-08-05), and one of those per batch is a store-scaled term in a
+       * per-write path — the shape that makes bulk ingest quadratic in fact count.
        */
       const embeddingsWritten = opts.embed ? yield* embedMissing({ candidateChunkIds }) : 0
 
@@ -728,7 +783,7 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
       }
     }).pipe(Effect.withSpan("indexer.update"))
 
-  return { rebuild, update, indexPaths, embedMissing }
+  return { rebuild, update, embedMissing }
 }
 
 const countEdges = (db: DatabaseShape) =>

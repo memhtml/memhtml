@@ -1,8 +1,10 @@
 import { contentHash } from "@memhtml/html"
+import { Effect } from "effect"
+import { TestClock } from "effect/testing"
 import { describe, expect, it } from "vitest"
 
-import { buildCorpus, DEFAULT_PROBE_COUNT, queryFor } from "../src/corpus.js"
-import { memoryFileFor } from "../src/fixture.js"
+import { buildCorpus, DEFAULT_PROBE_COUNT, quantizeNow, queryFor } from "../src/corpus.js"
+import { makeFixtureCorpus, memoryFileFor } from "../src/fixture.js"
 
 /**
  * The corpus generator's invariants.
@@ -12,7 +14,13 @@ import { memoryFileFor } from "../src/fixture.js"
  * to the generator fails a test rather than silently moving the gate's numbers.
  */
 
-const spec = buildCorpus()
+/**
+ * A pinned run instant, so these assertions exercise `(seed, now)` determinism rather than the
+ * wall clock. The generator quantizes it to the UTC day; any instant works.
+ */
+const NOW = Date.UTC(2026, 7, 24, 15, 30, 0)
+
+const spec = buildCorpus({ now: NOW })
 const active = spec.memories.filter((memory) => memory.archivedAt === undefined)
 const isControl = (path: string): boolean =>
   path.includes("refuted-reading") ||
@@ -20,11 +28,11 @@ const isControl = (path: string): boolean =>
   path.includes("qualified-variant")
 
 describe("determinism", () => {
-  it("produces byte-identical files for one seed", () => {
+  it("produces byte-identical files for one (seed, now)", () => {
     // The property the gate rests on: a change in the numbers means the RANKING changed, never that
     // the corpus did. Compared as rendered bytes rather than as specs, because bytes are what the
     // indexer reads.
-    const again = buildCorpus()
+    const again = buildCorpus({ now: NOW })
     expect(again.memories.map(memoryFileFor)).toEqual(spec.memories.map(memoryFileFor))
     expect(again.probes).toEqual(spec.probes)
     expect(again.access).toEqual(spec.access)
@@ -32,8 +40,106 @@ describe("determinism", () => {
 
   it("produces a different corpus for a different seed", () => {
     // Otherwise the seed is decoration and `--seed` on a failing run reproduces nothing.
-    expect(buildCorpus({ seed: 7 }).memories.map(memoryFileFor)).not.toEqual(
+    expect(buildCorpus({ seed: 7, now: NOW }).memories.map(memoryFileFor)).not.toEqual(
       spec.memories.map(memoryFileFor)
+    )
+  })
+
+  it("quantizes the run instant to its UTC day, so one calendar date is one corpus", () => {
+    // The gate's determinism checks compare full runs; a millisecond anchor would make "same seed,
+    // same numbers" true only for runs started in the same millisecond.
+    const morning = buildCorpus({ now: Date.UTC(2026, 7, 24, 0, 0, 1) })
+    const evening = buildCorpus({ now: Date.UTC(2026, 7, 24, 23, 59, 59) })
+    expect(morning.now).toBe(quantizeNow(NOW))
+    expect(evening.memories.map(memoryFileFor)).toEqual(morning.memories.map(memoryFileFor))
+    expect(evening.access).toEqual(morning.access)
+  })
+
+  it("never quantizes AHEAD of the instant it was given", () => {
+    // The whole point of the anchor is that no generated stamp sits in the future, so an anchor
+    // ahead of the run instant defeats it from the top. A `%` remainder keeps the dividend's sign,
+    // which puts every pre-1970 instant on day 0.
+    for (const instant of [NOW, 0, -1, -86_400_001, Date.UTC(1969, 0, 1)]) {
+      expect(quantizeNow(instant)).toBeLessThanOrEqual(instant)
+      expect(instant - quantizeNow(instant)).toBeLessThan(86_400_000)
+      expect(Number.isInteger(quantizeNow(instant) / 86_400_000)).toBe(true)
+    }
+  })
+
+  it("refuses a non-finite instant instead of carrying it into a stamp", () => {
+    // `NaN` passes every arithmetic step and only fails at `toISOString`, as
+    // `RangeError: Invalid time value` — an error naming neither the input nor its caller.
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(() => quantizeNow(bad)).toThrow(RangeError)
+      expect(() => buildCorpus({ now: bad })).toThrow(/finite epoch-millis/)
+    }
+  })
+})
+
+describe("the default anchor", () => {
+  /**
+   * `makeFixtureCorpus` is the ONE clock read in this package, and the gate cannot see it: the
+   * discrimination suite passes an explicit `now`, and the fold's decay term is numerically inert in
+   * this fixture, so replacing the fallback with a fixed epoch leaves every test in the package green
+   * and re-introduces a corpus that ages out from under the gate. Two different pinned instants,
+   * because one would also be satisfied by a constant.
+   */
+  const anchorAt = async (pinned: number): Promise<number> => {
+    const fixture = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(pinned)
+          // Small on purpose: this measures where `now` came from, not what the corpus looks like.
+          return yield* makeFixtureCorpus({ size: 12, probes: 2 })
+        }),
+        TestClock.layer()
+      )
+    )
+    await fixture.cleanup()
+    return fixture.spec.now
+  }
+
+  it("anchors an unspecified `now` to the run clock", async () => {
+    const first = Date.UTC(2026, 2, 9, 18, 45, 12)
+    const second = Date.UTC(2027, 10, 2, 4, 5, 6)
+    expect(await anchorAt(first)).toBe(quantizeNow(first))
+    expect(await anchorAt(second)).toBe(quantizeNow(second))
+  }, 60_000)
+})
+
+describe("now-anchoring", () => {
+  it("keeps every ranked stamp BEHIND the run instant", () => {
+    /**
+     * The regression this pins: the salience arm decays on `unixepoch('now') - last_accessed_at`
+     * at query time, so a stamp AHEAD of the run instant inverts the decay into a boost that grows
+     * until the calendar catches up — the same seed then produces different decay, and eventually
+     * different ranks, depending on the day the eval runs. Only `validUntil` may sit in the
+     * future, because it marks when a memory STOPS being valid and an expired memory is filtered.
+     */
+    for (const memory of spec.memories) {
+      expect(Date.parse(memory.createdAt)).toBeLessThan(spec.now)
+      expect(Date.parse(memory.updatedAt)).toBeLessThan(spec.now)
+      if (memory.archivedAt !== undefined) {
+        expect(Date.parse(memory.archivedAt)).toBeLessThan(spec.now)
+      }
+    }
+    for (const row of spec.access) {
+      expect(Date.parse(row.lastAccessedAt)).toBeLessThan(spec.now)
+    }
+  })
+
+  it("keeps the relative spacing identical across run dates", () => {
+    // Decay is a function of (now - stamp), so stable decay across calendar dates means every
+    // stamp's DISTANCE behind the anchor is invariant — the corpus slides as one rigid body.
+    const later = buildCorpus({ now: NOW + 90 * 86_400_000 })
+    const offsets = (corpus: typeof spec): ReadonlyArray<number> =>
+      corpus.memories.flatMap((memory) => [
+        corpus.now - Date.parse(memory.createdAt),
+        corpus.now - Date.parse(memory.updatedAt)
+      ])
+    expect(offsets(later)).toEqual(offsets(spec))
+    expect(later.access.map((row) => later.now - Date.parse(row.lastAccessedAt))).toEqual(
+      spec.access.map((row) => spec.now - Date.parse(row.lastAccessedAt))
     )
   })
 })

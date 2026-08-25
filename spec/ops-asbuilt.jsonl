@@ -1,6 +1,10 @@
-# memhtml symspec v5 model — PART 1: the as-built system (post Horizon 1, main @ 7c22c69)
-# Authored 2026-08-07 from session-729e89's explore packets + shipped code. status=implemented
-# on everything in this file; the pnpm-check suite is the verification evidence.
+# memhtml symspec v5 model — PART 1: the as-built system (post Horizon 1, main @ 7c22c69 — a
+# pre-publication-history SHA, not resolvable in this repository)
+# Authored 2026-08-07 from session-729e89's explore packets + shipped code. That session id is a
+# pre-publication reference and does not resolve in this repository either. status=implemented on
+# everything in this file; the pnpm-check suite is the verification evidence.
+#
+# spec/memhtml.symspec.json is the current record; this file is the op log that seeded it.
 
 # ── state model ────────────────────────────────────────────────────────────────
 {"op":"state","name":"memory_state","type":"enum","domain":["active","archived"],"initial":"active"}

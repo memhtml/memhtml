@@ -18,7 +18,9 @@ import type { DiffEntry, GitPort, StatusEntry, TreeEntry } from "./git-port.js"
  *    A `copied` entry maps to `A` and NOT to `R`: a copy's source still exists, so `R` would make the
  *    indexer move the source's row to the destination and drop a live file from the index.
  * 4. `statusPorcelainV2` reports a five-way `kind` plus a two-letter `xy` code. "Is this path gone
- *    from the worktree?" is `xy` containing `D`, and an `ignored` entry is not a change at all.
+ *    from the worktree?" is `xy` containing `D`, and an `ignored` entry is not a change at all. A
+ *    `renamed` entry carries a `fromPath` the port must keep, because a staged `git mv` is ONE record
+ *    naming only the destination and the indexer has to retire the source row in the same pass.
  * 5. Failures are `GitFailure { command, exitCode }`, and the port speaks `StorageFailure
  *    { operation }`, so the git command name is logged for the operator and never returned to an
  *    agent.
@@ -61,6 +63,8 @@ export interface StoreChangedPath {
 export interface StoreStatusEntry {
   readonly kind: "changed" | "renamed" | "unmerged" | "untracked" | "ignored"
   readonly path: string
+  /** The source of a staged rename (`kind: "renamed"`), `null` for every other kind. */
+  readonly fromPath: string | null
   readonly xy: string
 }
 
@@ -122,11 +126,17 @@ export const toDiffEntry = (change: StoreChangedPath): DiffEntry => {
  * unresolved merge would record a state the tree does not agree on yet, and the conflict is the
  * caller's to resolve.
  */
-export const toStatusEntry = (entry: StoreStatusEntry): ReadonlyArray<StatusEntry> =>
-  entry.kind === "ignored" || entry.kind === "unmerged"
-    ? []
-    : // `xy` is index-vs-HEAD and worktree-vs-index; a `D` in either position means the path is gone.
-      [{ path: entry.path, deleted: entry.xy.includes("D") }]
+export const toStatusEntry = (entry: StoreStatusEntry): ReadonlyArray<StatusEntry> => {
+  if (entry.kind === "ignored" || entry.kind === "unmerged") return []
+  // A staged rename is ONE porcelain-v2 record whose path is the destination. The source must
+  // travel with it: reporting only `{path: dest}` leaves the source's row live in the index, and
+  // the destination's projection then collides with it on `files_content_hash_active`.
+  if (entry.kind === "renamed" && entry.fromPath !== null) {
+    return [{ path: entry.path, deleted: entry.xy.includes("D"), fromPath: entry.fromPath }]
+  }
+  // `xy` is index-vs-HEAD and worktree-vs-index; a `D` in either position means the path is gone.
+  return [{ path: entry.path, deleted: entry.xy.includes("D") }]
+}
 
 /**
  * Map a store `GitShape` onto the indexer's port.

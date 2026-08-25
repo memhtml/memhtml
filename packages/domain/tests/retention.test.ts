@@ -202,23 +202,51 @@ describe("computeSignals", () => {
     expect(at({ contradictionCount: 3 }).contestedStatus).toBe(0)
   })
 
-  it("penalizes a body under ten words into [0, 0.5)", () => {
-    for (let wordCount = 0; wordCount < 10; wordCount += 1) {
-      const density = computeSignals({
-        memoryType: "semantic",
-        ageDays: 0,
-        accessCount: 0,
-        confidence: 0,
-        graphRank: 0,
-        maxGraphRank: 1,
-        bridgeCount: 0,
-        reinforcementCount: 0,
-        wordCount,
-        contradictionCount: 0
-      }).contentDensity
-      expect(density).toBeGreaterThanOrEqual(0)
-      expect(density).toBeLessThan(0.5)
+  const densityAt = (wordCount: number): number =>
+    computeSignals({
+      memoryType: "semantic",
+      ageDays: 0,
+      accessCount: 0,
+      confidence: 0,
+      graphRank: 0,
+      maxGraphRank: 1,
+      bridgeCount: 0,
+      reinforcementCount: 0,
+      wordCount,
+      contradictionCount: 0
+    }).contentDensity
+
+  it("penalizes a body under ten words below the main wordCount/100 line", () => {
+    for (let wordCount = 1; wordCount < 10; wordCount += 1) {
+      const density = densityAt(wordCount)
+      expect(density).toBeGreaterThan(0)
+      expect(density).toBeLessThan(wordCount / 100)
     }
+    expect(densityAt(0)).toBe(0)
+  })
+
+  /**
+   * `contentDensity` is monotone in word count, so a terse memory can never OUT-score a fuller
+   * one on a retention signal and survive eviction for being short. The 9-vs-10 pair is the seam
+   * where the short-body arm meets the main curve, which is where a divergent short arm shows up
+   * first, so it is asserted on its own ahead of the sweep.
+   *
+   * Mutation-verified 2026-08-24: a short arm of `wordCount / 20` scores a 9-word body 0.45
+   * against a 10-word body's 0.10 and fails the 9-vs-10 pair below.
+   */
+  it("is monotone in word count, so a terse body never out-scores a fuller one", () => {
+    expect(densityAt(9)).toBeLessThanOrEqual(densityAt(10))
+    for (let wordCount = 0; wordCount <= 120; wordCount += 1) {
+      expect(densityAt(wordCount + 1), `at ${wordCount}`).toBeGreaterThanOrEqual(
+        densityAt(wordCount)
+      )
+    }
+  })
+
+  it("joins the short-body arm to the main curve continuously at ten words", () => {
+    // The arms agree at the seam: 10² / 1000 == 10 / 100, so there is no jump to game.
+    expect(densityAt(10)).toBe(0.1)
+    expect(densityAt(9)).toBeCloseTo(0.081, 12)
   })
 })
 

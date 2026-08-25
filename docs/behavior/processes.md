@@ -13,13 +13,14 @@ The CLI and the MCP server are both thin adapters over one shared use-case modul
 Entry point: `apps/cli/src/run.ts:809`
 
 1. `bin.ts` calls `run` with the argv tail, writes the returned stdout, and exits with the returned code `apps/cli/src/bin.ts:1-7`.
-2. `parseArgv` splits argv into positionals and a flag map whose values are always arrays, then greedily matches the two-word compound command names longest-first so `index status` beats `index` `apps/cli/src/run.ts:61-111`.
-3. A bare invocation or `help` answers with the manifest immediately, without building any service `apps/cli/src/run.ts:822-824`.
-4. `validate` rejects the usage errors: an unknown flag, an unknown command with nearest-match suggestions, a missing required argument or flag, a violation of the claim-or-article-html exclusive rule, a violation of the exec flag rules, and any value outside a closed vocabulary `apps/cli/src/run.ts:734-795`.
-5. Five commands answer without building the app layer, each for a stated reason: `manifest` must answer on a machine with no repo, `agents-doc` must not scaffold a root as a side effect, `serve mcp` must not open the database its child will serve, `eval discriminate` runs against its own generated fixture, and `exec` reads a git tree only `apps/cli/src/run.ts:842-992`.
-6. `memhtml apply` reads and shape-validates its whole JSONL op stream here, before any service exists, so a malformed line is exit 2 with nothing written `apps/cli/src/run.ts:1006-1015`.
-7. `dispatch` switches on the command name into one arm per remaining command. Each arm decodes flags, calls one shared use case, and names a response type `apps/cli/src/run.ts:186-578`.
-8. The single envelope is built once around the whole program: success becomes exit 0, a typed failure becomes exit 1 through `failureFor`, and an unexpected defect becomes `ERR_UNKNOWN` rather than a stack trace on stdout `apps/cli/src/run.ts:1017-1035`.
+2. `parseArgv` splits argv into positionals and a flag map whose values are always arrays, then greedily matches the two-word compound command names longest-first so `index status` beats `index` `apps/cli/src/run.ts:125`.
+3. A bare invocation or `help` answers with the manifest immediately, without building any service `apps/cli/src/run.ts:1099-1101`.
+4. `validate` rejects the usage errors, in a fixed order `apps/cli/src/run.ts:974`. Flags are checked against THIS command's spec plus the true globals rather than the union of every command's flags, so `memhtml list --status todo` is `ERR_INVALID_FLAG` naming the commands that do take `--status` instead of an unfiltered answer that looks filtered `apps/cli/src/run.ts:985-1003`. Then a boolean flag handed a space-separated value (`--embed false`, which parses as `--embed` plus a stray positional) `apps/cli/src/run.ts:917`; then a positional past what the command declares, as `ERR_UNEXPECTED_ARGUMENT`, unless the command's last argument is `repeatable` `apps/cli/src/run.ts:950`; then a missing required argument or flag; then the claim-or-article-html exclusive rule, the `exec` flag rules, and the `apply` flag rules; then `--as-of`, which must satisfy the format's own `isValidDatetime` `apps/cli/src/run.ts:892`; then any value outside a closed vocabulary, every occurrence of a repeatable flag rather than only the last `apps/cli/src/run.ts:1057`.
+5. Five commands answer without building the app layer, each for a stated reason: `manifest` must answer on a machine with no repo, `agents-doc` must not scaffold a root as a side effect, `serve mcp` must not open the database its child will serve, `eval discriminate` runs against its own generated fixture, and `exec` reads a git tree only `apps/cli/src/run.ts:1120-1140`.
+6. `memhtml apply` reads and shape-validates its whole JSONL op stream here, before any service exists, so a malformed line is exit 2 with nothing written. The stream arrives from `--file <path>`, or from stdin on `--file -`, a bare positional `-`, or no argument at all; stdin beside a real `--file` is refused `apps/cli/src/run.ts:821`.
+7. `dispatch` switches on the command name into one arm per remaining command. Each arm decodes flags, calls one shared use case, and names a response type `apps/cli/src/run.ts:299`.
+8. The single envelope is built once around the whole program: success becomes exit 0, a typed failure becomes exit 1 through `failureFor`, and an unexpected defect becomes `ERR_UNKNOWN` rather than a stack trace on stdout `apps/cli/src/run.ts:1094-1097`.
+9. Two commands carry an exit code their own payload implies, which is why a dispatch arm may return a third element. `sleep run` and `sleep resume` return the `sleep.report` SUCCESS envelope and exit **1** when any phase failed `apps/cli/src/run.ts:284`. `@memhtml/sleep` types both with error channel `never` — a failed phase is a normal terminal state with a report row — so a failure envelope would carry no `data` and delete the per-phase detail, while a cron reading only the exit code still has to be told the curation did not happen. `sleep status` and `sleep review` are excluded: they report a run they did not perform.
 
 ### Related
 
@@ -39,9 +40,9 @@ Entry point: `apps/cli/src/operations.ts:288`
 3. `store.writeMemory` takes one clock reading and renders the file through the template `packages/store/src/store.ts:530-534`.
 4. `renderChecked` runs the format check over the rendered bytes and fails with the list of violations before anything is written, staged, or committed `packages/store/src/store.ts:521-528`.
 5. The content hash is looked up against the dedupe oracle first, so a duplicate returns the existing path and leaves the tree byte-identical `packages/store/src/store.ts:537-551`.
-6. `freePathFor` resolves the placement rule's path, suffixing `-2`, then `-3`, until one is absent from disk. A caller that named a valid explicit path keeps that path instead `packages/store/src/store.ts:384-406`.
+6. `freePathFor` resolves the placement rule's path, suffixing `-2`, then `-3`, until one is absent from disk `packages/store/src/store.ts:395`. A caller that named a valid explicit path gets that path or nothing: an occupied one is `WriteConflict` → `ERR_WRITE_CONFLICT` with nothing written and nothing committed, and no `-2` suffix, because the caller named ONE path and a quiet fallback would hand back a path with no file behind it while a quiet overwrite would delete a memory in a corpus where eviction is a `git mv` `packages/store/src/store.ts:403-419`. The one exemption is `correctMemory`'s own target, whose path the same commit vacates into the archive. The recovery is `memhtml correct <path>` `apps/cli/src/errors.ts:147`.
 7. The file is written, staged, and committed in one commit carrying the provenance trailers `packages/store/src/store.ts:563-567`.
-8. `reindex` calls `indexer.update()` rather than `indexPaths`, because only the diff-driven path can express a rename and only it records the watermark. `recordLink` then notes the session link, and it swallows its own failure `apps/cli/src/operations.ts:227-231`, `apps/cli/src/operations.ts:294-296`.
+8. `reindex` brings the index up to the whole COMMIT the write just made, through `indexer.update()` `apps/cli/src/operations.ts:228-232`, and never a caller-supplied path list. Two index properties rest on that. A rename is only expressible as a diff: every correction and every archive is a `git mv`, and `update()` reads `diff --name-status -M`, sees the `R`, and re-points the row, keeping the embedding — indexing the destination alone would leave the source row live, so the archived memory stays in `memhtml list` and the chunk rows the move exists to preserve end up duplicated under two paths. And only `update()` records `index_state.head_sha`, without which `memhtml status` reports `index_fresh: false` forever `apps/cli/src/operations.ts:210-227`. `recordLink` then notes the session link, and it swallows its own failure `apps/cli/src/operations.ts:167`.
 
 ### Related
 
@@ -122,19 +123,23 @@ Entry point: `packages/index/src/indexer.ts:531`
 
 Entry point: `packages/sleep/src/run.ts:69`
 
-1. The `sleep run` dispatch arm resolves the date through the Effect clock, narrows any `--phases` subset, and calls the service `apps/cli/src/run.ts:459-469`.
-2. `runIdFor` picks `sleep/<date>`, suffixing `-2` upward when that branch already exists, so a same-day rerun never collides `packages/sleep/src/run.ts:45-53`.
-3. The branch is created BEFORE any phase runs and every commit lands on it, so a run leaves `main` unchanged. A dry run creates no branch `packages/sleep/src/run.ts:95-97`.
-4. `recordRun` writes the run row as `running`, through a wrapper that keeps a reporting failure from failing the run `packages/sleep/src/run.ts:98-108`.
-5. `executePhases` walks the selected phases in canonical order, running each body under `Effect.result` so a failure becomes a value the loop reads and the phases after it still run `packages/sleep/src/run.ts:231-297`.
-6. A failed phase is recorded, its declared dependents are blocked, and the git index is reset so the next phase's commit cannot carry half-finished work `packages/sleep/src/run.ts:279-291`.
-7. `preflight` runs first. It fails on a dirty tree, refreshes the index so every later phase reads current rows, and commits nothing `packages/sleep/src/phases/preflight.ts:20-41`.
-8. The run row is rewritten as `review`, `failed`, or `abandoned` for a dry run, and the report carries every phase result plus the total model calls `packages/sleep/src/run.ts:115-135`.
+1. The `sleep run` dispatch arm resolves the date through the Effect clock, narrows any `--phases` subset, reads `--deep` and `--max-llm-calls`, and calls the service `apps/cli/src/run.ts:574-586`.
+2. `runIdFor` picks `sleep/<date>`, suffixing `-2` upward when that branch already exists, so a same-day rerun never collides `packages/sleep/src/run.ts:67`.
+3. The branch is created BEFORE any phase runs and every commit lands on it, so a run leaves `main` unchanged. A dry run creates no branch `packages/sleep/src/run.ts:376`.
+4. `recordRun` writes the run row as `running`, through a wrapper that keeps a reporting failure from failing the run `packages/sleep/src/run.ts:178`.
+5. `executePhases` walks the selected phases in canonical order — `SLEEP_PHASES`, seventeen as of v0.6.0 `packages/sleep/src/contract.ts:43` — running each body under `Effect.result` so a failure becomes a value the loop reads and the phases after it still run `packages/sleep/src/run.ts:460`.
+6. A failed phase is recorded, its declared dependents are blocked, and the git index is reset so the next phase's commit cannot carry half-finished work `packages/sleep/src/run.ts:478-530`. The dependency graph is `HARD_PREREQUISITES` `packages/sleep/src/contract.ts:107`, spelled one literal pair at a time so the generated phase table can parse it: `preflight` gates every one of the sixteen phases after it, and `dedup-merge` gates `compress` and `retention-triage`. Everything else is SOFT.
+7. `preflight` runs first, and it gates the WHOLE run. It fails on a dirty tree, on an `EmbedModelMismatch`, or on an `IndexStale` index; it refreshes the index so every later phase reads current rows; and it commits nothing `packages/sleep/src/phases/preflight.ts:31`. Each of its failures makes every later commit wrong rather than merely unhelpful — a dirty tree means a later phase commits the operator's bytes under sleep's trailers, a half-migrated vector space returns plausible-and-wrong cosines from dedup and mining alike, and a half-populated index makes every count describe a corpus fragment. All three end in a corrupt night with a green report, which per-phase isolation is no defense against, so a failed preflight commits nothing at all.
+8. Three phases record their non-undoable state-plane writes into the run's own ledger instead of performing them — `trace-consolidation`'s consolidation watermarks, `edge-typing`'s edge promotions, and `entity-resolution`'s entity promotions — as JSONL lines in `.memhtml/sleep/<run-id>.pending.jsonl`, staged and committed on the branch `packages/sleep/src/contract.ts:306`, `packages/sleep/src/contract.ts:501`. `merge` applies them; a discarded branch takes them with it.
+9. The run row is rewritten as `review`, `failed`, or `abandoned` for a dry run, and the report carries every phase result plus the total model calls `packages/sleep/src/run.ts:195`.
+10. Any failed phase makes the process exit 1 while the envelope stays the `sleep.report` success payload `apps/cli/src/run.ts:284`.
 
 ### Related
 
-- `packages/sleep/src/contract.ts:17`
-- `packages/sleep/src/contract.ts:57`
+- `packages/sleep/src/contract.ts:43`
+- `packages/sleep/src/contract.ts:107`
+- `packages/sleep/src/contract.ts:168`
+- `packages/sleep/src/contract.ts:197`
 - `packages/sleep/src/phases/index.ts:27`
 - `packages/sleep/src/commit.ts:1`
 - `packages/sleep/src/sql.ts:1`
@@ -142,25 +147,27 @@ Entry point: `packages/sleep/src/run.ts:69`
 
 ## Sleep merge
 
-Entry point: `packages/sleep/src/review.ts:224`
+Entry point: `packages/sleep/src/review.ts:238`
 
 1. The `sleep merge` dispatch arm composes the discrimination gate here, in the CLI, because `@memhtml/sleep` cannot import the eval, and composing it in the CLI keeps the gate from being defaulted silently `apps/cli/src/run.ts:494-524`.
 2. `--skip-gate` logs a warning and passes no gate. It is a visible override the caller asks for, and it is not the default `apps/cli/src/run.ts:498-502`.
-3. `resolveRun` reads the named run row, or the newest recorded one. A missing row fails with `no-run` `packages/sleep/src/review.ts:29-35`, `packages/sleep/src/review.ts:231-240`.
-4. The target branch is checked out and its head is read, before anything moves `packages/sleep/src/review.ts:242-246`.
-5. The first refusal case is `main` having advanced past the run's `base_sha`, which means the run curated a corpus that no longer exists. The merge stops with `main-advanced` `packages/sleep/src/review.ts:248-259`.
-6. The second refusal case comes from the pre-merge gate, which runs under `Effect.result`. A gate failure becomes `gate-failed`, and `main` does not move `packages/sleep/src/review.ts:261-273`.
-7. `discriminationGate` runs the probes in `fake` mode and fails when the report does not pass. Because the gate runs before the merge, a retrieval regression blocks the merge `packages/eval/src/run.ts:174-181`.
-8. The merge is always a fast-forward, and it never creates a merge commit. On success the run row is rewritten as `merged` `packages/sleep/src/review.ts:275-301`.
+3. `resolveRun` reads the named run row, or the newest recorded one. A missing row fails with `no-run` `packages/sleep/src/review.ts:35`.
+4. The target branch is checked out and its head is read, before anything moves.
+5. The first refusal case is `main` having advanced past the run's `base_sha`, which means the run curated a corpus that no longer exists. The merge stops with `main-advanced` `packages/sleep/src/review.ts:271`.
+6. The second refusal case comes from the pre-merge gate, which runs under `Effect.result`. A gate failure becomes `gate-failed`, and `main` does not move `packages/sleep/src/review.ts:284`.
+7. `discriminationGate` runs the probes in `fake` mode and fails when the report does not pass. Because the gate runs before the merge, a retrieval regression blocks the merge `packages/eval/src/run.ts:186`.
+8. The merge is always a fast-forward and never creates a merge commit `packages/sleep/src/review.ts:289`. A three-way merge here would produce a commit whose parents are the sleep branch and a moved `main`, which is the state step 5 exists to prevent.
+9. **Only after the fast-forward succeeds** does `applyMarks` read the branch's pending-mark ledger and perform the state-plane writes the phases deferred `packages/sleep/src/review.ts:305`, `packages/sleep/src/review.ts:343`. The ledger is read as a BLOB at the branch tip rather than off the working tree, so an uncommitted file a discarded run of the same date left behind cannot be honoured. The report carries `marksPending` and `marksApplied` as TWO numbers: they agree on an ordinary merge, and a disagreement is the operator-visible reading of a plane write that did not land — the sessions in the shortfall stay unconsolidated and are re-read next cycle, which costs a model call and loses nothing. A failed apply does not fail the merge, because `main` has already moved and every mark is bookkeeping whose absence costs a repeat rather than a loss.
+10. On success the run row is rewritten as `merged` `packages/sleep/src/review.ts:307`.
 
 ### Related
 
 - `packages/sleep/src/review.ts:47`
-- `packages/sleep/src/review.ts:128`
-- `packages/sleep/src/review.ts:196`
+- `packages/sleep/src/review.ts:343`
 - `packages/eval/src/run.ts:77`
 - `packages/eval/src/discriminate.ts:224`
-- `packages/sleep/src/contract.ts:161`
+- `packages/sleep/src/contract.ts:306`
+- `packages/sleep/src/contract.ts:351`
 
 ## MCP tool invocation
 
@@ -193,12 +200,12 @@ Entry point: `apps/mcp/src/bin.ts:15`
 - List memories or tasks: entry at `apps/cli/src/operations.ts:1193` and `apps/cli/src/operations.ts:1444`. These are direct indexed scans with keyset pagination on `path`, chosen over ranked retrieval. The task scan carries each row's `blockedBy` from one correlated subquery over `edges`.
 - Walk a memory's neighborhood: entry at `apps/cli/src/operations.ts:1093`. Uses two fixed-depth joins in a `UNION ALL` rather than a recursive CTE. It follows both edge directions, stops at two hops, and filters to `edge_class = 'memory'`.
 - Reinforce paths: entry at `apps/cli/src/operations.ts:1046`. Bumps access bookkeeping with a caller-chosen signal through the one SQL writer for `state.access`, gated by a per-path cooldown `packages/index/src/reinforce.ts:45`.
-- Index Claude Code transcripts: entry at `apps/cli/src/operations.ts:1557`. Scans `$MEMHTML_TRACE_ROOT` reading only what the per-file watermarks say changed, then persists each scanned file as a `traces` row plus its prompts `packages/traces/src/scan.ts:58`, `packages/index/src/traces-persist.ts:376`.
+- Index Claude Code transcripts: entry at `apps/cli/src/operations.ts:1557`. Scans `$MEMHTML_TRACE_ROOT` reading only what the per-file watermarks say changed, then persists each scanned file as a `traces` row plus its prompts `packages/traces/src/scan.ts:58`, `packages/index/src/traces-persist.ts:376`. Four counters partition the outcome and one counts something else. `skipped + tailed + rescanned + filesFailed` is every file the scan planned to read, so `filesFailed` — a file the scan planned to read and could not (`packages/traces/src/scan.ts:65`, surfaced as `filesFailed` at `apps/cli/src/operations.ts:1783`) — is what keeps that census honest rather than letting a read failure vanish into a smaller total. `sessionsWritten` is not a fifth partition: it counts the files for which a `traces` ROW was actually written `apps/cli/src/operations.ts:1754-1770`, so a file that was read but yielded no session id is tailed and unwritten, and the two numbers answer different questions.
 - Search transcripts: entry at `apps/cli/src/operations.ts:1606`. Runs FTS over session first-prompts and AI titles through the same sanitizer the memory arms use. The query names no memory table, which is the trace firewall in that direction.
 - Read memory-session links: entry at `apps/cli/src/operations.ts:1674`. Answers from either side, and rejects a call that names neither side rather than scanning every link ever recorded.
 - Report corpus status: entry at `apps/cli/src/operations.ts:1737`. Compares the recorded watermark to `HEAD` for freshness and reads the embedder's usability off the stored watermark rather than probing Bedrock.
 - Run a code-mode script: entry at `apps/cli/src/exec.ts:382`. Pins a commit as a detached worktree, mounts it read-only in a QuickJS sandbox with no network and no index handle, runs the script under a capped wall-clock bound, and releases the worktree through `acquireRelease` `apps/cli/src/exec.ts:224`.
-- Check corpus health: entry at `apps/cli/src/doctor.ts:428`. Gathers dangling hrefs, orphan state rows, inbox depth, format warnings, overdue tasks, and stale blockers before any repair, so a `--fix` run reports what was wrong and what was done in one envelope.
+- Check corpus health: entry at `apps/cli/src/doctor.ts:428`. Gathers dangling hrefs, orphan state rows, inbox depth, format warnings, overdue tasks, and stale blockers before any repair, so a `--fix` run reports what was wrong and what was done in one envelope. `repaired` carries `rewritten`, `dropped`, `failedWrites`, `prunedAccessRows`, and `commitSha` `apps/cli/src/doctor.ts:156`. A repair counts only when its bytes reached disk: a file whose write failed lands in `failedWrites`, is counted under neither `rewritten` nor `dropped`, and is never staged `apps/cli/src/doctor.ts:389-405`, because staging the unchanged file would put the pre-repair bytes into a commit whose subject claims they were repaired, and counting it would report a finding as settled while it is still open.
 - Publish generated listings: entry at `apps/cli/src/publish.ts:59`. Regenerates every per-directory `index.html` and the root `sitemap.xml` from the same generator the sleep integrity phase uses, writing only files whose bytes differ.
 - Export the state plane: entry at `apps/cli/src/state.ts:54`. Writes `.memhtml/state/access.jsonl`, the only durable copy of the plane git cannot rebuild, and commits nothing when the bytes already match.
 - Import the state plane: entry at `apps/cli/src/state.ts:103`. Replays the committed sidecar with a per-row upsert that takes the maximum of the two counters, so an import onto a live plane cannot lose a bump.
@@ -208,7 +215,7 @@ Entry point: `apps/mcp/src/bin.ts:15`
 - Resume a sleep run: entry at `packages/sleep/src/run.ts:146`. Reads the completed phases out of the branch's own `Memhtml-Phase` commit trailers, not from the journal table, and executes only the rest.
 - Review a sleep run: entry at `packages/sleep/src/review.ts:47`. Reports per-phase counts, the commit list with trailers, `git diff --stat`, and a per-file classification where `meta-only` is decided by comparing article content hashes.
 - Consolidate transcripts into memories: entry at `packages/sleep/src/phases/trace-consolidation.ts:1`. Hands a manifest of transcript metadata to the sandboxed consolidator agent, gates each returned candidate deterministically, and lands each cleared one as its own reviewable commit `apps/consolidator/src/client.ts:988`.
-- Read an MCP resource: entry at `apps/mcp/src/resources.ts:42` and `apps/mcp/src/resources.ts:67`. `memhtml://file/{path}` returns one memory's title, claim, and body for citation-grade drill-down, and it bumps salience through the same `readMemory` the tool calls. `memhtml://sleep/{run-id}` reads the run's committed HTML report from the tree.
+- Read an MCP resource: entry at `apps/mcp/src/resources.ts:182` and `apps/mcp/src/resources.ts:228`, both registered through the one `templateLayer` at `apps/mcp/src/resources.ts:118`. `memhtml://file/{path}` returns one memory's title, claim, and body for citation-grade drill-down, and it bumps salience through the same `readMemory` the tool calls; the captured path is traversal-gated by `isValidMemoryPath` before the store sees it. `memhtml://sleep/{run-id}` reads the run's committed HTML report from the tree, under the filename `reportFilename` gives it. Each route matches on `memhtml:://<section>/*`, whose rest parameter is what lets a multi-segment PARA path resolve `apps/mcp/src/resources.ts:42`.
 
 ## See also
 

@@ -4,6 +4,8 @@ import { basename, dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 
+import { mdxExpressions } from "./mdx-braces.js"
+
 /**
  * The figures: their sources, the pages that mount them, and the SVGs the build emitted.
  *
@@ -176,26 +178,37 @@ describe("every figure carries a real text alternative", () => {
   })
 })
 
-describe("no page writes a brace anchor, which would break the raw Markdown route", () => {
+describe("no page writes an MDX expression, which would break the raw Markdown route", () => {
   /*
-   * The generated Reference pages have their own version of this in `census.test.ts`. Authored content
-   * is served through the same `starlight-md-txt` route and had no cover, so this closes it: one
-   * `{ #anchor }` anywhere fails the whole raw-Markdown build, and `remark-mdx` reads the brace as a JSX
-   * expression rather than as text.
+   * The generated Reference pages have their own version of this in `census.test.ts`, over the same
+   * `mdxExpressions` reading. Authored content is served through the same `starlight-md-txt` route, so
+   * this is the other half: one brace outside a code span fails the whole raw-Markdown build, and
+   * `remark-mdx` hands it to acorn as an expression rather than reading it as text.
+   *
+   * `.md` only. An `.mdx` page's braces are that format's own syntax — `index.mdx` carries an MDX
+   * comment expression — and the raw route parses them as intended. The extension is the file's
+   * declaration of which language it is written in, so it is also the right scope for this rule.
    */
-  it("holds for every authored page under src/content/docs", () => {
-    const walk = (directory: string): ReadonlyArray<string> =>
-      readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
-        entry.isDirectory()
-          ? walk(join(directory, entry.name))
-          : /\.mdx?$/.test(entry.name)
-            ? [join(directory, entry.name)]
-            : []
-      )
-    const pages = walk(join(root, "src", "content", "docs"))
-    expect(pages.length).toBeGreaterThan(20)
-    for (const page of pages) {
-      expect(readFileSync(page, "utf8"), page).not.toMatch(/\{\s*#[a-z0-9-]+\s*\}/)
+  const walk = (directory: string): ReadonlyArray<string> =>
+    readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory()
+        ? walk(join(directory, entry.name))
+        : /\.mdx?$/.test(entry.name)
+          ? [join(directory, entry.name)]
+          : []
+    )
+
+  it("holds for every authored `.md` page under src/content/docs", () => {
+    const authored = walk(join(root, "src", "content", "docs"))
+    const markdown = authored.filter((page) => page.endsWith(".md"))
+    const mdx = authored.filter((page) => page.endsWith(".mdx"))
+    expect(authored.length).toBeGreaterThan(20)
+    // The two sets partition the corpus, and the exemption above is live rather than hypothetical: at
+    // zero `.mdx` pages this scope would be silently narrowing nothing and should be widened instead.
+    expect(markdown.length + mdx.length).toBe(authored.length)
+    expect(mdx.length).toBeGreaterThan(0)
+    for (const page of markdown) {
+      expect(mdxExpressions(readFileSync(page, "utf8")), page).toEqual([])
     }
   })
 })

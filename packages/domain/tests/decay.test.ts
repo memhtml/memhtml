@@ -36,6 +36,17 @@ describe("fixed-point grid", () => {
     expect(DEFAULT_CONFIDENCE_FLOOR).toBe(0.2)
   })
 
+  /**
+   * `DEFAULT_EWMA_ALPHA` has a twin: `OUTCOME_EWMA_ALPHA` in `packages/index/src/reinforce.ts`,
+   * the literal the production SQL binds for the outcome EWMA. The SQL cannot read this
+   * constant, so the two are pinned to 0.3 independently — this side here, the index side in
+   * `packages/index/tests/reinforce.test.ts` — and a fork of either fails its package's suite
+   * loudly rather than drifting the reference model away from the shipped arithmetic.
+   */
+  it("pins DEFAULT_EWMA_ALPHA to the 0.3 the index SQL twin binds", () => {
+    expect(DEFAULT_EWMA_ALPHA).toBe(0.3)
+  })
+
   it("round-trips a grid-aligned float exactly", () => {
     fc.assert(
       fc.property(signedFp, (valueFp) => {

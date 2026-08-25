@@ -33,8 +33,8 @@ import {
   scriptedConsolidator,
   withCommitments
 } from "../src/testing.js"
+import { appliedWatermarks, applyLedger, pendingSessions } from "./abort-fixture.js"
 import {
-  consolidationWatermarks,
   DEDUP_CORPUS,
   type Fixture,
   memoryHtml,
@@ -106,6 +106,20 @@ const addedPaths = (fixture: Fixture, from: string): Effect.Effect<ReadonlyArray
     Effect.orDie
   )
 
+/** True for a run's pending-mark ledger: the one committed path that is bookkeeping, not corpus. */
+const isLedgerPath = (path: string): boolean => path.endsWith(".pending.jsonl")
+
+/**
+ * The CORPUS paths a phase added: {@link addedPaths} without the run's pending-mark ledger.
+ *
+ * The ledger is committed on the branch beside the memories, because a proposal a merge cannot find is
+ * a proposal that never applies — so it shows up in `git diff --name-status` like anything else. It is
+ * bookkeeping and not a memory, so a case about which MEMORIES a night wrote filters it out and the
+ * abort suites assert on the ledger directly instead.
+ */
+const addedMemories = (fixture: Fixture, from: string): Effect.Effect<ReadonlyArray<string>> =>
+  addedPaths(fixture, from).pipe(Effect.map((paths) => paths.filter((path) => !isLedgerPath(path))))
+
 const headSha = (fixture: Fixture): Effect.Effect<string> =>
   fixture.raw("rev-parse", "HEAD").pipe(Effect.map((text) => text.trim()))
 
@@ -144,7 +158,8 @@ describe("trace-consolidation degradation", () => {
           expect(outcome.commitSha).toBeNull()
           expect(yield* headSha(fixture)).toBe(before)
           // And no watermark: an unbound phase must not claim to have read anything.
-          expect(yield* consolidationWatermarks(fixture)).toEqual([])
+          expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual([])
+          expect(yield* appliedWatermarks(fixture)).toEqual([])
         }),
       { seed: DEDUP_CORPUS }
     )
@@ -182,7 +197,8 @@ describe("trace-consolidation degradation", () => {
            * NOTHING IS WATERMARKED. A failed call must leave the session unconsolidated, or the
            * transcript is lost — marked read with no memory to show for it and nothing saying so.
            */
-          expect(yield* consolidationWatermarks(fixture)).toEqual([])
+          expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual([])
+          expect(yield* appliedWatermarks(fixture)).toEqual([])
           // And nothing is left staged for a later phase's commit to absorb.
           expect(yield* fixture.deps.store.dirtyPaths().pipe(Effect.orDie)).toEqual([])
         }),
@@ -202,19 +218,30 @@ describe("trace-consolidation degradation", () => {
       (fixture) =>
         Effect.gen(function* () {
           yield* seedTrace(fixture, { sessionId: "session-a" })
+          const base = yield* headSha(fixture)
           const outcome = yield* traceConsolidation(envFor(fixture))
 
           expect(outcome.detail).toBeUndefined()
           expect(outcome.counts.candidates).toBe(0)
           expect(outcome.counts.written).toBe(0)
-          expect(outcome.commitSha).toBeNull()
 
           /**
-           * The barren session IS watermarked, which the failed case above shows is not automatic. The
-           * agent read it and correctly found nothing; re-reading it every night forever would mean
-           * the batch never advances past a quiet session.
+           * The barren session IS marked, which the failed case above shows is not automatic. The agent
+           * read it and correctly found nothing; re-reading it every night forever would mean the batch
+           * never advances past a quiet session.
+           *
+           * And the mark COMMITS, on a night with no memory to carry it. A ledger left unstaged would be
+           * swept into whichever later phase commits next, or discarded with the index — so the batch
+           * would either never advance or advance under another phase's trailer.
            */
-          expect(yield* consolidationWatermarks(fixture)).toEqual([
+          expect(outcome.commitSha).not.toBeNull()
+          expect(yield* addedMemories(fixture, base)).toEqual([])
+          expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual(["session-a"])
+
+          /** Still a PROPOSAL: nothing reached the plane, because nothing has merged. */
+          expect(yield* appliedWatermarks(fixture)).toEqual([])
+          yield* applyLedger(fixture, `sleep/${DATE}`)
+          expect(yield* appliedWatermarks(fixture)).toEqual([
             { session_id: "session-a", run_id: `sleep/${DATE}` }
           ])
         }),
@@ -271,7 +298,7 @@ describe("trace-consolidation happy path", () => {
           expect(yield* commitCount(fixture)).toBe(commitsBefore + 2)
 
           // Both files exist at ordinary memory paths, and BOTH sessions were handed over.
-          const added = yield* addedPaths(fixture, base)
+          const added = yield* addedMemories(fixture, base)
           expect(added).toHaveLength(2)
           for (const path of added) {
             expect(path.endsWith(".html")).toBe(true)
@@ -301,11 +328,16 @@ describe("trace-consolidation happy path", () => {
             expect(parsed.candidates).toBe(2)
           }
 
-          // Both sessions are watermarked, under this run.
-          expect(yield* consolidationWatermarks(fixture)).toEqual([
-            { session_id: "session-a", run_id: `sleep/${DATE}` },
-            { session_id: "session-b", run_id: `sleep/${DATE}` }
+          /**
+           * Both sessions are MARKED under this run, and the ledger rides in the first candidate's
+           * commit rather than earning a third — which is what keeps "one commit per candidate" a
+           * statement about the night's commits and not about its memories only.
+           */
+          expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual([
+            "session-a",
+            "session-b"
           ])
+          expect(yield* appliedWatermarks(fixture)).toEqual([])
         }),
       { seed: DEDUP_CORPUS, consolidator }
     )
@@ -346,7 +378,7 @@ describe("trace-consolidation happy path", () => {
           const base = yield* headSha(fixture)
 
           const outcome = yield* traceConsolidation(envFor(fixture))
-          const [path] = yield* addedPaths(fixture, base)
+          const [path] = yield* addedMemories(fixture, base)
           expect(path).toBeDefined()
 
           const html = yield* atHead(fixture, path ?? "")
@@ -493,7 +525,7 @@ describe("trace-consolidation candidate gate", () => {
           expect(outcome.counts.written).toBe(2)
           expect(outcome.counts.skipped).toBe(4)
           // Two commits for the two that cleared the gate; the four refusals wrote no file at all.
-          expect(yield* addedPaths(fixture, base)).toHaveLength(2)
+          expect(yield* addedMemories(fixture, base)).toHaveLength(2)
           // And nothing landed on the fallback stem, which is the shape a missing slug gate takes.
           expect(yield* atHead(fixture, "areas/inbox/untitled.html")).toBeUndefined()
 
@@ -502,7 +534,7 @@ describe("trace-consolidation candidate gate", () => {
            * been read, and the refusals are about the candidates rather than about the transcripts —
            * re-reading them would produce the same refusals at the same cost.
            */
-          expect(yield* consolidationWatermarks(fixture)).toHaveLength(1)
+          expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toHaveLength(1)
         }),
       { seed: DEDUP_CORPUS, consolidator }
     )
@@ -534,7 +566,7 @@ describe("trace-consolidation candidate gate", () => {
           const outcome = yield* traceConsolidation(envFor(fixture))
           expect(outcome.counts.written).toBe(2)
 
-          const added = yield* addedPaths(fixture, base)
+          const added = yield* addedMemories(fixture, base)
           expect(added).toHaveLength(2)
           expect(new Set(added).size).toBe(2)
           // Both files really hold content, so "two paths" is not two names for one write.
@@ -588,7 +620,7 @@ describe("trace-consolidation candidate gate", () => {
           const first = yield* traceConsolidation(envFor(fixture))
           expect(first.counts.written).toBe(1)
 
-          const [victimPath] = yield* addedPaths(fixture, beforeFirst)
+          const [victimPath] = yield* addedMemories(fixture, beforeFirst)
           expect(victimPath).toBeDefined()
 
           // The stem is at the length ceiling, which is what makes the `-2` below a budget case.
@@ -617,7 +649,7 @@ describe("trace-consolidation candidate gate", () => {
            */
           expect(yield* atHead(fixture, victimPath ?? "")).toBe(corrected)
 
-          const added = yield* addedPaths(fixture, beforeSecond)
+          const added = yield* addedMemories(fixture, beforeSecond)
           expect(added).toHaveLength(1)
           expect(added[0]).not.toBe(victimPath)
           // The `-2` ordinal, in the same directory: the placement rule did not move, the stem did.
@@ -633,14 +665,20 @@ describe("trace-consolidation candidate gate", () => {
           expect(yield* atHead(fixture, added[0] ?? "")).toContain("The pattern, distilled again.")
 
           /**
-           * And the second commit is an ADDITION, not a modification. `diffNameStatus` is what
-           * `addedPaths` reads, so a phase that had overwritten the victim would show `modified`
-           * here and add nothing — which is exactly how quietly the original bug shipped.
+           * And the second commit adds a MEMORY rather than modifying one. `diffNameStatus` is what
+           * `addedPaths` reads, so a phase that overwrote the victim would show `modified` here and add
+           * nothing — which is exactly how quietly that class of bug ships.
+           *
+           * The ledger is the one legitimate modification: both nights share a run id, so the second
+           * night appends its session to the file the first night committed. That is the ledger doing
+           * its job, and it is why the filter names it rather than allowing modifications generally.
            */
           const changes = yield* fixture.deps.git
             .diffNameStatus(beforeSecond, "HEAD")
             .pipe(Effect.orDie)
-          expect(changes.filter((change) => change.kind === "modified")).toEqual([])
+          expect(
+            changes.filter((change) => change.kind === "modified" && !isLedgerPath(change.path))
+          ).toEqual([])
         }),
       { seed: DEDUP_CORPUS, consolidator }
     )
@@ -698,7 +736,7 @@ describe("trace-consolidation conflict assist", () => {
           expect(outcome.counts.conflicts).toBe(1)
           expect(outcome.commitSha).not.toBeNull()
 
-          const added = yield* addedPaths(fixture, base)
+          const added = yield* addedMemories(fixture, base)
           expect(added).toHaveLength(1)
 
           // The count reaches the `Memhtml-Counts` trailer, which is what `sleep review` reads.
@@ -785,9 +823,7 @@ describe("trace-consolidation session selection", () => {
 
           expect(outcome.counts.batch).toBe(1)
           // The at-floor session is the one that went, and the tiny one is still unconsolidated.
-          expect((yield* consolidationWatermarks(fixture)).map((row) => row.session_id)).toEqual([
-            "session-at-floor"
-          ])
+          expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual(["session-at-floor"])
         }),
       { seed: DEDUP_CORPUS, consolidator }
     )
@@ -824,9 +860,7 @@ describe("trace-consolidation session selection", () => {
           const outcome = yield* traceConsolidation(envFor(fixture))
 
           expect(outcome.counts.batch).toBe(1)
-          expect((yield* consolidationWatermarks(fixture)).map((row) => row.session_id)).toEqual([
-            "session-settled"
-          ])
+          expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual(["session-settled"])
         }),
       { seed: DEDUP_CORPUS, consolidator }
     )
@@ -868,9 +902,7 @@ describe("trace-consolidation session selection", () => {
           const outcome = yield* traceConsolidation(envFor(fixture))
 
           expect(outcome.counts.batch).toBe(1)
-          expect((yield* consolidationWatermarks(fixture)).map((row) => row.session_id)).toEqual([
-            "session-just-settled"
-          ])
+          expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual(["session-just-settled"])
         }),
       { seed: DEDUP_CORPUS, consolidator }
     )
@@ -905,7 +937,7 @@ describe("trace-consolidation session selection", () => {
           const outcome = yield* traceConsolidation(envFor(fixture))
 
           expect(outcome.counts.batch).toBe(TRACE_SESSIONS_PER_RUN)
-          const taken = (yield* consolidationWatermarks(fixture)).map((row) => row.session_id)
+          const taken = yield* pendingSessions(fixture, `sleep/${DATE}`)
           expect(taken).toHaveLength(TRACE_SESSIONS_PER_RUN)
           /**
            * The NEWEST ten by mtime, which — given the inverted seeding — are ids 00..09. A phase
@@ -1077,7 +1109,7 @@ describe("trace-consolidation session selection", () => {
 
           /** The batch was three; the watermark is the two that arrived. */
           expect(outcome.counts.batch).toBe(3)
-          expect((yield* consolidationWatermarks(fixture)).map((row) => row.session_id)).toEqual([
+          expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual([
             "session-reached-a",
             "session-reached-b"
           ])
@@ -1096,10 +1128,12 @@ describe("trace-consolidation session selection", () => {
           expect(outcome.commitSha).not.toBeNull()
 
           /**
-           * The consequence that matters: a SECOND run still sees the vanished session, because the
-           * anti-join never lost it. Asserted as a transition rather than by reading the table, since
-           * "is it still selectable" is the question the watermark actually answers.
+           * The consequence that matters: with the two reached sessions' marks APPLIED, a second run
+           * still sees the vanished one, because the anti-join never took it. Asserted as a transition
+           * rather than by reading the table, since "is it still selectable" is the question the
+           * watermark actually answers — and the apply is what puts the other two beyond it.
            */
+          expect(yield* applyLedger(fixture, `sleep/${DATE}`)).toBe(2)
           const second = yield* traceConsolidation(envFor(fixture))
           expect(second.counts.batch).toBe(1)
           expect(consolidator.calls[1]?.transcripts.map((entry) => entry.sessionId)).toEqual([
@@ -1133,7 +1167,8 @@ describe("trace-consolidation session selection", () => {
           expect(outcome.counts.batch).toBe(2)
           expect(outcome.counts.consolidated).toBe(0)
           expect(outcome.counts.unreachable).toBe(2)
-          expect(yield* consolidationWatermarks(fixture)).toEqual([])
+          expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual([])
+          expect(yield* appliedWatermarks(fixture)).toEqual([])
         }),
       { seed: DEDUP_CORPUS, consolidator }
     )
@@ -1171,9 +1206,7 @@ describe("trace-consolidation session selection", () => {
           const outcome = yield* traceConsolidation(envFor(fixture))
 
           expect(outcome.counts.batch).toBe(1)
-          expect((yield* consolidationWatermarks(fixture)).map((row) => row.session_id)).toEqual([
-            "session-asked"
-          ])
+          expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual(["session-asked"])
           // And the over-report is NOT counted as unreachable either: one asked, one analyzed.
           expect(outcome.counts.unreachable).toBe(0)
         }),
@@ -1181,11 +1214,16 @@ describe("trace-consolidation session selection", () => {
     )
   })
 
-  it("does not re-consolidate a session already watermarked", async () => {
+  it("does not re-consolidate a session whose mark a merge APPLIED", async () => {
     /**
-     * The anti-join, as a TRANSITION rather than a seeded row: the same session is consolidated, then
-     * the phase is run again and does not see it. A pre-seeded watermark would pass even against a
-     * query that read the wrong column.
+     * The anti-join, as a TRANSITION rather than a seeded row: the session is consolidated, the mark is
+     * applied the way a merge applies it, and the phase is then run again and does not see it. A
+     * pre-seeded watermark would pass even against a query that read the wrong column.
+     *
+     * **The apply is the load-bearing step and it belongs in the middle.** A mark is a proposal on the
+     * branch until `merge` lands it, so the run BEFORE the apply is still re-selectable — which is the
+     * abort property, asserted here as the second pass really re-reading the session and then, after the
+     * apply, really declining to.
      */
     const consolidator = scriptedConsolidator(() =>
       candidates([candidate({ claim: "A candidate from the first pass over this session." })])
@@ -1199,6 +1237,11 @@ describe("trace-consolidation session selection", () => {
           const first = yield* traceConsolidation(envFor(fixture))
           expect(first.counts.batch).toBe(1)
           expect(first.counts.written).toBe(1)
+          expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual(["session-a"])
+
+          // Unmerged, so the session is still on offer: the mark has changed no plane yet.
+          expect(yield* appliedWatermarks(fixture)).toEqual([])
+          expect(yield* applyLedger(fixture, `sleep/${DATE}`)).toBe(1)
 
           const afterFirst = yield* headSha(fixture)
           const second = yield* traceConsolidation(envFor(fixture))
@@ -1233,11 +1276,13 @@ describe("trace-consolidation session selection", () => {
         Effect.gen(function* () {
           yield* seedTrace(fixture, { sessionId: "session-a" })
           yield* traceConsolidation(envFor(fixture))
-          expect(yield* consolidationWatermarks(fixture)).toHaveLength(1)
+          // The merge's own apply, so the row under test is the row a landed run really writes.
+          expect(yield* applyLedger(fixture, `sleep/${DATE}`)).toBe(1)
+          expect(yield* appliedWatermarks(fixture)).toHaveLength(1)
 
           yield* fixture.reindex()
 
-          expect(yield* consolidationWatermarks(fixture)).toEqual([
+          expect(yield* appliedWatermarks(fixture)).toEqual([
             { session_id: "session-a", run_id: `sleep/${DATE}` }
           ])
         }),
@@ -1378,7 +1423,8 @@ describe("trace-consolidation dry run", () => {
           expect(consolidator.calls).toEqual([])
           // No commit, no watermark, and a clean tree: nothing for a later phase to absorb.
           expect(yield* headSha(fixture)).toBe(before)
-          expect(yield* consolidationWatermarks(fixture)).toEqual([])
+          expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual([])
+          expect(yield* appliedWatermarks(fixture)).toEqual([])
           expect(yield* fixture.deps.store.dirtyPaths().pipe(Effect.orDie)).toEqual([])
         }),
       { seed: DEDUP_CORPUS, consolidator }
@@ -1618,14 +1664,20 @@ describe("trace-consolidation mints tasks from commitments", () => {
         Effect.gen(function* () {
           yield* oneSession(fixture)
           const before = yield* headSha(fixture)
+          const commitsBefore = yield* commitCount(fixture)
           const outcome = yield* traceConsolidation(envFor(fixture))
 
           expect(outcome.counts.commitments).toBe(1)
           expect(outcome.counts.commitmentTasks).toBe(0)
           expect(outcome.counts.commitmentsSkipped).toBe(1)
           expect(yield* detectedIn(fixture)).toEqual([])
-          // No commit at all: nothing was staged, so the commitment pass costs no empty diff.
-          expect(yield* headSha(fixture)).toBe(before)
+          /**
+           * The commitment pass staged nothing, so it costs no empty diff: the ONE commit the night made
+           * is the ledger's, and it added no corpus file. `addedMemories` is what says the commitment
+           * pass wrote nothing; the single commit is the run recording that it read the batch.
+           */
+          expect(yield* addedMemories(fixture, before)).toEqual([])
+          expect(yield* commitCount(fixture)).toBe(commitsBefore + 1)
         }),
       { seed: DEDUP_CORPUS, consolidator }
     )
@@ -1680,10 +1732,11 @@ describe("trace-consolidation mints tasks from commitments", () => {
      * tasks with identical bodies are two real work items, so the structural dedup index cannot answer
      * "have I already minted this". The second night's re-read has to land on the same path.
      *
-     * The WATERMARK is what makes this a real second night rather than the same night run twice. The
-     * first run marks `session-a` consolidated, so it leaves the batch permanently; `session-b` is
-     * seeded for the second night and carries the SAME commitment restated, which is the shape a
-     * standing intention actually takes.
+     * The WATERMARK is what makes this a real second night rather than the same night run twice: the
+     * first run's mark, once APPLIED, takes `session-a` out of the batch permanently, and `session-b` is
+     * seeded for the second night carrying the SAME commitment restated, which is the shape a standing
+     * intention actually takes. The apply stands in for the first night's merge, without which the
+     * second night would re-read `session-a` and the two nights would not be two.
      *
      * (Mutation: keying on the RUN id, or on the session id, mints a second task and fails this.)
      */
@@ -1706,6 +1759,7 @@ describe("trace-consolidation mints tasks from commitments", () => {
           const first = yield* traceConsolidation(envFor(fixture))
           expect(first.counts.commitmentTasks).toBe(1)
           const [path] = yield* detectedAt(fixture, "HEAD")
+          expect(yield* applyLedger(fixture, `sleep/${DATE}`)).toBe(1)
 
           yield* oneSession(fixture, "session-b")
           const second = yield* traceConsolidation(envFor(fixture, false, { date: LATER }))
@@ -1914,9 +1968,13 @@ describe("trace-consolidation closes a detected task when a session shows it don
    * it.
    *
    * The session differs across nights on purpose, and it is what makes every case here a real
-   * cross-night closure rather than the same night run twice: `markSessionsConsolidated` takes
-   * `session-a` out of the batch after night one, so night two reads `session-b`. A design keyed on the
-   * session could not match the two, which is exactly the property `commitmentKey` argues for.
+   * cross-night closure rather than the same night run twice: night one's `session-consolidated` mark,
+   * once applied, takes `session-a` out of the batch, so night two reads `session-b`. A design keyed on
+   * the session could not match the two, which is exactly the property `commitmentKey` argues for.
+   *
+   * {@link applyLedger} between the nights is night one's merge. Without it night one is a branch nobody
+   * landed, `session-a` is still on offer, and the two nights collapse into one — which is the abort
+   * property working, and it is why these cases state the apply rather than assuming it.
    */
   const SHIPPED = "wire the capture path before the next release"
   const shipped = (sessionId: string, resolved: boolean, confidence = 0.9) =>
@@ -1956,6 +2014,7 @@ describe("trace-consolidation closes a detected task when a session shows it don
           expect(first.counts.commitmentTasks).toBe(1)
           const [opened] = yield* detectedAt(fixture, "HEAD")
           expect(opened).toBeDefined()
+          expect(yield* applyLedger(fixture, `sleep/${DATE}`)).toBe(1)
 
           yield* oneSession(fixture, "session-b")
           const second = yield* traceConsolidation(envFor(fixture, false, { date: LATER }))
@@ -2096,7 +2155,14 @@ describe("trace-consolidation closes a detected task when a session shows it don
           expect(outcome.counts.completionsUnmatched).toBe(1)
           expect(outcome.counts.completionsApplied).toBe(0)
           expect(outcome.counts.commitmentTasks).toBe(0)
-          expect(yield* headSha(fixture)).toBe(before)
+          // Nothing in the corpus moved: the unmatched completion is a count and not a write.
+          expect(yield* addedMemories(fixture, before)).toEqual([])
+          expect(
+            yield* fixture.deps.git.diffNameStatus(before, "HEAD").pipe(
+              Effect.map((changes) => changes.filter((change) => !isLedgerPath(change.path))),
+              Effect.orDie
+            )
+          ).toEqual([])
         }),
       { seed: DEDUP_CORPUS, consolidator }
     )

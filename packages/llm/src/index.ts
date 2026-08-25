@@ -3,7 +3,9 @@ export {
   invokeJson,
   LlmConfig,
   type LlmConfigShape,
-  modelFailure
+  makeBedrockClient,
+  modelFailure,
+  REQUEST_HANDLER_OPTIONS
 } from "./client.js"
 export * from "./constants.js"
 export {

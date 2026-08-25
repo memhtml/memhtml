@@ -1,8 +1,8 @@
 node_modules/
 dist/
 dist-check/
-# The assembled single package. A pure function of the twelve `dist/` trees plus
-# scripts/assemble-package.mjs, rebuilt by `mise run package:assemble`.
+# The assembled single package: tsdown bundles the workspace and
+# scripts/package-manifest.mjs writes its manifest, rebuilt by `mise run package:assemble`.
 dist-package/
 coverage/
 .turbo/

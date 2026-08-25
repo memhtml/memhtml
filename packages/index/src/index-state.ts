@@ -2,10 +2,10 @@
  * The `index_state` watermark row. One schema, one query, one decode.
  *
  * The table holds exactly one row by CHECK, and three call sites across two packages read it: the
- * indexer's model guard, `memhtml index status`, and `memhtml doctor`. Each used to restate the
- * column list as a bare type parameter over a hand-written SELECT, so one table's shape was
- * transcribed three times in three different subsets, with nothing that would fail if they
- * disagreed with each other or with `0007_watermark.sql`.
+ * indexer's model guard, `memhtml index status`, and `memhtml doctor`. They share this ONE query and
+ * this one decode, so the table's shape is transcribed once. A per-caller SELECT with a bare type
+ * parameter states the shape again in a different subset each time, and nothing fails when those
+ * subsets disagree with each other or with `0007_watermark.sql`.
  *
  * The row is decoded rather than cast, which is what makes the single declaration authoritative.
  * `onExcessProperty: "error"` means a column added to the SELECT without being added here is a
@@ -23,10 +23,13 @@ import { INDEX_STATE_ID } from "./schema-const.js"
 /**
  * Every column of `index_state`, in the order `0007_watermark.sql` declares them.
  *
- * `head_sha` is the only nullable one. It is NULL until the first rebuild records a commit, which is
- * how "never indexed" is distinguished from "indexed at some commit". `embed_model` carries
- * `<model-id>@<dim>` (`@memhtml/llm`'s `EMBED_WATERMARK`), and `embed_dim` restates the dimension as
- * a number so a mismatch is comparable without parsing the watermark string.
+ * `head_sha` is the only nullable one, and the three states it distinguishes are not two. NO ROW is a
+ * store nothing has indexed. A row carrying NULL is a rebuild in flight or one that died: the rebuild
+ * clears the column in the same transaction as its truncate and writes the commit back only after
+ * every projection landed, so `update` reads NULL as `IndexStale` rather than as a watermark to diff
+ * from. A commit is an index that describes that commit. `embed_model` carries `<model-id>@<dim>`
+ * (`@memhtml/llm`'s `EMBED_WATERMARK`), and `embed_dim` restates the dimension as a number so a
+ * mismatch is comparable without parsing the watermark string.
  *
  * `embed_dim` is `Int` rather than `Number` because the two guards divide the work. The column's own
  * `CHECK (embed_dim > 0)` owns the RANGE, and SQLite enforces it, so no row can carry a

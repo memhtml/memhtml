@@ -70,7 +70,12 @@ export const renderOsvConfig = (vex) => {
       .trim()
 
     for (const id of ids) {
-      lines.push("[[IgnoredVulns]]", `id = ${JSON.stringify(id)}`, `reason = ${literal(reason)}`, "")
+      lines.push(
+        "[[IgnoredVulns]]",
+        `id = ${JSON.stringify(id)}`,
+        `reason = ${literal(reason)}`,
+        ""
+      )
     }
   }
 

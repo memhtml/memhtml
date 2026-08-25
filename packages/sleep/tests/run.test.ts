@@ -16,6 +16,7 @@ import {
   value,
   violation
 } from "../src/testing.js"
+import { pendingSessions } from "./abort-fixture.js"
 import {
   consolidationWatermarks,
   DEDUP_CORPUS,
@@ -498,9 +499,9 @@ describe("trace-consolidation inside a full run", () => {
             expect(row.gist, row.path).not.toBe("")
           }
 
-          // Both sessions carry a watermark, so a second night does not re-read them.
-          const watermarks = yield* consolidationWatermarks(fixture)
-          expect(watermarks.map((row) => row.session_id)).toEqual(["session-a", "session-b"])
+          // Both sessions carry a PENDING watermark, which `merge` applies once the branch lands. The
+          // state plane stays untouched until then, so discarding this branch leaves them re-selectable.
+          expect(yield* pendingSessions(fixture, report.runId)).toEqual(["session-a", "session-b"])
         }),
       { seed: DEDUP_CORPUS, model: inertModel(), consolidator }
     )

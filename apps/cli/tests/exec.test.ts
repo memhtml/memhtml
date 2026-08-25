@@ -683,6 +683,21 @@ describe("the envelope contract", () => {
     expect(envelope.code).toBe("ERR_INVALID_MEMORY")
   }, 120_000)
 
+  it("reads the script from stdin under `--file -`, the flag spelling of the dash", async () => {
+    /**
+     * The docs promise three stdin spellings — a bare call, a positional `-`, and `--file -` — and
+     * the third used to fall through to `readScript("-")`, which tried to open a FILE named `-`
+     * and answered `ERR_PATH_NOT_FOUND` to a caller doing what the flag's own description says.
+     */
+    const result = await run(["exec", "--repo", fixture.root, "--file", "-"], undefined, () =>
+      Promise.resolve(`console.log(JSON.stringify({ viaStdin: true }))`)
+    )
+    expect(result.exitCode).toBe(0)
+    const envelope = JSON.parse(result.stdout) as { type: string; data: { stdout: string } }
+    expect(envelope.type).toBe("exec.report")
+    expect(JSON.parse(envelope.data.stdout)).toEqual({ viaStdin: true })
+  }, 120_000)
+
   /**
    * `--dense` must not strip anything load-bearing.
    *
@@ -720,7 +735,9 @@ describe("usage errors are exit 2, decided before anything is mounted", () => {
    * The XOR over the script doors.
    *
    * `validate`'s return becomes exit 2 while a failure raised in `dispatch` becomes exit 1, so this
-   * check cannot live in the arm — `.erpaval/solutions/api-patterns/xor-params-and-mcp-error-masking.md`.
+   * check cannot live in the arm: a mutually-exclusive-parameter refusal raised after dispatch is
+   * masked as a runtime error
+   * (`.erpaval/solutions/api-patterns/xor-params-and-mcp-error-masking.md`).
    *
    * (Mutation: moving the `execFlags` call out of `validate` and into the exec arm as a raised failure
    * turns every case here into exit 1. Observed: `expected 1 to be 2`.)
@@ -731,10 +748,15 @@ describe("usage errors are exit 2, decided before anything is mounted", () => {
     expect((JSON.parse(result.stdout) as { code: string }).code).toBe("ERR_INVALID_FLAG")
   })
 
-  it("refuses a `-` stdin marker beside a door", async () => {
-    const result = await run(["exec", "-", "--script", "console.log(1)"])
-    expect(result.exitCode).toBe(2)
-    expect((JSON.parse(result.stdout) as { code: string }).code).toBe("ERR_INVALID_FLAG")
+  it("refuses a `-` stdin marker beside a door, in both spellings", async () => {
+    for (const argv of [
+      ["exec", "-", "--script", "console.log(1)"],
+      ["exec", "--file", "-", "--script", "console.log(1)"]
+    ]) {
+      const result = await run(argv)
+      expect(result.exitCode, argv.join(" ")).toBe(2)
+      expect((JSON.parse(result.stdout) as { code: string }).code).toBe("ERR_INVALID_FLAG")
+    }
   })
 
   /**

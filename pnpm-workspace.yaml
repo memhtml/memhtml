@@ -27,11 +27,14 @@ trustPolicyIgnoreAfter: 525948
 # wrote down themselves.
 blockExoticSubdeps: true
 
-# The `packageManager` field in package.json is the ONE pnpm pin, and mise installs from
-# it (mise.toml's `idiomatic_version_file_enable_tools`). pnpm 11 defaults `pmOnFail` to
-# `download`, which means a pnpm whose own version disagrees with that field silently
-# downloads and execs the other one — so the version that ran is not the version anything
-# declared. `ignore` closes that path rather than trusting the two to agree.
+# pnpm is pinned TWICE: package.json's `packageManager` field and mise.toml's
+# `[tools]` pnpm entry, which is where the binary actually comes from. The two pins are
+# independent, so `mise run tools:verify` (scripts/verify-pnpm-pin.mjs) is what makes
+# their agreement a checked invariant rather than a convention. pnpm 11 defaults
+# `pmOnFail` to `download`, which means a pnpm whose own version disagrees with
+# `packageManager` silently downloads and execs the other one — so the version that ran
+# is not the version anything declared. `ignore` closes that path rather than trusting
+# the two to agree.
 pmOnFail: ignore
 
 # nanoid reaches this repo only through the test toolchain (vitest → vite → postcss), so

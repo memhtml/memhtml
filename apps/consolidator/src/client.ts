@@ -1,30 +1,34 @@
 import { spawn } from "node:child_process"
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
-import { Context, Effect, Layer, Result, Schema } from "effect"
+import { Effect, Result, Schema } from "effect"
 
 import { eveBinPath, resolveAgentAppRoot } from "./agent-build.js"
+import { appendStderrTail, stderrMessageTail } from "./child-stderr.js"
 import {
   CONSOLIDATION_OUTPUT_JSON_SCHEMA,
   ConsolidationPayload,
   type ConsolidationResult,
   ConsolidatorContractViolation,
   ConsolidatorCredentialsMissing,
+  type ConsolidatorError,
   ConsolidatorRunFailed,
   ConsolidatorUnavailable,
   credentialsMissingReason,
-  decodedTranscriptStrings,
   hasConsolidatorCredentials,
   MAX_TRANSCRIPTS_PER_RUN,
-  quoteAppearsIn,
   type TranscriptRef,
+  transcriptQuoteChecker,
+  underCitedWatermarkWarning,
   ungroundedCommitmentReason,
-  ungroundedEvidenceReason
+  ungroundedEvidenceReason,
+  watermarkableSessionIds
 } from "./contract.js"
 import {
+  CORPUS_SNAPSHOT_TMPDIR_PREFIX,
   encodeSandboxMounts,
   mountReadOnlyRoots,
   type ReadOnlyRoot,
@@ -36,10 +40,10 @@ import { mintRunSecret, RUN_SECRET_ENV, signRunToken } from "./run-auth.js"
  * The typed client the sleep phase is handed, and the process plumbing behind it.
  *
  * Shaped like `packages/llm`'s `ModelClientShape` (`packages/llm/src/model-client.ts:52-64`): an
- * interface, a `Context.Service` tag, a `make*` that takes its collaborators, and a live layer
- * that builds the real one. The reason to match it is that the sleep cycle already injects every
- * dependency as a shape, and `packages/sleep/src/env.ts:18-23` records that a runner which built its
- * own services could not be pointed at a fixture, so this has to be substitutable the same way.
+ * interface and a `make*` that takes its collaborators. The reason to match it is that the sleep
+ * cycle already injects every dependency as a shape, and `packages/sleep/src/env.ts:18-23` records
+ * that a runner which built its own services could not be pointed at a fixture, so this has to be
+ * substitutable the same way. No service tag and no layer: see the note above the type re-exports.
  *
  * eve is filesystem-first and has no in-process entry point: reaching the agent means `eve build`
  * then `eve start`, then HTTP. So "call the consolidator" is really check what resolves, write one
@@ -106,35 +110,37 @@ export interface ConsolidatorShape {
   }) => Effect.Effect<ConsolidationResult, ConsolidatorError>
 }
 
-export const Consolidator = Context.Service<ConsolidatorShape>("memhtml/Consolidator")
-
+/**
+ * The error union is the CONTRACT's (`ConsolidatorError` in `contract.ts`), re-exported rather than
+ * restated: a second local union drifted from the contract's once, and the two would type-check
+ * independently while disagreeing about what a caller must handle.
+ *
+ * There is deliberately no `Context` tag and no `Layer` here. The one production consumer is the
+ * CLI's composition root, which calls `makeConsolidator({ env, traceRoot })` directly
+ * (`apps/cli/src/api-layer.ts`) because the options come from its own config resolution — a layer
+ * would need those options threaded to it anyway, and a tag with a single, directly-constructed
+ * implementation is indirection with no substitution point. The sleep phase's substitution seam is
+ * `ConsolidatorPort` in `packages/sleep`, not a service tag here.
+ */
 export type { ConsolidationResult, ConsolidatorError, TranscriptRef } from "./contract.js"
-
-type ConsolidatorError =
-  | ConsolidatorCredentialsMissing
-  | ConsolidatorUnavailable
-  | ConsolidatorRunFailed
-  | ConsolidatorContractViolation
 
 /**
  * The bind address, as a constant with no override.
  *
- * **No longer the only thing keeping the agent off the network, and still required.**
- * `agent/channels/eve.ts` used to authenticate every request anonymously via `none()`, which made
- * this constant the whole boundary; it now requires a bearer JWT signed with the per-run secret this
- * module mints (`run-auth.ts`). The two controls answer different questions. Loopback bounds who
- * can OPEN a connection to the server, the token bounds who is SERVED, and narrowing the first is
- * what makes the second the only credential that has to be guessed rather than one of two.
+ * One of TWO controls, and both are required. `agent/channels/eve.ts` requires a bearer JWT signed
+ * with the per-run secret this module mints (`run-auth.ts`); loopback bounds who can OPEN a
+ * connection to the server, the token bounds who is SERVED, and narrowing the first is what makes
+ * the second the only credential that has to be guessed rather than one of two.
  *
- * The option is still absent rather than defaulted, for the reason it always was: `eve start` binds
- * ALL INTERFACES by default (node_modules/eve/docs/reference/cli.md, `eve start --host`), and a `host`
- * option here would be a way for a caller to widen a boundary the caller does not own. Defense in
- * depth is only depth while both layers are in place.
+ * There is no `host` option, because `eve start` binds ALL INTERFACES by default
+ * (node_modules/eve/docs/reference/cli.md, `eve start --host`), and an option here would be a way
+ * for a caller to widen a boundary the caller does not own. Defense in depth is only depth while
+ * both layers are in place.
  *
- * It also fixes where this process CONNECTS, because the port is now chosen HERE rather than read
- * back from the child: {@link reserveLoopbackPort} binds it, so the origin is a string this process
- * composed from two constants and one integer it obtained from the kernel. Nothing on the child's
- * stdout can name the address a transcript is posted to, or the address a run token is presented to.
+ * It also fixes where this process CONNECTS: {@link reserveLoopbackPort} chooses the port, so the
+ * origin is a string this process composed from two constants and one integer it obtained from the
+ * kernel. Nothing on the child's stdout can name the address a transcript is posted to, or the
+ * address a run token is presented to.
  */
 const LOOPBACK_HOST = "127.0.0.1"
 
@@ -170,6 +176,30 @@ const MANIFEST_PATH = `${MANIFEST_MOUNT}/MANIFEST.json`
 
 /** Its host filename inside the per-run temp directory. */
 const MANIFEST_FILENAME = "MANIFEST.json"
+
+/**
+ * The per-run temp directory prefix, named once so the orphan sweep and the mkdtemp cannot drift.
+ * See {@link sweepOrphanedTempDirectories} for why a sweep exists at all.
+ */
+const RUN_TMPDIR_PREFIX = "memhtml-consolidator-run-"
+
+/**
+ * Every temp prefix this app creates under `tmpdir()`, which is exactly the set the sweep reclaims.
+ *
+ * Two entries and two owners: this module's manifest directory, and `mount.ts`'s pinned corpus
+ * snapshot, which `memhtml exec` creates on a path that never reaches `consolidate`. One list of
+ * LITERAL prefixes rather than a pattern like `memhtml-*`, because `tmpdir()` is shared with every
+ * process on the box and a sweep that removed directories this app did not create would be deleting
+ * someone else's state on an age gate it does not own.
+ */
+const SWEPT_TMPDIR_PREFIXES = [RUN_TMPDIR_PREFIX, CORPUS_SNAPSHOT_TMPDIR_PREFIX] as const
+
+/**
+ * How stale an orphaned temp directory must be before the sweep removes it. A directory younger than
+ * this may belong to a LIVE concurrent run — a turn is allowed {@link TURN_TIMEOUT_MS} (10 minutes),
+ * so a day is two orders of magnitude of margin, and a leaked manifest costs nothing while it waits.
+ */
+const ORPHAN_RUN_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000
 
 /**
  * How long to wait for a spawned server to answer its health route before giving up.
@@ -233,36 +263,23 @@ export interface ConsolidatorOptions {
    * EXTRA host directories to mount read-only, beside the two {@link ConsolidatorShape.consolidate}
    * derives from its own input. Empty by default.
    *
-   * The transcript root and the corpus snapshot are NOT passed here and cannot be: they are per-call
-   * values, and this object is built once per client. That was the blocker recorded here before, since
-   * `baseSha` is on `PhaseEnv` (`packages/sleep/src/env.ts:80`) while the repository path is
-   * `RootsShape.memhtmlRoot` in the CLI's composition root. It is resolved by widening the CALL's
-   * input rather than this one, which also settles the lifetime question: a pinned snapshot is
-   * released by the scope that pinned it, and a per-call parameter is inside such a scope while a
-   * constructor argument is not.
+   * Only a root that is CONSTANT for the client's whole life belongs here, because this object is
+   * built once per client, outside any run's scope. A per-run resource — anything that must be
+   * released when the run ends, such as a pinned git worktree — cannot be a constructor argument
+   * without leaking for the process's life; it would have to arrive by widening the CALL's input.
+   * No such mount is passed today: the "is this already written down" question the agent has is
+   * answered by the manifest's `linkedMemories` field, which names the memories the corpus already
+   * links to each session with one caller-side join and no mount at all.
    *
-   * What remains for this option is a root that is constant for a client's whole life. The cached
-   * plugin and skill directories are the case that motivated it and are still not wired, for a reason
-   * worth recording rather than retrying blind: `~/.claude/skills/*` holds symlinks to directories
-   * outside the trace root, `allowSymlinks` defaults to FALSE, and a real path traversing one reads as
-   * ABSENT inside the sandbox (measured, `mount.ts`). So mounting that tree would present a partial
-   * view that looks complete, and the fix is upstream of this option.
+   * The cached plugin and skill directories are the constant-root case that motivated this option
+   * and are still not wired, for a reason worth recording rather than retrying blind:
+   * `~/.claude/skills/*` holds symlinks to directories outside the trace root, `allowSymlinks`
+   * defaults to FALSE, and a real path traversing one reads as ABSENT inside the sandbox (measured,
+   * `mount.ts`). So mounting that tree would present a partial view that looks complete, and the fix
+   * is upstream of this option.
    *
    * Validated by `encodeSandboxMounts` at spawn, since eve does not invoke its `filesystem` factory
    * until the first live session.
-   *
-   * ── The corpus snapshot is the case this option does NOT serve, and it is not wired ─────────────
-   *
-   * A read-only mount of the memory corpus at the run's `baseSha` would let the agent check whether a
-   * finding is already written down, and `pinCorpusSnapshot` in `mount.ts` exists to materialize one.
-   * It is deliberately not passed here and not passed at all yet, for a reason that is about lifetime
-   * rather than plumbing: a snapshot is a git worktree that must be RELEASED, so it belongs to a
-   * per-run scope, and this object is built once per client, outside any run. Mounting one here would
-   * pin a worktree for the process's life and never release it.
-   *
-   * The manifest's `linkedMemories` field covers the important half of the same question without a
-   * mount, by naming the memories the corpus already links to each session. That is the specific
-   * "already written down" check the bar turns on.
    */
   readonly mounts?: ReadonlyArray<ReadOnlyRoot>
 }
@@ -293,7 +310,10 @@ export interface ReachableTranscript {
  * filesystem, and a `..` in the remainder is resolved BEFORE the routing decision, so a guest path
  * with enough `..` segments climbs out of the mount and lands on the BASE filesystem. Measured
  * 2026-08-09 against just-bash 3.2.0, with a base holding `/workspace/secret.txt`:
- * `/mnt/traces/../../workspace/secret.txt` READ IT, returning the base's content.
+ * `/mnt/traces/../../workspace/secret.txt` READ IT, returning the base's content. (What
+ * `tests/mount.test.ts` re-proves against the installed just-bash is the overlay side — reads
+ * confined to the root, symlinks refused; the escape above is the composed-path hazard THIS function
+ * exists to close, pinned by `tests/seeding.test.ts`'s guestPathFor cases.)
  *
  * In production the base is eve's own `defaultFilesystem`, which owns `/workspace`, `/tmp`, and the
  * home directory (`agent/sandbox/sandbox.ts`). So without this check a `filePath` outside the trace
@@ -352,9 +372,10 @@ export const guestPathFor = (input: {
  *   caller with a stale `MEMHTML_TRACE_ROOT`, or a `traces` row indexed from a different root, hands over
  *   paths that all exist on the host and none of which exist in the sandbox.
  * - The path traverses a SYMLINK. `allowSymlinks` defaults to false, so `readFile` fails while
- *   `exists` returns TRUE (both measured 2026-08-09 against just-bash 3.2.0), which is why this
- *   probes with `stat`, whose failure tracks the read, and not with `exists`, whose success does not.
- *   `~/.claude/skills/*` really does hold such symlinks.
+ *   `exists` returns TRUE (the read failure is re-proven against the installed just-bash by
+ *   `tests/mount.test.ts`; the `exists` asymmetry was measured 2026-08-09 on just-bash 3.2.0), which
+ *   is why this probes with `stat`, whose failure tracks the read, and not with `exists`, whose
+ *   success does not. `~/.claude/skills/*` really does hold such symlinks.
  * - The file was rotated or pruned between `memhtml trace index` and the sleep run. This one a host
  *   `stat` would also catch; it is the least interesting of the four.
  *
@@ -437,24 +458,21 @@ const partitionReachable = (input: {
 /**
  * The manifest: the ONE thing the client puts in the model's context about the batch.
  *
- * ## It replaced a 750k-token peer message, and that is the security half rather than the cost half
+ * ## Transcript bytes must never ride `clientContext`, because it is a model message
  *
- * The seeding path this supersedes called `sessions.create({ clientContext: { files } })` with every
- * transcript's bytes inline. **`clientContext` is not a filesystem write.** eve renders it as ONE
- * user-role model context message: `parseClientContextField` folds an object to
+ * **`clientContext` is not a filesystem write.** eve renders it as ONE user-role model context
+ * message: `parseClientContextField` folds an object to
  * `[toClientContextMessage(JSON.stringify(obj))]` and `toClientContextMessage` returns the literal
  * `"Client context:\n" + text` (node_modules/eve/dist/src/public/channels/eve.js, read from the
  * shipped dist rather than from docs; the client's own type says the same at
  * node_modules/eve/dist/src/client/types.d.ts:83-88, "Objects are JSON-serialized into one user-role
- * model context message").
+ * model context message"). Transcript bytes sent that way would arrive as a PEER MESSAGE beside the
+ * operator's instructions, and the data-not-instructions boundary `agent/instructions.md`
+ * establishes would not hold for that turn. `tests/seeding.test.ts` asserts no `clientContext` is
+ * composed anywhere in this file.
  *
- * So a whole batch of transcripts arrived as a PEER MESSAGE beside the operator's instructions, and
- * the `/workspace`-is-data boundary that `agent/instructions.md` establishes did not hold for that
- * turn. The turn even asked the model to write the files out itself, which meant the transcripts
- * reached the sandbox only if the model echoed them back, and a batch could half-succeed silently.
- *
- * Transcripts now reach the sandbox through the FILESYSTEM, read-only, and never enter the context as
- * a message. What the model gets is this manifest: paths it can open, plus the per-session metadata a
+ * Transcripts reach the sandbox through the FILESYSTEM, read-only, and never enter the context as a
+ * message. What the model gets is this manifest: paths it can open, plus the per-session metadata a
  * transcript's own bytes do not state.
  *
  * ## Every value here is metadata, and none of it is transcript content
@@ -569,43 +587,50 @@ const reserveLoopbackPort = (): Effect.Effect<number, ConsolidatorUnavailable> =
   })
 
 /**
- * Whether a server is answering `/eve/v1/health` at an origin.
+ * Whether a server is answering `/eve/v1/health` at an origin AS EVE, body checked, not just 200.
  *
- * A REAL check rather than a sleep: the health route is a framework route eve registers on
- * both GET and HEAD (`registerApplicationRoutes` in
- * node_modules/eve/dist/src/internal/nitro/host/configure-nitro-routes.js) and its handler returns
- * `{ ok: true, status: "ready", workflowId }` only once the workflow entry resolves, so a 200 means
- * the app is serving rather than that a socket exists. eve's own start path gates on the same route.
+ * The status line alone does not identify the listener. The port is released between the probe bind
+ * and eve's bind (see {@link reserveLoopbackPort}), so the process answering this route can be a
+ * port-race winner, and any generic HTTP server returns 200 to a GET of an unknown-but-handled path.
+ * A readiness check that stopped at `response.ok` would then hand the WHOLE RUN to a server that is
+ * not eve: the turn would be posted to it, whatever it answered would be decoded, and an answer that
+ * happened to decode — `{"candidates": [], "commitments": []}` is four tokens of valid JSON — would
+ * sail through every grounding gate vacuously, because empty lists cite nothing. So the body is
+ * parsed and matched against the documented shape, and a listener that answers 200 with anything
+ * else is not healthy.
  *
- * Three outcomes were probed (2026-08-09) and all three are folded to `false` rather than
- * distinguished, because the caller's next move is the same for each: poll again until the budget
- * runs out or the child exits.
+ * The shape is eve's own: the handler returns `{ ok: true, status: "ready", workflowId }`
+ * (node_modules/eve/dist/src/internal/nitro/routes/health.js, read from the shipped 0.38.3 dist),
+ * with `workflowId` a non-empty string naming the workflow entry. All three fields are checked;
+ * `workflowId`'s VALUE is not pinned, because it embeds eve's package name and entry name, which are
+ * eve's to change between versions.
  *
- * - nothing listening yet: `TypeError: fetch failed` with `cause.code === "ECONNREFUSED"`, which is
- *   what the entire 1.7s startup window looks like.
- * - a listener that accepts and does not answer: `TimeoutError` at
- *   {@link READY_PROBE_TIMEOUT_MS}. This is the shape a LOST PORT RACE takes if the winner is a bare
- *   TCP listener, and it is why the probe has its own timeout instead of inheriting the outer one.
- * - a foreign HTTP server on the port: a non-2xx, so `r.ok` is false. Nothing is posted to a server
- *   that does not answer this route as eve.
+ * Every failure — connection refused, probe timeout, non-2xx, unparseable body, wrong shape — folds
+ * to `false` rather than being distinguished, because the caller's next move is the same for each:
+ * poll again until the budget runs out or the child exits. The probe has its own
+ * {@link READY_PROBE_TIMEOUT_MS} so a listener that accepts and never answers (the shape a lost port
+ * race takes when the winner is a bare TCP listener) is retried rather than waited on.
  *
  * **No token is presented, and none is needed: this route is NOT behind the channel's auth.** eve
  * registers it as a framework route directly on the nitro app (`registerApplicationRoutes` in
  * node_modules/eve/dist/src/internal/nitro/host/configure-nitro-routes.js) while `eveChannel`'s
- * `routeAuth` walk guards only the `/eve/v1` session routes, and its handler returns
- * `{ ok: true, status: "ready" }` unconditionally
- * (node_modules/eve/dist/src/internal/nitro/routes/health.js). Confirmed live 2026-08-09: a server
- * spawned with NO run secret, one that 401s every session request, answers this route 200.
+ * `routeAuth` walk guards only the `/eve/v1` session routes. So a pass here says the app is serving
+ * eve; it says nothing about whether this process can be served. The turn is where the credential is
+ * proven.
  *
- * So a 200 here says the app is serving; it says nothing about whether this process can be served,
- * and a readiness poll must not be read as an auth check. The turn is where the credential is proven.
+ * Exported for `tests/health-check.test.ts`, which drives it against live loopback servers answering
+ * this route with the right and the wrong bodies.
  */
-const healthy = async (origin: string): Promise<boolean> => {
+export const healthy = async (origin: string): Promise<boolean> => {
   try {
     const response = await fetch(new URL("/eve/v1/health", origin), {
       signal: AbortSignal.timeout(READY_PROBE_TIMEOUT_MS)
     })
-    return response.ok
+    if (!response.ok) return false
+    const body: unknown = await response.json()
+    if (typeof body !== "object" || body === null) return false
+    const { ok, status, workflowId } = body as Record<string, unknown>
+    return ok === true && status === "ready" && typeof workflowId === "string" && workflowId !== ""
   } catch {
     return false
   }
@@ -617,6 +642,26 @@ interface StartAttemptFailure {
   /** True when the child died without ever answering, which a different port may survive. */
   readonly retryable: boolean
 }
+
+/**
+ * The reason an `eve start` child that EXITED gets, carrying the end of what it wrote to stderr.
+ *
+ * The tail, through {@link stderrMessageTail}, and that is the whole point of the function existing as
+ * a value rather than as a template literal inside the callback: the retained buffer is itself a
+ * bounded tail (`child-stderr.ts`), so a message rendered from its HEAD shows the bytes from just
+ * before the cap first bit — for any child that logged past 64 KiB, a window ending well before the
+ * line that killed it. A dying process says why last.
+ *
+ * Exported for `tests/agent-build.test.ts`, which drives it over a stderr buffer larger than the cap;
+ * the only production caller is the exit handler below.
+ */
+export const startFailureReason = (input: {
+  readonly url: string
+  readonly code: number | null
+  readonly stderr: string
+}): string =>
+  `eve start exited with code ${String(input.code)} before answering ${input.url}/eve/v1/health. ` +
+  `Run \`pnpm --filter @memhtml/consolidator build:agent\` first. ${stderrMessageTail(input.stderr)}`
 
 /**
  * Spawn `eve start` on one caller-chosen loopback port and wait until it answers its health route.
@@ -716,10 +761,12 @@ const startServerOnPort = (input: {
     }
 
     // Read but never parsed for an address: it goes into the failure message so an operator sees why
-    // a start died, and nothing on it reaches the origin.
+    // a start died, and nothing on it reaches the origin. Only a bounded TAIL is retained, and the
+    // message renders the end of that tail — both rules are `child-stderr.ts`'s, shared with the
+    // `eve build` child in `agent-build.ts`.
     child.stderr.setEncoding("utf8")
     child.stderr.on("data", (chunk: string) => {
-      stderr += chunk
+      stderr = appendStderrTail(stderr, chunk)
     })
     child.stdout.resume()
 
@@ -727,12 +774,7 @@ const startServerOnPort = (input: {
       fail({ reason: `could not spawn eve start: ${String(cause)}`, retryable: false })
     })
     child.once("exit", (code) => {
-      fail({
-        reason:
-          `eve start exited with code ${String(code)} before answering ${url}/eve/v1/health. ` +
-          `Run \`pnpm --filter @memhtml/consolidator build:agent\` first. ${stderr.slice(0, 400)}`,
-        retryable: true
-      })
+      fail({ reason: startFailureReason({ url, code, stderr }), retryable: true })
     })
 
     const deadline = Date.now() + START_TIMEOUT_MS
@@ -874,10 +916,11 @@ const turnMessage = (reachable: ReadonlyArray<ReachableTranscript>): string =>
  *
  * ## Cost, and why it is bounded in practice
  *
- * Each CITED session's file is read once and cached for the walk, so the bill is bytes-per-cited-
- * session rather than per-quote, and a run that cited nothing reads nothing at all. Decoding is
- * lazier still: the raw arm decides most quotes, so a session whose every quote is verbatim in the
- * bytes never pays for a JSON parse of its lines.
+ * Each CITED session's file is read once and its normalization paid once — `transcriptQuoteChecker`
+ * (`contract.ts`) flattens the raw bytes at construction and each quote after the first costs one
+ * `includes`, rather than re-flattening megabytes of transcript per quote. A run that cited nothing
+ * reads nothing at all. Decoding is lazier still: the raw arm decides most quotes, so a session
+ * whose every quote is verbatim in the bytes never pays for a JSON parse of its lines.
  *
  * ## An unreadable file is a REFUSAL, not a skip
  *
@@ -921,17 +964,12 @@ export const fabricatedQuoteReason = (
     const hostPathOf = new Map(
       reachable.map(({ entry }) => [entry.sessionId, entry.filePath] as const)
     )
-    /** `null` marks a file that could not be read, so one failure is not retried per quote. */
-    const loaded = new Map<string, string | null>()
-    /** The DECODED strings of a session, computed on first need and cached for the walk. */
-    const decoded = new Map<string, ReadonlyArray<string>>()
-    const decodedFor = (sessionId: string, transcript: string): ReadonlyArray<string> => {
-      const held = decoded.get(sessionId)
-      if (held !== undefined) return held
-      const strings = decodedTranscriptStrings(transcript)
-      decoded.set(sessionId, strings)
-      return strings
-    }
+    /**
+     * One checker per cited session, `null` marking a file that could not be read so one failure is
+     * not retried per quote. The checker holds the flattened transcript, so a session cited many
+     * times pays its normalization once rather than once per quote (`transcriptQuoteChecker`).
+     */
+    const loaded = new Map<string, ReturnType<typeof transcriptQuoteChecker> | null>()
 
     for (const { label, offset, evidence } of cited) {
       if (!loaded.has(evidence.sessionId)) {
@@ -948,21 +986,16 @@ export const fabricatedQuoteReason = (
           try: () => readFile(hostPath, "utf8"),
           catch: () => null
         }).pipe(Effect.orElseSucceed(() => null))
-        loaded.set(evidence.sessionId, text)
+        loaded.set(evidence.sessionId, text === null ? null : transcriptQuoteChecker(text))
       }
-      const transcript = loaded.get(evidence.sessionId) ?? null
-      if (transcript === null) {
+      const checker = loaded.get(evidence.sessionId) ?? null
+      if (checker === null) {
         return (
           `${label} ${String(offset)} quotes session ${evidence.sessionId}, whose transcript could ` +
           "not be re-read to verify the quote"
         )
       }
-      if (
-        !quoteAppearsIn(evidence.quote, transcript) &&
-        !decodedFor(evidence.sessionId, transcript).some((text) =>
-          quoteAppearsIn(evidence.quote, text)
-        )
-      ) {
+      if (!checker.contains(evidence.quote)) {
         /**
          * The reason carries a TRUNCATED quote and never the transcript. A failure message is logged
          * and reported by the sleep cycle, so it must not become a channel for session content; 80
@@ -980,17 +1013,13 @@ export const fabricatedQuoteReason = (
 /**
  * Run ONE turn against a live server and decode its structured answer.
  *
- * ## One turn, because there is nothing left to seed
+ * ## Exactly one turn, and one `sessions.create`
  *
- * This used to be two: a `clientContext` "seeding" turn that asked the model to `write_file` every
- * transcript, then the analysis turn. Both the extra turn and its cost are gone, since the transcripts
- * are on a read-only mount before the server is spawned, so the first model call this run makes is
- * the one that reads them. {@link manifestFor} records what `clientContext` actually did and why it
- * was not a filesystem write.
- *
- * The turn is created with the `outputSchema` on `sessions.create` rather than on a follow-up `send`,
- * which is available because the schema is now known at session-creation time. There is no seeding
- * turn that has to come first.
+ * The transcripts are on a read-only mount before the server is spawned, so the first model call
+ * this run makes is the one that reads them — nothing has to be seeded into the session first.
+ * The `outputSchema` therefore goes on `sessions.create` itself rather than on a follow-up `send`:
+ * the schema is known at session-creation time, and a second turn would be a second model call for
+ * work the mount already did. `tests/seeding.test.ts` pins the single-turn shape.
  *
  * Failure mapping covers both shapes, which is necessary because they arrive by different
  * mechanisms: a `session.failed` comes back as `MessageResult.status: "failed"` WITHOUT throwing,
@@ -1142,22 +1171,44 @@ const runTurn = (
     }
 
     /**
-     * `analyzedSessionIds` is the REACHABLE set and nothing else: never the batch that was asked
-     * about, and never the ids the candidates happened to cite.
+     * `analyzedSessionIds` is what the caller watermarks from, and it is gated on EVIDENCE of
+     * reading, not on reachability alone: reachability is this process's pre-spawn measurement, so
+     * it proves the files could be read, never that anything read them. The rule is
+     * `watermarkableSessionIds` in `contract.ts` — an answer with at least one finding has passed the
+     * quote-containment gate above, which proves real files were read, and then the FULL reachable
+     * set advances (a barren-but-read sibling session must not be re-read at full model cost every
+     * night). An answer with NO candidates and NO commitments carries no receipt at all, so it
+     * advances nothing; the batch stays unwatermarked and the next night asks again. That is defense
+     * in depth behind {@link healthy}: even if a non-eve listener's answer decoded, empty lists could
+     * not watermark sessions nothing read.
      *
-     * Not the batch, because that is the watermark bug in one line: a session whose transcript never
-     * resolved would be recorded as consolidated and never read again.
-     *
-     * Not the cited ids either, and that direction matters as much. A barren-but-read session cites
-     * nothing, and the pre-existing watermark semantics, "the agent read it and correctly found
-     * nothing above the bar", is exactly the case that must still advance, or every quiet transcript
-     * is re-read at full Opus cost every night forever.
+     * Never the batch that was asked about, in either arm: a session whose transcript never resolved
+     * would be recorded as consolidated and never read again.
      */
+    const analyzedSessionIds = watermarkableSessionIds(decoded.success, readableIds)
+    if (analyzedSessionIds.length === 0) {
+      yield* Effect.logWarning(
+        `consolidation returned no candidates and no commitments; NOT watermarking any of the ` +
+          `${String(readableIds.length)} reachable session(s) — the batch will be re-selected`
+      )
+    }
+
+    /**
+     * The BREADTH of that receipt, logged when it is narrow. The gate above proves the run read some
+     * file; it does not say how many, and the advance covers every readable session either way. A turn
+     * that opened one transcript of thirty-two therefore advances all thirty-two and each of the
+     * unread thirty-one is lost to the anti-join — the shape a truncated turn takes, and until the
+     * payload carries a per-session read receipt this line is the only place it is visible.
+     * `underCitedWatermarkWarning` (`contract.ts`) holds the threshold and the wording.
+     */
+    const underCited = underCitedWatermarkWarning(decoded.success, readableIds)
+    if (underCited !== null) yield* Effect.logWarning(underCited)
+
     return {
       candidates: decoded.success.candidates,
       commitments: decoded.success.commitments,
       llmCalls,
-      analyzedSessionIds: readableIds
+      analyzedSessionIds
     }
   })
 
@@ -1247,6 +1298,13 @@ export const makeConsolidator = (options: ConsolidatorOptions): ConsolidatorShap
           eveBin
         })
 
+        /**
+         * Clean up after PAST processes before leaving anything of this one's: a run directory can
+         * only outlive its finalizer when the process died uncleanly (SIGKILL, OOM), and in-process
+         * cleanup cannot reach it then. Best-effort and age-gated; see the sweep's own note.
+         */
+        yield* sweepOrphanedTempDirectories()
+
         return yield* Effect.acquireUseRelease(
           writeManifestDirectory({ reachable }),
           (manifestRoot) =>
@@ -1301,7 +1359,7 @@ const writeManifestDirectory = (input: {
 }): Effect.Effect<string, ConsolidatorUnavailable> =>
   Effect.tryPromise({
     try: async () => {
-      const directory = await mkdtemp(join(tmpdir(), "memhtml-consolidator-run-"))
+      const directory = await mkdtemp(join(tmpdir(), RUN_TMPDIR_PREFIX))
       await chmod(directory, 0o700)
       await writeFile(join(directory, MANIFEST_FILENAME), manifestFor(input), "utf8")
       return directory
@@ -1313,15 +1371,47 @@ const writeManifestDirectory = (input: {
   })
 
 /**
- * The live service, over this package's own `agent/` directory and the ambient environment.
+ * Remove temp directories a PAST process left behind, under every prefix this app creates.
+ * Best-effort; never fails a run.
  *
- * `traceRoot` is a parameter because there is no default this module may pick. `~/.claude` is the
- * CLI's documented fallback for `MEMHTML_TRACE_ROOT` (`apps/cli/src/config.ts`), and a second copy of it
- * here would be a second place the default lives, free to disagree with the one the trace INDEXER
- * scanned. That would mount a tree whose paths no `traces` row names.
+ * The per-run finalizer removes this run's directory on every path an Effect finalizer can run on —
+ * but a finalizer is in-process code, and SIGKILL or the OOM killer ends the process before any of it
+ * executes. What such a death leaks is one `memhtml-consolidator-run-*` directory holding a manifest
+ * (session ids and corpus paths — metadata, never transcript content, per {@link manifestFor}), and
+ * nothing in-process can ever clean it up, by definition. So the NEXT run sweeps: anything under one of
+ * this app's own prefixes whose mtime is older than {@link ORPHAN_RUN_DIR_MAX_AGE_MS} cannot belong to a
+ * live run (a turn is bounded at ten minutes) and is removed.
+ *
+ * The scope is {@link SWEPT_TMPDIR_PREFIXES}, which is wider than this module: `memhtml exec` pins a
+ * corpus snapshot under its own prefix (`mount.ts`) and dies the same way, and a sweep that covered
+ * only the prefix its own file writes would leave that one to accumulate — a leak whose only visible
+ * symptom is an empty directory nobody reads. A sweep of the wrong scope is the same defect as no
+ * sweep, one prefix at a time.
+ *
+ * The same death also leaks the spawned `eve start` itself — a live listener holding the run secret
+ * in its environment. That one a sweep cannot fix and eve's CLI offers no handle for: probed against
+ * the shipped 0.38.3 dist, `eve start` takes only `--host`/`--port`
+ * (node_modules/eve/dist/src/cli/run.js), installs SIGINT/SIGTERM handlers
+ * (node_modules/eve/dist/src/cli/shutdown.js), and neither watches its parent pid nor exits when
+ * stdin closes (stdin is spawned `ignore` here regardless). The residual is bounded by what the
+ * orphan can do: it serves only loopback, its secret authenticates only requests to itself, and the
+ * token this client signs expires minutes after minting — so an orphaned server is a leaked process
+ * and one readable `/proc/<pid>/environ`, not an open door. An operator hunting one should look for
+ * `node .../eve.js start` with `MEMHTML_CONSOLIDATOR_RUN_SECRET` in its environment.
  */
-export const consolidatorLive = (traceRoot: string): Layer.Layer<ConsolidatorShape> =>
-  Layer.effect(
-    Consolidator,
-    Effect.sync(() => makeConsolidator({ traceRoot }))
-  )
+const sweepOrphanedTempDirectories = (): Effect.Effect<void> =>
+  Effect.promise(async () => {
+    const root = tmpdir()
+    const cutoff = Date.now() - ORPHAN_RUN_DIR_MAX_AGE_MS
+    const names = await readdir(root).catch((): string[] => [])
+    for (const name of names) {
+      if (!SWEPT_TMPDIR_PREFIXES.some((prefix) => name.startsWith(prefix))) continue
+      const path = join(root, name)
+      const age = await stat(path).then(
+        (stats) => stats.mtimeMs,
+        () => null
+      )
+      if (age === null || age > cutoff) continue
+      await rm(path, { recursive: true, force: true }).catch(() => {})
+    }
+  })

@@ -464,64 +464,38 @@ export const makeCallsOf = (relativePath: string, namespace: string): ReadonlyAr
   return calls
 }
 
+/** One `const Identifier = factory({ … })` declaration: the spec object it hands the factory. */
+export interface FactoryCall {
+  readonly identifier: string
+  readonly object: ts.ObjectLiteralExpression
+}
+
 /**
- * The declarations built by a call on a tagged template, e.g.
- * ``const R = McpServer.resource`memhtml://file/${pathParam}`({ … })``.
+ * Every `const Identifier = factory({ … })` in a file, in source order.
  *
- * `template` is reassembled with each substitution replaced by the parameter NAME it declares, which
- * is the form `resources/templates` publishes.
+ * `apps/mcp` declares each resource by handing one spec object to a file-local factory, so a
+ * resource's whole published surface — its URI template, name, description, and MIME type — is that
+ * object's properties. The declaring identifier comes back with it because the registration list
+ * names the identifier while the spec carries the wire values, and reading the order a server
+ * publishes in needs the two joined.
+ *
+ * A generic call matches: TypeScript keeps `factory<E, R>({ … })`'s type arguments off the argument
+ * list, so a spelled-out inference reads the same as an inferred one.
  */
-export const taggedTemplateCallsOf = (
+export const factoryCallsOf = (
   relativePath: string,
-  namespace: string,
-  member: string
-): ReadonlyArray<{ readonly template: string; readonly object: ts.ObjectLiteralExpression }> => {
-  const found: Array<{ template: string; object: ts.ObjectLiteralExpression }> = []
-  for (const [, declared] of topLevel(relativePath)) {
+  factoryName: string
+): ReadonlyArray<FactoryCall> => {
+  const calls: Array<FactoryCall> = []
+  for (const [identifier, declared] of topLevel(relativePath)) {
     const call = declared.initializer
-    if (!ts.isCallExpression(call) || !ts.isTaggedTemplateExpression(call.expression)) continue
-    const tag = call.expression.tag
-    if (
-      !ts.isPropertyAccessExpression(tag) ||
-      !ts.isIdentifier(tag.expression) ||
-      tag.expression.text !== namespace ||
-      tag.name.text !== member
-    )
-      continue
+    if (!ts.isCallExpression(call) || !ts.isIdentifier(call.expression)) continue
+    if (call.expression.text !== factoryName) continue
     const [first] = call.arguments
     if (!first || !ts.isObjectLiteralExpression(first)) continue
-    found.push({
-      template: templateTextOf(relativePath, call.expression.template),
-      object: first
-    })
+    calls.push({ identifier, object: first })
   }
-  return found
-}
-
-const templateTextOf = (relativePath: string, template: ts.TemplateLiteral): string => {
-  if (ts.isNoSubstitutionTemplateLiteral(template)) return template.text
-  return (
-    template.head.text +
-    template.templateSpans
-      .map((span) => `{${paramNameOf(relativePath, span.expression)}}${span.literal.text}`)
-      .join("")
-  )
-}
-
-/** The name a `McpSchema.param("path", …)` declaration gives its hole. */
-const paramNameOf = (relativePath: string, expression: ts.Expression): string => {
-  if (!ts.isIdentifier(expression)) {
-    throw new Error(`${relativePath}: a template hole is not an identifier`)
-  }
-  const call = declaration(relativePath, expression.text).initializer
-  if (!ts.isCallExpression(call)) {
-    throw new Error(`${relativePath}: \`${expression.text}\` is not a parameter declaration`)
-  }
-  const [first] = call.arguments
-  if (!first || !ts.isStringLiteralLike(first)) {
-    throw new Error(`${relativePath}: \`${expression.text}\` names no parameter`)
-  }
-  return first.text
+  return calls
 }
 
 /**

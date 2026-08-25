@@ -8,6 +8,7 @@ import { assembleBatches, batchCall, keyMembers, resolveKeys } from "../batch.js
 import { commitPhase } from "../commit.js"
 import { archiveFile, hrefFor, link, meta, stampFile, writeFileBytes } from "../edits.js"
 import { emptyOutcome, modelFor, type PhaseBody, type PhaseEnv, takeLlmCall } from "../env.js"
+import { freePathIn } from "../free-path.js"
 import { COMPRESS_SYSTEM, CompressSynthesis, compressPrompt } from "../llm.js"
 import { runRetentionPass, type ScoredMemory } from "../retention.js"
 import {
@@ -214,6 +215,14 @@ export const compress: PhaseBody = (env) =>
     const modelKey = modelFor(env.deps, "compress")
     const passes: Array<PassTally> = []
     let lastCommit: string | null = null
+    /**
+     * Every canonical path this RUN has written, across batches and across deep passes. Two batches
+     * whose canonicals the model titled identically slug to one path, and the second write would
+     * silently replace the first — the disk probe alone cannot refuse it, because by then the first
+     * canonical is a real file a probe reads as merely "taken", and before the first write it is not
+     * even that. The set is the half of the taken-path question disk cannot answer; see `free-path.ts`.
+     */
+    const claimedCanonicals = new Set<string>()
 
     for (let passAt = 0; passAt < (env.deep === undefined ? 1 : DEEP_COMPRESS_MAX_PASSES); ) {
       passAt += 1
@@ -357,7 +366,30 @@ export const compress: PhaseBody = (env) =>
          */
         const directories = new Set(absorbed.map((path) => path.slice(0, path.lastIndexOf("/"))))
         const directory = directories.size === 1 ? [...directories][0] : INBOX_DIR
-        const canonicalPath = `${directory ?? INBOX_DIR}/${slugify(synthesis.title)}.html`
+        const canonicalDir = directory ?? INBOX_DIR
+        const barePath = `${canonicalDir}/${slugify(synthesis.title)}.html`
+
+        /**
+         * The canonical's path is PROBED before anything moves. A title's slug is not unique: a
+         * batch can slug onto a file outside the batch — a memory a human hand-corrected, another
+         * batch's canonical from this same run — and the unprobed write silently replaced it as a
+         * MODIFY no report line mentioned. The one collision that is NOT a collision is a bare path
+         * that is itself an ABSORBED member: folding into a member is this phase's own design (see
+         * the module header on `excludeSelfSupersede`), the member's content is carried forward, and
+         * the write is the fold. Every other occupant gets an ordinal via the shared probe.
+         */
+        const canonicalPath = absorbed.includes(barePath)
+          ? barePath
+          : yield* freePathIn(env, canonicalDir, slugify(synthesis.title), claimedCanonicals)
+        if (canonicalPath === undefined) {
+          tally.skipped += 1
+          tally.refused += 1
+          yield* Effect.logWarning(
+            `sleep.llm compress batch of ${batch.length} refused: every collision ordinal for ` +
+              `"${synthesis.title.trim()}" is taken, so no member was archived`
+          )
+          continue
+        }
         const members = excludeSelfSupersede(canonicalPath, absorbed)
         if (members.length === 0) {
           tally.skipped += 1
@@ -389,6 +421,13 @@ export const compress: PhaseBody = (env) =>
           continue
         }
 
+        /**
+         * Claimed at the WRITE, not at the allocation: a batch that bails between the two (every
+         * member already gone) never occupied the path, so a later batch may still take it. Once
+         * written the bytes are on disk and the probe would refuse it anyway; the set is the
+         * belt-and-braces half for any window where the write has been decided but not yet flushed.
+         */
+        claimedCanonicals.add(canonicalPath)
         yield* writeFileBytes(
           env,
           canonicalPath,

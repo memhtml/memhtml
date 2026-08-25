@@ -2,22 +2,22 @@
  * Prose → claim derivation: the single implementation both write doors use.
  *
  * The tools take `{title, body}` because that is what a model produces, and the format needs a
- * `<mark>` claim plus one `<p>` per paragraph. Turning the first into the second is a text heuristic,
- * and it lives here for two reasons. It was duplicated once, as `claimOf`/`restOf` in `apps/mcp` and
- * `claimFromProse`/`proseTail` in `apps/cli`, the same regex in two packages. A sentence-splitting
- * rule that drifts between the doors also makes `memhtml apply` and `memory_write_batch` derive different
- * claims from the same body, so the gist of a memory would depend on which door wrote it.
+ * `<mark>` claim plus one `<p>` per paragraph. Turning the first into the second is a text
+ * heuristic, and it must have exactly one copy: `apps/mcp` and `apps/cli` both import this module,
+ * because a sentence-splitting rule maintained per door lets `memhtml apply` and
+ * `memory_write_batch` derive different claims from the same body, making the gist of a memory
+ * depend on which door wrote it.
  *
  * It does not live in `@memhtml/html`, which owns markup and the format's own rules. "Where does a
  * sentence end" is a guess about natural-language prose, and the format states no such constraint. It
  * is not in `operations.ts` either, because that module holds the use cases both doors call, and this
  * is a text helper they apply before calling one.
  *
- * The derivation is defense in depth now; it was once the only guard. `@memhtml/html` constraint 1 now
- * rejects an empty `<mark>` outright, so a door that skipped this would be stopped by the store's
- * render gate instead of landing a file with an empty `files.gist`. What is left here is the
- * authoring convenience the doors exist to provide: a JSONL line and an MCP call carry no `claim`
- * field, so the door derives one instead of asking an author to restate the body's first sentence.
+ * The derivation is defense in depth: `@memhtml/html` constraint 1 rejects an empty `<mark>`
+ * outright, so a door that skipped this would be stopped by the store's render gate rather than
+ * landing a file with an empty `files.gist`. What this module carries is the authoring convenience
+ * the doors exist to provide: a JSONL line and an MCP call carry no `claim` field, so the door
+ * derives one instead of asking an author to restate the body's first sentence.
  */
 
 import { closesFence, fenceOpeningOf } from "@memhtml/html"
