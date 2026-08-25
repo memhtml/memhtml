@@ -10,10 +10,16 @@ import type {
   ReviewReport,
   SleepPhase
 } from "./contract.js"
-import { isSleepPhase, TRAILER_COUNTS, TRAILER_PHASE } from "./contract.js"
+import {
+  isSleepPhase,
+  parsePendingMarks,
+  pendingMarksPath,
+  TRAILER_COUNTS,
+  TRAILER_PHASE
+} from "./contract.js"
 import type { SleepDeps } from "./env.js"
 import { parseCounts } from "./run.js"
-import { latestRun, type RunRow, readPhases, readRun, recordRun } from "./sql.js"
+import { applyPendingMarks, latestRun, type RunRow, readPhases, readRun, recordRun } from "./sql.js"
 
 /**
  * `review` and `merge`: what a human reads before a sleep branch lands, and the two refusals that
@@ -220,6 +226,14 @@ export interface MergeOptions {
  * Fast-forward only, with no merge commit. A three-way merge here would produce a commit whose parents
  * are the sleep branch and a moved `main`, which is exactly the state the first refusal exists to
  * prevent, and the conflict resolution would be a human editing generated `sitemap.xml` by hand.
+ *
+ * **The merge is also where the run's PENDING STATE-PLANE MARKS are applied**, and that is what makes
+ * `git branch -D` a real abort. `.memhtml/state.db` is not rebuildable from the tree and
+ * `trace_consolidations` outlives an index rebuild, so a state-plane row written during a phase
+ * survives the discard of the branch that earned it — for the consolidation watermark that is content
+ * loss, because the watermark is an anti-join and the session it covers is never selected again. So a
+ * phase records each such write in `pendingMarksPath(runId)`, a committed artifact on the branch, and
+ * {@link applyMarks} performs them here, once the memories they describe are on `main`.
  */
 export const merge = (
   deps: SleepDeps,
@@ -288,6 +302,8 @@ export const merge = (
       .pipe(Effect.orElseSucceed(() => null))
       .pipe(Effect.map((sha) => sha ?? mainHead))
 
+    const marks = yield* applyMarks(deps, row)
+
     yield* recordRun(deps.db, {
       runId: row.run_id,
       branch: row.branch,
@@ -298,5 +314,54 @@ export const merge = (
       endedAt: row.ended_at ?? merged
     }).pipe(Effect.catchCause(() => Effect.void))
 
-    return { runId: row.run_id, branch: row.branch, merged: true, headSha: merged }
+    return {
+      runId: row.run_id,
+      branch: row.branch,
+      merged: true,
+      headSha: merged,
+      marksPending: marks.pending,
+      marksApplied: marks.applied
+    }
   }).pipe(Effect.withSpan("sleep.merge"))
+
+/**
+ * Apply the merged run's pending state-plane marks, from the ledger the branch carries.
+ *
+ * **The ledger is read as a BLOB at the branch tip, not off the working tree.** What earns the writes is
+ * what the branch committed, and a working-tree read would also honour an uncommitted file — including
+ * one a discarded run of the same date left behind, which is precisely the mark this design refuses to
+ * apply. A run that earned no marks has no such blob at all, and `git show` failing for that is the
+ * ordinary case rather than an error.
+ *
+ * **A failed apply does NOT fail the merge, and the direction is deliberate.** `main` has already moved
+ * and the memories are landed; every mark is a bookkeeping write whose absence costs a repeat rather
+ * than a loss — an unwatermarked session is re-read next cycle at the price of a model call and a
+ * duplicate candidate a reviewer declines, and an unpromoted counter leaves its pair re-eligible. So
+ * the shortfall is reported (`marksPending` above `marksApplied`) and logged, which is a state an
+ * operator can read, instead of a merge that reports failure over a `main` that moved.
+ */
+const applyMarks = (
+  deps: SleepDeps,
+  row: RunRow
+): Effect.Effect<{ readonly pending: number; readonly applied: number }, never, never> =>
+  Effect.gen(function* () {
+    const contents = yield* blobText(deps, `${row.branch}:${pendingMarksPath(row.run_id)}`)
+    if (contents === undefined) return { pending: 0, applied: 0 }
+
+    const ledger = parsePendingMarks(contents)
+    if (ledger.skipped > 0) {
+      yield* Effect.logWarning(
+        `sleep.merge could not read ${String(ledger.skipped)} pending mark(s) of ${row.run_id}; ` +
+          `their sessions stay unconsolidated and are re-read next cycle`
+      )
+    }
+    const pending = ledger.marks.length + ledger.skipped
+    const applied = yield* applyPendingMarks(deps.db, ledger.marks).pipe(
+      Effect.catch((error) =>
+        Effect.logError(
+          `sleep.merge could not apply ${row.run_id}'s pending marks: ${error.operation}`
+        ).pipe(Effect.as(0))
+      )
+    )
+    return { pending, applied }
+  })

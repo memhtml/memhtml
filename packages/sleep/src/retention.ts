@@ -19,12 +19,19 @@ import {
 } from "./sql.js"
 
 /**
- * The retention scoring pass, computed once and consumed by both `retention-triage` and `compress`.
+ * The retention scoring pass: ONE function, executed independently by each phase that needs a
+ * banded corpus — `arc-synthesis`, `retention-triage`, `compress`, and `reprieve` each call it once,
+ * and a deep compress run recomputes it per pass after re-indexing, deliberately.
  *
- * Shared because the two phases must agree by construction. They run adjacently and read the same
- * corpus, so a second computation would be a second chance to disagree. A memory that triage
- * banded COMPRESS while compress scored it KEEP would be neither compressed nor kept, silently
- * falling out of both phases' work.
+ * Shared as one FUNCTION because the consumers must agree by construction: they read the same
+ * corpus through the same scoring, so a memory that triage banded COMPRESS is the same memory
+ * compress sees banded COMPRESS. The index is refreshed once in preflight and the inputs below are
+ * all index reads, so the nightly executions are recomputations of one deterministic function over
+ * unchanged rows — they agree by determinism, not by sharing a value. NOT memoized per run, and the
+ * reason is where a cache could live: a module-level cache is the contaminating-state failure this
+ * repo has paid for repeatedly (see `PhaseEnv.detectionBudget`'s note), it would serve stale scores
+ * to the deep compress loop that re-indexes mid-phase, and the sanctioned per-run slot on `PhaseEnv`
+ * is the runner's surface to grow, not this module's.
  *
  * PageRank and communities run in TypeScript over the memory-class edge list, both deterministic:
  * PageRank sorts its nodes before iterating so the floating-point summation order is fixed, and label

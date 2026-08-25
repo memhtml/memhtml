@@ -6,6 +6,8 @@ import { Effect } from "effect"
 
 import { assembleBatches, batchCall, keyMembers, offeredKeyFor, resolveKeys } from "../batch.js"
 import { commitPhase } from "../commit.js"
+import type { PendingMark } from "../contract.js"
+import { pendingMarksPath, recordPendingMarks } from "../contract.js"
 import { applyHeadEdits, meta, readFileBytes, rewriteEntityMeta, writeFileBytes } from "../edits.js"
 import { emptyOutcome, modelFor, type PhaseBody, type PhaseEnv, type SleepError } from "../env.js"
 import { ENTITY_CLUSTER_SYSTEM, EntityClustering, entityClusterPrompt } from "../llm.js"
@@ -16,7 +18,6 @@ import {
   type EntityCount,
   entityClaims,
   entityVectors,
-  markEntityPromoted,
   pathsForEntity,
   peoplePaths
 } from "../sql.js"
@@ -58,6 +59,15 @@ import { budgetFor, closeVanishedDetections, detectionKey, mintDetectedTask } fr
  * written about in the same terms. What the deterministic code keeps is the part a threshold is good
  * at: the confidence floor, the corroboration count, and the choice of which name survives.
  *
+ * **The `promoted` flag is PROPOSED, not set.** The rewritten `memhtml-entity` metas live on the sleep
+ * branch and go away with `git branch -D`; `entity_corroboration.promoted` lives in
+ * `.memhtml/state.db`, which no discard can undo and no index rebuild can re-derive. Setting it here
+ * would make the abort partial in the direction that lies: the plane would assert that every file
+ * claiming the alias now names the canonical, across a corpus that carries none of it. So the phase
+ * records an `entity-promoted` `PendingMark` in the run's ledger and `merge` applies it once the
+ * rewrites are on `main`. The `detections` counter is bumped DURING the phase and deliberately so — it
+ * counts nights on which a model read the corpus and proposed the merge, which a discarded night did.
+ *
  * **Every band that does not merge is COUNTED, not merged.** The 0.75-0.85 character band the model did
  * not cluster, and a cluster below {@link ENTITY_CONFIDENCE_FLOOR}, both land in `reviewCandidates`. An
  * entity merge is a one-way door on stored identity: no later commit separates two subjects whose
@@ -96,6 +106,44 @@ export const ENTITY_PROMOTION_DETECTIONS = 2
  * (59 entities); this is the shard boundary for a corpus that outgrows that.
  */
 export const ENTITY_BATCH_SIZE = 500
+
+/**
+ * Names of one type fed to the QUADRATIC passes: the character pair pass and the centroid
+ * neighbor scan. The same explicit-cap posture as compress's {@link DEEP_ENTITY_HUB_LIMIT}, because
+ * both passes are O(n²) in the name count and nothing else in the phase bounds them —
+ * {@link ENTITY_BATCH_SIZE} shards only the PROMPT, after the pair space has already been walked.
+ * At this cap the pair space is 124,750: an LCS per pair for the character pass and a cosine per
+ * pair for the neighbor scan, which is the work one type costs tonight at most. An uncapped type of
+ * ten thousand names is 50 million LCS computations, each itself O(len²).
+ *
+ * The cap keeps the HIGHEST-SIGNAL names — most active claiming files first, ties lexicographic —
+ * because a name's file count is how much corpus a merge of it would touch. A dropped name still
+ * gets pass-one normalization and still applies a declared alias ({@link aliasPairs} reads the full
+ * count map); what it forgoes is fuzzy matching and a seat in the model call. Drops are counted in
+ * `namesCapped`, so a night that capped says so instead of reading as a night with nothing to merge.
+ * At or below the cap the behavior is byte-identical to an uncapped pass.
+ */
+export const ENTITY_QUADRATIC_NAME_LIMIT = 500
+
+/**
+ * The highest-signal `limit` names: most files first, ties broken lexicographically so the kept set
+ * is a function of the counts alone. PURE, so the cap and the tie-break are unit-assertable.
+ * A map at or under the limit is returned as-is, which is what makes the cap invisible below it.
+ */
+export const capQuadraticNames = (
+  counts: ReadonlyMap<string, number>,
+  limit: number
+): { readonly kept: ReadonlyMap<string, number>; readonly dropped: number } => {
+  if (counts.size <= limit) return { kept: counts, dropped: 0 }
+  const kept = new Map(
+    [...counts.entries()]
+      .sort(([leftName, leftFiles], [rightName, rightFiles]) =>
+        leftFiles !== rightFiles ? rightFiles - leftFiles : leftName < rightName ? -1 : 1
+      )
+      .slice(0, limit)
+  )
+  return { kept, dropped: counts.size - kept.size }
+}
 
 /** Memory titles shown per name. Enough to say what a name is about, few enough to stay cheap. */
 export const ENTITY_SAMPLE_TITLES = 3
@@ -599,6 +647,8 @@ export const entityResolution: PhaseBody = (env) =>
     let fuzzyMerges = 0
     let llmMerges = 0
     let aliasMerges = 0
+    /** Names the quadratic cap dropped, summed over types. See {@link ENTITY_QUADRATIC_NAME_LIMIT}. */
+    let namesCapped = 0
     let pendingCorroboration = 0
     let reviewCandidates = 0
     let llmCalls = 0
@@ -620,6 +670,14 @@ export const entityResolution: PhaseBody = (env) =>
      * candidate.
      */
     const deferred: Array<ReviewCandidate> = []
+    /**
+     * The state-plane writes this night has earned, recorded on the branch instead of performed.
+     *
+     * One entry per merge that reached {@link ENTITY_PROMOTION_DETECTIONS} tonight and whose counter row
+     * does not already say so. Accumulated rather than written per merge, so the ledger is read and
+     * rewritten once for the whole phase and its bytes are a function of the night's merges.
+     */
+    const marks: Array<PendingMark> = []
 
     /**
      * The model core is skipped entirely on a dry run and when no model is bound, and both leave the
@@ -679,8 +737,23 @@ export const entityResolution: PhaseBody = (env) =>
         if (canonical !== entity.entity_name) normalized += 1
       }
 
+      /**
+       * The quadratic passes see at most {@link ENTITY_QUADRATIC_NAME_LIMIT} names, highest file
+       * count first. `counts` itself stays whole: normalization already happened, the union-find and
+       * the alias oracle read the full map, so a dropped name loses only fuzzy matching and its seat
+       * in the model call.
+       */
+      const capped = capQuadraticNames(counts, ENTITY_QUADRATIC_NAME_LIMIT)
+      namesCapped += capped.dropped
+      if (capped.dropped > 0) {
+        yield* Effect.logWarning(
+          `sleep entity-resolution ${entityType}: ${capped.dropped} of ${counts.size} names ` +
+            `dropped from the pair passes at the ${ENTITY_QUADRATIC_NAME_LIMIT}-name cap`
+        )
+      }
+
       /** Pass two: the character pass. Its auto pairs merge; its band pairs await a later stage. */
-      const character = characterPairs([...counts.keys()])
+      const character = characterPairs([...capped.kept.keys()])
       const accepted: Array<NamePair> = [...character.auto]
 
       /**
@@ -708,8 +781,15 @@ export const entityResolution: PhaseBody = (env) =>
        */
       const clusteredPairs = new Set<string>()
       if (model !== undefined && centroidsByType !== undefined) {
-        const centroids = centroidsByType.get(entityType) ?? []
-        const members = centroids.filter((centroid) => counts.has(centroid.name))
+        /**
+         * The capped set bounds BOTH sides of the neighbor scan: `nearestCentroids` is a cosine per
+         * (member, candidate) pair, so a capped member list against uncapped candidates would still
+         * be O(members × type). A dropped name neither appears in a prompt nor in a neighbor line.
+         */
+        const centroids = (centroidsByType.get(entityType) ?? []).filter((centroid) =>
+          capped.kept.has(centroid.name)
+        )
+        const members = centroids
         const aliasesFor = (name: string): ReadonlyArray<string> =>
           entityType === PERSON_TYPE
             ? [
@@ -840,8 +920,25 @@ export const entityResolution: PhaseBody = (env) =>
               }
               accepted.push([merge.alias, merge.canonical])
               llmMerges += 1
+              /**
+               * The flag is PROPOSED, not set. `promoted = 1, confirmed = 1` asserts the corpus carries
+               * the rewrite, and the rewrite lives on this branch while the flag would live in
+               * `.memhtml/state.db`, which `git branch -D` cannot reach and an index rebuild cannot
+               * re-derive — so setting it here leaves a discarded run's plane claiming a corpus-wide
+               * rename that no file carries. The mark goes in the run's ledger and `merge` applies it.
+               *
+               * `row.promoted` is read straight off the bump's `RETURNING`, so it is the plane as MERGED
+               * nights left it: 1 only when an earlier landed night already recorded this merge, in which
+               * case there is nothing left to propose. A re-read inside one run reads 0 again and records
+               * the same mark, which {@link recordPendingMarks} collapses to the line already there —
+               * the ledger is itself this phase's same-run view, because both the read and the write go
+               * through the one file. (Edge typing keeps a separate in-memory overlay because ITS
+               * `promoted` read gates a write into the files and a `promoted` count; here the flag gates
+               * only the recording of the mark, so a second read costs a dedup and nothing else.)
+               */
               if (row.promoted === 0) {
-                yield* markEntityPromoted(env.deps.db, {
+                marks.push({
+                  kind: "entity-promoted",
                   entityType,
                   aliasName: merge.alias,
                   canonicalName: merge.canonical,
@@ -904,6 +1001,7 @@ export const entityResolution: PhaseBody = (env) =>
     const counts = {
       entities: entities.length,
       namesNormalized: normalized,
+      namesCapped,
       fuzzyMerges,
       llmMerges,
       aliasMerges,
@@ -963,6 +1061,18 @@ export const entityResolution: PhaseBody = (env) =>
       rewritten += 1
     }
 
+    /**
+     * The ledger, written once for the whole night and STAGED so this phase's own commit carries it.
+     *
+     * Staged rather than left on disk, because a plane write the branch does not commit is a write no
+     * merge can find: the rewrite would be in the files with the counter still reading pending, and
+     * every later night would re-propose a merge the corpus already made. Left unstaged it would also be
+     * swept into whichever later phase commits next, which is the cross-phase contamination per-phase
+     * commits exist to prevent.
+     */
+    const pendingRecorded = yield* recordPendingMarks(env.deps.git.root, env.runId, marks)
+    if (pendingRecorded) yield* env.deps.git.add([pendingMarksPath(env.runId)])
+
     const final = {
       ...counts,
       tasksMinted: tasks.minted,
@@ -973,10 +1083,19 @@ export const entityResolution: PhaseBody = (env) =>
     }
     /**
      * Nothing staged, no commit. `commitPhase` already no-ops on an empty index, so this only spares
-     * git the call — and it now has to consider the MINTS as well as the rewrites, because a night
-     * whose only output is deferred-decision tasks must still commit them.
+     * git the call — and it has to consider the MINTS and the LEDGER as well as the rewrites. A night
+     * whose only output is deferred-decision tasks must still commit them, and a night that earned a
+     * promotion whose alias files have since left the tree rewrites nothing while still owing its merge
+     * a mark: returning early there would leave the ledger staged and uncommitted, so the next phase to
+     * commit would carry it.
      */
-    if (rewritten === 0 && tasks.minted === 0 && tasks.refreshed === 0 && tasks.closed === 0) {
+    if (
+      !pendingRecorded &&
+      rewritten === 0 &&
+      tasks.minted === 0 &&
+      tasks.refreshed === 0 &&
+      tasks.closed === 0
+    ) {
       return { ...emptyOutcome(final), llmCalls }
     }
     const commitSha = yield* commitPhase(

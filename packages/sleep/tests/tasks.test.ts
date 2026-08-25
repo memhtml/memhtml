@@ -80,7 +80,9 @@ describe("retention-triage", () => {
      * `HALF_LIVES_DAYS.task` is `null`, so a task's recency signal is pinned at 1 whatever its age
      * — and with a uniform PageRank over an edgeless corpus contributing its own fixed share, the
      * floor a task can reach under `DEFAULT_WEIGHTS` sits ABOVE the 0.3 evict edge. `t-forgotten` is
-     * seven months stale, never accessed, importance 1, and one line long, and it still scores 0.57.
+     * seven months stale, never accessed, importance 1, and one line long, and its composite still
+     * lands clear of that edge — the assertion below reads the live score rather than a copied
+     * figure, so a weight or signal change moves the number without stranding this comment.
      * So there is no fixture that makes "the phase declined to evict an EVICT-banded task" a real
      * assertion: the domain's half-life entry already prevents the band.
      *

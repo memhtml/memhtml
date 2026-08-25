@@ -1168,3 +1168,45 @@ export const seedCorroboration = (
       [input.srcPath, input.dstPath, input.detections, "2026-08-01T00:00:00Z"]
     )
     .pipe(Effect.orDie)
+
+/**
+ * Write an entity-merge counter directly, so a promotion test starts one night short — or seeds a row a
+ * NEIGHBOUR run already landed.
+ *
+ * `updatedAt` defaults to a date before any test's run, which is what makes the phase's own
+ * `updated_at`-differs guard count tonight's proposal as a second night. `promoted`/`confirmed` are
+ * parameters because a seeded neighbour's row is the applied shape and the subject's is the pending one,
+ * and a helper that could only write one of the two would make "the table holds somebody else's landed
+ * merge" unstateable.
+ */
+export const seedEntityCorroboration = (
+  db: DatabaseShape,
+  input: {
+    readonly entityType: string
+    readonly aliasName: string
+    readonly canonicalName: string
+    readonly detections: number
+    readonly promoted?: number | undefined
+    readonly confirmed?: number | undefined
+    readonly updatedAt?: string | undefined
+  }
+): Effect.Effect<void, never> =>
+  db
+    .run(
+      `INSERT INTO ${STATE_SCHEMA}.entity_corroboration
+         (entity_type, alias_name, canonical_name, detections, confirmed, promoted, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(entity_type, alias_name, canonical_name) DO UPDATE SET
+         detections = excluded.detections, confirmed = excluded.confirmed,
+         promoted = excluded.promoted, updated_at = excluded.updated_at`,
+      [
+        input.entityType,
+        input.aliasName,
+        input.canonicalName,
+        input.detections,
+        input.confirmed ?? 0,
+        input.promoted ?? 0,
+        input.updatedAt ?? "2026-08-01T00:00:00Z"
+      ]
+    )
+    .pipe(Effect.orDie)

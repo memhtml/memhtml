@@ -217,6 +217,11 @@ export const packGroups = <T>(
  * instructions, so a procedural memory about a deploy step reads exactly like a directive to the
  * model, and un-delimited member text in a user turn would be an injection surface the system built
  * for itself.
+ *
+ * The boundary covers the whole family, not only each member's own tag: the keys are `m1`..`mN` and
+ * therefore predictable, so `wrapAsData` neutralizes every `</<label>_m<n>>` in a member's text. Left
+ * to one label, member 1 could close member 2's block and reopen it around a fabricated body, and the
+ * answer is keyed BY MEMBER — the verdicts on this surface drive merge and evict writes.
  */
 export const memberList = (
   keyed: ReadonlyArray<KeyedMember>,

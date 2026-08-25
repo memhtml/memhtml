@@ -156,6 +156,13 @@ describe("merge", () => {
 
           expect(merged.merged).toBe(true)
           expect(merged.refusal).toBeUndefined()
+          /**
+           * The state-plane ledger reports no SHORTFALL. `marksPending` is what the branch earned and
+           * `marksApplied` what the plane took, and a merge where they disagree is a plane write that did
+           * not land — the abort suite drives the numbers themselves; this holds the invariant on the
+           * ordinary path, including a night that earned nothing.
+           */
+          expect(merged.marksApplied).toBe(merged.marksPending)
           // main IS the branch tip now, and HEAD is on main — a fast-forward, not a merge commit.
           expect(yield* headOf(fixture, "main")).toBe(branchHead)
           expect((yield* fixture.raw("rev-parse", "--abbrev-ref", "HEAD")).trim()).toBe("main")

@@ -6,14 +6,19 @@ import type { DatabaseShape } from "@memhtml/index"
 import { STATE_SCHEMA } from "@memhtml/index"
 import { Effect } from "effect"
 
+import type { PendingMark } from "./contract.js"
+
 /**
  * Every read a phase makes against the index, in one module.
  *
  * Gathered here instead of inlined per phase because these statements are where the index's
  * reading semantics live: `archived = 0` for active, `derived = 0` for an authored contradiction,
  * and `edge_class = 'memory'` for anything that may enter the graph. A phase that wrote its own
- * `WHERE` would be a second reader of a producer's private rules. Every statement below is a read;
- * a phase's writes go through git, through `state.*`, or through the derived-edge insert.
+ * `WHERE` would be a second reader of a producer's private rules.
+ *
+ * A phase's own mutations go through git. The statements here that are not reads are the reporting
+ * rows, the derived-edge insert, and the MERGE-TIME appliers — the state-plane writes a phase records
+ * as a `PendingMark` and `merge` performs, so discarding a branch discards everything the run decided.
  */
 
 /**
@@ -649,7 +654,16 @@ export const bumpCorroboration = (
     [input.srcPath, input.rel, input.dstPath, input.at]
   )
 
-/** Mark a corroborated edge promoted, so a later run reads it as file-borne instead of pending. */
+/**
+ * Mark a corroborated edge promoted, so a later run reads it as file-borne instead of pending.
+ *
+ * **A MERGE-TIME write, and the single-mark form of {@link applyPendingMarks} rather than a second
+ * statement.** `promoted = 1` takes the pair out of edge typing's promotion path permanently, and
+ * `.memhtml/state.db` is the one plane a discarded branch cannot undo — so a phase that set it directly
+ * would make its own abort partial: the branch's `<link rel="memhtml-contradicts">` goes away with the
+ * branch and the flag saying the corpus already carries it does not, and no later night writes the edge
+ * again. The phase records an `edge-promoted` `PendingMark` instead and the merge performs it.
+ */
 export const markPromoted = (
   db: DatabaseShape,
   input: {
@@ -659,12 +673,86 @@ export const markPromoted = (
     readonly at: string
   }
 ): Effect.Effect<void, StorageFailure> =>
-  db.run(
-    `UPDATE ${STATE_SCHEMA}.edge_corroboration
-     SET promoted = 1, confirmed = 1, updated_at = ?
-     WHERE src_path = ? AND rel = ? AND dst_path = ?`,
-    [input.at, input.srcPath, input.rel, input.dstPath]
-  )
+  applyPendingMarks(db, [
+    {
+      kind: "edge-promoted",
+      srcPath: input.srcPath,
+      rel: input.rel,
+      dstPath: input.dstPath,
+      at: input.at
+    }
+  ]).pipe(Effect.asVoid)
+
+/**
+ * One mark as the statement that performs it. The merge-time half of the ledger, one arm per kind.
+ *
+ * A total switch over the union, so a `PendingMark` arm added without an applier is a compile error
+ * rather than a mark a merge silently drops. That direction matters more than the reverse: a kind with
+ * no producer is dead code a reader can find, while a kind with no applier is a write a run earns,
+ * commits, and never makes.
+ */
+const statementFor = (
+  mark: PendingMark
+): { readonly sql: string; readonly params: ReadonlyArray<string | number> } => {
+  switch (mark.kind) {
+    case "session-consolidated":
+      return {
+        /**
+         * `ON CONFLICT DO UPDATE` instead of `DO NOTHING`, so a reconsolidation after a lost
+         * `index.db` re-stamps the row with the run that actually re-read the session. A stale
+         * `run_id` pointing at a branch that no longer exists is worse than no row, because it
+         * reads as provenance.
+         */
+        sql: `INSERT INTO trace_consolidations (session_id, run_id, consolidated_at)
+              VALUES (?, ?, ?)
+              ON CONFLICT(session_id) DO UPDATE SET
+                run_id = excluded.run_id, consolidated_at = excluded.consolidated_at`,
+        params: [mark.sessionId, mark.runId, mark.at]
+      }
+    case "edge-promoted":
+      return {
+        sql: `UPDATE ${STATE_SCHEMA}.edge_corroboration
+              SET promoted = 1, confirmed = 1, updated_at = ?
+              WHERE src_path = ? AND rel = ? AND dst_path = ?`,
+        params: [mark.at, mark.srcPath, mark.rel, mark.dstPath]
+      }
+    case "entity-promoted":
+      /**
+       * All THREE key columns in the `WHERE`, and the pair unsorted. `(entity_type, alias_name,
+       * canonical_name)` is the row's primary key and the orientation distinguishes two rows the table
+       * keeps apart — the merge one way and the merge back — so a clause that dropped the type, or that
+       * sorted the names, would promote a row the run never counted.
+       */
+      return {
+        sql: `UPDATE ${STATE_SCHEMA}.entity_corroboration
+              SET promoted = 1, confirmed = 1, updated_at = ?
+              WHERE entity_type = ? AND alias_name = ? AND canonical_name = ?`,
+        params: [mark.at, mark.entityType, mark.aliasName, mark.canonicalName]
+      }
+  }
+}
+
+/**
+ * Apply a merged run's pending state-plane marks, as ONE transaction. Returns how many were applied.
+ *
+ * **One `writeAll` batch, so the plane takes all of them or none.** A merge that applied half a
+ * ledger would leave some sessions watermarked and the rest not, from one artifact, with nothing
+ * recording where it stopped.
+ *
+ * **Every statement is idempotent, because a merge retries.** The watermark is an upsert on
+ * `session_id`; both promotions are an `UPDATE … SET promoted = 1` that a second application re-states.
+ * So applying one ledger twice reaches the same plane as applying it once, which is what lets a
+ * caller re-run `merge` after a failure without reasoning about what the first attempt reached.
+ *
+ * Ledger ORDER is preserved, which is the order `contract.ts`'s `appendPendingMarks` records in: a
+ * promotion presumes the counter row its own phase created, and the reverse order would update a row
+ * that is not there.
+ */
+export const applyPendingMarks = (
+  db: DatabaseShape,
+  marks: ReadonlyArray<PendingMark>
+): Effect.Effect<number, StorageFailure> =>
+  db.writeAll(marks.map(statementFor)).pipe(Effect.as(marks.length))
 
 /** One corroboration counter on a machine-proposed entity merge. */
 export interface EntityCorroborationRow {
@@ -693,6 +781,15 @@ export interface EntityCorroborationRow {
  *
  * Names are the NORMALIZED forms, which is what makes one merge one counter: `Checkout API` and
  * `checkout api` would otherwise be two rows for one merge and neither would reach two detections.
+ *
+ * **The bump happens DURING the phase while {@link markEntityPromoted} waits for the merge, and the line
+ * between them is what each column MEANS.** `detections` counts nights on which a model, reading the
+ * corpus, proposed this merge — a discarded night did read the corpus and did propose it, so the sighting
+ * is true whether or not the branch landed, and deferring the bump would also cost the `RETURNING` race
+ * guard above (a projected count is a second reader of this statement's own `updated_at` rule).
+ * `promoted`/`confirmed` instead assert that the corpus CARRIES the rewrite, which a discarded branch
+ * makes false. So the counter is phase-time and the flag is merge-time. {@link bumpCorroboration} splits
+ * on the same line for the same reason.
  */
 export const bumpEntityCorroboration = (
   db: DatabaseShape,
@@ -715,7 +812,18 @@ export const bumpEntityCorroboration = (
     [input.entityType, input.aliasName, input.canonicalName, input.at]
   )
 
-/** Mark a corroborated merge applied, so a later night reads it as done instead of pending. */
+/**
+ * Mark a corroborated merge applied, so the plane records the rewrite the corpus carries.
+ *
+ * **A MERGE-TIME write, and the single-mark form of {@link applyPendingMarks} rather than a second
+ * statement**, the same shape {@link markPromoted} has and for a stronger version of its reason.
+ * `promoted = 1, confirmed = 1` asserts that every `memhtml-entity` meta naming the alias has been
+ * rewritten onto the canonical, and that rewrite spans every file claiming the name. It lives on the
+ * sleep branch; the flag lives in `.memhtml/state.db`, which no `git branch -D` can undo and no index
+ * rebuild can re-derive. A phase that set it directly would leave a discarded run's plane asserting a
+ * corpus-wide rename that no file carries. The phase records an `entity-promoted` `PendingMark` in the
+ * run's ledger instead and `merge` performs it once the rewrites are on `main`.
+ */
 export const markEntityPromoted = (
   db: DatabaseShape,
   input: {
@@ -725,12 +833,15 @@ export const markEntityPromoted = (
     readonly at: string
   }
 ): Effect.Effect<void, StorageFailure> =>
-  db.run(
-    `UPDATE ${STATE_SCHEMA}.entity_corroboration
-     SET promoted = 1, confirmed = 1, updated_at = ?
-     WHERE entity_type = ? AND alias_name = ? AND canonical_name = ?`,
-    [input.at, input.entityType, input.aliasName, input.canonicalName]
-  )
+  applyPendingMarks(db, [
+    {
+      kind: "entity-promoted",
+      entityType: input.entityType,
+      aliasName: input.aliasName,
+      canonicalName: input.canonicalName,
+      at: input.at
+    }
+  ]).pipe(Effect.asVoid)
 
 /** Sessions with no memory linked to them, which is what trace-consolidation counts in v1. */
 export const unlinkedSessionCount = (db: DatabaseShape): Effect.Effect<number, StorageFailure> =>
@@ -888,18 +999,17 @@ export const unconsolidatedSessions = (
 /**
  * Mark sessions consolidated, as ONE batch.
  *
- * Written AFTER the phase's commits land, and that ordering is the crash-safety property. A process
- * killed between the commits and this write reconsolidates those sessions next night, which costs a
- * model call and produces a duplicate candidate a reviewer declines. The reverse order would lose the
- * transcripts silently: watermarked as read, with no memory to show for it and nothing anywhere
- * saying so.
+ * **A MERGE-TIME write, reached through {@link applyPendingMarks} and not from a phase.** This table is
+ * the anti-join {@link unconsolidatedSessions} selects on, so a row here removes its session from every
+ * future batch — and it survives both `git branch -D` and `memhtml index rebuild` (migration 0010
+ * records why). A phase that wrote it directly would make the abort partial in the one direction that
+ * costs content: the branch's distilled memories go away with the branch and the row asserting the
+ * transcript was handled stays, so the transcript is never read again. The phase records a
+ * `PendingMark` on the branch instead, and this runs once the merge has landed the memories.
  *
- * `writeAll`, not a loop, for the reason `replaceMinedEdges` gives: one batch per phase, and no
- * round trip per row.
- *
- * `ON CONFLICT DO UPDATE` instead of `DO NOTHING`, so a reconsolidation after a lost `index.db`
- * re-stamps the row with the run that actually re-read the session. A stale `run_id` pointing at a
- * branch that no longer exists is worse than no row, because it reads as provenance.
+ * Expressed as {@link applyPendingMarks} over `session-consolidated` marks rather than as its own
+ * statement, so the upsert and its conflict clause exist once. One `writeAll` batch either way, for the
+ * reason `replaceMinedEdges` gives: one batch, and no round trip per row.
  *
  * An empty list needs no guard here: `writeAll` short-circuits a zero-length batch without touching
  * the database (`packages/index/src/database.ts:302-304`).
@@ -912,15 +1022,15 @@ export const markSessionsConsolidated = (
     readonly sessionIds: ReadonlyArray<string>
   }
 ): Effect.Effect<void, StorageFailure> =>
-  db.writeAll(
+  applyPendingMarks(
+    db,
     input.sessionIds.map((sessionId) => ({
-      sql: `INSERT INTO trace_consolidations (session_id, run_id, consolidated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(session_id) DO UPDATE SET
-              run_id = excluded.run_id, consolidated_at = excluded.consolidated_at`,
-      params: [sessionId, input.runId, input.at] as ReadonlyArray<string | number>
+      kind: "session-consolidated" as const,
+      sessionId,
+      runId: input.runId,
+      at: input.at
     }))
-  )
+  ).pipe(Effect.asVoid)
 
 /** How many sessions carry a consolidation watermark. A report count, and a test's read. */
 export const consolidatedSessionCount = (

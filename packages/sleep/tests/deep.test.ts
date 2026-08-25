@@ -205,11 +205,11 @@ describe("deep mining (guard a: band isolation)", () => {
       (fixture) =>
         Effect.gen(function* () {
           const nightly = yield* relationshipMining(envFor(fixture))
-          expect(nightly.counts["deepMined"]).toBeUndefined()
+          expect(nightly.counts.deepMined).toBeUndefined()
           expect(yield* minedEdges(fixture)).toEqual([])
 
           const deep = yield* relationshipMining(envFor(fixture, { deep: true }))
-          expect(deep.counts["deepMined"]).toBe(6)
+          expect(deep.counts.deepMined).toBe(6)
         }),
       { seed: [...trioFor("tundra")] }
     )
@@ -261,8 +261,8 @@ describe("entity grouping (guard b: batch size and the hub cap)", () => {
         Effect.gen(function* () {
           yield* relationshipMining(envFor(fixture, { deep: true }))
           const outcome = yield* compress(envFor(fixture, { deep: true }))
-          expect(outcome.counts["entityGroups"]).toBeGreaterThanOrEqual(1)
-          expect(outcome.counts["canonicals"]).toBeGreaterThanOrEqual(1)
+          expect(outcome.counts.entityGroups).toBeGreaterThanOrEqual(1)
+          expect(outcome.counts.canonicals).toBeGreaterThanOrEqual(1)
           // One batch of three: the kernel sliced the entity group under COMPRESS_BATCH_SIZE.
           expect(model.calls.length).toBeGreaterThanOrEqual(1)
           // Anchored per line: the ARCHIVE path contains the inbox path as a substring, so a bare
@@ -287,7 +287,7 @@ describe("iterate-until-quiet (guard d) and the budget (guard e)", () => {
         Effect.gen(function* () {
           yield* relationshipMining(envFor(fixture, { deep: true }))
           const outcome = yield* compress(envFor(fixture, { deep: true }))
-          expect(outcome.counts["canonicals"]).toBe(0)
+          expect(outcome.counts.canonicals).toBe(0)
           // One community, one batch, one call: the loop did NOT re-run after a quiet pass.
           expect(model.calls).toHaveLength(1)
         }),
@@ -308,8 +308,8 @@ describe("iterate-until-quiet (guard d) and the budget (guard e)", () => {
         Effect.gen(function* () {
           yield* relationshipMining(envFor(fixture, { deep: true }))
           const outcome = yield* compress(envFor(fixture, { deep: true }))
-          expect(outcome.counts["canonicals"]).toBe(1)
-          expect(outcome.counts["passes"]).toBe(2)
+          expect(outcome.counts.canonicals).toBe(1)
+          expect(outcome.counts.passes).toBe(2)
           expect(model.calls).toHaveLength(1)
         }),
       { seed: [...trioFor("marsh")], model }
@@ -329,8 +329,8 @@ describe("iterate-until-quiet (guard d) and the budget (guard e)", () => {
           yield* relationshipMining(envFor(fixture, { deep: true }))
           const outcome = yield* compress(envFor(fixture, { deep: true, budget: 1 }))
           expect(model.calls).toHaveLength(1)
-          expect(outcome.counts["budgetSkipped"]).toBeGreaterThanOrEqual(1)
-          expect(outcome.counts["failed"]).toBe(0)
+          expect(outcome.counts.budgetSkipped).toBeGreaterThanOrEqual(1)
+          expect(outcome.counts.failed).toBe(0)
           expect(outcome.llmCalls).toBe(1)
         }),
       { seed: [...trioFor("marsh"), ...trioFor("tundra")], model }
@@ -348,7 +348,7 @@ describe("iterate-until-quiet (guard d) and the budget (guard e)", () => {
         Effect.gen(function* () {
           const outcome = yield* placementTriage(envFor(fixture, { deep: true, budget: 0 }))
           expect(model.calls).toHaveLength(0)
-          expect(outcome.counts["budgetSkipped"]).toBeGreaterThanOrEqual(1)
+          expect(outcome.counts.budgetSkipped).toBeGreaterThanOrEqual(1)
           expect(outcome.llmCalls).toBe(0)
         }),
       { seed: [...ENTITY_CLUSTER], model }
@@ -372,8 +372,8 @@ describe("placement triage (guard c: destinations and refusals)", () => {
       (fixture) =>
         Effect.gen(function* () {
           const outcome = yield* placementTriage(envFor(fixture, { deep: true }))
-          expect(outcome.counts["applied"]).toBe(3)
-          expect(outcome.counts["newDirs"]).toBe(1)
+          expect(outcome.counts.applied).toBe(3)
+          expect(outcome.counts.newDirs).toBe(1)
           const tree = yield* fixture.raw("ls-tree", "-r", "--name-only", "HEAD")
           expect(tree).toContain("areas/ledgers/ledger-manifest.html")
           expect(tree).not.toContain("areas/inbox/ledger-manifest.html")
@@ -427,9 +427,9 @@ describe("placement triage (guard c: destinations and refusals)", () => {
         Effect.gen(function* () {
           const before = yield* fixture.raw("ls-tree", "-r", "--name-only", "HEAD")
           const outcome = yield* placementTriage(envFor(fixture, { deep: true }))
-          expect(outcome.counts["applied"]).toBe(0)
-          expect(outcome.counts["refused"]).toBe(2)
-          expect(outcome.counts["keptInbox"]).toBe(1)
+          expect(outcome.counts.applied).toBe(0)
+          expect(outcome.counts.refused).toBe(2)
+          expect(outcome.counts.keptInbox).toBe(1)
           expect(yield* fixture.raw("ls-tree", "-r", "--name-only", "HEAD")).toEqual(before)
         }),
       { seed: [...ENTITY_CLUSTER], model }
@@ -469,9 +469,9 @@ describe("placement triage (guard c: destinations and refusals)", () => {
       (fixture) =>
         Effect.gen(function* () {
           const outcome = yield* placementTriage(envFor(fixture, { deep: true }))
-          expect(outcome.counts["newDirs"]).toBe(5)
-          expect(outcome.counts["applied"]).toBe(5)
-          expect(outcome.counts["refused"]).toBe(2)
+          expect(outcome.counts.newDirs).toBe(5)
+          expect(outcome.counts.applied).toBe(5)
+          expect(outcome.counts.refused).toBe(2)
         }),
       { seed: singles, model }
     )
@@ -517,15 +517,15 @@ describe("the no-flag regression (guard f)", () => {
 
           // Compress saw ZERO candidates: the deep band in the index did not leak a community in.
           const compressed = report.phases.find((phase) => phase.phase === "compress")
-          expect(compressed?.counts["candidates"]).toBe(0)
-          expect(compressed?.counts["canonicals"]).toBe(0)
+          expect(compressed?.counts.candidates).toBe(0)
+          expect(compressed?.counts.canonicals).toBe(0)
           for (const key of ["passes", "entityGroups", "budgetSkipped"]) {
             expect(compressed?.counts[key]).toBeUndefined()
           }
 
           // Mining reported no deep count and rewrote only its own band.
           const mining = report.phases.find((phase) => phase.phase === "relationship-mining")
-          expect(mining?.counts["deepMined"]).toBeUndefined()
+          expect(mining?.counts.deepMined).toBeUndefined()
           const edges = yield* minedEdges(fixture)
           expect(edges.filter((edge) => edge.rel === "relates_to")).toHaveLength(0)
           // The stale deep band survives untouched (re-derivable; the next deep run replaces it).
@@ -553,10 +553,10 @@ describe("the no-flag regression (guard f)", () => {
         Effect.gen(function* () {
           const report = yield* run(fixture.deps, { date: DATE, deep: true })
           const compressed = report.phases.find((phase) => phase.phase === "compress")
-          expect(compressed?.counts["canonicals"]).toBeGreaterThanOrEqual(2)
-          expect(compressed?.counts["entityGroups"]).toBeGreaterThanOrEqual(1)
+          expect(compressed?.counts.canonicals).toBeGreaterThanOrEqual(2)
+          expect(compressed?.counts.entityGroups).toBeGreaterThanOrEqual(1)
           const mining = report.phases.find((phase) => phase.phase === "relationship-mining")
-          expect(mining?.counts["deepMined"]).toBe(6)
+          expect(mining?.counts.deepMined).toBe(6)
         }),
       { seed: [...trioFor("marsh"), ...ENTITY_CLUSTER], model }
     )
@@ -574,7 +574,7 @@ describe("the no-flag regression (guard f)", () => {
           expect(model.calls).toHaveLength(0)
           expect(yield* fixture.raw("rev-parse", "HEAD")).toEqual(head)
           const mining = report.phases.find((phase) => phase.phase === "relationship-mining")
-          expect(mining?.counts["deepMined"]).toBe(6)
+          expect(mining?.counts.deepMined).toBe(6)
         }),
       { seed: [...trioFor("marsh"), ...ENTITY_CLUSTER], model }
     )

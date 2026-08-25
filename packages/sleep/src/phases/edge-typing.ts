@@ -4,6 +4,8 @@ import { Effect } from "effect"
 
 import { assembleBatches, batchCall, keyMembers, offeredKeyFor, resolveKeys } from "../batch.js"
 import { commitPhase } from "../commit.js"
+import type { PendingMark } from "../contract.js"
+import { pendingMarksPath, readPendingMarks, recordPendingMarks } from "../contract.js"
 import { hrefFor, link, meta, readFileBytes, stampFile } from "../edits.js"
 import { emptyOutcome, modelFor, type PhaseBody, type PhaseEnv } from "../env.js"
 import {
@@ -18,7 +20,6 @@ import {
 import {
   activeCorpus,
   bumpCorroboration,
-  markPromoted,
   minedPairs,
   type PairRow,
   SLEEP_EXCLUDED_TYPES,
@@ -53,9 +54,9 @@ import { budgetFor, closeVanishedDetections, detectionKey, mintDetectedTask } fr
  *    - `contradicts` above `EDGE_CONFIDENCE_FLOOR` bumps the corroboration counter and is
  *      written into BOTH files only at `detections >= 2`. A single machine detection therefore
  *      cannot reach the retention penalty, which counts only `derived = 0` file-borne edges. Both
- *      endpoints must still be in the TREE, checked before either write, and the counter is marked
- *      promoted only when both sides actually gained the link — otherwise the pair is left
- *      re-eligible for a later night rather than recorded as half done.
+ *      endpoints must still be in the TREE, checked before either write, and the promotion is recorded
+ *      only when both sides actually gained the link — otherwise the pair is left re-eligible for a
+ *      later night rather than recorded as half done.
  *    - A DIRECTIONAL rel above the floor is written into the SUBJECT's file alone, per the
  *      direction the model named. No corroboration gate: a `part_of` carries no penalty and is
  *      cheap for a reviewer to delete, so a second night's wait would buy nothing.
@@ -78,6 +79,14 @@ import { budgetFor, closeVanishedDetections, detectionKey, mintDetectedTask } fr
  * superseded, no `memhtml-valid-until` is closed, neither side is archived. Choosing the winner of a
  * contradiction is a one-way door on stored belief, and it belongs to an agent or a human, not to a
  * nightly job.
+ *
+ * **The `promoted` flag is PROPOSED, not set.** The `<link>` a promotion writes lives on the sleep
+ * branch and goes away with `git branch -D`; `promoted = 1` lives in `.memhtml/state.db`, which no
+ * discard can undo. Setting it here would therefore make the abort partial in the worst direction: the
+ * flag takes the pair out of both candidate arms' successors permanently while the corpus carries no
+ * edge, so the contradiction is silently unrecordable forever. The phase records an `edge-promoted`
+ * `PendingMark` in the run's ledger instead and `merge` applies it, and the run's own reads consult
+ * {@link promotionKey} over ledger-plus-database so the phase sees marks it has already earned.
  *
  * **A single-detection contradiction becomes a TASK.** Surface 1 of issue #44, third detector, and the
  * one whose gap was widest: a contradiction at `detections = 1` is written nowhere at all, so a real
@@ -353,6 +362,21 @@ export const edgeTyping: PhaseBody = (env) =>
      * which of two claims survives is exactly what the gate is holding the decision open for.
      */
     const deferred: Array<PendingContradiction> = []
+    /**
+     * The run's own view of `edge_corroboration.promoted`: the DATABASE plus this run's ledger.
+     *
+     * Seeded from the ledger already committed on the branch, then grown as this pass earns promotions.
+     * Both halves are needed. The database alone answers `0` for a promotion this run has already
+     * recorded, so a second read inside the run would re-enter the promotion path for a pair whose edge
+     * is already in the tree and whose mark is already earned — and would count it twice. The ledger
+     * alone cannot see what earlier merged nights promoted.
+     */
+    const marks: Array<PendingMark> = []
+    const promotedKeys = new Set(
+      (yield* readPendingMarks(env.deps.git.root, env.runId)).flatMap((mark) =>
+        mark.kind === "edge-promoted" ? [promotionKey(mark.srcPath, mark.rel, mark.dstPath)] : []
+      )
+    )
 
     for (const batch of batches) {
       /** Opaque keys again, so a verdict cannot name a path. Each SIDE is sliced to its budget. */
@@ -451,7 +475,13 @@ export const edgeTyping: PhaseBody = (env) =>
               ...(verdict.rationale === undefined ? {} : { rationale: verdict.rationale })
             })
           }
-          if (row === undefined || row.detections < PROMOTION_DETECTIONS || row.promoted === 1) {
+          const promotion = promotionKey(candidate.pair.src, "contradicts", candidate.pair.dst)
+          if (
+            row === undefined ||
+            row.detections < PROMOTION_DETECTIONS ||
+            row.promoted === 1 ||
+            promotedKeys.has(promotion)
+          ) {
             continue
           }
           if (promoted + typed >= EDGE_PROMOTION_CAP) {
@@ -459,20 +489,6 @@ export const edgeTyping: PhaseBody = (env) =>
             continue
           }
 
-          /**
-           * **BOTH endpoints, or nothing at all — checked BEFORE either write.**
-           *
-           * A `contradicts` is symmetric, and the phase's own promotion rule is that a reader arriving
-           * at either file sees it. So the pair is all-or-nothing, and the check has to come first
-           * because the alternative is not recoverable: stamping `src` and then finding `dst` gone
-           * leaves a `<link>` pointing at a path the tree does not hold — a dangling href committed by
-           * the commit that created it — while the other half of the conflict is invisible.
-           *
-           * A missing endpoint is ORDINARY here, not exceptional. Every phase reads its candidates from
-           * an index refreshed once in preflight and not again, so a file an earlier phase archived is
-           * still listed active at its old path when this phase reads it. `readFileBytes` answers
-           * `undefined` for exactly that case, and the TREE is the system of record.
-           */
           /**
            * **BOTH endpoints, or nothing at all — checked BEFORE either write.**
            *
@@ -502,27 +518,22 @@ export const edgeTyping: PhaseBody = (env) =>
           ])
 
           /**
-           * The counter is promoted only when BOTH sides gained the edge on this run. `stampFile`'s
+           * The promotion is recorded only when BOTH sides gained the edge on this run. `stampFile`'s
            * `false` also covers "the head already said this", so a pair whose files were somehow
-           * stamped without the counter being promoted stays un-promoted — and therefore RE-ELIGIBLE,
-           * which is the outcome that lets a later night with a refreshed index finish the job rather
-           * than record a half-written edge as done.
-           */
-          /**
-           * The counter is promoted only when BOTH sides gained the edge on this run. `stampFile`'s
-           * `false` also covers "the head already said this", so a pair whose files were somehow
-           * stamped without the counter being promoted stays un-promoted — and therefore RE-ELIGIBLE,
-           * which is the outcome that lets a later night with a refreshed index finish the job rather
-           * than record a half-written edge as done.
+           * stamped without a promotion recorded stays un-promoted — and therefore RE-ELIGIBLE, which
+           * is the outcome that lets a later night with a refreshed index finish the job rather than
+           * record a half-written edge as done.
            */
           if (!wroteSrc || !wroteDst) continue
 
-          yield* markPromoted(env.deps.db, {
+          marks.push({
+            kind: "edge-promoted",
             srcPath: candidate.pair.src,
             rel: "contradicts",
             dstPath: candidate.pair.dst,
             at: env.at
           })
+          promotedKeys.add(promotion)
           promoted += 1
           continue
         }
@@ -571,6 +582,18 @@ export const edgeTyping: PhaseBody = (env) =>
      */
     const tasks = yield* mintContradictionTasks(env, deferred, skipped === 0 && unresolved === 0)
 
+    /**
+     * The ledger, written once for the whole night and STAGED so this phase's own commit carries it.
+     *
+     * Staged rather than left on disk, because a plane write the branch does not commit is a write no
+     * merge can find — the promotion would then be in the files and never in the counter, and every
+     * later night would re-judge a pair the corpus already answers. Left unstaged it would also be swept
+     * into whichever later phase commits next, which is the cross-phase contamination per-phase commits
+     * exist to prevent.
+     */
+    const pendingRecorded = yield* recordPendingMarks(env.deps.git.root, env.runId, marks)
+    if (pendingRecorded) yield* env.deps.git.add([pendingMarksPath(env.runId)])
+
     const counts = {
       candidates: candidates.length,
       judged,
@@ -587,6 +610,7 @@ export const edgeTyping: PhaseBody = (env) =>
       tasksClosed: tasks.closed
     }
     if (
+      !pendingRecorded &&
       promoted === 0 &&
       typed === 0 &&
       tasks.minted === 0 &&
@@ -608,6 +632,23 @@ export const edgeTyping: PhaseBody = (env) =>
     )
     return { counts, commitSha, llmCalls }
   })
+
+/**
+ * A promotion's identity in the run's own view of the state plane: the counter row's key, verbatim.
+ *
+ * ORIENTED, and deliberately not sorted. `edge_corroboration`'s primary key is `(src_path, rel,
+ * dst_path)` in the order the bump wrote it, and this key exists to answer "has the run already earned
+ * the write that UPDATE would make". A sorted key would collapse two rows the table keeps apart, so a
+ * pair whose orientation a later night flips would read as already promoted with its own row untouched.
+ * (The review TASK's key is sorted, and for the opposite reason: it asks a human one unordered
+ * question. See {@link contradictionFinding}.)
+ *
+ * A SPACE separates the three parts, which is unambiguous here for the reason {@link unionPairs}' key
+ * relies on: a corpus path is a slug plus `/` and `.html`, and a rel comes from a closed vocabulary, so
+ * no part can contain one.
+ */
+export const promotionKey = (srcPath: string, rel: string, dstPath: string): string =>
+  `${srcPath} ${rel} ${dstPath}`
 
 /** The detector name every contradiction review task is keyed and swept under. */
 export const EDGE_REVIEW_DETECTOR = "edge-typing"

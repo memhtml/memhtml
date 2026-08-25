@@ -82,6 +82,7 @@ export {
   edgeTypingCandidates,
   PROMOTION_DETECTIONS,
   pairGroupKey,
+  promotionKey,
   // Aliased: entity-resolution exports its own `unionPairs` (name pairs, not path pairs).
   unionPairs as unionEdgePairs
 } from "./edge-typing.js"
@@ -97,6 +98,7 @@ export type {
 export {
   AUTO_MERGE_THRESHOLD,
   aliasBacked,
+  capQuadraticNames,
   characterPairs,
   decomposeCluster,
   ENTITY_BATCH_SIZE,
@@ -104,6 +106,7 @@ export {
   ENTITY_MEMBER_CHARS,
   ENTITY_NEIGHBORS,
   ENTITY_PROMOTION_DETECTIONS,
+  ENTITY_QUADRATIC_NAME_LIMIT,
   ENTITY_SAMPLE_TITLES,
   entityCentroids,
   entityMemberText,
