@@ -18,8 +18,26 @@ import { STATE_SCHEMA } from "./schema-const.js"
  * boundary. Both use `>=`, so a stamp exactly the window old IS bumpable.
  */
 
-/** The EWMA weight a new outcome signal carries. The remainder keeps the prior score. */
+/**
+ * The EWMA weight a new outcome signal carries. The remainder keeps the prior score.
+ *
+ * The value the SQL below BINDS, and the twin of `@memhtml/domain`'s `DEFAULT_EWMA_ALPHA`, which is
+ * the reference implementation the arithmetic here is checked against. SQL cannot read that constant,
+ * so this one is declared here and `tests/reinforce.test.ts` pins the pair to agree — a fork of
+ * either side fails a suite rather than drifting the reference model off the shipped arithmetic.
+ */
 export const OUTCOME_EWMA_ALPHA = 0.3
+
+/**
+ * Paths bound into one upsert.
+ *
+ * SQLite's bound-variable ceiling is a BUILD property rather than a language one, at 999 in older
+ * builds and 32766 since 3.32, and this package must not assume which one the driver shipped with.
+ * Five shared values plus this many paths stays under either, so the split is a correctness guard
+ * rather than a tuning knob: one extra statement per 500 paths against a batch that would otherwise
+ * be refused outright.
+ */
+export const REINFORCE_PATH_BATCH = 500
 
 /** Which paths were bumped and which were still cooling down. */
 export interface ReinforceResult {
@@ -34,6 +52,12 @@ export interface ReinforceResult {
  * decides in the database, at the instant of the write, and reports which rows it actually touched.
  * Reading `last_accessed_at` first and deciding in TypeScript would race a concurrent reinforce and
  * report a bump that never happened.
+ *
+ * BATCHED by signature: one statement per {@link REINFORCE_PATH_BATCH} paths, never one per path.
+ * A multi-row upsert evaluates its `DO UPDATE … WHERE` per conflicting row, so each path is still
+ * decided on its own stamp, and `RETURNING` names exactly the rows that moved. A per-path statement
+ * is the store-scaled per-op shape this package refuses everywhere else (see the indexer's pending
+ * scan): a recall reinforcing forty hits would pay forty round trips to answer one question.
  *
  * `at` is passed in rather than read from the clock so a caller can pin the instant. The cooldown
  * boundary test needs to name a time exactly `REINFORCE_COOLDOWN_S` after the stored stamp.
@@ -55,29 +79,42 @@ export const reinforce = (
 
     const value = signalValue(signal)
     const reinforced = value === 0 ? 0 : 1
-    const bumped: Array<string> = []
+    const bumped = new Set<string>()
 
-    for (const path of targets) {
+    for (let start = 0; start < targets.length; start += REINFORCE_PATH_BATCH) {
+      const slice = targets.slice(start, start + REINFORCE_PATH_BATCH)
+      /**
+       * `?1`–`?5` are the shared values and `?6` onward are the paths, which is what lets one
+       * statement carry a whole batch without restating the instant, the signal, or the window per
+       * row. Every path is BOUND; none is interpolated.
+       */
       const rows = yield* db.all<{ path: string }>(
         `INSERT INTO ${STATE_SCHEMA}.access
            (path, access_count, reinforcement_count, outcome_score, last_accessed_at, last_reinforced_at, updated_at)
-         VALUES (?1, 1, ?3, ?4, ?2, CASE WHEN ?3 = 0 THEN NULL ELSE ?2 END, ?2)
+         VALUES ${slice
+           .map(
+             (_, offset) =>
+               `(?${String(offset + 6)}, 1, ?2, ?3, ?1, CASE WHEN ?2 = 0 THEN NULL ELSE ?1 END, ?1)`
+           )
+           .join(", ")}
          ON CONFLICT(path) DO UPDATE SET
            access_count = access_count + 1,
-           reinforcement_count = reinforcement_count + ?3,
-           outcome_score = CASE WHEN ?3 = 0 THEN outcome_score
-             ELSE max(-1.0, min(1.0, outcome_score * (1 - ?5) + ?4 * ?5)) END,
-           last_accessed_at = ?2,
-           last_reinforced_at = CASE WHEN ?3 = 0 THEN last_reinforced_at ELSE ?2 END,
-           updated_at = ?2
+           reinforcement_count = reinforcement_count + ?2,
+           outcome_score = CASE WHEN ?2 = 0 THEN outcome_score
+             ELSE max(-1.0, min(1.0, outcome_score * (1 - ?4) + ?3 * ?4)) END,
+           last_accessed_at = ?1,
+           last_reinforced_at = CASE WHEN ?2 = 0 THEN last_reinforced_at ELSE ?1 END,
+           updated_at = ?1
          WHERE access.last_accessed_at IS NULL
-            OR unixepoch(?2) - unixepoch(access.last_accessed_at) >= ?6
+            OR unixepoch(?1) - unixepoch(access.last_accessed_at) >= ?5
          RETURNING path`,
-        [path, at, reinforced, value, OUTCOME_EWMA_ALPHA, cooldownSeconds]
+        [at, reinforced, value, OUTCOME_EWMA_ALPHA, cooldownSeconds, ...slice]
       )
-      if (rows.length > 0) bumped.push(path)
+      for (const row of rows) bumped.add(row.path)
     }
 
-    const cooledDown = targets.filter((path) => !bumped.includes(path))
-    return { bumped, cooledDown }
+    return {
+      bumped: targets.filter((path) => bumped.has(path)),
+      cooledDown: targets.filter((path) => !bumped.has(path))
+    }
   }).pipe(Effect.withSpan("index.reinforce"))

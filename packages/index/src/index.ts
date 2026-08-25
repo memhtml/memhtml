@@ -48,6 +48,7 @@ export {
   Indexer,
   type IndexerDeps,
   type IndexerShape,
+  IndexStale,
   isIndexablePath,
   makeIndexer,
   type RebuildReport,
@@ -65,7 +66,12 @@ export {
   wordCountOf,
   workspaceOf
 } from "./project.js"
-export { OUTCOME_EWMA_ALPHA, type ReinforceResult, reinforce } from "./reinforce.js"
+export {
+  OUTCOME_EWMA_ALPHA,
+  REINFORCE_PATH_BATCH,
+  type ReinforceResult,
+  reinforce
+} from "./reinforce.js"
 export {
   DEFAULT_ARM_LIMIT,
   DEFAULT_SEARCH_LIMIT,

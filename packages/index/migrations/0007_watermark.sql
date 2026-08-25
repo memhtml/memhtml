@@ -9,8 +9,10 @@ CREATE TABLE index_state (
   head_sha      TEXT,
   -- The vector space, as `<model-id>@<dim>` (@memhtml/llm's EMBED_WATERMARK). A mismatch against
   -- configuration is a hard refusal, never a silent reindex: a half-migrated vector space degrades
-  -- every cosine and is invisible in tests. Only `rebuild --embed-model` rewrites it, and it
-  -- truncates `embeddings` first.
+  -- every cosine and is invisible in tests. `rebuild --embed` is the one path past that refusal: it
+  -- truncates `embeddings` with the other memory tables and records the configured space before any
+  -- vector is written, so it migrates the whole space rather than mixing two. `--no-embed` refuses
+  -- before the truncate, so a store that refuses keeps the vectors it has.
   embed_model   TEXT NOT NULL,
   embed_dim     INTEGER NOT NULL CHECK (embed_dim > 0),
   rebuilt_at    TEXT NOT NULL,

@@ -1,7 +1,8 @@
 /**
  * The identifiers the SQL and the TypeScript both name. Stated here once so a table rename is a
  * compile error at every reader rather than a query that silently matches nothing. A truncate
- * list that has drifted from the schema leaves rows behind, and a rebuild is no longer a rebuild.
+ * list that has drifted from the schema leaves rows behind, and a rebuild that leaves rows behind is
+ * not a rebuild.
  */
 
 /** Where the rebuildable index's migrations live, applied in filename order. */
@@ -21,8 +22,9 @@ export const STATE_SCHEMA = "state"
  * The lexical index, an external-content FTS5 table over `files`, maintained by triggers.
  *
  * It is a TABLE, not an index, which is what makes it MATCHable and `bm25()`-rankable. Nothing
- * drops or recreates it around a bulk load. See `indexer.ts`'s `applyProjectionWrites` for the
- * measurements that retired that bracket.
+ * drops or recreates it around a bulk load: FTS5 writes are linear, so the bracket buys nothing and
+ * opens a window where a crash leaves the store with no lexical index. See `indexer.ts`'s
+ * `applyProjectionWrites` for the measurements.
  */
 export const FTS_INDEX_NAME = "files_fts"
 

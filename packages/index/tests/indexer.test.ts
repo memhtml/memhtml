@@ -1,9 +1,9 @@
-import { ModelUnavailable } from "@memhtml/contracts/errors"
+import { ModelUnavailable, StorageFailure } from "@memhtml/contracts/errors"
 import { EMBED_DIM, EMBED_WATERMARK } from "@memhtml/llm"
 import { Effect, Result } from "effect"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
-import type { DatabaseShape, SqlValue } from "../src/database.js"
+import type { DatabaseShape, SqlValue, Write } from "../src/database.js"
 import {
   type IndexerShape,
   isIndexablePath,
@@ -796,6 +796,148 @@ describe("update", () => {
     expect(outcome.old).toBeGreaterThan(0)
   })
 
+  /**
+   * A STAGED `git mv` inside the corpus: one porcelain-v2 record naming only the destination.
+   *
+   * The source has to retire in the same pass. A rename leaves both bodies byte-identical, so with the
+   * source row still active the destination's projection hits `files_content_hash_active` and the
+   * UNIQUE index refuses the write — which fails the whole batch, the nineteen neighbours' rows
+   * included, and leaves the watermark where it was so the next update fails the same way.
+   */
+  it("retires the source of a staged rename, leaving exactly one active row", async () => {
+    const outcome = await withRig(repo, ({ db, indexer, embedder }) =>
+      Effect.gen(function* () {
+        yield* indexer.rebuild({ embed: true })
+        const callsAfterRebuild = embedder.calls()
+        const chunkBefore = yield* db.get<{ chunk_id: string }>(
+          "SELECT chunk_id FROM chunks WHERE path = ?",
+          ["areas/notes/entry-01.html"]
+        )
+
+        yield* Effect.promise(() =>
+          repo.moveStaged("areas/notes/entry-01.html", "areas/notes/renamed-01.html")
+        )
+        const report = yield* indexer.update({ embed: true })
+
+        const byHash = yield* db.all<{ path: string }>(
+          "SELECT path FROM files WHERE content_hash = (SELECT content_hash FROM files WHERE path = ?)",
+          ["areas/notes/renamed-01.html"]
+        )
+        const total = yield* db.get<{ n: number }>("SELECT count(*) AS n FROM files")
+        const chunk = yield* db.get<{ path: string }>(
+          "SELECT path FROM chunks WHERE chunk_id = ?",
+          [chunkBefore?.chunk_id ?? ""]
+        )
+        const embedding = yield* db.get<{ n: number }>(
+          "SELECT count(*) AS n FROM embeddings WHERE chunk_id = ?",
+          [chunkBefore?.chunk_id ?? ""]
+        )
+        return {
+          report,
+          byHash: byHash.map((row) => row.path),
+          total: total?.n,
+          chunk: chunk?.path,
+          embedding: embedding?.n,
+          callsAfterRebuild,
+          callsAfterMove: embedder.calls()
+        }
+      })
+    )
+
+    expect(outcome.report.renamed).toBe(1)
+    // ONE row under that content hash, at the path the working tree holds.
+    expect(outcome.byHash).toEqual(["areas/notes/renamed-01.html"])
+    // And every neighbour survived: the collision would have rolled back all twenty rows, not one.
+    expect(outcome.total).toBe(20)
+    // Handled as a MOVE, so the vector travels with the row and costs nothing.
+    expect(outcome.chunk).toBe("areas/notes/renamed-01.html")
+    expect(outcome.embedding).toBe(1)
+    expect(outcome.callsAfterMove).toBe(outcome.callsAfterRebuild)
+  })
+
+  /**
+   * A rename OUT of the corpus retires the row rather than following it.
+   *
+   * Two destinations, because they fail `isIndexablePath` for different reasons and only one of them
+   * is visible to a naive projection: `docs/` is outside the PARA buckets, so its blob is not even in
+   * the tree read, while `resources/misc/index.html` IS under a read prefix and is refused only for its
+   * generated name — so a move there projects a real row at a path `memhtml publish` owns.
+   *
+   * The rebuild comparison is the assertion that matters. Whatever the incremental path leaves behind
+   * has to be what a fresh rebuild of the same tree produces, or `rm index.db` stops being safe.
+   */
+  it("deletes the row when a committed rename leaves the corpus, and agrees with a rebuild", async () => {
+    const incremental = await withRig(repo, ({ db, indexer }) =>
+      Effect.gen(function* () {
+        yield* indexer.rebuild({ embed: false })
+        yield* Effect.promise(async () => {
+          await repo.move(
+            "areas/notes/entry-01.html",
+            "docs/moved-out.html",
+            "move out of the buckets"
+          )
+          await repo.move(
+            "resources/misc/entry-02.html",
+            "resources/misc/index.html",
+            "move onto a generated name"
+          )
+        })
+        const report = yield* indexer.update({ embed: false })
+        const strays = yield* db.all<{ path: string }>(
+          "SELECT path FROM files WHERE path IN (?, ?, ?, ?) ORDER BY path",
+          [
+            "areas/notes/entry-01.html",
+            "docs/moved-out.html",
+            "resources/misc/entry-02.html",
+            "resources/misc/index.html"
+          ]
+        )
+        const total = yield* db.get<{ n: number }>("SELECT count(*) AS n FROM files")
+        return {
+          report,
+          strays: strays.map((row) => row.path),
+          total: total?.n,
+          rows: yield* snapshot(db)
+        }
+      })
+    )
+
+    const fresh = await withRig(repo, ({ db, indexer }) =>
+      Effect.gen(function* () {
+        yield* indexer.rebuild({ embed: false })
+        return yield* snapshot(db)
+      })
+    )
+
+    expect(incremental.report.removed).toBe(2)
+    expect(incremental.report.renamed).toBe(0)
+    // Neither the source nor the destination survives: one left the corpus, the other never entered it.
+    expect(incremental.strays).toEqual([])
+    expect(incremental.total).toBe(18)
+    expect(incremental.rows).toEqual(fresh)
+  })
+
+  it("deletes the row when a STAGED rename leaves the corpus", async () => {
+    const outcome = await withRig(repo, ({ db, indexer }) =>
+      Effect.gen(function* () {
+        yield* indexer.rebuild({ embed: false })
+        yield* Effect.promise(() =>
+          repo.moveStaged("areas/notes/entry-01.html", "docs/moved-out.html")
+        )
+        const report = yield* indexer.update({ embed: false })
+        const strays = yield* db.all<{ path: string }>(
+          "SELECT path FROM files WHERE path IN (?, ?)",
+          ["areas/notes/entry-01.html", "docs/moved-out.html"]
+        )
+        const total = yield* db.get<{ n: number }>("SELECT count(*) AS n FROM files")
+        return { report, strays: strays.map((row) => row.path), total: total?.n }
+      })
+    )
+    expect(outcome.report.removed).toBe(1)
+    expect(outcome.strays).toEqual([])
+    expect(outcome.total).toBe(19)
+  })
+
   it("indexes an uncommitted working-tree edit at its real blob sha", async () => {
     const outcome = await withRig(repo, ({ db, indexer }) =>
       Effect.gen(function* () {
@@ -1140,6 +1282,218 @@ describe("embedMissing scan scope", () => {
     for (const scan of outcome.scans) {
       expect(scan.params.length).toBeLessThanOrEqual(PENDING_SCAN_ID_BATCH + 1)
     }
+  })
+})
+
+/**
+ * The interrupted rebuild, which is the only state `IndexStale` describes.
+ *
+ * A rebuild's truncate and its watermark clear commit together, so between that commit and the
+ * watermark write the store is empty tables plus a NULL `head_sha`. `update` has to refuse there. The
+ * failure is injected between the two — the truncate lands, the projection batch does not — because
+ * nothing else reproduces the state, and a hand-written `UPDATE index_state SET head_sha = NULL`
+ * would prove the detection without proving the rebuild ever produces it.
+ */
+describe("an interrupted rebuild", () => {
+  let repo: FixtureRepo
+
+  beforeEach(async () => {
+    repo = await makeFixtureRepo()
+    await repo.commit(seedCorpus(), "seed the corpus")
+  })
+
+  afterEach(() => repo.cleanup())
+
+  /** Fails the batch that carries the projections, so the truncate before it stays committed. */
+  const failOnProjection = (db: DatabaseShape): DatabaseShape => ({
+    ...db,
+    writeAll: (writes: ReadonlyArray<Write>) =>
+      writes.some((write) => write.sql.includes("INSERT INTO files"))
+        ? Effect.fail(StorageFailure.make({ operation: "writeAll" }))
+        : db.writeAll(writes)
+  })
+
+  const indexerOver = (db: DatabaseShape): IndexerShape =>
+    makeIndexer({
+      db,
+      git: repo.git,
+      embedWatermark: EMBED_WATERMARK,
+      embedDim: EMBED_DIM,
+      embeddings: makeFakeEmbedder(),
+      now: () => AT
+    })
+
+  it("leaves a NULL watermark over empty tables, which update reads as IndexStale", async () => {
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        /** A populated index first, so the truncate has a neighbour's rows to take away. */
+        yield* indexerOver(db).rebuild({ embed: false })
+        const before = yield* db.get<{ files: number; head_sha: string | null }>(
+          `SELECT (SELECT count(*) FROM files) AS files,
+                  (SELECT head_sha FROM index_state WHERE id = 1) AS head_sha`
+        )
+
+        const interrupted = yield* Effect.result(
+          indexerOver(failOnProjection(db)).rebuild({ embed: false })
+        )
+        const during = yield* db.get<{ files: number; head_sha: string | null }>(
+          `SELECT (SELECT count(*) FROM files) AS files,
+                  (SELECT head_sha FROM index_state WHERE id = 1) AS head_sha`
+        )
+
+        const update = yield* Effect.result(indexerOver(db).update({ embed: false }))
+        const recovered = yield* indexerOver(db).rebuild({ embed: false })
+        const after = yield* db.get<{ files: number; head_sha: string | null }>(
+          `SELECT (SELECT count(*) FROM files) AS files,
+                  (SELECT head_sha FROM index_state WHERE id = 1) AS head_sha`
+        )
+        return { before, interrupted, during, update, recovered, after }
+      })
+    )
+
+    expect(outcome.before?.files).toBe(20)
+    expect(outcome.before?.head_sha).toBe(await repo.head())
+    expect(Result.isFailure(outcome.interrupted)).toBe(true)
+
+    // The window the type describes, produced by the code rather than asserted about it.
+    expect(outcome.during?.files).toBe(0)
+    expect(outcome.during?.head_sha).toBeNull()
+
+    // A refusal, not `unchanged: true` over an empty index that the tree disagrees with.
+    expect(Result.isFailure(outcome.update)).toBe(true)
+    if (Result.isFailure(outcome.update)) {
+      expect(outcome.update.failure._tag).toBe("IndexStale")
+    }
+
+    // And the published remedy works: one rebuild puts the store back.
+    expect(outcome.recovered.filesIndexed).toBe(20)
+    expect(outcome.after?.files).toBe(20)
+    expect(outcome.after?.head_sha).toBe(await repo.head())
+  })
+
+  it("still rebuilds from an ABSENT row, which is a store nothing has indexed", async () => {
+    const report = await withDb((db) => indexerOver(db).update({ embed: false }))
+    // No row and a NULL column are different states, and only the second is a refusal.
+    expect(report.unchanged).toBe(false)
+    expect(report.added).toBe(20)
+  })
+})
+
+/**
+ * The vector-space migration, which is the one path allowed past the model guard.
+ *
+ * The guard makes every other write refuse, and `rebuild --embed` is what the CLI's
+ * `ERR_EMBED_MODEL_MISMATCH` suggestion names. A guard that also refused the remedy would leave the
+ * store with no way forward but deleting the file by hand.
+ */
+describe("rebuild --embed as the vector-space migration", () => {
+  const OLD_SPACE = `superseded.model@${String(EMBED_DIM)}`
+
+  let repo: FixtureRepo
+
+  beforeEach(async () => {
+    repo = await makeFixtureRepo()
+    await repo.commit(seedCorpus(), "seed the corpus")
+  })
+
+  afterEach(() => repo.cleanup())
+
+  const indexerIn = (
+    db: DatabaseShape,
+    watermark: string,
+    embeddings: FakeEmbedder = makeFakeEmbedder()
+  ): IndexerShape =>
+    makeIndexer({
+      db,
+      git: repo.git,
+      embedWatermark: watermark,
+      embedDim: EMBED_DIM,
+      embeddings,
+      now: () => AT
+    })
+
+  it("re-embeds the whole store in the configured space and records it", async () => {
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* indexerIn(db, OLD_SPACE).rebuild({ embed: true })
+        const before = yield* db.all<{ model: string; n: number }>(
+          "SELECT model, count(*) AS n FROM embeddings GROUP BY model"
+        )
+
+        const report = yield* indexerIn(db, EMBED_WATERMARK).rebuild({ embed: true })
+        const after = yield* db.all<{ model: string; n: number }>(
+          "SELECT model, count(*) AS n FROM embeddings GROUP BY model"
+        )
+        const state = yield* db.get<{ embed_model: string; head_sha: string | null }>(
+          "SELECT embed_model, head_sha FROM index_state WHERE id = 1"
+        )
+        return { before, report, after, state }
+      })
+    )
+
+    expect(outcome.before).toEqual([{ model: OLD_SPACE, n: 20 }])
+    expect(outcome.report.embeddingsWritten).toBe(20)
+    // One space, the configured one — never two, which is what the guard exists to prevent.
+    expect(outcome.after).toEqual([{ model: EMBED_WATERMARK, n: 20 }])
+    expect(outcome.state?.embed_model).toBe(EMBED_WATERMARK)
+    expect(outcome.state?.head_sha).toBe(await repo.head())
+  })
+
+  /**
+   * The ORDER, which is what makes the bypass safe rather than merely convenient: the row carries the
+   * configured space before the first vector is written. A model outage mid-migration therefore leaves
+   * a store with no vectors and the new space recorded, and a plain `embedMissing()` finishes it — not
+   * a store whose row still claims a space its remaining vectors no longer belong to.
+   */
+  it("records the configured space before any vector is written", async () => {
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* indexerIn(db, OLD_SPACE).rebuild({ embed: true })
+
+        const report = yield* indexerIn(db, EMBED_WATERMARK, failingEmbedder()).rebuild({
+          embed: true
+        })
+        const state = yield* db.get<{ embed_model: string }>(
+          "SELECT embed_model FROM index_state WHERE id = 1"
+        )
+        const vectors = yield* db.get<{ n: number }>("SELECT count(*) AS n FROM embeddings")
+
+        /** The row already names the new space, so the guard admits the backfill that finishes it. */
+        const backfilled = yield* indexerIn(db, EMBED_WATERMARK).embedMissing()
+        const spaces = yield* db.all<{ model: string; n: number }>(
+          "SELECT model, count(*) AS n FROM embeddings GROUP BY model"
+        )
+        return { report, state, vectors: vectors?.n, backfilled, spaces }
+      })
+    )
+
+    expect(outcome.report.filesIndexed).toBe(20)
+    expect(outcome.state?.embed_model).toBe(EMBED_WATERMARK)
+    expect(outcome.vectors).toBe(0)
+    expect(outcome.backfilled).toBe(20)
+    expect(outcome.spaces).toEqual([{ model: EMBED_WATERMARK, n: 20 }])
+  })
+
+  it("keeps refusing --no-embed, so the published remedy stays the only way across", async () => {
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* indexerIn(db, OLD_SPACE).rebuild({ embed: true })
+        const refused = yield* Effect.result(
+          indexerIn(db, EMBED_WATERMARK).rebuild({ embed: false })
+        )
+        const untouched = yield* db.all<{ model: string; n: number }>(
+          "SELECT model, count(*) AS n FROM embeddings GROUP BY model"
+        )
+        return { refused, untouched }
+      })
+    )
+
+    expect(Result.isFailure(outcome.refused)).toBe(true)
+    if (Result.isFailure(outcome.refused)) {
+      expect(outcome.refused.failure._tag).toBe("EmbedModelMismatch")
+    }
+    // Refused BEFORE the truncate: a store that says no keeps the vectors it has.
+    expect(outcome.untouched).toEqual([{ model: OLD_SPACE, n: 20 }])
   })
 })
 

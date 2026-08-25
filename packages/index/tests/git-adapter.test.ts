@@ -293,6 +293,36 @@ describe("the store's GitShape satisfies the indexer's GitPort", () => {
     expect(status).toContainEqual({ path: "areas/notes/a.html", deleted: false })
   })
 
+  /**
+   * A STAGED `git mv`, through the store's real porcelain-v2 parser and the adapter.
+   *
+   * Probed against real git: the record is `2 R. … R100 <dest>\0<source>\0`, so the source is its own
+   * NUL field and the destination sits one space-delimited field later than in a `1 ` record. Both
+   * offsets are the store's to get right; what this asserts is that `fromPath` survives the whole way
+   * to the port, because the indexer cannot retire the source row without it.
+   */
+  it("reports a staged rename with its source path", async () => {
+    await Effect.runPromise(
+      commit(fixture, [["areas/notes/a.html", memoryHtml({ title: "A", claim: "C." })]], "add a")
+    )
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          mkdir(join(fixture.root, "archive/2026/areas/notes"), { recursive: true })
+        )
+        yield* fixture.git.mv("areas/notes/a.html", "archive/2026/areas/notes/a.html")
+      }).pipe(Effect.orDie)
+    )
+    const status = await Effect.runPromise(portFor(fixture.root).statusPorcelainV2())
+    expect(status).toContainEqual({
+      path: "archive/2026/areas/notes/a.html",
+      deleted: false,
+      fromPath: "areas/notes/a.html"
+    })
+    // One entry, not two: the source is carried ON the destination's record, never as its own.
+    expect(status.filter((entry) => entry.path.endsWith("a.html"))).toHaveLength(1)
+  })
+
   it("reports an uncommitted deletion as deleted", async () => {
     await Effect.runPromise(
       commit(fixture, [["areas/notes/a.html", memoryHtml({ title: "A", claim: "C." })]], "add a")
@@ -404,29 +434,63 @@ describe("toDiffEntry", () => {
 
 describe("toStatusEntry", () => {
   it("drops an ignored path, which is not a change", () => {
-    expect(toStatusEntry({ kind: "ignored", path: ".memhtml/index.db", xy: "" })).toEqual([])
+    expect(
+      toStatusEntry({ kind: "ignored", path: ".memhtml/index.db", fromPath: null, xy: "" })
+    ).toEqual([])
   })
 
   it("drops an unmerged path, because neither side is the tree's answer yet", () => {
-    expect(toStatusEntry({ kind: "unmerged", path: "areas/a.html", xy: "UU" })).toEqual([])
+    expect(
+      toStatusEntry({ kind: "unmerged", path: "areas/a.html", fromPath: null, xy: "UU" })
+    ).toEqual([])
   })
 
   it("reads deletion off either half of the xy code", () => {
-    expect(toStatusEntry({ kind: "changed", path: "a.html", xy: "D." })).toEqual([
+    expect(toStatusEntry({ kind: "changed", path: "a.html", fromPath: null, xy: "D." })).toEqual([
       { path: "a.html", deleted: true }
     ])
-    expect(toStatusEntry({ kind: "changed", path: "a.html", xy: ".D" })).toEqual([
+    expect(toStatusEntry({ kind: "changed", path: "a.html", fromPath: null, xy: ".D" })).toEqual([
       { path: "a.html", deleted: true }
     ])
-    expect(toStatusEntry({ kind: "changed", path: "a.html", xy: ".M" })).toEqual([
+    expect(toStatusEntry({ kind: "changed", path: "a.html", fromPath: null, xy: ".M" })).toEqual([
       { path: "a.html", deleted: false }
     ])
   })
 
   it("keeps an untracked path, which is a brand-new memory not yet committed", () => {
-    expect(toStatusEntry({ kind: "untracked", path: "areas/a.html", xy: "" })).toEqual([
-      { path: "areas/a.html", deleted: false }
-    ])
+    expect(
+      toStatusEntry({ kind: "untracked", path: "areas/a.html", fromPath: null, xy: "" })
+    ).toEqual([{ path: "areas/a.html", deleted: false }])
+  })
+
+  /**
+   * A staged `git mv` is ONE record naming the destination, and the source travels with it.
+   *
+   * Without it the source's row stays live in the index and the destination's projection collides
+   * with it on `files_content_hash_active`, because a rename leaves both bodies byte-identical. That
+   * failure is not one skipped file: the whole update's write batch rolls back.
+   */
+  it("carries the source of a staged rename", () => {
+    expect(
+      toStatusEntry({
+        kind: "renamed",
+        path: "archive/2026/areas/a.html",
+        fromPath: "areas/a.html",
+        xy: "R."
+      })
+    ).toEqual([{ path: "archive/2026/areas/a.html", deleted: false, fromPath: "areas/a.html" }])
+  })
+
+  it("reads a staged rename that is then gone from the worktree as deleted, source and all", () => {
+    expect(
+      toStatusEntry({ kind: "renamed", path: "areas/b.html", fromPath: "areas/a.html", xy: "RD" })
+    ).toEqual([{ path: "areas/b.html", deleted: true, fromPath: "areas/a.html" }])
+  })
+
+  it("degrades a source-less rename to a plain change rather than inventing a move", () => {
+    expect(
+      toStatusEntry({ kind: "renamed", path: "areas/b.html", fromPath: null, xy: "R." })
+    ).toEqual([{ path: "areas/b.html", deleted: false }])
   })
 })
 
@@ -580,5 +644,127 @@ describe("the indexer over the store's own git service", () => {
     expect(outcome.report.renamed).toBe(1)
     expect(outcome.moved).toEqual({ path: "archive/2026/areas/oncall/a.html", archived: 1 })
     expect(outcome.embedding).toBe(1)
+  })
+
+  /**
+   * An UNCOMMITTED `git mv`, end to end through the store's own git service.
+   *
+   * The destination's body is byte-identical to the source's, so both rows would be active under one
+   * `content_hash` and `files_content_hash_active` refuses the write — taking the whole batch with it,
+   * neighbour rows included, and leaving the watermark where it was so every later update fails the
+   * same way. A neighbour is seeded for exactly that reason: the failure is not scoped to the renamed
+   * file, and a one-file corpus would not show it.
+   */
+  it("retires the source of a STAGED rename, so the destination does not collide with it", async () => {
+    await Effect.runPromise(
+      commit(
+        fixture,
+        [
+          ["areas/notes/a.html", memoryHtml({ title: "A", claim: "The claim of A." })],
+          ["areas/notes/neighbour.html", memoryHtml({ title: "N", claim: "An unrelated claim." })]
+        ],
+        "seed a plus a neighbour"
+      )
+    )
+
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        const indexer = indexerFor(db)
+        yield* indexer.rebuild({ embed: true })
+        const chunkBefore = yield* db.get<{ chunk_id: string }>(
+          "SELECT chunk_id FROM chunks WHERE path = ?",
+          ["areas/notes/a.html"]
+        )
+
+        yield* fixture.git.mv("areas/notes/a.html", "areas/notes/renamed.html").pipe(Effect.orDie)
+
+        const report = yield* indexer.update({ embed: true })
+        const rows = yield* db.all<{ path: string; content_hash: string }>(
+          "SELECT path, content_hash FROM files ORDER BY path"
+        )
+        const embedding = yield* db.get<{ n: number }>(
+          "SELECT count(*) AS n FROM embeddings WHERE chunk_id = ?",
+          [chunkBefore?.chunk_id ?? ""]
+        )
+        return { report, paths: rows.map((row) => row.path), embedding: embedding?.n }
+      })
+    )
+
+    // Exactly one active row for the memory, at the path the working tree holds.
+    expect(outcome.paths).toEqual(["areas/notes/neighbour.html", "areas/notes/renamed.html"])
+    expect(outcome.report.renamed).toBe(1)
+    // Handled as a MOVE rather than a delete plus an add, so the vector is not re-paid for.
+    expect(outcome.embedding).toBe(1)
+  })
+
+  /**
+   * A rename whose destination is ALREADY a row, which `movePath` has to absorb rather than collide
+   * with: `UPDATE files SET path = <to>` against a live `<to>` is a primary-key violation, and it
+   * fails the pass and every pass after it, because the watermark never advances past the diff
+   * carrying the rename.
+   *
+   * Reached the way production reaches it, in three steps and with no hand-inserted row: index a new
+   * uncommitted file, then commit it together with a delete. Git pairs ANY delete-and-add of memory
+   * files into one rename — the format's head boilerplate dominates the similarity score — so the
+   * diff names a move onto the path the previous pass already indexed. The neighbour is seeded because
+   * the collision fails the whole write batch, not the one file.
+   */
+  it("absorbs a rename onto a destination the index already holds", async () => {
+    await Effect.runPromise(
+      commit(
+        fixture,
+        [
+          [
+            "areas/notes/wildebeest.html",
+            memoryHtml({ title: "Wildebeest", claim: "Wildebeest migrate across the Serengeti." })
+          ],
+          ["areas/notes/neighbour.html", memoryHtml({ title: "N", claim: "An unrelated claim." })]
+        ],
+        "seed a memory plus a neighbour"
+      )
+    )
+
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        const indexer = indexerFor(db)
+        yield* indexer.rebuild({ embed: true })
+
+        /** Indexed while UNCOMMITTED, so `files` carries the destination before the diff names it. */
+        yield* writeDirty(
+          fixture,
+          "areas/notes/bm25.html",
+          memoryHtml({
+            title: "Ascending bm25",
+            claim: "A stronger bm25 match scores more negative."
+          })
+        )
+        yield* indexer.update({ embed: true })
+        const staged = yield* db.all<{ path: string }>("SELECT path FROM files ORDER BY path")
+
+        yield* Effect.gen(function* () {
+          yield* Effect.promise(() => rm(join(fixture.root, "areas/notes/wildebeest.html")))
+          yield* fixture.git.run(["add", "-A"])
+          yield* fixture.git.commit("delete one, commit the new one")
+        }).pipe(Effect.orDie)
+
+        const report = yield* indexer.update({ embed: true })
+        const rows = yield* db.all<{ path: string; gist: string }>(
+          "SELECT path, gist FROM files ORDER BY path"
+        )
+        return { report, staged: staged.map((row) => row.path), rows }
+      })
+    )
+
+    // The precondition the test rests on: both sides of the pairing were rows before the diff ran.
+    expect(outcome.staged).toEqual([
+      "areas/notes/bm25.html",
+      "areas/notes/neighbour.html",
+      "areas/notes/wildebeest.html"
+    ])
+    // And afterwards exactly the tree, each row carrying its own claim.
+    expect(outcome.rows).toEqual([
+      { path: "areas/notes/bm25.html", gist: "A stronger bm25 match scores more negative." },
+      { path: "areas/notes/neighbour.html", gist: "An unrelated claim." }
+    ])
   })
 })
