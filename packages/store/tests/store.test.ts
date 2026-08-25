@@ -132,6 +132,79 @@ describe("writeMemory", () => {
     expect(result.path).toBe("areas/oncall/named.html")
   })
 
+  describe("an explicit path that is already occupied", () => {
+    /**
+     * Nothing in this corpus is ever removed: eviction is a `git mv` into `archive/<YYYY>/`, which
+     * is what makes `git log --follow` read through a memory's whole life. A write that replaced the
+     * file at an explicit path would delete a memory with no archive, no supersedes link, and no
+     * trace in the history beyond a content change — the one operation the design has no undo for.
+     */
+    it("fails with WriteConflict and leaves the occupant byte-identical", async () => {
+      const repo = await fixture()
+      // A NEIGHBOUR in the same directory, so the assertions below cannot pass by accident on a
+      // store that refuses (or clobbers) every path under `areas/oncall/`.
+      const neighbour = await run(
+        repo.store.writeMemory(
+          writeInput({ path: "areas/oncall/neighbour.html", claim: "The neighbouring fact." })
+        )
+      )
+      const occupied = await run(
+        repo.store.writeMemory(
+          writeInput({
+            path: "areas/oncall/rollback-order.html",
+            title: "Rollback order",
+            claim: "Revert the deploy, then drain the VIP."
+          })
+        )
+      )
+      const before = await readFile(join(repo.root, occupied.path), "utf8")
+      const neighbourBefore = await readFile(join(repo.root, neighbour.path), "utf8")
+      const commitsBefore = await commitCount(repo)
+      const headBefore = await run(repo.git.revParseHead())
+
+      const failure = await runErr(
+        repo.store.writeMemory(
+          writeInput({
+            path: occupied.path,
+            title: "Rollback order",
+            claim: "Drain the VIP, THEN revert the deploy."
+          })
+        )
+      )
+
+      expect(failure).toBeInstanceOf(WriteConflict)
+      const conflict = failure as WriteConflict
+      expect(conflict.path).toBe(occupied.path)
+      // `theirSha` is the blob that is actually there, read from git rather than fabricated, so a
+      // caller can fetch exactly the content that refused it. `ourSha` is empty because this write
+      // had no base: it never read the file it would have replaced.
+      expect(conflict.theirSha).toBe(await run(repo.git.hashObject(occupied.path)))
+      expect(conflict.ourSha).toBe("")
+
+      // The original bytes, to the byte — and no commit, no stage, nothing for git to report.
+      expect(await readFile(join(repo.root, occupied.path), "utf8")).toBe(before)
+      expect(await readFile(join(repo.root, neighbour.path), "utf8")).toBe(neighbourBefore)
+      expect(await commitCount(repo)).toBe(commitsBefore)
+      expect(await run(repo.git.revParseHead())).toBe(headBefore)
+      expect(await run(repo.store.dirtyPaths())).toEqual([])
+    })
+
+    it("still writes to an explicit path nothing holds, with no collision suffix", async () => {
+      // The mutation-proof pair: the guard must refuse an OCCUPIED path and only that. An explicit
+      // path silently answered as `…-2.html` would hand the caller a path with no file behind it.
+      const repo = await fixture()
+      await run(repo.store.writeMemory(writeInput({ path: "areas/oncall/taken.html" })))
+      const free = await run(
+        repo.store.writeMemory(
+          writeInput({ path: "areas/oncall/free.html", claim: "A different claim." })
+        )
+      )
+      expect(free.path).toBe("areas/oncall/free.html")
+      expect(free.created).toBe(true)
+      expect(await run(repo.store.dirtyPaths())).toEqual([])
+    })
+  })
+
   it("writes a parseable file whose stamped hash matches the article it wrote", async () => {
     const repo = await fixture()
     const result = await run(
@@ -177,6 +250,24 @@ describe("writeMemory", () => {
     const body = await run(repo.git.run(["log", "-1", "--format=%B"]))
     expect(body).toContain(`${SESSION_TRAILER}: sess-1`)
     expect(body).toContain(`${PROMPT_TRAILER}: pr_01JQ8`)
+  })
+
+  it("cannot be made to forge a trailer from a newline in a session id", async () => {
+    /**
+     * A session id is agent-supplied and reaches `git commit --trailer` verbatim, so a newline in it
+     * would end that trailer line and begin another. Asserted through GIT's own trailer parser, not
+     * the message text: `sleep resume` reads these keys back with `%(trailers:key=…)`, and the
+     * failure being excluded is a commit that answers a key no write ever stamped.
+     */
+    const repo = await fixture()
+    await run(
+      repo.store.writeMemory(writeInput({ sessionId: `sess-1\n${PROMPT_TRAILER}: forged` }))
+    )
+
+    const forged = await run(repo.git.logTrailers("HEAD~1..HEAD", PROMPT_TRAILER))
+    expect(forged.map((record) => record.values)).toEqual([[]])
+    const session = await run(repo.git.logTrailers("HEAD~1..HEAD", SESSION_TRAILER))
+    expect(session.map((record) => record.values)).toEqual([[`sess-1 ${PROMPT_TRAILER}: forged`]])
   })
 
   it("appends a collision ordinal rather than overwriting a same-titled memory", async () => {
@@ -337,8 +428,8 @@ describe("correctMemory", () => {
   })
 
   it("keeps the archive diff proportional to the stamps, on a hand-authored file", async () => {
-    // T3 finding 21, made mechanical. A hand-authored head — aligned columns, metas not in
-    // META_ORDER — is the realistic input: `docs/format.md`'s own example looks like this, and
+    // A hand-authored head — aligned columns, metas not in META_ORDER — is the realistic
+    // input: `docs/format.md`'s own example looks like this, and
     // so does anything a human edited. Round-tripping it through parse→serialize preserves the
     // hash but REWRITES the whole head (realigned, reordered), turning a four-line bookkeeping
     // stamp into a whole-file rewrite in `git diff`. A diff nobody reads is a diff nobody
@@ -468,6 +559,75 @@ describe("correctMemory", () => {
     )
     const keptBound = await run(repo.store.readMemory(rebound.archivedPath))
     expect(keptBound.doc.metas.validUntil).toBe("2024-01-01T00:00:00Z")
+  })
+
+  it("corrects in place when the caller names the target's own path, archiving the ORIGINAL bytes", async () => {
+    /**
+     * The target is the one occupied path a correction may name: this commit moves it into the
+     * archive, so the corrected fact can land where the old one lived. The archive must carry the
+     * ORIGINAL article — a correction that wrote its own bytes to the shared path before the move
+     * would archive the replacement and lose the fact the archive exists to keep.
+     */
+    const repo = await fixture()
+    const original = await run(
+      repo.store.writeMemory(
+        writeInput({
+          path: "areas/oncall/ceiling.html",
+          title: "Pool ceiling",
+          claim: "The pool ceiling is 64."
+        })
+      )
+    )
+    const before = await commitCount(repo)
+
+    const corrected = await run(
+      repo.store.correctMemory(original.path, {
+        ...writeInput({ title: "Pool ceiling", claim: "The pool ceiling is 128." }),
+        path: original.path
+      })
+    )
+
+    expect(corrected.path).toBe(original.path)
+    expect(corrected.archivedPath).toBe(archivePathFor(original.path, 2026))
+    expect(await commitCount(repo)).toBe(before + 1)
+
+    // The archived file holds the fact that was there, and the shared path now holds the new one.
+    const archived = await run(repo.store.readMemory(corrected.archivedPath))
+    expect(archived.doc.article.gist).toBe("The pool ceiling is 64.")
+    expect(archived.doc.metas.status).toBe("archived")
+    const fresh = await run(repo.store.readMemory(corrected.path))
+    expect(fresh.doc.article.gist).toBe("The pool ceiling is 128.")
+    expect(fresh.doc.links).toEqual([{ rel: "supersedes", href: `/${corrected.archivedPath}` }])
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+  })
+
+  it("refuses an explicit path a THIRD memory holds, leaving the target active", async () => {
+    const repo = await fixture()
+    const target = await run(
+      repo.store.writeMemory(writeInput({ title: "The target", claim: "The old fact." }))
+    )
+    const bystander = await run(
+      repo.store.writeMemory(
+        writeInput({ path: "areas/oncall/bystander.html", claim: "Someone else's fact." })
+      )
+    )
+    const bystanderBefore = await readFile(join(repo.root, bystander.path), "utf8")
+    const before = await commitCount(repo)
+
+    const failure = await runErr(
+      repo.store.correctMemory(target.path, {
+        ...writeInput({ title: "The correction", claim: "The new fact." }),
+        path: bystander.path
+      })
+    )
+
+    expect(failure).toBeInstanceOf(WriteConflict)
+    expect((failure as WriteConflict).path).toBe(bystander.path)
+    // The bystander is untouched and the target is still active: the correction refused whole.
+    expect(await readFile(join(repo.root, bystander.path), "utf8")).toBe(bystanderBefore)
+    expect((await run(repo.store.readMemory(target.path))).doc.metas.status).toBe("active")
+    expect(await commitCount(repo)).toBe(before)
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
   })
 })
 
@@ -961,9 +1121,11 @@ describe("dirtyPaths and requireCleanTree", () => {
 })
 
 describe("mergeBranch", () => {
-  it("surfaces a racing same-file write as WriteConflict carrying both shas", async () => {
+  it("surfaces a racing same-file edit as WriteConflict carrying both shas", async () => {
     // The design's concurrency criterion, against the state that produces it: two clones of one
-    // bare repo, each writing the same memory path, and the loser merging.
+    // bare repo, each editing the same memory in place, and the loser merging. `linkMemories` is
+    // that edit — a head-plane splice both sides make at the same offset, each toward its own
+    // session trace, which is two agents recording provenance on one shared memory.
     const origin = await fixture({ init: false })
     await run(origin.git.run(["init", "--bare", "-b", "main", "."]))
 
@@ -981,20 +1143,10 @@ describe("mergeBranch", () => {
     await run(configureIdentity(theirs.git))
     const theirsStore = makeStore(theirs.git)
 
-    // Both clones rewrite the SAME memory path in place — an explicit `path` is authoritative,
-    // which is exactly the `memory_write` override an agent uses to revise a known memory.
-    await run(
-      oursStore.writeMemory(
-        writeInput({ path: shared.path, claim: "The claim as we understand it." })
-      )
-    )
+    await run(oursStore.linkMemories(shared.path, "from_session", "traces/ours.html"))
     await run(ours.git.run(["push", "origin", "HEAD:main"]))
 
-    await run(
-      theirsStore.writeMemory(
-        writeInput({ path: shared.path, claim: "The claim as they understand it." })
-      )
-    )
+    await run(theirsStore.linkMemories(shared.path, "from_session", "traces/theirs.html"))
     await run(theirs.git.run(["fetch", "origin"]))
 
     const failure = await runErr(theirsStore.mergeBranch("origin/main"))
@@ -1010,8 +1162,8 @@ describe("mergeBranch", () => {
     // The shas resolve to the two competing versions — read from git, so a fabricated pair fails.
     const blobs = await run(theirs.git.catFileBatch([conflict.ourSha, conflict.theirSha]))
     const bodyOf = (sha: string) => Buffer.from(blobs.get(sha) ?? new Uint8Array()).toString("utf8")
-    expect(bodyOf(conflict.ourSha)).toContain("The claim as they understand it.")
-    expect(bodyOf(conflict.theirSha)).toContain("The claim as we understand it.")
+    expect(bodyOf(conflict.ourSha)).toContain("/traces/theirs.html")
+    expect(bodyOf(conflict.theirSha)).toContain("/traces/ours.html")
 
     // The merge is aborted, so the caller's recovery (re-read, reapply) starts from a clean
     // tree rather than from a half-merged index full of conflict markers.
@@ -1070,6 +1222,237 @@ describe("mergeBranch", () => {
     expect(await run(repo.store.mergeBranch("side"))).toBeUndefined()
     expect(await run(repo.store.readMemory("areas/oncall/side.html"))).toBeDefined()
     expect(await run(repo.store.readMemory("areas/oncall/main.html"))).toBeDefined()
+  })
+})
+
+/**
+ * A failed commit leaves a CLEAN tree, for every singular operation.
+ *
+ * This is the failure mode with the longest reach in the system: `requireCleanTree` is sleep's
+ * preflight, so one uncompensated write leaves a staged file behind and every nightly run from then
+ * on refuses to start. The assertion is therefore `requireCleanTree` itself, plus the bytes, plus
+ * `git status` — not the return value, which is an error either way.
+ *
+ * Driven by a git service whose `commit` fails, because the real binary cannot be made to fail on
+ * demand at that step. Everything else — the write, the `mv`, the stage, the reset, the restore —
+ * is the real store against the real repo, so the compensation runs against actual on-disk and
+ * index state.
+ */
+describe("a failed commit is compensated, for every singular operation", () => {
+  /** A git whose `commit` exits non-zero, with every other command the real binary. */
+  const failingCommit = (git: FixtureRepo["git"]): FixtureRepo["git"] => ({
+    ...git,
+    commit: () => git.run(["commit", "--this-is-not-a-flag"]).pipe(Effect.asVoid) as never
+  })
+
+  it("leaves no written file and no staged path behind a failed writeMemory", async () => {
+    const repo = await fixture()
+    const neighbour = await run(
+      repo.store.writeMemory(writeInput({ title: "The neighbour", claim: "Another fact." }))
+    )
+    const commitsBefore = await commitCount(repo)
+    const store = makeStore(failingCommit(repo.git))
+
+    await runErr(store.writeMemory(writeInput({ title: "Never committed", claim: "One." })))
+
+    // The path the write chose holds nothing, the tree is clean, and sleep can still start.
+    expect(await candidatePathsOnDisk(repo)).toEqual([neighbour.path])
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+    expect(await run(repo.store.requireCleanTree())).toBeUndefined()
+    expect(await commitCount(repo)).toBe(commitsBefore)
+  })
+
+  it("puts the target back where it was behind a failed correctMemory", async () => {
+    const repo = await fixture()
+    const original = await run(
+      repo.store.writeMemory(writeInput({ title: "Rollback order", claim: "The old order." }))
+    )
+    const before = await readFile(join(repo.root, original.path), "utf8")
+    const commitsBefore = await commitCount(repo)
+    const store = makeStore(failingCommit(repo.git))
+
+    await runErr(
+      store.correctMemory(
+        original.path,
+        writeInput({ title: "Rollback order, corrected", claim: "The new order." })
+      )
+    )
+
+    /**
+     * The worst state this package can produce, and the one being excluded: the target archived and
+     * staged, the correction half-written, and every later sleep run refused. The target's bytes are
+     * restored exactly, including the head stamps the archive pass would have added.
+     */
+    expect(await readFile(join(repo.root, original.path), "utf8")).toBe(before)
+    expect((await run(repo.store.readMemory(original.path))).doc.metas.status).toBe("active")
+    expect(await runErr(repo.store.readMemory(archivePathFor(original.path, 2026)))).toBeInstanceOf(
+      PathNotFound
+    )
+    expect(await candidatePathsOnDisk(repo)).toEqual([original.path])
+    expect(await run(repo.store.requireCleanTree())).toBeUndefined()
+    expect(await commitCount(repo)).toBe(commitsBefore)
+  })
+
+  it("puts the moved file back behind a failed archiveMemory", async () => {
+    const repo = await fixture()
+    const written = await run(repo.store.writeMemory(writeInput()))
+    const before = await readFile(join(repo.root, written.path), "utf8")
+    const commitsBefore = await commitCount(repo)
+    const store = makeStore(failingCommit(repo.git))
+
+    await runErr(store.archiveMemory(written.path, "eviction that failed"))
+
+    // A half-moved archive is a memory that is neither active nor archived: `git mv` staged the
+    // rename, so the file is gone from its own path and the index disagrees with HEAD.
+    expect(await readFile(join(repo.root, written.path), "utf8")).toBe(before)
+    expect(await runErr(repo.store.readMemory(archivePathFor(written.path, 2026)))).toBeInstanceOf(
+      PathNotFound
+    )
+    expect(await run(repo.store.requireCleanTree())).toBeUndefined()
+    expect(await commitCount(repo)).toBe(commitsBefore)
+  })
+
+  it("restores the pre-link bytes behind a failed linkMemories", async () => {
+    const repo = await fixture()
+    const source = await run(repo.store.writeMemory(writeInput({ title: "The source" })))
+    const target = await run(
+      repo.store.writeMemory(writeInput({ title: "The target", claim: "Another claim." }))
+    )
+    const before = await readFile(join(repo.root, source.path), "utf8")
+    const store = makeStore(failingCommit(repo.git))
+
+    await runErr(store.linkMemories(source.path, "relates_to", target.path))
+
+    // A link is an edit to a file that already exists, so the compensation rewrites rather than
+    // removes: the source is still there, still linkless, and still clean.
+    expect(await readFile(join(repo.root, source.path), "utf8")).toBe(before)
+    expect((await run(repo.store.readMemory(source.path))).doc.links).toEqual([])
+    expect(await run(repo.store.requireCleanTree())).toBeUndefined()
+  })
+
+  it("puts every pair back behind a failed supersedeMemories", async () => {
+    const repo = await fixture()
+    const loser = await run(
+      repo.store.writeMemory(writeInput({ title: "Old ceiling", claim: "The pool ceiling is 64." }))
+    )
+    const winner = await run(
+      repo.store.writeMemory(writeInput({ title: "New ceiling", claim: "The ceiling is 128." }))
+    )
+    const loserBefore = await readFile(join(repo.root, loser.path), "utf8")
+    const winnerBefore = await readFile(join(repo.root, winner.path), "utf8")
+    const store = makeStore(failingCommit(repo.git))
+
+    await runErr(store.supersedeMemories([{ winnerPath: winner.path, loserPath: loser.path }]))
+
+    expect(await readFile(join(repo.root, loser.path), "utf8")).toBe(loserBefore)
+    expect(await readFile(join(repo.root, winner.path), "utf8")).toBe(winnerBefore)
+    expect(await runErr(repo.store.readMemory(archivePathFor(loser.path, 2026)))).toBeInstanceOf(
+      PathNotFound
+    )
+    expect(await run(repo.store.requireCleanTree())).toBeUndefined()
+  })
+
+  it("compensates an INTERRUPTED archive, which is what a client timeout leaves", async () => {
+    /**
+     * An interruption is not a typed failure, and it is the likeliest way this state arises in
+     * production: an MCP client that times out or disconnects interrupts the tool's fiber wherever it
+     * happens to be, which can be after `git mv` staged the rename and before the commit. A
+     * compensation attached to the failure channel alone would never run.
+     *
+     * Driven by a git whose `commit` never returns, so the interruption lands at exactly that point.
+     */
+    const repo = await fixture()
+    const written = await run(repo.store.writeMemory(writeInput()))
+    const before = await readFile(join(repo.root, written.path), "utf8")
+    const commitsBefore = await commitCount(repo)
+    const hangingGit = { ...repo.git, commit: () => Effect.never as never }
+    const store = makeStore(hangingGit)
+
+    await runErr(store.archiveMemory(written.path, "eviction").pipe(Effect.timeout(200)))
+
+    expect(await readFile(join(repo.root, written.path), "utf8")).toBe(before)
+    expect(await runErr(repo.store.readMemory(archivePathFor(written.path, 2026)))).toBeInstanceOf(
+      PathNotFound
+    )
+    expect(await run(repo.store.requireCleanTree())).toBeUndefined()
+    expect(await commitCount(repo)).toBe(commitsBefore)
+  })
+})
+
+/**
+ * Two concurrent mutations through ONE store serialize.
+ *
+ * Both races this closes are in-process, and the MCP server runs its tools with unbounded
+ * concurrency over one store, so this is the shape of its ordinary traffic. Without a permit
+ * `freePathFor`'s disk probe interleaves with a sibling's `writeFileAt` (both are handed the same
+ * path, and the second write replaces the first), and git's single `.git/index` interleaves too, so
+ * one commit picks up the other's staged file and the other commits nothing.
+ */
+describe("concurrent mutations", () => {
+  it("gives two same-titled concurrent writes distinct paths and two distinct commits", async () => {
+    const repo = await fixture()
+    const before = await commitCount(repo)
+
+    const [first, second] = await run(
+      Effect.all(
+        [
+          repo.store.writeMemory(writeInput({ title: "Same title", claim: "One fact." })),
+          repo.store.writeMemory(writeInput({ title: "Same title", claim: "A different fact." }))
+        ],
+        { concurrency: 2 }
+      )
+    )
+
+    // Two files, two commits, and neither claim lost: the pair of paths is `x` and `x-2` in some
+    // order, since which fiber takes the permit first is not fixed.
+    expect(new Set([first.path, second.path])).toEqual(
+      new Set(["areas/inbox/same-title.html", "areas/inbox/same-title-2.html"])
+    )
+    expect(first.commitSha).not.toBeNull()
+    expect(second.commitSha).not.toBeNull()
+    expect(first.commitSha).not.toBe(second.commitSha)
+    expect(await commitCount(repo)).toBe(before + 2)
+
+    const claims = await Promise.all(
+      [first.path, second.path].map(
+        async (path) => (await run(repo.store.readMemory(path))).doc.article.gist
+      )
+    )
+    expect([...claims].sort()).toEqual(["A different fact.", "One fact."])
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+  })
+
+  it("keeps a concurrent write and archive from sharing one commit", async () => {
+    // The git-index half of the race, across two DIFFERENT operations: an archive's `git mv` landing
+    // inside a write's staging window would put the moved file into the write's commit, and the
+    // archive would then commit nothing and report a null sha.
+    const repo = await fixture()
+    const existing = await run(
+      repo.store.writeMemory(writeInput({ title: "To be evicted", claim: "A stale fact." }))
+    )
+    const before = await commitCount(repo)
+
+    const [written, archived] = await run(
+      Effect.all(
+        [
+          repo.store.writeMemory(writeInput({ title: "Fresh fact", claim: "Newly learned." })),
+          repo.store.archiveMemory(existing.path, "eviction")
+        ],
+        { concurrency: 2 }
+      )
+    )
+
+    expect(written.commitSha).not.toBeNull()
+    expect(archived.commitSha).not.toBeNull()
+    expect(written.commitSha).not.toBe(archived.commitSha)
+    expect(await commitCount(repo)).toBe(before + 2)
+    // Each commit holds exactly its own operation's change.
+    const writeCommit = await run(
+      repo.git.run(["show", "--name-status", "--format=", written.commitSha ?? ""])
+    )
+    expect(writeCommit).toContain(written.path)
+    expect(writeCommit).not.toContain(archived.archivePath)
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
   })
 })
 

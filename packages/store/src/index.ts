@@ -80,12 +80,4 @@ export type {
   WriteProvenance,
   WriteResult
 } from "./store.js"
-export {
-  expandRoot,
-  GitLive,
-  isoSecond,
-  MemhtmlRootConfig,
-  makeStore,
-  Store,
-  StoreLive
-} from "./store.js"
+export { expandRoot, isoSecond, makeStore, Store } from "./store.js"

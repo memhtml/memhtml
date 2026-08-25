@@ -407,4 +407,37 @@ describe("provenanceTrailers", () => {
   it("treats an empty string as absent, so no empty trailer reaches a commit", () => {
     expect(provenanceTrailers({ sessionId: "", promptId: "" })).toEqual({})
   })
+
+  it("flattens a newline out of a value, so no value can forge a second trailer", () => {
+    /**
+     * Both values are agent-supplied and reach `git commit --trailer "<key>: <value>"` verbatim. A
+     * newline inside one ends the trailer line and starts another, so `sleep resume` — which
+     * attributes a night's writes by reading these keys back off the commits — would read a session
+     * and a prompt no write ever carried.
+     */
+    const trailers = provenanceTrailers({
+      sessionId: "sess-1\nMemhtml-Prompt: forged",
+      promptId: "pr_1\r\nSigned-off-by: nobody"
+    })
+    expect(trailers).toEqual({
+      "Memhtml-Session": "sess-1 Memhtml-Prompt: forged",
+      "Memhtml-Prompt": "pr_1 Signed-off-by: nobody"
+    })
+    for (const value of Object.values(trailers)) {
+      expect(value).not.toContain("\n")
+      expect(value).not.toContain("\r")
+    }
+  })
+
+  it("treats a whitespace-only value as absent, the way an empty one is", () => {
+    expect(provenanceTrailers({ sessionId: " \n\t ", promptId: "\n" })).toEqual({})
+  })
+
+  it("leaves an ordinary value byte-identical", () => {
+    // The mutation-proof pair: the flattening must not rewrite the ids every trace join reads on.
+    expect(provenanceTrailers({ sessionId: "sess-01JQ8", promptId: "pr_01JQ8ABC" })).toEqual({
+      "Memhtml-Session": "sess-01JQ8",
+      "Memhtml-Prompt": "pr_01JQ8ABC"
+    })
+  })
 })
