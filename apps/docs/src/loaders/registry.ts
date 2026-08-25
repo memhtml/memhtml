@@ -23,6 +23,7 @@ import {
   booleanProperty,
   callArgumentIdentifiers,
   docCommentFor,
+  factoryCallsOf,
   identifierListProperty,
   makeCallsOf,
   moduleDocOf,
@@ -36,7 +37,6 @@ import {
   stringPairArrayConst,
   stringProperty,
   switchReturnsOf,
-  taggedTemplateCallsOf,
   tsFilesUnder
 } from "./repo-sources.js"
 
@@ -211,18 +211,41 @@ const toolRegistry = (): ReadonlyArray<McpTool> => {
 const resourceRegistry = (): ReadonlyArray<McpResource> => {
   const path = SOURCES.mcpResources
   const templates = stringArrayConst(path, "RESOURCE_TEMPLATES")
-  const declared = taggedTemplateCallsOf(path, "McpServer", "resource").map((entry) => ({
-    template: entry.template,
-    name: stringProperty(path, entry.object, "name"),
-    description: stringProperty(path, entry.object, "description"),
-    mimeType: stringProperty(path, entry.object, "mimeType")
-  }))
+  // Each resource is one spec object handed to the file's `templateLayer`, which registers the route
+  // with `McpServer.addResourceTemplate`. The published URI template is that spec's `uriTemplate`
+  // property — a literal, since the route the server matches is a rest-parameter pattern rather than
+  // the braced form a client fills in, and neither string can be derived from the other.
+  const built = new Map(
+    factoryCallsOf(path, "templateLayer").map(
+      (call) =>
+        [
+          call.identifier,
+          {
+            template: stringProperty(path, call.object, "uriTemplate"),
+            name: stringProperty(path, call.object, "name"),
+            description: stringProperty(path, call.object, "description"),
+            mimeType: stringProperty(path, call.object, "mimeType")
+          }
+        ] as const
+    )
+  )
+  // Registration order, not source order: `Resources` is the one layer the server provides, so a
+  // resource built and never merged into it is absent from the page — which is correct, since it is
+  // absent from the server.
+  const declared = callArgumentIdentifiers(path, "Resources").map((identifier) => {
+    const resource = built.get(identifier)
+    if (!resource) throw new Error(`${path}: \`${identifier}\` is registered but never built`)
+    return resource
+  })
   // The two independent readings must agree: `RESOURCE_TEMPLATES` exists so a test can assert the
-  // surface without a handshake, and it is a second copy of the URIs the `resource` calls build. A
-  // page that published one while the server serves the other is the drift this tier exists to
-  // refuse.
-  const built = declared.map((entry) => entry.template)
-  if (built.length !== templates.length || built.some((uri, at) => uri !== templates.at(at))) {
+  // surface without a handshake, and each spec's own `uriTemplate` is the string
+  // `resources/templates` publishes. A page that published one while the server serves the other is
+  // the drift this tier exists to refuse.
+  const published = declared.map((entry) => entry.template)
+  if (
+    published.length !== templates.length ||
+    published.some((uri, at) => uri !== templates.at(at))
+  ) {
     throw new Error(`${path}: RESOURCE_TEMPLATES disagrees with the declared resources`)
   }
   return declared
