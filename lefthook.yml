@@ -1,7 +1,7 @@
 # Git hooks via lefthook, installed by `mise run install` (or `mise run hooks:install`).
 #
 # Every job goes through `mise exec` / `mise run`, so the tool that runs is the version
-# this repo pins — biome 2.5.8 from node_modules/.bin (reached via mise.toml's `_.path`),
+# this repo pins — biome 2.5.10 from node_modules/.bin (reached via mise.toml's `_.path`),
 # betterleaks 1.7.4 from mise. Never a bare `biome`, whose resolution depends on the
 # committer's shell.
 #

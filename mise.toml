@@ -65,7 +65,7 @@ lychee = "latest"
 
 [env]
 # Puts the workspace's own binaries on PATH so a lefthook job reaching for `biome` gets
-# the pinned 2.5.8 from devDependencies rather than needing a fifteenth declaration
+# the pinned 2.5.10 from devDependencies rather than needing a fifteenth declaration
 # under [tools]. PATH only — see the header on why no value-bearing var is set.
 _.path = ["{{config_root}}/node_modules/.bin"]
 
