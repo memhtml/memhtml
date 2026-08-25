@@ -1,8 +1,7 @@
-import { BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime"
 import { ModelUnavailable } from "@memhtml/contracts/errors"
 import { Context, Effect, Layer } from "effect"
 
-import { type InvokeClient, invokeJson, LlmConfig } from "./client.js"
+import { type InvokeClient, invokeJson, LlmConfig, makeBedrockClient } from "./client.js"
 import { EMBED_BATCH_LIMIT, EMBED_CONCURRENCY, EMBED_DIM, EMBED_MODEL_ID } from "./constants.js"
 
 /**
@@ -156,21 +155,17 @@ export const makeEmbeddings = (client: InvokeClient): EmbeddingsShape => {
 }
 
 /**
- * `maxAttempts: 10` with adaptive retry, matching croq's botocore configuration. The
- * embed lane issues hundreds of calls per index run, so a throttle that failed the run
- * instead of backing off would make a full rebuild unreliable at exactly the corpus size
- * where the rebuild matters.
+ * `makeBedrockClient` carries `maxAttempts: 10` with adaptive retry, and the embed lane
+ * is why the retries matter here: it issues hundreds of calls per index run, so a
+ * throttle that failed the run instead of backing off would make a full rebuild
+ * unreliable at exactly the corpus size where the rebuild matters. The same construction
+ * bounds a hung socket (`REQUEST_HANDLER_OPTIONS`), so one dead connection inside a
+ * batch fan-out fails that batch instead of stalling the whole rebuild.
  */
 export const EmbeddingsLive = Layer.effect(
   Embeddings,
   Effect.gen(function* () {
     const config = yield* LlmConfig
-    return makeEmbeddings(
-      new BedrockRuntimeClient({
-        region: config.region,
-        maxAttempts: 10,
-        retryMode: "adaptive"
-      })
-    )
+    return makeEmbeddings(makeBedrockClient(config.region))
   })
 )

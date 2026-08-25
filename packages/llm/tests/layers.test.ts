@@ -6,11 +6,11 @@ import { Embeddings, EmbeddingsLive } from "../src/embeddings.js"
 import { ModelClient, ModelClientLive } from "../src/model-client.js"
 
 /**
- * A declared service that nothing constructs is worse than a missing one: the fleet has
- * shipped a port whose claimed implementation defined none of its methods, so three tools
- * would `AttributeError` at the first call with no covering test. These build the real
- * layers and read every method off the resulting service — no Bedrock call is made, but a
- * layer that fails to construct, or a shape missing a method, fails here.
+ * A declared service that nothing constructs is worse than a missing one: a port whose
+ * claimed implementation defines none of its methods fails at the first call, in
+ * production, with no covering test. These build the real layers and read every method
+ * off the resulting service — no Bedrock call is made, but a layer that fails to
+ * construct, or a shape missing a method, fails here.
  */
 
 const withEnv = <A, E, R>(env: Record<string, string>, program: Effect.Effect<A, E, R>) =>

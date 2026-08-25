@@ -12,10 +12,17 @@ import {
 /**
  * The fixture corpus, as a pure specification.
  *
- * Pure and seeded, so the same seed yields byte-identical files on any machine. A fixture the
- * discrimination gate runs against exists so that a change in the numbers means a change in the
- * RANKING and not a change in the corpus. Nothing here reads a clock, a filesystem, or an environment
- * variable, and `fixture.ts` is the only module that writes.
+ * Pure, seeded, and now-anchored: the corpus is a function of `(seed, now)` and nothing else, so
+ * one `(seed, now)` pair yields byte-identical files on any machine. A fixture the discrimination
+ * gate runs against exists so that a change in the numbers means a change in the RANKING and not a
+ * change in the corpus. Nothing here reads a clock, a filesystem, or an environment variable, and
+ * `fixture.ts` is the only module that writes.
+ *
+ * `now` matters because the ranking stack is not calendar-blind: the salience arm decays on
+ * `unixepoch('now') - last_accessed_at` at query time, so a fixture with FIXED calendar stamps ages
+ * out from under the gate — the same seed produces different decay, and eventually different ranks,
+ * depending on the day the eval runs. Anchoring every stamp as an offset BEHIND the harness's run
+ * time keeps the corpus's relative spacing identical on every calendar date. See {@link quantizeNow}.
  *
  * No real transcript, no real memory, no `~/.claude` content. Every fact below is invented about
  * invented services.
@@ -81,6 +88,8 @@ export interface CorpusSpec {
   readonly access: ReadonlyArray<AccessSpec>
   readonly probes: ReadonlyArray<Probe>
   readonly seed: number
+  /** The quantized run instant every stamp is anchored behind, UTC millis. See {@link quantizeNow}. */
+  readonly now: number
 }
 
 /** The default seed. Named so a caller changing it is making a visible choice. */
@@ -340,14 +349,68 @@ export const queryFor = (spec: MemorySpec, limit = 12): string =>
 /** A memory's slug-derived path inside a directory. */
 const pathIn = (directory: string, title: string): string => `${directory}/${slugify(title)}.html`
 
-/** An ISO-8601 UTC second, from a day offset against the corpus's fixed epoch. */
-const at = (dayOffset: number, hour = 9): string => {
-  const millis = Date.UTC(2026, 0, 1, hour, 0, 0) + dayOffset * 86_400_000
-  return `${new Date(millis).toISOString().slice(0, 19)}Z`
+const DAY_MILLIS = 86_400_000
+
+/**
+ * Quantize a run instant to its UTC day.
+ *
+ * The anchor is the day rather than the millisecond so that every run on one calendar date builds
+ * a byte-identical corpus at a given seed. The gate's determinism checks compare two full runs, and
+ * a millisecond-precision anchor would make "same seed, same numbers" true only for runs started in
+ * the same millisecond.
+ *
+ * `Math.floor` rather than a `%` remainder, because JS `%` keeps the DIVIDEND's sign: at
+ * `nowMillis = -1`, `nowMillis % DAY_MILLIS` is `-1` and subtracting it lands on 0 — an anchor AHEAD
+ * of the instant asked for, which is the one thing the anchoring exists to rule out.
+ *
+ * A non-finite instant is refused here rather than carried: `NaN` passes every arithmetic step and
+ * surfaces hundreds of lines later as `RangeError: Invalid time value` out of a stamp formatter, which
+ * names neither the input nor the caller that supplied it.
+ */
+export const quantizeNow = (nowMillis: number): number => {
+  if (!Number.isFinite(nowMillis)) {
+    throw new RangeError(
+      `the corpus anchor must be a finite epoch-millis instant, received ${nowMillis}`
+    )
+  }
+  return Math.floor(nowMillis / DAY_MILLIS) * DAY_MILLIS
 }
 
-/** A calendar date `YYYY-MM-DD` from the same epoch, for a `<time datetime>` attribute. */
-const eventDate = (dayOffset: number): string => at(dayOffset).slice(0, 10)
+/**
+ * Where day offset 0 sits behind the anchor.
+ *
+ * The generator's day offsets run from -200 (the archived tier) to 299 (an event date), and every
+ * stamp the ranking stack reads must land BEHIND the run instant — the salience arm decays on
+ * `unixepoch('now') - last_accessed_at`, and a future stamp inverts the decay into a boost that
+ * grows until the calendar catches up. 300 puts the newest generated stamp at least 15 hours behind
+ * any instant inside the anchor day. Only `validUntil` intentionally lands in the future, because
+ * it marks when a memory STOPS being valid.
+ */
+const CORPUS_SPAN_DAYS = 300
+
+/** The stamp functions, all derived from one quantized run instant. */
+interface Stamps {
+  /** An ISO-8601 UTC second, from a day offset. Offset {@link CORPUS_SPAN_DAYS} is the anchor day. */
+  readonly at: (dayOffset: number, hour?: number) => string
+  /** A calendar date `YYYY-MM-DD` from the same offset, for a `<time datetime>` attribute. */
+  readonly eventDate: (dayOffset: number) => string
+  /** The day offset an ISO instant produced by {@link at} sits at. */
+  readonly dayOf: (instant: string) => number
+}
+
+const stampsFor = (nowMillis: number): Stamps => {
+  const anchor = quantizeNow(nowMillis)
+  const at = (dayOffset: number, hour = 9): string => {
+    const millis = anchor + (dayOffset - CORPUS_SPAN_DAYS) * DAY_MILLIS + hour * 3_600_000
+    return `${new Date(millis).toISOString().slice(0, 19)}Z`
+  }
+  return {
+    at,
+    eventDate: (dayOffset) => at(dayOffset).slice(0, 10),
+    // `Math.floor` discards the hour component `at` added, so the offset round-trips exactly.
+    dayOf: (instant) => Math.floor((Date.parse(instant) - anchor) / DAY_MILLIS) + CORPUS_SPAN_DAYS
+  }
+}
 
 /**
  * The element kits, one per index modulo their count, so a generated corpus exercises every element
@@ -356,10 +419,12 @@ const eventDate = (dayOffset: number): string => at(dayOffset).slice(0, 10)
  * Each kit returns markup that follows the claim paragraph. None of them contains a `<mark>`, because
  * the claim leads the article and constraint 5 forbids one inside an `<aside>` or `<details>`.
  */
-const KITS: ReadonlyArray<(topic: Topic, ordinal: number) => ReadonlyArray<string>> = [
+const KITS: ReadonlyArray<
+  (topic: Topic, ordinal: number, stamps: Stamps) => ReadonlyArray<string>
+> = [
   // `<time datetime>`, the event the fact is about, which the recency arm ranks on.
-  (topic, ordinal) => [
-    `<p>Observed on <time datetime="${eventDate(ordinal % 300)}">the ${topic.service} rotation</time>` +
+  (topic, ordinal, stamps) => [
+    `<p>Observed on <time datetime="${stamps.eventDate(ordinal % 300)}">the ${topic.service} rotation</time>` +
       ` while the ${topic.nouns[0] ?? "surface"} was under load.</p>`
   ],
   // `<dl>`/`<dt>`/`<dd>` with a `<data value>`, the facet rows, one with a numeric value.
@@ -445,13 +510,11 @@ export const articleFor = (spec: MemorySpec): string => {
  * A claim built from a topic and an ordinal.
  *
  * **Distinct per ordinal, and the gate requires that.** The topic list, the type list, the noun list,
- * and the verb list all cycle, so `(topic, type, noun, verb)` repeats every lcm(12, 9, 5, 3) = 180
- * ordinals, and a corpus of 200 therefore held 20 pairs of memories asserting the SAME claim in
- * different directories. A probe's query is derived from its target's claim, so a shared claim means
- * the query identifies two memories equally well. The twin outranks the target on recency about half
- * the time, and the probe reports an inversion that says nothing about the control it was built to
- * test. Measured on the first generated 200: the twin took fused rank 1 and the target rank 8 on the
- * probe that surfaced it.
+ * and the verb list all cycle, so `(topic, type, noun, verb)` alone repeats every lcm(12, 9, 5, 3) =
+ * 180 ordinals — within reach of a 200-memory corpus. A probe's query is derived from its target's
+ * claim, so two memories sharing a claim would be identified equally well by the query, and the twin
+ * would outrank the target on recency about half the time: an inversion that says nothing about the
+ * control the probe was built to test.
  *
  * `scopeFor` disambiguates them with a per-ordinal environment noun spliced into the claim, so two
  * ordinals a multiple of 180 apart state facts about different environments. It carries no digit, so
@@ -487,14 +550,14 @@ const claimFor = (topic: Topic, type: string, ordinal: number): string => {
  * The noun index for an ordinal, from the ordinal's own `(topic, type)` LANE rather than from the
  * ordinal directly.
  *
- * **`ordinal % nouns.length` cycles in lockstep with the topic and type lists, which is what produced
- * the corpus's twin problem.** Topic cycles at 12 and type at 9, so a given `(topic, type)` pair
- * recurs every 36 ordinals. With the noun taken as `ordinal % 5` the SAME noun returns every
- * lcm(36, 5) = 180. Two memories then share their entire subject, same service, same type, same noun,
- * and differ only in the scope word and the body's letter code. A probe query built from one of them
- * matches both, and the twin took fused rank 1 while the target sat at 3 or 4 on EVERY probe. The
- * controls were still correctly ranked below the target, so this was not an inversion. It was a
- * fixture that cannot measure rank 1, which caps MRR near 0.25 no matter how well retrieval works.
+ * **`ordinal % nouns.length` would cycle in lockstep with the topic and type lists, and the lockstep
+ * is what this function must avoid.** Topic cycles at 12 and type at 9, so a given `(topic, type)`
+ * pair recurs every 36 ordinals; a noun taken as `ordinal % 5` returns the SAME noun every
+ * lcm(36, 5) = 180. Two memories would then share their entire subject — same service, same type,
+ * same noun — differing only in the scope word and the body's letter code. A probe query built from
+ * one matches both, the twin takes fused rank 1, and the controls stay correctly ranked below the
+ * target: not an inversion, but a fixture that cannot measure rank 1, which caps MRR near 0.25 no
+ * matter how well retrieval works.
  *
  * Dividing by the `(topic, type)` cycle length advances the noun once per LANE visit instead, so the
  * fifth `checkout-api`/`procedural` memory gets the fifth noun. The full tuple then repeats only after
@@ -563,11 +626,10 @@ const letterCode = (ordinal: number): string => {
  *
  * **The last sentence carries a per-ordinal code, and it is what makes every article distinct.** The
  * content hash's scope is `<article>` alone, so a title is not part of it, and the claim is a function
- * of `(topic, type, ordinal mod k)` for several small `k`. Two ordinals a common multiple apart
- * therefore produce IDENTICAL article text under different titles. `files_content_hash_active` is a
- * partial UNIQUE index, so the second such memory cannot be indexed at all. The whole `writeAll` batch
- * fails and the corpus never reaches the gate. Measured on the first generated 200: 17 colliding pairs
- * at ordinals 180 apart.
+ * of `(topic, type, ordinal mod k)` for several small `k`. Without the code, two ordinals a common
+ * multiple apart produce IDENTICAL article text under different titles. `files_content_hash_active`
+ * is a partial UNIQUE index, so the second such memory cannot be indexed at all — the whole
+ * `writeAll` batch fails and the corpus never reaches the gate.
  *
  * A code rather than widening the claim vocabulary, because a probe query is derived from the claim.
  * Pushing the distinguisher into the claim would put a token unique to one memory into the query that
@@ -609,15 +671,15 @@ const PROBE_TYPES: ReadonlyArray<string> = ["procedural", "semantic"]
  * A control's own title, so its `fts_text` differs from its target's as a real file's would.
  *
  * **The family marker LEADS the title, and that placement decides the tie-break.** The title is the
- * slug and the slug is the filename, so a trailing marker made every control's path an extension of
- * its target's stem, `…-110-qualified-variant.html` against `…-110.html`. `-` (0x2D) sorts before
- * `.` (0x2E), so the control's path sorted before its target's on EVERY pair.
+ * slug and the slug is the filename, so a trailing marker would make every control's path an
+ * extension of its target's stem, `…-110-qualified-variant.html` against `…-110.html`. `-` (0x2D)
+ * sorts before `.` (0x2E), so the control's path would sort before its target's on EVERY pair.
  *
  * That matters because RRF produces **exact** score ties, and the fold breaks them on `path ASC`
  * (design §5, deliberately, so the ordering is total and reproducible). Two documents that swap
- * positions across two equal-weight arms sum identically, measured here at 0.03252247 for both the
- * target (fts 1, vector 2) and its variant control (fts 2, vector 1). With a trailing marker the
- * tie-break went to the CONTROL every time, a systematic loss decided by filename punctuation.
+ * positions across two equal-weight arms sum identically — a target at fts 1/vector 2 and its
+ * variant control at fts 2/vector 1 carry the same fused score. With a trailing marker the
+ * tie-break goes to the CONTROL every time, a systematic loss decided by filename punctuation.
  *
  * Leading the marker makes the ordering depend on the marker word against the target's first word,
  * which is arbitrary per pair rather than adverse. That is the relationship a real corpus has, where a
@@ -643,7 +705,8 @@ const controlTitleFor = (targetTitle: string, family: DivergenceFamily): string 
  * and the day offsets. Placement and vocabulary are functions of the ordinal, which keeps a corpus
  * legible: the fifth `checkout-api` memory is always the fifth `checkout-api` memory.
  */
-const buildBase = (count: number, seed: number): ReadonlyArray<MemorySpec> => {
+const buildBase = (count: number, seed: number, stamps: Stamps): ReadonlyArray<MemorySpec> => {
+  const { at } = stamps
   const next = rng(seed)
   const specs: Array<MemorySpec> = []
 
@@ -692,7 +755,7 @@ const buildBase = (count: number, seed: number): ReadonlyArray<MemorySpec> => {
       ],
       tags: topic.tags,
       links: [],
-      extras: kit(topic, ordinal),
+      extras: kit(topic, ordinal, stamps),
       ...(jitter > 0.9 ? { validUntil: at(day + 400) } : {}),
       ...(ordinal % 17 === 0 ? { sessionId: sessionIdFor(ordinal) } : {})
     })
@@ -789,12 +852,19 @@ const withEdges = (specs: ReadonlyArray<MemorySpec>): ReadonlyArray<MemorySpec> 
  * an EARLIER version of the fact rather than the same one. That is also what gives the supersedes edge
  * something to mean.
  */
-const withArchive = (specs: ReadonlyArray<MemorySpec>): ReadonlyArray<MemorySpec> => {
+const withArchive = (
+  specs: ReadonlyArray<MemorySpec>,
+  stamps: Stamps
+): ReadonlyArray<MemorySpec> => {
+  const { at } = stamps
   const live = specs.filter(
     (spec) => spec.memoryType === "procedural" && !spec.path.startsWith("archive/")
   )
   const archived: Array<MemorySpec> = []
   const superseding = new Map<string, string>()
+  // The year partition `archive/<YYYY>/` requires, taken from the archived stamp itself so the
+  // partition and the `memhtml-archived` value name the same year on every run date.
+  const archiveYear = at(-190).slice(0, 4)
 
   live.forEach((spec, index) => {
     if (index % 6 !== 0) return
@@ -802,12 +872,12 @@ const withArchive = (specs: ReadonlyArray<MemorySpec>): ReadonlyArray<MemorySpec
       /\/([^/]+)\.html$/,
       (_all, stem: string) => `/${stem}-earlier.html`
     )
-    const archivePath = `archive/2025/${originalPath}`
+    const archivePath = `archive/${archiveYear}/${originalPath}`
     archived.push({
       ...spec,
       path: archivePath,
       title: `${spec.title} (earlier reading)`,
-      claim: spec.claim.replace(/\.$/, ", as the rotation understood it in 2025."),
+      claim: spec.claim.replace(/\.$/, ", as the rotation understood it a season earlier."),
       createdAt: at(-200),
       updatedAt: at(-190),
       archivedAt: at(-190),
@@ -838,20 +908,18 @@ const withArchive = (specs: ReadonlyArray<MemorySpec>): ReadonlyArray<MemorySpec
  * depends on that.** Two of the four ranking arms, recency (w 0.5) and salience (w 0.4), together
  * 31% of the fold's weight, are QUERY-BLIND. They rank a fixed `DEFAULT_ARM_LIMIT` window of the
  * corpus whatever was asked. `base` is generated in ordinal order and a memory's `updatedAt`
- * advances with its ordinal, so taking the first N candidates takes the N OLDEST memories. Every
- * probe target then sits outside the recency window by construction and loses both blind arms on
- * every probe. Probed directly: the recency window held ordinals 157-199 while the probe targets
- * were 1-155, an overlap of exactly zero, and MRR capped at 0.06 with the inversion check
- * nonetheless passing at every corpus scale.
+ * advances with its ordinal, so taking the first N candidates would take the N OLDEST memories —
+ * every probe target would sit outside the recency window by construction and lose both blind arms
+ * on every probe, capping MRR far below the floor while the inversion check still passes.
  *
  * A uniform stride puts targets across the whole age range, which is what an agent's queries actually
- * hit. It changes NOTHING about the controls or the strict per-probe check, since the inversion count
- * was 1 before and after. It makes the MRR aggregate a measurement of ranking rather than of where the
- * generator happened to slice.
+ * hit. It changes NOTHING about the controls or the strict per-probe check. It makes the MRR
+ * aggregate a measurement of ranking rather than of where the generator happened to slice.
  */
 const buildProbes = (
   base: ReadonlyArray<MemorySpec>,
-  wanted: number
+  wanted: number,
+  stamps: Stamps
 ): { readonly controls: ReadonlyArray<MemorySpec>; readonly probes: ReadonlyArray<Probe> } => {
   const candidates = base.filter(
     (spec) =>
@@ -908,17 +976,17 @@ const buildProbes = (
          * against a broken vector arm. Paying the recency penalty is what makes the pass mean that
          * the lexical and semantic arms discriminated.
          */
-        updatedAt: at(dayOf(target.updatedAt) + 1),
+        updatedAt: stamps.at(stamps.dayOf(target.updatedAt) + 1),
         links: [],
         /**
          * **The target's element kit is COPIED rather than dropped, which is what makes the pair a
          * fair test.** A control without the kit is a strictly SHORTER document carrying the same
-         * query terms, and both ranking arms are length-sensitive. The FTS arm's only relevance signal
-         * is MATCH's own term-density order, and a vector is L2-normalized so unrelated tokens dilute
-         * the cosine. Measured before this was fixed: the kit-free control took FTS rank 1 and vector
-         * rank 3 while its target sat at 4 and 10, on 22 of 36 probes. The gate was failing on
-         * document length instead of on the fact. A control that wins by being terser proves nothing
-         * about discrimination, and a fold that "fixed" it would be tuned against an artifact.
+         * query terms, and both ranking arms are length-sensitive: the FTS arm's only relevance
+         * signal is MATCH's own term-density order, and a vector is L2-normalized so unrelated
+         * tokens dilute the cosine. A kit-free control therefore outranks its own target on both
+         * arms, and the gate fails on document length instead of on the fact. A control that wins
+         * by being terser proves nothing about discrimination, and a fold that "fixed" it would be
+         * tuned against an artifact.
          *
          * With the kit copied, the pair differs by exactly the flipped token, which is the
          * high-cosine wrong-fact adversary design §5 asks for.
@@ -946,10 +1014,6 @@ const qualifierFor = (path: string): string => {
 /** The directory part of a path. */
 const directoryOf = (path: string): string => path.slice(0, path.lastIndexOf("/"))
 
-/** The day offset an ISO instant sits at, against the corpus's epoch. */
-const dayOf = (instant: string): number =>
-  Math.round((Date.parse(instant) - Date.UTC(2026, 0, 1, 9, 0, 0)) / 86_400_000)
-
 /** How many base memories a default corpus carries, before controls and the archive tier. */
 export const DEFAULT_CORPUS_SIZE = 200
 
@@ -960,22 +1024,28 @@ export const DEFAULT_PROBE_COUNT = 36
  * The whole fixture specification.
  *
  * The order is fixed as people, base, archive tier, then controls, so the generated tree is written
- * in a stable order and two runs at one seed produce byte-identical files.
+ * in a stable order and two runs at one `(seed, now)` produce byte-identical files. `now` is
+ * REQUIRED rather than defaulted from a clock, because this module's contract is purity: every
+ * caller threads its own run instant (the harness reads Effect's `Clock` once), it is quantized to
+ * the UTC day, and it is recorded on the spec, so a failing run is reproducible by passing the
+ * reported `now` back in.
  */
-export const buildCorpus = (
-  options: {
-    readonly seed?: number | undefined
-    readonly size?: number | undefined
-    readonly probes?: number | undefined
-  } = {}
-): CorpusSpec => {
+export const buildCorpus = (options: {
+  readonly seed?: number | undefined
+  readonly size?: number | undefined
+  readonly probes?: number | undefined
+  /** The run instant to anchor stamps behind, UTC millis. */
+  readonly now: number
+}): CorpusSpec => {
   const seed = options.seed ?? DEFAULT_SEED
   const size = options.size ?? DEFAULT_CORPUS_SIZE
-  const base = buildBase(size, seed)
-  const { controls, probes } = buildProbes(base, options.probes ?? DEFAULT_PROBE_COUNT)
-  const memories = withArchive(withEdges([...base, ...controls]))
+  const now = quantizeNow(options.now)
+  const stamps = stampsFor(now)
+  const base = buildBase(size, seed, stamps)
+  const { controls, probes } = buildProbes(base, options.probes ?? DEFAULT_PROBE_COUNT, stamps)
+  const memories = withArchive(withEdges([...base, ...controls]), stamps)
   const controlPaths = new Set(controls.map((control) => control.path))
-  return { memories, access: buildAccess(memories, controlPaths, seed), probes, seed }
+  return { memories, access: buildAccess(memories, controlPaths, seed, stamps), probes, seed, now }
 }
 
 /** Fraction of the non-control corpus that has been read at least once. */
@@ -987,8 +1057,8 @@ const ACCESSED_FRACTION = 0.6
  * **Without it the salience arm has no signal, and 14% of the fold's weight is inert.** That arm scores
  * `exp(-decay * hoursSinceAccess) + ln(1 + accessCount) + max(outcomeScore, 0)` over a `LEFT JOIN
  * state.access`. With the plane empty every term collapses to a function of `updated_at` alone, so the
- * arm becomes a second recency arm and the fold is effectively three-armed. Probed directly on the
- * empty-plane corpus: 0 of 36 probe targets fell inside the salience window.
+ * arm becomes a second recency arm and the fold is effectively three-armed — no probe target can earn
+ * a place in the salience window at all.
  *
  * **Two rules, and both are about honesty rather than about the number:**
  *
@@ -1008,7 +1078,8 @@ const ACCESSED_FRACTION = 0.6
 const buildAccess = (
   memories: ReadonlyArray<MemorySpec>,
   controlPaths: ReadonlySet<string>,
-  seed: number
+  seed: number,
+  stamps: Stamps
 ): ReadonlyArray<AccessSpec> => {
   // A second stream off the same seed, so the access spread is reproducible and independent of the
   // jitter stream `buildBase` consumed. A shared generator would make a corpus-size change re-roll
@@ -1027,7 +1098,7 @@ const buildAccess = (
       accessCount: count,
       reinforcementCount: Math.min(count, Math.floor(jitter * 6)),
       outcomeScore: Math.round(jitter * 100) / 100,
-      lastAccessedAt: at(240 + Math.floor(jitter * 20))
+      lastAccessedAt: stamps.at(240 + Math.floor(jitter * 20))
     })
   }
 

@@ -12,9 +12,9 @@ import { articleFor, buildCorpus, type CorpusSpec, type MemorySpec } from "./cor
  * Write a {@link CorpusSpec} into a real git repository.
  *
  * The only module here that touches a filesystem. Everything about the corpus's SHAPE is decided in
- * `corpus.ts` as a pure function of a seed, so this module has no decisions to make and a fixture is
- * reproducible by construction. The discrimination gate rests on that property, because it means a
- * change in the numbers came from the ranking and not from the corpus.
+ * `corpus.ts` as a pure function of `(seed, now)`, so this module has no decisions to make and a
+ * fixture is reproducible by construction. The discrimination gate rests on that property, because
+ * it means a change in the numbers came from the ranking and not from the corpus.
  *
  * The fixture corpus is NEVER committed to this repo. It is generated into a temp directory by the
  * test suite and by `memhtml eval discriminate`, and `pnpm gen:fixture` writes one somewhere an operator
@@ -130,6 +130,12 @@ export interface FixtureOptions {
   readonly seed?: number | undefined
   readonly size?: number | undefined
   readonly probes?: number | undefined
+  /**
+   * The run instant the corpus's stamps are anchored behind, UTC millis. Effect's `Clock` when
+   * absent, which is the one place the fixture pipeline consults time at all — `buildCorpus`
+   * requires it, so a test pinning this value pins every stamp in the tree.
+   */
+  readonly now?: number | undefined
   /** Where to generate. A fresh temp directory when absent. */
   readonly root?: string | undefined
 }
@@ -155,7 +161,10 @@ export const makeFixtureCorpus = (options: FixtureOptions = {}): Effect.Effect<F
     }
     yield* initRepo(git).pipe(Effect.orDie)
 
-    const spec = buildCorpus(options)
+    // The Clock service rather than a bare `Date.now()`, so a test can pin the whole corpus's
+    // timeline with `TestClock` while a real run anchors to the actual run instant.
+    const now = options.now ?? (yield* Effect.clockWith((clock) => clock.currentTimeMillis))
+    const spec = buildCorpus({ ...options, now })
     const written = yield* writeCorpus(root, git, spec)
 
     return {

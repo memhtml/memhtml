@@ -220,8 +220,7 @@ describe("mode selection and the loud-skip rule", () => {
   })
 
   it("treats a blank token as absent", async () => {
-    // An exported-but-empty variable is the shape a rotated token takes between refreshes, and it
-    // authenticates nothing.
+    // An exported-but-empty variable authenticates nothing, so it must not count as credentials.
     const outcome = await Effect.runPromise(
       runDiscrimination({ mode: "live", env: { AWS_BEARER_TOKEN_BEDROCK: "   " } })
     )
