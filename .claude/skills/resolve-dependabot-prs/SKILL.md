@@ -23,7 +23,7 @@ Note which are grouped and which are single. A set of near-identical single PRs 
 
 ## Phase 2 — Check the cooldown before anything else
 
-`minimumReleaseAge` is 72 hours. A version inside that window cannot be installed, so verifying it costs a gate run that was always going to fail.
+`minimumReleaseAge` is enforced by pnpm (see `pnpm-workspace.yaml`). A version inside that window cannot be installed, so verifying it costs a gate run that was always going to fail.
 
 ```bash
 node .claude/skills/resolve-dependabot-prs/scripts/cooldown-check.mjs --pr <n>

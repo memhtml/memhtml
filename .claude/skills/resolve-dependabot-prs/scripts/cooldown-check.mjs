@@ -53,11 +53,17 @@ const readFromPr = (number) => {
 
 /** The registry's publish time for one exact version, or null when it does not exist. */
 const publishedAt = (name, version) => {
-  const raw = execFileSync("npm", ["view", name, "time", "--json"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"]
-  })
-  return JSON.parse(raw)[version] ?? null
+  try {
+    const raw = execFileSync("npm", ["view", name, "time", "--json"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    })
+    return JSON.parse(raw)[version] ?? null
+  } catch (error) {
+    const stderr = error?.stderr?.toString?.() ?? ""
+    const message = stderr.trim() || error?.message || String(error)
+    throw new Error(`npm view failed for ${name}: ${message}`)
+  }
 }
 
 /** Split `@scope/name@1.2.3` on its LAST `@`, so a scoped name survives. */
@@ -73,7 +79,16 @@ if (args.length === 0) {
   process.exit(2)
 }
 
-const specs = args[0] === "--pr" ? readFromPr(args[1]) : args
+let specs
+if (args[0] === "--pr") {
+  if (args.length !== 2 || !/^\d+$/.test(args[1])) {
+    console.error("usage: cooldown-check.mjs <pkg@version>... | --pr <number>")
+    process.exit(2)
+  }
+  specs = readFromPr(args[1])
+} else {
+  specs = args
+}
 const { minutes, exclude } = readPolicy()
 const windowMs = minutes * 60_000
 const now = Date.now()

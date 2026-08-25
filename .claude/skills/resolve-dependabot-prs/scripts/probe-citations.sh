@@ -58,7 +58,7 @@ fi
 
 echo
 echo "=== reminders ==="
-echo "- .erpaval/solutions/** is excluded from the probe sweep on purpose: a lesson records what was"
+echo "- .erpaval/** is excluded from the probe sweep on purpose: a lesson records what was"
 echo "  true when written and is not a citation to update. Read it, do not rewrite it."
 echo "- A dated probe may stay at its measured version. What is NOT acceptable is a probe whose claim"
 echo "  the new version contradicts. Check the claim, then either re-date it or fix the code."
