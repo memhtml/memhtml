@@ -62,10 +62,45 @@ const check = async (name, body) => {
 }
 
 /** One envelope per command, on stdout, and nothing else. That contract is what makes this parseable. */
+/**
+ * One command's JSON envelope.
+ *
+ * A NONZERO exit needs nothing added here: `execFile`'s rejection already carries the child's whole
+ * stderr in `error.message` (`Command failed: <cmd>\n<stderr>` — probed 2026-08-25 against node 24, a
+ * 60 KiB stderr arriving intact), so letting it propagate reports the cause. What this shape cannot
+ * carry is a command that exits 0 having logged why it degraded, which is {@link envelopeWithLog}.
+ */
 const envelope = async (bin, args, env) => {
   const { stdout } = await exec(bin, args, { env, maxBuffer: 32 * 1024 * 1024 })
   return JSON.parse(stdout)
 }
+
+/**
+ * A command's envelope AND what it logged, for a check whose failure mode is a run that SUCCEEDED.
+ *
+ * `envelope` is the right shape for the other checks: the envelope is the contract, stderr is a log,
+ * and a broken command throws with its stderr attached. It is the wrong shape for a phase that reports
+ * `ok` with zero counts and puts the cause in a log line — the process exits 0, so nothing throws, and
+ * `execFile` resolves with a `stderr` that is then dropped. A sleep run whose consolidator was
+ * unreachable is exactly that: `candidates: 0` on stdout, and
+ * `sleep.trace-consolidation degraded: <tag>: <reason>` — naming the child's own last words — on the
+ * stream the caller discarded.
+ */
+const envelopeWithLog = async (bin, args, env) => {
+  const { stdout, stderr } = await exec(bin, args, { env, maxBuffer: 32 * 1024 * 1024 })
+  return { data: JSON.parse(stdout).data, stderr }
+}
+
+/** How much of a child's stderr a check's detail carries: enough for a stack, not for a log. */
+const STDERR_TAIL_CHARS = 400
+
+/**
+ * The END of what a child wrote, which is where a dying one says why.
+ *
+ * The same rule `apps/consolidator/src/child-stderr.ts` states for the two children the consolidator
+ * spawns: a message rendered from the HEAD of a child's output shows its banner.
+ */
+const tail = (text) => text.slice(-STDERR_TAIL_CHARS).trim()
 
 const main = async () => {
   const work = await mkdtemp(join(tmpdir(), "memhtml-smoke-"))
@@ -829,13 +864,23 @@ const checkLiveBedrock = async ({ bin, work, env }) => {
   await envelope(bin, ["trace", "index"], live)
 
   await check("the sleep cycle calls the model and distills a transcript", async () => {
-    const slept = (await envelope(bin, ["sleep", "run"], live)).data
+    const { data: slept, stderr } = await envelopeWithLog(bin, ["sleep", "run"], live)
     const phase = (slept.phases ?? []).find((entry) => entry.phase === "trace-consolidation")
     const counts = phase?.counts ?? {}
-    // `batch` proves the transcript qualified, `candidates` proves eve ran and the model answered.
+    /**
+     * `batch` proves the transcript qualified, `candidates` proves eve ran and the model answered.
+     *
+     * Two channels ride along, because every way this check fails reports `candidates=0` and the counts
+     * alone cannot say which: the phase's own `detail` separates "the agent found nothing" from "the
+     * agent could not be asked", and the run's log tail carries the REASON behind the second — the
+     * typed tag is in the envelope, but the sentence naming what the spawned server said is only ever
+     * on stderr.
+     */
+    const ok = slept.llmCalls >= 1 && counts.batch >= 1 && counts.candidates >= 1
+    const why = phase?.detail === undefined ? "" : ` — ${String(phase.detail)}`
     return {
-      ok: slept.llmCalls >= 1 && counts.batch >= 1 && counts.candidates >= 1,
-      detail: `llmCalls=${String(slept.llmCalls)} batch=${String(counts.batch)} candidates=${String(counts.candidates)} written=${String(counts.written)}`
+      ok,
+      detail: `llmCalls=${String(slept.llmCalls)} batch=${String(counts.batch)} candidates=${String(counts.candidates)} written=${String(counts.written)}${why}${ok ? "" : `\n     ${tail(stderr)}`}`
     }
   })
 }
@@ -915,11 +960,29 @@ const checkAgentBuild = async ({ consumer, env }) => {
         }
       }
     )
+    /**
+     * eve's own stderr, which is the only place a failed boot says why.
+     *
+     * A `pipe` nobody reads is worse than `ignore` twice over: the reason is lost, and a child that
+     * wrote past the pipe's ~64 KiB buffer would BLOCK on the write and read as a hang. `eve start`
+     * failing on a relocated build writes one line and exits 1, so a check that reported only the exit
+     * code sent an operator to look for a cause the child had already handed over. Production does not
+     * have this hole — `startFailureReason` in `apps/consolidator/src/client.ts` carries the tail into
+     * its typed failure — so this is the script catching up to the client.
+     */
+    let stderr = ""
+    child.stderr.setEncoding("utf8")
+    child.stderr.on("data", (chunk) => {
+      stderr = (stderr + chunk).slice(-64 * 1024)
+    })
     try {
       const deadline = Date.now() + 120_000
       while (Date.now() < deadline) {
         if (child.exitCode !== null)
-          return { ok: false, detail: `eve start exited ${String(child.exitCode)}` }
+          return {
+            ok: false,
+            detail: `eve start exited ${String(child.exitCode)} — ${tail(stderr)}`
+          }
         const answer = await fetch(`http://127.0.0.1:${String(port)}/eve/v1/health`)
           .then((response) => response.json())
           .catch(() => null)
@@ -943,7 +1006,9 @@ const checkAgentBuild = async ({ consumer, env }) => {
         }
         await new Promise((done) => setTimeout(done, 1_000))
       }
-      return { ok: false, detail: "never became healthy" }
+      // A server that is alive and not answering says so on stderr too, or says nothing — and
+      // "nothing" is itself the finding, so the tail is carried either way.
+      return { ok: false, detail: `never became healthy — ${tail(stderr)}` }
     } finally {
       child.kill("SIGKILL")
     }
