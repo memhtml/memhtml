@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import { commandSlug, referencePages, TIER } from "../src/loaders/pages.js"
 import { collectRegistry } from "../src/loaders/registry.js"
+import { mdxExpressions } from "./mdx-braces.js"
 
 /**
  * Census probes over the generated Reference tier.
@@ -50,6 +51,21 @@ const rowsMentioning = (body: string, values: ReadonlyArray<string>): number =>
  */
 const flatten = (text: string): string =>
   text.replaceAll("&lt;", "<").replaceAll("&amp;", "&").replaceAll("`", "")
+
+/**
+ * The ledger fields a stray brace could have come from, as `KEY.field: text`.
+ *
+ * The requirements page puts `sentence` and `verificationNote` through `cell`, which escapes `&` and
+ * `<` and nothing else, so a brace in the ledger reaches the MDX verbatim. EVERY string field is
+ * walked rather than those two by name, so a field added to `Requirement` is attributed at the commit
+ * that adds it instead of arriving as an unexplained build error.
+ */
+const bracedLedgerFields = (source: typeof registry): ReadonlyArray<string> =>
+  source.requirements.flatMap((requirement) =>
+    Object.entries(requirement)
+      .filter(([, value]) => typeof value === "string" && value.includes("{"))
+      .map(([field, value]) => `${requirement.key}.${field}: ${String(value)}`)
+  )
 
 describe("every registry member reaches a page", () => {
   it("gives each command its own page", () => {
@@ -219,15 +235,24 @@ describe("the pages themselves", () => {
 
   /*
    * A brace anchor would be the better convention — it survives a renumbering without churning
-   * inbound links — and it is nonetheless forbidden here. `starlight-md-txt` parses every page's raw
-   * body through `remark-mdx`, where `{ #anchor }` is a JSX expression, so one brace anywhere fails
-   * the whole raw-Markdown route. Those routes are this site's agent surface, so they win.
+   * inbound links — and it is nonetheless forbidden here, along with every other brace outside a code
+   * span. `starlight-md-txt` parses every page's raw body through `remark-mdx`, where a brace opens a
+   * JSX expression, so one anywhere fails the whole raw-Markdown route. Those routes are this site's
+   * agent surface, so they win.
    *
-   * This asserts the constraint rather than trusting a comment, because the failure it prevents is a
-   * build error in a route nothing else covers.
+   * Scoped to the brace rather than to the `{ #anchor }` spelling, because acorn refuses every value
+   * that is not an expression and a page assembles prose from registries this file does not enumerate.
+   * A page body is what `remark-mdx` receives, so this reads the same bytes the build parses.
    */
-  it("writes no brace anchor, which would break the raw Markdown route", () => {
-    for (const one of pages) expect(one.body).not.toMatch(/\{\s*#[a-z0-9-]+\s*\}/)
+  it("writes no MDX expression, which would break the raw Markdown route", () => {
+    for (const one of pages) {
+      expect(
+        mdxExpressions(one.body),
+        `${one.id} — braced source fields: ${
+          bracedLedgerFields(registry).join(" | ") || "none in the spec ledger"
+        }`
+      ).toEqual([])
+    }
   })
 
   it("names the registry it came from on every page", () => {
@@ -243,6 +268,95 @@ describe("the pages themselves", () => {
       const outsideCode = one.body.replace(/`+[^`]*`+/g, "")
       expect(outsideCode).not.toMatch(/<(article|mark|time|link|meta|p|li|figure)\b/)
     }
+  })
+})
+
+/*
+ * The requirements page is the one generated page whose prose comes from a JSON ledger rather than
+ * from a doc comment, and `spec/memhtml.symspec.json` is edited by hand. A brace in a `sentence` or a
+ * `verificationNote` therefore reaches `remark-mdx` verbatim and fails `astro build` with acorn's own
+ * message, which names no requirement and no field. The case above catches the brace; these two are
+ * what turn it into an answer — the first states the ledger is clean and prints every braced field it
+ * holds, the second proves the pair actually bites on a synthetic entry rather than passing vacuously.
+ */
+describe("a braced value in the spec ledger fails as a probe rather than as an acorn error", () => {
+  const requirementsOf = (source: typeof registry) => {
+    const generated = referencePages(source, { base: "/memhtml" }).find(
+      (candidate) => candidate.id === `${TIER}/requirements`
+    )
+    if (!generated) throw new Error(`no \`${TIER}/requirements\` page`)
+    return generated.body
+  }
+
+  it("holds for the ledger on disk, and reports the fields a brace could come from", () => {
+    const braced = bracedLedgerFields(registry)
+    expect(
+      mdxExpressions(requirementsOf(registry)),
+      `braced ledger fields: ${braced.join(" | ") || "none"}`
+    ).toEqual([])
+  })
+
+  /*
+   * The negative control, and the reason this file can call the case above a lock. `referencePages` is
+   * a pure function of a registry, so the poison is a synthetic requirement rather than a temporary
+   * edit to the ledger — nothing on disk moves, and the control cannot rot away from the gate it
+   * verifies because both read the same two helpers.
+   */
+  it("names the requirement key and the offending text when a ledger entry carries a brace", () => {
+    const poisoned = {
+      ...registry,
+      requirements: [
+        ...registry.requirements,
+        {
+          key: "ENT-1",
+          prefix: "ENT",
+          sentence:
+            "While MEMHTML_EXTRACT_ENTITIES is on, memhtml shall extract entities on write.",
+          status: "implemented",
+          priority: "should",
+          patternType: "state-driven",
+          verificationMethod: "test",
+          verificationNote: "the port resolves to { extractor: undefined } when the flag is off",
+          systemName: "memhtml"
+        }
+      ]
+    }
+    const strays = mdxExpressions(requirementsOf(poisoned))
+    expect(strays.length).toBeGreaterThan(0)
+    expect(strays.join(" ")).toContain("{ extractor: undefined }")
+    // Found by key rather than by position: the attribution names whatever the ledger holds, so a
+    // real braced field arriving later must not turn this control's own subject into an index.
+    const attribution = bracedLedgerFields(poisoned).find((entry) => entry.startsWith("ENT-1."))
+    expect(attribution).toBeDefined()
+    expect(attribution).toContain("verificationNote")
+    expect(attribution).toContain("{ extractor: undefined }")
+  })
+
+  /*
+   * And the escape hatch is real: the same text inside a code span is leaf content `remark-mdx` never
+   * parses, so an author with a braced value to document has somewhere to put it. Without this case
+   * the pair above would be satisfied by a probe that simply refused every brace, including the ones
+   * the build accepts.
+   */
+  it("accepts the same value inside a code span, which is where a braced value belongs", () => {
+    const quoted = {
+      ...registry,
+      requirements: [
+        ...registry.requirements,
+        {
+          key: "ENT-2",
+          prefix: "ENT",
+          sentence: "While MEMHTML_EXTRACT_ENTITIES is off, memhtml shall write nothing extra.",
+          status: "implemented",
+          priority: "should",
+          patternType: "state-driven",
+          verificationMethod: "test",
+          verificationNote: "the port resolves to `{ extractor: undefined }` when the flag is off",
+          systemName: "memhtml"
+        }
+      ]
+    }
+    expect(mdxExpressions(requirementsOf(quoted))).toEqual([])
   })
 })
 
