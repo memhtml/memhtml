@@ -525,11 +525,19 @@ const checkEveryResource = async ({ mcpBin, env, sleep }) => {
     const writePayload = JSON.parse(written.result?.content?.[0]?.text ?? "{}")
     const memoryPath = writePayload.path ?? ""
     /**
-     * The commit that write landed, which is what the pinned template's first hole takes. Read off the
-     * SERVER's own response rather than from `git rev-parse`, so the URI cites the commit the server
-     * says it made.
+     * The commit the pinned template's first hole takes, read off `memory_resolve`'s `indexed_commit`.
+     *
+     * That tool is the one surface that names a commit for a SINGLE path: `memory_write` publishes
+     * `path`, `created`, `deduped` and `existing_path`, and `commit_sha` belongs to
+     * `memory_write_batch` alone. It is also the RIGHT commit rather than a substitute for one — a
+     * pinned read resolves the path inside a commit's tree, and `indexed_commit` is the commit the
+     * server says its own answer was taken against, so a read that succeeds proves the two agree.
      */
-    const writeCommit = writePayload.commit_sha ?? ""
+    const resolved = await session.request("tools/call", {
+      name: "memory_resolve",
+      arguments: { path: memoryPath }
+    })
+    const writeCommit = JSON.parse(resolved.result?.content?.[0]?.text ?? "{}").indexed_commit ?? ""
 
     /**
      * `[hole, value, expected]` per published template. A template with no entry fails the census.
@@ -564,15 +572,23 @@ const checkEveryResource = async ({ mcpBin, env, sleep }) => {
       detail: `${String(templates.length)} published, ${String(Object.keys(READS).length)} read${unread.length > 0 ? `, UNREAD: ${unread.join(", ")}` : ""}${unpublished.length > 0 ? `, NOT PUBLISHED: ${unpublished.join(", ")}` : ""}`
     }))
 
-    await check("every resource read names a MULTI-SEGMENT value", async () => {
-      const single = Object.entries(READS).flatMap(([template, [, value]]) =>
-        String(value).includes("/") ? [] : [template]
-      )
+    /*
+     * Two ways a substitution proves nothing, refused together because they fail the same way — a read
+     * under a route no client can reach. A SINGLE segment resolves under a route a real path never
+     * takes, since a named route parameter stops at the next `/`. An EMPTY segment is a hole nothing
+     * filled: `memhtml://at//<path>` is what an absent commit composes, and it reaches the router as a
+     * URI whose commit is the empty string.
+     */
+    await check("every resource read names a MULTI-SEGMENT value with no empty hole", async () => {
+      const bad = Object.entries(READS).flatMap(([template, [, value]]) => {
+        const segments = String(value).split("/")
+        return segments.length > 1 && segments.every((segment) => segment !== "") ? [] : [template]
+      })
       return {
-        ok: single.length === 0,
+        ok: bad.length === 0,
         detail:
-          single.length > 0
-            ? `SINGLE SEGMENT: ${single.join(", ")}`
+          bad.length > 0
+            ? `SINGLE SEGMENT OR EMPTY HOLE: ${bad.join(", ")}`
             : `${memoryPath}, ${sleep.runId}, ${writeCommit.slice(0, 8)}`
       }
     })
