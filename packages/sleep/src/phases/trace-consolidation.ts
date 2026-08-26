@@ -789,15 +789,33 @@ const titleFor = (claim: string): string => {
  * Ids are trimmed before they are compared, so the same session cited with stray whitespace is one
  * origin rather than two, and an id that trims to nothing yields `undefined`.
  *
+ * ## Contained by the BATCH, the same bar `consolidateCommitments` holds a commitment to
+ *
+ * The id is a value an injected collaborator supplies — `ConsolidatorPort` is a structural port, and the
+ * harness's own scripted consolidator proves an arbitrary one can come back — so an id outside the set
+ * this run asked about is stamped only if nothing checks. The sibling arm refuses exactly that, and its
+ * reason applies word for word: an id outside the batch must not become provenance that names a session
+ * nobody selected, in a file that is committed and permanent. An injected collaborator may NARROW what
+ * the phase asked about and never widen it.
+ *
+ * Absent rather than refused, unlike a fabricated evidence id, because the same rule the multi-session
+ * case follows applies: `undefined` is the honest value for a memory whose single origin this run cannot
+ * account for, and the candidate is still worth writing. The composed client refuses such an answer
+ * outright at the door (`ungroundedEvidenceReason`), and this is the redundancy that does not rely on it.
+ *
  * NOTHING here writes a `memory_session_links` row, and the phase's `linked`/`unlinked` counters
  * therefore do not move. Those count sessions the corpus links a memory to through the WRITE path's
  * own recorder, and a distilled memory is not a memory that session wrote.
  */
-const soleEvidenceSession = (candidate: CandidateMemoryLike): string | undefined => {
+const soleEvidenceSession = (
+  candidate: CandidateMemoryLike,
+  batchSessionIds: ReadonlySet<string>
+): string | undefined => {
   const cited = new Set(candidate.evidence.map((one) => one.sessionId.trim()))
   if (cited.size !== 1) return undefined
   const [only] = [...cited]
-  return only === undefined || only === "" ? undefined : only
+  if (only === undefined || only === "") return undefined
+  return batchSessionIds.has(only) ? only : undefined
 }
 
 /**
@@ -909,6 +927,16 @@ export const traceConsolidation: PhaseBody = (env) =>
     if (batch.length === 0) {
       return emptyOutcome({ ...base, ...ZERO_COUNTS })
     }
+    /**
+     * The set this run ASKED ABOUT, computed once and used by both arms of the answer.
+     *
+     * Both a candidate's origin stamp and a commitment's `from_session` are contained by it, and a second
+     * copy of "the batch, as a set" is a second place a containment check could be written against the
+     * wrong set. It is the batch and never `analyzedFrom`: a consolidator may report a narrower reachable
+     * set while still having read what it quotes, so the reachable set is the right input for a watermark
+     * and the wrong one for a containment check.
+     */
+    const batchSessionIds = new Set(batch.map((session) => session.session_id))
 
     /**
      * A dry run stops HERE, having done the whole deterministic half: the batch is real and counted,
@@ -1101,7 +1129,7 @@ export const traceConsolidation: PhaseBody = (env) =>
            * an `undefined`, so a candidate whose quotes span sessions leaves the meta off. See
            * {@link soleEvidenceSession}.
            */
-          sessionId: soleEvidenceSession(candidate),
+          sessionId: soleEvidenceSession(candidate, batchSessionIds),
           entities: entityRefs,
           tags: [CONSOLIDATION_TAG]
         })
@@ -1143,7 +1171,7 @@ export const traceConsolidation: PhaseBody = (env) =>
     const commitments = yield* consolidateCommitments(
       env,
       outcome.success.commitments,
-      new Set(batch.map((session) => session.session_id))
+      batchSessionIds
     )
     if (commitments.staged) {
       const commitSha = yield* commitPhase(

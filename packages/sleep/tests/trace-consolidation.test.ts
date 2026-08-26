@@ -726,6 +726,99 @@ describe("trace-consolidation happy path", () => {
     )
   })
 
+  it("leaves the origin unstamped for a candidate citing a session outside this run's batch", async () => {
+    /**
+     * The containment the commitment arm already holds, at the arm that writes a MEMORY.
+     *
+     * `ConsolidatorPort` is a structural port and the harness's own `scriptedConsolidator` proves an
+     * injected collaborator can return any id it likes, so an id outside the set this run selected reaches
+     * the mint site unless something checks. Stamping it puts `memhtml-session` — and `files.session_id`
+     * — on a committed, permanent file, naming a session nobody selected: provenance a reviewer trusts
+     * and cannot audit. The sibling refusal (`consolidateCommitments`) states the same rule for a
+     * detected task's `from_session`, and an injected collaborator may narrow what the phase asked about
+     * and never widen it.
+     *
+     * Absent rather than refused, which is the deliberate difference from a fabricated evidence id: the
+     * claim is still worth writing and `undefined` is the honest origin.
+     *
+     * The in-batch candidate is the control. Without it a rule that stamped nothing at all would pass.
+     *
+     * (Mutation: dropping the `batchSessionIds.has(only)` guard stamps `session-elsewhere` and fails the
+     * NULL assertions here while every other case stays green.)
+     */
+    const IN_BATCH = "Both quotes for this claim come from a session this run selected."
+    const OUTSIDE = "Both quotes for this claim name a session this run never selected."
+    const consolidator = scriptedConsolidator(() =>
+      candidates([
+        candidate({
+          claim: IN_BATCH,
+          gist: "The run asked about session-a, so session-a is an origin it can account for.",
+          kind: "episodic",
+          evidence: [
+            { sessionId: "session-a", quote: "the first supporting line" },
+            { sessionId: "session-a", quote: "the second supporting line" }
+          ]
+        }),
+        candidate({
+          claim: OUTSIDE,
+          gist: "The quotes agree on one session, and it is not one this run selected.",
+          kind: "episodic",
+          evidence: [
+            { sessionId: "session-elsewhere", quote: "the first supporting line" },
+            { sessionId: "session-elsewhere", quote: "the second supporting line" }
+          ]
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          // Only session-a is seeded, so it is the whole batch and `session-elsewhere` is outside it.
+          yield* seedTrace(fixture, { sessionId: "session-a" })
+          const base = yield* headSha(fixture)
+
+          const outcome = yield* traceConsolidation(envFor(fixture))
+          // BOTH are written: the id is dropped, not the candidate.
+          expect(outcome.counts.written).toBe(2)
+
+          const byClaim = new Map<string, string>()
+          for (const path of yield* addedMemories(fixture, base)) {
+            const doc = yield* parseMemory((yield* atHead(fixture, path)) ?? "")
+            byClaim.set(doc.article.gist, path)
+          }
+          const inBatch = byClaim.get(IN_BATCH)
+          const outside = byClaim.get(OUTSIDE)
+          if (inBatch === undefined || outside === undefined) {
+            throw new Error(`expected both claims among ${[...byClaim.keys()].join(" | ")}`)
+          }
+
+          expect(
+            (yield* parseMemory((yield* atHead(fixture, inBatch)) ?? "")).metas.sessionId
+          ).toBe("session-a")
+          expect(
+            (yield* parseMemory((yield* atHead(fixture, outside)) ?? "")).metas.sessionId
+          ).toBeUndefined()
+
+          // And the column, because a stamp under any name at all would project to something here.
+          yield* fixture.reindex()
+          const rows = yield* fixture.db
+            .all<{ path: string; session_id: string | null }>(
+              "SELECT path, session_id FROM files WHERE path IN (?, ?) ORDER BY path",
+              [inBatch, outside].sort()
+            )
+            .pipe(Effect.orDie)
+          expect(new Map(rows.map((row) => [row.path, row.session_id]))).toEqual(
+            new Map([
+              [inBatch, "session-a"],
+              [outside, null]
+            ])
+          )
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
   it("indents the commit body, so an evidence quote cannot forge a trailer", async () => {
     /**
      * The injection guard, exercised with the attack rather than asserted as a property of the
