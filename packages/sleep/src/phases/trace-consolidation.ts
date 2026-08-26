@@ -1,4 +1,4 @@
-import { ENTITY_SEPARATOR, WRITABLE_MEMORY_TYPES } from "@memhtml/contracts"
+import { ENTITY_SEPARATOR, normalizeEntityRef, WRITABLE_MEMORY_TYPES } from "@memhtml/contracts"
 import type { StorageFailure } from "@memhtml/contracts/errors"
 import { placementFor } from "@memhtml/contracts/paths"
 import { SLUG_FALLBACK, slugify, withCollisionOrdinal } from "@memhtml/contracts/slug"
@@ -17,6 +17,8 @@ import { pendingMarksPath, recordPendingMarks } from "../contract.js"
 import { readFileBytes, writeFileBytes } from "../edits.js"
 import { emptyOutcome, type PhaseBody, type PhaseEnv, type SleepError } from "../env.js"
 import {
+  activeEntities,
+  type EntityCount,
   linkedSessionCount,
   type SessionManifestRow,
   sessionManifestRows,
@@ -72,6 +74,12 @@ import {
  * `merge`'s `preMergeGate` (`review.ts:196-209`) runs over the whole branch before `main` moves. So
  * being on the branch IS being behind the gate, and a phase that tried to gate itself would be a
  * second, weaker copy of the one that already covers all fifteen phases.
+ *
+ * **A candidate's entity references are canonicalized against the corpus before the write.** The model
+ * states each entity as a type and a name (`apps/consolidator/src/contract.ts`' `CandidateEntity`), and
+ * a reference whose normalized form the corpus already holds is written with the corpus's own spelling.
+ * That is a rewrite between two spellings of ONE name and not a judgement about two names, which is why
+ * it is deterministic and needs no threshold. See {@link corpusEntitySpellings}.
  *
  * **Degrades three ways and fails on none of them.** No consolidator bound, a consolidator that failed
  * (missing credentials, an unreachable agent, an off-contract answer), and a candidate this phase
@@ -574,15 +582,94 @@ const consolidateCommitments = (
  * `service:` — references whose one meaningful half is unreachable through a scope that compares the
  * whole string.
  *
- * One function, called by the write and by {@link placementDirectory}, so the file's metas and the
- * directory it lands in are derived from the same references. `placementFor` routes on `person:`, and
- * two independent joins could put a person memory outside `resources/people/`.
+ * Each surviving reference is then rewritten to the corpus's own spelling of the same name when the
+ * corpus already holds one — see {@link corpusEntitySpellings} for the rule and for why it is not an
+ * assist. `corpus` is empty whenever the pre-write read was skipped or failed, and an empty map is the
+ * identity, so the join degrades to the candidate's own spelling rather than to no entities.
+ *
+ * One function, called by the write and by {@link placementDirectory} through ONE value computed per
+ * candidate, so the file's metas and the directory it lands in are derived from the same references.
+ * `placementFor` routes on `person:`, and two independent joins could put a person memory outside
+ * `resources/people/`.
  */
-const entityRefsFor = (candidate: CandidateMemoryLike): ReadonlyArray<string> =>
+const entityRefsFor = (
+  candidate: CandidateMemoryLike,
+  corpus: ReadonlyMap<string, string>
+): ReadonlyArray<string> =>
   candidate.entities.flatMap((entity) => {
     const type = entity.type.trim()
     const name = entity.name.trim()
-    return type === "" || name === "" ? [] : [`${type}${ENTITY_SEPARATOR}${name}`]
+    if (type === "" || name === "") return []
+    const ref = `${type}${ENTITY_SEPARATOR}${name}`
+    return [corpus.get(normalizeEntityRef(ref)) ?? ref]
+  })
+
+/**
+ * The corpus's own spelling of every entity it already names, keyed by the normalized reference.
+ *
+ * ## What this is, and what it deliberately is not
+ *
+ * A candidate can coin a variant of a name the corpus already holds — `Checkout-API` beside
+ * `checkout-api`, `sanju kumar` beside `Sanju  Kumar` — and the `entity` scope compares the whole
+ * reference, so the two are different handles until `entity-resolution` merges them. That phase needs
+ * TWO independent nights to agree before a merge applies, so the variant is live in the corpus and
+ * addressable only by its own spelling until then. Rewriting at the mint site closes the window for
+ * the case that needs no judgement at all.
+ *
+ * **This is not the "propose rather than mutate" assist INV-1 governs, and the distinction is exact.**
+ * A proximity assist decides that two DIFFERENT names, or two paraphrases of a claim, are about one
+ * thing — a judgement, which is why PROX-2 refuses to let one stamp anything without a threshold
+ * measured on a labeled near-duplicate corpus. This decides nothing: `normalizeEntityRef` is the one
+ * definition of what it means for two entity names to be the SAME name (case, NFC, internal
+ * whitespace), so the only thing that changes is WHICH SPELLING of one name is stored. No model, no
+ * threshold, no cosine. Reusing `entity-resolution`'s 0.75-0.85 band here is precisely what PROX-2
+ * forbids: those numbers were measured for clustering entity names against centroids, not for deciding
+ * that a reference is a variant.
+ *
+ * ## The set, and the tie-break
+ *
+ * `activeEntities` is the query, reused rather than re-issued: it already returns every entity on an
+ * ACTIVE NON-TASK file with its claim count, and both exclusions are the ones this needs. An archived
+ * memory's spelling should not steer a new write, and a task's entity references are the agent's own
+ * handles on its own work rather than the corpus's vocabulary — the reasoning that function's own note
+ * records for `entity-resolution` and `person-links`.
+ *
+ * Two active spellings can normalize together, so the winner is the one the MOST files claim, and a
+ * count tie breaks on the lexicographically smaller reference. That makes the choice the corpus's own
+ * majority spelling and makes it a pure function of the rows rather than of the order they arrived in.
+ *
+ * ## One read for the batch, and a failure costs nothing but the rewrite
+ *
+ * Called once beside {@link frameConflicts}, which is the phase's other pre-write index read, and for
+ * the same two reasons: a per-candidate lookup against a corpus-sized table is the quadratic-write-cost
+ * shape this codebase has already paid for once, and a failed read degrades to an empty map — the
+ * identity for {@link entityRefsFor} — because losing the night's memories over a failed spelling
+ * lookup about them would invert the priority.
+ */
+const corpusEntitySpellings = (env: PhaseEnv): Effect.Effect<ReadonlyMap<string, string>> =>
+  Effect.gen(function* () {
+    const rows = yield* activeEntities(env.deps.db).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning(
+          `sleep.trace-consolidation entity spelling lookup skipped: ${error.operation}`
+        ).pipe(Effect.as<ReadonlyArray<EntityCount>>([]))
+      )
+    )
+
+    const best = new Map<string, { readonly ref: string; readonly files: number }>()
+    for (const row of rows) {
+      const ref = `${row.entity_type}${ENTITY_SEPARATOR}${row.entity_name}`
+      const key = normalizeEntityRef(ref)
+      const held = best.get(key)
+      if (
+        held === undefined ||
+        row.files > held.files ||
+        (row.files === held.files && ref < held.ref)
+      ) {
+        best.set(key, { ref, files: row.files })
+      }
+    }
+    return new Map([...best].map(([key, held]) => [key, held.ref] as const))
   })
 
 /**
@@ -849,6 +936,12 @@ export const traceConsolidation: PhaseBody = (env) =>
     if (pendingRecorded) yield* env.deps.git.add([pendingMarksPath(env.runId)])
 
     const conflicts = yield* frameConflicts(env, candidates)
+    /**
+     * The corpus's own spellings, read ONCE beside the conflict lookup for the reason that one records:
+     * a per-candidate query against a corpus-sized table is the quadratic-write-cost shape this package
+     * avoids everywhere. See {@link corpusEntitySpellings}.
+     */
+    const spellings = yield* corpusEntitySpellings(env)
 
     let written = 0
     let skipped = 0
@@ -869,16 +962,23 @@ export const traceConsolidation: PhaseBody = (env) =>
 
       const title = titleFor(candidate.claim)
       /**
+       * ONE value per candidate, threaded to both the placement and the write, so the directory the
+       * file lands in and the metas it carries are derived from the same references. `placementFor`
+       * routes on `person:`, so two independent joins could disagree about whether this is a person
+       * memory.
+       */
+      const entityRefs = entityRefsFor(candidate, spellings)
+      /**
        * No free path is a REFUSAL, taking the same skip-and-count path a bad candidate takes. A
        * thousand collisions on one stem is a corpus problem an operator should see in the counts.
        * The alternative, one fixed overflow path, is the overwrite this probe exists to
        * prevent, made unconditional.
        */
-      const path = yield* freePath(env, candidate, title, claimed)
+      const path = yield* freePath(env, candidate, entityRefs, title, claimed)
       if (path === undefined) {
         yield* Effect.logWarning(
           `sleep.trace-consolidation candidate ${offset} skipped: no free path under ` +
-            `${placementDirectory(candidate)} for ${slugify(title)}`
+            `${placementDirectory(candidate, entityRefs)} for ${slugify(title)}`
         )
         skipped += 1
         continue
@@ -918,7 +1018,7 @@ export const traceConsolidation: PhaseBody = (env) =>
           memoryType: candidate.kind as (typeof WRITABLE_MEMORY_TYPES)[number],
           at: env.at,
           author: "agent:sleep",
-          entities: entityRefsFor(candidate),
+          entities: entityRefs,
           tags: [CONSOLIDATION_TAG]
         })
       )
@@ -1217,11 +1317,12 @@ const PATH_ORDINAL_LIMIT = 1000
 const freePath = (
   env: PhaseEnv,
   candidate: CandidateMemoryLike,
+  entityRefs: ReadonlyArray<string>,
   title: string,
   claimed: ReadonlySet<string>
 ): Effect.Effect<string | undefined, StorageFailure> =>
   Effect.gen(function* () {
-    const directory = placementDirectory(candidate)
+    const directory = placementDirectory(candidate, entityRefs)
     const stem = slugify(title)
     for (let ordinal = 1; ordinal <= PATH_ORDINAL_LIMIT; ordinal += 1) {
       const candidatePath = `${directory}/${withCollisionOrdinal(stem, ordinal)}.html`
@@ -1231,10 +1332,20 @@ const freePath = (
     return undefined
   })
 
-/** The directory the ordinary placement rules give a candidate. */
-const placementDirectory = (candidate: CandidateMemoryLike): string =>
+/**
+ * The directory the ordinary placement rules give a candidate, from the references it will be WRITTEN
+ * with rather than from the candidate's raw entities.
+ *
+ * Taking the refs as an argument is what keeps the two in step: the caller computes them once and hands
+ * the same value here and to `renderTemplate`, so a canonicalized `person:` reference cannot route the
+ * placement one way while the file's metas say the other.
+ */
+const placementDirectory = (
+  candidate: CandidateMemoryLike,
+  entityRefs: ReadonlyArray<string>
+): string =>
   placementFor({
     memoryType: candidate.kind,
-    entities: entityRefsFor(candidate),
+    entities: entityRefs,
     tags: [CONSOLIDATION_TAG]
   })

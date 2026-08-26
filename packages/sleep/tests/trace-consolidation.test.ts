@@ -38,6 +38,7 @@ import {
   DEDUP_CORPUS,
   type Fixture,
   memoryHtml,
+  type SeedFile,
   seedSessionLink,
   seedTrace,
   withFixture
@@ -467,6 +468,76 @@ describe("trace-consolidation happy path", () => {
           expect(doc.entities).toEqual(["service:sqlite"])
         }),
       { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("rewrites a variant entity to the CORPUS's spelling and leaves a new name alone", async () => {
+    /**
+     * The mint-site canonicalization, against a real indexed corpus and real `file_entities` rows.
+     *
+     * The corpus already names `service:checkout-api` (two files, from `DEDUP_CORPUS`) and
+     * `person:Priya Raman` (the file seeded below, whose authored spelling is NOT the normalized one).
+     * The candidate coins a variant of each, and each must land on its OWN corpus spelling — which is
+     * what makes the case non-vacuous three ways over:
+     *
+     * - `Service:Checkout-API` proves the rewrite happens at all.
+     * - `person:priya  raman` proves the target is the CORPUS's spelling and not the normalized form. An
+     *   implementation that simply lowercased and collapsed every reference passes the first arm and
+     *   fails this one, and it would leave a reference addressing nothing.
+     * - `Service:Brand-New-Thing` proves it is a LOOKUP. A name the corpus does not hold keeps the
+     *   candidate's own spelling, so an implementation that rewrote toward whichever row it read first,
+     *   or that normalized unconditionally, fails here.
+     *
+     * The neighbour matters for the reason the shared-table lesson states: `file_entities` is one table
+     * across every entity, so a corpus holding a single name cannot tell "found the right row" from
+     * "returned a row".
+     *
+     * (Mutations: returning an empty map from `corpusEntitySpellings` leaves all three verbatim and
+     * fails the first two arms; keying the map on the raw reference instead of the normalized one
+     * matches nothing and fails the same two; returning `normalizeEntityRef(ref)` instead of the corpus
+     * spelling fails the person arm and the new-name arm.)
+     */
+    const PERSON_FILE: SeedFile = {
+      path: "resources/people/priya-raman.html",
+      html: memoryHtml({
+        title: "Priya Raman",
+        claim: "Priya Raman owns the payments ledger reconciliation.",
+        createdAt: "2026-05-02T00:00:00Z",
+        entities: ["person:Priya Raman"]
+      })
+    }
+
+    const consolidator = scriptedConsolidator(() =>
+      candidates([
+        candidate({
+          claim: "A coined entity variant is a second handle on one name until sleep merges them.",
+          gist: "Two nights of entity resolution have to agree before a merge applies, so the variant is live and separately addressable until then.",
+          kind: "agent_insight",
+          entities: [
+            { type: "Service", name: "Checkout-API" },
+            { type: "person", name: "priya  raman" },
+            { type: "Service", name: "Brand-New-Thing" }
+          ]
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* seedTrace(fixture, { sessionId: "session-a" })
+          const base = yield* headSha(fixture)
+
+          yield* traceConsolidation(envFor(fixture))
+          const [path] = yield* addedMemories(fixture, base)
+          const doc = yield* parseMemory((yield* atHead(fixture, path ?? "")) ?? "")
+          expect(doc.entities).toEqual([
+            "service:checkout-api",
+            "person:Priya Raman",
+            "Service:Brand-New-Thing"
+          ])
+        }),
+      { seed: [...DEDUP_CORPUS, PERSON_FILE], consolidator }
     )
   })
 
