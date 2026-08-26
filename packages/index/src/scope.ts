@@ -49,6 +49,17 @@ export interface SearchScope {
   /**
    * STRICT equality on ONE entity reference, in `type:name` form, so `person:sanju` and not `sanju`.
    *
+   * Strict about the TYPE half being required, and case-INSENSITIVE about spelling: a caller should not
+   * have to reproduce an author's capitalization to find a memory. The fold is `lower()` applied to
+   * BOTH sides inside SQL, never once in TypeScript and once in SQL — JS `toLowerCase` is full-Unicode
+   * and SQLite's `lower()` is ASCII-only, so splitting the fold across the two would make `place:CAFÉ`
+   * match from one door and miss from the other. One function, one side of the seam.
+   *
+   * ASCII-only is the honest bound, and it is not the whole story: `entity-resolution` rewrites each
+   * file's `memhtml-entity` meta to its NFC- and whitespace-normalized form, so full canonicalization
+   * is durable in the tree rather than re-derived per query. This fold covers the window before that
+   * phase has run.
+   *
    * The same spelling `memory_list` takes, and the same predicate, because the two are one vocabulary.
    * A caller that learned `person:sanju` from a listing must be able to hand that exact string to a
    * search. `file_entities` is keyed on `(type, name)`, so the bare name is ambiguous. `person:sanju`
@@ -177,7 +188,7 @@ export const assembleScope = (scope: SearchScope = {}): AssembledScope => {
    */
   if (scope.entity !== undefined && scope.entity !== "") {
     conditions.push(
-      `EXISTS (SELECT 1 FROM file_entities e WHERE e.path = {alias}.path AND (e.entity_type || ':' || e.entity_name) = ${placeholder(scope.entity)})`
+      `EXISTS (SELECT 1 FROM file_entities e WHERE e.path = {alias}.path AND lower(e.entity_type || ':' || e.entity_name) = lower(${placeholder(scope.entity.trim())}))`
     )
   }
 

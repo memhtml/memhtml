@@ -311,6 +311,12 @@ export const projectFile = (input: {
  * An entity with no `type:` separator is stored under the `unknown` type rather than dropped. The
  * name is still a real handle a query can use, and dropping it would silently lose a hand-authored
  * file's only entity.
+ *
+ * Names are stored AS AUTHORED, deliberately. `entity-resolution` rewrites a file's `memhtml-entity`
+ * meta to its normalized form and finds that work by reading these rows back — so a projection that
+ * normalized here would hide every unnormalized meta from the one pass whose job is to fix it, and
+ * the phase would report `namesNormalized: 0` over a corpus full of them. Casing is folded at COMPARE
+ * time instead (`assembleScope`, `listMemories`), where it costs a query nothing and blinds nobody.
  */
 export const entityRowsFor = (
   doc: MemoryDoc

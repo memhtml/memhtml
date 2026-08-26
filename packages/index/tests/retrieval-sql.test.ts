@@ -478,7 +478,7 @@ describe("assembleScope", () => {
     expect(scope.holes.fileFilter).toContain("memory_type IN (?5)")
     expect(scope.holes.fileFilter).toContain("workspace = ?6")
     expect(scope.holes.fileFilter).toContain("ft.tag IN (?7, ?8)")
-    expect(scope.holes.fileFilter).toContain("e.entity_name) = ?9")
+    expect(scope.holes.fileFilter).toContain("e.entity_name) = lower(?9)")
     expect(scope.params).toEqual([
       "semantic",
       "memhtml",
@@ -531,10 +531,36 @@ describe("assembleScope: the entity axis", () => {
      * assertion stayed green. So the STATEMENT is asserted to carry the grouping.
      */
     const filter = assembleScope({ entity: ENTITY }).holes.fileFilter
-    expect(filter).toContain("(e.entity_type || ':' || e.entity_name) = ?5")
+    // `lower(...)` is now what supplies the grouping, and it supplies it for the same reason the bare
+    // parentheses did: the concatenation must bind tighter than the comparison.
+    expect(filter).toContain("lower(e.entity_type || ':' || e.entity_name) = ")
     // And the ungrouped spelling appears nowhere, so the assertion above cannot be satisfied by a
     // statement that carries both forms.
     expect(filter).not.toContain("e.entity_type || ':' || e.entity_name = ")
+  })
+
+  it("folds case on BOTH sides, so a caller need not reproduce an author's casing", () => {
+    /**
+     * A caller copies a reference out of a hit's own `entities` list, or types one from memory. Comparing
+     * it raw against an authored row returns an empty set from a corpus that holds the memory — a silent
+     * miss, with no error and nothing pointing at spelling as the cause.
+     *
+     * The fold has to be on ONE side of the JS/SQL seam. JS `toLowerCase` is full-Unicode and SQLite's
+     * `lower()` is ASCII-only, so folding the bound value in TypeScript and the column in SQL would make
+     * a non-ASCII name match through one door and miss through the other. Both sides go through the same
+     * `lower()`, and the raw spelling is what binds.
+     */
+    const scope = assembleScope({ entity: "Service:Checkout-API" })
+    expect(scope.holes.fileFilter).toContain(
+      "lower(e.entity_type || ':' || e.entity_name) = lower(?5)"
+    )
+    expect(scope.params).toEqual(["Service:Checkout-API"])
+  })
+
+  it("trims the reference, so padding is not part of an entity's identity", () => {
+    expect(assembleScope({ entity: "  service:checkout-api  " }).params).toEqual([
+      "service:checkout-api"
+    ])
   })
 
   it("binds the reference rather than inlining it, so a name holding a quote cannot break the statement", () => {
@@ -566,7 +592,7 @@ describe("assembleScope: the entity axis", () => {
             "EXISTS (SELECT 1 FROM file_entities e"
           )
           expect(armSql, `${arm.name} lost the grouping`).toContain(
-            "(e.entity_type || ':' || e.entity_name) = ?5"
+            "lower(e.entity_type || ':' || e.entity_name) = lower(?5)"
           )
           // The arm substituted its OWN alias into the subquery's correlation, so the predicate is
           // about the row that arm is ranking rather than about a `files` row it never reads.
@@ -608,7 +634,7 @@ describe("assembleScope: the entity axis", () => {
       expect(
         assembled.holes.fileFilter,
         `entity placeholder for ${JSON.stringify(scope)}`
-      ).toContain(`(e.entity_type || ':' || e.entity_name) = ${placeholder}`)
+      ).toContain(`lower(e.entity_type || ':' || e.entity_name) = lower(${placeholder})`)
       // The VALUE at that position, not just the number: params is positional, so agreeing on the
       // number while disagreeing on the order would bind a tag where the entity belongs.
       expect(assembled.params).toEqual(params)
@@ -636,6 +662,6 @@ describe("assembleScope: the entity axis", () => {
     expect(filter).toContain("FROM file_tags ft")
     expect(filter).toContain("FROM file_entities e")
     expect(filter).toContain("ft.tag IN (?5)")
-    expect(filter).toContain("(e.entity_type || ':' || e.entity_name) = ?6")
+    expect(filter).toContain("lower(e.entity_type || ':' || e.entity_name) = lower(?6)")
   })
 })

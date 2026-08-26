@@ -729,6 +729,64 @@ describe("search", () => {
     expect(outcome.entityScope).toBe("service:checkout-api")
   })
 
+  /** The same entity as the target, authored with different capitalization. */
+  const MIXED_CASE = "areas/oncall/vip-drain-runbook-owner.html"
+
+  const seedMixedCase = () =>
+    repo.commit(
+      [
+        {
+          path: MIXED_CASE,
+          html: memoryHtml({
+            title: "The VIP drain runbook has one named owner",
+            claim: "If the VIP drain runbook needs a change, Priya owns the deploy path.",
+            body: "Written up after the third rollback that skipped the drain step.",
+            memoryType: "semantic",
+            tags: ["deploy", "oncall"],
+            entities: ["Service:Checkout-API"],
+            updatedAt: "2026-07-25T00:00:00Z"
+          })
+        }
+      ],
+      "seed a mixed-case spelling of an existing entity"
+    )
+
+  it("finds a mixed-case authored entity from a lowercase reference, and the reverse", async () => {
+    /**
+     * At the database, over a corpus where the SAME entity is authored two ways. Two files spell it
+     * `service:checkout-api` and `Service:Checkout-API`, and one reference has to reach both — a caller
+     * copies a spelling out of a listing or types one from memory, and comparing raw returns a subset of
+     * a corpus that holds all of it. A silent miss: no error, and nothing pointing at casing.
+     *
+     * Asserted in BOTH directions on purpose. A fold applied to only one side of the comparison passes
+     * whichever direction happens to match the fixture's own casing, which is exactly the shape of a
+     * test that proves nothing.
+     */
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(seedMixedCase)
+        yield* indexInto(db, repo, makeFakeEmbedder())
+        const retrieval = makeRetrieval({ db, embeddings: makeFakeEmbedder() })
+        const query = "VIP drain deploy"
+        const lower = yield* retrieval.search({ query, entity: "service:checkout-api", limit: 20 })
+        const upper = yield* retrieval.search({ query, entity: "SERVICE:CHECKOUT-API", limit: 20 })
+        return {
+          lower: lower.hits.map((hit) => hit.path),
+          upper: upper.hits.map((hit) => hit.path)
+        }
+      })
+    )
+
+    // A lowercase reference reaches the file that authored it in mixed case.
+    expect(outcome.lower).toContain(MIXED_CASE)
+    // And the file that authored it lowercase, so the fold widened rather than shifted the match.
+    expect(outcome.lower).toContain("areas/oncall/vip-drain-before-rollback.html")
+    // The reverse direction returns the same set, which a one-sided fold cannot do.
+    expect([...outcome.upper].sort()).toEqual([...outcome.lower].sort())
+    // Still a scope: nothing entity-free came along.
+    expect(outcome.lower.some((path) => path.includes("filler-"))).toBe(false)
+  })
+
   it("carries every hit's entities in type:name form, sorted, empty array when it has none", async () => {
     const outcome = await withIndexed(repo, ({ retrieval }) =>
       Effect.gen(function* () {

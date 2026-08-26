@@ -1353,11 +1353,14 @@ export const listMemories = (params: ListParams) =>
     }
     if (params.entity !== undefined && params.entity !== "") {
       // The entity arrives as `type:name` and the table splits it at the first colon, so the
-      // comparison rebuilds the reference rather than making the caller know the split.
+      // comparison rebuilds the reference rather than making the caller know the split. `lower()` on
+      // BOTH sides for the same reason `assembleScope` folds that way: listing and search are one
+      // vocabulary, so a spelling that finds a memory through one door has to find it through the
+      // other, and the fold has to happen on one side of the JS/SQL seam rather than both.
       conditions.push(
-        "EXISTS (SELECT 1 FROM file_entities e WHERE e.path = f.path AND e.entity_type || ':' || e.entity_name = ?)"
+        "EXISTS (SELECT 1 FROM file_entities e WHERE e.path = f.path AND lower(e.entity_type || ':' || e.entity_name) = lower(?))"
       )
-      values.push(params.entity)
+      values.push(params.entity.trim())
     }
     if (params.cursor !== undefined && params.cursor !== "") {
       conditions.push("f.path > ?")

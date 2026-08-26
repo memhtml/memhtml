@@ -122,6 +122,41 @@ export const parseEntity = (
   return { entityType: entity.slice(0, at), entityName: entity.slice(at + 1) }
 }
 
+/**
+ * Lowercase, NFC-normalize, collapse internal whitespace, trim. What it means for two entity names to
+ * be the SAME name.
+ *
+ * It lives in contracts rather than beside a caller because it is a vocabulary rule, and a second copy
+ * of a vocabulary rule fails silently: `entity-resolution` decides which `memhtml-entity` metas to
+ * rewrite by comparing a name against this form, so a divergent copy would have the phase canonicalize
+ * files toward a spelling nothing else recognizes, reporting merges no query can reach.
+ *
+ * `file_entities` stores names AS AUTHORED, not in this form, and that is deliberate — the phase finds
+ * its work by reading those rows back, so a projection that pre-normalized would hide every
+ * unnormalized meta from the one pass whose job is to fix it. The two SQL doors fold with `lower()` on
+ * both sides instead: a narrower fold (SQLite's `lower()` is ASCII-only) that cannot disagree with
+ * itself across the JS/SQL seam. Full canonicalization is durable in the TREE, applied by the phase.
+ */
+export const normalizeEntityName = (name: string): string =>
+  name.normalize("NFC").toLowerCase().replace(/\s+/g, " ").trim()
+
+/**
+ * A whole reference in that form: both halves normalized, rejoined, padding around the separator gone.
+ *
+ * For callers comparing references in TypeScript — the write path deciding whether a candidate entity
+ * is one the corpus already names. The SQL doors do NOT use this; see the seam note above.
+ *
+ * Total over unparseable input. A string with no separator normalizes as a whole and is returned
+ * without one, so the caller still decides what an untyped reference means rather than receiving a
+ * silently invented type.
+ */
+export const normalizeEntityRef = (entity: string): string => {
+  const parsed = parseEntity(entity.trim())
+  return parsed === undefined
+    ? normalizeEntityName(entity)
+    : `${normalizeEntityName(parsed.entityType)}${ENTITY_SEPARATOR}${normalizeEntityName(parsed.entityName)}`
+}
+
 /** The `person:` entity prefix, which routes a semantic memory to `resources/people/`. */
 export const PERSON_ENTITY_PREFIX = `person${ENTITY_SEPARATOR}`
 
