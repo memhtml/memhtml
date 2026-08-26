@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.7.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.6.0...memhtml-v0.7.0) (2026-08-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** three observable changes to the command surface. The global `--json` flag is removed — it was parsed, advertised and read by nothing, because the typed envelope is the only output — and because flags are now validated per command, passing it exits 2 rather than being ignored; drop it. A boolean flag no longer takes a space-separated value, so `--embed false` and the same spelling for `--detected`, `--fix`, `--check`, `--deep`, `--diff` and `--dry-run` exit 2; use `--embed=false` or `--no-embed`. And `memhtml sleep run` exits 1 when any phase failed, where it exited 0; a caller that treated exit 0 as success was reading an aborted run as a successful one. The envelope is unchanged in all three cases.
+* **store:** a write naming an explicit `path` that already holds a memory now fails with `ERR_WRITE_CONFLICT` instead of replacing that memory. This reaches `memhtml write --path`, `memhtml apply`, and the MCP `memory_write` and `memory_write_batch` tools. The single exemption is `memhtml correct`, whose target is the file it is correcting. To replace a memory's content, use `memhtml correct <path>`; to add a new one, omit `--path` and let the store derive it. Callers relying on the old behaviour were relying on silent data loss, since the store's core invariant is that nothing is ever deleted.
+
+### Features
+
+* **cli:** doctor reports entity references written without a type ([5feed66](https://github.com/memhtml/memhtml/commit/5feed66d60509775cb8b1273f51143879d8eddae))
+* **cli:** report per-entity last activity, as a report and never a signal ([638a263](https://github.com/memhtml/memhtml/commit/638a2630513875d8b818cddbfa9c04d95a397332))
+* **cli:** resolve a moved citation forward, and pin one at a commit ([113e0a2](https://github.com/memhtml/memhtml/commit/113e0a2fe9f5a2dbfdcf9d4f92281dfb872d0cfe))
+* **consolidator:** emit each candidate entity as a type and a name ([080c7c7](https://github.com/memhtml/memhtml/commit/080c7c7663b6fb3275ecfef7ed9eb5ebfb9e8206))
+* **consolidator:** watermark over the sessions the agent reports reading ([f49b7e6](https://github.com/memhtml/memhtml/commit/f49b7e6abe2a72690214cb61bf7ee4003b7610b6))
+* **index:** scope retrieval and listing by authored `<dl>` facets ([d73f537](https://github.com/memhtml/memhtml/commit/d73f537ec546af3ede7d6f2502a99ee8953dc30d))
+* **sleep:** answer whether a run would change anything, without running one ([e06db04](https://github.com/memhtml/memhtml/commit/e06db047db588cdfc7cc7bd11755dab2aeb38158))
+* **sleep:** stamp the origin session on a single-session consolidated memory ([bf9d573](https://github.com/memhtml/memhtml/commit/bf9d573418a67e5859cbe9e18479250a27a7c55e))
+* **sleep:** write a consolidated entity with the corpus's own spelling ([6fdd001](https://github.com/memhtml/memhtml/commit/6fdd0017f25b26754f1e789776a94fff0b29735a))
+* **store:** refuse an unusable explicit path when a caller asks for strict placement ([4e5afdb](https://github.com/memhtml/memhtml/commit/4e5afdb46ff13a67897a94dbb987e2bda58f3007))
+* the consumer extension surface, and the entity path that made it reachable ([58221a7](https://github.com/memhtml/memhtml/commit/58221a7c2963200e0a38e201670a18c3377f6e28))
+
+
+### Bug Fixes
+
+* **cli:** fold the entity type the activity report scopes on ([afa026a](https://github.com/memhtml/memhtml/commit/afa026aedc85e4cf8f1245edd4925b575c956fe6))
+* **cli:** parse against the flag table, and validate flags per command ([043d0eb](https://github.com/memhtml/memhtml/commit/043d0ebe48046ceeece2c934851082e7533ca763))
+* **cli:** point a dead-ended path at the walk that repairs it ([360f106](https://github.com/memhtml/memhtml/commit/360f1066788b4055bf5de39117216ab48c3dfa38))
+* **consolidator:** build the agent where it will be served ([f54879e](https://github.com/memhtml/memhtml/commit/f54879ecf363a7d55b6c8b29669d57e59100bfec))
+* **consolidator:** measure the watermark's citations over the advancing set ([ee7099e](https://github.com/memhtml/memhtml/commit/ee7099e56e29caba4c763bde803a4e939bfcf2f2))
+* **consolidator:** offer a barren answer the decoder accepts ([e18d7c5](https://github.com/memhtml/memhtml/commit/e18d7c537d19b933ff4eebed6678f685bdc2e232))
+* **consolidator:** validate that the server answering is eve, and cap what it can lose ([c64433e](https://github.com/memhtml/memhtml/commit/c64433ed4c20ad784610d62d678f83b5431dba45))
+* **domain:** remove withCollisionOrdinal's fixed points and make cosine total ([444ebe6](https://github.com/memhtml/memhtml/commit/444ebe6b17032c0ec812a50b64076c91621723eb))
+* **html:** make the datetime grammar match the string comparison it feeds ([1994ef1](https://github.com/memhtml/memhtml/commit/1994ef1a36a45352415ed4097defe7c1ba46fda5))
+* **index:** drop the predicate that made both edge indexes unusable by the graph walk ([601ea60](https://github.com/memhtml/memhtml/commit/601ea6006623b58a5f0f12af3ee785949edeecf4))
+* **index:** find an entity regardless of how its name is capitalized ([6e5b4fa](https://github.com/memhtml/memhtml/commit/6e5b4fa2adf3c98e78d6a18201936790229ffa44))
+* **index:** probe the edge index when a search hit reports what superseded it ([51cc2fe](https://github.com/memhtml/memhtml/commit/51cc2fef995b3729b07e109b8f9902f196e1ce82))
+* **index:** propagate renames and make an interrupted rebuild detectable ([077ba71](https://github.com/memhtml/memhtml/commit/077ba7100270e8f6f4aeec2d62e9437cc076c43b))
+* **llm:** bound a hung Bedrock socket without capping a legitimate answer ([0606f2d](https://github.com/memhtml/memhtml/commit/0606f2d95b63a610b687e7c620d04cd6ada6f4d0))
+* **mcp:** resolve multi-segment resource paths and stop leaking absolute paths ([38580fd](https://github.com/memhtml/memhtml/commit/38580fd4123ab8188b297a55d9035760e9bbe8f0))
+* **mcp:** withhold a pinned citation for a path its commit does not hold ([53e37dc](https://github.com/memhtml/memhtml/commit/53e37dc02dc00f58f5b4a2457cb25eef369ad74e))
+* **sleep:** canonicalize a consolidated entity's name, never its type ([7de5cf1](https://github.com/memhtml/memhtml/commit/7de5cf175a9b210b7d42b451fc18254310cb0124))
+* **sleep:** contain a consolidated memory's origin session by the run's batch ([95c4a33](https://github.com/memhtml/memhtml/commit/95c4a337d4eed2f7406156fb94727ac8cbbd662c))
+* **sleep:** make the abort real, and stop a failed phase contaminating a later one ([03ab20b](https://github.com/memhtml/memhtml/commit/03ab20b90d6997880a6c7d39d078114f4d6bcda8))
+* **sleep:** weigh the plan's counts against the commit they describe ([c202dce](https://github.com/memhtml/memhtml/commit/c202dcedcdd86b6290adc21c41d2aa966c2a74a7))
+* **store:** refuse a blank explicit path under strict placement ([4cdaf18](https://github.com/memhtml/memhtml/commit/4cdaf187ca1f75b420aea76b5926ff310d65450c))
+* **store:** refuse an explicit path that is taken, and compensate a failed commit ([86acbd3](https://github.com/memhtml/memhtml/commit/86acbd313c2c463e7eaaab20db30f4fca6880e17))
+* the v0.6.0 tech-debt sprint ([e679b12](https://github.com/memhtml/memhtml/commit/e679b1257ebba4a87a364933df03efcfeb48e4e7))
+* **traces:** a failed transcript read no longer advances the watermark ([f77fedc](https://github.com/memhtml/memhtml/commit/f77fedc444b37ca505a163016bf7d63b476ff89c))
+
 ## [0.6.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.5.1...memhtml-v0.6.0) (2026-08-24)
 
 
