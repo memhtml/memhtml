@@ -1119,10 +1119,10 @@ describe("neighbors reports the edge at the minimal hop, and marks mined edges",
        * `packages/index/tests/migrations.test.ts`; this case asserts the SHIPPED statement gets the
        * shipped plan.
        *
-       * Two bound columns per arm, not one: the `src_path = ?1` arms could always probe
-       * `sqlite_autoindex_edges_1` on the primary key's leftmost column, so a test that only asked
-       * "does something probe" passed before the indexes were usable. The constraint LIST is the
-       * assertion.
+       * Two bound columns per arm, not one, and that is why the constraint LIST is the assertion: the
+       * `src_path = ?1` arms can probe `sqlite_autoindex_edges_1` on the primary key's leftmost column
+       * even with no directional index at all, so a check for "does something probe" is satisfied by the
+       * primary key and says nothing about the `dst_path` arms.
        *
        * (Mutation: restoring `WHERE derived = 0` on both indexes brings back one `SCAN e` and drops
        * both `edges_*` steps. Observed: `expected [...] to include stringContaining edges_dst`.)
@@ -1139,11 +1139,25 @@ describe("neighbors reports the edge at the minimal hop, and marks mined edges",
       expect(steps.filter((step) => step.startsWith("SCAN e"))).toEqual([])
     })
 
-    it("probes on every arm once a rel filter is named, because that index carries no predicate", async () => {
-      // `edges_rel` is `(rel, edge_class)` with no `WHERE`, so a rel-scoped walk is index-probed in both
-      // directions and the scan disappears. The flag is a cost lever as well as a filter.
+    it("keeps every arm probed when a rel filter is named, and adds `edges_rel` at hop two", async () => {
+      /**
+       * The rel filter is a FILTER, and the case above is what makes every arm probe. Measured
+       * 2026-08-26 over this same statement: hop ONE binds `edges_src`/`edges_dst` with or without a
+       * rel, and naming one moves hop TWO's inner arm from `edges_src (src_path=? AND edge_class=?)` to
+       * `edges_rel (rel=? AND edge_class=?)` — two bound columns either way, so which is cheaper depends
+       * on whether the rel or the path is more selective in that corpus and is not asserted here.
+       *
+       * What this case holds is that the rel filter costs nothing: it does not push any arm back onto a
+       * scan, and the outer arms keep the directional indexes.
+       */
       const steps = await planFor(["supersedes"])
       expect(steps.some((step) => step.includes("edges_rel"))).toBe(true)
+      expect(steps).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("edges_src (src_path=? AND edge_class=?)"),
+          expect.stringContaining("edges_dst (dst_path=? AND edge_class=?)")
+        ])
+      )
       for (const step of steps) expect(step, step).not.toMatch(/^SCAN /)
     })
   })

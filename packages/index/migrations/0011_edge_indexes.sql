@@ -15,7 +15,7 @@
 -- over the walk's own statement at depth 2. With the predicate:
 --
 --   * the two `src_path = ?1` arms probe `sqlite_autoindex_edges_1`, because `src_path` leads
---     `PRIMARY KEY (src_path, rel, dst_path)` — so they were never the defect;
+--     `PRIMARY KEY (src_path, rel, dst_path)`, which binds ONE column;
 --   * the `dst_path = ?1` hop-1 arm is `SCAN e`, a full pass over `edges`;
 --   * the `dst_path`-driven hop-2 arm is `SCAN e2 USING INDEX sqlite_autoindex_edges_1`, a full index
 --     scan of the table per outer row.
