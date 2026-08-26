@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.2](https://github.com/memhtml/memhtml/compare/memhtml-v0.7.1...memhtml-v0.7.2) (2026-08-26)
+
+
+### Bug Fixes
+
+* **sleep:** scope placement's this-run guard to the phases that decide ([5f78dde](https://github.com/memhtml/memhtml/commit/5f78ddeb4000d9286a97654dd161a847eb313f75)), closes [#81](https://github.com/memhtml/memhtml/issues/81)
+
 ## [0.7.1](https://github.com/memhtml/memhtml/compare/memhtml-v0.7.0...memhtml-v0.7.1) (2026-08-26)
 
 
