@@ -8,7 +8,7 @@ memhtml serve mcp
 MEMHTML_MCP_BIN=/path/to/bin.js memhtml serve mcp   # explicit path, for a split deployment
 ```
 
-The server publishes fourteen tools and two resources over this same repo (`apps/mcp/src/tools.ts:881`). Sleep stays off that tool surface deliberately: a curation run is a cron and operator action that produces a reviewable branch, and an agent should not start one mid-conversation.
+The server publishes fifteen tools and three resources over this same repo (`apps/mcp/src/tools.ts`). Sleep stays off that tool surface deliberately: a curation run is a cron and operator action that produces a reviewable branch, and an agent should not start one mid-conversation.
 
 ## Yes, they can share it
 

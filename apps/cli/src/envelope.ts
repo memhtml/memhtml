@@ -42,7 +42,8 @@ export const RESPONSE_TYPES = [
   "task.list",
   "batch.applied",
   "exec.report",
-  "entity.activity"
+  "entity.activity",
+  "memory.resolved"
 ] as const
 
 export type ResponseType = (typeof RESPONSE_TYPES)[number]

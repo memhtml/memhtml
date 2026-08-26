@@ -1,8 +1,8 @@
 # memhtml-public · RPC tools
 
-This repository ships an MCP server, `memhtml-mcp`, over stdio. It publishes fourteen tools and two resource templates, and a coding agent calls it to operate a memhtml root. The repository stores no memory of its own. The server acts on whatever root `$MEMHTML_ROOT` points the process at, and the same binary serves many roots.
+This repository ships an MCP server, `memhtml-mcp`, over stdio. It publishes fifteen tools and three resource templates, and a coding agent calls it to operate a memhtml root. The repository stores no memory of its own. The server acts on whatever root `$MEMHTML_ROOT` points the process at, and the same binary serves many roots.
 
-The server is one Effect layer that merges `McpServer.toolkit(MemhtmlToolkit)` with the two resources, over the CLI's own app layer, on the stdio transport at protocol revision `v2025_06_18`, the only adapter this dependency ships (`apps/mcp/src/server.ts:40-53`). The server shares the CLI's layer, so an agent's `memory_write` and an operator's `memhtml search` resolve to one database, one git root, and one vector space (`apps/mcp/src/server.ts:12-19`). Logs are pinned to stderr with `Logger.LogToStderr` because stdout carries the NDJSON-RPC frames, and Effect's default logger writes to stdout (`apps/mcp/src/server.ts:20-22`, `apps/mcp/src/server.ts:53`, `apps/mcp/src/bin.ts:7-13`).
+The server is one Effect layer that merges `McpServer.toolkit(MemhtmlToolkit)` with the three resources, over the CLI's own app layer, on the stdio transport at protocol revision `v2025_06_18`, the only adapter this dependency ships (`apps/mcp/src/server.ts:40-53`). The server shares the CLI's layer, so an agent's `memory_write` and an operator's `memhtml search` resolve to one database, one git root, and one vector space (`apps/mcp/src/server.ts:12-19`). Logs are pinned to stderr with `Logger.LogToStderr` because stdout carries the NDJSON-RPC frames, and Effect's default logger writes to stdout (`apps/mcp/src/server.ts:20-22`, `apps/mcp/src/server.ts:53`, `apps/mcp/src/bin.ts:7-13`).
 
 Every tool binds its handler by name in `MemhtmlToolkit.toLayer({...})` (`apps/mcp/src/handlers.ts:309`). A handler decodes the snake_case wire parameters, calls the same operation function the matching CLI command calls, and renames the result back to snake_case (`apps/mcp/src/handlers.ts:33-43`).
 
@@ -14,7 +14,7 @@ Three conventions apply to every entry below.
 
 Signatures are quoted verbatim from the registration site with two mechanical elisions, both marked where they occur. `description: /* … */,` stands for the description string, which for the write tools runs to several paragraphs assembled from shared constants (`apps/mcp/src/tools.ts:143-211`). `// …` stands for a nested doc comment explaining a schema choice. No identifier, schema, or punctuation is altered. Each entry's citation points at the full block.
 
-### How both resources route
+### How the resources route
 
 Both templates are registered by one helper, `templateLayer` (`apps/mcp/src/resources.ts:118`), which calls `McpServer.addResourceTemplate` directly rather than using the `McpServer.resource` tagged template. The reason is the router. `McpServer` matches a `resources/read` URI with find-my-way (`effect/unstable/http/FindMyWay`, effect `4.0.0-rc.109`), and two of that router's rules decide the pattern each resource registers, `memhtml:://<section>/*` (`apps/mcp/src/resources.ts:42`):
 

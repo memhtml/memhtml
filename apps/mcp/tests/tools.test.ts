@@ -9,14 +9,14 @@ import { SERVER_NAME } from "../src/server.js"
 import { MemhtmlToolkit, TOOL_NAMES } from "../src/tools.js"
 
 /**
- * The tool surface as a contract: fourteen names, `Schema.Struct` parameters, and JSON Schemas a
+ * The tool surface as a contract: fifteen names, `Schema.Struct` parameters, and JSON Schemas a
  * client can validate against.
  *
  * `TOOL_NAMES` is derived from the toolkit, so every count assertion below is about the SERVER. A
- * hand-maintained list would let a toolkit that builds thirteen tools pass a test asserting fourteen.
+ * hand-maintained list would let a toolkit that builds fourteen tools pass a test asserting fifteen.
  */
 
-/** The fourteen names: design.md §8's table in its own order, with the batch behind the singular. */
+/** The fifteen names: design.md §8's table in its own order, with the batch behind the singular. */
 const EXPECTED = [
   "memory_write",
   "memory_write_batch",
@@ -26,6 +26,7 @@ const EXPECTED = [
   "memory_correct",
   "memory_link",
   "memory_neighbors",
+  "memory_resolve",
   "memory_archive",
   "memory_reinforce",
   "memory_list",
@@ -47,9 +48,9 @@ const schemaFor = (name: string): JsonSchemaObject =>
   ) as unknown as JsonSchemaObject
 
 describe("tool surface", () => {
-  it("declares exactly fourteen distinct tools, in design §8's order", () => {
-    expect(TOOL_NAMES).toHaveLength(14)
-    expect(new Set(TOOL_NAMES).size).toBe(14)
+  it("declares exactly fifteen distinct tools, in design §8's order", () => {
+    expect(TOOL_NAMES).toHaveLength(15)
+    expect(new Set(TOOL_NAMES).size).toBe(15)
     expect([...TOOL_NAMES]).toEqual([...EXPECTED])
   })
 
@@ -85,13 +86,30 @@ describe("tool surface", () => {
     }
   })
 
-  it("templates both resources under the server's own scheme", () => {
-    expect(RESOURCE_TEMPLATES).toHaveLength(2)
+  it("templates every resource under the server's own scheme", () => {
+    expect(RESOURCE_TEMPLATES).toHaveLength(3)
     for (const template of RESOURCE_TEMPLATES) {
       expect(template.startsWith(`${SERVER_NAME}://`)).toBe(true)
     }
     expect(RESOURCE_TEMPLATES).toContain("memhtml://file/{path}")
     expect(RESOURCE_TEMPLATES).toContain("memhtml://sleep/{run-id}")
+    expect(RESOURCE_TEMPLATES).toContain("memhtml://at/{commit}/{path}")
+  })
+
+  it("gives every template a hole whose value spans SEGMENTS, which a route must match across", () => {
+    /**
+     * The routing defect `memhtml://file/{path}` shipped with, as a surface property rather than as one
+     * resource's test. A named router parameter stops at the next `/`, so a template whose only hole is
+     * filled with a single segment can pass a read while being unreachable for every real value: every
+     * memory path has at least two segments and an archived one has at least four, and a run id is
+     * `sleep/<date>`. What has to be true of a template is that its LAST hole is the one that may
+     * contain separators, which is where the rest parameter sits.
+     */
+    for (const template of RESOURCE_TEMPLATES) {
+      const holes = [...template.matchAll(/\{[^}]+\}/g)].map((match) => match[0])
+      expect(holes.length, template).toBeGreaterThan(0)
+      expect(template.endsWith(holes[holes.length - 1] ?? ""), template).toBe(true)
+    }
   })
 
   it("gives every tool a description an agent can choose from", () => {

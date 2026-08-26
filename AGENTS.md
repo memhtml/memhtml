@@ -88,6 +88,7 @@ Answering a question that takes MORE THAN ONE HOP through the corpus? Write it a
 | `memhtml correct` | <target> | `--title`* `--claim` `--body` `--article-html` `--type` `--reason` `--session-id` `--prompt-id` `--turn-uuid` | `memory.corrected` |
 | `memhtml link` | <src> <rel> <dst> | — | `memory.linked` |
 | `memhtml neighbors` | <path> | `--depth` `--limit` `--rel` | `memory.neighbors` |
+| `memhtml resolve` | <path> | — | `memory.resolved` |
 | `memhtml archive` | <path> | `--reason`* | `memory.archived` |
 | `memhtml reinforce` | <path> | `--signal` | `memory.reinforced` |
 | `memhtml list` | — | `--type` `--workspace` `--tag` `--entity` `--facet` `--para` `--limit` `--cursor` `--include-archived` | `memory.list` |
@@ -229,6 +230,12 @@ The memory graph around one path, to a fixed depth of at most two hops.
 - `--depth` (int) — 1 or 2. Never more. _(default `1`)_
 - `--limit` (int) — Distinct nodes to return, clamped to 200. `nodesDropped` counts the paths the walk reached and this limit turned away, and `scanSaturated` says the walk stopped at its own 10000-row cap, which no limit recovers. _(default `200`)_
 - `--rel` (string) — Restrict to these rels. Repeatable. _(repeatable; one of: `supersedes`, `contradicts`, `caused_by`, `leads_to`, `part_of`, `relates_to`, `example_of`, `supports`, `laterally_related`)_
+
+### `memhtml resolve`
+
+Follow a possibly-moved path forward to the memory that carries the fact now.
+
+- `<path>` — The path a receipt, citation, or older answer recorded.
 
 ### `memhtml archive`
 
@@ -429,7 +436,7 @@ Regenerate AGENTS.md from this command table. --check fails on drift.
 
 ### `memhtml serve mcp`
 
-Run the `memhtml-mcp` stdio server: 14 tools and 2 resources over this same repo.
+Run the `memhtml-mcp` stdio server: 15 tools and 3 resources over this same repo.
 
 ## Error codes
 

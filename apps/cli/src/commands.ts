@@ -416,6 +416,22 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     responseTypes: ["memory.neighbors"]
   },
   {
+    name: "resolve",
+    summary: "Follow a possibly-moved path forward to the memory that carries the fact now.",
+    args: [
+      {
+        name: "path",
+        description: "The path a receipt, citation, or older answer recorded.",
+        required: true
+      }
+    ],
+    // No flags. The walk has nothing to tune: both mechanisms that move a memory are followed, the
+    // hop bound is a property of the answer rather than a preference, and a caller who wants one hop
+    // reads `steps`.
+    flags: [],
+    responseTypes: ["memory.resolved"]
+  },
+  {
     name: "archive",
     summary: "Soft-evict: `git mv` into archive/<YYYY>/ with the archive stamps. Never a delete.",
     args: [{ name: "path", description: "The memory to archive.", required: true }],
@@ -948,7 +964,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   },
   {
     name: "serve mcp",
-    summary: "Run the `memhtml-mcp` stdio server: 14 tools and 2 resources over this same repo.",
+    summary: "Run the `memhtml-mcp` stdio server: 15 tools and 3 resources over this same repo.",
     args: [],
     flags: [],
     responseTypes: ["serve.exit"]

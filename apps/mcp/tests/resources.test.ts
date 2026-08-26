@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 
-import { type EmbedderShape, layerAppWith, writeMemory } from "@memhtml/cli"
+import { correctMemory, type EmbedderShape, layerAppWith, writeMemory } from "@memhtml/cli"
 import { reportFilename } from "@memhtml/sleep"
 import { SLEEP_REPORTS_DIR } from "@memhtml/store"
 import { makeFixtureRepo } from "@memhtml/store/testing"
@@ -34,6 +34,19 @@ const fileUri = (path: string): string => {
   const template = RESOURCE_TEMPLATES.find((entry) => entry.includes("/file/"))
   if (template === undefined) throw new Error("no file resource template is published")
   return template.replace("{path}", path)
+}
+
+/**
+ * A pinned request URI, expanded from the published template's TWO holes.
+ *
+ * Both are filled from the template rather than concatenated, for the same reason as `fileUri`: a
+ * template that reordered its holes, or renamed one, has to fail a read here rather than pass a
+ * comparison of two strings this file built.
+ */
+const pinnedUriFor = (commit: string, path: string): string => {
+  const template = RESOURCE_TEMPLATES.find((entry) => entry.includes("/at/"))
+  if (template === undefined) throw new Error("no pinned resource template is published")
+  return template.replace("{commit}", commit).replace("{path}", path)
 }
 
 /** The deterministic embedder, same construction as the CLI harness. */
@@ -93,6 +106,19 @@ describe("a resources/read through the real registry", () => {
   >
   /** The multi-segment path the fixture's one memory landed at. */
   let memoryPath: string
+  /**
+   * A SECOND memory, corrected with a reworded title so the path it was written at is now vacant.
+   *
+   * Separate from `memoryPath` on purpose: the file resource's own tests read that one, and correcting
+   * it would make them fail for a reason that has nothing to do with routing.
+   */
+  let pinnedPath: string
+  /** The commit that wrote `pinnedPath` — the sha a receipt taken at that moment would carry. */
+  let pinnedCommit: string
+  /** Where the correction of `pinnedPath` landed. */
+  let correctedPath: string
+  /** The correction's own commit, so a read of `correctedPath` at a REAL sha is available. */
+  let correctedCommit: string
   /** The run id whose report the fixture staged. */
   let runId: string
   /** The `uriTemplate` of every template the registry actually published. */
@@ -129,6 +155,31 @@ describe("a resources/read through the real registry", () => {
       })
     )
     memoryPath = written.path
+
+    const pinned = await run(
+      writeMemory({
+        title: "The build box runs on a spinning disk",
+        claim: "The build box stores its workspace on a spinning disk.",
+        body: ["Parallel checkouts thrash the head, so the build serializes them."],
+        memoryType: "semantic",
+        workspace: "build-box",
+        tags: [],
+        entities: []
+      })
+    )
+    pinnedPath = pinned.path
+    if (pinned.commitSha === null) throw new Error("the write committed nothing to pin to")
+    pinnedCommit = pinned.commitSha
+    const corrected = await run(
+      correctMemory({
+        targetPath: pinnedPath,
+        title: "The build box runs on an NVMe drive",
+        claim: "The build box stores its workspace on an NVMe drive."
+      })
+    )
+    correctedPath = corrected.path
+    if (corrected.commitSha === null) throw new Error("the correction committed nothing")
+    correctedCommit = corrected.commitSha
 
     /**
      * The report file at exactly the path the sleep phase writes it to, named by the producer's own
@@ -211,7 +262,7 @@ describe("a resources/read through the real registry", () => {
     expect(encoded.text).toBe(raw.text)
   })
 
-  it("publishes exactly the two templates it routes", () => {
+  it("publishes exactly the templates it routes", () => {
     /**
      * Read off the SAME registry the reads above resolved against, which is what makes this a check on
      * the published surface rather than on the `RESOURCE_TEMPLATES` literal restating itself. A
@@ -316,5 +367,114 @@ describe("a resources/read through the real registry", () => {
     expect(result.message).toContain("ERR_PATH_NOT_FOUND")
     expect(result.message).toContain("memhtml://file/")
     expect(result.message).toContain("Try: ")
+  })
+
+  it("vacates the pinned path, which is what makes the pin worth having", async () => {
+    /**
+     * The fixture's precondition, asserted rather than assumed. The correction reworded the title, so
+     * the memory moved and the cited path holds nothing — if it still resolved, every assertion below
+     * would pass against a resource that ignored its commit parameter entirely.
+     */
+    expect(correctedPath).not.toBe(pinnedPath)
+    const live = await read(fileUri(pinnedPath))
+    expect(live.ok).toBe(false)
+    expect(pinnedCommit).toMatch(/^[0-9a-f]{40}$/)
+  })
+
+  it("reads a memory AS OF a commit, at a path the tree no longer holds", async () => {
+    const result = await read(pinnedUriFor(pinnedCommit, pinnedPath))
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // The ORIGINAL fact, not the correction's. The two differ in one word, which is exactly the kind of
+    // drift a receipt is written to survive.
+    expect(result.text).toContain("# The build box runs on a spinning disk")
+    expect(result.text).toContain("spinning disk")
+    expect(result.text).not.toContain("NVMe")
+    expect(result.mimeType).toBe("text/plain")
+  })
+
+  it("returns the same bytes for the escaped spelling of a pinned path", async () => {
+    const raw = await read(pinnedUriFor(pinnedCommit, pinnedPath))
+    const encoded = await read(pinnedUriFor(pinnedCommit, pinnedPath.replaceAll("/", "%2F")))
+    expect(encoded.ok).toBe(true)
+    if (!encoded.ok || !raw.ok) return
+    expect(encoded.text).toBe(raw.text)
+  })
+
+  it("refuses a ref that can MOVE, which is the whole contract of the pinned form", async () => {
+    /**
+     * `HEAD` and the branch name both resolve TODAY and mean something else after the next commit. A
+     * resource that accepted them would publish a citation URI that silently re-points, which is worse
+     * than having no pinned form at all, because the receipt would still look verified.
+     *
+     * The path here is `correctedPath`, which EXISTS at HEAD, so `git ls-tree HEAD -- <it>` would come
+     * back with a blob and the read would succeed if the shape gate were absent. Naming a vacated path
+     * instead would make this pass for the wrong reason.
+     */
+    for (const ref of ["HEAD", "main", "HEAD~1", "v1.0.0"]) {
+      const result = await read(`memhtml://at/${ref}/${correctedPath}`)
+      expect(result.ok, ref).toBe(false)
+      if (result.ok) continue
+      expect(result.message, ref).toContain("ERR_PATH_NOT_FOUND")
+      expect(result.code, ref).toBe(-32602)
+    }
+    // And the same path at a real sha DOES read, so the refusals above are attributable to the ref
+    // SHAPE rather than to anything about the path.
+    const atSha = await read(pinnedUriFor(correctedCommit, correctedPath))
+    expect(atSha.ok).toBe(true)
+    if (!atSha.ok) return
+    expect(atSha.text).toContain("NVMe")
+  })
+
+  it("refuses a well-formed sha this repository does not hold, without leaking git's own message", async () => {
+    const absent = "0".repeat(40)
+    const result = await read(pinnedUriFor(absent, pinnedPath))
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.message).toContain("ERR_PATH_NOT_FOUND")
+    // `git ls-tree` on an unknown object says "Not a valid object name" and names its argv; the client
+    // gets a refusal about the URI it sent, and the real cause goes to stderr.
+    expect(result.message).not.toContain("ls-tree")
+    expect(result.message).not.toContain("Not a valid object")
+    expect(result.message).not.toContain("/tmp/")
+    expect(result.code).toBe(-32602)
+  })
+
+  it("refuses a NON-MEMORY file the commit really holds, rather than serving the tree", async () => {
+    /**
+     * The containment that a traversal cannot demonstrate. `../../etc/passwd` is refused by git itself
+     * as a pathspec outside the repository, so a traversal case passes with the gate deleted; what only
+     * `isValidMemoryPath` refuses is a path INSIDE the tree that is not a memory. A scaffolded repo has
+     * a root `README.html`, and `git ls-tree <sha> -- README.html` returns its blob, so without the gate
+     * this resource would hand a client any file in any commit of the repository.
+     *
+     * `ERR_PATH_NOT_FOUND` and not `ERR_INVALID_MEMORY`, and the distinction IS the assertion — the same
+     * one the file resource's traversal case makes. The second code would mean the bytes were read and
+     * then failed to parse, which is a read that happened.
+     */
+    const result = await read(pinnedUriFor(pinnedCommit, "README.html"))
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.message).not.toContain("ERR_INVALID_MEMORY")
+    expect(result.message).toContain("ERR_PATH_NOT_FOUND")
+    expect(result.code).toBe(-32602)
+  })
+
+  it("refuses a traversal in the pinned path", async () => {
+    const result = await read(pinnedUriFor(pinnedCommit, "../../../../etc/passwd"))
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.message).not.toContain("root:")
+    expect(result.message).toContain("ERR_PATH_NOT_FOUND")
+    expect(result.code).toBe(-32602)
+  })
+
+  it("refuses a pinned URI carrying only one segment, which names no path at all", async () => {
+    // The degenerate shape: a commit and nothing after it. Refused rather than read as a path, which
+    // would hand the store an empty pathspec and let git answer with the whole tree.
+    const result = await read(`memhtml://at/${pinnedCommit}`)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.code).toBe(-32602)
   })
 })

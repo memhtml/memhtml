@@ -1315,6 +1315,226 @@ export const neighborsOf = (params: NeighborsParams) =>
     }
   })
 
+/**
+ * Steps the forward walk takes before it stops and says which bound stopped it.
+ *
+ * A chain this long is a corpus that has corrected one fact sixteen times, which the walk answers
+ * with `hop_limit` rather than by paying an unbounded number of statements for a read a caller
+ * expects to be cheap. It is not the cycle guard: {@link resolveMemory} carries a visited set, so a
+ * loop is reported as a loop at the hop that closes it, however short.
+ */
+export const RESOLVE_MAX_HOPS = 16
+
+/**
+ * Why the forward walk stopped, and therefore what `path` is.
+ *
+ * A closed vocabulary, and the reason it is five values rather than a boolean: only the first means
+ * "cite this". Collapsing the other four into "not found" would make an evicted memory, an
+ * unindexed path, and a corpus defect one answer, and a caller acting on any of them needs a
+ * different next move.
+ *
+ * - `live` — nothing supersedes `path` and it is active. The resolution a citation wants.
+ * - `archived` — `path` is in the archive and nothing supersedes it, so the memory was EVICTED
+ *   rather than corrected. `git log --follow` on `path` reads through its whole life.
+ * - `unindexed` — the index holds no such path and no archive mapping onto it. Either the path was
+ *   never a memory here, or the index does not yet describe the commit that holds it; `indexedCommit`
+ *   is which commit it does describe.
+ * - `cycle` — the walk returned to a path it had already visited. `steps` shows the loop closing, and
+ *   `path` is a member of it rather than a resolution. Two memories each claiming to supersede the
+ *   other is an authoring defect, not a state this walk can resolve.
+ * - `hop_limit` — the chain is longer than {@link RESOLVE_MAX_HOPS}, so `path` is where the walk
+ *   stopped and NOT the end of the chain. Resolving `path` again continues from there.
+ *
+ * An array rather than a bare union, so `memory_resolve` publishes the five values as a JSON Schema
+ * enum from this one declaration and a client can branch exhaustively.
+ */
+export const RESOLVE_STOP_REASONS = ["live", "archived", "unindexed", "cycle", "hop_limit"] as const
+
+export type ResolveStopReason = (typeof RESOLVE_STOP_REASONS)[number]
+
+/**
+ * The two mechanisms that move a memory, as a closed vocabulary.
+ *
+ * There is no third: a memory's path changes because a correction superseded it or because a `git mv`
+ * archived it, and nothing else in the system renames a file.
+ */
+export const RESOLVE_STEP_VIA = ["supersedes", "archive_move"] as const
+
+export type ResolveStepVia = (typeof RESOLVE_STEP_VIA)[number]
+
+/**
+ * One hop of the forward walk, naming the mechanism that moved the memory.
+ *
+ * `via` is what makes the chain auditable rather than a list of paths a caller has to trust:
+ * `supersedes` is an authored `<link>` in a file, so it survives `rm index.db`, and `archive_move` is
+ * a `git mv` recorded by the path itself. The two are different claims and a reader acts on them
+ * differently.
+ */
+export interface ResolveStep {
+  readonly from: string
+  readonly to: string
+  readonly via: ResolveStepVia
+}
+
+/** What {@link resolveMemory} answers. */
+export interface ResolveResult {
+  /** The path asked about, normalized. Echoed so a receipt can be matched to its answer. */
+  readonly requested: string
+  /** Where the walk ended. What that means is {@link ResolveStopReason}'s, not this field's. */
+  readonly path: string
+  /** Hops taken: `steps.length`. `0` when the requested path needed no walk. */
+  readonly hops: number
+  readonly steps: ReadonlyArray<ResolveStep>
+  readonly stopReason: ResolveStopReason
+  /** The title of `path`, or `null` when the index holds no row for it. */
+  readonly title: string | null
+  /**
+   * The commit the INDEX describes, which is the commit to pin a citation to, or `null` before the
+   * first rebuild and during one.
+   *
+   * Published because this whole answer is a statement about that commit and not about HEAD: the index
+   * is a projection of git, so a resolution taken against a stale index is correct as of the commit
+   * named here. `memhtml status` reports whether that commit IS HEAD.
+   */
+  readonly indexedCommit: string | null
+}
+
+/**
+ * The three statements the walk issues, as literals a plan assertion can EXPLAIN.
+ *
+ * Exported for {@link neighborsQuery}'s reason: a cost contract can only be asserted at the planner,
+ * and a test that EXPLAINed a pasted copy would explain the copy. Each one binds exactly one
+ * parameter, so a test can run them as written.
+ *
+ * `successor` names `edge_class` even though `rel = 'supersedes'` implies it under `edges`' CHECK
+ * constraints. That is a planner constraint, not a filter: measured 2026-08-26 on node 24's
+ * `node:sqlite` with no `ANALYZE`, `dst_path = ? AND rel = ? AND derived = 0` alone plans as `SEARCH
+ * edges USING INDEX edges_derived (derived=? AND rel=?)` — every authored correction in the corpus,
+ * per hop — while naming the class binds two columns of `edges_dst` and the same statement probes.
+ * The rel and `derived = 0` are still the CORRECTNESS half: `derived = 0` is the same authored-only
+ * rule `SearchHit.supersededBy` reads, so `search` and this walk cannot disagree about who superseded
+ * what, and a sleep-mined suspicion can never redirect a citation.
+ *
+ * `archived` is the archive mapping read backwards, served by `files_origin`
+ * (`0012_origin_path.sql`). `ORDER BY archived_at DESC` decides the case a UNIQUE index would have
+ * had to refuse: one path evicted, rewritten, and evicted again carries two archive rows, and the
+ * NEWEST is the occupant a citation of that path most recently named. A row with no `memhtml-archived`
+ * stamp sorts last, since SQLite puts NULLs last under DESC.
+ */
+export const resolveQueries = {
+  successor: `SELECT e.src_path AS path FROM edges e
+     WHERE e.dst_path = ? AND e.edge_class = 'memory' AND e.rel = 'supersedes' AND e.derived = 0
+     ORDER BY e.created_at DESC, e.src_path ASC LIMIT 1`,
+  archived: `SELECT f.path AS path FROM files f
+     WHERE f.origin_path = ? ORDER BY f.archived_at DESC, f.path DESC LIMIT 1`,
+  file: "SELECT f.archived AS archived, f.title AS title FROM files f WHERE f.path = ?"
+} as const
+
+/**
+ * The live path a possibly-moved path names now, by walking `supersedes` forward.
+ *
+ * **A path IS the id of a memory** (`packages/contracts/src/types.ts`, `MemoryPath`), and it is
+ * derived from the title through `slugify`, so a re-consolidation that rewords a title lands the
+ * corrected fact at a DIFFERENT path while `correctMemory` `git mv`s the original into
+ * `archive/<YYYY>/`. An external receipt holding the old path therefore dead-ends at a path the tree
+ * no longer holds — through no fault of the receipt. This read is how such a receipt is repaired
+ * without a second identifier: the corpus already records both mechanisms that move a memory, and
+ * nothing here is minted.
+ *
+ * **Two mechanisms, and a path absent from `files` is looked up by the archive mapping ALONE.** A
+ * correction stamps its `supersedes` link toward the target's ARCHIVE path
+ * (`packages/store/src/store.ts`, `correctMemory`), so the pre-archive path has no inbound edge at
+ * all and only `origin_path` knows where its bytes went. An inbound `supersedes` edge over a path the
+ * tree does not hold is a DANGLING edge — `memhtml doctor`'s finding — and following one would
+ * resolve a citation through an assertion about a file nothing can read. Conversely a path that IS in
+ * `files` is never redirected by the archive mapping, even when an older eviction of the same path
+ * left a row behind: the live file at that path is the answer, and the redirect would replace it with
+ * a historical one.
+ *
+ * **Every node in the chain is named by the path that holds it NOW.** A `supersedes` link is an
+ * element inside a file, so archiving that file carries the link with it: after a second correction the
+ * edge points from the archived middle memory, not from the path the middle was live at. A three-step
+ * chain over two corrections therefore reads `cited → archive(cited) → archive(middle) → live`, and the
+ * middle's own live-at-the-time path appears nowhere in it. The tree is the system of record, and this
+ * walk reports where each memory is rather than where it was.
+ *
+ * **`hops: 0` with `stopReason: "live"` does not mean the bytes are unchanged.** A correction whose
+ * title is unchanged lands at the SAME path, so the path is live and its content is a different fact.
+ * That grain is what the pinned citation URI is for; this read answers where to look, not what was
+ * there.
+ *
+ * Statement count is `1..2` per hop and the walk is bounded twice — by a visited set and by
+ * {@link RESOLVE_MAX_HOPS} — so a corpus defect costs a bounded read and is reported rather than
+ * hung. A recursive CTE would do it in one statement and could not report WHICH mechanism took each
+ * hop, which is the half a receipt is audited on.
+ */
+export const resolveMemory = (path: string) =>
+  Effect.gen(function* () {
+    const db = yield* DatabaseService
+    const requested = normalizePath(path)
+    const state = yield* readIndexState(db)
+
+    const steps: Array<ResolveStep> = []
+    const visited = new Set<string>([requested])
+    /** Titles of every indexed path the walk touched, so the answer carries one without a re-read. */
+    const titles = new Map<string, string>()
+    let at = requested
+    let stopReason: ResolveStopReason = "unindexed"
+
+    for (;;) {
+      const row = yield* db.get<{ archived: number; title: string }>(resolveQueries.file, [at])
+      if (row !== undefined) titles.set(at, row.title)
+
+      const hop =
+        row === undefined
+          ? {
+              found: yield* db.get<{ path: string }>(resolveQueries.archived, [at]),
+              via: "archive_move" as const
+            }
+          : {
+              found: yield* db.get<{ path: string }>(resolveQueries.successor, [at]),
+              via: "supersedes" as const
+            }
+
+      if (hop.found === undefined) {
+        if (row === undefined) stopReason = "unindexed"
+        else stopReason = row.archived === 1 ? "archived" : "live"
+        break
+      }
+      /**
+       * The bound is checked BEFORE the step is taken, so `steps.length` is exactly
+       * {@link RESOLVE_MAX_HOPS} when it fires and `path` is a real path the walk stood on. Taking the
+       * step first would report a hop past a bound the answer claims to respect.
+       */
+      if (steps.length >= RESOLVE_MAX_HOPS) {
+        stopReason = "hop_limit"
+        break
+      }
+      steps.push({ from: at, to: hop.found.path, via: hop.via })
+      at = hop.found.path
+      /**
+       * The repeat IS recorded as a step before the walk stops, so `steps` shows the loop closing and
+       * a reader can name both ends of it. A cycle detected and then hidden would leave the caller
+       * with a `path` it cannot account for.
+       */
+      if (visited.has(at)) {
+        stopReason = "cycle"
+        break
+      }
+      visited.add(at)
+    }
+
+    return {
+      requested,
+      path: at,
+      hops: steps.length,
+      steps,
+      stopReason,
+      title: titles.get(at) ?? null,
+      indexedCommit: state?.head_sha ?? null
+    } satisfies ResolveResult
+  })
+
 export interface ListParams {
   readonly memoryType?: string | undefined
   readonly workspace?: string | undefined

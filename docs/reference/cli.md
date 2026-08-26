@@ -1,6 +1,6 @@
 # memhtml-public · CLI
 
-The `memhtml` CLI has 36 subcommands, one entry each in the `COMMANDS` array that also drives parsing and `AGENTS.md`. Each one writes exactly one JSON envelope to stdout, so a calling agent can parse the result instead of scraping prose. `apps/cli/src/commands.ts:118`
+The `memhtml` CLI has 38 subcommands, one entry each in the `COMMANDS` array that also drives parsing and `AGENTS.md`. Each one writes exactly one JSON envelope to stdout, so a calling agent can parse the result instead of scraping prose. `apps/cli/src/commands.ts:118`
 
 Start with `memhtml manifest`, which returns the whole contract: every command, argument, flag, response type, error code, and environment variable the binary accepts. `apps/cli/src/commands.ts:1094-1118`
 
@@ -245,6 +245,24 @@ Flags:
 The response distinguishes two ways a neighborhood comes back short, because the recoveries differ. `nodesDropped` counts the paths the walk reached and `--limit` turned away, so a higher limit returns them. `scanSaturated` says the walk stopped at its own 10000-row cap, which no limit recovers. `apps/cli/src/commands.ts:355-360`
 
 The nine memory rels are `supersedes`, `contradicts`, `caused_by`, `leads_to`, `part_of`, `relates_to`, `example_of`, `supports`, `laterally_related`. `packages/contracts/src/edges.ts:19-29`
+
+## resolve
+
+```
+memhtml resolve <path>
+```
+
+Follow a possibly-moved path forward to the memory that carries the fact now. A path is the id of a memory and it derives from the title, so correcting a memory with a reworded title moves the file and an external citation of the old path stops resolving. `apps/cli/src/operations.ts`
+
+Arguments:
+
+- `<path>`: The path a receipt, citation, or older answer recorded. Required.
+
+No flags. The walk follows both mechanisms that move a memory — an authored `supersedes` link and the archive move recorded by `origin_path` — and neither is optional; the hop bound is a property of the answer rather than a preference.
+
+`stopReason` decides whether the answer is citable and only `live` means yes. `archived` is a memory evicted rather than corrected, `unindexed` is no such path here (which can also mean the index does not yet describe the commit holding it — `indexedCommit` names the one it does), `cycle` is two memories each claiming to supersede the other, and `hopLimit` means `path` is where the walk stopped rather than the end of the chain. `steps` names each hop's mechanism, and every node is named by the path holding it now.
+
+`hops: 0` with `stopReason: live` does not mean the bytes are unchanged: a correction whose title did not change lands at the same path. The MCP resource `memhtml://at/{commit}/{path}` is the grain that answers that, and `memory_resolve` publishes such a URI as `pinned_uri`.
 
 ## archive
 
@@ -681,7 +699,7 @@ This command builds no app layer, so running it in CI does not scaffold a memhtm
 memhtml serve mcp
 ```
 
-Run the `memhtml-mcp` stdio server: 14 tools and 2 resources over this same repo. `apps/cli/src/run.ts:1146-1165`
+Run the `memhtml-mcp` stdio server: 15 tools and 3 resources over this same repo. `apps/cli/src/run.ts:1146-1165`
 
 This command takes no arguments and no command-specific flags. `apps/cli/src/commands.ts:869-875`
 

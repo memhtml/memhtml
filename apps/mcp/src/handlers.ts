@@ -16,6 +16,7 @@ import {
   readMemory,
   recallMemories,
   reinforceMemories,
+  resolveMemory,
   searchMemories,
   searchTraces,
   statusReport,
@@ -29,6 +30,7 @@ import { parseFacetFilters } from "@memhtml/index"
 import { Effect, type Layer } from "effect"
 
 import { batchAbortFailure, type ToolFailure, toToolFailure } from "./failure.js"
+import { pinnedUri } from "./resources.js"
 import { MemhtmlToolkit } from "./tools.js"
 
 /**
@@ -98,7 +100,7 @@ const metaRecord = (doc: MemoryDoc): Readonly<Record<string, string>> => {
  * derived JSON Schema advertises `null`, and a client that reads the schema and sends
  * `{"workspace": null}` for "no workspace" is doing the documented thing. The operations layer speaks
  * `undefined` for "not supplied" because `exactOptionalPropertyTypes` distinguishes an absent key from
- * a present one, so the two vocabularies meet HERE, once, rather than at each of fourteen call sites.
+ * a present one, so the two vocabularies meet HERE, once, rather than at each of fifteen call sites.
  */
 const opt = <A>(value: A | null | undefined): A | undefined => value ?? undefined
 
@@ -670,6 +672,35 @@ export const ToolHandlers: Layer.Layer<
           node_limit: result.limit,
           dropped_node_count: result.nodesDropped,
           scan_saturated: result.scanSaturated
+        }
+      })
+    ),
+
+  memory_resolve: (params) =>
+    handled(
+      Effect.gen(function* () {
+        const result = yield* resolveMemory(params.path)
+        /**
+         * `pinned_uri` is composed HERE and nowhere else, from `pinnedUri`, the function the resource
+         * that routes that URI exports.
+         *
+         * The operation cannot build it: `@memhtml/cli` knows nothing about the MCP scheme, and a
+         * resolution is a fact about the corpus rather than about a transport. Composing it from
+         * literals in this file would be a second declaration of the published template — the
+         * consumer-side reimplementation of a producer's naming rule this repo has paid for. It is
+         * null exactly when `indexed_commit` is, because there is no commit to pin to before the first
+         * rebuild.
+         */
+        return {
+          requested: result.requested,
+          path: result.path,
+          hops: result.hops,
+          steps: result.steps,
+          stop_reason: result.stopReason,
+          title: result.title,
+          indexed_commit: result.indexedCommit,
+          pinned_uri:
+            result.indexedCommit === null ? null : pinnedUri(result.indexedCommit, result.path)
         }
       })
     ),

@@ -19,6 +19,8 @@ browsable
 inspectable
 unopenable
 unparseable
+# a `stopReason` value on `memhtml resolve`: the index holds no row for the path
+unindexed
 unplaceable
 unsuffixed
 vectorless

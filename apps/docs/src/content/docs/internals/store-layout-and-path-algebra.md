@@ -63,7 +63,17 @@ Path validation refuses `.` and `..` segments (`packages/contracts/src/paths.ts:
 
 An `href` value in the HTML plane carries the same path with a leading slash. That leading slash is a document-reference form, converted at the HTML boundary and never stored (`packages/contracts/src/types.ts:102-107`, `packages/index/src/project.ts:336-344`).
 
-## 5. `memhtml init` converges on one end state
+## 5. A citation resolves forward, or pins a commit
+
+Because the path is the id and the path is derived from the title, correcting a memory with a reworded title lands the corrected fact at a different path and `git mv`s the original into `archive/<YYYY>/`. Anything outside the store that recorded the old path — a receipt, a report, another agent's note — now names a path the tree does not hold, through no fault of its own. Two reads answer that, and they answer different questions.
+
+`memhtml resolve <path>` walks forward. It follows the two mechanisms that move a memory, and only those two: an authored `supersedes` link, and the archive move recorded by `origin_path`. A correction points its `supersedes` link at the target's ARCHIVE path, so a cited pre-archive path has no inbound edge at all and the archive mapping is the only thing that knows where its bytes went; the walk therefore reads the mapping first for a path absent from the index, and the edge for a path present in it. Every node it reports is named by the path holding that memory NOW: a `supersedes` link is an element inside a file, so archiving that file carries the link with it, and a chain over two corrections reads `cited → archive(cited) → archive(middle) → live` with the middle's own live-at-the-time path appearing nowhere.
+
+The answer's `stopReason` is the field that decides whether to cite, and only `live` means yes. `archived` is a memory that was evicted rather than corrected, so nothing supersedes it. `unindexed` is no such path, which can also mean the index does not yet describe the commit holding it — `indexedCommit` names the commit it does describe. `cycle` and `hopLimit` are the two abnormal endings: two memories each claiming to supersede the other is an authoring defect the walk refuses to resolve, and the hop bound means the answer is where the walk stopped rather than the end of the chain. Nothing is fabricated in any of the five cases, which is the point — a resolver that answered "not found" for all four of the non-live ones would collapse an eviction, a stale index, and a corpus defect into one word.
+
+Forward resolution cannot answer one thing, and it says so: a correction whose title did NOT change lands at the same path, so the path is live at zero hops while the bytes behind it state a different fact. That grain is the pinned citation, `memhtml://at/{commit}/{path}`, an MCP resource that reads the git object at a named commit rather than the working tree. A commit sha is immutable, so those bytes cannot move; a branch name or `HEAD` is refused, because a URI whose target can move is not a citation. `memory_resolve` publishes such a URI ready-made as `pinned_uri`.
+
+## 6. `memhtml init` converges on one end state
 
 `memhtml init` (`packages/store/src/layout.ts:183`) is the only code path that creates the root. Each step asks the repository what is already true, so the command reaches the same end state from an empty directory, from a live repository, and from one an interrupted run left half-staged.
 

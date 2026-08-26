@@ -58,7 +58,7 @@ const EVERY_FAILURE = [
   new LlmContractViolation({ reason: "the tool payload did not decode" })
 ] as const
 
-/** The fourteen names an agent can actually call, which is the vocabulary a suggestion may use. */
+/** The tool names an agent can actually call, which is the vocabulary a suggestion may use. */
 const CALLABLE = new Set<string>(TOOL_NAMES)
 
 describe("the wire failure a tool call produces", () => {
@@ -292,7 +292,7 @@ describe("the atomic batch abort as a wire failure", () => {
 })
 
 describe("the suggestions, as an MCP agent can act on them", () => {
-  it("names no CLI command: the reader has fourteen tools and no shell", () => {
+  it("names no CLI command: the reader has tools and no shell", () => {
     /**
      * The rule that makes this a parallel mapping rather than a reuse of `suggestionsFor`. That function
      * answers the same question for a human at a prompt and answers it in `memhtml search`, `git status`,
@@ -421,7 +421,7 @@ describe("the suggestions, as an MCP agent can act on them", () => {
 })
 
 describe("the declared failure schema on every tool", () => {
-  it("declares a failure schema on all fourteen, which is what un-masks the message", () => {
+  it("declares a failure schema on every tool, which is what un-masks the message", () => {
     /**
      * `Schema.is(tool.failureSchema)` IS `McpServer`'s branch-2 predicate: `isDeclaredFailure`, built
      * once per tool at registration and consulted on every failed call (effect 4.0.0-rc.109). So this
@@ -430,7 +430,7 @@ describe("the declared failure schema on every tool", () => {
      * matter how good `toToolFailure`'s prose was.
      */
     const failure = toToolFailure(new PathNotFound({ path: "areas/x.html" }))
-    expect(TOOL_NAMES).toHaveLength(14)
+    expect(TOOL_NAMES).toHaveLength(15)
     for (const name of TOOL_NAMES) {
       const isDeclaredFailure = Schema.is(MemhtmlToolkit.tools[name].failureSchema)
       expect(isDeclaredFailure(failure)).toBe(true)

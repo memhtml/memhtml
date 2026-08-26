@@ -343,6 +343,7 @@ const checkEveryCommand = async ({ bin, work, env }) => {
     // stale afterwards. `link` refused the resulting dangling edge, which is the store being right.
     ["link", ["link", pathA, "relates_to", pathB]],
     ["neighbors", ["neighbors", pathA]],
+    ["resolve", ["resolve", pathA]],
     ["reinforce", ["reinforce", pathA]],
     [
       "correct",
@@ -520,7 +521,14 @@ const checkEveryResource = async ({ mcpBin, env, sleep }) => {
         workspace: "checkout-api"
       }
     })
-    const memoryPath = JSON.parse(written.result?.content?.[0]?.text ?? "{}").path ?? ""
+    const writePayload = JSON.parse(written.result?.content?.[0]?.text ?? "{}")
+    const memoryPath = writePayload.path ?? ""
+    /**
+     * The commit that write landed, which is what the pinned template's first hole takes. Read off the
+     * SERVER's own response rather than from `git rev-parse`, so the URI cites the commit the server
+     * says it made.
+     */
+    const writeCommit = writePayload.commit_sha ?? ""
 
     /**
      * `[hole, value, expected]` per published template. A template with no entry fails the census.
@@ -532,7 +540,17 @@ const checkEveryResource = async ({ mcpBin, env, sleep }) => {
      */
     const READS = {
       "memhtml://file/{path}": ["{path}", memoryPath, "Written to be read back through a resource"],
-      "memhtml://sleep/{run-id}": ["{run-id}", sleep.runId, sleep.runId]
+      "memhtml://sleep/{run-id}": ["{run-id}", sleep.runId, sleep.runId],
+      /**
+       * Two holes, filled as ONE substitution, because the census substitutes once per template. The
+       * value still carries separators — a commit sha, a slash, then a multi-segment path — so the
+       * single-segment check below covers this route as well.
+       */
+      "memhtml://at/{commit}/{path}": [
+        "{commit}/{path}",
+        `${writeCommit}/${memoryPath}`,
+        "Written to be read back through a resource"
+      ]
     }
 
     const unread = templates.filter((template) => READS[template] === undefined)
@@ -554,7 +572,7 @@ const checkEveryResource = async ({ mcpBin, env, sleep }) => {
         detail:
           single.length > 0
             ? `SINGLE SEGMENT: ${single.join(", ")}`
-            : `${memoryPath}, ${sleep.runId}`
+            : `${memoryPath}, ${sleep.runId}, ${writeCommit.slice(0, 8)}`
       }
     })
 
@@ -596,7 +614,8 @@ const checkEveryMcpTool = async ({ mcpBin, env }) => {
    *
    * The tool surface is its own vocabulary and does not mirror the CLI's flags: `memory_type` not
    * `type`, `target_path` not `target`, `src_path`/`dst_path` not `src`/`dst`, and `paths` is an array.
-   * Guessing from the CLI produced `Invalid parameters … Missing key` on seven of the fourteen. The
+   * Guessing from the CLI produced `Invalid parameters … Missing key` on seven of the fourteen then
+   * registered. The
    * census below reads each tool's `inputSchema.required` and fails when a key here does not cover it,
    * so a rename or a new required field surfaces as a failure rather than as a wrong call.
    */
@@ -635,6 +654,7 @@ const checkEveryMcpTool = async ({ mcpBin, env }) => {
     },
     memory_link: { src_path: "PLACEHOLDER", rel: "relates_to", dst_path: "SECOND" },
     memory_neighbors: { path: "PLACEHOLDER" },
+    memory_resolve: { path: "PLACEHOLDER" },
     memory_reinforce: { paths: ["PLACEHOLDER"], signal: "positive" },
     memory_archive: { path: "DOOMED", reason: "written by the MCP smoke tier" }
   }

@@ -437,6 +437,12 @@ const dispatch = (
         return ["memory.neighbors", result] as const
       })
 
+    case "resolve":
+      return Effect.gen(function* () {
+        const result = yield* ops.resolveMemory(parsed.positional[0] ?? "")
+        return ["memory.resolved", result] as const
+      })
+
     case "archive":
       return Effect.gen(function* () {
         const result = yield* ops.archiveMemory(

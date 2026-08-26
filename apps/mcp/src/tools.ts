@@ -4,6 +4,8 @@ import {
   Indexer,
   IndexRecorder,
   NEIGHBORS_LIMIT,
+  RESOLVE_STEP_VIA,
+  RESOLVE_STOP_REASONS,
   Retrieval,
   Store
 } from "@memhtml/cli"
@@ -16,7 +18,8 @@ import { Tool, Toolkit } from "effect/unstable/ai"
 import { ToolFailure } from "./failure.js"
 
 /**
- * The fourteen tools: design.md §8 verbatim, plus `memory_write_batch` (spec 004 D7).
+ * The fifteen tools: design.md §8 verbatim, plus `memory_write_batch` (spec 004 D7) and
+ * `memory_resolve`.
  *
  * **`parameters` is always `Schema.Struct`, never `Schema.Class`.** A client sends a plain object
  * literal, and a class schema's decode expects an instance. The failure is a decode error on every
@@ -113,8 +116,8 @@ const Optional = <S extends Schema.Top>(schema: S) => Schema.optionalKey(Schema.
  * which keeps `memory_search` provably unable to reach the store and write.
  *
  * A FUNCTION per set, not a shared constant: the option's type is a mutable array, so handing the
- * same array to fourteen tools would let one tool's construction mutate the dependency list of the
- * other thirteen.
+ * same array to fifteen tools would let one tool's construction mutate the dependency list of the
+ * other fourteen.
  */
 const READS = () => [DatabaseService]
 // ExtractorPort is in the write set because `batchWrite` reads it (the write-time entity assist);
@@ -761,6 +764,60 @@ const MemoryNeighbors = Tool.make("memory_neighbors", {
   })
 })
 
+const MemoryResolve = Tool.make("memory_resolve", {
+  description:
+    "Follow a path an older answer, receipt, or external citation recorded FORWARD to the memory that carries the fact now. A path is the id of a memory and it is derived from the title, so a correction that rewords the title moves the file: the cited path stops resolving through no fault of the citation. " +
+    "`stop_reason` is what decides whether the answer is citable, and only `live` means yes. `archived` is a memory that was EVICTED rather than corrected, so nothing supersedes it and citing it as current would be wrong. `unindexed` is no such path here, which may also mean the index does not yet describe the commit that holds it — `indexed_commit` says which commit it does describe. `cycle` and `hop_limit` are the two abnormal endings: a cycle is two memories each claiming to supersede the other, an authoring defect, and `hop_limit` means `path` is where the walk stopped rather than the end of the chain, so resolving it again continues. " +
+    "`steps` names the mechanism of every hop, `supersedes` for an authored link and `archive_move` for a `git mv` into the archive, and each node is named by the path that holds it NOW. " +
+    "`hops: 0` with `stop_reason: live` does NOT mean the bytes are unchanged: a correction whose title did not change lands at the same path. Read `pinned_uri` for the grain that answers that — it is a resource URI naming these bytes at a commit, so it cannot move, where memhtml://file/<path> always returns whatever is at the path today.",
+  dependencies: READS(),
+  parameters: Schema.Struct({ path: MemoryPath }),
+  failure: ToolFailure,
+  success: Schema.Struct({
+    /** The path asked about, normalized, so an answer can be matched back to the receipt. */
+    requested: MemoryPath,
+    /** Where the walk ended. What that MEANS is `stop_reason`'s, not this field's. */
+    path: MemoryPath,
+    /** Hops taken, equal to `steps.length`. A quantity, `0` when the path needed no walk. */
+    hops: Count,
+    steps: Schema.Array(
+      Schema.Struct({
+        from: MemoryPath,
+        to: MemoryPath,
+        /**
+         * Which mechanism moved the memory, from the closed vocabulary the operation declares.
+         *
+         * Published as an enum rather than a string so a client can branch exhaustively: the two are
+         * different claims. `supersedes` is an authored `<link>` inside a file, which survives a
+         * rebuilt index; `archive_move` is a `git mv` recorded by the path itself.
+         */
+        via: Schema.Literals(RESOLVE_STEP_VIA)
+      })
+    ),
+    /** Why the walk stopped, from the five values the operation declares. Only `live` is citable. */
+    stop_reason: Schema.Literals(RESOLVE_STOP_REASONS),
+    /** The title at `path`, or null when the index holds no row for it. */
+    title: Schema.NullOr(Schema.String),
+    /**
+     * The commit the INDEX describes, or null before the first rebuild and during one.
+     *
+     * This whole answer is a statement about that commit rather than about HEAD, since the index is a
+     * projection of git. `memory_status.index_fresh` says whether the two agree.
+     */
+    indexed_commit: Schema.NullOr(Schema.String),
+    /**
+     * A `resources/read` URI pinning `path` at `indexed_commit`, or null when there is no commit to
+     * pin to — which is the same condition as a null `indexed_commit`.
+     *
+     * Composed by the server rather than by the client, because the URI's spelling belongs to the
+     * resource that routes it. A caller writing a receipt stores this string: the path half can be
+     * corrected, archived, or evicted afterwards and the URI still returns the bytes the receipt was
+     * written against.
+     */
+    pinned_uri: Schema.NullOr(Schema.String)
+  })
+})
+
 const MemoryArchive = Tool.make("memory_archive", {
   description:
     "Soft-evict a memory: `git mv` into archive/<YYYY>/ with the archive stamps. Nothing is ever deleted, and `git log --follow` reads straight through.",
@@ -912,7 +969,8 @@ const MemoryStatus = Tool.make("memory_status", {
 })
 
 /**
- * The toolkit. Exactly fourteen: design.md §8's thirteen plus `memory_write_batch`.
+ * The toolkit. Exactly fifteen: design.md §8's thirteen, plus `memory_write_batch` and
+ * `memory_resolve`.
  *
  * Order is the read order of the table in §8, which is also roughly the order an agent needs them:
  * write and read, then the three retrieval shapes, then the graph operations, then the trace plane,
@@ -932,6 +990,7 @@ export const MemhtmlToolkit = Toolkit.make(
   MemoryCorrect,
   MemoryLink,
   MemoryNeighbors,
+  MemoryResolve,
   MemoryArchive,
   MemoryReinforce,
   MemoryList,
@@ -943,8 +1002,8 @@ export const MemhtmlToolkit = Toolkit.make(
 /**
  * The tool names, derived from the toolkit rather than restated.
  *
- * Two lists would drift: a placeholder list that once said fourteen names and a toolkit that now
- * builds thirteen would leave a test asserting the list and proving nothing about the server.
+ * Two lists would drift: a placeholder list that once said fifteen names and a toolkit that now
+ * builds fourteen would leave a test asserting the list and proving nothing about the server.
  */
 export const TOOL_NAMES = Object.keys(MemhtmlToolkit.tools) as ReadonlyArray<
   keyof typeof MemhtmlToolkit.tools

@@ -3,7 +3,7 @@ title: Wire up the MCP server
 description: Run memhtml serve mcp over stdio, see the tools and resources a client gets, and call one by hand.
 ---
 
-`memhtml serve mcp` exposes the same store over the Model Context Protocol on stdio: fourteen tools and two resources (`apps/mcp/src/tools.ts:735`). This tutorial starts the server, lists what a client sees, calls a tool by hand so you can verify the wiring without a client, and then configures a client.
+`memhtml serve mcp` exposes the same store over the Model Context Protocol on stdio: fifteen tools and three resources (`apps/mcp/src/tools.ts`). This tutorial starts the server, lists what a client sees, calls a tool by hand so you can verify the wiring without a client, and then configures a client.
 
 You need a store with something in it, so [write a memory](/learn/tutorial/first-memory/) first.
 
@@ -59,13 +59,13 @@ The handshake answers:
 ```
 memory_write        memory_write_batch  memory_read      memory_search
 memory_recall       memory_correct      memory_link      memory_neighbors
-memory_archive      memory_reinforce    memory_list      trace_search
-trace_links         memory_status
+memory_resolve      memory_archive      memory_reinforce memory_list
+trace_search        trace_links         memory_status
 ```
 
 The order is deliberate, because a client publishes it and an agent reads it top-down. `memory_write_batch` sits second, directly after `memory_write`, so the tool that `memory_write`'s own description points at is the very next entry rather than thirteen tools away.
 
-Two resource templates come with them:
+Three resource templates come with them:
 
 ```json
 {
@@ -76,12 +76,15 @@ Two resource templates come with them:
       "description": "One memory's title, claim, and body text, by repo-root-relative path. For showing a human the file behind an answer.",
       "mimeType": "text/plain"
     },
-    { "uriTemplate": "memhtml://sleep/{run-id}", "name": "Sleep run report" }
+    { "uriTemplate": "memhtml://sleep/{run-id}", "name": "Sleep run report" },
+    { "uriTemplate": "memhtml://at/{commit}/{path}", "name": "Memory file at a commit" }
   ]
 }
 ```
 
 `memhtml://file/{path}` funnels through the same use case `memory_read` does, so fetching it bumps the access plane: it is a chosen open. `memhtml://sleep/{run-id}` serves one curation run's committed HTML report.
+
+`memhtml://at/{commit}/{path}` is the same read as the first one at a finer grain: the bytes of that path as of that commit, so a citation written today still resolves to what it cited after the memory is corrected, archived, or evicted. It reads the git object rather than the working tree, it refuses a branch name or `HEAD` because a citation must name something that cannot move, and it does not bump the access plane — verifying a receipt is auditing, not choosing. `memory_resolve` is its companion: one answers what was true, the other where the fact went.
 
 Sleep is absent from the tool surface, because it is a cron and operator action that produces a reviewable branch and an agent should not start one mid-conversation. The other operator commands are absent with it: `doctor`, `publish`, `index rebuild`, `sleep merge`, and the discrimination gate all stay on the CLI, so reach for `memhtml` for anything on the operations pages.
 

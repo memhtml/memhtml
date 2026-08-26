@@ -1,7 +1,8 @@
 import { join } from "node:path"
 
-import { Roots, readMemory } from "@memhtml/cli"
+import { Roots, readMemory, Store } from "@memhtml/cli"
 import { isValidMemoryPath, normalizePath } from "@memhtml/contracts/paths"
+import { parseMemory } from "@memhtml/html"
 import { reportFilename } from "@memhtml/sleep"
 import { readFileOrNull, SLEEP_REPORTS_DIR } from "@memhtml/store"
 import { Context, Effect, Layer } from "effect"
@@ -10,14 +11,21 @@ import { McpSchema, McpServer } from "effect/unstable/ai"
 import { resourceFailure, type ToolFailure, toResourceFailure } from "./failure.js"
 
 /**
- * The two resources, design.md §8.
+ * The three resources: design.md §8's two, plus one version-pinned citation grain.
  *
  * A resource is for CITATION-grade drill-down: a client that got a path from `memory_search` can
  * fetch `memhtml://file/<path>` and show a human the file behind an answer, without spending a tool call
  * and without the tool response having had to carry the whole body.
+ *
+ * `memhtml://file/{path}` and `memhtml://at/{commit}/{path}` are the same read at two grains, and the
+ * difference is whether the answer can move. A path is the id of a memory and a correction rewrites
+ * what lives at it, so a receipt citing a path alone cites whatever is there when someone follows it.
+ * The pinned form names a commit as well, and a commit sha is immutable, so the bytes behind that URI
+ * are the bytes the receipt was written against. This is a grain only a git-native store can offer, and
+ * `memory_resolve` is the other half: one URI says what was true, the other says where the fact went.
  */
 
-/** The URI scheme both resources publish under, matching `SERVER_NAME`. */
+/** The URI scheme every resource publishes under, matching `SERVER_NAME`. */
 const SCHEME = "memhtml"
 
 /**
@@ -243,8 +251,125 @@ export const SleepResource = templateLayer({
     })
 })
 
-/** Both resources as one layer, for the server to provide. */
-export const Resources = Layer.mergeAll(FileResource, SleepResource)
+/**
+ * A commit sha, and nothing that can move.
+ *
+ * Seven to sixty-four lowercase hex characters: git's own abbreviation floor through the width of
+ * SHA-256. `HEAD`, a branch name, and a tag are all REFUSED, and that refusal is the whole point of
+ * this resource — a URI whose target can move is not a citation, and `memhtml://at/main/x.html` would
+ * read as a pin while resolving to different bytes next week. A caller wanting the current bytes has
+ * `memhtml://file/{path}`, which says so in its own name.
+ *
+ * It is also the containment on the argv: `lsTreeR` passes this value to `git ls-tree` as a positional,
+ * and a value starting with `-` would be read as an option. Hex cannot.
+ */
+const COMMIT_SHA = /^[0-9a-f]{7,64}$/
+
+/** `memhtml://at/{commit}/{path}`: no such path in that commit, or no such commit here. */
+const pinnedRefusal = (uri: string): ToolFailure =>
+  resourceFailure("ERR_PATH_NOT_FOUND", `nothing to read at ${uri}`, [
+    `re-request it as ${prefixOf("at")}<commit-sha>/<repo-root-relative path>, the form resources/templates publishes`,
+    "call memory_resolve for the path this memory occupies now, and read `indexed_commit` for a sha this repository holds",
+    "a branch name or HEAD is refused on purpose: a citation names bytes that cannot move"
+  ])
+
+/**
+ * One memory's text AS OF a commit: a citation that cannot move.
+ *
+ * **Two segments after the section, split at the FIRST `/`.** The rest parameter captures
+ * `<commit>/<path>` as one string, and the commit half cannot contain a slash while the path half must,
+ * so the first separator is the only place the split can be. The published template names both holes,
+ * which is what makes this route multi-segment BY CONSTRUCTION: `{path}` alone is at least two segments
+ * for every memory and at least four for an archived one.
+ *
+ * **The bytes come out of git, not off disk.** `lsTreeR` resolves `<path>` in `<commit>`'s tree to a
+ * blob sha and `catFileBatch` reads that object, so a path corrected, archived, or evicted since is
+ * still readable at the commit that held it. Reading the worktree instead would answer with today's
+ * file under yesterday's URI, which is the exact failure the pin exists to prevent.
+ *
+ * **The same text shape `memhtml://file/{path}` returns**, parsed from the historical bytes rather
+ * than re-derived: title, claim, body. A client renders either grain the same way, and the only
+ * difference between the two answers is which commit produced it.
+ *
+ * **This read does NOT bump salience, where `memhtml://file/{path}` does.** Salience counts a chosen
+ * open of a memory, and `state.access` is keyed on PATH with no notion of a commit
+ * (`packages/index/state-migrations/S0001_access.sql`), so a bump here would credit whatever occupies
+ * that path today for a read of a version it may not even contain. Verifying a receipt is auditing, not
+ * choosing, and rewarding audit traffic would let a heavily-cited-then-corrected memory outrank the
+ * fact that replaced it. It is also why this resource declares `Store` and not `IndexRecorder`: the
+ * dependency set makes the refusal structural.
+ *
+ * `isValidMemoryPath` gates the path for `FileResource`'s reason — the rest parameter accepts `/`, so
+ * it accepts `../../etc/passwd`, and `git ls-tree` would happily resolve a path outside the four PARA
+ * buckets if the tree held one.
+ *
+ * A `GitFailure` becomes this resource's own refusal rather than an `ERR_GIT`: from the client's side,
+ * an unknown commit and a path absent from a known commit are one answer, "this URI names nothing
+ * here", and the real cause is on stderr where an operator reads it. Nothing else in the read can fail
+ * that way, since the path is gated and the blob is named by the tree itself.
+ */
+export const PinnedResource = templateLayer({
+  section: "at",
+  uriTemplate: "memhtml://at/{commit}/{path}",
+  name: "Memory file at a commit",
+  description:
+    "One memory's title, claim, and body text as of a specific commit sha. For a citation whose bytes cannot move: the path may since have been corrected, archived, or evicted. A branch name or HEAD is refused.",
+  mimeType: "text/plain",
+  refuse: pinnedRefusal,
+  read: (uri, captured) =>
+    Effect.gen(function* () {
+      const at = captured.indexOf("/")
+      if (at <= 0) return yield* Effect.fail(pinnedRefusal(uri))
+      const commit = captured.slice(0, at)
+      const path = captured.slice(at + 1)
+      if (!COMMIT_SHA.test(commit) || !isValidMemoryPath(path)) {
+        return yield* Effect.fail(pinnedRefusal(uri))
+      }
+
+      const store = yield* Store
+      const normalized = normalizePath(path)
+      const entries = yield* store.git.lsTreeR(commit, [normalized]).pipe(
+        Effect.tapError(Effect.logError),
+        Effect.catchTag("GitFailure", () => Effect.fail(pinnedRefusal(uri)))
+      )
+      // `ls-tree -r` over one pathspec returns that blob or nothing. A submodule entry is an
+      // `objectType` of `commit` and holds no memory, so it is refused rather than read.
+      const blob = entries.find((entry) => entry.path === normalized && entry.objectType === "blob")
+      if (blob === undefined) return yield* Effect.fail(pinnedRefusal(uri))
+
+      const bytes = yield* store.git.catFileBatch([blob.sha]).pipe(
+        Effect.tapError(Effect.logError),
+        Effect.catchTag("GitFailure", () => Effect.fail(pinnedRefusal(uri)))
+      )
+      const body = bytes.get(blob.sha)
+      if (body === undefined) return yield* Effect.fail(pinnedRefusal(uri))
+
+      const doc = yield* parseMemory(new TextDecoder().decode(body))
+      return [`# ${doc.title}`, "", doc.article.gist, "", doc.article.bodyText].join("\n")
+    })
+})
+
+/**
+ * The URI that pins one memory at one commit, for a producer of a receipt.
+ *
+ * Exported so `memory_resolve` can publish a citation the caller pastes rather than assembles. The
+ * spelling of a URI belongs to the surface that routes it, and a handler composing `memhtml://at/…`
+ * out of its own string literals would be a second declaration of this template — the same
+ * consumer-side reimplementation of a producer's naming rule that `reportFilename` exists to prevent
+ * one resource over.
+ *
+ * The path is NOT percent-encoded. `capturedOf` decodes once, so a raw path and an escaped one name
+ * the same resource, and the raw form is the one the published template shows.
+ */
+export const pinnedUri = (commit: string, path: string): string =>
+  `${prefixOf("at")}${commit}/${normalizePath(path)}`
+
+/** Every resource as one layer, for the server to provide. */
+export const Resources = Layer.mergeAll(FileResource, SleepResource, PinnedResource)
 
 /** The templates, for a test to assert the surface without a handshake. */
-export const RESOURCE_TEMPLATES = ["memhtml://file/{path}", "memhtml://sleep/{run-id}"] as const
+export const RESOURCE_TEMPLATES = [
+  "memhtml://file/{path}",
+  "memhtml://sleep/{run-id}",
+  "memhtml://at/{commit}/{path}"
+] as const

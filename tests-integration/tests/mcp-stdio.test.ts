@@ -194,13 +194,14 @@ describe("the event_at bug report, inverted: article_html over real MCP stdio", 
 
   it("completes initialize -> tools/list with article_html on the published wire", () => {
     /**
-     * Fourteen, and the delta is auditable rather than a number that drifts: `article_html` cost NO
-     * tool (it is a parameter on `memory_write`), and `memory_write_batch` cost exactly one. So the
-     * count is asserted alongside the name that raised it, and a regression that added a fifteenth
-     * tool fails on the count while one that renamed the fourteenth fails on the name.
+     * Fifteen, and the delta is auditable rather than a number that drifts: `article_html` cost NO
+     * tool (it is a parameter on `memory_write`), while `memory_write_batch` and `memory_resolve` cost
+     * exactly one each. So the count is asserted alongside the names that raised it, and a regression
+     * that added a sixteenth tool fails on the count while one that renamed a tool fails on the name.
      */
-    expect(tools).toHaveLength(14)
+    expect(tools).toHaveLength(15)
     expect(tools.map((tool) => tool.name)).toContain("memory_write_batch")
+    expect(tools.map((tool) => tool.name)).toContain("memory_resolve")
     const write = tools.find((tool) => tool.name === "memory_write")
     const schema = write?.inputSchema as {
       readonly properties: Record<string, unknown>
@@ -299,7 +300,7 @@ describe("the event_at bug report, inverted: article_html over real MCP stdio", 
     expect(notFoundText.toLowerCase()).not.toContain("internal server error")
 
     /**
-     * `memory_search`, not `memhtml search`. The reader is an LLM mid-task holding fourteen tools and no
+     * `memory_search`, not `memhtml search`. The reader is an LLM mid-task holding fifteen tools and no
      * shell, so the CLI suggestions the envelope hands a human (`apps/cli/src/errors.ts:119`) are all
      * unreachable here — a suggestion an agent cannot execute spends its attention on a plan that ends
      * in "I have no terminal" while the recovery that WAS available goes unmentioned.

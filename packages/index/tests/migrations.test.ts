@@ -18,11 +18,11 @@ import {
  */
 
 describe("migrations", () => {
-  it("applies all eleven index migrations and both state migrations", async () => {
+  it("applies all twelve index migrations and both state migrations", async () => {
     const counts = await withDb((db) =>
       Effect.succeed({ index: db.migrationsApplied, state: db.stateMigrationsApplied })
     )
-    expect(counts).toEqual({ index: 11, state: 2 })
+    expect(counts).toEqual({ index: 12, state: 2 })
   })
 
   it("creates every table the truncate lists name", async () => {
@@ -76,7 +76,8 @@ describe("migrations", () => {
       "0008_tasks.sql",
       "0009_frame_key.sql",
       "0010_trace_consolidations.sql",
-      "0011_edge_indexes.sql"
+      "0011_edge_indexes.sql",
+      "0012_origin_path.sql"
     ])
     expect(ledgers.state).toEqual(["S0001_access.sql", "S0002_entity_corroboration.sql"])
   })
@@ -297,6 +298,7 @@ describe("0008 over a populated 0007 database", () => {
       "files_content_hash_active",
       "files_event",
       "files_frame_key_active",
+      "files_origin",
       "files_para",
       "files_session",
       "files_task_status",

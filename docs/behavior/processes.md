@@ -174,9 +174,9 @@ Entry point: `packages/sleep/src/review.ts:238`
 Entry point: `apps/mcp/src/bin.ts:15`
 
 1. `Layer.launch` runs the server for the process's lifetime, because the stdio transport is the program and a built-then-released layer would close stdin under a live client `apps/mcp/src/bin.ts:9-15`.
-2. `layerServer` merges the toolkit and the two resources over the CLI's own app layer, so both entry points resolve to one database file, one git root, and one vector space `apps/mcp/src/server.ts:39-54`.
+2. `layerServer` merges the toolkit and the three resources over the CLI's own app layer, so both entry points resolve to one database file, one git root, and one vector space `apps/mcp/src/server.ts:39-54`.
 3. `Logger.LogToStderr` is set here because stdout on this transport carries the NDJSON-RPC stream, and one log line would corrupt the frame a client is mid-parse on `apps/mcp/src/server.ts:53`.
-4. The toolkit declares 14 tools with the batch second, directly after `memory_write`, because `tools/list` publishes this order and an agent reads it top-down `apps/mcp/src/tools.ts:774-789`.
+4. The toolkit declares 15 tools with the batch second, directly after `memory_write`, because `tools/list` publishes this order and an agent reads it top-down `apps/mcp/src/tools.ts:774-789`.
 5. `MemhtmlToolkit.toLayer` binds each handler and typechecks it against the toolkit's own parameter and success schemas, so a wrong shape is a compile error rather than a live decode failure `apps/mcp/src/handlers.ts:305-309`.
 6. Each handler renames snake_case wire parameters to the operations layer's camelCase and maps an explicit `null` to absent. It then calls the same shared use case the CLI command calls `apps/mcp/src/handlers.ts:102`, `apps/mcp/src/handlers.ts:524-556`.
 7. `authored` resolves the body-or-article-html exclusive rule at the wire boundary. It rejects a call that supplies both and a call that supplies neither, instead of picking one `apps/mcp/src/handlers.ts:143-167`.

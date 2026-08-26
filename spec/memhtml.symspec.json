@@ -370,6 +370,26 @@
       "verificationMethod": "test",
       "verifies": []
     },
+    "3b1f24c7-6f0e-5a41-9c8d-1a4e7b2d5f30": {
+      "createdAt": "2026-08-26T00:00:00.000Z",
+      "derives": [],
+      "id": "3b1f24c7-6f0e-5a41-9c8d-1a4e7b2d5f30",
+      "key": "CITE-1",
+      "negated": false,
+      "patternType": "event-driven",
+      "priority": "high",
+      "refines": [],
+      "satisfies": [],
+      "sentence": "When a caller resolves a path a citation recorded, the forward walk shall report the path holding that memory now and shall state which bound stopped it.",
+      "status": "implemented",
+      "systemName": "forward walk",
+      "systemResponse": "report the path holding that memory now and state which bound stopped it",
+      "trigger": "a caller resolves a path a citation recorded",
+      "updatedAt": "2026-08-26T00:00:00.000Z",
+      "verificationMethod": "test",
+      "verificationNote": "resolveMemory (apps/cli/src/operations.ts) follows the only two mechanisms that move a memory: an authored supersedes edge and the archive mapping in files.origin_path. A correction points its supersedes link at the target's ARCHIVE path, so a cited pre-archive path has no inbound edge and the mapping is read first for a path absent from files; a path present in files is never redirected by the mapping, because the live file at that path is the answer. Each node is named by the path holding it NOW, since a supersedes link is an element inside a file and archiving carries it along. stopReason is five values and only `live` is citable: `archived` is an eviction rather than a correction, `unindexed` may also mean the index does not describe the commit holding the path (indexedCommit names the one it does), and `cycle` and `hop_limit` are the two abnormal endings, the first from a visited set and the second from RESOLVE_MAX_HOPS, checked before the step so hops equals the bound rather than exceeding it. Nothing is fabricated in any case. apps/cli/tests/resolve.test.ts builds two chains corrected TWICE with reworded titles, so the walk crosses both mechanisms alternately and a NEIGHBOUR chain shares edges and files.origin_path; verified by mutation on the archive redirect (4 failures), the cycle guard, and the bound's ordering.",
+      "verifies": []
+    },
     "3bef59c1-cdfd-4a11-8623-13547c86eab3": {
       "createdAt": "2026-08-08T02:00:00.328Z",
       "derives": [],
@@ -864,6 +884,25 @@
       "updatedAt": "2026-08-25T00:00:00.000Z",
       "verificationMethod": "test",
       "verificationNote": "apps/cli/src/config.ts declares it with fallback `off`, opt-in unlike MEMHTML_EMBED because it changes what a write STORES: extracted entities land in the files as if authored. The write never waits on or fails with the model, and a failed extraction is a logged warning plus an unextracted batch. ExtractorPort (apps/cli/src/api-layer.ts:345) resolves to an absent extractor unless the variable is on, which is why apps/mcp/src/tools.ts carries it in the WRITES service set.",
+      "verifies": []
+    },
+    "8c5a90e2-71b4-5d63-8f27-6b0c3ae14d95": {
+      "createdAt": "2026-08-26T00:00:00.000Z",
+      "derives": [],
+      "id": "8c5a90e2-71b4-5d63-8f27-6b0c3ae14d95",
+      "key": "CITE-2",
+      "negated": false,
+      "patternType": "ubiquitous",
+      "priority": "high",
+      "refines": [],
+      "satisfies": [],
+      "sentence": "The pinned citation resource shall serve the bytes a commit held and shall refuse any reference that can move.",
+      "status": "implemented",
+      "systemName": "pinned citation resource",
+      "systemResponse": "serve the bytes a commit held and refuse any reference that can move",
+      "updatedAt": "2026-08-26T00:00:00.000Z",
+      "verificationMethod": "test",
+      "verificationNote": "memhtml://at/<commit>/<path> (apps/mcp/src/resources.ts, PinnedResource) resolves the path in that commit's tree with lsTreeR and reads the blob with catFileBatch, so a path since corrected, archived, or evicted still reads. The commit half must match seven to sixty-four lowercase hex characters: HEAD, a branch, and a tag are refused because a URI whose target can move is not a citation, and hex also keeps a leading `-` out of git's argv. The route is multi-segment by construction, since the path hole is at least two segments for every memory and four for an archived one, and the capture is split at the FIRST slash because a commit cannot contain one. isValidMemoryPath gates the path half: git resolves README.html in the tree, so without it the resource would serve any file in any commit. It declares Store and not IndexRecorder, so it structurally cannot bump salience — state.access is path-keyed with no notion of a commit, and verifying a receipt is auditing rather than choosing. apps/mcp/tests/resources.test.ts reads a path the tree no longer holds; verified by mutation on the commit source (lsTreeR at HEAD), the ref-shape gate, and the path gate, which yields ERR_INVALID_MEMORY instead of ERR_PATH_NOT_FOUND because the read happened.",
       "verifies": []
     },
     "8ceca52a-ba86-4bfc-8585-cccf3154a672": {
@@ -1429,6 +1468,25 @@
       "updatedAt": "2026-08-08T01:57:30.129Z",
       "verificationMethod": "test",
       "verificationNote": "propose-only: removal mutation fires 14 tests across three layers. BEAM: the gold IS the contradiction",
+      "verifies": []
+    },
+    "d47e6b13-0a92-5c85-bb64-2f8d19c7e0a6": {
+      "createdAt": "2026-08-26T00:00:00.000Z",
+      "derives": [],
+      "id": "d47e6b13-0a92-5c85-bb64-2f8d19c7e0a6",
+      "key": "CITE-3",
+      "negated": false,
+      "patternType": "ubiquitous",
+      "priority": "medium",
+      "refines": [],
+      "satisfies": [],
+      "sentence": "The resolution answer shall name the commit the index describes rather than HEAD.",
+      "status": "implemented",
+      "systemName": "resolution answer",
+      "systemResponse": "name the commit the index describes rather than HEAD",
+      "updatedAt": "2026-08-26T00:00:00.000Z",
+      "verificationMethod": "test",
+      "verificationNote": "indexedCommit is index_state.head_sha, read through readIndexState (packages/index/src/index-state.ts), and it is what memory_resolve composes pinned_uri from. The index is a projection of git, so a resolution is a statement about the commit the projection describes and not about the working tree; reporting HEAD would pin a citation to bytes the answer was never taken against. It is null before the first rebuild and during one, which is the same condition under which pinned_uri is null. memory_status.index_fresh answers whether the two agree. apps/cli/tests/resolve.test.ts asserts the value equals what `memhtml index status` reports rather than a literal.",
       "verifies": []
     },
     "d826a9bd-8da5-4a7b-b114-c143dd435b9a": {

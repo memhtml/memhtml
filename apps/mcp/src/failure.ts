@@ -56,7 +56,7 @@ const text = (value: unknown): string | undefined => (typeof value === "string" 
 /**
  * What to do about a failure, phrased as calls this agent can actually make.
  *
- * The reader is an LLM mid-task holding fourteen tools and no shell. `suggestionsFor` in
+ * The reader is an LLM mid-task holding fifteen tools and no shell. `suggestionsFor` in
  * `apps/cli/src/errors.ts:115-137` answers the same question for a human at a prompt and answers it in
  * `memhtml` commands and `git` invocations, every one of which is unreachable from here. A suggestion
  * an agent cannot execute costs more than none: it spends the model's attention on a plan that ends in

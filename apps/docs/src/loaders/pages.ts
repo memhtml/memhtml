@@ -586,7 +586,7 @@ const mcpResourcesPage = (registry: Registry): ReferencePage => ({
   id: `${TIER}/mcp-resources`,
   title: "MCP resources",
   description:
-    "What a client can fetch by URI: the file behind an answer, and a sleep run's report.",
+    "What a client can fetch by URI: the file behind an answer, a sleep run's report, and a memory pinned at a commit.",
   source: SOURCES.mcpResources,
   filePath: `${DOCS_COLLECTION}/${TIER}/mcp-resources.md`,
   lastUpdated: registry.commitDates.mcpResources,

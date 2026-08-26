@@ -79,7 +79,7 @@ The first two do not affect `healthy` (`:488`): they are facts about the work, n
 
 ## MCP status: read and create, never advance
 
-The toolkit is fourteen tools and none is a task tool (`apps/mcp/src/tools.ts:881`).
+The toolkit is fifteen tools and none is a task tool (`apps/mcp/src/tools.ts`).
 
 - `memory_write` takes `memory_type: "task"` — the enum derives from `WRITABLE_MEMORY_TYPES` (`:45`). There is no `status` or `due` field in the write parameters (`:237-246`), so a task authored over MCP opens in `todo` with no deadline.
 - `memory_list` filters `memory_type: "task"` and `memory_search` opts in through `memory_types: ["task"]` (`:650`, `:444`). `memory_recall` takes no type parameter at all (`:514-518`), so over MCP a task is unreachable through recall with no opt-in available.

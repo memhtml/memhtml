@@ -100,7 +100,7 @@ memhtml serve mcp
 MEMHTML_MCP_BIN=/path/to/bin.js memhtml serve mcp   # explicit path, for a split deployment
 ```
 
-14 tools and 2 resources over this same repo (`apps/mcp/src/tools.ts:763`). Sleep is deliberately absent from the tool surface: it is a cron and operator action producing a reviewable branch, not something an agent triggers mid-conversation.
+15 tools and 3 resources over this same repo (`apps/mcp/src/tools.ts`). Sleep is deliberately absent from the tool surface: it is a cron and operator action producing a reviewable branch, not something an agent triggers mid-conversation.
 
 **A CLI command and a running server can share one repo.** WAL admits one writer at a time and any number of concurrent readers: readers never block the writer, a second writer waits rather than failing, and a wait that outlives `busy_timeout` is retried with jittered exponential backoff for up to 20 seconds (`packages/index/src/database.ts`). So `memhtml write` while `memhtml serve mcp` is serving the same store is a supported thing to do, and so is the every-10-minutes `index update` cron. Measure it yourself with `node scripts/probe-sqlite-concurrency.mjs`.
 

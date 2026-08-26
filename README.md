@@ -22,7 +22,7 @@ memhtml init                                  # scaffold $MEMHTML_ROOT: git init
 memhtml write --title "WAL admits one writer and many readers" --type semantic \
   --claim "A CLI command and a running memhtml serve mcp share one index.db."
 memhtml search "one writer many readers"      # FTS + vector + recency + salience, fused with RRF
-memhtml serve mcp                             # the same store over stdio: 14 tools, 2 resources
+memhtml serve mcp                             # the same store over stdio: 15 tools, 3 resources
 ```
 
 `memhtml manifest` (or a bare `memhtml`) answers with every command, flag, response type, and error code the binary accepts, and it answers on a machine with no repo, no database, and no credentials. Every command writes exactly one JSON envelope to stdout, logs go to stderr, and the exit code is 0 for success, 2 for a usage error, 1 for a runtime failure. `AGENTS.md` is generated from the same table that drives parsing, so the doc cannot drift from the binary.
@@ -85,7 +85,7 @@ Figure 1 draws that. It is built from monospace box characters, which a screen r
 <!-- /figure:system-topology -->
 <!-- dprint-ignore-end -->
 
-**Figure 1: every write door lands in the git tree, and every read is served from projections of it.** Three doors reach in from outside: `memhtml write` and `memhtml apply`, the MCP server's 14 tools, and your own file tools. All three commit into one git tree, and they differ only in who owns the commit. Eviction moves a file to `archive/YYYY/` and leaves it in the tree. From the tree, a git-driven indexer derives `index.db`, which supplies three of the four ranking arms. The fourth, salience, comes from `state.db`, the one plane git cannot reproduce. A query enters the ranker at the bottom, RRF fuses the four arms, MMR diversifies the result, and ranked hits come out. On the docs site the same drawing puts into its borders what this caption has to spell out: a heavy border is a door, a double border is the system of record, a dashed border is a projection that can be deleted and rebuilt, and a cylinder is a database on disk.
+**Figure 1: every write door lands in the git tree, and every read is served from projections of it.** Three doors reach in from outside: `memhtml write` and `memhtml apply`, the MCP server's 15 tools, and your own file tools. All three commit into one git tree, and they differ only in who owns the commit. Eviction moves a file to `archive/YYYY/` and leaves it in the tree. From the tree, a git-driven indexer derives `index.db`, which supplies three of the four ranking arms. The fourth, salience, comes from `state.db`, the one plane git cannot reproduce. A query enters the ranker at the bottom, RRF fuses the four arms, MMR diversifies the result, and ranked hits come out. On the docs site the same drawing puts into its borders what this caption has to spell out: a heavy border is a door, a double border is the system of record, a dashed border is a projection that can be deleted and rebuilt, and a cylinder is a database on disk.
 
 ## Why files
 
@@ -173,7 +173,7 @@ The single `<mark>` is the claim. It becomes the gist every listing shows, and i
 Three doors, all supported, all landing in the same tree:
 
 1. The CLI. `memhtml write` takes one memory. Give it `--claim` plus `--body` and the template owns the markup; give it `--article-html` and you own the markup, with the format check refusing violations before anything is written. `memhtml apply` takes many: one JSONL op per line, every op validated for shape before any of them executes, then one commit and one index pass.
-2. The MCP server. `memhtml serve mcp` speaks stdio and exposes 14 tools and 2 resources over the same repo: write, read, search, recall, correct, link, archive, batch writes, and trace search. A CLI command and a running server share one store, because WAL admits one writer and any number of readers, and a contended write retries on `SQLITE_BUSY` (see `RUNBOOK.md`, section 4).
+2. The MCP server. `memhtml serve mcp` speaks stdio and exposes 15 tools and 3 resources over the same repo: write, read, search, recall, correct, link, archive, batch writes, and trace search. A CLI command and a running server share one store, because WAL admits one writer and any number of readers, and a contended write retries on `SQLITE_BUSY` (see `RUNBOOK.md`, section 4).
 3. Your file tools. The tree is the system of record, so a hand-written file is as real as one the CLI wrote. You take on what the write path would have done: format validity (`memhtml doctor`), path choice, dedup, and the commit. Sleep refuses to start on a dirty tree.
 
 Dedup is enforced by the schema: a partial unique index over active files makes a duplicate write impossible to index, so the write returns the existing path with `deduped: true` and creates nothing.
@@ -350,7 +350,7 @@ None of them is published. Every workspace package is `private`, and `mise run p
 | `@memhtml/llm`          | Bedrock: Cohere embeddings and forced-tool structured output.                   |
 | `@memhtml/eval`         | The fixture corpus generator and the refusable discrimination gate.             |
 | `@memhtml/cli`          | The `memhtml` binary, the envelope contract, and the one composition root.      |
-| `@memhtml/mcp`          | The `memhtml-mcp` stdio server: 14 tools, 2 resources.                          |
+| `@memhtml/mcp`          | The `memhtml-mcp` stdio server: 15 tools, 3 resources.                          |
 | `@memhtml/consolidator` | The sandboxed eve agent that distills candidate memories from raw transcripts.  |
 | `@memhtml/docs`         | The documentation site.                                                         |
 
