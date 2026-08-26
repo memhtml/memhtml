@@ -541,6 +541,106 @@ describe("trace-consolidation happy path", () => {
     )
   })
 
+  it("stamps the origin session only when EVERY evidence quote cites one", async () => {
+    /**
+     * Provenance on a distilled memory, and the honest absence of it.
+     *
+     * The stamp is the ordinary `memhtml-session` meta, which is the decision `tasks.ts` records for
+     * the detected-task arm: it is already in the closed vocabulary and already projects to
+     * `files.session_id`, so nothing new is introduced and every provenance query already reads it.
+     *
+     * BOTH branches, in one answer, because the rule is the pair. A candidate whose quotes span
+     * sessions has no single origin, and `files.session_id` is a scalar — so stamping one of several
+     * would answer a provenance query with a session the claim is only partly from, which is a wrong
+     * value no reader could detect. Absent is the honest answer, and the bar prefers cross-session
+     * candidates, so it is also the COMMON one.
+     *
+     * The assertions read the DATABASE as well as the file, and that second read is what proves the
+     * meta name is the right one. A stamp under any other name parses to nothing and projects to NULL,
+     * which the meta assertion alone would not distinguish from an absent stamp.
+     *
+     * (Mutations: stamping `candidate.evidence[0]?.sessionId` unconditionally puts `session-a` on the
+     * cross-session memory and fails the NULL assertions; dropping the stamp entirely fails the
+     * single-origin ones. Renaming the meta fails the two `session_id` reads while the parsed
+     * `metas.sessionId` reads would report `undefined` and look merely unstamped.)
+     */
+    const ONE_ORIGIN = "Everything this claim rests on was read in one session."
+    const TWO_ORIGINS = "This claim rests on lines from two different sessions."
+    const consolidator = scriptedConsolidator(() =>
+      candidates([
+        candidate({
+          claim: ONE_ORIGIN,
+          gist: "Both quotes come from session-a, so the memory has exactly one origin to name.",
+          kind: "episodic",
+          evidence: [
+            { sessionId: "session-a", quote: "the first supporting line" },
+            { sessionId: "session-a", quote: "the second supporting line" }
+          ]
+        }),
+        candidate({
+          claim: TWO_ORIGINS,
+          gist: "The quotes come from session-a and session-b, so no single session is the origin.",
+          kind: "semantic",
+          evidence: [
+            { sessionId: "session-a", quote: "the first supporting line" },
+            { sessionId: "session-b", quote: "the second supporting line" }
+          ]
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* seedTrace(fixture, { sessionId: "session-a" })
+          yield* seedTrace(fixture, { sessionId: "session-b" })
+          const base = yield* headSha(fixture)
+
+          const outcome = yield* traceConsolidation(envFor(fixture))
+          expect(outcome.counts.written).toBe(2)
+
+          const added = yield* addedMemories(fixture, base)
+          expect(added).toHaveLength(2)
+
+          /** Path by claim, so neither assertion depends on the order git reports the two files in. */
+          const byClaim = new Map<string, string>()
+          for (const path of added) {
+            const doc = yield* parseMemory((yield* atHead(fixture, path)) ?? "")
+            byClaim.set(doc.article.gist, path)
+          }
+          const single = byClaim.get(ONE_ORIGIN)
+          const spanning = byClaim.get(TWO_ORIGINS)
+          if (single === undefined || spanning === undefined) {
+            throw new Error(`expected both claims among ${[...byClaim.keys()].join(" | ")}`)
+          }
+
+          const singleDoc = yield* parseMemory((yield* atHead(fixture, single)) ?? "")
+          expect(singleDoc.metas.sessionId).toBe("session-a")
+          const spanningDoc = yield* parseMemory((yield* atHead(fixture, spanning)) ?? "")
+          expect(spanningDoc.metas.sessionId).toBeUndefined()
+
+          /**
+           * And the meta reaches the column the `files_session` index covers. `reindex` rebuilds from
+           * git, so this is the projection a fresh `memhtml index rebuild` would produce.
+           */
+          yield* fixture.reindex()
+          const rows = yield* fixture.db
+            .all<{ path: string; session_id: string | null }>(
+              "SELECT path, session_id FROM files WHERE path IN (?, ?) ORDER BY path",
+              [single, spanning].sort()
+            )
+            .pipe(Effect.orDie)
+          expect(new Map(rows.map((row) => [row.path, row.session_id]))).toEqual(
+            new Map([
+              [single, "session-a"],
+              [spanning, null]
+            ])
+          )
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
   it("indents the commit body, so an evidence quote cannot forge a trailer", async () => {
     /**
      * The injection guard, exercised with the attack rather than asserted as a property of the

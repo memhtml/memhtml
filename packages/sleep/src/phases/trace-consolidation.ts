@@ -75,6 +75,13 @@ import {
  * being on the branch IS being behind the gate, and a phase that tried to gate itself would be a
  * second, weaker copy of the one that already covers all fifteen phases.
  *
+ * **The origin session is stamped when the candidate has ONE, as provenance rather than content.** A
+ * candidate whose every evidence quote cites one session carries that id as the ordinary
+ * `memhtml-session` meta, which projects to `files.session_id`; one whose quotes span sessions carries
+ * none, because the column is a scalar and there is no single origin to name. See
+ * {@link soleEvidenceSession}. The QUOTES are still commit-message-only, which is the invariant this
+ * does not touch — a session id names where a claim was read and reproduces nothing that was said.
+ *
  * **A candidate's entity references are canonicalized against the corpus before the write.** The model
  * states each entity as a type and a name (`apps/consolidator/src/contract.ts`' `CandidateEntity`), and
  * a reference whose normalized form the corpus already holds is written with the corpus's own spelling.
@@ -726,6 +733,47 @@ const titleFor = (claim: string): string => {
 }
 
 /**
+ * The ONE session every evidence quote cites, or `undefined` when they do not agree on one.
+ *
+ * ## A session id is provenance, and provenance is not transcript content
+ *
+ * {@link commitContextFor} reserves the commit message for the evidence QUOTES, because a verbatim
+ * transcript span must not enter the corpus. A session id is the opposite kind of value: it names
+ * WHERE the claim was read rather than reproducing anything that was said, and it is the value the
+ * corpus already carries for a memory an agent wrote during a session. So it goes in the file, and the
+ * quotes still do not.
+ *
+ * Stamped as the ordinary `memhtml-session` meta and nothing new, which is the decision
+ * `packages/sleep/src/tasks.ts` records for the detected-task arm: the name is already in the closed
+ * vocabulary, already projects to `files.session_id`, and already carries exactly this meaning, so a
+ * consolidated memory answers "which session is this from" through the same column every other
+ * provenance query reads. No new meta, no new column, no widened vocabulary.
+ *
+ * ## Unset unless the whole candidate has ONE origin
+ *
+ * A candidate carries two to thirty-two evidence quotes, and the cross-session pattern is the one the
+ * bar prefers — so most candidates have several origins and no single one. `files.session_id` is a
+ * scalar, so stamping any one of several would assert that the claim came from that session, which is
+ * false in a way no reader could detect: the column would answer a provenance query with one of the
+ * sessions rather than with the truth. Absent is the honest value for a multi-session claim, and it is
+ * the same reasoning `tasks.ts` uses to refuse putting a RUN id in this column.
+ *
+ * Ids are trimmed before they are compared, so the same session cited with stray whitespace is one
+ * origin rather than two. An empty id yields `undefined`; the schema and {@link refusalFor} both
+ * refuse one already, and a whitespace `memhtml-session` would be an unusable stamp.
+ *
+ * NOTHING here writes a `memory_session_links` row, and the phase's `linked`/`unlinked` counters
+ * therefore do not move. Those count sessions the corpus links a memory to through the WRITE path's
+ * own recorder, and a distilled memory is not a memory that session wrote.
+ */
+const soleEvidenceSession = (candidate: CandidateMemoryLike): string | undefined => {
+  const cited = new Set(candidate.evidence.map((one) => one.sessionId.trim()))
+  if (cited.size !== 1) return undefined
+  const [only] = [...cited]
+  return only === undefined || only === "" ? undefined : only
+}
+
+/**
  * The commit message context for one candidate: its evidence, capped, and its frame conflict if any.
  *
  * This is where evidence quotes are allowed to go, and nowhere else. A reviewer deciding whether a
@@ -1018,6 +1066,12 @@ export const traceConsolidation: PhaseBody = (env) =>
           memoryType: candidate.kind as (typeof WRITABLE_MEMORY_TYPES)[number],
           at: env.at,
           author: "agent:sleep",
+          /**
+           * Provenance, not content, which is exactly why it may be stamped. `renderTemplate` drops
+           * an `undefined`, so a candidate whose quotes span sessions leaves the meta off. See
+           * {@link soleEvidenceSession}.
+           */
+          sessionId: soleEvidenceSession(candidate),
           entities: entityRefs,
           tags: [CONSOLIDATION_TAG]
         })
