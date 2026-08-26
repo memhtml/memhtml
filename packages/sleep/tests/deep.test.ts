@@ -1,9 +1,15 @@
+import { GitFailure } from "@memhtml/store"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 
+import { commitPhase } from "../src/commit.js"
+import { type SleepPhase, TRAILER_PHASE } from "../src/contract.js"
+import { meta, stampFile } from "../src/edits.js"
 import { makeLlmBudget, type PhaseEnv } from "../src/env.js"
 import { assignEntityLabels, compress, ENTITY_LABEL_PREFIX } from "../src/phases/compress.js"
-import { placementTriage } from "../src/phases/placement-triage.js"
+import { confidenceDecay } from "../src/phases/confidence-decay.js"
+import { personLinks } from "../src/phases/person-links.js"
+import { PLACEMENT_REFUSALS, placementTriage } from "../src/phases/placement-triage.js"
 import {
   DEEP_GROUPING_REL,
   DEEP_MINING_COSINE_FLOOR,
@@ -356,16 +362,16 @@ describe("iterate-until-quiet (guard d) and the budget (guard e)", () => {
   })
 })
 
-describe("placement triage (guard c: destinations and refusals)", () => {
-  /** One placement answer for every offered member, all naming one destination. */
-  const placeAllInto = (destination: string, confidence = 0.9): ScriptedModel =>
-    scriptedModel((request) => {
-      const keys = [...request.prompt.matchAll(/<memory_(m\d+)>/g)].map((match) => match[1] ?? "")
-      return value({
-        placements: keys.map((memberKey) => ({ memberKey, destination, confidence }))
-      })
+/** One placement answer for every offered member, all naming one destination. */
+const placeAllInto = (destination: string, confidence = 0.9): ScriptedModel =>
+  scriptedModel((request) => {
+    const keys = [...request.prompt.matchAll(/<memory_(m\d+)>/g)].map((match) => match[1] ?? "")
+    return value({
+      placements: keys.map((memberKey) => ({ memberKey, destination, confidence }))
     })
+  })
 
+describe("placement triage (guard c: destinations and refusals)", () => {
   it("moves a placed file, mints the new directory, and rewrites inbound hrefs in one commit", async () => {
     const model = placeAllInto("areas/ledgers")
     await withFixture(
@@ -488,6 +494,390 @@ describe("placement triage (guard c: destinations and refusals)", () => {
           expect(model.calls).toHaveLength(0)
         }),
       { seed: [...ENTITY_CLUSTER], model }
+    )
+  })
+})
+
+describe("placement triage (guard g: the this-run touched set)", () => {
+  /**
+   * The guard against cross-phase contamination, and the distinction issue #81 turns on: a phase whose
+   * write carries a DECISION pins its files, while a uniform sweep does not.
+   *
+   * **Every case here supplies a real `baseSha`, and that is what makes them the guard's only
+   * coverage.** `envFor` defaults it to `""`, which short-circuits the read to an empty set, so a
+   * placement case that omits it exercises the destination rules and nothing about this guard — which
+   * is how a guard refusing ~100% of a real corpus's moves reached a release.
+   *
+   * Every case seeds an anchor under `areas/ledgers`, so the destination is an EXISTING directory and
+   * `PLACEMENT_NEW_DIR_CAP` cannot be what decides the outcome. One guard per test.
+   */
+  const STEMS = ["alfa", "bravo", "cielo"] as const
+
+  const inboxPath = (stem: string): string => `areas/inbox/${stem}.html`
+
+  const singleton = (stem: string, entities: ReadonlyArray<string> = []): SeedFile => ({
+    path: inboxPath(stem),
+    html: memoryHtml({
+      title: `The ${stem} fact`,
+      claim: `The ${stem}ledger posting closes on the ${stem}window each night.`,
+      body: `Only ${stem}detail follows, and nothing else names it.`,
+      memoryType: "semantic",
+      createdAt: "2026-08-01T00:00:00Z",
+      confidence: "1.0",
+      importance: "5",
+      tags: ["deeptest"],
+      entities
+    })
+  })
+
+  /**
+   * The corpus: three inbox singletons plus a file that already lives in `areas/ledgers`, which is
+   * what puts that directory in `existingDirs` and takes the new-directory cap out of the question.
+   */
+  const corpusFor = (entities: ReadonlyArray<string> = []): ReadonlyArray<SeedFile> => [
+    singleton("alfa", entities),
+    singleton("bravo"),
+    singleton("cielo"),
+    {
+      path: "areas/ledgers/anchor.html",
+      html: memoryHtml({
+        title: "The ledgers anchor",
+        claim: "The anchorbook already sits in the ledgers directory.",
+        memoryType: "semantic",
+        createdAt: "2026-08-01T00:00:00Z",
+        confidence: "1.0",
+        importance: "5",
+        tags: ["deeptest"]
+      })
+    }
+  ]
+
+  /**
+   * Every refusal class present as a count, and the classes summing to the `refused` total.
+   *
+   * A census rather than a restatement: `refused` is derived by the phase from the same increments,
+   * so a class that bumped only the total (or only itself) is a partition that lies, and the numbers
+   * would still look like data. Asserted in every case below, so it is never vacuous for want of a
+   * refusal to count.
+   */
+  const expectRefusalCensus = (counts: Record<string, number>): void => {
+    let total = 0
+    for (const key of Object.keys(PLACEMENT_REFUSALS)) {
+      expect(counts[key], `${key} is not reported`).toBeTypeOf("number")
+      total += counts[key] ?? 0
+    }
+    expect(total).toBe(counts.refused)
+  }
+
+  /** Write one meta and commit it AS `phase`, through the real stamp and the real trailer block. */
+  const writeAs = (
+    fixture: Fixture,
+    phase: SleepPhase,
+    path: string
+  ): Effect.Effect<void, never, never> =>
+    Effect.gen(function* () {
+      const env = envFor(fixture)
+      const changed = yield* stampFile(env, path, [meta("memhtml-confidence", "0.500")])
+      expect(changed).toBe(true)
+      const sha = yield* commitPhase(env, phase, `write ${path}`, {})
+      expect(sha).not.toBeNull()
+    }).pipe(Effect.orDie)
+
+  it("moves a file the confidence sweep restamped, which is issue #81", async () => {
+    const model = placeAllInto("areas/ledgers")
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const base = (yield* fixture.raw("rev-parse", "HEAD")).trim()
+
+          /**
+           * The REAL phase, so the commit and its `Memhtml-Phase` trailer come from production code.
+           * A hand-forged commit would pass this case while the trailer writer and the trailer reader
+           * disagreed.
+           */
+          const decay = yield* confidenceDecay(envFor(fixture))
+          /**
+           * NON-VACUITY, and it is the hinge of the case. Decay is a fixed point on an already-decayed
+           * corpus and commits nothing there, so without these three the case would pass by decay
+           * having done nothing at all — the exact shape a quarter of this repo's candidate regression
+           * tests had.
+           */
+          expect(decay.counts.decayed).toBe(4)
+          expect(decay.commitSha).not.toBeNull()
+          expect(yield* fixture.raw("diff", "--name-only", `${base}..HEAD`)).toContain(
+            inboxPath("alfa")
+          )
+
+          const outcome = yield* placementTriage(envFor(fixture, { deep: true, baseSha: base }))
+          // The sweep's commit is seen and excluded: one commit in the range, zero of them pinning.
+          expect(outcome.counts.sweepCommits).toBe(1)
+          expect(outcome.counts.touchedCommits).toBe(0)
+          expect(outcome.counts.touchedFiles).toBe(0)
+          expect(outcome.counts.touchedWidened).toBe(0)
+          expect(outcome.counts.refusedTouched).toBe(0)
+          expect(outcome.counts.applied).toBe(3)
+          // An existing destination, so the new-directory cap is not what let these through.
+          expect(outcome.counts.newDirs).toBe(0)
+          expect(outcome.counts.existingDirs).toBe(1)
+          expectRefusalCensus(outcome.counts as Record<string, number>)
+
+          const tree = yield* fixture.raw("ls-tree", "-r", "--name-only", "HEAD")
+          for (const stem of STEMS) {
+            expect(tree).toContain(`areas/ledgers/${stem}.html`)
+            expect(tree).not.toContain(inboxPath(stem))
+          }
+        }),
+      { seed: corpusFor(), model }
+    )
+  })
+
+  it("refuses a file person-links wrote, whose commit decides something", async () => {
+    /**
+     * A real phase whose whole write is a `<link>` plus a stamp, so the article's bytes — and its
+     * content hash — are identical afterwards. That is why the rule is about what a phase DECIDES and
+     * not about how wide or how deep its diff is: a hash-based rule would release exactly this file,
+     * and placement's inbound-href rewrite reads the index, which no phase refreshes mid-run, so the
+     * link this commit authored is invisible to it.
+     */
+    const model = placeAllInto("areas/ledgers")
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const base = (yield* fixture.raw("rev-parse", "HEAD")).trim()
+          const linked = yield* personLinks(envFor(fixture))
+          expect(linked.counts.linksAdded).toBe(1)
+          expect(linked.commitSha).not.toBeNull()
+          expect(yield* fixture.raw("diff", "--name-only", `${base}..HEAD`)).toContain(
+            inboxPath("alfa")
+          )
+
+          const outcome = yield* placementTriage(envFor(fixture, { deep: true, baseSha: base }))
+          expect(outcome.counts.touchedCommits).toBe(1)
+          expect(outcome.counts.sweepCommits).toBe(0)
+          expect(outcome.counts.refusedTouched).toBe(1)
+          expect(outcome.counts.applied).toBe(2)
+          expectRefusalCensus(outcome.counts as Record<string, number>)
+
+          const tree = yield* fixture.raw("ls-tree", "-r", "--name-only", "HEAD")
+          // The linked file stayed; its two neighbours, which the same run never wrote, moved.
+          expect(tree).toContain(inboxPath("alfa"))
+          expect(tree).toContain("areas/ledgers/bravo.html")
+          expect(tree).toContain("areas/ledgers/cielo.html")
+        }),
+      { seed: corpusFor(["person:sanju"]), model }
+    )
+  })
+
+  it("reads the trailer and nothing else: one edit, two trailers, opposite outcomes", async () => {
+    /**
+     * The pair that proves the MECHANISM. Both halves make the byte-identical edit to the same file
+     * and produce the same diff; only the `Memhtml-Phase` value differs, and the outcomes invert. Any
+     * mutation of `SWEEP_PHASES` turns one half red.
+     */
+    for (const [phase, moves] of [
+      ["dedup-merge", false],
+      ["confidence-decay", true]
+    ] as const) {
+      const model = placeAllInto("areas/ledgers")
+      await withFixture(
+        (fixture) =>
+          Effect.gen(function* () {
+            const base = (yield* fixture.raw("rev-parse", "HEAD")).trim()
+            yield* writeAs(fixture, phase, inboxPath("alfa"))
+            // The two halves are the same diff, so the trailer is the only variable.
+            expect(yield* fixture.raw("diff", "--name-only", `${base}..HEAD`)).toBe(
+              `${inboxPath("alfa")}\n`
+            )
+
+            const outcome = yield* placementTriage(envFor(fixture, { deep: true, baseSha: base }))
+            expect(outcome.counts.refusedTouched, `${phase} refusals`).toBe(moves ? 0 : 1)
+            expect(outcome.counts.applied, `${phase} moves`).toBe(moves ? 3 : 2)
+            expect(outcome.counts.sweepCommits, `${phase} sweeps`).toBe(moves ? 1 : 0)
+            expectRefusalCensus(outcome.counts as Record<string, number>)
+
+            const tree = yield* fixture.raw("ls-tree", "-r", "--name-only", "HEAD")
+            expect(tree.includes(`areas/ledgers/alfa.html`), `${phase} tree`).toBe(moves)
+          }),
+        { seed: corpusFor(), model }
+      )
+    }
+  })
+
+  it("pins a commit whose phase it cannot recognize, and one with no phase at all", async () => {
+    /**
+     * The fail-safe default. The trailer is what IDENTIFIES a sweep, so the absence of the
+     * identification cannot grant the exemption: an operator's own mid-run commit and a commit stamped
+     * with a phase name this version does not know both pin.
+     *
+     * **The refusals here do not distinguish a scoped read from a whole-range one** — a diff of the
+     * whole range pins these two files as well. That is the point: this case locks the fail-safe
+     * DEFAULT, and its mutation is flipping the unrecognized-trailer branch to "sweep", not reverting
+     * the guard. What the two diagnostic counts below distinguish is which read produced the set.
+     */
+    const model = placeAllInto("areas/ledgers")
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const base = (yield* fixture.raw("rev-parse", "HEAD")).trim()
+
+          // No trailers at all: `fixture.commit` commits bare, exactly as a human's `git commit` does.
+          yield* fixture.commit(
+            [
+              {
+                path: inboxPath("alfa"),
+                html: memoryHtml({
+                  title: "Edited by hand",
+                  claim: "An operator rewrote the alfaledger claim."
+                })
+              }
+            ],
+            "an operator's own edit"
+          )
+          // A trailer value that is not a phase this version knows.
+          const env = envFor(fixture)
+          yield* stampFile(env, inboxPath("bravo"), [meta("memhtml-confidence", "0.500")])
+          yield* fixture.deps.git.commit("sleep(conflict-detection): x", {
+            trailers: { [TRAILER_PHASE]: "conflict-detection" }
+          })
+
+          const outcome = yield* placementTriage(envFor(fixture, { deep: true, baseSha: base }))
+          expect(outcome.counts.touchedCommits).toBe(2)
+          expect(outcome.counts.sweepCommits).toBe(0)
+          expect(outcome.counts.refusedTouched).toBe(2)
+          expect(outcome.counts.applied).toBe(1)
+          expectRefusalCensus(outcome.counts as Record<string, number>)
+        }),
+      { seed: corpusFor(), model }
+    )
+  })
+
+  it("pins a commit claiming two phases unless BOTH of them are sweeps", async () => {
+    const model = placeAllInto("areas/ledgers")
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const base = (yield* fixture.raw("rev-parse", "HEAD")).trim()
+          const env = envFor(fixture)
+          yield* stampFile(env, inboxPath("alfa"), [meta("memhtml-confidence", "0.500")])
+          // Two `Memhtml-Phase` values on one commit, which the port's one-value-per-key shape
+          // cannot express — so this goes through git directly, as a forged commit would.
+          yield* fixture.raw(
+            "commit",
+            "-m",
+            "sleep(confidence-decay): two phases",
+            "--trailer",
+            `${TRAILER_PHASE}: confidence-decay`,
+            "--trailer",
+            `${TRAILER_PHASE}: person-links`
+          )
+
+          const outcome = yield* placementTriage(envFor(fixture, { deep: true, baseSha: base }))
+          expect(outcome.counts.sweepCommits).toBe(0)
+          expect(outcome.counts.refusedTouched).toBe(1)
+          expect(outcome.counts.applied).toBe(2)
+          expectRefusalCensus(outcome.counts as Record<string, number>)
+        }),
+      { seed: corpusFor(), model }
+    )
+  })
+
+  it("widens to the whole range when the per-commit diff cannot be read", async () => {
+    /**
+     * The middle rung of the failure ladder. A read that failed and returned an EMPTY set would turn
+     * the guard off at exactly the moment it cannot tell what happened, so a failure pins more than
+     * it must: here the file the sweep restamped — the one a working read releases — is refused.
+     *
+     * The port is the REAL one with a single method made to fail. Nothing about git is faked; what is
+     * injected is the failure, which is the subject.
+     */
+    const model = placeAllInto("areas/ledgers")
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const base = (yield* fixture.raw("rev-parse", "HEAD")).trim()
+          yield* confidenceDecay(envFor(fixture))
+
+          const env = envFor(fixture, { deep: true, baseSha: base })
+          const outcome = yield* placementTriage({
+            ...env,
+            deps: {
+              ...env.deps,
+              git: {
+                ...env.deps.git,
+                diffTreeNames: () =>
+                  Effect.fail(GitFailure.make({ command: "diff-tree", exitCode: 1 }))
+              }
+            }
+          })
+
+          expect(outcome.counts.touchedWidened).toBe(1)
+          expect(outcome.counts.sweepCommits).toBe(0)
+          expect(outcome.counts.touchedFiles).toBe(4)
+          expect(outcome.counts.refusedTouched).toBe(3)
+          expect(outcome.counts.applied).toBe(0)
+          expectRefusalCensus(outcome.counts as Record<string, number>)
+        }),
+      { seed: corpusFor(), model }
+    )
+  })
+
+  it("reports a reason and spends no model call when the set cannot be read at all", async () => {
+    /**
+     * The bottom rung. Moving under an unreadable guard would be moving with no guard, and the corpus
+     * is still there tomorrow — so this degrades the way an absent model does: a reason, nothing
+     * written, nothing committed. The read happens BEFORE the batch loop, which is what makes the
+     * night cost zero model calls instead of a full batch budget spent on proposals that all refuse.
+     */
+    const model = placeAllInto("areas/ledgers")
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const before = yield* fixture.raw("ls-tree", "-r", "--name-only", "HEAD")
+          // A sha no object has, so both the trailer read and the fallback diff fail.
+          const outcome = yield* placementTriage(
+            envFor(fixture, { deep: true, baseSha: "0".repeat(40) })
+          )
+
+          expect(outcome.detail).toContain("touched set could not be read")
+          expect(outcome.commitSha).toBeNull()
+          expect(outcome.llmCalls).toBe(0)
+          expect(model.calls).toHaveLength(0)
+          expect(outcome.counts.applied).toBe(0)
+          expect(yield* fixture.raw("ls-tree", "-r", "--name-only", "HEAD")).toEqual(before)
+        }),
+      { seed: corpusFor(), model }
+    )
+  })
+
+  it("counts a duplicate answer as an already-moved file, not as another phase's write", async () => {
+    /**
+     * The two refusals that are easy to conflate, held apart. This one is THIS phase's own move
+     * ledger — a second answer naming a file an earlier row already moved — and it is not evidence of
+     * any other phase having written anything, so it must not be counted as though it were.
+     */
+    const model = scriptedModel((request) => {
+      const keys = [...request.prompt.matchAll(/<memory_(m\d+)>/g)].map((match) => match[1] ?? "")
+      const first = keys[0] ?? ""
+      // The first key twice, so the second mention is a file this run has already moved.
+      return value({
+        placements: [first, ...keys].map((memberKey) => ({
+          memberKey,
+          destination: "areas/ledgers",
+          confidence: 0.9
+        }))
+      })
+    })
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const base = (yield* fixture.raw("rev-parse", "HEAD")).trim()
+          const outcome = yield* placementTriage(envFor(fixture, { deep: true, baseSha: base }))
+          expect(outcome.counts.applied).toBe(3)
+          expect(outcome.counts.refusedAlreadyMoved).toBe(1)
+          expect(outcome.counts.refusedTouched).toBe(0)
+          expectRefusalCensus(outcome.counts as Record<string, number>)
+        }),
+      { seed: corpusFor(), model }
     )
   })
 })

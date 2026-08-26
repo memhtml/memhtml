@@ -9,10 +9,12 @@ import {
   dependentsOf,
   HARD_PREREQUISITES,
   isSleepPhase,
+  isSweepPhase,
   LLM_PHASES,
   NON_COMMITTING_PHASES,
   phaseIndexOf,
   SLEEP_PHASES,
+  SWEEP_PHASES,
   TRAILER_COUNTS,
   TRAILER_PHASE,
   TRAILER_RUN
@@ -215,6 +217,37 @@ describe("the phase contract", () => {
     for (const phase of [...LLM_PHASES, ...NON_COMMITTING_PHASES]) {
       expect(isSleepPhase(phase)).toBe(true)
     }
+  })
+
+  it("pins which phases are uniform sweeps, and what disqualifies the near-misses", () => {
+    expect(SWEEP_PHASES).toEqual(["confidence-decay"])
+    for (const phase of SWEEP_PHASES) expect(isSleepPhase(phase)).toBe(true)
+    /**
+     * A model answer is a per-file decision, so no model-calling phase can be a sweep. Asserted as a
+     * DISJOINTNESS over both whole lists rather than checked for the current member, so a phase that
+     * later gains a model, or a model-calling phase someone adds here, fails at that commit.
+     */
+    for (const phase of LLM_PHASES) expect(isSweepPhase(phase)).toBe(false)
+    /**
+     * A phase that cannot commit, and a phase that runs after `placement-triage`, both have no commit
+     * in the range the guard reads — so membership for either would be a claim nothing can exercise,
+     * which is the phantom-guarantee shape this repo refuses.
+     */
+    for (const phase of NON_COMMITTING_PHASES) expect(isSweepPhase(phase)).toBe(false)
+    for (const phase of SWEEP_PHASES) {
+      expect(SLEEP_PHASES.indexOf(phase)).toBeLessThan(SLEEP_PHASES.indexOf("placement-triage"))
+    }
+    /**
+     * Listed in execution order, so the list reads against `SLEEP_PHASES`. LAST of the derived checks
+     * on purpose: it fires for any out-of-order member, so a member that also breaks one of the rules
+     * above would report the ordering instead of the rule, and the rule's assertion would never have
+     * been the one anybody watched fail.
+     */
+    expect([...SWEEP_PHASES]).toEqual(SLEEP_PHASES.filter((one) => SWEEP_PHASES.includes(one)))
+    // `reprieve` writes only head metas and is still out: its stamp records a retention DECISION.
+    expect(isSweepPhase("reprieve")).toBe(false)
+    // `person-links` splices a link, which leaves the article hash identical and the edge real.
+    expect(isSweepPhase("person-links")).toBe(false)
   })
 
   it("gives every model-calling phase a default model, so none silently falls back", () => {

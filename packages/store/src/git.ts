@@ -6,6 +6,7 @@ import {
   parseCatFileBatch,
   parseDiffNameStatus,
   parseLsTree,
+  parseNulPathList,
   parseStatusPorcelainV2,
   parseTrailerLog,
   type StatusEntry,
@@ -75,6 +76,20 @@ export interface GitShape {
     from: string,
     to: string
   ) => Effect.Effect<ReadonlyArray<ChangedPath>, GitFailure>
+  /**
+   * Every path the given commits changed, unioned, in ONE subprocess. FULL object names only.
+   *
+   * The shas go in on stdin, exactly as {@link catFileBatch} does, because the caller's set is one
+   * per commit in a range and a range can hold hundreds — `sleep`'s compress phase commits inside
+   * its fold loop. One process either way.
+   *
+   * A rename contributes BOTH of its paths. The union answers "which paths did these commits
+   * write", and a caller asking that about a `git mv` needs the path that went away as much as the
+   * one that arrived.
+   */
+  readonly diffTreeNames: (
+    commits: ReadonlyArray<string>
+  ) => Effect.Effect<ReadonlyArray<string>, GitFailure>
   /** The working tree's dirty state, with both the index and worktree blob shas. */
   readonly statusPorcelainV2: () => Effect.Effect<ReadonlyArray<StatusEntry>, GitFailure>
   /** The blob sha a working-tree file would hash to. Equals its sha in the tree once committed. */
@@ -140,10 +155,15 @@ interface ProcessResult {
 }
 
 /**
- * Environment for every git call. The three `GIT_CONFIG_*` variables suppress any
- * `~/.gitconfig` alias, hook path, or template dir that would otherwise change what these
- * commands do on a developer's machine but not in CI. `GIT_TERMINAL_PROMPT=0` is what keeps a
- * credential prompt from hanging a headless indexer forever.
+ * Environment for every git call. `GIT_TERMINAL_PROMPT=0` keeps a credential prompt from hanging a
+ * headless indexer forever, `GIT_OPTIONAL_LOCKS=0` stops a read from taking the index lock, and
+ * `LC_ALL=C` pins the message locale so a parsed word is the same word everywhere.
+ *
+ * **A user's own config IS read.** Nothing here neutralizes `~/.gitconfig`, so every call whose output
+ * a caller parses states its format with explicit flags rather than inheriting a default: `-z` against
+ * `core.quotePath`, `-M` and `--no-renames` against `diff.renames`, `--porcelain=v2` against every
+ * status shorthand. A format a developer's machine and CI could disagree about is a format this
+ * service does not rely on.
  */
 const GIT_ENV: Readonly<Record<string, string>> = {
   GIT_TERMINAL_PROMPT: "0",
@@ -153,6 +173,9 @@ const GIT_ENV: Readonly<Record<string, string>> = {
 
 /** 64 MiB. A `cat-file --batch` over a whole corpus is the one call with a large stdout. */
 const MAX_BUFFER = 64 * 1024 * 1024
+
+/** A full 40-hex object name, which is the only form {@link GitShape.diffTreeNames} accepts. */
+const FULL_OBJECT_NAME = /^[0-9a-f]{40}$/
 
 /**
  * Spawn git and collect its output as bytes.
@@ -273,6 +296,58 @@ export const makeGit = (root: string): GitShape => ({
       Effect.map((result) => parseDiffNameStatus(text(result)))
     ),
 
+  /**
+   * Dropping any of the first five flags makes the answer SILENTLY smaller or dirtier rather than an
+   * error, which is why each has its own case in `git.test.ts`. Measured against git 2.50.1 on
+   * 2026-08-26:
+   *
+   * - `--stdin`, so a range of hundreds of commits costs one process;
+   * - `-r`, or the answer is the changed TREE (`areas`) instead of the blobs under it;
+   * - `-m`, or a merge commit reports ZERO paths (empty without, its paths with, and byte-identical
+   *   on a single-parent commit, so it is free);
+   * - `--root`, or a root commit reports ZERO paths (0 without, its whole tree with);
+   * - `--no-commit-id`, or each commit's own 40-hex sha arrives as a line among the paths;
+   * - `-z`, which frames on NUL and disables `core.quotePath` — under newline framing a path
+   *   holding a non-ASCII byte arrives as `"areas/x/caf\303\251.html"`, quoted and escaped, and
+   *   equals nothing a caller compares it to.
+   *
+   * `--no-renames` is INERT here and is declared anyway. `diff-tree` detects no renames in this form
+   * whatever the config says — probed under `diff.renames` unset, `true`, and `copies`, all three
+   * reporting both paths of a `git mv` — so the flag pins that default rather than producing it, the
+   * same reason the calls above spell `-z` and `--porcelain=v2`. What holds the behavior is the test,
+   * not the flag: a caller unioning paths needs the path that went away as much as the one that
+   * arrived, and `git diff --name-only` (which DOES detect renames) reports only the destination.
+   *
+   * **An abbreviated sha is refused rather than passed through**, because git echoes the short name
+   * as its own output line and reports no diff at all — with `--no-commit-id` set, a caller would
+   * receive one bogus path and no real ones, at exit 0. `%H` from `logTrailers` is already full, so
+   * the check costs nothing and closes the one input that fails quietly.
+   */
+  diffTreeNames: (commits) => {
+    const malformed = commits.find((sha) => !FULL_OBJECT_NAME.test(sha))
+    if (malformed !== undefined) {
+      return Effect.fail(GitFailure.make({ command: "diff-tree", exitCode: null }))
+    }
+    return commits.length === 0
+      ? Effect.succeed([])
+      : git(
+          root,
+          "diff-tree",
+          [
+            "diff-tree",
+            "-r",
+            "-m",
+            "--root",
+            "--stdin",
+            "--no-commit-id",
+            "--name-only",
+            "-z",
+            "--no-renames"
+          ],
+          { stdin: `${commits.join("\n")}\n` }
+        ).pipe(Effect.map((result) => parseNulPathList(text(result))))
+  },
+
   statusPorcelainV2: () =>
     git(root, "status", ["status", "--porcelain=v2", "-z"]).pipe(
       Effect.map((result) => parseStatusPorcelainV2(text(result)))
@@ -330,12 +405,7 @@ export const makeGit = (root: string): GitShape => ({
       })
       if (result.exitCode === 0) return { merged: true, conflicted: [] }
       const unmerged = yield* git(root, "diff-u", ["diff", "--name-only", "--diff-filter=U", "-z"])
-      return {
-        merged: false,
-        conflicted: text(unmerged)
-          .split("\0")
-          .filter((path) => path !== "")
-      }
+      return { merged: false, conflicted: parseNulPathList(text(unmerged)) }
     }),
 
   mergeAbort: () => git(root, "merge-abort", ["merge", "--abort"]).pipe(Effect.asVoid),

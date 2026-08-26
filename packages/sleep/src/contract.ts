@@ -177,6 +177,49 @@ export const LLM_PHASES: ReadonlyArray<SleepPhase> = [
 ]
 
 /**
+ * Phases whose commit is a UNIFORM SWEEP: one head stamp applied to every eligible file by a rule,
+ * carrying no per-file decision and authoring no edge.
+ *
+ * This is the distinction `placement-triage`'s this-run guard turns on. That guard refuses to move a
+ * file another phase wrote on this branch, because a move would fold that phase's edit into a rename
+ * a reviewer reads somewhere else. A sweep has no edit to fold: `confidence-decay` restamps
+ * `memhtml-confidence` and `memhtml-updated` on every eligible active file, and its value is a
+ * mechanical function of the value already in the file (`decayConfidence`), so nothing about it is
+ * invalidated by the file being at a different path afterwards. It is also the WIDEST commit in a
+ * run, so a guard that counts it pins essentially the whole corpus and the phase downstream refuses
+ * essentially everything (issue #81).
+ *
+ * **The list enumerates the sweeps, so a phase absent from it PINS.** The two mistakes cost
+ * different amounts. A phase wrongly treated as a sweep lets placement move a file it just wrote —
+ * a committed href that dangles, or a decision folded into a rename — while a phase wrongly pinning
+ * costs one night's yield on a file that is still a candidate tomorrow. So membership is an explicit
+ * claim and the default is the recoverable side.
+ *
+ * A phase that calls a model is never a member: a model answer is a per-file decision. The two lists
+ * are asserted disjoint in `units.test.ts`.
+ *
+ * The near-misses, because the absences carry the rule:
+ *
+ * - `reprieve` writes only head metas too, and is still out. `memhtml-valid-until` plus
+ *   `memhtml-reprieves` IS a per-file retention decision, and a reviewer reads it at the path it was
+ *   decided on. Its volume is bounded to the files whose TTL passed, so membership would buy almost
+ *   no reach against that.
+ * - `person-links` and `edge-typing` splice `<link>` elements, which leave the article's bytes — and
+ *   therefore its content hash — identical. So the meaning of a change, not its width, is what
+ *   decides membership: a hash-based rule would release exactly these two, and placement's inbound
+ *   href rewrite reads the INDEX, which no phase refreshes mid-run, so an edge authored this run is
+ *   invisible to it and the move would leave the href dangling.
+ * - `preflight` and `relationship-mining` are in {@link NON_COMMITTING_PHASES}, so no commit of
+ *   theirs can appear in a range; `integrity`, `state-export`, and `report` run after
+ *   `placement-triage`, so theirs cannot either. Membership for any of the five would be a claim
+ *   nothing can exercise.
+ */
+export const SWEEP_PHASES: ReadonlyArray<SleepPhase> = ["confidence-decay"]
+
+/** True when a phase's commit is a uniform sweep. See {@link SWEEP_PHASES}. */
+export const isSweepPhase = (phase: SleepPhase): boolean => SWEEP_PHASES.includes(phase)
+
+/**
  * Phases that never commit.
  *
  * `preflight` refreshes the index and asserts a clean tree; it produces no mutation to review.

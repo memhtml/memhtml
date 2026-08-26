@@ -22,6 +22,7 @@ import {
   placementPrompt
 } from "../llm.js"
 import { activeCorpus, inboundAuthoredEdges, isSleepExcluded } from "../sql.js"
+import { touchedThisRun } from "../touched.js"
 import { deepCommunityLabels } from "./compress.js"
 
 /**
@@ -47,11 +48,21 @@ import { deepCommunityLabels } from "./compress.js"
  *   `archive/`, and any path outside the PARA buckets;
  * - tasks never move (excluded from the scan AND re-checked per row, matching the double guard
  *   task-detection carries);
- * - a file another phase already touched this run never moves, read from `git diff --name-only
- *   base..HEAD` — a `mv` of a path compress just archived would fail, and one of a path an earlier
- *   phase stamped would tear that phase's edit out of its own commit's diff;
+ * - a file a phase whose write carries a DECISION already touched this run never moves, read from
+ *   the diffs of the run's own commits whose `Memhtml-Phase` trailer is not in `SWEEP_PHASES` — a
+ *   `mv` of a path compress just archived would fail, and one of a path a phase stamped a link into
+ *   would tear that phase's edit out of the commit a reviewer reads it in. A SWEEP is exempt:
+ *   `confidence-decay` restamps every eligible file in the corpus by a rule, so counting it pins
+ *   essentially every candidate and this phase refuses essentially everything (issue #81). An
+ *   unreadable trailer or diff widens the set to the whole range instead of emptying it, and a
+ *   set that cannot be read at all returns before a single model call;
  * - `keep-inbox`, an unknown key, a below-floor confidence, and an omitted member all leave the
  *   file where it is.
+ *
+ * **Every refusal is its own count**, one key per class beside the `refused` total
+ * ({@link PLACEMENT_REFUSALS}). Nine classes pooled into one number make a night where the phase
+ * applied nothing unreadable without a log grep, which is exactly how issue #81's mechanism stayed
+ * hidden for two runs.
  *
  * **Inbound hrefs are rewritten in the same commit.** Integrity's dangling-href repair chases a
  * target into the ARCHIVE by deriving `archivePathFor`; a placement move is not an archive, so this
@@ -75,6 +86,34 @@ export const PLACEMENT_MEMBER_CHARS = 600
  * thirty new topics should earn them over several reviewed runs, not one.
  */
 export const PLACEMENT_NEW_DIR_CAP = 5
+
+/**
+ * Every refusal class, as its count key and the prose it logs. The keys ARE the partition of
+ * `refused`, which stays the total.
+ *
+ * One map rather than a prose string per guard, so the count and the log line cannot name different
+ * things and a class cannot exist without a count. `refused` keeps its meaning exactly — an existing
+ * reader is unaffected — and every case in `deep.test.ts`'s guard g asserts the parts sum to it.
+ *
+ * `refusedTouched` and `refusedAlreadyMoved` are separate because they are separate facts: the first
+ * is another phase's write, the second is THIS phase having already moved the file in an earlier row
+ * of the same run. One key covering both would report a duplicate model answer as cross-phase
+ * contamination, and an operator reading the count would go looking for a phase that wrote nothing.
+ */
+export const PLACEMENT_REFUSALS = {
+  refusedLowConfidence: "below the confidence floor",
+  refusedDestination: "not a placeable directory",
+  refusedTask: "tasks never move",
+  refusedTouched: "a phase that decides wrote this file this run",
+  refusedAlreadyMoved: "this run already moved this file",
+  refusedNewDirCap: "the new-directory cap for this run is spent",
+  refusedInvalidPath: "the destination path is not a valid memory path",
+  refusedCollision: "the destination already holds a file by that name",
+  refusedSourceGone: "the source file is already gone from the tree"
+} as const
+
+/** One refusal class. */
+export type PlacementRefusal = keyof typeof PLACEMENT_REFUSALS
 
 export const placementTriage: PhaseBody = (env) =>
   Effect.gen(function* () {
@@ -127,20 +166,12 @@ export const placementTriage: PhaseBody = (env) =>
       )
     ].sort()
 
-    /** Paths this run already touched. A move of one would cross-contaminate another phase's diff. */
-    const touched = new Set(
-      env.baseSha === ""
-        ? []
-        : yield* env.deps.git.run(["diff", "--name-only", `${env.baseSha}..HEAD`]).pipe(
-            Effect.map((out) =>
-              out
-                .split("\n")
-                .map((line) => line.trim())
-                .filter(Boolean)
-            ),
-            Effect.orElseSucceed(() => [] as ReadonlyArray<string>)
-          )
-    )
+    /**
+     * Paths a phase whose write carries a decision already touched this run. A move of one would
+     * fold that phase's edit into a rename a reviewer reads elsewhere; a SWEEP has no such edit.
+     * Read BEFORE the batch loop, so a set that cannot be read costs no model call.
+     */
+    const touched = yield* touchedThisRun(env.deps.git, env.baseSha)
 
     const batches = assembleBatches([candidates], { maxMembers: PLACEMENT_BATCH_SIZE })
     const counts: Record<string, number> = {
@@ -152,7 +183,22 @@ export const placementTriage: PhaseBody = (env) =>
       keptInbox: 0,
       newDirs: 0,
       budgetSkipped: 0,
-      failed: 0
+      failed: 0,
+      existingDirs: existingDirs.length,
+      touchedFiles: touched.kind === "unknown" ? 0 : touched.paths.size,
+      touchedCommits: touched.kind === "scoped" ? touched.commits : 0,
+      sweepCommits: touched.kind === "scoped" ? touched.sweeps : 0,
+      touchedWidened: touched.kind === "widened" ? 1 : 0,
+      // Pre-seeded, all nine, because an absent key is a key an operator has to go looking for.
+      ...Object.fromEntries(Object.keys(PLACEMENT_REFUSALS).map((key) => [key, 0]))
+    }
+    /**
+     * A touched set neither read could establish is a degradation, reported the way an absent model
+     * is: a reason, nothing written, nothing committed. Moving under it would be moving without the
+     * guard, and the corpus is still there tomorrow.
+     */
+    if (touched.kind === "unknown") {
+      return { ...emptyOutcome(counts), detail: "the run's touched set could not be read" }
     }
     if (batches.length === 0 || env.dryRun) return emptyOutcome(counts)
 
@@ -212,15 +258,16 @@ export const placementTriage: PhaseBody = (env) =>
           counts.keptInbox = (counts.keptInbox ?? 0) + 1
           continue
         }
-        const refuse = (reason: string): Effect.Effect<void> => {
+        const refuse = (reason: PlacementRefusal): Effect.Effect<void> => {
           counts.refused = (counts.refused ?? 0) + 1
+          counts[reason] = (counts[reason] ?? 0) + 1
           return Effect.logWarning(
-            `sleep.placement refused ${row.path} -> ${destination}: ${reason}`
+            `sleep.placement refused ${row.path} -> ${destination}: ${PLACEMENT_REFUSALS[reason]}`
           )
         }
 
         if (placement.confidence < PLACEMENT_CONFIDENCE_FLOOR) {
-          yield* refuse("below the confidence floor")
+          yield* refuse("refusedLowConfidence")
           continue
         }
         const bucket = paraBucketOf(destination)
@@ -232,37 +279,41 @@ export const placementTriage: PhaseBody = (env) =>
             .split("/")
             .some((segment) => segment === "" || segment === "." || segment === "..")
         ) {
-          yield* refuse("not a placeable directory")
+          yield* refuse("refusedDestination")
           continue
         }
         // Tasks never move: excluded from the scan, and re-checked here because the scan reads a
         // projected column refreshed once per night.
         if (isSleepExcluded(row.memory_type)) {
-          yield* refuse("tasks never move")
+          yield* refuse("refusedTask")
           continue
         }
-        if (touched.has(row.path) || movedFrom.has(row.path)) {
-          yield* refuse("another phase touched this file this run")
+        if (touched.paths.has(row.path)) {
+          yield* refuse("refusedTouched")
+          continue
+        }
+        if (movedFrom.has(row.path)) {
+          yield* refuse("refusedAlreadyMoved")
           continue
         }
         const isNew = !existingDirs.includes(destination) && !mintedDirs.has(destination)
         if (isNew && mintedDirs.size >= PLACEMENT_NEW_DIR_CAP) {
-          yield* refuse("the new-directory cap for this run is spent")
+          yield* refuse("refusedNewDirCap")
           continue
         }
 
         const filename = row.path.slice(row.path.lastIndexOf("/") + 1)
         const target = `${destination}/${filename}`
         if (!isValidMemoryPath(target)) {
-          yield* refuse("the destination path is not a valid memory path")
+          yield* refuse("refusedInvalidPath")
           continue
         }
         if ((yield* readFileBytes(env, target)) !== undefined) {
-          yield* refuse("the destination already holds a file by that name")
+          yield* refuse("refusedCollision")
           continue
         }
         if ((yield* readFileBytes(env, row.path)) === undefined) {
-          yield* refuse("the source file is already gone from the tree")
+          yield* refuse("refusedSourceGone")
           continue
         }
 

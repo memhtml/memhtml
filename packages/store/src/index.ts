@@ -56,6 +56,7 @@ export {
   parseCatFileBatch,
   parseDiffNameStatus,
   parseLsTree,
+  parseNulPathList,
   parseStatusPorcelainV2,
   parseTrailerLog,
   provenanceTrailers,

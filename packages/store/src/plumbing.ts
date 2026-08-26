@@ -41,6 +41,20 @@ export const parseLsTree = (output: string): ReadonlyArray<TreeEntry> =>
       return [{ mode, objectType, sha, path: row.slice(tab + 1) }]
     })
 
+/**
+ * A bare NUL-terminated path list, which is what every `-z` path-only git output is.
+ *
+ * One function for the shape rather than one `split` per call site, because the trailing NUL is what
+ * makes the naive read wrong: `"a\0b\0"` splits into three fields, the last empty, so a caller that
+ * forgets the filter gets an empty string in its path set. `diff-tree --name-only -z` and
+ * `diff --name-only --diff-filter=U -z` are both this shape.
+ *
+ * `-z` is also what removes the escaping question: under newline framing git applies `core.quotePath`
+ * and a path holding a non-ASCII byte arrives as `"caf\303\251.html"`, quotes included.
+ */
+export const parseNulPathList = (output: string): ReadonlyArray<string> =>
+  output.split("\0").filter((path) => path !== "")
+
 /** How a path changed between two commits. `renamed` carries both paths. */
 export type ChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "typechanged"
 

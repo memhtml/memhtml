@@ -300,6 +300,124 @@ describe("branches", () => {
   })
 })
 
+describe("diffTreeNames", () => {
+  /**
+   * One case per flag, and every one of them is a case about a SILENT answer. `diff-tree` reports
+   * nothing for a merge commit, nothing for a root commit, and nothing for an abbreviated sha, all
+   * at exit 0 — so a caller unioning paths would receive a smaller set and no error. These are the
+   * flags' locks; drop any flag from `makeGit` and its case here goes red.
+   */
+  it("reports BOTH paths of a rename, so a caller sees the path that went away", async () => {
+    /**
+     * A this-run guard asking "which paths did these commits write" needs the pre-move path as much
+     * as the post-move one, and `git diff --name-only` — which DOES detect renames — reports only
+     * the destination. This is the behavior assertion for the difference, not a flag assertion:
+     * `--no-renames` is inert on `diff-tree`, so this case is red only if the invocation stops being
+     * a `diff-tree` or loses `-r`/`-z`.
+     */
+    const repo = await fixture()
+    await put(repo.root, "areas/x/a.html", "<p>line one</p>\n<p>line two</p>\n")
+    await run(repo.git.add(["areas/x/a.html"]))
+    await run(repo.git.commit("memhtml(write): a"))
+
+    await mkdir(join(repo.root, "areas/y"), { recursive: true })
+    await run(repo.git.mv("areas/x/a.html", "areas/y/a.html"))
+    const moved = await run(repo.git.commit("memhtml(write): move a"))
+
+    expect([...(await run(repo.git.diffTreeNames([moved.sha ?? ""])))].sort()).toEqual([
+      "areas/x/a.html",
+      "areas/y/a.html"
+    ])
+  })
+
+  it("returns a non-ASCII path unquoted, so it equals the path the index holds", async () => {
+    // Under newline framing `core.quotePath` renders this as `"areas/x/caf\303\251.html"`, quotes
+    // and octal escapes included, and a caller's `Set.has` against a real path never matches.
+    const repo = await fixture()
+    await put(repo.root, "areas/x/café.html", "<p>c</p>")
+    await run(repo.git.add(["areas/x/café.html"]))
+    const made = await run(repo.git.commit("memhtml(write): cafe"))
+
+    expect(await run(repo.git.diffTreeNames([made.sha ?? ""]))).toEqual(["areas/x/café.html"])
+  })
+
+  it("reports a merge commit's paths rather than nothing", async () => {
+    const repo = await fixture()
+    await put(repo.root, "areas/x/base.html", "<p>base</p>")
+    await run(repo.git.add(["areas/x/base.html"]))
+    await run(repo.git.commit("memhtml(write): base"))
+    const base = await run(repo.git.revParseHead())
+
+    await run(repo.git.checkoutBranch("side", { create: true }))
+    await put(repo.root, "areas/x/side.html", "<p>side</p>")
+    await run(repo.git.add(["areas/x/side.html"]))
+    await run(repo.git.commit("memhtml(write): side"))
+
+    await run(repo.git.checkoutBranch("main"))
+    await put(repo.root, "areas/x/main.html", "<p>main</p>")
+    await run(repo.git.add(["areas/x/main.html"]))
+    await run(repo.git.commit("memhtml(write): main"))
+    await run(repo.git.run(["merge", "--no-ff", "-m", "merge side", "side"]))
+    const merge = await run(repo.git.revParseHead())
+
+    expect(merge).not.toBe(base)
+    expect(await run(repo.git.diffTreeNames([merge ?? ""]))).toContain("areas/x/side.html")
+  })
+
+  it("reports a root commit's whole tree rather than nothing", async () => {
+    const repo = await fixture({ init: false })
+    await run(repo.git.run(["init", "-b", "main", "."]))
+    await run(configureIdentity(repo.git))
+    await put(repo.root, "areas/x/first.html", "<p>first</p>")
+    await run(repo.git.add(["areas/x/first.html"]))
+    const root = await run(repo.git.commit("memhtml(write): first"))
+
+    expect(await run(repo.git.diffTreeNames([root.sha ?? ""]))).toEqual(["areas/x/first.html"])
+  })
+
+  it("unions many commits in ONE subprocess, with no sha among the paths", async () => {
+    const repo = await fixture()
+    const shas: Array<string> = []
+    for (const name of ["one", "two", "three"]) {
+      await put(repo.root, `areas/x/${name}.html`, `<p>${name}</p>`)
+      await run(repo.git.add([`areas/x/${name}.html`]))
+      const made = await run(repo.git.commit(`memhtml(write): ${name}`))
+      shas.push(made.sha ?? "")
+    }
+
+    const [paths, spawns] = await countingSpawns(() => run(repo.git.diffTreeNames(shas)))
+    expect(spawns).toBe(1)
+    expect([...paths].sort()).toEqual([
+      "areas/x/one.html",
+      "areas/x/three.html",
+      "areas/x/two.html"
+    ])
+    // Without `--no-commit-id` each commit's own 40-hex name arrives as a line among the paths.
+    for (const path of paths) expect(path).not.toMatch(/^[0-9a-f]{40}$/)
+  })
+
+  it("refuses an abbreviated sha, which git answers with the short name and no diff", async () => {
+    const repo = await fixture()
+    await put(repo.root, "areas/x/a.html", "<p>a</p>")
+    await run(repo.git.add(["areas/x/a.html"]))
+    const made = await run(repo.git.commit("memhtml(write): a"))
+    const short = (made.sha ?? "").slice(0, 7)
+
+    const failure = await runErr(repo.git.diffTreeNames([short]))
+    expect(failure).toBeInstanceOf(GitFailure)
+    expect(failure.command).toBe("diff-tree")
+    // The full name is what the same call accepts, so the refusal is about the FORM and nothing else.
+    expect(await run(repo.git.diffTreeNames([made.sha ?? ""]))).toEqual(["areas/x/a.html"])
+  })
+
+  it("spawns nothing for an empty commit list", async () => {
+    const repo = await fixture()
+    const [paths, spawns] = await countingSpawns(() => run(repo.git.diffTreeNames([])))
+    expect(paths).toEqual([])
+    expect(spawns).toBe(0)
+  })
+})
+
 describe("logTrailers", () => {
   it("reads one key's values per commit, empty for a commit carrying none", async () => {
     const repo = await fixture()

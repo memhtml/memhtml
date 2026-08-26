@@ -122,11 +122,13 @@ export {
 } from "./entity-resolution.js"
 export { ARCHIVE_LOOKBACK_YEARS, archivedFormOf, integrity } from "./integrity.js"
 export { personLinks } from "./person-links.js"
+export type { PlacementRefusal } from "./placement-triage.js"
 export {
   PLACEMENT_BATCH_SIZE,
   PLACEMENT_CANDIDATE_LIMIT,
   PLACEMENT_MEMBER_CHARS,
   PLACEMENT_NEW_DIR_CAP,
+  PLACEMENT_REFUSALS,
   placementTriage
 } from "./placement-triage.js"
 export { preflight } from "./preflight.js"

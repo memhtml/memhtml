@@ -48,6 +48,7 @@ export {
   dependentsOf,
   HARD_PREREQUISITES,
   isSleepPhase,
+  isSweepPhase,
   LLM_PHASES,
   NON_COMMITTING_PHASES,
   parsePendingMarks,
@@ -56,6 +57,7 @@ export {
   readPendingMarks,
   recordPendingMarks,
   SLEEP_PHASES,
+  SWEEP_PHASES,
   TRAILER_COUNTS,
   TRAILER_PHASE,
   TRAILER_RUN
@@ -248,3 +250,5 @@ export {
   mintDetectedTask,
   openDetections
 } from "./tasks.js"
+export type { TouchedSet } from "./touched.js"
+export { isSweepCommit, touchedThisRun } from "./touched.js"
