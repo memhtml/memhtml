@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/mcp",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "description": "The `memhtml-mcp` stdio server.",
   "type": "module",
