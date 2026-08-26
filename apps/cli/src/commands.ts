@@ -94,7 +94,7 @@ const FACET_FLAG =
   "Repeatable, and the composition is fixed: values under the SAME name broaden (--facet doc-type=runbook --facet doc-type=guide is either), " +
   "DIFFERENT names narrow (--facet doc-type=runbook --facet tier=1 is both). " +
   "This is the extension axis: memhtml's element and meta vocabularies are closed, so a consumer's own document kinds, states, and tiers live in `<dt>`/`<dd>` pairs and are queried here. " +
-  "The match is on the facet's TEXT, exactly as authored, with no case folding. There is no numeric comparison: a `<data value>` is indexed UNITLESS because the unit lives in the prose beside it, so the caller owns the unit and matches the text it wrote."
+  "The match is on the facet's TEXT with no case folding, so write the halves you mean to query. The stored form is the element's text content, which the parser collapses whitespace runs in and trims — so `<dd>runbook  rollback</dd>` is stored and queried single-spaced. There is no numeric comparison: a `<data value>` is indexed UNITLESS because the unit lives in the prose beside it, so the caller owns the unit and matches the text it wrote."
 
 /** Flags every retrieval command shares, so `search` and `recall` cannot scope differently. */
 const SCOPE_FLAGS: ReadonlyArray<FlagSpec> = [

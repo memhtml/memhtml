@@ -270,7 +270,7 @@ const FACET_SCOPE_CONTRACT =
   "`facets` narrows by the corpus's own <dl> facets, each entry spelled name=value (the value may contain =, the name may not). " +
   'THE COMPOSITION IS FIXED: values under the SAME name broaden, so ["doc-type=runbook","doc-type=guide"] is either; DIFFERENT names narrow, so ["doc-type=runbook","tier=1"] is both. ' +
   "This is the extension axis. memhtml's element and meta vocabularies are closed, so your own document kinds, states, and tiers belong in <dt>/<dd> pairs inside the article, and this is how you query them back. " +
-  "The match is on the facet's TEXT, exactly as authored, with no case folding, so write the facet names you query. " +
+  "The match is on the facet's TEXT with no case folding, so write the halves you mean to query. The stored form is the element's text content, which the parser collapses whitespace runs in and trims, so <dd>runbook  rollback</dd> is stored and queried single-spaced. " +
   "There is no numeric comparison and that is deliberate: a <data value> is indexed UNITLESS, because the unit lives in the prose beside it, so you own the unit and match the text you wrote."
 
 /**
