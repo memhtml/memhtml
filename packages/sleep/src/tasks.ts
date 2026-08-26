@@ -247,10 +247,17 @@ const STEM_SLUG_CHARS = SLUG_MAX_LENGTH - DETECTION_PREFIX.length - DETECTION_DI
  * The detector's name is INSIDE the digest, so two detectors that happen to canonicalize one finding
  * identically still own separate tasks. They noticed different things about it, and a sweep is
  * per-detector: sharing a key would let one detector's sweep close the other's task.
+ *
+ * **The separator is `\u0000`, written as the escape and not as the byte.** A NUL cannot occur in a
+ * normalized detector name or finding, which is what makes it an unambiguous delimiter: without one,
+ * `("ab", "c")` and `("a", "bc")` would digest the same input and share a task. Spelling it as a RAW
+ * NUL in the source made this file `data` rather than text, and `grep` silently skips a file it reads
+ * as binary — so a repo-wide text gate, and every maintainer's grep, had a blind spot on it. The
+ * escape hands `sha256` byte-identical input, so no key moves.
  */
 export const detectionKey = (detector: string, finding: string): string =>
   `${DETECTION_PREFIX}${createHash("sha256")
-    .update(`${normalizeFinding(detector)} ${normalizeFinding(finding)}`, "utf8")
+    .update(`${normalizeFinding(detector)}\u0000${normalizeFinding(finding)}`, "utf8")
     .digest("hex")
     .slice(0, DETECTION_DIGEST_CHARS)}`
 
