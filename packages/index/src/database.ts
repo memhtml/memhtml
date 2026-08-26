@@ -133,7 +133,7 @@ class DriverRejection {
  *
  * `busy_timeout` covers a short wait inside one call, and stops covering anything past its
  * deadline. A probe against a held `BEGIN IMMEDIATE` throws `database is locked` rather than
- * queueing indefinitely. This deployment has many short-lived CLI processes plus a unattended sleep run
+ * queueing indefinitely. This deployment has many short-lived CLI processes plus an unattended sleep run
  * writing to one file, and **Effect coordinates nothing across processes**, so the driver's
  * timeout plus this retry is the whole of the answer.
  *

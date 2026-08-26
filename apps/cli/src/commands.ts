@@ -1032,7 +1032,7 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
     body:
       "There are three ways to put a memory into the corpus, and they are all legitimate. " +
       "First, this CLI: `memhtml write` for one memory, `memhtml apply` for many. " +
-      "Second, the MCP server: `memhtml serve mcp` speaks stdio with 14 tools and 2 resources over this " +
+      "Second, the MCP server: `memhtml serve mcp` speaks stdio with the same tools and resources over this " +
       "same repo, and it is the door to use when you are already an MCP client. " +
       "Third, editing files under $MEMHTML_ROOT directly with your normal file tools: the git tree IS the " +
       "system of record and `.memhtml/index.db` is only a projection of it, so a hand-written or hand-edited " +

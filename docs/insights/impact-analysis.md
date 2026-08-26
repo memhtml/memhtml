@@ -222,7 +222,7 @@ This file defines the memhtml root's on-disk shape and the one operation that cr
 
 Defined at: `apps/cli/src/envelope.ts:6-157`
 
-This file defines the machine contract every agent parses: `API_VERSION`, `RESPONSE_TYPES` (32 values), `ResponseType`, `Success`, `Failure`, `ERROR_CODES` (15 values), `ErrorCode`, the three exit codes, `succeed`, `fail`, `nearest`, and `render`. 15 importing files across 3 workspace packages. It is the widest external surface in the repository, because it is what a calling agent reads.
+This file defines the machine contract every agent parses: `API_VERSION`, `RESPONSE_TYPES` (35 values), `ResponseType`, `Success`, `Failure`, `ERROR_CODES` (16 values), `ErrorCode`, the three exit codes, `succeed`, `fail`, `nearest`, and `render`. 15 importing files across 3 workspace packages. It is the widest external surface in the repository, because it is what a calling agent reads.
 
 | Downstream                                                                                         | Type             | Touch on change | Citation                                                                              |
 | -------------------------------------------------------------------------------------------------- | ---------------- | --------------- | ------------------------------------------------------------------------------------- |

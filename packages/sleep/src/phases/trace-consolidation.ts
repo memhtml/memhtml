@@ -764,6 +764,13 @@ const titleFor = (claim: string): string => {
  * corpus already carries for a memory an agent wrote during a session. So it goes in the file, and the
  * quotes still do not.
  *
+ * The id is TRIMMED and an empty result yields `undefined`. Nothing upstream refuses a whitespace-only
+ * one: the schema's check is `Schema.isMinLength(1)` (`apps/consolidator/src/contract.ts`), which admits
+ * `"   "`, and {@link refusalFor} tests kind, claim, gist, quote count, and the slug fallback but says
+ * nothing about a session id — `commitmentRefusalFor` is the arm that refuses an empty evidence session,
+ * and that is the other surface. So this trim is the only guard, and removing it would stamp a
+ * `memhtml-session` meta holding whitespace.
+ *
  * Stamped as the ordinary `memhtml-session` meta and nothing new, which is the decision
  * `packages/sleep/src/tasks.ts` records for the detected-task arm: the name is already in the closed
  * vocabulary, already projects to `files.session_id`, and already carries exactly this meaning, so a
@@ -780,8 +787,7 @@ const titleFor = (claim: string): string => {
  * the same reasoning `tasks.ts` uses to refuse putting a RUN id in this column.
  *
  * Ids are trimmed before they are compared, so the same session cited with stray whitespace is one
- * origin rather than two. An empty id yields `undefined`; the schema and {@link refusalFor} both
- * refuse one already, and a whitespace `memhtml-session` would be an unusable stamp.
+ * origin rather than two, and an id that trims to nothing yields `undefined`.
  *
  * NOTHING here writes a `memory_session_links` row, and the phase's `linked`/`unlinked` counters
  * therefore do not move. Those count sessions the corpus links a memory to through the WRITE path's
@@ -958,13 +964,16 @@ export const traceConsolidation: PhaseBody = (env) =>
      * The watermark, recorded as a PENDING MARK on the branch and applied by `merge`. It covers exactly
      * the sessions the agent ACTUALLY READ; {@link analyzedFrom} is that set, and it is not `batch`.
      *
-     * ## Only a session whose transcript arrived
+     * ## Only a session whose transcript arrived AND that the agent reports reading
      *
-     * `batch` is the set the phase ASKED ABOUT, and the two differ whenever a transcript does not reach
-     * the agent: rotated away since `memhtml trace index` ran, moved outside `MEMHTML_TRACE_ROOT`, or
-     * behind a symlink the read-only mount will not follow (measured; see `partitionReachable` in
-     * `apps/consolidator/src/client.ts`). Marking such a session records it consolidated when nothing
-     * read it, and `trace_consolidations` is an ANTI-JOIN, so the session is then never selected again.
+     * `batch` is the set the phase ASKED ABOUT, and it exceeds the marked set for either of two reasons.
+     * A transcript may not reach the agent at all — rotated away since `memhtml trace index` ran, moved
+     * outside `MEMHTML_TRACE_ROOT`, or behind a symlink the read-only mount will not follow (measured;
+     * see `partitionReachable` in `apps/consolidator/src/client.ts`). Or it reaches the agent and the
+     * answer's read receipt does not name it. Marking a session either way records it consolidated when
+     * nothing read it, and `trace_consolidations` is an ANTI-JOIN, so the session is then never selected
+     * again. The phase holds only the intersected set, which is why `unconsolidated` carries both causes
+     * under one name rather than claiming to separate them.
      *
      * **The guard is structural, not a check placed here.** `ConsolidationOutcome` cannot be constructed
      * without `analyzedSessionIds` (`../consolidator.ts`), so no shape a consolidator returns leaves this
@@ -980,7 +989,7 @@ export const traceConsolidation: PhaseBody = (env) =>
      * A session that yielded no candidate HAS been consolidated: the agent read it and correctly found
      * nothing above the bar. Marking only the productive sessions would re-read every quiet transcript at
      * full Opus cost every night forever, and the batch would never advance past them. So the narrowing
-     * is by REACHABILITY and never by productivity.
+     * is by REACHABILITY and by the agent's own read receipt, never by productivity.
      *
      * ## Recorded FIRST, and safe because it is only a proposal
      *
@@ -1125,9 +1134,10 @@ export const traceConsolidation: PhaseBody = (env) =>
      * that commit decided; each half of the answer gets its own reviewable commit.
      *
      * The batch is the grounding set, `analyzedFrom` is not. A commitment cites a session whose
-     * TRANSCRIPT was read, and `analyzedSessionIds` is the reachable set the CLIENT computed — which is
-     * the right input for a watermark and the wrong one for this check, since a scripted or degraded
-     * consolidator could report a narrower reachable set while still having read the sessions it quotes.
+     * TRANSCRIPT was read, and `analyzedSessionIds` is the reachable set narrowed by the answer's own
+     * read receipt — which is the right input for a watermark and the wrong one for this check, since a
+     * scripted or degraded consolidator could report a narrower set while still having read the sessions
+     * it quotes.
      * The batch is what this phase asked about, and it is the containment the phase can assert.
      */
     const commitments = yield* consolidateCommitments(

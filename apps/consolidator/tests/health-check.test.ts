@@ -11,7 +11,8 @@ import { healthy } from "../src/client.js"
  * see `reserveLoopbackPort`), so the process answering `/eve/v1/health` can be anything on the box —
  * and any generic HTTP server answers 200 to a path it routes. A `healthy()` that stopped at
  * `response.ok` would then hand the whole run to a non-eve listener: the turn posted to it, its
- * answer decoded, and `{"candidates": [], "commitments": []}` decodes. So the check must read the
+ * answer decoded, and a barren-looking payload is exactly what a generic 200 body is one step from. So
+ * the check must read the
  * BODY and match eve's documented shape (`{ ok: true, status: "ready", workflowId }`,
  * node_modules/eve/dist/src/internal/nitro/routes/health.js), and every case below is a listener
  * that a status-line-only check accepts and this one must not.

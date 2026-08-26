@@ -293,7 +293,8 @@ const packageRoot = (): string => resolve(dirname(fileURLToPath(import.meta.url)
  * "Resolves" is the checkable half of "was read", and the distinction is the whole reason this type
  * exists rather than the client trusting its input: nothing outside the model can prove a file was
  * opened, while a file that does not resolve was categorically not opened. `ConsolidationResult`'s
- * `analyzedSessionIds` is built from these and from nothing else.
+ * `analyzedSessionIds` is these NARROWED by the read receipt the answer carries, so a transcript that
+ * resolved and that the agent did not report reading is not watermarked.
  */
 export interface ReachableTranscript {
   readonly entry: TranscriptManifestEntry
@@ -1145,10 +1146,12 @@ const runTurn = (
 
     /**
      * The commitments are grounded against the SAME reachable set, by the same rule and with the same
-     * whole-turn refusal. A commitment's session id travels further than a candidate's: it rides into
-     * `packages/sleep/src/phases/trace-consolidation.ts`, keys a detected task, and lands in that
-     * task's own body as its provenance, where a human reading the queue treats it as the place to go
-     * and check. So the check runs over both lists and neither is exempt.
+     * whole-turn refusal. Both kinds of session id reach a committed file: a commitment's keys a
+     * detected task and lands in that task's body as its provenance, where a human reading the queue
+     * treats it as the place to go and check, and a candidate's is stamped as the distilled memory's
+     * `memhtml-session` meta when every quote agrees on one
+     * (`packages/sleep/src/phases/trace-consolidation.ts`). Neither list is the low-stakes half, so
+     * neither is exempt.
      *
      * Two calls rather than one, because the shapes differ (a commitment carries ONE evidence quote,
      * not a list) and the reason string has to say which list the offender is in.

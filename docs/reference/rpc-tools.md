@@ -16,7 +16,7 @@ Signatures are quoted verbatim from the registration site with two mechanical el
 
 ### How the resources route
 
-Both templates are registered by one helper, `templateLayer` (`apps/mcp/src/resources.ts:118`), which calls `McpServer.addResourceTemplate` directly rather than using the `McpServer.resource` tagged template. The reason is the router. `McpServer` matches a `resources/read` URI with find-my-way (`effect/unstable/http/FindMyWay`, effect `4.0.0-rc.109`), and two of that router's rules decide the pattern each resource registers, `memhtml:://<section>/*` (`apps/mcp/src/resources.ts:42`):
+All three templates are registered by one helper, `templateLayer` (`apps/mcp/src/resources.ts:118`), which calls `McpServer.addResourceTemplate` directly rather than using the `McpServer.resource` tagged template. The reason is the router. `McpServer` matches a `resources/read` URI with find-my-way (`effect/unstable/http/FindMyWay`, effect `4.0.0-rc.109`), and two of that router's rules decide the pattern each resource registers, `memhtml:://<section>/*` (`apps/mcp/src/resources.ts:42`):
 
 - A single `:` opens a NAMED PARAMETER and `::` is the escape for a literal colon, so the scheme's colon has to be doubled — left single, `memhtml:` registers a parameter named `""`.
 - A named parameter's value ENDS AT THE NEXT `/`, so it matches exactly one segment. Every memory path has at least two segments and an archived one has at least four, so a single-segment route would leave the file resource unreachable in normal use. `*` is the rest parameter, the only construct that matches across `/`, and the router requires it to be the pattern's LAST character. The tagged template compiles its parameters to named parameters, which is why it is not used here.
@@ -26,6 +26,44 @@ The captured value does not arrive through the parameter array: `McpServer` fold
 The RFC 6570 templates `resources/templates` publishes are LITERALS on each spec (`RESOURCE_TEMPLATES`, `apps/mcp/src/resources.ts:250`) rather than composed from the route, so the template a client reads and the route the server matches are two independent readings of one URI shape. `tests/resources.test.ts` builds its request URI out of the PUBLISHED template and expects the read to resolve, so a template that drifted from its route fails a read rather than a literal comparison.
 
 **Every failure is sanitized, and no handler dies.** A defect becomes a stated refusal through `catchDefect` and a typed failure becomes one through `toResourceFailure`, both after `tapCause` has put the real cause on stderr where an operator reads it (`apps/mcp/src/resources.ts:130-146`). An `Effect.orDie` in their place hands the client `Cause.prettyErrors(cause)[0].message`: an absolute filesystem path for a missing sleep report, and a `PathNotFound` stripped of its `ERR_*` code and its suggestions.
+
+## `memhtml://at/{commit}/{path}`
+
+```ts
+export const PinnedResource = templateLayer({
+  section: "at",
+  uriTemplate: "memhtml://at/{commit}/{path}",
+  name: "Memory file at a commit",
+  description: /* … */,
+  mimeType: "text/plain",
+  refuse: pinnedRefusal,
+  read: (uri, captured) =>
+    Effect.gen(function* () {
+      const at = captured.indexOf("/")
+      if (at <= 0) return yield* Effect.fail(pinnedRefusal(uri))
+      const commit = captured.slice(0, at)
+      const path = captured.slice(at + 1)
+      if (!COMMIT_SHA.test(commit) || !isValidMemoryPath(path)) {
+        return yield* Effect.fail(pinnedRefusal(uri))
+      }
+      // …
+    })
+})
+```
+
+Returns one memory's title, claim, and body text AS OF a commit: a citation whose bytes cannot move.
+
+**Input:** two holes, captured as one rest parameter and split at the FIRST `/`. A commit sha cannot contain a slash and a memory path must, so that separator is the only place the split can be. The commit half must match `/^[0-9a-f]{7,64}$/` — git's abbreviation floor through the width of SHA-256 — so `HEAD`, a branch, and a tag are all refused, which is the whole contract: a URI whose target can move is not a citation, and `memhtml://at/main/x.html` would read as a pin while resolving to different bytes next week. Hex also keeps a leading `-` out of `git ls-tree`'s argv. The path half is gated by `isValidMemoryPath` for `memhtml://file/{path}`'s reason, since a rest parameter accepts `..` (`apps/mcp/src/resources.ts:255-274`).
+
+**Output:** a `text/plain` body in the same shape `memhtml://file/{path}` returns, parsed from the HISTORICAL bytes. `lsTreeR` resolves the path in that commit's tree to a blob sha and `catFileBatch` reads the object, so a path since corrected, archived, or evicted still reads. A submodule entry is an `objectType` of `commit`, holds no memory, and is refused rather than read.
+
+**This read does NOT bump salience, where `memhtml://file/{path}` does.** `state.access` is keyed on PATH with no notion of a commit, so a bump would credit whatever occupies that path today for a read of a version it may not contain. Verifying a receipt is auditing rather than choosing. The resource declares `Store` and not `IndexRecorder`, which makes the refusal structural.
+
+**Refusal:** `ERR_PATH_NOT_FOUND` for an unknown commit, a path absent from a known commit, a movable ref, and an unusable path alike — from a client's side those are one answer, "this URI names nothing here", and the real cause goes to stderr. Its suggestions name the published template form and `memory_resolve` for the path a memory occupies now (`apps/mcp/src/resources.ts:268-274`).
+
+`memory_resolve` publishes a ready-made URI for this template as `pinned_uri`, so a client stores a citation without composing one.
+
+`apps/mcp/src/resources.ts:311-350`
 
 ## `memhtml://file/{path}`
 
@@ -359,6 +397,50 @@ Returns a context pack under a character budget. What fits gets a full body, and
 **Output:** `sections` with three arrays, plus `spent_chars`, `truncated`, and `degraded`. `arcs` and `memories` carry full bodies. `lateral` is the union of both folds' index lines, so it holds what did not fit the budget rather than the output of a third retrieval arm. Dropping it would make a truncated pack indistinguishable from a small corpus (`apps/mcp/src/handlers.ts:566-572`).
 
 `apps/mcp/src/tools.ts:510-547`
+
+## `memory_resolve`
+
+```ts
+const MemoryResolve = Tool.make("memory_resolve", {
+  description: /* … */,
+  dependencies: READS(),
+  parameters: Schema.Struct({ path: MemoryPath }),
+  failure: ToolFailure,
+  success: Schema.Struct({
+    requested: MemoryPath,
+    path: MemoryPath,
+    hops: Count,
+    steps: Schema.Array(
+      Schema.Struct({
+        from: MemoryPath,
+        to: MemoryPath,
+        // …
+        via: Schema.Literals(RESOLVE_STEP_VIA)
+      })
+    ),
+    stop_reason: Schema.Literals(RESOLVE_STOP_REASONS),
+    title: Schema.NullOr(Schema.String),
+    // …
+    indexed_commit: Schema.NullOr(Schema.String),
+    // …
+    pinned_uri: Schema.NullOr(Schema.String)
+  })
+})
+```
+
+Follows a path an older answer, receipt, or external citation recorded FORWARD to the memory that carries the fact now. A path is the id of a memory and it is derived from the title, so a correction that rewords the title moves the file and the cited path stops resolving through no fault of the citation.
+
+**Input:** `path` only. The walk follows both mechanisms that move a memory and neither is optional, and the hop bound is a property of the answer rather than a preference.
+
+**Output:** `stop_reason` decides whether the answer is citable, and only `live` means yes. `archived` is a memory EVICTED rather than corrected, so nothing supersedes it. `unindexed` is no such path here, which can also mean the index does not yet describe the commit that holds it — `indexed_commit` names the commit it does describe. `cycle` is two memories each claiming to supersede the other, an authoring defect. `hop_limit` means `path` is where the walk stopped rather than the end of the chain, so resolving it again continues. The five values are the shipped enum `RESOLVE_STOP_REASONS`, spelled exactly as `live`, `archived`, `unindexed`, `cycle`, `hop_limit`.
+
+`steps` names each hop's mechanism from a closed vocabulary — `supersedes` for an authored `<link>` inside a file, `archive_move` for a `git mv` recorded by `origin_path` — and every node is named by the path holding that memory NOW, because a `supersedes` link travels with the file that carries it.
+
+`pinned_uri` is a `memhtml://at/{commit}/{path}` URI for `path` at `indexed_commit`, composed by the server because the URI's spelling belongs to the resource that routes it. It is null when there is no commit to pin to and when `stop_reason` is `unindexed`, the one ending whose path that commit does not hold — a citation the same server would refuse is not a citation.
+
+`hops: 0` with `stop_reason: live` does NOT mean the bytes are unchanged: a correction whose title did not change lands at the same path. `pinned_uri` is the grain that answers that.
+
+`apps/mcp/src/tools.ts:767-824`
 
 ## `memory_reinforce`
 

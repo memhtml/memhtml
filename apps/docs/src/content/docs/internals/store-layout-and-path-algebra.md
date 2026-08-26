@@ -25,11 +25,11 @@ A workspace is a directory and nothing else. There is no workspaces table, so cr
 
 ## 2. Placement is a pure total function
 
-`placementFor` (`packages/contracts/src/paths.ts:113`) applies six rules in order:
+`placementFor` (`packages/contracts/src/paths.ts:145`) applies six rules in order:
 
 1. an explicit valid path;
 2. an `arc` goes to `areas/arcs`;
-3. a `task` is placed by workspace alone, before the person and topic rules run, so a task about a person does not land in the durable identity surface (`packages/contracts/src/paths.ts:126-130`);
+3. a `task` is placed by workspace alone, before the person and topic rules run, so a task about a person does not land in the durable identity surface (`packages/contracts/src/paths.ts:158-162`);
 4. a `person:` entity on a `semantic` memory goes to `resources/people`;
 5. a named workspace goes to `projects/<slug>`;
 6. a `semantic`, `procedural`, or `precedent` memory with a primary tag goes to `resources/<tag>`.
@@ -42,11 +42,11 @@ Rule 1 reads "an explicit **valid** path", and the validity clause is where a ca
 
 `ERR_INVALID_MEMORY` rather than `ERR_WRITE_CONFLICT`, which is what an **occupied** explicit path earns. That error carries two blob shas and its published recovery is `memhtml read <path>` then `memhtml correct <path>`; against a path no file can occupy, both of those are calls that cannot succeed. An unusable path is malformed caller input, which is what `InvalidMemory` is for and what every other decode on the write path already uses.
 
-`memoryPathFor` (`packages/contracts/src/paths.ts:152`) adds the filename. It date-prefixes an episodic entry, because time is part of that memory's identity, while every other type has to stay correctable in place.
+`memoryPathFor` (`packages/contracts/src/paths.ts:190`) adds the filename. It date-prefixes an episodic entry, because time is part of that memory's identity, while every other type has to stay correctable in place.
 
 ## 3. The archive mapping can be inverted
 
-`archivePathFor` (`packages/contracts/src/paths.ts:175`) mirrors the whole original path beneath `archive/<YYYY>/`, and `originalPathFor` (`packages/contracts/src/paths.ts:183`) strips exactly one such prefix. Stripping one rather than all of them keeps it a left inverse even for a memory archived twice. `git log --follow` reads through the move, and `diff -M` reports `R100` instead of a delete plus an add. No memory is removed from the repository.
+`archivePathFor` (`packages/contracts/src/paths.ts:213`) mirrors the whole original path beneath `archive/<YYYY>/`, and `originalPathFor` (`packages/contracts/src/paths.ts:221`) strips exactly one such prefix. Stripping one rather than all of them keeps it a left inverse even for a memory archived twice. `git log --follow` reads through the move, and `diff -M` reports `R100` instead of a delete plus an add. No memory is removed from the repository.
 
 A test pins the property: `originalPathFor(archivePathFor(p, y)) === p` for every generated path. That invertibility is what lets the sleep pipeline's integrity phase derive an archived target's new href rather than searching for it, and no rename-similarity score is consulted anywhere in the system.
 
@@ -59,7 +59,7 @@ Figure 1 draws the mapping as a ladder rather than as a round trip. From a twice
 
 ## 4. A path is an id
 
-Path validation refuses `.` and `..` segments (`packages/contracts/src/paths.ts:63`), which keeps a caller-supplied path inside the repository. The path is the id of a memory, and there is no separate uuid anywhere in the system (`packages/contracts/src/types.ts:102-107`). `files.path` is the primary key of the index's central table, and because that key moves when a memory is evicted, every child table declares `ON UPDATE CASCADE` alongside `ON DELETE CASCADE`.
+Path validation refuses `.` and `..` segments (`packages/contracts/src/paths.ts:90-96`), which keeps a caller-supplied path inside the repository. The path is the id of a memory, and there is no separate uuid anywhere in the system (`packages/contracts/src/types.ts:102-107`). `files.path` is the primary key of the index's central table, and because that key moves when a memory is evicted, every child table declares `ON UPDATE CASCADE` alongside `ON DELETE CASCADE`.
 
 An `href` value in the HTML plane carries the same path with a leading slash. That leading slash is a document-reference form, converted at the HTML boundary and never stored (`packages/contracts/src/types.ts:102-107`, `packages/index/src/project.ts:336-344`).
 
@@ -69,7 +69,7 @@ Because the path is the id and the path is derived from the title, correcting a 
 
 `memhtml resolve <path>` walks forward. It follows the two mechanisms that move a memory, and only those two: an authored `supersedes` link, and the archive move recorded by `origin_path`. A correction points its `supersedes` link at the target's ARCHIVE path, so a cited pre-archive path has no inbound edge at all and the archive mapping is the only thing that knows where its bytes went; the walk therefore reads the mapping first for a path absent from the index, and the edge for a path present in it. Every node it reports is named by the path holding that memory NOW: a `supersedes` link is an element inside a file, so archiving that file carries the link with it, and a chain over two corrections reads `cited → archive(cited) → archive(middle) → live` with the middle's own live-at-the-time path appearing nowhere.
 
-The answer's `stopReason` is the field that decides whether to cite, and only `live` means yes. `archived` is a memory that was evicted rather than corrected, so nothing supersedes it. `unindexed` is no such path, which can also mean the index does not yet describe the commit holding it — `indexedCommit` names the commit it does describe. `cycle` and `hopLimit` are the two abnormal endings: two memories each claiming to supersede the other is an authoring defect the walk refuses to resolve, and the hop bound means the answer is where the walk stopped rather than the end of the chain. Nothing is fabricated in any of the five cases, which is the point — a resolver that answered "not found" for all four of the non-live ones would collapse an eviction, a stale index, and a corpus defect into one word.
+The answer's `stopReason` is the field that decides whether to cite, and only `live` means yes. `archived` is a memory that was evicted rather than corrected, so nothing supersedes it. `unindexed` is no such path, which can also mean the index does not yet describe the commit holding it — `indexedCommit` names the commit it does describe. `cycle` and `hop_limit` are the two abnormal endings: two memories each claiming to supersede the other is an authoring defect the walk refuses to resolve, and the hop bound means the answer is where the walk stopped rather than the end of the chain. Nothing is fabricated in any of the five cases, which is the point — a resolver that answered "not found" for all four of the non-live ones would collapse an eviction, a stale index, and a corpus defect into one word.
 
 Forward resolution cannot answer one thing, and it says so: a correction whose title did NOT change lands at the same path, so the path is live at zero hops while the bytes behind it state a different fact. That grain is the pinned citation, `memhtml://at/{commit}/{path}`, an MCP resource that reads the git object at a named commit rather than the working tree. A commit sha is immutable, so those bytes cannot move; a branch name or `HEAD` is refused, because a URI whose target can move is not a citation. `memory_resolve` publishes such a URI ready-made as `pinned_uri`.
 

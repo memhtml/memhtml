@@ -23,23 +23,36 @@
 -- Without it, all four arms are `SEARCH … (src_path=? AND edge_class=?)` or
 -- `(dst_path=? AND edge_class=?)`: two bound columns instead of one, in every direction.
 --
--- ── The partial pair had no readers at all, which is why it is replaced rather than kept ──────────
+-- ── A REPLACEMENT, and the per-statement census behind that ──────────────────────────────────────
 --
 -- Measured the same way over every statement in the tree that reads `edges` — the walk, both
 -- authored-only anti-joins in `@memhtml/sleep` (`sharedEntityPairs`, `minedPairs`), `retentionEdgeCounts`,
 -- `memoryEdges`, `deepGroupingEdges`, `inboundAuthoredEdges`, `danglingEdges`, retrieval's
--- `superseded_by` subquery, `doctor`'s stale-blocker join, `task list`'s blockers column, and the
--- indexer's delete-by-source. The planner chose `edges_src` or `edges_dst` in NONE of them: the
--- `derived = 0` readers reach for `edges_derived (derived, rel)`, which binds two columns where the
--- partial pair binds one. So the predicate bought nothing and cost the walk its index.
+-- `superseded_by` subquery, `doctor`'s stale-blocker join, `task list`'s blockers column, the indexer's
+-- delete-by-source, and `movePath`'s `UPDATE edges SET src_path`. FIVE change plan, and every one of the
+-- five gets a probe it did not have or binds a column more:
 --
--- Replacing rather than adding also keeps `edges` at four indexes instead of six. Every index is
--- maintained on every edge write, and the sleep cycle's mining phase writes thousands per run.
+--   * both `dst_path` walk arms, `SCAN e` -> `edges_dst (dst_path=? AND edge_class=?)`;
+--   * both `src_path` walk arms, `sqlite_autoindex_edges_1 (src_path=?)` -> `edges_src (src_path=? AND
+--     edge_class=?)`;
+--   * `retentionEdgeCounts`, `SCAN e` plus a temp b-tree -> `SCAN e USING COVERING INDEX edges_dst`, so
+--     it stops building an `AUTOMATIC PARTIAL COVERING INDEX` per call;
+--   * `task list`'s blockers subquery, `edges_rel (rel, edge_class)` -> `edges_dst (dst_path,
+--     edge_class)`, binding a path rather than the rel `'blocks'`;
+--   * the indexer's delete-by-source and `movePath`'s update, `sqlite_autoindex_edges_1 (src_path=?)` ->
+--     `edges_src (src_path=?)`.
 --
--- Two OTHER statements improve as a side effect, both measured: `retentionEdgeCounts` stops building an
--- `AUTOMATIC PARTIAL COVERING INDEX` — a transient index SQLite constructs per call — and `task list`'s
--- blockers subquery moves from `edges_rel (rel, edge_class)` to `edges_dst (dst_path, edge_class)`,
--- where the bound column is a path rather than the rel `'blocks'`. Every other plan is byte-identical.
+-- The rest are byte-identical, including retrieval's `superseded_by` subquery, which probes
+-- `edges_dst (dst_path=? AND edge_class=?)` under BOTH shapes — it names the class, so it never depended
+-- on the predicate. The `derived = 0` readers that do not name a path reach for `edges_derived (derived,
+-- rel)`, which binds two columns where either directional pair binds one.
+--
+-- The predicate is not free to keep, and the cost is not the index COUNT: `edges` carries four either
+-- way. It is that a partial index holds only the authored rows. Dropping the predicate puts every mined
+-- edge in both b-trees, and mining writes thousands per run — measured 2026-08-26, 20,000 derived-edge
+-- inserts in one transaction cost 158-162 ms with the predicate and 184-188 ms without it, three
+-- repetitions, so roughly 14-19% more per mined edge. That is the price of the walk's two probes, paid
+-- knowingly: a walk arm was a full pass over `edges` per hop.
 --
 -- ── ADDITIVE, in 0009's sense ────────────────────────────────────────────────────────────────────
 --

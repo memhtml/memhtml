@@ -64,7 +64,13 @@ export interface TranscriptManifestEntry extends TranscriptRef {
     | undefined
 }
 
-/** One transcript line a candidate rests on. Carried for the commit message, never into a memory. */
+/**
+ * One transcript line a candidate rests on.
+ *
+ * The QUOTE is carried for the commit message and never into a memory: a verbatim transcript span must
+ * not enter the corpus. The `sessionId` is provenance rather than content, and it does reach a memory —
+ * `soleEvidenceSession` stamps it as `memhtml-session` when every quote of one candidate agrees on one.
+ */
 export interface CandidateEvidenceLike {
   readonly sessionId: string
   readonly quote: string
