@@ -799,6 +799,15 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     responseTypes: ["sleep.report"]
   },
   {
+    name: "sleep plan",
+    summary: "Would a run change anything? Read the signals from index counts, running no phase.",
+    args: [],
+    // No flags. There is nothing to scope: the signals ARE the phases' own predicates, and a caller
+    // wanting one of them reads its entry out of `signals`.
+    flags: [],
+    responseTypes: ["sleep.plan"]
+  },
+  {
     name: "status",
     summary: "Corpus health: HEAD, dirty state, counts by type, edges, index freshness.",
     args: [],

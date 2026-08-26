@@ -2,12 +2,14 @@ import { Context, type Effect, Layer } from "effect"
 
 import type { MergeReport, ReviewReport, RunReport } from "./contract.js"
 import type { SleepDeps } from "./env.js"
+import type { SleepPlan } from "./plan.js"
+import { plan } from "./plan.js"
 import type { MergeOptions } from "./review.js"
 import { merge, review } from "./review.js"
 import { type RunOptions, resume, run } from "./run.js"
 
 /**
- * The sleep service: the four operations the CLI and MCP surfaces call.
+ * The sleep service: the five operations the CLI and MCP surfaces call.
  *
  * Every method's error channel is `never`. A sleep run's failures are its own DATA, and a failed phase
  * is a normal terminal state with a row and a report line. A run whose error channel could fire would
@@ -23,6 +25,14 @@ export interface SleepShape {
   ) => Effect.Effect<RunReport>
   readonly review: (runId?: string) => Effect.Effect<ReviewReport>
   readonly merge: (runId: string | undefined, options?: MergeOptions) => Effect.Effect<MergeReport>
+  /**
+   * What a run WOULD find, from index counts alone, running no phase.
+   *
+   * `atMillis` is a parameter for the same reason every phase's instant is: the settled-transcript
+   * cutoff is derived from it, so a test pins a date rather than racing a clock. It is the only clock
+   * reading anywhere near sleep that is not a stamp, and it is the CALLER's.
+   */
+  readonly plan: (atMillis: number) => Effect.Effect<SleepPlan>
 }
 
 export const Sleep = Context.Service<SleepShape>("memhtml/Sleep")
@@ -32,7 +42,8 @@ export const makeSleep = (deps: SleepDeps): SleepShape => ({
   run: (options) => run(deps, options),
   resume: (runId, options = {}) => resume(deps, runId, options),
   review: (runId) => review(deps, runId),
-  merge: (runId, options = {}) => merge(deps, runId, options)
+  merge: (runId, options = {}) => merge(deps, runId, options),
+  plan: (atMillis) => plan(deps.db, atMillis)
 })
 
 /**

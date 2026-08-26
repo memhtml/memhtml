@@ -973,6 +973,20 @@ export const sessionManifestRows = (
  * consolidates recent sessions first and works backwards a batch per night, so the memories it earns
  * soonest are the ones about what the agent is doing now.
  */
+/**
+ * The predicate that makes a session a CANDIDATE, as one clause two statements bind.
+ *
+ * Written once because {@link unconsolidatedSessions} selects the batch and
+ * {@link settledSessionCount} counts the whole set, and a second copy of a selection rule is what lets
+ * a plan report a number the phase does not agree with. Two parameters, in this order: `minBytes`, then
+ * the settled-before instant.
+ */
+const SETTLED_SESSION_WHERE = `WHERE NOT EXISTS (
+       SELECT 1 FROM trace_consolidations c WHERE c.session_id = t.session_id
+     )
+       AND t.file_size >= ?
+       AND t.file_mtime < ?`
+
 export const unconsolidatedSessions = (
   db: DatabaseShape,
   options: {
@@ -986,15 +1000,31 @@ export const unconsolidatedSessions = (
     `SELECT t.session_id AS session_id, t.file_path AS file_path,
             t.file_size AS file_size, t.file_mtime AS file_mtime
      FROM traces t
-     WHERE NOT EXISTS (
-       SELECT 1 FROM trace_consolidations c WHERE c.session_id = t.session_id
-     )
-       AND t.file_size >= ?
-       AND t.file_mtime < ?
+     ${SETTLED_SESSION_WHERE}
      ORDER BY t.file_mtime DESC, t.session_id ASC
      LIMIT ?`,
     [options.minBytes, options.settledBefore, options.limit]
   )
+
+/**
+ * How many sessions the consolidation phase WOULD have to choose from, unbounded by its per-run cap.
+ *
+ * The same clause {@link unconsolidatedSessions} binds, counted rather than paged, so a read that
+ * reports the backlog cannot disagree with the phase about what a candidate is. The batch cap is a
+ * separate fact the caller reports beside it: a count of 40 with a cap of 10 is four runs of work, and
+ * a count that had been clamped to the cap would read as one.
+ */
+export const settledSessionCount = (
+  db: DatabaseShape,
+  options: { readonly minBytes: number; readonly settledBefore: string }
+): Effect.Effect<number, StorageFailure> =>
+  db
+    .get<{ n: number }>(
+      `SELECT count(*) AS n FROM traces t
+     ${SETTLED_SESSION_WHERE}`,
+      [options.minBytes, options.settledBefore]
+    )
+    .pipe(Effect.map((row) => row?.n ?? 0))
 
 /**
  * Mark sessions consolidated, as ONE batch.

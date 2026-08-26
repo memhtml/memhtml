@@ -139,6 +139,8 @@ export {
   taskDetectPrompt
 } from "./llm.js"
 export * from "./phases/index.js"
+export type { PlanSignal, PlanUnknown, PlanVerdict, SleepPlan } from "./plan.js"
+export { plan } from "./plan.js"
 export type { GeneratedFile } from "./publish.js"
 export {
   generateArtifacts,

@@ -1,6 +1,6 @@
 # memhtml-public · CLI
 
-The `memhtml` CLI has 38 subcommands, one entry each in the `COMMANDS` array that also drives parsing and `AGENTS.md`. Each one writes exactly one JSON envelope to stdout, so a calling agent can parse the result instead of scraping prose. `apps/cli/src/commands.ts:118`
+The `memhtml` CLI has 39 subcommands, one entry each in the `COMMANDS` array that also drives parsing and `AGENTS.md`. Each one writes exactly one JSON envelope to stdout, so a calling agent can parse the result instead of scraping prose. `apps/cli/src/commands.ts:118`
 
 Start with `memhtml manifest`, which returns the whole contract: every command, argument, flag, response type, error code, and environment variable the binary accepts. `apps/cli/src/commands.ts:1094-1118`
 
@@ -571,6 +571,20 @@ This command takes no arguments and no flags. `apps/cli/src/commands.ts:698-704`
 
 Like `sleep review`, it exits 0 even when the run it reports failed. `apps/cli/src/run.ts:281-283`
 
+## sleep plan
+
+```
+memhtml sleep plan
+```
+
+Would a run change anything? Reads index counts and runs no phase, so it costs a handful of aggregates rather than the seventeen phases `--dry-run` executes before declining to write. `packages/sleep/src/plan.ts`
+
+No arguments and no flags. The signals ARE the phases' own selection predicates, called or clause-shared, so a caller wanting one reads its entry out of `signals`.
+
+`verdict` is the field to branch on, and it has three values because two phases cannot have their candidates counted cheaply. `would-change`: a counted signal is non-zero. `no-signal`: every counted signal is zero AND every uncountable phase's input is empty, which is the one state in which a run would reach nothing. `unknown`: in between — `dedup-merge` and `relationship-mining` select candidate pairs from an n-by-n neighbor scan, so counting their candidates is the scan, and each reports an `inputCount` with an `unknownReason` instead of a zero.
+
+`signals` carries the counted ones with the phases each feeds: memories written since the last run, chunks with no vector, settled transcripts, dangling authored links, and entity merges awaiting a second run. `sessionsPerRun` is the consolidation phase's per-run cap, published beside the transcript count because a backlog larger than the cap is more than one run of work.
+
 ## status
 
 ```
@@ -719,7 +733,7 @@ A caller should branch on `code` rather than on the `error` prose. The code list
 
 The sixteen codes, in `ERROR_CODES` order, are `ERR_UNKNOWN_COMMAND`, `ERR_MISSING_ARGUMENT`, `ERR_INVALID_FLAG`, `ERR_UNEXPECTED_ARGUMENT`, `ERR_PATH_NOT_FOUND`, `ERR_INVALID_MEMORY`, `ERR_DUPLICATE_CONTENT`, `ERR_WRITE_CONFLICT`, `ERR_DIRTY_TREE`, `ERR_INDEX_STALE`, `ERR_EMBED_MODEL_MISMATCH`, `ERR_MODEL_UNAVAILABLE`, `ERR_STORAGE`, `ERR_GIT`, `ERR_DISCRIMINATION_FAILED`, `ERR_UNKNOWN`. `apps/cli/src/envelope.ts:67-87`
 
-`ERR_UNEXPECTED_ARGUMENT` names a positional past what the command declares. It is its own code rather than a reuse of a neighbour, because the offending token is not a flag, which rules out `ERR_INVALID_FLAG`, and it is surplus rather than absent, which rules out `ERR_MISSING_ARGUMENT`: the caller fixes it by dropping a word instead of adding one. `apps/cli/src/envelope.ts:71-74`
+`ERR_UNEXPECTED_ARGUMENT` names a positional past what the command declares. It is its own code rather than a reuse of a neighbor, because the offending token is not a flag, which rules out `ERR_INVALID_FLAG`, and it is surplus rather than absent, which rules out `ERR_MISSING_ARGUMENT`: the caller fixes it by dropping a word instead of adding one. `apps/cli/src/envelope.ts:71-74`
 
 An unknown command or an unknown flag returns nearest-match candidates in `suggestions`, computed by Levenshtein distance. A caller can retry a typo from that list without a second discovery call. `apps/cli/src/envelope.ts:129-143`
 

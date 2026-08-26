@@ -1762,6 +1762,26 @@
       "verificationNote": "detection-only by design; choosing a winner is a one-way door",
       "verifies": []
     },
+    "f38b0c72-5e41-59d8-a3b6-84c07e159d24": {
+      "createdAt": "2026-08-26T00:00:00.000Z",
+      "derives": [],
+      "id": "f38b0c72-5e41-59d8-a3b6-84c07e159d24",
+      "key": "SLEEP-11",
+      "negated": false,
+      "patternType": "event-driven",
+      "priority": "high",
+      "refines": [],
+      "satisfies": [],
+      "sentence": "When a caller asks whether a run would change anything, the sleep plan shall answer from index counts and shall report an explicit unknown for any phase whose candidate count it did not compute.",
+      "status": "implemented",
+      "systemName": "sleep plan",
+      "systemResponse": "answer from index counts and report an explicit unknown for any phase whose candidate count it did not compute",
+      "trigger": "a caller asks whether a run would change anything",
+      "updatedAt": "2026-08-26T00:00:00.000Z",
+      "verificationMethod": "test",
+      "verificationNote": "plan (packages/sleep/src/plan.ts) issues a FIXED number of aggregates and runs no phase, which is what makes it cheaper than --dry-run: a dry run executes all seventeen phases, including the neighbor scan that exhausted 70 GB of RSS on a 2,907-file corpus (issue #40), and each model-calling phase then checks env.dryRun. Every signal is a phase's own predicate CALLED or its clause SHARED — settledSessionCount binds the same WHERE unconsolidatedSessions binds — so a plan cannot report a number the phase disagrees with. dedup-merge and relationship-mining select candidate PAIRS from an n-by-n scan, so their candidate count is not cheaply computable; they carry inputCount plus unknownReason and NO count field, and verdict is three-valued because of them: no-signal requires every counted signal zero AND every uncountable input empty, so unknown is what a corpus with unreachable work returns. packages/sleep/tests/plan.test.ts asserts the statement count is identical over a corpus ten times larger and that no statement's plan names one table twice, which is the shape the n-by-n phases have. Verified by mutation: collapsing unknown into no-signal, fabricating count: 0 on an unknown entry, and adding a per-row statement each failed the case that names them.",
+      "verifies": []
+    },
     "f5c8e425-bb64-4257-90dd-a970cb28ae79": {
       "createdAt": "2026-08-08T02:00:00.328Z",
       "derives": [],

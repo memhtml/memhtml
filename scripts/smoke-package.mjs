@@ -371,6 +371,7 @@ const checkEveryCommand = async ({ bin, work, env }) => {
     ["trace links", ["trace", "links", "--session-id", "s1"], traced],
     ["sleep run", ["sleep", "run", "--dry-run"]],
     ["sleep status", ["sleep", "status"]],
+    ["sleep plan", ["sleep", "plan"]],
     ["sleep review", ["sleep", "review", runId]],
     ["status", ["status"]],
     ["publish", ["publish"]],

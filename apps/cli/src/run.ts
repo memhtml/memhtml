@@ -689,6 +689,19 @@ const dispatch = (
         return ["state.import", report] as const
       })
 
+    case "sleep plan":
+      return Effect.gen(function* () {
+        const sleep = yield* Sleep
+        /**
+         * The instant is read HERE and passed in, which keeps the one clock reading anywhere near sleep
+         * on the caller's side. The settled-transcript cutoff is derived from it, and a plan that read a
+         * clock inside the package would be the first thing in sleep that consults one to decide
+         * something.
+         */
+        const millis = yield* Effect.clockWith((clock) => clock.currentTimeMillis)
+        return ["sleep.plan", yield* sleep.plan(millis)] as const
+      })
+
     case "sleep status":
       return Effect.gen(function* () {
         const sleep = yield* Sleep

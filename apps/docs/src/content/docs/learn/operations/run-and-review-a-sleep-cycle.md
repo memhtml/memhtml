@@ -4,6 +4,7 @@ description: "Seventeen curation phases on a review branch: how to run them, how
 ---
 
 ```bash
+memhtml sleep plan                      # would a run change anything? index counts, no phase runs
 memhtml sleep run                       # 17 phases, each its own commit on sleep/<date>
 memhtml sleep run --dry-run             # per-phase counts, no branch, no commits
 memhtml sleep run --phases preflight,dedup-merge,integrity
@@ -33,6 +34,18 @@ report
 The branch is created before any phase runs and every commit lands on it, so a run never touches `main` (`packages/sleep/src/run.ts:96`). A second run on the same date takes `sleep/<date>-2` and upward (`packages/sleep/src/run.ts:45`). A dry run creates no branch at all.
 
 A real run leaves you checked out on the sleep branch. `memhtml sleep merge` checks out the target itself, so you do not have to.
+
+## Decide whether to run at all
+
+```bash
+memhtml sleep plan
+```
+
+`sleep plan` reads index counts and runs no phase, so it costs a handful of aggregates. `verdict` is the field to branch on. `would-change` means a counted signal is non-zero and a run has work. `no-signal` means nothing any phase reads has anything in it, which is the one state in which skipping is safe. `unknown` means every counted signal is zero but a phase whose candidates cannot be counted still has input: `dedup-merge` and `relationship-mining` select candidate pairs from a neighbor scan, so counting their candidates is the scan, and they report an input cardinality with an explicit reason instead of a zero.
+
+`signals` carries the counted ones — memories written since the last run, chunks with no vector, settled transcripts, dangling authored links, entity merges waiting on a second run — each naming the phases it feeds. `sessionsPerRun` sits beside the transcript count because a backlog of forty at a cap of ten is four runs of work.
+
+Trigger on VOLUME, not on the calendar, and the reason is correctness rather than cost: a machine-proposed entity merge applies only once two separate runs independently agree, and what makes the second agreement evidence is that the corpus changed between the reads. Two runs back to back over an unchanged corpus rubber-stamp each other.
 
 ## Start with a dry run
 
@@ -181,7 +194,7 @@ The gate always runs in fake mode here (`apps/cli/src/run.ts:514`), which keeps 
 
 ## Why the merge is a human step
 
-`memhtml sleep run` is on the cron and `memhtml sleep merge` is not. A run rewrites confidence across the corpus and archives memories, so the branch waits for a person to read `memhtml sleep review` first.
+A caller may fire `memhtml sleep run` unattended; `memhtml sleep merge` is not for that. A run rewrites confidence across the corpus and archives memories, so the branch waits for a person to read `memhtml sleep review` first.
 
 Conflict detection runs on every cycle and automatically, and conflict resolution stays with the writer or a human, which is the division of labour the whole system uses. Choosing a winner between two contradictory memories is a one-way door.
 

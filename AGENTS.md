@@ -107,6 +107,7 @@ Answering a question that takes MORE THAN ONE HOP through the corpus? Write it a
 | `memhtml sleep review` | <run-id> | `--diff` | `sleep.review` |
 | `memhtml sleep merge` | <run-id> | `--skip-gate` | `sleep.merge` |
 | `memhtml sleep status` | — | — | `sleep.report` |
+| `memhtml sleep plan` | — | — | `sleep.plan` |
 | `memhtml status` | — | — | `status.health` |
 | `memhtml publish` | — | — | `publish.report` |
 | `memhtml doctor` | — | `--fix` | `doctor.report` |
@@ -384,6 +385,10 @@ Fast-forward main to the run's branch, after the discrimination gate passes.
 ### `memhtml sleep status`
 
 The latest sleep run and its per-phase outcomes.
+
+### `memhtml sleep plan`
+
+Would a run change anything? Read the signals from index counts, running no phase.
 
 ### `memhtml status`
 
