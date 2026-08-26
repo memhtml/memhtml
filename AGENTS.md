@@ -273,7 +273,7 @@ Page through the corpus by type, workspace, tag, entity, facet, or PARA bucket.
 Every entity with its file count and its last activity, newest first. Report only.
 
 - `--type` (string) — Restrict to one entity type, e.g. `service`. The half before the colon in a `type:name` reference.
-- `--limit` (int) — Rows to return, 1 to 500. An ask outside that is clamped into it rather than refused, and `limit` echoes the bound the answer was built under. `entity_count` is the total matching the scope, so a clamped answer is visible. _(default `50`)_
+- `--limit` (int) — Rows to return, 1 to 500. An ask outside that is clamped into it rather than refused, and `limit` echoes the bound the answer was built under. `entityCount` is the total matching the scope, so a clamped answer is visible. _(default `50`)_
 - `--include-archived` (boolean) — Aggregate archived memories too. Excluded by default: eviction is a `git mv`, so an archived memory still exists and would otherwise keep an entity looking active. _(default `false`)_
 
 ### `memhtml task add`

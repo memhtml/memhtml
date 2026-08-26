@@ -514,7 +514,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "limit",
         type: "int",
         description:
-          "Rows to return, 1 to 500. An ask outside that is clamped into it rather than refused, and `limit` echoes the bound the answer was built under. `entity_count` is the total matching the scope, so a clamped answer is visible.",
+          "Rows to return, 1 to 500. An ask outside that is clamped into it rather than refused, and `limit` echoes the bound the answer was built under. `entityCount` is the total matching the scope, so a clamped answer is visible.",
         default: 50
       },
       {

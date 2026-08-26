@@ -1657,7 +1657,11 @@ export const listMemories = (params: ListParams) =>
 
 /** What {@link entityActivity} takes. Every field is optional and every default is stated. */
 export interface EntityActivityParams {
-  /** Restrict to one entity type, e.g. `service`. Absent means every type. */
+  /**
+   * Restrict to one entity type, e.g. `service`. Absent means every type.
+   *
+   * Matched case-insensitively, the way `--entity` is matched at both retrieval doors.
+   */
   readonly entityType?: string | undefined
   /** Rows to return, 1 to {@link ENTITY_ACTIVITY_MAX}. Clamped, never refused. */
   readonly limit?: number | undefined
@@ -1750,7 +1754,15 @@ export const entityActivityQuery = (
   const values: Array<string | number> = []
   if (params.includeArchived !== true) conditions.push("f.archived = 0")
   if (params.entityType !== undefined && params.entityType !== "") {
-    conditions.push("e.entity_type = ?")
+    /*
+     * Folded, because every other entity door folds. `memhtml list --entity` and `memhtml search
+     * --entity` both bind `lower(entity_type || ':' || entity_name) = lower(?)`, so a corpus holding
+     * `Service:Checkout-API` answers `service:checkout-api` on both — and a report that alone demanded
+     * the stored capitalization returns an empty page with no error and no marker, which reads as "the
+     * corpus has no entities of that type". The fold is on the FILTER only: the rows still carry the
+     * spelling the corpus authored, and `entity-resolution` is the phase that folds spellings.
+     */
+    conditions.push("lower(e.entity_type) = lower(?)")
     values.push(params.entityType.trim())
   }
   const where = conditions.length === 0 ? "" : `WHERE ${conditions.join(" AND ")}`
@@ -1803,6 +1815,14 @@ export const entityActivityQuery = (
  * `entityCount` is the total matching the scope, independent of `limit`, so a clamped answer is
  * visible rather than silent — a caller can tell "these are all of them" from "these are the newest
  * of more".
+ *
+ * **A row is one STORED reference, not one folded identity.** The grouping is on `(entity_type,
+ * entity_name)` as `file_entities` holds them, so a corpus that authored both `Service:Checkout-API`
+ * and `service:checkout-api` reports two rows while `--entity` at either retrieval door folds them and
+ * returns one entity's memories. That is the honest report of an unresolved corpus — `entity-resolution`
+ * is the phase that folds spellings, and a report that folded them first would hide the work it has to
+ * do — but it means `fileCount` is per stored spelling and a caller summing rows to a per-name total
+ * has to fold them itself.
  */
 export const entityActivity = (params: EntityActivityParams = {}) =>
   Effect.gen(function* () {

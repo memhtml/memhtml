@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { readFile, writeFile } from "node:fs/promises"
+import { readdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { promisify } from "node:util"
 
@@ -376,25 +376,131 @@ describe("memhtml entity activity", () => {
     expect(sorts, `plan: ${steps.join(" | ")}`).toEqual(["USE TEMP B-TREE FOR ORDER BY"])
   })
 
-  it("is reachable from apps/cli only, which is what keeps it out of ranking and decay", async () => {
+  it("names its symbol in NO emitted ranking or decay module, which is the report-only clause", async () => {
     /**
-     * Caution (a) as a structural fact rather than a comment. Every ranking term lives in
-     * `@memhtml/index` (the four arms) and every decay term in `@memhtml/domain` (retention), and both
-     * sit BELOW `apps/cli` in the project-reference graph — so neither can import this function, and an
-     * attempt is a compile error rather than a review comment.
+     * Caution (a) as a measurement over compiled output, the shape
+     * `packages/domain/tests/layering.test.ts` already uses for this class of claim.
      *
-     * The salience arm's two exclusions are why that matters: it refuses to rank `resources/people/`
+     * Every ranking term lives in `@memhtml/index` (the four arms) and every decay term in
+     * `@memhtml/domain` (retention), and both sit BELOW `apps/cli` in the project-reference graph — so
+     * an import from either is a compile error. What the graph does NOT prevent is the reverse
+     * direction, and that is the direction the caution is about: `apps/cli` imports both, so a
+     * tiebreaker added HERE that folded `lastActivityAt` into a ranked order would compile. This reads
+     * every emitted `.js` in the two layers that may not have it and asserts the symbol appears in
+     * none, and it reads the CLI's own dist as the control so a walk that found no files cannot pass.
+     *
+     * The salience arm's two exclusions are why it matters: it refuses to rank `resources/people/`
      * because decay is wrong for identity, and refuses `task` because decay there rewards staleness. An
      * "entity last active" number wired into ranking reintroduces both at once.
-     *
-     * Asserted by importing it here and reading it as a function, which is the only claim a test can
-     * make about a boundary the compiler already enforces: the symbol exists in the layer that may
-     * have it.
      */
+    const namesTheSymbol = async (dist: string): Promise<ReadonlyArray<string>> => {
+      const entries = await readdir(dist, { recursive: true, withFileTypes: true })
+      const files = entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+        .map((entry) => join(entry.parentPath, entry.name))
+      // A walk that found nothing would make every assertion below vacuous, which is the failure this
+      // whole case exists to replace.
+      expect(files.length, `no emitted modules under ${dist}`).toBeGreaterThan(0)
+      const named: Array<string> = []
+      for (const file of files) {
+        if ((await readFile(file, "utf8")).includes("entityActivity")) named.push(file)
+      }
+      return named
+    }
+
+    const cliDist = new URL("../dist", import.meta.url).pathname
+    // The control: the layer that MAY have it does, so a matcher that never matched cannot pass below.
+    expect(await namesTheSymbol(cliDist)).not.toEqual([])
+
+    for (const layer of ["index", "domain"]) {
+      const dist = new URL(`../../../packages/${layer}/dist`, import.meta.url).pathname
+      expect(await namesTheSymbol(dist), `${layer} names entityActivity`).toEqual([])
+    }
     expect(typeof entityActivity).toBe("function")
-    expect(shared).not.toBe("")
-    expect(checkoutOnly).not.toBe("")
-    expect(sanjuOnly).not.toBe("")
-    expect(conceptSanju).not.toBe("")
+  })
+})
+
+/**
+ * The `--type` filter over a corpus that authored its types in two cases.
+ *
+ * Its own corpus rather than a case in the suite above, so the census there keeps a fixture whose
+ * entity total is derived from what it seeded.
+ *
+ * `file_entities` stores the type the author wrote, and nothing between the write door and this table
+ * folds it: `CandidateEntity.type` is a free-form string, `memhtml write --entity` takes one verbatim,
+ * and the extraction assist unions what a model returned. So a corpus holding `Service:Payments-API`
+ * beside `service:checkout-api` is ordinary, and both retrieval doors already answer
+ * `--entity service:payments-api` for the first one. A report that alone demanded the stored
+ * capitalization answers an empty page, exit 0, with no marker — the failure that reads as "the corpus
+ * has no entities of that type".
+ */
+describe("memhtml entity activity --type over mixed-case stored types", () => {
+  let cli: Cli
+  let lowerCased: unknown
+  let upperCased: unknown
+  let listedCapitalized = 0
+
+  beforeAll(async () => {
+    cli = await makeCli()
+    await seed(cli, {
+      title: "The payments API retries a declined authorization once",
+      claim: "The payments API retries a declined authorization exactly once.",
+      entities: ["Service:Payments-API"]
+    })
+    await seed(cli, {
+      title: "The checkout API drains before a rollback",
+      claim: "The checkout API drains its VIP before a rollback.",
+      entities: ["service:checkout-api"]
+    })
+    // The neighbour that makes the filter a filter: a type the scope must still exclude.
+    await seed(cli, {
+      title: "Sanju owns the payments runbook",
+      claim: "Sanju owns the payments rollback runbook.",
+      entities: ["person:sanju"]
+    })
+
+    lowerCased = await cli.json<ActivityReport>(["entity", "activity", "--type", "service"])
+    upperCased = await cli.json<ActivityReport>(["entity", "activity", "--type", "SERVICE"])
+    const listed = await cli.json<{ readonly files: ReadonlyArray<{ readonly path: string }> }>([
+      "list",
+      "--entity",
+      "service:payments-api"
+    ])
+    listedCapitalized = listed.files.length
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  it("answers the spelling both retrieval doors answer, in either case", () => {
+    // The control that makes this a fold rather than a coincidence: `list --entity` already finds the
+    // capitalized reference under the lowercase spelling, so the report was the one door that did not.
+    expect(listedCapitalized).toBe(1)
+    const lower = lowerCased as ActivityReport
+    const upper = upperCased as ActivityReport
+    expect(lower.entities.map((row) => row.entity).sort()).toEqual([
+      "Service:Payments-API",
+      "service:checkout-api"
+    ])
+    expect(lower.entityCount).toBe(2)
+    // Case-insensitive in BOTH directions, so neither spelling is privileged.
+    expect(upper.entities.map((row) => row.entity).sort()).toEqual(
+      lower.entities.map((row) => row.entity).sort()
+    )
+  })
+
+  it("still excludes a type outside the scope, so the fold did not widen the filter", () => {
+    const lower = lowerCased as ActivityReport
+    expect(lower.entities.map((row) => row.entityType)).not.toContain("person")
+  })
+
+  it("reports the STORED spelling in each row, which is what the folding phase later resolves", () => {
+    // The fold is on the predicate only. A report that lowercased its output would claim the corpus
+    // holds a reference it does not, and `entity-resolution` is the phase that changes what is stored.
+    const lower = lowerCased as ActivityReport
+    const payments = lower.entities.find((row) => row.entityName === "Payments-API")
+    expect(payments?.entityType).toBe("Service")
+    expect(payments?.entity).toBe("Service:Payments-API")
   })
 })
