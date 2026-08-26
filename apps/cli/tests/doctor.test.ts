@@ -111,3 +111,79 @@ describe("doctor --fix counts only repairs whose bytes reached disk", () => {
     expect(clean.dangling).toEqual([])
   })
 })
+
+/**
+ * The untyped-entity count, which is what makes a bare-name PRODUCER visible.
+ *
+ * `unknown` is a supported storage type, so nothing refuses a bare `memhtml-entity` meta and nothing
+ * downstream errors on one. What it costs is reachability: the `entity` scope requires the type half, so
+ * a memory stored under `unknown:checkout-api` returns an empty set for `service:checkout-api` — the
+ * same answer an absent memory gives. Doctor is the only surface that can say the corpus holds them.
+ */
+describe("doctor counts untyped entity references", () => {
+  let cli: Cli
+
+  beforeAll(async () => {
+    cli = await makeCli()
+
+    // A TYPED neighbour first. Its `unknown`-free rows are what prove the count is a predicate on the
+    // entity type rather than a count of every entity in the corpus.
+    await cli.json([
+      "write",
+      "--type",
+      "semantic",
+      "--title",
+      "The typed neighbour",
+      "--claim",
+      "This memory names its entity with a type.",
+      "--entity",
+      "service:checkout-api"
+    ])
+
+    // Two files sharing one bare name, so `files` is a count of claimants and not of distinct names.
+    for (const title of ["The first bare namer", "The second bare namer"]) {
+      await cli.json([
+        "write",
+        "--type",
+        "semantic",
+        "--title",
+        title,
+        "--claim",
+        `${title} writes its entity without a type.`,
+        "--entity",
+        "payments-api"
+      ])
+    }
+
+    await cli.json([
+      "write",
+      "--type",
+      "semantic",
+      "--title",
+      "The third bare namer",
+      "--claim",
+      "A different bare name entirely.",
+      "--entity",
+      "ledger-service"
+    ])
+  })
+
+  it("reports each bare name with how many files claim it, and the typed one not at all", async () => {
+    const report = await cli.json<DoctorReport>(["doctor"])
+    // Ordered by claimants descending, so the worst offender leads.
+    expect(report.untypedEntities).toEqual([
+      { entityName: "payments-api", files: 2 },
+      { entityName: "ledger-service", files: 1 }
+    ])
+    // Distinct NAMES, not files: two claimants of one name count once.
+    expect(report.untypedEntityTotal).toBe(2)
+  })
+
+  it("leaves healthy alone, because unknown is a supported type rather than a defect", async () => {
+    const report = await cli.json<DoctorReport>(["doctor"])
+    expect(report.untypedEntityTotal).toBeGreaterThan(0)
+    // The load-bearing half: a corpus whose only finding is untyped entities is still healthy. Gating
+    // on it would turn every hand-authored corpus red for writing metas the way the format allows.
+    expect(report.healthy).toBe(true)
+  })
+})

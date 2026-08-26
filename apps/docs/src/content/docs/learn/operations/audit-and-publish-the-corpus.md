@@ -26,6 +26,8 @@ A healthy store answers with every finding list empty:
     "inboxTasksCrowded": false,
     "overdueTasks": [],
     "staleBlockers": [],
+    "untypedEntities": [],
+    "untypedEntityTotal": 0,
     "warnings": [],
     "unparseable": [],
     "indexFresh": true,
@@ -51,12 +53,15 @@ Every list is present and possibly empty, so a parser never has to branch on a m
 | `inboxTasksCrowded`        | Over 10 open tasks in `areas/inbox/tasks/`: work with no project.                                              | Drain it. A task inbox is a queue, and this one is filling up.                                                            |
 | `overdueTasks`             | An open task whose `memhtml-due` has passed.                                                                   | Doctor is the only surface that reads `due_at`, because search excludes a task by default and every sleep phase skips it. |
 | `staleBlockers`            | A `blocks` edge whose blocker is archived or absent.                                                           | Decide whether the blocked task is ready. Each file on its own is valid, and only the pair is wrong.                      |
+| `untypedEntities`          | A `memhtml-entity` meta written as a bare name, so it indexes under the `unknown` type.                        | Name a type in the producer. `unknown:checkout-api` is not reachable by `--entity service:checkout-api`.                  |
 | `warnings`                 | An element outside the closed vocabulary. The file still indexes.                                              | Author's intent, and doctor will not guess at it.                                                                         |
 | `unparseable`              | A file the parser refuses. It is absent from the index.                                                        | Read the violations with `memhtml read <path>`, fix the file, then `memhtml index rebuild`.                               |
 | `indexFresh: false`        | The index describes an older commit.                                                                           | `memhtml index update --embed`.                                                                                           |
 | `embedModelMatches: false` | The stored vectors came from a different embedding model than the configured one.                              | Delete the database and rebuild: see [rebuild the index](/learn/operations/rebuild-the-index/).                           |
 
 The two inbox thresholds are `INBOX_WARN_DEPTH` 20 and `INBOX_TASK_WARN_DEPTH` 10 (`apps/cli/src/doctor.ts:69`, `apps/cli/src/doctor.ts:78`).
+
+`overdueTasks`, `staleBlockers` and `untypedEntities` are the three findings excluded from `healthy`. The first two describe work that has fallen behind rather than a corpus that is wrong, and folding them in would make `healthy: false` the normal state. `untypedEntities` is excluded because `unknown` is a supported storage type: a bare name costs reachability, not correctness, and gating on it would turn a hand-authored corpus red for writing its metas the way the format allows. `untypedEntities` is capped at `UNTYPED_ENTITY_SAMPLE` 20 with the distinct count reported beside it as `untypedEntityTotal`, so a truncated sample cannot be read as the whole set.
 
 Search excludes a `task` memory by default and every sleep phase skips it, so `memhtml doctor` is the only command that reports a task past its due date. If you use tasks, put this command on your cron.
 
