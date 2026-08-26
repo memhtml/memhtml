@@ -233,6 +233,8 @@ const MemoryList = Tool.make("memory_list", {
     workspace: Optional(Schema.String),
     tag: Optional(Schema.String),
     entity: Optional(Schema.String),
+    // …
+    facets: Optional(Schema.Array(Schema.String)),
     para: Optional(Schema.Literals(PARA_BUCKETS)),
     limit: Optional(Count),
     cursor: Optional(Schema.String)
@@ -260,7 +262,7 @@ const MemoryList = Tool.make("memory_list", {
 
 Pages through the corpus by facet. A keyset cursor on the path keeps a page correct while a sleep cycle archives files.
 
-**Input:** every parameter optional. `memory_type` is one of the nine writable types; `para` is one of `projects`, `areas`, `resources`, `archive` (`packages/contracts/src/types.ts:63`); `entity` takes the same `type:name` spelling `memory_search` accepts; `limit` is clamped to 1..500 and defaults to 50 (`apps/cli/src/operations.ts:1196`).
+**Input:** every parameter optional. `memory_type` is one of the nine writable types; `para` is one of `projects`, `areas`, `resources`, `archive` (`packages/contracts/src/types.ts:63`); `entity` takes the same `type:name` spelling `memory_search` accepts; `facets` takes `name=value` specs over the article's authored `<dl>` pairs, composed exactly as `memory_search` composes them — AND across distinct names, OR within one name — and matched as TEXT with no case fold; `limit` is clamped to 1..500 and defaults to 50.
 
 **Output:** `files`, an array of ten-field rows, and `next_cursor`, null on the last page.
 
@@ -482,6 +484,8 @@ const MemorySearch = Tool.make("memory_search", {
     tags: Optional(Schema.Array(Schema.String)),
     // …
     entity: Optional(Schema.String),
+    // …
+    facets: Optional(Schema.Array(Schema.String)),
     include_archived: Optional(Schema.Boolean),
     // …
     as_of: Optional(Schema.String)
@@ -518,7 +522,7 @@ const MemorySearch = Tool.make("memory_search", {
 
 Runs ranked search over the corpus. It fuses the lexical, vector, recency, and salience arms with RRF and then diversifies the result.
 
-**Input:** `query` required; the rest optional. `limit` defaults to 10 (`packages/index/src/retrieval.ts:29`). `memory_types` draws from the nine writable types. `entity` takes one reference in `type:name` form. That is the same spelling `memory_list` accepts and the same spelling a hit's `entities` publishes, so an agent chains by copying a value rather than reconstructing one (`apps/mcp/src/tools.ts:447-451`). `as_of` takes an ISO instant and returns what was believed valid at that moment, over the window `coalesce(valid_from, event_at, created_at) <= as_of < valid_until` (`apps/mcp/src/tools.ts:452-458`).
+**Input:** `query` required; the rest optional. `limit` defaults to 10 (`packages/index/src/retrieval.ts:29`). `memory_types` draws from the nine writable types. `entity` takes one reference in `type:name` form. That is the same spelling `memory_list` accepts and the same spelling a hit's `entities` publishes, so an agent chains by copying a value rather than reconstructing one (`apps/mcp/src/tools.ts:447-451`). `facets` takes `name=value` specs over the article's authored `<dl>` pairs. The composition is a semantic contract rather than a convenience: values under the SAME name broaden (OR) and different names narrow (AND), so `["doc-type=runbook", "doc-type=guide"]` is either and `["doc-type=runbook", "tier=1"]` is both — and a caller who read it the other way round acts on a superset or on an empty set, neither of which the rows report. Matched as TEXT with no case fold, unlike `entity`: a facet is the consumer's own machine-written vocabulary. A spec with an empty half is dropped rather than refused, so a malformed one widens the answer instead of narrowing it, and the rows cannot report that either. `as_of` takes an ISO instant and returns what was believed valid at that moment, over the window `coalesce(valid_from, event_at, created_at) <= as_of < valid_until` (`apps/mcp/src/tools.ts:452-458`).
 
 **Output:** `hits` plus four result-level fields. Each hit carries `snippet`, which holds the best-matching chunk's text for this query, or the file's opening chunk on the degraded path, truncated with a trailing ellipsis when cut. `superseded_by` is present and nullable so a client can tell "not superseded" from "this build does not report supersession" (`apps/mcp/src/tools.ts:485-491`). `degraded` is true when the vector arm did not fire. `arms` names the arms that ran. `scope_empty` is true when an `entity` scope narrowed the query and nothing survived, so an empty scoped result is attributable to the scope. A scope the tool could not satisfy is reported rather than widened (`apps/mcp/src/tools.ts:499-505`). Returning a path changes nothing on the access plane, because a hit is the ranker's guess rather than a deliberate open.
 
@@ -580,7 +584,7 @@ const MemoryWrite = Tool.make("memory_write", {
 
 Writes one memory to the corpus. When an active memory already holds this exact content, the call returns that existing path with `deduped: true` and creates no file and no commit.
 
-**Input:** `Schema.Struct(writeFields())`, thirteen fields shared with each `memory_write_batch` op (`apps/mcp/src/tools.ts:226-247`). Required: `title` and `memory_type`, the latter one of the nine writable types, since the sleep cycle writes `arc` itself (`apps/mcp/src/tools.ts:44-45`, `packages/contracts/src/types.ts:34-40`). Optional: `body`, `article_html`, `path`, `workspace`, `tags`, `entities`, `importance`, `confidence`, `session_id`, `prompt_id`, `turn_uuid`. Exactly one of `body` or `article_html` must be supplied. The handler enforces that rule rather than the schema, and a blank string counts as absent on both sides (`apps/mcp/src/handlers.ts:107-136`). On the prose path the first sentence becomes the `<mark>` claim and each blank-line paragraph becomes one `<p>`. On the markup path the caller owns the format, which includes the single `<mark>` rule, the closed element vocabulary, and the first `<time datetime>` becoming the memory's event time that the recency arm ranks by (`apps/mcp/src/tools.ts:133-144`).
+**Input:** `Schema.Struct(writeFields())`, thirteen fields shared with each `memory_write_batch` op (`apps/mcp/src/tools.ts:226-247`). Required: `title` and `memory_type`, the latter one of the nine writable types, since the sleep cycle writes `arc` itself (`apps/mcp/src/tools.ts:44-45`, `packages/contracts/src/types.ts:34-40`). Optional: `body`, `article_html`, `path`, `strict_path`, `workspace`, `tags`, `entities`, `importance`, `confidence`, `session_id`, `prompt_id`, `turn_uuid`. `strict_path` opts out of the lenient default: an explicit `path` that is not a usable memory path is re-derived through the placement rule and reported as a success at some other path, and `strict_path: true` makes it `ERR_INVALID_MEMORY` with nothing written, staged, or committed. It is published on every `memory_write_batch` op too, through the same `writeFields()`. Exactly one of `body` or `article_html` must be supplied. The handler enforces that rule rather than the schema, and a blank string counts as absent on both sides (`apps/mcp/src/handlers.ts:107-136`). On the prose path the first sentence becomes the `<mark>` claim and each blank-line paragraph becomes one `<p>`. On the markup path the caller owns the format, which includes the single `<mark>` rule, the closed element vocabulary, and the first `<time datetime>` becoming the memory's event time that the recency arm ranks by (`apps/mcp/src/tools.ts:133-144`).
 
 **Output:** `path`, `created`, `deduped`, and `existing_path`. `existing_path` is present and nullable rather than optional, so a client can tell "this op did not dedupe" from "this server does not report dedupes" (`apps/mcp/src/tools.ts:284-288`).
 

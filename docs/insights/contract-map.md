@@ -698,6 +698,8 @@ export interface SearchScope {
   /** ANY-of overlap. Each tag BROADENS the result set. */
   readonly tags?: ReadonlyArray<string> | undefined
   readonly entity?: string | undefined
+  /** `<dl>` facet predicates: AND across distinct names, OR within one name. */
+  readonly facets?: ReadonlyArray<FacetFilter> | undefined
   /** Archived files are excluded unless asked for. Eviction is a `git mv`, so they still exist. */
   readonly includeArchived?: boolean | undefined
   readonly asOf?: string | undefined
