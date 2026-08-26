@@ -326,7 +326,7 @@ export const sharedEntityPairs = (
  * Three filters, each load-bearing:
  *
  * - `derived = 1` restricts this to the machine-mined set. An authored `relates_to` is an agent's
- *   assertion, and re-typing it would let a nightly job overwrite a human judgment with a narrower rel.
+ *   assertion, and re-typing it would let an unattended run overwrite a human judgment with a narrower rel.
  * - `edge_class = 'memory'` is the same firewall every graph read carries.
  * - The `derived = 0` anti-join drops a pair that already carries ANY authored edge either way, which
  *   is exactly {@link sharedEntityPairs}' rule. Without it a pair typed last night would be re-judged
@@ -375,7 +375,7 @@ export interface EntityCount {
  * ("ask Imani about the migration ledger") would otherwise mint `resources/people/imani.html`, a
  * durable hand-editable identity surface created from a to-do item. A task's entity references
  * are also the agent's own handles on its own work: renaming one to a corpus-wide canonical is a
- * nightly job editing live working state.
+ * an unattended run editing live working state.
  */
 export const activeEntities = (
   db: DatabaseShape
@@ -509,11 +509,11 @@ export interface EdgeRow {
  * propagation, or the retention bridge count, and this query is what makes that true. The CHECK
  * constraint alone does not.
  *
- * **The deep grouping band is excluded, and the exclusion is what keeps nightly scoring stable
+ * **The deep grouping band is excluded, and the exclusion is what keeps DEFAULT-run scoring stable
  * across deep runs (issue #63).** Deep mining writes machine-mined `laterally_related` edges at a
- * floor (0.72) far below the nightly one, purely so label propagation can partition the inbox tail
+ * floor (0.72) far below the default one, purely so label propagation can partition the inbox tail
  * for compress. Those edges persist in the index after the deep run, so without this predicate the
- * FIRST deep run would permanently change every subsequent nightly run's PageRank, communities, and
+ * FIRST deep run would permanently change every subsequent default run's PageRank, communities, and
  * bridge counts — and therefore its eviction decisions — on a corpus whose files did not change.
  * The filter names `derived = 1` as well as the rel, so an AUTHORED `laterally_related` (an agent's
  * own assertion, addable through `memhtml link`) keeps exactly the graph standing it had.
@@ -948,6 +948,20 @@ export const sessionManifestRows = (
       )
 
 /**
+ * The predicate that makes a session a CANDIDATE, as one clause two statements bind.
+ *
+ * Written once because {@link unconsolidatedSessions} selects the batch and
+ * {@link settledSessionCount} counts the whole set, and a second copy of a selection rule is what lets
+ * a plan report a number the phase does not agree with. Two parameters, in this order: `minBytes`, then
+ * the settled-before instant.
+ */
+const SETTLED_SESSION_WHERE = `WHERE NOT EXISTS (
+       SELECT 1 FROM trace_consolidations c WHERE c.session_id = t.session_id
+     )
+       AND t.file_size >= ?
+       AND t.file_mtime < ?`
+
+/**
  * Sessions the sleep cycle has not distilled yet: big enough to hold something, settled enough to be
  * over, newest first, capped.
  *
@@ -969,9 +983,9 @@ export const sessionManifestRows = (
  *
  * **`ORDER BY file_mtime DESC` + `LIMIT` is the first-run guard, and the order carries the policy.** A
  * fresh install faces a year of transcripts, and an uncapped batch would hand thousands of files to
- * one agent session. Newest-first is what makes the cap deliberate: the cycle
- * consolidates recent sessions first and works backwards a batch per night, so the memories it earns
- * soonest are the ones about what the agent is doing now.
+ * one agent session. Newest-first is what makes the cap deliberate: the cycle consolidates recent
+ * sessions first and works backwards one batch per run, so the memories it earns soonest are the ones
+ * about what the agent is doing now.
  */
 export const unconsolidatedSessions = (
   db: DatabaseShape,
@@ -986,15 +1000,31 @@ export const unconsolidatedSessions = (
     `SELECT t.session_id AS session_id, t.file_path AS file_path,
             t.file_size AS file_size, t.file_mtime AS file_mtime
      FROM traces t
-     WHERE NOT EXISTS (
-       SELECT 1 FROM trace_consolidations c WHERE c.session_id = t.session_id
-     )
-       AND t.file_size >= ?
-       AND t.file_mtime < ?
+     ${SETTLED_SESSION_WHERE}
      ORDER BY t.file_mtime DESC, t.session_id ASC
      LIMIT ?`,
     [options.minBytes, options.settledBefore, options.limit]
   )
+
+/**
+ * How many sessions the consolidation phase WOULD have to choose from, unbounded by its per-run cap.
+ *
+ * The same clause {@link unconsolidatedSessions} binds, counted rather than paged, so a read that
+ * reports the backlog cannot disagree with the phase about what a candidate is. The batch cap is a
+ * separate fact the caller reports beside it: a count of 40 with a cap of 10 is four runs of work, and
+ * a count that had been clamped to the cap would read as one.
+ */
+export const settledSessionCount = (
+  db: DatabaseShape,
+  options: { readonly minBytes: number; readonly settledBefore: string }
+): Effect.Effect<number, StorageFailure> =>
+  db
+    .get<{ n: number }>(
+      `SELECT count(*) AS n FROM traces t
+     ${SETTLED_SESSION_WHERE}`,
+      [options.minBytes, options.settledBefore]
+    )
+    .pipe(Effect.map((row) => row?.n ?? 0))
 
 /**
  * Mark sessions consolidated, as ONE batch.

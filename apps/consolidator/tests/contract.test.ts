@@ -17,6 +17,7 @@ import {
   MAX_EVIDENCE_PER_CANDIDATE,
   MAX_QUOTE_CHARS,
   MAX_STATEMENT_CHARS,
+  MAX_TRANSCRIPTS_PER_RUN,
   underCitedWatermarkWarning,
   ungroundedCommitmentReason,
   ungroundedEvidenceReason,
@@ -41,23 +42,20 @@ const decodeRaw = (payload: unknown): Result.Result<ConsolidationPayload, unknow
   )
 
 /**
- * The same decode with `commitments: []` supplied when the case did not state one.
+ * The same decode with the payload's other REQUIRED fields supplied when the case did not state them.
  *
- * Every case in the CANDIDATE suite is about the candidate half of the payload, and `commitments` is a
- * REQUIRED field, so without this each of them would fail for a reason that has nothing to do with what
- * it asserts. Filling it here keeps each case's subject legible.
+ * Every case in the CANDIDATE suite is about the candidate half of the payload, and `commitments` and
+ * `readSessionIds` are both required, so without this each of them would fail for a reason that has
+ * nothing to do with what it asserts. Filling them here keeps each case's subject legible.
  *
- * It fills only when the value is a non-array object with no `commitments` key, so the three cases that
- * turn on the ROOT shape — a missing `candidates`, a bare array, an extra root key — still see exactly
- * what they passed. And the requirement itself is asserted directly through {@link decodeRaw}, so
- * nothing about it rests on this convenience.
+ * It fills only a non-array object, and only a key the case did not state, so the three cases that turn
+ * on the ROOT shape — a missing `candidates`, a bare array, an extra root key — still see exactly what
+ * they passed. Each requirement is asserted directly through {@link decodeRaw}, so nothing about it
+ * rests on this convenience.
  */
 const decode = (payload: unknown): Result.Result<ConsolidationPayload, unknown> =>
-  typeof payload === "object" &&
-  payload !== null &&
-  !Array.isArray(payload) &&
-  !("commitments" in payload)
-    ? decodeRaw({ commitments: [], ...payload })
+  typeof payload === "object" && payload !== null && !Array.isArray(payload)
+    ? decodeRaw({ commitments: [], readSessionIds: ["session-a"], ...payload })
     : decodeRaw(payload)
 
 const evidence = (sessionId: string, quote: string) => ({ sessionId, quote })
@@ -76,7 +74,10 @@ const candidate = (overrides: Record<string, unknown> = {}) => ({
   kind: "error_pattern",
   claim: "The batch importer fails on empty CSV headers across sessions.",
   gist: "Three sessions hit the same TypeError from a header-less CSV; the fix each time was to pass an explicit header list.",
-  entities: ["importer.ts", "papaparse"],
+  entities: [
+    { type: "file", name: "importer.ts" },
+    { type: "package", name: "papaparse" }
+  ],
   evidence: [
     evidence("session-a", "TypeError: Cannot read properties of undefined (reading 'trim')"),
     evidence("session-b", "TypeError: Cannot read properties of undefined (reading 'trim')")
@@ -183,9 +184,81 @@ describe("CandidateMemory decode", () => {
     expect(Result.isFailure(decode([candidate()]))).toBe(true)
   })
 
-  it("accepts empty entities but rejects an empty entity string", () => {
+  it("accepts empty entities but rejects an entity with an empty half", () => {
     expect(Result.isSuccess(decode({ candidates: [candidate({ entities: [] })] }))).toBe(true)
-    expect(Result.isFailure(decode({ candidates: [candidate({ entities: [""] })] }))).toBe(true)
+    expect(
+      Result.isFailure(decode({ candidates: [candidate({ entities: [{ type: "", name: "x" }] })] }))
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        decode({ candidates: [candidate({ entities: [{ type: "file", name: "" }] })] })
+      )
+    ).toBe(true)
+  })
+
+  /**
+   * The type half is what makes an entity reachable, so the decode refuses every way of omitting it.
+   *
+   * A memory whose entity is filed under `unknown` answers the reference a caller spells —
+   * `service:checkout-api` — with an empty set, and the empty set is also what an absent memory
+   * returns. This is the case that keeps the shape STRUCTURAL rather than advisory: a bare string is
+   * the answer a model trained on the previous phrasing gives, and it fails here instead of writing an
+   * unreachable memory.
+   *
+   * (Mutation: `entities: Schema.Array(Schema.String.check(Schema.isMinLength(1)))` accepts the bare
+   * strings and the type-less object below, and fails this case on the first two expectations.)
+   */
+  it("REJECTS a bare-string entity and an entity with no type", () => {
+    expect(
+      Result.isFailure(decode({ candidates: [candidate({ entities: ["checkout-api"] })] }))
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        decode({ candidates: [candidate({ entities: [{ name: "checkout-api" }] })] })
+      )
+    ).toBe(true)
+    expect(
+      Result.isFailure(decode({ candidates: [candidate({ entities: [{ type: "service" }] })] }))
+    ).toBe(true)
+  })
+
+  /**
+   * An undeclared key inside an entity fails, matching the payload root's own posture: the decode runs
+   * with `onExcessProperty: "error"` precisely so an answer shaped like a NEIGHBOURING schema cannot
+   * decode with the difference stripped out.
+   */
+  it("REJECTS an extra key inside an entity", () => {
+    expect(
+      Result.isFailure(
+        decode({
+          candidates: [candidate({ entities: [{ type: "service", name: "checkout-api", id: 7 }] })]
+        })
+      )
+    ).toBe(true)
+  })
+
+  /**
+   * The type vocabulary is OPEN, and this is the assertion that keeps it open. memhtml must not dictate
+   * a consumer's entity taxonomy, so a term outside anything the prompt suggests decodes, and so does
+   * `unknown` — which is a real store type, not a rejection.
+   *
+   * (Mutation: `type: Schema.Literals([...])` over any fixed list fails here.)
+   */
+  it("ACCEPTS a type outside the suggested vocabulary, and `unknown`", () => {
+    expect(
+      Result.isSuccess(
+        decode({
+          candidates: [
+            candidate({
+              entities: [
+                { type: "gauge", name: "backlog-depth" },
+                { type: "unknown", name: "the thing in the corner" }
+              ]
+            })
+          ]
+        })
+      )
+    ).toBe(true)
   })
 
   it("decodes to the class, so downstream code gets the declared type", () => {
@@ -325,8 +398,48 @@ describe("CandidateCommitment decode", () => {
    * (Mutation: making `commitments` optional, or defaulting it to `[]` in the schema, fails this.)
    */
   it("REJECTS a payload with no commitments field at all", () => {
-    expect(Result.isFailure(decodeRaw({ candidates: [] }))).toBe(true)
-    expect(Result.isSuccess(decodeRaw({ candidates: [], commitments: [] }))).toBe(true)
+    expect(Result.isFailure(decodeRaw({ candidates: [], readSessionIds: [] }))).toBe(true)
+    expect(
+      Result.isSuccess(decodeRaw({ candidates: [], commitments: [], readSessionIds: [] }))
+    ).toBe(true)
+  })
+})
+
+describe("the read receipt is a required field", () => {
+  /**
+   * `readSessionIds` is what the watermark advances over, so an ABSENT one has no honest reading. The
+   * only fallback available would be the whole reachable set, which is the advance the field exists to
+   * narrow — a turn that opened 1 of 32 would go back to watermarking all 32, and
+   * `trace_consolidations` is an anti-join, so those 31 transcripts would be lost rather than delayed.
+   * Required is what makes an agent that stopped reporting it fail the turn instead.
+   *
+   * (Mutation: `Schema.optionalKey(...)`, or a `?? []` anywhere downstream, fails the first case.)
+   */
+  it("REJECTS a payload with no readSessionIds at all", () => {
+    expect(Result.isFailure(decodeRaw({ candidates: [], commitments: [] }))).toBe(true)
+    expect(
+      Result.isSuccess(decodeRaw({ candidates: [], commitments: [], readSessionIds: [] }))
+    ).toBe(true)
+  })
+
+  /** `[]` is a real answer: nothing was readable, or nothing was opened. Not the same as absent. */
+  it("ACCEPTS an empty receipt", () => {
+    expect(Result.isSuccess(decode({ candidates: [], readSessionIds: [] }))).toBe(true)
+  })
+
+  /**
+   * Bounded by the transcript cap, because a run mounts at most that many transcripts and a longer list
+   * names sessions no run was handed. Both sides of the bound, so a later edit cannot tighten the value
+   * while every rejection case stays green.
+   */
+  it("bounds the receipt at the transcript cap and accepts exactly that many", () => {
+    const ids = (count: number) => Array.from({ length: count }, (_, i) => `session-${String(i)}`)
+    expect(
+      Result.isSuccess(decode({ candidates: [], readSessionIds: ids(MAX_TRANSCRIPTS_PER_RUN) }))
+    ).toBe(true)
+    expect(
+      Result.isFailure(decode({ candidates: [], readSessionIds: ids(MAX_TRANSCRIPTS_PER_RUN + 1) }))
+    ).toBe(true)
   })
 })
 
@@ -488,10 +601,10 @@ describe("one answer is finite by contract", () => {
   })
 
   it("REJECTS a candidate with more entities than the ceiling", () => {
-    const entities = Array.from(
-      { length: MAX_ENTITIES_PER_CANDIDATE + 1 },
-      (_, i) => `entity-${String(i)}`
-    )
+    const entities = Array.from({ length: MAX_ENTITIES_PER_CANDIDATE + 1 }, (_, i) => ({
+      type: "file",
+      name: `entity-${String(i)}`
+    }))
     expect(Result.isFailure(decode({ candidates: [candidate({ entities })] }))).toBe(true)
   })
 
@@ -511,10 +624,10 @@ describe("one answer is finite by contract", () => {
     const quotes = Array.from({ length: MAX_EVIDENCE_PER_CANDIDATE }, (_, i) =>
       evidence("session-a", `quote number ${String(i)}`)
     )
-    const entities = Array.from(
-      { length: MAX_ENTITIES_PER_CANDIDATE },
-      (_, i) => `entity-${String(i)}`
-    )
+    const entities = Array.from({ length: MAX_ENTITIES_PER_CANDIDATE }, (_, i) => ({
+      type: "file",
+      name: `entity-${String(i)}`
+    }))
     expect(
       Result.isSuccess(
         decode({
@@ -536,58 +649,125 @@ describe("one answer is finite by contract", () => {
   })
 })
 
-describe("watermarkableSessionIds gates the watermark on evidence of reading", () => {
+describe("watermarkableSessionIds advances the sessions the answer reports reading", () => {
   const READABLE = ["session-a", "session-b", "session-c"]
+  /** The receipt an honest turn over the whole batch returns. */
+  const READ_ALL = { readSessionIds: READABLE }
 
   /**
-   * Reachability is measured by this process BEFORE the model runs, so it can never prove reading.
-   * The only receipt an answer carries is its quotes — verified against the real files by
-   * `fabricatedQuoteReason` — so an answer with no candidates AND no commitments proves nothing and
-   * must advance nothing. Without this rule, a misrouted or hollow turn watermarks the whole batch
-   * and those sessions are never read again.
+   * Reachability is measured by this process BEFORE the model runs, so it can never prove reading, and
+   * `readSessionIds` is the agent's own claim. The only VERIFIED receipt an answer carries is its quotes,
+   * re-read against the real files by `fabricatedQuoteReason` — so an answer with no candidates AND no
+   * commitments proves nothing and must advance nothing, however many sessions its receipt names. That
+   * arm is the one a misrouted listener trips: `{"candidates": [], "commitments": [], "readSessionIds":
+   * [...]}` is valid JSON that would otherwise watermark a batch nothing opened.
    *
-   * (Mutation: returning `readableSessionIds` unconditionally fails the first case.)
+   * (Mutation: returning the intersection unconditionally, without the finding gate, fails this case.)
    */
-  it("advances NOTHING for an answer with zero candidates and zero commitments", () => {
-    expect(watermarkableSessionIds({ candidates: [], commitments: [] }, READABLE)).toEqual([])
+  it("advances NOTHING for an answer with zero findings, whatever its receipt claims", () => {
+    expect(
+      watermarkableSessionIds({ candidates: [], commitments: [], ...READ_ALL }, READABLE)
+    ).toEqual([])
   })
 
-  it("advances EVERY readable session on one finding's receipt — a KNOWN residual, not a proof", () => {
+  it("advances exactly the READ sessions, not the whole reachable set", () => {
     /**
-     * The guarantee, stated as what it is rather than as what would be safe. One finding advances the
-     * WHOLE readable set, cited or not, and the receipt behind it is per-RUN: the quote-containment gate
-     * proves some file was opened and quoted, and a `ConsolidationPayload` says nothing about the
-     * others. So a turn that opened 1 of 32 reachable transcripts and returned one candidate with two
-     * real quotes advances all 32, and `trace_consolidations` is an anti-join, so the 31 it never read
-     * are lost rather than delayed.
+     * The receipt is what bounds the advance to what was opened. A rule that advanced every REACHABLE
+     * session on one finding would watermark all 32 for a turn that read 1, and `trace_consolidations`
+     * is an anti-join, so the 31 nobody opened would be lost rather than delayed.
      *
-     * That is deliberate and it is not free. The alternative — advancing only cited sessions — re-reads
-     * every quiet transcript at full model cost every night forever, and "the agent read it and found
-     * nothing above the bar" is what the watermark means. Closing the hole needs a per-session read
-     * receipt in the payload; until then {@link underCitedWatermarkWarning} makes the narrow-receipt
-     * shape visible in the log, and this case pins the residual so nobody reads it as a checked
-     * guarantee.
+     * A candidate quoting only `session-a`, with a receipt naming `session-a` alone, advances
+     * `session-a` alone — and `session-b` and `session-c` come back on a later night.
+     *
+     * (Mutation: returning `readableSessionIds` fails the second expectation; intersecting on the CITED
+     * sessions instead of the reported ones fails the third, where a barren-but-read session advances.)
      */
     expect(
-      watermarkableSessionIds({ candidates: [candidate()], commitments: [] }, READABLE)
-    ).toEqual(READABLE)
+      watermarkableSessionIds(
+        { candidates: [candidate()], commitments: [], readSessionIds: ["session-a"] },
+        READABLE
+      )
+    ).toEqual(["session-a"])
     expect(
-      watermarkableSessionIds({ candidates: [], commitments: [commitment()] }, READABLE)
-    ).toEqual(READABLE)
-    // The uncited sessions advance: `session-b` and `session-c` are named by nothing in the answer.
+      watermarkableSessionIds(
+        { candidates: [candidate()], commitments: [], readSessionIds: ["session-a"] },
+        READABLE
+      )
+    ).not.toContain("session-c")
+
+    /**
+     * A session the receipt names and the answer never quotes DOES advance. That is the whole reason the
+     * intersection is over the receipt rather than over the citations: "the agent read it and found
+     * nothing above the bar" is what the watermark means, and gating on a citation would re-read every
+     * quiet transcript at full model cost every night forever.
+     */
     const cited = candidate().evidence.map((quote) => quote.sessionId)
     expect(cited).not.toContain("session-c")
     expect(
-      watermarkableSessionIds({ candidates: [candidate()], commitments: [] }, READABLE)
-    ).toContain("session-c")
+      watermarkableSessionIds({ candidates: [candidate()], commitments: [], ...READ_ALL }, READABLE)
+    ).toEqual(READABLE)
+    // A commitment is a finding too, so the same receipt advances on the commitments arm alone.
+    expect(
+      watermarkableSessionIds(
+        { candidates: [], commitments: [commitment()], ...READ_ALL },
+        READABLE
+      )
+    ).toEqual(READABLE)
   })
 
-  it("advances nothing when nothing was reachable, whatever the answer claims", () => {
-    expect(watermarkableSessionIds({ candidates: [candidate()], commitments: [] }, [])).toEqual([])
+  /**
+   * The receipt can only ever NARROW. A session the run did not make reachable is inert however the
+   * answer names it, which is what bounds a model claim to something the caller measured — and it is why
+   * an id outside the set does not refuse the whole turn the way a fabricated EVIDENCE id does.
+   */
+  it("cannot advance a session the run never made reachable", () => {
+    expect(
+      watermarkableSessionIds(
+        { candidates: [candidate()], commitments: [], readSessionIds: ["session-z", "session-b"] },
+        READABLE
+      )
+    ).toEqual(["session-b"])
+    expect(
+      watermarkableSessionIds({ candidates: [candidate()], commitments: [], ...READ_ALL }, [])
+    ).toEqual([])
+  })
+
+  /** Reachable order is preserved, so a report line and a test's `toEqual` are reproducible. */
+  it("returns the reachable order, not the receipt's", () => {
+    expect(
+      watermarkableSessionIds(
+        {
+          candidates: [candidate()],
+          commitments: [],
+          readSessionIds: ["session-c", "session-a", "session-b"]
+        },
+        READABLE
+      )
+    ).toEqual(READABLE)
+  })
+
+  /** A padded id in the receipt still matches: neither side controls the whitespace around an id. */
+  it("trims the receipt's ids before matching", () => {
+    expect(
+      watermarkableSessionIds(
+        { candidates: [candidate()], commitments: [], readSessionIds: ["  session-b  "] },
+        READABLE
+      )
+    ).toEqual(["session-b"])
+  })
+
+  /** An EMPTY receipt beside real findings advances nothing, which is the honest reading of it. */
+  it("advances nothing for a finding with an empty receipt", () => {
+    expect(
+      watermarkableSessionIds(
+        { candidates: [candidate()], commitments: [], readSessionIds: [] },
+        READABLE
+      )
+    ).toEqual([])
   })
 })
 
-describe("a narrow receipt is logged rather than silently watermarked", () => {
+describe("a wide read claim behind narrow quotes is logged", () => {
   /** Enough sessions for the ratio to carry signal; below eight the rule declines to speak. */
   const batchOf = (count: number): ReadonlyArray<string> =>
     Array.from({ length: count }, (_, i) => `session-${String(i)}`)
@@ -599,18 +779,22 @@ describe("a narrow receipt is logged rather than silently watermarked", () => {
     })
 
   /**
-   * THE observability gap. A turn that opened 1 of 32 reachable transcripts, returned one candidate with
-   * two real quotes from that one session, and watermarked all 32 passed every gate WITHOUT a log line
-   * distinguishable from a thorough run's — and the 31 it never read are gone, because the selection is
-   * an anti-join. The warning does not change the advance; it makes the advance's breadth visible.
+   * THE residual `readSessionIds` cannot close. The receipt is a model CLAIM, so a turn that opened one
+   * transcript and NAMES thirty-two advances thirty-two, and the 31 it never read are gone because the
+   * selection is an anti-join. The quotes are the verified half, so the gap between what the answer
+   * claims and what it can prove is the only measurable signal, and this line is where it is measured.
    *
    * (Mutation: returning `null` unconditionally, or counting evidence QUOTES rather than distinct
    * sessions, fails this case — two quotes from one session is one session's receipt.)
    */
-  it("warns when a whole batch advances on quotes from a small fraction of it", () => {
+  it("warns when a wide receipt advances on quotes from a small fraction of it", () => {
     const readable = batchOf(32)
     const warning = underCitedWatermarkWarning(
-      { candidates: [oneSessionCandidate("session-0")], commitments: [] },
+      {
+        candidates: [oneSessionCandidate("session-0")],
+        commitments: [],
+        readSessionIds: readable
+      },
       readable
     )
     expect(warning).not.toBeNull()
@@ -621,16 +805,43 @@ describe("a narrow receipt is logged rather than silently watermarked", () => {
   })
 
   /**
-   * A thorough turn is silent. The threshold is a quarter of the advancing batch, and a run citing nine
-   * of 32 sessions is the shape the instructions ask for — a warning there teaches an operator to
-   * ignore the line by the time a one-session receipt arrives.
+   * An HONEST narrow turn is silent, and this is the case the receipt buys. A turn that opened one
+   * transcript and says so advances one session, which is below the minimum the ratio speaks about — so
+   * the operator sees a line only when a wide CLAIM is not backed by wide quoting.
+   *
+   * (Mutation: computing `advancing` from `readableSessionIds` rather than from the advance fails here,
+   * because the reachable set is 32 while the honest advance is 1.)
    */
-  it("says nothing when a quarter or more of the batch is cited", () => {
+  it("says nothing for an honest turn that reads one session and names one", () => {
+    const readable = batchOf(32)
+    expect(
+      underCitedWatermarkWarning(
+        {
+          candidates: [oneSessionCandidate("session-0")],
+          commitments: [],
+          readSessionIds: ["session-0"]
+        },
+        readable
+      )
+    ).toBeNull()
+  })
+
+  /**
+   * A thorough turn is silent. The threshold is a quarter of the advance, and a run citing eight of 32
+   * sessions is the shape the instructions ask for — a warning there teaches an operator to ignore the
+   * line by the time a one-session receipt arrives.
+   */
+  it("says nothing when a quarter or more of the advance is cited", () => {
     const readable = batchOf(32)
     const candidates = Array.from({ length: 8 }, (_, i) =>
       oneSessionCandidate(`session-${String(i)}`)
     )
-    expect(underCitedWatermarkWarning({ candidates, commitments: [] }, readable)).toBeNull()
+    expect(
+      underCitedWatermarkWarning(
+        { candidates, commitments: [], readSessionIds: readable },
+        readable
+      )
+    ).toBeNull()
   })
 
   /** Commitments are receipts too: a commitment's session is cited exactly as a candidate's is. */
@@ -643,30 +854,95 @@ describe("a narrow receipt is logged rather than silently watermarked", () => {
     )
     expect(
       underCitedWatermarkWarning(
-        { candidates: [oneSessionCandidate("session-9")], commitments },
+        {
+          candidates: [oneSessionCandidate("session-9")],
+          commitments,
+          readSessionIds: readable
+        },
         readable
       )
     ).toBeNull()
-    // The same four sessions cited against a batch three times the size does warn.
+    // The same four sessions cited against a claim three times as wide does warn.
     expect(
       underCitedWatermarkWarning(
-        { candidates: [oneSessionCandidate("session-9")], commitments },
+        {
+          candidates: [oneSessionCandidate("session-9")],
+          commitments,
+          readSessionIds: batchOf(32)
+        },
         batchOf(32)
       )
     ).not.toBeNull()
   })
 
   /**
-   * Two arms that must stay quiet, for different reasons. An answer with NO findings advances nothing at
-   * all — {@link watermarkableSessionIds} already returns `[]` and the client logs that arm itself, so a
-   * second warning about a watermark that is not happening would be noise. And a small batch carries no
-   * ratio: one citation out of two is both the floor and the ordinary shape of a two-transcript night.
+   * A citation OUTSIDE the advance is not a receipt for the advance, and the two failures it causes pull
+   * in opposite directions.
+   *
+   * First arm: eight sessions advance on the receipt alone and the only quotes name two REACHABLE
+   * sessions the receipt left out. Counting those two puts `cited.size` at the quarter floor and the line
+   * goes silent, while ZERO of the advancing eight carries a citation — the exact shape the rule exists
+   * to surface, suppressed by evidence about a different set.
+   *
+   * Second arm: a wide claim whose one quote names a session outside the advance. The line must fire, and
+   * both of its numbers must be in the advancing space — `0 of them` cited, `32` uncited. A count over
+   * the whole answer prints `1` and `31`, neither of which is true of any set.
+   *
+   * (Mutation: counting every cited session id regardless of the advance makes the first arm return a
+   * string and prints `only 1 of them` in the second.)
    */
-  it("is silent for an answer that advances nothing, and for a small batch", () => {
-    expect(underCitedWatermarkWarning({ candidates: [], commitments: [] }, batchOf(32))).toBeNull()
+  it("counts a citation only when the session it names is one the watermark advances", () => {
+    const advance = batchOf(8)
+    const reachable = [...advance, "session-outside-a", "session-outside-b"]
     expect(
       underCitedWatermarkWarning(
-        { candidates: [oneSessionCandidate("session-0")], commitments: [] },
+        {
+          candidates: [oneSessionCandidate("session-outside-a")],
+          commitments: [
+            commitment({
+              evidence: evidence("session-outside-b", "I'll wire capture before we cut the release")
+            })
+          ],
+          readSessionIds: advance
+        },
+        reachable
+      )
+    ).not.toBeNull()
+
+    const wide = batchOf(32)
+    const warning = underCitedWatermarkWarning(
+      {
+        candidates: [oneSessionCandidate("session-elsewhere")],
+        commitments: [],
+        readSessionIds: wide
+      },
+      [...wide, "session-elsewhere"]
+    )
+    expect(warning).toContain("watermarking 32")
+    expect(warning).toContain("only 0 of them")
+    expect(warning).toContain("other 32")
+  })
+
+  /**
+   * Two arms that must stay quiet, for different reasons. An answer with NO findings advances nothing at
+   * all — {@link watermarkableSessionIds} already returns `[]` and the client logs that arm itself, so a
+   * second warning about a watermark that is not happening would be noise. And a small advance carries no
+   * ratio: one citation out of two is both the floor and the ordinary shape of a two-transcript night.
+   */
+  it("is silent for an answer that advances nothing, and for a small advance", () => {
+    expect(
+      underCitedWatermarkWarning(
+        { candidates: [], commitments: [], readSessionIds: batchOf(32) },
+        batchOf(32)
+      )
+    ).toBeNull()
+    expect(
+      underCitedWatermarkWarning(
+        {
+          candidates: [oneSessionCandidate("session-0")],
+          commitments: [],
+          readSessionIds: batchOf(4)
+        },
         batchOf(4)
       )
     ).toBeNull()
@@ -703,6 +979,7 @@ describe("the derived JSON Schema eve is handed", () => {
     expect(schema.type).toBe("object")
     expect(schema.properties).toHaveProperty("candidates")
     expect(schema.properties).toHaveProperty("commitments")
+    expect(schema.properties).toHaveProperty("readSessionIds")
     expect(schema.$ref).toBeUndefined()
   })
 
@@ -757,8 +1034,29 @@ describe("the derived JSON Schema eve is handed", () => {
   })
 
   it("keeps the root's own constraints after inlining", () => {
-    expect(schema.required).toEqual(["candidates", "commitments"])
+    expect(schema.required).toEqual(["candidates", "commitments", "readSessionIds"])
     expect(schema.additionalProperties).toBe(false)
+  })
+
+  /**
+   * The read receipt has to reach the MODEL, not only the decoder. It is the field the watermark
+   * advances over, so a schema that stopped publishing it would be asking for an answer that then fails
+   * the required-field decode on every turn — the loudest possible way to discover it and still a wasted
+   * call every night.
+   *
+   * A plain string array with the transcript cap as `maxItems`, asserted here rather than inferred: the
+   * bound is what tells the model the list is a per-session receipt over a bounded batch and not a place
+   * to write prose.
+   *
+   * (Mutation: dropping `readSessionIds` from `ConsolidationPayload` fails this and the two cases above.)
+   */
+  it("publishes the read receipt as a bounded array of strings", () => {
+    const properties = schema.properties as Record<string, Record<string, unknown>>
+    const receipt = properties.readSessionIds
+    if (receipt === undefined) throw new Error("schema.properties.readSessionIds is missing")
+    expect(receipt.type).toBe("array")
+    expect((receipt.items as Record<string, unknown>).type).toBe("string")
+    expect(receipt.maxItems).toBe(MAX_TRANSCRIPTS_PER_RUN)
   })
 
   /** The nested refs must survive the root inlining, or the item shape is lost. */
@@ -785,6 +1083,51 @@ describe("the derived JSON Schema eve is handed", () => {
     expect(target.type).toBe("object")
     expect(target.properties).toHaveProperty("claim")
     expect(target.properties).toHaveProperty("evidence")
+  })
+
+  /**
+   * The entity's TWO HALVES have to reach the MODEL as an object with both fields required.
+   *
+   * This is the whole mechanism by which a typed reference arrives, and it is why the shape is an
+   * object rather than a string with a `pattern`: a provider's strict-mode structured output enforces
+   * a required object field, and a `pattern` on a string it does not. A schema publishing
+   * `{"type": "string"}` here would be asked for bare names again, every candidate would file under
+   * `unknown`, and the decode would accept it — the wire schema is the only place that is visible.
+   *
+   * `additionalProperties: false` matters for the same reason `strict: true` demands it in
+   * `apps/cli/src/extraction.ts`: a lax item schema invites a third key the join would ignore.
+   *
+   * (Mutation: `entities: Schema.Array(Schema.String.check(Schema.isMinLength(1)))` publishes
+   * `items: {type: "string"}` with no `$ref`, and fails on the ref lookup below.)
+   */
+  it("publishes the entity item as an object requiring both type and name", () => {
+    const properties = schema.properties as Record<string, Record<string, unknown>>
+    const candidates = properties.candidates
+    if (candidates === undefined) throw new Error("schema.properties.candidates is missing")
+    const defs = schema.$defs as Record<string, Record<string, unknown> | undefined>
+    const candidateRef = (candidates.items as Record<string, unknown>).$ref
+    if (typeof candidateRef !== "string") throw new Error("candidates.items has no $ref")
+    const candidateDef = defs[candidateRef.slice("#/$defs/".length)]
+    if (candidateDef === undefined) throw new Error(`unresolved ref ${candidateRef}`)
+    const entities = (candidateDef.properties as Record<string, Record<string, unknown>>).entities
+    if (entities === undefined) throw new Error("the candidate definition has no entities")
+    expect(entities.type).toBe("array")
+    const entityRef = (entities.items as Record<string, unknown>).$ref
+    if (typeof entityRef !== "string") {
+      throw new Error(`entities.items is not an object ref: ${JSON.stringify(entities.items)}`)
+    }
+    const entity = defs[entityRef.slice("#/$defs/".length)]
+    if (entity === undefined) throw new Error(`unresolved ref ${entityRef}`)
+    expect(entity.type).toBe("object")
+    expect(entity.required).toEqual(["type", "name"])
+    expect(entity.additionalProperties).toBe(false)
+    /**
+     * The type is a plain string and NOT an enum, asserted on the wire because that is where a closed
+     * vocabulary would be imposed on a consumer. memhtml does not own a consumer's entity taxonomy.
+     */
+    const type = (entity.properties as Record<string, Record<string, unknown>>).type
+    expect(type?.type).toBe("string")
+    expect(type?.enum).toBeUndefined()
   })
 
   /**

@@ -25,5 +25,5 @@ clone -> import
 rebuild -> index: from ls-tree {class: derives}
 import -> state: sidecar only {class: derives}
 
-state -> export: nightly
+state -> export: each run
 export -> sidecar: byte-stable

@@ -1,0 +1,78 @@
+-- `edges_src` and `edges_dst` carry NO predicate: `(src_path, edge_class)` and `(dst_path, edge_class)`
+-- over every row, authored and derived alike. That is what the memory-graph walk needs, and a partial
+-- index on `derived = 0` cannot serve it at all.
+--
+-- ── Why a predicate makes the index unreachable ───────────────────────────────────────────────────
+--
+-- SQLite may use a partial index only when the query's WHERE clause IMPLIES the index's WHERE clause.
+-- The neighbors walk (`neighborsQuery`, `apps/cli/src/operations.ts`) filters
+-- `src_path = ?1 AND edge_class = 'memory'` and SELECTS `e.derived`, because it wants BOTH kinds of
+-- edge: sleep-mined edges are what lateral retrieval is for, and each node reports which kind reached
+-- it. `edge_class = 'memory'` does not imply `derived = 0`, so an index declared `WHERE derived = 0` is
+-- simply not a candidate.
+--
+-- Measured 2026-08-26 on node 24.19.0's `node:sqlite` with these migrations applied and no `ANALYZE`,
+-- over the walk's own statement at depth 2. With the predicate:
+--
+--   * the two `src_path = ?1` arms probe `sqlite_autoindex_edges_1`, because `src_path` leads
+--     `PRIMARY KEY (src_path, rel, dst_path)`, which binds ONE column;
+--   * the `dst_path = ?1` hop-1 arm is `SCAN e`, a full pass over `edges`;
+--   * the `dst_path`-driven hop-2 arm is `SCAN e2 USING INDEX sqlite_autoindex_edges_1`, a full index
+--     scan of the table per outer row.
+--
+-- Without it, all four arms are `SEARCH … (src_path=? AND edge_class=?)` or
+-- `(dst_path=? AND edge_class=?)`: two bound columns instead of one, in every direction.
+--
+-- ── A REPLACEMENT, and the per-statement census behind that ──────────────────────────────────────
+--
+-- Measured the same way over every statement in the tree that reads `edges` — the walk, both
+-- authored-only anti-joins in `@memhtml/sleep` (`sharedEntityPairs`, `minedPairs`), `retentionEdgeCounts`,
+-- `memoryEdges`, `deepGroupingEdges`, `inboundAuthoredEdges`, `danglingEdges`, retrieval's
+-- `superseded_by` subquery, `doctor`'s stale-blocker join, `task list`'s blockers column, the indexer's
+-- delete-by-source, and `movePath`'s `UPDATE edges SET src_path`. FIVE change plan, and every one of the
+-- five gets a probe it did not have or binds a column more:
+--
+--   * both `dst_path` walk arms, `SCAN e` -> `edges_dst (dst_path=? AND edge_class=?)`;
+--   * both `src_path` walk arms, `sqlite_autoindex_edges_1 (src_path=?)` -> `edges_src (src_path=? AND
+--     edge_class=?)`;
+--   * `retentionEdgeCounts`, `SCAN e` plus a temp b-tree -> `SCAN e USING COVERING INDEX edges_dst`, so
+--     it stops building an `AUTOMATIC PARTIAL COVERING INDEX` per call;
+--   * `task list`'s blockers subquery, `edges_rel (rel, edge_class)` -> `edges_dst (dst_path,
+--     edge_class)`, binding a path rather than the rel `'blocks'`;
+--   * the indexer's delete-by-source and `movePath`'s update, `sqlite_autoindex_edges_1 (src_path=?)` ->
+--     `edges_src (src_path=?)`.
+--
+-- The rest are byte-identical, including retrieval's `superseded_by` subquery, which probes
+-- `edges_dst (dst_path=? AND edge_class=?)` under BOTH shapes — it names the class, so it never depended
+-- on the predicate. The `derived = 0` readers that do not name a path reach for `edges_derived (derived,
+-- rel)`, which binds two columns where either directional pair binds one.
+--
+-- The predicate is not free to keep, and the cost is not the index COUNT: `edges` carries four either
+-- way. It is that a partial index holds only the authored rows. Dropping the predicate puts every mined
+-- edge in both b-trees, and mining writes thousands per run — measured 2026-08-26, 20,000 derived-edge
+-- inserts in one transaction cost 158-162 ms with the predicate and 184-188 ms without it, three
+-- repetitions, so roughly 14-19% more per mined edge. That is the price of the walk's two probes, paid
+-- knowingly: a walk arm was a full pass over `edges` per hop.
+--
+-- ── ADDITIVE, in 0009's sense ────────────────────────────────────────────────────────────────────
+--
+-- `DROP INDEX` plus `CREATE INDEX`, and deliberately NOT 0008's recreate-and-copy. That pattern was
+-- forced by a CHECK-constraint edit, which SQLite cannot `ALTER`, and it carried real risk:
+-- `DROP TABLE edges` would cascade nothing here, but `DROP TABLE files` cascades to `embeddings` and
+-- 0008 had to snapshot six tables to avoid re-paying Bedrock for the whole corpus. An index is derived
+-- data with no rows of its own — dropping one loses nothing and recreating one costs a single scan of
+-- `edges` — so none of that machinery applies.
+--
+-- The NAMES are reused because the name states which column the index leads with, which is what a
+-- reader of a query plan needs from it, and that has not changed.
+--
+-- `IF EXISTS` on the drops, so this file converges from any starting state a real store can be in —
+-- including one where an operator dropped an index by hand in `sqlite3`. A bare `DROP` there would fail
+-- the migration inside its transaction and leave that store unable to open at all. The `CREATE`s carry
+-- no such guard on purpose: if either name is still taken when they run, that is a fact worth failing on.
+
+DROP INDEX IF EXISTS edges_src;
+DROP INDEX IF EXISTS edges_dst;
+
+CREATE INDEX edges_src ON edges (src_path, edge_class);
+CREATE INDEX edges_dst ON edges (dst_path, edge_class);

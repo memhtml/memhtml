@@ -14,7 +14,9 @@ import { isValidDatetime, setMeta } from "@memhtml/html"
 import {
   DatabaseService,
   type DatabaseShape,
+  type FacetFilter,
   type FrameMatch,
+  facetConditions,
   Indexer,
   IndexRecorder,
   type IndexRecorderShape,
@@ -195,6 +197,11 @@ export interface WriteParams extends Provenance {
   readonly articleHtml?: string | undefined
   readonly memoryType: string
   readonly path?: string | undefined
+  /**
+   * Refuse an unusable `path` instead of letting the placement rule decide. Opt-in; the store owns
+   * the refusal (`@memhtml/store`'s `strictPathRefusal`), so this door and `memhtml apply` share it.
+   */
+  readonly strictPath?: boolean | undefined
   readonly workspace?: string | undefined
   readonly tags?: ReadonlyArray<string> | undefined
   readonly entities?: ReadonlyArray<string> | undefined
@@ -266,6 +273,7 @@ const toWriteInput = (params: WriteParams, at: string): Effect.Effect<WriteInput
         body: params.body,
         articleHtml: params.articleHtml,
         path: params.path,
+        strictPath: params.strictPath,
         workspace: params.workspace,
         tags: params.tags,
         entities: params.entities,
@@ -1190,15 +1198,15 @@ export const neighborsQuery = (input: {
  * query must not have here: an unbounded worst case on a corpus whose `relates_to` edges are
  * mined by the sleep cycle and can be dense.
  *
- * **Only the forward direction is index-probed, and `edges_src`/`edges_dst` are not what probes it.**
- * Measured 2026-08-25 on node 24.19.0 (locked by the plan assertion in `apps/cli/tests/e2e.test.ts`):
- * both of those indexes are PARTIAL — `WHERE derived = 0` (`0008_tasks.sql`) — and this walk includes
- * derived edges on purpose, so neither is available to it. The `src_path = ?1` arms probe
- * `sqlite_autoindex_edges_1` instead, the implicit index behind `PRIMARY KEY (src_path, rel,
- * dst_path)`, whose leftmost column is the one they filter on. The `dst_path = ?1` arms have no such
- * luck and are a full SCAN of `edges`, so a neighborhood costs one table scan per reverse arm on top
- * of the degree² row set. A `rels` filter changes that: `edges_rel` carries no predicate, so a
- * rel-scoped walk probes on every arm.
+ * **Every arm is index-probed, in both directions, through `edges_src` and `edges_dst`.** Measured
+ * 2026-08-26 on node 24.19.0 with no `ANALYZE`, and locked by the plan assertion in
+ * `apps/cli/tests/e2e.test.ts`: each arm is a `SEARCH` binding two columns,
+ * `(src_path=? AND edge_class=?)` or `(dst_path=? AND edge_class=?)`. Neither index carries a
+ * predicate (`0011_edge_indexes.sql`), which is what makes them reachable from here at all — this walk
+ * selects `e.derived` and filters only on `edge_class`, so a `WHERE derived = 0` index could not be a
+ * candidate, and the reverse arms would fall back to a full scan of `edges` per arm. The row set is
+ * still degree², which is what `NEIGHBORS_SCAN_LIMIT` bounds; what the indexes bound is the work spent
+ * finding it.
  *
  * **Both directions, and `derived = 0 ∪ derived = 1`.** An edge is an assertion about a pair, and
  * which file happens to hold the `<link>` is authorship rather than direction of meaning. A
@@ -1307,11 +1315,237 @@ export const neighborsOf = (params: NeighborsParams) =>
     }
   })
 
+/**
+ * Steps the forward walk takes before it stops and says which bound stopped it.
+ *
+ * A chain this long is a corpus that has corrected one fact sixteen times, which the walk answers
+ * with `hop_limit` rather than by paying an unbounded number of statements for a read a caller
+ * expects to be cheap. It is not the cycle guard: {@link resolveMemory} carries a visited set, so a
+ * loop is reported as a loop at the hop that closes it, however short.
+ */
+export const RESOLVE_MAX_HOPS = 16
+
+/**
+ * Why the forward walk stopped, and therefore what `path` is.
+ *
+ * A closed vocabulary, and the reason it is five values rather than a boolean: only the first means
+ * "cite this". Collapsing the other four into "not found" would make an evicted memory, an
+ * unindexed path, and a corpus defect one answer, and a caller acting on any of them needs a
+ * different next move.
+ *
+ * - `live` — nothing supersedes `path` and it is active. The resolution a citation wants.
+ * - `archived` — `path` is in the archive and nothing supersedes it, so the memory was EVICTED
+ *   rather than corrected. `git log --follow` on `path` reads through its whole life.
+ * - `unindexed` — the index holds no such path and no archive mapping onto it. Either the path was
+ *   never a memory here, or the index does not yet describe the commit that holds it; `indexedCommit`
+ *   is which commit it does describe.
+ * - `cycle` — the walk returned to a path it had already visited. `steps` shows the loop closing, and
+ *   `path` is a member of it rather than a resolution. Two memories each claiming to supersede the
+ *   other is an authoring defect, not a state this walk can resolve.
+ * - `hop_limit` — the chain is longer than {@link RESOLVE_MAX_HOPS}, so `path` is where the walk
+ *   stopped and NOT the end of the chain. Resolving `path` again continues from there.
+ *
+ * An array rather than a bare union, so `memory_resolve` publishes the five values as a JSON Schema
+ * enum from this one declaration and a client can branch exhaustively.
+ */
+export const RESOLVE_STOP_REASONS = ["live", "archived", "unindexed", "cycle", "hop_limit"] as const
+
+export type ResolveStopReason = (typeof RESOLVE_STOP_REASONS)[number]
+
+/**
+ * The two mechanisms that move a memory, as a closed vocabulary.
+ *
+ * There is no third: a memory's path changes because a correction superseded it or because a `git mv`
+ * archived it, and nothing else in the system renames a file.
+ */
+export const RESOLVE_STEP_VIA = ["supersedes", "archive_move"] as const
+
+export type ResolveStepVia = (typeof RESOLVE_STEP_VIA)[number]
+
+/**
+ * One hop of the forward walk, naming the mechanism that moved the memory.
+ *
+ * `via` is what makes the chain auditable rather than a list of paths a caller has to trust:
+ * `supersedes` is an authored `<link>` in a file, so it survives `rm index.db`, and `archive_move` is
+ * a `git mv` recorded by the path itself. The two are different claims and a reader acts on them
+ * differently.
+ */
+export interface ResolveStep {
+  readonly from: string
+  readonly to: string
+  readonly via: ResolveStepVia
+}
+
+/** What {@link resolveMemory} answers. */
+export interface ResolveResult {
+  /** The path asked about, normalized. Echoed so a receipt can be matched to its answer. */
+  readonly requested: string
+  /** Where the walk ended. What that means is {@link ResolveStopReason}'s, not this field's. */
+  readonly path: string
+  /** Hops taken: `steps.length`. `0` when the requested path needed no walk. */
+  readonly hops: number
+  readonly steps: ReadonlyArray<ResolveStep>
+  readonly stopReason: ResolveStopReason
+  /** The title of `path`, or `null` when the index holds no row for it. */
+  readonly title: string | null
+  /**
+   * The commit the INDEX describes, which is the commit to pin a citation to, or `null` before the
+   * first rebuild and during one.
+   *
+   * Published because this whole answer is a statement about that commit and not about HEAD: the index
+   * is a projection of git, so a resolution taken against a stale index is correct as of the commit
+   * named here. `memhtml status` reports whether that commit IS HEAD.
+   */
+  readonly indexedCommit: string | null
+}
+
+/**
+ * The three statements the walk issues, as literals a plan assertion can EXPLAIN.
+ *
+ * Exported for {@link neighborsQuery}'s reason: a cost contract can only be asserted at the planner,
+ * and a test that EXPLAINed a pasted copy would explain the copy. Each one binds exactly one
+ * parameter, so a test can run them as written.
+ *
+ * `successor` names `edge_class` even though `rel = 'supersedes'` implies it under `edges`' CHECK
+ * constraints. That is a planner constraint, not a filter: measured 2026-08-26 on node 24's
+ * `node:sqlite` with no `ANALYZE`, `dst_path = ? AND rel = ? AND derived = 0` alone plans as `SEARCH
+ * edges USING INDEX edges_derived (derived=? AND rel=?)` — every authored correction in the corpus,
+ * per hop — while naming the class binds two columns of `edges_dst` and the same statement probes.
+ * The rel and `derived = 0` are still the CORRECTNESS half: `derived = 0` is the same authored-only
+ * rule `SearchHit.supersededBy` reads, so `search` and this walk cannot disagree about who superseded
+ * what, and a sleep-mined suspicion can never redirect a citation.
+ *
+ * `archived` is the archive mapping read backwards, served by `files_origin`
+ * (`0012_origin_path.sql`). `ORDER BY archived_at DESC` decides the case a UNIQUE index would have
+ * had to refuse: one path evicted, rewritten, and evicted again carries two archive rows, and the
+ * NEWEST is the occupant a citation of that path most recently named. A row with no `memhtml-archived`
+ * stamp sorts last, since SQLite puts NULLs last under DESC.
+ */
+export const resolveQueries = {
+  successor: `SELECT e.src_path AS path FROM edges e
+     WHERE e.dst_path = ? AND e.edge_class = 'memory' AND e.rel = 'supersedes' AND e.derived = 0
+     ORDER BY e.created_at DESC, e.src_path ASC LIMIT 1`,
+  archived: `SELECT f.path AS path FROM files f
+     WHERE f.origin_path = ? ORDER BY f.archived_at DESC, f.path DESC LIMIT 1`,
+  file: "SELECT f.archived AS archived, f.title AS title FROM files f WHERE f.path = ?"
+} as const
+
+/**
+ * The live path a possibly-moved path names now, by walking `supersedes` forward.
+ *
+ * **A path IS the id of a memory** (`packages/contracts/src/types.ts`, `MemoryPath`), and it is
+ * derived from the title through `slugify`, so a re-consolidation that rewords a title lands the
+ * corrected fact at a DIFFERENT path while `correctMemory` `git mv`s the original into
+ * `archive/<YYYY>/`. An external receipt holding the old path therefore dead-ends at a path the tree
+ * no longer holds — through no fault of the receipt. This read is how such a receipt is repaired
+ * without a second identifier: the corpus already records both mechanisms that move a memory, and
+ * nothing here is minted.
+ *
+ * **Two mechanisms, and a path absent from `files` is looked up by the archive mapping ALONE.** A
+ * correction stamps its `supersedes` link toward the target's ARCHIVE path
+ * (`packages/store/src/store.ts`, `correctMemory`), so the pre-archive path has no inbound edge at
+ * all and only `origin_path` knows where its bytes went. An inbound `supersedes` edge over a path the
+ * tree does not hold is a DANGLING edge — `memhtml doctor`'s finding — and following one would
+ * resolve a citation through an assertion about a file nothing can read. Conversely a path that IS in
+ * `files` is never redirected by the archive mapping, even when an older eviction of the same path
+ * left a row behind: the live file at that path is the answer, and the redirect would replace it with
+ * a historical one.
+ *
+ * **Every node in the chain is named by the path that holds it NOW.** A `supersedes` link is an
+ * element inside a file, so archiving that file carries the link with it: after a second correction the
+ * edge points from the archived middle memory, not from the path the middle was live at. A three-step
+ * chain over two corrections therefore reads `cited → archive(cited) → archive(middle) → live`, and the
+ * middle's own live-at-the-time path appears nowhere in it. The tree is the system of record, and this
+ * walk reports where each memory is rather than where it was.
+ *
+ * **`hops: 0` with `stopReason: "live"` does not mean the bytes are unchanged.** A correction whose
+ * title is unchanged lands at the SAME path, so the path is live and its content is a different fact.
+ * That grain is what the pinned citation URI is for; this read answers where to look, not what was
+ * there.
+ *
+ * Statement count is `1..2` per hop and the walk is bounded twice — by a visited set and by
+ * {@link RESOLVE_MAX_HOPS} — so a corpus defect costs a bounded read and is reported rather than
+ * hung. A recursive CTE would do it in one statement and could not report WHICH mechanism took each
+ * hop, which is the half a receipt is audited on.
+ */
+export const resolveMemory = (path: string) =>
+  Effect.gen(function* () {
+    const db = yield* DatabaseService
+    const requested = normalizePath(path)
+    const state = yield* readIndexState(db)
+
+    const steps: Array<ResolveStep> = []
+    const visited = new Set<string>([requested])
+    /** Titles of every indexed path the walk touched, so the answer carries one without a re-read. */
+    const titles = new Map<string, string>()
+    let at = requested
+    let stopReason: ResolveStopReason = "unindexed"
+
+    for (;;) {
+      const row = yield* db.get<{ archived: number; title: string }>(resolveQueries.file, [at])
+      if (row !== undefined) titles.set(at, row.title)
+
+      const hop =
+        row === undefined
+          ? {
+              found: yield* db.get<{ path: string }>(resolveQueries.archived, [at]),
+              via: "archive_move" as const
+            }
+          : {
+              found: yield* db.get<{ path: string }>(resolveQueries.successor, [at]),
+              via: "supersedes" as const
+            }
+
+      if (hop.found === undefined) {
+        if (row === undefined) stopReason = "unindexed"
+        else stopReason = row.archived === 1 ? "archived" : "live"
+        break
+      }
+      /**
+       * The bound is checked BEFORE the step is taken, so `steps.length` is exactly
+       * {@link RESOLVE_MAX_HOPS} when it fires and `path` is a real path the walk stood on. Taking the
+       * step first would report a hop past a bound the answer claims to respect.
+       */
+      if (steps.length >= RESOLVE_MAX_HOPS) {
+        stopReason = "hop_limit"
+        break
+      }
+      steps.push({ from: at, to: hop.found.path, via: hop.via })
+      at = hop.found.path
+      /**
+       * The repeat IS recorded as a step before the walk stops, so `steps` shows the loop closing and
+       * a reader can name both ends of it. A cycle detected and then hidden would leave the caller
+       * with a `path` it cannot account for.
+       */
+      if (visited.has(at)) {
+        stopReason = "cycle"
+        break
+      }
+      visited.add(at)
+    }
+
+    return {
+      requested,
+      path: at,
+      hops: steps.length,
+      steps,
+      stopReason,
+      title: titles.get(at) ?? null,
+      indexedCommit: state?.head_sha ?? null
+    } satisfies ResolveResult
+  })
+
 export interface ListParams {
   readonly memoryType?: string | undefined
   readonly workspace?: string | undefined
   readonly tag?: string | undefined
   readonly entity?: string | undefined
+  /**
+   * `<dl>` facet predicates, AND across distinct names and OR within one name — `SearchScope.facets`'
+   * rule, from the same builder, so a narrowing that finds a memory through `memhtml list` finds it
+   * through `memhtml search` too.
+   */
+  readonly facets?: ReadonlyArray<FacetFilter> | undefined
   readonly para?: string | undefined
   readonly limit?: number | undefined
   /** The previous page's `nextCursor`: the last path returned. A keyset rather than an offset. */
@@ -1353,11 +1587,27 @@ export const listMemories = (params: ListParams) =>
     }
     if (params.entity !== undefined && params.entity !== "") {
       // The entity arrives as `type:name` and the table splits it at the first colon, so the
-      // comparison rebuilds the reference rather than making the caller know the split.
+      // comparison rebuilds the reference rather than making the caller know the split. `lower()` on
+      // BOTH sides for the same reason `assembleScope` folds that way: listing and search are one
+      // vocabulary, so a spelling that finds a memory through one door has to find it through the
+      // other, and the fold has to happen on one side of the JS/SQL seam rather than both.
       conditions.push(
-        "EXISTS (SELECT 1 FROM file_entities e WHERE e.path = f.path AND e.entity_type || ':' || e.entity_name = ?)"
+        "EXISTS (SELECT 1 FROM file_entities e WHERE e.path = f.path AND lower(e.entity_type || ':' || e.entity_name) = lower(?))"
       )
-      values.push(params.entity)
+      values.push(params.entity.trim())
+    }
+    /**
+     * The facet axis, from `@memhtml/index`'s builder rather than a second copy of the grouping.
+     *
+     * The listing binds anonymous `?` in textual order, so the placeholder callback pushes onto
+     * `values` and returns the marker. That is the same contract the numbered form has: whatever the
+     * builder emits, the values it pushed are in the order the statement reads them.
+     */
+    for (const condition of facetConditions(params.facets ?? [], "f", (value) => {
+      values.push(value)
+      return "?"
+    })) {
+      conditions.push(condition)
     }
     if (params.cursor !== undefined && params.cursor !== "") {
       conditions.push("f.path > ?")
@@ -1402,6 +1652,208 @@ export const listMemories = (params: ListParams) =>
         updatedAt: row.updated_at
       })),
       nextCursor
+    }
+  })
+
+/** What {@link entityActivity} takes. Every field is optional and every default is stated. */
+export interface EntityActivityParams {
+  /**
+   * Restrict to one entity type, e.g. `service`. Absent means every type.
+   *
+   * Matched case-insensitively, the way `--entity` is matched at both retrieval doors.
+   */
+  readonly entityType?: string | undefined
+  /** Rows to return, 1 to {@link ENTITY_ACTIVITY_MAX}. Clamped, never refused. */
+  readonly limit?: number | undefined
+  /** Include archived memories in the aggregate. Excluded by default. */
+  readonly includeArchived?: boolean | undefined
+}
+
+/** The most rows one call returns. A caller asking for more is clamped into it. */
+export const ENTITY_ACTIVITY_MAX = 500
+
+/**
+ * One entity's activity, aggregated over the memories that carry it.
+ *
+ * **Three timestamps rather than one, because they are three different clocks and a caller acting on
+ * the wrong one gets a plausible answer.** Every value is an ISO-8601 UTC string compared
+ * lexicographically, the same way `files` stores and orders them, so no per-row parse happens
+ * anywhere. Scope: the memories carrying this entity that survive the call's own archived filter.
+ */
+export interface EntityActivityRow {
+  /**
+   * The reference in `type:name` form, the spelling `--entity` and `memory_search`'s `entity` take
+   * and the spelling a search hit's `entities` publishes.
+   *
+   * Present alongside the two halves so a hop off this report is a COPY rather than a caller
+   * reassembling a string and guessing where the colon goes. `file_entities` is keyed on
+   * `(type, name)`, so the bare name is ambiguous and would scope to whichever of two entities the
+   * corpus happens to hold.
+   */
+  readonly entity: string
+  readonly entityType: string
+  readonly entityName: string
+  /** How many in-scope memories carry this entity. A quantity, not an ordinal. */
+  readonly fileCount: number
+  /**
+   * The newest `coalesce(event_at, updated_at)` over those memories: WORLD time where the memory
+   * states one and WRITE time where it does not, decided per row before the maximum is taken.
+   *
+   * The recency arm's own rule (`packages/index/src/retrieval-sql.ts`), so "most recently active"
+   * here means what it means in a ranked search. It is a MAX of a per-row coalesce and not a coalesce
+   * of two maxima: those differ whenever the newest world time and the newest write time sit on
+   * different memories, which is the ordinary case for a corpus written after the fact.
+   */
+  readonly lastActivityAt: string
+  /**
+   * The newest `event_at` alone: WORLD time, when the remembered fact happened, from the first
+   * `<time datetime>` in the article. `null` when no in-scope memory carrying this entity states one.
+   *
+   * Published beside {@link lastActivityAt} so a caller that needs strictly world time can have it,
+   * and so a `null` says "the corpus never stated one" rather than leaving the caller to infer it
+   * from a value that silently fell back to write time.
+   */
+  readonly lastEventAt: string | null
+  /** The newest `updated_at` alone: WRITE time, when the memory was last committed. Never null. */
+  readonly lastWrittenAt: string
+}
+
+/**
+ * {@link entityActivity}'s statement, as a pure function of its parameters.
+ *
+ * Exported for `neighborsQuery`'s reason: a cost contract can only be asserted at the planner, and a
+ * test that EXPLAINed a pasted copy of the SQL would be explaining its own string. This repo has
+ * already written that test the other way and watched it keep passing while the clause it guarded was
+ * deleted from the source. Handing the caller the statement the code issues is what makes the plan
+ * assertion about the code.
+ *
+ * `count(*) OVER ()` counts the GROUPED rows, so it is the number of distinct entities in scope rather
+ * than the number of `file_entities` rows. A window function is evaluated after grouping, which is what
+ * makes one statement answer both the page and its total; a second `COUNT` over the same predicate
+ * could disagree with this one under a concurrent write.
+ *
+ * `GROUP BY (entity_type, entity_name)` is exactly `file_entities_name`'s column SET, so the grouping
+ * is served by an index scan rather than by a sort of the whole join. The SET is what matters and the
+ * order within it does not: probed 2026-08-26 on node 24's `node:sqlite`, naming the two columns either
+ * way plans identically as `SCAN e USING INDEX file_entities_name`, because SQLite reorders group keys
+ * to match an index it can use. Grouping on a set the index does NOT cover — `entity_name` alone, or
+ * `(path, entity_name)` — adds `USE TEMP B-TREE FOR GROUP BY`, a full sort of the join per call. The
+ * ORDER BY is over an aggregate and no index can serve it, which is the one sort this statement pays
+ * for knowingly.
+ */
+export const entityActivityQuery = (
+  params: EntityActivityParams = {}
+): {
+  readonly sql: string
+  readonly params: ReadonlyArray<string | number>
+  /** The clamped bound the statement carries, so the caller reports the bound it actually used. */
+  readonly limit: number
+} => {
+  const limit = Math.min(ENTITY_ACTIVITY_MAX, Math.max(1, Math.trunc(params.limit ?? 50)))
+  const conditions: Array<string> = []
+  const values: Array<string | number> = []
+  if (params.includeArchived !== true) conditions.push("f.archived = 0")
+  if (params.entityType !== undefined && params.entityType !== "") {
+    /*
+     * Folded, because every other entity door folds. `memhtml list --entity` and `memhtml search
+     * --entity` both bind `lower(entity_type || ':' || entity_name) = lower(?)`, so a corpus holding
+     * `Service:Checkout-API` answers `service:checkout-api` on both — and a report that alone demanded
+     * the stored capitalization returns an empty page with no error and no marker, which reads as "the
+     * corpus has no entities of that type". The fold is on the FILTER only: the rows still carry the
+     * spelling the corpus authored, and `entity-resolution` is the phase that folds spellings.
+     */
+    conditions.push("lower(e.entity_type) = lower(?)")
+    values.push(params.entityType.trim())
+  }
+  const where = conditions.length === 0 ? "" : `WHERE ${conditions.join(" AND ")}`
+
+  return {
+    sql: `SELECT e.entity_type AS entity_type, e.entity_name AS entity_name,
+              count(*) AS file_count,
+              max(coalesce(f.event_at, f.updated_at)) AS last_activity_at,
+              max(f.event_at) AS last_event_at,
+              max(f.updated_at) AS last_written_at,
+              count(*) OVER () AS entity_total
+       FROM file_entities e JOIN files f ON f.path = e.path
+       ${where}
+       GROUP BY e.entity_type, e.entity_name
+       ORDER BY max(coalesce(f.event_at, f.updated_at)) DESC,
+                e.entity_type ASC, e.entity_name ASC
+       LIMIT ?`,
+    params: [...values, limit],
+    limit
+  }
+}
+
+/**
+ * Every entity in the corpus with its file count and its last activity, newest first.
+ *
+ * **REPORT-ONLY, and that is a design constraint rather than a description of today's callers.** This
+ * value must never become a decay term, a retention input, or a ranking signal. The salience arm
+ * already refuses to rank two kinds of row for reasons that apply here word for word
+ * (`SALIENCE_EXCLUDED_PREFIX` and `SALIENCE_EXCLUDED_TYPE`, `packages/index/src/retrieval-sql.ts`):
+ * decay is wrong for identity, because a colleague unmentioned for six months is not less themselves,
+ * and decay over working state would reward STALENESS, so the stuck task re-read at every triage would
+ * outrank the fresh urgent one. An "entity last active" number wired into ranking reintroduces both at
+ * once, on the axis where a consumer models its own domain. It answers a question an operator asks;
+ * it decides nothing.
+ *
+ * **WRITE-side activity, deliberately, so the read stays inside one database.** Reads live in
+ * `state.access`, which is path-keyed with NO foreign key onto `files`
+ * (`packages/index/state-migrations/S0001_access.sql`) and which is ATTACHed as a separate plane —
+ * `index.db` is a disposable projection of git and `state.db` is not. Joining it here would make one
+ * report span both lifetimes, so a rebuilt index and a preserved state plane could disagree about a
+ * row. The salience arm already owns read-time signals and is the only statement that crosses that
+ * boundary.
+ *
+ * Every memory type counts, tasks included, matching {@link listMemories} rather than
+ * `activeEntities` in `@memhtml/sleep`. That function excludes tasks because it FEEDS a phase that
+ * mints person files from what it finds, and a person mentioned only by a to-do item would get a
+ * durable identity surface out of it. Nothing here mints anything, and a report that hid an entity's
+ * task activity would be answering a narrower question than the one asked.
+ *
+ * `entityCount` is the total matching the scope, independent of `limit`, so a clamped answer is
+ * visible rather than silent — a caller can tell "these are all of them" from "these are the newest
+ * of more".
+ *
+ * **A row is one STORED reference, not one folded identity.** The grouping is on `(entity_type,
+ * entity_name)` as `file_entities` holds them, so a corpus that authored both `Service:Checkout-API`
+ * and `service:checkout-api` reports two rows while `--entity` at either retrieval door folds them and
+ * returns one entity's memories. That is the honest report of an unresolved corpus — `entity-resolution`
+ * is the phase that folds spellings, and a report that folded them first would hide the work it has to
+ * do — but it means `fileCount` is per stored spelling and a caller summing rows to a per-name total
+ * has to fold them itself.
+ */
+export const entityActivity = (params: EntityActivityParams = {}) =>
+  Effect.gen(function* () {
+    const db = yield* DatabaseService
+    const statement = entityActivityQuery(params)
+    const rows = yield* db.all<{
+      entity_type: string
+      entity_name: string
+      file_count: number
+      last_activity_at: string
+      last_event_at: string | null
+      last_written_at: string
+      entity_total: number
+    }>(statement.sql, statement.params)
+
+    return {
+      entities: rows.map(
+        (row): EntityActivityRow => ({
+          entity: `${row.entity_type}:${row.entity_name}`,
+          entityType: row.entity_type,
+          entityName: row.entity_name,
+          fileCount: row.file_count,
+          lastActivityAt: row.last_activity_at,
+          lastEventAt: row.last_event_at,
+          lastWrittenAt: row.last_written_at
+        })
+      ),
+      /** Distinct entities matching the scope, before `limit`. `0` when the scope matched nothing. */
+      entityCount: rows[0]?.entity_total ?? 0,
+      /** The bound this answer was built under, so a clamped ask is legible rather than silent. */
+      limit: statement.limit
     }
   })
 

@@ -727,7 +727,7 @@ describe("cluster decomposition", () => {
     /**
      * The one-way-door guard, at the function that owns it. The canonical name is what every
      * `memhtml-entity` meta in the corpus is rewritten TO, and person-links then makes it a file path,
-     * so letting the model choose it would make a nightly job's write target a model's answer.
+     * so letting the model choose it would make an unattended run's write target a model's answer.
      *
      * The fixture is the adversarial case: `laith` is the SHORTER, lexicographically smaller name a
      * model would plausibly nominate, and it is claimed by one memory against the full form's nine. The

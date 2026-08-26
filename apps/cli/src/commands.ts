@@ -61,6 +61,41 @@ export const GLOBAL_FLAGS: ReadonlyArray<FlagSpec> = [
   }
 ]
 
+/**
+ * The `--strict-path` help.
+ *
+ * It states the DEFAULT as well as the opt-in, because the default is the surprising half: a caller
+ * reaching for this flag is a caller who just discovered that a malformed `--path` was re-derived, and
+ * the help has to confirm that reading rather than leave it inferred. The refusal's code is named too,
+ * since a caller branches on `code` and never on the prose.
+ */
+const STRICT_PATH_FLAG =
+  "Refuse an unusable --path instead of letting the placement rule decide. " +
+  "By default a --path that is not a usable memory path is re-derived, so the memory lands somewhere you did not name and the response reports that other path as a success. " +
+  "With this flag the write is REFUSED with ERR_INVALID_MEMORY naming the clause the path broke, and nothing is written, staged, or committed. " +
+  "It governs the path you NAMED: with no --path there is nothing to be strict about and the flag changes nothing, while an EMPTY or blank --path is named rather than absent and is refused — that is what your own path template renders when it produced nothing. " +
+  "An OCCUPIED path is refused with ERR_WRITE_CONFLICT with or without it."
+
+/**
+ * The `--facet` help, shared by every command that scopes on one.
+ *
+ * The composition rule is IN the help because it is a semantic contract rather than a convenience: a
+ * caller who read `--facet a=1 --facet b=2` as "either" would act on a superset, and one who read
+ * `--facet a=1 --facet a=2` as "both" would act on an empty result. Neither mistake is visible in
+ * the rows that come back.
+ *
+ * The unitless clause is there for the same reason. `file_facets.numeric_value` exists, and offering
+ * a numeric comparison over it would be offering an inequality on an unlabelled number — the unit
+ * lives in the human phrasing beside the value, so the caller owns it, and it owns it by matching the
+ * text the corpus holds.
+ */
+const FACET_FLAG =
+  "Restrict to memories carrying a `<dl>` facet, as name=value; the value may contain `=`, the name may not. " +
+  "Repeatable, and the composition is fixed: values under the SAME name broaden (--facet doc-type=runbook --facet doc-type=guide is either), " +
+  "DIFFERENT names narrow (--facet doc-type=runbook --facet tier=1 is both). " +
+  "This is the extension axis: memhtml's element and meta vocabularies are closed, so a consumer's own document kinds, states, and tiers live in `<dt>`/`<dd>` pairs and are queried here. " +
+  "The match is on the facet's TEXT with no case folding, so write the halves you mean to query. The stored form is the element's text content, which the parser collapses whitespace runs in and trims — so `<dd>runbook  rollback</dd>` is stored and queried single-spaced. There is no numeric comparison: a `<data value>` is indexed UNITLESS because the unit lives in the prose beside it, so the caller owns the unit and matches the text it wrote."
+
 /** Flags every retrieval command shares, so `search` and `recall` cannot scope differently. */
 const SCOPE_FLAGS: ReadonlyArray<FlagSpec> = [
   {
@@ -90,6 +125,12 @@ const SCOPE_FLAGS: ReadonlyArray<FlagSpec> = [
     // one vocabulary rather than two facets that happen to share a word.
     description:
       "Restrict to memories carrying one `type:name` entity reference, e.g. service:checkout-api, the form a hit's `entities` publishes, so a hop is a copy. A scope matching nothing returns no hits and says so; it never widens."
+  },
+  {
+    name: "facet",
+    type: "string",
+    description: FACET_FLAG,
+    repeatable: true
   },
   {
     name: "include-archived",
@@ -170,7 +211,13 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "path",
         type: "string",
         description:
-          "An explicit path override. One that is not a usable memory path (rooted in a PARA bucket, ending in .html, no `.` or `..` segment) is IGNORED and the placement rule decides instead, so a malformed override lands the memory somewhere you did not name. One a file ALREADY occupies is REFUSED with ERR_WRITE_CONFLICT and nothing is written or committed: this corpus overwrites nothing, and an explicit path gets no `-2` suffix because you named one path. To replace what a memory says, use `memhtml correct <path>`."
+          "An explicit path override. One that is not a usable memory path (rooted in a PARA bucket, ending in .html, no `.` or `..` segment) is IGNORED and the placement rule decides instead, so a malformed override lands the memory somewhere you did not name — pass --strict-path to have it refused instead. One a file ALREADY occupies is REFUSED with ERR_WRITE_CONFLICT and nothing is written or committed: this corpus overwrites nothing, and an explicit path gets no `-2` suffix because you named one path. To replace what a memory says, use `memhtml correct <path>`."
+      },
+      {
+        name: "strict-path",
+        type: "boolean",
+        description: STRICT_PATH_FLAG,
+        default: false
       },
       { name: "workspace", type: "string", description: "Routes the memory to projects/<slug>/." },
       {
@@ -369,6 +416,22 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     responseTypes: ["memory.neighbors"]
   },
   {
+    name: "resolve",
+    summary: "Follow a possibly-moved path forward to the memory that carries the fact now.",
+    args: [
+      {
+        name: "path",
+        description: "The path a receipt, citation, or older answer recorded.",
+        required: true
+      }
+    ],
+    // No flags. The walk has nothing to tune: both mechanisms that move a memory are followed, the
+    // hop bound is a property of the answer rather than a preference, and a caller who wants one hop
+    // reads `steps`.
+    flags: [],
+    responseTypes: ["memory.resolved"]
+  },
+  {
     name: "archive",
     summary: "Soft-evict: `git mv` into archive/<YYYY>/ with the archive stamps. Never a delete.",
     args: [{ name: "path", description: "The memory to archive.", required: true }],
@@ -399,7 +462,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   },
   {
     name: "list",
-    summary: "Page through the corpus by type, workspace, tag, entity, or PARA bucket.",
+    summary: "Page through the corpus by type, workspace, tag, entity, facet, or PARA bucket.",
     args: [],
     flags: [
       {
@@ -411,6 +474,10 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       { name: "workspace", type: "string", description: "One workspace." },
       { name: "tag", type: "string", description: "One tag." },
       { name: "entity", type: "string", description: "One `type:name` entity reference." },
+      // Repeatable here where `--tag` and `--entity` are not, because the facet axis composes: the
+      // whole point of an open vocabulary is asking for a conjunction of a consumer's own keys, and
+      // one predicate per call would make that N calls the caller has to intersect by hand.
+      { name: "facet", type: "string", description: FACET_FLAG, repeatable: true },
       {
         name: "para",
         type: "string",
@@ -431,6 +498,34 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       }
     ],
     responseTypes: ["memory.list"]
+  },
+  {
+    name: "entity activity",
+    summary: "Every entity with its file count and its last activity, newest first. Report only.",
+    args: [],
+    flags: [
+      {
+        name: "type",
+        type: "string",
+        description:
+          "Restrict to one entity type, e.g. `service`. The half before the colon in a `type:name` reference."
+      },
+      {
+        name: "limit",
+        type: "int",
+        description:
+          "Rows to return, 1 to 500. An ask outside that is clamped into it rather than refused, and `limit` echoes the bound the answer was built under. `entityCount` is the total matching the scope, so a clamped answer is visible.",
+        default: 50
+      },
+      {
+        name: "include-archived",
+        type: "boolean",
+        description:
+          "Aggregate archived memories too. Excluded by default: eviction is a `git mv`, so an archived memory still exists and would otherwise keep an entity looking active.",
+        default: false
+      }
+    ],
+    responseTypes: ["entity.activity"]
   },
   /**
    * The task family: CRUDL over the 10th memory type, without retrieval.
@@ -625,7 +720,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
      * gate compares generated bytes, so it fails only on the string that also prints the names, and a
      * stale number in the other one ships.
      */
-    summary: `The nightly curation cycle: ${SLEEP_PHASES.length} phases, each an isolated commit on a review branch.`,
+    summary: `The curation cycle: ${SLEEP_PHASES.length} phases, each an isolated commit on a review branch.`,
     args: [],
     flags: [
       {
@@ -650,8 +745,8 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         description:
           "The deep-sleep cycle: mine a lower grouping band, group by shared entity, re-file " +
           "inbox singletons, and iterate compress until a pass folds nothing. Reaches the inbox " +
-          "tail the nightly community gate cannot; costs more model calls. Same branch, review, " +
-          "and merge gate as a nightly run.",
+          "tail the default community gate cannot; costs more model calls. Same branch, review, " +
+          "and merge gate as a run without this flag.",
         default: false
       },
       {
@@ -702,6 +797,15 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     args: [],
     flags: [],
     responseTypes: ["sleep.report"]
+  },
+  {
+    name: "sleep plan",
+    summary: "Would a run change anything? Read the signals from index counts, running no phase.",
+    args: [],
+    // No flags. There is nothing to scope: the signals ARE the phases' own predicates, and a caller
+    // wanting one of them reads its entry out of `signals`.
+    flags: [],
+    responseTypes: ["sleep.plan"]
   },
   {
     name: "status",
@@ -869,7 +973,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   },
   {
     name: "serve mcp",
-    summary: "Run the `memhtml-mcp` stdio server: 14 tools and 2 resources over this same repo.",
+    summary: "Run the `memhtml-mcp` stdio server: 15 tools and 3 resources over this same repo.",
     args: [],
     flags: [],
     responseTypes: ["serve.exit"]
@@ -928,7 +1032,7 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
     body:
       "There are three ways to put a memory into the corpus, and they are all legitimate. " +
       "First, this CLI: `memhtml write` for one memory, `memhtml apply` for many. " +
-      "Second, the MCP server: `memhtml serve mcp` speaks stdio with 14 tools and 2 resources over this " +
+      "Second, the MCP server: `memhtml serve mcp` speaks stdio with the same tools and resources over this " +
       "same repo, and it is the door to use when you are already an MCP client. " +
       "Third, editing files under $MEMHTML_ROOT directly with your normal file tools: the git tree IS the " +
       "system of record and `.memhtml/index.db` is only a projection of it, so a hand-written or hand-edited " +
@@ -937,7 +1041,7 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "What you take on by editing directly is everything the write path would have done for you: the " +
       "file must satisfy the format (run `memhtml doctor`, and `memhtml read <path>` reports per-file format " +
       "warnings), you own choosing a path that does not collide, you own noticing that the content " +
-      "already exists somewhere else, and you own the commit. The nightly `memhtml sleep run` refuses to " +
+      "already exists somewhere else, and you own the commit. `memhtml sleep run` refuses to " +
       "start on a dirty tree, so an uncommitted edit blocks curation until it is committed or stashed. " +
       "A CLI command and a running `memhtml serve mcp` may share one store: the index is WAL SQLite, " +
       "which admits one writer at a time and any number of concurrent readers, so a second writer " +
@@ -957,8 +1061,9 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "line looks like this:\n" +
       `${GUIDE_OP_EXAMPLE}\n` +
       "`op` is `write` (the only verb in the vocabulary today), `title` and `type` are required, and each " +
-      "op carries the same optional fields `memhtml write` takes, in snake_case: `path`, `workspace`, `tag`, " +
-      "`entity`, `importance`, `confidence`, `session_id`, `prompt_id`, `turn_uuid`. " +
+      "op carries the same optional fields `memhtml write` takes, in snake_case: `path`, `strict_path`, " +
+      "`workspace`, `tag`, `entity`, `importance`, `confidence`, `status`, `due`, `session_id`, " +
+      "`prompt_id`, `turn_uuid`. " +
       "The whole file is validated for shape before ANY op executes, so a malformed line 7 is exit 2 " +
       "naming line 7 with nothing written. A failed apply costs you nothing but the call. " +
       "You get one result per op in INPUT ORDER, each naming its own `index`, so you can match results " +

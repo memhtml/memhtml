@@ -4,6 +4,8 @@ import {
   Indexer,
   IndexRecorder,
   NEIGHBORS_LIMIT,
+  RESOLVE_STEP_VIA,
+  RESOLVE_STOP_REASONS,
   Retrieval,
   Store
 } from "@memhtml/cli"
@@ -16,7 +18,8 @@ import { Tool, Toolkit } from "effect/unstable/ai"
 import { ToolFailure } from "./failure.js"
 
 /**
- * The fourteen tools: design.md §8 verbatim, plus `memory_write_batch` (spec 004 D7).
+ * The fifteen tools: design.md §8 verbatim, plus `memory_write_batch` (spec 004 D7) and
+ * `memory_resolve`.
  *
  * **`parameters` is always `Schema.Struct`, never `Schema.Class`.** A client sends a plain object
  * literal, and a class schema's decode expects an instance. The failure is a decode error on every
@@ -113,8 +116,8 @@ const Optional = <S extends Schema.Top>(schema: S) => Schema.optionalKey(Schema.
  * which keeps `memory_search` provably unable to reach the store and write.
  *
  * A FUNCTION per set, not a shared constant: the option's type is a mutable array, so handing the
- * same array to fourteen tools would let one tool's construction mutate the dependency list of the
- * other thirteen.
+ * same array to fifteen tools would let one tool's construction mutate the dependency list of the
+ * other fourteen.
  */
 const READS = () => [DatabaseService]
 // ExtractorPort is in the write set because `batchWrite` reads it (the write-time entity assist);
@@ -164,6 +167,11 @@ const ARTICLE_HTML_CONTRACT =
  * agent that expected last-write-wins gets `ERR_WRITE_CONFLICT` and no file. Learning either from a
  * response costs a round trip, and learning the second one wrong costs the corpus a memory.
  *
+ * `strict_path` is named beside the first branch rather than in a paragraph of its own, because it is
+ * that branch's opt-out and an agent reading about the re-derivation is the agent who needs it. It
+ * matters most to a caller placing documents at deterministic paths, where the lenient default makes a
+ * write APPEAR to succeed at a path it did not ask for.
+ *
  * The recovery is named, because a write is not it: eviction here is a `git mv` into `archive/` and
  * nothing is ever removed, so replacing a memory is `memory_correct`, which archives what it supersedes
  * in the same commit.
@@ -171,6 +179,7 @@ const ARTICLE_HTML_CONTRACT =
 const PATH_OVERRIDE_CONTRACT =
   "`path` is optional and rarely worth sending: without it the placement rule picks the directory from the memory's type, workspace, and entities, and the title becomes the filename. " +
   "A `path` that is not a usable memory path (rooted in a PARA bucket, ending in .html, no . or .. segment) is IGNORED, and the placement rule decides instead — so a malformed override lands the memory somewhere you did not name. " +
+  "Send strict_path: true to have that REFUSED instead, with ERR_INVALID_MEMORY naming the clause the path broke and nothing written, staged, or committed; it governs the path you named, so with no `path` it changes nothing. Reach for it when you place documents at paths you compute, where a silent re-derivation makes a write look like it landed where you asked. " +
   "A `path` that a file ALREADY occupies is REFUSED with ERR_WRITE_CONFLICT, and nothing is written or committed: this corpus overwrites nothing, and an explicit path gets no -2 suffix because you named one path. " +
   "To replace what a memory says, call memory_correct on it — that archives the file it supersedes in the same commit and leaves it readable under archive/."
 
@@ -242,6 +251,29 @@ const CONSOLIDATE_GUIDANCE =
   "Off by default, and claims with no frame shape are never consolidated. The guards fail closed, so this only ever acts on claims the conflict rule would have matched."
 
 /**
+ * The `facets` contract, stated in the description of every tool that scopes on one.
+ *
+ * A description rather than a doc comment, for `ARTICLE_HTML_CONTRACT`'s reason: `tools/list` publishes
+ * `description`, so a rule stated anywhere else is a rule the caller never reads. This one belongs
+ * there because the COMPOSITION is a semantic contract an agent cannot recover from the rows. An agent
+ * that read two names as "either" acts on a superset, and one that read two values under one name as
+ * "both" acts on an empty set, and each result looks like a plausible corpus answer.
+ *
+ * The unitless clause is the second thing a caller would otherwise assume wrong. `file_facets` holds a
+ * `numeric_value` beside every `<data value>`, and no tool exposes an inequality over it, because the
+ * unit lives in the human phrasing the number sits in. An agent told nothing would ask for one; told
+ * this, it matches the text its own corpus wrote.
+ *
+ * Written once and appended twice, so the two doors cannot publish two versions of one rule.
+ */
+const FACET_SCOPE_CONTRACT =
+  "`facets` narrows by the corpus's own <dl> facets, each entry spelled name=value (the value may contain =, the name may not). " +
+  'THE COMPOSITION IS FIXED: values under the SAME name broaden, so ["doc-type=runbook","doc-type=guide"] is either; DIFFERENT names narrow, so ["doc-type=runbook","tier=1"] is both. ' +
+  "This is the extension axis. memhtml's element and meta vocabularies are closed, so your own document kinds, states, and tiers belong in <dt>/<dd> pairs inside the article, and this is how you query them back. " +
+  "The match is on the facet's TEXT with no case folding, so write the halves you mean to query. The stored form is the element's text content, which the parser collapses whitespace runs in and trims, so <dd>runbook  rollback</dd> is stored and queried single-spaced. " +
+  "There is no numeric comparison and that is deliberate: a <data value> is indexed UNITLESS, because the unit lives in the prose beside it, so you own the unit and match the text you wrote."
+
+/**
  * The fields that author ONE memory, shared by `memory_write`'s parameters and `memory_write_batch`'s
  * op struct.
  *
@@ -272,6 +304,13 @@ const writeFields = () => ({
    * them. The refusal is `@memhtml/store`'s `freePathFor`, so this door and `memhtml apply` share it.
    */
   path: Optional(MemoryPath),
+  /**
+   * Refuse an unusable `path` instead of re-deriving one. Opt-in, because the lenient branch is what
+   * ships and what callers depend on; `PATH_OVERRIDE_CONTRACT` states both branches in the
+   * description, which is where a caller reads them. The refusal is `@memhtml/store`'s
+   * `strictPathRefusal`, so this door, `memhtml write`, and `memhtml apply` share it.
+   */
+  strict_path: Optional(Schema.Boolean),
   workspace: Optional(Schema.String),
   tags: Optional(Schema.Array(Schema.String)),
   entities: Optional(Schema.Array(Schema.String)),
@@ -476,7 +515,8 @@ const MemoryRead = Tool.make("memory_read", {
 
 const MemorySearch = Tool.make("memory_search", {
   description:
-    "Ranked search over the corpus: lexical, vector, recency, and salience arms fused with RRF, then diversified. Each hit carries a `snippet`: the text of the file's best-matching chunk for this query (its opening chunk when the vector arm did not fire), truncated with a trailing `…` when cut. `degraded` is true when the vector arm did not fire, so the result came from fewer signals. Each hit also carries `entities` in `type:name` form; pass one of those values back as `entity` to make the next call the second hop of a chain. That is two calls, not a guess about spelling. An `entity` scope that matches nothing returns NO hits and says so through `scope_empty`: this tool never widens a scope it could not satisfy. `as_of` is a point-in-time view: pass an ISO instant and the result is what was believed valid at that moment, including since-superseded memories (marked superseded_by). Returning a path changes nothing: a hit is this ranker's guess, so it never bumps salience. Call memory_read to open the one you chose, and memory_reinforce to record whether it was right.",
+    "Ranked search over the corpus: lexical, vector, recency, and salience arms fused with RRF, then diversified. Each hit carries a `snippet`: the text of the file's best-matching chunk for this query (its opening chunk when the vector arm did not fire), truncated with a trailing `…` when cut. `degraded` is true when the vector arm did not fire, so the result came from fewer signals. Each hit also carries `entities` in `type:name` form; pass one of those values back as `entity` to make the next call the second hop of a chain. That is two calls, not a guess about spelling. An `entity` scope that matches nothing returns NO hits and says so through `scope_empty`: this tool never widens a scope it could not satisfy. `as_of` is a point-in-time view: pass an ISO instant and the result is what was believed valid at that moment, including since-superseded memories (marked superseded_by). Returning a path changes nothing: a hit is this ranker's guess, so it never bumps salience. Call memory_read to open the one you chose, and memory_reinforce to record whether it was right. " +
+    FACET_SCOPE_CONTRACT,
   dependencies: RETRIEVES(),
   parameters: Schema.Struct({
     query: Schema.String,
@@ -489,6 +529,11 @@ const MemorySearch = Tool.make("memory_search", {
      * spelling a hit's `entities` publishes, so a value read off a hit is a valid scope verbatim.
      */
     entity: Optional(Schema.String),
+    /**
+     * `<dl>` facet predicates as `name=value` strings. AND across distinct names, OR within one name;
+     * the description carries the rule, because that is what a caller reads.
+     */
+    facets: Optional(Schema.Array(Schema.String)),
     include_archived: Optional(Schema.Boolean),
     /**
      * Point-in-time view: returns what was believed valid at this moment, including
@@ -719,6 +764,65 @@ const MemoryNeighbors = Tool.make("memory_neighbors", {
   })
 })
 
+const MemoryResolve = Tool.make("memory_resolve", {
+  description:
+    "Follow a path an older answer, receipt, or external citation recorded FORWARD to the memory that carries the fact now. A path is the id of a memory and it is derived from the title, so a correction that rewords the title moves the file: the cited path stops resolving through no fault of the citation. " +
+    "`stop_reason` is what decides whether the answer is citable, and only `live` means yes. `archived` is a memory that was EVICTED rather than corrected, so nothing supersedes it and citing it as current would be wrong. `unindexed` is no such path here, which may also mean the index does not yet describe the commit that holds it — `indexed_commit` says which commit it does describe. `cycle` and `hop_limit` are the two abnormal endings: a cycle is two memories each claiming to supersede the other, an authoring defect, and `hop_limit` means `path` is where the walk stopped rather than the end of the chain, so resolving it again continues. " +
+    "`steps` names the mechanism of every hop, `supersedes` for an authored link and `archive_move` for a `git mv` into the archive, and each node is named by the path that holds it NOW. " +
+    "`hops: 0` with `stop_reason: live` does NOT mean the bytes are unchanged: a correction whose title did not change lands at the same path. Read `pinned_uri` for the grain that answers that — it is a resource URI naming these bytes at a commit, so it cannot move, where memhtml://file/<path> always returns whatever is at the path today.",
+  dependencies: READS(),
+  parameters: Schema.Struct({ path: MemoryPath }),
+  failure: ToolFailure,
+  success: Schema.Struct({
+    /** The path asked about, normalized, so an answer can be matched back to the receipt. */
+    requested: MemoryPath,
+    /** Where the walk ended. What that MEANS is `stop_reason`'s, not this field's. */
+    path: MemoryPath,
+    /** Hops taken, equal to `steps.length`. A quantity, `0` when the path needed no walk. */
+    hops: Count,
+    steps: Schema.Array(
+      Schema.Struct({
+        from: MemoryPath,
+        to: MemoryPath,
+        /**
+         * Which mechanism moved the memory, from the closed vocabulary the operation declares.
+         *
+         * Published as an enum rather than a string so a client can branch exhaustively: the two are
+         * different claims. `supersedes` is an authored `<link>` inside a file, which survives a
+         * rebuilt index; `archive_move` is a `git mv` recorded by the path itself.
+         */
+        via: Schema.Literals(RESOLVE_STEP_VIA)
+      })
+    ),
+    /** Why the walk stopped, from the five values the operation declares. Only `live` is citable. */
+    stop_reason: Schema.Literals(RESOLVE_STOP_REASONS),
+    /** The title at `path`, or null when the index holds no row for it. */
+    title: Schema.NullOr(Schema.String),
+    /**
+     * The commit the INDEX describes, or null before the first rebuild and during one.
+     *
+     * This whole answer is a statement about that commit rather than about HEAD, since the index is a
+     * projection of git. `memory_status.index_fresh` says whether the two agree.
+     */
+    indexed_commit: Schema.NullOr(Schema.String),
+    /**
+     * A `resources/read` URI pinning `path` at `indexed_commit`, or null when reading it would fail.
+     *
+     * Two conditions make it null, and both are the same rule: this field is a URI the same server
+     * answers. There is no commit to pin to before the first rebuild, and `unindexed` is the one
+     * `stop_reason` whose `path` the indexed commit does not hold — pinning it would publish a
+     * citation `resources/read` refuses with `ERR_PATH_NOT_FOUND`, which a receipt would store as a
+     * permanently dead link. The other four stop reasons all end on a path the index holds a row for.
+     *
+     * Composed by the server rather than by the client, because the URI's spelling belongs to the
+     * resource that routes it. A caller writing a receipt stores this string: the path half can be
+     * corrected, archived, or evicted afterwards and the URI still returns the bytes the receipt was
+     * written against.
+     */
+    pinned_uri: Schema.NullOr(Schema.String)
+  })
+})
+
 const MemoryArchive = Tool.make("memory_archive", {
   description:
     "Soft-evict a memory: `git mv` into archive/<YYYY>/ with the archive stamps. Nothing is ever deleted, and `git log --follow` reads straight through.",
@@ -751,13 +855,16 @@ const MemoryReinforce = Tool.make("memory_reinforce", {
 
 const MemoryList = Tool.make("memory_list", {
   description:
-    "Page through the corpus by facet. `next_cursor` is a keyset on the path, so a page stays correct even while a sleep cycle archives files.",
+    "Page through the corpus by facet. `next_cursor` is a keyset on the path, so a page stays correct even while a sleep cycle archives files. " +
+    FACET_SCOPE_CONTRACT,
   dependencies: READS(),
   parameters: Schema.Struct({
     memory_type: Optional(WritableType),
     workspace: Optional(Schema.String),
     tag: Optional(Schema.String),
     entity: Optional(Schema.String),
+    /** `<dl>` facet predicates as `name=value` strings, composing exactly as `memory_search`'s do. */
+    facets: Optional(Schema.Array(Schema.String)),
     para: Optional(Schema.Literals(PARA_BUCKETS)),
     limit: Optional(Count),
     cursor: Optional(Schema.String)
@@ -867,7 +974,8 @@ const MemoryStatus = Tool.make("memory_status", {
 })
 
 /**
- * The toolkit. Exactly fourteen: design.md §8's thirteen plus `memory_write_batch`.
+ * The toolkit. Exactly fifteen: design.md §8's thirteen, plus `memory_write_batch` and
+ * `memory_resolve`.
  *
  * Order is the read order of the table in §8, which is also roughly the order an agent needs them:
  * write and read, then the three retrieval shapes, then the graph operations, then the trace plane,
@@ -887,6 +995,7 @@ export const MemhtmlToolkit = Toolkit.make(
   MemoryCorrect,
   MemoryLink,
   MemoryNeighbors,
+  MemoryResolve,
   MemoryArchive,
   MemoryReinforce,
   MemoryList,
@@ -898,8 +1007,8 @@ export const MemhtmlToolkit = Toolkit.make(
 /**
  * The tool names, derived from the toolkit rather than restated.
  *
- * Two lists would drift: a placeholder list that once said fourteen names and a toolkit that now
- * builds thirteen would leave a test asserting the list and proving nothing about the server.
+ * Two lists would drift: a placeholder list that once said fifteen names and a toolkit that now
+ * builds fourteen would leave a test asserting the list and proving nothing about the server.
  */
 export const TOOL_NAMES = Object.keys(MemhtmlToolkit.tools) as ReadonlyArray<
   keyof typeof MemhtmlToolkit.tools

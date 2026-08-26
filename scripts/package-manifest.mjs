@@ -92,7 +92,7 @@ await writeFile(
       name: "memhtml",
       version: root.version,
       description:
-        "An agent's long-term memory: one fact per semantic HTML file in git, four-arm retrieval, and a nightly sleep cycle.",
+        "An agent's long-term memory: one fact per semantic HTML file in git, four-arm retrieval, and a curation sleep cycle.",
       keywords: ["memory", "agent", "mcp", "retrieval", "sqlite", "git", "semantic-html", "cli"],
       homepage: "https://github.com/memhtml/memhtml",
       bugs: { url: "https://github.com/memhtml/memhtml/issues" },

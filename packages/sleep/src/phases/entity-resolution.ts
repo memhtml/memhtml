@@ -1,4 +1,4 @@
-import { PERSON_ENTITY_PREFIX } from "@memhtml/contracts/types"
+import { normalizeEntityName, PERSON_ENTITY_PREFIX } from "@memhtml/contracts/types"
 import { cosine } from "@memhtml/domain"
 import { parseMemory } from "@memhtml/html"
 import type { GitFailure } from "@memhtml/store"
@@ -163,9 +163,15 @@ export const ENTITY_MEMBER_CHARS = 600
  */
 const PERSON_TYPE = PERSON_ENTITY_PREFIX.slice(0, -1)
 
-/** Lowercase, NFC-normalize, collapse internal whitespace, trim. The pre-compare form. */
-export const normalizeEntityName = (name: string): string =>
-  name.normalize("NFC").toLowerCase().replace(/\s+/g, " ").trim()
+/**
+ * Lowercase, NFC-normalize, collapse internal whitespace, trim. The pre-compare form.
+ *
+ * Re-exported from `@memhtml/contracts` rather than defined here, because the projection into
+ * `file_entities` and the `entity` scope predicate apply the same rule. A second copy would let this
+ * phase cluster on one spelling while the index stored and matched another, and nothing would fail —
+ * the corroboration counter would just count merges of names that no query could reach.
+ */
+export { normalizeEntityName }
 
 /**
  * A character-overlap similarity in `[0, 1]`: the longest common subsequence over the mean length.
@@ -495,7 +501,7 @@ export interface ProposedMerge {
  *
  * **The model's `canonicalKey` does not decide this**, and the reason is worth stating. The canonical
  * name is what every `memhtml-entity` meta in the corpus is rewritten TO, and it becomes a person file's
- * path once person-links runs. Letting the model choose it would make a nightly job's write target a
+ * path once person-links runs. Letting the model choose it would make an unattended run's write target a
  * model's answer. What `canonicalKey` is for is validation: a cluster whose canonical is not one of its
  * own members is a self-contradicting answer, and the caller drops it.
  *

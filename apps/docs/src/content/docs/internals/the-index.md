@@ -39,7 +39,17 @@ Each child table (`packages/index/migrations/0001_files.sql:73-110`) declares `O
 
 The state plane (`packages/index/state-migrations/S0001_access.sql`) holds `access` and `edge_corroboration`. Its DDL names its own schema and puts that name on the INDEX rather than on the table, which is the form this driver accepts.
 
-### 2.3. Widening a CHECK-bearing table
+### 2.3. Entity activity is a report and never a signal
+
+`file_entities` carries no time column of its own, so "when was this entity last active" is a question about the `files` rows that reference it. `memhtml entity activity` (`entityActivity`, `apps/cli/src/operations.ts`) answers it: `GROUP BY (entity_type, entity_name)` over `file_entities JOIN files`, which is `file_entities_name`'s own column order, so the grouping is an index scan rather than a sort of the whole join.
+
+It publishes three timestamps because they are three clocks. `lastActivityAt` is `max(coalesce(event_at, updated_at))`, the recency arm's own rule, so "most recently active" means here what it means in a ranked search — and it is a maximum of a per-row coalesce, not a coalesce of two maxima, which differ whenever the newest world time and the newest write time sit on different memories. `lastEventAt` is `max(event_at)` alone, WORLD time, `null` when no in-scope memory states one. `lastWrittenAt` is `max(updated_at)` alone, WRITE time. A caller that needs one clock gets it by name instead of inferring which one a coalesced value fell back to. `entityCount` is the total matching the scope regardless of `limit`, so a clamped answer is visible. `--type` folds case, the way `--entity` folds at both retrieval doors, but a ROW carries the type and name the corpus authored — so a corpus holding both `Service:Checkout-API` and `service:checkout-api` reports two rows where `--entity` returns one entity's memories, which is the honest report of a corpus [`entity-resolution`](/internals/the-sleep-pipeline/) has not folded yet.
+
+**It is report-only, and that is structural.** Every ranking arm lives in `@memhtml/index` and every decay term in `@memhtml/domain`, and both sit below `apps/cli` in the project-reference graph, so neither can import this function — an attempt is a compile error. The reason it matters is the salience arm's own two exclusions ([Four-arm retrieval](/internals/four-arm-retrieval/)): decay is wrong for identity, because a colleague unmentioned for six months is not less themselves, and decay over working state would reward staleness. An "entity last active" number wired into ranking reintroduces both at once, on the axis where a consumer models its own domain.
+
+Activity is write-side only. Reads live in `state.access`, which is path-keyed with no foreign key onto `files` and sits in the separately ATTACHed plane whose lifetime differs from the index's — `index.db` is a disposable projection of git and `state.db` is not. Joining it here would let a rebuilt index and a preserved state plane disagree about one row. The salience arm is the one statement that crosses that boundary.
+
+### 2.4. Widening a CHECK-bearing table
 
 Migration `0008_tasks.sql` widens both CHECK-bearing tables by recreating them and copying the rows across, and the step that makes it safe is that it snapshots every child table first (`packages/index/migrations/0008_tasks.sql:85-92`).
 

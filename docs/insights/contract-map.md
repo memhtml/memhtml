@@ -165,7 +165,7 @@ export const Edge = Schema.Struct({
 
 This module provides placement, archival, and normalization as pure total functions over repo-root-relative paths. It has 13 non-test importers across 5 packages and 1 app, and it is the only module that decides where a memory lands in the root.
 
-**Producer:** `packages/contracts/src/paths.ts:10-186`
+**Producer:** `packages/contracts/src/paths.ts:10-240`
 
 **Consumer(s):**
 
@@ -233,12 +233,12 @@ export const originalPathFor = (archivePath: string): string | undefined => {
 
 **Assumptions consumers make:**
 
-- Every caller assumes `placementFor` never fails and never returns a directory outside a PARA bucket, so the write path does not guess twice (`packages/contracts/src/paths.ts:96-102`). An unusable explicit `path` is ignored rather than propagated, which is how totality is preserved.
+- Every caller assumes `placementFor` never fails and never returns a directory outside a PARA bucket, so the write path does not guess twice (`packages/contracts/src/paths.ts:134-143`). An unusable explicit `path` is ignored rather than propagated, which is how totality is preserved.
 - `packages/store/src/layout.ts:36-48` assumes the three directory constants `placementFor` can return already exist on disk, so `memhtml init` creates all of them and an agent's first write lands somewhere real.
 - `packages/index/src/project.ts:336-341` assumes the leading slash in a link's `href` must be stripped before it becomes a `dst_path`, because the `edges` table stores the git-tree form and a slashed value would fail to join `files.path` while looking exactly like a corpus with no edges.
-- A caller that wants an invalid path rejected instead of re-derived assumes it must check `isValidMemoryPath` itself first (`packages/contracts/src/paths.ts:99-102`).
+- A caller that wants an invalid path rejected instead of re-derived asks the store for it, with `strictPath` on a `WriteInput` (`packages/store/src/store.ts`, `strictPathRefusal`).
 - `packages/index/src/project.ts:366-368` re-implements the archive-path inverse as a local `originOf` instead of importing `originalPathFor`, so two copies of the same regex exist. Both match `^archive\/\d{4,}\/(.+)$`.
-- `PlacementInput` allows `| undefined` on every optional field. `packages/contracts/src/paths.ts:74-80` states that under `exactOptionalPropertyTypes` a bare `path?: string` would force every tool adapter to strip absent fields by hand, so the contract accepts the shape the MCP and CLI layers already hold.
+- `PlacementInput` allows `| undefined` on every optional field. `packages/contracts/src/paths.ts:112-118` states that under `exactOptionalPropertyTypes` a bare `path?: string` would force every tool adapter to strip absent fields by hand, so the contract accepts the shape the MCP and CLI layers already hold.
 
 **Drift risk:** Adding a routing rule to `placementFor` changes where new memories land without moving anything already in the root, so the same logical memory can sit in two directories depending on when it was written. Mitigation: treat a rule change as needing a migration pass over the root, and check inbox depth through `memhtml doctor`, which already reports it as a health signal (`packages/contracts/src/paths.ts:15-18`).
 
@@ -607,7 +607,7 @@ export interface StoreGitShape {
 
 ## The CLI JSON envelope and exit codes
 
-This is the machine contract an agent parses. It declares two envelope shapes, 32 response discriminators, 15 error codes, and 3 exit codes, and all of those lists are append-only.
+This is the machine contract an agent parses. It declares two envelope shapes, the response discriminators, the error codes, and 3 exit codes, and all of those lists are append-only — the counts are deliberately not restated here, because an append-only list grows and a number beside it in prose is a number nothing re-derives.
 
 **Producer:** `apps/cli/src/envelope.ts:6-157`
 
@@ -698,6 +698,8 @@ export interface SearchScope {
   /** ANY-of overlap. Each tag BROADENS the result set. */
   readonly tags?: ReadonlyArray<string> | undefined
   readonly entity?: string | undefined
+  /** `<dl>` facet predicates: AND across distinct names, OR within one name. */
+  readonly facets?: ReadonlyArray<FacetFilter> | undefined
   /** Archived files are excluded unless asked for. Eviction is a `git mv`, so they still exist. */
   readonly includeArchived?: boolean | undefined
   readonly asOf?: string | undefined

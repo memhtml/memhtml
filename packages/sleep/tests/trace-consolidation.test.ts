@@ -38,6 +38,7 @@ import {
   DEDUP_CORPUS,
   type Fixture,
   memoryHtml,
+  type SeedFile,
   seedSessionLink,
   seedTrace,
   withFixture
@@ -265,7 +266,7 @@ describe("trace-consolidation happy path", () => {
               "Partial indexes on this driver need the predicate restated in the query to be chosen.",
             gist: "Three separate lookups planned as SCAN until the redundant IS NOT NULL clause was added, across two different tables.",
             kind: "error_pattern",
-            entities: ["service:sqlite"]
+            entities: [{ type: "service", name: "sqlite" }]
           }),
           candidate({
             claim: "Fixture corpora go stale one phase before the phase under test.",
@@ -361,7 +362,10 @@ describe("trace-consolidation happy path", () => {
           claim: "Partial indexes on this driver need their predicate restated in the query.",
           gist: "The distilled prose, which IS allowed in the body.",
           kind: "error_pattern",
-          entities: ["service:sqlite", "person:sanju"],
+          entities: [
+            { type: "service", name: "sqlite" },
+            { type: "person", name: "sanju" }
+          ],
           evidence: [
             { sessionId: "session-a", quote: QUOTE_A },
             { sessionId: "session-b", quote: QUOTE_B }
@@ -397,7 +401,18 @@ describe("trace-consolidation happy path", () => {
           expect(doc.metas.author).toBe("agent:sleep")
           expect(doc.metas.memoryType).toBe("error_pattern")
           expect(doc.metas.status).toBe("active")
-          expect(doc.entities).toContain("service:sqlite")
+          /**
+           * Each entity's TWO HALVES arrive joined as one `type:name` reference, which is the form
+           * `file_entities` keys on and the form the `entity` scope compares. A reference filed without
+           * its type lands under `unknown` and answers `service:sqlite` with an empty set — the same
+           * answer an absent memory gives — so this is the assertion that says the memory is reachable
+           * by the reference a caller would ask for.
+           *
+           * `toEqual` over both, in the candidate's own order, so a join that dropped a half or
+           * reordered the pair is visible. (Mutation: joining `name` alone yields `["sqlite",
+           * "sanju"]`; joining `name:type` yields `["sqlite:service", ...]`. Both fail here.)
+           */
+          expect(doc.entities).toEqual(["service:sqlite", "person:sanju"])
 
           /**
            * The evidence IS in the commit message, which is where a reviewer needs it — a commit
@@ -407,6 +422,398 @@ describe("trace-consolidation happy path", () => {
           const message = yield* messageOf(fixture, outcome.commitSha ?? "")
           expect(message).toContain(QUOTE_A)
           expect(message).toContain(QUOTE_B)
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("trims both halves of an entity and drops a pair missing one", async () => {
+    /**
+     * The redundancy every model-facing value in this package carries, applied to the entity join.
+     *
+     * The padding case is not cosmetic: `parseEntity` splits on the FIRST colon, so an untrimmed
+     * `" service "` files under the type `"service "` and no reference a caller spells reaches it — a
+     * memory in the tree, indexed, and unfindable. The dropped pairs are the shapes the schema already
+     * refuses, gated again here so a scripted or future consolidator that skipped the decode still
+     * cannot write `:orphan` or `person:`, whose one meaningful half is unreachable through a scope
+     * that compares the whole reference.
+     *
+     * (Mutation: removing the `.trim()` from either half yields `" service : sqlite "`; removing the
+     * empty-half filter adds `unknown`-typed junk. Both fail the `toEqual`.)
+     */
+    const consolidator = scriptedConsolidator(() =>
+      candidates([
+        candidate({
+          claim: "A padded entity half files under a type nobody can spell.",
+          gist: "Two lookups missed a memory whose entity meta carried surrounding whitespace.",
+          kind: "error_pattern",
+          entities: [
+            { type: " service ", name: " sqlite " },
+            { type: "   ", name: "orphan" },
+            { type: "person", name: " " }
+          ]
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* seedTrace(fixture, { sessionId: "session-a" })
+          const base = yield* headSha(fixture)
+
+          yield* traceConsolidation(envFor(fixture))
+          const [path] = yield* addedMemories(fixture, base)
+          const doc = yield* parseMemory((yield* atHead(fixture, path ?? "")) ?? "")
+          expect(doc.entities).toEqual(["service:sqlite"])
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("rewrites a variant entity to the CORPUS's spelling and leaves a new name alone", async () => {
+    /**
+     * The mint-site canonicalization, against a real indexed corpus and real `file_entities` rows.
+     *
+     * The corpus already names `service:checkout-api` (two files, from `DEDUP_CORPUS`) and
+     * `person:Priya Raman` (the file seeded below, whose authored spelling is NOT the normalized one).
+     * The candidate coins a variant of each, and each must land on its OWN corpus spelling — which is
+     * what makes the case non-vacuous three ways over:
+     *
+     * - `Service:Checkout-API` proves the rewrite happens at all.
+     * - `person:priya  raman` proves the target is the CORPUS's spelling and not the normalized form. An
+     *   implementation that simply lowercased and collapsed every reference passes the first arm and
+     *   fails this one, and it would leave a reference addressing nothing.
+     * - `Service:Brand-New-Thing` proves it is a LOOKUP. A name the corpus does not hold keeps the
+     *   candidate's own spelling, so an implementation that rewrote toward whichever row it read first,
+     *   or that normalized unconditionally, fails here.
+     *
+     * The neighbour matters for the reason the shared-table lesson states: `file_entities` is one table
+     * across every entity, so a corpus holding a single name cannot tell "found the right row" from
+     * "returned a row".
+     *
+     * (Mutations: returning an empty map from `corpusEntitySpellings` leaves all three verbatim and
+     * fails the first two arms; keying the map on the raw reference instead of the normalized one
+     * matches nothing and fails the same two; returning `normalizeEntityRef(ref)` instead of the corpus
+     * spelling fails the person arm and the new-name arm; substituting the corpus's whole REFERENCE
+     * rather than its name half fails the first arm's type.)
+     */
+    const PERSON_FILE: SeedFile = {
+      path: "resources/people/priya-raman.html",
+      html: memoryHtml({
+        title: "Priya Raman",
+        claim: "Priya Raman owns the payments ledger reconciliation.",
+        createdAt: "2026-05-02T00:00:00Z",
+        entities: ["person:Priya Raman"]
+      })
+    }
+
+    const consolidator = scriptedConsolidator(() =>
+      candidates([
+        candidate({
+          claim: "A coined entity variant is a second handle on one name until sleep merges them.",
+          gist: "Two nights of entity resolution have to agree before a merge applies, so the variant is live and separately addressable until then.",
+          kind: "agent_insight",
+          entities: [
+            { type: "Service", name: "Checkout-API" },
+            { type: "person", name: "priya  raman" },
+            { type: "Service", name: "Brand-New-Thing" }
+          ]
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* seedTrace(fixture, { sessionId: "session-a" })
+          const base = yield* headSha(fixture)
+
+          yield* traceConsolidation(envFor(fixture))
+          const [path] = yield* addedMemories(fixture, base)
+          const doc = yield* parseMemory((yield* atHead(fixture, path ?? "")) ?? "")
+          /*
+           * The NAME folds to the corpus's spelling and the TYPE does not: `Service` is the candidate's
+           * own half in the first and third arms, because a type is the routing discriminator rather
+           * than a spelling. See the case below for what substituting it would do.
+           */
+          expect(doc.entities).toEqual([
+            "Service:checkout-api",
+            "person:Priya Raman",
+            "Service:Brand-New-Thing"
+          ])
+        }),
+      { seed: [...DEDUP_CORPUS, PERSON_FILE], consolidator }
+    )
+  })
+
+  it("keeps the candidate's TYPE when the corpus spells that type in another case", async () => {
+    /**
+     * The half of the mint-site rewrite that must NOT happen, and the placement arm of the one-join
+     * design — neither of which the case above can see, because `placementFor` consults `entities` only
+     * for a `semantic` candidate.
+     *
+     * A type is not a spelling. `isPersonEntity` compares `person:` exactly
+     * (`packages/contracts/src/types.ts`), `placementFor` routes on that predicate, and `person-links`
+     * filters `entity_type === "person"` — so a reference typed `Person` is invisible to all three. The
+     * corpus can hold one: this phase writes a candidate's type verbatim for a name the corpus does not
+     * know, and `CandidateEntity.type` is an open free-form string. Substituting the corpus's WHOLE
+     * reference therefore takes a candidate that got the type right and files its memory outside
+     * `resources/people/`, where nothing repairs it: `placementFor` runs only on write, `placement-triage`
+     * refuses `resources/people` as a destination, and `entity-resolution` buckets on the raw
+     * `entity_type` and rewrites only names.
+     *
+     * The padded arm is the same rule at the other end. `entityRowsFor` trims the whole meta and splits
+     * on the FIRST colon, so an authored `person : Devon Oyelowo` files as `type=[person ]
+     * name=[ Devon Oyelowo]` — a reference the read doors, which fold case only, cannot reach. The
+     * lookup hands back the corpus's spelling minus that edge padding, so the new memory is addressable
+     * even though the seed file is not.
+     *
+     * (Mutations: substituting `held.ref` for `held.name` lands the person arm on `Person:Priya Raman`
+     * and its file outside `resources/people/`; dropping the `.trim()` on the corpus name lands the
+     * second arm on `person: Devon Oyelowo`.)
+     */
+    const CAPITALIZED_TYPE: SeedFile = {
+      path: "resources/people/priya-raman.html",
+      html: memoryHtml({
+        title: "Priya Raman",
+        claim: "Priya Raman owns the payments ledger reconciliation.",
+        createdAt: "2026-05-02T00:00:00Z",
+        entities: ["Person:Priya Raman"]
+      })
+    }
+    const PADDED_REFERENCE: SeedFile = {
+      path: "resources/people/devon-oyelowo.html",
+      html: memoryHtml({
+        title: "Devon Oyelowo",
+        claim: "Devon Oyelowo owns the ingest replay window.",
+        createdAt: "2026-05-03T00:00:00Z",
+        entities: ["person : Devon Oyelowo"]
+      })
+    }
+
+    const consolidator = scriptedConsolidator(() =>
+      candidates([
+        candidate({
+          claim: "Priya Raman and Devon Oyelowo both sign off a replay of the payments ledger.",
+          gist: "Two owners sign off one replay, and each is addressed by the spelling the corpus already holds.",
+          kind: "semantic",
+          entities: [
+            { type: "person", name: "priya  raman" },
+            { type: "person", name: "Devon Oyelowo" }
+          ]
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* seedTrace(fixture, { sessionId: "session-a" })
+          const base = yield* headSha(fixture)
+
+          yield* traceConsolidation(envFor(fixture))
+          const [path] = yield* addedMemories(fixture, base)
+          const doc = yield* parseMemory((yield* atHead(fixture, path ?? "")) ?? "")
+          expect(doc.entities).toEqual(["person:Priya Raman", "person:Devon Oyelowo"])
+          /*
+           * The routing consequence, which is the whole reason the type is left alone. A `Person:`-typed
+           * reference sends the same memory to `resources/trace-consolidation/`.
+           */
+          expect(path ?? "").toMatch(/^resources\/people\//)
+        }),
+      { seed: [...DEDUP_CORPUS, CAPITALIZED_TYPE, PADDED_REFERENCE], consolidator }
+    )
+  })
+
+  it("stamps the origin session only when EVERY evidence quote cites one", async () => {
+    /**
+     * Provenance on a distilled memory, and the honest absence of it.
+     *
+     * The stamp is the ordinary `memhtml-session` meta, which is the decision `tasks.ts` records for
+     * the detected-task arm: it is already in the closed vocabulary and already projects to
+     * `files.session_id`, so nothing new is introduced and every provenance query already reads it.
+     *
+     * BOTH branches, in one answer, because the rule is the pair. A candidate whose quotes span
+     * sessions has no single origin, and `files.session_id` is a scalar — so stamping one of several
+     * would answer a provenance query with a session the claim is only partly from, which is a wrong
+     * value no reader could detect. Absent is the honest answer, and the bar prefers cross-session
+     * candidates, so it is also the COMMON one.
+     *
+     * The assertions read the DATABASE as well as the file, and that second read is what proves the
+     * meta name is the right one. A stamp under any other name parses to nothing and projects to NULL,
+     * which the meta assertion alone would not distinguish from an absent stamp.
+     *
+     * (Mutations: stamping `candidate.evidence[0]?.sessionId` unconditionally puts `session-a` on the
+     * cross-session memory and fails the NULL assertions; dropping the stamp entirely fails the
+     * single-origin ones. Renaming the meta fails the two `session_id` reads while the parsed
+     * `metas.sessionId` reads would report `undefined` and look merely unstamped.)
+     */
+    const ONE_ORIGIN = "Everything this claim rests on was read in one session."
+    const TWO_ORIGINS = "This claim rests on lines from two different sessions."
+    const consolidator = scriptedConsolidator(() =>
+      candidates([
+        candidate({
+          claim: ONE_ORIGIN,
+          gist: "Both quotes come from session-a, so the memory has exactly one origin to name.",
+          kind: "episodic",
+          evidence: [
+            { sessionId: "session-a", quote: "the first supporting line" },
+            { sessionId: "session-a", quote: "the second supporting line" }
+          ]
+        }),
+        candidate({
+          claim: TWO_ORIGINS,
+          gist: "The quotes come from session-a and session-b, so no single session is the origin.",
+          kind: "semantic",
+          evidence: [
+            { sessionId: "session-a", quote: "the first supporting line" },
+            { sessionId: "session-b", quote: "the second supporting line" }
+          ]
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* seedTrace(fixture, { sessionId: "session-a" })
+          yield* seedTrace(fixture, { sessionId: "session-b" })
+          const base = yield* headSha(fixture)
+
+          const outcome = yield* traceConsolidation(envFor(fixture))
+          expect(outcome.counts.written).toBe(2)
+
+          const added = yield* addedMemories(fixture, base)
+          expect(added).toHaveLength(2)
+
+          /** Path by claim, so neither assertion depends on the order git reports the two files in. */
+          const byClaim = new Map<string, string>()
+          for (const path of added) {
+            const doc = yield* parseMemory((yield* atHead(fixture, path)) ?? "")
+            byClaim.set(doc.article.gist, path)
+          }
+          const single = byClaim.get(ONE_ORIGIN)
+          const spanning = byClaim.get(TWO_ORIGINS)
+          if (single === undefined || spanning === undefined) {
+            throw new Error(`expected both claims among ${[...byClaim.keys()].join(" | ")}`)
+          }
+
+          const singleDoc = yield* parseMemory((yield* atHead(fixture, single)) ?? "")
+          expect(singleDoc.metas.sessionId).toBe("session-a")
+          const spanningDoc = yield* parseMemory((yield* atHead(fixture, spanning)) ?? "")
+          expect(spanningDoc.metas.sessionId).toBeUndefined()
+
+          /**
+           * And the meta reaches the column the `files_session` index covers. `reindex` rebuilds from
+           * git, so this is the projection a fresh `memhtml index rebuild` would produce.
+           */
+          yield* fixture.reindex()
+          const rows = yield* fixture.db
+            .all<{ path: string; session_id: string | null }>(
+              "SELECT path, session_id FROM files WHERE path IN (?, ?) ORDER BY path",
+              [single, spanning].sort()
+            )
+            .pipe(Effect.orDie)
+          expect(new Map(rows.map((row) => [row.path, row.session_id]))).toEqual(
+            new Map([
+              [single, "session-a"],
+              [spanning, null]
+            ])
+          )
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("leaves the origin unstamped for a candidate citing a session outside this run's batch", async () => {
+    /**
+     * The containment the commitment arm already holds, at the arm that writes a MEMORY.
+     *
+     * `ConsolidatorPort` is a structural port and the harness's own `scriptedConsolidator` proves an
+     * injected collaborator can return any id it likes, so an id outside the set this run selected reaches
+     * the mint site unless something checks. Stamping it puts `memhtml-session` — and `files.session_id`
+     * — on a committed, permanent file, naming a session nobody selected: provenance a reviewer trusts
+     * and cannot audit. The sibling refusal (`consolidateCommitments`) states the same rule for a
+     * detected task's `from_session`, and an injected collaborator may narrow what the phase asked about
+     * and never widen it.
+     *
+     * Absent rather than refused, which is the deliberate difference from a fabricated evidence id: the
+     * claim is still worth writing and `undefined` is the honest origin.
+     *
+     * The in-batch candidate is the control. Without it a rule that stamped nothing at all would pass.
+     *
+     * (Mutation: dropping the `batchSessionIds.has(only)` guard stamps `session-elsewhere` and fails the
+     * NULL assertions here while every other case stays green.)
+     */
+    const IN_BATCH = "Both quotes for this claim come from a session this run selected."
+    const OUTSIDE = "Both quotes for this claim name a session this run never selected."
+    const consolidator = scriptedConsolidator(() =>
+      candidates([
+        candidate({
+          claim: IN_BATCH,
+          gist: "The run asked about session-a, so session-a is an origin it can account for.",
+          kind: "episodic",
+          evidence: [
+            { sessionId: "session-a", quote: "the first supporting line" },
+            { sessionId: "session-a", quote: "the second supporting line" }
+          ]
+        }),
+        candidate({
+          claim: OUTSIDE,
+          gist: "The quotes agree on one session, and it is not one this run selected.",
+          kind: "episodic",
+          evidence: [
+            { sessionId: "session-elsewhere", quote: "the first supporting line" },
+            { sessionId: "session-elsewhere", quote: "the second supporting line" }
+          ]
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          // Only session-a is seeded, so it is the whole batch and `session-elsewhere` is outside it.
+          yield* seedTrace(fixture, { sessionId: "session-a" })
+          const base = yield* headSha(fixture)
+
+          const outcome = yield* traceConsolidation(envFor(fixture))
+          // BOTH are written: the id is dropped, not the candidate.
+          expect(outcome.counts.written).toBe(2)
+
+          const byClaim = new Map<string, string>()
+          for (const path of yield* addedMemories(fixture, base)) {
+            const doc = yield* parseMemory((yield* atHead(fixture, path)) ?? "")
+            byClaim.set(doc.article.gist, path)
+          }
+          const inBatch = byClaim.get(IN_BATCH)
+          const outside = byClaim.get(OUTSIDE)
+          if (inBatch === undefined || outside === undefined) {
+            throw new Error(`expected both claims among ${[...byClaim.keys()].join(" | ")}`)
+          }
+
+          expect(
+            (yield* parseMemory((yield* atHead(fixture, inBatch)) ?? "")).metas.sessionId
+          ).toBe("session-a")
+          expect(
+            (yield* parseMemory((yield* atHead(fixture, outside)) ?? "")).metas.sessionId
+          ).toBeUndefined()
+
+          // And the column, because a stamp under any name at all would project to something here.
+          yield* fixture.reindex()
+          const rows = yield* fixture.db
+            .all<{ path: string; session_id: string | null }>(
+              "SELECT path, session_id FROM files WHERE path IN (?, ?) ORDER BY path",
+              [inBatch, outside].sort()
+            )
+            .pipe(Effect.orDie)
+          expect(new Map(rows.map((row) => [row.path, row.session_id]))).toEqual(
+            new Map([
+              [inBatch, "session-a"],
+              [outside, null]
+            ])
+          )
         }),
       { seed: DEDUP_CORPUS, consolidator }
     )
@@ -1116,12 +1523,12 @@ describe("trace-consolidation session selection", () => {
 
           /**
            * The counts SAY SO, which is the operator-visible half. `consolidated` is the analyzed count
-           * rather than the batch, so the two disagreeing is the signal that transcripts went missing —
-           * a state that previously had no reading at all, since watermarking the batch made them equal
-           * by construction.
+           * rather than the batch, so the two disagreeing is the signal that a session the phase asked
+           * about did not come back consolidated. Watermarking the batch would make them equal by
+           * construction and leave that state with no reading at all.
            */
           expect(outcome.counts.consolidated).toBe(2)
-          expect(outcome.counts.unreachable).toBe(1)
+          expect(outcome.counts.unconsolidated).toBe(1)
 
           // And the productive path really ran, so this is not passing via an early return.
           expect(outcome.counts.written).toBe(1)
@@ -1166,7 +1573,7 @@ describe("trace-consolidation session selection", () => {
 
           expect(outcome.counts.batch).toBe(2)
           expect(outcome.counts.consolidated).toBe(0)
-          expect(outcome.counts.unreachable).toBe(2)
+          expect(outcome.counts.unconsolidated).toBe(2)
           expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual([])
           expect(yield* appliedWatermarks(fixture)).toEqual([])
         }),
@@ -1207,8 +1614,8 @@ describe("trace-consolidation session selection", () => {
 
           expect(outcome.counts.batch).toBe(1)
           expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual(["session-asked"])
-          // And the over-report is NOT counted as unreachable either: one asked, one analyzed.
-          expect(outcome.counts.unreachable).toBe(0)
+          // And the over-report is NOT counted as unconsolidated either: one asked, one analyzed.
+          expect(outcome.counts.unconsolidated).toBe(0)
         }),
       { seed: DEDUP_CORPUS, consolidator }
     )

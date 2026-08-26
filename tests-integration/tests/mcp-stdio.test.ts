@@ -6,7 +6,7 @@ import { Effect } from "effect"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { type Cli, makeCli } from "./harness.js"
-import { type Client, connect, failureText, handshake, structured } from "./spawned.js"
+import { type Client, connect, failureText, handshake, structured, treeDigest } from "./spawned.js"
 
 /**
  * The regression lock for `docs/bugs/2026-08-03-event-at-unreachable-through-write-paths.md`, run as
@@ -194,13 +194,14 @@ describe("the event_at bug report, inverted: article_html over real MCP stdio", 
 
   it("completes initialize -> tools/list with article_html on the published wire", () => {
     /**
-     * Fourteen, and the delta is auditable rather than a number that drifts: `article_html` cost NO
-     * tool (it is a parameter on `memory_write`), and `memory_write_batch` cost exactly one. So the
-     * count is asserted alongside the name that raised it, and a regression that added a fifteenth
-     * tool fails on the count while one that renamed the fourteenth fails on the name.
+     * Fifteen, and the delta is auditable rather than a number that drifts: `article_html` cost NO
+     * tool (it is a parameter on `memory_write`), while `memory_write_batch` and `memory_resolve` cost
+     * exactly one each. So the count is asserted alongside the names that raised it, and a regression
+     * that added a sixteenth tool fails on the count while one that renamed a tool fails on the name.
      */
-    expect(tools).toHaveLength(14)
+    expect(tools).toHaveLength(15)
     expect(tools.map((tool) => tool.name)).toContain("memory_write_batch")
+    expect(tools.map((tool) => tool.name)).toContain("memory_resolve")
     const write = tools.find((tool) => tool.name === "memory_write")
     const schema = write?.inputSchema as {
       readonly properties: Record<string, unknown>
@@ -299,7 +300,7 @@ describe("the event_at bug report, inverted: article_html over real MCP stdio", 
     expect(notFoundText.toLowerCase()).not.toContain("internal server error")
 
     /**
-     * `memory_search`, not `memhtml search`. The reader is an LLM mid-task holding fourteen tools and no
+     * `memory_search`, not `memhtml search`. The reader is an LLM mid-task holding fifteen tools and no
      * shell, so the CLI suggestions the envelope hands a human (`apps/cli/src/errors.ts:119`) are all
      * unreachable here — a suggestion an agent cannot execute spends its attention on a plan that ends
      * in "I have no terminal" while the recovery that WAS available goes unmentioned.
@@ -322,5 +323,409 @@ describe("the event_at bug report, inverted: article_html over real MCP stdio", 
     expect(exit.envelope.type).toBe("serve.exit")
     const data = exit.envelope.data as { readonly server: string }
     expect(data.server).toMatch(/apps\/mcp\/dist\/bin\.js$/)
+  })
+})
+
+/**
+ * The facet scope over real MCP stdio: the extension axis at the door a client actually calls.
+ *
+ * In-process coverage cannot reach two of the four links here. `facets` is an OPTIONAL array in the
+ * published parameter schema, so a client sending it exercises the derived JSON Schema and the decoder
+ * together — and this repo has shipped an `Optional` whose advertised shape the decoder rejected. And
+ * the predicate has to survive `layerApp` built from the ENVIRONMENT, where `MEMHTML_EMBED=off` leaves
+ * the vector arm absent, so the scope has to hold on the degraded path too.
+ *
+ * Three memories under two facet names, so every assertion has a NEIGHBOUR a broken predicate returns:
+ * the same name at another value, the same value under another name, and one carrying no facets.
+ */
+describe("the facet scope over real MCP stdio", () => {
+  let cli: Cli
+  let searchTool: { readonly name: string; readonly inputSchema: unknown } | undefined
+  let listTool: { readonly name: string; readonly inputSchema: unknown } | undefined
+  let runbookTierOne = ""
+  let guideTierOne = ""
+  let runbookTierTwo = ""
+  let scopedPaths: ReadonlyArray<string> = []
+  let broadenedPaths: ReadonlyArray<string> = []
+  let narrowedPaths: ReadonlyArray<string> = []
+  let unscopedCount = 0
+  let missingScopeEmpty: unknown
+
+  const article = (
+    claim: string,
+    facets: ReadonlyArray<{ readonly name: string; readonly value: string }>
+  ) =>
+    `<p><mark>${claim}</mark></p><dl>${facets
+      .map((facet) => `<dt>${facet.name}</dt><dd>${facet.value}</dd>`)
+      .join("")}</dl>`
+
+  beforeAll(async () => {
+    cli = await makeCli()
+    const client: Client = connect(cli.root)
+    await handshake(client)
+
+    const listed = await client.rpc("tools/list", {})
+    const tools = (listed.result as { readonly tools: ReadonlyArray<typeof searchTool> }).tools
+    searchTool = tools.find((tool) => tool?.name === "memory_search")
+    listTool = tools.find((tool) => tool?.name === "memory_list")
+
+    const write = async (
+      title: string,
+      claim: string,
+      facets: ReadonlyArray<{ readonly name: string; readonly value: string }>
+    ) =>
+      structured(
+        await client.rpc("tools/call", {
+          name: "memory_write",
+          arguments: { title, memory_type: "procedural", article_html: article(claim, facets) }
+        })
+      ).path as string
+
+    runbookTierOne = await write(
+      "Restart the ingest worker",
+      "Restart the ingest worker after a backfill, draining the queue first.",
+      [
+        { name: "doc-type", value: "runbook" },
+        { name: "tier", value: "1" }
+      ]
+    )
+    guideTierOne = await write(
+      "How the ingest worker restarts",
+      "The ingest worker restarts by draining its queue and replaying the backfill.",
+      [
+        { name: "doc-type", value: "guide" },
+        { name: "tier", value: "1" }
+      ]
+    )
+    runbookTierTwo = await write(
+      "Backfill the ingest worker",
+      "Backfill the ingest worker before a restart when the queue is empty.",
+      [
+        { name: "doc-type", value: "runbook" },
+        { name: "tier", value: "2" }
+      ]
+    )
+    await write("Notes on the ingest worker restart", "The restart is safe to retry.", [])
+
+    const pathsOf = (result: Record<string, unknown>) =>
+      (result.files as ReadonlyArray<{ readonly path: string }>).map((file) => file.path).sort()
+
+    const listCall = async (facets: ReadonlyArray<string> | null) =>
+      pathsOf(
+        structured(
+          await client.rpc("tools/call", {
+            name: "memory_list",
+            arguments: facets === null ? { limit: 20 } : { limit: 20, facets }
+          })
+        )
+      )
+
+    unscopedCount = (await listCall(null)).length
+    scopedPaths = await listCall(["doc-type=runbook"])
+    broadenedPaths = await listCall(["doc-type=runbook", "doc-type=guide"])
+    narrowedPaths = await listCall(["doc-type=runbook", "tier=1"])
+
+    missingScopeEmpty = structured(
+      await client.rpc("tools/call", {
+        name: "memory_search",
+        arguments: {
+          query: "restart the ingest worker",
+          facets: ["doc-type=charter"],
+          limit: 20
+        }
+      })
+    ).scope_empty
+
+    await client.shutdown()
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  it("publishes `facets` as an optional array on both scoping tools", () => {
+    // The wire contract. A parameter absent from the published schema is a parameter no client sends,
+    // however well the handler would have served it.
+    for (const tool of [searchTool, listTool]) {
+      const schema = tool?.inputSchema as {
+        readonly properties?: Record<string, unknown>
+        readonly required?: ReadonlyArray<string>
+      }
+      expect(schema?.properties, `${tool?.name} publishes no properties`).toBeDefined()
+      expect(Object.keys(schema.properties ?? {})).toContain("facets")
+      // Optional, so a client that never heard of facets keeps working.
+      expect(schema.required ?? []).not.toContain("facets")
+    }
+  })
+
+  it("lists all four memories unscoped, so each exclusion below is the predicate", () => {
+    // The control, for the reason the CLI suite states: a facet answer of two is otherwise consistent
+    // with a corpus of two.
+    expect(unscopedCount).toBe(4)
+  })
+
+  it("narrows on one name=value and BROADENS across two values of that name", () => {
+    expect(scopedPaths).toEqual([runbookTierOne, runbookTierTwo].sort())
+    expect(broadenedPaths).toEqual([runbookTierOne, runbookTierTwo, guideTierOne].sort())
+  })
+
+  it("NARROWS across two names, returning only the memory carrying both", () => {
+    expect(narrowedPaths).toEqual([runbookTierOne])
+  })
+
+  it("reports scope_empty for a facet nothing carries, on the degraded path", () => {
+    // `MEMHTML_EMBED=off` in this tier, so the vector arm never fires and the marker still has to be
+    // computed from the scope rather than from the arms that ran.
+    expect(missingScopeEmpty).toBe(true)
+  })
+})
+
+/**
+ * `strict_path` over real MCP stdio: the refusal an agent actually receives.
+ *
+ * The wire text is only observable here. `McpServer` decides whether a failed handler's message is
+ * passed through or replaced with its generic internal-error sentence, and that decision is invisible
+ * in-process — so a refusal whose code and reason the handler computed correctly can still reach its
+ * agent stripped. `InvalidMemory` travels the same declared-failure branch the XOR refusal above does,
+ * and this is the tier that proves it for THIS refusal rather than for that one.
+ *
+ * "Refused" and "wrote nothing" are separate claims. The digest is taken over a corpus that already
+ * holds a memory, so a write-nothing bug cannot hide behind an empty scaffold.
+ */
+describe("strict_path over real MCP stdio", () => {
+  let cli: Cli
+  let strictText = ""
+  let lenientPath = ""
+  let validPath = ""
+  let digestBefore = ""
+  let digestAfter = ""
+  let writeSchema: { readonly properties?: Record<string, unknown> } | undefined
+  let batchOpSchema: { readonly properties?: Record<string, unknown> } | undefined
+  let batchStrictText = ""
+  let batchDigestBefore = ""
+  let batchDigestAfter = ""
+
+  const UNUSABLE = "notes/oncall/rollback.html"
+
+  beforeAll(async () => {
+    cli = await makeCli()
+    const client: Client = connect(cli.root)
+    await handshake(client)
+
+    const listed = await client.rpc("tools/list", {})
+    const tools = (
+      listed.result as {
+        readonly tools: ReadonlyArray<{ readonly name: string; readonly inputSchema: unknown }>
+      }
+    ).tools
+    writeSchema = tools.find((tool) => tool.name === "memory_write")?.inputSchema as {
+      readonly properties?: Record<string, unknown>
+    }
+
+    // The neighbour the refusal must not disturb.
+    await client.rpc("tools/call", {
+      name: "memory_write",
+      arguments: {
+        title: "The bastion listens on a non-default port",
+        memory_type: "semantic",
+        body: "The staging bastion listens on port 2222."
+      }
+    })
+
+    lenientPath = structured(
+      await client.rpc("tools/call", {
+        name: "memory_write",
+        arguments: {
+          title: "A lenient override lands elsewhere",
+          memory_type: "semantic",
+          body: "The lenient branch re-derives the directory.",
+          path: UNUSABLE
+        }
+      })
+    ).path as string
+
+    digestBefore = await treeDigest(cli.root)
+    strictText = failureText(
+      await client.rpc("tools/call", {
+        name: "memory_write",
+        arguments: {
+          title: "A strict override is refused",
+          memory_type: "semantic",
+          body: "The strict branch refuses rather than re-deriving.",
+          path: UNUSABLE,
+          strict_path: true
+        }
+      })
+    )
+    digestAfter = await treeDigest(cli.root)
+
+    validPath = structured(
+      await client.rpc("tools/call", {
+        name: "memory_write",
+        arguments: {
+          title: "A strict override that is valid",
+          memory_type: "semantic",
+          body: "A usable explicit path is honored verbatim.",
+          path: "areas/oncall/strict-and-valid.html",
+          strict_path: true
+        }
+      })
+    ).path as string
+
+    const batchTool = tools.find((tool) => tool.name === "memory_write_batch")?.inputSchema as
+      | {
+          readonly properties?: Record<
+            string,
+            { readonly items?: { readonly properties?: unknown } }
+          >
+        }
+      | undefined
+    batchOpSchema = batchTool?.properties?.ops?.items as
+      | { readonly properties?: Record<string, unknown> }
+      | undefined
+
+    batchDigestBefore = await treeDigest(cli.root)
+    batchStrictText = failureText(
+      await client.rpc("tools/call", {
+        name: "memory_write_batch",
+        arguments: {
+          ops: [
+            {
+              title: "A batch op whose override is refused",
+              memory_type: "semantic",
+              body: "One op names an unusable path under strict placement.",
+              path: UNUSABLE,
+              strict_path: true
+            }
+          ]
+        }
+      })
+    )
+    batchDigestAfter = await treeDigest(cli.root)
+
+    await client.shutdown()
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  it("publishes `strict_path` on memory_write, so a client can send it at all", () => {
+    expect(Object.keys(writeSchema?.properties ?? {})).toContain("strict_path")
+  })
+
+  it("re-derives an unusable path by DEFAULT, which is what the flag opts out of", () => {
+    expect(lenientPath).not.toBe(UNUSABLE)
+    expect(lenientPath.startsWith("areas/inbox/")).toBe(true)
+  })
+
+  it("delivers the refusal as prose carrying the code and the offending path", () => {
+    // Not the internal-error sentence: that string is what a failure reaches an agent as when its
+    // tool's declared failure schema does not cover it, and it names neither the code nor the path.
+    expect(strictText).not.toContain("internal server error")
+    expect(strictText).toContain("ERR_INVALID_MEMORY")
+    expect(strictText).toContain(UNUSABLE)
+  })
+
+  it("leaves the working tree BYTE-IDENTICAL across that refusal", () => {
+    // "Returned an error" is not "wrote nothing", and only this assertion is the second one.
+    expect(digestAfter).toBe(digestBefore)
+  })
+
+  it("still honors a USABLE path under strict_path", () => {
+    // The mutation-proof half, for the CLI door's reason.
+    expect(validPath).toBe("areas/oncall/strict-and-valid.html")
+  })
+
+  it("carries `strict_path` on a BATCH op, which is a second forwarding and a second door", () => {
+    /**
+     * `memory_write_batch` publishes the field on every op — `BatchOp` is built from the same
+     * `writeFields()` — and one line in `writeParamsOf` forwards it. That line is the whole opt-in for
+     * this door, and a published field a handler drops is worse than an absent one: the client sends it,
+     * the response is shaped like a success, and the memory sits at a path the caller never named.
+     */
+    expect(Object.keys(batchOpSchema?.properties ?? {})).toContain("strict_path")
+    expect(batchStrictText).not.toContain("internal server error")
+    expect(batchStrictText).toContain("ERR_INVALID_MEMORY")
+    expect(batchStrictText).toContain(UNUSABLE)
+    // Wrote nothing, and the survivor is what proves the abort was the op rather than the transport.
+    expect(batchDigestAfter).toBe(batchDigestBefore)
+  })
+})
+
+/**
+ * `memory_resolve`'s `pinned_uri` over real MCP stdio: a citation the same server will answer.
+ *
+ * The field is composed by the server and stored by the client, so its correctness is a round trip
+ * rather than a shape — a URI that parses, publishes, and then reads back `ERR_PATH_NOT_FOUND` is a
+ * receipt that looks verified. Only this tier can take that trip: the composition lives in
+ * `apps/mcp/src/handlers.ts` and the read lives in the resource router, and nothing in-process drives
+ * both through one session.
+ *
+ * Both branches of the rule are here, on ONE session over ONE corpus, so the difference between them
+ * is the stop reason and nothing else.
+ */
+describe("a resolved citation over real MCP stdio", () => {
+  let cli: Cli
+  let livePinned: unknown
+  let liveBody = ""
+  let unindexedPinned: unknown
+  let unindexedCommit: unknown
+
+  beforeAll(async () => {
+    cli = await makeCli()
+    const client: Client = connect(cli.root)
+    await handshake(client)
+
+    const written = structured(
+      await client.rpc("tools/call", {
+        name: "memory_write",
+        arguments: {
+          title: "The pinned citation reads back",
+          body: "A resolved citation names bytes this server will hand over.",
+          memory_type: "semantic"
+        }
+      })
+    )
+
+    const live = structured(
+      await client.rpc("tools/call", {
+        name: "memory_resolve",
+        arguments: { path: written.path as string }
+      })
+    )
+    livePinned = live.pinned_uri
+    const read = await client.rpc("resources/read", { uri: live.pinned_uri as string })
+    liveBody =
+      (read.result as { readonly contents?: ReadonlyArray<{ readonly text?: string }> } | undefined)
+        ?.contents?.[0]?.text ?? ""
+
+    const unindexed = structured(
+      await client.rpc("tools/call", {
+        name: "memory_resolve",
+        arguments: { path: "areas/oncall/never-written.html" }
+      })
+    )
+    unindexedPinned = unindexed.pinned_uri
+    unindexedCommit = unindexed.indexed_commit
+
+    await client.shutdown()
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  it("pins a live path, and the pin reads back through the same session", () => {
+    // The control. Without it the null below is consistent with a field that is always null.
+    expect(livePinned).toMatch(/^memhtml:\/\/at\/[0-9a-f]{40}\/.+\.html$/)
+    expect(liveBody).toContain("A resolved citation names bytes this server will hand over")
+  })
+
+  it("withholds the pin for `unindexed`, the one stop reason whose path is not in that commit", () => {
+    // The corpus HAS a commit to pin to, so a null here is the stop reason rather than a missing
+    // watermark — publishing the URI anyway would hand a receipt a permanent ERR_PATH_NOT_FOUND.
+    expect(unindexedCommit).toMatch(/^[0-9a-f]{40}$/)
+    expect(unindexedPinned).toBeNull()
   })
 })

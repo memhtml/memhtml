@@ -74,7 +74,7 @@ areas/arcs/     areas/inbox/    resources/people/
 .gitignore      .gitattributes  README.html
 ```
 
-Only the nightly sleep cycle writes into `areas/arcs/`, which holds behavioral arcs: memories that summarize a pattern running across many other memories. `resources/people/` is the person plane. A memory the placement rules cannot place lands in `areas/inbox/`, and [`memhtml doctor`](/learn/operations/audit-and-publish-the-corpus/) warns you when that directory gets crowded, because a full inbox means the placement rules stopped matching what agents write.
+Only the sleep cycle writes into `areas/arcs/`, which holds behavioral arcs: memories that summarize a pattern running across many other memories. `resources/people/` is the person plane. A memory the placement rules cannot place lands in `areas/inbox/`, and [`memhtml doctor`](/learn/operations/audit-and-publish-the-corpus/) warns you when that directory gets crowded, because a full inbox means the placement rules stopped matching what agents write.
 
 `memhtml init` also applies the database migrations, so `.memhtml/index.db` exists from the start and holds nothing until `memhtml index rebuild` projects the tree into it.
 

@@ -5,6 +5,7 @@ import {
   runDiscrimination
 } from "@memhtml/eval"
 import { isValidDatetime } from "@memhtml/html"
+import { parseFacetFilters } from "@memhtml/index"
 import { initRepo } from "@memhtml/store"
 import { Effect, type Layer, Logger } from "effect"
 import { runAgentsDoc } from "./agents-doc.js"
@@ -235,6 +236,9 @@ const scopeOf = (parsed: Parsed) => ({
   workspace: str(parsed, "workspace"),
   tags: list(parsed, "tag"),
   entity: str(parsed, "entity"),
+  // `list` returns every occurrence, so a repeated `--facet` composes instead of last-winning, and
+  // the `name=value` split is `@memhtml/index`'s so both doors read one wire form.
+  facets: parseFacetFilters(list(parsed, "facet")),
   includeArchived: bool(parsed, "include-archived", false),
   asOf: str(parsed, "as-of")
 })
@@ -323,6 +327,7 @@ const dispatch = (
           articleHtml: str(parsed, "article-html"),
           memoryType: str(parsed, "type") ?? "",
           path: str(parsed, "path"),
+          strictPath: bool(parsed, "strict-path", false),
           workspace: str(parsed, "workspace"),
           tags: list(parsed, "tag"),
           entities: list(parsed, "entity"),
@@ -432,6 +437,12 @@ const dispatch = (
         return ["memory.neighbors", result] as const
       })
 
+    case "resolve":
+      return Effect.gen(function* () {
+        const result = yield* ops.resolveMemory(parsed.positional[0] ?? "")
+        return ["memory.resolved", result] as const
+      })
+
     case "archive":
       return Effect.gen(function* () {
         const result = yield* ops.archiveMemory(
@@ -459,12 +470,23 @@ const dispatch = (
           workspace: str(parsed, "workspace"),
           tag: str(parsed, "tag"),
           entity: str(parsed, "entity"),
+          facets: parseFacetFilters(list(parsed, "facet")),
           para: str(parsed, "para"),
           limit: int(parsed, "limit"),
           cursor: str(parsed, "cursor"),
           includeArchived: bool(parsed, "include-archived", false)
         })
         return ["memory.list", result] as const
+      })
+
+    case "entity activity":
+      return Effect.gen(function* () {
+        const result = yield* ops.entityActivity({
+          entityType: str(parsed, "type"),
+          limit: int(parsed, "limit"),
+          includeArchived: bool(parsed, "include-archived", false)
+        })
+        return ["entity.activity", result] as const
       })
 
     case "task add":
@@ -630,7 +652,7 @@ const dispatch = (
          * failure becomes `refusal: "gate-failed"` with `main` never moving.
          *
          * `fake` mode, always. The gate measures the ranking stack against its own generated fixture
-         * corpus, so a live-Bedrock run would make a nightly merge conditional on a network call and
+         * corpus, so a live-Bedrock run would make an unattended merge conditional on a network call and
          * on credentials being present at 3am. The deterministic embedder's cosine relations are
          * a pure function of the text, which is the property a regression gate needs. A
          * cron whose merge silently skipped its gate because a token expired is the failure this
@@ -665,6 +687,19 @@ const dispatch = (
       return Effect.gen(function* () {
         const report = yield* stateImport()
         return ["state.import", report] as const
+      })
+
+    case "sleep plan":
+      return Effect.gen(function* () {
+        const sleep = yield* Sleep
+        /**
+         * The instant is read HERE and passed in, which keeps the one clock reading anywhere near sleep
+         * on the caller's side. The settled-transcript cutoff is derived from it, and a plan that read a
+         * clock inside the package would be the first thing in sleep that consults one to decide
+         * something.
+         */
+        const millis = yield* Effect.clockWith((clock) => clock.currentTimeMillis)
+        return ["sleep.plan", yield* sleep.plan(millis)] as const
       })
 
     case "sleep status":

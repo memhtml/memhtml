@@ -1,5 +1,5 @@
 /**
- * `@memhtml/sleep`: the nightly curation cycle as seventeen git commits.
+ * `@memhtml/sleep`: the curation cycle as seventeen git commits.
  *
  * Every phase is its own commit on `sleep/<date>`, carrying a `Memhtml-Run`/`Memhtml-Phase`/`Memhtml-Counts`
  * trailer block. The trailers are what `resume` reads, so no journal table is required and the git
@@ -139,6 +139,8 @@ export {
   taskDetectPrompt
 } from "./llm.js"
 export * from "./phases/index.js"
+export type { PlanSignal, PlanUnknown, PlanVerdict, SleepPlan } from "./plan.js"
+export { plan } from "./plan.js"
 export type { GeneratedFile } from "./publish.js"
 export {
   generateArtifacts,

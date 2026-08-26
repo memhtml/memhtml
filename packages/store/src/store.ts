@@ -13,6 +13,7 @@ import {
   archivePathFor,
   isValidMemoryPath,
   memoryPathFor,
+  memoryPathViolation,
   normalizePath,
   type PlacementInput
 } from "@memhtml/contracts/paths"
@@ -54,12 +55,33 @@ export interface WriteProvenance {
 export type WriteInput = NewMemoryInput &
   WriteProvenance & {
     /**
-     * An explicit path override. Ignored when it is not a usable memory path, and refused with
-     * `WriteConflict` when a file already sits there: nothing in this corpus is overwritten, so a
-     * revision is `correctMemory` (which archives the file it replaces) and never a second write
-     * to the same path.
+     * An explicit path override. Re-derived through the placement rule when it is not a usable
+     * memory path unless {@link strictPath} is set, and refused with `WriteConflict` when a file
+     * already sits there: nothing in this corpus is overwritten, so a revision is `correctMemory`
+     * (which archives the file it replaces) and never a second write to the same path.
      */
     readonly path?: string | undefined
+    /**
+     * Refuse an unusable {@link path} instead of re-deriving one.
+     *
+     * OPT-IN, because the lenient branch is shipped behavior that callers depend on. It exists for
+     * the caller that places documents at deterministic paths, where a silent re-derivation makes a
+     * write APPEAR to succeed somewhere the caller did not name — the file lands in `areas/inbox`,
+     * the response reports a path, and nothing says the two disagree with the ask.
+     *
+     * `InvalidMemory` is the refusal, carrying `memoryPathViolation`'s own reason. NOT `WriteConflict`,
+     * which is what an OCCUPIED path earns: that error's payload is two blob shas and its published
+     * recovery is `memhtml read <path>` then `memhtml correct <path>`, and both of those are calls that
+     * cannot succeed against a path no file can occupy. An unusable path is malformed caller input,
+     * which is `InvalidMemory`'s subject and what every other decode on this write path already uses.
+     *
+     * Governs a path the caller NAMED. With no `path` there is nothing to be strict about, so the
+     * flag is a no-op rather than a refusal: a caller may set it once and still let the placement rule
+     * file the memories it deliberately leaves unplaced. A path that is present and BLANK is named
+     * rather than absent, and it is refused — it is what a caller's own path template renders when it
+     * produced nothing, which is the case the flag exists for.
+     */
+    readonly strictPath?: boolean | undefined
     readonly workspace?: string | undefined
   }
 
@@ -645,8 +667,46 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
         : Effect.succeed(html)
     })
 
+  /**
+   * Refuse an unusable explicit path when the caller asked for strict placement.
+   *
+   * The FIRST gate on every write door, ahead of the render gate and the dedupe question, because an
+   * unusable path makes the whole op unusable and the caller has to hear that regardless of what the
+   * rest of the op would have done. Checking it after the dedupe question would make the answer
+   * depend on whether the content happened to be stored already: identical input would refuse on one
+   * call and report a dedupe at some other path on the next, and only one of the two mentions the
+   * path at all.
+   *
+   * The refusal is decided before anything touches disk, so "refused" and "wrote nothing" are the
+   * same fact rather than two claims a rollback has to reconcile. See {@link WriteInput.strictPath}
+   * for why `InvalidMemory` rather than `WriteConflict`.
+   *
+   * **An ABSENT path is the only no-op, and a blank one is not absent.** Strict mode governs the path a
+   * caller NAMED, so a caller may set the flag once and still let the rule file the memories it leaves
+   * unplaced — that is `path === undefined`. A present `""` or `"   "` is what a caller's own path
+   * template renders when it produced nothing, which is exactly the case the flag exists for: both fail
+   * `memoryPathViolation`, both are re-derived by `freePathFor`, and a lenient re-derivation reports
+   * success at a path the caller never asked for. Treating one of the two spellings as absent also made
+   * them disagree with each other, `""` succeeding where `" "` refused.
+   */
+  const strictPathRefusal = (input: WriteInput): Effect.Effect<void, InvalidMemory> =>
+    Effect.suspend(() => {
+      if (input.strictPath !== true || input.path === undefined) {
+        return Effect.void
+      }
+      const violation = memoryPathViolation(input.path)
+      return violation === undefined
+        ? Effect.void
+        : Effect.fail(
+            InvalidMemory.make({
+              reason: `path \`${input.path}\` is not a usable memory path: ${violation}. Nothing was written`
+            })
+          )
+    })
+
   const writeMemory = (input: WriteInput): Effect.Effect<WriteResult, StoreError> =>
     Effect.gen(function* () {
+      yield* strictPathRefusal(input)
       const millis = yield* now
       const at = isoSecond(millis)
       const html = yield* renderChecked(input, at)
@@ -710,11 +770,12 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
    * Validate one op against the batch's FOLDED state, answering either the pending write it earned
    * or the result that ends it.
    *
-   * The three stages are the singular write's first three, in the same order and for the same
-   * reason. The render gate rejects bad bytes before anything is written, the dedupe question is
-   * asked before a path is claimed, and only then does a path get taken. Both differences are
-   * about the fold. The dedupe question is asked of THIS batch first and the store second, and the
-   * path claim consults the batch's own claimed set.
+   * The four stages are the singular write's four, in the same order and for the same reason. The
+   * strict-path gate is FIRST, because an unusable path makes the whole op unusable whatever the rest
+   * of it would have done; the render gate then rejects bad bytes before anything is written; the
+   * dedupe question is asked before a path is claimed; and only then does a path get taken. Both
+   * differences are about the fold. The dedupe question is asked of THIS batch first and the store
+   * second, and the path claim consults the batch's own claimed set.
    */
   const validateOp = (
     input: WriteInput,
@@ -728,6 +789,15 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
     StorageFailure | GitFailure
   > =>
     Effect.gen(function* () {
+      /*
+       * The strict-path gate, per op and FIRST, as a per-op result for the render gate's reason: one
+       * op naming an unusable path is that op's failure, so a continue-mode batch keeps its
+       * survivors instead of losing them to a neighbour's typo.
+       */
+      const strict = yield* Effect.result(strictPathRefusal(input))
+      if (strict._tag === "Failure") {
+        return { result: { index, ok: false, error: strict.failure } }
+      }
       // AC-6-8: the render gate, per op, never bypassed. The failure is a per-op result rather
       // than an error channel value, so a continue-mode batch reports it in place.
       const rendered = yield* Effect.result(renderChecked(input, at))
@@ -962,6 +1032,10 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
     input: WriteInput & { readonly reason?: string | undefined }
   ): Effect.Effect<CorrectResult, StoreError> =>
     Effect.gen(function* () {
+      // A correction accepts the same explicit path a write does, so it accepts the same strict-path
+      // ask. Ahead of the target read for `writeMemory`'s reason: the caller's own input is judged
+      // before this call does any work.
+      yield* strictPathRefusal(input)
       const millis = yield* now
       const at = isoSecond(millis)
       const normalizedTarget = normalizePath(target)

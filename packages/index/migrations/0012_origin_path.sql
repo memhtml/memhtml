@@ -1,0 +1,21 @@
+-- The archive mapping, read backwards. `origin_path` holds the pre-archive path of a file under
+-- `archive/<YYYY>/`, derived from the path itself by the projection, and NULL for an active file.
+--
+-- Without an index, answering "what became of the memory that lived at areas/oncall/x.html" is a
+-- `SCAN files` — the one question an external citation asks, since a correction with a reworded title
+-- moves the memory to a new path and leaves the cited one holding nothing. Measured 2026-08-26 on
+-- node 24's `node:sqlite` with no ANALYZE: `SCAN files` becomes `SEARCH files USING INDEX
+-- files_origin (origin_path=?)`.
+--
+-- PARTIAL on purpose, and the predicate IS reachable from the query: SQLite proves `origin_path = ?`
+-- implies `origin_path IS NOT NULL`, so the probe above is what a partial index yields (probed the
+-- same day, both forms). Most of a corpus is active, so the partial form keeps every live file out of
+-- an index that only archived files can answer from. Contrast `0011_edge_indexes.sql`, where the
+-- predicate had to GO: there the readers filter on a column the predicate does not mention, and an
+-- implication SQLite cannot prove makes the index no candidate at all.
+--
+-- No UNIQUE. One path can be archived more than once — written, evicted, written again at the same
+-- path, evicted again — and each eviction lands in its own `archive/<YYYY>/` partition, so two rows
+-- may legitimately carry one `origin_path`. The reader orders by `archived_at` and takes the newest.
+
+CREATE INDEX files_origin ON files (origin_path) WHERE origin_path IS NOT NULL;

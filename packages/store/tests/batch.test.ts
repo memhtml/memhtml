@@ -296,6 +296,60 @@ describe("continue_on_error: survivors land in the one commit", () => {
     expect(result.summary).toEqual({ total: 3, written: 2, deduped: 0, failed: 1, skipped: 0 })
   })
 
+  it("reports ONE op's unusable strict path in place, keeping its neighbours", async () => {
+    /**
+     * The strict-path gate is per op, like the render gate, so one op's typo costs that op and not the
+     * batch. An error-channel refusal here would abort a continue-mode call, which is the failure a
+     * caller cannot tell from a store outage: nineteen good ops lost to the twentieth's path.
+     *
+     * The neighbours are the assertion's substance. Both survivors carry their own explicit paths, and
+     * one of them is in the same directory the refused op named, so a guard that refused a directory
+     * rather than a path would take the survivor with it.
+     */
+    const repo = await fixture()
+    const before = await commitCount(repo)
+
+    const result = await run(
+      repo.store.writeMemories(
+        [
+          writeInput({
+            title: "Survivor one",
+            claim: "One.",
+            path: "areas/oncall/survivor-one.html",
+            strictPath: true
+          }),
+          writeInput({
+            title: "The casualty",
+            claim: "Two.",
+            path: "notes/oncall/casualty.html",
+            strictPath: true
+          }),
+          writeInput({
+            title: "Survivor two",
+            claim: "Three.",
+            path: "areas/oncall/survivor-two.html",
+            strictPath: true
+          })
+        ],
+        { continueOnError: true }
+      )
+    )
+
+    expect(await commitCount(repo)).toBe(before + 1)
+    expect(result.writtenPaths).toEqual([
+      "areas/oncall/survivor-one.html",
+      "areas/oncall/survivor-two.html"
+    ])
+    expect(await htmlOnDisk(repo)).toEqual([
+      "areas/oncall/survivor-one.html",
+      "areas/oncall/survivor-two.html"
+    ])
+    expect(result.results[1]?.ok).toBe(false)
+    expect(result.results[1]?.error).toBeInstanceOf(InvalidMemory)
+    expect(result.results[1]?.skipped).toBeUndefined()
+    expect(result.summary).toEqual({ total: 3, written: 2, deduped: 0, failed: 1, skipped: 0 })
+  })
+
   it("commits nothing when every op fails, and still reports all of them", async () => {
     const repo = await fixture()
     const before = await snapshot(repo)

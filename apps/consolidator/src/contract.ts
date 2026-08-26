@@ -85,6 +85,21 @@ export const MAX_EVIDENCE_PER_CANDIDATE = 32
 export const MAX_ENTITIES_PER_CANDIDATE = 64
 
 /**
+ * Ceiling on transcripts per run.
+ *
+ * Not a bound on resident bytes — the mount does not copy — but on how many files one agent session
+ * is asked to hold in attention, and the guard against a caller handing over five thousand sessions,
+ * which is well within what one sleep cycle could find unconsolidated. The sleep phase's own
+ * `TRACE_SESSIONS_PER_RUN` is lower and binds first; this is the client's independent backstop
+ * against a different caller.
+ *
+ * Declared with the other ceilings rather than beside the mount notes below, because
+ * {@link ConsolidationPayload} bounds its read receipt by it and a class body evaluates where it is
+ * written — a `const` declared further down would be in its temporal dead zone.
+ */
+export const MAX_TRANSCRIPTS_PER_RUN = 32
+
+/**
  * One transcript line the candidate rests on, tied to the session it came from.
  *
  * Evidence is what makes the TRACE-2 bar checkable by something other than trust: a candidate
@@ -107,6 +122,41 @@ export class CandidateEvidence extends Schema.Class<CandidateEvidence>("Candidat
 }) {}
 
 /**
+ * One entity a candidate names, as a TYPE and a NAME rather than as one bare string.
+ *
+ * ## Why the type half is structural
+ *
+ * The corpus keys an entity on `(entity_type, entity_name)`, and the `entity` retrieval scope compares
+ * a whole `type:name` reference (`packages/index/src/scope.ts`). A reference carrying no separator is
+ * filed under the type `unknown` (`packages/index/src/project.ts`), which keeps the name as a handle
+ * and costs reachability: a memory stored under `unknown:checkout-api` answers
+ * `service:checkout-api` — the reference a caller would ask for — with an empty set, which is the same
+ * answer an absent memory gives. So a producer emitting bare names writes memories nothing can reach
+ * by entity.
+ *
+ * ## A required OBJECT FIELD, never a `pattern` on a string
+ *
+ * The other entity producer in this repo already ships this shape: `apps/cli/src/extraction.ts` sends
+ * `{type, name}` with `required: ["type", "name"]` and `additionalProperties: false` under the
+ * Responses API's `strict: true`, and joins the pair as `type:name`. A JSON-Schema `pattern` is not
+ * reliably enforced by a provider's strict-mode structured output, while a required object field is,
+ * so the type half arrives because the shape has nowhere else to put it.
+ *
+ * ## The type vocabulary is OPEN
+ *
+ * `type` is any non-empty term, not a literal union. memhtml does not dictate a consumer's entity
+ * taxonomy: the types `agent/instructions.md` offers are a prompt-level suggestion, `unknown` remains
+ * a valid store type, and a consumer modelling its own domain adds its own terms without a change
+ * here. What this schema requires is that the type is STATED, never which one it is.
+ */
+export class CandidateEntity extends Schema.Class<CandidateEntity>("CandidateEntity")({
+  /** What kind of thing it is — `service`, `person`, `file`, or any other term. See the class note. */
+  type: Schema.String.check(Schema.isMinLength(1)),
+  /** Its concrete name, as the transcript spells it. */
+  name: Schema.String.check(Schema.isMinLength(1))
+}) {}
+
+/**
  * One distilled candidate. Not yet a memory: the next task decides what reaches the corpus.
  *
  * `evidence` is `minLength(2)`, which expresses the TRACE-2 bar as a type rather than as
@@ -122,9 +172,7 @@ export class CandidateMemory extends Schema.Class<CandidateMemory>("CandidateMem
   /** The supporting detail: what recurs, where, and what it implies. */
   gist: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_GIST_CHARS)),
   /** Tools, files, commands, packages, people the claim is about. May be empty. */
-  entities: Schema.Array(Schema.String.check(Schema.isMinLength(1))).check(
-    Schema.isMaxLength(MAX_ENTITIES_PER_CANDIDATE)
-  ),
+  entities: Schema.Array(CandidateEntity).check(Schema.isMaxLength(MAX_ENTITIES_PER_CANDIDATE)),
   evidence: Schema.Array(CandidateEvidence).check(
     Schema.isMinLength(2),
     Schema.isMaxLength(MAX_EVIDENCE_PER_CANDIDATE)
@@ -187,7 +235,7 @@ export class CandidateCommitment extends Schema.Class<CandidateCommitment>("Cand
 }) {}
 
 /**
- * What one run produced, what it cost in model calls, and WHICH SESSIONS IT ACTUALLY REACHED.
+ * What one run produced, what it cost in model calls, and WHICH SESSIONS IT ACTUALLY READ.
  *
  * `analyzedSessionIds` is the value a caller watermarks from rather than a reporting field. It exists
  * because the alternative, watermarking the batch that was ASKED about, records a transcript that
@@ -195,20 +243,19 @@ export class CandidateCommitment extends Schema.Class<CandidateCommitment>("Cand
  * rotated away, or sits behind a symlink the sandbox will not follow, is not ten sessions read.
  *
  * The field is REQUIRED rather than optional, and that is what makes the rule structural instead of
- * advisory: nothing can produce a `ConsolidationResult` without stating what it reached, so a caller
- * has the honest set at hand and never has to fall back on the batch. `markSessionsConsolidated`'s
- * only correct input is this set, intersected with the batch. See
+ * advisory: nothing can produce a `ConsolidationResult` without stating what it read, so a caller has
+ * the honest set at hand and never has to fall back on the batch. `markSessionsConsolidated`'s only
+ * correct input is this set, intersected with the batch. See
  * `packages/sleep/src/phases/trace-consolidation.ts`.
  *
- * It is the set of transcripts whose files RESOLVE AT THEIR GUEST PATH inside the sandbox's
- * read-only mount — never the batch that was asked about, and never merely the ids the answer
- * cites — GATED on the answer carrying at least one finding. Resolution is checkable where "the
- * model opened it" is not; but resolution alone is measured before the model runs, so an answer
- * with zero candidates AND zero commitments carries no receipt that anything was read, and the set
- * is `[]` for that case. {@link watermarkableSessionIds} holds the rule, and the client logs the
- * empty arm loudly. The watermark's meaning, "the agent saw this session and correctly found
- * nothing above the bar", still advances quiet sessions whenever the same answer proves the run
- * read ANY of the batch.
+ * It is the intersection of two sets, gated on the answer carrying at least one finding: the
+ * transcripts whose files RESOLVE AT THEIR GUEST PATH inside the sandbox's read-only mount, and the
+ * sessions the agent's own read receipt names. Resolution is checkable where "the model opened it" is
+ * not, and it is measured before the model runs — so it bounds the claim rather than proving it, while
+ * the receipt narrows it to what the agent says it opened. Never the batch that was asked about, and
+ * never merely the ids the answer CITES: a barren-but-read session must advance, or every quiet
+ * transcript is re-read at full model cost every night. {@link watermarkableSessionIds} holds the whole
+ * rule, and the client logs the empty arm loudly.
  */
 export class ConsolidationResult extends Schema.Class<ConsolidationResult>("ConsolidationResult")({
   candidates: Schema.Array(CandidateMemory),
@@ -311,36 +358,45 @@ const ungroundedReason = (
 /**
  * Which of the reachable sessions a caller may WATERMARK from this answer.
  *
- * The reachable set alone is not enough evidence of reading: reachability is decided by this process
- * before the model runs, so a turn that read nothing — a misrouted server that returned an empty
- * structured answer, or a model that skipped the files — would still watermark the whole batch, and
- * every one of those sessions would be recorded as consolidated without a byte of it having been
- * opened. Quotes are the only reading receipt the answer carries, so an answer with NO candidates and
- * NO commitments proves nothing and advances nothing; the batch stays unwatermarked and the next
- * night asks again.
+ * TWO conditions, and both are necessary because each covers what the other cannot.
  *
- * ## What one finding actually proves, stated as the guarantee it is
+ * ## One: the answer must carry a finding, which is the only VERIFIED receipt
  *
- * An answer with at least ONE finding advances EVERY readable session, cited or not. The receipt is
- * per-RUN and not per-session: the quote-containment gate (`fabricatedQuoteReason` in `client.ts`)
- * proves that SOME file in the batch was opened and quoted verbatim, and nothing in a
- * `ConsolidationPayload` says which of the others were read. A barren-but-read session must still
- * advance — "the agent read it and found nothing above the bar" is the watermark's meaning, and gating
- * each session on its own citation would re-read every quiet transcript at full model cost every night
- * forever.
+ * Reachability is decided by this process before the model runs, so it proves the files could be read
+ * and never that anything read them. Quotes are the only receipt an answer carries that something
+ * outside the model checks: `fabricatedQuoteReason` (`client.ts`) re-reads each cited transcript and
+ * refuses the turn unless the quoted text is really in it. So an answer with NO candidates and NO
+ * commitments proves nothing and advances nothing, whatever its {@link ConsolidationPayload.readSessionIds}
+ * claims — a misrouted listener answering with empty lists and a full read receipt would otherwise
+ * watermark a batch nothing opened. The batch stays unwatermarked and the next night asks again.
  *
- * The residual that buys is exact and worth naming: a turn that opens 1 of 32 reachable transcripts and
- * returns one candidate with two real quotes clears every gate here and advances all 32, and because
- * `trace_consolidations` is an anti-join the other 31 are never selected again. That is the shape a
- * step-budget-truncated or lazy turn takes, and it is permanent loss rather than a delay. Closing it
- * needs a per-session READ RECEIPT in the payload — a field naming which sessions the agent opened,
- * which the model can state and the caller can intersect — and until the payload carries one,
- * {@link underCitedWatermarkWarning} makes the shape visible in the log rather than silent.
+ * ## Two: the advance covers what the agent SAYS it read, intersected with what was reachable
  *
- * The cost of the empty arm is that a genuinely-barren whole batch is re-read the next night. That
- * is bounded (one batch) and it is the honest direction to be wrong in: re-reading a quiet batch
- * costs a model call, while watermarking an unread one loses those sessions permanently. The caller
- * logs the empty arm loudly for exactly that reason.
+ * The receipt behind the quote gate is per-RUN: it proves SOME file in the batch was opened, and says
+ * nothing about the others. Advancing every reachable session on that receipt loses transcripts
+ * permanently — a turn that opens 1 of 32 and returns one candidate with two real quotes advances all
+ * 32, and `trace_consolidations` is an anti-join, so the other 31 are never selected again. That is the
+ * shape a step-budget-truncated turn takes.
+ *
+ * `readSessionIds` closes it: the agent names the sessions it opened or grepped, and only those
+ * advance. A barren-but-READ session still advances, which is what keeps the cost bounded — "the agent
+ * read it and found nothing above the bar" is the watermark's meaning, and gating each session on its
+ * own CITATION would re-read every quiet transcript at full model cost every night forever.
+ *
+ * The intersection is what bounds the claim. A session id the run did not make reachable cannot be
+ * watermarked however the answer names it, so the receipt can only ever NARROW the reachable set. That
+ * is the same authority `analyzedFrom` gives the client's answer against the phase's batch.
+ *
+ * ## What is still unverified, stated as the residual it is
+ *
+ * `readSessionIds` is a model CLAIM. An agent that opens one transcript and names thirty-two advances
+ * thirty-two, and nothing here can tell that from a thorough run — the quote gate proves reading
+ * happened, not how much. {@link underCitedWatermarkWarning} is what makes that shape
+ * visible: it compares the sessions the answer QUOTES against the sessions it claims to have read, so a
+ * wide claim behind a narrow set of quotes is logged rather than silent.
+ *
+ * Ids are trimmed before comparison, so a receipt whose entries carry stray whitespace still matches
+ * the reachable ids the manifest handed over.
  *
  * In the contract rather than inline in `client.ts`, matching {@link ungroundedEvidenceReason}: the
  * rule is pure over the answer and the reachable ids, and the test tier exercises it with no server.
@@ -349,45 +405,63 @@ export const watermarkableSessionIds = (
   answer: {
     readonly candidates: ReadonlyArray<unknown>
     readonly commitments: ReadonlyArray<unknown>
+    readonly readSessionIds: ReadonlyArray<string>
   },
   readableSessionIds: ReadonlyArray<string>
-): ReadonlyArray<string> =>
-  answer.candidates.length === 0 && answer.commitments.length === 0 ? [] : readableSessionIds
+): ReadonlyArray<string> => {
+  if (answer.candidates.length === 0 && answer.commitments.length === 0) return []
+  const read = new Set(answer.readSessionIds.map((id) => id.trim()))
+  return readableSessionIds.filter((id) => read.has(id))
+}
 
 /**
- * The share of an advancing batch that must be CITED for the advance to pass without a warning.
+ * The share of an ADVANCING set that must be CITED for the advance to pass without a warning.
  *
  * A quarter. The instructions call six candidates plenty for a batch of up to
  * {@link MAX_TRANSCRIPTS_PER_RUN} transcripts, and each candidate cites at least two quotes, so an
- * honest thorough turn over 32 sessions cites somewhere around 4 to 12 of them and sits near this line;
- * the shape this exists to surface — one candidate quoting one session while 31 advance — is at 3%.
- * Set to fire rather than to stay quiet, because the log line is the only place today where the
- * per-run receipt's breadth is visible at all, and a warning costs a line while the residual it
- * describes costs transcripts.
+ * honest thorough turn claiming 32 sessions read cites somewhere around 4 to 12 of them and sits near
+ * this line; the shape this exists to surface — one candidate quoting one session while the receipt
+ * claims 32 — is at 3%. Set to fire rather than to stay quiet, because the log line is the only place
+ * the claim's breadth is measured against a verified receipt, and a warning costs a line while the
+ * shape it describes costs transcripts.
  */
 const WATERMARK_CITED_SHARE_FLOOR = 0.25
 
 /**
- * Batches smaller than this never warn.
+ * Advances smaller than this never warn.
  *
- * Below eight sessions the ratio carries no signal: a two-session batch with one citation is at the
- * floor and is also the ordinary shape of a night with two transcripts, so warning there would train
- * an operator to ignore the line by the time a batch of 32 advancing on one citation arrives.
+ * Below eight sessions the ratio carries no signal: a two-session advance with one citation is at the
+ * floor and is also the ordinary shape of a night with two transcripts, so warning there would train an
+ * operator to ignore the line by the time a claim of 32 advancing on one citation arrives. It is also
+ * what keeps an HONEST narrow turn quiet — a run that opens one transcript and names one advances one.
  */
 const WATERMARK_WARN_MIN_READABLE = 8
 
 /**
- * The warning for a watermark that advances a whole batch on the citations of a small fraction of it,
+ * The warning for a watermark that advances many sessions on the citations of a small fraction of them,
  * or `null` when the advance is unremarkable.
  *
- * This is OBSERVABILITY over the residual {@link watermarkableSessionIds} documents, not a second gate.
- * It changes no semantics: the advance happens either way, because the alternative — refusing to
- * watermark the uncited sessions — re-reads every quiet transcript at full model cost every night, and
- * the fix that actually closes the hole is a per-session read receipt in {@link ConsolidationPayload}.
- * What this adds is that the lossy shape stops being silent, which is the state it was in: a turn that
- * read 1 of 32 and watermarked all 32 produced no log line distinguishable from a thorough run's.
+ * This is OBSERVABILITY over the one thing {@link watermarkableSessionIds} cannot check, not a second
+ * gate. It changes no semantics: the advance happens either way.
  *
- * The count is of DISTINCT cited session ids, because a candidate citing one session twice is one
+ * What it measures is the gap between two receipts of different strength. `readSessionIds` is the
+ * agent's own CLAIM about what it opened, and the advance is derived from it; the quotes are the
+ * VERIFIED half, re-read against the real transcripts by `fabricatedQuoteReason`. So an answer claiming
+ * thirty-two sessions read while quoting one is the shape a truncated or lazy turn takes, and it is
+ * indistinguishable here from a thorough run whose thirty-one quiet sessions genuinely held nothing.
+ * The log line is the only place that gap is visible.
+ *
+ * An HONEST narrow turn does not warn, and that follows from the advance being the claim: a turn that
+ * opens one transcript and names one advances one, which is below {@link WATERMARK_WARN_MIN_READABLE}.
+ * The line fires for a WIDE claim behind a NARROW set of quotes, which is exactly the case worth an
+ * operator's attention.
+ *
+ * The count is of DISTINCT cited session ids INSIDE the advancing set, because both numbers in the line
+ * have to name one space. A citation of a session that is not advancing — one outside the receipt, or
+ * one the run never made reachable — is evidence about a different set, and counting it both understates
+ * the uncited remainder and suppresses the line in the case it exists for: eight sessions advancing on
+ * the receipt alone, with two quotes naming sessions none of them, reads as a quarter cited when zero
+ * of the advance is. Distinct rather than per-quote, because a candidate citing one session twice is one
  * session's receipt and a per-quote count would read as breadth. Pure over the answer and the readable
  * ids, in the contract for the reason {@link ungroundedEvidenceReason} records: the test tier drives it
  * with no server.
@@ -398,23 +472,30 @@ export const underCitedWatermarkWarning = (
       readonly evidence: ReadonlyArray<{ readonly sessionId: string }>
     }>
     readonly commitments: ReadonlyArray<{ readonly evidence: { readonly sessionId: string } }>
+    readonly readSessionIds: ReadonlyArray<string>
   },
   readableSessionIds: ReadonlyArray<string>
 ): string | null => {
-  const advancing = watermarkableSessionIds(answer, readableSessionIds).length
+  const advance = watermarkableSessionIds(answer, readableSessionIds)
+  const advancing = advance.length
   if (advancing < WATERMARK_WARN_MIN_READABLE) return null
 
+  const advancingIds = new Set(advance)
   const cited = new Set<string>()
-  for (const candidate of answer.candidates) {
-    for (const quote of candidate.evidence) cited.add(quote.sessionId)
+  const cite = (sessionId: string): void => {
+    const id = sessionId.trim()
+    if (advancingIds.has(id)) cited.add(id)
   }
-  for (const commitment of answer.commitments) cited.add(commitment.evidence.sessionId)
+  for (const candidate of answer.candidates) {
+    for (const quote of candidate.evidence) cite(quote.sessionId)
+  }
+  for (const commitment of answer.commitments) cite(commitment.evidence.sessionId)
   if (cited.size >= advancing * WATERMARK_CITED_SHARE_FLOOR) return null
 
   return (
-    `consolidation is watermarking ${String(advancing)} readable session(s) on quotes from only ` +
-    `${String(cited.size)} of them; the other ${String(advancing - cited.size)} advance on this run's ` +
-    "receipt without a citation of their own, and a watermarked session is never selected again. " +
+    `consolidation is watermarking ${String(advancing)} session(s) the agent reports having read, on ` +
+    `quotes from only ${String(cited.size)} of them; the other ${String(advancing - cited.size)} ` +
+    "advance on the reported receipt alone, and a watermarked session is never selected again. " +
     "Check the turn's step budget if it should have read more."
   )
 }
@@ -493,7 +574,7 @@ export const transcriptQuoteChecker = (transcript: string): TranscriptQuoteCheck
  *
  * The cost of that mismatch is not one lost commitment. `fabricatedQuoteReason` (`client.ts`) refuses
  * the WHOLE turn, so the batch produces nothing, so `markSessionsConsolidated` never runs, so the
- * next night selects the same batch and fails identically — an honest answer livelocking a nightly
+ * next run selects the same batch and fails identically — an honest answer livelocking an unattended
  * job. PR #47's review gauntlet found exactly this against real JSONL bytes.
  *
  * ## Values only, and each value SEPARATELY
@@ -591,7 +672,25 @@ export class ConsolidationPayload extends Schema.Class<ConsolidationPayload>(
   candidates: Schema.Array(CandidateMemory).check(Schema.isMaxLength(MAX_CANDIDATES_PER_RESULT)),
   commitments: Schema.Array(CandidateCommitment).check(
     Schema.isMaxLength(MAX_COMMITMENTS_PER_RESULT)
-  )
+  ),
+  /**
+   * The `sessionId` of every session the agent opened or grepped: the PER-SESSION READ RECEIPT the
+   * watermark advances over.
+   *
+   * REQUIRED, and that is what makes it a receipt rather than a hint. An optional field would let an
+   * agent that reported nothing be indistinguishable from one that read nothing, and the fallback for
+   * an absent receipt is the whole reachable set — which is exactly the advance this field exists to
+   * narrow. Nothing downstream defaults it.
+   *
+   * Bounded by {@link MAX_TRANSCRIPTS_PER_RUN}, because a run mounts at most that many transcripts, so
+   * a longer list names sessions no run was handed.
+   *
+   * {@link watermarkableSessionIds} intersects it with the reachable set, so an id outside that set is
+   * INERT. The whole turn is not refused for one, unlike a fabricated EVIDENCE id
+   * ({@link ungroundedEvidenceReason}): that one rides into a commit message as provenance a reviewer
+   * trusts, while this one changes nothing a caller can act on.
+   */
+  readSessionIds: Schema.Array(Schema.String).check(Schema.isMaxLength(MAX_TRANSCRIPTS_PER_RUN))
 }) {}
 
 /**
@@ -683,17 +782,6 @@ export const CONSOLIDATION_OUTPUT_JSON_SCHEMA = toJsonSchema(ConsolidationPayloa
  * 332 KB, p90 915 KB, p99 4.68 MB, max 37.2 MB. `packages/traces/src/parse.ts:16-21` reasons about
  * the same shape.
  */
-
-/**
- * Ceiling on transcripts per run.
- *
- * Not a bound on resident bytes — the mount does not copy — but on how many files one agent session
- * is asked to hold in attention, and the guard against a caller handing over five thousand sessions,
- * which is well within what one sleep cycle could find unconsolidated. The sleep phase's own
- * `TRACE_SESSIONS_PER_RUN` is lower and binds first; this is the client's independent backstop
- * against a different caller.
- */
-export const MAX_TRANSCRIPTS_PER_RUN = 32
 
 /** One transcript the caller wants read, named by the session it belongs to. */
 export interface TranscriptRef {

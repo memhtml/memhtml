@@ -134,7 +134,17 @@ type SuggestionsFor = (error: TaggedError) => ReadonlyArray<string>
  * `AUTHORABLE_RELS` undefined in `commands.ts`'s module body under an operations-first import order.
  */
 export const SUGGESTIONS: Readonly<Record<string, SuggestionsFor>> = {
-  PathNotFound: () => ["memhtml search <what you were looking for>", "memhtml list"],
+  /*
+   * `resolve` FIRST, because the commonest way to reach this error is a path that used to resolve. A
+   * correction that rewords a title moves the file and an eviction `git mv`s it, and both mechanisms are
+   * recorded — so the walk answers where the fact went, where a search re-derives the answer semantically
+   * and may not find it. The two broad reads stay for the case where nothing recorded a move.
+   */
+  PathNotFound: () => [
+    "memhtml resolve <the path you cited> — a correction or an eviction may have moved it",
+    "memhtml search <what you were looking for>",
+    "memhtml list"
+  ],
   /**
    * Two branches produce this tag and they recover differently, so both are offered.
    *

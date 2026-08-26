@@ -35,7 +35,7 @@ Per-operation batch codes are mapped once, in the operations layer (`apps/cli/sr
 
 ## 4. The tool surface
 
-The MCP tools are built with `Tool.make` and collected by `Toolkit.make` (`apps/mcp/src/tools.ts:712`). The [MCP tools reference](/reference/mcp-tools/) lists them, generated from that registry, so it states how many there are and this page does not. Two resources come with them: `memhtml://file/{path}` for citation-grade drill-down and `memhtml://sleep/{run-id}` for a run report (`apps/mcp/src/resources.ts:90`).
+The MCP tools are built with `Tool.make` and collected by `Toolkit.make` (`apps/mcp/src/tools.ts:712`). The [MCP tools reference](/reference/mcp-tools/) lists them, generated from that registry, so it states how many there are and this page does not. Three resources come with them: `memhtml://file/{path}` for citation-grade drill-down, `memhtml://sleep/{run-id}` for a run report, and `memhtml://at/{commit}/{path}` for the same drill-down at a commit, whose bytes cannot move (`apps/mcp/src/resources.ts`).
 
 Sleep stays off the tool surface, because it is an operator action that produces a branch for a human to review.
 

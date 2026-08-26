@@ -46,7 +46,7 @@ Controls are derived mechanically from the target by the three divergence famili
 
 ### 3.3. Where the gate is wired
 
-Three places. `memhtml eval discriminate` exits non-zero on any inversion. The repository-wide check runs it as a `test:eval` task. `memhtml sleep merge` re-runs it and refuses the merge on failure, so a nightly run that degrades retrieval quality does not land.
+Three places. `memhtml eval discriminate` exits non-zero on any inversion. The repository-wide check runs it as a `test:eval` task. `memhtml sleep merge` re-runs it and refuses the merge on failure, so an unattended run that degrades retrieval quality does not land.
 
 ## 4. Standing hazards this suite is written against
 

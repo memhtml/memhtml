@@ -103,7 +103,7 @@ import { budgetFor, closeVanishedDetections, detectionKey, mintDetectedTask } fr
  * Surface 1 of issue #44, second detector. The veto is the phase's strongest signal that something
  * needs a HUMAN rather than a merge: two memories a cosine says are the same and a divergence
  * predicate says cannot both be true is either a correction the corpus has not recorded as one, or a
- * pair of facts about different things that read alike. Neither resolution is a nightly job's to make —
+ * pair of facts about different things that read alike. Neither resolution is an unattended run's to make —
  * choosing the winner of a contradiction is a one-way door on stored belief — and the count alone told
  * nobody. {@link mintVetoTasks} opens one task per vetoed pair NAMING THE PREDICATE that fired, in the
  * same commit as the folds.

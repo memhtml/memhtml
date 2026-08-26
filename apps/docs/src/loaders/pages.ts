@@ -586,7 +586,7 @@ const mcpResourcesPage = (registry: Registry): ReferencePage => ({
   id: `${TIER}/mcp-resources`,
   title: "MCP resources",
   description:
-    "What a client can fetch by URI: the file behind an answer, and a sleep run's report.",
+    "What a client can fetch by URI: the file behind an answer, a sleep run's report, and a memory pinned at a commit.",
   source: SOURCES.mcpResources,
   filePath: `${DOCS_COLLECTION}/${TIER}/mcp-resources.md`,
   lastUpdated: registry.commitDates.mcpResources,
@@ -656,7 +656,7 @@ const vocabularyPage = (registry: Registry): ReferencePage => ({
 const sleepPhasesPage = (registry: Registry, base: string): ReferencePage => ({
   id: `${TIER}/sleep-phases`,
   title: "Sleep phases",
-  description: "The nightly curation cycle's phases, in execution order.",
+  description: "The curation cycle's phases, in execution order.",
   source: SOURCES.sleep,
   filePath: `${DOCS_COLLECTION}/${TIER}/sleep-phases.md`,
   lastUpdated: registry.commitDates.sleep,

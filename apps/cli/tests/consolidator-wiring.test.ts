@@ -9,7 +9,7 @@ import { ConsolidatorPortService, layerConsolidatorPort, Roots } from "../src/ap
  * This is the only place the decision is made, and getting it wrong is not a small bug in either
  * direction. Bound when it should not be spawns an eve server and spends Opus tokens on a night an
  * operator turned the models off; unbound when it should not be makes the phase permanently report
- * `no consolidator bound` on a machine that has credentials, and a nightly job that never distills
+ * `no consolidator bound` on a machine that has credentials, and an unattended run that never distills
  * anything looks exactly like one that found nothing worth distilling.
  *
  * ── Two environments, and why they are threaded rather than mutated ──────────────────────────────
@@ -206,7 +206,7 @@ describe("layerConsolidatorPort", () => {
      * The mount root has to come from the SAME `Roots` service `memhtml trace index` scans with, or the
      * agent mounts a tree whose paths no `traces` row names — and the failure mode is quiet: every
      * transcript in every batch reads as unreachable, so the phase reports `consolidated: 0` forever
-     * and a nightly job that never distills anything looks exactly like one that found nothing.
+     * and an unattended run that never distills anything looks exactly like one that found nothing.
      *
      * ── The observable, and why the obvious one is vacuous ────────────────────────────────────────
      *

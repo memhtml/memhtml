@@ -52,7 +52,7 @@ memhtml eval discriminate
 
 ## fake is the mode CI measures
 
-`fake` uses a deterministic embedder and needs no credentials, so a pass there is the verdict this project ships on. It is also the mode `memhtml sleep merge` runs, which keeps a nightly merge from depending on a token being valid at 3am.
+`fake` uses a deterministic embedder and needs no credentials, so a pass there is the verdict this project ships on. It is also the mode `memhtml sleep merge` runs, which keeps an unattended merge from depending on a token being valid at 3am.
 
 `live` runs the same probes against Bedrock's actual vector space. Treat it as an operator diagnostic rather than a CI gate.
 

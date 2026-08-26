@@ -581,6 +581,28 @@ describe("the line decoder, as a pure function", () => {
     expect(decoded.ops[0]?.articleHtml).toBe("<p><mark>The claim.</mark></p>")
   })
 
+  it("carries `strict_path` as a JSON boolean, and refuses the string spelling", () => {
+    /**
+     * A boolean field on a wire whose every other scalar is a string, so the two are decoded by
+     * separate tables. `"true"` is the spelling a template-driven writer produces, and accepting it
+     * as a string would hand `strictPath: "true"` down — truthy in JavaScript, absent to a `=== true`
+     * guard. The caller's ask would read as satisfied and behave as if it had never been made.
+     */
+    const decoded = decodeApply(line({ title: "Strict", body: "x.", strict_path: true }))
+    expect(decoded.ok && decoded.ops[0]?.strictPath).toBe(true)
+
+    const asString = decodeApply(line({ title: "Strict", body: "x.", strict_path: "true" }))
+    expect(asString.ok).toBe(false)
+    if (asString.ok) return
+    expect(asString.failure.code).toBe("ERR_INVALID_FLAG")
+    expect(asString.failure.error).toContain("strict_path")
+
+    // Absent means absent, not false: the key must not appear at all, so `exactOptionalPropertyTypes`
+    // callers downstream see the same shape they do for every other unstated field.
+    const absent = decodeApply(line({ title: "Lenient", body: "x." }))
+    expect(absent.ok && Object.hasOwn(absent.ops[0] ?? {}, "strictPath")).toBe(false)
+  })
+
   it("does NOT enforce the body/article_html XOR at the door: that is per-op, one layer down", () => {
     // The door owns SHAPE. A file where op 3 supplies both must still report per-op rather than
     // refusing the whole file, so the XOR stays the store's render gate's business.

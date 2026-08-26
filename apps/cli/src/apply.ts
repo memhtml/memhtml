@@ -53,11 +53,21 @@ const SCALAR_FIELDS = {
 /** Fields that accept a string or an array of strings, and always become an array. */
 const LIST_FIELDS = { tag: "tags", tags: "tags", entity: "entities", entities: "entities" } as const
 
+/**
+ * Fields that must be a JSON boolean.
+ *
+ * Its own table because {@link SCALAR_FIELDS}' decode refuses anything that is not a string, and a
+ * boolean spelled `"true"` is a different value from `true` on this wire. A caller that sent the
+ * string would otherwise get a strict-path ask that reads as satisfied and behaves as absent.
+ */
+const BOOLEAN_FIELDS = { strict_path: "strictPath" } as const
+
 /** `op` is the discriminator rather than a `WriteParams` field, so it is legal and never mapped. */
 const KNOWN_FIELDS: ReadonlySet<string> = new Set([
   "op",
   ...Object.keys(SCALAR_FIELDS),
-  ...Object.keys(LIST_FIELDS)
+  ...Object.keys(LIST_FIELDS),
+  ...Object.keys(BOOLEAN_FIELDS)
 ])
 
 /** A usage failure naming the offending line, 1-based as a text editor counts. */
@@ -228,6 +238,19 @@ const opAt = (record: Record<string, unknown>, line: number): WriteParams | Fail
     const parsed = strings(value, field, line)
     if (isFailure(parsed)) return parsed
     params[target] = [...((params[target] as Array<string> | undefined) ?? []), ...parsed]
+  }
+
+  for (const [field, target] of Object.entries(BOOLEAN_FIELDS)) {
+    const value = record[field]
+    if (value === undefined || value === null) continue
+    if (typeof value !== "boolean") {
+      return lineError(
+        "ERR_INVALID_FLAG",
+        line,
+        `\`${field}\` must be a boolean, got ${typeof value}. JSON \`true\`, not the string "true"`
+      )
+    }
+    params[target] = value
   }
 
   /**

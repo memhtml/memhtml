@@ -1,4 +1,4 @@
-import { WRITABLE_MEMORY_TYPES } from "@memhtml/contracts"
+import { ENTITY_SEPARATOR, normalizeEntityRef, WRITABLE_MEMORY_TYPES } from "@memhtml/contracts"
 import type { StorageFailure } from "@memhtml/contracts/errors"
 import { placementFor } from "@memhtml/contracts/paths"
 import { SLUG_FALLBACK, slugify, withCollisionOrdinal } from "@memhtml/contracts/slug"
@@ -17,6 +17,8 @@ import { pendingMarksPath, recordPendingMarks } from "../contract.js"
 import { readFileBytes, writeFileBytes } from "../edits.js"
 import { emptyOutcome, type PhaseBody, type PhaseEnv, type SleepError } from "../env.js"
 import {
+  activeEntities,
+  type EntityCount,
   linkedSessionCount,
   type SessionManifestRow,
   sessionManifestRows,
@@ -72,6 +74,19 @@ import {
  * `merge`'s `preMergeGate` (`review.ts:196-209`) runs over the whole branch before `main` moves. So
  * being on the branch IS being behind the gate, and a phase that tried to gate itself would be a
  * second, weaker copy of the one that already covers all fifteen phases.
+ *
+ * **The origin session is stamped when the candidate has ONE, as provenance rather than content.** A
+ * candidate whose every evidence quote cites one session carries that id as the ordinary
+ * `memhtml-session` meta, which projects to `files.session_id`; one whose quotes span sessions carries
+ * none, because the column is a scalar and there is no single origin to name. See
+ * {@link soleEvidenceSession}. The QUOTES are still commit-message-only, which is the invariant this
+ * does not touch — a session id names where a claim was read and reproduces nothing that was said.
+ *
+ * **A candidate's entity references are canonicalized against the corpus before the write.** The model
+ * states each entity as a type and a name (`apps/consolidator/src/contract.ts`' `CandidateEntity`), and
+ * a reference whose normalized form the corpus already holds is written with the corpus's own spelling.
+ * That is a rewrite between two spellings of ONE name and not a judgement about two names, which is why
+ * it is deterministic and needs no threshold. See {@link corpusEntitySpellings}.
  *
  * **Degrades three ways and fails on none of them.** No consolidator bound, a consolidator that failed
  * (missing credentials, an unreachable agent, an off-contract answer), and a candidate this phase
@@ -138,13 +153,13 @@ export const TRACE_MIN_BYTES = 8 * 1024
  * Sessions handed over per run.
  *
  * Ten, which sits below the consolidator's own 32-transcript ceiling
- * (`apps/consolidator/src/contract.ts:210`) deliberately. That cap bounds RESIDENT BYTES in
+ * (`MAX_TRANSCRIPTS_PER_RUN` in `apps/consolidator/src/contract.ts`) deliberately. That cap bounds RESIDENT BYTES in
  * the sandbox, and this one bounds what a single agent session is asked to hold in attention. A batch
  * that clears the byte budget can still be too wide to read carefully, and the cross-session patterns
  * this phase exists to find are the ones visible across a handful of recent sessions.
  *
  * The two caps compose instead of duplicating: whichever is smaller binds, and the consolidator warns
- * when it has to page. Newest-first ordering in the query is what makes ten a nightly increment
+ * when it has to page. Newest-first ordering in the query is what makes ten a per-run increment
  * instead of a truncation. A first run over a year of transcripts consolidates the ten most recent,
  * and each subsequent night takes the next ten.
  */
@@ -358,7 +373,7 @@ interface CommitmentOutcome {
    */
   readonly commitmentsDismissed: number
   /**
-   * Commitments the nightly volume cap turned away, measured as THIS PASS's DELTA on the shared
+   * Commitments the per-run volume cap turned away, measured as THIS PASS's DELTA on the shared
    * budget's overflow.
    *
    * A delta rather than `budget.overflow` outright, and the difference is not cosmetic. The budget is
@@ -559,6 +574,133 @@ const consolidateCommitments = (
   })
 
 /**
+ * A candidate's entities as the `type:name` references a `memhtml-entity` meta carries.
+ *
+ * The join is the whole translation between the agent's answer and the corpus: `CandidateEntity`
+ * (`apps/consolidator/src/contract.ts`) states the two halves separately so a model cannot omit the
+ * type, and the corpus keys on `(entity_type, entity_name)` reassembled as one reference by the
+ * `entity` scope. Both halves are trimmed, because a padded half survives `parseEntity` — the split is
+ * on the first colon, so `service :sqlite` files under the type `"service "` and no reference a caller
+ * spells reaches it.
+ *
+ * A pair with either half empty after the trim is DROPPED rather than filed, which is the same
+ * redundancy every model-facing gate in this package carries: the schema already refuses an empty half,
+ * and a scripted or future consolidator that skipped the schema still cannot write `:name` or
+ * `service:` — references whose one meaningful half is unreachable through a scope that compares the
+ * whole string.
+ *
+ * The surviving NAME is then rewritten to the corpus's own spelling of the same name when the corpus
+ * already holds one — see {@link corpusEntitySpellings} for the rule and for why it is not an assist.
+ * The TYPE is never rewritten and stays the candidate's own trimmed half, because a type is not a
+ * spelling: it is the routing discriminator that `isPersonEntity`, `placementFor` and `person-links` all
+ * compare exactly, so substituting a corpus row's `Person` over a candidate's correct `person` would
+ * move a person memory out of `resources/people/` and out of the reach of the phase that mints the
+ * person file. `corpus` holds no entry whenever the pre-write read was skipped or failed, and an absent
+ * entry is the identity, so the join degrades to the candidate's own spelling rather than to no
+ * entities.
+ *
+ * One function, called by the write and by {@link placementDirectory} through ONE value computed per
+ * candidate, so the file's metas and the directory it lands in are derived from the same references.
+ * `placementFor` routes on `person:`, and two independent joins could put a person memory outside
+ * `resources/people/`.
+ */
+const entityRefsFor = (
+  candidate: CandidateMemoryLike,
+  corpus: ReadonlyMap<string, string>
+): ReadonlyArray<string> =>
+  candidate.entities.flatMap((entity) => {
+    const type = entity.type.trim()
+    const name = entity.name.trim()
+    if (type === "" || name === "") return []
+    const ref = `${type}${ENTITY_SEPARATOR}${name}`
+    return [`${type}${ENTITY_SEPARATOR}${corpus.get(normalizeEntityRef(ref)) ?? name}`]
+  })
+
+/**
+ * The corpus's own spelling of every entity it already names, keyed by the normalized reference.
+ *
+ * ## What this is, and what it deliberately is not
+ *
+ * A candidate can coin a variant of a name the corpus already holds — `Checkout-API` beside
+ * `checkout-api`, `sanju kumar` beside `Sanju  Kumar` — and the `entity` scope compares the whole
+ * reference, so the two are different handles until `entity-resolution` merges them. That phase needs
+ * TWO independent nights to agree before a merge applies, so the variant is live in the corpus and
+ * addressable only by its own spelling until then. Rewriting at the mint site closes the window for
+ * the case that needs no judgement at all.
+ *
+ * **This is not the "propose rather than mutate" assist INV-1 governs, and the distinction is exact.**
+ * A proximity assist decides that two DIFFERENT names, or two paraphrases of a claim, are about one
+ * thing — a judgement, which is why PROX-2 refuses to let one stamp anything without a threshold
+ * measured on a labeled near-duplicate corpus. This decides nothing: `normalizeEntityRef` is the one
+ * definition of what it means for two entity names to be the SAME name (case, NFC, internal
+ * whitespace), so the only thing that changes is WHICH SPELLING of one name is stored — the value is a
+ * NAME and never a whole reference, so the candidate's own type survives the join. No model, no
+ * threshold, no cosine. Reusing `entity-resolution`'s 0.75-0.85 band here is precisely what PROX-2
+ * forbids: those numbers were measured for clustering entity names against centroids, not for deciding
+ * that a reference is a variant.
+ *
+ * ## The set, and the tie-break
+ *
+ * `activeEntities` is the query, reused rather than re-issued: it already returns every entity on an
+ * ACTIVE NON-TASK file with its claim count, and both exclusions are the ones this needs. An archived
+ * memory's spelling should not steer a new write, and a task's entity references are the agent's own
+ * handles on its own work rather than the corpus's vocabulary — the reasoning that function's own note
+ * records for `entity-resolution` and `person-links`.
+ *
+ * Two active spellings can normalize together, so the winner is the one the MOST files claim, and a
+ * count tie breaks on the lexicographically smaller NAME. That makes the choice the corpus's own
+ * majority spelling and makes it a pure function of the rows rather than of the order they arrived in.
+ *
+ * ## One read for the batch, and a failure costs nothing but the rewrite
+ *
+ * Called once beside {@link frameConflicts}, which is the phase's other pre-write index read, and for
+ * the same two reasons: a per-candidate lookup against a corpus-sized table is the quadratic-write-cost
+ * shape this codebase has already paid for once, and a failed read degrades to an empty map — the
+ * identity for {@link entityRefsFor} — because losing the night's memories over a failed spelling
+ * lookup about them would invert the priority.
+ */
+const corpusEntitySpellings = (env: PhaseEnv): Effect.Effect<ReadonlyMap<string, string>> =>
+  Effect.gen(function* () {
+    const rows = yield* activeEntities(env.deps.db).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning(
+          `sleep.trace-consolidation entity spelling lookup skipped: ${error.operation}`
+        ).pipe(Effect.as<ReadonlyArray<EntityCount>>([]))
+      )
+    )
+
+    const best = new Map<string, { readonly name: string; readonly files: number }>()
+    for (const row of rows) {
+      /*
+       * TRIMMED at the edges, because a stored half can be padded and this value is written verbatim
+       * into a new file's meta. `entityRowsFor` trims the whole `content` string and then splits on the
+       * FIRST colon, so an authored `person : Priya Raman` files as `type=[person ]
+       * name=[ Priya Raman]` — and carrying that name forward would mint a memory the read doors, which
+       * fold case only, cannot reach, propagating the unreachability this rewrite exists to remove.
+       * Interior whitespace is left alone: it is part of the authored name, and collapsing it would
+       * store a spelling neither the corpus nor the candidate holds. Same rule as the trim
+       * {@link entityRefsFor} applies to the candidate's own halves.
+       */
+      const name = row.entity_name.trim()
+      if (name === "" || row.entity_type.trim() === "") continue
+      const key = normalizeEntityRef(`${row.entity_type}${ENTITY_SEPARATOR}${name}`)
+      const held = best.get(key)
+      /*
+       * The tie-break compares the NAME rather than the whole reference, because the name is what this
+       * map hands over. Comparing references would let one row's type decide another row's spelling.
+       */
+      if (
+        held === undefined ||
+        row.files > held.files ||
+        (row.files === held.files && name < held.name)
+      ) {
+        best.set(key, { name, files: row.files })
+      }
+    }
+    return new Map([...best].map(([key, held]) => [key, held.name] as const))
+  })
+
+/**
  * A candidate the phase will write, or `null` with the reason it was refused.
  *
  * The gate is deterministic and sits between the agent and the tree, which is where every
@@ -609,6 +751,71 @@ const titleFor = (claim: string): string => {
     .replace(/[.!?]+$/, "")
     .slice(0, 90)
     .trim()
+}
+
+/**
+ * The ONE session every evidence quote cites, or `undefined` when they do not agree on one.
+ *
+ * ## A session id is provenance, and provenance is not transcript content
+ *
+ * {@link commitContextFor} reserves the commit message for the evidence QUOTES, because a verbatim
+ * transcript span must not enter the corpus. A session id is the opposite kind of value: it names
+ * WHERE the claim was read rather than reproducing anything that was said, and it is the value the
+ * corpus already carries for a memory an agent wrote during a session. So it goes in the file, and the
+ * quotes still do not.
+ *
+ * The id is TRIMMED and an empty result yields `undefined`. Nothing upstream refuses a whitespace-only
+ * one: the schema's check is `Schema.isMinLength(1)` (`apps/consolidator/src/contract.ts`), which admits
+ * `"   "`, and {@link refusalFor} tests kind, claim, gist, quote count, and the slug fallback but says
+ * nothing about a session id — `commitmentRefusalFor` is the arm that refuses an empty evidence session,
+ * and that is the other surface. So this trim is the only guard, and removing it would stamp a
+ * `memhtml-session` meta holding whitespace.
+ *
+ * Stamped as the ordinary `memhtml-session` meta and nothing new, which is the decision
+ * `packages/sleep/src/tasks.ts` records for the detected-task arm: the name is already in the closed
+ * vocabulary, already projects to `files.session_id`, and already carries exactly this meaning, so a
+ * consolidated memory answers "which session is this from" through the same column every other
+ * provenance query reads. No new meta, no new column, no widened vocabulary.
+ *
+ * ## Unset unless the whole candidate has ONE origin
+ *
+ * A candidate carries two to thirty-two evidence quotes, and the cross-session pattern is the one the
+ * bar prefers — so most candidates have several origins and no single one. `files.session_id` is a
+ * scalar, so stamping any one of several would assert that the claim came from that session, which is
+ * false in a way no reader could detect: the column would answer a provenance query with one of the
+ * sessions rather than with the truth. Absent is the honest value for a multi-session claim, and it is
+ * the same reasoning `tasks.ts` uses to refuse putting a RUN id in this column.
+ *
+ * Ids are trimmed before they are compared, so the same session cited with stray whitespace is one
+ * origin rather than two, and an id that trims to nothing yields `undefined`.
+ *
+ * ## Contained by the BATCH, the same bar `consolidateCommitments` holds a commitment to
+ *
+ * The id is a value an injected collaborator supplies — `ConsolidatorPort` is a structural port, and the
+ * harness's own scripted consolidator proves an arbitrary one can come back — so an id outside the set
+ * this run asked about is stamped only if nothing checks. The sibling arm refuses exactly that, and its
+ * reason applies word for word: an id outside the batch must not become provenance that names a session
+ * nobody selected, in a file that is committed and permanent. An injected collaborator may NARROW what
+ * the phase asked about and never widen it.
+ *
+ * Absent rather than refused, unlike a fabricated evidence id, because the same rule the multi-session
+ * case follows applies: `undefined` is the honest value for a memory whose single origin this run cannot
+ * account for, and the candidate is still worth writing. The composed client refuses such an answer
+ * outright at the door (`ungroundedEvidenceReason`), and this is the redundancy that does not rely on it.
+ *
+ * NOTHING here writes a `memory_session_links` row, and the phase's `linked`/`unlinked` counters
+ * therefore do not move. Those count sessions the corpus links a memory to through the WRITE path's
+ * own recorder, and a distilled memory is not a memory that session wrote.
+ */
+const soleEvidenceSession = (
+  candidate: CandidateMemoryLike,
+  batchSessionIds: ReadonlySet<string>
+): string | undefined => {
+  const cited = new Set(candidate.evidence.map((one) => one.sessionId.trim()))
+  if (cited.size !== 1) return undefined
+  const [only] = [...cited]
+  if (only === undefined || only === "") return undefined
+  return batchSessionIds.has(only) ? only : undefined
 }
 
 /**
@@ -720,6 +927,16 @@ export const traceConsolidation: PhaseBody = (env) =>
     if (batch.length === 0) {
       return emptyOutcome({ ...base, ...ZERO_COUNTS })
     }
+    /**
+     * The set this run ASKED ABOUT, computed once and used by both arms of the answer.
+     *
+     * Both a candidate's origin stamp and a commitment's `from_session` are contained by it, and a second
+     * copy of "the batch, as a set" is a second place a containment check could be written against the
+     * wrong set. It is the batch and never `analyzedFrom`: a consolidator may report a narrower reachable
+     * set while still having read what it quotes, so the reachable set is the right input for a watermark
+     * and the wrong one for a containment check.
+     */
+    const batchSessionIds = new Set(batch.map((session) => session.session_id))
 
     /**
      * A dry run stops HERE, having done the whole deterministic half: the batch is real and counted,
@@ -775,13 +992,16 @@ export const traceConsolidation: PhaseBody = (env) =>
      * The watermark, recorded as a PENDING MARK on the branch and applied by `merge`. It covers exactly
      * the sessions the agent ACTUALLY READ; {@link analyzedFrom} is that set, and it is not `batch`.
      *
-     * ## Only a session whose transcript arrived
+     * ## Only a session whose transcript arrived AND that the agent reports reading
      *
-     * `batch` is the set the phase ASKED ABOUT, and the two differ whenever a transcript does not reach
-     * the agent: rotated away since `memhtml trace index` ran, moved outside `MEMHTML_TRACE_ROOT`, or
-     * behind a symlink the read-only mount will not follow (measured; see `partitionReachable` in
-     * `apps/consolidator/src/client.ts`). Marking such a session records it consolidated when nothing
-     * read it, and `trace_consolidations` is an ANTI-JOIN, so the session is then never selected again.
+     * `batch` is the set the phase ASKED ABOUT, and it exceeds the marked set for either of two reasons.
+     * A transcript may not reach the agent at all — rotated away since `memhtml trace index` ran, moved
+     * outside `MEMHTML_TRACE_ROOT`, or behind a symlink the read-only mount will not follow (measured;
+     * see `partitionReachable` in `apps/consolidator/src/client.ts`). Or it reaches the agent and the
+     * answer's read receipt does not name it. Marking a session either way records it consolidated when
+     * nothing read it, and `trace_consolidations` is an ANTI-JOIN, so the session is then never selected
+     * again. The phase holds only the intersected set, which is why `unconsolidated` carries both causes
+     * under one name rather than claiming to separate them.
      *
      * **The guard is structural, not a check placed here.** `ConsolidationOutcome` cannot be constructed
      * without `analyzedSessionIds` (`../consolidator.ts`), so no shape a consolidator returns leaves this
@@ -797,7 +1017,7 @@ export const traceConsolidation: PhaseBody = (env) =>
      * A session that yielded no candidate HAS been consolidated: the agent read it and correctly found
      * nothing above the bar. Marking only the productive sessions would re-read every quiet transcript at
      * full Opus cost every night forever, and the batch would never advance past them. So the narrowing
-     * is by REACHABILITY and never by productivity.
+     * is by REACHABILITY and by the agent's own read receipt, never by productivity.
      *
      * ## Recorded FIRST, and safe because it is only a proposal
      *
@@ -822,6 +1042,12 @@ export const traceConsolidation: PhaseBody = (env) =>
     if (pendingRecorded) yield* env.deps.git.add([pendingMarksPath(env.runId)])
 
     const conflicts = yield* frameConflicts(env, candidates)
+    /**
+     * The corpus's own spellings, read ONCE beside the conflict lookup for the reason that one records:
+     * a per-candidate query against a corpus-sized table is the quadratic-write-cost shape this package
+     * avoids everywhere. See {@link corpusEntitySpellings}.
+     */
+    const spellings = yield* corpusEntitySpellings(env)
 
     let written = 0
     let skipped = 0
@@ -842,16 +1068,23 @@ export const traceConsolidation: PhaseBody = (env) =>
 
       const title = titleFor(candidate.claim)
       /**
+       * ONE value per candidate, threaded to both the placement and the write, so the directory the
+       * file lands in and the metas it carries are derived from the same references. `placementFor`
+       * routes on `person:`, so two independent joins could disagree about whether this is a person
+       * memory.
+       */
+      const entityRefs = entityRefsFor(candidate, spellings)
+      /**
        * No free path is a REFUSAL, taking the same skip-and-count path a bad candidate takes. A
        * thousand collisions on one stem is a corpus problem an operator should see in the counts.
        * The alternative, one fixed overflow path, is the overwrite this probe exists to
        * prevent, made unconditional.
        */
-      const path = yield* freePath(env, candidate, title, claimed)
+      const path = yield* freePath(env, candidate, entityRefs, title, claimed)
       if (path === undefined) {
         yield* Effect.logWarning(
           `sleep.trace-consolidation candidate ${offset} skipped: no free path under ` +
-            `${placementDirectory(candidate)} for ${slugify(title)}`
+            `${placementDirectory(candidate, entityRefs)} for ${slugify(title)}`
         )
         skipped += 1
         continue
@@ -891,7 +1124,13 @@ export const traceConsolidation: PhaseBody = (env) =>
           memoryType: candidate.kind as (typeof WRITABLE_MEMORY_TYPES)[number],
           at: env.at,
           author: "agent:sleep",
-          entities: candidate.entities.filter((entity) => entity.trim() !== ""),
+          /**
+           * Provenance, not content, which is exactly why it may be stamped. `renderTemplate` drops
+           * an `undefined`, so a candidate whose quotes span sessions leaves the meta off. See
+           * {@link soleEvidenceSession}.
+           */
+          sessionId: soleEvidenceSession(candidate, batchSessionIds),
+          entities: entityRefs,
           tags: [CONSOLIDATION_TAG]
         })
       )
@@ -923,15 +1162,16 @@ export const traceConsolidation: PhaseBody = (env) =>
      * that commit decided; each half of the answer gets its own reviewable commit.
      *
      * The batch is the grounding set, `analyzedFrom` is not. A commitment cites a session whose
-     * TRANSCRIPT was read, and `analyzedSessionIds` is the reachable set the CLIENT computed — which is
-     * the right input for a watermark and the wrong one for this check, since a scripted or degraded
-     * consolidator could report a narrower reachable set while still having read the sessions it quotes.
+     * TRANSCRIPT was read, and `analyzedSessionIds` is the reachable set narrowed by the answer's own
+     * read receipt — which is the right input for a watermark and the wrong one for this check, since a
+     * scripted or degraded consolidator could report a narrower set while still having read the sessions
+     * it quotes.
      * The batch is what this phase asked about, and it is the containment the phase can assert.
      */
     const commitments = yield* consolidateCommitments(
       env,
       outcome.success.commitments,
-      new Set(batch.map((session) => session.session_id))
+      batchSessionIds
     )
     if (commitments.staged) {
       const commitSha = yield* commitPhase(
@@ -947,14 +1187,24 @@ export const traceConsolidation: PhaseBody = (env) =>
 
     /**
      * `consolidated` is the ANALYZED count and `batch` the requested one, so the two disagreeing in a
-     * report is the operator-visible signal that transcripts went missing. A mark over the batch would
-     * make the two equal by construction and leave that state with no reading at all.
+     * report is the operator-visible signal that a session the phase asked about did not come back
+     * consolidated. A mark over the batch would make the two equal by construction and leave that state
+     * with no reading at all.
+     *
+     * The gap has TWO causes and this phase cannot tell them apart, which is why the count is named for
+     * the outcome rather than for a cause: the transcript did not reach the agent (rotated away, outside
+     * `MEMHTML_TRACE_ROOT`, behind a symlink the mount refuses), or it reached the agent and the agent's
+     * read receipt did not name it. The phase holds only `analyzedSessionIds`, which is already the
+     * intersection of both, so a count called `unreachable` would name one cause for a number that
+     * carries both. Either way the session stays selectable and comes back on a later night, which is
+     * the fact an operator acts on.
      */
-    const unreachable = batch.length - analyzed.length
-    if (unreachable > 0) {
+    const unconsolidated = batch.length - analyzed.length
+    if (unconsolidated > 0) {
       yield* Effect.logWarning(
         `sleep.trace-consolidation asked about ${String(batch.length)} sessions and ` +
-          `${String(unreachable)} did not reach the agent; those stay unconsolidated for the next run`
+          `${String(unconsolidated)} came back unconsolidated: the transcript did not reach the agent, ` +
+          "or the agent did not report reading it. Those stay unconsolidated for the next run"
       )
     }
 
@@ -966,7 +1216,7 @@ export const traceConsolidation: PhaseBody = (env) =>
       skipped,
       conflicts: conflicted,
       consolidated: analyzed.length,
-      unreachable,
+      unconsolidated,
       ...commitmentCounts(commitments)
     }
 
@@ -1030,7 +1280,7 @@ const ZERO_COUNTS = {
   skipped: 0,
   conflicts: 0,
   consolidated: 0,
-  unreachable: 0,
+  unconsolidated: 0,
   ...commitmentCounts(ZERO_COMMITMENTS)
 }
 
@@ -1039,10 +1289,11 @@ const ZERO_COUNTS = {
  *
  * The intersection is the containment half of the invariant and it is cheap, so it is unconditional. A
  * consolidator is an injected collaborator, the real one an eve agent over HTTP and a scripted one in
- * tests, and `analyzedSessionIds` is a value it computes. Trusting it as the watermark set directly
- * would make "which sessions are marked read forever" a claim the agent gets to make about sessions
- * nobody asked about. Intersecting lets the outcome NARROW the batch and not widen it,
- * which is the only authority it needs.
+ * tests, and `analyzedSessionIds` is a value it computes — for the real one, its own per-session read
+ * receipt narrowed to what resolved inside the sandbox. Trusting it as the watermark set directly would
+ * make "which sessions are marked read forever" a claim the agent gets to make about sessions nobody
+ * asked about. Intersecting lets the outcome NARROW the batch and not widen it, which is the only
+ * authority it needs.
  *
  * Batch order is preserved instead of the outcome's, so the watermark writes newest-first exactly as
  * the selection read. That ordering makes a report line and a test's `toEqual` reproducible.
@@ -1190,11 +1441,12 @@ const PATH_ORDINAL_LIMIT = 1000
 const freePath = (
   env: PhaseEnv,
   candidate: CandidateMemoryLike,
+  entityRefs: ReadonlyArray<string>,
   title: string,
   claimed: ReadonlySet<string>
 ): Effect.Effect<string | undefined, StorageFailure> =>
   Effect.gen(function* () {
-    const directory = placementDirectory(candidate)
+    const directory = placementDirectory(candidate, entityRefs)
     const stem = slugify(title)
     for (let ordinal = 1; ordinal <= PATH_ORDINAL_LIMIT; ordinal += 1) {
       const candidatePath = `${directory}/${withCollisionOrdinal(stem, ordinal)}.html`
@@ -1204,10 +1456,20 @@ const freePath = (
     return undefined
   })
 
-/** The directory the ordinary placement rules give a candidate. */
-const placementDirectory = (candidate: CandidateMemoryLike): string =>
+/**
+ * The directory the ordinary placement rules give a candidate, from the references it will be WRITTEN
+ * with rather than from the candidate's raw entities.
+ *
+ * Taking the refs as an argument is what keeps the two in step: the caller computes them once and hands
+ * the same value here and to `renderTemplate`, so a canonicalized `person:` reference cannot route the
+ * placement one way while the file's metas say the other.
+ */
+const placementDirectory = (
+  candidate: CandidateMemoryLike,
+  entityRefs: ReadonlyArray<string>
+): string =>
   placementFor({
     memoryType: candidate.kind,
-    entities: candidate.entities,
+    entities: entityRefs,
     tags: [CONSOLIDATION_TAG]
   })

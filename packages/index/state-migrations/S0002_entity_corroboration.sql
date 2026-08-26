@@ -5,8 +5,14 @@
 -- A proposal the model makes with no external evidence is a guess, and acting on it renames every
 -- `memhtml-entity` meta across the corpus and fuses two subjects' memories permanently — there is no
 -- inverse commit that separates them again. So a merge the model alone proposes is COUNTED here on the
--- night it is seen and applied only once `detections >= 2`, meaning two different nights reached the
--- same conclusion over independently re-read corpora.
+-- run that sees it and applied only once `detections >= 2`, meaning two SEPARATE runs reached the same
+-- conclusion over independently re-read corpora.
+--
+-- Independence is what the second detection buys, and it comes from the CORPUS HAVING CHANGED between
+-- the two runs — not from time passing. Two runs back to back over an unchanged corpus re-read the same
+-- rows, so the second rubber-stamps the first and the counter reaches 2 on one piece of evidence.
+-- Nothing here can enforce that, because sleep reads no clock to decide whether to run: the caller owns
+-- the trigger, and a VOLUME threshold is what makes the two reads independent.
 --
 -- The same discipline `state.edge_corroboration` holds for a machine-detected `contradicts`, and for
 -- the same reason: the counter is derived, high-churn, and gates a write into the files, so it belongs
@@ -15,15 +21,15 @@
 --
 -- A merge backed by a DECLARED alias never reaches this table. A person file stating
 -- `<meta name="memhtml-alias" content="laith">` is a human's (or an authoritative directory's)
--- assertion of identity, not a machine's suspicion, so it applies on the first night.
+-- assertion of identity, not a machine's suspicion, so it applies on the first run.
 --
 -- Known and accepted: the ORIENTATION is part of the key, so a merge whose direction flips restarts the
 -- counter. The phase's weight-then-lexicographic rule reads the corpus's own file counts, and those churn
--- as memories are written and evicted — so a night that counted `laith -> laith al-saadoon` and a later
--- night that reaches `laith al-saadoon -> laith` are two rows at one detection each, and neither
+-- as memories are written and evicted — so a run that counted `laith -> laith al-saadoon` and a later
+-- run that reaches `laith al-saadoon -> laith` are two rows at one detection each, and neither
 -- promotes. That is the safe direction to be wrong in: a corpus whose weights are still moving has not
 -- settled which name is canonical, and a merge recorded under one orientation and applied under the other
--- would rewrite every meta toward a name a later night disagrees with.
+-- would rewrite every meta toward a name a later run disagrees with.
 
 CREATE TABLE state.entity_corroboration (
   -- Keyed on the merge, not on a file. An entity name is a value in a `memhtml-entity` meta and
@@ -51,5 +57,5 @@ CREATE TABLE state.entity_corroboration (
 -- within it. (The same fact S0001 records for `state.access`.)
 --
 -- The lookup this serves is "every pending merge for one type", which the phase reads to report how
--- many proposals are waiting on a second night.
+-- many proposals are waiting on a second run.
 CREATE INDEX state.entity_corroboration_pending ON entity_corroboration (entity_type, promoted);

@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { type Cli, failingEmbedder, makeCli, writeMemory } from "./harness.js"
+import { envelopeOf, runBuilt, treeDigest } from "./spawned.js"
 
 /**
  * The plan's end-to-end verification items 3 and 4, plus `memhtml publish` and `memhtml doctor`.
@@ -491,5 +492,241 @@ describe("memhtml doctor", () => {
     }>(["doctor"])
     expect(report.indexFresh).toBe(false)
     expect(report.indexHeadSha).not.toBe(report.headSha)
+  })
+})
+
+/**
+ * The facet axis through the shipped binary: authored `<dl>` markup, projected, then queried back.
+ *
+ * The package suites assemble the predicate and prove the plan; this tier proves the whole path —
+ * `--facet` parsed as a repeatable flag, split at its first `=`, projected from `<dt>`/`<dd>` by the
+ * indexer, and read by both the listing and the ranked search. A caller extending memhtml with its own
+ * vocabulary depends on every one of those, and each is in a different package.
+ *
+ * The corpus is three memories under two facet names, so every assertion below has a NEIGHBOUR that a
+ * broken predicate would return: same name at another value, same value under another name, and a
+ * memory with no facets at all.
+ */
+describe("the facet scope, end to end through the CLI", () => {
+  let cli: Cli
+
+  const faceted = (input: {
+    readonly title: string
+    readonly claim: string
+    readonly facets: ReadonlyArray<{ readonly name: string; readonly value: string }>
+  }) =>
+    cli.json<{ readonly path: string }>([
+      "write",
+      "--type",
+      "procedural",
+      "--title",
+      input.title,
+      "--article-html",
+      `<p><mark>${input.claim}</mark></p><dl>${input.facets
+        .map((facet) => `<dt>${facet.name}</dt><dd>${facet.value}</dd>`)
+        .join("")}</dl>`
+    ])
+
+  let runbookTierOne = ""
+  let guideTierOne = ""
+  let runbookTierTwo = ""
+
+  beforeAll(async () => {
+    cli = await makeCli()
+    runbookTierOne = (
+      await faceted({
+        title: "Restart the ingest worker",
+        claim: "Restart the ingest worker after a backfill, draining the queue first.",
+        facets: [
+          { name: "doc-type", value: "runbook" },
+          { name: "tier", value: "1" }
+        ]
+      })
+    ).path
+    guideTierOne = (
+      await faceted({
+        title: "How the ingest worker restarts",
+        claim: "The ingest worker restarts by draining its queue and replaying the backfill.",
+        facets: [
+          { name: "doc-type", value: "guide" },
+          { name: "tier", value: "1" }
+        ]
+      })
+    ).path
+    runbookTierTwo = (
+      await faceted({
+        title: "Backfill the ingest worker",
+        claim: "Backfill the ingest worker before a restart when the queue is empty.",
+        facets: [
+          { name: "doc-type", value: "runbook" },
+          { name: "tier", value: "2" }
+        ]
+      })
+    ).path
+    await writeMemory(cli, {
+      title: "Notes on the ingest worker restart",
+      claim: "The ingest worker restart is safe to retry after a backfill."
+    })
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  const listed = async (argv: ReadonlyArray<string>) => {
+    const page = await cli.json<{ readonly files: ReadonlyArray<{ readonly path: string }> }>([
+      "list",
+      ...argv
+    ])
+    return page.files.map((file) => file.path).sort()
+  }
+
+  it("lists every memory unscoped, so each exclusion below is the predicate", async () => {
+    // The control. Four writes, four rows: a facet result of two would otherwise be consistent with a
+    // predicate that matched nothing and a corpus that held nothing.
+    expect(await listed([])).toHaveLength(4)
+  })
+
+  it("narrows a listing to one name=value, and BROADENS across two values of that name", async () => {
+    expect(await listed(["--facet", "doc-type=runbook"])).toEqual(
+      [runbookTierOne, runbookTierTwo].sort()
+    )
+    expect(await listed(["--facet", "doc-type=runbook", "--facet", "doc-type=guide"])).toEqual(
+      [runbookTierOne, runbookTierTwo, guideTierOne].sort()
+    )
+  })
+
+  it("NARROWS a listing across two names, returning only the memory carrying both", async () => {
+    expect(await listed(["--facet", "doc-type=runbook", "--facet", "tier=1"])).toEqual([
+      runbookTierOne
+    ])
+  })
+
+  it("scopes a ranked search by the same flag, reporting scope_empty on a facet nothing carries", async () => {
+    const scoped = await cli.json<{
+      readonly hits: ReadonlyArray<{ readonly path: string }>
+      readonly scopeEmpty: boolean
+    }>(["search", "restart the ingest worker", "--facet", "doc-type=runbook", "--limit", "20"])
+    expect(scoped.hits.map((hit) => hit.path).sort()).toEqual(
+      [runbookTierOne, runbookTierTwo].sort()
+    )
+    expect(scoped.scopeEmpty).toBe(false)
+
+    const missing = await cli.json<{
+      readonly hits: ReadonlyArray<unknown>
+      readonly scopeEmpty: boolean
+    }>(["search", "restart the ingest worker", "--facet", "doc-type=charter", "--limit", "20"])
+    expect(missing.hits).toEqual([])
+    // The marker is what makes the empty answer attributable to the scope rather than to the corpus,
+    // which the control case above proves is not empty.
+    expect(missing.scopeEmpty).toBe(true)
+  })
+
+  it("ignores a malformed --facet rather than narrowing to nothing", async () => {
+    // A flag with no `=` cannot name a predicate. Refusing the whole call would make a typo fatal, and
+    // narrowing to nothing would report an empty corpus; neither is what the caller asked for.
+    expect(await listed(["--facet", "doc-type"])).toHaveLength(4)
+  })
+})
+
+/**
+ * `--strict-path` at the CLI door, through the BUILT binary so the exit code is a real one.
+ *
+ * The default is the half worth stating: an unusable `--path` is re-derived, so the write reports a
+ * path the caller never named and reports it as a success. That behavior ships and stays. What the
+ * flag adds is a caller that computes its paths being told, rather than discovering it later by
+ * listing `areas/inbox`.
+ *
+ * "Refused" and "wrote nothing" are two different claims, so both are asserted: the envelope's `code`
+ * for the first, and a tree digest over a corpus that already holds a memory for the second.
+ */
+describe("memhtml write --strict-path", () => {
+  let cli: Cli
+  const UNUSABLE = "notes/oncall/rollback.html"
+
+  beforeAll(async () => {
+    cli = await makeCli()
+    // A NEIGHBOUR, so the digest below is taken over a corpus with content in it rather than over an
+    // empty scaffold, where any write-nothing bug would still leave the digest unchanged.
+    await writeMemory(cli, {
+      title: "The bastion listens on a non-default port",
+      claim: "The staging bastion listens on port 2222."
+    })
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  it("re-derives an unusable --path by DEFAULT, landing the memory somewhere else", async () => {
+    const written = await writeMemory(cli, {
+      title: "A fact filed at a path outside every bucket",
+      claim: "This claim named a path that is not a memory path."
+    })
+    const lenient = await cli.json<{ readonly path: string; readonly created: boolean }>([
+      "write",
+      "--type",
+      "semantic",
+      "--title",
+      "A lenient override lands elsewhere",
+      "--claim",
+      "The lenient branch re-derives the directory.",
+      "--path",
+      UNUSABLE
+    ])
+    expect(lenient.created).toBe(true)
+    expect(lenient.path).not.toBe(UNUSABLE)
+    expect(lenient.path.startsWith("areas/inbox/")).toBe(true)
+    // The control write is unrelated and only proves the corpus takes ordinary writes here.
+    expect(written.created).toBe(true)
+  })
+
+  it("refuses with ERR_INVALID_MEMORY under --strict-path and writes nothing", async () => {
+    const before = await treeDigest(cli.root)
+    const commitsBefore = (await cli.git("rev-list", "--count", "HEAD")).trim()
+
+    const refused = await runBuilt(cli.root, [
+      "write",
+      "--type",
+      "semantic",
+      "--title",
+      "A strict override is refused",
+      "--claim",
+      "The strict branch refuses rather than re-deriving.",
+      "--path",
+      UNUSABLE,
+      "--strict-path"
+    ])
+    // Exit 1 is a runtime refusal; exit 2 would mean the flag failed argument validation, which would
+    // pass a code assertion while proving the wrong thing.
+    expect(refused.exitCode).toBe(1)
+    const envelope = envelopeOf(refused)
+    expect(envelope.code).toBe("ERR_INVALID_MEMORY")
+    // The reason names the path the caller gave, so the fix does not need a doc lookup.
+    expect(String(envelope.error)).toContain(UNUSABLE)
+
+    // Wrote NOTHING: byte-identical tree, no commit, nothing staged.
+    expect(await treeDigest(cli.root)).toBe(before)
+    expect((await cli.git("rev-list", "--count", "HEAD")).trim()).toBe(commitsBefore)
+    expect((await cli.git("status", "--porcelain")).trim()).toBe("")
+  })
+
+  it("still honors a USABLE --path under --strict-path", async () => {
+    // The mutation-proof half: a guard that refused every explicit path would satisfy the case above
+    // and make the flag useless for the only job it has.
+    const written = await cli.json<{ readonly path: string; readonly created: boolean }>([
+      "write",
+      "--type",
+      "semantic",
+      "--title",
+      "A strict override that is valid",
+      "--claim",
+      "A usable explicit path is honored verbatim.",
+      "--path",
+      "areas/oncall/strict-and-valid.html",
+      "--strict-path"
+    ])
+    expect(written.path).toBe("areas/oncall/strict-and-valid.html")
+    expect(written.created).toBe(true)
   })
 })

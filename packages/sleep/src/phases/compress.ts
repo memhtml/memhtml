@@ -54,10 +54,10 @@ import { mineAllBands } from "./relationship-mining.js"
  * Under `--deep` three things change about WHICH memories a fold can reach, and nothing about what
  * happens to a fold:
  *
- * 1. **Communities come from the widened graph.** Label propagation runs over the nightly memory
+ * 1. **Communities come from the widened graph.** Label propagation runs over the default memory
  *    edges PLUS the deep grouping band (`laterally_related`, mined at 0.72), so inbox files whose
- *    best neighbor sits under the nightly 0.85 floor get a partition. Retention SCORES stay the
- *    nightly function — the band decides grouping, never eviction.
+ *    best neighbor sits under the default 0.85 floor get a partition. Retention SCORES stay the
+ *    default function — the band decides grouping, never eviction.
  * 2. **Entity groups are a second community source.** Candidates the widened graph still leaves
  *    communityless are grouped by shared `file_entities` reference under a synthetic
  *    `entity:<type>:<name>` label, because two memories about one subject can share no vocabulary at
@@ -122,7 +122,7 @@ interface PassTally {
 }
 
 /**
- * The community label of every active path under the WIDENED graph: nightly memory edges plus the
+ * The community label of every active path under the WIDENED graph: default memory edges plus the
  * deep grouping band, one label-propagation pass (issue #63).
  *
  * Computed here rather than inside `runRetentionPass`, deliberately: retention's partition feeds
@@ -134,11 +134,16 @@ export const deepCommunityLabels = (
 ): Effect.Effect<ReadonlyMap<string, string | undefined>, never> =>
   Effect.gen(function* () {
     const corpus = yield* activeCorpus(env.deps.db)
-    const nightly = yield* memoryEdges(env.deps.db)
+    /**
+     * The NON-DEEP edge set: `memoryEdges` is every authored and mined memory edge at the default
+     * 0.85 floor, which is what the deep grouping band below widens. The name says which set it is,
+     * because the two are unioned one line down and a reader has to be able to tell them apart.
+     */
+    const standard = yield* memoryEdges(env.deps.db)
     const band = yield* deepGroupingEdges(env.deps.db)
     return labelPropagation(
       corpus.map((row) => row.path),
-      [...nightly, ...band].map((edge) => ({
+      [...standard, ...band].map((edge) => ({
         src: edge.src_path,
         dst: edge.dst_path,
         strength: edge.strength
@@ -238,7 +243,7 @@ export const compress: PhaseBody = (env) =>
       )
 
       /**
-       * Which label a candidate folds under. Nightly: the retention pass's own community, and a
+       * Which label a candidate folds under. By default: the retention pass's own community, and a
        * memory without one is not a candidate — the exact selection this phase has always made.
        * Deep: the widened partition first, then an entity label for what the graph still missed.
        */
@@ -460,8 +465,8 @@ export const compress: PhaseBody = (env) =>
        * Iterate-until-quiet, deep only (issue #63). A pass that folded nothing has reached the
        * fixed point; one that folded something changed the neighbor structure, so the branch is
        * re-indexed (renames tracked, new canonicals embedded), both bands are re-mined over the new
-       * vectors, and the next pass sees the canonicals as members. The nightly cycle exits here
-       * unconditionally, which is what keeps its behavior single-pass and byte-identical.
+       * vectors, and the next pass sees the canonicals as members. A run without `--deep` exits
+       * here unconditionally, which is what keeps its behavior single-pass and byte-identical.
        */
       if (env.deep === undefined || tally.canonicals === 0) break
       if (passAt >= DEEP_COMPRESS_MAX_PASSES) break
@@ -479,7 +484,7 @@ export const compress: PhaseBody = (env) =>
 /**
  * The pass tallies as one counts record. Work counters SUM across passes; `candidates` and
  * `communities` describe the corpus the run STARTED from (the first pass), because a sum of
- * re-scans of one shrinking corpus counts nothing a reviewer can reconcile. On a nightly
+ * re-scans of one shrinking corpus counts nothing a reviewer can reconcile. On a default
  * single-pass run every key and every number is byte-identical to what this phase has always
  * reported — the deep-only keys appear only when a deep quantity is nonzero or a second pass ran,
  * which cannot happen without the flag. Response counts are append-only, so the deep keys are

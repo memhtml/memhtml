@@ -7,7 +7,7 @@ import { FORMAT_MD_EXAMPLE, fileWith, MINIMAL_ARTICLE, parseOk } from "./fixture
 
 /**
  * The surgical head editors. Two properties are asserted throughout: exactly one line changes,
- * and the article's bytes are untouched. Both are what let a nightly decay pass over the whole
+ * and the article's bytes are untouched. Both are what let a corpus-wide decay pass over the whole
  * corpus produce a reviewable diff instead of a rewrite.
  */
 

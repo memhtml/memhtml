@@ -16,6 +16,7 @@ import {
   readMemory,
   recallMemories,
   reinforceMemories,
+  resolveMemory,
   searchMemories,
   searchTraces,
   statusReport,
@@ -25,9 +26,11 @@ import {
 } from "@memhtml/cli"
 import { InvalidMemory } from "@memhtml/contracts/errors"
 import type { MemoryDoc } from "@memhtml/html"
+import { parseFacetFilters } from "@memhtml/index"
 import { Effect, type Layer } from "effect"
 
 import { batchAbortFailure, type ToolFailure, toToolFailure } from "./failure.js"
+import { pinnedUri } from "./resources.js"
 import { MemhtmlToolkit } from "./tools.js"
 
 /**
@@ -97,7 +100,7 @@ const metaRecord = (doc: MemoryDoc): Readonly<Record<string, string>> => {
  * derived JSON Schema advertises `null`, and a client that reads the schema and sends
  * `{"workspace": null}` for "no workspace" is doing the documented thing. The operations layer speaks
  * `undefined` for "not supplied" because `exactOptionalPropertyTypes` distinguishes an absent key from
- * a present one, so the two vocabularies meet HERE, once, rather than at each of fourteen call sites.
+ * a present one, so the two vocabularies meet HERE, once, rather than at each of fifteen call sites.
  */
 const opt = <A>(value: A | null | undefined): A | undefined => value ?? undefined
 
@@ -173,6 +176,7 @@ interface BatchOpParams {
   readonly article_html?: string | null | undefined
   readonly memory_type: string
   readonly path?: string | null | undefined
+  readonly strict_path?: boolean | null | undefined
   readonly workspace?: string | null | undefined
   readonly tags?: ReadonlyArray<string> | null | undefined
   readonly entities?: ReadonlyArray<string> | null | undefined
@@ -197,6 +201,7 @@ const writeParamsOf = (op: BatchOpParams, article: Authored): WriteParams => ({
   articleHtml: article.articleHtml,
   memoryType: op.memory_type,
   path: opt(op.path),
+  strictPath: opt(op.strict_path),
   workspace: opt(op.workspace),
   tags: arr(op.tags),
   entities: arr(op.entities),
@@ -318,6 +323,7 @@ export const ToolHandlers: Layer.Layer<
           articleHtml: article.articleHtml,
           memoryType: params.memory_type,
           path: opt(params.path),
+          strictPath: opt(params.strict_path),
           workspace: opt(params.workspace),
           tags: arr(params.tags),
           entities: arr(params.entities),
@@ -531,6 +537,9 @@ export const ToolHandlers: Layer.Layer<
           workspace: opt(params.workspace),
           tags: opt(params.tags),
           entity: opt(params.entity),
+          // The same `name=value` decode `memhtml search --facet` runs, from `@memhtml/index`, so one
+          // spelling reaches one predicate through both doors.
+          facets: parseFacetFilters(arr(params.facets)),
           includeArchived: opt(params.include_archived),
           asOf: opt(params.as_of)
         })
@@ -667,6 +676,41 @@ export const ToolHandlers: Layer.Layer<
       })
     ),
 
+  memory_resolve: (params) =>
+    handled(
+      Effect.gen(function* () {
+        const result = yield* resolveMemory(params.path)
+        /**
+         * `pinned_uri` is composed HERE and nowhere else, from `pinnedUri`, the function the resource
+         * that routes that URI exports.
+         *
+         * The operation cannot build it: `@memhtml/cli` knows nothing about the MCP scheme, and a
+         * resolution is a fact about the corpus rather than about a transport. Composing it from
+         * literals in this file would be a second declaration of the published template — the
+         * consumer-side reimplementation of a producer's naming rule this repo has paid for.
+         *
+         * It is withheld in two cases and they are one rule: a URI this server would refuse is not a
+         * citation. There is no commit to pin to before the first rebuild, and `unindexed` is the one
+         * stop reason whose `path` the indexed commit does not hold, so pinning it would hand a client
+         * a receipt that reads `ERR_PATH_NOT_FOUND` forever. Every other stop reason ends on a path the
+         * index holds a row for.
+         */
+        return {
+          requested: result.requested,
+          path: result.path,
+          hops: result.hops,
+          steps: result.steps,
+          stop_reason: result.stopReason,
+          title: result.title,
+          indexed_commit: result.indexedCommit,
+          pinned_uri:
+            result.indexedCommit === null || result.stopReason === "unindexed"
+              ? null
+              : pinnedUri(result.indexedCommit, result.path)
+        }
+      })
+    ),
+
   memory_archive: (params) =>
     handled(
       Effect.gen(function* () {
@@ -691,6 +735,7 @@ export const ToolHandlers: Layer.Layer<
           workspace: opt(params.workspace),
           tag: opt(params.tag),
           entity: opt(params.entity),
+          facets: parseFacetFilters(arr(params.facets)),
           para: opt(params.para),
           limit: opt(params.limit),
           cursor: opt(params.cursor)

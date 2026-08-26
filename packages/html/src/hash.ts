@@ -11,7 +11,7 @@ import { GIST_EXCLUDED_ELEMENTS, INLINE_ELEMENTS } from "./vocabulary.js"
  * `sha256` over the whitespace-normalized text content of `<article>`, except inside `<pre>`
  * where whitespace is preserved verbatim. Meta and `<link>` edits are outside the scope by
  * construction, so confidence decay, access bookkeeping, and the sleep phases' own stamping do
- * not look like content changes. Without that invariance every nightly decay pass would
+ * not look like content changes. Without that invariance every corpus-wide decay pass would
  * present the whole corpus as new content and dedup would collapse.
  */
 

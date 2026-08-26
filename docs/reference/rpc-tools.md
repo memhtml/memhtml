@@ -1,8 +1,8 @@
 # memhtml-public · RPC tools
 
-This repository ships an MCP server, `memhtml-mcp`, over stdio. It publishes fourteen tools and two resource templates, and a coding agent calls it to operate a memhtml root. The repository stores no memory of its own. The server acts on whatever root `$MEMHTML_ROOT` points the process at, and the same binary serves many roots.
+This repository ships an MCP server, `memhtml-mcp`, over stdio. It publishes fifteen tools and three resource templates, and a coding agent calls it to operate a memhtml root. The repository stores no memory of its own. The server acts on whatever root `$MEMHTML_ROOT` points the process at, and the same binary serves many roots.
 
-The server is one Effect layer that merges `McpServer.toolkit(MemhtmlToolkit)` with the two resources, over the CLI's own app layer, on the stdio transport at protocol revision `v2025_06_18`, the only adapter this dependency ships (`apps/mcp/src/server.ts:40-53`). The server shares the CLI's layer, so an agent's `memory_write` and an operator's `memhtml search` resolve to one database, one git root, and one vector space (`apps/mcp/src/server.ts:12-19`). Logs are pinned to stderr with `Logger.LogToStderr` because stdout carries the NDJSON-RPC frames, and Effect's default logger writes to stdout (`apps/mcp/src/server.ts:20-22`, `apps/mcp/src/server.ts:53`, `apps/mcp/src/bin.ts:7-13`).
+The server is one Effect layer that merges `McpServer.toolkit(MemhtmlToolkit)` with the three resources, over the CLI's own app layer, on the stdio transport at protocol revision `v2025_06_18`, the only adapter this dependency ships (`apps/mcp/src/server.ts:40-53`). The server shares the CLI's layer, so an agent's `memory_write` and an operator's `memhtml search` resolve to one database, one git root, and one vector space (`apps/mcp/src/server.ts:12-19`). Logs are pinned to stderr with `Logger.LogToStderr` because stdout carries the NDJSON-RPC frames, and Effect's default logger writes to stdout (`apps/mcp/src/server.ts:20-22`, `apps/mcp/src/server.ts:53`, `apps/mcp/src/bin.ts:7-13`).
 
 Every tool binds its handler by name in `MemhtmlToolkit.toLayer({...})` (`apps/mcp/src/handlers.ts:309`). A handler decodes the snake_case wire parameters, calls the same operation function the matching CLI command calls, and renames the result back to snake_case (`apps/mcp/src/handlers.ts:33-43`).
 
@@ -14,9 +14,9 @@ Three conventions apply to every entry below.
 
 Signatures are quoted verbatim from the registration site with two mechanical elisions, both marked where they occur. `description: /* … */,` stands for the description string, which for the write tools runs to several paragraphs assembled from shared constants (`apps/mcp/src/tools.ts:143-211`). `// …` stands for a nested doc comment explaining a schema choice. No identifier, schema, or punctuation is altered. Each entry's citation points at the full block.
 
-### How both resources route
+### How the resources route
 
-Both templates are registered by one helper, `templateLayer` (`apps/mcp/src/resources.ts:118`), which calls `McpServer.addResourceTemplate` directly rather than using the `McpServer.resource` tagged template. The reason is the router. `McpServer` matches a `resources/read` URI with find-my-way (`effect/unstable/http/FindMyWay`, effect `4.0.0-rc.109`), and two of that router's rules decide the pattern each resource registers, `memhtml:://<section>/*` (`apps/mcp/src/resources.ts:42`):
+All three templates are registered by one helper, `templateLayer` (`apps/mcp/src/resources.ts:118`), which calls `McpServer.addResourceTemplate` directly rather than using the `McpServer.resource` tagged template. The reason is the router. `McpServer` matches a `resources/read` URI with find-my-way (`effect/unstable/http/FindMyWay`, effect `4.0.0-rc.109`), and two of that router's rules decide the pattern each resource registers, `memhtml:://<section>/*` (`apps/mcp/src/resources.ts:42`):
 
 - A single `:` opens a NAMED PARAMETER and `::` is the escape for a literal colon, so the scheme's colon has to be doubled — left single, `memhtml:` registers a parameter named `""`.
 - A named parameter's value ENDS AT THE NEXT `/`, so it matches exactly one segment. Every memory path has at least two segments and an archived one has at least four, so a single-segment route would leave the file resource unreachable in normal use. `*` is the rest parameter, the only construct that matches across `/`, and the router requires it to be the pattern's LAST character. The tagged template compiles its parameters to named parameters, which is why it is not used here.
@@ -26,6 +26,44 @@ The captured value does not arrive through the parameter array: `McpServer` fold
 The RFC 6570 templates `resources/templates` publishes are LITERALS on each spec (`RESOURCE_TEMPLATES`, `apps/mcp/src/resources.ts:250`) rather than composed from the route, so the template a client reads and the route the server matches are two independent readings of one URI shape. `tests/resources.test.ts` builds its request URI out of the PUBLISHED template and expects the read to resolve, so a template that drifted from its route fails a read rather than a literal comparison.
 
 **Every failure is sanitized, and no handler dies.** A defect becomes a stated refusal through `catchDefect` and a typed failure becomes one through `toResourceFailure`, both after `tapCause` has put the real cause on stderr where an operator reads it (`apps/mcp/src/resources.ts:130-146`). An `Effect.orDie` in their place hands the client `Cause.prettyErrors(cause)[0].message`: an absolute filesystem path for a missing sleep report, and a `PathNotFound` stripped of its `ERR_*` code and its suggestions.
+
+## `memhtml://at/{commit}/{path}`
+
+```ts
+export const PinnedResource = templateLayer({
+  section: "at",
+  uriTemplate: "memhtml://at/{commit}/{path}",
+  name: "Memory file at a commit",
+  description: /* … */,
+  mimeType: "text/plain",
+  refuse: pinnedRefusal,
+  read: (uri, captured) =>
+    Effect.gen(function* () {
+      const at = captured.indexOf("/")
+      if (at <= 0) return yield* Effect.fail(pinnedRefusal(uri))
+      const commit = captured.slice(0, at)
+      const path = captured.slice(at + 1)
+      if (!COMMIT_SHA.test(commit) || !isValidMemoryPath(path)) {
+        return yield* Effect.fail(pinnedRefusal(uri))
+      }
+      // …
+    })
+})
+```
+
+Returns one memory's title, claim, and body text AS OF a commit: a citation whose bytes cannot move.
+
+**Input:** two holes, captured as one rest parameter and split at the FIRST `/`. A commit sha cannot contain a slash and a memory path must, so that separator is the only place the split can be. The commit half must match `/^[0-9a-f]{7,64}$/` — git's abbreviation floor through the width of SHA-256 — so `HEAD`, a branch, and a tag are all refused, which is the whole contract: a URI whose target can move is not a citation, and `memhtml://at/main/x.html` would read as a pin while resolving to different bytes next week. Hex also keeps a leading `-` out of `git ls-tree`'s argv. The path half is gated by `isValidMemoryPath` for `memhtml://file/{path}`'s reason, since a rest parameter accepts `..` (`apps/mcp/src/resources.ts:255-274`).
+
+**Output:** a `text/plain` body in the same shape `memhtml://file/{path}` returns, parsed from the HISTORICAL bytes. `lsTreeR` resolves the path in that commit's tree to a blob sha and `catFileBatch` reads the object, so a path since corrected, archived, or evicted still reads. A submodule entry is an `objectType` of `commit`, holds no memory, and is refused rather than read.
+
+**This read does NOT bump salience, where `memhtml://file/{path}` does.** `state.access` is keyed on PATH with no notion of a commit, so a bump would credit whatever occupies that path today for a read of a version it may not contain. Verifying a receipt is auditing rather than choosing. The resource declares `Store` and not `IndexRecorder`, which makes the refusal structural.
+
+**Refusal:** `ERR_PATH_NOT_FOUND` for an unknown commit, a path absent from a known commit, a movable ref, and an unusable path alike — from a client's side those are one answer, "this URI names nothing here", and the real cause goes to stderr. Its suggestions name the published template form and `memory_resolve` for the path a memory occupies now (`apps/mcp/src/resources.ts:268-274`).
+
+`memory_resolve` publishes a ready-made URI for this template as `pinned_uri`, so a client stores a citation without composing one.
+
+`apps/mcp/src/resources.ts:311-350`
 
 ## `memhtml://file/{path}`
 
@@ -195,6 +233,8 @@ const MemoryList = Tool.make("memory_list", {
     workspace: Optional(Schema.String),
     tag: Optional(Schema.String),
     entity: Optional(Schema.String),
+    // …
+    facets: Optional(Schema.Array(Schema.String)),
     para: Optional(Schema.Literals(PARA_BUCKETS)),
     limit: Optional(Count),
     cursor: Optional(Schema.String)
@@ -222,7 +262,7 @@ const MemoryList = Tool.make("memory_list", {
 
 Pages through the corpus by facet. A keyset cursor on the path keeps a page correct while a sleep cycle archives files.
 
-**Input:** every parameter optional. `memory_type` is one of the nine writable types; `para` is one of `projects`, `areas`, `resources`, `archive` (`packages/contracts/src/types.ts:63`); `entity` takes the same `type:name` spelling `memory_search` accepts; `limit` is clamped to 1..500 and defaults to 50 (`apps/cli/src/operations.ts:1196`).
+**Input:** every parameter optional. `memory_type` is one of the nine writable types; `para` is one of `projects`, `areas`, `resources`, `archive` (`packages/contracts/src/types.ts:63`); `entity` takes the same `type:name` spelling `memory_search` accepts; `facets` takes `name=value` specs over the article's authored `<dl>` pairs, composed exactly as `memory_search` composes them — AND across distinct names, OR within one name — and matched as TEXT with no case fold; `limit` is clamped to 1..500 and defaults to 50.
 
 **Output:** `files`, an array of ten-field rows, and `next_cursor`, null on the last page.
 
@@ -360,6 +400,50 @@ Returns a context pack under a character budget. What fits gets a full body, and
 
 `apps/mcp/src/tools.ts:510-547`
 
+## `memory_resolve`
+
+```ts
+const MemoryResolve = Tool.make("memory_resolve", {
+  description: /* … */,
+  dependencies: READS(),
+  parameters: Schema.Struct({ path: MemoryPath }),
+  failure: ToolFailure,
+  success: Schema.Struct({
+    requested: MemoryPath,
+    path: MemoryPath,
+    hops: Count,
+    steps: Schema.Array(
+      Schema.Struct({
+        from: MemoryPath,
+        to: MemoryPath,
+        // …
+        via: Schema.Literals(RESOLVE_STEP_VIA)
+      })
+    ),
+    stop_reason: Schema.Literals(RESOLVE_STOP_REASONS),
+    title: Schema.NullOr(Schema.String),
+    // …
+    indexed_commit: Schema.NullOr(Schema.String),
+    // …
+    pinned_uri: Schema.NullOr(Schema.String)
+  })
+})
+```
+
+Follows a path an older answer, receipt, or external citation recorded FORWARD to the memory that carries the fact now. A path is the id of a memory and it is derived from the title, so a correction that rewords the title moves the file and the cited path stops resolving through no fault of the citation.
+
+**Input:** `path` only. The walk follows both mechanisms that move a memory and neither is optional, and the hop bound is a property of the answer rather than a preference.
+
+**Output:** `stop_reason` decides whether the answer is citable, and only `live` means yes. `archived` is a memory EVICTED rather than corrected, so nothing supersedes it. `unindexed` is no such path here, which can also mean the index does not yet describe the commit that holds it — `indexed_commit` names the commit it does describe. `cycle` is two memories each claiming to supersede the other, an authoring defect. `hop_limit` means `path` is where the walk stopped rather than the end of the chain, so resolving it again continues. The five values are the shipped enum `RESOLVE_STOP_REASONS`, spelled exactly as `live`, `archived`, `unindexed`, `cycle`, `hop_limit`.
+
+`steps` names each hop's mechanism from a closed vocabulary — `supersedes` for an authored `<link>` inside a file, `archive_move` for a `git mv` recorded by `origin_path` — and every node is named by the path holding that memory NOW, because a `supersedes` link travels with the file that carries it.
+
+`pinned_uri` is a `memhtml://at/{commit}/{path}` URI for `path` at `indexed_commit`, composed by the server because the URI's spelling belongs to the resource that routes it. It is null when there is no commit to pin to and when `stop_reason` is `unindexed`, the one ending whose path that commit does not hold — a citation the same server would refuse is not a citation.
+
+`hops: 0` with `stop_reason: live` does NOT mean the bytes are unchanged: a correction whose title did not change lands at the same path. `pinned_uri` is the grain that answers that.
+
+`apps/mcp/src/tools.ts:767-824`
+
 ## `memory_reinforce`
 
 ```ts
@@ -400,6 +484,8 @@ const MemorySearch = Tool.make("memory_search", {
     tags: Optional(Schema.Array(Schema.String)),
     // …
     entity: Optional(Schema.String),
+    // …
+    facets: Optional(Schema.Array(Schema.String)),
     include_archived: Optional(Schema.Boolean),
     // …
     as_of: Optional(Schema.String)
@@ -436,7 +522,7 @@ const MemorySearch = Tool.make("memory_search", {
 
 Runs ranked search over the corpus. It fuses the lexical, vector, recency, and salience arms with RRF and then diversifies the result.
 
-**Input:** `query` required; the rest optional. `limit` defaults to 10 (`packages/index/src/retrieval.ts:29`). `memory_types` draws from the nine writable types. `entity` takes one reference in `type:name` form. That is the same spelling `memory_list` accepts and the same spelling a hit's `entities` publishes, so an agent chains by copying a value rather than reconstructing one (`apps/mcp/src/tools.ts:447-451`). `as_of` takes an ISO instant and returns what was believed valid at that moment, over the window `coalesce(valid_from, event_at, created_at) <= as_of < valid_until` (`apps/mcp/src/tools.ts:452-458`).
+**Input:** `query` required; the rest optional. `limit` defaults to 10 (`packages/index/src/retrieval.ts:29`). `memory_types` draws from the nine writable types. `entity` takes one reference in `type:name` form. That is the same spelling `memory_list` accepts and the same spelling a hit's `entities` publishes, so an agent chains by copying a value rather than reconstructing one (`apps/mcp/src/tools.ts:447-451`). `facets` takes `name=value` specs over the article's authored `<dl>` pairs. The composition is a semantic contract rather than a convenience: values under the SAME name broaden (OR) and different names narrow (AND), so `["doc-type=runbook", "doc-type=guide"]` is either and `["doc-type=runbook", "tier=1"]` is both — and a caller who read it the other way round acts on a superset or on an empty set, neither of which the rows report. Matched as TEXT with no case fold, unlike `entity`: a facet is the consumer's own machine-written vocabulary. A spec with an empty half is dropped rather than refused, so a malformed one widens the answer instead of narrowing it, and the rows cannot report that either. `as_of` takes an ISO instant and returns what was believed valid at that moment, over the window `coalesce(valid_from, event_at, created_at) <= as_of < valid_until` (`apps/mcp/src/tools.ts:452-458`).
 
 **Output:** `hits` plus four result-level fields. Each hit carries `snippet`, which holds the best-matching chunk's text for this query, or the file's opening chunk on the degraded path, truncated with a trailing ellipsis when cut. `superseded_by` is present and nullable so a client can tell "not superseded" from "this build does not report supersession" (`apps/mcp/src/tools.ts:485-491`). `degraded` is true when the vector arm did not fire. `arms` names the arms that ran. `scope_empty` is true when an `entity` scope narrowed the query and nothing survived, so an empty scoped result is attributable to the scope. A scope the tool could not satisfy is reported rather than widened (`apps/mcp/src/tools.ts:499-505`). Returning a path changes nothing on the access plane, because a hit is the ranker's guess rather than a deliberate open.
 
@@ -498,7 +584,7 @@ const MemoryWrite = Tool.make("memory_write", {
 
 Writes one memory to the corpus. When an active memory already holds this exact content, the call returns that existing path with `deduped: true` and creates no file and no commit.
 
-**Input:** `Schema.Struct(writeFields())`, thirteen fields shared with each `memory_write_batch` op (`apps/mcp/src/tools.ts:226-247`). Required: `title` and `memory_type`, the latter one of the nine writable types, since the sleep cycle writes `arc` itself (`apps/mcp/src/tools.ts:44-45`, `packages/contracts/src/types.ts:34-40`). Optional: `body`, `article_html`, `path`, `workspace`, `tags`, `entities`, `importance`, `confidence`, `session_id`, `prompt_id`, `turn_uuid`. Exactly one of `body` or `article_html` must be supplied. The handler enforces that rule rather than the schema, and a blank string counts as absent on both sides (`apps/mcp/src/handlers.ts:107-136`). On the prose path the first sentence becomes the `<mark>` claim and each blank-line paragraph becomes one `<p>`. On the markup path the caller owns the format, which includes the single `<mark>` rule, the closed element vocabulary, and the first `<time datetime>` becoming the memory's event time that the recency arm ranks by (`apps/mcp/src/tools.ts:133-144`).
+**Input:** `Schema.Struct(writeFields())`, thirteen fields shared with each `memory_write_batch` op (`apps/mcp/src/tools.ts:226-247`). Required: `title` and `memory_type`, the latter one of the nine writable types, since the sleep cycle writes `arc` itself (`apps/mcp/src/tools.ts:44-45`, `packages/contracts/src/types.ts:34-40`). Optional: `body`, `article_html`, `path`, `strict_path`, `workspace`, `tags`, `entities`, `importance`, `confidence`, `session_id`, `prompt_id`, `turn_uuid`. `strict_path` opts out of the lenient default: an explicit `path` that is not a usable memory path is re-derived through the placement rule and reported as a success at some other path, and `strict_path: true` makes it `ERR_INVALID_MEMORY` with nothing written, staged, or committed. It is published on every `memory_write_batch` op too, through the same `writeFields()`. Exactly one of `body` or `article_html` must be supplied. The handler enforces that rule rather than the schema, and a blank string counts as absent on both sides (`apps/mcp/src/handlers.ts:107-136`). On the prose path the first sentence becomes the `<mark>` claim and each blank-line paragraph becomes one `<p>`. On the markup path the caller owns the format, which includes the single `<mark>` rule, the closed element vocabulary, and the first `<time datetime>` becoming the memory's event time that the recency arm ranks by (`apps/mcp/src/tools.ts:133-144`).
 
 **Output:** `path`, `created`, `deduped`, and `existing_path`. `existing_path` is present and nullable rather than optional, so a client can tell "this op did not dedupe" from "this server does not report dedupes" (`apps/mcp/src/tools.ts:284-288`).
 

@@ -1,6 +1,6 @@
 # memhtml-public · CLI
 
-The `memhtml` CLI has 36 subcommands, one entry each in the `COMMANDS` array that also drives parsing and `AGENTS.md`. Each one writes exactly one JSON envelope to stdout, so a calling agent can parse the result instead of scraping prose. `apps/cli/src/commands.ts:118`
+The `memhtml` CLI has 39 subcommands, one entry each in the `COMMANDS` array that also drives parsing and `AGENTS.md`. Each one writes exactly one JSON envelope to stdout, so a calling agent can parse the result instead of scraping prose. `apps/cli/src/commands.ts:118`
 
 Start with `memhtml manifest`, which returns the whole contract: every command, argument, flag, response type, error code, and environment variable the binary accepts. `apps/cli/src/commands.ts:1094-1118`
 
@@ -147,12 +147,15 @@ Flags:
 - `--type`: Restrict to one memory type. Repeatable; each occurrence broadens the set (ANY-of). String. `apps/cli/src/commands.ts:67`
 - `--workspace`: Restrict to one workspace. Strict: a scoped query never returns a memory with no workspace. String. `apps/cli/src/commands.ts:74`
 - `--tag`: Restrict to memories carrying any of these tags. Repeatable; each broadens. String. `apps/cli/src/commands.ts:80`
-- `--entity`: Restrict to memories carrying one `type:name` entity reference, the same form a hit's `entities` field publishes. String. `apps/cli/src/commands.ts:86`
-- `--include-archived`: Include archived memories. Eviction is a `git mv`, so they still exist. Boolean, default false. `apps/cli/src/commands.ts:95`
-- `--as-of`: Point-in-time view: returns what was believed valid at this ISO instant, including since-superseded memories marked `superseded_by`. String. `apps/cli/src/commands.ts:101`
-- `--limit`: Hits to return. Int, default 10. `apps/cli/src/commands.ts:276`
+- `--entity`: Restrict to memories carrying one `type:name` entity reference, the same form a hit's `entities` field publishes. String. `apps/cli/src/commands.ts:121`
+- `--facet`: Restrict to memories carrying an authored `<dl>` facet, as `name=value`. Repeatable: two values of ONE name broaden (OR), two DIFFERENT names narrow (AND). String. `apps/cli/src/commands.ts:130`
+- `--include-archived`: Include archived memories. Eviction is a `git mv`, so they still exist. Boolean, default false. `apps/cli/src/commands.ts:136`
+- `--as-of`: Point-in-time view: returns what was believed valid at this ISO instant, including since-superseded memories marked `superseded_by`. String. `apps/cli/src/commands.ts:142`
+- `--limit`: Hits to return. Int, default 10. `apps/cli/src/commands.ts:323`
 
-The first six flags are `SCOPE_FLAGS`, declared once and spread into this command, so `search` and `recall` scope the same way. `apps/cli/src/commands.ts:65-106`
+The first seven flags are `SCOPE_FLAGS`, declared once and spread into this command, so `search` and `recall` scope the same way. `apps/cli/src/commands.ts:100-147`
+
+A facet name and value are matched as TEXT with no case folding, so they are the one scope axis whose vocabulary is the consumer's own. Nothing published lets a caller DISCOVER the names a corpus holds — a hit's `entities` are copy-ready, its facets are not — so `--facet` presumes the vocabulary is already known, which is correct for the consumer writing its own facets and a real gap for exploring someone else's corpus.
 
 `--as-of` is checked against the same grammar the format enforces on `<time datetime>` — `YYYY-MM-DD` or `YYYY-MM-DDThh:mm:ssZ` — and a value outside it is `ERR_INVALID_FLAG` at exit 2, before any service is built. That refusal is the only visible answer available: the flag binds into `coalesce(valid_from, event_at, created_at) <= ? AND (valid_until IS NULL OR valid_until > ?)`, where SQLite compares TEXT to TEXT and nothing parses the value, so `--as-of "2026-08-24 13:00"` would select a window the caller did not ask for and return a plausible-looking point-in-time view. One grammar for both sides also means the instants a caller may ask about are exactly the instants a file may state. `apps/cli/src/run.ts:873-904`
 
@@ -173,10 +176,13 @@ Flags:
 - `--type`: Restrict to one memory type. Repeatable; each occurrence broadens the set. String. `apps/cli/src/commands.ts:67`
 - `--workspace`: Restrict to one workspace. Strict. String. `apps/cli/src/commands.ts:74`
 - `--tag`: Restrict to memories carrying any of these tags. Repeatable. String. `apps/cli/src/commands.ts:80`
-- `--entity`: Restrict to memories carrying one `type:name` entity reference. String. `apps/cli/src/commands.ts:86`
-- `--include-archived`: Include archived memories. Boolean, default false. `apps/cli/src/commands.ts:95`
-- `--as-of`: Point-in-time view at this ISO instant. String. `apps/cli/src/commands.ts:101`
-- `--budget`: Characters of quoted body. Arcs get their own envelope on top. Int, default 16000. `apps/cli/src/commands.ts:287`
+- `--entity`: Restrict to memories carrying one `type:name` entity reference. String. `apps/cli/src/commands.ts:121`
+- `--facet`: Restrict to memories carrying an authored `<dl>` facet, as `name=value`. Repeatable, AND across names and OR within one. String. `apps/cli/src/commands.ts:130`
+- `--include-archived`: Include archived memories. Boolean, default false. `apps/cli/src/commands.ts:136`
+- `--as-of`: Point-in-time view at this ISO instant. String. `apps/cli/src/commands.ts:142`
+- `--budget`: Characters of quoted body. Arcs get their own envelope on top. Int, default 16000. `apps/cli/src/commands.ts:333`
+
+The MCP tool `memory_recall` publishes only `query`, `budget_chars` and `workspace`, so an agent on that surface cannot narrow a budgeted pack by type, tag, entity, or facet the way this command can.
 
 ## correct
 
@@ -246,6 +252,24 @@ The response distinguishes two ways a neighborhood comes back short, because the
 
 The nine memory rels are `supersedes`, `contradicts`, `caused_by`, `leads_to`, `part_of`, `relates_to`, `example_of`, `supports`, `laterally_related`. `packages/contracts/src/edges.ts:19-29`
 
+## resolve
+
+```
+memhtml resolve <path>
+```
+
+Follow a possibly-moved path forward to the memory that carries the fact now. A path is the id of a memory and it derives from the title, so correcting a memory with a reworded title moves the file and an external citation of the old path stops resolving. `apps/cli/src/operations.ts`
+
+Arguments:
+
+- `<path>`: The path a receipt, citation, or older answer recorded. Required.
+
+No flags. The walk follows both mechanisms that move a memory — an authored `supersedes` link and the archive move recorded by `origin_path` — and neither is optional; the hop bound is a property of the answer rather than a preference.
+
+`stopReason` decides whether the answer is citable and only `live` means yes. `archived` is a memory evicted rather than corrected, `unindexed` is no such path here (which can also mean the index does not yet describe the commit holding it — `indexedCommit` names the one it does), `cycle` is two memories each claiming to supersede the other, and `hop_limit` means `path` is where the walk stopped rather than the end of the chain. `steps` names each hop's mechanism, and every node is named by the path holding it now.
+
+`hops: 0` with `stopReason: live` does not mean the bytes are unchanged: a correction whose title did not change lands at the same path. The MCP resource `memhtml://at/{commit}/{path}` is the grain that answers that, and `memory_resolve` publishes such a URI as `pinned_uri`.
+
 ## archive
 
 ```
@@ -285,23 +309,46 @@ The signal vocabulary is `REINFORCE_SIGNALS`. `packages/domain/src/reinforce.ts:
 ## list
 
 ```
-memhtml list [--type <type>] [--workspace <ws>] [--tag <tag>] [--entity <ref>] [--para <bucket>] [--limit 50] [--cursor <path>]
+memhtml list [--type <type>] [--workspace <ws>] [--tag <tag>] [--entity <ref>] [--facet <name=value>] [--para <bucket>] [--limit 50] [--cursor <path>]
 ```
 
-Page through the corpus by type, workspace, tag, entity, or PARA bucket. `apps/cli/src/run.ts:455-469`
+Page through the corpus by type, workspace, tag, entity, facet, or PARA bucket.
 
 Flags:
 
-- `--type`: One memory type, from the nine writable types. String. `apps/cli/src/commands.ts:406`
-- `--workspace`: One workspace. String. `apps/cli/src/commands.ts:411`
-- `--tag`: One tag. String. `apps/cli/src/commands.ts:412`
-- `--entity`: One `type:name` entity reference. String. `apps/cli/src/commands.ts:413`
-- `--para`: One PARA bucket: `projects`, `areas`, `resources`, or `archive`. String. `apps/cli/src/commands.ts:415`
-- `--limit`: Rows per page. Int, default 50. `apps/cli/src/commands.ts:420`
-- `--cursor`: The `next_cursor` from the previous page: the last path returned. String. `apps/cli/src/commands.ts:422`
-- `--include-archived`: Include archived memories. Boolean, default false. `apps/cli/src/commands.ts:427`
+- `--type`: One memory type, from the nine writable types. String. `apps/cli/src/commands.ts:469`
+- `--workspace`: One workspace. String. `apps/cli/src/commands.ts:474`
+- `--tag`: One tag. String. `apps/cli/src/commands.ts:475`
+- `--entity`: One `type:name` entity reference. String. `apps/cli/src/commands.ts:476`
+- `--facet`: One authored `<dl>` facet as `name=value`. Repeatable, composed exactly as `search` composes it: AND across distinct names, OR within one name. String. `apps/cli/src/commands.ts:480`
+- `--para`: One PARA bucket: `projects`, `areas`, `resources`, or `archive`. String. `apps/cli/src/commands.ts:482`
+- `--limit`: Rows per page. Int, default 50. `apps/cli/src/commands.ts:487`
+- `--cursor`: The `next_cursor` from the previous page: the last path returned. String. `apps/cli/src/commands.ts:489`
+- `--include-archived`: Include archived memories. Boolean, default false. `apps/cli/src/commands.ts:494`
 
 `--status` belongs to `task list`, not here. Passing it to `list` is `ERR_INVALID_FLAG` with `memhtml task list --status` among the suggestions, because a flag silently ignored would return an unfiltered answer that reads as filtered. `apps/cli/src/run.ts:989-1002`
+
+## entity activity
+
+```
+memhtml entity activity [--type <entity-type>] [--limit 50] [--include-archived]
+```
+
+Every entity with its file count and its last activity, newest first. A report and never a signal. `apps/cli/src/operations.ts`
+
+Flags:
+
+- `--type`: Restrict to one entity type, e.g. `service` — the half before the colon in a `type:name` reference. Matched case-insensitively, the way `--entity` is matched by `search` and `list`. String. `apps/cli/src/commands.ts:508`
+- `--limit`: Rows to return, 1 to 500. An ask outside that is clamped rather than refused, and `limit` echoes the bound. Int, default 50. `apps/cli/src/commands.ts:514`
+- `--include-archived`: Aggregate archived memories too. Excluded by default, because eviction is a `git mv` and an archived memory would otherwise keep an entity looking active. Boolean, default false. `apps/cli/src/commands.ts:521`
+
+Three timestamps, because they are three clocks. `lastActivityAt` is `max(coalesce(event_at, updated_at))`, the recency arm's own rule, so "most recently active" means here what it means in a ranked search. `lastEventAt` is `max(event_at)` alone — WORLD time, `null` when no in-scope memory states one. `lastWrittenAt` is `max(updated_at)` alone: WRITE time. `entityCount` is the total matching the scope regardless of `limit`, so a clamped answer is visible rather than silent.
+
+A row is one STORED reference rather than one folded identity: the grouping is on `(entity_type, entity_name)` as `file_entities` holds them, so a corpus that authored both `Service:Checkout-API` and `service:checkout-api` reports two rows where `--entity` at either retrieval door returns one entity's memories. `entity-resolution` is the phase that folds spellings.
+
+Report-only, and structurally so. Every ranking arm lives in `@memhtml/index` and every decay term in `@memhtml/domain`, both below `apps/cli` in the project-reference graph, so neither can import this read.
+
+There is no cursor, so a corpus with more than 500 entities cannot be fully enumerated through this command. `entityCount` makes the truncation visible.
 
 ## task add
 
@@ -461,14 +508,14 @@ Flags:
 memhtml sleep run [--date YYYY-MM-DD] [--phases <list>] [--dry-run] [--deep] [--max-llm-calls <n>]
 ```
 
-The nightly curation cycle: one isolated commit per phase on a review branch. The summary and the `--phases` default are both derived from `SLEEP_PHASES.length` rather than typed, so the number the manifest states and the list beside it cannot disagree. `apps/cli/src/run.ts:574-589`, `apps/cli/src/commands.ts:627`
+The curation cycle: one isolated commit per phase on a review branch. The summary and the `--phases` default are both derived from `SLEEP_PHASES.length` rather than typed, so the number the manifest states and the list beside it cannot disagree. `apps/cli/src/run.ts:574-589`, `apps/cli/src/commands.ts:627`
 
 Flags:
 
 - `--date`: The run date, `YYYY-MM-DD`. Defaults to today. Names the branch. String. `apps/cli/src/commands.ts:631`
 - `--phases`: Comma-separated subset. Every phase by default. String. `apps/cli/src/commands.ts:636`
 - `--dry-run`: Report per-phase counts and commit nothing. Boolean, default false. `apps/cli/src/commands.ts:641`
-- `--deep`: The deep-sleep cycle: mine a lower grouping band, group by shared entity, re-file inbox singletons, and iterate `compress` until a pass folds nothing. Reaches the inbox tail the nightly community gate cannot, and costs more model calls. Same branch, review, and merge gate as a nightly run. Boolean, default false. `apps/cli/src/commands.ts:647`
+- `--deep`: The deep-sleep cycle: mine a lower grouping band, group by shared entity, re-file inbox singletons, and iterate `compress` until a pass folds nothing. Reaches the inbox tail the default community gate cannot, and costs more model calls. Same branch, review, and merge gate as a run without the flag. Boolean, default false. `apps/cli/src/commands.ts:647`
 - `--max-llm-calls`: Cap on model calls the deep mechanisms may spend, shared across all deep phases. Exhaustion skips remaining batches with reason `budget` and the run stays green. Read only with `--deep`; absent means uncapped. Int. `apps/cli/src/commands.ts:657`
 
 The phase names come from `SLEEP_PHASES` — seventeen as of v0.6.0, in execution order: `preflight`, `dedup-merge`, `entity-resolution`, `person-links`, `relationship-mining`, `edge-typing`, `confidence-decay`, `arc-synthesis`, `retention-triage`, `compress`, `reprieve`, `trace-consolidation`, `task-detection`, `placement-triage`, `integrity`, `state-export`, `report`. `packages/sleep/src/contract.ts:43-61`
@@ -477,7 +524,7 @@ Fifteen of them commit. `preflight` and `relationship-mining` are the two that c
 
 Eight of them spend model calls when a model is bound: `dedup-merge`, `entity-resolution`, `edge-typing`, `arc-synthesis`, `compress`, `trace-consolidation`, `task-detection`, `placement-triage`. The other nine are deterministic and cost none. `packages/sleep/src/contract.ts:168-177`
 
-`placement-triage` is deep-only. On a run without `--deep` it returns immediately, writes nothing, and commits nothing, so the nightly cycle's behavior is unchanged by its presence in the list. `packages/sleep/src/contract.ts:33-41`
+`placement-triage` is deep-only. On a run without `--deep` it returns immediately, writes nothing, and commits nothing, so a default run's behavior is unchanged by its presence in the list. `packages/sleep/src/contract.ts:33-41`
 
 A run with any failed phase exits 1, while still writing the `sleep.report` success envelope with the whole per-phase report. Both halves matter: a cron line reading only the exit code has to see that the curation did not happen, and a failure envelope carries no `data`, so reporting it as one would delete the per-phase detail that says which phases landed. A fully aborted run and a partially failed one exit the same, because a caller reading the exit code is asking one question and both answers are no; the payload already distinguishes them precisely, since an abort is every selected phase `failed` with `headSha === baseSha` and no commits. `apps/cli/src/run.ts:267-285`
 
@@ -552,6 +599,22 @@ The latest sleep run and its per-phase outcomes. `apps/cli/src/run.ts:670-686`
 This command takes no arguments and no flags. `apps/cli/src/commands.ts:698-704`
 
 Like `sleep review`, it exits 0 even when the run it reports failed. `apps/cli/src/run.ts:281-283`
+
+## sleep plan
+
+```
+memhtml sleep plan
+```
+
+Would a run change anything? Reads index counts and runs no phase, so it costs a handful of aggregates rather than the seventeen phases `--dry-run` executes before declining to write. `packages/sleep/src/plan.ts`
+
+No arguments and no flags. The signals ARE the phases' own selection predicates, called or clause-shared, so a caller wanting one reads its entry out of `signals`.
+
+`verdict` is the field to branch on, and it has three values because two phases cannot have their candidates counted cheaply. `would-change`: a counted signal is non-zero. `no-signal`: every counted signal is zero, every uncountable phase's input is empty, AND `indexFresh` is true, which is the one state in which a run would reach nothing. `unknown`: everything else — `dedup-merge` and `relationship-mining` select candidate pairs from an n-by-n neighbor scan, so counting their candidates is the scan, and each reports an `inputCount` with an `unknownReason` instead of a zero.
+
+Every count comes from `.memhtml/index.db`, so `indexFresh` says whether they describe anything: it is the same predicate `memhtml status` reports, and `indexedCommit` names the commit they do describe. A clone, a `git pull`, and a deleted index all answer every aggregate with zero over a corpus nothing has curated, so a stale index can never yield `no-signal`.
+
+`signals` carries the counted ones with the phases each feeds: memories written since the last run, chunks with no vector, settled transcripts, dangling authored links, and entity merges awaiting a second run. `sessionsPerRun` is the consolidation phase's per-run cap, published beside the transcript count because a backlog larger than the cap is more than one run of work.
 
 ## status
 
@@ -681,7 +744,7 @@ This command builds no app layer, so running it in CI does not scaffold a memhtm
 memhtml serve mcp
 ```
 
-Run the `memhtml-mcp` stdio server: 14 tools and 2 resources over this same repo. `apps/cli/src/run.ts:1146-1165`
+Run the `memhtml-mcp` stdio server: 15 tools and 3 resources over this same repo. `apps/cli/src/run.ts:1146-1165`
 
 This command takes no arguments and no command-specific flags. `apps/cli/src/commands.ts:869-875`
 
@@ -701,7 +764,7 @@ A caller should branch on `code` rather than on the `error` prose. The code list
 
 The sixteen codes, in `ERROR_CODES` order, are `ERR_UNKNOWN_COMMAND`, `ERR_MISSING_ARGUMENT`, `ERR_INVALID_FLAG`, `ERR_UNEXPECTED_ARGUMENT`, `ERR_PATH_NOT_FOUND`, `ERR_INVALID_MEMORY`, `ERR_DUPLICATE_CONTENT`, `ERR_WRITE_CONFLICT`, `ERR_DIRTY_TREE`, `ERR_INDEX_STALE`, `ERR_EMBED_MODEL_MISMATCH`, `ERR_MODEL_UNAVAILABLE`, `ERR_STORAGE`, `ERR_GIT`, `ERR_DISCRIMINATION_FAILED`, `ERR_UNKNOWN`. `apps/cli/src/envelope.ts:67-87`
 
-`ERR_UNEXPECTED_ARGUMENT` names a positional past what the command declares. It is its own code rather than a reuse of a neighbour, because the offending token is not a flag, which rules out `ERR_INVALID_FLAG`, and it is surplus rather than absent, which rules out `ERR_MISSING_ARGUMENT`: the caller fixes it by dropping a word instead of adding one. `apps/cli/src/envelope.ts:71-74`
+`ERR_UNEXPECTED_ARGUMENT` names a positional past what the command declares. It is its own code rather than a reuse of a neighbor, because the offending token is not a flag, which rules out `ERR_INVALID_FLAG`, and it is surplus rather than absent, which rules out `ERR_MISSING_ARGUMENT`: the caller fixes it by dropping a word instead of adding one. `apps/cli/src/envelope.ts:71-74`
 
 An unknown command or an unknown flag returns nearest-match candidates in `suggestions`, computed by Levenshtein distance. A caller can retry a typo from that list without a second discovery call. `apps/cli/src/envelope.ts:129-143`
 

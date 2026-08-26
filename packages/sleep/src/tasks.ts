@@ -29,14 +29,14 @@ import type { PhaseEnv } from "./env.js"
 
 /**
  * The minting discipline for a DETECTED task: one home for idempotence, evidence verification, the
- * nightly cap, and self-cleaning.
+ * per-run cap, and self-cleaning.
  *
  * Issue #44's shape is three detection surfaces sharing one discipline. The surfaces differ in what
  * they notice — a review band entity-resolution declined to merge, a near-duplicate pair the
  * divergence veto refused, a commitment a model found in a memory's own prose — and they agree on
  * everything that happens after: the finding becomes a `task` file authored `agent:sleep`, keyed on a
  * stable digest so a second night refreshes rather than duplicates, carrying its evidence verbatim,
- * inside a nightly volume cap, and closed when the finding stops appearing. That agreement is what
+ * inside a per-run volume cap, and closed when the finding stops appearing. That agreement is what
  * lives here. A copy of it per surface would be three chances to mint a task nobody can trust.
  *
  * ## A detected task is a `task`, and inherits every firewall by being one
@@ -247,10 +247,17 @@ const STEM_SLUG_CHARS = SLUG_MAX_LENGTH - DETECTION_PREFIX.length - DETECTION_DI
  * The detector's name is INSIDE the digest, so two detectors that happen to canonicalize one finding
  * identically still own separate tasks. They noticed different things about it, and a sweep is
  * per-detector: sharing a key would let one detector's sweep close the other's task.
+ *
+ * **The separator is `\u0000`, written as the escape and not as the byte.** A NUL cannot occur in a
+ * normalized detector name or finding, which is what makes it an unambiguous delimiter: without one,
+ * `("ab", "c")` and `("a", "bc")` would digest the same input and share a task. Spelling it as a RAW
+ * NUL in the source made this file `data` rather than text, and `grep` silently skips a file it reads
+ * as binary — so a repo-wide text gate, and every maintainer's grep, had a blind spot on it. The
+ * escape hands `sha256` byte-identical input, so no key moves.
  */
 export const detectionKey = (detector: string, finding: string): string =>
   `${DETECTION_PREFIX}${createHash("sha256")
-    .update(`${normalizeFinding(detector)} ${normalizeFinding(finding)}`, "utf8")
+    .update(`${normalizeFinding(detector)}\u0000${normalizeFinding(finding)}`, "utf8")
     .digest("hex")
     .slice(0, DETECTION_DIGEST_CHARS)}`
 
@@ -291,7 +298,7 @@ export interface DetectionBudget {
   overflow: number
 }
 
-/** A fresh budget at the nightly cap. */
+/** A fresh budget at the per-run cap. */
 export const makeDetectionBudget = (cap: number = DETECTED_TASK_CAP): DetectionBudget => ({
   remaining: Math.max(0, Math.trunc(cap)),
   overflow: 0

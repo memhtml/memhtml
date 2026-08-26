@@ -3,7 +3,7 @@ title: Internals
 description: Why the system is built the way it is, with the implementing code cited for every decision.
 ---
 
-These pages explain why the system is shaped the way it is. Each chapter takes one mechanism and says what it is, how it works, which failure it prevents, and where in the source that lives. Someone who wants to install the store, write a memory, or operate a nightly curation run is served by [Learn](/learn/). Someone who wants the exact spelling of a flag or an error code is served by [Reference](/reference/).
+These pages explain why the system is shaped the way it is. Each chapter takes one mechanism and says what it is, how it works, which failure it prevents, and where in the source that lives. Someone who wants to install the store, write a memory, or operate a curation run is served by [Learn](/learn/). Someone who wants the exact spelling of a flag or an error code is served by [Reference](/reference/).
 
 ## 1. Two invariants
 
@@ -45,6 +45,7 @@ The chapters run in dependency order: the layers first, then the paths through t
 | [The sleep pipeline](/internals/the-sleep-pipeline/)                               | Seventeen phases, per-phase isolation, commit trailers as the resume mechanism                 |
 | [Concurrency and conflicts](/internals/concurrency-and-conflicts/)                 | Git as the concurrency mechanism, and typed conflict surfacing                                 |
 | [The envelope contract](/internals/the-envelope-contract/)                         | One JSON envelope, append-only codes, the tool surface and its forced choices                  |
+| [The extension contract](/internals/the-extension-contract/)                       | The five open axes a consumer models its domain on, and the four closed vocabularies           |
 | [Testing posture](/internals/testing-posture/)                                     | Real driver, real git, two fakes, and the quality gate that can refuse a merge                 |
 
 Three pages sit beside the chapters. [The consolidator](/internals/the-consolidator/) reproduces the live system prompt of the agent that distills memories out of transcripts. [Measured standing](/internals/measured-standing/) carries the benchmark numbers together with the caveat that governs how to read them. The [glossary](/glossary/) defines the domain vocabulary these pages use and links each term to the chapter that develops it.

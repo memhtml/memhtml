@@ -56,7 +56,7 @@ const text = (value: unknown): string | undefined => (typeof value === "string" 
 /**
  * What to do about a failure, phrased as calls this agent can actually make.
  *
- * The reader is an LLM mid-task holding fourteen tools and no shell. `suggestionsFor` in
+ * The reader is an LLM mid-task holding fifteen tools and no shell. `suggestionsFor` in
  * `apps/cli/src/errors.ts:115-137` answers the same question for a human at a prompt and answers it in
  * `memhtml` commands and `git` invocations, every one of which is unreachable from here. A suggestion
  * an agent cannot execute costs more than none: it spends the model's attention on a plan that ends in
@@ -81,7 +81,13 @@ export const mcpSuggestionsFor = (error: unknown): ReadonlyArray<string> => {
   if (!isTagged(error)) return []
   switch (error._tag) {
     case "PathNotFound":
+      /*
+       * `memory_resolve` first, for the CLI door's reason: the commonest path that is not there is one a
+       * correction or an eviction moved, and both mechanisms are recorded, so the walk answers where the
+       * fact went rather than re-deriving it semantically.
+       */
       return [
+        "call memory_resolve on the path you cited — a correction or an eviction may have moved it",
         "call memory_search with a query for what you were looking for",
         "call memory_list to page the corpus by type or workspace"
       ]

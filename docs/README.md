@@ -19,7 +19,7 @@ These pages describe what the system is and how its parts connect.
 These pages list the calls an agent can make and the shape each one returns.
 
 - [CLI](reference/cli.md): all 36 subcommands of the `memhtml` binary, with flags, error codes, and environment variables.
-- [RPC tools](reference/rpc-tools.md): the 14 MCP tools and 2 resources of `memhtml-mcp`.
+- [RPC tools](reference/rpc-tools.md): the 15 MCP tools and 3 resources of `memhtml-mcp`.
 - [Public API](reference/public-api.md): the 30 most-imported library symbols with verbatim signatures.
 
 ## Behavior

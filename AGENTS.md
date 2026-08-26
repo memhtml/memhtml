@@ -37,7 +37,7 @@ You are reading this CLI's manifest: every command, argument, flag, response typ
 
 ### `write-surfaces`
 
-There are three ways to put a memory into the corpus, and they are all legitimate. First, this CLI: `memhtml write` for one memory, `memhtml apply` for many. Second, the MCP server: `memhtml serve mcp` speaks stdio with 14 tools and 2 resources over this same repo, and it is the door to use when you are already an MCP client. Third, editing files under $MEMHTML_ROOT directly with your normal file tools: the git tree IS the system of record and `.memhtml/index.db` is only a projection of it, so a hand-written or hand-edited memory file is as real as one this CLI wrote. `memhtml index update` projects uncommitted working-tree changes as well as committed ones, so a dirty edit is searchable before you commit it. What you take on by editing directly is everything the write path would have done for you: the file must satisfy the format (run `memhtml doctor`, and `memhtml read <path>` reports per-file format warnings), you own choosing a path that does not collide, you own noticing that the content already exists somewhere else, and you own the commit. The nightly `memhtml sleep run` refuses to start on a dirty tree, so an uncommitted edit blocks curation until it is committed or stashed. A CLI command and a running `memhtml serve mcp` may share one store: the index is WAL SQLite, which admits one writer at a time and any number of concurrent readers, so a second writer waits its turn rather than failing. The one thing to keep clear of is `memhtml sleep run`, and for a git reason rather than a database one: a run holds a checked-out `sleep/<date>` branch, so a write landing during it commits onto that branch and is merged as if it were curation or lost when the branch is dropped.
+There are three ways to put a memory into the corpus, and they are all legitimate. First, this CLI: `memhtml write` for one memory, `memhtml apply` for many. Second, the MCP server: `memhtml serve mcp` speaks stdio with the same tools and resources over this same repo, and it is the door to use when you are already an MCP client. Third, editing files under $MEMHTML_ROOT directly with your normal file tools: the git tree IS the system of record and `.memhtml/index.db` is only a projection of it, so a hand-written or hand-edited memory file is as real as one this CLI wrote. `memhtml index update` projects uncommitted working-tree changes as well as committed ones, so a dirty edit is searchable before you commit it. What you take on by editing directly is everything the write path would have done for you: the file must satisfy the format (run `memhtml doctor`, and `memhtml read <path>` reports per-file format warnings), you own choosing a path that does not collide, you own noticing that the content already exists somewhere else, and you own the commit. `memhtml sleep run` refuses to start on a dirty tree, so an uncommitted edit blocks curation until it is committed or stashed. A CLI command and a running `memhtml serve mcp` may share one store: the index is WAL SQLite, which admits one writer at a time and any number of concurrent readers, so a second writer waits its turn rather than failing. The one thing to keep clear of is `memhtml sleep run`, and for a git reason rather than a database one: a run holds a checked-out `sleep/<date>` branch, so a write landing during it commits onto that branch and is merged as if it were curation or lost when the branch is dropped.
 
 ### `when-to-batch`
 
@@ -47,7 +47,7 @@ Writing more than about three memories in one task? Call `memhtml apply` once wi
 {"op":"write","title":"One writer and many readers share the index","type":"semantic","body":"WAL admits a single writer at a time and any number of concurrent readers, so a CLI command and a running `memhtml serve mcp` can work against one store.","tag":"infra"}
 ```
 
-`op` is `write` (the only verb in the vocabulary today), `title` and `type` are required, and each op carries the same optional fields `memhtml write` takes, in snake_case: `path`, `workspace`, `tag`, `entity`, `importance`, `confidence`, `session_id`, `prompt_id`, `turn_uuid`. The whole file is validated for shape before ANY op executes, so a malformed line 7 is exit 2 naming line 7 with nothing written. A failed apply costs you nothing but the call. You get one result per op in INPUT ORDER, each naming its own `index`, so you can match results back to the lines you sent. A batch is ATOMIC by default: the first refused op aborts the whole batch, no file is written, no commit is made, and the surviving ops report `skipped: true`. Pass `--continue-on-error` for best-effort instead, and a refused op comes back as one failed result carrying its own `code` and `error` while every op that succeeded lands in the one commit. A duplicate is never an error: an op whose exact content is already stored comes back `ok: true` with `deduped: true` and the existing path, so re-applying a file you already applied is safe and writes nothing. `commit_sha` is null exactly when nothing was committed: a batch that only deduped, or one that aborted.
+`op` is `write` (the only verb in the vocabulary today), `title` and `type` are required, and each op carries the same optional fields `memhtml write` takes, in snake_case: `path`, `strict_path`, `workspace`, `tag`, `entity`, `importance`, `confidence`, `status`, `due`, `session_id`, `prompt_id`, `turn_uuid`. The whole file is validated for shape before ANY op executes, so a malformed line 7 is exit 2 naming line 7 with nothing written. A failed apply costs you nothing but the call. You get one result per op in INPUT ORDER, each naming its own `index`, so you can match results back to the lines you sent. A batch is ATOMIC by default: the first refused op aborts the whole batch, no file is written, no commit is made, and the surviving ops report `skipped: true`. Pass `--continue-on-error` for best-effort instead, and a refused op comes back as one failed result carrying its own `code` and `error` while every op that succeeded lands in the one commit. A duplicate is never an error: an op whose exact content is already stored comes back `ok: true` with `deduped: true` and the existing path, so re-applying a file you already applied is safe and writes nothing. `commit_sha` is null exactly when nothing was committed: a batch that only deduped, or one that aborted.
 
 ### `conflicts`
 
@@ -80,17 +80,19 @@ Answering a question that takes MORE THAN ONE HOP through the corpus? Write it a
 |---|---|---|---|
 | `memhtml manifest` | — | — | `cli.manifest` |
 | `memhtml init` | — | — | `repo.init` |
-| `memhtml write` | — | `--title`* `--claim` `--body` `--article-html` `--type`* `--path` `--workspace` `--tag` `--entity` `--importance` `--confidence` `--session-id` `--prompt-id` `--turn-uuid` | `memory.written` |
+| `memhtml write` | — | `--title`* `--claim` `--body` `--article-html` `--type`* `--path` `--strict-path` `--workspace` `--tag` `--entity` `--importance` `--confidence` `--session-id` `--prompt-id` `--turn-uuid` | `memory.written` |
 | `memhtml apply` | — | `--file` `--continue-on-error` `--detect-conflicts` `--consolidate` `--session-id` `--prompt-id` `--turn-uuid` | `batch.applied` |
 | `memhtml read` | <path> | `--session-id` `--prompt-id` `--turn-uuid` | `memory.detail` |
-| `memhtml search` | <query> | `--type` `--workspace` `--tag` `--entity` `--include-archived` `--as-of` `--limit` | `memory.hits` |
-| `memhtml recall` | <query> | `--type` `--workspace` `--tag` `--entity` `--include-archived` `--as-of` `--budget` | `recall.pack` |
+| `memhtml search` | <query> | `--type` `--workspace` `--tag` `--entity` `--facet` `--include-archived` `--as-of` `--limit` | `memory.hits` |
+| `memhtml recall` | <query> | `--type` `--workspace` `--tag` `--entity` `--facet` `--include-archived` `--as-of` `--budget` | `recall.pack` |
 | `memhtml correct` | <target> | `--title`* `--claim` `--body` `--article-html` `--type` `--reason` `--session-id` `--prompt-id` `--turn-uuid` | `memory.corrected` |
 | `memhtml link` | <src> <rel> <dst> | — | `memory.linked` |
 | `memhtml neighbors` | <path> | `--depth` `--limit` `--rel` | `memory.neighbors` |
+| `memhtml resolve` | <path> | — | `memory.resolved` |
 | `memhtml archive` | <path> | `--reason`* | `memory.archived` |
 | `memhtml reinforce` | <path> | `--signal` | `memory.reinforced` |
-| `memhtml list` | — | `--type` `--workspace` `--tag` `--entity` `--para` `--limit` `--cursor` `--include-archived` | `memory.list` |
+| `memhtml list` | — | `--type` `--workspace` `--tag` `--entity` `--facet` `--para` `--limit` `--cursor` `--include-archived` | `memory.list` |
+| `memhtml entity activity` | — | `--type` `--limit` `--include-archived` | `entity.activity` |
 | `memhtml task add` | — | `--title`* `--claim` `--body` `--status` `--due` `--workspace` `--tag` `--entity` `--session-id` `--prompt-id` `--turn-uuid` | `task.written` |
 | `memhtml task status` | <path> <status> | `--reason` | `task.updated` |
 | `memhtml task list` | — | `--status` `--workspace` `--due-before` `--limit` `--cursor` `--include-archived` `--detected` | `task.list` |
@@ -105,6 +107,7 @@ Answering a question that takes MORE THAN ONE HOP through the corpus? Write it a
 | `memhtml sleep review` | <run-id> | `--diff` | `sleep.review` |
 | `memhtml sleep merge` | <run-id> | `--skip-gate` | `sleep.merge` |
 | `memhtml sleep status` | — | — | `sleep.report` |
+| `memhtml sleep plan` | — | — | `sleep.plan` |
 | `memhtml status` | — | — | `status.health` |
 | `memhtml publish` | — | — | `publish.report` |
 | `memhtml doctor` | — | `--fix` | `doctor.report` |
@@ -132,7 +135,8 @@ Write one memory. Content-hash duplicates return the existing path, uncommitted.
 - `--body` (string) — A prose paragraph after the claim. Repeatable, one <p> each. _(repeatable)_
 - `--article-html` (string) — Raw <article> markup used verbatim in place of --claim/--body. Must contain exactly one <mark> in the first <p> or <li>; the first <time datetime> becomes the memory's event time. The store refuses format violations before any commit. Exactly one of --claim or --article-html.
 - `--type` (string) — The memory type. `arc` is absent: an arc is synthesized by sleep. _(**required**; one of: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `task`)_
-- `--path` (string) — An explicit path override. One that is not a usable memory path (rooted in a PARA bucket, ending in .html, no `.` or `..` segment) is IGNORED and the placement rule decides instead, so a malformed override lands the memory somewhere you did not name. One a file ALREADY occupies is REFUSED with ERR_WRITE_CONFLICT and nothing is written or committed: this corpus overwrites nothing, and an explicit path gets no `-2` suffix because you named one path. To replace what a memory says, use `memhtml correct <path>`.
+- `--path` (string) — An explicit path override. One that is not a usable memory path (rooted in a PARA bucket, ending in .html, no `.` or `..` segment) is IGNORED and the placement rule decides instead, so a malformed override lands the memory somewhere you did not name — pass --strict-path to have it refused instead. One a file ALREADY occupies is REFUSED with ERR_WRITE_CONFLICT and nothing is written or committed: this corpus overwrites nothing, and an explicit path gets no `-2` suffix because you named one path. To replace what a memory says, use `memhtml correct <path>`.
+- `--strict-path` (boolean) — Refuse an unusable --path instead of letting the placement rule decide. By default a --path that is not a usable memory path is re-derived, so the memory lands somewhere you did not name and the response reports that other path as a success. With this flag the write is REFUSED with ERR_INVALID_MEMORY naming the clause the path broke, and nothing is written, staged, or committed. It governs the path you NAMED: with no --path there is nothing to be strict about and the flag changes nothing, while an EMPTY or blank --path is named rather than absent and is refused — that is what your own path template renders when it produced nothing. An OCCUPIED path is refused with ERR_WRITE_CONFLICT with or without it. _(default `false`)_
 - `--workspace` (string) — Routes the memory to projects/<slug>/.
 - `--tag` (string) — A tag. Repeatable; the first one routes an unplaced resource memory.
 - `--entity` (string) — A `type:name` entity reference, e.g. service:checkout-api. Repeatable. _(repeatable)_
@@ -174,6 +178,7 @@ Ranked search: four RRF arms plus MMR. Degrades to the lexical floor.
 - `--workspace` (string) — Restrict to one workspace. STRICT: a scoped query never returns a memory with no workspace.
 - `--tag` (string) — Restrict to memories carrying any of these tags. Repeatable; each broadens. _(repeatable)_
 - `--entity` (string) — Restrict to memories carrying one `type:name` entity reference, e.g. service:checkout-api, the form a hit's `entities` publishes, so a hop is a copy. A scope matching nothing returns no hits and says so; it never widens.
+- `--facet` (string) — Restrict to memories carrying a `<dl>` facet, as name=value; the value may contain `=`, the name may not. Repeatable, and the composition is fixed: values under the SAME name broaden (--facet doc-type=runbook --facet doc-type=guide is either), DIFFERENT names narrow (--facet doc-type=runbook --facet tier=1 is both). This is the extension axis: memhtml's element and meta vocabularies are closed, so a consumer's own document kinds, states, and tiers live in `<dt>`/`<dd>` pairs and are queried here. The match is on the facet's TEXT with no case folding, so write the halves you mean to query. The stored form is the element's text content, which the parser collapses whitespace runs in and trims — so `<dd>runbook  rollback</dd>` is stored and queried single-spaced. There is no numeric comparison: a `<data value>` is indexed UNITLESS because the unit lives in the prose beside it, so the caller owns the unit and matches the text it wrote. _(repeatable)_
 - `--include-archived` (boolean) — Include archived memories. Eviction is a `git mv`, so they still exist. _(default `false`)_
 - `--as-of` (string) — Point-in-time view: returns what was believed valid at this ISO instant, including since-superseded memories (marked superseded_by). The validity window is coalesce(valid_from, event_at, created_at) <= as-of < valid_until.
 - `--limit` (int) — Hits to return. _(default `10`)_
@@ -188,6 +193,7 @@ A disclosure pack under a character budget: arcs and memories folded separately.
 - `--workspace` (string) — Restrict to one workspace. STRICT: a scoped query never returns a memory with no workspace.
 - `--tag` (string) — Restrict to memories carrying any of these tags. Repeatable; each broadens. _(repeatable)_
 - `--entity` (string) — Restrict to memories carrying one `type:name` entity reference, e.g. service:checkout-api, the form a hit's `entities` publishes, so a hop is a copy. A scope matching nothing returns no hits and says so; it never widens.
+- `--facet` (string) — Restrict to memories carrying a `<dl>` facet, as name=value; the value may contain `=`, the name may not. Repeatable, and the composition is fixed: values under the SAME name broaden (--facet doc-type=runbook --facet doc-type=guide is either), DIFFERENT names narrow (--facet doc-type=runbook --facet tier=1 is both). This is the extension axis: memhtml's element and meta vocabularies are closed, so a consumer's own document kinds, states, and tiers live in `<dt>`/`<dd>` pairs and are queried here. The match is on the facet's TEXT with no case folding, so write the halves you mean to query. The stored form is the element's text content, which the parser collapses whitespace runs in and trims — so `<dd>runbook  rollback</dd>` is stored and queried single-spaced. There is no numeric comparison: a `<data value>` is indexed UNITLESS because the unit lives in the prose beside it, so the caller owns the unit and matches the text it wrote. _(repeatable)_
 - `--include-archived` (boolean) — Include archived memories. Eviction is a `git mv`, so they still exist. _(default `false`)_
 - `--as-of` (string) — Point-in-time view: returns what was believed valid at this ISO instant, including since-superseded memories (marked superseded_by). The validity window is coalesce(valid_from, event_at, created_at) <= as-of < valid_until.
 - `--budget` (int) — Characters of quoted body. Arcs get their own envelope on top. _(default `16000`)_
@@ -226,6 +232,12 @@ The memory graph around one path, to a fixed depth of at most two hops.
 - `--limit` (int) — Distinct nodes to return, clamped to 200. `nodesDropped` counts the paths the walk reached and this limit turned away, and `scanSaturated` says the walk stopped at its own 10000-row cap, which no limit recovers. _(default `200`)_
 - `--rel` (string) — Restrict to these rels. Repeatable. _(repeatable; one of: `supersedes`, `contradicts`, `caused_by`, `leads_to`, `part_of`, `relates_to`, `example_of`, `supports`, `laterally_related`)_
 
+### `memhtml resolve`
+
+Follow a possibly-moved path forward to the memory that carries the fact now.
+
+- `<path>` — The path a receipt, citation, or older answer recorded.
+
 ### `memhtml archive`
 
 Soft-evict: `git mv` into archive/<YYYY>/ with the archive stamps. Never a delete.
@@ -244,16 +256,25 @@ Bump access bookkeeping, gated by a 900-second per-path cooldown.
 
 ### `memhtml list`
 
-Page through the corpus by type, workspace, tag, entity, or PARA bucket.
+Page through the corpus by type, workspace, tag, entity, facet, or PARA bucket.
 
 - `--type` (string) — One memory type. _(one of: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `task`)_
 - `--workspace` (string) — One workspace.
 - `--tag` (string) — One tag.
 - `--entity` (string) — One `type:name` entity reference.
+- `--facet` (string) — Restrict to memories carrying a `<dl>` facet, as name=value; the value may contain `=`, the name may not. Repeatable, and the composition is fixed: values under the SAME name broaden (--facet doc-type=runbook --facet doc-type=guide is either), DIFFERENT names narrow (--facet doc-type=runbook --facet tier=1 is both). This is the extension axis: memhtml's element and meta vocabularies are closed, so a consumer's own document kinds, states, and tiers live in `<dt>`/`<dd>` pairs and are queried here. The match is on the facet's TEXT with no case folding, so write the halves you mean to query. The stored form is the element's text content, which the parser collapses whitespace runs in and trims — so `<dd>runbook  rollback</dd>` is stored and queried single-spaced. There is no numeric comparison: a `<data value>` is indexed UNITLESS because the unit lives in the prose beside it, so the caller owns the unit and matches the text it wrote. _(repeatable)_
 - `--para` (string) — One PARA bucket. _(one of: `projects`, `areas`, `resources`, `archive`)_
 - `--limit` (int) — Rows per page. _(default `50`)_
 - `--cursor` (string) — The `next_cursor` from the previous page: the last path returned.
 - `--include-archived` (boolean) — Include archived memories. _(default `false`)_
+
+### `memhtml entity activity`
+
+Every entity with its file count and its last activity, newest first. Report only.
+
+- `--type` (string) — Restrict to one entity type, e.g. `service`. The half before the colon in a `type:name` reference.
+- `--limit` (int) — Rows to return, 1 to 500. An ask outside that is clamped into it rather than refused, and `limit` echoes the bound the answer was built under. `entityCount` is the total matching the scope, so a clamped answer is visible. _(default `50`)_
+- `--include-archived` (boolean) — Aggregate archived memories too. Excluded by default: eviction is a `git mv`, so an archived memory still exists and would otherwise keep an entity looking active. _(default `false`)_
 
 ### `memhtml task add`
 
@@ -331,12 +352,12 @@ The memory-session links, from either side.
 
 ### `memhtml sleep run`
 
-The nightly curation cycle: 17 phases, each an isolated commit on a review branch.
+The curation cycle: 17 phases, each an isolated commit on a review branch.
 
 - `--date` (string) — The run date, `YYYY-MM-DD`. Defaults to today. Names the branch.
 - `--phases` (string) — Comma-separated subset. All 17 by default: preflight, dedup-merge, entity-resolution, person-links, relationship-mining, edge-typing, confidence-decay, arc-synthesis, retention-triage, compress, reprieve, trace-consolidation, task-detection, placement-triage, integrity, state-export, report.
 - `--dry-run` (boolean) — Report per-phase counts and commit nothing. _(default `false`)_
-- `--deep` (boolean) — The deep-sleep cycle: mine a lower grouping band, group by shared entity, re-file inbox singletons, and iterate compress until a pass folds nothing. Reaches the inbox tail the nightly community gate cannot; costs more model calls. Same branch, review, and merge gate as a nightly run. _(default `false`)_
+- `--deep` (boolean) — The deep-sleep cycle: mine a lower grouping band, group by shared entity, re-file inbox singletons, and iterate compress until a pass folds nothing. Reaches the inbox tail the default community gate cannot; costs more model calls. Same branch, review, and merge gate as a run without this flag. _(default `false`)_
 - `--max-llm-calls` (int) — Cap on model calls the deep mechanisms may spend, shared across all deep phases. Exhaustion skips remaining batches with reason `budget` and the run stays green. Read only with --deep; absent means uncapped.
 
 ### `memhtml sleep resume`
@@ -364,6 +385,10 @@ Fast-forward main to the run's branch, after the discrimination gate passes.
 ### `memhtml sleep status`
 
 The latest sleep run and its per-phase outcomes.
+
+### `memhtml sleep plan`
+
+Would a run change anything? Read the signals from index counts, running no phase.
 
 ### `memhtml status`
 
@@ -416,7 +441,7 @@ Regenerate AGENTS.md from this command table. --check fails on drift.
 
 ### `memhtml serve mcp`
 
-Run the `memhtml-mcp` stdio server: 14 tools and 2 resources over this same repo.
+Run the `memhtml-mcp` stdio server: 15 tools and 3 resources over this same repo.
 
 ## Error codes
 

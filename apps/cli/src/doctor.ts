@@ -25,7 +25,7 @@ import { Git, Store } from "./api-layer.js"
  * `memhtml doctor`: the corpus's own health check, and `--fix` for the two findings a repair can settle
  * without a judgement call.
  *
- * Eight checks, and each one is a claim the design makes about the corpus rather than a lint:
+ * Nine checks, and each one is a claim the design makes about the corpus rather than a lint:
  *
  * 1. **Dangling `<link>` hrefs**: an authored edge pointing at a path the tree does not hold. Design
  *    §2.3 has no foreign key on `edges` deliberately (a `<link>` may name a file the indexer has not
@@ -49,8 +49,12 @@ import { Git, Store } from "./api-layer.js"
  *    is a task waiting on something that will never move.
  * 8. **Task inbox depth**: a task in `areas/inbox/tasks/` is work with no project, and a task inbox
  *    is meant to be drained rather than accumulated.
+ * 9. **Untyped entity references**: a `memhtml-entity` meta written as a bare name indexes under the
+ *    `unknown` type, which is supported, and is therefore unreachable by the typed reference the
+ *    `entity` scope requires. The query returns an empty set rather than an error, so a producer
+ *    emitting bare names makes its memories unfindable with nothing anywhere reporting it.
  *
- * **`--fix` repairs exactly two of the eight, and the repair logic is imported from the sleep
+ * **`--fix` repairs exactly two of the nine, and the repair logic is imported from the sleep
  * integrity phase rather than re-ported.** `archivedFormOf` decides whether a dangling target moved
  * to the archive or is genuinely gone, and `applyHeadEdits`/`link`/`unlink`/`meta` are the byte-splice
  * editors that change one head line without touching the article. A parse→serialize round trip drops
@@ -58,11 +62,12 @@ import { Git, Store } from "./api-layer.js"
  * every file it touched. A second implementation of either would be the consumer-side reimplementation
  * of producer semantics the fleet has paid for repeatedly.
  *
- * The other six report and do not repair. An inbox memory or task needs a human or an agent to decide
+ * The other seven report and do not repair. An inbox memory or task needs a human or an agent to decide
  * where it belongs, a vocabulary warning needs the author's intent, and a stale index needs
  * `memhtml index update`, which doctor names in its own suggestions rather than running behind the
  * operator's back. An overdue task needs the work done or the deadline moved, and a stale blocker
- * needs someone to decide whether the blocked task is actually ready.
+ * needs someone to decide whether the blocked task is actually ready. An untyped entity needs the
+ * producer that wrote it to name a type, which is a vocabulary decision no repair can make.
  */
 
 /** How deep the inbox may get before doctor calls it a finding. */
@@ -108,6 +113,22 @@ export interface StaleBlockerFinding {
   readonly blockerState: "archived" | "missing"
 }
 
+/**
+ * How many distinct untyped entity names a report lists before truncating.
+ *
+ * A bound rather than the whole set, because the count is a signal about a PRODUCER and twenty examples
+ * name it as well as two thousand would. `untypedEntityTotal` carries the real cardinality beside the
+ * sample, so a truncated list can never be mistaken for the whole one.
+ */
+export const UNTYPED_ENTITY_SAMPLE = 20
+
+export interface UntypedEntityFinding {
+  /** The name as authored, with no `type:` prefix. Stored under the `unknown` type. */
+  readonly entityName: string
+  /** Active files claiming it. */
+  readonly files: number
+}
+
 /** What a doctor pass found. Every list is present and possibly empty, so a parser never branches. */
 export interface DoctorReport {
   readonly root: string
@@ -127,6 +148,13 @@ export interface DoctorReport {
   readonly overdueTasks: ReadonlyArray<OverdueTaskFinding>
   /** Open tasks blocked by a task that is archived or absent from the tree. */
   readonly staleBlockers: ReadonlyArray<StaleBlockerFinding>
+  /**
+   * `memhtml-entity` metas written as a bare name, so the `entity` scope cannot reach them. Truncated
+   * to {@link UNTYPED_ENTITY_SAMPLE}; `untypedEntityTotal` is the distinct count.
+   */
+  readonly untypedEntities: ReadonlyArray<UntypedEntityFinding>
+  /** Distinct untyped entity names, whether or not they fit in the sample above. */
+  readonly untypedEntityTotal: number
   readonly warnings: ReadonlyArray<WarningFinding>
   /** Files the index holds that failed to parse when doctor re-read them. */
   readonly unparseable: ReadonlyArray<string>
@@ -288,6 +316,46 @@ const staleBlockers = (
         }))
       ),
       Effect.orElseSucceed(() => [])
+    )
+
+/**
+ * Untyped entity references: `memhtml-entity` metas written as a bare name, which the projection files
+ * under the `unknown` type rather than dropping (`@memhtml/index`'s `entityRowsFor`).
+ *
+ * Report-only, and excluded from `healthy` on the same reasoning as `overdueTasks`. `unknown` is a
+ * SUPPORTED fallback — a hand-authored file's only entity is still a real handle — so a bare name is not
+ * a defect in the corpus. What it is is invisible to the caller who would look for it: the `entity`
+ * scope requires the type half, so a memory stored under `unknown:checkout-api` cannot be found by
+ * `service:checkout-api`, and the query returns an empty set rather than an error. A PRODUCER that emits
+ * bare names therefore makes every memory it writes unreachable by the reference an agent would guess,
+ * and nothing in a green suite says so. This count is where that shows up.
+ *
+ * Truncated to {@link UNTYPED_ENTITY_SAMPLE} with the distinct total reported beside it, so the sample
+ * can never be read as the whole set.
+ */
+const untypedEntities = (
+  db: DatabaseShape
+): Effect.Effect<
+  { readonly sample: ReadonlyArray<UntypedEntityFinding>; readonly total: number },
+  never,
+  never
+> =>
+  db
+    .all<{ entity_name: string; files: number }>(
+      `SELECT e.entity_name AS entity_name, count(*) AS files
+       FROM file_entities e JOIN files f ON f.path = e.path
+       WHERE e.entity_type = 'unknown' AND f.archived = 0
+       GROUP BY e.entity_name
+       ORDER BY files DESC, e.entity_name ASC`
+    )
+    .pipe(
+      Effect.map((rows) => ({
+        sample: rows
+          .slice(0, UNTYPED_ENTITY_SAMPLE)
+          .map((row) => ({ entityName: row.entity_name, files: row.files })),
+        total: rows.length
+      })),
+      Effect.orElseSucceed(() => ({ sample: [], total: 0 }))
     )
 
 /**
@@ -482,6 +550,7 @@ export const doctor = (options: { readonly fix: boolean }) =>
     const taskDepth = yield* inboxTaskDepth(db)
     const overdue = yield* overdueTasks(db, yield* todayDate)
     const stale = yield* staleBlockers(db)
+    const untyped = yield* untypedEntities(db)
 
     const active = yield* db
       .all<{ path: string }>("SELECT path FROM files WHERE archived = 0 ORDER BY path ASC")
@@ -514,6 +583,10 @@ export const doctor = (options: { readonly fix: boolean }) =>
          * late on a to-do is structurally sound, and folding them in would make `healthy: false` the
          * normal state and stop anyone reading the flag at all. Every other finding here is a defect
          * in the corpus; those two describe work that has fallen behind.
+         *
+         * `untypedEntities` is excluded for a third reason: `unknown` is a supported storage type, so a
+         * bare entity name is a reachability cost rather than a defect. Gating on it would turn a
+         * corpus of hand-authored files red for writing its metas the way the format allows.
          */
         taskDepth <= INBOX_TASK_WARN_DEPTH &&
         warnings.length === 0 &&
@@ -528,6 +601,8 @@ export const doctor = (options: { readonly fix: boolean }) =>
       inboxTasksCrowded: taskDepth > INBOX_TASK_WARN_DEPTH,
       overdueTasks: overdue,
       staleBlockers: stale,
+      untypedEntities: untyped.sample,
+      untypedEntityTotal: untyped.total,
       warnings,
       unparseable,
       indexFresh,

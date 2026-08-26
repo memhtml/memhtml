@@ -79,7 +79,7 @@ An MCP client runs `memhtml serve mcp`, which spawns the `memhtml-mcp` server as
 1. `run` handles `serve mcp` before building the app layer, so the supervisor does not open the database the child exists to serve `apps/cli/src/run.ts:869`.
 2. `serveMcp` resolves the server entry point and spawns it with `stdio: "inherit"` and `MEMHTML_ROOT` set to the resolved root, so the client talks to the child directly `apps/cli/src/serve.ts:77`.
 3. The child launches `layerServer()` over the Node stdio transport for the process's lifetime `apps/mcp/src/bin.ts:15`.
-4. `layerServer` merges the 14-tool toolkit and the 2 resources over `layerApp(repoOverride)`, the CLI's own composition, and routes every log to stderr so stdout stays the NDJSON-RPC stream `apps/mcp/src/server.ts:52`.
+4. `layerServer` merges the 15-tool toolkit and the 3 resources over `layerApp(repoOverride)`, the CLI's own composition, and routes every log to stderr so stdout stays the NDJSON-RPC stream `apps/mcp/src/server.ts:52`.
 5. A `tools/call` lands on the handler table that `MemhtmlToolkit.toLayer` type-checks against the toolkit's own parameter and success schemas `apps/mcp/src/handlers.ts:309`.
 6. The `memory_search` handler renames the snake_case wire parameters and calls the same `searchMemories` the CLI arm calls `apps/mcp/src/handlers.ts:527`.
 7. Retrieval runs the flow-2 chain: query vector, fused RRF statement, hydrate, MMR, snippets `packages/index/src/retrieval.ts:331`.

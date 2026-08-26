@@ -8,6 +8,8 @@ import {
   isWritableMemoryType,
   MEMORY_TYPES,
   MemoryType,
+  normalizeEntityName,
+  normalizeEntityRef,
   PARA_BUCKETS,
   parseEntity,
   TASK_STATUSES,
@@ -136,6 +138,67 @@ describe("entity references", () => {
     expect(parseEntity(":sanju")).toBeUndefined()
     expect(parseEntity("person:")).toBeUndefined()
     expect(parseEntity("")).toBeUndefined()
+  })
+
+  /**
+   * The comparison form, in TypeScript.
+   *
+   * `entity-resolution` uses it to decide which `memhtml-entity` metas to rewrite, so it is the rule
+   * that decides what a canonical entity name IS. The two SQL doors fold with `lower()` on both sides
+   * instead — a narrower fold, but one that cannot disagree with itself across the JS/SQL seam.
+   */
+  it("folds case, NFC, and internal whitespace into one comparison form", () => {
+    expect(normalizeEntityName("  Checkout   API ")).toBe("checkout api")
+    expect(normalizeEntityName("cafe\u0301")).toBe(normalizeEntityName("caf\u00e9"))
+  })
+
+  it("is idempotent, so re-normalizing a stored name cannot change it", () => {
+    fc.assert(
+      fc.property(fc.string({ maxLength: 40 }), (raw) => {
+        const once = normalizeEntityName(raw)
+        expect(normalizeEntityName(once)).toBe(once)
+      }),
+      { numRuns: 1000 }
+    )
+  })
+
+  it("normalizes BOTH halves of a reference and rejoins them", () => {
+    expect(normalizeEntityRef("Service:Checkout-API")).toBe("service:checkout-api")
+  })
+
+  it("strips padding around the separator, so spacing is not part of an entity's identity", () => {
+    // Each half is trimmed independently, so `PERSON : Sanju` and `person:sanju` are one entity.
+    // A hand-authored meta written with spaces around the colon is a spelling, not a new entity.
+    expect(normalizeEntityRef("  PERSON : Sanju   Kumar ")).toBe("person:sanju kumar")
+    expect(normalizeEntityRef("person:sanju kumar")).toBe("person:sanju kumar")
+  })
+
+  it("keeps a separator-less reference separator-less rather than inventing a type", () => {
+    // The caller decides what an untyped reference means. Prefixing `unknown:` here would make this
+    // function answer a question only the projection is entitled to answer.
+    expect(normalizeEntityRef("Checkout-API")).toBe("checkout-api")
+    expect(normalizeEntityRef("")).toBe("")
+  })
+
+  it("splits a reference on the FIRST colon when normalizing, so a URL name survives", () => {
+    expect(normalizeEntityRef("URL:https://Example.com/A")).toBe("url:https://example.com/a")
+  })
+
+  it("agrees with parseEntity about where the split is", () => {
+    fc.assert(
+      fc.property(
+        fc.stringMatching(/^[A-Za-z]{1,12}$/),
+        fc.stringMatching(/^[A-Za-z0-9-]{1,20}$/),
+        (entityType, entityName) => {
+          const parsed = parseEntity(normalizeEntityRef(`${entityType}:${entityName}`))
+          expect(parsed).toEqual({
+            entityType: normalizeEntityName(entityType),
+            entityName: normalizeEntityName(entityName)
+          })
+        }
+      ),
+      { numRuns: 500 }
+    )
   })
 
   it("recognizes a person only when the prefix carries a name", () => {

@@ -118,11 +118,11 @@ export interface PhaseEnv {
   /** True on a dry run: compute and count, write no commit and no row beyond the run row. */
   readonly dryRun: boolean
   /**
-   * The deep-sleep switches, or absent on a nightly run (issue #63).
+   * The deep-sleep switches, or absent on a default run (issue #63).
    *
-   * ABSENT is the nightly cycle, byte-identical to what it did before this field existed: every deep
+   * ABSENT is the default cycle, byte-identical to what it did before this field existed: every deep
    * behavior in every phase is behind an `env.deep !== undefined` gate, so a `PhaseEnv` built without
-   * the field — every existing test, every nightly cron — takes the exact code paths it always took.
+   * the field — every existing test, every unattended caller — takes the exact code paths it always took.
    */
   readonly deep?: DeepOptions | undefined
   /**
@@ -164,10 +164,10 @@ export const emptyOutcome = (counts: PhaseCounts = {}): PhaseOutcome => ({
 })
 
 /**
- * The deep-sleep switches (issue #63): absent on a nightly run, present under `--deep`.
+ * The deep-sleep switches (issue #63): absent on a default run, present under `--deep`.
  *
  * One OBJECT rather than a boolean beside a number, because the two travel together or not at all: a
- * budget with no deep run has nothing to bound (the nightly phases carry their own per-phase caps),
+ * budget with no deep run has nothing to bound (the default phases carry their own per-phase caps),
  * and a deep run with no stated budget still needs a place for the shared counter to live. Every
  * deep behavior in every phase gates on `env.deep !== undefined`, which is what makes the no-flag
  * regression test a one-field assertion.

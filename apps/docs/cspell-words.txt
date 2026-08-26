@@ -19,6 +19,8 @@ browsable
 inspectable
 unopenable
 unparseable
+# a `stopReason` value on `memhtml resolve`: the index holds no row for the path
+unindexed
 unplaceable
 unsuffixed
 vectorless
@@ -50,6 +52,9 @@ upserts
 EWMA
 
 # --- pipeline and operations vocabulary ---------------------------------------------------
+# `Millis` is the tail of effect's `clock.currentTimeMillis`, quoted by `internals/the-sleep-pipeline`
+# where it names sleep's ONE clock read.
+Millis
 oneline
 sandboxed
 unentitled

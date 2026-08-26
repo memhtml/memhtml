@@ -36,6 +36,11 @@ describe("the typecheck gate", () => {
   it("refuses a type error in a component that the build accepts", () => {
     const fixture = readFileSync(join(root, "tests", "fixtures", "type-error.astro.txt"), "utf8")
     mkdirSync(dirname(probe), { recursive: true })
+    // Clear any probe a HARD-KILLED run left behind. The `finally` below is the normal path, and a
+    // SIGKILL bypasses it — after which the leftover fails this package's real `typecheck` on every
+    // later change, reading as a defect in whatever is under review rather than as debris. Removing it
+    // here makes that state self-healing on the next run instead of a manual discovery.
+    rmSync(probe, { force: true })
     writeFileSync(probe, fixture)
     try {
       const checked = runAstro("check")

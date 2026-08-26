@@ -343,6 +343,7 @@ const checkEveryCommand = async ({ bin, work, env }) => {
     // stale afterwards. `link` refused the resulting dangling edge, which is the store being right.
     ["link", ["link", pathA, "relates_to", pathB]],
     ["neighbors", ["neighbors", pathA]],
+    ["resolve", ["resolve", pathA]],
     ["reinforce", ["reinforce", pathA]],
     [
       "correct",
@@ -356,6 +357,7 @@ const checkEveryCommand = async ({ bin, work, env }) => {
       ]
     ],
     ["list", ["list"]],
+    ["entity activity", ["entity", "activity"]],
     ["task add", ["task", "add", "--title", "Second task"]],
     ["task list", ["task", "list"]],
     ["task status", ["task", "status", taskPath, "doing"]],
@@ -369,6 +371,7 @@ const checkEveryCommand = async ({ bin, work, env }) => {
     ["trace links", ["trace", "links", "--session-id", "s1"], traced],
     ["sleep run", ["sleep", "run", "--dry-run"]],
     ["sleep status", ["sleep", "status"]],
+    ["sleep plan", ["sleep", "plan"]],
     ["sleep review", ["sleep", "review", runId]],
     ["status", ["status"]],
     ["publish", ["publish"]],
@@ -519,7 +522,22 @@ const checkEveryResource = async ({ mcpBin, env, sleep }) => {
         workspace: "checkout-api"
       }
     })
-    const memoryPath = JSON.parse(written.result?.content?.[0]?.text ?? "{}").path ?? ""
+    const writePayload = JSON.parse(written.result?.content?.[0]?.text ?? "{}")
+    const memoryPath = writePayload.path ?? ""
+    /**
+     * The commit the pinned template's first hole takes, read off `memory_resolve`'s `indexed_commit`.
+     *
+     * That tool is the one surface that names a commit for a SINGLE path: `memory_write` publishes
+     * `path`, `created`, `deduped` and `existing_path`, and `commit_sha` belongs to
+     * `memory_write_batch` alone. It is also the RIGHT commit rather than a substitute for one — a
+     * pinned read resolves the path inside a commit's tree, and `indexed_commit` is the commit the
+     * server says its own answer was taken against, so a read that succeeds proves the two agree.
+     */
+    const resolved = await session.request("tools/call", {
+      name: "memory_resolve",
+      arguments: { path: memoryPath }
+    })
+    const writeCommit = JSON.parse(resolved.result?.content?.[0]?.text ?? "{}").indexed_commit ?? ""
 
     /**
      * `[hole, value, expected]` per published template. A template with no entry fails the census.
@@ -531,7 +549,17 @@ const checkEveryResource = async ({ mcpBin, env, sleep }) => {
      */
     const READS = {
       "memhtml://file/{path}": ["{path}", memoryPath, "Written to be read back through a resource"],
-      "memhtml://sleep/{run-id}": ["{run-id}", sleep.runId, sleep.runId]
+      "memhtml://sleep/{run-id}": ["{run-id}", sleep.runId, sleep.runId],
+      /**
+       * Two holes, filled as ONE substitution, because the census substitutes once per template. The
+       * value still carries separators — a commit sha, a slash, then a multi-segment path — so the
+       * single-segment check below covers this route as well.
+       */
+      "memhtml://at/{commit}/{path}": [
+        "{commit}/{path}",
+        `${writeCommit}/${memoryPath}`,
+        "Written to be read back through a resource"
+      ]
     }
 
     const unread = templates.filter((template) => READS[template] === undefined)
@@ -544,16 +572,24 @@ const checkEveryResource = async ({ mcpBin, env, sleep }) => {
       detail: `${String(templates.length)} published, ${String(Object.keys(READS).length)} read${unread.length > 0 ? `, UNREAD: ${unread.join(", ")}` : ""}${unpublished.length > 0 ? `, NOT PUBLISHED: ${unpublished.join(", ")}` : ""}`
     }))
 
-    await check("every resource read names a MULTI-SEGMENT value", async () => {
-      const single = Object.entries(READS).flatMap(([template, [, value]]) =>
-        String(value).includes("/") ? [] : [template]
-      )
+    /*
+     * Two ways a substitution proves nothing, refused together because they fail the same way — a read
+     * under a route no client can reach. A SINGLE segment resolves under a route a real path never
+     * takes, since a named route parameter stops at the next `/`. An EMPTY segment is a hole nothing
+     * filled: `memhtml://at//<path>` is what an absent commit composes, and it reaches the router as a
+     * URI whose commit is the empty string.
+     */
+    await check("every resource read names a MULTI-SEGMENT value with no empty hole", async () => {
+      const bad = Object.entries(READS).flatMap(([template, [, value]]) => {
+        const segments = String(value).split("/")
+        return segments.length > 1 && segments.every((segment) => segment !== "") ? [] : [template]
+      })
       return {
-        ok: single.length === 0,
+        ok: bad.length === 0,
         detail:
-          single.length > 0
-            ? `SINGLE SEGMENT: ${single.join(", ")}`
-            : `${memoryPath}, ${sleep.runId}`
+          bad.length > 0
+            ? `SINGLE SEGMENT OR EMPTY HOLE: ${bad.join(", ")}`
+            : `${memoryPath}, ${sleep.runId}, ${writeCommit.slice(0, 8)}`
       }
     })
 
@@ -595,7 +631,8 @@ const checkEveryMcpTool = async ({ mcpBin, env }) => {
    *
    * The tool surface is its own vocabulary and does not mirror the CLI's flags: `memory_type` not
    * `type`, `target_path` not `target`, `src_path`/`dst_path` not `src`/`dst`, and `paths` is an array.
-   * Guessing from the CLI produced `Invalid parameters … Missing key` on seven of the fourteen. The
+   * Guessing from the CLI produced `Invalid parameters … Missing key` on seven of the fourteen then
+   * registered. The
    * census below reads each tool's `inputSchema.required` and fails when a key here does not cover it,
    * so a rename or a new required field surfaces as a failure rather than as a wrong call.
    */
@@ -634,6 +671,7 @@ const checkEveryMcpTool = async ({ mcpBin, env }) => {
     },
     memory_link: { src_path: "PLACEHOLDER", rel: "relates_to", dst_path: "SECOND" },
     memory_neighbors: { path: "PLACEHOLDER" },
+    memory_resolve: { path: "PLACEHOLDER" },
     memory_reinforce: { paths: ["PLACEHOLDER"], signal: "positive" },
     memory_archive: { path: "DOOMED", reason: "written by the MCP smoke tier" }
   }
