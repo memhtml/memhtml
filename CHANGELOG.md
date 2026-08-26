@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1](https://github.com/memhtml/memhtml/compare/memhtml-v0.7.0...memhtml-v0.7.1) (2026-08-26)
+
+
+### Bug Fixes
+
+* **html:** stop the aside/gist property failing on chance substrings ([c66b25b](https://github.com/memhtml/memhtml/commit/c66b25b9ba805c3be7ddc17522305b0be875a42e))
+* **html:** stop the aside/gist property failing on chance substrings ([665b1fd](https://github.com/memhtml/memhtml/commit/665b1fd1873c255a82e860802e9aabcd98d03d3d))
+
 ## [0.7.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.6.0...memhtml-v0.7.0) (2026-08-26)
 
 

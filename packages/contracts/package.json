@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/contracts",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "description": "Schemas, enums, errors, and path algebra. Zero I/O.",
   "type": "module",
