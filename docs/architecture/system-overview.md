@@ -18,7 +18,7 @@ The repository is a pnpm workspace over `apps/*`, `packages/*`, and `tests-integ
 
 `@memhtml/index` reads the tree through a git adapter and derives the projection (`packages/index/src/git-adapter.ts:5-9`, 16 files, 3936 LOC). It uses the built-in `node:sqlite` driver (`packages/index/src/database.ts:4`) over 10 committed migrations in `packages/index/migrations/`, and it assembles retrieval as four weighted ranking arms fused by reciprocal rank fusion inside one statement (`packages/index/src/retrieval-sql.ts:78-288`).
 
-`@memhtml/sleep` is the largest library at 31 files and 6011 LOC. Its `PHASE_BODIES` registry names 15 nightly curation phases, from dedup and entity resolution through arc synthesis and retention triage (`packages/sleep/src/phases/index.ts:27-43`). `@memhtml/traces` reads Claude Code transcripts, `@memhtml/llm` reaches Bedrock, and `@memhtml/eval` owns the refusable discrimination gate.
+`@memhtml/sleep` is the largest library at 31 files and 6011 LOC. Its `PHASE_BODIES` registry names 15 curation phases, from dedup and entity resolution through arc synthesis and retention triage (`packages/sleep/src/phases/index.ts:27-43`). `@memhtml/traces` reads Claude Code transcripts, `@memhtml/llm` reaches Bedrock, and `@memhtml/eval` owns the refusable discrimination gate.
 
 `@memhtml/cli` is the one composition root: it depends on every library plus `@memhtml/consolidator` (`apps/cli/package.json:24-37`), and `@memhtml/mcp` depends on the CLI and reuses its operations (`apps/mcp/package.json:28-30`).
 

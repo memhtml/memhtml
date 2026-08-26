@@ -28,7 +28,7 @@ Defined at: `packages/contracts/src/types.ts:69`
 
 ## SleepRunStatus
 
-`SleepRunStatus` has five states and tracks one nightly curation run from launch through merge. The vocabulary is closed in two places, once as the inline union on `recordRun` (`packages/sleep/src/sql.ts:730`) and once as a SQL `CHECK` constraint on `sleep_runs.status` (`packages/index/migrations/0006_sleep.sql:12`).
+`SleepRunStatus` has five states and tracks one curation run from launch through merge. The vocabulary is closed in two places, once as the inline union on `recordRun` (`packages/sleep/src/sql.ts:730`) and once as a SQL `CHECK` constraint on `sleep_runs.status` (`packages/index/migrations/0006_sleep.sql:12`).
 
 This row is a report of progress rather than the system of record. `memhtml sleep resume` decides which phases already ran by reading the commit trailers on the run's own branch (`packages/index/migrations/0006_sleep.sql:1-4`, `packages/sleep/src/run.ts:138-145`). A run's progress is therefore recoverable from git history even with the row deleted.
 

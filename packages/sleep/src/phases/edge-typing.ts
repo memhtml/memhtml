@@ -78,7 +78,7 @@ import { budgetFor, closeVanishedDetections, detectionKey, mintDetectedTask } fr
  * **Detection only, still.** A promoted `contradicts` asserts the conflict and stops: nothing is
  * superseded, no `memhtml-valid-until` is closed, neither side is archived. Choosing the winner of a
  * contradiction is a one-way door on stored belief, and it belongs to an agent or a human, not to a
- * nightly job.
+ * an unattended run.
  *
  * **The `promoted` flag is PROPOSED, not set.** The `<link>` a promotion writes lives on the sleep
  * branch and goes away with `git branch -D`; `promoted = 1` lives in `.memhtml/state.db`, which no

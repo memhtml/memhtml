@@ -501,7 +501,7 @@ export interface ProposedMerge {
  *
  * **The model's `canonicalKey` does not decide this**, and the reason is worth stating. The canonical
  * name is what every `memhtml-entity` meta in the corpus is rewritten TO, and it becomes a person file's
- * path once person-links runs. Letting the model choose it would make a nightly job's write target a
+ * path once person-links runs. Letting the model choose it would make an unattended run's write target a
  * model's answer. What `canonicalKey` is for is validation: a cluster whose canonical is not one of its
  * own members is a self-contradicting answer, and the caller drops it.
  *

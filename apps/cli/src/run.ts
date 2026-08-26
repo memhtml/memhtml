@@ -652,7 +652,7 @@ const dispatch = (
          * failure becomes `refusal: "gate-failed"` with `main` never moving.
          *
          * `fake` mode, always. The gate measures the ranking stack against its own generated fixture
-         * corpus, so a live-Bedrock run would make a nightly merge conditional on a network call and
+         * corpus, so a live-Bedrock run would make an unattended merge conditional on a network call and
          * on credentials being present at 3am. The deterministic embedder's cosine relations are
          * a pure function of the text, which is the property a regression gate needs. A
          * cron whose merge silently skipped its gate because a token expired is the failure this

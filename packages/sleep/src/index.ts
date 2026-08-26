@@ -1,5 +1,5 @@
 /**
- * `@memhtml/sleep`: the nightly curation cycle as seventeen git commits.
+ * `@memhtml/sleep`: the curation cycle as seventeen git commits.
  *
  * Every phase is its own commit on `sleep/<date>`, carrying a `Memhtml-Run`/`Memhtml-Phase`/`Memhtml-Counts`
  * trailer block. The trailers are what `resume` reads, so no journal table is required and the git

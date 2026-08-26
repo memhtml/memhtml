@@ -40,7 +40,7 @@ export interface RunOptions {
   /**
    * The deep-sleep cycle (issue #63): mine a lower grouping band, group by shared entity, triage
    * inbox singletons into topic directories, and iterate compress until a pass folds nothing.
-   * Same branch, same review, same merge gate as a nightly run — deep changes what the phases
+   * Same branch, same review, same merge gate as a default run — deep changes what the phases
    * REACH, never what happens to what they produce.
    */
   readonly deep?: boolean | undefined
@@ -235,10 +235,10 @@ export const resume = (
     readonly date?: string | undefined
     /**
      * Resume the remaining phases as a DEEP run. NOT inferred from the interrupted run — the run row
-     * does not record the flag, and the commits a nightly phase leaves are indistinguishable from a
+     * does not record the flag, and the commits a default phase leaves are indistinguishable from a
      * deep phase's — so the caller restates it, exactly as the caller restates nothing else because
-     * everything else is on the branch. A deep run resumed without the flag finishes as a nightly
-     * one: already-completed deep phases keep their commits, and the remaining phases do nightly
+     * everything else is on the branch. A deep run resumed without the flag finishes as a DEFAULT
+     * one: already-completed deep phases keep their commits, and the remaining phases do default
      * work, which is safe because every deep mechanism is additive.
      */
     readonly deep?: boolean | undefined

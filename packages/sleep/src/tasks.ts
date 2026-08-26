@@ -29,14 +29,14 @@ import type { PhaseEnv } from "./env.js"
 
 /**
  * The minting discipline for a DETECTED task: one home for idempotence, evidence verification, the
- * nightly cap, and self-cleaning.
+ * per-run cap, and self-cleaning.
  *
  * Issue #44's shape is three detection surfaces sharing one discipline. The surfaces differ in what
  * they notice — a review band entity-resolution declined to merge, a near-duplicate pair the
  * divergence veto refused, a commitment a model found in a memory's own prose — and they agree on
  * everything that happens after: the finding becomes a `task` file authored `agent:sleep`, keyed on a
  * stable digest so a second night refreshes rather than duplicates, carrying its evidence verbatim,
- * inside a nightly volume cap, and closed when the finding stops appearing. That agreement is what
+ * inside a per-run volume cap, and closed when the finding stops appearing. That agreement is what
  * lives here. A copy of it per surface would be three chances to mint a task nobody can trust.
  *
  * ## A detected task is a `task`, and inherits every firewall by being one
@@ -298,7 +298,7 @@ export interface DetectionBudget {
   overflow: number
 }
 
-/** A fresh budget at the nightly cap. */
+/** A fresh budget at the per-run cap. */
 export const makeDetectionBudget = (cap: number = DETECTED_TASK_CAP): DetectionBudget => ({
   remaining: Math.max(0, Math.trunc(cap)),
   overflow: 0

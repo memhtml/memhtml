@@ -479,14 +479,14 @@ Flags:
 memhtml sleep run [--date YYYY-MM-DD] [--phases <list>] [--dry-run] [--deep] [--max-llm-calls <n>]
 ```
 
-The nightly curation cycle: one isolated commit per phase on a review branch. The summary and the `--phases` default are both derived from `SLEEP_PHASES.length` rather than typed, so the number the manifest states and the list beside it cannot disagree. `apps/cli/src/run.ts:574-589`, `apps/cli/src/commands.ts:627`
+The curation cycle: one isolated commit per phase on a review branch. The summary and the `--phases` default are both derived from `SLEEP_PHASES.length` rather than typed, so the number the manifest states and the list beside it cannot disagree. `apps/cli/src/run.ts:574-589`, `apps/cli/src/commands.ts:627`
 
 Flags:
 
 - `--date`: The run date, `YYYY-MM-DD`. Defaults to today. Names the branch. String. `apps/cli/src/commands.ts:631`
 - `--phases`: Comma-separated subset. Every phase by default. String. `apps/cli/src/commands.ts:636`
 - `--dry-run`: Report per-phase counts and commit nothing. Boolean, default false. `apps/cli/src/commands.ts:641`
-- `--deep`: The deep-sleep cycle: mine a lower grouping band, group by shared entity, re-file inbox singletons, and iterate `compress` until a pass folds nothing. Reaches the inbox tail the nightly community gate cannot, and costs more model calls. Same branch, review, and merge gate as a nightly run. Boolean, default false. `apps/cli/src/commands.ts:647`
+- `--deep`: The deep-sleep cycle: mine a lower grouping band, group by shared entity, re-file inbox singletons, and iterate `compress` until a pass folds nothing. Reaches the inbox tail the default community gate cannot, and costs more model calls. Same branch, review, and merge gate as a run without the flag. Boolean, default false. `apps/cli/src/commands.ts:647`
 - `--max-llm-calls`: Cap on model calls the deep mechanisms may spend, shared across all deep phases. Exhaustion skips remaining batches with reason `budget` and the run stays green. Read only with `--deep`; absent means uncapped. Int. `apps/cli/src/commands.ts:657`
 
 The phase names come from `SLEEP_PHASES` — seventeen as of v0.6.0, in execution order: `preflight`, `dedup-merge`, `entity-resolution`, `person-links`, `relationship-mining`, `edge-typing`, `confidence-decay`, `arc-synthesis`, `retention-triage`, `compress`, `reprieve`, `trace-consolidation`, `task-detection`, `placement-triage`, `integrity`, `state-export`, `report`. `packages/sleep/src/contract.ts:43-61`
@@ -495,7 +495,7 @@ Fifteen of them commit. `preflight` and `relationship-mining` are the two that c
 
 Eight of them spend model calls when a model is bound: `dedup-merge`, `entity-resolution`, `edge-typing`, `arc-synthesis`, `compress`, `trace-consolidation`, `task-detection`, `placement-triage`. The other nine are deterministic and cost none. `packages/sleep/src/contract.ts:168-177`
 
-`placement-triage` is deep-only. On a run without `--deep` it returns immediately, writes nothing, and commits nothing, so the nightly cycle's behavior is unchanged by its presence in the list. `packages/sleep/src/contract.ts:33-41`
+`placement-triage` is deep-only. On a run without `--deep` it returns immediately, writes nothing, and commits nothing, so a default run's behavior is unchanged by its presence in the list. `packages/sleep/src/contract.ts:33-41`
 
 A run with any failed phase exits 1, while still writing the `sleep.report` success envelope with the whole per-phase report. Both halves matter: a cron line reading only the exit code has to see that the curation did not happen, and a failure envelope carries no `data`, so reporting it as one would delete the per-phase detail that says which phases landed. A fully aborted run and a partially failed one exit the same, because a caller reading the exit code is asking one question and both answers are no; the payload already distinguishes them precisely, since an abort is every selected phase `failed` with `headSha === baseSha` and no commits. `apps/cli/src/run.ts:267-285`
 

@@ -74,7 +74,7 @@ const minedEdges = (
  * Construction: three shared claim tokens, five shared body tokens, TWO unique body tokens per
  * member, all topic-prefixed. Measured pairwise cosines per stem (2026-08-24): marsh 0.8148-0.8220,
  * tundra 0.8000-0.8083, playa 0.8000 — every pair above the 0.72 deep floor and below the 0.85
- * nightly floor, so the NIGHTLY band cannot see one edge here and the deep band sees them all.
+ * default floor, so the DEFAULT band cannot see one edge here and the deep band sees them all.
  * Cross-stem maximum 0.0385, so two trios never chain. `confidence: "1.0"` at age ~0 scores 0.32,
  * inside the compress band (0.3, 0.7] (measured against `scoreRetention`), so every member is a
  * compress candidate the moment it has a community.
@@ -165,11 +165,11 @@ const foldEverythingModel = (): ScriptedModel =>
   })
 
 describe("deep mining (guard a: band isolation)", () => {
-  it("writes the deep band under its own rel and leaves the nightly set untouched, and vice versa", async () => {
+  it("writes the deep band under its own rel and leaves the default set untouched, and vice versa", async () => {
     /**
-     * The two bands replace atomically PER REL, so a deep re-mine cannot clobber the nightly
-     * `relates_to` set and a nightly re-mine cannot clobber the deep band. Driven through the real
-     * phase twice — deep first, nightly second — because the clobber would happen in the SECOND
+     * The two bands replace atomically PER REL, so a deep re-mine cannot clobber the default
+     * `relates_to` set and a default re-mine cannot clobber the deep band. Driven through the real
+     * phase twice — deep first, default second — because the clobber would happen in the SECOND
      * run's `replaceMinedEdges`, not the first's.
      */
     await withFixture(
@@ -178,23 +178,23 @@ describe("deep mining (guard a: band isolation)", () => {
           // Deep run: both bands land.
           yield* relationshipMining(envFor(fixture, { deep: true }))
           const afterDeep = yield* minedEdges(fixture)
-          const nightly = afterDeep.filter((edge) => edge.rel === "relates_to")
+          const standard = afterDeep.filter((edge) => edge.rel === "relates_to")
           const deep = afterDeep.filter((edge) => edge.rel === DEEP_GROUPING_REL)
-          // The trio's three unordered pairs are measured 0.8000-0.8220: all deep-band, none
-          // nightly. Six ROWS, because the kernel offers each pair to both endpoints'
-          // neighborhoods — the same doubling the nightly band has always had.
+          // The trio's three unordered pairs are measured 0.8000-0.8220: all deep-band, none in the
+          // default band. Six ROWS, because the kernel offers each pair to both endpoints'
+          // neighborhoods — the same doubling the default band has always had.
           expect(deep.length).toBe(6)
-          expect(nightly.length).toBe(0)
+          expect(standard.length).toBe(0)
           for (const edge of deep) {
             expect(edge.strength).toBeGreaterThanOrEqual(DEEP_MINING_COSINE_FLOOR)
             expect(edge.strength).toBeLessThan(MINING_COSINE_FLOOR)
           }
 
-          // Nightly run over the same corpus: the deep band SURVIVES, the nightly set is replaced.
+          // Default run over the same corpus: the deep band SURVIVES, the default set is replaced.
           yield* relationshipMining(envFor(fixture, { deep: false }))
-          const afterNightly = yield* minedEdges(fixture)
-          expect(afterNightly.filter((edge) => edge.rel === DEEP_GROUPING_REL)).toEqual(deep)
-          expect(afterNightly.filter((edge) => edge.rel === "relates_to").length).toBe(0)
+          const afterDefault = yield* minedEdges(fixture)
+          expect(afterDefault.filter((edge) => edge.rel === DEEP_GROUPING_REL)).toEqual(deep)
+          expect(afterDefault.filter((edge) => edge.rel === "relates_to").length).toBe(0)
         }),
       { seed: [...trioFor("marsh")] }
     )
@@ -204,8 +204,8 @@ describe("deep mining (guard a: band isolation)", () => {
     await withFixture(
       (fixture) =>
         Effect.gen(function* () {
-          const nightly = yield* relationshipMining(envFor(fixture))
-          expect(nightly.counts.deepMined).toBeUndefined()
+          const standard = yield* relationshipMining(envFor(fixture))
+          expect(standard.counts.deepMined).toBeUndefined()
           expect(yield* minedEdges(fixture)).toEqual([])
 
           const deep = yield* relationshipMining(envFor(fixture, { deep: true }))
@@ -295,11 +295,11 @@ describe("iterate-until-quiet (guard d) and the budget (guard e)", () => {
     )
   })
 
-  it("runs a second pass after a folding pass, and the nightly phase never iterates", async () => {
+  it("runs a second pass after a folding pass, and a run without --deep never iterates", async () => {
     /**
      * Pass 1 folds the trio into a canonical; the loop re-indexes, re-mines, re-scores, and pass 2
      * runs over the post-fold corpus (the canonical alone forms no community, so pass 2 is quiet
-     * and the loop exits at zero canonicals rather than at the cap). The nightly control makes the
+     * and the loop exits at zero canonicals rather than at the cap). The no-flag control makes the
      * same corpus fold ONCE with no second retention pass, observed through the call count.
      */
     const model = foldEverythingModel()
@@ -477,7 +477,7 @@ describe("placement triage (guard c: destinations and refusals)", () => {
     )
   })
 
-  it("does nothing at all on a nightly run", async () => {
+  it("does nothing at all on a run without --deep", async () => {
     const model = placeAllInto("areas/ledgers")
     await withFixture(
       (fixture) =>
@@ -493,12 +493,12 @@ describe("placement triage (guard c: destinations and refusals)", () => {
 })
 
 describe("the no-flag regression (guard f)", () => {
-  it("keeps the nightly mined-edge set, compress selection, and phase plan byte-identical", async () => {
+  it("keeps the default mined-edge set, compress selection, and phase plan byte-identical", async () => {
     /**
      * THE test the whole feature answers to. One corpus holding a deep trio, an entity cluster,
-     * and nothing the nightly cycle can act on; two full runs, flag off, one with a prior deep
-     * run's band sitting in the index — and the second nightly run must behave as if deep never
-     * existed: same mined set, zero compress candidates (no community at the nightly floor), no
+     * and nothing a default run can act on; two full runs, flag off, one with a prior deep
+     * run's band sitting in the index — and the second default run must behave as if deep never
+     * existed: same mined set, zero compress candidates (no community at the default floor), no
      * placement work, no deep count keys anywhere.
      */
     const model = foldEverythingModel()
@@ -544,7 +544,7 @@ describe("the no-flag regression (guard f)", () => {
 
   it("reaches memories under --deep that the same corpus and model cannot reach without it", async () => {
     /**
-     * The headline of issue #63 as one assertion: nightly run folds nothing (asserted above), deep
+     * The headline of issue #63 as one assertion: a default run folds nothing (asserted above), deep
      * run folds BOTH the trio (via the grouping band) and the entity cluster (via entity groups).
      */
     const model = foldEverythingModel()

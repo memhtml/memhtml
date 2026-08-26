@@ -656,7 +656,7 @@ const vocabularyPage = (registry: Registry): ReferencePage => ({
 const sleepPhasesPage = (registry: Registry, base: string): ReferencePage => ({
   id: `${TIER}/sleep-phases`,
   title: "Sleep phases",
-  description: "The nightly curation cycle's phases, in execution order.",
+  description: "The curation cycle's phases, in execution order.",
   source: SOURCES.sleep,
   filePath: `${DOCS_COLLECTION}/${TIER}/sleep-phases.md`,
   lastUpdated: registry.commitDates.sleep,

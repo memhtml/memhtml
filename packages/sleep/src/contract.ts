@@ -31,7 +31,7 @@ import { Effect } from "effect"
  * until the next night.
  *
  * `placement-triage` is deep-only (issue #63): on a run without `--deep` it returns immediately,
- * writes nothing, and commits nothing, so the nightly cycle's behavior is unchanged by its presence
+ * writes nothing, and commits nothing, so a default run's behavior is unchanged by its presence
  * in this list. Its slot has the same two edges task-detection's does, plus one more on each side:
  * it must run after `compress` (it re-files only what even deep grouping could not fold, so folding
  * has to have had its chance first) and after `task-detection` (a move mid-scan would hand the
@@ -161,7 +161,7 @@ export const TRAILER_COUNTS = "Memhtml-Counts"
  * the highest-signal sources at no marginal cost, and this one is the batched scan over the active
  * corpus, capped like every other phase and degrading to `no model bound` with nothing written.
  *
- * `placement-triage` spends model calls only under `--deep` (issue #63). On a nightly run it returns
+ * `placement-triage` spends model calls only under `--deep` (issue #63). On a default run it returns
  * immediately with a reason, so its membership here reads "spends calls when deep AND a model is
  * bound" — the same two-condition degradation `trace-consolidation` has for its consolidator.
  */

@@ -5,7 +5,7 @@ description: Seventeen curation phases in a fixed order, each an isolated commit
 
 ## 1. Seventeen phases on a branch
 
-The nightly curation run is called sleep. It executes the phases of `SLEEP_PHASES` in a fixed order — seventeen as of v0.6.0 (`packages/sleep/src/contract.ts:43`) — each producing its own commit on a branch named `sleep/<YYYY-MM-DD>`, suffixed `-2` when it runs a second time the same day (`packages/sleep/src/run.ts:45`). The branch is created before any phase runs, so `main` is never touched (`packages/sleep/src/run.ts:95-97`). A dry run creates no branch, which is safe because no phase writes a file in dry mode.
+The curation run is called sleep. It has no schedule of its own: nothing in the system reads a clock to decide whether to run, so the cadence is the caller's — see [Sleep has no schedule](#17-sleep-has-no-schedule). It executes the phases of `SLEEP_PHASES` in a fixed order — seventeen as of v0.6.0 (`packages/sleep/src/contract.ts:43`) — each producing its own commit on a branch named `sleep/<YYYY-MM-DD>`, suffixed `-2` when it runs a second time the same day (`packages/sleep/src/run.ts:45`). The branch is created before any phase runs, so `main` is never touched (`packages/sleep/src/run.ts:95-97`). A dry run creates no branch, which is safe because no phase writes a file in dry mode.
 
 Figure 1 shows the shape of a run. Both of the gate's outcomes are drawn, because the refusal is the property worth seeing. There is no third outcome and no rollback.
 
@@ -14,25 +14,25 @@ Figure 1 shows the shape of a run. Both of the gate's outcomes are drawn, becaus
 
 **Figure 1: `main` moves only when a gate that can refuse says so.** The branch is cut before any phase executes, so a failed run needs no compensating writes: the abort is `git branch -D` and `main` never moved. The two boxes leaving the gate are the only two outcomes.
 
-| #  | Phase                 | Model | Git effect                                                                                                            |
-| -- | --------------------- | ----- | --------------------------------------------------------------------------------------------------------------------- |
-| 1  | `preflight`           | no    | none; runs `index update` and snapshots counts                                                                        |
-| 2  | `dedup-merge`         | yes   | one commit: keeper gains `memhtml-supersedes`, dropped files `git mv` to archive, vetoed pairs become review tasks    |
-| 3  | `entity-resolution`   | yes   | one commit: `memhtml-entity` values normalized and cluster-merged in place, review-band pairs become review tasks     |
-| 4  | `person-links`        | no    | one commit: `memhtml-about-person` links to `resources/people/*`                                                      |
-| 5  | `relationship-mining` | no    | no commit; derived `relates_to` rows in the index only                                                                |
-| 6  | `edge-typing`         | yes   | one commit: typed edges promoted, corroborated contradictions written, single-detection ones deferred to review tasks |
-| 7  | `confidence-decay`    | no    | one commit: `memhtml-confidence` rewritten for un-reinforced files                                                    |
-| 8  | `arc-synthesis`       | yes   | one commit per arc                                                                                                    |
-| 9  | `retention-triage`    | no    | one commit: files in the evict band `git mv` to archive                                                               |
-| 10 | `compress`            | yes   | one commit per batch                                                                                                  |
-| 11 | `reprieve`            | no    | one commit: `memhtml-valid-until` extended, or the file archived                                                      |
-| 12 | `trace-consolidation` | yes   | one commit per distilled memory                                                                                       |
-| 13 | `task-detection`      | yes   | one commit: task files for commitments and follow-ups the corpus records                                              |
-| 14 | `placement-triage`    | yes   | deep-only (`--deep`): one commit re-filing inbox singletons into topic directories; a nightly run does nothing        |
-| 15 | `integrity`           | no    | one commit: dangling hrefs repaired, artifacts regenerated                                                            |
-| 16 | `state-export`        | no    | one commit: `.memhtml/state/access.jsonl`                                                                             |
-| 17 | `report`              | no    | one commit: `.memhtml/sleep/<run-id>.html`                                                                            |
+| #  | Phase                 | Model | Git effect                                                                                                              |
+| -- | --------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------- |
+| 1  | `preflight`           | no    | none; runs `index update` and snapshots counts                                                                          |
+| 2  | `dedup-merge`         | yes   | one commit: keeper gains `memhtml-supersedes`, dropped files `git mv` to archive, vetoed pairs become review tasks      |
+| 3  | `entity-resolution`   | yes   | one commit: `memhtml-entity` values normalized and cluster-merged in place, review-band pairs become review tasks       |
+| 4  | `person-links`        | no    | one commit: `memhtml-about-person` links to `resources/people/*`                                                        |
+| 5  | `relationship-mining` | no    | no commit; derived `relates_to` rows in the index only                                                                  |
+| 6  | `edge-typing`         | yes   | one commit: typed edges promoted, corroborated contradictions written, single-detection ones deferred to review tasks   |
+| 7  | `confidence-decay`    | no    | one commit: `memhtml-confidence` rewritten for un-reinforced files                                                      |
+| 8  | `arc-synthesis`       | yes   | one commit per arc                                                                                                      |
+| 9  | `retention-triage`    | no    | one commit: files in the evict band `git mv` to archive                                                                 |
+| 10 | `compress`            | yes   | one commit per batch                                                                                                    |
+| 11 | `reprieve`            | no    | one commit: `memhtml-valid-until` extended, or the file archived                                                        |
+| 12 | `trace-consolidation` | yes   | one commit per distilled memory                                                                                         |
+| 13 | `task-detection`      | yes   | one commit: task files for commitments and follow-ups the corpus records                                                |
+| 14 | `placement-triage`    | yes   | deep-only (`--deep`): one commit re-filing inbox singletons into topic directories; a run without `--deep` does nothing |
+| 15 | `integrity`           | no    | one commit: dangling hrefs repaired, artifacts regenerated                                                              |
+| 16 | `state-export`        | no    | one commit: `.memhtml/state/access.jsonl`                                                                               |
+| 17 | `report`              | no    | one commit: `.memhtml/sleep/<run-id>.html`                                                                              |
 
 The order encodes six dependencies. Entity resolution precedes person links so that aliases have already merged. Confidence decay precedes retention triage so that triage scores the decayed value. Dedup-merge precedes both compress and retention triage, because both operate on the post-merge set. Task detection precedes integrity, because it writes files and integrity regenerates the directory listings those files belong in. And placement triage sits between the two, after compress and task detection and before integrity: it re-files only what deep grouping could not fold, a move mid-scan would hand the detector paths that no longer hold files, and it moves files whose inbound hrefs it rewrites itself, which integrity's archive-chasing repair cannot do.
 
@@ -45,7 +45,7 @@ Figure 2 draws the four edges among the six phases that carry them. Every phase 
 
 The phases of `LLM_PHASES` call a model — eight as of v0.6.0 (`packages/sleep/src/contract.ts:168`). The other nine are deterministic and cost no model call.
 
-Two of the eight still do real work without one, and they degrade differently from the other six. `entity-resolution`'s normalization and character-overlap passes are a pre-stage, so a credential-free run still collapses `Checkout API` onto `checkout api`; what an absent model removes is the decision core, not the phase. `dedup-merge` falls back to the 0.92 cosine floor plus the divergence veto and still commits, so a night with no credentials folds every duplicate a cosine can prove. The other six report a reason and write nothing. `placement-triage` carries a second condition on top of the model: it spends calls only under `--deep`, and a nightly run returns immediately with a reason.
+Two of the eight still do real work without one, and they degrade differently from the other six. `entity-resolution`'s normalization and character-overlap passes are a pre-stage, so a credential-free run still collapses `Checkout API` onto `checkout api`; what an absent model removes is the decision core, not the phase. `dedup-merge` falls back to the 0.92 cosine floor plus the divergence veto and still commits, so a run with no credentials folds every duplicate a cosine can prove. The other six report a reason and write nothing. `placement-triage` carries a second condition on top of the model: it spends calls only under `--deep`, and a run without the flag returns immediately with a reason.
 
 Seven of the eight judge a group of memories at once and share one batching kernel (`packages/sleep/src/batch.ts`): the phase sorts its rows, the kernel slices them into batches, mints opaque `m1`..`mN` keys over each batch's members, frames the member list as one prompt, and resolves the keys an answer names back to rows. A key the batch never offered resolves to nothing and is dropped, so a model can only ever name a member it was shown, never a path it inferred. The kernel does no sorting of its own and preserves the order it is handed, which is what lets each phase state that its own batch boundaries and prompt bytes are a function of the corpus alone. `trace-consolidation` is the eighth, and it reaches its model through the consolidator rather than through this kernel.
 
@@ -179,7 +179,7 @@ What is written is decided by code. A directional rel above the confidence floor
 
 `none`, or anything below the floor, writes nothing and leaves the pair a mined `relates_to`. That is the answer an unsure model is told to pick, and it costs the corpus nothing.
 
-The phase detects and stops there. A promoted `contradicts` asserts the conflict: nothing is superseded, no `memhtml-valid-until` is closed, and neither side is archived. Choosing the winner of a contradiction is a one-way door on stored belief, and it belongs to an agent or a human rather than to a nightly job.
+The phase detects and stops there. A promoted `contradicts` asserts the conflict: nothing is superseded, no `memhtml-valid-until` is closed, and neither side is archived. Choosing the winner of a contradiction is a one-way door on stored belief, and it belongs to an agent or a human rather than to an unattended run.
 
 ## 10. Detected tasks are proposals with evidence
 
@@ -241,15 +241,15 @@ A target that is simply gone means the edge asserts a relationship to nothing, s
 
 `@memhtml/sleep` takes the gate as a parameter and supplies no default (`packages/sleep/src/review.ts:238`). A package that cannot import the eval package must not be able to default it silently, so the composition is visible in the CLI's own wiring or it does not exist (`apps/cli/src/run.ts:496-515`).
 
-The gate runs with the fake embedder (`packages/eval/src/run.ts:174`), because it measures the ranking stack against a generated fixture corpus. A gate that needed live embeddings would make a nightly merge conditional on a network call and on credentials being present at 3am. [Testing posture](/internals/testing-posture/) develops the gate itself, and the run-and-review procedure is an operations how-to under [Learn](/learn/).
+The gate runs with the fake embedder (`packages/eval/src/run.ts:174`), because it measures the ranking stack against a generated fixture corpus. A gate that needed live embeddings would make an unattended merge conditional on a network call and on credentials being present whenever the caller happened to fire it. [Testing posture](/internals/testing-posture/) develops the gate itself, and the run-and-review procedure is an operations how-to under [Learn](/learn/).
 
 ## 16. Deep sleep: the occasional, budgeted cycle
 
-`memhtml sleep run --deep` trades model cost for reach (issue #63). The nightly cycle's community gate is the right cost guard for every-night operation, and it has a structural blind spot: `compress` selects only memories with a graph community, communities come from label propagation over mined edges, and mining is floored at 0.85 cosine. On a measured bulk-import inbox of 3,079 files, 8% had a neighbor at that floor and 84% touched no edge at all — no community, so no compress candidacy, at any frequency. Deep sleep is for exactly those corpus states: bulk imports, migrations, any stretch where writes outpaced curation.
+`memhtml sleep run --deep` trades model cost for reach (issue #63). The default community gate is the right cost guard for routine operation, and it has a structural blind spot: `compress` selects only memories with a graph community, communities come from label propagation over mined edges, and mining is floored at 0.85 cosine. On a measured bulk-import inbox of 3,079 files, 8% had a neighbor at that floor and 84% touched no edge at all — no community, so no compress candidacy, at any frequency. Deep sleep is for exactly those corpus states: bulk imports, migrations, any stretch where writes outpaced curation.
 
 Under the flag, four mechanisms turn on, and nothing else changes — the same branch lifecycle, the same review and merge gate, the same degradation posture:
 
-- **A grouping-tier mining band.** `relationship-mining` additionally mines [0.72, 0.85) as derived `laterally_related` edges (`packages/sleep/src/phases/relationship-mining.ts`). Their one consumer is label propagation's partition for the deep phases; `memoryEdges` excludes the band, so nightly retention scoring, PageRank, and bridge counts never see it.
+- **A grouping-tier mining band.** `relationship-mining` additionally mines [0.72, 0.85) as derived `laterally_related` edges (`packages/sleep/src/phases/relationship-mining.ts`). Their one consumer is label propagation's partition for the deep phases; `memoryEdges` excludes the band, so default-run retention scoring, PageRank, and bridge counts never see it.
 - **Entity-keyed grouping.** Compress candidates the widened graph still leaves without a community are grouped by shared `file_entities` reference — the pair class whose prose diverges while the subject is identical, invisible to any cosine. Hub entities (more than 64 active claimants) are stop-words and are skipped.
 - **Placement triage.** A deep-only phase proposes an existing `areas/<topic>` or `resources/<topic>` directory — or at most five new ones per run — for each inbox memory even deep grouping could not attach, and `git mv`s the confident placements, rewriting inbound hrefs in the same commit. `keep-inbox` is the model's refusal and the ordinary answer.
 - **Iterate-until-quiet compress.** A pass that folded something re-indexes, re-mines, re-scores, and folds again, up to three passes, because a canonical is a new neighbor and a new community member.
@@ -257,3 +257,13 @@ Under the flag, four mechanisms turn on, and nothing else changes — the same b
 `--max-llm-calls <n>` is one budget every deep phase shares. Exhaustion skips remaining batches with the distinct count `budgetSkipped` — a budget stop and a model outage need different mornings-after — and the run stays green. `--dry-run` composes with `--deep`: mining and grouping counts are computed deterministically with no model call and no write.
 
 What deep sleep will not do: it never changes what happens to a fold or a move (everything lands on the review branch behind the same discrimination gate), it never lets the grouping band touch eviction decisions, and it never re-files a task, an arc, or anything outside the inbox.
+
+## 17. Sleep has no schedule
+
+Sleep reads a clock only to STAMP, never to trigger. One `clock.currentTimeMillis` supplies the run's timestamps (`packages/sleep/src/run.ts`) and `edits.ts` does date arithmetic to compute a validity bound; no phase, and nothing in the runner, consults a clock to decide whether to do work. There is no scheduler, no cron entry, and no default cadence anywhere in the package.
+
+The absence is deliberate, and one design decision already rests on it: sleep is the one capability absent from the MCP tool surface, because it is an operator action that rewrites confidence across the corpus, archives memories, and produces a branch a human is expected to read (`apps/mcp/src/tools.ts`). `memhtml sleep run` is the entry point, and the caller owns when it fires.
+
+**Trigger on volume, not on the calendar, and the reason is correctness rather than cost.** A machine-proposed entity merge is applied only once two SEPARATE runs have independently reached the same conclusion — `state.entity_corroboration` counts detections and promotes at two (`packages/index/state-migrations/S0002_entity_corroboration.sql`). What makes the second detection evidence is that the corpus CHANGED between the two reads. Two runs back to back over an unchanged corpus re-read the same rows, so the second rubber-stamps the first and the counter reaches two on one piece of evidence. A calendar cannot supply that independence and a volume threshold can: run when enough has been written since the last one.
+
+The same reading applies to every other phase, for the cheaper reason. A run over an unchanged corpus re-derives the same deterministic scores over the same rows, so it costs model calls and produces commits nobody needs to read. What "enough has been written" means is the caller's to choose, because only the caller knows its own write rate; memhtml owns the signal and not the decision.

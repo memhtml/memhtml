@@ -1083,7 +1083,7 @@ describe("linkMemories", () => {
     expect(read.doc.links).toEqual([{ rel: "relates_to", href: `/${target.path}` }])
 
     // Re-running writes nothing and commits nothing — which is what makes the sleep conflict
-    // phase's nightly re-promotion of one corroborated edge cost one commit in total.
+    // phase's per-run re-promotion of one corroborated edge cost one commit in total.
     const second = await run(repo.store.linkMemories(source.path, "relates_to", target.path))
     expect(second.commitSha).toBeNull()
     expect(await commitCount(repo)).toBe(before + 1)
@@ -1356,7 +1356,7 @@ describe("mergeBranch", () => {
  * A failed commit leaves a CLEAN tree, for every singular operation.
  *
  * This is the failure mode with the longest reach in the system: `requireCleanTree` is sleep's
- * preflight, so one uncompensated write leaves a staged file behind and every nightly run from then
+ * preflight, so one uncompensated write leaves a staged file behind and every sleep run from then
  * on refuses to start. The assertion is therefore `requireCleanTree` itself, plus the bytes, plus
  * `git status` — not the return value, which is an error either way.
  *

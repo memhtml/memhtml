@@ -31,7 +31,7 @@ import { budgetFor, closeVanishedDetections, detectionKey, mintDetectedTask } fr
  * 4. **Mint (deterministic, and this is where the guards are).** The key must resolve to an offered
  *    member; the confidence must clear {@link TASK_DETECT_FLOOR}; the sentence must exist VERBATIM in
  *    the cited file's own article text, which `mintDetectedTask` checks by reading the file; the
- *    nightly budget must have room. Everything the file says is derived from the member the model was
+ *    per-run budget must have room. Everything the file says is derived from the member the model was
  *    shown plus its own quoted sentence — the model never names a path, a title, or a status.
  *
  * **No self-referential loops, and ONE guard rather than two.** `recentActiveMemories` excludes `task`

@@ -3,7 +3,7 @@ title: Internals
 description: Why the system is built the way it is, with the implementing code cited for every decision.
 ---
 
-These pages explain why the system is shaped the way it is. Each chapter takes one mechanism and says what it is, how it works, which failure it prevents, and where in the source that lives. Someone who wants to install the store, write a memory, or operate a nightly curation run is served by [Learn](/learn/). Someone who wants the exact spelling of a flag or an error code is served by [Reference](/reference/).
+These pages explain why the system is shaped the way it is. Each chapter takes one mechanism and says what it is, how it works, which failure it prevents, and where in the source that lives. Someone who wants to install the store, write a memory, or operate a curation run is served by [Learn](/learn/). Someone who wants the exact spelling of a flag or an error code is served by [Reference](/reference/).
 
 ## 1. Two invariants
 

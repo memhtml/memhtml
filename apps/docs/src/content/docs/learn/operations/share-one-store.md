@@ -40,7 +40,7 @@ A run holds a checked-out `sleep/<date>` branch. A concurrent write therefore co
 
 `git branch -D` discards more than the commits. A run records the state-plane writes it earns — a `trace-consolidation` watermark, an edge promotion, an entity promotion — as lines in `.memhtml/sleep/<run-id>.pending.jsonl`, a committed file on the run's own branch, and `memhtml sleep merge` applies them only after the fast-forward succeeds (`packages/sleep/src/contract.ts:306`). Dropping the branch drops that ledger with it, so those writes are never made and the sessions in it are simply re-read on the next cycle. That is the design working: `.memhtml/state.db` is not rebuildable from the tree, so a watermark written during a phase would outlive the branch that earned it, and because the watermark is an anti-join the transcript would go unread behind a row asserting it was handled. A write of your own that landed on the branch has no such ledger, which is the asymmetry this section exists to warn about.
 
-Stop other writes for the length of a run. In practice that means the nightly `sleep run` sits at an hour when nothing else writes, and you start an interactive run with the agent idle.
+Stop other writes for the length of a run. In practice that means `sleep run` fires when nothing else is writing, and you start an interactive run with the agent idle.
 
 ## The supervisor holds nothing
 

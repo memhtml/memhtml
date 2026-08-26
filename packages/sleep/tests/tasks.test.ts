@@ -147,7 +147,7 @@ describe("person-links", () => {
 describe("entity-resolution", () => {
   it("does not normalize a task's mixed-case entity meta", async () => {
     // `t-ask-imani` carries `Service:Checkout-API`, which pass one of this phase would lowercase —
-    // a nightly job editing live working state, and a rewrite of the task's own bytes.
+    // an unattended run editing live working state, and a rewrite of the task's own bytes.
     await withFixture(
       (fixture) =>
         Effect.gen(function* () {

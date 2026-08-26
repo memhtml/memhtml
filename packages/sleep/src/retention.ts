@@ -26,7 +26,7 @@ import {
  * Shared as one FUNCTION because the consumers must agree by construction: they read the same
  * corpus through the same scoring, so a memory that triage banded COMPRESS is the same memory
  * compress sees banded COMPRESS. The index is refreshed once in preflight and the inputs below are
- * all index reads, so the nightly executions are recomputations of one deterministic function over
+ * all index reads, so the two executions are recomputations of one deterministic function over
  * unchanged rows — they agree by determinism, not by sharing a value. NOT memoized per run, and the
  * reason is where a cache could live: a module-level cache is the contaminating-state failure this
  * repo has paid for repeatedly (see `PhaseEnv.detectionBudget`'s note), it would serve stale scores

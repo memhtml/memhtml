@@ -56,7 +56,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
  *
  * And the consequence is not a lost commitment. `fabricatedQuoteReason` refuses the WHOLE TURN, so the
  * batch produces nothing, so it is never watermarked, so the next night selects the same batch and
- * fails the same way — a livelock on an honest answer, costing every candidate in the batch nightly.
+ * fails the same way — a livelock on an honest answer, costing every candidate in the batch on every run.
  * That is why the check ships with both arms from day one.
  *
  * ## Why the fabrication tests still have to fail

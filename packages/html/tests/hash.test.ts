@@ -10,7 +10,7 @@ import { FORMAT_MD_EXAMPLE, fileWith, MINIMAL_ARTICLE, parseOk } from "./fixture
 /**
  * The content hash. Meta-invariance is the single most load-bearing property here: it is what
  * makes confidence decay and access bookkeeping not look like content changes, so a hash that
- * moved on a nightly decay pass would present the whole corpus as new content and collapse
+ * moved on a corpus-wide decay pass would present the whole corpus as new content and collapse
  * dedup.
  */
 

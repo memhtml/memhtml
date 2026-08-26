@@ -91,7 +91,7 @@ Each line is safe to repeat. An unchanged HEAD and a clean tree touch nothing, a
 
 `memhtml publish` is deterministic to the byte, so two runs over an unchanged corpus write nothing and commit nothing.
 
-`memhtml sleep merge` stays off the cron. A curation run rewrites confidence across the corpus and archives memories, so the branch waits for a person to read `memhtml sleep review` first. The nightly `sleep run` produces the branch, and landing it is a decision. See [run and review a sleep cycle](/learn/operations/run-and-review-a-sleep-cycle/).
+`memhtml sleep merge` stays off the cron. A curation run rewrites confidence across the corpus and archives memories, so the branch waits for a person to read `memhtml sleep review` first. A `sleep run` produces the branch, and landing it is a decision. See [run and review a sleep cycle](/learn/operations/run-and-review-a-sleep-cycle/).
 
 ## Reading the log files
 

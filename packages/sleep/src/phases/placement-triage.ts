@@ -34,7 +34,7 @@ import { deepCommunityLabels } from "./compress.js"
  * reports `inboxCrowded` and no phase acts on it. This one does, under the same discipline as every
  * other mutation: on the review branch, in its own commit, reversible by discarding the branch.
  *
- * **On a nightly run the phase returns immediately**, before any read, with a reason — the same
+ * **On a default run the phase returns immediately**, before any read, with a reason — the same
  * shape `compress` has for a missing model. That is the whole no-flag contract: a run without
  * `--deep` cannot reach a single line of this phase's work.
  *
@@ -87,7 +87,7 @@ export const placementTriage: PhaseBody = (env) =>
     }
 
     /**
-     * Candidates: active inbox memories with no community even under the WIDENED graph — nightly
+     * Candidates: active inbox memories with no community even under the WIDENED graph — default
      * edges plus the deep grouping band, the same partition deep compress groups by. Issue #63's
      * "true singleton" is exactly this: a file even the 0.72 band could not attach to anything.
      * A file the widened graph DID reach belongs to compress's pipeline (this run or a later one),

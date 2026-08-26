@@ -731,11 +731,11 @@
       "priority": "medium",
       "refines": [],
       "satisfies": [],
-      "sentence": "If a nightly phase reads the corpus, then the sleep cycle shall not bump salience access counts.",
+      "sentence": "If a sleep phase reads the corpus, then the sleep cycle shall not bump salience access counts.",
       "status": "implemented",
       "systemName": "sleep cycle",
       "systemResponse": "bump salience access counts",
-      "trigger": "a nightly phase reads the corpus",
+      "trigger": "a sleep phase reads the corpus",
       "updatedAt": "2026-08-08T01:57:30.129Z",
       "verificationMethod": "inspection",
       "verificationNote": "sleep bypasses the tool path",
@@ -1184,7 +1184,7 @@
       "trigger": "a run does not pass --deep",
       "updatedAt": "2026-08-25T00:00:00.000Z",
       "verificationMethod": "test",
-      "verificationNote": "The whole no-flag contract: packages/sleep/src/phases/placement-triage.ts returns immediately with a reason before any read, so the nightly cycle's behavior is unchanged by the phase's presence in SLEEP_PHASES. Same shape `compress` has for a missing model.",
+      "verificationNote": "The whole no-flag contract: packages/sleep/src/phases/placement-triage.ts returns immediately with a reason before any read, so a run without the flag behaves as it does with the phase absent from SLEEP_PHASES. Same shape `compress` has for a missing model.",
       "verifies": []
     },
     "adb85977-f3ec-4834-8fd5-66d658c79d5a": {

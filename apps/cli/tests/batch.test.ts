@@ -1270,7 +1270,7 @@ describe("batchWrite: consolidate last-wins", () => {
     /**
      * The interaction guard, at the narrowest seam: sleep's dedup-merge (and every other curation
      * phase) selects candidates from `activeCorpus`, whose predicate is `archived = 0` — so the
-     * one fact that keeps a write-time supersede from fighting the nightly merge is the loser's
+     * one fact that keeps a write-time supersede from fighting a sleep merge is the loser's
      * row flipping archived. Asserted by TRANSITION over the same query the phases run, rather
      * than by a full sleep run: found active before, absent after.
      */

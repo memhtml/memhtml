@@ -142,7 +142,7 @@ for (const m of memhtmls.values()) byType.set(m.type, (byType.get(m.type) ?? 0) 
 //   user_preference, verdict, agent_insight, error_pattern, arc
 ```
 
-**2. Live contradiction pairs** — sleep's `edge-typing` finds these nightly and deliberately never resolves them; nothing lists the open set on demand.
+**2. Live contradiction pairs** — sleep's `edge-typing` finds these on every run and deliberately never resolves them; nothing lists the open set on demand.
 
 ```ts
 const live = [...memhtmls.values()]

@@ -2,7 +2,7 @@
 
 [![check](https://github.com/memhtml/memhtml/actions/workflows/check.yml/badge.svg)](https://github.com/memhtml/memhtml/actions/workflows/check.yml) [![security](https://github.com/memhtml/memhtml/actions/workflows/security.yml/badge.svg)](https://github.com/memhtml/memhtml/actions/workflows/security.yml) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/memhtml/memhtml/badge)](https://scorecard.dev/viewer/?uri=github.com/memhtml/memhtml) [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-memhtml stores an agent's long-term memory as a git repository of semantic HTML5 files, one fact per file. A rebuildable SQLite index sits over that tree, retrieval fuses four ranking arms, and a nightly curation pipeline commits its work to a branch a human reviews before it lands.
+memhtml stores an agent's long-term memory as a git repository of semantic HTML5 files, one fact per file. A rebuildable SQLite index sits over that tree, retrieval fuses four ranking arms, and a seventeen-phase curation pipeline commits its work to a branch a human reviews before it lands.
 
 ## Install
 
@@ -93,63 +93,63 @@ A memory an agent can be trusted with has to be reviewable, diffable, and recove
 
 - A correction is a commit. `memhtml correct` writes the new file and archives the old one in one commit, so an interrupted run cannot leave two live memories contradicting each other.
 - A batch is a commit. `memhtml apply` (JSONL ops) and `memory_write_batch` (MCP) stage N files, make one commit, and reindex once. The batch is atomic by default, per-op results come back in input order, and a duplicate succeeds with `deduped: true` and the existing path.
-- A nightly curation run is a branch. `memhtml sleep run` walks the phases of `SLEEP_PHASES` — seventeen as of v0.6.0 — and commits each one's work on its own, so a human reads the curation one phase-shaped diff at a time, and `memhtml sleep merge` fast-forwards `main` only after a quality gate that can refuse.
+- A curation run is a branch. `memhtml sleep run` walks the phases of `SLEEP_PHASES` — seventeen as of v0.6.0 — and commits each one's work on its own, so a human reads the curation one phase-shaped diff at a time, and `memhtml sleep merge` fast-forwards `main` only after a quality gate that can refuse.
 
 ## Who does what
 
-Three actors share one tree. The agent writes facts, and it resolves only the conflicts it found itself. Sleep curates nightly on a branch, and it detects conflicts without resolving them. The human owns the gate and every one-way door.
+Three actors share one tree. The agent writes facts, and it resolves only the conflicts it found itself. Sleep curates on a branch when a caller fires it, and it detects conflicts without resolving them. The human owns the gate and every one-way door.
 
 Figure 2 draws the cycle they form. A screen reader reads its box characters as noise, so the paragraph beneath the figure carries the same content in words.
 
 <!-- dprint-ignore-start -->
 <!-- figure:three-actors -->
 ```text
-        +----------+
-        |the agent |
-        |          |
-        +----------+
-              |
-           writes
-              |
-              v
-          +-------+
-          | main  |
-          |       |
-          +-------+
-             |  ^
-             |  +---+
-             |      |
-           reads    |
-             |      |
-             v      |
- +---------------+  |
- |sleep, nightly |  |
- |               |  |
- +---------------+  |
-         |          |
-         |        merge
-    15 commits      |
-         |          |
-         v          |
- +-------------+    |
- |sleep/<date> |    |
- |             |    |
- +-------------+    |
+          +----------+
+          |the agent |
+          |          |
+          +----------+
+                |
+             writes
+                |
+                v
+            +-------+
+            | main  |
             |       |
-         review     |
-            |       |
-            |   +---+
-            |   |
-            v   |
-        +------------+
-        | the human  |
-        |            |
-        +------------+
+            +-------+
+               |  ^
+               |  +----+
+               |       |
+             reads     |
+               |       |
+               v       |
+ +-----------------+   |
+ |sleep, on demand |   |
+ |                 |   |
+ +-----------------+   |
+          |            |
+          |          merge
+     15 commits        |
+          |            |
+          v            |
+   +-------------+     |
+   |sleep/<date> |     |
+   |             |     |
+   +-------------+     |
+              |        |
+           review      |
+              |        |
+              |   +----+
+              |   |
+              v   |
+          +------------+
+          | the human  |
+          |            |
+          +------------+
 ```
 <!-- /figure:three-actors -->
 <!-- dprint-ignore-end -->
 
-**Figure 2: the three actors form a cycle through `main`, and only one of them may settle a contradiction.** Reading top to bottom: the agent writes to `main` at any hour, one fact per file. Sleep reads `main` nightly and puts its fifteen commits on a `sleep/<date>` branch, leaving `main` untouched. Those phases deduplicate, resolve entities, decay confidence, compress, and synthesize arcs, and they flag a contradiction without choosing a winner. The human reviews that branch and merges, which returns the cycle to `main` and to the agent. The two heavy-bordered boxes are the actors outside the system, and `main` and the branch are double-bordered because they are the system of record.
+**Figure 2: the three actors form a cycle through `main`, and only one of them may settle a contradiction.** Reading top to bottom: the agent writes to `main` at any hour, one fact per file. Sleep reads `main` when it runs and puts its fifteen commits on a `sleep/<date>` branch, leaving `main` untouched. Those phases deduplicate, resolve entities, decay confidence, compress, and synthesize arcs, and they flag a contradiction without choosing a winner. The human reviews that branch and merges, which returns the cycle to `main` and to the agent. The two heavy-bordered boxes are the actors outside the system, and `main` and the branch are double-bordered because they are the system of record.
 
 ## The file format
 
@@ -245,7 +245,7 @@ Two places run it. `pnpm check` runs it, and CI runs `pnpm check`. `memhtml slee
 
 A run also opens TASKS, for work the corpus records and nobody opened. `task-detection` reads the recent memories in batches and asks which of them carry a commitment nobody closed, quoting the sentence it found; three other phases do the same for the decisions they decline to make — an alias pair too close to ignore and too far to merge, a near-duplicate pair the divergence veto refused, a contradiction seen only once. Every detected task is authored `agent:sleep`, cites its evidence verbatim, is capped at ten a night across all four detectors, and closes itself when its finding stops appearing. A detection is a proposal for a human, never a fact the corpus asserts.
 
-`memhtml sleep review` classifies every touched file. `memhtml sleep merge` re-runs the discrimination gate and refuses to move `main` on a regression. Detecting a conflict is nightly and automatic; resolving one stays with the writer or a human, because choosing a winner is a one-way door.
+`memhtml sleep review` classifies every touched file. `memhtml sleep merge` re-runs the discrimination gate and refuses to move `main` on a regression. Detecting a conflict happens on every run and is automatic; resolving one stays with the writer or a human, because choosing a winner is a one-way door.
 
 Figure 4 draws the branch and the gate. A screen reader sounds out its box characters, so read the paragraph beneath the figure, which carries the same content in words.
 

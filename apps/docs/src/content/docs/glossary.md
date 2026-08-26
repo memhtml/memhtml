@@ -87,7 +87,7 @@ A derived, disposable representation of the tree. The index is one, and `project
 
 ### Retention triage and reprieve
 
-The nightly eviction decision and its appeal. Triage archives EVICT-band files by the eight-signal retention score; reprieve extends a bounded validity instead, up to a capped number of times. See [The sleep pipeline](/internals/the-sleep-pipeline/).
+Sleep's eviction decision and its appeal. Triage archives EVICT-band files by the eight-signal retention score; reprieve extends a bounded validity instead, up to a capped number of times. See [The sleep pipeline](/internals/the-sleep-pipeline/).
 
 ### RRF arm
 

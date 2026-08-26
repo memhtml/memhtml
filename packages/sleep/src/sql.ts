@@ -326,7 +326,7 @@ export const sharedEntityPairs = (
  * Three filters, each load-bearing:
  *
  * - `derived = 1` restricts this to the machine-mined set. An authored `relates_to` is an agent's
- *   assertion, and re-typing it would let a nightly job overwrite a human judgment with a narrower rel.
+ *   assertion, and re-typing it would let an unattended run overwrite a human judgment with a narrower rel.
  * - `edge_class = 'memory'` is the same firewall every graph read carries.
  * - The `derived = 0` anti-join drops a pair that already carries ANY authored edge either way, which
  *   is exactly {@link sharedEntityPairs}' rule. Without it a pair typed last night would be re-judged
@@ -375,7 +375,7 @@ export interface EntityCount {
  * ("ask Imani about the migration ledger") would otherwise mint `resources/people/imani.html`, a
  * durable hand-editable identity surface created from a to-do item. A task's entity references
  * are also the agent's own handles on its own work: renaming one to a corpus-wide canonical is a
- * nightly job editing live working state.
+ * an unattended run editing live working state.
  */
 export const activeEntities = (
   db: DatabaseShape
@@ -509,11 +509,11 @@ export interface EdgeRow {
  * propagation, or the retention bridge count, and this query is what makes that true. The CHECK
  * constraint alone does not.
  *
- * **The deep grouping band is excluded, and the exclusion is what keeps nightly scoring stable
+ * **The deep grouping band is excluded, and the exclusion is what keeps DEFAULT-run scoring stable
  * across deep runs (issue #63).** Deep mining writes machine-mined `laterally_related` edges at a
- * floor (0.72) far below the nightly one, purely so label propagation can partition the inbox tail
+ * floor (0.72) far below the default one, purely so label propagation can partition the inbox tail
  * for compress. Those edges persist in the index after the deep run, so without this predicate the
- * FIRST deep run would permanently change every subsequent nightly run's PageRank, communities, and
+ * FIRST deep run would permanently change every subsequent default run's PageRank, communities, and
  * bridge counts — and therefore its eviction decisions — on a corpus whose files did not change.
  * The filter names `derived = 1` as well as the rel, so an AUTHORED `laterally_related` (an agent's
  * own assertion, addable through `memhtml link`) keeps exactly the graph standing it had.

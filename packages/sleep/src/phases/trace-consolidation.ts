@@ -159,7 +159,7 @@ export const TRACE_MIN_BYTES = 8 * 1024
  * this phase exists to find are the ones visible across a handful of recent sessions.
  *
  * The two caps compose instead of duplicating: whichever is smaller binds, and the consolidator warns
- * when it has to page. Newest-first ordering in the query is what makes ten a nightly increment
+ * when it has to page. Newest-first ordering in the query is what makes ten a per-run increment
  * instead of a truncation. A first run over a year of transcripts consolidates the ten most recent,
  * and each subsequent night takes the next ten.
  */
@@ -373,7 +373,7 @@ interface CommitmentOutcome {
    */
   readonly commitmentsDismissed: number
   /**
-   * Commitments the nightly volume cap turned away, measured as THIS PASS's DELTA on the shared
+   * Commitments the per-run volume cap turned away, measured as THIS PASS's DELTA on the shared
    * budget's overflow.
    *
    * A delta rather than `budget.overflow` outright, and the difference is not cosmetic. The budget is

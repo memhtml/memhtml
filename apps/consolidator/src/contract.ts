@@ -563,7 +563,7 @@ export const transcriptQuoteChecker = (transcript: string): TranscriptQuoteCheck
  *
  * The cost of that mismatch is not one lost commitment. `fabricatedQuoteReason` (`client.ts`) refuses
  * the WHOLE turn, so the batch produces nothing, so `markSessionsConsolidated` never runs, so the
- * next night selects the same batch and fails identically — an honest answer livelocking a nightly
+ * next run selects the same batch and fails identically — an honest answer livelocking an unattended
  * job. PR #47's review gauntlet found exactly this against real JSONL bytes.
  *
  * ## Values only, and each value SEPARATELY

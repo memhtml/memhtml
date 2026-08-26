@@ -14,7 +14,7 @@ memhtml sleep resume <run-id>
 memhtml sleep merge <run-id>
 ```
 
-A sleep cycle is the nightly curation pass over the corpus. It merges duplicates, resolves entities, mines relationships, decays confidence, evicts what has gone stale, and distills new memories out of session transcripts. Each phase makes its own commit on a branch, so nothing reaches `main` until you merge.
+A sleep cycle is the curation pass over the corpus. It merges duplicates, resolves entities, mines relationships, decays confidence, evicts what has gone stale, and distills new memories out of session transcripts. Each phase makes its own commit on a branch, so nothing reaches `main` until you merge.
 
 The phases of `SLEEP_PHASES`, in order — seventeen as of v0.6.0 (`packages/sleep/src/contract.ts:43`):
 
@@ -26,7 +26,7 @@ task-detection       placement-triage   integrity            state-export
 report
 ```
 
-`placement-triage` is deep-only. On a run without `--deep` it returns immediately, writes nothing, and commits nothing, so the nightly cycle behaves the same whether or not you count it.
+`placement-triage` is deep-only. On a run without `--deep` it returns immediately, writes nothing, and commits nothing, so a run without the flag behaves the same whether or not you count it.
 
 `reprieve` gives a memory whose stated validity date has passed another two weeks when its use record earns it, and archives it otherwise. `compress` folds several overlapping memories into one canonical memory. `edge-typing` reads the pairs relationship mining and the shared-entity scan turned up and names the relationship between them — `caused_by`, `leads_to`, `example_of`, `supports`, `part_of`, or `contradicts` — promoting the confident ones into the files as authored links. `task-detection` reads the recent corpus for work the text records and nobody opened — a commitment somebody made, a follow-up nobody closed — and opens a task file quoting the sentence it found. Three other phases do the same for the decisions they decline to make: an alias pair entity resolution would not merge, a near-duplicate pair the divergence veto refused, a contradiction below the two-night promotion gate. Every detected task is authored `agent:sleep`, capped at ten a night across all four, and closed automatically when its finding stops appearing.
 
@@ -94,7 +94,7 @@ task-detection        | ok | no model bound
 placement-triage      | ok | deep only
 ```
 
-`placement-triage` reports its deep-only reason on any nightly run, with or without a model, because the flag gates it before the credential does.
+`placement-triage` reports its deep-only reason on any run without `--deep`, with or without a model, because the flag gates it before the credential does.
 
 `dedup-merge` and `entity-resolution` are absent from that list on purpose. Both call a model when one is bound and both have deterministic work to do when one is not, so they report counts rather than a reason: dedup falls back to the 0.92 cosine floor plus the divergence veto and still commits its folds, and entity resolution still runs its normalization and character-overlap passes.
 
@@ -177,13 +177,13 @@ A merge that happened reports `marksPending` and `marksApplied`. They agree on a
 
 The discrimination gate is the check that every probe query ranks its target fact above deliberately wrong versions of that fact. `--skip-gate` merges without re-running it and logs a warning (`apps/cli/src/run.ts:490`), which is a deliberate override and never a default.
 
-The gate always runs in fake mode here (`apps/cli/src/run.ts:514`), which keeps a nightly merge from depending on a token being valid at 3am. See [check the discrimination gate](/learn/operations/check-the-discrimination-gate/).
+The gate always runs in fake mode here (`apps/cli/src/run.ts:514`), which keeps an unattended merge from depending on a token being valid whenever the run fires. See [check the discrimination gate](/learn/operations/check-the-discrimination-gate/).
 
 ## Why the merge is a human step
 
 `memhtml sleep run` is on the cron and `memhtml sleep merge` is not. A run rewrites confidence across the corpus and archives memories, so the branch waits for a person to read `memhtml sleep review` first.
 
-Conflict detection runs nightly and automatically, and conflict resolution stays with the writer or a human, which is the division of labour the whole system uses. Choosing a winner between two contradictory memories is a one-way door.
+Conflict detection runs on every cycle and automatically, and conflict resolution stays with the writer or a human, which is the division of labour the whole system uses. Choosing a winner between two contradictory memories is a one-way door.
 
 For an AI agent, sleep is absent from the MCP tool surface, so do not try to start a curation run mid-conversation. If you found a contradiction yourself, `memhtml correct` is your verb.
 

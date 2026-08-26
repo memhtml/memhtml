@@ -26,12 +26,12 @@ import { neighborPairs, replaceMinedEdges, SLEEP_EXCLUDED_TYPES } from "../sql.j
  * never correctness.
  *
  * **The two bands are separate rels, and that is the isolation mechanism.** {@link replaceMinedEdges}
- * scopes its atomic delete by rel, so the deep replace cannot clobber the nightly `relates_to` set and
- * the nightly replace cannot clobber the deep band. The issue sketched a distinct PROVENANCE instead;
+ * scopes its atomic delete by rel, so the deep replace cannot clobber the default `relates_to` set and
+ * the default replace cannot clobber the deep band. The issue sketched a distinct PROVENANCE instead;
  * the `edges` CHECKs pin `derived = 1` to `provenance = 'sleep'` (migration 0008), so that spelling
  * needs a table recreate while a distinct rel needs nothing: `laterally_related` is already in the
  * memory-rel vocabulary with no producer, and edge typing's candidate scan reads `rel = 'relates_to'`
- * alone, so the deep band never spends nightly edge-typing calls. A nightly run never touches the
+ * alone, so the deep band never spends default edge-typing calls. A default run never touches the
  * deep rel, so a deep band persists until the next deep run re-mines it or `index rebuild` drops it —
  * both re-derivable, which is the property that makes an index-only edge safe to hold.
  */
@@ -61,8 +61,8 @@ export const MINING_SAMPLE_LIMIT = 2000
 
 /**
  * The deep band's own write cap. Separate from {@link MINING_SAMPLE_LIMIT} because the band is wider
- * by construction — it exists to reach the 84% the nightly band cannot — and sharing the nightly cap
- * would make the deep run's reach a function of how crowded the nightly band happens to be.
+ * by construction — it exists to reach the 84% the default band cannot — and sharing the default cap
+ * would make the deep run's reach a function of how crowded the default band happens to be.
  */
 export const DEEP_MINING_SAMPLE_LIMIT = 10000
 
@@ -73,7 +73,7 @@ export const DEEP_GROUPING_REL = "laterally_related"
  * Mine every band the run is entitled to and replace the index's mined sets: the whole phase minus
  * its counts. Exported because deep compress re-runs it BETWEEN passes (issue #63's
  * iterate-until-quiet): a fold's canonical is a new neighbor only after it is indexed and re-mined,
- * and a second implementation of the scan here would be free to disagree with the nightly one about
+ * and a second implementation of the scan here would be free to disagree with the default one about
  * floors, caps, and exclusions.
  */
 export const mineAllBands = (
@@ -95,10 +95,10 @@ export const mineAllBands = (
     })
 
     /**
-     * The deep grouping band: everything in [deep floor, nightly floor). Mined only under `--deep`,
-     * so a nightly run's writes — and therefore the graph every nightly consumer reads on a corpus
+     * The deep grouping band: everything in [deep floor, default floor). Mined only under `--deep`,
+     * so a default run's writes — and therefore the graph every consumer reads on a corpus
      * that has never run deep — are byte-identical to what they were before this branch existed.
-     * The nightly floor is the band's EXCLUSIVE ceiling: a pair at or above it is the nightly
+     * The default floor is the band's EXCLUSIVE ceiling: a pair at or above it is the default
      * band's, and holding it in both would double its label-propagation weight.
      */
     const deepPairs =

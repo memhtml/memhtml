@@ -4,7 +4,7 @@ This file lists what runs when in `memhtml-public`. Each process is a flow that 
 
 This repository is the software that manages a separate directory called the memhtml root, which `$MEMHTML_ROOT` locates (`apps/cli/src/config.ts:26-31`). It stores no memory of its own. The root's git tree is the system of record, and `.memhtml/index.db` inside the root is a projection that can be rebuilt from that tree (`packages/index/src/indexer.ts:17-24`). A process that writes acts on the root rather than on this repo, so one binary serves many roots.
 
-The primary consumer of every process is a coding agent. Processes start from one of three initiators. The CLI publishes its commands as one machine-readable table (`apps/cli/src/commands.ts`; `memhtml manifest` prints the current set), and each command returns exactly one JSON envelope on stdout and writes its logs to stderr (`apps/cli/src/run.ts:1029-1031`). The MCP server publishes its tools (`apps/mcp/src/tools.ts`) and resource templates (`apps/mcp/src/resources.ts:90`) over stdio. The nightly sleep cycle runs the ordered phases in `SLEEP_PHASES` as an internal scheduled flow (`packages/sleep/src/contract.ts:17`).
+The primary consumer of every process is a coding agent. Processes start from one of three initiators. The CLI publishes its commands as one machine-readable table (`apps/cli/src/commands.ts`; `memhtml manifest` prints the current set), and each command returns exactly one JSON envelope on stdout and writes its logs to stderr (`apps/cli/src/run.ts:1029-1031`). The MCP server publishes its tools (`apps/mcp/src/tools.ts`) and resource templates (`apps/mcp/src/resources.ts:90`) over stdio. The sleep cycle runs the ordered phases in `SLEEP_PHASES` when a caller fires it, and reads no clock to decide whether to (`packages/sleep/src/contract.ts:17`).
 
 The CLI and the MCP server are both thin adapters over one shared use-case module (`apps/cli/src/operations.ts:42-48`, `apps/mcp/src/handlers.ts:33-43`), so a search issued by the CLI and a search issued through MCP run the same query.
 
@@ -119,7 +119,7 @@ Entry point: `packages/index/src/indexer.ts:531`
 - `packages/index/src/git-adapter.ts:1`
 - `packages/index/src/index-state.ts:1`
 
-## Nightly sleep run
+## The sleep run
 
 Entry point: `packages/sleep/src/run.ts:69`
 
