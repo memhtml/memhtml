@@ -473,6 +473,16 @@ const dispatch = (
         return ["memory.list", result] as const
       })
 
+    case "entity activity":
+      return Effect.gen(function* () {
+        const result = yield* ops.entityActivity({
+          entityType: str(parsed, "type"),
+          limit: int(parsed, "limit"),
+          includeArchived: bool(parsed, "include-archived", false)
+        })
+        return ["entity.activity", result] as const
+      })
+
     case "task add":
       return Effect.gen(function* () {
         const title = str(parsed, "title") ?? ""

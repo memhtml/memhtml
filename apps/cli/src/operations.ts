@@ -1435,6 +1435,188 @@ export const listMemories = (params: ListParams) =>
     }
   })
 
+/** What {@link entityActivity} takes. Every field is optional and every default is stated. */
+export interface EntityActivityParams {
+  /** Restrict to one entity type, e.g. `service`. Absent means every type. */
+  readonly entityType?: string | undefined
+  /** Rows to return, 1 to {@link ENTITY_ACTIVITY_MAX}. Clamped, never refused. */
+  readonly limit?: number | undefined
+  /** Include archived memories in the aggregate. Excluded by default. */
+  readonly includeArchived?: boolean | undefined
+}
+
+/** The most rows one call returns. A caller asking for more is clamped into it. */
+export const ENTITY_ACTIVITY_MAX = 500
+
+/**
+ * One entity's activity, aggregated over the memories that carry it.
+ *
+ * **Three timestamps rather than one, because they are three different clocks and a caller acting on
+ * the wrong one gets a plausible answer.** Every value is an ISO-8601 UTC string compared
+ * lexicographically, the same way `files` stores and orders them, so no per-row parse happens
+ * anywhere. Scope: the memories carrying this entity that survive the call's own archived filter.
+ */
+export interface EntityActivityRow {
+  /**
+   * The reference in `type:name` form, the spelling `--entity` and `memory_search`'s `entity` take
+   * and the spelling a search hit's `entities` publishes.
+   *
+   * Present alongside the two halves so a hop off this report is a COPY rather than a caller
+   * reassembling a string and guessing where the colon goes. `file_entities` is keyed on
+   * `(type, name)`, so the bare name is ambiguous and would scope to whichever of two entities the
+   * corpus happens to hold.
+   */
+  readonly entity: string
+  readonly entityType: string
+  readonly entityName: string
+  /** How many in-scope memories carry this entity. A quantity, not an ordinal. */
+  readonly fileCount: number
+  /**
+   * The newest `coalesce(event_at, updated_at)` over those memories: WORLD time where the memory
+   * states one and WRITE time where it does not, decided per row before the maximum is taken.
+   *
+   * The recency arm's own rule (`packages/index/src/retrieval-sql.ts`), so "most recently active"
+   * here means what it means in a ranked search. It is a MAX of a per-row coalesce and not a coalesce
+   * of two maxima: those differ whenever the newest world time and the newest write time sit on
+   * different memories, which is the ordinary case for a corpus written after the fact.
+   */
+  readonly lastActivityAt: string
+  /**
+   * The newest `event_at` alone: WORLD time, when the remembered fact happened, from the first
+   * `<time datetime>` in the article. `null` when no in-scope memory carrying this entity states one.
+   *
+   * Published beside {@link lastActivityAt} so a caller that needs strictly world time can have it,
+   * and so a `null` says "the corpus never stated one" rather than leaving the caller to infer it
+   * from a value that silently fell back to write time.
+   */
+  readonly lastEventAt: string | null
+  /** The newest `updated_at` alone: WRITE time, when the memory was last committed. Never null. */
+  readonly lastWrittenAt: string
+}
+
+/**
+ * {@link entityActivity}'s statement, as a pure function of its parameters.
+ *
+ * Exported for `neighborsQuery`'s reason: a cost contract can only be asserted at the planner, and a
+ * test that EXPLAINed a pasted copy of the SQL would be explaining its own string. This repo has
+ * already written that test the other way and watched it keep passing while the clause it guarded was
+ * deleted from the source. Handing the caller the statement the code issues is what makes the plan
+ * assertion about the code.
+ *
+ * `count(*) OVER ()` counts the GROUPED rows, so it is the number of distinct entities in scope rather
+ * than the number of `file_entities` rows. A window function is evaluated after grouping, which is what
+ * makes one statement answer both the page and its total; a second `COUNT` over the same predicate
+ * could disagree with this one under a concurrent write.
+ *
+ * `GROUP BY (entity_type, entity_name)` is exactly `file_entities_name`'s column SET, so the grouping
+ * is served by an index scan rather than by a sort of the whole join. The SET is what matters and the
+ * order within it does not: probed 2026-08-26 on node 24's `node:sqlite`, naming the two columns either
+ * way plans identically as `SCAN e USING INDEX file_entities_name`, because SQLite reorders group keys
+ * to match an index it can use. Grouping on a set the index does NOT cover — `entity_name` alone, or
+ * `(path, entity_name)` — adds `USE TEMP B-TREE FOR GROUP BY`, a full sort of the join per call. The
+ * ORDER BY is over an aggregate and no index can serve it, which is the one sort this statement pays
+ * for knowingly.
+ */
+export const entityActivityQuery = (
+  params: EntityActivityParams = {}
+): {
+  readonly sql: string
+  readonly params: ReadonlyArray<string | number>
+  /** The clamped bound the statement carries, so the caller reports the bound it actually used. */
+  readonly limit: number
+} => {
+  const limit = Math.min(ENTITY_ACTIVITY_MAX, Math.max(1, Math.trunc(params.limit ?? 50)))
+  const conditions: Array<string> = []
+  const values: Array<string | number> = []
+  if (params.includeArchived !== true) conditions.push("f.archived = 0")
+  if (params.entityType !== undefined && params.entityType !== "") {
+    conditions.push("e.entity_type = ?")
+    values.push(params.entityType.trim())
+  }
+  const where = conditions.length === 0 ? "" : `WHERE ${conditions.join(" AND ")}`
+
+  return {
+    sql: `SELECT e.entity_type AS entity_type, e.entity_name AS entity_name,
+              count(*) AS file_count,
+              max(coalesce(f.event_at, f.updated_at)) AS last_activity_at,
+              max(f.event_at) AS last_event_at,
+              max(f.updated_at) AS last_written_at,
+              count(*) OVER () AS entity_total
+       FROM file_entities e JOIN files f ON f.path = e.path
+       ${where}
+       GROUP BY e.entity_type, e.entity_name
+       ORDER BY max(coalesce(f.event_at, f.updated_at)) DESC,
+                e.entity_type ASC, e.entity_name ASC
+       LIMIT ?`,
+    params: [...values, limit],
+    limit
+  }
+}
+
+/**
+ * Every entity in the corpus with its file count and its last activity, newest first.
+ *
+ * **REPORT-ONLY, and that is a design constraint rather than a description of today's callers.** This
+ * value must never become a decay term, a retention input, or a ranking signal. The salience arm
+ * already refuses to rank two kinds of row for reasons that apply here word for word
+ * (`SALIENCE_EXCLUDED_PREFIX` and `SALIENCE_EXCLUDED_TYPE`, `packages/index/src/retrieval-sql.ts`):
+ * decay is wrong for identity, because a colleague unmentioned for six months is not less themselves,
+ * and decay over working state would reward STALENESS, so the stuck task re-read at every triage would
+ * outrank the fresh urgent one. An "entity last active" number wired into ranking reintroduces both at
+ * once, on the axis where a consumer models its own domain. It answers a question an operator asks;
+ * it decides nothing.
+ *
+ * **WRITE-side activity, deliberately, so the read stays inside one database.** Reads live in
+ * `state.access`, which is path-keyed with NO foreign key onto `files`
+ * (`packages/index/state-migrations/S0001_access.sql`) and which is ATTACHed as a separate plane —
+ * `index.db` is a disposable projection of git and `state.db` is not. Joining it here would make one
+ * report span both lifetimes, so a rebuilt index and a preserved state plane could disagree about a
+ * row. The salience arm already owns read-time signals and is the only statement that crosses that
+ * boundary.
+ *
+ * Every memory type counts, tasks included, matching {@link listMemories} rather than
+ * `activeEntities` in `@memhtml/sleep`. That function excludes tasks because it FEEDS a phase that
+ * mints person files from what it finds, and a person mentioned only by a to-do item would get a
+ * durable identity surface out of it. Nothing here mints anything, and a report that hid an entity's
+ * task activity would be answering a narrower question than the one asked.
+ *
+ * `entityCount` is the total matching the scope, independent of `limit`, so a clamped answer is
+ * visible rather than silent — a caller can tell "these are all of them" from "these are the newest
+ * of more".
+ */
+export const entityActivity = (params: EntityActivityParams = {}) =>
+  Effect.gen(function* () {
+    const db = yield* DatabaseService
+    const statement = entityActivityQuery(params)
+    const rows = yield* db.all<{
+      entity_type: string
+      entity_name: string
+      file_count: number
+      last_activity_at: string
+      last_event_at: string | null
+      last_written_at: string
+      entity_total: number
+    }>(statement.sql, statement.params)
+
+    return {
+      entities: rows.map(
+        (row): EntityActivityRow => ({
+          entity: `${row.entity_type}:${row.entity_name}`,
+          entityType: row.entity_type,
+          entityName: row.entity_name,
+          fileCount: row.file_count,
+          lastActivityAt: row.last_activity_at,
+          lastEventAt: row.last_event_at,
+          lastWrittenAt: row.last_written_at
+        })
+      ),
+      /** Distinct entities matching the scope, before `limit`. `0` when the scope matched nothing. */
+      entityCount: rows[0]?.entity_total ?? 0,
+      /** The bound this answer was built under, so a clamped ask is legible rather than silent. */
+      limit: statement.limit
+    }
+  })
+
 /**
  * The task surface: CRUDL without retrieval.
  *

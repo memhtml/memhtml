@@ -483,6 +483,34 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     ],
     responseTypes: ["memory.list"]
   },
+  {
+    name: "entity activity",
+    summary: "Every entity with its file count and its last activity, newest first. Report only.",
+    args: [],
+    flags: [
+      {
+        name: "type",
+        type: "string",
+        description:
+          "Restrict to one entity type, e.g. `service`. The half before the colon in a `type:name` reference."
+      },
+      {
+        name: "limit",
+        type: "int",
+        description:
+          "Rows to return, 1 to 500. An ask outside that is clamped into it rather than refused, and `limit` echoes the bound the answer was built under. `entity_count` is the total matching the scope, so a clamped answer is visible.",
+        default: 50
+      },
+      {
+        name: "include-archived",
+        type: "boolean",
+        description:
+          "Aggregate archived memories too. Excluded by default: eviction is a `git mv`, so an archived memory still exists and would otherwise keep an entity looking active.",
+        default: false
+      }
+    ],
+    responseTypes: ["entity.activity"]
+  },
   /**
    * The task family: CRUDL over the 10th memory type, without retrieval.
    *

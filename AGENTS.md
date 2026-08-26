@@ -91,6 +91,7 @@ Answering a question that takes MORE THAN ONE HOP through the corpus? Write it a
 | `memhtml archive` | <path> | `--reason`* | `memory.archived` |
 | `memhtml reinforce` | <path> | `--signal` | `memory.reinforced` |
 | `memhtml list` | — | `--type` `--workspace` `--tag` `--entity` `--facet` `--para` `--limit` `--cursor` `--include-archived` | `memory.list` |
+| `memhtml entity activity` | — | `--type` `--limit` `--include-archived` | `entity.activity` |
 | `memhtml task add` | — | `--title`* `--claim` `--body` `--status` `--due` `--workspace` `--tag` `--entity` `--session-id` `--prompt-id` `--turn-uuid` | `task.written` |
 | `memhtml task status` | <path> <status> | `--reason` | `task.updated` |
 | `memhtml task list` | — | `--status` `--workspace` `--due-before` `--limit` `--cursor` `--include-archived` `--detected` | `task.list` |
@@ -258,6 +259,14 @@ Page through the corpus by type, workspace, tag, entity, facet, or PARA bucket.
 - `--limit` (int) — Rows per page. _(default `50`)_
 - `--cursor` (string) — The `next_cursor` from the previous page: the last path returned.
 - `--include-archived` (boolean) — Include archived memories. _(default `false`)_
+
+### `memhtml entity activity`
+
+Every entity with its file count and its last activity, newest first. Report only.
+
+- `--type` (string) — Restrict to one entity type, e.g. `service`. The half before the colon in a `type:name` reference.
+- `--limit` (int) — Rows to return, 1 to 500. An ask outside that is clamped into it rather than refused, and `limit` echoes the bound the answer was built under. `entity_count` is the total matching the scope, so a clamped answer is visible. _(default `50`)_
+- `--include-archived` (boolean) — Aggregate archived memories too. Excluded by default: eviction is a `git mv`, so an archived memory still exists and would otherwise keep an entity looking active. _(default `false`)_
 
 ### `memhtml task add`
 

@@ -1589,6 +1589,25 @@
       "verificationNote": "sleepExit (apps/cli/src/run.ts:284). A partially-failed run and a fully-aborted run exit the same, because a caller reading the exit code asks one question and both answers are no; the payload already distinguishes them precisely, an abort being every selected phase failed with headSha === baseSha and no commits. The envelope stays a SUCCESS sleep.report because a failure envelope carries no `data` and the per-phase detail IS the data. `sleep status` and `sleep review` are excluded: they report a run they did not perform, and a read that exited non-zero would make 'tell me what happened' indistinguishable from 'I could not tell you'. apps/cli/tests/e2e.test.ts 'exits 1 on an aborted run, with the report intact'.",
       "verifies": []
     },
+    "effd6897-37a7-579e-905a-35468732c738": {
+      "createdAt": "2026-08-26T00:00:00.000Z",
+      "derives": [],
+      "id": "effd6897-37a7-579e-905a-35468732c738",
+      "key": "ENT-2",
+      "negated": false,
+      "patternType": "ubiquitous",
+      "priority": "medium",
+      "refines": [],
+      "satisfies": [],
+      "sentence": "The entity activity report shall aggregate write-side activity per entity and shall never be a ranking or decay input.",
+      "status": "implemented",
+      "systemName": "entity activity report",
+      "systemResponse": "aggregate write-side activity per entity and never be a ranking or decay input",
+      "updatedAt": "2026-08-26T00:00:00.000Z",
+      "verificationMethod": "test",
+      "verificationNote": "entityActivity (apps/cli/src/operations.ts) groups file_entities JOIN files on (entity_type, entity_name), reporting max(coalesce(event_at, updated_at)) beside max(event_at) and max(updated_at) so a caller acts on a named clock rather than on a coalesced one. Report-only is structural rather than a convention: every ranking arm lives in @memhtml/index and every decay term in @memhtml/domain, both BELOW apps/cli in the project-reference graph, so neither can import it. Reads are excluded because state.access is path-keyed with no foreign key and lives in the separately ATTACHed state plane, whose lifetime differs from the index's; the salience arm is the one statement that crosses that boundary. apps/cli/tests/entity-activity.test.ts seeds a NEIGHBOUR entity sharing one memory and asserts the plan groups through file_entities_name.",
+      "verifies": []
+    },
     "f19864b2-04ac-4ce6-9e0d-84b345be8c24": {
       "createdAt": "2026-08-08T01:57:30.129Z",
       "derives": [],

@@ -356,6 +356,7 @@ const checkEveryCommand = async ({ bin, work, env }) => {
       ]
     ],
     ["list", ["list"]],
+    ["entity activity", ["entity", "activity"]],
     ["task add", ["task", "add", "--title", "Second task"]],
     ["task list", ["task", "list"]],
     ["task status", ["task", "status", taskPath, "doing"]],
