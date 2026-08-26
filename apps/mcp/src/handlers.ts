@@ -174,6 +174,7 @@ interface BatchOpParams {
   readonly article_html?: string | null | undefined
   readonly memory_type: string
   readonly path?: string | null | undefined
+  readonly strict_path?: boolean | null | undefined
   readonly workspace?: string | null | undefined
   readonly tags?: ReadonlyArray<string> | null | undefined
   readonly entities?: ReadonlyArray<string> | null | undefined
@@ -198,6 +199,7 @@ const writeParamsOf = (op: BatchOpParams, article: Authored): WriteParams => ({
   articleHtml: article.articleHtml,
   memoryType: op.memory_type,
   path: opt(op.path),
+  strictPath: opt(op.strict_path),
   workspace: opt(op.workspace),
   tags: arr(op.tags),
   entities: arr(op.entities),
@@ -319,6 +321,7 @@ export const ToolHandlers: Layer.Layer<
           articleHtml: article.articleHtml,
           memoryType: params.memory_type,
           path: opt(params.path),
+          strictPath: opt(params.strict_path),
           workspace: opt(params.workspace),
           tags: arr(params.tags),
           entities: arr(params.entities),

@@ -164,6 +164,11 @@ const ARTICLE_HTML_CONTRACT =
  * agent that expected last-write-wins gets `ERR_WRITE_CONFLICT` and no file. Learning either from a
  * response costs a round trip, and learning the second one wrong costs the corpus a memory.
  *
+ * `strict_path` is named beside the first branch rather than in a paragraph of its own, because it is
+ * that branch's opt-out and an agent reading about the re-derivation is the agent who needs it. It
+ * matters most to a caller placing documents at deterministic paths, where the lenient default makes a
+ * write APPEAR to succeed at a path it did not ask for.
+ *
  * The recovery is named, because a write is not it: eviction here is a `git mv` into `archive/` and
  * nothing is ever removed, so replacing a memory is `memory_correct`, which archives what it supersedes
  * in the same commit.
@@ -171,6 +176,7 @@ const ARTICLE_HTML_CONTRACT =
 const PATH_OVERRIDE_CONTRACT =
   "`path` is optional and rarely worth sending: without it the placement rule picks the directory from the memory's type, workspace, and entities, and the title becomes the filename. " +
   "A `path` that is not a usable memory path (rooted in a PARA bucket, ending in .html, no . or .. segment) is IGNORED, and the placement rule decides instead — so a malformed override lands the memory somewhere you did not name. " +
+  "Send strict_path: true to have that REFUSED instead, with ERR_INVALID_MEMORY naming the clause the path broke and nothing written, staged, or committed; it governs the path you named, so with no `path` it changes nothing. Reach for it when you place documents at paths you compute, where a silent re-derivation makes a write look like it landed where you asked. " +
   "A `path` that a file ALREADY occupies is REFUSED with ERR_WRITE_CONFLICT, and nothing is written or committed: this corpus overwrites nothing, and an explicit path gets no -2 suffix because you named one path. " +
   "To replace what a memory says, call memory_correct on it — that archives the file it supersedes in the same commit and leaves it readable under archive/."
 
@@ -295,6 +301,13 @@ const writeFields = () => ({
    * them. The refusal is `@memhtml/store`'s `freePathFor`, so this door and `memhtml apply` share it.
    */
   path: Optional(MemoryPath),
+  /**
+   * Refuse an unusable `path` instead of re-deriving one. Opt-in, because the lenient branch is what
+   * ships and what callers depend on; `PATH_OVERRIDE_CONTRACT` states both branches in the
+   * description, which is where a caller reads them. The refusal is `@memhtml/store`'s
+   * `strictPathRefusal`, so this door, `memhtml write`, and `memhtml apply` share it.
+   */
+  strict_path: Optional(Schema.Boolean),
   workspace: Optional(Schema.String),
   tags: Optional(Schema.Array(Schema.String)),
   entities: Optional(Schema.Array(Schema.String)),

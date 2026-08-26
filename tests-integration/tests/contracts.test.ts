@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { type Cli, failingEmbedder, makeCli, writeMemory } from "./harness.js"
+import { envelopeOf, runBuilt, treeDigest } from "./spawned.js"
 
 /**
  * The plan's end-to-end verification items 3 and 4, plus `memhtml publish` and `memhtml doctor`.
@@ -625,5 +626,107 @@ describe("the facet scope, end to end through the CLI", () => {
     // A flag with no `=` cannot name a predicate. Refusing the whole call would make a typo fatal, and
     // narrowing to nothing would report an empty corpus; neither is what the caller asked for.
     expect(await listed(["--facet", "doc-type"])).toHaveLength(4)
+  })
+})
+
+/**
+ * `--strict-path` at the CLI door, through the BUILT binary so the exit code is a real one.
+ *
+ * The default is the half worth stating: an unusable `--path` is re-derived, so the write reports a
+ * path the caller never named and reports it as a success. That behavior ships and stays. What the
+ * flag adds is a caller that computes its paths being told, rather than discovering it later by
+ * listing `areas/inbox`.
+ *
+ * "Refused" and "wrote nothing" are two different claims, so both are asserted: the envelope's `code`
+ * for the first, and a tree digest over a corpus that already holds a memory for the second.
+ */
+describe("memhtml write --strict-path", () => {
+  let cli: Cli
+  const UNUSABLE = "notes/oncall/rollback.html"
+
+  beforeAll(async () => {
+    cli = await makeCli()
+    // A NEIGHBOUR, so the digest below is taken over a corpus with content in it rather than over an
+    // empty scaffold, where any write-nothing bug would still leave the digest unchanged.
+    await writeMemory(cli, {
+      title: "The bastion listens on a non-default port",
+      claim: "The staging bastion listens on port 2222."
+    })
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  it("re-derives an unusable --path by DEFAULT, landing the memory somewhere else", async () => {
+    const written = await writeMemory(cli, {
+      title: "A fact filed at a path outside every bucket",
+      claim: "This claim named a path that is not a memory path."
+    })
+    const lenient = await cli.json<{ readonly path: string; readonly created: boolean }>([
+      "write",
+      "--type",
+      "semantic",
+      "--title",
+      "A lenient override lands elsewhere",
+      "--claim",
+      "The lenient branch re-derives the directory.",
+      "--path",
+      UNUSABLE
+    ])
+    expect(lenient.created).toBe(true)
+    expect(lenient.path).not.toBe(UNUSABLE)
+    expect(lenient.path.startsWith("areas/inbox/")).toBe(true)
+    // The control write is unrelated and only proves the corpus takes ordinary writes here.
+    expect(written.created).toBe(true)
+  })
+
+  it("refuses with ERR_INVALID_MEMORY under --strict-path and writes nothing", async () => {
+    const before = await treeDigest(cli.root)
+    const commitsBefore = (await cli.git("rev-list", "--count", "HEAD")).trim()
+
+    const refused = await runBuilt(cli.root, [
+      "write",
+      "--type",
+      "semantic",
+      "--title",
+      "A strict override is refused",
+      "--claim",
+      "The strict branch refuses rather than re-deriving.",
+      "--path",
+      UNUSABLE,
+      "--strict-path"
+    ])
+    // Exit 1 is a runtime refusal; exit 2 would mean the flag failed argument validation, which would
+    // pass a code assertion while proving the wrong thing.
+    expect(refused.exitCode).toBe(1)
+    const envelope = envelopeOf(refused)
+    expect(envelope.code).toBe("ERR_INVALID_MEMORY")
+    // The reason names the path the caller gave, so the fix does not need a doc lookup.
+    expect(String(envelope.error)).toContain(UNUSABLE)
+
+    // Wrote NOTHING: byte-identical tree, no commit, nothing staged.
+    expect(await treeDigest(cli.root)).toBe(before)
+    expect((await cli.git("rev-list", "--count", "HEAD")).trim()).toBe(commitsBefore)
+    expect((await cli.git("status", "--porcelain")).trim()).toBe("")
+  })
+
+  it("still honors a USABLE --path under --strict-path", async () => {
+    // The mutation-proof half: a guard that refused every explicit path would satisfy the case above
+    // and make the flag useless for the only job it has.
+    const written = await cli.json<{ readonly path: string; readonly created: boolean }>([
+      "write",
+      "--type",
+      "semantic",
+      "--title",
+      "A strict override that is valid",
+      "--claim",
+      "A usable explicit path is honored verbatim.",
+      "--path",
+      "areas/oncall/strict-and-valid.html",
+      "--strict-path"
+    ])
+    expect(written.path).toBe("areas/oncall/strict-and-valid.html")
+    expect(written.created).toBe(true)
   })
 })

@@ -205,6 +205,133 @@ describe("writeMemory", () => {
     })
   })
 
+  /**
+   * An explicit path that is UNUSABLE, which is a different failure from an occupied one.
+   *
+   * The lenient branch is shipped behavior and stays: a malformed override is re-derived through the
+   * placement rule, which is why `strictPath` is an opt-in rather than a change of default. What the
+   * opt-in buys is honesty for a caller that computes its paths — a silent re-derivation makes a write
+   * report success at a path the caller never asked for, and the report carries no sign of the
+   * disagreement.
+   */
+  describe("an explicit path that is not a usable memory path", () => {
+    /** One case per clause `memoryPathViolation` checks, so no clause is locked by another's. */
+    const UNUSABLE = [
+      ["outside every PARA bucket", "notes/oncall/rollback.html"],
+      ["not ending in .html", "areas/oncall/rollback.txt"],
+      ["a bucket with no file under it", "areas"],
+      ["carrying a traversal segment", "areas/../../etc/passwd.html"]
+    ] as const
+
+    it("re-derives it through the placement rule by DEFAULT, which is what strict mode opts out of", async () => {
+      const repo = await fixture()
+      for (const [why, path] of UNUSABLE) {
+        const result = await run(
+          repo.store.writeMemory(
+            writeInput({ path, title: `Lenient ${why}`, claim: `A claim about ${why}.` })
+          )
+        )
+        // Landed somewhere the caller did not name, and reported as a success. That IS the default.
+        expect(result.created, why).toBe(true)
+        expect(result.path, why).not.toBe(path)
+        expect(result.path, why).toMatch(/^areas\/inbox\//)
+      }
+    })
+
+    it("refuses with InvalidMemory under strictPath and leaves the tree byte-identical", async () => {
+      const repo = await fixture()
+      // A NEIGHBOUR the strict write must not disturb, so "nothing changed" is a claim about the
+      // corpus rather than about an empty repo.
+      const neighbour = await run(
+        repo.store.writeMemory(
+          writeInput({ path: "areas/oncall/neighbour.html", claim: "The neighbouring fact." })
+        )
+      )
+      const neighbourBefore = await readFile(join(repo.root, neighbour.path), "utf8")
+      const filesBefore = await candidatePathsOnDisk(repo)
+      const commitsBefore = await commitCount(repo)
+      const headBefore = await run(repo.git.revParseHead())
+
+      for (const [why, path] of UNUSABLE) {
+        const failure = await runErr(
+          repo.store.writeMemory(
+            writeInput({ path, strictPath: true, title: `Strict ${why}`, claim: `A claim.` })
+          )
+        )
+        expect(failure, why).toBeInstanceOf(InvalidMemory)
+        // The reason names the path AND the clause it broke, so a caller can fix the input without
+        // re-reading the format doc. `WriteConflict` is deliberately NOT the error: its published
+        // recovery is `read` then `correct` on the named path, and no file can occupy this one.
+        expect((failure as InvalidMemory).reason, why).toContain(path)
+        expect(failure, why).not.toBeInstanceOf(WriteConflict)
+      }
+
+      // Refused AND wrote nothing: no file at any candidate path, no commit, nothing staged, and the
+      // neighbour byte-identical. "Returned an error" is not the assertion.
+      expect(await candidatePathsOnDisk(repo)).toEqual(filesBefore)
+      expect(await commitCount(repo)).toBe(commitsBefore)
+      expect(await run(repo.git.revParseHead())).toBe(headBefore)
+      expect(await run(repo.store.dirtyPaths())).toEqual([])
+      expect(await readFile(join(repo.root, neighbour.path), "utf8")).toBe(neighbourBefore)
+    })
+
+    it("honors a USABLE explicit path under strictPath, so the flag refuses only the unusable", async () => {
+      // The mutation-proof half. A guard that refused every explicit path would satisfy the case
+      // above and make the flag unusable for its only purpose.
+      const repo = await fixture()
+      const result = await run(
+        repo.store.writeMemory(
+          writeInput({ path: "areas/oncall/strict-and-valid.html", strictPath: true })
+        )
+      )
+      expect(result.path).toBe("areas/oncall/strict-and-valid.html")
+      expect(result.created).toBe(true)
+    })
+
+    it("is a no-op under strictPath with no path, so the rule still places the memory", async () => {
+      // Strict mode governs the path a caller NAMED. Refusing here would stop a caller from setting
+      // the flag once and still letting the rule file the memories it leaves unplaced.
+      const repo = await fixture()
+      const result = await run(
+        repo.store.writeMemory(
+          writeInput({ strictPath: true, title: "A fact", workspace: "Checkout API" })
+        )
+      )
+      expect(result.path).toBe("projects/checkout-api/a-fact.html")
+      expect(result.created).toBe(true)
+    })
+
+    it("refuses ahead of the dedupe question, so identical input cannot answer two ways", async () => {
+      /**
+       * The ordering that makes the refusal reportable at all. The dedupe question is asked before a
+       * path is claimed, so a strict check placed after it would answer "deduped at some other path"
+       * for content the store already holds and "refused" for content it does not — the same
+       * malformed input, two answers, and only one of them mentions the path.
+       *
+       * The lookup answers EVERY hash, which is the contaminating state: it stands for a corpus that
+       * already holds this content, and it is the state under which a late check reports a success.
+       */
+      const repo = await fixture({
+        hooks: { dedupeLookup: () => Effect.succeed("areas/oncall/already-here.html") }
+      })
+      const failure = await runErr(
+        repo.store.writeMemory(
+          writeInput({ claim: "A repeated claim.", path: "notes/x.txt", strictPath: true })
+        )
+      )
+      expect(failure).toBeInstanceOf(InvalidMemory)
+      expect((failure as InvalidMemory).reason).toContain("notes/x.txt")
+
+      // And the same input WITHOUT the flag still dedupes, so the case above is the gate's ordering
+      // rather than a dedupe branch this fixture never reaches.
+      const lenient = await run(
+        repo.store.writeMemory(writeInput({ claim: "A repeated claim.", path: "notes/x.txt" }))
+      )
+      expect(lenient.deduped).toBe(true)
+      expect(lenient.existingPath).toBe("areas/oncall/already-here.html")
+    })
+  })
+
   it("writes a parseable file whose stamped hash matches the article it wrote", async () => {
     const repo = await fixture()
     const result = await run(

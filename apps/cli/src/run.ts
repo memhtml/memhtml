@@ -327,6 +327,7 @@ const dispatch = (
           articleHtml: str(parsed, "article-html"),
           memoryType: str(parsed, "type") ?? "",
           path: str(parsed, "path"),
+          strictPath: bool(parsed, "strict-path", false),
           workspace: str(parsed, "workspace"),
           tags: list(parsed, "tag"),
           entities: list(parsed, "entity"),

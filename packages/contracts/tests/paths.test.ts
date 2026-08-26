@@ -9,6 +9,7 @@ import {
   isArchivePath,
   isValidMemoryPath,
   memoryPathFor,
+  memoryPathViolation,
   normalizePath,
   originalPathFor,
   PEOPLE_DIR,
@@ -151,6 +152,39 @@ describe("isValidMemoryPath", () => {
     expect(isValidMemoryPath("areas/../../etc/passwd.html")).toBe(false)
     expect(isValidMemoryPath("areas/./a.html")).toBe(false)
     expect(isValidMemoryPath("")).toBe(false)
+  })
+})
+
+describe("memoryPathViolation", () => {
+  it("agrees with isValidMemoryPath on every path, in both directions", () => {
+    /**
+     * The invariant that makes one of them the rule and the other a phrasing of it. A refusal that
+     * quoted a reason for a path the predicate accepts would refuse a usable path, and a predicate
+     * that rejected a path with no reason would refuse one with nothing to tell the caller.
+     */
+    fc.assert(
+      fc.property(fc.oneof(memoryPath, fc.string()), (path) => {
+        expect(memoryPathViolation(path) === undefined).toBe(isValidMemoryPath(path))
+      }),
+      { numRuns: 1000 }
+    )
+  })
+
+  it("names the clause a path broke, one clause at a time", () => {
+    // Each case violates exactly one clause, so a reason that named the wrong one fails here rather
+    // than reading as plausible. A caller holding the string has to be able to fix the input from it.
+    expect(memoryPathViolation("notes/a.html")).toContain("PARA bucket")
+    expect(memoryPathViolation("areas/a.md")).toContain(".html")
+    expect(memoryPathViolation("areas/../etc/passwd.html")).toContain("`..`")
+    expect(memoryPathViolation("areas/./a.html")).toContain("`.`")
+    // A bare bucket is not rooted IN one: `paraBucketOf` needs a `/` past the head, so `areas` and
+    // `areas/` both land on the first clause rather than on a clause of their own.
+    expect(memoryPathViolation("areas")).toContain("PARA bucket")
+    expect(memoryPathViolation("areas/")).toContain("PARA bucket")
+  })
+
+  it("says nothing about a usable path", () => {
+    expect(memoryPathViolation("areas/oncall/rollback.html")).toBeUndefined()
   })
 })
 

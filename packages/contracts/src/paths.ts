@@ -66,18 +66,45 @@ export const paraBucketOf = (path: string): ParaBucket | undefined => {
 }
 
 /**
- * True when a path is a usable memory path: rooted in a PARA bucket, ending in `.html`,
- * carrying no `.` or `..` segment. The traversal check is what keeps a caller-supplied
- * path from escaping the memory repo.
+ * Why a path is not a usable memory path, or `undefined` when it is one.
+ *
+ * The RULE and its explanation in one function, because a refusal that restated the rule in its own
+ * words would be a second copy of it, free to name a clause this function does not check. A
+ * caller that refuses an unusable path quotes this string; {@link isValidMemoryPath} is the same
+ * question asked as a boolean.
+ *
+ * Each clause names the input it saw rather than the rule in the abstract, so a caller holding the
+ * message can act without re-reading the format doc. The traversal clause is the security one: it is
+ * what keeps a caller-supplied path from escaping the memory repo.
  */
-export const isValidMemoryPath = (path: string): boolean => {
+export const memoryPathViolation = (path: string): string | undefined => {
   const normalized = normalizePath(path)
-  if (paraBucketOf(normalized) === undefined) return false
-  if (!normalized.endsWith(MEMORY_EXTENSION)) return false
-  const segments = normalized.split("/")
-  if (segments.length < 2) return false
-  return segments.every((segment) => segment !== "" && segment !== "." && segment !== "..")
+  if (paraBucketOf(normalized) === undefined) {
+    return `it is not rooted in a PARA bucket (${PARA_BUCKETS.join(", ")})`
+  }
+  if (!normalized.endsWith(MEMORY_EXTENSION)) return `it does not end in ${MEMORY_EXTENSION}`
+  /*
+   * No "names a bucket and nothing else" clause, because that case cannot reach here:
+   * `paraBucketOf` returns a bucket only when a `/` sits at index 1 or later, so a path that got past
+   * it always has at least one segment after the bucket. A bare `areas` (or `areas/`, which
+   * `normalizePath` reduces to it) fails the clause above instead, and says so.
+   */
+  const traversal = normalized
+    .split("/")
+    .find((segment) => segment === "" || segment === "." || segment === "..")
+  return traversal === undefined
+    ? undefined
+    : `it carries a ${traversal === "" ? "blank" : `\`${traversal}\``} path segment`
 }
+
+/**
+ * True when a path is a usable memory path: rooted in a PARA bucket, ending in `.html`,
+ * carrying no `.` or `..` segment.
+ *
+ * {@link memoryPathViolation} asked as a boolean, so the predicate and the refusal's reason cannot
+ * disagree about which paths are usable.
+ */
+export const isValidMemoryPath = (path: string): boolean => memoryPathViolation(path) === undefined
 
 /**
  * What {@link placementFor} decides from. `path` is the caller's explicit override.
@@ -107,8 +134,13 @@ const RESOURCE_TYPES: ReadonlyArray<string> = ["semantic", "procedural", "preced
  * Returns the *directory*, not the full path, because the filename needs a title this input
  * does not carry. {@link memoryPathFor} composes the two. An explicit `path` contributes
  * its directory; when that path is unusable it is ignored rather than propagated, so the
- * return stays a valid bucket. A caller that wants an invalid path refused rather than
- * silently re-derived gates on {@link isValidMemoryPath} first.
+ * return stays a valid bucket and this function stays total.
+ *
+ * Totality is why the refusal cannot live here. A caller that wants an unusable path refused
+ * rather than re-derived asks the store for it (`strictPath` on a `WriteInput`), which gates on
+ * {@link memoryPathViolation} before any of this runs and quotes its reason. Refusing here instead
+ * would make placement fallible for every caller, including the sleep phases that place a synthesized
+ * arc and have no caller path to be wrong about.
  */
 export const placementFor = (input: PlacementInput): string => {
   if (input.path !== undefined && isValidMemoryPath(input.path)) {

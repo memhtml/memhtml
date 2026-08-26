@@ -6,7 +6,7 @@ import { Effect } from "effect"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { type Cli, makeCli } from "./harness.js"
-import { type Client, connect, failureText, handshake, structured } from "./spawned.js"
+import { type Client, connect, failureText, handshake, structured, treeDigest } from "./spawned.js"
 
 /**
  * The regression lock for `docs/bugs/2026-08-03-event-at-unreachable-through-write-paths.md`, run as
@@ -476,5 +476,128 @@ describe("the facet scope over real MCP stdio", () => {
     // `MEMHTML_EMBED=off` in this tier, so the vector arm never fires and the marker still has to be
     // computed from the scope rather than from the arms that ran.
     expect(missingScopeEmpty).toBe(true)
+  })
+})
+
+/**
+ * `strict_path` over real MCP stdio: the refusal an agent actually receives.
+ *
+ * The wire text is only observable here. `McpServer` decides whether a failed handler's message is
+ * passed through or replaced with its generic internal-error sentence, and that decision is invisible
+ * in-process — so a refusal whose code and reason the handler computed correctly can still reach its
+ * agent stripped. `InvalidMemory` travels the same declared-failure branch the XOR refusal above does,
+ * and this is the tier that proves it for THIS refusal rather than for that one.
+ *
+ * "Refused" and "wrote nothing" are separate claims. The digest is taken over a corpus that already
+ * holds a memory, so a write-nothing bug cannot hide behind an empty scaffold.
+ */
+describe("strict_path over real MCP stdio", () => {
+  let cli: Cli
+  let strictText = ""
+  let lenientPath = ""
+  let validPath = ""
+  let digestBefore = ""
+  let digestAfter = ""
+  let writeSchema: { readonly properties?: Record<string, unknown> } | undefined
+
+  const UNUSABLE = "notes/oncall/rollback.html"
+
+  beforeAll(async () => {
+    cli = await makeCli()
+    const client: Client = connect(cli.root)
+    await handshake(client)
+
+    const listed = await client.rpc("tools/list", {})
+    const tools = (
+      listed.result as {
+        readonly tools: ReadonlyArray<{ readonly name: string; readonly inputSchema: unknown }>
+      }
+    ).tools
+    writeSchema = tools.find((tool) => tool.name === "memory_write")?.inputSchema as {
+      readonly properties?: Record<string, unknown>
+    }
+
+    // The neighbour the refusal must not disturb.
+    await client.rpc("tools/call", {
+      name: "memory_write",
+      arguments: {
+        title: "The bastion listens on a non-default port",
+        memory_type: "semantic",
+        body: "The staging bastion listens on port 2222."
+      }
+    })
+
+    lenientPath = structured(
+      await client.rpc("tools/call", {
+        name: "memory_write",
+        arguments: {
+          title: "A lenient override lands elsewhere",
+          memory_type: "semantic",
+          body: "The lenient branch re-derives the directory.",
+          path: UNUSABLE
+        }
+      })
+    ).path as string
+
+    digestBefore = await treeDigest(cli.root)
+    strictText = failureText(
+      await client.rpc("tools/call", {
+        name: "memory_write",
+        arguments: {
+          title: "A strict override is refused",
+          memory_type: "semantic",
+          body: "The strict branch refuses rather than re-deriving.",
+          path: UNUSABLE,
+          strict_path: true
+        }
+      })
+    )
+    digestAfter = await treeDigest(cli.root)
+
+    validPath = structured(
+      await client.rpc("tools/call", {
+        name: "memory_write",
+        arguments: {
+          title: "A strict override that is valid",
+          memory_type: "semantic",
+          body: "A usable explicit path is honored verbatim.",
+          path: "areas/oncall/strict-and-valid.html",
+          strict_path: true
+        }
+      })
+    ).path as string
+
+    await client.shutdown()
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  it("publishes `strict_path` on memory_write, so a client can send it at all", () => {
+    expect(Object.keys(writeSchema?.properties ?? {})).toContain("strict_path")
+  })
+
+  it("re-derives an unusable path by DEFAULT, which is what the flag opts out of", () => {
+    expect(lenientPath).not.toBe(UNUSABLE)
+    expect(lenientPath.startsWith("areas/inbox/")).toBe(true)
+  })
+
+  it("delivers the refusal as prose carrying the code and the offending path", () => {
+    // Not the internal-error sentence: that string is what a failure reaches an agent as when its
+    // tool's declared failure schema does not cover it, and it names neither the code nor the path.
+    expect(strictText).not.toContain("internal server error")
+    expect(strictText).toContain("ERR_INVALID_MEMORY")
+    expect(strictText).toContain(UNUSABLE)
+  })
+
+  it("leaves the working tree BYTE-IDENTICAL across that refusal", () => {
+    // "Returned an error" is not "wrote nothing", and only this assertion is the second one.
+    expect(digestAfter).toBe(digestBefore)
+  })
+
+  it("still honors a USABLE path under strict_path", () => {
+    // The mutation-proof half, for the CLI door's reason.
+    expect(validPath).toBe("areas/oncall/strict-and-valid.html")
   })
 })

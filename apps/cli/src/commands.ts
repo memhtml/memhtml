@@ -62,6 +62,21 @@ export const GLOBAL_FLAGS: ReadonlyArray<FlagSpec> = [
 ]
 
 /**
+ * The `--strict-path` help.
+ *
+ * It states the DEFAULT as well as the opt-in, because the default is the surprising half: a caller
+ * reaching for this flag is a caller who just discovered that a malformed `--path` was re-derived, and
+ * the help has to confirm that reading rather than leave it inferred. The refusal's code is named too,
+ * since a caller branches on `code` and never on the prose.
+ */
+const STRICT_PATH_FLAG =
+  "Refuse an unusable --path instead of letting the placement rule decide. " +
+  "By default a --path that is not a usable memory path is re-derived, so the memory lands somewhere you did not name and the response reports that other path as a success. " +
+  "With this flag the write is REFUSED with ERR_INVALID_MEMORY naming the clause the path broke, and nothing is written, staged, or committed. " +
+  "It governs the path you NAMED: with no --path there is nothing to be strict about and the flag changes nothing. " +
+  "An OCCUPIED path is refused with ERR_WRITE_CONFLICT with or without it."
+
+/**
  * The `--facet` help, shared by every command that scopes on one.
  *
  * The composition rule is IN the help because it is a semantic contract rather than a convenience: a
@@ -196,7 +211,13 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "path",
         type: "string",
         description:
-          "An explicit path override. One that is not a usable memory path (rooted in a PARA bucket, ending in .html, no `.` or `..` segment) is IGNORED and the placement rule decides instead, so a malformed override lands the memory somewhere you did not name. One a file ALREADY occupies is REFUSED with ERR_WRITE_CONFLICT and nothing is written or committed: this corpus overwrites nothing, and an explicit path gets no `-2` suffix because you named one path. To replace what a memory says, use `memhtml correct <path>`."
+          "An explicit path override. One that is not a usable memory path (rooted in a PARA bucket, ending in .html, no `.` or `..` segment) is IGNORED and the placement rule decides instead, so a malformed override lands the memory somewhere you did not name — pass --strict-path to have it refused instead. One a file ALREADY occupies is REFUSED with ERR_WRITE_CONFLICT and nothing is written or committed: this corpus overwrites nothing, and an explicit path gets no `-2` suffix because you named one path. To replace what a memory says, use `memhtml correct <path>`."
+      },
+      {
+        name: "strict-path",
+        type: "boolean",
+        description: STRICT_PATH_FLAG,
+        default: false
       },
       { name: "workspace", type: "string", description: "Routes the memory to projects/<slug>/." },
       {

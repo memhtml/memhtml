@@ -197,6 +197,11 @@ export interface WriteParams extends Provenance {
   readonly articleHtml?: string | undefined
   readonly memoryType: string
   readonly path?: string | undefined
+  /**
+   * Refuse an unusable `path` instead of letting the placement rule decide. Opt-in; the store owns
+   * the refusal (`@memhtml/store`'s `strictPathRefusal`), so this door and `memhtml apply` share it.
+   */
+  readonly strictPath?: boolean | undefined
   readonly workspace?: string | undefined
   readonly tags?: ReadonlyArray<string> | undefined
   readonly entities?: ReadonlyArray<string> | undefined
@@ -268,6 +273,7 @@ const toWriteInput = (params: WriteParams, at: string): Effect.Effect<WriteInput
         body: params.body,
         articleHtml: params.articleHtml,
         path: params.path,
+        strictPath: params.strictPath,
         workspace: params.workspace,
         tags: params.tags,
         entities: params.entities,
