@@ -390,8 +390,8 @@ const ungroundedReason = (
  * ## What is still unverified, stated as the residual it is
  *
  * `readSessionIds` is a model CLAIM. An agent that opens one transcript and names thirty-two advances
- * thirty-two, exactly as before, and nothing here can tell that from a thorough run — the quote gate
- * proves reading happened, not how much. {@link underCitedWatermarkWarning} is what makes that shape
+ * thirty-two, and nothing here can tell that from a thorough run — the quote gate proves reading
+ * happened, not how much. {@link underCitedWatermarkWarning} is what makes that shape
  * visible: it compares the sessions the answer QUOTES against the sessions it claims to have read, so a
  * wide claim behind a narrow set of quotes is logged rather than silent.
  *
@@ -456,7 +456,12 @@ const WATERMARK_WARN_MIN_READABLE = 8
  * The line fires for a WIDE claim behind a NARROW set of quotes, which is exactly the case worth an
  * operator's attention.
  *
- * The count is of DISTINCT cited session ids, because a candidate citing one session twice is one
+ * The count is of DISTINCT cited session ids INSIDE the advancing set, because both numbers in the line
+ * have to name one space. A citation of a session that is not advancing — one outside the receipt, or
+ * one the run never made reachable — is evidence about a different set, and counting it both understates
+ * the uncited remainder and suppresses the line in the case it exists for: eight sessions advancing on
+ * the receipt alone, with two quotes naming sessions none of them, reads as a quarter cited when zero
+ * of the advance is. Distinct rather than per-quote, because a candidate citing one session twice is one
  * session's receipt and a per-quote count would read as breadth. Pure over the answer and the readable
  * ids, in the contract for the reason {@link ungroundedEvidenceReason} records: the test tier drives it
  * with no server.
@@ -471,14 +476,20 @@ export const underCitedWatermarkWarning = (
   },
   readableSessionIds: ReadonlyArray<string>
 ): string | null => {
-  const advancing = watermarkableSessionIds(answer, readableSessionIds).length
+  const advance = watermarkableSessionIds(answer, readableSessionIds)
+  const advancing = advance.length
   if (advancing < WATERMARK_WARN_MIN_READABLE) return null
 
+  const advancingIds = new Set(advance)
   const cited = new Set<string>()
-  for (const candidate of answer.candidates) {
-    for (const quote of candidate.evidence) cited.add(quote.sessionId)
+  const cite = (sessionId: string): void => {
+    const id = sessionId.trim()
+    if (advancingIds.has(id)) cited.add(id)
   }
-  for (const commitment of answer.commitments) cited.add(commitment.evidence.sessionId)
+  for (const candidate of answer.candidates) {
+    for (const quote of candidate.evidence) cite(quote.sessionId)
+  }
+  for (const commitment of answer.commitments) cite(commitment.evidence.sessionId)
   if (cited.size >= advancing * WATERMARK_CITED_SHARE_FLOOR) return null
 
   return (

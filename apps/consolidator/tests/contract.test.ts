@@ -876,6 +876,54 @@ describe("a wide read claim behind narrow quotes is logged", () => {
   })
 
   /**
+   * A citation OUTSIDE the advance is not a receipt for the advance, and the two failures it causes pull
+   * in opposite directions.
+   *
+   * First arm: eight sessions advance on the receipt alone and the only quotes name two REACHABLE
+   * sessions the receipt left out. Counting those two puts `cited.size` at the quarter floor and the line
+   * goes silent, while ZERO of the advancing eight carries a citation — the exact shape the rule exists
+   * to surface, suppressed by evidence about a different set.
+   *
+   * Second arm: a wide claim whose one quote names a session outside the advance. The line must fire, and
+   * both of its numbers must be in the advancing space — `0 of them` cited, `32` uncited. A count over
+   * the whole answer prints `1` and `31`, neither of which is true of any set.
+   *
+   * (Mutation: counting every cited session id regardless of the advance makes the first arm return a
+   * string and prints `only 1 of them` in the second.)
+   */
+  it("counts a citation only when the session it names is one the watermark advances", () => {
+    const advance = batchOf(8)
+    const reachable = [...advance, "session-outside-a", "session-outside-b"]
+    expect(
+      underCitedWatermarkWarning(
+        {
+          candidates: [oneSessionCandidate("session-outside-a")],
+          commitments: [
+            commitment({
+              evidence: evidence("session-outside-b", "I'll wire capture before we cut the release")
+            })
+          ],
+          readSessionIds: advance
+        },
+        reachable
+      )
+    ).not.toBeNull()
+
+    const wide = batchOf(32)
+    const warning = underCitedWatermarkWarning(
+      {
+        candidates: [oneSessionCandidate("session-elsewhere")],
+        commitments: [],
+        readSessionIds: wide
+      },
+      [...wide, "session-elsewhere"]
+    )
+    expect(warning).toContain("watermarking 32")
+    expect(warning).toContain("only 0 of them")
+    expect(warning).toContain("other 32")
+  })
+
+  /**
    * Two arms that must stay quiet, for different reasons. An answer with NO findings advances nothing at
    * all — {@link watermarkableSessionIds} already returns `[]` and the client logs that arm itself, so a
    * second warning about a watermark that is not happening would be noise. And a small advance carries no
