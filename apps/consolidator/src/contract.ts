@@ -107,6 +107,41 @@ export class CandidateEvidence extends Schema.Class<CandidateEvidence>("Candidat
 }) {}
 
 /**
+ * One entity a candidate names, as a TYPE and a NAME rather than as one bare string.
+ *
+ * ## Why the type half is structural
+ *
+ * The corpus keys an entity on `(entity_type, entity_name)`, and the `entity` retrieval scope compares
+ * a whole `type:name` reference (`packages/index/src/scope.ts`). A reference carrying no separator is
+ * filed under the type `unknown` (`packages/index/src/project.ts`), which keeps the name as a handle
+ * and costs reachability: a memory stored under `unknown:checkout-api` answers
+ * `service:checkout-api` — the reference a caller would ask for — with an empty set, which is the same
+ * answer an absent memory gives. So a producer emitting bare names writes memories nothing can reach
+ * by entity.
+ *
+ * ## A required OBJECT FIELD, never a `pattern` on a string
+ *
+ * The other entity producer in this repo already ships this shape: `apps/cli/src/extraction.ts` sends
+ * `{type, name}` with `required: ["type", "name"]` and `additionalProperties: false` under the
+ * Responses API's `strict: true`, and joins the pair as `type:name`. A JSON-Schema `pattern` is not
+ * reliably enforced by a provider's strict-mode structured output, while a required object field is,
+ * so the type half arrives because the shape has nowhere else to put it.
+ *
+ * ## The type vocabulary is OPEN
+ *
+ * `type` is any non-empty term, not a literal union. memhtml does not dictate a consumer's entity
+ * taxonomy: the types `agent/instructions.md` offers are a prompt-level suggestion, `unknown` remains
+ * a valid store type, and a consumer modelling its own domain adds its own terms without a change
+ * here. What this schema requires is that the type is STATED, never which one it is.
+ */
+export class CandidateEntity extends Schema.Class<CandidateEntity>("CandidateEntity")({
+  /** What kind of thing it is — `service`, `person`, `file`, or any other term. See the class note. */
+  type: Schema.String.check(Schema.isMinLength(1)),
+  /** Its concrete name, as the transcript spells it. */
+  name: Schema.String.check(Schema.isMinLength(1))
+}) {}
+
+/**
  * One distilled candidate. Not yet a memory: the next task decides what reaches the corpus.
  *
  * `evidence` is `minLength(2)`, which expresses the TRACE-2 bar as a type rather than as
@@ -122,9 +157,7 @@ export class CandidateMemory extends Schema.Class<CandidateMemory>("CandidateMem
   /** The supporting detail: what recurs, where, and what it implies. */
   gist: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_GIST_CHARS)),
   /** Tools, files, commands, packages, people the claim is about. May be empty. */
-  entities: Schema.Array(Schema.String.check(Schema.isMinLength(1))).check(
-    Schema.isMaxLength(MAX_ENTITIES_PER_CANDIDATE)
-  ),
+  entities: Schema.Array(CandidateEntity).check(Schema.isMaxLength(MAX_ENTITIES_PER_CANDIDATE)),
   evidence: Schema.Array(CandidateEvidence).check(
     Schema.isMinLength(2),
     Schema.isMaxLength(MAX_EVIDENCE_PER_CANDIDATE)

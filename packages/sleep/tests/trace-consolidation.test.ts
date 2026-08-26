@@ -265,7 +265,7 @@ describe("trace-consolidation happy path", () => {
               "Partial indexes on this driver need the predicate restated in the query to be chosen.",
             gist: "Three separate lookups planned as SCAN until the redundant IS NOT NULL clause was added, across two different tables.",
             kind: "error_pattern",
-            entities: ["service:sqlite"]
+            entities: [{ type: "service", name: "sqlite" }]
           }),
           candidate({
             claim: "Fixture corpora go stale one phase before the phase under test.",
@@ -361,7 +361,10 @@ describe("trace-consolidation happy path", () => {
           claim: "Partial indexes on this driver need their predicate restated in the query.",
           gist: "The distilled prose, which IS allowed in the body.",
           kind: "error_pattern",
-          entities: ["service:sqlite", "person:sanju"],
+          entities: [
+            { type: "service", name: "sqlite" },
+            { type: "person", name: "sanju" }
+          ],
           evidence: [
             { sessionId: "session-a", quote: QUOTE_A },
             { sessionId: "session-b", quote: QUOTE_B }
@@ -397,7 +400,18 @@ describe("trace-consolidation happy path", () => {
           expect(doc.metas.author).toBe("agent:sleep")
           expect(doc.metas.memoryType).toBe("error_pattern")
           expect(doc.metas.status).toBe("active")
-          expect(doc.entities).toContain("service:sqlite")
+          /**
+           * Each entity's TWO HALVES arrive joined as one `type:name` reference, which is the form
+           * `file_entities` keys on and the form the `entity` scope compares. A reference filed without
+           * its type lands under `unknown` and answers `service:sqlite` with an empty set — the same
+           * answer an absent memory gives — so this is the assertion that says the memory is reachable
+           * by the reference a caller would ask for.
+           *
+           * `toEqual` over both, in the candidate's own order, so a join that dropped a half or
+           * reordered the pair is visible. (Mutation: joining `name` alone yields `["sqlite",
+           * "sanju"]`; joining `name:type` yields `["sqlite:service", ...]`. Both fail here.)
+           */
+          expect(doc.entities).toEqual(["service:sqlite", "person:sanju"])
 
           /**
            * The evidence IS in the commit message, which is where a reviewer needs it — a commit
@@ -407,6 +421,50 @@ describe("trace-consolidation happy path", () => {
           const message = yield* messageOf(fixture, outcome.commitSha ?? "")
           expect(message).toContain(QUOTE_A)
           expect(message).toContain(QUOTE_B)
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("trims both halves of an entity and drops a pair missing one", async () => {
+    /**
+     * The redundancy every model-facing value in this package carries, applied to the entity join.
+     *
+     * The padding case is not cosmetic: `parseEntity` splits on the FIRST colon, so an untrimmed
+     * `" service "` files under the type `"service "` and no reference a caller spells reaches it — a
+     * memory in the tree, indexed, and unfindable. The dropped pairs are the shapes the schema already
+     * refuses, gated again here so a scripted or future consolidator that skipped the decode still
+     * cannot write `:orphan` or `person:`, whose one meaningful half is unreachable through a scope
+     * that compares the whole reference.
+     *
+     * (Mutation: removing the `.trim()` from either half yields `" service : sqlite "`; removing the
+     * empty-half filter adds `unknown`-typed junk. Both fail the `toEqual`.)
+     */
+    const consolidator = scriptedConsolidator(() =>
+      candidates([
+        candidate({
+          claim: "A padded entity half files under a type nobody can spell.",
+          gist: "Two lookups missed a memory whose entity meta carried surrounding whitespace.",
+          kind: "error_pattern",
+          entities: [
+            { type: " service ", name: " sqlite " },
+            { type: "   ", name: "orphan" },
+            { type: "person", name: " " }
+          ]
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* seedTrace(fixture, { sessionId: "session-a" })
+          const base = yield* headSha(fixture)
+
+          yield* traceConsolidation(envFor(fixture))
+          const [path] = yield* addedMemories(fixture, base)
+          const doc = yield* parseMemory((yield* atHead(fixture, path ?? "")) ?? "")
+          expect(doc.entities).toEqual(["service:sqlite"])
         }),
       { seed: DEDUP_CORPUS, consolidator }
     )

@@ -76,7 +76,10 @@ const candidate = (overrides: Record<string, unknown> = {}) => ({
   kind: "error_pattern",
   claim: "The batch importer fails on empty CSV headers across sessions.",
   gist: "Three sessions hit the same TypeError from a header-less CSV; the fix each time was to pass an explicit header list.",
-  entities: ["importer.ts", "papaparse"],
+  entities: [
+    { type: "file", name: "importer.ts" },
+    { type: "package", name: "papaparse" }
+  ],
   evidence: [
     evidence("session-a", "TypeError: Cannot read properties of undefined (reading 'trim')"),
     evidence("session-b", "TypeError: Cannot read properties of undefined (reading 'trim')")
@@ -183,9 +186,81 @@ describe("CandidateMemory decode", () => {
     expect(Result.isFailure(decode([candidate()]))).toBe(true)
   })
 
-  it("accepts empty entities but rejects an empty entity string", () => {
+  it("accepts empty entities but rejects an entity with an empty half", () => {
     expect(Result.isSuccess(decode({ candidates: [candidate({ entities: [] })] }))).toBe(true)
-    expect(Result.isFailure(decode({ candidates: [candidate({ entities: [""] })] }))).toBe(true)
+    expect(
+      Result.isFailure(decode({ candidates: [candidate({ entities: [{ type: "", name: "x" }] })] }))
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        decode({ candidates: [candidate({ entities: [{ type: "file", name: "" }] })] })
+      )
+    ).toBe(true)
+  })
+
+  /**
+   * The type half is what makes an entity reachable, so the decode refuses every way of omitting it.
+   *
+   * A memory whose entity is filed under `unknown` answers the reference a caller spells —
+   * `service:checkout-api` — with an empty set, and the empty set is also what an absent memory
+   * returns. This is the case that keeps the shape STRUCTURAL rather than advisory: a bare string is
+   * the answer a model trained on the previous phrasing gives, and it fails here instead of writing an
+   * unreachable memory.
+   *
+   * (Mutation: `entities: Schema.Array(Schema.String.check(Schema.isMinLength(1)))` accepts the bare
+   * strings and the type-less object below, and fails this case on the first two expectations.)
+   */
+  it("REJECTS a bare-string entity and an entity with no type", () => {
+    expect(
+      Result.isFailure(decode({ candidates: [candidate({ entities: ["checkout-api"] })] }))
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        decode({ candidates: [candidate({ entities: [{ name: "checkout-api" }] })] })
+      )
+    ).toBe(true)
+    expect(
+      Result.isFailure(decode({ candidates: [candidate({ entities: [{ type: "service" }] })] }))
+    ).toBe(true)
+  })
+
+  /**
+   * An undeclared key inside an entity fails, matching the payload root's own posture: the decode runs
+   * with `onExcessProperty: "error"` precisely so an answer shaped like a NEIGHBOURING schema cannot
+   * decode with the difference stripped out.
+   */
+  it("REJECTS an extra key inside an entity", () => {
+    expect(
+      Result.isFailure(
+        decode({
+          candidates: [candidate({ entities: [{ type: "service", name: "checkout-api", id: 7 }] })]
+        })
+      )
+    ).toBe(true)
+  })
+
+  /**
+   * The type vocabulary is OPEN, and this is the assertion that keeps it open. memhtml must not dictate
+   * a consumer's entity taxonomy, so a term outside anything the prompt suggests decodes, and so does
+   * `unknown` — which is a real store type, not a rejection.
+   *
+   * (Mutation: `type: Schema.Literals([...])` over any fixed list fails here.)
+   */
+  it("ACCEPTS a type outside the suggested vocabulary, and `unknown`", () => {
+    expect(
+      Result.isSuccess(
+        decode({
+          candidates: [
+            candidate({
+              entities: [
+                { type: "gauge", name: "backlog-depth" },
+                { type: "unknown", name: "the thing in the corner" }
+              ]
+            })
+          ]
+        })
+      )
+    ).toBe(true)
   })
 
   it("decodes to the class, so downstream code gets the declared type", () => {
@@ -488,10 +563,10 @@ describe("one answer is finite by contract", () => {
   })
 
   it("REJECTS a candidate with more entities than the ceiling", () => {
-    const entities = Array.from(
-      { length: MAX_ENTITIES_PER_CANDIDATE + 1 },
-      (_, i) => `entity-${String(i)}`
-    )
+    const entities = Array.from({ length: MAX_ENTITIES_PER_CANDIDATE + 1 }, (_, i) => ({
+      type: "file",
+      name: `entity-${String(i)}`
+    }))
     expect(Result.isFailure(decode({ candidates: [candidate({ entities })] }))).toBe(true)
   })
 
@@ -511,10 +586,10 @@ describe("one answer is finite by contract", () => {
     const quotes = Array.from({ length: MAX_EVIDENCE_PER_CANDIDATE }, (_, i) =>
       evidence("session-a", `quote number ${String(i)}`)
     )
-    const entities = Array.from(
-      { length: MAX_ENTITIES_PER_CANDIDATE },
-      (_, i) => `entity-${String(i)}`
-    )
+    const entities = Array.from({ length: MAX_ENTITIES_PER_CANDIDATE }, (_, i) => ({
+      type: "file",
+      name: `entity-${String(i)}`
+    }))
     expect(
       Result.isSuccess(
         decode({
@@ -785,6 +860,51 @@ describe("the derived JSON Schema eve is handed", () => {
     expect(target.type).toBe("object")
     expect(target.properties).toHaveProperty("claim")
     expect(target.properties).toHaveProperty("evidence")
+  })
+
+  /**
+   * The entity's TWO HALVES have to reach the MODEL as an object with both fields required.
+   *
+   * This is the whole mechanism by which a typed reference arrives, and it is why the shape is an
+   * object rather than a string with a `pattern`: a provider's strict-mode structured output enforces
+   * a required object field, and a `pattern` on a string it does not. A schema publishing
+   * `{"type": "string"}` here would be asked for bare names again, every candidate would file under
+   * `unknown`, and the decode would accept it — the wire schema is the only place that is visible.
+   *
+   * `additionalProperties: false` matters for the same reason `strict: true` demands it in
+   * `apps/cli/src/extraction.ts`: a lax item schema invites a third key the join would ignore.
+   *
+   * (Mutation: `entities: Schema.Array(Schema.String.check(Schema.isMinLength(1)))` publishes
+   * `items: {type: "string"}` with no `$ref`, and fails on the ref lookup below.)
+   */
+  it("publishes the entity item as an object requiring both type and name", () => {
+    const properties = schema.properties as Record<string, Record<string, unknown>>
+    const candidates = properties.candidates
+    if (candidates === undefined) throw new Error("schema.properties.candidates is missing")
+    const defs = schema.$defs as Record<string, Record<string, unknown> | undefined>
+    const candidateRef = (candidates.items as Record<string, unknown>).$ref
+    if (typeof candidateRef !== "string") throw new Error("candidates.items has no $ref")
+    const candidateDef = defs[candidateRef.slice("#/$defs/".length)]
+    if (candidateDef === undefined) throw new Error(`unresolved ref ${candidateRef}`)
+    const entities = (candidateDef.properties as Record<string, Record<string, unknown>>).entities
+    if (entities === undefined) throw new Error("the candidate definition has no entities")
+    expect(entities.type).toBe("array")
+    const entityRef = (entities.items as Record<string, unknown>).$ref
+    if (typeof entityRef !== "string") {
+      throw new Error(`entities.items is not an object ref: ${JSON.stringify(entities.items)}`)
+    }
+    const entity = defs[entityRef.slice("#/$defs/".length)]
+    if (entity === undefined) throw new Error(`unresolved ref ${entityRef}`)
+    expect(entity.type).toBe("object")
+    expect(entity.required).toEqual(["type", "name"])
+    expect(entity.additionalProperties).toBe(false)
+    /**
+     * The type is a plain string and NOT an enum, asserted on the wire because that is where a closed
+     * vocabulary would be imposed on a consumer. memhtml does not own a consumer's entity taxonomy.
+     */
+    const type = (entity.properties as Record<string, Record<string, unknown>>).type
+    expect(type?.type).toBe("string")
+    expect(type?.enum).toBeUndefined()
   })
 
   /**

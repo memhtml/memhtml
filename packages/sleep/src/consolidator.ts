@@ -71,6 +71,22 @@ export interface CandidateEvidenceLike {
 }
 
 /**
+ * One entity a candidate names, split into the two halves the corpus keys on.
+ *
+ * Both halves are `string` and neither is a vocabulary here, matching how this port widens `kind` and
+ * `actor`: the phase joins them into a `type:name` reference and the corpus decides what a type means,
+ * so a narrower type in this file would be a taxonomy `@memhtml/sleep` does not own.
+ *
+ * A pair rather than one pre-joined string, so the phase never has to decide whether an incoming
+ * reference already carries its type. `apps/consolidator`'s `CandidateEntity` is the concrete shape
+ * this accepts and it records why the type half is structural.
+ */
+export interface CandidateEntityLike {
+  readonly type: string
+  readonly name: string
+}
+
+/**
  * One distilled candidate, as the phase reads it.
  *
  * `claim` becomes the file's `<mark>` and therefore `files.gist`; `gist` becomes its prose. The
@@ -84,7 +100,7 @@ export interface CandidateMemoryLike {
   readonly kind: string
   readonly claim: string
   readonly gist: string
-  readonly entities: ReadonlyArray<string>
+  readonly entities: ReadonlyArray<CandidateEntityLike>
   readonly evidence: ReadonlyArray<CandidateEvidenceLike>
 }
 

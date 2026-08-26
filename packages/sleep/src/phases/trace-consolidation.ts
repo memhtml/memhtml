@@ -1,4 +1,4 @@
-import { WRITABLE_MEMORY_TYPES } from "@memhtml/contracts"
+import { ENTITY_SEPARATOR, WRITABLE_MEMORY_TYPES } from "@memhtml/contracts"
 import type { StorageFailure } from "@memhtml/contracts/errors"
 import { placementFor } from "@memhtml/contracts/paths"
 import { SLUG_FALLBACK, slugify, withCollisionOrdinal } from "@memhtml/contracts/slug"
@@ -559,6 +559,33 @@ const consolidateCommitments = (
   })
 
 /**
+ * A candidate's entities as the `type:name` references a `memhtml-entity` meta carries.
+ *
+ * The join is the whole translation between the agent's answer and the corpus: `CandidateEntity`
+ * (`apps/consolidator/src/contract.ts`) states the two halves separately so a model cannot omit the
+ * type, and the corpus keys on `(entity_type, entity_name)` reassembled as one reference by the
+ * `entity` scope. Both halves are trimmed, because a padded half survives `parseEntity` — the split is
+ * on the first colon, so `service :sqlite` files under the type `"service "` and no reference a caller
+ * spells reaches it.
+ *
+ * A pair with either half empty after the trim is DROPPED rather than filed, which is the same
+ * redundancy every model-facing gate in this package carries: the schema already refuses an empty half,
+ * and a scripted or future consolidator that skipped the schema still cannot write `:name` or
+ * `service:` — references whose one meaningful half is unreachable through a scope that compares the
+ * whole string.
+ *
+ * One function, called by the write and by {@link placementDirectory}, so the file's metas and the
+ * directory it lands in are derived from the same references. `placementFor` routes on `person:`, and
+ * two independent joins could put a person memory outside `resources/people/`.
+ */
+const entityRefsFor = (candidate: CandidateMemoryLike): ReadonlyArray<string> =>
+  candidate.entities.flatMap((entity) => {
+    const type = entity.type.trim()
+    const name = entity.name.trim()
+    return type === "" || name === "" ? [] : [`${type}${ENTITY_SEPARATOR}${name}`]
+  })
+
+/**
  * A candidate the phase will write, or `null` with the reason it was refused.
  *
  * The gate is deterministic and sits between the agent and the tree, which is where every
@@ -891,7 +918,7 @@ export const traceConsolidation: PhaseBody = (env) =>
           memoryType: candidate.kind as (typeof WRITABLE_MEMORY_TYPES)[number],
           at: env.at,
           author: "agent:sleep",
-          entities: candidate.entities.filter((entity) => entity.trim() !== ""),
+          entities: entityRefsFor(candidate),
           tags: [CONSOLIDATION_TAG]
         })
       )
@@ -1208,6 +1235,6 @@ const freePath = (
 const placementDirectory = (candidate: CandidateMemoryLike): string =>
   placementFor({
     memoryType: candidate.kind,
-    entities: candidate.entities,
+    entities: entityRefsFor(candidate),
     tags: [CONSOLIDATION_TAG]
   })

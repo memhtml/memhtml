@@ -82,8 +82,21 @@ The requirement is not paperwork. It is the bar restated as something checkable:
   - `episodic` — a specific episode that matters as an episode. Use it sparingly; most things that feel episodic are either narration (drop it) or a durable rule (use another kind).
 - `claim` — one sentence, standing alone. Someone reading only this sentence should get the point without the gist.
 - `gist` — the supporting detail: what recurs, where, and what to do about it.
-- `entities` — the tools, files, commands, packages, or people involved. Concrete names.
+- `entities` — the tools, files, commands, packages, or people involved, each as an object with a `type` and a `name`. See [Entities](#entities). May be empty.
 - `evidence` — see above.
+
+## Entities
+
+Each entry in a candidate's `entities` is an object with two required halves.
+
+- `type` — what kind of thing it is, lowercase and singular. `service`, `person`, `file`, `command`, `package`, `org`, `concept` cover most findings; use another term when none of those fits, and `unknown` when the transcript names a thing whose kind it never says.
+- `name` — the concrete name, spelled as the transcript spells it. `checkout-api`, `pnpm`, `packages/index/src/scope.ts`.
+
+So a claim about a slow retrieval path carries `{"type": "service", "name": "checkout-api"}` and `{"type": "command", "name": "memhtml search"}`, not `"checkout-api"` and `"memhtml search"`.
+
+Both halves are required, and the store is why: a memory is looked up by the whole `type:name` reference, so a name whose type is missing is filed under `unknown` and a later search for `service:checkout-api` finds nothing. Name the type you mean, or `unknown` when you genuinely cannot tell.
+
+Prefer few, concrete entities over an inventory. A file the session merely opened is not what the claim is about.
 
 ## Commitments
 

@@ -424,7 +424,7 @@ describe("trace-consolidation inside a full run", () => {
           claim: "Partial indexes on this driver need the predicate restated in the query.",
           gist: "Two separate lookups planned as a table scan until the redundant clause was added.",
           kind: "error_pattern",
-          entities: ["service:sqlite"]
+          entities: [{ type: "service", name: "sqlite" }]
         }),
         candidate({
           claim: "A fixture corpus goes stale one phase before the phase under test.",
