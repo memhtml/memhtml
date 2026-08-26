@@ -90,7 +90,8 @@ describe("the wire failure a tool call produces", () => {
       toToolFailure(new PathNotFound({ path: "areas/oncall/never-written.html" })).message
     ).toBe(
       "ERR_PATH_NOT_FOUND: no memory at areas/oncall/never-written.html. " +
-        "Try: call memory_search with a query for what you were looking for; " +
+        "Try: call memory_resolve on the path you cited — a correction or an eviction may have moved it; " +
+        "call memory_search with a query for what you were looking for; " +
         "call memory_list to page the corpus by type or workspace"
     )
   })

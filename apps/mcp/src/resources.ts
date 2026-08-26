@@ -162,6 +162,7 @@ const templateLayer = <E, R>(spec: TemplateSpec<E, R>): Layer.Layer<never, never
 const fileRefusal = (uri: string): ToolFailure =>
   resourceFailure("ERR_PATH_NOT_FOUND", `nothing to read at ${uri}`, [
     `re-request it as ${prefixOf("file")}<repo-root-relative path>, the form resources/templates publishes`,
+    "call memory_resolve on that path — a correction or an eviction may have moved the memory, and both are recorded",
     "call memory_search or memory_list for a path this corpus holds"
   ])
 

@@ -1,3 +1,4 @@
+import { INBOX_DIR } from "@memhtml/contracts/paths"
 import { type DatabaseShape, readIndexState } from "@memhtml/index"
 import { Effect } from "effect"
 
@@ -61,12 +62,13 @@ export interface PlanUnknown {
  * Whether a run would change anything, as three values rather than a boolean.
  *
  * - `would-change` — at least one exactly-counted signal is non-zero. A run has work.
- * - `unknown` — every counted signal is zero, and either a phase whose candidates cannot be counted has
- *   a non-empty input or the index does not describe `HEAD`. A run MIGHT find something; this read
+ * - `unknown` — every counted signal is zero, and at least one thing was not read: a phase whose
+ *   candidates cannot be counted has a non-empty input, the index does not describe `HEAD`, or no state
+ *   plane is attached so the corroboration ledger is unreadable. A run MIGHT find something; this read
  *   cannot say.
- * - `no-signal` — every counted signal is zero, every uncountable phase's input is empty, AND the
- *   counts describe the tree the caller has checked out. This is the only value that means a run would
- *   do nothing.
+ * - `no-signal` — every counted signal is zero, every uncountable phase's input is empty, the counts
+ *   describe the tree the caller has checked out, AND every plane a signal comes from was readable. This
+ *   is the only value that means a run would do nothing.
  *
  * `no-signal` is deliberately hard to reach. Collapsing `unknown` into it is the exact mistake this
  * read exists not to make, and a stale index is the cheapest way to make that mistake: every count
@@ -210,9 +212,17 @@ export const plan = (
       ? yield* count(db, "SELECT count(*) AS n FROM state.entity_corroboration WHERE promoted = 0")
       : 0
 
-    /** Active inbox memories: `placement-triage`'s input, and `compress`'s hardest population. */
-    const inbox = yield* count(db, `${CURATABLE} AND f.path LIKE 'areas/inbox/%'`, [
-      ...SLEEP_EXCLUDED_TYPES
+    /**
+     * Active inbox memories: `placement-triage`'s input, and `compress`'s hardest population.
+     *
+     * The prefix comes from `INBOX_DIR`, the constant both phases import, rather than from a literal.
+     * The rule here is that a signal is a phase's own predicate and never a second reading of it, and a
+     * literal is a second reading that stays green while the phases follow the constant somewhere else —
+     * silently zeroing this input, which is one of the three that `no-signal` requires to be empty.
+     */
+    const inbox = yield* count(db, `${CURATABLE} AND f.path LIKE ?`, [
+      ...SLEEP_EXCLUDED_TYPES,
+      `${INBOX_DIR}/%`
     ])
 
     const signals: ReadonlyArray<PlanSignal> = [
@@ -249,7 +259,7 @@ export const plan = (
         count: pendingMerges,
         detail: db.hasState
           ? "proposed merges at one detection, awaiting a second run that reads an independently changed corpus"
-          : "no state plane is attached, so the corroboration ledger is unreadable from here"
+          : "no state plane is attached, so the corroboration ledger is UNREAD here and this zero counts nothing; the verdict cannot be no-signal while it stands"
       }
     ]
 
@@ -288,7 +298,12 @@ export const plan = (
        * is the honest value: a run's preflight would project the delta first and every later phase would
        * then read a corpus this answer never saw.
        */
-      verdict: counted > 0 ? "would-change" : inputs > 0 || !indexFresh ? "unknown" : "no-signal",
+      verdict:
+        counted > 0
+          ? "would-change"
+          : inputs > 0 || !indexFresh || !db.hasState
+            ? "unknown"
+            : "no-signal",
       signals,
       unknown,
       lastRun:

@@ -1236,7 +1236,17 @@ const runTurn = (
  */
 export const makeConsolidator = (options: ConsolidatorOptions): ConsolidatorShape => {
   const { traceRoot } = options
-  const maxTranscripts = options.maxTranscripts ?? MAX_TRANSCRIPTS_PER_RUN
+  /*
+   * CLAMPED, not just defaulted. `ConsolidationAnswer.readSessionIds` is bounded by
+   * MAX_TRANSCRIPTS_PER_RUN, and that bound's justification is "a run mounts at most that many
+   * transcripts, so a longer list names sessions no run was handed". An unclamped caller ask breaks the
+   * justification and then the turn: a caller passing 64 mounts 64, an honest receipt naming all of them
+   * fails the decode, and the client refuses every turn for that caller forever.
+   */
+  const maxTranscripts = Math.min(
+    options.maxTranscripts ?? MAX_TRANSCRIPTS_PER_RUN,
+    MAX_TRANSCRIPTS_PER_RUN
+  )
   const env = options.env ?? process.env
   const extraMounts = options.mounts ?? []
 

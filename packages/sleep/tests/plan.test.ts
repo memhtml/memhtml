@@ -273,6 +273,33 @@ describe("sleep plan", () => {
     expect(outcome.verdict).toBe("unknown")
   })
 
+  it("cannot answer `no-signal` with no state plane, where one signal is unread rather than zero", async () => {
+    /**
+     * `pending_entity_merges` comes from `state.entity_corroboration`, which lives in the separately
+     * ATTACHed state plane — the one plane git cannot rebuild. A corpus can be opened without it
+     * (`reinforce`, `doctor` and `state` all support that shape), and then the count is UNREAD rather
+     * than zero. The detail says so, and the verdict has to agree: a caller weighing an unread quantity
+     * as "none pending" skips a run that would promote a merge.
+     */
+    const outcome = await withFixture((fixture) =>
+      Effect.gen(function* () {
+        yield* fixture.reindex()
+        const withState = yield* planOf(fixture)
+        const headSha = yield* fixture.deps.git
+          .revParseHead()
+          .pipe(Effect.orElseSucceed(() => null))
+        const stateless = yield* plan({ ...fixture.db, hasState: false }, AT_MILLIS, headSha)
+        return { withState, stateless }
+      })
+    )
+
+    // The control: the same empty corpus WITH its state plane is the one case that may skip.
+    expect(outcome.withState.verdict).toBe("no-signal")
+    expect(outcome.stateless.verdict).toBe("unknown")
+    const merges = outcome.stateless.signals.find((one) => one.name === "pending_entity_merges")
+    expect(merges?.detail).toContain("UNREAD")
+  })
+
   it("counts settled transcripts through the phase's OWN predicate, unclamped by its batch cap", async () => {
     const outcome = await withFixture((fixture) =>
       Effect.gen(function* () {

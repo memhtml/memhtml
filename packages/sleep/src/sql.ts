@@ -948,6 +948,20 @@ export const sessionManifestRows = (
       )
 
 /**
+ * The predicate that makes a session a CANDIDATE, as one clause two statements bind.
+ *
+ * Written once because {@link unconsolidatedSessions} selects the batch and
+ * {@link settledSessionCount} counts the whole set, and a second copy of a selection rule is what lets
+ * a plan report a number the phase does not agree with. Two parameters, in this order: `minBytes`, then
+ * the settled-before instant.
+ */
+const SETTLED_SESSION_WHERE = `WHERE NOT EXISTS (
+       SELECT 1 FROM trace_consolidations c WHERE c.session_id = t.session_id
+     )
+       AND t.file_size >= ?
+       AND t.file_mtime < ?`
+
+/**
  * Sessions the sleep cycle has not distilled yet: big enough to hold something, settled enough to be
  * over, newest first, capped.
  *
@@ -969,24 +983,10 @@ export const sessionManifestRows = (
  *
  * **`ORDER BY file_mtime DESC` + `LIMIT` is the first-run guard, and the order carries the policy.** A
  * fresh install faces a year of transcripts, and an uncapped batch would hand thousands of files to
- * one agent session. Newest-first is what makes the cap deliberate: the cycle
- * consolidates recent sessions first and works backwards a batch per night, so the memories it earns
- * soonest are the ones about what the agent is doing now.
+ * one agent session. Newest-first is what makes the cap deliberate: the cycle consolidates recent
+ * sessions first and works backwards one batch per run, so the memories it earns soonest are the ones
+ * about what the agent is doing now.
  */
-/**
- * The predicate that makes a session a CANDIDATE, as one clause two statements bind.
- *
- * Written once because {@link unconsolidatedSessions} selects the batch and
- * {@link settledSessionCount} counts the whole set, and a second copy of a selection rule is what lets
- * a plan report a number the phase does not agree with. Two parameters, in this order: `minBytes`, then
- * the settled-before instant.
- */
-const SETTLED_SESSION_WHERE = `WHERE NOT EXISTS (
-       SELECT 1 FROM trace_consolidations c WHERE c.session_id = t.session_id
-     )
-       AND t.file_size >= ?
-       AND t.file_mtime < ?`
-
 export const unconsolidatedSessions = (
   db: DatabaseShape,
   options: {
