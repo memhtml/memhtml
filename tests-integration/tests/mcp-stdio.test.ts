@@ -602,3 +602,80 @@ describe("strict_path over real MCP stdio", () => {
     expect(validPath).toBe("areas/oncall/strict-and-valid.html")
   })
 })
+
+/**
+ * `memory_resolve`'s `pinned_uri` over real MCP stdio: a citation the same server will answer.
+ *
+ * The field is composed by the server and stored by the client, so its correctness is a round trip
+ * rather than a shape — a URI that parses, publishes, and then reads back `ERR_PATH_NOT_FOUND` is a
+ * receipt that looks verified. Only this tier can take that trip: the composition lives in
+ * `apps/mcp/src/handlers.ts` and the read lives in the resource router, and nothing in-process drives
+ * both through one session.
+ *
+ * Both branches of the rule are here, on ONE session over ONE corpus, so the difference between them
+ * is the stop reason and nothing else.
+ */
+describe("a resolved citation over real MCP stdio", () => {
+  let cli: Cli
+  let livePinned: unknown
+  let liveBody = ""
+  let unindexedPinned: unknown
+  let unindexedCommit: unknown
+
+  beforeAll(async () => {
+    cli = await makeCli()
+    const client: Client = connect(cli.root)
+    await handshake(client)
+
+    const written = structured(
+      await client.rpc("tools/call", {
+        name: "memory_write",
+        arguments: {
+          title: "The pinned citation reads back",
+          body: "A resolved citation names bytes this server will hand over.",
+          memory_type: "semantic"
+        }
+      })
+    )
+
+    const live = structured(
+      await client.rpc("tools/call", {
+        name: "memory_resolve",
+        arguments: { path: written.path as string }
+      })
+    )
+    livePinned = live.pinned_uri
+    const read = await client.rpc("resources/read", { uri: live.pinned_uri as string })
+    liveBody =
+      (read.result as { readonly contents?: ReadonlyArray<{ readonly text?: string }> } | undefined)
+        ?.contents?.[0]?.text ?? ""
+
+    const unindexed = structured(
+      await client.rpc("tools/call", {
+        name: "memory_resolve",
+        arguments: { path: "areas/oncall/never-written.html" }
+      })
+    )
+    unindexedPinned = unindexed.pinned_uri
+    unindexedCommit = unindexed.indexed_commit
+
+    await client.shutdown()
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  it("pins a live path, and the pin reads back through the same session", () => {
+    // The control. Without it the null below is consistent with a field that is always null.
+    expect(livePinned).toMatch(/^memhtml:\/\/at\/[0-9a-f]{40}\/.+\.html$/)
+    expect(liveBody).toContain("A resolved citation names bytes this server will hand over")
+  })
+
+  it("withholds the pin for `unindexed`, the one stop reason whose path is not in that commit", () => {
+    // The corpus HAS a commit to pin to, so a null here is the stop reason rather than a missing
+    // watermark — publishing the URI anyway would hand a receipt a permanent ERR_PATH_NOT_FOUND.
+    expect(unindexedCommit).toMatch(/^[0-9a-f]{40}$/)
+    expect(unindexedPinned).toBeNull()
+  })
+})

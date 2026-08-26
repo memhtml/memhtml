@@ -806,8 +806,13 @@ const MemoryResolve = Tool.make("memory_resolve", {
      */
     indexed_commit: Schema.NullOr(Schema.String),
     /**
-     * A `resources/read` URI pinning `path` at `indexed_commit`, or null when there is no commit to
-     * pin to — which is the same condition as a null `indexed_commit`.
+     * A `resources/read` URI pinning `path` at `indexed_commit`, or null when reading it would fail.
+     *
+     * Two conditions make it null, and both are the same rule: this field is a URI the same server
+     * answers. There is no commit to pin to before the first rebuild, and `unindexed` is the one
+     * `stop_reason` whose `path` the indexed commit does not hold — pinning it would publish a
+     * citation `resources/read` refuses with `ERR_PATH_NOT_FOUND`, which a receipt would store as a
+     * permanently dead link. The other four stop reasons all end on a path the index holds a row for.
      *
      * Composed by the server rather than by the client, because the URI's spelling belongs to the
      * resource that routes it. A caller writing a receipt stores this string: the path half can be

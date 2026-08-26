@@ -687,9 +687,13 @@ export const ToolHandlers: Layer.Layer<
          * The operation cannot build it: `@memhtml/cli` knows nothing about the MCP scheme, and a
          * resolution is a fact about the corpus rather than about a transport. Composing it from
          * literals in this file would be a second declaration of the published template — the
-         * consumer-side reimplementation of a producer's naming rule this repo has paid for. It is
-         * null exactly when `indexed_commit` is, because there is no commit to pin to before the first
-         * rebuild.
+         * consumer-side reimplementation of a producer's naming rule this repo has paid for.
+         *
+         * It is withheld in two cases and they are one rule: a URI this server would refuse is not a
+         * citation. There is no commit to pin to before the first rebuild, and `unindexed` is the one
+         * stop reason whose `path` the indexed commit does not hold, so pinning it would hand a client
+         * a receipt that reads `ERR_PATH_NOT_FOUND` forever. Every other stop reason ends on a path the
+         * index holds a row for.
          */
         return {
           requested: result.requested,
@@ -700,7 +704,9 @@ export const ToolHandlers: Layer.Layer<
           title: result.title,
           indexed_commit: result.indexedCommit,
           pinned_uri:
-            result.indexedCommit === null ? null : pinnedUri(result.indexedCommit, result.path)
+            result.indexedCommit === null || result.stopReason === "unindexed"
+              ? null
+              : pinnedUri(result.indexedCommit, result.path)
         }
       })
     ),
