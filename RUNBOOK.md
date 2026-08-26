@@ -223,7 +223,7 @@ The refusal is a value on the report, never an error (`packages/sleep/src/contra
 | `main-advanced` | `main` moved past the run's `base_sha`, so the run curated a corpus that no longer exists. Also the refusal when the fast-forward itself fails. | Re-run the sleep. Every phase is idempotent, so it is cheap.                             |
 | `gate-failed`   | The discrimination gate refused: this run degrades retrieval.                                                                                   | `memhtml eval discriminate` to see which probes inverted, then `git branch -D <run-id>`. |
 
-`--skip-gate` merges without re-running discrimination and logs a warning (`apps/cli/src/run.ts:617-620`) — a deliberate override, never a default. The gate always runs in FAKE mode (`apps/cli/src/run.ts:641`), precisely so a unattended merge is not conditional on a token being valid whenever the run fires.
+`--skip-gate` merges without re-running discrimination and logs a warning (`apps/cli/src/run.ts:617-620`) — a deliberate override, never a default. The gate always runs in FAKE mode (`apps/cli/src/run.ts:641`), precisely so an unattended merge is not conditional on a token being valid whenever the run fires.
 
 ---
 
