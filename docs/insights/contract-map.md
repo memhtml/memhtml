@@ -607,7 +607,7 @@ export interface StoreGitShape {
 
 ## The CLI JSON envelope and exit codes
 
-This is the machine contract an agent parses. It declares two envelope shapes, 32 response discriminators, 15 error codes, and 3 exit codes, and all of those lists are append-only.
+This is the machine contract an agent parses. It declares two envelope shapes, the response discriminators, the error codes, and 3 exit codes, and all of those lists are append-only — the counts are deliberately not restated here, because an append-only list grows and a number beside it in prose is a number nothing re-derives.
 
 **Producer:** `apps/cli/src/envelope.ts:6-157`
 
