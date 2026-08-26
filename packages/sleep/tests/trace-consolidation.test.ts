@@ -1345,12 +1345,12 @@ describe("trace-consolidation session selection", () => {
 
           /**
            * The counts SAY SO, which is the operator-visible half. `consolidated` is the analyzed count
-           * rather than the batch, so the two disagreeing is the signal that transcripts went missing —
-           * a state that previously had no reading at all, since watermarking the batch made them equal
-           * by construction.
+           * rather than the batch, so the two disagreeing is the signal that a session the phase asked
+           * about did not come back consolidated. Watermarking the batch would make them equal by
+           * construction and leave that state with no reading at all.
            */
           expect(outcome.counts.consolidated).toBe(2)
-          expect(outcome.counts.unreachable).toBe(1)
+          expect(outcome.counts.unconsolidated).toBe(1)
 
           // And the productive path really ran, so this is not passing via an early return.
           expect(outcome.counts.written).toBe(1)
@@ -1395,7 +1395,7 @@ describe("trace-consolidation session selection", () => {
 
           expect(outcome.counts.batch).toBe(2)
           expect(outcome.counts.consolidated).toBe(0)
-          expect(outcome.counts.unreachable).toBe(2)
+          expect(outcome.counts.unconsolidated).toBe(2)
           expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual([])
           expect(yield* appliedWatermarks(fixture)).toEqual([])
         }),
@@ -1436,8 +1436,8 @@ describe("trace-consolidation session selection", () => {
 
           expect(outcome.counts.batch).toBe(1)
           expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual(["session-asked"])
-          // And the over-report is NOT counted as unreachable either: one asked, one analyzed.
-          expect(outcome.counts.unreachable).toBe(0)
+          // And the over-report is NOT counted as unconsolidated either: one asked, one analyzed.
+          expect(outcome.counts.unconsolidated).toBe(0)
         }),
       { seed: DEDUP_CORPUS, consolidator }
     )

@@ -83,7 +83,26 @@ describe("agent/instructions.md", () => {
   it("permits an empty commitment list", async () => {
     const text = await read("instructions.md")
     expect(text).toContain('"commitments": []')
-    expect(text).toContain('{"candidates": [], "commitments": []}')
+    expect(text).toContain('{"candidates": [], "commitments": [], "readSessionIds":')
+  })
+
+  /**
+   * The read receipt's rules, stated where the agent reads them.
+   *
+   * The schema REQUIRES `readSessionIds` and the watermark advances over exactly it, so instructions
+   * that named the field without saying what it costs would get a list filled to look thorough — and a
+   * session named but not read is a transcript recorded as consolidated and never offered again.
+   * Assertions on the DECISIONS: the field exists, naming a session means it is never offered again, and
+   * omitting one costs a re-read rather than the transcript.
+   *
+   * (Mutation: dropping the "never offered" sentence fails this while every other prose case stays
+   * green, which is exactly the sentence an editor would trim as repetition.)
+   */
+  it("states what naming a session in the read receipt costs", async () => {
+    const text = await readProse("instructions.md")
+    expect(text).toContain("readsessionids")
+    expect(text).toContain("never offered to you again")
+    expect(text).toContain("offered again on a later night")
   })
 
   /**

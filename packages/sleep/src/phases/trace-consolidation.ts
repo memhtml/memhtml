@@ -153,7 +153,7 @@ export const TRACE_MIN_BYTES = 8 * 1024
  * Sessions handed over per run.
  *
  * Ten, which sits below the consolidator's own 32-transcript ceiling
- * (`apps/consolidator/src/contract.ts:210`) deliberately. That cap bounds RESIDENT BYTES in
+ * (`MAX_TRANSCRIPTS_PER_RUN` in `apps/consolidator/src/contract.ts`) deliberately. That cap bounds RESIDENT BYTES in
  * the sandbox, and this one bounds what a single agent session is asked to hold in attention. A batch
  * that clears the byte budget can still be too wide to read carefully, and the cross-session patterns
  * this phase exists to find are the ones visible across a handful of recent sessions.
@@ -1128,14 +1128,24 @@ export const traceConsolidation: PhaseBody = (env) =>
 
     /**
      * `consolidated` is the ANALYZED count and `batch` the requested one, so the two disagreeing in a
-     * report is the operator-visible signal that transcripts went missing. A mark over the batch would
-     * make the two equal by construction and leave that state with no reading at all.
+     * report is the operator-visible signal that a session the phase asked about did not come back
+     * consolidated. A mark over the batch would make the two equal by construction and leave that state
+     * with no reading at all.
+     *
+     * The gap has TWO causes and this phase cannot tell them apart, which is why the count is named for
+     * the outcome rather than for a cause: the transcript did not reach the agent (rotated away, outside
+     * `MEMHTML_TRACE_ROOT`, behind a symlink the mount refuses), or it reached the agent and the agent's
+     * read receipt did not name it. The phase holds only `analyzedSessionIds`, which is already the
+     * intersection of both, so a count called `unreachable` would name one cause for a number that
+     * carries both. Either way the session stays selectable and comes back on a later night, which is
+     * the fact an operator acts on.
      */
-    const unreachable = batch.length - analyzed.length
-    if (unreachable > 0) {
+    const unconsolidated = batch.length - analyzed.length
+    if (unconsolidated > 0) {
       yield* Effect.logWarning(
         `sleep.trace-consolidation asked about ${String(batch.length)} sessions and ` +
-          `${String(unreachable)} did not reach the agent; those stay unconsolidated for the next run`
+          `${String(unconsolidated)} came back unconsolidated: the transcript did not reach the agent, ` +
+          "or the agent did not report reading it. Those stay unconsolidated for the next run"
       )
     }
 
@@ -1147,7 +1157,7 @@ export const traceConsolidation: PhaseBody = (env) =>
       skipped,
       conflicts: conflicted,
       consolidated: analyzed.length,
-      unreachable,
+      unconsolidated,
       ...commitmentCounts(commitments)
     }
 
@@ -1211,7 +1221,7 @@ const ZERO_COUNTS = {
   skipped: 0,
   conflicts: 0,
   consolidated: 0,
-  unreachable: 0,
+  unconsolidated: 0,
   ...commitmentCounts(ZERO_COMMITMENTS)
 }
 
@@ -1220,10 +1230,11 @@ const ZERO_COUNTS = {
  *
  * The intersection is the containment half of the invariant and it is cheap, so it is unconditional. A
  * consolidator is an injected collaborator, the real one an eve agent over HTTP and a scripted one in
- * tests, and `analyzedSessionIds` is a value it computes. Trusting it as the watermark set directly
- * would make "which sessions are marked read forever" a claim the agent gets to make about sessions
- * nobody asked about. Intersecting lets the outcome NARROW the batch and not widen it,
- * which is the only authority it needs.
+ * tests, and `analyzedSessionIds` is a value it computes — for the real one, its own per-session read
+ * receipt narrowed to what resolved inside the sandbox. Trusting it as the watermark set directly would
+ * make "which sessions are marked read forever" a claim the agent gets to make about sessions nobody
+ * asked about. Intersecting lets the outcome NARROW the batch and not widen it, which is the only
+ * authority it needs.
  *
  * Batch order is preserved instead of the outcome's, so the watermark writes newest-first exactly as
  * the selection read. That ordering makes a report line and a test's `toEqual` reproducible.

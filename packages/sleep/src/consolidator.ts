@@ -129,7 +129,7 @@ export interface CandidateCommitmentLike {
   readonly resolved: boolean
 }
 
-/** What one consolidation run produced, what it cost, and which sessions it actually reached. */
+/** What one consolidation run produced, what it cost, and which sessions it actually read. */
 export interface ConsolidationOutcome {
   readonly candidates: ReadonlyArray<CandidateMemoryLike>
   /**
@@ -150,13 +150,19 @@ export interface ConsolidationOutcome {
    */
   readonly llmCalls: number
   /**
-   * The sessions whose transcripts REACHED the agent, which is the only set the phase may watermark.
+   * The sessions the consolidator REPORTS HAVING READ, which is the only set the phase may watermark.
    *
-   * REQUIRED, which makes the rule "watermark only a session whose transcript arrived"
-   * structural rather than advisory. The phase cannot ask the batch instead, because a batch is what it
-   * REQUESTED, and the difference between requested and reached is exactly a transcript that was
-   * rotated away, moved outside `MEMHTML_TRACE_ROOT`, or sits behind a symlink the sandbox will not
-   * follow. Watermarking the batch records such a session as consolidated and never reads it again.
+   * REQUIRED, which makes the rule "watermark only a session that was read" structural rather than
+   * advisory. The phase cannot ask the batch instead, because a batch is what it REQUESTED, and the
+   * difference between requested and read is a transcript that was rotated away, moved outside
+   * `MEMHTML_TRACE_ROOT`, sits behind a symlink the sandbox will not follow, or simply was not opened by
+   * a turn that ran out of steps. Watermarking the batch records such a session as consolidated and
+   * never reads it again.
+   *
+   * How the real consolidator derives it is its own business and is stated where it is derived
+   * (`apps/consolidator/src/contract.ts`' `watermarkableSessionIds`): the agent's per-session read
+   * receipt, intersected with the transcripts that resolved in its sandbox, gated on the answer carrying
+   * a finding. This port asks only for the set.
    *
    * The port cannot verify the set, and it does not have to: the phase INTERSECTS it with the batch
    * (`markSessionsConsolidated`'s input in `phases/trace-consolidation.ts`), so a consolidator that
