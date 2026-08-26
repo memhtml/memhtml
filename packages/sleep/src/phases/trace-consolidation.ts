@@ -589,10 +589,15 @@ const consolidateCommitments = (
  * `service:` — references whose one meaningful half is unreachable through a scope that compares the
  * whole string.
  *
- * Each surviving reference is then rewritten to the corpus's own spelling of the same name when the
- * corpus already holds one — see {@link corpusEntitySpellings} for the rule and for why it is not an
- * assist. `corpus` is empty whenever the pre-write read was skipped or failed, and an empty map is the
- * identity, so the join degrades to the candidate's own spelling rather than to no entities.
+ * The surviving NAME is then rewritten to the corpus's own spelling of the same name when the corpus
+ * already holds one — see {@link corpusEntitySpellings} for the rule and for why it is not an assist.
+ * The TYPE is never rewritten and stays the candidate's own trimmed half, because a type is not a
+ * spelling: it is the routing discriminator that `isPersonEntity`, `placementFor` and `person-links` all
+ * compare exactly, so substituting a corpus row's `Person` over a candidate's correct `person` would
+ * move a person memory out of `resources/people/` and out of the reach of the phase that mints the
+ * person file. `corpus` holds no entry whenever the pre-write read was skipped or failed, and an absent
+ * entry is the identity, so the join degrades to the candidate's own spelling rather than to no
+ * entities.
  *
  * One function, called by the write and by {@link placementDirectory} through ONE value computed per
  * candidate, so the file's metas and the directory it lands in are derived from the same references.
@@ -608,7 +613,7 @@ const entityRefsFor = (
     const name = entity.name.trim()
     if (type === "" || name === "") return []
     const ref = `${type}${ENTITY_SEPARATOR}${name}`
-    return [corpus.get(normalizeEntityRef(ref)) ?? ref]
+    return [`${type}${ENTITY_SEPARATOR}${corpus.get(normalizeEntityRef(ref)) ?? name}`]
   })
 
 /**
@@ -628,7 +633,8 @@ const entityRefsFor = (
  * thing — a judgement, which is why PROX-2 refuses to let one stamp anything without a threshold
  * measured on a labeled near-duplicate corpus. This decides nothing: `normalizeEntityRef` is the one
  * definition of what it means for two entity names to be the SAME name (case, NFC, internal
- * whitespace), so the only thing that changes is WHICH SPELLING of one name is stored. No model, no
+ * whitespace), so the only thing that changes is WHICH SPELLING of one name is stored — the value is a
+ * NAME and never a whole reference, so the candidate's own type survives the join. No model, no
  * threshold, no cosine. Reusing `entity-resolution`'s 0.75-0.85 band here is precisely what PROX-2
  * forbids: those numbers were measured for clustering entity names against centroids, not for deciding
  * that a reference is a variant.
@@ -642,7 +648,7 @@ const entityRefsFor = (
  * records for `entity-resolution` and `person-links`.
  *
  * Two active spellings can normalize together, so the winner is the one the MOST files claim, and a
- * count tie breaks on the lexicographically smaller reference. That makes the choice the corpus's own
+ * count tie breaks on the lexicographically smaller NAME. That makes the choice the corpus's own
  * majority spelling and makes it a pure function of the rows rather than of the order they arrived in.
  *
  * ## One read for the batch, and a failure costs nothing but the rewrite
@@ -663,20 +669,35 @@ const corpusEntitySpellings = (env: PhaseEnv): Effect.Effect<ReadonlyMap<string,
       )
     )
 
-    const best = new Map<string, { readonly ref: string; readonly files: number }>()
+    const best = new Map<string, { readonly name: string; readonly files: number }>()
     for (const row of rows) {
-      const ref = `${row.entity_type}${ENTITY_SEPARATOR}${row.entity_name}`
-      const key = normalizeEntityRef(ref)
+      /*
+       * TRIMMED at the edges, because a stored half can be padded and this value is written verbatim
+       * into a new file's meta. `entityRowsFor` trims the whole `content` string and then splits on the
+       * FIRST colon, so an authored `person : Priya Raman` files as `type=[person ]
+       * name=[ Priya Raman]` — and carrying that name forward would mint a memory the read doors, which
+       * fold case only, cannot reach, propagating the unreachability this rewrite exists to remove.
+       * Interior whitespace is left alone: it is part of the authored name, and collapsing it would
+       * store a spelling neither the corpus nor the candidate holds. Same rule as the trim
+       * {@link entityRefsFor} applies to the candidate's own halves.
+       */
+      const name = row.entity_name.trim()
+      if (name === "" || row.entity_type.trim() === "") continue
+      const key = normalizeEntityRef(`${row.entity_type}${ENTITY_SEPARATOR}${name}`)
       const held = best.get(key)
+      /*
+       * The tie-break compares the NAME rather than the whole reference, because the name is what this
+       * map hands over. Comparing references would let one row's type decide another row's spelling.
+       */
       if (
         held === undefined ||
         row.files > held.files ||
-        (row.files === held.files && ref < held.ref)
+        (row.files === held.files && name < held.name)
       ) {
-        best.set(key, { ref, files: row.files })
+        best.set(key, { name, files: row.files })
       }
     }
-    return new Map([...best].map(([key, held]) => [key, held.ref] as const))
+    return new Map([...best].map(([key, held]) => [key, held.name] as const))
   })
 
 /**

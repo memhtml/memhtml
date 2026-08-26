@@ -495,7 +495,8 @@ describe("trace-consolidation happy path", () => {
      * (Mutations: returning an empty map from `corpusEntitySpellings` leaves all three verbatim and
      * fails the first two arms; keying the map on the raw reference instead of the normalized one
      * matches nothing and fails the same two; returning `normalizeEntityRef(ref)` instead of the corpus
-     * spelling fails the person arm and the new-name arm.)
+     * spelling fails the person arm and the new-name arm; substituting the corpus's whole REFERENCE
+     * rather than its name half fails the first arm's type.)
      */
     const PERSON_FILE: SeedFile = {
       path: "resources/people/priya-raman.html",
@@ -531,13 +532,97 @@ describe("trace-consolidation happy path", () => {
           yield* traceConsolidation(envFor(fixture))
           const [path] = yield* addedMemories(fixture, base)
           const doc = yield* parseMemory((yield* atHead(fixture, path ?? "")) ?? "")
+          /*
+           * The NAME folds to the corpus's spelling and the TYPE does not: `Service` is the candidate's
+           * own half in the first and third arms, because a type is the routing discriminator rather
+           * than a spelling. See the case below for what substituting it would do.
+           */
           expect(doc.entities).toEqual([
-            "service:checkout-api",
+            "Service:checkout-api",
             "person:Priya Raman",
             "Service:Brand-New-Thing"
           ])
         }),
       { seed: [...DEDUP_CORPUS, PERSON_FILE], consolidator }
+    )
+  })
+
+  it("keeps the candidate's TYPE when the corpus spells that type in another case", async () => {
+    /**
+     * The half of the mint-site rewrite that must NOT happen, and the placement arm of the one-join
+     * design — neither of which the case above can see, because `placementFor` consults `entities` only
+     * for a `semantic` candidate.
+     *
+     * A type is not a spelling. `isPersonEntity` compares `person:` exactly
+     * (`packages/contracts/src/types.ts`), `placementFor` routes on that predicate, and `person-links`
+     * filters `entity_type === "person"` — so a reference typed `Person` is invisible to all three. The
+     * corpus can hold one: this phase writes a candidate's type verbatim for a name the corpus does not
+     * know, and `CandidateEntity.type` is an open free-form string. Substituting the corpus's WHOLE
+     * reference therefore takes a candidate that got the type right and files its memory outside
+     * `resources/people/`, where nothing repairs it: `placementFor` runs only on write, `placement-triage`
+     * refuses `resources/people` as a destination, and `entity-resolution` buckets on the raw
+     * `entity_type` and rewrites only names.
+     *
+     * The padded arm is the same rule at the other end. `entityRowsFor` trims the whole meta and splits
+     * on the FIRST colon, so an authored `person : Devon Oyelowo` files as `type=[person ]
+     * name=[ Devon Oyelowo]` — a reference the read doors, which fold case only, cannot reach. The
+     * lookup hands back the corpus's spelling minus that edge padding, so the new memory is addressable
+     * even though the seed file is not.
+     *
+     * (Mutations: substituting `held.ref` for `held.name` lands the person arm on `Person:Priya Raman`
+     * and its file outside `resources/people/`; dropping the `.trim()` on the corpus name lands the
+     * second arm on `person: Devon Oyelowo`.)
+     */
+    const CAPITALIZED_TYPE: SeedFile = {
+      path: "resources/people/priya-raman.html",
+      html: memoryHtml({
+        title: "Priya Raman",
+        claim: "Priya Raman owns the payments ledger reconciliation.",
+        createdAt: "2026-05-02T00:00:00Z",
+        entities: ["Person:Priya Raman"]
+      })
+    }
+    const PADDED_REFERENCE: SeedFile = {
+      path: "resources/people/devon-oyelowo.html",
+      html: memoryHtml({
+        title: "Devon Oyelowo",
+        claim: "Devon Oyelowo owns the ingest replay window.",
+        createdAt: "2026-05-03T00:00:00Z",
+        entities: ["person : Devon Oyelowo"]
+      })
+    }
+
+    const consolidator = scriptedConsolidator(() =>
+      candidates([
+        candidate({
+          claim: "Priya Raman and Devon Oyelowo both sign off a replay of the payments ledger.",
+          gist: "Two owners sign off one replay, and each is addressed by the spelling the corpus already holds.",
+          kind: "semantic",
+          entities: [
+            { type: "person", name: "priya  raman" },
+            { type: "person", name: "Devon Oyelowo" }
+          ]
+        })
+      ])
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* seedTrace(fixture, { sessionId: "session-a" })
+          const base = yield* headSha(fixture)
+
+          yield* traceConsolidation(envFor(fixture))
+          const [path] = yield* addedMemories(fixture, base)
+          const doc = yield* parseMemory((yield* atHead(fixture, path ?? "")) ?? "")
+          expect(doc.entities).toEqual(["person:Priya Raman", "person:Devon Oyelowo"])
+          /*
+           * The routing consequence, which is the whole reason the type is left alone. A `Person:`-typed
+           * reference sends the same memory to `resources/trace-consolidation/`.
+           */
+          expect(path ?? "").toMatch(/^resources\/people\//)
+        }),
+      { seed: [...DEDUP_CORPUS, CAPITALIZED_TYPE, PADDED_REFERENCE], consolidator }
     )
   })
 
