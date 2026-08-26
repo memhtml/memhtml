@@ -500,6 +500,10 @@ describe("strict_path over real MCP stdio", () => {
   let digestBefore = ""
   let digestAfter = ""
   let writeSchema: { readonly properties?: Record<string, unknown> } | undefined
+  let batchOpSchema: { readonly properties?: Record<string, unknown> } | undefined
+  let batchStrictText = ""
+  let batchDigestBefore = ""
+  let batchDigestAfter = ""
 
   const UNUSABLE = "notes/oncall/rollback.html"
 
@@ -568,6 +572,37 @@ describe("strict_path over real MCP stdio", () => {
       })
     ).path as string
 
+    const batchTool = tools.find((tool) => tool.name === "memory_write_batch")?.inputSchema as
+      | {
+          readonly properties?: Record<
+            string,
+            { readonly items?: { readonly properties?: unknown } }
+          >
+        }
+      | undefined
+    batchOpSchema = batchTool?.properties?.ops?.items as
+      | { readonly properties?: Record<string, unknown> }
+      | undefined
+
+    batchDigestBefore = await treeDigest(cli.root)
+    batchStrictText = failureText(
+      await client.rpc("tools/call", {
+        name: "memory_write_batch",
+        arguments: {
+          ops: [
+            {
+              title: "A batch op whose override is refused",
+              memory_type: "semantic",
+              body: "One op names an unusable path under strict placement.",
+              path: UNUSABLE,
+              strict_path: true
+            }
+          ]
+        }
+      })
+    )
+    batchDigestAfter = await treeDigest(cli.root)
+
     await client.shutdown()
   })
 
@@ -600,6 +635,21 @@ describe("strict_path over real MCP stdio", () => {
   it("still honors a USABLE path under strict_path", () => {
     // The mutation-proof half, for the CLI door's reason.
     expect(validPath).toBe("areas/oncall/strict-and-valid.html")
+  })
+
+  it("carries `strict_path` on a BATCH op, which is a second forwarding and a second door", () => {
+    /**
+     * `memory_write_batch` publishes the field on every op — `BatchOp` is built from the same
+     * `writeFields()` — and one line in `writeParamsOf` forwards it. That line is the whole opt-in for
+     * this door, and a published field a handler drops is worse than an absent one: the client sends it,
+     * the response is shaped like a success, and the memory sits at a path the caller never named.
+     */
+    expect(Object.keys(batchOpSchema?.properties ?? {})).toContain("strict_path")
+    expect(batchStrictText).not.toContain("internal server error")
+    expect(batchStrictText).toContain("ERR_INVALID_MEMORY")
+    expect(batchStrictText).toContain(UNUSABLE)
+    // Wrote nothing, and the survivor is what proves the abort was the op rather than the transport.
+    expect(batchDigestAfter).toBe(batchDigestBefore)
   })
 })
 

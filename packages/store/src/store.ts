@@ -77,7 +77,9 @@ export type WriteInput = NewMemoryInput &
      *
      * Governs a path the caller NAMED. With no `path` there is nothing to be strict about, so the
      * flag is a no-op rather than a refusal: a caller may set it once and still let the placement rule
-     * file the memories it deliberately leaves unplaced.
+     * file the memories it deliberately leaves unplaced. A path that is present and BLANK is named
+     * rather than absent, and it is refused — it is what a caller's own path template renders when it
+     * produced nothing, which is the case the flag exists for.
      */
     readonly strictPath?: boolean | undefined
     readonly workspace?: string | undefined
@@ -678,10 +680,18 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
    * The refusal is decided before anything touches disk, so "refused" and "wrote nothing" are the
    * same fact rather than two claims a rollback has to reconcile. See {@link WriteInput.strictPath}
    * for why `InvalidMemory` rather than `WriteConflict`.
+   *
+   * **An ABSENT path is the only no-op, and a blank one is not absent.** Strict mode governs the path a
+   * caller NAMED, so a caller may set the flag once and still let the rule file the memories it leaves
+   * unplaced — that is `path === undefined`. A present `""` or `"   "` is what a caller's own path
+   * template renders when it produced nothing, which is exactly the case the flag exists for: both fail
+   * `memoryPathViolation`, both are re-derived by `freePathFor`, and a lenient re-derivation reports
+   * success at a path the caller never asked for. Treating one of the two spellings as absent also made
+   * them disagree with each other, `""` succeeding where `" "` refused.
    */
   const strictPathRefusal = (input: WriteInput): Effect.Effect<void, InvalidMemory> =>
     Effect.suspend(() => {
-      if (input.strictPath !== true || input.path === undefined || input.path === "") {
+      if (input.strictPath !== true || input.path === undefined) {
         return Effect.void
       }
       const violation = memoryPathViolation(input.path)
@@ -760,11 +770,12 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
    * Validate one op against the batch's FOLDED state, answering either the pending write it earned
    * or the result that ends it.
    *
-   * The three stages are the singular write's first three, in the same order and for the same
-   * reason. The render gate rejects bad bytes before anything is written, the dedupe question is
-   * asked before a path is claimed, and only then does a path get taken. Both differences are
-   * about the fold. The dedupe question is asked of THIS batch first and the store second, and the
-   * path claim consults the batch's own claimed set.
+   * The four stages are the singular write's four, in the same order and for the same reason. The
+   * strict-path gate is FIRST, because an unusable path makes the whole op unusable whatever the rest
+   * of it would have done; the render gate then rejects bad bytes before anything is written; the
+   * dedupe question is asked before a path is claimed; and only then does a path get taken. Both
+   * differences are about the fold. The dedupe question is asked of THIS batch first and the store
+   * second, and the path claim consults the batch's own claimed set.
    */
   const validateOp = (
     input: WriteInput,

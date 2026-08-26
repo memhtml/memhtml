@@ -220,7 +220,14 @@ describe("writeMemory", () => {
       ["outside every PARA bucket", "notes/oncall/rollback.html"],
       ["not ending in .html", "areas/oncall/rollback.txt"],
       ["a bucket with no file under it", "areas"],
-      ["carrying a traversal segment", "areas/../../etc/passwd.html"]
+      ["carrying a traversal segment", "areas/../../etc/passwd.html"],
+      /*
+       * The two blank spellings, and they must not disagree with each other. A caller's own path
+       * template renders one of these when it produced nothing, which is the case the flag exists for,
+       * and both are re-derived by the lenient branch exactly as the four above are.
+       */
+      ["empty, which a path template renders when it produced nothing", ""],
+      ["whitespace only, the other spelling of the same mistake", "   "]
     ] as const
 
     it("re-derives it through the placement rule by DEFAULT, which is what strict mode opts out of", async () => {

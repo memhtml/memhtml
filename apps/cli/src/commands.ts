@@ -73,7 +73,7 @@ const STRICT_PATH_FLAG =
   "Refuse an unusable --path instead of letting the placement rule decide. " +
   "By default a --path that is not a usable memory path is re-derived, so the memory lands somewhere you did not name and the response reports that other path as a success. " +
   "With this flag the write is REFUSED with ERR_INVALID_MEMORY naming the clause the path broke, and nothing is written, staged, or committed. " +
-  "It governs the path you NAMED: with no --path there is nothing to be strict about and the flag changes nothing. " +
+  "It governs the path you NAMED: with no --path there is nothing to be strict about and the flag changes nothing, while an EMPTY or blank --path is named rather than absent and is refused — that is what your own path template renders when it produced nothing. " +
   "An OCCUPIED path is refused with ERR_WRITE_CONFLICT with or without it."
 
 /**
@@ -1061,8 +1061,9 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "line looks like this:\n" +
       `${GUIDE_OP_EXAMPLE}\n` +
       "`op` is `write` (the only verb in the vocabulary today), `title` and `type` are required, and each " +
-      "op carries the same optional fields `memhtml write` takes, in snake_case: `path`, `workspace`, `tag`, " +
-      "`entity`, `importance`, `confidence`, `session_id`, `prompt_id`, `turn_uuid`. " +
+      "op carries the same optional fields `memhtml write` takes, in snake_case: `path`, `strict_path`, " +
+      "`workspace`, `tag`, `entity`, `importance`, `confidence`, `status`, `due`, `session_id`, " +
+      "`prompt_id`, `turn_uuid`. " +
       "The whole file is validated for shape before ANY op executes, so a malformed line 7 is exit 2 " +
       "naming line 7 with nothing written. A failed apply costs you nothing but the call. " +
       "You get one result per op in INPUT ORDER, each naming its own `index`, so you can match results " +
