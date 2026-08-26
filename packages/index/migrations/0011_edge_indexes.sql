@@ -1,0 +1,65 @@
+-- `edges_src` and `edges_dst` carry NO predicate: `(src_path, edge_class)` and `(dst_path, edge_class)`
+-- over every row, authored and derived alike. That is what the memory-graph walk needs, and a partial
+-- index on `derived = 0` cannot serve it at all.
+--
+-- ── Why a predicate makes the index unreachable ───────────────────────────────────────────────────
+--
+-- SQLite may use a partial index only when the query's WHERE clause IMPLIES the index's WHERE clause.
+-- The neighbors walk (`neighborsQuery`, `apps/cli/src/operations.ts`) filters
+-- `src_path = ?1 AND edge_class = 'memory'` and SELECTS `e.derived`, because it wants BOTH kinds of
+-- edge: sleep-mined edges are what lateral retrieval is for, and each node reports which kind reached
+-- it. `edge_class = 'memory'` does not imply `derived = 0`, so an index declared `WHERE derived = 0` is
+-- simply not a candidate.
+--
+-- Measured 2026-08-26 on node 24.19.0's `node:sqlite` with these migrations applied and no `ANALYZE`,
+-- over the walk's own statement at depth 2. With the predicate:
+--
+--   * the two `src_path = ?1` arms probe `sqlite_autoindex_edges_1`, because `src_path` leads
+--     `PRIMARY KEY (src_path, rel, dst_path)` — so they were never the defect;
+--   * the `dst_path = ?1` hop-1 arm is `SCAN e`, a full pass over `edges`;
+--   * the `dst_path`-driven hop-2 arm is `SCAN e2 USING INDEX sqlite_autoindex_edges_1`, a full index
+--     scan of the table per outer row.
+--
+-- Without it, all four arms are `SEARCH … (src_path=? AND edge_class=?)` or
+-- `(dst_path=? AND edge_class=?)`: two bound columns instead of one, in every direction.
+--
+-- ── The partial pair had no readers at all, which is why it is replaced rather than kept ──────────
+--
+-- Measured the same way over every statement in the tree that reads `edges` — the walk, both
+-- authored-only anti-joins in `@memhtml/sleep` (`sharedEntityPairs`, `minedPairs`), `retentionEdgeCounts`,
+-- `memoryEdges`, `deepGroupingEdges`, `inboundAuthoredEdges`, `danglingEdges`, retrieval's
+-- `superseded_by` subquery, `doctor`'s stale-blocker join, `task list`'s blockers column, and the
+-- indexer's delete-by-source. The planner chose `edges_src` or `edges_dst` in NONE of them: the
+-- `derived = 0` readers reach for `edges_derived (derived, rel)`, which binds two columns where the
+-- partial pair binds one. So the predicate bought nothing and cost the walk its index.
+--
+-- Replacing rather than adding also keeps `edges` at four indexes instead of six. Every index is
+-- maintained on every edge write, and the sleep cycle's mining phase writes thousands per run.
+--
+-- Two OTHER statements improve as a side effect, both measured: `retentionEdgeCounts` stops building an
+-- `AUTOMATIC PARTIAL COVERING INDEX` — a transient index SQLite constructs per call — and `task list`'s
+-- blockers subquery moves from `edges_rel (rel, edge_class)` to `edges_dst (dst_path, edge_class)`,
+-- where the bound column is a path rather than the rel `'blocks'`. Every other plan is byte-identical.
+--
+-- ── ADDITIVE, in 0009's sense ────────────────────────────────────────────────────────────────────
+--
+-- `DROP INDEX` plus `CREATE INDEX`, and deliberately NOT 0008's recreate-and-copy. That pattern was
+-- forced by a CHECK-constraint edit, which SQLite cannot `ALTER`, and it carried real risk:
+-- `DROP TABLE edges` would cascade nothing here, but `DROP TABLE files` cascades to `embeddings` and
+-- 0008 had to snapshot six tables to avoid re-paying Bedrock for the whole corpus. An index is derived
+-- data with no rows of its own — dropping one loses nothing and recreating one costs a single scan of
+-- `edges` — so none of that machinery applies.
+--
+-- The NAMES are reused because the name states which column the index leads with, which is what a
+-- reader of a query plan needs from it, and that has not changed.
+--
+-- `IF EXISTS` on the drops, so this file converges from any starting state a real store can be in —
+-- including one where an operator dropped an index by hand in `sqlite3`. A bare `DROP` there would fail
+-- the migration inside its transaction and leave that store unable to open at all. The `CREATE`s carry
+-- no such guard on purpose: if either name is still taken when they run, that is a fact worth failing on.
+
+DROP INDEX IF EXISTS edges_src;
+DROP INDEX IF EXISTS edges_dst;
+
+CREATE INDEX edges_src ON edges (src_path, edge_class);
+CREATE INDEX edges_dst ON edges (dst_path, edge_class);

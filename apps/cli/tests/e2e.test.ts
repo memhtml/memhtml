@@ -1107,36 +1107,36 @@ describe("neighbors reports the edge at the minimal hop, and marks mined edges",
       )
     })
 
-    it("cannot use the two partial edge indexes, so the reverse arms are full scans", async () => {
+    it("probes both edge indexes on every arm, so no direction scans the table", async () => {
       /**
-       * The measured half of the claim, and it corrects the docstring rather than confirming it.
-       * `edges_src` and `edges_dst` are declared `WHERE derived = 0` (`0008_tasks.sql`), and this walk
-       * includes derived edges on purpose — lateral retrieval is what they are for — so neither index
-       * is available to it at all.
+       * The cost half of the walk's contract, over the statement `neighborsOf` issues.
        *
-       * The `src_path = ?1` arms still probe, through `sqlite_autoindex_edges_1`, because `src_path` is
-       * the leftmost column of `PRIMARY KEY (src_path, rel, dst_path)`. The `dst_path = ?1` arms have
-       * no index leading with `dst_path` and SCAN the table, so each costs one pass over `edges`.
+       * `edges_src` and `edges_dst` carry NO predicate (`0011_edge_indexes.sql`), and that is what makes
+       * them reachable from here: this walk selects `e.derived` and filters only on `edge_class`, so a
+       * `WHERE derived = 0` index could not be a candidate at all and each `dst_path = ?1` arm would be
+       * a full `SCAN` of `edges`. The mechanism — SQLite uses a partial index only when the query's
+       * WHERE implies the index's — is asserted with and without the predicate in
+       * `packages/index/tests/migrations.test.ts`; this case asserts the SHIPPED statement gets the
+       * shipped plan.
        *
-       * If a full (non-partial) index on `dst_path` lands, this case fails — and the comment on
-       * `neighborsOf` moves with it. That is the point: the claim and the plan are locked together.
+       * Two bound columns per arm, not one: the `src_path = ?1` arms could always probe
+       * `sqlite_autoindex_edges_1` on the primary key's leftmost column, so a test that only asked
+       * "does something probe" passed before the indexes were usable. The constraint LIST is the
+       * assertion.
        *
-       * (Mutation: pointing both reverse arms forward, which is the "only outbound edges" bug the
-       * docstring warns about, removes every SCAN. Observed: `expected false to be true`. The two
-       * index-name assertions are a ratchet rather than a measurement of today's plan: adding
-       * `derived = 0` to an arm makes the planner reach for `edges_derived`, measured 2026-08-25, not
-       * for either partial index — so they fail only when the partial predicate itself moves.)
+       * (Mutation: restoring `WHERE derived = 0` on both indexes brings back one `SCAN e` and drops
+       * both `edges_*` steps. Observed: `expected [...] to include stringContaining edges_dst`.)
        */
       const steps = await planFor([])
-      for (const step of steps) {
-        expect(step, step).not.toContain("edges_src")
-        expect(step, step).not.toContain("edges_dst")
-      }
-      // The forward arms probe; the reverse arms scan.
-      expect(
-        steps.some((step) => step.includes("SEARCH e USING") && step.includes("src_path=?"))
-      ).toBe(true)
-      expect(steps.some((step) => step.startsWith("SCAN e"))).toBe(true)
+      expect(steps.length).toBeGreaterThan(0)
+      expect(steps).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("edges_src (src_path=? AND edge_class=?)"),
+          expect.stringContaining("edges_dst (dst_path=? AND edge_class=?)")
+        ])
+      )
+      // Nothing scans `edges` in either direction, at either hop.
+      expect(steps.filter((step) => step.startsWith("SCAN e"))).toEqual([])
     })
 
     it("probes on every arm once a rel filter is named, because that index carries no predicate", async () => {

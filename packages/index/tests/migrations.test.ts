@@ -18,11 +18,11 @@ import {
  */
 
 describe("migrations", () => {
-  it("applies all ten index migrations and both state migrations", async () => {
+  it("applies all eleven index migrations and both state migrations", async () => {
     const counts = await withDb((db) =>
       Effect.succeed({ index: db.migrationsApplied, state: db.stateMigrationsApplied })
     )
-    expect(counts).toEqual({ index: 10, state: 2 })
+    expect(counts).toEqual({ index: 11, state: 2 })
   })
 
   it("creates every table the truncate lists name", async () => {
@@ -75,7 +75,8 @@ describe("migrations", () => {
       "0007_watermark.sql",
       "0008_tasks.sql",
       "0009_frame_key.sql",
-      "0010_trace_consolidations.sql"
+      "0010_trace_consolidations.sql",
+      "0011_edge_indexes.sql"
     ])
     expect(ledgers.state).toEqual(["S0001_access.sql", "S0002_entity_corroboration.sql"])
   })
@@ -1143,5 +1144,147 @@ describe("S0002 over a populated S0001 state plane", () => {
       )
     )
     expect(row?.tbl_name).toBe("entity_corroboration")
+  })
+})
+
+/**
+ * The two edge indexes, at the planner, with the predicate and without it in one test.
+ *
+ * A cost contract whose subject is a QUERY the index either serves or does not, so it cannot be
+ * asserted from the schema alone: a `WHERE derived = 0` index exists, is well-formed, and is invisible
+ * to the walk that needs it. Asserting the DDL would confirm the predicate is absent without ever
+ * showing what the predicate did.
+ *
+ * So the case recreates the partial pair, takes a plan, restores the shipped pair, and takes the plan
+ * again. Both halves come from the same statement over the same schema, which makes the difference the
+ * predicate's rather than the fixture's — and it locks the MECHANISM (SQLite uses a partial index only
+ * when the query's WHERE implies the index's) instead of today's index names.
+ *
+ * The statement is the walk's own shape rather than an import, because `neighborsQuery` lives in
+ * `apps/cli`, which sits ABOVE this package: importing it here would invert the dependency direction.
+ * The shape is pinned instead by `apps/cli/tests/e2e.test.ts`, which EXPLAINs the exported statement
+ * and asserts the same two probes — so a divergence between this fixture and the shipped walk fails
+ * there.
+ *
+ * `ANALYZE` is deliberately not run, because production does not run it, so this is the plan that
+ * matters.
+ */
+describe("the edge indexes serve the memory-graph walk", () => {
+  /** The walk's hop-1 arms, both directions, over the `edge_class` filter it actually carries. */
+  const WALK = `SELECT e.dst_path AS path, e.derived AS derived
+     FROM edges e WHERE e.src_path = ?1 AND e.edge_class = 'memory'
+     UNION ALL
+     SELECT e.src_path AS path, e.derived AS derived
+     FROM edges e WHERE e.dst_path = ?1 AND e.edge_class = 'memory'`
+
+  const PARTIAL = [
+    "DROP INDEX edges_src",
+    "DROP INDEX edges_dst",
+    "CREATE INDEX edges_src ON edges (src_path, edge_class) WHERE derived = 0",
+    "CREATE INDEX edges_dst ON edges (dst_path, edge_class) WHERE derived = 0"
+  ]
+  const SHIPPED = [
+    "DROP INDEX edges_src",
+    "DROP INDEX edges_dst",
+    "CREATE INDEX edges_src ON edges (src_path, edge_class)",
+    "CREATE INDEX edges_dst ON edges (dst_path, edge_class)"
+  ]
+
+  const plans = () =>
+    withDb((db) =>
+      Effect.gen(function* () {
+        const planOf = () =>
+          db
+            .all<{ detail: string }>(`EXPLAIN QUERY PLAN ${WALK}`, ["areas/oncall/a.html"])
+            .pipe(Effect.map((rows) => rows.map((row) => row.detail)))
+
+        const shipped = yield* planOf()
+        for (const statement of PARTIAL) yield* db.run(statement)
+        const partial = yield* planOf()
+        for (const statement of SHIPPED) yield* db.run(statement)
+        const restored = yield* planOf()
+        return { shipped, partial, restored }
+      })
+    )
+
+  it("ships indexes with NO predicate, which is what the walk can use", async () => {
+    const definitions = await withDb((db) =>
+      db.all<{ name: string; sql: string }>(
+        `SELECT name, sql FROM sqlite_schema
+         WHERE type = 'index' AND name IN ('edges_src', 'edges_dst') ORDER BY name`
+      )
+    )
+    expect(definitions.map((row) => row.name)).toEqual(["edges_dst", "edges_src"])
+    for (const definition of definitions) {
+      expect(definition.sql, definition.name).not.toContain("WHERE")
+      expect(definition.sql, definition.name).toContain("edge_class")
+    }
+  })
+
+  it("probes BOTH directions on the shipped pair and SCANS the reverse one on a partial pair", async () => {
+    const { shipped, partial, restored } = await plans()
+
+    // AFTER: two bound columns in each direction, and nothing scans the table.
+    expect(shipped, "shipped plan").toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("edges_src (src_path=? AND edge_class=?)"),
+        expect.stringContaining("edges_dst (dst_path=? AND edge_class=?)")
+      ])
+    )
+    expect(shipped.filter((step) => step.startsWith("SCAN e"))).toEqual([])
+
+    // BEFORE: neither index is a candidate. The forward arm still probes, through the primary key's
+    // own automatic index, because `src_path` leads `PRIMARY KEY (src_path, rel, dst_path)` — which is
+    // why the forward arms were never the defect. The reverse arm has nothing leading with `dst_path`
+    // and scans.
+    for (const step of partial) {
+      expect(step, `partial plan: ${step}`).not.toContain("edges_src (")
+      expect(step, `partial plan: ${step}`).not.toContain("edges_dst (")
+    }
+    expect(
+      partial.some(
+        (step) => step.includes("sqlite_autoindex_edges_1") && step.includes("src_path=?")
+      ),
+      `partial plan: ${partial.join(" | ")}`
+    ).toBe(true)
+    expect(
+      partial.filter((step) => step.startsWith("SCAN e")).length,
+      `partial plan: ${partial.join(" | ")}`
+    ).toBe(1)
+
+    // And restoring the shipped definitions restores the shipped plan, so the difference is the
+    // predicate and not the order the statements ran in.
+    expect(restored).toEqual(shipped)
+  })
+
+  it("leaves the authored-only anti-join's plan unchanged, which is what makes the swap free", async () => {
+    /**
+     * The partial pair's only plausible readers were the `derived = 0` anti-joins in `@memhtml/sleep`,
+     * and the plan says they never used it: with two columns to bind, the planner prefers
+     * `edges_derived (derived, rel)`. Asserted here rather than in the sleep package because the claim
+     * is about THIS migration's cost, and it is what justifies replacing the pair instead of keeping
+     * both.
+     */
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        const antiJoin = `SELECT e.src_path FROM edges e
+           WHERE e.derived = 1 AND e.edge_class = 'memory' AND e.rel = ?
+             AND NOT EXISTS (
+               SELECT 1 FROM edges a
+               WHERE a.derived = 0
+                 AND ((a.src_path = e.src_path AND a.dst_path = e.dst_path)
+                   OR (a.src_path = e.dst_path AND a.dst_path = e.src_path)))`
+        const planOf = () =>
+          db
+            .all<{ detail: string }>(`EXPLAIN QUERY PLAN ${antiJoin}`, ["relates_to"])
+            .pipe(Effect.map((rows) => rows.map((row) => row.detail)))
+        const shipped = yield* planOf()
+        for (const statement of PARTIAL) yield* db.run(statement)
+        const partial = yield* planOf()
+        return { shipped, partial }
+      })
+    )
+    expect(outcome.shipped).toEqual(outcome.partial)
+    expect(outcome.shipped.some((step) => step.includes("edges_derived"))).toBe(true)
   })
 })

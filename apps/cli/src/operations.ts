@@ -1198,15 +1198,15 @@ export const neighborsQuery = (input: {
  * query must not have here: an unbounded worst case on a corpus whose `relates_to` edges are
  * mined by the sleep cycle and can be dense.
  *
- * **Only the forward direction is index-probed, and `edges_src`/`edges_dst` are not what probes it.**
- * Measured 2026-08-25 on node 24.19.0 (locked by the plan assertion in `apps/cli/tests/e2e.test.ts`):
- * both of those indexes are PARTIAL — `WHERE derived = 0` (`0008_tasks.sql`) — and this walk includes
- * derived edges on purpose, so neither is available to it. The `src_path = ?1` arms probe
- * `sqlite_autoindex_edges_1` instead, the implicit index behind `PRIMARY KEY (src_path, rel,
- * dst_path)`, whose leftmost column is the one they filter on. The `dst_path = ?1` arms have no such
- * luck and are a full SCAN of `edges`, so a neighborhood costs one table scan per reverse arm on top
- * of the degree² row set. A `rels` filter changes that: `edges_rel` carries no predicate, so a
- * rel-scoped walk probes on every arm.
+ * **Every arm is index-probed, in both directions, through `edges_src` and `edges_dst`.** Measured
+ * 2026-08-26 on node 24.19.0 with no `ANALYZE`, and locked by the plan assertion in
+ * `apps/cli/tests/e2e.test.ts`: each arm is a `SEARCH` binding two columns,
+ * `(src_path=? AND edge_class=?)` or `(dst_path=? AND edge_class=?)`. Neither index carries a
+ * predicate (`0011_edge_indexes.sql`), which is what makes them reachable from here at all — this walk
+ * selects `e.derived` and filters only on `edge_class`, so a `WHERE derived = 0` index could not be a
+ * candidate, and the reverse arms would fall back to a full scan of `edges` per arm. The row set is
+ * still degree², which is what `NEIGHBORS_SCAN_LIMIT` bounds; what the indexes bound is the work spent
+ * finding it.
  *
  * **Both directions, and `derived = 0 ∪ derived = 1`.** An edge is an assertion about a pair, and
  * which file happens to hold the `<link>` is authorship rather than direction of meaning. A
