@@ -63,7 +63,7 @@
 
 # ── sleep + CI ────────────────────────────────────────────────────────────────
 {"op":"add","key":"SLEEP-1","patternType":"ubiquitous","systemName":"sleep conflict-detection phase","systemResponse":"report conflicts without resolving them","status":"implemented","verificationMethod":"inspection","verificationNote":"detection-only by design; choosing a winner is a one-way door"}
-{"op":"add","key":"SLEEP-2","patternType":"unwanted-behavior","systemName":"sleep cycle","trigger":"a nightly phase reads the corpus","systemResponse":"bump salience access counts","negated":true,"status":"implemented","verificationMethod":"inspection","verificationNote":"sleep bypasses the tool path"}
+{"op":"add","key":"SLEEP-2","patternType":"unwanted-behavior","systemName":"sleep cycle","trigger":"a sleep phase reads the corpus","systemResponse":"bump salience access counts","negated":true,"status":"implemented","verificationMethod":"inspection","verificationNote":"sleep bypasses the tool path"}
 {"op":"add","key":"CI-1","patternType":"event-driven","systemName":"ci pipeline","trigger":"a merge request or default-branch push lands","systemResponse":"run the full check gate without credentials","status":"implemented","verificationMethod":"demonstration","verificationNote":".github/workflows/check.yml; eval defaults to fake mode, integration tests set MEMHTML_EMBED=off themselves"}
 
 # ── glossary: vocabulary the corpus uses interchangeably ─────────────────────

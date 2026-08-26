@@ -61,7 +61,7 @@ These are prompts for looking, not a checklist to fill. A pattern that fits none
 
 ### Refuse rather than pad
 
-Returning `{"candidates": []}` is a correct answer, and a good one when the transcripts hold nothing durable — short sessions, one-off questions, and routine work often do. A run's value is in what it refuses. Do not invent a candidate to avoid an empty result, and do not split one finding into several to look thorough.
+Returning no candidates is a correct answer, and a good one when the transcripts hold nothing durable — short sessions, one-off questions, and routine work often do. A run's value is in what it refuses. Do not invent a candidate to avoid an empty result, and do not split one finding into several to look thorough.
 
 Six candidates is plenty for a batch of this size. Prefer three you can defend to ten you cannot.
 

@@ -44,25 +44,37 @@ const SKIPPED_DIRS: ReadonlySet<string> = new Set([
   ".packets"
 ])
 
-/** Extensions of files a human authors. A binary asset cannot promise a cadence. */
-const AUTHORED_EXTENSIONS: ReadonlySet<string> = new Set([
-  ".ts",
-  ".tsx",
-  ".js",
-  ".mjs",
-  ".cjs",
-  ".md",
-  ".mdx",
-  ".json",
-  ".sql",
-  ".d2",
-  ".toml",
-  ".yml",
-  ".yaml",
-  ".html",
-  ".astro",
-  ".css",
-  ".txt"
+/**
+ * Extensions of files nobody authors PROSE in. Everything else is read.
+ *
+ * A DENYLIST rather than a list of authored extensions, and that is the load-bearing choice: an
+ * allowlist silently drops every extension nobody thought of, so the census reports a total over a
+ * subset while claiming to be repo-wide — a wrong count that reads as a clean result, which is the
+ * failure this whole file exists to prevent. Measured 2026-08-26, an allowlist of the eighteen obvious
+ * extensions skipped five `.jsonl` files, eleven `.svg` files, and three extensionless ones inside the
+ * walked trees, and one of the `.jsonl` files held a live occurrence.
+ *
+ * A binary read as bytes costs a `readFile` and matches nothing, so the only reason to name one here is
+ * to keep the walk from reading megabytes it cannot learn from.
+ */
+const BINARY_EXTENSIONS: ReadonlySet<string> = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".avif",
+  ".ico",
+  ".pdf",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".otf",
+  ".zip",
+  ".gz",
+  ".tgz",
+  ".db",
+  ".wasm"
 ])
 
 /** Trees walked in full, plus the root files that are authored rather than generated. */
@@ -151,6 +163,12 @@ const SELF = "tests-integration/tests/schedule-metaphor.test.ts"
  * is not cosmetic: `readdir(recursive: true)` descends into every `node_modules` in the workspace
  * before anything can discard the results, which took this census from under a second to ninety-six.
  */
+/** A filename's extension, or `""` for a name with no dot — which is read rather than skipped. */
+const extensionOf = (name: string): string => {
+  const dot = name.lastIndexOf(".")
+  return dot <= 0 ? "" : name.slice(dot)
+}
+
 const authoredUnder = async (dir: string): Promise<ReadonlyArray<string>> => {
   const found: Array<string> = []
   const walk = async (relative: string): Promise<void> => {
@@ -164,7 +182,7 @@ const authoredUnder = async (dir: string): Promise<ReadonlyArray<string>> => {
       const child = posix.join(relative, entry.name.split(sep).join(posix.sep))
       if (entry.isDirectory()) {
         if (!SKIPPED_DIRS.has(entry.name)) await walk(child)
-      } else if (AUTHORED_EXTENSIONS.has(child.slice(child.lastIndexOf(".")))) {
+      } else if (!BINARY_EXTENSIONS.has(extensionOf(entry.name))) {
         found.push(child)
       }
     }

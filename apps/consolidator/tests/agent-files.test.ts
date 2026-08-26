@@ -55,10 +55,23 @@ describe("agent/instructions.md", () => {
     expect(text).toContain("restating one line")
   })
 
-  /** An empty result must read as success, or the agent pads to look useful. */
-  it("permits an empty candidate list", async () => {
+  /**
+   * An empty result must read as success, or the agent pads to look useful — and the payload the prompt
+   * offers as that success has to be one the decoder ACCEPTS.
+   *
+   * The asserted example carries all three required fields. `{"candidates": []}` alone fails
+   * `Schema.decodeUnknownEffect` on two missing keys, the client maps that to
+   * `ConsolidatorContractViolation`, and the whole night is refused with the batch unwatermarked — so a
+   * prompt advertising it would turn every quiet night into a failed run.
+   */
+  it("permits an empty result through a payload the decoder accepts", async () => {
     const text = await read("instructions.md")
-    expect(text).toContain('{"candidates": []}')
+    expect(text).toContain("Returning no candidates is a correct answer")
+    expect(text).toContain(
+      '{"candidates": [], "commitments": [], "readSessionIds": ["<every session you read>"]}'
+    )
+    // No shorter example anywhere, since the shorter one is the payload that fails to decode.
+    expect(text).not.toContain('{"candidates": []}')
   })
 
   /**
