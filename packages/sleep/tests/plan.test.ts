@@ -1,3 +1,4 @@
+import { StorageFailure } from "@memhtml/contracts/errors"
 import type { DatabaseShape } from "@memhtml/index"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
@@ -77,7 +78,72 @@ const counting = (
   return { db: wrapped, count: () => issued }
 }
 
-const planOf = (fixture: Fixture) => plan(fixture.db, AT_MILLIS)
+/** A commit for the two cases that measure COST rather than freshness, where the value is inert. */
+const HEAD_SHA = "0123456789abcdef0123456789abcdef01234567"
+
+/** Words that can follow a table name in `FROM x …`, so none of them is mistaken for an alias. */
+const NOT_AN_ALIAS = new Set([
+  "WHERE",
+  "ORDER",
+  "GROUP",
+  "LIMIT",
+  "HAVING",
+  "JOIN",
+  "LEFT",
+  "INNER",
+  "CROSS",
+  "ON",
+  "UNION",
+  "AND",
+  "OR"
+])
+
+/**
+ * Alias → table for every `FROM`/`JOIN` in one statement.
+ *
+ * `EXPLAIN QUERY PLAN` names the ALIAS a statement bound (`SCAN f`, `SEARCH e USING INDEX …`) and never
+ * the table, and every statement in this file is aliased, so a step matched against a table NAME
+ * matches nothing at all — including in `sqlite_autoindex_files_1` and `files_type_active`, where a word
+ * boundary fails on the surrounding `_`. That is the shape of a cost guard that holds by construction,
+ * and this repo has shipped one. The resolution is what makes the assertion able to fail.
+ */
+const aliasesOf = (sql: string): ReadonlyMap<string, string> => {
+  const found = new Map<string, string>()
+  for (const match of sql.matchAll(
+    /\b(?:FROM|JOIN)\s+([A-Za-z_][\w.]*)(?:\s+(?:AS\s+)?([A-Za-z_]\w*))?/gi
+  )) {
+    const table = match[1]
+    if (table === undefined) continue
+    const candidate = match[2]
+    const alias =
+      candidate === undefined || NOT_AN_ALIAS.has(candidate.toUpperCase()) ? table : candidate
+    found.set(alias, table)
+  }
+  return found
+}
+
+/** The table each `SCAN`/`SEARCH` step loops over, in order. Other step kinds open no loop. */
+const loopTablesOf = (
+  steps: ReadonlyArray<string>,
+  aliases: ReadonlyMap<string, string>
+): ReadonlyArray<string> =>
+  steps.flatMap((step) => {
+    const named = /^(?:SCAN|SEARCH)\s+(\S+)/.exec(step)?.[1]
+    if (named === undefined) return []
+    return [aliases.get(named) ?? named]
+  })
+
+/**
+ * The plan over a fixture, with the tree's own `HEAD` — which is what makes a `no-signal` answerable.
+ *
+ * Resolved from the fixture's git rather than passed as a literal, so a case that leaves the index
+ * behind a commit gets a stale answer for the real reason.
+ */
+const planOf = (fixture: Fixture) =>
+  Effect.gen(function* () {
+    const headSha = yield* fixture.deps.git.revParseHead().pipe(Effect.orElseSucceed(() => null))
+    return yield* plan(fixture.db, AT_MILLIS, headSha)
+  })
 
 describe("sleep plan", () => {
   it("reports an explicit UNKNOWN for a phase whose candidate count is the n-by-n work", async () => {
@@ -138,12 +204,73 @@ describe("sleep plan", () => {
   })
 
   it("says `no-signal` only when nothing any phase reads has anything in it", async () => {
-    const outcome = await withFixture((fixture) => planOf(fixture))
+    const outcome = await withFixture((fixture) =>
+      Effect.gen(function* () {
+        // The rebuild is what earns the verdict: an empty corpus whose index describes the tree. Without
+        // it every count is zero because nothing has been projected, which is a different fact.
+        yield* fixture.reindex()
+        return yield* planOf(fixture)
+      })
+    )
     // An empty corpus: every counted signal is zero AND every uncountable phase's input is empty, so
     // there is nothing for any phase to reach. This is the one state in which a caller may skip a run.
     expect(outcome.signals.every((signal) => signal.count === 0)).toBe(true)
     expect(outcome.unknown.every((entry) => entry.inputCount === 0)).toBe(true)
+    expect(outcome.indexFresh).toBe(true)
     expect(outcome.verdict).toBe("no-signal")
+  })
+
+  it("refuses `no-signal` from an index that does not describe HEAD, where every count is zero", async () => {
+    /**
+     * The failure this guard exists for, isolated to ONE variable.
+     *
+     * Both reads run over the same empty-corpus projection, so every aggregate answers zero in both and
+     * every uncountable input is zero in both. The only difference is a commit the index has not seen —
+     * which is the state a `git clone`, a `git pull`, and an `rm .memhtml/index.db` all leave behind, and
+     * `index.db` is documented as disposable precisely so callers do that. A verdict derived from the
+     * counts alone reads the emptiest possible corpus and calls skipping safe.
+     */
+    const outcome = await withFixture((fixture) =>
+      Effect.gen(function* () {
+        yield* fixture.reindex()
+        const fresh = yield* planOf(fixture)
+        yield* fixture.commit(corpusOf(3), "commit three memories the index has never seen")
+        return { fresh, stale: yield* planOf(fixture) }
+      })
+    )
+
+    expect(outcome.fresh.verdict).toBe("no-signal")
+    expect(outcome.stale.signals.every((signal) => signal.count === 0)).toBe(true)
+    expect(outcome.stale.unknown.every((entry) => entry.inputCount === 0)).toBe(true)
+    expect(outcome.stale.verdict).toBe("unknown")
+    // Attributable rather than mysterious: the caller is told WHICH commit the numbers describe.
+    expect(outcome.stale.indexFresh).toBe(false)
+    expect(outcome.stale.indexedCommit).toBe(outcome.fresh.indexedCommit)
+    expect(outcome.stale.indexedCommit).toMatch(/^[0-9a-f]{40}$/)
+  })
+
+  it("cannot answer `no-signal` when the database itself is unreadable", async () => {
+    /**
+     * A read failure and an empty corpus are indistinguishable in the counts — both are zero — so the
+     * watermark is what separates them. An unreadable database fails the watermark read too, and an
+     * unread watermark is not fresh, which is why the aggregates may fall back to zero at all.
+     */
+    const outcome = await withFixture((fixture) =>
+      plan(
+        {
+          ...fixture.db,
+          get: (() => Effect.fail(StorageFailure.make({ operation: "plan.probe" }))) as never,
+          all: (() => Effect.fail(StorageFailure.make({ operation: "plan.probe" }))) as never
+        },
+        AT_MILLIS,
+        "0000000000000000000000000000000000000000"
+      )
+    )
+
+    expect(outcome.signals.every((signal) => signal.count === 0)).toBe(true)
+    expect(outcome.indexedCommit).toBeNull()
+    expect(outcome.indexFresh).toBe(false)
+    expect(outcome.verdict).toBe("unknown")
   })
 
   it("counts settled transcripts through the phase's OWN predicate, unclamped by its batch cap", async () => {
@@ -221,7 +348,7 @@ describe("sleep plan", () => {
       (fixture) =>
         Effect.gen(function* () {
           const rig = counting(fixture.db)
-          yield* plan(rig.db, AT_MILLIS)
+          yield* plan(rig.db, AT_MILLIS, HEAD_SHA)
           return rig.count()
         }),
       { seed: corpusOf(4) }
@@ -230,7 +357,7 @@ describe("sleep plan", () => {
       (fixture) =>
         Effect.gen(function* () {
           const rig = counting(fixture.db)
-          yield* plan(rig.db, AT_MILLIS)
+          yield* plan(rig.db, AT_MILLIS, HEAD_SHA)
           return rig.count()
         }),
       { seed: corpusOf(40) }
@@ -275,7 +402,7 @@ describe("sleep plan", () => {
               )(sql, params)
             }) as DatabaseShape["all"]
           }
-          yield* plan(capturing, AT_MILLIS)
+          yield* plan(capturing, AT_MILLIS, HEAD_SHA)
 
           const explained: Array<{ sql: string; steps: ReadonlyArray<string> }> = []
           for (const statement of issued) {
@@ -292,12 +419,23 @@ describe("sleep plan", () => {
 
     // The statements really ran, so these plans describe reads that did the work.
     expect(plans.length).toBeGreaterThan(4)
+    /*
+     * Every plan must resolve at least one loop, or the loop below would iterate nothing and this whole
+     * case would hold by construction — which is what a guard matching a table name against `SCAN f`
+     * does.
+     */
+    let loops = 0
     for (const { sql, steps } of plans) {
-      const tables = ["files", "chunks", "edges", "traces", "file_entities"]
-      for (const table of tables) {
-        const touches = steps.filter((step) => new RegExp(`\\b${table}\\b`).test(step)).length
-        expect(touches, `${table} appears ${String(touches)}x in: ${sql}`).toBeLessThanOrEqual(1)
+      const aliases = aliasesOf(sql)
+      const perTable = new Map<string, number>()
+      for (const table of loopTablesOf(steps, aliases)) {
+        loops += 1
+        perTable.set(table, (perTable.get(table) ?? 0) + 1)
+      }
+      for (const [table, touches] of perTable) {
+        expect(touches, `${table} is looped ${String(touches)}x in: ${sql}`).toBe(1)
       }
     }
+    expect(loops).toBeGreaterThanOrEqual(plans.length)
   })
 })

@@ -581,7 +581,9 @@ Would a run change anything? Reads index counts and runs no phase, so it costs a
 
 No arguments and no flags. The signals ARE the phases' own selection predicates, called or clause-shared, so a caller wanting one reads its entry out of `signals`.
 
-`verdict` is the field to branch on, and it has three values because two phases cannot have their candidates counted cheaply. `would-change`: a counted signal is non-zero. `no-signal`: every counted signal is zero AND every uncountable phase's input is empty, which is the one state in which a run would reach nothing. `unknown`: in between — `dedup-merge` and `relationship-mining` select candidate pairs from an n-by-n neighbor scan, so counting their candidates is the scan, and each reports an `inputCount` with an `unknownReason` instead of a zero.
+`verdict` is the field to branch on, and it has three values because two phases cannot have their candidates counted cheaply. `would-change`: a counted signal is non-zero. `no-signal`: every counted signal is zero, every uncountable phase's input is empty, AND `indexFresh` is true, which is the one state in which a run would reach nothing. `unknown`: everything else — `dedup-merge` and `relationship-mining` select candidate pairs from an n-by-n neighbor scan, so counting their candidates is the scan, and each reports an `inputCount` with an `unknownReason` instead of a zero.
+
+Every count comes from `.memhtml/index.db`, so `indexFresh` says whether they describe anything: it is the same predicate `memhtml status` reports, and `indexedCommit` names the commit they do describe. A clone, a `git pull`, and a deleted index all answer every aggregate with zero over a corpus nothing has curated, so a stale index can never yield `no-signal`.
 
 `signals` carries the counted ones with the phases each feeds: memories written since the last run, chunks with no vector, settled transcripts, dangling authored links, and entity merges awaiting a second run. `sessionsPerRun` is the consolidation phase's per-run cap, published beside the transcript count because a backlog larger than the cap is more than one run of work.
 

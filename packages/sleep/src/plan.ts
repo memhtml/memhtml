@@ -1,4 +1,4 @@
-import type { DatabaseShape } from "@memhtml/index"
+import { type DatabaseShape, readIndexState } from "@memhtml/index"
 import { Effect } from "effect"
 
 import {
@@ -61,13 +61,18 @@ export interface PlanUnknown {
  * Whether a run would change anything, as three values rather than a boolean.
  *
  * - `would-change` — at least one exactly-counted signal is non-zero. A run has work.
- * - `unknown` — every counted signal is zero, and at least one phase whose candidates cannot be counted
- *   has a non-empty input. A run MIGHT find something; this read cannot say.
- * - `no-signal` — every counted signal is zero AND every uncountable phase's input is empty, so there
- *   is nothing for any phase to reach. This is the only value that means a run would do nothing.
+ * - `unknown` — every counted signal is zero, and either a phase whose candidates cannot be counted has
+ *   a non-empty input or the index does not describe `HEAD`. A run MIGHT find something; this read
+ *   cannot say.
+ * - `no-signal` — every counted signal is zero, every uncountable phase's input is empty, AND the
+ *   counts describe the tree the caller has checked out. This is the only value that means a run would
+ *   do nothing.
  *
  * `no-signal` is deliberately hard to reach. Collapsing `unknown` into it is the exact mistake this
- * read exists not to make.
+ * read exists not to make, and a stale index is the cheapest way to make that mistake: every count
+ * here comes from `index.db`, which is a disposable projection, so a clone or a `git pull` answers
+ * every aggregate with zero for a corpus nothing has curated. A read that had not looked would report
+ * the emptiest possible corpus as the safest possible verdict.
  */
 export type PlanVerdict = "would-change" | "unknown" | "no-signal"
 
@@ -89,6 +94,17 @@ export interface SleepPlan {
    * one run's worth.
    */
   readonly sessionsPerRun: number
+  /** The commit `index.db` describes, or `null` before the first rebuild and during one. */
+  readonly indexedCommit: string | null
+  /**
+   * Whether every count in this answer describes the tree the caller has checked out.
+   *
+   * The same question `memory_status.index_fresh` answers, and the same predicate, so the two commands
+   * cannot disagree about one store. It is published rather than folded silently into the verdict
+   * because it is the one field that says whether the numbers are about anything: `false` means the
+   * counts describe some other commit, and the honest reading of all of them is "unread".
+   */
+  readonly indexFresh: boolean
 }
 
 /**
@@ -110,24 +126,46 @@ const count = (
 ): Effect.Effect<number, never> =>
   db.get<{ n: number }>(sql, params).pipe(
     Effect.map((row) => row?.n ?? 0),
-    // A plan is a READ a caller runs to decide whether to spend a run, so a storage failure on one
-    // aggregate must not deny the whole answer. Zero is the safe direction: it can only make the
-    // verdict more cautious, never claim work that is not there.
+    /*
+     * A plan is a READ a caller runs to decide whether to spend a run, so a storage failure on one
+     * aggregate must not deny the whole answer. Zero is what an unread aggregate contributes, and zero
+     * is NOT by itself the cautious direction — it pushes the verdict toward `no-signal`, the one value
+     * that means a caller may skip. What makes the fallback safe is that a failing database also fails
+     * the watermark read, and an unread watermark is not fresh, so `no-signal` is unreachable from
+     * here. The two guards are one guard.
+     */
     Effect.orElseSucceed(() => 0)
   )
 
 /**
  * What a run would find, without running one.
  *
- * Statement count is FIXED — one per signal plus the last-run row — and independent of corpus size,
- * which is the property that distinguishes this from the phases it describes. `tests/plan.test.ts`
- * asserts that count is identical over a corpus ten times larger, because a read whose statement count
- * grew with n would be the n-by-n work arriving through the back door.
+ * Statement count is FIXED — one per signal plus the last-run row and the watermark — and independent
+ * of corpus size, which is the property that distinguishes this from the phases it describes.
+ * `tests/plan.test.ts` asserts that count is identical over a corpus ten times larger, because a read
+ * whose statement count grew with n would be the n-by-n work arriving through the back door.
+ *
+ * `headSha` is the commit the CALLER's tree is at, and it is a parameter for the same reason `atMillis`
+ * is: this package reads no clock and resolves no ref to decide anything. Every count below comes from
+ * the index, which is a projection of some commit, so without the tree's own commit the answer cannot
+ * say whether it describes the corpus the caller has.
  */
-export const plan = (db: DatabaseShape, atMillis: number): Effect.Effect<SleepPlan> =>
+export const plan = (
+  db: DatabaseShape,
+  atMillis: number,
+  headSha: string | null
+): Effect.Effect<SleepPlan> =>
   Effect.gen(function* () {
     const last = yield* latestRun(db).pipe(Effect.orElseSucceed(() => undefined))
     const settledBefore = new Date(Math.max(0, atMillis - TRACE_QUIET_MILLIS)).toISOString()
+    /*
+     * The watermark, read through the one query that decodes it, and compared with the same predicate
+     * `memhtml status` uses. A second spelling of "fresh" would let the two commands disagree about one
+     * store, and this is the field a caller weighs a `no-signal` against.
+     */
+    const state = yield* readIndexState(db).pipe(Effect.orElseSucceed(() => undefined))
+    const indexedCommit = state?.head_sha ?? null
+    const indexFresh = indexedCommit !== null && indexedCommit === headSha
 
     /**
      * Memories written since the last run STARTED, which is the volume trigger to run on.
@@ -243,13 +281,22 @@ export const plan = (db: DatabaseShape, atMillis: number): Effect.Effect<SleepPl
     const inputs = unknown.reduce((total, entry) => total + entry.inputCount, 0)
 
     return {
-      verdict: counted > 0 ? "would-change" : inputs > 0 ? "unknown" : "no-signal",
+      /*
+       * A stale index cannot answer `no-signal`, and that is the whole reason `headSha` is a parameter.
+       * The counts are all `index.db`'s, so over a projection of some other commit they describe a
+       * corpus the caller does not have — and every one of them reads zero over an absent one. `unknown`
+       * is the honest value: a run's preflight would project the delta first and every later phase would
+       * then read a corpus this answer never saw.
+       */
+      verdict: counted > 0 ? "would-change" : inputs > 0 || !indexFresh ? "unknown" : "no-signal",
       signals,
       unknown,
       lastRun:
         last === undefined
           ? null
           : { runId: last.run_id, startedAt: last.started_at, status: last.status },
-      sessionsPerRun: TRACE_SESSIONS_PER_RUN
+      sessionsPerRun: TRACE_SESSIONS_PER_RUN,
+      indexedCommit,
+      indexFresh
     } satisfies SleepPlan
   })
