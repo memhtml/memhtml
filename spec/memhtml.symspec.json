@@ -586,6 +586,25 @@
       "verificationNote": "one-SQL-writer rule; swap moved callers, never added a writer",
       "verifies": []
     },
+    "5e2a8f41-9c37-5b06-a84d-3f7e21c05b98": {
+      "createdAt": "2026-08-26T00:00:00.000Z",
+      "derives": [],
+      "id": "5e2a8f41-9c37-5b06-a84d-3f7e21c05b98",
+      "key": "EXT-1",
+      "negated": false,
+      "patternType": "ubiquitous",
+      "priority": "high",
+      "refines": [],
+      "satisfies": [],
+      "sentence": "The store shall index and filter a value on an open axis without interpreting its meaning.",
+      "status": "implemented",
+      "systemName": "store",
+      "systemResponse": "index and filter a value on an open axis without interpreting its meaning",
+      "updatedAt": "2026-08-26T00:00:00.000Z",
+      "verificationMethod": "test",
+      "verificationNote": "Five axes are open: dl facets projected into file_facets (0001_files.sql) and queried through --facet; memhtml-tag, repeatable with an open vocabulary (packages/html/src/vocabulary.ts); the entity TYPE half of a type:name reference, where the shape is fixed and the vocabulary is not, so unknown: is a valid stored type (apps/cli/src/extraction.ts); workspace, an open string that routes to projects/<slug> with no workspaces table; and any explicit path legal under isValidMemoryPath. Matching is on TEXT exactly as authored, with no case folding, and file_facets.numeric_value is UNITLESS with no inequality offered over it, because the unit lives in the prose beside the value. Exactly three readings-for-meaning exist and each names a directory rather than a behaviour: person: on a semantic memory routes to resources/people, the indexer promotes concept: rows from a dfn, and a primary tag names a resources/<tag> directory. packages/index/tests/retrieval-sql.test.ts asserts the composition rule directly against the assembled statement (OR within one name, AND across names), which is the half a caller cannot verify by reading rows back: read either way round it acts on a superset or on an empty set. tests-integration/tests/contracts.test.ts drives the axis through both doors.",
+      "verifies": []
+    },
     "5fb1d8cc-503d-4b22-8a47-d5f66c7dda00": {
       "createdAt": "2026-08-08T01:57:30.129Z",
       "derives": [],
@@ -1129,6 +1148,25 @@
       "verificationNote": "backlog 7 decision 5; mechanical now the threshold is measured; same detector, same 0.30",
       "verifies": []
     },
+    "a91c47d6-2e58-5f73-b0a6-84d3927ce15f": {
+      "createdAt": "2026-08-26T00:00:00.000Z",
+      "derives": [],
+      "id": "a91c47d6-2e58-5f73-b0a6-84d3927ce15f",
+      "key": "EXT-2",
+      "negated": false,
+      "patternType": "ubiquitous",
+      "priority": "medium",
+      "refines": [],
+      "satisfies": [],
+      "sentence": "Each closed vocabulary shall carry the reason it is closed beside the declaration that closes it.",
+      "status": "implemented",
+      "systemName": "closed vocabulary",
+      "systemResponse": "carry the reason it is closed beside the declaration that closes it",
+      "updatedAt": "2026-08-26T00:00:00.000Z",
+      "verificationMethod": "test",
+      "verificationNote": "Four vocabularies are closed and each is interpreted rather than merely stored, which is what closing buys: the element/attribute vocabulary and the memhtml-* meta names (packages/html/src/vocabulary.ts, whose head comment states that the vocabulary IS the policy, so the module holds data and no sanitizer); the ten memory types, where the MEMORY_TYPES doc comment records that three overlapping type vocabularies is what made the predecessor memory system's classification unanswerable, and a type selects a retention half-life, a placement rule, and a default search scope; PARA's four buckets, where archive is a bucket rather than a status value because eviction is a git mv and the path records the state; and the envelope type/code values, closed in the weaker APPEND-ONLY sense. The docs page internals/the-extension-contract CITES each reason rather than restating it, since a second copy of a rationale drifts from the first. apps/docs/tests/census.test.ts derives the vocabulary page from the declaring constants, so a vocabulary that grew is documented at the commit that grows it.",
+      "verifies": []
+    },
     "a9896914-4753-499e-b174-7f470139aa5a": {
       "createdAt": "2026-08-25T00:00:00.000Z",
       "derives": [],
@@ -1346,6 +1384,26 @@
       "updatedAt": "2026-08-08T01:57:30.129Z",
       "verificationMethod": "test",
       "verificationNote": "effect masks undeclared failures as internal server error; wire tests lock",
+      "verifies": []
+    },
+    "c6f0b382-4d19-5a27-9e85-71b2c4038fa7": {
+      "createdAt": "2026-08-26T00:00:00.000Z",
+      "derives": [],
+      "id": "c6f0b382-4d19-5a27-9e85-71b2c4038fa7",
+      "key": "EXT-3",
+      "negated": true,
+      "patternType": "unwanted-behavior",
+      "priority": "high",
+      "refines": [],
+      "satisfies": [],
+      "sentence": "If a caller branches on an envelope type or code, then a later release shall not change that value's meaning or remove it.",
+      "status": "implemented",
+      "systemName": "envelope vocabulary",
+      "systemResponse": "change that value's meaning or remove it",
+      "trigger": "a caller branches on an envelope type or code",
+      "updatedAt": "2026-08-26T00:00:00.000Z",
+      "verificationMethod": "test",
+      "verificationNote": "RESPONSE_TYPES and ERROR_CODES are append-only (apps/cli/src/envelope.ts): a shipped value never changes meaning and is never removed, and a new condition takes a new value. A consumer therefore branches on code and never on the error prose, which changes freely as wording improves, and must treat an unrecognized value as unknown rather than refusing it — a closed reading of an append-only list breaks on the first addition. Growth is a minor release and a removal or a meaning change is a major, which the Conventional Commit subject is what states. apps/cli/tests/cli.test.ts asserts every raised code is a member and that suggestions name only real commands; the docs error-code page is generated from the same arrays, so a value added without documentation fails the census.",
       "verifies": []
     },
     "c9ef035a-4771-47b7-a8a7-7758d79c444a": {
