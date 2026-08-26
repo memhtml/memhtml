@@ -121,6 +121,11 @@ export {
   type AssembledScope,
   assembleScope,
   EXCLUDED_BY_DEFAULT,
+  FACET_SEPARATOR,
+  type FacetFilter,
+  facetConditions,
+  parseFacetFilter,
+  parseFacetFilters,
   type SearchScope
 } from "./scope.js"
 export {

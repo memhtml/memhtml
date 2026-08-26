@@ -61,6 +61,26 @@ export const GLOBAL_FLAGS: ReadonlyArray<FlagSpec> = [
   }
 ]
 
+/**
+ * The `--facet` help, shared by every command that scopes on one.
+ *
+ * The composition rule is IN the help because it is a semantic contract rather than a convenience: a
+ * caller who read `--facet a=1 --facet b=2` as "either" would act on a superset, and one who read
+ * `--facet a=1 --facet a=2` as "both" would act on an empty result. Neither mistake is visible in
+ * the rows that come back.
+ *
+ * The unitless clause is there for the same reason. `file_facets.numeric_value` exists, and offering
+ * a numeric comparison over it would be offering an inequality on an unlabelled number — the unit
+ * lives in the human phrasing beside the value, so the caller owns it, and it owns it by matching the
+ * text the corpus holds.
+ */
+const FACET_FLAG =
+  "Restrict to memories carrying a `<dl>` facet, as name=value; the value may contain `=`, the name may not. " +
+  "Repeatable, and the composition is fixed: values under the SAME name broaden (--facet doc-type=runbook --facet doc-type=guide is either), " +
+  "DIFFERENT names narrow (--facet doc-type=runbook --facet tier=1 is both). " +
+  "This is the extension axis: memhtml's element and meta vocabularies are closed, so a consumer's own document kinds, states, and tiers live in `<dt>`/`<dd>` pairs and are queried here. " +
+  "The match is on the facet's TEXT, exactly as authored, with no case folding. There is no numeric comparison: a `<data value>` is indexed UNITLESS because the unit lives in the prose beside it, so the caller owns the unit and matches the text it wrote."
+
 /** Flags every retrieval command shares, so `search` and `recall` cannot scope differently. */
 const SCOPE_FLAGS: ReadonlyArray<FlagSpec> = [
   {
@@ -90,6 +110,12 @@ const SCOPE_FLAGS: ReadonlyArray<FlagSpec> = [
     // one vocabulary rather than two facets that happen to share a word.
     description:
       "Restrict to memories carrying one `type:name` entity reference, e.g. service:checkout-api, the form a hit's `entities` publishes, so a hop is a copy. A scope matching nothing returns no hits and says so; it never widens."
+  },
+  {
+    name: "facet",
+    type: "string",
+    description: FACET_FLAG,
+    repeatable: true
   },
   {
     name: "include-archived",
@@ -399,7 +425,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   },
   {
     name: "list",
-    summary: "Page through the corpus by type, workspace, tag, entity, or PARA bucket.",
+    summary: "Page through the corpus by type, workspace, tag, entity, facet, or PARA bucket.",
     args: [],
     flags: [
       {
@@ -411,6 +437,10 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       { name: "workspace", type: "string", description: "One workspace." },
       { name: "tag", type: "string", description: "One tag." },
       { name: "entity", type: "string", description: "One `type:name` entity reference." },
+      // Repeatable here where `--tag` and `--entity` are not, because the facet axis composes: the
+      // whole point of an open vocabulary is asking for a conjunction of a consumer's own keys, and
+      // one predicate per call would make that N calls the caller has to intersect by hand.
+      { name: "facet", type: "string", description: FACET_FLAG, repeatable: true },
       {
         name: "para",
         type: "string",

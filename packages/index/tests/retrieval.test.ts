@@ -1425,3 +1425,254 @@ describe("recall", () => {
     expect(pack.memories.disclosed.length + pack.memories.indexLines.length).toBeGreaterThan(0)
   })
 })
+
+/**
+ * The facet scope, against a real projection of real `<dl>` markup.
+ *
+ * Its own corpus rather than the shared one, and the shape of that corpus is the assertion's whole
+ * validity. Every entry shares the query's vocabulary, so all four rank inside the window and an
+ * absence is the predicate rather than the ranking. And every entry is a NEIGHBOUR of the subject
+ * under exactly one axis: same name with a different value, same value under a different name, and no
+ * facets at all. `file_facets` is keyed on `(path, name, value)` and shared across every memory in the
+ * corpus, so a fixture holding only the wanted row passes against a predicate that ignores its
+ * value, ignores its name, or ignores the correlation.
+ */
+describe("search: the facet scope", () => {
+  let repo: FixtureRepo
+
+  const RUNBOOK_TIER_ONE = "projects/acme/restart-runbook.html"
+  const GUIDE_TIER_ONE = "projects/acme/restart-guide.html"
+  const RUNBOOK_TIER_TWO = "projects/acme/backfill-runbook.html"
+  const NO_FACETS = "projects/acme/restart-notes.html"
+  const QUERY = "restart the ingest worker after a backfill"
+
+  const facetCorpus = (): ReadonlyArray<SeedFile> => [
+    {
+      path: RUNBOOK_TIER_ONE,
+      html: memoryHtml({
+        title: "Restart the ingest worker",
+        claim: "Restart the ingest worker after a backfill, draining the queue first.",
+        memoryType: "procedural",
+        facets: [
+          { name: "doc-type", value: "runbook" },
+          { name: "tier", value: "1" }
+        ],
+        updatedAt: "2026-07-20T00:00:00Z"
+      })
+    },
+    {
+      // Same NAME, different value. A predicate that bound the name and ignored the value returns it.
+      path: GUIDE_TIER_ONE,
+      html: memoryHtml({
+        title: "How the ingest worker restarts",
+        claim: "The ingest worker restarts by draining its queue and replaying the backfill.",
+        memoryType: "semantic",
+        facets: [
+          { name: "doc-type", value: "guide" },
+          { name: "tier", value: "1" }
+        ],
+        updatedAt: "2026-07-21T00:00:00Z"
+      })
+    },
+    {
+      // Same doc-type, different tier. A predicate that OR-ed across names returns it.
+      path: RUNBOOK_TIER_TWO,
+      html: memoryHtml({
+        title: "Backfill the ingest worker",
+        claim: "Backfill the ingest worker before a restart when the queue is empty.",
+        memoryType: "procedural",
+        facets: [
+          { name: "doc-type", value: "runbook" },
+          { name: "tier", value: "2" }
+        ],
+        updatedAt: "2026-07-22T00:00:00Z"
+      })
+    },
+    {
+      // No facets at all. A predicate dropped from an arm returns it.
+      path: NO_FACETS,
+      html: memoryHtml({
+        title: "Notes on the ingest worker restart",
+        claim: "The ingest worker restart is safe to retry after a backfill.",
+        memoryType: "episodic",
+        updatedAt: "2026-07-23T00:00:00Z"
+      })
+    }
+  ]
+
+  beforeEach(async () => {
+    repo = await makeFixtureRepo()
+    await repo.commit(facetCorpus(), "seed a faceted corpus")
+  })
+
+  afterEach(() => repo.cleanup())
+
+  const pathsFor = (facets: ReadonlyArray<{ name: string; value: string }>) =>
+    withIndexed(repo, ({ retrieval }) =>
+      retrieval
+        .search({ query: QUERY, facets, limit: 20 })
+        .pipe(Effect.map((result) => result.hits.map((hit) => hit.path).sort()))
+    )
+
+  it("returns every entry unscoped, so each exclusion below is the predicate", async () => {
+    // The control. Without it a facet scope returning two paths could be two paths the ranker happened
+    // to reach, and this repo has shipped a probe whose zero was its own bug.
+    const paths = await pathsFor([])
+    expect(paths).toEqual([RUNBOOK_TIER_TWO, GUIDE_TIER_ONE, NO_FACETS, RUNBOOK_TIER_ONE].sort())
+  })
+
+  it("narrows to one name=value, excluding the same name at another value", async () => {
+    expect(await pathsFor([{ name: "doc-type", value: "runbook" }])).toEqual(
+      [RUNBOOK_TIER_ONE, RUNBOOK_TIER_TWO].sort()
+    )
+  })
+
+  it("BROADENS across two values of one name, and no further", async () => {
+    // The guide joins the result and the facetless entry does not: an OR that widened to the corpus
+    // would return all four, which is the failure a caller reads as "the scope was ignored".
+    expect(
+      await pathsFor([
+        { name: "doc-type", value: "runbook" },
+        { name: "doc-type", value: "guide" }
+      ])
+    ).toEqual([RUNBOOK_TIER_ONE, RUNBOOK_TIER_TWO, GUIDE_TIER_ONE].sort())
+  })
+
+  it("NARROWS across two different names, returning only the entry carrying both", async () => {
+    // The tier-2 runbook and the tier-1 guide each satisfy exactly one conjunct, so a predicate that
+    // OR-ed the names returns three rows here and one row is the correct answer.
+    expect(
+      await pathsFor([
+        { name: "doc-type", value: "runbook" },
+        { name: "tier", value: "1" }
+      ])
+    ).toEqual([RUNBOOK_TIER_ONE])
+  })
+
+  it("composes with the tag and type axes rather than replacing them", async () => {
+    // A facet AND a type: the tier-1 guide is `semantic`, so the pair has to intersect.
+    const paths = await withIndexed(repo, ({ retrieval }) =>
+      retrieval
+        .search({
+          query: QUERY,
+          memoryTypes: ["procedural"],
+          facets: [{ name: "tier", value: "1" }],
+          limit: 20
+        })
+        .pipe(Effect.map((result) => result.hits.map((hit) => hit.path)))
+    )
+    expect(paths).toEqual([RUNBOOK_TIER_ONE])
+  })
+
+  it("reports scope_empty on a facet nothing carries, and not on one something does", async () => {
+    // Without this the caller cannot tell "no memory carries doc-type=charter" from "this corpus is
+    // empty", and `scopeNarrows` is the one place a new axis has to be named for that to hold.
+    const outcome = await withIndexed(repo, ({ retrieval }) =>
+      Effect.gen(function* () {
+        const missing = yield* retrieval.search({
+          query: QUERY,
+          facets: [{ name: "doc-type", value: "charter" }],
+          limit: 20
+        })
+        const present = yield* retrieval.search({
+          query: QUERY,
+          facets: [{ name: "doc-type", value: "runbook" }],
+          limit: 20
+        })
+        return { missing, present }
+      })
+    )
+    expect(outcome.missing.hits).toEqual([])
+    expect(outcome.missing.scopeEmpty).toBe(true)
+    expect(outcome.present.hits.length).toBeGreaterThan(0)
+    expect(outcome.present.scopeEmpty).toBe(false)
+  })
+
+  it("PROBES file_facets once per candidate rather than scanning it, in every arm", async () => {
+    /**
+     * The cost contract, at the planner, over the statement retrieval ITSELF issued — the entity
+     * axis's own test, on the facet table.
+     *
+     * A correlated `EXISTS` is the shape where correct results and acceptable cost diverge completely:
+     * `SEARCH ff … (path=? AND name=? AND value=?)` probes the `(path, name, value)` primary key once
+     * per candidate row, while `SCAN ff` re-reads the whole facet table once per candidate row —
+     * quadratic, and returning exactly the same hits. No result assertion in this file could tell them
+     * apart at any corpus size a test will seed.
+     *
+     * The assertion is on SEARCH-versus-SCAN and on the TABLE rather than on an index name, for the
+     * reason the entity test records: `ANALYZE` is deliberately not run, because production does not
+     * run it, and the chosen index NAME differs with and without statistics. Probed 2026-08-26 without
+     * statistics, the pick is `sqlite_autoindex_file_facets_1` as a covering index — not
+     * `file_facets_name`, which a name-first driving order would pick and which binds one column where
+     * this shape binds three.
+     *
+     * The BOUND COLUMNS are asserted too, and that is the second half of the lock. Probed 2026-08-26
+     * over a 60-file corpus with and without `ANALYZE`: the constraint list is
+     * `(path=? AND name=? AND value=?)` in both, and case-folding either column degrades it to
+     * `(path=?)` while returning the identical 30 rows. So the difference between one seek and one
+     * seek-plus-a-filter-over-every-facet-row is visible ONLY here.
+     */
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* indexInto(db, repo, makeFakeEmbedder())
+
+        let issued: { sql: string; params: ReadonlyArray<unknown> } | null = null
+        const capturing: DatabaseShape = {
+          ...db,
+          all: (<A>(sql: string, params?: ReadonlyArray<unknown>) => {
+            // The FUSED statement, which is the only one carrying the scope.
+            if (issued === null && sql.includes("file_facets") && sql.includes("rrf AS (")) {
+              issued = { sql, params: params ?? [] }
+            }
+            return (db.all as never as (s: string, p?: ReadonlyArray<unknown>) => Effect.Effect<A>)(
+              sql,
+              params
+            )
+          }) as DatabaseShape["all"]
+        }
+
+        const result = yield* makeRetrieval({
+          db: capturing,
+          embeddings: makeFakeEmbedder()
+        }).search({
+          query: QUERY,
+          facets: [{ name: "doc-type", value: "runbook" }],
+          limit: 20
+        })
+        const captured = issued as { sql: string; params: ReadonlyArray<unknown> } | null
+        if (captured === null) return { steps: [] as ReadonlyArray<string>, hits: 0, arms: 0 }
+
+        const plan = yield* db.all<{ detail: string }>(
+          `EXPLAIN QUERY PLAN ${captured.sql}`,
+          captured.params as never
+        )
+        return {
+          steps: plan.map((row) => row.detail),
+          hits: result.hits.length,
+          arms: result.arms.length
+        }
+      })
+    )
+
+    // The statement really ran and really matched, so the plan describes a query that did the work.
+    expect(outcome.hits).toBeGreaterThan(0)
+    expect(outcome.arms).toBe(4)
+    expect(outcome.steps.length).toBeGreaterThan(0)
+
+    const probes = outcome.steps.filter(
+      (step) =>
+        step.includes("SEARCH") &&
+        step.includes("file_facets") &&
+        step.includes("(path=? AND name=? AND value=?)")
+    )
+    // ONE probe per arm: four arms fired, each carrying its own copy of the shared filter, so a count
+    // below four is an arm that lost the scope and a count above four is a duplicated subquery.
+    expect(probes.length).toBe(outcome.arms)
+    // And no arm scans the facet table. Asserted over the whole plan rather than per step, because a
+    // single scanning arm is the entire defect.
+    const scans = outcome.steps.filter(
+      (step) => step.includes("SCAN") && step.includes("file_facets")
+    )
+    expect(scans, `file_facets scanned: ${scans.join(" | ")}`).toEqual([])
+  })
+})

@@ -866,6 +866,26 @@
       "verificationNote": "MEMHTML_MCP_BIN joined CONFIG_VARS (T3)",
       "verifies": []
     },
+    "8ec38e3d-19ab-56c9-a60a-39086676e0cf": {
+      "createdAt": "2026-08-26T00:00:00.000Z",
+      "derives": [],
+      "id": "8ec38e3d-19ab-56c9-a60a-39086676e0cf",
+      "key": "RET-4",
+      "negated": false,
+      "patternType": "event-driven",
+      "priority": "high",
+      "refines": [],
+      "satisfies": [],
+      "sentence": "When a caller names facet predicates, the retrieval shall require every distinct facet name and admit any named value under one name.",
+      "status": "implemented",
+      "systemName": "retrieval",
+      "systemResponse": "require every distinct facet name and admit any named value under one name",
+      "trigger": "a caller names facet predicates",
+      "updatedAt": "2026-08-26T00:00:00.000Z",
+      "verificationMethod": "test",
+      "verificationNote": "scope.ts facetConditions; retrieval-sql.test.ts the facet axis",
+      "verifies": []
+    },
     "8f5bebec-9f2e-4520-beab-919b1a06f6b4": {
       "createdAt": "2026-08-25T00:00:00.000Z",
       "derives": [],

@@ -178,7 +178,11 @@ const scopeNarrows = (scope: SearchScope): boolean =>
   (scope.memoryTypes ?? []).length > 0 ||
   (scope.workspace !== undefined && scope.workspace !== "") ||
   (scope.tags ?? []).some((tag) => tag.trim() !== "") ||
-  (scope.entity !== undefined && scope.entity !== "")
+  (scope.entity !== undefined && scope.entity !== "") ||
+  // Every axis `assembleScope` can emit a condition for has to be named here, or a facet-scoped query
+  // that matched nothing reports `scopeEmpty: false` and an agent reads the empty result as the
+  // corpus's answer rather than as its own predicate.
+  (scope.facets ?? []).some((facet) => facet.name.trim() !== "" && facet.value.trim() !== "")
 
 export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
   const { db } = deps

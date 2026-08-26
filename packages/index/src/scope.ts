@@ -26,6 +26,97 @@ import { PARAM_QUERY_VECTOR } from "./retrieval-sql.js"
  * 2026-08-02), so a shifted number would silently match nothing instead of erroring.
  */
 
+/**
+ * One `<dl>` facet predicate: a `<dt>` name and one `<dd>` value beneath it.
+ *
+ * A pair rather than a `name=value` string, because the SQL binds the halves separately and a
+ * predicate builder that had to re-split its own input would carry a second copy of the split rule.
+ * {@link parseFacetFilters} owns the wire spelling, once, for both doors.
+ */
+export interface FacetFilter {
+  /** The `<dt>` text, as the corpus spells it. Matched exactly. */
+  readonly name: string
+  /** One `<dd>` text under that name. Matched exactly, as TEXT. */
+  readonly value: string
+}
+
+/** What separates a facet's name from its value in the `name=value` wire form. */
+export const FACET_SEPARATOR = "="
+
+/**
+ * One `name=value` spec as a {@link FacetFilter}, or `undefined` when it is not one.
+ *
+ * The split is at the FIRST separator, so a VALUE may contain `=` (`query=a=b` is `a=b` under
+ * `query`) and a NAME may not. That asymmetry is the useful direction: a `<dd>` holds arbitrary
+ * authored text while a `<dt>` is a key a consumer chooses, and it can choose one without an `=`.
+ *
+ * Both halves are trimmed and an empty half is a rejection, so `=x`, `x=`, and `x` yield nothing.
+ * Silently dropping a malformed spec is the same discipline {@link SearchScope.tags} follows for a
+ * blank tag: a scope value that cannot narrow anything must not narrow everything.
+ */
+export const parseFacetFilter = (spec: string): FacetFilter | undefined => {
+  const at = spec.indexOf(FACET_SEPARATOR)
+  if (at < 1) return undefined
+  const name = spec.slice(0, at).trim()
+  const value = spec.slice(at + FACET_SEPARATOR.length).trim()
+  return name === "" || value === "" ? undefined : { name, value }
+}
+
+/** Every parseable `name=value` spec, in order. The one wire-form decode both doors call. */
+export const parseFacetFilters = (specs: ReadonlyArray<string>): ReadonlyArray<FacetFilter> =>
+  specs.flatMap((spec) => {
+    const parsed = parseFacetFilter(spec)
+    return parsed === undefined ? [] : [parsed]
+  })
+
+/**
+ * The facet predicates for one filter list: one `EXISTS` per distinct NAME, values OR-ed inside it.
+ *
+ * Shared by {@link assembleScope} and `listMemories`, parameterized on the alias and on how the
+ * caller emits a placeholder, because those are the only two things that differ between the four-arm
+ * filter (a `{alias}` token and numbered `?5`-upward parameters) and the listing (a real alias and
+ * anonymous `?`). Two hand-written copies would agree on the day they were written and disagree the
+ * first time the composition rule moved, and a caller cannot tell a subset from a superset by reading
+ * the rows back.
+ *
+ * The grouping is what implements AND-across-names / OR-within-name: one `EXISTS` per name is a
+ * conjunction because the conditions are joined by `AND`, and `value IN (…)` inside it is the
+ * disjunction. A single `EXISTS` over `(name, value) IN (…)` would make every pair OR, so
+ * `doc-type=runbook tier=1` would return every runbook plus every tier-1 memory.
+ *
+ * Duplicate `(name, value)` pairs collapse. A repeated flag is a caller typing the same narrowing
+ * twice, and binding it twice would put two identical values in one `IN` list, which changes no rows
+ * and makes the assembled SQL depend on how many times someone pressed up-arrow.
+ */
+export const facetConditions = (
+  facets: ReadonlyArray<FacetFilter>,
+  alias: string,
+  placeholder: (value: string) => string
+): ReadonlyArray<string> => {
+  const byName = new Map<string, Array<string>>()
+  for (const facet of facets) {
+    const name = facet.name.trim()
+    const value = facet.value.trim()
+    if (name === "" || value === "") continue
+    const values = byName.get(name)
+    if (values === undefined) byName.set(name, [value])
+    else if (!values.includes(value)) values.push(value)
+  }
+  return [...byName].map(([name, values]) => {
+    /*
+     * The name binds BEFORE its values, in two statements rather than one template literal.
+     * `placeholder` appends to the caller's parameter array as a side effect, and a template
+     * literal's substitutions evaluate left to right only if each is written inline — computing the
+     * value list first and interpolating it second would emit `?5` for the name while `?5` held the
+     * first value, so every facet predicate would compare a name against a value. The rows come back
+     * empty rather than wrong, which is the failure that reads as "the corpus has no such facet".
+     */
+    const boundName = placeholder(name)
+    const boundValues = values.map((value) => placeholder(value)).join(", ")
+    return `EXISTS (SELECT 1 FROM file_facets ff WHERE ff.path = ${alias}.path AND ff.name = ${boundName} AND ff.value IN (${boundValues}))`
+  })
+}
+
 /** The caller's scope. Every field absent means "the whole wiki, minus the tasks". */
 export interface SearchScope {
   /**
@@ -71,6 +162,35 @@ export interface SearchScope {
    * question of whether it broadens or narrows before anyone has asked for either.
    */
   readonly entity?: string | undefined
+  /**
+   * `<dl>` facet predicates: AND across distinct NAMES, OR within one name.
+   *
+   * The extension axis. `memhtml`'s element and `<meta>` vocabularies are closed, so a consumer that
+   * needs to model its own document kinds, states, or tiers writes them as `<dt>`/`<dd>` pairs and
+   * narrows on them here. Nothing about those names reaches this package: the predicate is over two
+   * TEXT columns, so one corpus can carry `doc-type` and another `severity` with no code between them.
+   *
+   * The composition rule is stated because a silent choice here is a semantic contract. Two values
+   * under ONE name broaden (`doc-type=runbook`, `doc-type=guide` is either), matching how {@link tags}
+   * broadens. Two DIFFERENT names narrow (`doc-type=runbook`, `tier=1` is both), matching how a
+   * workspace narrows a tag scope. A caller that read it the other way would get a superset or an
+   * empty set and no signal which.
+   *
+   * `value` is matched as TEXT, and exactly, with no case fold. Two reasons, and the second is
+   * measurable. A facet is a consumer's own machine-written vocabulary rather than a name a human
+   * types from memory, which is what {@link entity}'s fold exists for. And the fold would cost the
+   * index: probed 2026-08-26 on node 24's `node:sqlite`, `ff.name = ? AND ff.value IN (?)` seeks
+   * `sqlite_autoindex_file_facets_1` on `(path=? AND name=? AND value=?)`, while wrapping either
+   * column in `lower()` degrades the same probe to `(path=?)` — every facet row of every candidate
+   * file read and filtered, returning identical rows.
+   *
+   * `file_facets.numeric_value` is NOT reachable from here, and that is the contract rather than a
+   * gap: the column is UNITLESS (`0001_files.sql:91-94`), because the unit lives in the human
+   * phrasing beside it. A `>=` on an unlabelled number is a comparison whose meaning the corpus
+   * never stated, so the caller owning the unit is the only honest arrangement, and it owns it by
+   * matching the text it authored.
+   */
+  readonly facets?: ReadonlyArray<FacetFilter> | undefined
   /** Archived files are excluded unless asked for. Eviction is a `git mv`, so they still exist. */
   readonly includeArchived?: boolean | undefined
   /**
@@ -191,6 +311,17 @@ export const assembleScope = (scope: SearchScope = {}): AssembledScope => {
       `EXISTS (SELECT 1 FROM file_entities e WHERE e.path = {alias}.path AND lower(e.entity_type || ':' || e.entity_name) = lower(${placeholder(scope.entity.trim())}))`
     )
   }
+
+  /**
+   * The facet axis, as the same `EXISTS` `listMemories` issues, from the one builder above.
+   *
+   * `EXISTS` for the tag predicate's reason: a file carrying three `<dd>`s under one `<dt>` would
+   * multiply its rows through a join, and a duplicated row inside an arm's `LIMIT` spends the
+   * candidate budget on one file. `ff` rather than `f`, because `{alias}` resolves to `f` in the
+   * vector arm and an inner alias shadowing the outer one would make the correlation compare a row
+   * with itself.
+   */
+  conditions.push(...facetConditions(scope.facets ?? [], "{alias}", placeholder))
 
   const fileFilter = conditions.map((condition) => `\n         AND ${condition}`).join("")
   return { holes: { fileFilter }, params }

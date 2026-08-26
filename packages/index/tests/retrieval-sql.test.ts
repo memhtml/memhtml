@@ -10,7 +10,7 @@ import {
   truncateSnippet
 } from "../src/retrieval-sql.js"
 import { SNIPPET_MAX_CHARS, TRACE_TABLES } from "../src/schema-const.js"
-import { assembleScope, EXCLUDED_BY_DEFAULT } from "../src/scope.js"
+import { assembleScope, EXCLUDED_BY_DEFAULT, parseFacetFilters } from "../src/scope.js"
 
 /**
  * The assembler, as a pure function over the arm registry. These are the assertions that make the
@@ -663,5 +663,236 @@ describe("assembleScope: the entity axis", () => {
     expect(filter).toContain("FROM file_entities e")
     expect(filter).toContain("ft.tag IN (?5)")
     expect(filter).toContain("lower(e.entity_type || ':' || e.entity_name) = lower(?6)")
+  })
+})
+
+/**
+ * The facet axis: the extension point, at the level a result assertion cannot see.
+ *
+ * Every assertion here is about the assembled TEXT, because the composition rule is the thing a caller
+ * acts on and the rows cannot report it. Read `--facet a=1 --facet b=2` as a disjunction and a caller
+ * acts on a superset; read `--facet a=1 --facet a=2` as a conjunction and it acts on an empty set. Both
+ * look like plausible corpus answers on any fixture small enough to write down, so the grouping is
+ * asserted in the statement.
+ */
+describe("assembleScope: the facet axis", () => {
+  const EXISTS = "EXISTS (SELECT 1 FROM file_facets ff WHERE ff.path = {alias}.path"
+  const ENTITY_REF = "service:checkout-api"
+
+  it("emits ONE EXISTS per distinct name, with that name's values OR-ed inside it", () => {
+    const scope = assembleScope({
+      facets: [
+        { name: "doc-type", value: "runbook" },
+        { name: "doc-type", value: "guide" },
+        { name: "tier", value: "1" }
+      ]
+    })
+    // Two names, so two conjuncts. The count is derived from the input rather than copied from
+    // output: a single EXISTS over an `(name, value) IN (...)` list would make every pair OR and
+    // would report as one condition.
+    expect(scope.holes.fileFilter.split(EXISTS).length - 1).toBe(2)
+    expect(scope.holes.fileFilter).toContain(`${EXISTS} AND ff.name = ?5 AND ff.value IN (?6, ?7)`)
+    expect(scope.holes.fileFilter).toContain(`${EXISTS} AND ff.name = ?8 AND ff.value IN (?9)`)
+    // Positional, so agreeing on the numbers while disagreeing on the order would compare a name
+    // against a value and match nothing.
+    expect(scope.params).toEqual(["doc-type", "runbook", "guide", "tier", "1"])
+  })
+
+  it("binds each name BEFORE its own values, which is what makes the numbering readable at all", () => {
+    /**
+     * The failure this locks is an evaluation order: computing the value list first and interpolating
+     * it second emits `?5` for the name while `?5` holds the first value. Every predicate then
+     * compares a `<dt>` against a `<dd>`, the statement stays valid, and the result is empty — which
+     * reads as "this corpus has no such facet".
+     */
+    const scope = assembleScope({ facets: [{ name: "state", value: "open" }] })
+    expect(scope.params[0]).toBe("state")
+    expect(scope.params[1]).toBe("open")
+    expect(scope.holes.fileFilter).toContain("ff.name = ?5 AND ff.value IN (?6)")
+  })
+
+  it("binds one placeholder per bound value, counted from the input", () => {
+    // A census rather than a report: the total is derived from the filters (one per distinct name plus
+    // one per distinct pair), so a builder that dropped or doubled a binding fails here instead of
+    // emitting a plausible statement.
+    const facets = [
+      { name: "doc-type", value: "runbook" },
+      { name: "doc-type", value: "guide" },
+      { name: "tier", value: "1" },
+      { name: "state", value: "open" }
+    ]
+    const names = new Set(facets.map((facet) => facet.name))
+    const pairs = new Set(facets.map((facet) => `${facet.name} ${facet.value}`))
+    const expected = names.size + pairs.size
+    const scope = assembleScope({ facets })
+    expect(scope.params).toHaveLength(expected)
+    expect(scope.holes.fileFilter.match(/\?\d+/g) ?? []).toHaveLength(expected)
+  })
+
+  it("collapses a repeated name=value pair rather than binding it twice", () => {
+    // A caller pressing up-arrow narrows nothing further, and the assembled SQL must not depend on
+    // how many times it did.
+    const twice = assembleScope({
+      facets: [
+        { name: "doc-type", value: "runbook" },
+        { name: "doc-type", value: "runbook" }
+      ]
+    })
+    expect(twice.params).toEqual(["doc-type", "runbook"])
+    expect(twice.holes.fileFilter).toContain("ff.value IN (?6)")
+  })
+
+  it("matches the facet TEXT exactly, folding no case on either column", () => {
+    /**
+     * A shape assertion, and the only place this cost is visible. Probed 2026-08-26 on node 24's
+     * `node:sqlite` against the shipped migrations: `ff.name = ? AND ff.value IN (?)` plans as
+     * `SEARCH ff USING COVERING INDEX sqlite_autoindex_file_facets_1 (path=? AND name=? AND value=?)`,
+     * while wrapping either column in `lower()` degrades the same probe to `(path=?)` — every facet
+     * row of every candidate read and filtered, returning identical rows. So the ABSENCE of a fold is
+     * asserted rather than assumed.
+     */
+    const scope = assembleScope({ facets: [{ name: "Doc-Type", value: "Runbook" }] })
+    expect(scope.holes.fileFilter).toContain("ff.name = ?5")
+    expect(scope.holes.fileFilter).not.toContain("lower(ff.name)")
+    expect(scope.holes.fileFilter).not.toContain("lower(ff.value)")
+    // The authored casing binds untouched: the caller matches what its own corpus holds.
+    expect(scope.params).toEqual(["Doc-Type", "Runbook"])
+  })
+
+  it("reaches numeric_value nowhere, because that column is unitless by contract", () => {
+    // `0001_files.sql` indexes a `<data value>` UNITLESS: the unit lives in the prose beside it. An
+    // inequality over it would be a comparison whose meaning the corpus never stated.
+    const filter = assembleScope({ facets: [{ name: "duration", value: "about two minutes" }] })
+      .holes.fileFilter
+    expect(filter).not.toContain("numeric_value")
+  })
+
+  it("puts every facet conjunct in EVERY arm's assembled SQL, not only the fold's", () => {
+    /**
+     * The leak this catches is the one no type sees: an arm missing the hole keeps ranking candidates
+     * from OUTSIDE the scope, RRF sums them with the scoped arms' contributions, and the response
+     * carries a hit holding none of the asked-for facets.
+     */
+    const scoped = assembleScope({
+      facets: [
+        { name: "doc-type", value: "runbook" },
+        { name: "tier", value: "1" }
+      ]
+    })
+    let checked = 0
+    for (const hasQueryVector of [true, false]) {
+      for (const hasState of [true, false]) {
+        for (const arm of activeArms({ hasQueryVector, hasState, holes: scoped.holes })) {
+          const armSql = arm.sql(scoped.holes)
+          checked += 1
+          /*
+           * The alias is READ OFF the arm rather than assumed: each arm substitutes its own into the
+           * shared filter, and the whole point of the assertion is that the facet correlation followed
+           * the same substitution the archived predicate did. Hardcoding a list of aliases here would
+           * make the test agree with a stale memory of the registry instead of with the arm.
+           */
+          const alias = /AND (\w+)\.archived = 0/.exec(armSql)?.[1]
+          expect(alias, `${arm.name} has no substituted alias to correlate against`).toBeDefined()
+          expect(armSql, `${arm.name} lost the first facet conjunct`).toContain(
+            `ff.path = ${alias}.path AND ff.name = ?5 AND ff.value IN (?6)`
+          )
+          expect(armSql, `${arm.name} lost the second facet conjunct`).toContain(
+            `ff.path = ${alias}.path AND ff.name = ?7 AND ff.value IN (?8)`
+          )
+          expect(armSql, `${arm.name} left {alias} unsubstituted`).not.toContain("{alias}")
+        }
+      }
+    }
+    // A guard over an empty collection reports as nothing at all rather than as a failure.
+    expect(checked).toBe(12)
+  })
+
+  it("aliases its subquery apart from the tag and entity ones, so no correlation crosses", () => {
+    // Three EXISTS over three side tables in one filter. `ff` is deliberately not `f`, which is the
+    // vector arm's own alias for `files` — an inner alias shadowing the outer one would correlate a
+    // row against itself and the predicate would hold for every row.
+    const filter = assembleScope({
+      tags: ["deploy"],
+      entity: ENTITY_REF,
+      facets: [{ name: "doc-type", value: "runbook" }]
+    }).holes.fileFilter
+    expect(filter).toContain("FROM file_tags ft")
+    expect(filter).toContain("FROM file_entities e")
+    expect(filter).toContain("FROM file_facets ff")
+    expect(filter).toContain("ft.tag IN (?5)")
+    expect(filter).toContain("lower(e.entity_type || ':' || e.entity_name) = lower(?6)")
+    expect(filter).toContain("ff.name = ?7 AND ff.value IN (?8)")
+  })
+
+  it("numbers the facet placeholders after every axis that can precede them", () => {
+    // The facet conditions are assembled LAST, so their numbers are a function of what every other
+    // axis bound. A shifted number reads as NULL on this driver and matches nothing, which is
+    // indistinguishable from an over-narrow scope.
+    const assembled = assembleScope({
+      memoryTypes: ["semantic", "arc"],
+      workspace: "memhtml",
+      tags: ["deploy"],
+      entity: ENTITY_REF,
+      facets: [{ name: "doc-type", value: "runbook" }]
+    })
+    expect(assembled.holes.fileFilter).toContain("ff.name = ?10 AND ff.value IN (?11)")
+    expect(assembled.params).toEqual([
+      "semantic",
+      "arc",
+      "memhtml",
+      "deploy",
+      ENTITY_REF,
+      "doc-type",
+      "runbook"
+    ])
+  })
+
+  it("leaves the filter facet-free when no facet is named, and when a blank half is", () => {
+    // The blank halves reach here from a flag nobody passed and from an MCP client sending the key
+    // with no value. Both mean "no facet scope", and binding one would narrow to nothing.
+    for (const scope of [
+      assembleScope(),
+      assembleScope({ facets: [] }),
+      assembleScope({ facets: [{ name: "", value: "runbook" }] }),
+      assembleScope({ facets: [{ name: "doc-type", value: "  " }] }),
+      assembleScope({ tags: ["deploy"] })
+    ]) {
+      expect(scope.holes.fileFilter).not.toContain("file_facets")
+      expect(scope.params).not.toContain("")
+    }
+  })
+
+  it("binds the facet rather than inlining it, so a value holding a quote cannot break the statement", () => {
+    const scope = assembleScope({ facets: [{ name: "owner", value: "o'brien" }] })
+    expect(scope.params).toEqual(["owner", "o'brien"])
+    expect(scope.holes.fileFilter).not.toContain("o'brien")
+  })
+})
+
+describe("parseFacetFilters: the name=value wire form", () => {
+  it("splits at the FIRST separator, so a value may contain one and a name may not", () => {
+    expect(parseFacetFilters(["query=status = 'open'"])).toEqual([
+      { name: "query", value: "status = 'open'" }
+    ])
+  })
+
+  it("trims both halves, so shell padding is not part of a facet's identity", () => {
+    expect(parseFacetFilters(["  doc-type  =  runbook  "])).toEqual([
+      { name: "doc-type", value: "runbook" }
+    ])
+  })
+
+  it("drops a spec with no separator or a blank half, rather than narrowing to nothing", () => {
+    expect(parseFacetFilters(["doc-type", "=runbook", "doc-type=", "  =  ", ""])).toEqual([])
+  })
+
+  it("keeps order and keeps duplicates, leaving the composition rule to the predicate builder", () => {
+    // The parser is a decode, not a policy. Collapsing here would put the dedupe rule in two places,
+    // and the SQL builder is where the grouping already lives.
+    expect(parseFacetFilters(["a=1", "b=2", "a=1"])).toEqual([
+      { name: "a", value: "1" },
+      { name: "b", value: "2" },
+      { name: "a", value: "1" }
+    ])
   })
 })

@@ -242,6 +242,29 @@ const CONSOLIDATE_GUIDANCE =
   "Off by default, and claims with no frame shape are never consolidated. The guards fail closed, so this only ever acts on claims the conflict rule would have matched."
 
 /**
+ * The `facets` contract, stated in the description of every tool that scopes on one.
+ *
+ * A description rather than a doc comment, for `ARTICLE_HTML_CONTRACT`'s reason: `tools/list` publishes
+ * `description`, so a rule stated anywhere else is a rule the caller never reads. This one belongs
+ * there because the COMPOSITION is a semantic contract an agent cannot recover from the rows. An agent
+ * that read two names as "either" acts on a superset, and one that read two values under one name as
+ * "both" acts on an empty set, and each result looks like a plausible corpus answer.
+ *
+ * The unitless clause is the second thing a caller would otherwise assume wrong. `file_facets` holds a
+ * `numeric_value` beside every `<data value>`, and no tool exposes an inequality over it, because the
+ * unit lives in the human phrasing the number sits in. An agent told nothing would ask for one; told
+ * this, it matches the text its own corpus wrote.
+ *
+ * Written once and appended twice, so the two doors cannot publish two versions of one rule.
+ */
+const FACET_SCOPE_CONTRACT =
+  "`facets` narrows by the corpus's own <dl> facets, each entry spelled name=value (the value may contain =, the name may not). " +
+  'THE COMPOSITION IS FIXED: values under the SAME name broaden, so ["doc-type=runbook","doc-type=guide"] is either; DIFFERENT names narrow, so ["doc-type=runbook","tier=1"] is both. ' +
+  "This is the extension axis. memhtml's element and meta vocabularies are closed, so your own document kinds, states, and tiers belong in <dt>/<dd> pairs inside the article, and this is how you query them back. " +
+  "The match is on the facet's TEXT, exactly as authored, with no case folding, so write the facet names you query. " +
+  "There is no numeric comparison and that is deliberate: a <data value> is indexed UNITLESS, because the unit lives in the prose beside it, so you own the unit and match the text you wrote."
+
+/**
  * The fields that author ONE memory, shared by `memory_write`'s parameters and `memory_write_batch`'s
  * op struct.
  *
@@ -476,7 +499,8 @@ const MemoryRead = Tool.make("memory_read", {
 
 const MemorySearch = Tool.make("memory_search", {
   description:
-    "Ranked search over the corpus: lexical, vector, recency, and salience arms fused with RRF, then diversified. Each hit carries a `snippet`: the text of the file's best-matching chunk for this query (its opening chunk when the vector arm did not fire), truncated with a trailing `…` when cut. `degraded` is true when the vector arm did not fire, so the result came from fewer signals. Each hit also carries `entities` in `type:name` form; pass one of those values back as `entity` to make the next call the second hop of a chain. That is two calls, not a guess about spelling. An `entity` scope that matches nothing returns NO hits and says so through `scope_empty`: this tool never widens a scope it could not satisfy. `as_of` is a point-in-time view: pass an ISO instant and the result is what was believed valid at that moment, including since-superseded memories (marked superseded_by). Returning a path changes nothing: a hit is this ranker's guess, so it never bumps salience. Call memory_read to open the one you chose, and memory_reinforce to record whether it was right.",
+    "Ranked search over the corpus: lexical, vector, recency, and salience arms fused with RRF, then diversified. Each hit carries a `snippet`: the text of the file's best-matching chunk for this query (its opening chunk when the vector arm did not fire), truncated with a trailing `…` when cut. `degraded` is true when the vector arm did not fire, so the result came from fewer signals. Each hit also carries `entities` in `type:name` form; pass one of those values back as `entity` to make the next call the second hop of a chain. That is two calls, not a guess about spelling. An `entity` scope that matches nothing returns NO hits and says so through `scope_empty`: this tool never widens a scope it could not satisfy. `as_of` is a point-in-time view: pass an ISO instant and the result is what was believed valid at that moment, including since-superseded memories (marked superseded_by). Returning a path changes nothing: a hit is this ranker's guess, so it never bumps salience. Call memory_read to open the one you chose, and memory_reinforce to record whether it was right. " +
+    FACET_SCOPE_CONTRACT,
   dependencies: RETRIEVES(),
   parameters: Schema.Struct({
     query: Schema.String,
@@ -489,6 +513,11 @@ const MemorySearch = Tool.make("memory_search", {
      * spelling a hit's `entities` publishes, so a value read off a hit is a valid scope verbatim.
      */
     entity: Optional(Schema.String),
+    /**
+     * `<dl>` facet predicates as `name=value` strings. AND across distinct names, OR within one name;
+     * the description carries the rule, because that is what a caller reads.
+     */
+    facets: Optional(Schema.Array(Schema.String)),
     include_archived: Optional(Schema.Boolean),
     /**
      * Point-in-time view: returns what was believed valid at this moment, including
@@ -751,13 +780,16 @@ const MemoryReinforce = Tool.make("memory_reinforce", {
 
 const MemoryList = Tool.make("memory_list", {
   description:
-    "Page through the corpus by facet. `next_cursor` is a keyset on the path, so a page stays correct even while a sleep cycle archives files.",
+    "Page through the corpus by facet. `next_cursor` is a keyset on the path, so a page stays correct even while a sleep cycle archives files. " +
+    FACET_SCOPE_CONTRACT,
   dependencies: READS(),
   parameters: Schema.Struct({
     memory_type: Optional(WritableType),
     workspace: Optional(Schema.String),
     tag: Optional(Schema.String),
     entity: Optional(Schema.String),
+    /** `<dl>` facet predicates as `name=value` strings, composing exactly as `memory_search`'s do. */
+    facets: Optional(Schema.Array(Schema.String)),
     para: Optional(Schema.Literals(PARA_BUCKETS)),
     limit: Optional(Count),
     cursor: Optional(Schema.String)

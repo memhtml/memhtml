@@ -83,14 +83,14 @@ Answering a question that takes MORE THAN ONE HOP through the corpus? Write it a
 | `memhtml write` | — | `--title`* `--claim` `--body` `--article-html` `--type`* `--path` `--workspace` `--tag` `--entity` `--importance` `--confidence` `--session-id` `--prompt-id` `--turn-uuid` | `memory.written` |
 | `memhtml apply` | — | `--file` `--continue-on-error` `--detect-conflicts` `--consolidate` `--session-id` `--prompt-id` `--turn-uuid` | `batch.applied` |
 | `memhtml read` | <path> | `--session-id` `--prompt-id` `--turn-uuid` | `memory.detail` |
-| `memhtml search` | <query> | `--type` `--workspace` `--tag` `--entity` `--include-archived` `--as-of` `--limit` | `memory.hits` |
-| `memhtml recall` | <query> | `--type` `--workspace` `--tag` `--entity` `--include-archived` `--as-of` `--budget` | `recall.pack` |
+| `memhtml search` | <query> | `--type` `--workspace` `--tag` `--entity` `--facet` `--include-archived` `--as-of` `--limit` | `memory.hits` |
+| `memhtml recall` | <query> | `--type` `--workspace` `--tag` `--entity` `--facet` `--include-archived` `--as-of` `--budget` | `recall.pack` |
 | `memhtml correct` | <target> | `--title`* `--claim` `--body` `--article-html` `--type` `--reason` `--session-id` `--prompt-id` `--turn-uuid` | `memory.corrected` |
 | `memhtml link` | <src> <rel> <dst> | — | `memory.linked` |
 | `memhtml neighbors` | <path> | `--depth` `--limit` `--rel` | `memory.neighbors` |
 | `memhtml archive` | <path> | `--reason`* | `memory.archived` |
 | `memhtml reinforce` | <path> | `--signal` | `memory.reinforced` |
-| `memhtml list` | — | `--type` `--workspace` `--tag` `--entity` `--para` `--limit` `--cursor` `--include-archived` | `memory.list` |
+| `memhtml list` | — | `--type` `--workspace` `--tag` `--entity` `--facet` `--para` `--limit` `--cursor` `--include-archived` | `memory.list` |
 | `memhtml task add` | — | `--title`* `--claim` `--body` `--status` `--due` `--workspace` `--tag` `--entity` `--session-id` `--prompt-id` `--turn-uuid` | `task.written` |
 | `memhtml task status` | <path> <status> | `--reason` | `task.updated` |
 | `memhtml task list` | — | `--status` `--workspace` `--due-before` `--limit` `--cursor` `--include-archived` `--detected` | `task.list` |
@@ -174,6 +174,7 @@ Ranked search: four RRF arms plus MMR. Degrades to the lexical floor.
 - `--workspace` (string) — Restrict to one workspace. STRICT: a scoped query never returns a memory with no workspace.
 - `--tag` (string) — Restrict to memories carrying any of these tags. Repeatable; each broadens. _(repeatable)_
 - `--entity` (string) — Restrict to memories carrying one `type:name` entity reference, e.g. service:checkout-api, the form a hit's `entities` publishes, so a hop is a copy. A scope matching nothing returns no hits and says so; it never widens.
+- `--facet` (string) — Restrict to memories carrying a `<dl>` facet, as name=value; the value may contain `=`, the name may not. Repeatable, and the composition is fixed: values under the SAME name broaden (--facet doc-type=runbook --facet doc-type=guide is either), DIFFERENT names narrow (--facet doc-type=runbook --facet tier=1 is both). This is the extension axis: memhtml's element and meta vocabularies are closed, so a consumer's own document kinds, states, and tiers live in `<dt>`/`<dd>` pairs and are queried here. The match is on the facet's TEXT, exactly as authored, with no case folding. There is no numeric comparison: a `<data value>` is indexed UNITLESS because the unit lives in the prose beside it, so the caller owns the unit and matches the text it wrote. _(repeatable)_
 - `--include-archived` (boolean) — Include archived memories. Eviction is a `git mv`, so they still exist. _(default `false`)_
 - `--as-of` (string) — Point-in-time view: returns what was believed valid at this ISO instant, including since-superseded memories (marked superseded_by). The validity window is coalesce(valid_from, event_at, created_at) <= as-of < valid_until.
 - `--limit` (int) — Hits to return. _(default `10`)_
@@ -188,6 +189,7 @@ A disclosure pack under a character budget: arcs and memories folded separately.
 - `--workspace` (string) — Restrict to one workspace. STRICT: a scoped query never returns a memory with no workspace.
 - `--tag` (string) — Restrict to memories carrying any of these tags. Repeatable; each broadens. _(repeatable)_
 - `--entity` (string) — Restrict to memories carrying one `type:name` entity reference, e.g. service:checkout-api, the form a hit's `entities` publishes, so a hop is a copy. A scope matching nothing returns no hits and says so; it never widens.
+- `--facet` (string) — Restrict to memories carrying a `<dl>` facet, as name=value; the value may contain `=`, the name may not. Repeatable, and the composition is fixed: values under the SAME name broaden (--facet doc-type=runbook --facet doc-type=guide is either), DIFFERENT names narrow (--facet doc-type=runbook --facet tier=1 is both). This is the extension axis: memhtml's element and meta vocabularies are closed, so a consumer's own document kinds, states, and tiers live in `<dt>`/`<dd>` pairs and are queried here. The match is on the facet's TEXT, exactly as authored, with no case folding. There is no numeric comparison: a `<data value>` is indexed UNITLESS because the unit lives in the prose beside it, so the caller owns the unit and matches the text it wrote. _(repeatable)_
 - `--include-archived` (boolean) — Include archived memories. Eviction is a `git mv`, so they still exist. _(default `false`)_
 - `--as-of` (string) — Point-in-time view: returns what was believed valid at this ISO instant, including since-superseded memories (marked superseded_by). The validity window is coalesce(valid_from, event_at, created_at) <= as-of < valid_until.
 - `--budget` (int) — Characters of quoted body. Arcs get their own envelope on top. _(default `16000`)_
@@ -244,12 +246,13 @@ Bump access bookkeeping, gated by a 900-second per-path cooldown.
 
 ### `memhtml list`
 
-Page through the corpus by type, workspace, tag, entity, or PARA bucket.
+Page through the corpus by type, workspace, tag, entity, facet, or PARA bucket.
 
 - `--type` (string) — One memory type. _(one of: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `task`)_
 - `--workspace` (string) — One workspace.
 - `--tag` (string) — One tag.
 - `--entity` (string) — One `type:name` entity reference.
+- `--facet` (string) — Restrict to memories carrying a `<dl>` facet, as name=value; the value may contain `=`, the name may not. Repeatable, and the composition is fixed: values under the SAME name broaden (--facet doc-type=runbook --facet doc-type=guide is either), DIFFERENT names narrow (--facet doc-type=runbook --facet tier=1 is both). This is the extension axis: memhtml's element and meta vocabularies are closed, so a consumer's own document kinds, states, and tiers live in `<dt>`/`<dd>` pairs and are queried here. The match is on the facet's TEXT, exactly as authored, with no case folding. There is no numeric comparison: a `<data value>` is indexed UNITLESS because the unit lives in the prose beside it, so the caller owns the unit and matches the text it wrote. _(repeatable)_
 - `--para` (string) — One PARA bucket. _(one of: `projects`, `areas`, `resources`, `archive`)_
 - `--limit` (int) — Rows per page. _(default `50`)_
 - `--cursor` (string) — The `next_cursor` from the previous page: the last path returned.

@@ -5,6 +5,7 @@ import {
   runDiscrimination
 } from "@memhtml/eval"
 import { isValidDatetime } from "@memhtml/html"
+import { parseFacetFilters } from "@memhtml/index"
 import { initRepo } from "@memhtml/store"
 import { Effect, type Layer, Logger } from "effect"
 import { runAgentsDoc } from "./agents-doc.js"
@@ -235,6 +236,9 @@ const scopeOf = (parsed: Parsed) => ({
   workspace: str(parsed, "workspace"),
   tags: list(parsed, "tag"),
   entity: str(parsed, "entity"),
+  // `list` returns every occurrence, so a repeated `--facet` composes instead of last-winning, and
+  // the `name=value` split is `@memhtml/index`'s so both doors read one wire form.
+  facets: parseFacetFilters(list(parsed, "facet")),
   includeArchived: bool(parsed, "include-archived", false),
   asOf: str(parsed, "as-of")
 })
@@ -459,6 +463,7 @@ const dispatch = (
           workspace: str(parsed, "workspace"),
           tag: str(parsed, "tag"),
           entity: str(parsed, "entity"),
+          facets: parseFacetFilters(list(parsed, "facet")),
           para: str(parsed, "para"),
           limit: int(parsed, "limit"),
           cursor: str(parsed, "cursor"),

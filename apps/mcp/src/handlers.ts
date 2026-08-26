@@ -25,6 +25,7 @@ import {
 } from "@memhtml/cli"
 import { InvalidMemory } from "@memhtml/contracts/errors"
 import type { MemoryDoc } from "@memhtml/html"
+import { parseFacetFilters } from "@memhtml/index"
 import { Effect, type Layer } from "effect"
 
 import { batchAbortFailure, type ToolFailure, toToolFailure } from "./failure.js"
@@ -531,6 +532,9 @@ export const ToolHandlers: Layer.Layer<
           workspace: opt(params.workspace),
           tags: opt(params.tags),
           entity: opt(params.entity),
+          // The same `name=value` decode `memhtml search --facet` runs, from `@memhtml/index`, so one
+          // spelling reaches one predicate through both doors.
+          facets: parseFacetFilters(arr(params.facets)),
           includeArchived: opt(params.include_archived),
           asOf: opt(params.as_of)
         })
@@ -691,6 +695,7 @@ export const ToolHandlers: Layer.Layer<
           workspace: opt(params.workspace),
           tag: opt(params.tag),
           entity: opt(params.entity),
+          facets: parseFacetFilters(arr(params.facets)),
           para: opt(params.para),
           limit: opt(params.limit),
           cursor: opt(params.cursor)

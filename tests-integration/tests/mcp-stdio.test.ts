@@ -324,3 +324,157 @@ describe("the event_at bug report, inverted: article_html over real MCP stdio", 
     expect(data.server).toMatch(/apps\/mcp\/dist\/bin\.js$/)
   })
 })
+
+/**
+ * The facet scope over real MCP stdio: the extension axis at the door a client actually calls.
+ *
+ * In-process coverage cannot reach two of the four links here. `facets` is an OPTIONAL array in the
+ * published parameter schema, so a client sending it exercises the derived JSON Schema and the decoder
+ * together — and this repo has shipped an `Optional` whose advertised shape the decoder rejected. And
+ * the predicate has to survive `layerApp` built from the ENVIRONMENT, where `MEMHTML_EMBED=off` leaves
+ * the vector arm absent, so the scope has to hold on the degraded path too.
+ *
+ * Three memories under two facet names, so every assertion has a NEIGHBOUR a broken predicate returns:
+ * the same name at another value, the same value under another name, and one carrying no facets.
+ */
+describe("the facet scope over real MCP stdio", () => {
+  let cli: Cli
+  let searchTool: { readonly name: string; readonly inputSchema: unknown } | undefined
+  let listTool: { readonly name: string; readonly inputSchema: unknown } | undefined
+  let runbookTierOne = ""
+  let guideTierOne = ""
+  let runbookTierTwo = ""
+  let scopedPaths: ReadonlyArray<string> = []
+  let broadenedPaths: ReadonlyArray<string> = []
+  let narrowedPaths: ReadonlyArray<string> = []
+  let unscopedCount = 0
+  let missingScopeEmpty: unknown
+
+  const article = (
+    claim: string,
+    facets: ReadonlyArray<{ readonly name: string; readonly value: string }>
+  ) =>
+    `<p><mark>${claim}</mark></p><dl>${facets
+      .map((facet) => `<dt>${facet.name}</dt><dd>${facet.value}</dd>`)
+      .join("")}</dl>`
+
+  beforeAll(async () => {
+    cli = await makeCli()
+    const client: Client = connect(cli.root)
+    await handshake(client)
+
+    const listed = await client.rpc("tools/list", {})
+    const tools = (listed.result as { readonly tools: ReadonlyArray<typeof searchTool> }).tools
+    searchTool = tools.find((tool) => tool?.name === "memory_search")
+    listTool = tools.find((tool) => tool?.name === "memory_list")
+
+    const write = async (
+      title: string,
+      claim: string,
+      facets: ReadonlyArray<{ readonly name: string; readonly value: string }>
+    ) =>
+      structured(
+        await client.rpc("tools/call", {
+          name: "memory_write",
+          arguments: { title, memory_type: "procedural", article_html: article(claim, facets) }
+        })
+      ).path as string
+
+    runbookTierOne = await write(
+      "Restart the ingest worker",
+      "Restart the ingest worker after a backfill, draining the queue first.",
+      [
+        { name: "doc-type", value: "runbook" },
+        { name: "tier", value: "1" }
+      ]
+    )
+    guideTierOne = await write(
+      "How the ingest worker restarts",
+      "The ingest worker restarts by draining its queue and replaying the backfill.",
+      [
+        { name: "doc-type", value: "guide" },
+        { name: "tier", value: "1" }
+      ]
+    )
+    runbookTierTwo = await write(
+      "Backfill the ingest worker",
+      "Backfill the ingest worker before a restart when the queue is empty.",
+      [
+        { name: "doc-type", value: "runbook" },
+        { name: "tier", value: "2" }
+      ]
+    )
+    await write("Notes on the ingest worker restart", "The restart is safe to retry.", [])
+
+    const pathsOf = (result: Record<string, unknown>) =>
+      (result.files as ReadonlyArray<{ readonly path: string }>).map((file) => file.path).sort()
+
+    const listCall = async (facets: ReadonlyArray<string> | null) =>
+      pathsOf(
+        structured(
+          await client.rpc("tools/call", {
+            name: "memory_list",
+            arguments: facets === null ? { limit: 20 } : { limit: 20, facets }
+          })
+        )
+      )
+
+    unscopedCount = (await listCall(null)).length
+    scopedPaths = await listCall(["doc-type=runbook"])
+    broadenedPaths = await listCall(["doc-type=runbook", "doc-type=guide"])
+    narrowedPaths = await listCall(["doc-type=runbook", "tier=1"])
+
+    missingScopeEmpty = structured(
+      await client.rpc("tools/call", {
+        name: "memory_search",
+        arguments: {
+          query: "restart the ingest worker",
+          facets: ["doc-type=charter"],
+          limit: 20
+        }
+      })
+    ).scope_empty
+
+    await client.shutdown()
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  it("publishes `facets` as an optional array on both scoping tools", () => {
+    // The wire contract. A parameter absent from the published schema is a parameter no client sends,
+    // however well the handler would have served it.
+    for (const tool of [searchTool, listTool]) {
+      const schema = tool?.inputSchema as {
+        readonly properties?: Record<string, unknown>
+        readonly required?: ReadonlyArray<string>
+      }
+      expect(schema?.properties, `${tool?.name} publishes no properties`).toBeDefined()
+      expect(Object.keys(schema.properties ?? {})).toContain("facets")
+      // Optional, so a client that never heard of facets keeps working.
+      expect(schema.required ?? []).not.toContain("facets")
+    }
+  })
+
+  it("lists all four memories unscoped, so each exclusion below is the predicate", () => {
+    // The control, for the reason the CLI suite states: a facet answer of two is otherwise consistent
+    // with a corpus of two.
+    expect(unscopedCount).toBe(4)
+  })
+
+  it("narrows on one name=value and BROADENS across two values of that name", () => {
+    expect(scopedPaths).toEqual([runbookTierOne, runbookTierTwo].sort())
+    expect(broadenedPaths).toEqual([runbookTierOne, runbookTierTwo, guideTierOne].sort())
+  })
+
+  it("NARROWS across two names, returning only the memory carrying both", () => {
+    expect(narrowedPaths).toEqual([runbookTierOne])
+  })
+
+  it("reports scope_empty for a facet nothing carries, on the degraded path", () => {
+    // `MEMHTML_EMBED=off` in this tier, so the vector arm never fires and the marker still has to be
+    // computed from the scope rather than from the arms that ran.
+    expect(missingScopeEmpty).toBe(true)
+  })
+})

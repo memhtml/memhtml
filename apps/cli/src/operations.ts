@@ -14,7 +14,9 @@ import { isValidDatetime, setMeta } from "@memhtml/html"
 import {
   DatabaseService,
   type DatabaseShape,
+  type FacetFilter,
   type FrameMatch,
+  facetConditions,
   Indexer,
   IndexRecorder,
   type IndexRecorderShape,
@@ -1312,6 +1314,12 @@ export interface ListParams {
   readonly workspace?: string | undefined
   readonly tag?: string | undefined
   readonly entity?: string | undefined
+  /**
+   * `<dl>` facet predicates, AND across distinct names and OR within one name — `SearchScope.facets`'
+   * rule, from the same builder, so a narrowing that finds a memory through `memhtml list` finds it
+   * through `memhtml search` too.
+   */
+  readonly facets?: ReadonlyArray<FacetFilter> | undefined
   readonly para?: string | undefined
   readonly limit?: number | undefined
   /** The previous page's `nextCursor`: the last path returned. A keyset rather than an offset. */
@@ -1361,6 +1369,19 @@ export const listMemories = (params: ListParams) =>
         "EXISTS (SELECT 1 FROM file_entities e WHERE e.path = f.path AND lower(e.entity_type || ':' || e.entity_name) = lower(?))"
       )
       values.push(params.entity.trim())
+    }
+    /**
+     * The facet axis, from `@memhtml/index`'s builder rather than a second copy of the grouping.
+     *
+     * The listing binds anonymous `?` in textual order, so the placeholder callback pushes onto
+     * `values` and returns the marker. That is the same contract the numbered form has: whatever the
+     * builder emits, the values it pushed are in the order the statement reads them.
+     */
+    for (const condition of facetConditions(params.facets ?? [], "f", (value) => {
+      values.push(value)
+      return "?"
+    })) {
+      conditions.push(condition)
     }
     if (params.cursor !== undefined && params.cursor !== "") {
       conditions.push("f.path > ?")

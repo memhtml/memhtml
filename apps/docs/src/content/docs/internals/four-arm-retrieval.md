@@ -85,6 +85,16 @@ The `entity` scope takes one reference in `type:name` form, and the predicate re
 
 The scope is singular where `tags` is a list, and that asymmetry is deliberate. The scope exists so a caller can follow a hop off a hit's own `entities` list, which yields one reference at a time. A list would raise the question of whether it broadens or narrows before anyone had asked for either. A scope matching nothing returns no hits and reports `scope_empty` rather than widening itself.
 
+### The facet axis is the extension point
+
+`facets` narrows on the `<dl>` pairs the indexer projects into `file_facets`, and it is the one scope axis whose vocabulary is the caller's rather than this system's. The element set and the `<meta>` names are closed, so a consumer modelling its own document kinds, states, or tiers writes them as `<dt>`/`<dd>` pairs and queries them here — `--facet doc-type=runbook` on the CLI, `facets: ["doc-type=runbook"]` on `memory_search` and `memory_list`. No name in that vocabulary reaches any package: the predicate is over two `TEXT` columns.
+
+The composition is fixed and it is stated in the flag help and in both tool descriptions, because it is a semantic contract rather than a convenience. Values under the **same** name broaden, so `doc-type=runbook doc-type=guide` is either; **different** names narrow, so `doc-type=runbook tier=1` is both. `facetConditions` (`packages/index/src/scope.ts`) implements that as one `EXISTS` per distinct name with `value IN (…)` inside it, and the same function builds the listing's predicate, so a narrowing that finds a memory through `memhtml search` finds it through `memhtml list`. A caller reading the rule the other way would act on a superset or on an empty set, and neither is visible in the rows that come back.
+
+The match is on the facet's text, exactly as authored, with no case fold — unlike the `entity` axis, which folds because a caller types a reference from memory. A facet name is a key the consumer chose and writes itself, and the fold would also cost the seek: probed 2026-08-26 on node 24's `node:sqlite`, `ff.name = ? AND ff.value IN (?)` plans as `SEARCH ff USING COVERING INDEX sqlite_autoindex_file_facets_1 (path=? AND name=? AND value=?)`, while wrapping either column in `lower()` degrades the same probe to `(path=?)` and returns identical rows.
+
+There is no numeric predicate, and that is the contract rather than a gap. `file_facets.numeric_value` carries whatever a `<data value>` parsed to, **unitless**: the unit lives in the human phrasing beside it, so `<data value="120">about two minutes</data>` is seconds only because the prose says so (`packages/index/migrations/0001_files.sql`). An inequality over that column would be a comparison whose meaning the corpus never stated. The caller owns the unit, and it owns it by matching the text it wrote.
+
 ## 7. Diversification
 
 `search` fetches three times as many fused candidates as the caller's limit (`packages/index/src/retrieval.ts:31-35`), because a diversifier can only reorder what it was given. `applyMmr` (`packages/domain/src/mmr.ts:36`) then runs maximal marginal relevance, a greedy selection that at each step picks the candidate maximizing `λ·relevance − (1−λ)·max_sim_to_selected`, with λ = 0.5. It trades a little relevance for less redundancy against the hits it has already chosen.

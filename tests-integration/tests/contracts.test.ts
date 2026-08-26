@@ -493,3 +493,137 @@ describe("memhtml doctor", () => {
     expect(report.indexHeadSha).not.toBe(report.headSha)
   })
 })
+
+/**
+ * The facet axis through the shipped binary: authored `<dl>` markup, projected, then queried back.
+ *
+ * The package suites assemble the predicate and prove the plan; this tier proves the whole path —
+ * `--facet` parsed as a repeatable flag, split at its first `=`, projected from `<dt>`/`<dd>` by the
+ * indexer, and read by both the listing and the ranked search. A caller extending memhtml with its own
+ * vocabulary depends on every one of those, and each is in a different package.
+ *
+ * The corpus is three memories under two facet names, so every assertion below has a NEIGHBOUR that a
+ * broken predicate would return: same name at another value, same value under another name, and a
+ * memory with no facets at all.
+ */
+describe("the facet scope, end to end through the CLI", () => {
+  let cli: Cli
+
+  const faceted = (input: {
+    readonly title: string
+    readonly claim: string
+    readonly facets: ReadonlyArray<{ readonly name: string; readonly value: string }>
+  }) =>
+    cli.json<{ readonly path: string }>([
+      "write",
+      "--type",
+      "procedural",
+      "--title",
+      input.title,
+      "--article-html",
+      `<p><mark>${input.claim}</mark></p><dl>${input.facets
+        .map((facet) => `<dt>${facet.name}</dt><dd>${facet.value}</dd>`)
+        .join("")}</dl>`
+    ])
+
+  let runbookTierOne = ""
+  let guideTierOne = ""
+  let runbookTierTwo = ""
+
+  beforeAll(async () => {
+    cli = await makeCli()
+    runbookTierOne = (
+      await faceted({
+        title: "Restart the ingest worker",
+        claim: "Restart the ingest worker after a backfill, draining the queue first.",
+        facets: [
+          { name: "doc-type", value: "runbook" },
+          { name: "tier", value: "1" }
+        ]
+      })
+    ).path
+    guideTierOne = (
+      await faceted({
+        title: "How the ingest worker restarts",
+        claim: "The ingest worker restarts by draining its queue and replaying the backfill.",
+        facets: [
+          { name: "doc-type", value: "guide" },
+          { name: "tier", value: "1" }
+        ]
+      })
+    ).path
+    runbookTierTwo = (
+      await faceted({
+        title: "Backfill the ingest worker",
+        claim: "Backfill the ingest worker before a restart when the queue is empty.",
+        facets: [
+          { name: "doc-type", value: "runbook" },
+          { name: "tier", value: "2" }
+        ]
+      })
+    ).path
+    await writeMemory(cli, {
+      title: "Notes on the ingest worker restart",
+      claim: "The ingest worker restart is safe to retry after a backfill."
+    })
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  const listed = async (argv: ReadonlyArray<string>) => {
+    const page = await cli.json<{ readonly files: ReadonlyArray<{ readonly path: string }> }>([
+      "list",
+      ...argv
+    ])
+    return page.files.map((file) => file.path).sort()
+  }
+
+  it("lists every memory unscoped, so each exclusion below is the predicate", async () => {
+    // The control. Four writes, four rows: a facet result of two would otherwise be consistent with a
+    // predicate that matched nothing and a corpus that held nothing.
+    expect(await listed([])).toHaveLength(4)
+  })
+
+  it("narrows a listing to one name=value, and BROADENS across two values of that name", async () => {
+    expect(await listed(["--facet", "doc-type=runbook"])).toEqual(
+      [runbookTierOne, runbookTierTwo].sort()
+    )
+    expect(await listed(["--facet", "doc-type=runbook", "--facet", "doc-type=guide"])).toEqual(
+      [runbookTierOne, runbookTierTwo, guideTierOne].sort()
+    )
+  })
+
+  it("NARROWS a listing across two names, returning only the memory carrying both", async () => {
+    expect(await listed(["--facet", "doc-type=runbook", "--facet", "tier=1"])).toEqual([
+      runbookTierOne
+    ])
+  })
+
+  it("scopes a ranked search by the same flag, reporting scope_empty on a facet nothing carries", async () => {
+    const scoped = await cli.json<{
+      readonly hits: ReadonlyArray<{ readonly path: string }>
+      readonly scopeEmpty: boolean
+    }>(["search", "restart the ingest worker", "--facet", "doc-type=runbook", "--limit", "20"])
+    expect(scoped.hits.map((hit) => hit.path).sort()).toEqual(
+      [runbookTierOne, runbookTierTwo].sort()
+    )
+    expect(scoped.scopeEmpty).toBe(false)
+
+    const missing = await cli.json<{
+      readonly hits: ReadonlyArray<unknown>
+      readonly scopeEmpty: boolean
+    }>(["search", "restart the ingest worker", "--facet", "doc-type=charter", "--limit", "20"])
+    expect(missing.hits).toEqual([])
+    // The marker is what makes the empty answer attributable to the scope rather than to the corpus,
+    // which the control case above proves is not empty.
+    expect(missing.scopeEmpty).toBe(true)
+  })
+
+  it("ignores a malformed --facet rather than narrowing to nothing", async () => {
+    // A flag with no `=` cannot name a predicate. Refusing the whole call would make a typo fatal, and
+    // narrowing to nothing would report an empty corpus; neither is what the caller asked for.
+    expect(await listed(["--facet", "doc-type"])).toHaveLength(4)
+  })
+})
