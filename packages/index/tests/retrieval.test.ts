@@ -1164,6 +1164,87 @@ describe("search", () => {
     expect(scans, `file_entities scanned: ${scans.join(" | ")}`).toEqual([])
   })
 
+  it("PROBES the edge index for `superseded_by` rather than walking every correction", async () => {
+    /**
+     * The other cost contract in the hydrate statement, and the one whose two plans return
+     * byte-identical hits.
+     *
+     * `superseded_by` is a correlated subquery over `edges`, so the planner picks its index per hit
+     * row. `edges_derived (derived, rel)` binds two equality columns for `derived = 0 AND rel =
+     * 'supersedes'` and matches EVERY correction in the corpus; `edges_dst (dst_path, edge_class)`
+     * binds two for the one edge that can answer. Both come back with the same answer, at every corpus
+     * size a test will seed, so only the plan can tell them apart.
+     *
+     * Two edges are seeded, not one: a supersede over the SUBJECT and a supersede over a NEIGHBOUR
+     * pair. With a single edge in the table the scanning plan reads exactly the row the probing plan
+     * reads, and the defect is invisible in row counts as well as in output.
+     */
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* indexInto(db, repo, makeFakeEmbedder())
+        for (const [src, dst] of [
+          ["areas/oncall/vip-drain-not-needed.html", "areas/oncall/vip-drain-before-rollback.html"],
+          ["projects/memhtml/bm25-sort-direction.html", "resources/misc/filler-00.html"]
+        ]) {
+          yield* db.run(
+            `INSERT INTO edges (src_path, rel, dst_path, edge_class, derived, provenance, created_at)
+             VALUES (?, 'supersedes', ?, 'memory', 0, 'authored', ?)`,
+            [src ?? "", dst ?? "", AT]
+          )
+        }
+
+        let issued: { sql: string; params: ReadonlyArray<unknown> } | null = null
+        const capturing: DatabaseShape = {
+          ...db,
+          all: (<A>(sql: string, params?: ReadonlyArray<unknown>) => {
+            // The HYDRATE statement, the only one selecting the column under test.
+            if (issued === null && sql.includes("AS superseded_by")) {
+              issued = { sql, params: params ?? [] }
+            }
+            return (db.all as never as (s: string, p?: ReadonlyArray<unknown>) => Effect.Effect<A>)(
+              sql,
+              params
+            )
+          }) as DatabaseShape["all"]
+        }
+
+        const result = yield* makeRetrieval({
+          db: capturing,
+          embeddings: makeFakeEmbedder()
+        }).search({ query: "drain the VIP before reverting the deploy", limit: 20 })
+        const captured = issued as { sql: string; params: ReadonlyArray<unknown> } | null
+        if (captured === null) return { steps: [] as ReadonlyArray<string>, superseded: [] }
+
+        const plan = yield* db.all<{ detail: string }>(
+          `EXPLAIN QUERY PLAN ${captured.sql}`,
+          captured.params as never
+        )
+        return {
+          steps: plan.map((row) => row.detail),
+          superseded: result.hits
+            .filter((hit) => hit.path === "areas/oncall/vip-drain-before-rollback.html")
+            .map((hit) => hit.supersededBy)
+        }
+      })
+    )
+
+    // The column still answers, so the plan below describes a subquery that did the work. This is the
+    // half the predicate could have broken, and the seeded edge is what makes a wrong answer visible.
+    expect(outcome.superseded).toEqual(["areas/oncall/vip-drain-not-needed.html"])
+    const edgeSteps = outcome.steps.filter((step) => step.includes("edges"))
+    expect(edgeSteps.length).toBeGreaterThan(0)
+    // The constraint LIST, not merely "something is probed": `edges_derived (derived=? AND rel=?)` is
+    // also a SEARCH, and it is the defect. The subquery has to bind the key it is keyed on.
+    expect(
+      edgeSteps.filter((step) => step.includes("edges_dst") && step.includes("dst_path=?")),
+      `edges plan: ${edgeSteps.join(" | ")}`
+    ).toHaveLength(1)
+    expect(
+      edgeSteps.filter((step) => step.includes("edges_derived") || step.includes("SCAN")),
+      `edges plan: ${edgeSteps.join(" | ")}`
+    ).toEqual([])
+  })
+
   it("returns nothing rather than failing on a query with no indexable terms", async () => {
     const result = await withIndexed(repo, ({ retrieval }) =>
       retrieval.search({ query: "!!! ???" })

@@ -266,6 +266,17 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
    * `type:name` reference, because that string is the next hop's `entity` scope and the bare name is
    * ambiguous. Collapsing the two into one column would silently move the cap or break the chain,
    * and the first of those has no test that could see it as anything but a ranking wobble.
+   *
+   * **`superseded_by` names `edge_class` so the subquery can probe `edges_dst`, and the predicate
+   * changes no row.** The class is implied: `edges`' CHECK constraints admit `rel = 'supersedes'`
+   * only under `edge_class = 'memory'` (`0004_edges.sql`), so this narrows nothing and is a planner
+   * constraint rather than a filter. Measured 2026-08-26 on node 24's `node:sqlite` with no
+   * `ANALYZE`: `dst_path = ? AND rel = ? AND derived = 0` alone plans as `SEARCH g USING INDEX
+   * edges_derived (derived=? AND rel=?)`, which binds `(0, 'supersedes')` and walks EVERY correction
+   * in the corpus once per hit; naming `edge_class` binds two columns of `edges_dst (dst_path,
+   * edge_class)` and the same subquery plans as a probe. This is `0011_edge_indexes.sql`'s rule read
+   * from the other side — an index that binds more equality columns wins the planner's guess, so a
+   * correlated subquery that omits a column the index leads with loses its own key.
    */
   const hydrate = (paths: ReadonlyArray<string>) =>
     Effect.gen(function* () {
@@ -279,7 +290,8 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
                 (SELECT group_concat(e.entity_type || ':' || e.entity_name, char(10))
                    FROM file_entities e WHERE e.path = f.path) AS entity_refs,
                 (SELECT g.src_path FROM edges g
-                  WHERE g.dst_path = f.path AND g.rel = 'supersedes' AND g.derived = 0
+                  WHERE g.dst_path = f.path AND g.edge_class = 'memory'
+                    AND g.rel = 'supersedes' AND g.derived = 0
                   ORDER BY g.created_at DESC, g.src_path ASC LIMIT 1) AS superseded_by,
                 (SELECT em.vec FROM chunks c JOIN embeddings em ON em.chunk_id = c.chunk_id
                   WHERE c.path = f.path ORDER BY c.ordinal LIMIT 1) AS vec
