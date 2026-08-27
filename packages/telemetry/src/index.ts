@@ -105,7 +105,11 @@ export const layerTelemetry = (options: TelemetryOptions): Layer.Layer<never> =>
   const endpoint = env["OTEL_EXPORTER_OTLP_ENDPOINT"]?.trim()
   if (endpoint === undefined || endpoint === "") return Layer.empty
   const serviceName = env["OTEL_SERVICE_NAME"]?.trim() || options.serviceName
-  const url = `${endpoint.replace(/\/+$/, "")}/v1/traces`
+  // Trailing slashes trimmed with a scan, not `/\/+$/` — a trailing-repetition regex on
+  // operator-supplied input is a polynomial-ReDoS lint finding even where exploitability is nil.
+  let end = endpoint.length
+  while (end > 0 && endpoint[end - 1] === "/") end -= 1
+  const url = `${endpoint.slice(0, end)}/v1/traces`
   const load = options.load ?? loadModules
   return Layer.unwrap(
     Effect.map(Effect.promise(load), ({ http, observability }) =>
