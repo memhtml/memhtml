@@ -1,4 +1,5 @@
 import { layerApp } from "@memhtml/cli"
+import { layerTelemetry } from "@memhtml/telemetry"
 import { Layer, Logger } from "effect"
 import { McpProtocol, McpServer } from "effect/unstable/ai"
 
@@ -50,5 +51,13 @@ export const layerServer = (repoOverride?: string | undefined) =>
       })
     ),
     Layer.provide(layerApp(repoOverride)),
+    /**
+     * The tracer, below the app layer so every `Effect.withSpan` in the graph exports — one trace
+     * per tool call for the lifetime of the process. Opt-in: `OTEL_EXPORTER_OTLP_ENDPOINT` unset
+     * means `Layer.empty` and no exporter module is even loaded. The exporter writes nothing to
+     * stdout (the RPC stream); its one collector-down warning goes through the logger, which the
+     * line below points at stderr.
+     */
+    Layer.provide(layerTelemetry({ serviceName: "memhtml-mcp" })),
     Layer.provide(Layer.succeed(Logger.LogToStderr)(true))
   )

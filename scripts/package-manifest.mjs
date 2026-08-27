@@ -32,6 +32,7 @@ const WORKSPACE_PACKAGES = [
   "packages/llm",
   "packages/sleep",
   "packages/store",
+  "packages/telemetry",
   "packages/traces"
 ]
 
