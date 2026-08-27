@@ -7,6 +7,7 @@ import {
 import { isValidDatetime } from "@memhtml/html"
 import { parseFacetFilters } from "@memhtml/index"
 import { initRepo } from "@memhtml/store"
+import { layerTelemetry } from "@memhtml/telemetry"
 import { Effect, type Layer, Logger } from "effect"
 import { runAgentsDoc } from "./agents-doc.js"
 import { Git, Indexer, layerApp, Sleep } from "./api-layer.js"
@@ -1236,6 +1237,9 @@ export const run = async (
             emit(fail("ERR_UNKNOWN", `unexpected failure: ${String(cause)}`, []), EXIT_RUNTIME)
           )
         ),
+        // The gate drives the real ranking stack, whose `retrieval.*` and `db.*` spans are worth
+        // exporting for exactly the runs an operator is tuning. Same opt-in as the main pipeline.
+        Effect.provide(layerTelemetry({ serviceName: "memhtml-cli" })),
         Effect.provideService(Logger.LogToStderr, true)
       )
     )
@@ -1302,6 +1306,9 @@ export const run = async (
             emit(fail("ERR_UNKNOWN", `unexpected failure: ${String(cause)}`, []), EXIT_RUNTIME)
           )
         ),
+        // The worktree dance under `exec` runs through `makeGit`, whose dynamic `git.<command>`
+        // spans answer "what took eight seconds" for a large corpus snapshot. Same opt-in gate.
+        Effect.provide(layerTelemetry({ serviceName: "memhtml-cli" })),
         Effect.provideService(Logger.LogToStderr, true),
         Effect.scoped
       )
@@ -1345,6 +1352,14 @@ export const run = async (
       )
     ),
     Effect.provide(layer ?? layerApp(str(parsed, "repo"))),
+    /**
+     * The tracer, provided AFTER the app layer so the layer's own construction work (migrations,
+     * git probes) is traced too. Every service below already carries `Effect.withSpan` annotations;
+     * this line is what makes them leave the process, and only when `OTEL_EXPORTER_OTLP_ENDPOINT`
+     * is set — unset, `layerTelemetry` is `Layer.empty` and the exporter module is never loaded.
+     * The final batch flushes when `Effect.scoped` closes, so a short invocation keeps its spans.
+     */
+    Effect.provide(layerTelemetry({ serviceName: "memhtml-cli" })),
     // Logs go to stderr, always. Effect's default logger writes to stdout, which would interleave
     // log lines with the envelope and break every parser.
     Effect.provideService(Logger.LogToStderr, true),
