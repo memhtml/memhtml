@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.7.2...memhtml-v0.8.0) (2026-08-27)
+
+
+### Features
+
+* **telemetry:** opt-in OTLP trace exporter gated on OTEL_EXPORTER_OTLP_ENDPOINT ([be0dd7e](https://github.com/memhtml/memhtml/commit/be0dd7e5df3b481a9b92f55c4beea6972f63c16e))
+* **telemetry:** opt-in OTLP trace exporter gated on OTEL_EXPORTER_OTLP_ENDPOINT ([3876725](https://github.com/memhtml/memhtml/commit/38767253f4ca3acc7a9b8c40b59942555d103381)), closes [#85](https://github.com/memhtml/memhtml/issues/85)
+
+
+### Bug Fixes
+
+* **telemetry:** trim trailing slashes with a scan, not a repetition regex ([b4c8563](https://github.com/memhtml/memhtml/commit/b4c85634a98397a36f0cfb776040dbc13b837d95)), closes [#85](https://github.com/memhtml/memhtml/issues/85)
+
 ## [0.7.2](https://github.com/memhtml/memhtml/compare/memhtml-v0.7.1...memhtml-v0.7.2) (2026-08-26)
 
 
