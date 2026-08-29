@@ -361,15 +361,19 @@ describe("a braced value in the spec ledger fails as a probe rather than as an a
 })
 
 describe("the registries agree with each other", () => {
-  it("keeps the writable memory types the type vocabulary minus `arc`", () => {
+  it("keeps `write --type`'s vocabulary the full storage set, `arc` included (issue #88)", () => {
+    /**
+     * The operator surface admits every storage type: `memhtml write --type arc` is the door for
+     * curated import and deliberately authored rules. The narrow vocabulary is the AGENT surface's,
+     * and it lives in `memory_write`'s schema (`WritableType`, apps/mcp/src/tools.ts), pinned by
+     * that package's own tests — restating it here against the CLI flag was the pre-#88 invariant.
+     */
     const vocabulary = registry.vocabularies.find((one) => one.name === "MEMORY_TYPES")
     const writable = registry.commands
       .find((command) => command.name === "write")
       ?.flags.find((flag) => flag.name === "type")?.values
     expect(writable).toBeDefined()
-    expect([...(writable ?? [])]).toEqual(
-      (vocabulary?.values ?? []).filter((value) => value !== "arc")
-    )
+    expect([...(writable ?? [])]).toEqual([...(vocabulary?.values ?? [])])
   })
 
   it("keeps `serve mcp`'s own summary honest about the surface it serves", () => {
