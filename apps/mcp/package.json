@@ -49,6 +49,7 @@
     "@memhtml/llm": "workspace:*",
     "@memhtml/sleep": "workspace:*",
     "@memhtml/store": "workspace:*",
+    "@memhtml/telemetry": "workspace:*",
     "@memhtml/traces": "workspace:*",
     "effect": "catalog:"
   },

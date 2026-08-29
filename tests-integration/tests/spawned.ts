@@ -57,11 +57,19 @@ export interface Spawned {
  *
  * The exit code is returned rather than asserted because it is half of the contract under test: a
  * usage refusal is exit 2 and a runtime failure is exit 1, and only a real process has one at all.
+ *
+ * `extraEnv` reaches the child on top of {@link childEnv}, because some contracts are about a
+ * variable the child reads at layer-build time — `OTEL_EXPORTER_OTLP_ENDPOINT` is one — and setting
+ * it on THIS process would not reach the child's config snapshot any more than `MEMHTML_EMBED` would.
  */
-export const runBuilt = (root: string, argv: ReadonlyArray<string>): Promise<Spawned> =>
+export const runBuilt = (
+  root: string,
+  argv: ReadonlyArray<string>,
+  extraEnv: NodeJS.ProcessEnv = {}
+): Promise<Spawned> =>
   new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [cliEntryPoint, ...argv, "--repo", root], {
-      env: childEnv(root),
+      env: { ...childEnv(root), ...extraEnv },
       stdio: ["ignore", "pipe", "pipe"]
     })
     let stdout = ""

@@ -45,6 +45,7 @@
     "@memhtml/llm": "workspace:*",
     "@memhtml/sleep": "workspace:*",
     "@memhtml/store": "workspace:*",
+    "@memhtml/telemetry": "workspace:*",
     "@memhtml/traces": "workspace:*",
     "effect": "catalog:",
     "just-bash": "3.4.2",

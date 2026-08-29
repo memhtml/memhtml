@@ -7,7 +7,7 @@
  * names it. Three assets shipped broken under exactly that blindness. So this tier packs, installs into
  * a throwaway directory, and runs the binary — the only check whose subject is the artifact.
  *
- * Not part of `check`: it reaches the npm registry to resolve the twelve external dependencies, and
+ * Not part of `check`: it reaches the npm registry to resolve the external dependencies, and
  * `check` is offline and credential-free by construction. CI runs it as its own job, and the publish
  * job runs it on the tag before publishing.
  *

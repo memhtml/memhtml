@@ -72,6 +72,18 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
     fallback: "off"
   },
   {
+    name: "OTEL_EXPORTER_OTLP_ENDPOINT",
+    description:
+      "An OTLP collector's base URL, e.g. `http://localhost:4318`. Set, the ~30 `Effect.withSpan` annotations already in the code (retrieval, embeddings, model calls, indexing, the sleep cycle, store writes, `db.*`, `git.*`) export as traces to `<endpoint>/v1/traces`, batched, flushed on exit. Unset, nothing is loaded and behavior is byte-identical. Export can never fail a command: a down collector is one stderr warning and a command that proceeds untraced.",
+    fallback: null
+  },
+  {
+    name: "OTEL_SERVICE_NAME",
+    description:
+      "Overrides the `service.name` resource attribute on exported traces. Absent, each process names itself: `memhtml-cli` or `memhtml-mcp`. Read only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.",
+    fallback: null
+  },
+  {
     /**
      * The name is imported rather than retyped: this row and the `process.env` read at serve.ts:50
      * must name the same string, and a literal here would let a rename disclose a variable nothing

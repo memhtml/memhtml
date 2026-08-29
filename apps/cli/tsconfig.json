@@ -12,6 +12,9 @@
       "path": "../../packages/contracts"
     },
     {
+      "path": "../../packages/telemetry"
+    },
+    {
       "path": "../../packages/domain"
     },
     {

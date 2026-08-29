@@ -19,6 +19,7 @@
         { "type": "json", "path": "packages/llm/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/sleep/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/store/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "packages/telemetry/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/traces/package.json", "jsonpath": "$.version" },
         { "type": "generic", "path": "apps/cli/src/commands.ts" },
         { "type": "generic", "path": "apps/mcp/src/server.ts" }
