@@ -4,6 +4,7 @@ import { normalizePath } from "@memhtml/contracts/paths"
 import {
   isTaskStatus,
   isWritableMemoryType,
+  MEMORY_TYPES,
   type MemoryType,
   TASK_STATUSES,
   type TaskStatus,
@@ -63,12 +64,14 @@ const defined = <T extends Record<string, unknown>>(input: T): Partial<T> => {
 }
 
 /**
- * Narrow an untrusted memory-type string.
+ * Narrow an untrusted memory-type string to the AGENT vocabulary.
  *
  * `arc` is refused even though it is a valid storage type. An arc is synthesized by the sleep
  * cycle from many memories, so an agent naming one directly would be asserting a conclusion the
- * corpus has not earned. The vocabulary the tool exposes is therefore narrower than the CHECK
- * constraint by exactly that one value.
+ * corpus has not earned. The vocabulary the MCP tools expose is therefore narrower than the CHECK
+ * constraint by exactly that one value, and their schemas restate it (`WritableType` in
+ * `apps/mcp/src/tools.ts`), so an agent's `arc` is refused at schema decode before it reaches any
+ * function here.
  */
 export const decodeWritableType = (
   value: string
@@ -78,6 +81,28 @@ export const decodeWritableType = (
     : Effect.fail(
         InvalidMemory.make({
           reason: `unknown memory type: ${value}. One of: ${WRITABLE_MEMORY_TYPES.join(", ")}`
+        })
+      )
+
+/**
+ * Narrow an untrusted memory-type string to the OPERATOR vocabulary: the CHECK constraint's full
+ * set, `arc` included (issue #88).
+ *
+ * The agent refusal above guards against a model minting an unearned conclusion mid-conversation.
+ * It does not cover curated import — an arc corpus earned under a prior system, whose evidence base
+ * sleep can never consume — or an operator deliberately authoring a durable rule. Both previously
+ * had to hand-write HTML into the tree, bypassing dedup, the index, format validation, and the
+ * one-commit apply contract. So the split mirrors the one `decodeAuthorableRel` documents: one
+ * narrow surface for agents and one wider one for the operator, with the store's guards governing
+ * both. `memhtml write`/`apply`/`correct` decode through this; `memory_write`/`memory_write_batch`
+ * keep the agent vocabulary at their schemas.
+ */
+export const decodeOperatorType = (value: string): Effect.Effect<MemoryType, InvalidMemory> =>
+  (MEMORY_TYPES as ReadonlyArray<string>).includes(value)
+    ? Effect.succeed(value as MemoryType)
+    : Effect.fail(
+        InvalidMemory.make({
+          reason: `unknown memory type: ${value}. One of: ${MEMORY_TYPES.join(", ")}`
         })
       )
 
@@ -251,10 +276,16 @@ const reindex = () =>
  * an ISO datetime, so a bad value passed through would render a file the indexer then declines to
  * project. That file is present in the tree, absent from every search, and visible only as a log
  * line. Deciding here turns it into a typed `InvalidMemory` before the commit.
+ *
+ * The type decodes through the OPERATOR vocabulary (issue #88): `memhtml write` and `memhtml apply`
+ * may author an arc — curated import and a deliberately authored rule are the legitimate cases —
+ * while the agent doors stay narrow at their own schemas (`WritableType` in `apps/mcp/src/tools.ts`
+ * refuses `arc` at decode, before this function runs). `placementFor` already routes an arc to
+ * `areas/arcs/`, so nothing downstream changes.
  */
 const toWriteInput = (params: WriteParams, at: string): Effect.Effect<WriteInput, InvalidMemory> =>
   Effect.gen(function* () {
-    const memoryType = yield* decodeWritableType(params.memoryType)
+    const memoryType = yield* decodeOperatorType(params.memoryType)
     const taskStatus =
       memoryType === "task" && params.taskStatus !== undefined && params.taskStatus !== ""
         ? yield* decodeTaskStatus(params.taskStatus)
@@ -990,13 +1021,20 @@ export interface CorrectParams extends Provenance {
  * The type defaults to the target's own. A correction that silently changed the type would move
  * the memory to a different retention profile and a different PARA directory, and that is a second
  * decision the caller did not make.
+ *
+ * The decode is the operator vocabulary (issue #88), and the default-to-target case is why it must
+ * be: a correction of an arc FILE preserves `arc` without the caller naming it, and the narrow
+ * decode refused exactly that — an arc was uncorrectable through every door. An agent still cannot
+ * NAME the type into being: `memory_correct`'s schema keeps the writable enum on its explicit
+ * `memory_type` parameter, so the only way `arc` reaches this line from an agent is off a target
+ * that already carries it.
  */
 export const correctMemory = (params: CorrectParams) =>
   Effect.gen(function* () {
     const store = yield* Store
     const target = yield* store.readMemory(params.targetPath)
     const requested = params.memoryType ?? target.doc.metas.memoryType
-    const memoryType = yield* decodeWritableType(requested)
+    const memoryType = yield* decodeOperatorType(requested)
     const at = yield* nowSecond
 
     const result = yield* store.correctMemory(params.targetPath, {
@@ -1569,7 +1607,9 @@ export const listMemories = (params: ListParams) =>
 
     if (params.includeArchived !== true) conditions.push("f.archived = 0")
     if (params.memoryType !== undefined && params.memoryType !== "") {
-      const memoryType = yield* decodeWritableType(params.memoryType)
+      // The operator vocabulary: a corpus that holds authored arcs (issue #88) must be pageable by
+      // that type. `memory_list`'s schema still refuses `arc` before its handler reaches this.
+      const memoryType = yield* decodeOperatorType(params.memoryType)
       conditions.push("f.memory_type = ?")
       values.push(memoryType)
     }

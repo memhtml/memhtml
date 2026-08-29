@@ -149,6 +149,29 @@ describe("memhtml apply: the JSONL door", () => {
     expect((await htmlOnDisk(cli.root)).length).toBe(3)
   })
 
+  it("admits `type: arc` and places it under areas/arcs/, in the batch's one commit (issue #88)", async () => {
+    /**
+     * The curated-import case the operator surface exists for: an op stream carrying arcs earned
+     * under a prior system flows through the same decode, dedup, placement, and one-commit contract
+     * as every other type — the alternative was hand-writing HTML into the tree past all four.
+     */
+    const cli = await withApply()
+    const result = await cli.fromFile([
+      line({ title: "A durable behavioral rule", body: "Verify before asserting, always." }),
+      line({
+        type: "arc",
+        title: "Imported arc on verification",
+        body: "Run the cheap direct check before stating a conclusion as fact."
+      })
+    ])
+    expect(result.exitCode).toBe(EXIT_OK)
+    const data = applied(result.stdout)
+    expect(data.summary.written).toBe(2)
+    expect(data.commit_sha).not.toBeNull()
+    const paths = await htmlOnDisk(cli.root)
+    expect(paths.some((path) => path.startsWith("areas/arcs/imported-arc"))).toBe(true)
+  })
+
   it("reads the same stream from stdin, via `apply -`, `apply --file -`, and a bare `apply`", async () => {
     // All three spellings, because the flag docs promise all three. A dash that fell through to
     // `--file` parsing would try to open a file named `-`.

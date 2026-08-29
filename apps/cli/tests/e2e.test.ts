@@ -92,6 +92,38 @@ describe("the write path, end to end", () => {
     expect(html).toContain('name="memhtml-session"')
   })
 
+  it("writes an authored arc to areas/arcs/, indexed and pageable by its type (issue #88)", async () => {
+    /**
+     * The operator surface admits `arc` — curated import and deliberately authored rules — while
+     * `memory_write`'s schema keeps refusing it (pinned in apps/mcp/tests/tools.test.ts). The
+     * placement half needs no new rule: `placementFor` already routes an arc to `areas/arcs/`, the
+     * same path the sleep phases use, so this asserts the whole door end to end: decode, placement,
+     * commit, index, and the `list --type arc` page that reads the projection back.
+     */
+    const written = await cli.json<Written>([
+      "write",
+      "--type",
+      "arc",
+      "--title",
+      "Always verify before asserting",
+      "--claim",
+      "Run the cheap direct check before stating a conclusion as fact."
+    ])
+    expect(written.created).toBe(true)
+    expect(written.path).toMatch(/^areas\/arcs\/always-verify-before-asserting[^/]*\.html$/)
+    expect(written.commitSha).not.toBeNull()
+
+    const html = await readFile(join(cli.root, written.path), "utf8")
+    expect(html).toContain('content="arc"')
+
+    const listed = await cli.json<{ files: ReadonlyArray<{ path: string }> }>([
+      "list",
+      "--type",
+      "arc"
+    ])
+    expect(listed.files.map((file) => file.path)).toContain(written.path)
+  })
+
   it("finds the memory it just wrote, with the vector arm firing", async () => {
     const result = await cli.json<Hits>(["search", "drain the vip before reverting"])
     expect(result.hits.length).toBeGreaterThan(0)
