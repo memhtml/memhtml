@@ -152,8 +152,9 @@ export const placementTriage: PhaseBody = (env) =>
     /**
      * The directories the corpus already has, from the index's own path set: every distinct
      * directory holding an active file under `areas/` or `resources/`, minus the managed surfaces.
-     * Offered to the model verbatim and used as the validation set, so the question and the gate
-     * cannot disagree.
+     * The list each batch is OFFERED is this plus the directories the run has minted so far
+     * (issue #82) — built per batch, inside the loop — and `isNew` below validates against the same
+     * two sets, so the question and the gate cannot disagree.
      */
     const managed = new Set([INBOX_DIR, `${INBOX_DIR}/tasks`, ARCS_DIR, PEOPLE_DIR])
     const existingDirs = [
@@ -217,10 +218,18 @@ export const placementTriage: PhaseBody = (env) =>
         continue
       }
       llmCalls += 1
+      /**
+       * The offered list is rebuilt per batch to include the directories THIS run has minted
+       * (issue #82). Batch 1 may mint `areas/billing`; without this, batches 2..N are never told it
+       * exists, so a later file that belongs there either re-derives the same slug by luck or
+       * proposes a new directory and burns the cap. Sorted, so a minted directory lands in the same
+       * lexicographic position an existing one would.
+       */
+      const offeredDirs = [...existingDirs, ...mintedDirs].sort()
       const answer = yield* batchCall(model, `placement batch of ${batch.length}`, {
         schema: PlacementTriage,
         system: PLACEMENT_SYSTEM,
-        prompt: placementPrompt(existingDirs, keyed.keyed),
+        prompt: placementPrompt(offeredDirs, keyed.keyed),
         modelKey,
         effort: "high",
         toolDescription: "Propose a destination directory (or keep-inbox) per offered memory."

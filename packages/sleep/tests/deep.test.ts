@@ -483,6 +483,56 @@ describe("placement triage (guard c: destinations and refusals)", () => {
     )
   })
 
+  it("offers a directory minted by an earlier batch to every later batch (issue #82)", async () => {
+    /**
+     * Seventeen singletons against a batch size of sixteen force two model calls. Batch 1 mints
+     * `areas/minted-topic`; the assertion is about batch 2's QUESTION: its `existing_directories`
+     * block must name the minted directory, so a later file that belongs there can be placed
+     * without the model re-deriving the slug. Before the fix the second prompt was byte-identical
+     * to the first on this axis, so the negative half (batch 1's prompt does NOT name it) is what
+     * makes the positive half non-vacuous.
+     */
+    const model = scriptedModel((request, callOffset) => {
+      const keys = [...request.prompt.matchAll(/<memory_(m\d+)>/g)].map((match) => match[1] ?? "")
+      return value({
+        placements: keys.map((memberKey) => ({
+          memberKey,
+          destination: callOffset === 0 ? "areas/minted-topic" : "keep-inbox",
+          confidence: 0.9
+        }))
+      })
+    })
+    const singles: ReadonlyArray<SeedFile> = Array.from({ length: 17 }, (_, at) => {
+      const stem = String.fromCharCode(97 + at)
+      return {
+        path: `areas/inbox/lone-${stem}.html`,
+        html: memoryHtml({
+          title: `Lone fact ${stem}`,
+          claim: `The ${stem}fact stands alone and shares no vocabulary with the others.`,
+          body: `Unrelated ${stem}detail follows here.`,
+          memoryType: "semantic",
+          createdAt: "2026-08-01T00:00:00Z",
+          confidence: "1.0",
+          importance: "5",
+          tags: ["deeptest"]
+        })
+      }
+    })
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* placementTriage(envFor(fixture, { deep: true }))
+          expect(outcome.counts.batches).toBe(2)
+          expect(outcome.counts.newDirs).toBe(1)
+          expect(model.calls).toHaveLength(2)
+          const [first, second] = model.calls
+          expect(first?.prompt).not.toContain("areas/minted-topic")
+          expect(second?.prompt).toContain("areas/minted-topic")
+        }),
+      { seed: singles, model }
+    )
+  })
+
   it("does nothing at all on a run without --deep", async () => {
     const model = placeAllInto("areas/ledgers")
     await withFixture(
