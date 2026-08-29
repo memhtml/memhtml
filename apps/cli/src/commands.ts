@@ -1,5 +1,5 @@
 import { MEMORY_RELS } from "@memhtml/contracts/edges"
-import { TASK_STATUSES, WRITABLE_MEMORY_TYPES } from "@memhtml/contracts/types"
+import { MEMORY_TYPES, TASK_STATUSES, WRITABLE_MEMORY_TYPES } from "@memhtml/contracts/types"
 import { REINFORCE_SIGNALS } from "@memhtml/domain"
 import { SLEEP_PHASES } from "@memhtml/sleep"
 
@@ -203,8 +203,9 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       {
         name: "type",
         type: "string",
-        description: "The memory type. `arc` is absent: an arc is synthesized by sleep.",
-        values: WRITABLE_MEMORY_TYPES,
+        description:
+          "The memory type. `arc` is admitted here, on the operator surface, for curated import and deliberately authored rules; the agent tools (`memory_write`) still refuse it, because an agent naming an arc asserts a conclusion the corpus has not earned.",
+        values: MEMORY_TYPES,
         required: true
       },
       {
@@ -365,8 +366,9 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       {
         name: "type",
         type: "string",
-        description: "The new memory's type. Defaults to the target's.",
-        values: WRITABLE_MEMORY_TYPES
+        description:
+          "The new memory's type. Defaults to the target's, so correcting an arc keeps it one.",
+        values: MEMORY_TYPES
       },
       { name: "reason", type: "string", description: "Why the correction was made." },
       { name: "session-id", type: "string", description: "Records a `corrected` session link." },
@@ -468,8 +470,8 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       {
         name: "type",
         type: "string",
-        description: "One memory type.",
-        values: WRITABLE_MEMORY_TYPES
+        description: "One memory type. `arc` pages the authored and synthesized arcs alike.",
+        values: MEMORY_TYPES
       },
       { name: "workspace", type: "string", description: "One workspace." },
       { name: "tag", type: "string", description: "One tag." },

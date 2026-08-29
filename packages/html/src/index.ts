@@ -30,7 +30,15 @@ export {
   MemoryLink,
   MemoryMetas
 } from "./document.js"
-export { addLink, addMeta, readMeta, removeLink, removeMeta, setMeta } from "./editors.js"
+export {
+  addLink,
+  addMeta,
+  readLinks,
+  readMeta,
+  removeLink,
+  removeMeta,
+  setMeta
+} from "./editors.js"
 export type { FencedBlock } from "./fences.js"
 export { closesFence, fencedBlockOf, fenceOpeningOf, LANG_TOKEN } from "./fences.js"
 export type { CanonicalTextOptions, HashableArticle } from "./hash.js"
