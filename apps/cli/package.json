@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/cli",
-  "version": "0.7.2",
+  "version": "0.9.0",
   "private": true,
   "description": "The `memhtml` binary.",
   "type": "module",

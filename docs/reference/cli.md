@@ -80,7 +80,7 @@ Flags:
 - `--prompt-id`: The prompt within that session. String. `apps/cli/src/commands.ts:198`
 - `--turn-uuid`: The turn within that session. String. `apps/cli/src/commands.ts:199`
 
-The `--type` vocabulary comes from `WRITABLE_MEMORY_TYPES`, the nine values in `MEMORY_TYPES` minus `arc`. `packages/contracts/src/types.ts:38-40`
+The `--type` vocabulary is the full `MEMORY_TYPES` storage set, `arc` included: the CLI is the operator surface, where curated import and deliberately authored rules are legitimate. The narrower `WRITABLE_MEMORY_TYPES` (minus `arc`) is the agent surface's, enforced by `memory_write`'s schema. `packages/contracts/src/types.ts:18-40`
 
 Supplying both `--claim` and `--article-html`, or neither, is a usage error. It is checked before any service is built, so it exits 2 rather than 1. `apps/cli/src/run.ts:846-871`
 

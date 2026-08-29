@@ -1018,7 +1018,13 @@ describe("batchWrite: the detect_conflicts assist", () => {
       batch({
         ops: [
           op({ title: "Would have been fine", claim: CEILING_128 }),
-          op({ title: "Bad type", claim: "The retry budget is per-connection.", memoryType: "arc" })
+          // `arc` decodes on the operator surface since issue #88, so the refused type is a
+          // genuinely unknown value.
+          op({
+            title: "Bad type",
+            claim: "The retry budget is per-connection.",
+            memoryType: "nonsense"
+          })
         ],
         detectConflicts: true
       })

@@ -1,6 +1,7 @@
 import type { EdgeRel } from "@memhtml/contracts/edges"
-import { relTokenFor } from "@memhtml/contracts/edges"
+import { relForToken, relTokenFor } from "@memhtml/contracts/edges"
 
+import type { MemoryLink } from "./document.js"
 import { escapeAttribute } from "./markup.js"
 import type { Document, Element } from "./tree.js"
 import { attr, elementsNamed, elementsOf, parseDocument } from "./tree.js"
@@ -257,6 +258,25 @@ const removeSpans = (html: string, spans: ReadonlyArray<Span>): string => {
     out = out.slice(0, span.start) + out.slice(span.end)
   }
   return out
+}
+
+/**
+ * Every `<link rel="memhtml-*">` edge in the head, in document order. The read half of
+ * {@link addLink}/{@link removeLink}, tolerant the way {@link readMeta} is: the document is
+ * parsed but nothing is validated — no `MemoryDoc`, no constraint check — so a caller holding raw
+ * bytes can ask what a file points at without the file having to be a well-formed memory. An
+ * unknown rel token is dropped exactly as `parseMemory`'s own reader drops it.
+ */
+export const readLinks = (html: string): ReadonlyArray<MemoryLink> => {
+  const head = headOf(parseDocument(html))
+  if (head === undefined) return []
+  return memhtmlLinks(head).flatMap((element) => {
+    const token = attr(element, "rel")
+    const href = attr(element, "href")
+    if (token === undefined || href === undefined) return []
+    const rel = relForToken(token)
+    return rel === undefined ? [] : [{ rel, href }]
+  })
 }
 
 /** The value of a head meta, or `undefined`. The read half of {@link setMeta}, no parse needed. */

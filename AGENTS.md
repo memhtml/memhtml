@@ -134,7 +134,7 @@ Write one memory. Content-hash duplicates return the existing path, uncommitted.
 - `--claim` (string) — The one load-bearing sentence. Becomes the <mark> span and files.gist. Exactly one of --claim or --article-html.
 - `--body` (string) — A prose paragraph after the claim. Repeatable, one <p> each. _(repeatable)_
 - `--article-html` (string) — Raw <article> markup used verbatim in place of --claim/--body. Must contain exactly one <mark> in the first <p> or <li>; the first <time datetime> becomes the memory's event time. The store refuses format violations before any commit. Exactly one of --claim or --article-html.
-- `--type` (string) — The memory type. `arc` is absent: an arc is synthesized by sleep. _(**required**; one of: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `task`)_
+- `--type` (string) — The memory type. `arc` is admitted here, on the operator surface, for curated import and deliberately authored rules; the agent tools (`memory_write`) still refuse it, because an agent naming an arc asserts a conclusion the corpus has not earned. _(**required**; one of: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `arc`, `task`)_
 - `--path` (string) — An explicit path override. One that is not a usable memory path (rooted in a PARA bucket, ending in .html, no `.` or `..` segment) is IGNORED and the placement rule decides instead, so a malformed override lands the memory somewhere you did not name — pass --strict-path to have it refused instead. One a file ALREADY occupies is REFUSED with ERR_WRITE_CONFLICT and nothing is written or committed: this corpus overwrites nothing, and an explicit path gets no `-2` suffix because you named one path. To replace what a memory says, use `memhtml correct <path>`.
 - `--strict-path` (boolean) — Refuse an unusable --path instead of letting the placement rule decide. By default a --path that is not a usable memory path is re-derived, so the memory lands somewhere you did not name and the response reports that other path as a success. With this flag the write is REFUSED with ERR_INVALID_MEMORY naming the clause the path broke, and nothing is written, staged, or committed. It governs the path you NAMED: with no --path there is nothing to be strict about and the flag changes nothing, while an EMPTY or blank --path is named rather than absent and is refused — that is what your own path template renders when it produced nothing. An OCCUPIED path is refused with ERR_WRITE_CONFLICT with or without it. _(default `false`)_
 - `--workspace` (string) — Routes the memory to projects/<slug>/.
@@ -208,7 +208,7 @@ Supersede a memory: write the new file and archive the target in ONE commit.
 - `--claim` (string) — The corrected claim. Exactly one of --claim or --article-html.
 - `--body` (string) — A prose paragraph. Repeatable. _(repeatable)_
 - `--article-html` (string) — Raw <article> markup for the superseding memory, used verbatim in place of --claim/--body. Must contain exactly one <mark> in the first <p> or <li>; the first <time datetime> becomes the memory's event time. The store refuses format violations before any commit. Exactly one of --claim or --article-html.
-- `--type` (string) — The new memory's type. Defaults to the target's. _(one of: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `task`)_
+- `--type` (string) — The new memory's type. Defaults to the target's, so correcting an arc keeps it one. _(one of: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `arc`, `task`)_
 - `--reason` (string) — Why the correction was made.
 - `--session-id` (string) — Records a `corrected` session link.
 - `--prompt-id` (string) — The prompt within that session.
@@ -258,7 +258,7 @@ Bump access bookkeeping, gated by a 900-second per-path cooldown.
 
 Page through the corpus by type, workspace, tag, entity, facet, or PARA bucket.
 
-- `--type` (string) — One memory type. _(one of: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `task`)_
+- `--type` (string) — One memory type. `arc` pages the authored and synthesized arcs alike. _(one of: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `arc`, `task`)_
 - `--workspace` (string) — One workspace.
 - `--tag` (string) — One tag.
 - `--entity` (string) — One `type:name` entity reference.

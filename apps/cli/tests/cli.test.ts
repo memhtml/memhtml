@@ -526,10 +526,15 @@ describe("error envelopes", () => {
     expect(body.suggestions).toContain("episodic")
   })
 
-  it("refuses `arc`, which is a storage type but not a writable one", async () => {
+  it("admits `arc` on the operator surface, which flag validation must not refuse (issue #88)", async () => {
+    /**
+     * The inversion of the refusal this case used to pin: `memhtml write --type arc` is the
+     * operator's door for curated import and deliberately authored rules, so the closed-vocabulary
+     * gate must pass it through. Still no layer, so the run fails LATER, at the service boundary —
+     * the assertion is that the failure is not the flag validator's.
+     */
     const result = await run(["write", "--title", "x", "--claim", "y", "--type", "arc"])
-    expect(result.exitCode).toBe(EXIT_USAGE)
-    expect(parse(result.stdout).code).toBe("ERR_INVALID_FLAG")
+    expect(parse(result.stdout).code).not.toBe("ERR_INVALID_FLAG")
   })
 
   describe("--as-of, which SQL compares as a string", () => {
