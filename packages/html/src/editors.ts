@@ -262,9 +262,10 @@ const removeSpans = (html: string, spans: ReadonlyArray<Span>): string => {
 
 /**
  * Every `<link rel="memhtml-*">` edge in the head, in document order. The read half of
- * {@link addLink}/{@link removeLink}, tolerant the way {@link readMeta} is: no full parse, no
- * constraint check, so a caller holding raw bytes can ask what a file points at without earning a
- * `MemoryDoc`. An unknown rel token is dropped exactly as `parseMemory`'s own reader drops it.
+ * {@link addLink}/{@link removeLink}, tolerant the way {@link readMeta} is: the document is
+ * parsed but nothing is validated — no `MemoryDoc`, no constraint check — so a caller holding raw
+ * bytes can ask what a file points at without the file having to be a well-formed memory. An
+ * unknown rel token is dropped exactly as `parseMemory`'s own reader drops it.
  */
 export const readLinks = (html: string): ReadonlyArray<MemoryLink> => {
   const head = headOf(parseDocument(html))

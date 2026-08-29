@@ -223,9 +223,11 @@ export const placementTriage: PhaseBody = (env) =>
      *
      * Read from the touched files' CURRENT BYTES rather than from a per-phase list of authorship
      * sites, so the next phase that authors a link without stamping its target cannot reopen this.
-     * The read is bounded by the non-sweep touched set, which the promotion caps already bound.
-     * A touched path that holds no file (an archive's source) or no parseable links (the pending-
-     * marks ledger) contributes nothing.
+     * The read walks `touched.paths` verbatim: on a scoped read that is the non-sweep commits'
+     * diffs, which the promotion caps keep small; on a WIDENED read it is every path the whole
+     * range touched, sweeps included — one file read per path, the same conservative cost the
+     * widened pin itself already accepts. A touched path that holds no file (an archive's source)
+     * or no parseable links (the pending-marks ledger) contributes nothing.
      */
     const linkTargets = new Set<string>()
     for (const touchedPath of [...touched.paths].sort()) {
