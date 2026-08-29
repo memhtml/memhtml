@@ -1,6 +1,6 @@
 import { ARCS_DIR } from "@memhtml/contracts/paths"
 import { slugify } from "@memhtml/contracts/slug"
-import { renderTemplate } from "@memhtml/html"
+import { escapeText, renderTemplate } from "@memhtml/html"
 import { Effect } from "effect"
 
 import { isolate } from "../batch.js"
@@ -224,14 +224,34 @@ export const arcSynthesis: PhaseBody = (env) =>
        * An arc file is written whole, not stamped. Its BODY is what this phase produces, so the
        * head-editor rule does not apply: there is no bookkeeping edit to keep surgical, and
        * `renderTemplate` stamps a `memhtml-content-hash` computed from the article it just built.
+       *
+       * The article is TIERED, not flat. An arc is read two ways with very different budgets:
+       * `recall` quotes `disclosure_text` (Tier 1 + Tier 2) under `ARC_BODY_BUDGET`, and
+       * `memory_read` returns everything. A flat arc makes its whole body Tier 1, so a handful of
+       * grown arcs exhaust the recall envelope and every other arc degrades to an index line.
+       * So the claim stands alone as the `<mark>` paragraph, the model's summary headlines one
+       * `<details>` fold, and the paragraphs live inside it — an arc can grow without inflating
+       * what recall pays. The markup path is used because the `claim`/`body` prose path has no
+       * fold vocabulary.
        */
+      const foldedParagraphs = content.paragraphs
+        .map((paragraph) => paragraph.trim())
+        .filter((paragraph) => paragraph !== "")
+        .map((paragraph) => `<p>${escapeText(paragraph)}</p>`)
+        .join("\n")
+      const summaryLine =
+        (content.summary ?? "").trim() === "" ? "Elaboration" : (content.summary ?? "").trim()
+      const articleHtml =
+        foldedParagraphs === ""
+          ? `<p><mark>${escapeText(content.claim.trim())}</mark></p>`
+          : `<p><mark>${escapeText(content.claim.trim())}</mark></p>\n<details>\n<summary>${escapeText(summaryLine)}</summary>\n${foldedParagraphs}\n</details>`
       yield* writeFileBytes(
         env,
         arcPath,
         renderTemplate({
           title: content.title.trim() === "" ? title : content.title.trim(),
           claim: content.claim,
-          body: content.paragraphs,
+          articleHtml,
           memoryType: "arc",
           at: env.at,
           author: "agent:sleep"

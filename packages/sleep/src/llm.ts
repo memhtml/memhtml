@@ -152,7 +152,14 @@ export const ArcContent = Schema.Struct({
   title: Schema.String,
   /** The single sentence carrying the arc, which becomes the file's `<mark>` claim. */
   claim: Schema.String,
-  /** 2-12 sentences that stand alone, one string per paragraph. */
+  /**
+   * The elaboration's one-line headline, which becomes the `<details>` fold's `<summary>`
+   * (Tier 2). Recall discloses the claim and this line; the paragraphs stay behind the fold.
+   * Optional so a model that omits it still writes the arc — the writer falls back to a
+   * generic headline rather than skipping the synthesis.
+   */
+  summary: Schema.optional(Schema.String),
+  /** 2-12 sentences that stand alone, one string per paragraph. Written inside the fold. */
   paragraphs: Schema.Array(Schema.String)
 })
 export type ArcContent = typeof ArcContent.Type
@@ -293,9 +300,15 @@ behavioral principal — a statement of a pattern, preference, or principle the 
 through experience. Arcs are read back in future sessions with no transcript context, so the
 content must stand alone.
 
-- claim is the ONE load-bearing sentence: the principle itself, stated as behavior to adopt.
+- claim is the ONE load-bearing sentence: the principle itself, stated as behavior to adopt. The
+  claim is what recall shows every future session, so it must carry the whole rule alone.
+- summary is one line naming what the elaboration covers. It headlines the folded body, so write
+  it as a scent trail ("when the rule applies, the failure it prevents, two incident classes"),
+  not a restatement of the claim.
 - paragraphs holds 2-12 sentences across one to four paragraphs. Behavioral principles fit at the
-  tight end; an operational playbook may span the wider range.
+  tight end; an operational playbook may span the wider range. Paragraphs live behind a
+  disclosure fold that recall never quotes: put elaboration, grounding, and named incidents here,
+  and keep anything the agent must see un-asked inside the claim instead.
 - Use IF/THEN conditional phrasing for rules, framed positively around the behavior to adopt.
 - When updating, incorporate both the existing content and the new evidence, preserving knowledge
   that still holds.
