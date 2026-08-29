@@ -7,6 +7,7 @@ import {
   PEOPLE_DIR,
   paraBucketOf
 } from "@memhtml/contracts/paths"
+import { readLinks } from "@memhtml/html"
 import { attemptIo } from "@memhtml/store"
 import { Effect } from "effect"
 
@@ -56,11 +57,19 @@ import { deepCommunityLabels } from "./compress.js"
  *   essentially every candidate and this phase refuses essentially everything (issue #81). An
  *   unreadable trailer or diff widens the set to the whole range instead of emptying it, and a
  *   set that cannot be read at all returns before a single model call;
+ * - nor does a file a link authored this run POINTS AT (issue #83). `edge-typing`'s directional arm
+ *   stamps the subject alone, so the object's path is not in any commit's diff — but this phase's
+ *   inbound-href rewrite and integrity's dangling-edge repair both read the INDEX, which no phase
+ *   refreshes mid-run, so a move of the object leaves the night-old edge dangling with no archive
+ *   form to chase, and the next night's integrity drops it. The invariant, in one sentence:
+ *   placement never moves a file a non-sweep phase wrote this run, nor a file such a write points
+ *   at. Read from the touched files' own bytes, so the next phase that authors a link without
+ *   stamping its target cannot reopen this;
  * - `keep-inbox`, an unknown key, a below-floor confidence, and an omitted member all leave the
  *   file where it is.
  *
  * **Every refusal is its own count**, one key per class beside the `refused` total
- * ({@link PLACEMENT_REFUSALS}). Nine classes pooled into one number make a night where the phase
+ * ({@link PLACEMENT_REFUSALS}). Ten classes pooled into one number make a night where the phase
  * applied nothing unreadable without a log grep, which is exactly how issue #81's mechanism stayed
  * hidden for two runs.
  *
@@ -105,6 +114,7 @@ export const PLACEMENT_REFUSALS = {
   refusedDestination: "not a placeable directory",
   refusedTask: "tasks never move",
   refusedTouched: "a phase that decides wrote this file this run",
+  refusedLinkTarget: "a link a phase wrote this run points at this file",
   refusedAlreadyMoved: "this run already moved this file",
   refusedNewDirCap: "the new-directory cap for this run is spent",
   refusedInvalidPath: "the destination path is not a valid memory path",
@@ -190,7 +200,7 @@ export const placementTriage: PhaseBody = (env) =>
       touchedCommits: touched.kind === "scoped" ? touched.commits : 0,
       sweepCommits: touched.kind === "scoped" ? touched.sweeps : 0,
       touchedWidened: touched.kind === "widened" ? 1 : 0,
-      // Pre-seeded, all nine, because an absent key is a key an operator has to go looking for.
+      // Pre-seeded, all ten, because an absent key is a key an operator has to go looking for.
       ...Object.fromEntries(Object.keys(PLACEMENT_REFUSALS).map((key) => [key, 0]))
     }
     /**
@@ -202,6 +212,28 @@ export const placementTriage: PhaseBody = (env) =>
       return { ...emptyOutcome(counts), detail: "the run's touched set could not be read" }
     }
     if (batches.length === 0 || env.dryRun) return emptyOutcome(counts)
+
+    /**
+     * The paths the touched files' own authored links point at (issue #83). `edge-typing`'s
+     * directional arm stamps a promoted rel into the SUBJECT alone, so the object's path is in no
+     * commit's diff and `touched` does not pin it — but the edge is invisible to this phase's
+     * inbound-href rewrite and to integrity's dangling-edge repair, both of which read an index no
+     * phase refreshes mid-run. Moving the object would leave the night-old edge dangling with no
+     * archive form to chase, and the next night's integrity would drop it with a warning.
+     *
+     * Read from the touched files' CURRENT BYTES rather than from a per-phase list of authorship
+     * sites, so the next phase that authors a link without stamping its target cannot reopen this.
+     * The read is bounded by the non-sweep touched set, which the promotion caps already bound.
+     * A touched path that holds no file (an archive's source) or no parseable links (the pending-
+     * marks ledger) contributes nothing.
+     */
+    const linkTargets = new Set<string>()
+    for (const touchedPath of [...touched.paths].sort()) {
+      const html = yield* readFileBytes(env, touchedPath)
+      if (html === undefined) continue
+      for (const authored of readLinks(html)) linkTargets.add(normalizePath(authored.href))
+    }
+    counts.linkTargets = linkTargets.size
 
     const modelKey = modelFor(env.deps, "placement-triage")
     const mintedDirs = new Set<string>()
@@ -299,6 +331,10 @@ export const placementTriage: PhaseBody = (env) =>
         }
         if (touched.paths.has(row.path)) {
           yield* refuse("refusedTouched")
+          continue
+        }
+        if (linkTargets.has(row.path)) {
+          yield* refuse("refusedLinkTarget")
           continue
         }
         if (movedFrom.has(row.path)) {

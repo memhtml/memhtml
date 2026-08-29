@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest"
 
 import { commitPhase } from "../src/commit.js"
 import { type SleepPhase, TRAILER_PHASE } from "../src/contract.js"
-import { meta, stampFile } from "../src/edits.js"
+import { hrefFor, link, meta, stampFile } from "../src/edits.js"
 import { makeLlmBudget, type PhaseEnv } from "../src/env.js"
 import { assignEntityLabels, compress, ENTITY_LABEL_PREFIX } from "../src/phases/compress.js"
 import { confidenceDecay } from "../src/phases/confidence-decay.js"
@@ -796,6 +796,54 @@ describe("placement triage (guard g: the this-run touched set)", () => {
           expect(outcome.counts.refusedTouched).toBe(2)
           expect(outcome.counts.applied).toBe(1)
           expectRefusalCensus(outcome.counts as Record<string, number>)
+        }),
+      { seed: corpusFor(), model }
+    )
+  })
+
+  it("pins the file a link authored this run points at, not just the file that holds it (issue #83)", async () => {
+    /**
+     * Edge-typing's directional arm stamps the promoted rel into the SUBJECT alone, so the OBJECT's
+     * path is in no commit's diff and `refusedTouched` cannot see it. This seeds exactly that shape
+     * through the real stamp and the real trailer: alfa gains `caused_by -> bravo`, bravo's bytes
+     * never change. Alfa pins as touched; bravo must pin as a link target, because a move of bravo
+     * leaves alfa's night-old edge pointing at a path the tree no longer holds — invisible to this
+     * phase's inbound-href rewrite and to integrity, both of which read an index nothing refreshes
+     * mid-run. Cielo, which nothing wrote and nothing points at, still moves: the pin must not
+     * become issue #81's over-refusal in a new key.
+     */
+    const model = placeAllInto("areas/ledgers")
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const base = (yield* fixture.raw("rev-parse", "HEAD")).trim()
+          const env = envFor(fixture)
+          const wrote = yield* stampFile(env, inboxPath("alfa"), [
+            link("caused_by", hrefFor(inboxPath("bravo"))),
+            meta("memhtml-updated", env.at)
+          ])
+          expect(wrote).toBe(true)
+          const sha = yield* commitPhase(env, "edge-typing", "promote 1 typed edge", {})
+          expect(sha).not.toBeNull()
+          // The object's path is NOT in the commit's diff — the gap this case exists to cover.
+          expect(yield* fixture.raw("diff", "--name-only", `${base}..HEAD`)).not.toContain(
+            inboxPath("bravo")
+          )
+
+          const outcome = yield* placementTriage(envFor(fixture, { deep: true, baseSha: base }))
+          expect(outcome.counts.refusedTouched).toBe(1)
+          expect(outcome.counts.refusedLinkTarget).toBe(1)
+          expect(outcome.counts.applied).toBe(1)
+          expectRefusalCensus(outcome.counts as Record<string, number>)
+
+          const tree = yield* fixture.raw("ls-tree", "-r", "--name-only", "HEAD")
+          // Subject and object both stay; only the uninvolved file moved.
+          expect(tree).toContain(inboxPath("alfa"))
+          expect(tree).toContain(inboxPath("bravo"))
+          expect(tree).toContain("areas/ledgers/cielo.html")
+          // The authored edge still points at a path the tree holds.
+          const subject = yield* fixture.raw("show", `HEAD:${inboxPath("alfa")}`)
+          expect(subject).toContain(`href="/${inboxPath("bravo")}"`)
         }),
       { seed: corpusFor(), model }
     )
