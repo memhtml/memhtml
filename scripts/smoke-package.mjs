@@ -113,7 +113,17 @@ const main = async () => {
       cwd: STAGING,
       maxBuffer: 32 * 1024 * 1024
     })
-    const tarball = join(STAGING, JSON.parse(packed)[0].filename)
+    /**
+     * npm ≤11 emits an array of pack reports; npm 12 emits an object keyed by package name
+     * (probed live, npm 12.0.2: `{"memhtml": {"filename": …}}`). Accept both, and fail with the
+     * raw head rather than a property-of-undefined when neither shape carries a filename.
+     */
+    const parsed = JSON.parse(packed)
+    const report = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0]
+    if (typeof report?.filename !== "string") {
+      throw new Error(`npm pack --json reported no filename: ${packed.slice(0, 200)}`)
+    }
+    const tarball = join(STAGING, report.filename)
 
     await exec("mkdir", ["-p", consumer])
     await writeFile(
