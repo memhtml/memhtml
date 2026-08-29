@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.8.0...memhtml-v0.9.0) (2026-08-29)
+
+
+### Features
+
+* **cli:** admit `arc` on the operator write surface ([309871c](https://github.com/memhtml/memhtml/commit/309871c57776aad1af27264e9c3c741ef91b8ac2)), closes [#88](https://github.com/memhtml/memhtml/issues/88)
+
+
+### Bug Fixes
+
+* **scripts:** accept npm 12's object-shaped pack --json report ([85740ef](https://github.com/memhtml/memhtml/commit/85740ef0ca8ba8fffc2e66a3a12190eee27fa7a8))
+* **sleep:** offer this run's minted directories to every later placement batch ([31924bb](https://github.com/memhtml/memhtml/commit/31924bbe5dd55a30f7f8f65b99c9e5a18ef08842)), closes [#82](https://github.com/memhtml/memhtml/issues/82)
+* **sleep:** pin the file a link authored this run points at (issue [#83](https://github.com/memhtml/memhtml/issues/83)) ([ede85b9](https://github.com/memhtml/memhtml/commit/ede85b989449797658b622b78a522db4eb29c92f))
+
 ## [0.8.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.7.2...memhtml-v0.8.0) (2026-08-27)
 
 
