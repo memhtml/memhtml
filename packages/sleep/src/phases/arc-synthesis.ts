@@ -166,10 +166,17 @@ export const arcSynthesis: PhaseBody = (env) =>
           ? plannedCreatePath
           : undefined)
 
-      const current =
-        existingPath === undefined
-          ? undefined
-          : (yield* readFileBytes(env, existingPath))?.slice(0, ARC_CURRENT_CHARS)
+      /**
+       * The FULL existing file is read once; the model sees only the head. The head is where
+       * a tiered arc keeps its claim and summary, so `ARC_CURRENT_CHARS` covers what the model
+       * needs to preserve — but the file is written WHOLE below, so everything past the slice
+       * would silently vanish on every update. `existingRaw` is held so the write site can carry
+       * the arc's `<details>` folds forward verbatim (the grounding recall never quotes and the
+       * model was never shown).
+       */
+      const existingRaw =
+        existingPath === undefined ? undefined : yield* readFileBytes(env, existingPath)
+      const current = existingRaw?.slice(0, ARC_CURRENT_CHARS)
 
       const supporting = entry.evidenceKeys.flatMap((key) => {
         const found = evidenceKeyed.find((candidate) => candidate.key === key)
@@ -241,10 +248,26 @@ export const arcSynthesis: PhaseBody = (env) =>
         .join("\n")
       const summaryLine =
         (content.summary ?? "").trim() === "" ? "Elaboration" : (content.summary ?? "").trim()
-      const articleHtml =
-        foldedParagraphs === ""
-          ? `<p><mark>${escapeText(content.claim.trim())}</mark></p>`
-          : `<p><mark>${escapeText(content.claim.trim())}</mark></p>\n<details>\n<summary>${escapeText(summaryLine)}</summary>\n${foldedParagraphs}\n</details>`
+      /**
+       * An update CARRIES THE EXISTING FOLDS FORWARD verbatim. The model saw only the file's
+       * head, so its output cannot restate what lived behind the folds — incident grounding,
+       * merged generation-1 lineage — and a whole-file write without this block deletes that
+       * material on every update (observed: the 2026-08-30 run stripped the grounding folds
+       * from ten arcs). Folds ride below the fresh one, oldest last; Tier 3 is free at recall,
+       * so accumulation costs a reader nothing until a deliberate re-draft consolidates it.
+       */
+      const carriedFolds =
+        existingRaw === undefined ? [] : (existingRaw.match(/<details>[\s\S]*?<\/details>/g) ?? [])
+      const articleParts = [
+        `<p><mark>${escapeText(content.claim.trim())}</mark></p>`,
+        ...(foldedParagraphs === ""
+          ? []
+          : [
+              `<details>\n<summary>${escapeText(summaryLine)}</summary>\n${foldedParagraphs}\n</details>`
+            ]),
+        ...carriedFolds
+      ]
+      const articleHtml = articleParts.join("\n")
       yield* writeFileBytes(
         env,
         arcPath,
