@@ -35,18 +35,18 @@
     "dev:agent": "eve dev"
   },
   "dependencies": {
-    "@ai-sdk/amazon-bedrock": "5.0.61",
+    "@ai-sdk/amazon-bedrock": "5.0.66",
     "@memhtml/contracts": "workspace:*",
-    "ai": "7.0.77",
+    "ai": "7.0.83",
     "effect": "catalog:",
-    "eve": "0.44.1",
+    "eve": "0.47.2",
     "just-bash": "3.4.2",
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.10",
+    "@biomejs/biome": "2.5.11",
     "@effect/vitest": "catalog:",
-    "@types/node": "26.2.0",
+    "@types/node": "26.4.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11"
   }
