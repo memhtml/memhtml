@@ -196,8 +196,9 @@ const SWEPT_TMPDIR_PREFIXES = [RUN_TMPDIR_PREFIX, CORPUS_SNAPSHOT_TMPDIR_PREFIX]
 
 /**
  * How stale an orphaned temp directory must be before the sweep removes it. A directory younger than
- * this may belong to a LIVE concurrent run — a turn is allowed {@link TURN_TIMEOUT_MS} (10 minutes),
- * so a day is two orders of magnitude of margin, and a leaked manifest costs nothing while it waits.
+ * this may belong to a LIVE concurrent run — a turn's budget is {@link turnBudgetMsFor}, forty
+ * minutes at the default batch — so a day is still over an order of magnitude of margin, and a
+ * leaked manifest costs nothing while it waits.
  */
 const ORPHAN_RUN_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000
 
@@ -232,8 +233,40 @@ const READY_PROBE_TIMEOUT_MS = 2_000
  */
 const MAX_PORT_ATTEMPTS = 3
 
-/** How long one consolidation turn may take. Reading a batch with `reasoning: "high"` is slow. */
-const TURN_TIMEOUT_MS = 10 * 60_000
+/**
+ * The turn budget's fixed part, spent once per run regardless of batch size.
+ *
+ * Ten minutes was the WHOLE budget until issue #99, and a full default batch did not fit it: an
+ * instrumented run over ten large transcripts was mid-work at event ~372 when the flat deadline
+ * fired, with every request authenticated and answered — the turn was killed for being exactly as
+ * slow as reading that much material with `reasoning: "high"` is. So the flat constant became the
+ * base of {@link turnBudgetMsFor}, which scales the rest with the batch actually handed over.
+ */
+const TURN_BASE_TIMEOUT_MS = 10 * 60_000
+
+/**
+ * The turn budget's per-transcript part.
+ *
+ * Three minutes per transcript the agent is asked to read. The measured failure that set this
+ * (issue #99) had ten transcripts over a ten-minute total, i.e. one minute each after overhead, and
+ * that was not enough; three each puts a default batch at a forty-minute ceiling, which bounds a
+ * runaway turn while no longer pricing careful reading out of the budget.
+ */
+const TURN_PER_TRANSCRIPT_TIMEOUT_MS = 3 * 60_000
+
+/**
+ * How long one consolidation turn may take, given how much it was handed.
+ *
+ * A pure function of the batch rather than a constant, because the work is proportional to the
+ * batch: a flat budget that fits three transcripts starves ten (issue #99). `override` is
+ * {@link ConsolidatorOptions.turnTimeoutMs} and wins outright when present — an operator stating a
+ * ceiling is stating THE ceiling, and scaling a stated ceiling would make it mean something else.
+ */
+export const turnBudgetMsFor = (input: {
+  readonly transcriptCount: number
+  readonly override?: number | undefined
+}): number =>
+  input.override ?? TURN_BASE_TIMEOUT_MS + TURN_PER_TRANSCRIPT_TIMEOUT_MS * input.transcriptCount
 
 /** How a client is built. Note the absence of a host: see {@link LOOPBACK_HOST}. */
 export interface ConsolidatorOptions {
@@ -259,6 +292,13 @@ export interface ConsolidatorOptions {
   readonly maxTranscripts?: number
   /** Env the credential preflight reads. Defaults to `process.env`. */
   readonly env?: Record<string, string | undefined>
+  /**
+   * A fixed ceiling on one consolidation turn, in milliseconds. Absent, the budget scales with the
+   * batch: {@link turnBudgetMsFor}. Present, it replaces that computation entirely — see the note
+   * there on why an operator's stated ceiling is not scaled. The CLI's composition root reads it
+   * from `MEMHTML_CONSOLIDATOR_TURN_TIMEOUT_MS` (`apps/cli/src/api-layer.ts`).
+   */
+  readonly turnTimeoutMs?: number
   /**
    * EXTRA host directories to mount read-only, beside the two {@link ConsolidatorShape.consolidate}
    * derives from its own input. Empty by default.
@@ -1054,8 +1094,8 @@ const runTurn = (
      * wire format in this file, free to drift from it.
      *
      * **The FUNCTION form, so a token is signed fresh per request.** `TokenValue` may be a thunk and
-     * "the client resolves credentials before each request" (types.d.ts:49-57), so a turn that runs the
-     * full {@link TURN_TIMEOUT_MS}, ten minutes against a token good for two, still presents a valid
+     * "the client resolves credentials before each request" (types.d.ts:49-57), so a turn that runs
+     * its full budget ({@link turnBudgetMsFor}, well past the token's TTL) still presents a valid
      * credential on its last stream reconnect. A static string would tie the credential's lifetime to
      * the turn's and force a TTL long enough to cover the slowest possible run.
      *
@@ -1340,19 +1380,24 @@ export const makeConsolidator = (options: ConsolidatorOptions): ConsolidatorShap
                   ...extraMounts
                 ]
               }),
-              (server) =>
-                runTurn(server, reachable).pipe(
+              (server) => {
+                const turnBudgetMs = turnBudgetMsFor({
+                  transcriptCount: reachable.length,
+                  override: options.turnTimeoutMs
+                })
+                return runTurn(server, reachable).pipe(
                   Effect.timeoutOrElse({
-                    duration: TURN_TIMEOUT_MS,
+                    duration: turnBudgetMs,
                     orElse: () =>
                       Effect.fail(
                         ConsolidatorRunFailed.make({
                           phase: "turn",
-                          reason: `the consolidation turn exceeded ${String(TURN_TIMEOUT_MS)}ms`
+                          reason: `the consolidation turn exceeded ${String(turnBudgetMs)}ms for ${String(reachable.length)} transcripts`
                         })
                       )
                   })
-                ),
+                )
+              },
               (server) => Effect.promise(server.stop)
             ),
           (manifestRoot) => Effect.promise(() => rm(manifestRoot, { recursive: true, force: true }))

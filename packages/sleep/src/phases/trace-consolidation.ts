@@ -162,6 +162,10 @@ export const TRACE_MIN_BYTES = 8 * 1024
  * when it has to page. Newest-first ordering in the query is what makes ten a per-run increment
  * instead of a truncation. A first run over a year of transcripts consolidates the ten most recent,
  * and each subsequent night takes the next ten.
+ *
+ * The DEFAULT, not the law: `env.traceSessions` (the `--trace-sessions` flag on `sleep run`)
+ * overrides it per run, because the right batch is a property of the host — how large its
+ * transcripts run, how much turn time they need (issue #99).
  */
 export const TRACE_SESSIONS_PER_RUN = 10
 
@@ -922,7 +926,7 @@ export const traceConsolidation: PhaseBody = (env) =>
     const batch = yield* unconsolidatedSessions(env.deps.db, {
       minBytes: TRACE_MIN_BYTES,
       settledBefore,
-      limit: TRACE_SESSIONS_PER_RUN
+      limit: env.traceSessions ?? TRACE_SESSIONS_PER_RUN
     })
     if (batch.length === 0) {
       return emptyOutcome({ ...base, ...ZERO_COUNTS })

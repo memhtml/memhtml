@@ -93,6 +93,28 @@ export const sleepPhases = (
 }
 
 /**
+ * The `--trace-sessions` flag, validated: a positive integer, or absent for the default.
+ *
+ * Refused rather than clamped, because the sharp edge is SQL: the value becomes the batch query's
+ * `LIMIT`, and SQLite reads a negative limit as NO limit — a typo'd flag would hand the
+ * consolidator the whole unconsolidated backlog in one turn. Zero is refused too: a run asked to
+ * consolidate zero sessions is a contradiction better surfaced than silently honored.
+ */
+export const traceSessionsFlag = (
+  raw: number | undefined
+): Effect.Effect<number | undefined, InvalidMemory> => {
+  if (raw === undefined) return Effect.succeed(undefined)
+  if (!Number.isSafeInteger(raw) || raw < 1) {
+    return Effect.fail(
+      InvalidMemory.make({
+        reason: `--trace-sessions must be a positive integer; got ${String(raw)}`
+      })
+    )
+  }
+  return Effect.succeed(raw)
+}
+
+/**
  * A run report on the wire.
  *
  * Identical to the internal shape except for `llmCalls`, which is summed per phase and totalled. A

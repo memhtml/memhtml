@@ -40,7 +40,7 @@ import * as ops from "./operations.js"
 import { publish } from "./publish.js"
 import { serveMcp } from "./serve.js"
 import { stateExport, stateImport } from "./state.js"
-import { indexReport, sleepPhases, sleepRunReport } from "./views.js"
+import { indexReport, sleepPhases, sleepRunReport, traceSessionsFlag } from "./views.js"
 
 export interface Parsed {
   readonly command: string
@@ -599,12 +599,14 @@ const dispatch = (
         const sleep = yield* Sleep
         const phases = yield* sleepPhases(str(parsed, "phases"))
         const maxLlmCalls = int(parsed, "max-llm-calls")
+        const traceSessions = yield* traceSessionsFlag(int(parsed, "trace-sessions"))
         const report = yield* sleep.run({
           date: str(parsed, "date") ?? (yield* today),
           ...(phases === undefined ? {} : { phases }),
           dryRun: bool(parsed, "dry-run", false),
           deep: bool(parsed, "deep", false),
-          ...(maxLlmCalls === undefined ? {} : { maxLlmCalls })
+          ...(maxLlmCalls === undefined ? {} : { maxLlmCalls }),
+          ...(traceSessions === undefined ? {} : { traceSessions })
         })
         const payload = sleepRunReport(report)
         return ["sleep.report", payload, sleepExit(payload)] as const

@@ -126,6 +126,16 @@ export interface PhaseEnv {
    */
   readonly deep?: DeepOptions | undefined
   /**
+   * Sessions handed to trace-consolidation this run, or absent for the default
+   * (`TRACE_SESSIONS_PER_RUN`, ten).
+   *
+   * A PARAMETER for the same reason `date` is: the right batch is a property of the HOST — how large
+   * its transcripts run, how much turn time they need (issue #99) — and a phase that read config
+   * itself could not be pointed at a fixture. Absent keeps every existing caller byte-identical,
+   * the same posture {@link deep} takes.
+   */
+  readonly traceSessions?: number | undefined
+  /**
    * The night's shared detected-task budget, or absent.
    *
    * The one MUTABLE member of this interface, and the mutation is the point: four phases mint
