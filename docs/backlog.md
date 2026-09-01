@@ -56,7 +56,17 @@ REMAINING, in rough order of pull:
 2. **A `conflicts` count in `summary` (v2).** Deliberately omitted — the five current numbers partition the ops and a conflict is not an outcome. Add only with a consumer that needs the count without walking `results`.
 3. **`article_html` ops report nothing.** The claim lives inside the caller's markup and the ops layer never parses it. Closing this means either parsing each op's article before the store renders it (a second parse, and a second place the gist rule can drift) or moving the assist behind the store's own render — the second is the honest fix and it is a bigger change than v1 earned.
 4. **No sleep-cycle phase consumes frame keys.** A curation phase proposing corrections for slots with several live claims is the natural next consumer, and it fits the existing shape: every sleep mutation is already a reviewable commit behind the discrimination gate. Deferred until the corpus has enough contradictions to be worth a phase.
-5. **Pre-0009 stores under-report until a rebuild.** SQL cannot call `frameKeyOf`, so 0009 does not backfill; existing rows carry NULL `frame_key` until `memhtml index rebuild` or each file's next update. The consequence is that the assist finds FEWER conflicts on an un-rebuilt store, never wrong ones — a safe degradation, stated in the migration header.
+
+## Near-duplicate assist (issue #103, ROADMAP 6b's write-time lane)
+
+`memory_write_batch` and `memhtml apply` take an optional `detect_near_duplicates` / `--detect-near-duplicates` and report a per-op `near_duplicates [{ path, batch_index, similarity, claim }]` — the vector sibling of the conflict assist, catching the rewording the frame rule refuses to key and the content hash cannot see. The batch embeds through the document-space port in ONE call (the op has no stored embedding at write time), ranks against active non-task, non-arc first-chunk vectors in ONE corpus read (`activeNearestFor`), and reports at or above `NEAR_DUPLICATE_THRESHOLD` (0.92, `dedup-merge`'s own floor). Propose-only, same fold asymmetries as the conflict assist, plus one honesty bit the frame assist does not need: `near_duplicates_degraded` on the batch result, true when the embedder is off or a call failed, so null findings read as UNCHECKED rather than unique. Requirements NEAR-1..5.
+
+REMAINING, in rough order of pull:
+
+1. **The budgeted LLM adjudication tier** (issue #103's optional second half). Compose `makeLlmBudget` and the `@memhtml/domain` merge vetoes to RESOLVE reported pairs under a `--max-llm-calls` budget, the way `consolidate: "last-wins"` acts on what `detect_conflicts` reports. Deferred: the propose-only tier needs no LLM at all, and acting on geometry without the divergence guards in front of a model is the exact failure `dedup-merge` exists to prevent.
+2. **The threshold is inherited, not measured at this surface.** 0.92 is `dedup-merge`'s mining floor, reused rather than guessed anew — but the fence-detector discipline says measure on a labeled near-duplicate corpus before trusting a boundary, and that measurement waits on the lived-in-corpus gym (ROADMAP 6b).
+3. **`article_html` ops report nothing**, for the conflict assist's exact reason (its REMAINING item 3): the claim lives inside the caller's markup, and the honest fix — the assist behind the store's own render — is the same bigger change.
+4. **Pre-0009 stores under-report until a rebuild.** SQL cannot call `frameKeyOf`, so 0009 does not backfill; existing rows carry NULL `frame_key` until `memhtml index rebuild` or each file's next update. The consequence is that the assist finds FEWER conflicts on an un-rebuilt store, never wrong ones — a safe degradation, stated in the migration header.
 
 ## Upstream watch
 

@@ -603,6 +603,8 @@ const MemoryWriteBatch = Tool.make("memory_write_batch", {
     // …
     detect_conflicts: Optional(Schema.Boolean),
     // …
+    detect_near_duplicates: Optional(Schema.Boolean),
+    // …
     consolidate: Optional(Schema.Literals(["last-wins"])),
     // …
     session_id: Optional(Schema.String),
@@ -622,18 +624,19 @@ const MemoryWriteBatch = Tool.make("memory_write_batch", {
       /** Batch-internal losers under `consolidate: "last-wins"`: neither written nor failed. */
       consolidated: Count
     }),
-    commit_sha: Schema.NullOr(Schema.String)
+    commit_sha: Schema.NullOr(Schema.String),
+    near_duplicates_degraded: Schema.Boolean
   })
 })
 ```
 
 Writes many memories in one commit. It validates every op first, stages every surviving file, then commits and reindexes exactly once.
 
-**Input:** `ops`, an array of `BatchOp`, which is `Schema.Struct(writeFields())` and therefore carries the same thirteen fields as `memory_write`, including the same one-of-`body`-or-`article_html` rule (`apps/mcp/src/tools.ts:277`). Both tools read the same field record, so adding a field cannot leave the two published schemas disagreeing (`apps/mcp/src/tools.ts:213-225`). `continue_on_error` switches from the atomic default to best-effort. `detect_conflicts` adds a per-op `conflict` field and changes nothing about what is written. `consolidate` accepts the single literal `"last-wins"`. A one-value `Literals` was used rather than a boolean so the vocabulary can widen without a shipped `true` changing meaning (`apps/mcp/src/tools.ts:377-382`). `session_id`, `prompt_id`, and `turn_uuid` are batch-level provenance that an op's own value overrides.
+**Input:** `ops`, an array of `BatchOp`, which is `Schema.Struct(writeFields())` and therefore carries the same thirteen fields as `memory_write`, including the same one-of-`body`-or-`article_html` rule (`apps/mcp/src/tools.ts:277`). Both tools read the same field record, so adding a field cannot leave the two published schemas disagreeing (`apps/mcp/src/tools.ts:213-225`). `continue_on_error` switches from the atomic default to best-effort. `detect_conflicts` adds a per-op `conflict` field and changes nothing about what is written. `detect_near_duplicates` adds a per-op `near_duplicates` list — the vector sibling of the frame-key assist, catching rewordings the grammatical rule refuses to key — and likewise changes nothing about what is written; it costs one document-space embedding call per batch. `consolidate` accepts the single literal `"last-wins"`. A one-value `Literals` was used rather than a boolean so the vocabulary can widen without a shipped `true` changing meaning (`apps/mcp/src/tools.ts:377-382`). `session_id`, `prompt_id`, and `turn_uuid` are batch-level provenance that an op's own value overrides.
 
-**Output:** `results`, `summary`, and `commit_sha`. `results` holds one `BatchOpResult` per op in input order, each with `index`, `ok`, `path`, `deduped`, `existing_path`, `code`, `error`, `skipped`, `conflict`, `consolidated_into`, and `superseded_path`. Every nullable field is present rather than optional, so an absent key never has to be read as a negative answer (`apps/mcp/src/tools.ts:280-341`). `conflict` names what an op's claim contradicts, by `path` for a stored active memory or by `batch_index` for an earlier op in the same call, plus that other claim's `claim` text. The handler translates both `batch_index` and `consolidated_into` from the survivor-array space `batchWrite` saw back into the caller's own op indices, so a refused op earlier in the batch cannot make a pointer name the wrong op (`apps/mcp/src/handlers.ts:446-488`). `summary` is derived from `results` in one pass so the counts cannot disagree with the array (`apps/mcp/src/handlers.ts:285-297`). `commit_sha` is null when nothing was written, which covers an all-deduped batch and an aborted one. An atomic abort does not arrive here at all. It reaches the caller through the error channel as `batchAbortFailure`, whose message names the offending op as `ops[N]` and states that nothing was written (`apps/mcp/src/failure.ts:206-219`, `apps/mcp/src/handlers.ts:431-444`).
+**Output:** `results`, `summary`, and `commit_sha`. `results` holds one `BatchOpResult` per op in input order, each with `index`, `ok`, `path`, `deduped`, `existing_path`, `code`, `error`, `skipped`, `conflict`, `near_duplicates`, `consolidated_into`, and `superseded_path`. Every nullable field is present rather than optional, so an absent key never has to be read as a negative answer (`apps/mcp/src/tools.ts:280-341`). `conflict` names what an op's claim contradicts, by `path` for a stored active memory or by `batch_index` for an earlier op in the same call, plus that other claim's `claim` text. `near_duplicates` lists what an op's text embedding-matches at or above cosine 0.92, each entry carrying `path` or `batch_index`, the measured `similarity`, and the other `claim`; it is null when the flag was off, when nothing matched, on an `article_html` op, and whenever the top-level `near_duplicates_degraded` is true — that flag means the assist could not run (no embedder bound, or the call failed), so null then reads as unchecked rather than unique. The handler translates `batch_index` (on `conflict` and on every `near_duplicates` entry) and `consolidated_into` from the survivor-array space `batchWrite` saw back into the caller's own op indices, so a refused op earlier in the batch cannot make a pointer name the wrong op (`apps/mcp/src/handlers.ts:486-526`). `summary` is derived from `results` in one pass so the counts cannot disagree with the array (`apps/mcp/src/handlers.ts:285-297`). `commit_sha` is null when nothing was written, which covers an all-deduped batch and an aborted one. An atomic abort does not arrive here at all. It reaches the caller through the error channel as `batchAbortFailure`, whose message names the offending op as `ops[N]` and states that nothing was written (`apps/mcp/src/failure.ts:206-219`, `apps/mcp/src/handlers.ts:431-444`).
 
-`apps/mcp/src/tools.ts:343-407`
+`apps/mcp/src/tools.ts:468-548`
 
 ## `trace_links`
 
