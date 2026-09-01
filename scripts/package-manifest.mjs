@@ -77,7 +77,8 @@ for (const required of [
   "migrations",
   "guest",
   "agent",
-  "src"
+  "src",
+  "tether"
 ]) {
   if (!existsSync(join(STAGING, required))) {
     throw new Error(`dist-package/${required} is missing; run \`pnpm package:assemble\``)
@@ -114,6 +115,7 @@ await writeFile(
         "guest",
         "agent",
         "src",
+        "tether",
         "README.md",
         "LICENSE"
       ],

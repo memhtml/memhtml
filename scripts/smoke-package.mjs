@@ -35,6 +35,27 @@ const exec = promisify(execFile)
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const STAGING = join(REPO_ROOT, "dist-package")
 
+/**
+ * Drop the variables by which the environment, not `-C`, decides which repository a git call
+ * operates on. This script runs under lefthook's pre-push, where git exports an absolute `GIT_DIR`
+ * from a linked worktree; inherited, it re-aims this script's own `git rev-parse`/`worktree` probes
+ * — and, through the spawned children, every corpus the smoke builds — at the repository being
+ * pushed. The installed CLI scrubs its own git spawns (`GIT_REPO_SELECTION_ENV`,
+ * `packages/store/src/git.ts`); this is the same scrub for the harness's process tree.
+ */
+for (const name of [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_COMMON_DIR",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_PREFIX",
+  "GIT_CEILING_DIRECTORIES"
+]) {
+  delete process.env[name]
+}
+
 /** `--live` also drives Bedrock. Off by default so the gate stays credential-free. */
 const LIVE = process.argv.includes("--live") || process.env.MEMHTML_SMOKE_LIVE === "1"
 

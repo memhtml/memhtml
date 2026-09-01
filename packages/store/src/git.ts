@@ -171,6 +171,35 @@ const GIT_ENV: Readonly<Record<string, string>> = {
   LC_ALL: "C"
 }
 
+/**
+ * The variables by which the ENVIRONMENT, not `-C`, decides which repository a git call operates on.
+ * Every spawn removes them, because git exports them into hook processes: a `pre-push` hook in a
+ * linked worktree receives an ABSOLUTE `GIT_DIR`, every descendant inherits it, and a store call
+ * that meant "the corpus at `-C <root>`" silently reads and writes the repository the hook ran in.
+ * Measured here: `memhtml sleep run` under such a hook refused with DirtyTree naming the CALLING
+ * repo's tree, with the corpus clean. (A primary checkout exports the relative `.git`, which a child
+ * running elsewhere fails to resolve and falls back from — which is why hooks from a primary
+ * checkout never surfaced this.) `apps/consolidator/src/mount.ts` scrubs the same set for its
+ * `git worktree` calls; the two lists are pinned to each other by tests on both sides.
+ */
+export const GIT_REPO_SELECTION_ENV: ReadonlyArray<string> = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_COMMON_DIR",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_PREFIX",
+  "GIT_CEILING_DIRECTORIES"
+]
+
+/** `process.env` with {@link GIT_ENV} applied and every repo-selecting variable removed. */
+const gitChildEnv = (): Record<string, string | undefined> => {
+  const env: Record<string, string | undefined> = { ...process.env, ...GIT_ENV }
+  for (const name of GIT_REPO_SELECTION_ENV) delete env[name]
+  return env
+}
+
 /** 64 MiB. A `cat-file --batch` over a whole corpus is the one call with a large stdout. */
 const MAX_BUFFER = 64 * 1024 * 1024
 
@@ -193,7 +222,7 @@ const spawnGit = (
     const child = execFile(
       "git",
       ["-C", root, ...args],
-      { encoding: "buffer", maxBuffer: MAX_BUFFER, env: { ...process.env, ...GIT_ENV }, signal },
+      { encoding: "buffer", maxBuffer: MAX_BUFFER, env: gitChildEnv(), signal },
       (error: (Error & { code?: unknown }) | null, stdout: Buffer, stderr: Buffer) => {
         resume(
           Effect.succeed({

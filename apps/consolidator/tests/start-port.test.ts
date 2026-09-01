@@ -157,7 +157,9 @@ describe("the port is passed explicitly, never read back", () => {
    */
   it("spawns eve through node rather than through a package manager", async () => {
     const code = codeOnly(await clientSource())
-    expect(code).toMatch(/spawn\(\s*process\.execPath,\s*\[eveBin,\s*"start"/)
+    // The entry rides behind the parent tether's `--import` pair (`child-tether.ts`), so the argv
+    // is composed by `tetheredNodeArgs` — still node against a resolved path, never a manager.
+    expect(code).toMatch(/spawn\(\s*process\.execPath,\s*tetheredNodeArgs\(eveBin,\s*\["start"/)
     expect(code).not.toMatch(/spawn\(\s*"pnpm"/)
     expect(code).not.toMatch(/"exec",\s*"eve"/)
   })

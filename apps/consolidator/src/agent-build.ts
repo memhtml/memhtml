@@ -17,6 +17,7 @@ import { dirname, join, resolve } from "node:path"
 import { Effect } from "effect"
 
 import { appendStderrTail, stderrMessageTail } from "./child-stderr.js"
+import { tetherEnv, tetheredNodeArgs } from "./child-tether.js"
 import { ConsolidatorUnavailable } from "./contract.js"
 
 /**
@@ -172,7 +173,10 @@ const packageOf = (specifier: string): string => {
  */
 const importedPackages = async (roots: ReadonlyArray<string>): Promise<ReadonlyArray<string>> => {
   const found = new Set<string>()
-  const pattern = /(?:from|import|require)\s*\(?\s*["']([^"']+)["']/g
+  // The lookbehind keeps a keyword INSIDE a string from matching: `"--import"` (the node flag the
+  // tether spawn composes) ends in `import` immediately before a quote, and without the guard the
+  // scanner reads whatever follows the comma as a specifier.
+  const pattern = /(?<![\w"'-])(?:from|import|require)\s*\(?\s*["']([^"']+)["']/g
   for (const root of roots) {
     for (const file of await sourceFiles(root)) {
       const text = await readFile(file, "utf8")
@@ -287,9 +291,15 @@ const runEveBuild = (input: {
   readonly cwd: string
 }): Effect.Effect<void, ConsolidatorUnavailable> =>
   Effect.callback<void, ConsolidatorUnavailable>((resume) => {
-    const child = spawn(process.execPath, [input.eveBin, "build"], {
+    /**
+     * Tethered like the `eve start` child in `client.ts` (`child-tether.ts`): a build whose parent
+     * was SIGKILLed grinds on producing output nothing will consult, and the markerless cache root
+     * it leaves is already the state the next run discards — killing it early just stops the burn.
+     */
+    const child = spawn(process.execPath, tetheredNodeArgs(input.eveBin, ["build"]), {
       cwd: input.cwd,
-      stdio: ["ignore", "ignore", "pipe"]
+      stdio: ["ignore", "ignore", "pipe"],
+      env: { ...process.env, ...tetherEnv() }
     })
     // Only a bounded TAIL is retained, and the failure message below renders the END of it. Both
     // rules are `child-stderr.ts`'s, shared with the `eve start` child in `client.ts`.
