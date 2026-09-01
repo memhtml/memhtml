@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/memhtml/memhtml/compare/memhtml-v0.9.0...memhtml-v0.9.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* **consolidator:** scale the turn budget with the batch and widen the token TTL ([#99](https://github.com/memhtml/memhtml/issues/99)) ([#101](https://github.com/memhtml/memhtml/issues/101)) ([44b3c9d](https://github.com/memhtml/memhtml/commit/44b3c9d0a68e17ce64d654f1971f6371ee82bd37))
+* **sleep:** carry existing details folds forward on arc update ([62c9901](https://github.com/memhtml/memhtml/commit/62c99013a26aa13193c234291312fbb13a912dee))
+
 ## [0.9.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.8.0...memhtml-v0.9.0) (2026-08-29)
 
 
