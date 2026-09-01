@@ -36,6 +36,10 @@ const inertModel = () =>
 const headOf = (fixture: Fixture, ref = "HEAD"): Effect.Effect<string> =>
   fixture.raw("rev-parse", ref).pipe(Effect.map((text) => text.trim()))
 
+/** One path's bytes as HEAD holds them, or `null` when HEAD does not hold the path. */
+const blobAt = (fixture: Fixture, path: string): Effect.Effect<string | null> =>
+  fixture.raw("show", `HEAD:${path}`).pipe(Effect.catchCause(() => Effect.succeed(null)))
+
 describe("review", () => {
   it("reports the phases, the commits with their trailers, the diff stat, and per-file classes", async () => {
     await withFixture(
@@ -174,13 +178,126 @@ describe("merge", () => {
     )
   })
 
-  it("refuses when main advanced past the run's base, and leaves main where it was", async () => {
+  it("merges a disjoint advance with a merge commit that keeps both sides", async () => {
+    /**
+     * Issue #108. An agent writing an UNRELATED memory on main while the sleep branch sits in
+     * review is a schedule collision, not a real conflict — and refusing it forfeits the whole
+     * night's model calls. When the paths main gained and the paths the branch wrote are provably
+     * disjoint, the merge proceeds with a merge commit that preserves both sides, and the pending
+     * marks the branch earned are still applied.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const report = yield* run(fixture.deps, { date: DATE })
+          const branchHead = yield* headOf(fixture)
+
+          // An agent writes a memory on main while the sleep branch sits in review. The path is
+          // new, so it is disjoint from anything the branch touched by construction.
+          yield* fixture.deps.git.checkoutBranch("main").pipe(Effect.orDie)
+          yield* fixture.commit(
+            [
+              {
+                path: "areas/team/written-during-review.html",
+                html: memoryHtml({
+                  title: "Written while the sleep branch was in review",
+                  claim: "An agent kept writing while curation was under review."
+                })
+              }
+            ],
+            "an ordinary write during review"
+          )
+
+          const merged = yield* merge(fixture.deps, report.runId)
+
+          expect(merged.merged).toBe(true)
+          expect(merged.refusal).toBeUndefined()
+          expect(merged.marksApplied).toBe(merged.marksPending)
+
+          // Both sides are on main: the agent's write and the branch's work.
+          expect((yield* fixture.raw("rev-parse", "--abbrev-ref", "HEAD")).trim()).toBe("main")
+          expect(yield* blobAt(fixture, "areas/team/written-during-review.html")).not.toBeNull()
+          const merges = yield* fixture.raw("rev-list", "--merges", "-n", "1", "HEAD")
+          expect(merges.trim()).not.toBe("")
+          const branchReachable = yield* fixture.raw(
+            "merge-base",
+            "--is-ancestor",
+            branchHead,
+            "HEAD"
+          )
+          expect(branchReachable).toBeDefined()
+        }),
+      { seed: DEDUP_CORPUS, model: inertModel() }
+    )
+  })
+
+  it("refuses when the advance overlaps the branch, names the overlap, and leaves main where it was", async () => {
     await withFixture(
       (fixture) =>
         Effect.gen(function* () {
           const report = yield* run(fixture.deps, { date: DATE })
 
-          // An agent writes a memory on main while the sleep branch sits in review.
+          /**
+           * The overlapping path is found by asking the branch what it wrote, never by restating a
+           * placement rule: any path the run's own diff names will do, and the first sorted one is
+           * deterministic.
+           */
+          const touched = (yield* fixture.raw(
+            "diff",
+            "--name-only",
+            `${report.baseSha}..${report.runId}`
+          ))
+            .split("\n")
+            .filter((path) => path.endsWith(".html"))
+            .sort()
+          const collision = touched[0]
+          expect(collision).toBeDefined()
+
+          // An agent rewrites one of those same paths on main while the branch sits in review.
+          yield* fixture.deps.git.checkoutBranch("main").pipe(Effect.orDie)
+          yield* fixture.commit(
+            [
+              {
+                path: collision ?? "",
+                html: memoryHtml({
+                  title: "Rewritten while the sleep branch was in review",
+                  claim: "An agent corrected this memory after the sleep read it."
+                })
+              }
+            ],
+            "a conflicting write during review"
+          )
+          const movedMain = yield* headOf(fixture, "main")
+
+          const refused = yield* merge(fixture.deps, report.runId)
+
+          expect(refused.merged).toBe(false)
+          expect(refused.refusal).toBe("main-advanced")
+          // The report names the collision, so an operator can tell a real overlap from two
+          // writers sharing a slot.
+          expect(refused.overlap).toContain(collision)
+          /**
+           * main did NOT move. The run curated a corpus that no longer exists — a decay computed
+           * against a confidence an agent has since corrected — so the operator reruns the sleep,
+           * which is cheap because every phase is idempotent.
+           */
+          expect(yield* headOf(fixture, "main")).toBe(movedMain)
+        }),
+      { seed: DEDUP_CORPUS, model: inertModel() }
+    )
+  })
+
+  it("refuses an advance whose touched sets cannot be read, rather than guessing", async () => {
+    /**
+     * The conservative arm: disjointness is a positive proof, and a diff that cannot be read is
+     * not a proof. The seam replaces `diffNameStatus` because no real-git provocation makes the
+     * advance readable for the run but unreadable for the guard.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const report = yield* run(fixture.deps, { date: DATE })
+
           yield* fixture.deps.git.checkoutBranch("main").pipe(Effect.orDie)
           yield* fixture.commit(
             [
@@ -196,16 +313,18 @@ describe("merge", () => {
           )
           const movedMain = yield* headOf(fixture, "main")
 
-          const refused = yield* merge(fixture.deps, report.runId)
+          const deps = {
+            ...fixture.deps,
+            git: {
+              ...fixture.deps.git,
+              diffNameStatus: () =>
+                Effect.fail({ _tag: "GitFailure", message: "unreadable" } as never)
+            }
+          }
+          const refused = yield* merge(deps, report.runId)
 
           expect(refused.merged).toBe(false)
           expect(refused.refusal).toBe("main-advanced")
-          /**
-           * main did NOT move. The run curated a corpus that no longer exists — a decay computed
-           * against a confidence an agent has since corrected, an eviction of a memory just
-           * reinforced — so the operator reruns the sleep, which is cheap because every phase is
-           * idempotent.
-           */
           expect(yield* headOf(fixture, "main")).toBe(movedMain)
         }),
       { seed: DEDUP_CORPUS, model: inertModel() }
