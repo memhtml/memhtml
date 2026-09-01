@@ -356,32 +356,33 @@ const ungroundedReason = (
   `not make readable (${String(readableCount)} transcript(s) resolved in the sandbox)`
 
 /**
- * Which of the reachable sessions a caller may WATERMARK from this answer.
+ * Which of the reachable sessions a caller may WATERMARK from this answer: the sessions the agent
+ * SAYS it read, intersected with what this run made reachable.
  *
- * TWO conditions, and both are necessary because each covers what the other cannot.
+ * The receipt is what bounds the advance to what was opened. Advancing every reachable session would
+ * lose transcripts permanently — a turn that opens 1 of 32 advances all 32, and `trace_consolidations`
+ * is an anti-join, so the other 31 are never selected again. That is the shape a step-budget-truncated
+ * turn takes. `readSessionIds` closes it: the agent names the sessions it opened or grepped, and only
+ * those advance.
  *
- * ## One: the answer must carry a finding, which is the only VERIFIED receipt
+ * A barren-but-READ session still advances, and so does a wholly barren ANSWER (issue #104), which is
+ * what keeps the cost bounded — "the agent read it and found nothing above the bar" is the watermark's
+ * meaning, the instructions call the all-empty answer with a full receipt the right one for a quiet
+ * batch, and gating each session on a CITATION would re-read every quiet transcript at full model cost
+ * every night forever. An earlier version gated the whole advance on the answer carrying at least one
+ * finding, as defense in depth against a misrouted listener whose `{"candidates": [], "commitments":
+ * []}` happened to decode — and the measured cost was #104's: selection is newest-first, so an honest
+ * barren night re-selected the identical batch forever and a ~2,000-session backlog never advanced.
  *
- * Reachability is decided by this process before the model runs, so it proves the files could be read
- * and never that anything read them. Quotes are the only receipt an answer carries that something
- * outside the model checks: `fabricatedQuoteReason` (`client.ts`) re-reads each cited transcript and
- * refuses the turn unless the quoted text is really in it. So an answer with NO candidates and NO
- * commitments proves nothing and advances nothing, whatever its {@link ConsolidationPayload.readSessionIds}
- * claims — a misrouted listener answering with empty lists and a full read receipt would otherwise
- * watermark a batch nothing opened. The batch stays unwatermarked and the next night asks again.
- *
- * ## Two: the advance covers what the agent SAYS it read, intersected with what was reachable
- *
- * The receipt behind the quote gate is per-RUN: it proves SOME file in the batch was opened, and says
- * nothing about the others. Advancing every reachable session on that receipt loses transcripts
- * permanently — a turn that opens 1 of 32 and returns one candidate with two real quotes advances all
- * 32, and `trace_consolidations` is an anti-join, so the other 31 are never selected again. That is the
- * shape a step-budget-truncated turn takes.
- *
- * `readSessionIds` closes it: the agent names the sessions it opened or grepped, and only those
- * advance. A barren-but-READ session still advances, which is what keeps the cost bounded — "the agent
- * read it and found nothing above the bar" is the watermark's meaning, and gating each session on its
- * own CITATION would re-read every quiet transcript at full model cost every night forever.
+ * What actually keeps that listener inert is not this function and not `healthy` (a weak pre-filter:
+ * its route is unauthenticated and its three fields are guessable). Two properties do the work.
+ * The exact body the gate feared FAILS DECODE — `readSessionIds` is required and the client decodes
+ * with `onExcessProperty: "error"`, so no receiptless answer reaches this rule at all. And a receipt
+ * that does arrive can only intersect nonzero if it names REAL session ids, which never cross the
+ * wire: `turnMessage` (`client.ts`) deliberately omits them, they live in the manifest mounted into
+ * the real agent's sandbox, so a listener that is not that agent has nothing to name. A future edit
+ * that put session ids into the turn message would silently void that second property — the
+ * seeding-era shape `turnMessage`'s own note declines — so the ids stay off the wire on purpose.
  *
  * The intersection is what bounds the claim. A session id the run did not make reachable cannot be
  * watermarked however the answer names it, so the receipt can only ever NARROW the reachable set. That
@@ -390,10 +391,12 @@ const ungroundedReason = (
  * ## What is still unverified, stated as the residual it is
  *
  * `readSessionIds` is a model CLAIM. An agent that opens one transcript and names thirty-two advances
- * thirty-two, and nothing here can tell that from a thorough run — the quote gate proves reading
- * happened, not how much. {@link underCitedWatermarkWarning} is what makes that shape
- * visible: it compares the sessions the answer QUOTES against the sessions it claims to have read, so a
- * wide claim behind a narrow set of quotes is logged rather than silent.
+ * thirty-two, and nothing here can tell that from a thorough run — the quote gate
+ * (`fabricatedQuoteReason`, `client.ts`) proves reading happened where an answer cites, not how much.
+ * {@link underCitedWatermarkWarning} is what makes that shape visible: it compares the sessions the
+ * answer QUOTES against the sessions it claims to have read, so a wide claim behind a narrow set of
+ * quotes — including a wholly barren answer claiming eight or more sessions read — is logged rather
+ * than silent.
  *
  * Ids are trimmed before comparison, so a receipt whose entries carry stray whitespace still matches
  * the reachable ids the manifest handed over.
@@ -402,14 +405,9 @@ const ungroundedReason = (
  * rule is pure over the answer and the reachable ids, and the test tier exercises it with no server.
  */
 export const watermarkableSessionIds = (
-  answer: {
-    readonly candidates: ReadonlyArray<unknown>
-    readonly commitments: ReadonlyArray<unknown>
-    readonly readSessionIds: ReadonlyArray<string>
-  },
+  answer: { readonly readSessionIds: ReadonlyArray<string> },
   readableSessionIds: ReadonlyArray<string>
 ): ReadonlyArray<string> => {
-  if (answer.candidates.length === 0 && answer.commitments.length === 0) return []
   const read = new Set(answer.readSessionIds.map((id) => id.trim()))
   return readableSessionIds.filter((id) => read.has(id))
 }
