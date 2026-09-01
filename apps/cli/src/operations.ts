@@ -413,7 +413,7 @@ export interface BatchOpReport {
    * {@link BatchWriteResult.nearDuplicatesDegraded}).
    *
    * Propose-only, exactly as `conflict` is: the presence of this field never changed what was
-   * written. The nightly `dedup-merge` — or an explicit `memory_correct` — is how a reported pair
+   * written. Sleep's `dedup-merge` — or an explicit `memory_correct` — is how a reported pair
    * gets folded, with the divergence guards in front of it.
    */
   readonly nearDuplicates?: ReadonlyArray<NearDuplicate> | undefined

@@ -673,6 +673,9 @@ describe("`memhtml apply` and `memory_write_batch` publish ONE per-op wire shape
     "error",
     "existing_path",
     "index",
+    // Present-and-null like `conflict`, for its reason: "nothing matched" and "this build does
+    // not check" lead to opposite decisions about whether to go looking.
+    "near_duplicates",
     "ok",
     "path",
     "skipped",
@@ -817,7 +820,7 @@ describe("`memhtml apply` and `memory_write_batch` publish ONE per-op wire shape
     }
   })
 
-  it("emits the same eleven per-op keys on both doors, and the same three inside a conflict", () => {
+  it("emits the same twelve per-op keys on both doors, and the same three inside a conflict", () => {
     for (const [label, payload] of [
       ["memhtml apply", applied],
       ["memory_write_batch", called]

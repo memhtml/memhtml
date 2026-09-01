@@ -1153,8 +1153,8 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "split `conflict` uses. PROPOSE-ONLY, exactly like `--detect-conflicts`, and for one more reason: " +
       "the score is geometry, and geometry is weak on the tokens that carry polarity — a claim and its " +
       "negation also sit above 0.92 — so read the paired claim before folding anything. Left alone, the " +
-      "nightly `dedup-merge` folds true rewordings under its divergence guards; this flag is for a " +
-      "batch writer that should not have to wait a night to learn it restated the corpus. It costs one " +
+      "next sleep's `dedup-merge` folds true rewordings under its divergence guards; this flag is for a " +
+      "batch writer that should not have to wait for a sleep run to learn it restated the corpus. It costs one " +
       "embedding call per batch. On an `article_html` line it is always null (the claim lives inside " +
       "your markup), and when the embedder cannot run at all (`MEMHTML_EMBED=off`, or the call failed) " +
       "the result carries `near_duplicates_degraded: true` and every `near_duplicates` is null, " +

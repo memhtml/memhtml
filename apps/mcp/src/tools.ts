@@ -264,7 +264,7 @@ const CONSOLIDATE_GUIDANCE =
  * geometry and geometry misses polarity; the degraded flag, because an embedding assist has a
  * standing way to be off (MEMHTML_EMBED=off) that a SQL lookup does not, and a null finding under
  * it means "nobody looked"; and the propose-only contract with its reason, so an agent does not
- * hand-roll the merge the nightly dedup phase owns, guards and all.
+ * hand-roll the merge sleep's dedup phase owns, guards and all.
  */
 const NEAR_DUPLICATE_GUIDANCE =
   "Set detect_near_duplicates to true and each per-op result gains a `near_duplicates` list naming what that op's text nearly RESTATES, by embedding cosine at or above 0.92, best match first. " +
@@ -272,7 +272,7 @@ const NEAR_DUPLICATE_GUIDANCE =
   "Each entry carries the other claim's text, the measured similarity, and ONE of path (an ACTIVE stored memory) or batch_index (an EARLIER op in this same call). " +
   "The score is geometry, not judgment: negations and small numeric edits also sit above 0.92, so read the paired claim before folding anything. " +
   "near_duplicates is null when nothing matched, when the flag was absent, on an op that used article_html (the claim is inside your markup and not read until the store renders it), and whenever near_duplicates_degraded is true — that top-level flag means the assist could not run (no embedder bound, or the embed call failed), so null then means UNCHECKED, not unique. " +
-  "THE ASSIST NEVER CHANGES WHAT IS WRITTEN, for detect_conflicts' reason. YOU decide, per finding: keep both, call memory_correct on the named path, or drop the op; left alone, the nightly dedup-merge folds true rewordings under its divergence guards."
+  "THE ASSIST NEVER CHANGES WHAT IS WRITTEN, for detect_conflicts' reason. YOU decide, per finding: keep both, call memory_correct on the named path, or drop the op; left alone, the next sleep run's dedup-merge folds true rewordings under its divergence guards."
 
 /**
  * The `facets` contract, stated in the description of every tool that scopes on one.

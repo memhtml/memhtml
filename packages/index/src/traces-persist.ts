@@ -266,7 +266,7 @@ export const makeIndexRecorder = (db: DatabaseShape): IndexRecorderShape => ({
    * same exclusion the SQL UDF's NULL produces for it in the retrieval arm. A row whose file has no
    * embedding yet — written since the last embed pass, or indexed under `--no-embed` — is simply not
    * in the join, so the assist under-reports rather than fails, which is the same blindness the
-   * nightly `dedup-merge` has until the embed pass catches up.
+   * sleep `dedup-merge` has until the embed pass catches up.
    *
    * An empty query set short-circuits without touching the database, for `activeFramesFor`'s
    * reason: a query with nothing to ask is not a query.
