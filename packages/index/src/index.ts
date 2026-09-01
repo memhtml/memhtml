@@ -135,6 +135,7 @@ export {
   LINK_KINDS,
   type LinkKind,
   makeIndexRecorder,
+  type NearMatch,
   type PersistOutcome,
   type PromptRowLike,
   persistScanned,

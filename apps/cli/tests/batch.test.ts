@@ -543,7 +543,8 @@ describe("the fold's own properties reach the operations layer intact", () => {
     expect(result).toEqual({
       results: [],
       summary: { total: 0, written: 0, deduped: 0, failed: 0, skipped: 0, consolidated: 0 },
-      commitSha: null
+      commitSha: null,
+      nearDuplicatesDegraded: false
     })
     expect(cli.calls.length).toBe(0)
   })
@@ -1307,5 +1308,196 @@ describe("batchWrite: consolidate last-wins", () => {
     expect(after).toContain(winnerPath)
     expect(after).not.toContain(storedPath)
     expect(after).not.toContain(second.results[0]?.supersededPath)
+  })
+})
+
+/**
+ * `batchWrite`'s `detectNearDuplicates` assist over the REAL layer graph: the deterministic embedder
+ * embeds the incoming ops, the real indexer has already embedded the stored corpus during the first
+ * batch's reindex, and the recorder's vector lookup ranks one against the other. Nothing here fakes
+ * the state the assist reads — that a fresh write's chunk 0 actually HAS an embedding by the time
+ * the next batch runs is half of what these tests prove.
+ *
+ * The two claims share their whole word multiset in a different order, so the bag-of-words fake
+ * embedder puts them at cosine 1.0 while their bytes differ — near-duplicate to the vector space,
+ * invisible to the content-hash dedupe, and (no shared frame key ranking aside) exactly the gap the
+ * assist exists to close.
+ */
+describe("the near-duplicate assist", () => {
+  const RUNBOOK =
+    "The deploy runbook owner is Priya Raman and the runbook lives in the operations wiki."
+  const RUNBOOK_REWORDED =
+    "Priya Raman is the deploy runbook owner and the runbook lives in the operations wiki."
+  const UNRELATED = "Grype and trivy disagree about reading VEX statements."
+
+  it("names the ACTIVE memory an op nearly restates, with the measured similarity, and writes it anyway", async () => {
+    const cli = await withCounter()
+    const first = await cli.run(batch({ ops: [op({ title: "Runbook owner", claim: RUNBOOK })] }))
+    const storedPath = first.results[0]?.path
+
+    const second = await cli.run(
+      batch({
+        ops: [op({ title: "Runbook owner restated", claim: RUNBOOK_REWORDED })],
+        detectNearDuplicates: true
+      })
+    )
+
+    const hits = second.results[0]?.nearDuplicates
+    expect(hits).toHaveLength(1)
+    // The PATH so the caller can go read or correct it, the CLAIM so it can decide without, and the
+    // measured SIMILARITY because 0.92 and 0.99 warrant different treatment.
+    expect(hits?.[0]?.path).toBe(storedPath)
+    expect(hits?.[0]?.claim).toBe(RUNBOOK)
+    expect(hits?.[0]?.batchIndex).toBeNull()
+    expect(hits?.[0]?.similarity).toBeGreaterThanOrEqual(0.92)
+    // The assist ran; null findings elsewhere mean "no match", not "unchecked".
+    expect(second.nearDuplicatesDegraded).toBe(false)
+
+    // PROPOSE-ONLY. The op reported a near-duplicate and still wrote: ok, a path, a commit, and BOTH
+    // memories on disk afterwards. This is the assertion the whole design rests on.
+    expect(second.results[0]?.ok).toBe(true)
+    expect(second.results[0]?.path).not.toBeUndefined()
+    expect(second.summary.written).toBe(1)
+    expect(second.commitSha).not.toBeNull()
+    expect((await htmlOnDisk(cli.root)).length).toBe(2)
+  })
+
+  it("reports nothing without the flag, over the same near-identical pair", async () => {
+    // The default-off half of the contract, over ops that WOULD match: a pair that reports nothing
+    // either way proves only that nothing matched.
+    const cli = await withCounter()
+    await cli.run(batch({ ops: [op({ title: "Runbook owner", claim: RUNBOOK })] }))
+    const second = await cli.run(
+      batch({ ops: [op({ title: "Runbook owner restated", claim: RUNBOOK_REWORDED })] })
+    )
+    expect(second.results[0]?.nearDuplicates).toBeUndefined()
+    expect(second.nearDuplicatesDegraded).toBe(false)
+  })
+
+  it("stays silent on a pair below the floor", async () => {
+    const cli = await withCounter()
+    await cli.run(batch({ ops: [op({ title: "Runbook owner", claim: RUNBOOK })] }))
+    const second = await cli.run(
+      batch({
+        ops: [op({ title: "Scanner disagreement", claim: UNRELATED })],
+        detectNearDuplicates: true
+      })
+    )
+    expect(second.results[0]?.nearDuplicates).toBeUndefined()
+    expect(second.nearDuplicatesDegraded).toBe(false)
+  })
+
+  it("names the EARLIER op when two ops in one batch restate each other, and writes both", async () => {
+    // The intra-batch fold, which nothing else in the system can see because neither op is stored
+    // when the assist runs — and ASYMMETRIC, the later op reporting on the earlier one, so one
+    // restatement is one finding rather than two.
+    const cli = await withCounter()
+    const result = await cli.run(
+      batch({
+        ops: [
+          op({ title: "Runbook owner", claim: RUNBOOK }),
+          op({ title: "Runbook owner restated", claim: RUNBOOK_REWORDED })
+        ],
+        detectNearDuplicates: true
+      })
+    )
+
+    expect(result.results[0]?.nearDuplicates).toBeUndefined()
+    const hits = result.results[1]?.nearDuplicates
+    expect(hits).toHaveLength(1)
+    expect(hits?.[0]?.batchIndex).toBe(0)
+    expect(hits?.[0]?.claim).toBe(RUNBOOK)
+    // No path: op 0's file does not exist yet, the batch has not been written when the assist runs.
+    expect(hits?.[0]?.path).toBeNull()
+    expect(result.summary.written).toBe(2)
+    expect((await htmlOnDisk(cli.root)).length).toBe(2)
+  })
+
+  it("never checks an article_html op, whose claim is inside the markup", async () => {
+    const cli = await withCounter()
+    await cli.run(batch({ ops: [op({ title: "Runbook owner", claim: RUNBOOK })] }))
+    const second = await cli.run(
+      batch({
+        ops: [
+          op({
+            title: "Markup restatement",
+            claim: "",
+            articleHtml: `<p><mark>${RUNBOOK_REWORDED}</mark></p>`
+          })
+        ],
+        detectNearDuplicates: true
+      })
+    )
+    // Unmatched, not degraded: the boundary is stated in the flag's description, and an op the
+    // assist cannot read is not a failure of the assist.
+    expect(second.results[0]?.nearDuplicates).toBeUndefined()
+    expect(second.nearDuplicatesDegraded).toBe(false)
+    expect(second.results[0]?.ok).toBe(true)
+  })
+
+  it("reports DEGRADED with no findings when no embedder is bound, and still writes", async () => {
+    // MEMHTML_EMBED=off: the one standing configuration where the assist can never run. The write
+    // must land regardless — an opt-in report may not become a new way to lose memories — and the
+    // caller must be told "unchecked" rather than shown a null that reads as "unique".
+    const { noEmbedder } = await import("./harness.js")
+    const cli = await makeCli({ embedder: noEmbedder() })
+    clis.push(cli)
+    const result = await Effect.runPromise(
+      Effect.provide(
+        batch({
+          ops: [op({ title: "Runbook owner", claim: RUNBOOK })],
+          detectNearDuplicates: true
+        }),
+        cli.layer
+      )
+    )
+    expect(result.nearDuplicatesDegraded).toBe(true)
+    expect(result.results[0]?.nearDuplicates).toBeUndefined()
+    expect(result.results[0]?.ok).toBe(true)
+    expect(result.summary.written).toBe(1)
+  })
+
+  it("reports DEGRADED when the embed call fails, and still writes", async () => {
+    // The other degradation: a bound embedder whose call fails (a Bedrock outage). Same contract,
+    // different failure channel — this one exercises the `Effect.result` around the embed call.
+    const { failingEmbedder } = await import("./harness.js")
+    const cli = await makeCli({ embedder: failingEmbedder() })
+    clis.push(cli)
+    const result = await Effect.runPromise(
+      Effect.provide(
+        batch({
+          ops: [op({ title: "Runbook owner", claim: RUNBOOK })],
+          detectNearDuplicates: true
+        }),
+        cli.layer
+      )
+    )
+    expect(result.nearDuplicatesDegraded).toBe(true)
+    expect(result.results[0]?.nearDuplicates).toBeUndefined()
+    expect(result.results[0]?.ok).toBe(true)
+    expect(result.summary.written).toBe(1)
+  })
+
+  it("attaches findings to an op in a batch that ABORTED, so a caller fixes everything in one round trip", async () => {
+    // The decode-abort path carries the assist's findings for `detectConflicts`' reason: a caller
+    // told "op 1 is malformed" and "op 0 nearly restates areas/x.html" can fix both before retrying.
+    const cli = await withCounter()
+    const first = await cli.run(batch({ ops: [op({ title: "Runbook owner", claim: RUNBOOK })] }))
+    const storedPath = first.results[0]?.path
+
+    const second = await cli.run(
+      batch({
+        ops: [
+          op({ title: "Runbook owner restated", claim: RUNBOOK_REWORDED }),
+          op({ title: "Broken", claim: "A claim.", memoryType: "not-a-type" })
+        ],
+        detectNearDuplicates: true
+      })
+    )
+    // The batch wrote nothing…
+    expect(second.commitSha).toBeNull()
+    expect(second.results[1]?.ok).toBe(false)
+    // …and op 0 still carries its finding.
+    expect(second.results[0]?.nearDuplicates?.[0]?.path).toBe(storedPath)
   })
 })

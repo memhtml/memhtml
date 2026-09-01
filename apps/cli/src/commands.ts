@@ -275,6 +275,13 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         default: false
       },
       {
+        name: "detect-near-duplicates",
+        type: "boolean",
+        description:
+          "Report each op's embedding near-duplicates as a per-op `near_duplicates` list: ACTIVE memories (or earlier ops in this stream) whose text sits at or above cosine 0.92 against this op's claim and body, best first, with the measured similarity. The vector sibling of --detect-conflicts: that flag catches a DIFFERENT value in the same grammatical slot, this one catches a REWORDING of the same fact. PROPOSE-ONLY for the same reason, and the score is geometry — negations also sit above 0.92, so read the paired claim before folding anything. Costs one embedding call per batch; ops written as `article_html` are never checked; when the embedder cannot run (MEMHTML_EMBED=off, or the call failed) the result carries `near_duplicates_degraded: true` and every `near_duplicates` is null, meaning UNCHECKED rather than unique.",
+        default: false
+      },
+      {
         name: "consolidate",
         type: "string",
         values: ["last-wins"],
@@ -1136,7 +1143,22 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "earliest stated bound. That is what `--as-of` on `memhtml search` reads: pass an ISO instant and " +
       "the result is what was believed valid AT THAT MOMENT. Since-superseded memories return, each " +
       "marked `superseded_by` naming what replaced it, and facts not yet valid then are absent. " +
-      "History is read from the files, not replayed from git, so it survives a full index rebuild."
+      "History is read from the files, not replayed from git, so it survives a full index rebuild.\n" +
+      "The frame rule deliberately refuses to match a REWORDING — same fact, different words shares no " +
+      "frame key — and dedupe refuses it too, because the bytes differ. That gap is " +
+      "`--detect-near-duplicates` (the batch tool's `detect_near_duplicates`): each result gains a " +
+      "`near_duplicates` list naming ACTIVE memories (or earlier ops in this same stream) whose text " +
+      "sits at or above cosine 0.92 against the op's claim and body, best first, each entry carrying " +
+      "the other claim's text, the measured `similarity`, and one of `path` or `batch_index`, the same " +
+      "split `conflict` uses. PROPOSE-ONLY, exactly like `--detect-conflicts`, and for one more reason: " +
+      "the score is geometry, and geometry is weak on the tokens that carry polarity — a claim and its " +
+      "negation also sit above 0.92 — so read the paired claim before folding anything. Left alone, the " +
+      "next sleep's `dedup-merge` folds true rewordings under its divergence guards; this flag is for a " +
+      "batch writer that should not have to wait for a sleep run to learn it restated the corpus. It costs one " +
+      "embedding call per batch. On an `article_html` line it is always null (the claim lives inside " +
+      "your markup), and when the embedder cannot run at all (`MEMHTML_EMBED=off`, or the call failed) " +
+      "the result carries `near_duplicates_degraded: true` and every `near_duplicates` is null, " +
+      "meaning UNCHECKED rather than unique."
   },
   {
     topic: "authoring",

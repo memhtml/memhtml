@@ -871,6 +871,12 @@ describe("a tool call through the toolkit layer", () => {
         readonly batch_index: number | null
         readonly claim: string
       } | null
+      readonly near_duplicates: ReadonlyArray<{
+        readonly path: string | null
+        readonly batch_index: number | null
+        readonly similarity: number
+        readonly claim: string
+      }> | null
     }
     const resultsOf = (batch: Record<string, unknown>): ReadonlyArray<WireResult> =>
       batch.results as ReadonlyArray<WireResult>
@@ -936,6 +942,11 @@ describe("a tool call through the toolkit layer", () => {
        */
       expect(results.every((result) => "conflict" in result)).toBe(true)
       expect(results.every((result) => result.conflict === null)).toBe(true)
+      // `near_duplicates` follows the same present-and-null rule, with the same two-halves check —
+      // and the batch-level degraded flag is false on a call that never asked for the assist.
+      expect(results.every((result) => "near_duplicates" in result)).toBe(true)
+      expect(results.every((result) => result.near_duplicates === null)).toBe(true)
+      expect(batch.near_duplicates_degraded).toBe(false)
 
       expect(batch.summary).toEqual({
         total: 3,
@@ -1665,6 +1676,153 @@ describe("a tool call through the toolkit layer", () => {
         })
         expect(resultsOf(after)[0]?.conflict).toBeNull()
         expect(after.summary).toMatchObject({ total: 1, written: 1, failed: 0 })
+      })
+    })
+
+    /**
+     * `detect_near_duplicates` over the wire: DECODE of the new parameter, ENCODE of the nested
+     * entry list, and the batch-level degraded flag — the same three halves the `detect_conflicts`
+     * suite pins, one field over.
+     *
+     * The suite's shared-fixture rule applies with a wider blast radius here: the lookup scans the
+     * WHOLE active corpus by cosine, not one frame slot, so these claims carry vocabulary
+     * (quorum-election coordinators, leap-second smearing) no other test in this file uses, or an
+     * earlier test's memory becomes a legitimate extra finding under the bag-of-words embedder.
+     */
+    describe("detect_near_duplicates", () => {
+      const ELECTION =
+        "The quorum election coordinator resigns after three missed heartbeats from the observers."
+      const ELECTION_REWORDED =
+        "After three missed heartbeats from the observers the quorum election coordinator resigns."
+
+      it("carries a store match's path, claim, and similarity through ENCODE, and the write still lands", async () => {
+        const first = await call("memory_write_batch", {
+          ops: [
+            {
+              title: "Wire election rule",
+              body: ELECTION,
+              memory_type: "semantic",
+              workspace: "batch-near"
+            }
+          ]
+        })
+        const storedPath = resultsOf(first)[0]?.path
+
+        const second = await call("memory_write_batch", {
+          ops: [
+            {
+              title: "Wire election rule restated",
+              body: ELECTION_REWORDED,
+              memory_type: "semantic",
+              workspace: "batch-near"
+            }
+          ],
+          detect_near_duplicates: true
+        })
+
+        const hits = resultsOf(second)[0]?.near_duplicates
+        expect(hits).toHaveLength(1)
+        expect(hits?.[0]?.path).toBe(storedPath)
+        expect(hits?.[0]?.claim).toBe(ELECTION)
+        expect(hits?.[0]?.batch_index).toBeNull()
+        expect(hits?.[0]?.similarity).toBeGreaterThanOrEqual(0.92)
+        expect(second.near_duplicates_degraded).toBe(false)
+
+        // PROPOSE-ONLY at the wire: the op is ok, it committed, and BOTH memories are listed after.
+        expect(resultsOf(second)[0]?.ok).toBe(true)
+        expect(second.summary).toMatchObject({ total: 1, written: 1, failed: 0 })
+        expect(second.commit_sha).not.toBeNull()
+        const listed = await call("memory_list", { workspace: "batch-near" })
+        expect(listed.files as ReadonlyArray<unknown>).toHaveLength(2)
+      })
+
+      it("reports null WITHOUT the flag, on a pair that would otherwise light up", async () => {
+        // The flag-off lock at the wire, for the reason `detect_conflicts`' twin exists: a handler
+        // forcing the assist on is invisible to every test whose ops share nothing.
+        const batch = await call("memory_write_batch", {
+          ops: [
+            {
+              title: "Wire smear one",
+              body: "The leap second smears across the final twelve hours of June.",
+              memory_type: "semantic",
+              workspace: "batch-near-off"
+            },
+            {
+              title: "Wire smear two",
+              body: "Across the final twelve hours of June the leap second smears.",
+              memory_type: "semantic",
+              workspace: "batch-near-off"
+            }
+          ]
+        })
+        const results = resultsOf(batch)
+        expect(results.every((result) => result.near_duplicates === null)).toBe(true)
+        expect(batch.near_duplicates_degraded).toBe(false)
+        expect(batch.summary).toMatchObject({ total: 2, written: 2, failed: 0 })
+      })
+
+      it("carries an intra-batch match as batch_index with a null path, translated to the CALLER's index space", async () => {
+        /**
+         * Both intra-batch properties in one call, in continue mode with an XOR-refused op 0 ahead
+         * of the pair — the exact arrangement that caught the untranslated `conflict.batch_index`.
+         * `batchWrite` saw the survivors, where the match is (0, 1); the caller must read (1, 2).
+         */
+        const batch = await call("memory_write_batch", {
+          ops: [
+            {
+              title: "Wire near shift zero, refused for the XOR",
+              body: "Prose.",
+              article_html: "<p><mark>And markup.</mark></p>",
+              memory_type: "semantic",
+              workspace: "batch-near-shift"
+            },
+            {
+              title: "Wire compaction rule",
+              body: "The tombstone compaction debt drains during the idle replica window.",
+              memory_type: "semantic",
+              workspace: "batch-near-shift"
+            },
+            {
+              title: "Wire compaction rule restated",
+              body: "During the idle replica window the tombstone compaction debt drains.",
+              memory_type: "semantic",
+              workspace: "batch-near-shift"
+            }
+          ],
+          continue_on_error: true,
+          detect_near_duplicates: true
+        })
+
+        const results = resultsOf(batch)
+        expect(results[0]?.ok).toBe(false)
+        expect(results[0]?.near_duplicates).toBeNull()
+        // Asymmetric: the later op reports on the earlier one, never the reverse.
+        expect(results[1]?.near_duplicates).toBeNull()
+        // THE ASSERTION: op 2 names op ONE in the caller's numbering, with no path — that op's
+        // file did not exist when the assist ran.
+        expect(results[2]?.near_duplicates?.[0]?.batch_index).toBe(1)
+        expect(results[2]?.near_duplicates?.[0]?.path).toBeNull()
+        expect(results[2]?.near_duplicates?.[0]?.claim).toBe(
+          "The tombstone compaction debt drains during the idle replica window."
+        )
+        expect(batch.summary).toMatchObject({ total: 3, written: 2, failed: 1 })
+      })
+
+      it("decodes an explicit null for detect_near_duplicates as absent, like every other optional", async () => {
+        const batch = await call("memory_write_batch", {
+          ops: [
+            {
+              title: "Wire near explicit null flag",
+              body: "The snapshot fencing token rotates on every checkpoint boundary.",
+              memory_type: "semantic",
+              workspace: "batch-near-nullflag"
+            }
+          ],
+          detect_near_duplicates: null
+        })
+        expect(resultsOf(batch)[0]?.near_duplicates).toBeNull()
+        expect(batch.near_duplicates_degraded).toBe(false)
+        expect(batch.summary).toMatchObject({ total: 1, written: 1, failed: 0 })
       })
     })
   })

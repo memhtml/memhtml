@@ -94,17 +94,18 @@ memhtml apply --file -
 memhtml apply -
 ```
 
-Write many memories from a JSONL op stream: one commit, one index update, per-op results. `apps/cli/src/run.ts:342-357`
+Write many memories from a JSONL op stream: one commit, one index update, per-op results. `apps/cli/src/run.ts:348-364`
 
 Flags:
 
-- `--file`: The JSONL file to read. One complete JSON object per line. Omit it, pass `--file -`, or pass a positional `-` to read the stream from stdin. String. `apps/cli/src/commands.ts:210`
-- `--continue-on-error`: Best-effort: a refused op is reported and skipped while every surviving op lands in the one commit. Atomic by default. Boolean, default false. `apps/cli/src/commands.ts:216`
-- `--detect-conflicts`: Report each op's frame-matches as a per-op `conflict`. Propose-only: every op still writes exactly as it would have. Boolean, default false. `apps/cli/src/commands.ts:223`
-- `--consolidate`: Resolve frame-key matches instead of only reporting them. One value: `last-wins`. Off by default. String. `apps/cli/src/commands.ts:230`
-- `--session-id`: The Claude Code session for every op that names none. A line's own `session_id` wins over this. String. `apps/cli/src/commands.ts:237`
-- `--prompt-id`: The prompt within that session. String. `apps/cli/src/commands.ts:242`
-- `--turn-uuid`: The turn within that session. String. `apps/cli/src/commands.ts:243`
+- `--file`: The JSONL file to read. One complete JSON object per line. Omit it, pass `--file -`, or pass a positional `-` to read the stream from stdin. String. `apps/cli/src/commands.ts:258`
+- `--continue-on-error`: Best-effort: a refused op is reported and skipped while every surviving op lands in the one commit. Atomic by default. Boolean, default false. `apps/cli/src/commands.ts:264`
+- `--detect-conflicts`: Report each op's frame-matches as a per-op `conflict`. Propose-only: every op still writes exactly as it would have. Boolean, default false. `apps/cli/src/commands.ts:271`
+- `--detect-near-duplicates`: Report each op's embedding near-duplicates as a per-op `near_duplicates` list — active memories (or earlier ops in the same stream) at or above cosine 0.92 against the op's claim and body, each entry carrying the other claim's text and the measured similarity. Propose-only like `--detect-conflicts`; costs one embedding call per batch; `article_html` ops are never checked; when the embedder cannot run the result carries `near_duplicates_degraded: true` and every finding is null, meaning unchecked rather than unique. Boolean, default false. `apps/cli/src/commands.ts:230`
+- `--consolidate`: Resolve frame-key matches instead of only reporting them. One value: `last-wins`. Off by default. String. `apps/cli/src/commands.ts:238`
+- `--session-id`: The Claude Code session for every op that names none. A line's own `session_id` wins over this. String. `apps/cli/src/commands.ts:292`
+- `--prompt-id`: The prompt within that session. String. `apps/cli/src/commands.ts:297`
+- `--turn-uuid`: The turn within that session. String. `apps/cli/src/commands.ts:298`
 
 `-` is the stdin spelling in both places it can appear, as a positional and as `--file -`, and it cannot sit beside a real `--file`: two streams claiming to be the one that applies is exit 2 rather than one of them being silently ignored. `apps/cli/src/run.ts:821-832`
 

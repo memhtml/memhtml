@@ -407,6 +407,22 @@ const opPayload = (report: BatchOpReport) => ({
           claim: report.conflict.claim
         },
   /**
+   * What this op's text embedding-matches, when `--detect-near-duplicates` was passed and something
+   * sat at or above the near-duplicate floor. The same snake_case rename `conflict` takes, for the
+   * same byte-comparability with `memory_write_batch`. Null when the flag was off, when nothing
+   * matched, on an `article_html` op, and whenever the batch-level `near_duplicates_degraded` is
+   * true — null then means the assist never looked. An op carrying findings was still written.
+   */
+  near_duplicates:
+    report.nearDuplicates === undefined
+      ? null
+      : report.nearDuplicates.map((hit) => ({
+          path: hit.path,
+          batch_index: hit.batchIndex,
+          similarity: hit.similarity,
+          claim: hit.claim
+        })),
+  /**
    * The two `--consolidate last-wins` outcomes, null everywhere else, including when the flag was
    * off. That is the same "absent is null" rule every field above follows, and the same shape
    * `memory_write_batch` publishes.
@@ -418,5 +434,6 @@ const opPayload = (report: BatchOpReport) => ({
 export const applyPayload = (result: BatchWriteResult) => ({
   results: result.results.map(opPayload),
   summary: result.summary,
-  commit_sha: result.commitSha
+  commit_sha: result.commitSha,
+  near_duplicates_degraded: result.nearDuplicatesDegraded
 })

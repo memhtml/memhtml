@@ -899,6 +899,228 @@ describe("activeFramesFor", () => {
   })
 })
 
+/**
+ * `activeNearestFor` — the near-duplicate assist's substrate, against the real driver.
+ *
+ * The same conjunction `activeFramesFor`'s suite states: the lookup must find the live rows near a
+ * query, and it must find NOTHING else — an archived row or an excluded type leaking in becomes a
+ * near-duplicate report about a memory that was evicted or about working state. Vectors are
+ * hand-built at dimension 4, because the lookup never checks width and small exact components make
+ * every expected cosine derivable by eye.
+ */
+describe("activeNearestFor", () => {
+  const Q: ReadonlyArray<number> = [1, 0, 0, 0]
+
+  it("answers per query, best first, at or above the floor, capped at k", async () => {
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* seedEmbedded(db, "areas/facts/exact.html", "Exact restatement.", [1, 0, 0, 0])
+        yield* seedEmbedded(db, "areas/facts/near.html", "Near restatement.", [0.95, 0.3122, 0, 0])
+        yield* seedEmbedded(db, "areas/facts/far.html", "Different fact.", [0.6, 0.8, 0, 0])
+        const recorder = makeIndexRecorder(db)
+        const wide = yield* recorder.activeNearestFor([Float32Array.from(Q)], {
+          floor: 0.9,
+          k: 5
+        })
+        const capped = yield* recorder.activeNearestFor(
+          [Float32Array.from(Q), Float32Array.from([0, 0, 1, 0])],
+          { floor: 0.5, k: 1 }
+        )
+        return { wide: wide[0], capped }
+      })
+    )
+
+    // Best first, floor respected: `far.html` sits at cosine 0.6 and never appears at floor 0.9.
+    expect(outcome.wide?.map((match) => match.path)).toEqual([
+      "areas/facts/exact.html",
+      "areas/facts/near.html"
+    ])
+    // The gist and the measured value travel with the path, for the same reason `FrameMatch` carries
+    // its gist: the finding is only reportable WITH the claim it restates and the score it earned.
+    expect(outcome.wide?.[0]?.gist).toBe("Exact restatement.")
+    expect(outcome.wide?.[0]?.similarity).toBeCloseTo(1.0, 5)
+    expect(outcome.wide?.[1]?.similarity).toBeCloseTo(0.95, 2)
+    // `k` caps per query, and the answer is positional: one array per query, empty when nothing
+    // in the corpus points that way at the floor.
+    expect(outcome.capped?.[0]?.map((match) => match.path)).toEqual(["areas/facts/exact.html"])
+    expect(outcome.capped?.[1]).toEqual([])
+  })
+
+  it("reports a match sitting exactly ON the floor, because at-or-above is the contract", async () => {
+    // Unit vectors against themselves: dot 1, norms 1, cosine exactly 1.0 with no float32 rounding
+    // anywhere. A `>` where `>=` belongs excludes this row and fails here, and nowhere else.
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* seedEmbedded(db, "areas/facts/exact.html", "Exact restatement.", [1, 0, 0, 0])
+        const found = yield* makeIndexRecorder(db).activeNearestFor([Float32Array.from(Q)], {
+          floor: 1.0,
+          k: 5
+        })
+        return found[0]
+      })
+    )
+    expect(outcome?.map((match) => match.path)).toEqual(["areas/facts/exact.html"])
+  })
+
+  it("drops a match once it is archived, which is the eviction becoming visible", async () => {
+    // Proven by TRANSITION, as `activeFramesFor`'s sibling case is: the same row found, archived the
+    // way an eviction archives it, then not found. An already-archived fixture would pass even
+    // against a query filtering the wrong column.
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* seedEmbedded(db, "areas/facts/exact.html", "Exact restatement.", [1, 0, 0, 0])
+        const recorder = makeIndexRecorder(db)
+        const before = yield* recorder.activeNearestFor([Float32Array.from(Q)], {
+          floor: 0.9,
+          k: 5
+        })
+        yield* db.run("UPDATE files SET archived = 1, para = 'archive', path = ? WHERE path = ?", [
+          "archive/2026/areas/facts/exact.html",
+          "areas/facts/exact.html"
+        ])
+        const after = yield* recorder.activeNearestFor([Float32Array.from(Q)], {
+          floor: 0.9,
+          k: 5
+        })
+        return { before: before[0], after: after[0] }
+      })
+    )
+    expect(outcome.before).toHaveLength(1)
+    // An evicted memory is not a live claim, so nothing new can be a near-duplicate of it.
+    expect(outcome.after).toEqual([])
+  })
+
+  it("never answers with an excluded type, even when it holds the neighborhood alone", async () => {
+    // Seeded as the ONLY match, which is the case that discriminates — beside a memory, a query
+    // that merely ordered the memory first would pass. The same row IS found without the exclusion,
+    // so the parameter, and not an accident of the seed, is what removed it.
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* seedEmbedded(db, "areas/inbox/tasks/t.html", "Do the thing.", [1, 0, 0, 0], {
+          memoryType: "task"
+        })
+        const recorder = makeIndexRecorder(db)
+        const excluded = yield* recorder.activeNearestFor([Float32Array.from(Q)], {
+          floor: 0.9,
+          k: 5,
+          excludeTypes: ["arc", "task"]
+        })
+        const unfiltered = yield* recorder.activeNearestFor([Float32Array.from(Q)], {
+          floor: 0.9,
+          k: 5
+        })
+        return { excluded: excluded[0], unfiltered: unfiltered[0] }
+      })
+    )
+    expect(outcome.excluded).toEqual([])
+    expect(outcome.unfiltered).toHaveLength(1)
+  })
+
+  it("drops a row whose blob does not decode rather than poisoning the ranking", async () => {
+    // A ragged blob (five bytes) is the same exclusion the SQL UDF's NULL produces for it in the
+    // retrieval arm. The decodable neighbor beside it still ranks.
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* seedEmbedded(db, "areas/facts/ragged.html", "Undecodable.", [1, 0, 0, 0], {
+          bytes: new Uint8Array([1, 2, 3, 4, 5])
+        })
+        yield* seedEmbedded(db, "areas/facts/exact.html", "Exact restatement.", [1, 0, 0, 0])
+        const found = yield* makeIndexRecorder(db).activeNearestFor([Float32Array.from(Q)], {
+          floor: 0.9,
+          k: 5
+        })
+        return found[0]
+      })
+    )
+    expect(outcome?.map((match) => match.path)).toEqual(["areas/facts/exact.html"])
+  })
+
+  it("asks ONE query for a whole batch of vectors, and none at all for an empty one", async () => {
+    // The batching contract, counted the way `activeFramesFor`'s is: the corpus is read and decoded
+    // once per CALL, never once per query vector, and a call with nothing to ask never reaches the
+    // database.
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* seedEmbedded(db, "areas/facts/exact.html", "Exact restatement.", [1, 0, 0, 0])
+        let queries = 0
+        const counted: DatabaseShape = {
+          ...db,
+          all: (<A>(sql: string, params?: ReadonlyArray<unknown>) => {
+            queries += 1
+            return (db.all as never as (s: string, p?: ReadonlyArray<unknown>) => Effect.Effect<A>)(
+              sql,
+              params
+            )
+          }) as DatabaseShape["all"]
+        }
+        const recorder = makeIndexRecorder(counted)
+        const empty = yield* recorder.activeNearestFor([], { floor: 0.9, k: 5 })
+        const afterEmpty = queries
+        const three = yield* recorder.activeNearestFor(
+          [Float32Array.from(Q), Float32Array.from(Q), Float32Array.from(Q)],
+          { floor: 0.9, k: 5 }
+        )
+        return { afterEmpty, queries, empty, found: three.length }
+      })
+    )
+    expect(outcome.empty).toEqual([])
+    expect(outcome.afterEmpty).toBe(0)
+    // Three query vectors, one round trip.
+    expect(outcome.queries).toBe(1)
+    expect(outcome.found).toBe(3)
+  })
+})
+
+/** Bytes of a float32 vector, laid out the way the `embeddings` table stores them. */
+const vecBytes = (values: ReadonlyArray<number>): Uint8Array => {
+  const vec = Float32Array.from(values)
+  return new Uint8Array(vec.buffer, vec.byteOffset, vec.byteLength)
+}
+
+/**
+ * A `files` row with a first-chunk embedding, for the nearest lookup's tests: the file, its chunk 0,
+ * and that chunk's vector, which is the exact join `activeNearestFor` reads. `bytes` overrides the
+ * encoded vector for the one case that needs an undecodable blob.
+ */
+const seedEmbedded = (
+  db: DatabaseShape,
+  path: string,
+  gist: string,
+  vec: ReadonlyArray<number>,
+  options: {
+    readonly memoryType?: string
+    readonly bytes?: Uint8Array
+  } = {}
+) =>
+  Effect.gen(function* () {
+    const memoryType = options.memoryType ?? "semantic"
+    yield* db.run(
+      `INSERT INTO files (path, blob_sha, content_hash, memory_type, title, body_text, gist, fts_text,
+         disclosure_text, para, archived, task_status, created_at, updated_at, indexed_at)
+       VALUES (?, ?, ?, ?, 'T', 'b', ?, 'f', 'd', 'areas', 0, ?, ?, ?, ?)`,
+      [
+        path,
+        `blob-${path}`,
+        `sha256:${path}`,
+        memoryType,
+        gist,
+        memoryType === "task" ? "todo" : null,
+        AT,
+        AT,
+        AT
+      ]
+    )
+    yield* db.run(
+      `INSERT INTO chunks (chunk_id, path, content_hash, ordinal, text, char_count)
+       VALUES (?, ?, ?, 0, 'b', 1)`,
+      [`chunk-${path}`, path, `sha256:${path}`]
+    )
+    yield* db.run(
+      "INSERT INTO embeddings (chunk_id, model, dim, vec, created_at) VALUES (?, 'm@4', 4, ?, ?)",
+      [`chunk-${path}`, options.bytes ?? vecBytes(vec), AT]
+    )
+  })
+
 /** A `files` row carrying an explicit `frame_key`, for the lookup's tests. */
 const seedFramed = (
   db: DatabaseShape,
