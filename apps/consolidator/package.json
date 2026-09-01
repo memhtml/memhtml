@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/consolidator",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "private": true,
   "description": "The eve agent that distills candidate memories from raw transcripts.",
   "type": "module",
