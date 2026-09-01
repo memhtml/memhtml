@@ -309,10 +309,17 @@ export interface MergeReport {
   readonly runId: string
   readonly branch: string
   readonly merged: boolean
-  /** `main`'s sha after the fast-forward, or before it on a refusal. */
+  /** `main`'s sha after the merge, or before it on a refusal. */
   readonly headSha: string
   /** Set on a refusal: which precondition failed. */
   readonly refusal?: "main-advanced" | "gate-failed" | "no-run" | undefined
+  /**
+   * Set on a `main-advanced` refusal caused by a path collision: the paths both main's advance and
+   * the branch touched since the base, sorted. Absent when the refusal is the advance being
+   * unreadable, or any other refusal — a disjoint advance merges and reports no refusal at all, so
+   * this field is what tells an operator "real collision" from "could not prove disjointness".
+   */
+  readonly overlap?: ReadonlyArray<string> | undefined
   /**
    * Pending state-plane marks the run's ledger carried, and how many of them this merge applied.
    * Present only on a merge that happened; a refusal applies nothing and reports neither.
@@ -340,7 +347,7 @@ export interface MergeReport {
  * never selected again, and the transcript is gone with a row asserting it was handled.
  *
  * So a phase records the write here instead of performing it, `merge` applies the ledger after the
- * fast-forward succeeds, and a discarded branch takes its pending marks with it.
+ * branch lands, and a discarded branch takes its pending marks with it.
  *
  * **The ledger is a committed artifact and not a table**, for the reason the trailers are the resume
  * mechanism: a run's facts are its commits. A table would be a second record of what a run earned,

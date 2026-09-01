@@ -210,22 +210,31 @@ export interface MergeOptions {
    * instead of being supplied silently here.
    */
   readonly preMergeGate?: Effect.Effect<void, unknown> | undefined
-  /** The branch to fast-forward. Defaults to `main`. */
+  /** The branch the run lands on. Defaults to `main`. */
   readonly targetBranch?: string | undefined
 }
 
 /**
- * Fast-forward the target branch to the sleep branch, or refuse.
+ * Land the sleep branch on the target branch, or refuse.
  *
  * **Two refusals, both before anything moves.** `main` having advanced past `base_sha` means the run
- * curated a corpus that no longer exists: a decay computed against a confidence an agent has since
- * corrected, an eviction of a memory that was just reinforced. The operator reruns the sleep, which is
- * cheap because every phase is idempotent. An already-merged duplicate no longer surfaces, an
- * already-decayed confidence is a fixed point, and an already-archived file is not a candidate.
+ * curated a corpus that MAY no longer exist: a decay computed against a confidence an agent has since
+ * corrected, an eviction of a memory that was just reinforced. Whether it does is a path question,
+ * and {@link advanceOverlap} asks it: when the paths main gained and the paths the branch wrote —
+ * FULL diffs on both sides, committed sidecars, regenerated artifacts, and both halves of every
+ * rename included — intersect at even one path, or when either diff cannot be read, the merge
+ * refuses and the operator reruns the sleep. The rerun is cheap because every phase is idempotent:
+ * an already-merged duplicate no longer surfaces, an already-decayed confidence is a fixed point,
+ * and an already-archived file is not a candidate. The refusal names the overlap (issue #108), so an
+ * operator can tell a real collision from two writers sharing a schedule slot.
  *
- * Fast-forward only, with no merge commit. A three-way merge here would produce a commit whose parents
- * are the sleep branch and a moved `main`, which is exactly the state the first refusal exists to
- * prevent, and the conflict resolution would be a human editing generated `sitemap.xml` by hand.
+ * A PROVABLY DISJOINT advance merges. Any writer committing to main during the sleep's multi-hour
+ * window would otherwise forfeit the whole night at merge time, and a schedule collision is exactly
+ * the case where the two writers touch unrelated paths. Disjointness makes the semantic objection
+ * above empty — nothing the run decided reads a path main changed — and makes a conflict impossible,
+ * so nobody hand-edits generated `sitemap.xml`. An unmoved main still fast-forwards with no merge
+ * commit; a disjoint advance lands as a merge commit that preserves both sides, with a conflict —
+ * unreachable if disjointness held — aborted and refused rather than left in progress.
  *
  * **The merge is also where the run's PENDING STATE-PLANE MARKS are applied**, and that is what makes
  * `git branch -D` a real abort. `.memhtml/state.db` is not rebuildable from the tree and
@@ -259,17 +268,43 @@ export const merge = (
       .pipe(Effect.orElseSucceed(() => null))
       .pipe(Effect.map((sha) => sha ?? ""))
 
-    if (row.base_sha !== "" && mainHead !== row.base_sha) {
-      yield* Effect.logWarning(
-        `sleep.merge refused: ${target} advanced past the run's base — rerun the sleep`
-      )
-      return {
-        runId: row.run_id,
-        branch: row.branch,
-        merged: false,
-        headSha: mainHead,
-        refusal: "main-advanced" as const
+    const advanced = row.base_sha !== "" && mainHead !== row.base_sha
+    if (advanced) {
+      const overlap = yield* Effect.result(advanceOverlap(deps, row.base_sha, mainHead, row.branch))
+      if (overlap._tag === "Failure") {
+        // Disjointness is a positive proof, and a diff that cannot be read is not one.
+        yield* Effect.logWarning(
+          `sleep.merge refused: ${target} advanced past the run's base and the touched sets ` +
+            `could not be read — rerun the sleep`
+        )
+        return {
+          runId: row.run_id,
+          branch: row.branch,
+          merged: false,
+          headSha: mainHead,
+          refusal: "main-advanced" as const
+        }
       }
+      if (overlap.success.length > 0) {
+        const named = overlap.success.slice(0, 5).join(", ")
+        const rest = overlap.success.length > 5 ? ` and ${overlap.success.length - 5} more` : ""
+        yield* Effect.logWarning(
+          `sleep.merge refused: ${target} advanced past the run's base and the advance overlaps ` +
+            `the branch (${named}${rest}) — rerun the sleep`
+        )
+        return {
+          runId: row.run_id,
+          branch: row.branch,
+          merged: false,
+          headSha: mainHead,
+          refusal: "main-advanced" as const,
+          overlap: overlap.success
+        }
+      }
+      yield* Effect.log(
+        `sleep.merge: ${target} advanced past the run's base on paths disjoint from the branch; ` +
+          `merging both sides`
+      )
     }
 
     if (options.preMergeGate !== undefined) {
@@ -286,8 +321,10 @@ export const merge = (
       }
     }
 
-    const fastForward = yield* Effect.result(deps.git.mergeFastForward(row.branch))
-    if (fastForward._tag === "Failure") {
+    const landed = yield* Effect.result(
+      advanced ? mergeBothSides(deps, row.branch) : deps.git.mergeFastForward(row.branch)
+    )
+    if (landed._tag === "Failure") {
       return {
         runId: row.run_id,
         branch: row.branch,
@@ -323,6 +360,63 @@ export const merge = (
       marksApplied: marks.applied
     }
   }).pipe(Effect.withSpan("sleep.merge"))
+
+/**
+ * The paths BOTH sides touched since the base, sorted. Empty is the proof a disjoint merge needs.
+ *
+ * Full `diff` on each side rather than the sweep-scoped {@link touchedThisRun} set: a sweep's
+ * restamp says nothing about the individual file as a DECISION, but it is still a write, and a
+ * path-level disjointness check is only safe if it sees every write — the integrity phase
+ * regenerates artifacts whose sources another writer may have just touched. Renames contribute both
+ * of their paths on the same reasoning as {@link touched.ts}'s widened set.
+ */
+const advanceOverlap = (
+  deps: SleepDeps,
+  baseSha: string,
+  mainHead: string,
+  branch: string
+): Effect.Effect<ReadonlyArray<string>, unknown> =>
+  Effect.gen(function* () {
+    const gained = yield* touchedBetween(deps, baseSha, mainHead)
+    const wrote = yield* touchedBetween(deps, baseSha, branch)
+    return [...gained].filter((path) => wrote.has(path)).sort()
+  })
+
+/** Every path `from..to` touched, both halves of a rename included. */
+const touchedBetween = (
+  deps: SleepDeps,
+  from: string,
+  to: string
+): Effect.Effect<ReadonlySet<string>, unknown> =>
+  deps.git.diffNameStatus(from, to).pipe(
+    Effect.map((changes) => {
+      const paths = new Set<string>()
+      for (const change of changes) {
+        paths.add(change.path)
+        if (change.fromPath !== null) paths.add(change.fromPath)
+      }
+      return paths
+    })
+  )
+
+/**
+ * Land a disjoint advance as a merge commit, with a conflict aborted rather than left in progress.
+ *
+ * A conflict is unreachable when {@link advanceOverlap} returned empty — git conflicts on a path
+ * both sides changed — so this arm exists for the same reason `merge --abort` does: the working
+ * tree must never be left mid-merge on a path this code did not predict.
+ */
+const mergeBothSides = (deps: SleepDeps, branch: string): Effect.Effect<void, unknown> =>
+  deps.git.merge(branch).pipe(
+    Effect.flatMap((outcome) =>
+      outcome.merged
+        ? Effect.void
+        : deps.git.mergeAbort().pipe(
+            Effect.orElseSucceed(() => {}),
+            Effect.andThen(Effect.fail(`merge conflicted: ${outcome.conflicted.join(", ")}`))
+          )
+    )
+  )
 
 /**
  * Apply the merged run's pending state-plane marks, from the ledger the branch carries.
