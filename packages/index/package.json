@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/index",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "private": true,
   "description": "SQLite schema, migrations, the git-driven indexer, and four-arm retrieval.",
   "type": "module",
