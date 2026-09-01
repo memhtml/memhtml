@@ -1,3 +1,4 @@
+import { MIGRATIONS_DIR, makeDatabase, STATE_MIGRATIONS_DIR } from "@memhtml/index"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 
@@ -5,7 +6,7 @@ import type { RunReport } from "../src/contract.js"
 import { SLEEP_PHASES, TRAILER_PHASE } from "../src/contract.js"
 import type { SleepDeps } from "../src/env.js"
 import { completedPhases, resume, run, runIdFor } from "../src/run.js"
-import { latestRun, readPhases, readRun } from "../src/sql.js"
+import { latestRun, readPhases, readRun, recordRun } from "../src/sql.js"
 import { DEDUP_CORPUS, type Fixture, LAST_DROP_PATH, withFixture } from "./fixture.js"
 
 /**
@@ -599,5 +600,51 @@ describe("resume against a run nothing recorded", () => {
         }),
       { seed: DEDUP_CORPUS }
     )
+  })
+})
+
+describe("a same-day rerun's row describes the rerun", () => {
+  it("recordRun's upsert refreshes base_sha, branch, and started_at on conflict", async () => {
+    /**
+     * Issue #110. `merge`'s main-advanced guard compares main's head against the row's `base_sha`,
+     * and a run id is reused by design when a date's branch is deleted and the sleep rerun on a
+     * newer main. If the upsert refreshes only head_sha/status/ended_at, the date's FIRST run owns
+     * `base_sha` forever and the guard refuses the very rerun its refusal message instructs —
+     * a provably fast-forwardable branch that can never merge.
+     *
+     * Asserted at the table, not through `merge`: the row is the single fact the guard consumes,
+     * and the property is that the row describes the run that most recently executed under the id.
+     */
+    await Effect.gen(function* () {
+      const db = yield* makeDatabase(":memory:", MIGRATIONS_DIR, {
+        path: ":memory:",
+        migrationsDir: STATE_MIGRATIONS_DIR
+      })
+
+      yield* recordRun(db, {
+        runId: "sleep/2026-09-01",
+        branch: "sleep/2026-09-01",
+        baseSha: "c000c0d1",
+        headSha: "0ddba11c",
+        status: "review",
+        startedAt: "2026-09-01T00:33:00Z",
+        endedAt: "2026-09-01T01:02:00Z"
+      })
+      yield* recordRun(db, {
+        runId: "sleep/2026-09-01",
+        branch: "sleep/2026-09-01",
+        baseSha: "44d3d34c",
+        headSha: "5b3372c4",
+        status: "review",
+        startedAt: "2026-09-01T16:04:00Z",
+        endedAt: "2026-09-01T16:55:00Z"
+      })
+
+      const row = yield* readRun(db, "sleep/2026-09-01")
+      expect(row?.base_sha).toBe("44d3d34c")
+      expect(row?.head_sha).toBe("5b3372c4")
+      expect(row?.started_at).toBe("2026-09-01T16:04:00Z")
+      expect(row?.ended_at).toBe("2026-09-01T16:55:00Z")
+    }).pipe(Effect.scoped, Effect.runPromise)
   })
 })
