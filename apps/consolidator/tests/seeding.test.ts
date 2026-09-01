@@ -348,11 +348,11 @@ describe("transcripts never enter the model's context", () => {
   })
 })
 
-describe("the watermark is gated on evidence of reading", () => {
+describe("the watermark is bounded by the answer's read receipt", () => {
   /**
-   * The rule itself — an answer with zero candidates AND zero commitments advances nothing — is
+   * The rule itself — the receipt intersected with the reachable set, and never the batch — is
    * `watermarkableSessionIds`, tested as a pure function in `contract.test.ts`. What this tier owns
-   * is the WIRING: `runTurn` must route `analyzedSessionIds` through the gate rather than assigning
+   * is the WIRING: `runTurn` must route `analyzedSessionIds` through the rule rather than assigning
    * the reachable set directly, because the reachable set is measured before the model runs and
    * proves nothing about reading. Asserted as code shape for the same reason the `clientContext`
    * case above is: the behavioral route needs a live model turn.

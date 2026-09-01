@@ -655,64 +655,63 @@ describe("watermarkableSessionIds advances the sessions the answer reports readi
   const READ_ALL = { readSessionIds: READABLE }
 
   /**
-   * Reachability is measured by this process BEFORE the model runs, so it can never prove reading, and
-   * `readSessionIds` is the agent's own claim. The only VERIFIED receipt an answer carries is its quotes,
-   * re-read against the real files by `fabricatedQuoteReason` — so an answer with no candidates AND no
-   * commitments proves nothing and must advance nothing, however many sessions its receipt names. That
-   * arm is the one a misrouted listener trips: `{"candidates": [], "commitments": [], "readSessionIds":
-   * [...]}` is valid JSON that would otherwise watermark a batch nothing opened.
+   * The rule reads ONLY the receipt, and its parameter type says so — the answer's findings are
+   * deliberately not an input. An earlier version gated the advance on the answer carrying at least
+   * one candidate or commitment, against a misrouted listener that is already inert without it (the
+   * receiptless body it feared fails decode, and session ids never cross the wire — the rule's own
+   * doc holds the whole argument), and issue #104 measured that gate's cost: the all-barren answer
+   * with a full receipt is the one the instructions call "the right one for a batch that held nothing
+   * durable", so an honest quiet night advanced nothing, the newest-first selection re-offered the
+   * identical batch, and a ~2,000-session backlog never moved.
    *
-   * (Mutation: returning the intersection unconditionally, without the finding gate, fails this case.)
+   * An empty receipt still advances nothing: it is the honest answer of an agent that opened nothing,
+   * and the sessions come back on a later night.
+   *
+   * (Mutation: reintroducing a finding gate makes the parameter type reject every caller and fails
+   * the first case for any answer-shaped fixture; defaulting an empty receipt to the reachable set
+   * fails the second.)
    */
-  it("advances NOTHING for an answer with zero findings, whatever its receipt claims", () => {
+  it("advances the whole receipt of a wholly barren answer, and nothing of an empty receipt", () => {
+    expect(watermarkableSessionIds(READ_ALL, READABLE)).toEqual(READABLE)
+    expect(watermarkableSessionIds({ readSessionIds: [] }, READABLE)).toEqual([])
+  })
+
+  /**
+   * Issue #104's observed night, as a fixture: four reachable sessions, an answer carrying zero
+   * candidates and zero commitments, and a read receipt naming one of the four. The phase's own
+   * contract (`packages/sleep/src/phases/trace-consolidation.ts`, "Still the whole READ batch,
+   * including the barren ones") says that one advances as read-with-nothing-above-the-bar.
+   * Selection is newest-first over unconsolidated sessions, so a rule that advances nothing here
+   * re-selects the identical batch every night and the backlog never moves.
+   */
+  it("advances the read-and-found-nothing sessions of a wholly barren answer (#104)", () => {
     expect(
-      watermarkableSessionIds({ candidates: [], commitments: [], ...READ_ALL }, READABLE)
-    ).toEqual([])
+      watermarkableSessionIds({ readSessionIds: ["session-b"] }, [
+        "session-a",
+        "session-b",
+        "session-c",
+        "session-d"
+      ])
+    ).toEqual(["session-b"])
   })
 
   it("advances exactly the READ sessions, not the whole reachable set", () => {
     /**
      * The receipt is what bounds the advance to what was opened. A rule that advanced every REACHABLE
-     * session on one finding would watermark all 32 for a turn that read 1, and `trace_consolidations`
-     * is an anti-join, so the 31 nobody opened would be lost rather than delayed.
+     * session would watermark all 32 for a turn that read 1, and `trace_consolidations` is an
+     * anti-join, so the 31 nobody opened would be lost rather than delayed.
      *
-     * A candidate quoting only `session-a`, with a receipt naming `session-a` alone, advances
-     * `session-a` alone — and `session-b` and `session-c` come back on a later night.
+     * A receipt naming `session-a` alone advances `session-a` alone — and `session-b` and `session-c`
+     * come back on a later night.
      *
-     * (Mutation: returning `readableSessionIds` fails the second expectation; intersecting on the CITED
-     * sessions instead of the reported ones fails the third, where a barren-but-read session advances.)
+     * (Mutation: returning `readableSessionIds` fails the first expectation.)
      */
-    expect(
-      watermarkableSessionIds(
-        { candidates: [candidate()], commitments: [], readSessionIds: ["session-a"] },
-        READABLE
-      )
-    ).toEqual(["session-a"])
-    expect(
-      watermarkableSessionIds(
-        { candidates: [candidate()], commitments: [], readSessionIds: ["session-a"] },
-        READABLE
-      )
-    ).not.toContain("session-c")
-
-    /**
-     * A session the receipt names and the answer never quotes DOES advance. That is the whole reason the
-     * intersection is over the receipt rather than over the citations: "the agent read it and found
-     * nothing above the bar" is what the watermark means, and gating on a citation would re-read every
-     * quiet transcript at full model cost every night forever.
-     */
-    const cited = candidate().evidence.map((quote) => quote.sessionId)
-    expect(cited).not.toContain("session-c")
-    expect(
-      watermarkableSessionIds({ candidates: [candidate()], commitments: [], ...READ_ALL }, READABLE)
-    ).toEqual(READABLE)
-    // A commitment is a finding too, so the same receipt advances on the commitments arm alone.
-    expect(
-      watermarkableSessionIds(
-        { candidates: [], commitments: [commitment()], ...READ_ALL },
-        READABLE
-      )
-    ).toEqual(READABLE)
+    expect(watermarkableSessionIds({ readSessionIds: ["session-a"] }, READABLE)).toEqual([
+      "session-a"
+    ])
+    expect(watermarkableSessionIds({ readSessionIds: ["session-a"] }, READABLE)).not.toContain(
+      "session-c"
+    )
   })
 
   /**
@@ -722,48 +721,23 @@ describe("watermarkableSessionIds advances the sessions the answer reports readi
    */
   it("cannot advance a session the run never made reachable", () => {
     expect(
-      watermarkableSessionIds(
-        { candidates: [candidate()], commitments: [], readSessionIds: ["session-z", "session-b"] },
-        READABLE
-      )
+      watermarkableSessionIds({ readSessionIds: ["session-z", "session-b"] }, READABLE)
     ).toEqual(["session-b"])
-    expect(
-      watermarkableSessionIds({ candidates: [candidate()], commitments: [], ...READ_ALL }, [])
-    ).toEqual([])
+    expect(watermarkableSessionIds(READ_ALL, [])).toEqual([])
   })
 
   /** Reachable order is preserved, so a report line and a test's `toEqual` are reproducible. */
   it("returns the reachable order, not the receipt's", () => {
     expect(
-      watermarkableSessionIds(
-        {
-          candidates: [candidate()],
-          commitments: [],
-          readSessionIds: ["session-c", "session-a", "session-b"]
-        },
-        READABLE
-      )
+      watermarkableSessionIds({ readSessionIds: ["session-c", "session-a", "session-b"] }, READABLE)
     ).toEqual(READABLE)
   })
 
   /** A padded id in the receipt still matches: neither side controls the whitespace around an id. */
   it("trims the receipt's ids before matching", () => {
-    expect(
-      watermarkableSessionIds(
-        { candidates: [candidate()], commitments: [], readSessionIds: ["  session-b  "] },
-        READABLE
-      )
-    ).toEqual(["session-b"])
-  })
-
-  /** An EMPTY receipt beside real findings advances nothing, which is the honest reading of it. */
-  it("advances nothing for a finding with an empty receipt", () => {
-    expect(
-      watermarkableSessionIds(
-        { candidates: [candidate()], commitments: [], readSessionIds: [] },
-        READABLE
-      )
-    ).toEqual([])
+    expect(watermarkableSessionIds({ readSessionIds: ["  session-b  "] }, READABLE)).toEqual([
+      "session-b"
+    ])
   })
 })
 
@@ -924,18 +898,19 @@ describe("a wide read claim behind narrow quotes is logged", () => {
   })
 
   /**
-   * Two arms that must stay quiet, for different reasons. An answer with NO findings advances nothing at
-   * all — {@link watermarkableSessionIds} already returns `[]` and the client logs that arm itself, so a
-   * second warning about a watermark that is not happening would be noise. And a small advance carries no
-   * ratio: one citation out of two is both the floor and the ordinary shape of a two-transcript night.
+   * A wholly barren answer claiming a WIDE read is exactly the shape this line exists for: since
+   * issue #104's fix, that receipt advances all 32, it cites zero of them, and a truncated turn
+   * returning empty lists over a wide receipt is indistinguishable here from a thorough quiet night —
+   * so the line fires and the operator decides. A small advance stays quiet either way: one citation
+   * out of two is both the floor and the ordinary shape of a two-transcript night.
    */
-  it("is silent for an answer that advances nothing, and for a small advance", () => {
-    expect(
-      underCitedWatermarkWarning(
-        { candidates: [], commitments: [], readSessionIds: batchOf(32) },
-        batchOf(32)
-      )
-    ).toBeNull()
+  it("warns for a barren answer advancing a wide receipt, and stays silent for a small advance", () => {
+    const barren = underCitedWatermarkWarning(
+      { candidates: [], commitments: [], readSessionIds: batchOf(32) },
+      batchOf(32)
+    )
+    expect(barren).toContain("watermarking 32")
+    expect(barren).toContain("only 0 of them")
     expect(
       underCitedWatermarkWarning(
         {

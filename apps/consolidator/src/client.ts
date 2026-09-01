@@ -277,6 +277,17 @@ const CANCEL_WAIT_MS = 10_000
 const TURN_ABANDON_GRACE_MS = 60_000
 
 /**
+ * Characters of ONE receipt entry shown in the empty-advance log line.
+ *
+ * A real session id is a UUID-shaped ~36 characters, so 120 shows any honest id whole plus enough of
+ * a malformed one (a mount path, a stray prefix) to diagnose the mismatch. The receipt's element
+ * strings are otherwise UNBOUNDED — the schema caps the list's length and not its members — and the
+ * line exists for exactly the malformed case, so the cut is what keeps a transcript-sized blob in a
+ * receipt slot out of the operator log.
+ */
+const RECEIPT_LOG_ID_CHARS = 120
+
+/**
  * How long one consolidation turn may take, given how much it was handed.
  *
  * A pure function of the batch rather than a constant, because the work is proportional to the
@@ -1366,33 +1377,23 @@ const runTurn = (
 
     /**
      * `analyzedSessionIds` is what the caller watermarks from, and it is the answer's own READ RECEIPT
-     * intersected with what this run made reachable, gated on the answer carrying a finding.
+     * intersected with what this run made reachable.
      *
      * Each half does something the other cannot. Reachability is this process's pre-spawn measurement,
      * so it bounds the claim — a session whose transcript never resolved cannot be watermarked however
-     * the answer names it — and it proves nothing about reading. The finding gate is the only VERIFIED
-     * receipt: a candidate or commitment has passed the quote-containment check above, which re-read a
-     * real transcript. And `readSessionIds` is what narrows the advance to the sessions the agent says
-     * it opened, so a turn that read 1 of 32 advances 1 and the other 31 come back on a later night
-     * instead of being lost to the anti-join. A barren-but-read session still advances, because
-     * "the agent read it and found nothing above the bar" is the watermark's meaning.
-     *
-     * An answer with NO candidates and NO commitments advances nothing whatever its receipt claims,
-     * which is defense in depth behind {@link healthy}: even if a non-eve listener's answer decoded,
-     * empty lists could not watermark sessions nothing read.
+     * the answer names it — and it proves nothing about reading. `readSessionIds` is what narrows the
+     * advance to the sessions the agent says it opened, so a turn that read 1 of 32 advances 1 and the
+     * other 31 come back on a later night instead of being lost to the anti-join. A barren-but-read
+     * session still advances, and so does a wholly barren ANSWER (issue #104), because "the agent read
+     * it and found nothing above the bar" is the watermark's meaning and the instructions call that
+     * answer the right one for a quiet batch. `watermarkableSessionIds`' doc records why an earlier
+     * finding gate's measured cost (an identical newest-first batch re-selected forever) outweighed
+     * what it defended, and what actually keeps a non-agent answer from watermarking anything.
      *
      * Never the batch that was asked about, in any arm. `watermarkableSessionIds` in `contract.ts` is
      * the whole rule.
      */
     const analyzedSessionIds = watermarkableSessionIds(decoded.success, readableIds)
-    if (analyzedSessionIds.length === 0) {
-      yield* Effect.logWarning(
-        `consolidation watermarked none of the ${String(readableIds.length)} reachable session(s) — ` +
-          `the answer carried ${String(decoded.success.candidates.length)} candidate(s), ` +
-          `${String(decoded.success.commitments.length)} commitment(s), and a read receipt naming ` +
-          `${String(decoded.success.readSessionIds.length)} session(s); the batch will be re-selected`
-      )
-    }
 
     /**
      * The one thing the intersection cannot check: `readSessionIds` is a CLAIM, and an agent that opens
@@ -1400,9 +1401,56 @@ const runTurn = (
      * comparing the cited sessions against the claimed ones is what makes a wide claim behind a narrow
      * set of quotes visible. `underCitedWatermarkWarning` (`contract.ts`) holds the threshold and the
      * wording, and an honest narrow turn stays quiet because its advance is narrow too.
+     *
+     * Computed BEFORE the advance is narrated below, because the two must not both speak about one
+     * run: a wide barren advance is exactly the truncated-turn shape this line exists to surface, and
+     * a night that logged "ordinary quiet night" and "check the turn's step budget" side by side
+     * would teach an operator to read neither.
      */
     const underCited = underCitedWatermarkWarning(decoded.success, readableIds)
     if (underCited !== null) yield* Effect.logWarning(underCited)
+
+    if (analyzedSessionIds.length === 0) {
+      /**
+       * The receipt's raw identifiers, each cut to {@link RECEIPT_LOG_ID_CHARS}, because an empty
+       * intersection over a non-empty receipt is a formatting mismatch (a path where a session id
+       * belongs, a stray prefix) and the raw strings are the one thing that distinguishes it from an
+       * agent that read nothing. The CUT is not optional: the schema bounds the receipt's LENGTH at
+       * `MAX_TRANSCRIPTS_PER_RUN` and says nothing about each element, and this arm fires precisely
+       * when an element is malformed — a receipt slot holding a paragraph of transcript must not ride
+       * verbatim into the operator log, which is the same no-session-content rule every other model
+       * string here clears through an explicit char ceiling.
+       */
+      const receipt = decoded.success.readSessionIds
+        .map((id) =>
+          id.length > RECEIPT_LOG_ID_CHARS ? `${id.slice(0, RECEIPT_LOG_ID_CHARS)}…` : id
+        )
+        .join(", ")
+      yield* Effect.logWarning(
+        `consolidation watermarked none of the ${String(readableIds.length)} reachable session(s) — ` +
+          `the answer carried ${String(decoded.success.candidates.length)} candidate(s), ` +
+          `${String(decoded.success.commitments.length)} commitment(s), and a read receipt naming ` +
+          `${String(decoded.success.readSessionIds.length)} session(s); the batch will be re-selected. ` +
+          `Receipt: [${receipt}]; ` +
+          `reachable: [${readableIds.join(", ")}]`
+      )
+    } else if (
+      decoded.success.candidates.length === 0 &&
+      decoded.success.commitments.length === 0 &&
+      underCited === null
+    ) {
+      /**
+       * The barren advance, named when it happens: this is the ordinary quiet night doing its job, and
+       * the one line is what lets an operator confirm #104's fix is advancing the backlog rather than
+       * infer it from the absence of the warning above. Silent when `underCited` already spoke — a
+       * wide barren advance gets that warning alone, per the ordering note above.
+       */
+      yield* Effect.logInfo(
+        `consolidation advancing ${String(analyzedSessionIds.length)} of ` +
+          `${String(readableIds.length)} reachable session(s) on a barren answer: the agent read ` +
+          `them and found nothing above the bar`
+      )
+    }
 
     return {
       candidates: decoded.success.candidates,
