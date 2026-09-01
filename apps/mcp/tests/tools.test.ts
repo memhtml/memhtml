@@ -331,6 +331,7 @@ describe("the derived JSON Schema", () => {
        * for an answer it did not ask for on every batch it ever sends.
        */
       "detect_conflicts",
+      "detect_near_duplicates",
       "session_id",
       "prompt_id",
       "turn_uuid"
@@ -381,7 +382,14 @@ describe("the derived JSON Schema", () => {
     const success = Tool.getJsonSchemaFromSchema(
       MemhtmlToolkit.tools.memory_write_batch.successSchema
     ) as unknown as JsonSchemaObject
-    expect(success.required).toEqual(["results", "summary", "commit_sha"])
+    // `near_duplicates_degraded` is top-level and always present: "the assist did not run" is a fact
+    // about the whole batch, and a client must be able to read it without probing any op.
+    expect(success.required).toEqual([
+      "results",
+      "summary",
+      "commit_sha",
+      "near_duplicates_degraded"
+    ])
 
     const results = (success.properties ?? {}).results as JsonSchemaObject & {
       readonly items?: JsonSchemaObject
@@ -402,6 +410,9 @@ describe("the derived JSON Schema", () => {
        * than optional for the same reason, asserted below.
        */
       "conflict",
+      // `near_duplicates` follows conflict's rule for conflict's reason: "nothing matched" and
+      // "this build does not check" lead to opposite decisions about whether to go looking.
+      "near_duplicates",
       // The two consolidation outcomes follow the same present-and-nullable rule: "not
       // consolidated" and "this build does not consolidate" are different facts.
       "consolidated_into",
@@ -422,6 +433,21 @@ describe("the derived JSON Schema", () => {
     const branches: ReadonlyArray<JsonSchemaObject> = conflict.anyOf ?? []
     const struct = branches.find((branch) => branch.type === "object")
     expect(struct?.required).toEqual(["path", "batch_index", "claim"])
+
+    /**
+     * The near-duplicate entry struct, one nesting deeper (NullOr → Array → Struct): all four fields
+     * required, `path`/`batch_index` nullable, for the conflict struct's reason — an entry whose
+     * `batch_index` decoded to `undefined` instead of `null` breaks the client on the op where the
+     * distinction decides which of two memories it goes and reads.
+     */
+    const near = (results.items?.properties ?? {}).near_duplicates as JsonSchemaObject & {
+      readonly anyOf?: ReadonlyArray<JsonSchemaObject>
+    }
+    const nearBranches: ReadonlyArray<JsonSchemaObject> = near.anyOf ?? []
+    const nearArray = nearBranches.find((branch) => branch.type === "array") as
+      | (JsonSchemaObject & { readonly items?: JsonSchemaObject })
+      | undefined
+    expect(nearArray?.items?.required).toEqual(["path", "batch_index", "similarity", "claim"])
 
     const summary = (success.properties ?? {}).summary as JsonSchemaObject
     expect(summary.required).toEqual([
