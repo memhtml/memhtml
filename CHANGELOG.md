@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.10.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.9.1...memhtml-v0.10.0) (2026-09-01)
+
+
+### Features
+
+* **sleep:** merge a provably disjoint main advance instead of refusing ([#112](https://github.com/memhtml/memhtml/issues/112)) ([6799f03](https://github.com/memhtml/memhtml/commit/6799f03fb734e70ae9341f487afd9ac28c2c9181)), closes [#108](https://github.com/memhtml/memhtml/issues/108)
+* **write:** embedding-proximity near-duplicate check at write time ([#103](https://github.com/memhtml/memhtml/issues/103)) ([540a969](https://github.com/memhtml/memhtml/commit/540a9695910a3c7ecf7b904094906d364fa985a5))
+* **write:** report embedding near-duplicates at write time behind an opt-in flag ([#103](https://github.com/memhtml/memhtml/issues/103)) ([5bc07ae](https://github.com/memhtml/memhtml/commit/5bc07ae1173661682912d0a14a8523f587d29302))
+
+
+### Bug Fixes
+
+* **consolidator:** abandoned turns stay dead and eve children die with their parent ([f80ca85](https://github.com/memhtml/memhtml/commit/f80ca852357ab2644d92b3c80adcab77ad2ec0f1))
+* **consolidator:** cancel timed-out turns, disable boot recovery of abandoned runs, and tether eve children to their parent ([7327d9a](https://github.com/memhtml/memhtml/commit/7327d9a254934d813cdd5ca7149d11d08291dce1))
+* **consolidator:** watermark barren-but-read sessions from the receipt ([#109](https://github.com/memhtml/memhtml/issues/109)) ([5d864b9](https://github.com/memhtml/memhtml/commit/5d864b9e0db35f851cbcf1ff424dc517fb550c54))
+* **sleep:** refresh base_sha, branch, and started_at in recordRun's upsert ([#111](https://github.com/memhtml/memhtml/issues/111)) ([e354c7d](https://github.com/memhtml/memhtml/commit/e354c7d90a355161dc47dd71d4edbfc9e26b259d)), closes [#110](https://github.com/memhtml/memhtml/issues/110)
+* **store:** pin git's repo selection to -C against hook-exported GIT_DIR ([b04157e](https://github.com/memhtml/memhtml/commit/b04157e306b077d45d7508262f70d667de662504))
+* **write:** keep the sleep metaphor honest and extend the cross-door censuses ([110a3b6](https://github.com/memhtml/memhtml/commit/110a3b63b37b18cd2ce1aaf7850adf241b8af24b))
+
 ## [0.9.1](https://github.com/memhtml/memhtml/compare/memhtml-v0.9.0...memhtml-v0.9.1) (2026-09-01)
 
 
