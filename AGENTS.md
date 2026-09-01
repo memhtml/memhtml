@@ -102,7 +102,7 @@ Answering a question that takes MORE THAN ONE HOP through the corpus? Write it a
 | `memhtml trace index` | — | — | `trace.report` |
 | `memhtml trace search` | <query> | `--cwd` `--since` `--limit` | `trace.sessions` |
 | `memhtml trace links` | — | `--session-id` `--path` | `trace.links` |
-| `memhtml sleep run` | — | `--date` `--phases` `--dry-run` `--deep` `--max-llm-calls` | `sleep.report` |
+| `memhtml sleep run` | — | `--date` `--phases` `--dry-run` `--deep` `--max-llm-calls` `--trace-sessions` | `sleep.report` |
 | `memhtml sleep resume` | <run-id> | — | `sleep.report` |
 | `memhtml sleep review` | <run-id> | `--diff` | `sleep.review` |
 | `memhtml sleep merge` | <run-id> | `--skip-gate` | `sleep.merge` |
@@ -359,6 +359,7 @@ The curation cycle: 17 phases, each an isolated commit on a review branch.
 - `--dry-run` (boolean) — Report per-phase counts and commit nothing. _(default `false`)_
 - `--deep` (boolean) — The deep-sleep cycle: mine a lower grouping band, group by shared entity, re-file inbox singletons, and iterate compress until a pass folds nothing. Reaches the inbox tail the default community gate cannot; costs more model calls. Same branch, review, and merge gate as a run without this flag. _(default `false`)_
 - `--max-llm-calls` (int) — Cap on model calls the deep mechanisms may spend, shared across all deep phases. Exhaustion skips remaining batches with reason `budget` and the run stays green. Read only with --deep; absent means uncapped.
+- `--trace-sessions` (int) — Sessions handed to trace-consolidation this run. Defaults to 10. The consolidation turn's time budget scales with this count, so a host with large transcripts can trade batch size for turn time.
 
 ### `memhtml sleep resume`
 

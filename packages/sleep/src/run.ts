@@ -50,6 +50,11 @@ export interface RunOptions {
    * phase — the run stays green, exactly as a model outage does.
    */
   readonly maxLlmCalls?: number | undefined
+  /**
+   * Sessions handed to trace-consolidation this run. Absent takes the default (ten); see the field
+   * on `PhaseEnv` for why this is a parameter of the run rather than a constant of the phase.
+   */
+  readonly traceSessions?: number | undefined
 }
 
 /** How many runs one date can name: `sleep/<date>` plus the ninety-nine suffixed reruns. */
@@ -159,7 +164,8 @@ export const run = (deps: SleepDeps, options: RunOptions): Effect.Effect<RunRepo
                 : { budget: makeLlmBudget(options.maxLlmCalls) })
             }
           }
-        : {})
+        : {}),
+      ...(options.traceSessions === undefined ? {} : { traceSessions: options.traceSessions })
     }
 
     if (!dryRun) {

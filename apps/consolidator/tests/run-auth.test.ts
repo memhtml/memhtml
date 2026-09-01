@@ -183,8 +183,13 @@ describe("eve's own verifier on this app's tokens", () => {
 
   /**
    * The token is SHORT-LIVED, and this asserts it from the token rather than from the constant: `exp`
-   * is within a few minutes of `iat`, so a credential that escapes is stale in minutes rather than
-   * good for the process's life. The client re-signs per request, so a tight TTL costs nothing.
+   * is bounded, so a credential that escapes goes stale rather than being good for the process's
+   * life. The bound is fifteen minutes rather than the two it once was, because a TTL also has to
+   * cover the gap between signing a request and the server judging it, and two minutes was measured
+   * insufficient on a loaded host (issue #99) — a stream reconnect queued past TTL-plus-skew in
+   * flight and was rejected as expired mid-turn. Fifteen stays far under a turn's budget
+   * (`turnBudgetMsFor`, forty minutes at the default batch), and the credential's REAL bound is
+   * unchanged either way: the per-spawn secret dies with the server process.
    */
   it("expires within minutes of being signed", () => {
     const [, body] = signRunToken({ secret: mintRunSecret() }).split(".")
@@ -193,7 +198,7 @@ describe("eve's own verifier on this app's tokens", () => {
       exp: number
     }
     expect(claims.exp - claims.iat).toBeGreaterThan(0)
-    expect(claims.exp - claims.iat).toBeLessThanOrEqual(300)
+    expect(claims.exp - claims.iat).toBeLessThanOrEqual(15 * 60)
   })
 
   /**

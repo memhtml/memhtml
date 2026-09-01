@@ -1362,6 +1362,42 @@ describe("trace-consolidation session selection", () => {
     )
   })
 
+  it("honors env.traceSessions over the default batch, still newest-first", async () => {
+    /**
+     * The `--trace-sessions` override (issue #99): the batch is a parameter of the run, because the
+     * right size is a property of the host. Three against six seeded sessions, with mtimes inverted
+     * exactly as the default-cap test above inverts them, so an override that changed the LIMIT but
+     * lost the ordering would fail here rather than pass by insertion luck.
+     */
+    const consolidator = scriptedConsolidator(() => candidates([]))
+    const total = 6
+    const requested = 3
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          for (let at = 0; at < total; at += 1) {
+            yield* seedTrace(fixture, {
+              sessionId: `session-${String(at).padStart(2, "0")}`,
+              fileMtime: `2026-07-${String(total - at).padStart(2, "0")}T00:00:00Z`
+            })
+          }
+
+          const outcome = yield* traceConsolidation({
+            ...envFor(fixture),
+            traceSessions: requested
+          })
+
+          expect(outcome.counts.batch).toBe(requested)
+          const taken = yield* pendingSessions(fixture, `sleep/${DATE}`)
+          expect(taken).toEqual(
+            Array.from({ length: requested }, (_, at) => `session-${String(at).padStart(2, "0")}`)
+          )
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
   it("hands over the transcript's real path, and never opens it itself", async () => {
     /**
      * The phase's contract with the consolidator: the path is the one `traces.file_path` holds, and the

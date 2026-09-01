@@ -448,11 +448,37 @@ export const layerConsolidatorPort = (
         return { consolidator: undefined }
       }
       /**
+       * The turn-budget override, read from the SAME injected environment as the credential gate
+       * above and for the same reason (the note on this layer: `Config` snapshots `process.env`, so
+       * an injected env and a `Config` read can disagree). Absent, the budget scales with the batch
+       * (`turnBudgetMsFor` in `apps/consolidator/src/client.ts`). A set-but-unparseable value DIES
+       * rather than falling back: a typo'd ceiling silently becoming the default is the
+       * degradation-instead-of-skip outcome the gate above exists to prevent, one knob over.
+       */
+      const turnTimeoutRaw = env.MEMHTML_CONSOLIDATOR_TURN_TIMEOUT_MS?.trim() ?? ""
+      const turnTimeoutMs = turnTimeoutRaw === "" ? undefined : Number(turnTimeoutRaw)
+      if (
+        turnTimeoutMs !== undefined &&
+        (!Number.isSafeInteger(turnTimeoutMs) || turnTimeoutMs <= 0)
+      ) {
+        return yield* Effect.die(
+          new Error(
+            `MEMHTML_CONSOLIDATOR_TURN_TIMEOUT_MS must be a positive integer of milliseconds; got ${JSON.stringify(turnTimeoutRaw)}`
+          )
+        )
+      }
+      /**
        * The client is built over the same environment the gate just read. A client over ambient
        * `process.env` while the gate read an injected one would pass the gate and fail at the call,
        * which is the degradation-instead-of-skip outcome this gate exists to prevent.
        */
-      return { consolidator: makeConsolidator({ env, traceRoot: roots.traceRoot }) }
+      return {
+        consolidator: makeConsolidator({
+          env,
+          traceRoot: roots.traceRoot,
+          ...(turnTimeoutMs === undefined ? {} : { turnTimeoutMs })
+        })
+      }
     })
   ).pipe(Layer.orDie)
 

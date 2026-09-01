@@ -758,6 +758,14 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
           "Cap on model calls the deep mechanisms may spend, shared across all deep phases. " +
           "Exhaustion skips remaining batches with reason `budget` and the run stays green. " +
           "Read only with --deep; absent means uncapped."
+      },
+      {
+        name: "trace-sessions",
+        type: "int",
+        description:
+          "Sessions handed to trace-consolidation this run. Defaults to 10. The consolidation " +
+          "turn's time budget scales with this count, so a host with large transcripts can " +
+          "trade batch size for turn time."
       }
     ],
     responseTypes: ["sleep.report"]

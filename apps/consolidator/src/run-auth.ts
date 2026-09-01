@@ -101,15 +101,19 @@ const SUBJECT = "memhtml-consolidator-client"
  *
  * Short because it does not have to cover the run: the client passes the FUNCTION form of eve's
  * `TokenValue`, which resolves before every HTTP call
- * (node_modules/eve/dist/src/client/types.d.ts:49-69), so a 10-minute turn presents a fresh token on
+ * (node_modules/eve/dist/src/client/types.d.ts:49-69), so a long turn presents a fresh token on
  * every request rather than one token held open for the turn. That decouples the credential's
- * lifetime from `TURN_TIMEOUT_MS` entirely: a stream reconnect ten minutes in signs a new token.
+ * lifetime from the turn budget (`turnBudgetMsFor` in `client.ts`) entirely: a stream reconnect
+ * deep into a turn signs a new token.
  *
- * 120s rather than something tighter because the bound that matters is the SERVER's lifetime (one
- * run), and a token has to survive being minted before a request that then queues behind a model
- * call's connection setup.
+ * The TTL therefore only has to cover the gap between SIGNING a request and the server JUDGING it,
+ * and 120s was measured insufficient there (issue #99): on a loaded host a stream reconnect queued
+ * past TTL-plus-skew in flight, arrived expired, and the server's generic 401 dressed a timing
+ * problem as an auth failure — mid-turn, with the signer provably fresh per request. Fifteen
+ * minutes clears any stall short of the turn budget itself while staying far below the credential's
+ * real bound, which is the per-spawn secret dying with the server process.
  */
-const TOKEN_TTL_SECONDS = 120
+const TOKEN_TTL_SECONDS = 900
 
 /**
  * Clock skew the verifier tolerates, in seconds. eve defaults to 30.
