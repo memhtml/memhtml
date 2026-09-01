@@ -1228,7 +1228,13 @@ export const replaceMinedEdges = (
     }))
   ])
 
-/** Record the run row. The one write a dry run makes, marked so a report can say so. */
+/**
+ * Record the run row. The one write a dry run makes, marked so a report can say so.
+ *
+ * The upsert replaces the whole row: a run id is reused when a date's branch is deleted and the
+ * sleep rerun, and `merge`'s main-advanced guard reads `base_sha` off this row — so the row must
+ * describe the run that most recently executed under the id, not the date's first run (#110).
+ */
 export const recordRun = (
   db: DatabaseShape,
   input: {
@@ -1244,8 +1250,9 @@ export const recordRun = (
   db.run(
     `INSERT INTO sleep_runs (run_id, branch, base_sha, head_sha, status, started_at, ended_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(run_id) DO UPDATE SET head_sha = excluded.head_sha, status = excluded.status,
-       ended_at = excluded.ended_at`,
+     ON CONFLICT(run_id) DO UPDATE SET branch = excluded.branch, base_sha = excluded.base_sha,
+       head_sha = excluded.head_sha, status = excluded.status,
+       started_at = excluded.started_at, ended_at = excluded.ended_at`,
     [
       input.runId,
       input.branch,
