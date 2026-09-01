@@ -85,6 +85,17 @@ const ASSET_CLAIMS: ReadonlyArray<AssetClaim> = [
     from: "apps/consolidator/src",
     resolvedIn: "apps/consolidator/agent/sandbox/sandbox.ts",
     needle: '"../../src/mount.js"'
+  },
+  /**
+   * Loaded with `node --import` in front of every spawned eve child, so what ships must be a FILE at
+   * a resolvable path — a module bundled into `dist/` would leave the spawn's `--import` argument
+   * pointing at nothing, with a green unit suite (issue #100).
+   */
+  {
+    path: "tether",
+    from: "apps/consolidator/tether",
+    resolvedIn: "apps/consolidator/src/child-tether.ts",
+    needle: 'join(packageRoot(), "tether", "parent-tether.mjs")'
   }
 ]
 

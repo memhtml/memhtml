@@ -384,13 +384,14 @@ Twelve workspace packages, one published package. All twelve are `private`, so `
 
 **The published contract is the two binaries and their envelope**, not an import. There is no `exports` map, deliberately: declaring an entry point would promise a surface no test covers, and adding one later is a minor bump while removing one is a major, so the cheap direction stays available.
 
-**Nothing that resolves a path at run time may be bundled with the code that resolves it.** Five things do, and after bundling the resolving module lives in `dist/`, so each asset is copied to the package root one level above:
+**Nothing that resolves a path at run time may be bundled with the code that resolves it.** Six things do, and after bundling the resolving module lives in `dist/`, so each asset is copied to the package root one level above:
 
-| Asset                              | Resolved by                                                                                       | From                 |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------- |
-| `migrations/`, `state-migrations/` | `new URL("../migrations", import.meta.url)` (`packages/index/src/schema-const.ts:8`)              | `packages/index/`    |
-| `guest/corpus.mjs`                 | `resolve(dirname(fileURLToPath(import.meta.url)), "..", "guest", …)` (`apps/cli/src/exec.ts:108`) | `apps/cli/`          |
-| `agent/`, `src/`                   | eve compiles them; `agent/` reaches `../../src/*.js`                                              | `apps/consolidator/` |
+| Asset                              | Resolved by                                                                                             | From                 |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------- | -------------------- |
+| `migrations/`, `state-migrations/` | `new URL("../migrations", import.meta.url)` (`packages/index/src/schema-const.ts:8`)                    | `packages/index/`    |
+| `guest/corpus.mjs`                 | `resolve(dirname(fileURLToPath(import.meta.url)), "..", "guest", …)` (`apps/cli/src/exec.ts:108`)       | `apps/cli/`          |
+| `agent/`, `src/`                   | eve compiles them; `agent/` reaches `../../src/*.js`                                                    | `apps/consolidator/` |
+| `tether/parent-tether.mjs`         | loaded by `node --import` in front of every spawned eve child (`apps/consolidator/src/child-tether.ts`) | `apps/consolidator/` |
 
 Two dependencies must additionally stay OUTSIDE the bundle, because their files are read rather than imported: `node-html-parser`, whose published `dist/index.mjs` is read as bytes into the QuickJS guest (`apps/cli/src/exec.ts:136`), and `highlight.js`, loaded through `createRequire` on the first detection (`packages/html/src/detect.ts:51`). A third, `eve`, is spawned rather than imported and is located through `eve/package.json` because its `exports` map declares no `./bin/*` subpath (`apps/consolidator/src/agent-build.ts`). Externals are derived from the workspace manifests as patterns that match subpaths, since `effect` alone does not match `effect/unstable/cli`.
 

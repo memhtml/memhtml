@@ -177,7 +177,10 @@ describe("staging copies agent/ and src/ together, at their original depth", () 
       })) {
         if (!entry.isFile() || !entry.name.endsWith(".ts")) continue
         const text = await readFile(join(entry.parentPath, entry.name), "utf8")
-        for (const [, spec] of text.matchAll(/(?:from|import|require)\s*\(?\s*["']([^"']+)["']/g)) {
+        for (const [, spec] of text.matchAll(
+          // Same lookbehind as `importedPackages`: `"--import"` in a string must not scan.
+          /(?<![\w"'-])(?:from|import|require)\s*\(?\s*["']([^"']+)["']/g
+        )) {
           if (spec === undefined || /^[./]/.test(spec) || spec.startsWith("node:")) continue
           const segments = spec.split("/")
           const first = segments[0] ?? spec

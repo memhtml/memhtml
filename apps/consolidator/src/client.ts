@@ -8,6 +8,7 @@ import { Effect, Result, Schema } from "effect"
 
 import { eveBinPath, resolveAgentAppRoot } from "./agent-build.js"
 import { appendStderrTail, stderrMessageTail } from "./child-stderr.js"
+import { tetherEnv, tetheredNodeArgs } from "./child-tether.js"
 import {
   CONSOLIDATION_OUTPUT_JSON_SCHEMA,
   ConsolidationPayload,
@@ -255,6 +256,27 @@ const TURN_BASE_TIMEOUT_MS = 10 * 60_000
 const TURN_PER_TRANSCRIPT_TIMEOUT_MS = 3 * 60_000
 
 /**
+ * How long the timeout path waits for the server to acknowledge the cooperative cancel before the
+ * kill proceeds anyway.
+ *
+ * The cancel is what marks the abandoned turn's workflow run terminal in the shared state directory
+ * (see {@link RECOVER_ACTIVE_RUNS_ENV} for what an un-cancelled run used to cost); the SIGTERM that
+ * follows only stops the process. Bounded, because `response.cancel()` waits for the event stream to
+ * name the turn, and a server wedged enough to blow a forty-minute budget may never do that — the
+ * recovery switch stays behind this as the guarantee that even an un-acknowledged cancel leaves
+ * nothing a later boot will run.
+ */
+const CANCEL_WAIT_MS = 10_000
+
+/**
+ * The backstop past the turn budget, covering what {@link settleTurnWithinBudget} cannot: a
+ * `sessions.create` POST that never returns has produced no response handle to cancel, so the
+ * in-band race never starts. One minute over the budget rather than a second deadline of its own —
+ * on this path there is nothing to cancel and the server stop is the only remedy left.
+ */
+const TURN_ABANDON_GRACE_MS = 60_000
+
+/**
  * How long one consolidation turn may take, given how much it was handed.
  *
  * A pure function of the batch rather than a constant, because the work is proportional to the
@@ -267,6 +289,30 @@ export const turnBudgetMsFor = (input: {
   readonly override?: number | undefined
 }): number =>
   input.override ?? TURN_BASE_TIMEOUT_MS + TURN_PER_TRANSCRIPT_TIMEOUT_MS * input.transcriptCount
+
+/**
+ * The switch that keeps a NEXT boot from resuming THIS boot's abandoned work (issue #100).
+ *
+ * eve's built server constructs its local workflow world with `dataDir` under `process.cwd()` —
+ * `<appRoot>/.eve/.workflow-data` — and every spawn of one version serves from the same built cache
+ * root, so all of them share one workflow state directory. A turn abandoned mid-flight (a timeout,
+ * or the client dying) stays `pending`/`running` in that directory, and the world's default boot
+ * behavior re-enqueues every active run it finds: a later spawn then runs the dead client's turn to
+ * completion, unattended, with whatever credentials it carries, for a result nobody consumes.
+ * Observed as `[world-local] Re-enqueued 9 active run(s) on startup`.
+ *
+ * `@workflow/world-local` reads this variable when (and only when) the world's constructor was not
+ * handed an explicit `recoverActiveRuns` — and eve's production `createWorld` call passes `dataDir`
+ * alone, so the variable decides. eve's own DEVELOPMENT server passes `recoverActiveRuns: false`
+ * for exactly this reason. `tests/run-recovery.test.ts` proves both halves against the installed
+ * world-local: the default boot re-delivers an abandoned run, and this value set to `"0"` leaves it
+ * alone. The stale rows still exist as data — inert, listable, never executed.
+ *
+ * On the child's environment rather than in this process's own env, and eve's `eve start` spreads
+ * its whole environment into the built server it supervises, so the value reaches the process that
+ * constructs the world.
+ */
+const RECOVER_ACTIVE_RUNS_ENV = "WORKFLOW_LOCAL_RECOVER_ACTIVE_RUNS"
 
 /** How a client is built. Note the absence of a host: see {@link LOOPBACK_HOST}. */
 export interface ConsolidatorOptions {
@@ -754,14 +800,21 @@ const startServerOnPort = (input: {
 
     const child = spawn(
       process.execPath,
-      [eveBin, "start", "--host", LOOPBACK_HOST, "--port", String(port)],
+      /**
+       * The tether rides in front of the entry (`child-tether.ts`): it exits this child when the
+       * spawning process dies, which is the only teardown that survives this process being
+       * SIGKILLed — the `stop` finalizer below cannot run then, and an orphaned `eve start` is a
+       * live listener holding the run secret for as long as nobody notices it (issue #100).
+       */
+      tetheredNodeArgs(eveBin, ["start", "--host", LOOPBACK_HOST, "--port", String(port)]),
       {
         cwd: appRoot,
         stdio: ["ignore", "pipe", "pipe"],
         /**
-         * Two per-run values cross to the server by ENVIRONMENT, for one reason: both are consumed by
-         * files eve loads INSIDE the spawned process, `agent/sandbox/sandbox.ts` for the mounts and
-         * `agent/channels/eve.ts` for the auth policy, and neither has another channel to a value the
+         * Per-run values cross to the server by ENVIRONMENT, for one reason: each is consumed by
+         * code loaded INSIDE the spawned process — `agent/sandbox/sandbox.ts` for the mounts,
+         * `agent/channels/eve.ts` for the auth policy, the tether module for the parent pid, and
+         * eve's workflow world for the recovery switch — and none has another channel to a value the
          * client decided. `mount.ts` established the pattern; `run-auth.ts` follows it.
          *
          * The secret is the one thing in this environment that is a credential, so the remaining
@@ -772,7 +825,9 @@ const startServerOnPort = (input: {
         env: {
           ...process.env,
           [SANDBOX_MOUNTS_ENV]: encodeSandboxMounts(mounts),
-          [RUN_SECRET_ENV]: secret
+          [RUN_SECRET_ENV]: secret,
+          [RECOVER_ACTIVE_RUNS_ENV]: "0",
+          ...tetherEnv()
         }
       }
     )
@@ -1056,6 +1111,76 @@ export const fabricatedQuoteReason = (
   })
 
 /**
+ * The turn handle {@link settleTurnWithinBudget} races: the settled result, and the cooperative
+ * cancel. The narrow shape is what lets the pure test tier drive the race with no server and no eve
+ * import (`contract.ts` records that rule for the test tiers).
+ */
+export interface TurnHandle<A> {
+  readonly result: () => Promise<A>
+  readonly cancel: () => Promise<unknown>
+}
+
+/**
+ * Await a turn's result under its budget, and CANCEL the turn when the budget expires (issue #100).
+ *
+ * The cancel is the difference between a timed-out turn and an ABANDONED one. A turn that is merely
+ * dropped — fiber interrupted, server SIGTERMed — stays `active` in the shared workflow state
+ * directory, where a boot without {@link RECOVER_ACTIVE_RUNS_ENV} re-enqueues and runs it
+ * unattended: two such consolidation turns were watched running to completion three hours after
+ * their clients died (issue #100), spending model tokens on answers nobody consumed. The recovery
+ * switch makes such rows inert; the cancel here keeps the common abandonment path — the budget
+ * timeout — from leaving one at all, which is also what protects an operator running `eve start` by
+ * hand with no switch set.
+ *
+ * The cancel is BEST-EFFORT and bounded by {@link CANCEL_WAIT_MS}: `response.cancel()` waits for the
+ * stream to identify the turn, and the timeout case is precisely the one where the server may be too
+ * wedged to answer. Its failure is swallowed because the caller's next move is the same either way —
+ * fail the run and stop the server — and the outcome reports `kind: "timeout"` regardless, so a
+ * cancel that hangs cannot convert a timeout into a success.
+ *
+ * A result that REJECTS before the budget propagates to the caller unchanged (the invocation-failure
+ * mapping there is unchanged); the same rejection arriving after the budget won is already handled by
+ * the detached `.catch`, so an abandoned turn cannot become an unhandled rejection.
+ *
+ * Exported for `tests/run-recovery.test.ts`, which drives all four arms with plain fakes; `runTurn`
+ * below is the only production caller.
+ */
+export const settleTurnWithinBudget = async <A>(input: {
+  readonly turn: TurnHandle<A>
+  readonly budgetMs: number
+  readonly cancelWaitMs?: number | undefined
+}): Promise<{ readonly kind: "settled"; readonly result: A } | { readonly kind: "timeout" }> => {
+  let budgetTimer: NodeJS.Timeout | undefined
+  const budgetExpired = new Promise<{ readonly kind: "timeout" }>((settle) => {
+    budgetTimer = setTimeout(() => settle({ kind: "timeout" }), input.budgetMs)
+  })
+  try {
+    const settled = input.turn.result().then((result) => ({ kind: "settled" as const, result }))
+    // A rejection after the budget wins belongs to an abandoned promise; without a handler it would
+    // crash the process as an unhandled rejection. The raced `settled` itself still rejects, so a
+    // rejection BEFORE the budget propagates exactly as it did without the race.
+    settled.catch(() => undefined)
+    const outcome = await Promise.race([settled, budgetExpired])
+    if (outcome.kind === "settled") return outcome
+
+    let cancelTimer: NodeJS.Timeout | undefined
+    try {
+      await Promise.race([
+        input.turn.cancel().catch(() => undefined),
+        new Promise((settle) => {
+          cancelTimer = setTimeout(settle, input.cancelWaitMs ?? CANCEL_WAIT_MS)
+        })
+      ])
+    } finally {
+      clearTimeout(cancelTimer)
+    }
+    return outcome
+  } finally {
+    clearTimeout(budgetTimer)
+  }
+}
+
+/**
  * Run ONE turn against a live server and decode its structured answer.
  *
  * ## Exactly one turn, and one `sessions.create`
@@ -1076,7 +1201,8 @@ export const fabricatedQuoteReason = (
  */
 const runTurn = (
   server: ServerHandle,
-  reachable: ReadonlyArray<ReachableTranscript>
+  reachable: ReadonlyArray<ReachableTranscript>,
+  turnBudgetMs: number
 ): Effect.Effect<ConsolidationResult, ConsolidatorError> =>
   Effect.gen(function* () {
     const { Client } = yield* Effect.tryPromise({
@@ -1110,13 +1236,24 @@ const runTurn = (
       redirect: "manual"
     })
 
-    const analysis = yield* Effect.tryPromise({
+    /**
+     * The budget is enforced IN BAND, so the timeout path still holds the response handle and can
+     * cancel the turn before the caller stops the server ({@link settleTurnWithinBudget}). An
+     * `Effect` timeout around this whole function would interrupt the fiber instead, and an
+     * interrupted fiber has no handle to cancel with — that is the shape that left active runs
+     * behind (issue #100). What stays out of band is the backstop in `makeConsolidator`, for the
+     * create-never-returns case where no handle ever existed.
+     */
+    const outcome = yield* Effect.tryPromise({
       try: async () => {
         const { response } = await client.sessions.create({
           message: turnMessage(reachable),
           outputSchema: CONSOLIDATION_OUTPUT_JSON_SCHEMA
         })
-        return await response.result()
+        return await settleTurnWithinBudget({
+          turn: { result: () => response.result(), cancel: () => response.cancel() },
+          budgetMs: turnBudgetMs
+        })
       },
       catch: (cause) =>
         ConsolidatorRunFailed.make({
@@ -1124,6 +1261,16 @@ const runTurn = (
           reason: `the consolidation turn could not be delivered: ${String(cause)}`
         })
     })
+
+    if (outcome.kind === "timeout") {
+      return yield* Effect.fail(
+        ConsolidatorRunFailed.make({
+          phase: "turn",
+          reason: `the consolidation turn exceeded ${String(turnBudgetMs)}ms for ${String(reachable.length)} transcripts`
+        })
+      )
+    }
+    const analysis = outcome.result
 
     if (analysis.status === "failed") {
       return yield* Effect.fail(
@@ -1385,14 +1532,24 @@ export const makeConsolidator = (options: ConsolidatorOptions): ConsolidatorShap
                   transcriptCount: reachable.length,
                   override: options.turnTimeoutMs
                 })
-                return runTurn(server, reachable).pipe(
+                /**
+                 * The budget itself is enforced inside `runTurn`, where the timeout path can still
+                 * cancel the in-flight turn (issue #100 — see {@link settleTurnWithinBudget}). This
+                 * outer timeout is only the BACKSTOP for a `sessions.create` that never returns,
+                 * which produced no handle to cancel; hence the grace on top of the budget rather
+                 * than a race at the same deadline, which the in-band cancel would always lose.
+                 */
+                return runTurn(server, reachable, turnBudgetMs).pipe(
                   Effect.timeoutOrElse({
-                    duration: turnBudgetMs,
+                    duration: turnBudgetMs + TURN_ABANDON_GRACE_MS,
                     orElse: () =>
                       Effect.fail(
                         ConsolidatorRunFailed.make({
                           phase: "turn",
-                          reason: `the consolidation turn exceeded ${String(turnBudgetMs)}ms for ${String(reachable.length)} transcripts`
+                          reason:
+                            `the consolidation turn did not settle within ` +
+                            `${String(turnBudgetMs + TURN_ABANDON_GRACE_MS)}ms for ` +
+                            `${String(reachable.length)} transcripts, cancellation grace included`
                         })
                       )
                   })
@@ -1456,16 +1613,17 @@ const writeManifestDirectory = (input: {
  * symptom is an empty directory nobody reads. A sweep of the wrong scope is the same defect as no
  * sweep, one prefix at a time.
  *
- * The same death also leaks the spawned `eve start` itself — a live listener holding the run secret
- * in its environment. That one a sweep cannot fix and eve's CLI offers no handle for: probed against
- * the shipped 0.38.3 dist, `eve start` takes only `--host`/`--port`
- * (node_modules/eve/dist/src/cli/run.js), installs SIGINT/SIGTERM handlers
- * (node_modules/eve/dist/src/cli/shutdown.js), and neither watches its parent pid nor exits when
- * stdin closes (stdin is spawned `ignore` here regardless). The residual is bounded by what the
- * orphan can do: it serves only loopback, its secret authenticates only requests to itself, and the
- * token this client signs expires minutes after minting — so an orphaned server is a leaked process
- * and one readable `/proc/<pid>/environ`, not an open door. An operator hunting one should look for
- * `node .../eve.js start` with `MEMHTML_CONSOLIDATOR_RUN_SECRET` in its environment.
+ * The spawned `eve start` dies with its parent by a different mechanism, because a sweep of temp
+ * DIRECTORIES cannot reach a process and eve's CLI offers no handle for one (probed against the
+ * shipped dist: `eve start` takes only `--host`/`--port`, installs SIGINT/SIGTERM handlers, and
+ * neither watches its parent pid nor exits when stdin closes). The parent tether riding inside it
+ * (`tether/parent-tether.mjs`, loaded via `--import` at spawn) notices the parent pid change the
+ * kernel makes at the moment of death and SIGTERMs the child through eve's own shutdown. The
+ * residual is a server whose TETHERED CLI process is itself SIGKILLed — the built server one layer
+ * down then leaks, bounded by what an orphan can do: it serves only loopback, its secret
+ * authenticates only requests to itself, and the token this client signs expires minutes after
+ * minting. An operator hunting one should look for `node .../eve.js start` with
+ * `MEMHTML_CONSOLIDATOR_RUN_SECRET` in its environment.
  */
 const sweepOrphanedTempDirectories = (): Effect.Effect<void> =>
   Effect.promise(async () => {

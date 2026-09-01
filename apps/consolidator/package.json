@@ -17,6 +17,7 @@
     "dist",
     "agent",
     "src",
+    "tether",
     "!dist/.tsbuildinfo"
   ],
   "exports": {

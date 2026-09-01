@@ -17,9 +17,10 @@ import {
  * The run-credential tier: the signer this app wrote and the verifier eve ships, checked against each
  * other rather than each against a description of the other.
  *
- * **This is the one test file that imports eve, and the import is what makes the guards non-vacuous.**
- * Every other tier stays eve-free so it needs no server — `contract.ts` records that rule — and this
- * file does not break it: `verifyJwtHmac` is a pure async function over a string and a config object,
+ * **This file imports eve, and the import is what makes the guards non-vacuous.** (The only other
+ * tier that reaches eve is `run-recovery.test.ts`, which drives the installed workflow world for the
+ * same reason.) Every other tier stays eve-free so it needs no server — `contract.ts` records that
+ * rule — and this file does not break it: `verifyJwtHmac` is a pure async function over a string and a config object,
  * with no server, no credential, no network, and no filesystem. A test that instead asserted "the
  * config names HS256" would pass against a signer that produced garbage, which is exactly the vacuous
  * shape this repo has shipped before. What is asserted here is the ACCEPTANCE VERDICT of the code that
