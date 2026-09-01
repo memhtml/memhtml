@@ -351,6 +351,7 @@ const dispatch = (
           ops: applyOps,
           continueOnError: bool(parsed, "continue-on-error", false),
           detectConflicts: bool(parsed, "detect-conflicts", false),
+          detectNearDuplicates: bool(parsed, "detect-near-duplicates", false),
           // `validate` has already refused any value outside the flag's closed vocabulary, so the
           // narrowing here cannot silently drop a caller's ask.
           ...(str(parsed, "consolidate") === "last-wins"

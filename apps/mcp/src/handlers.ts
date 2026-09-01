@@ -268,6 +268,20 @@ const wireReport = (report: BatchOpReport) => ({
           batch_index: report.conflict.batchIndex,
           claim: report.conflict.claim
         },
+  /**
+   * The near-duplicate assist's findings, each entry renamed the way `conflict` is and for its
+   * reason: `memhtml apply`'s `opPayload` publishes the same names, so the two doors' payloads stay
+   * byte-comparable. A finding says nothing about `ok`, `path`, or `skipped` either.
+   */
+  near_duplicates:
+    report.nearDuplicates === undefined
+      ? null
+      : report.nearDuplicates.map((hit) => ({
+          path: hit.path,
+          batch_index: hit.batchIndex,
+          similarity: hit.similarity,
+          claim: hit.claim
+        })),
   consolidated_into: report.consolidatedInto ?? null,
   superseded_path: report.supersededPath ?? null
 })
@@ -423,6 +437,10 @@ export const ToolHandlers: Layer.Layer<
            * for such an op would name a slot the caller never asserted.
            */
           detectConflicts: params.detect_conflicts === true,
+          // The same one-place-for-the-assist rule: `memhtml apply --detect-near-duplicates` gets
+          // the same findings from the same code, and the survivors-only consequence above holds
+          // here too — an XOR-refused op has no resolved text to embed.
+          detectNearDuplicates: params.detect_near_duplicates === true,
           // Threaded unchanged for the same reason the flag above is: `memhtml apply --consolidate`
           // resolves the same slots from the same code, so the two doors cannot disagree about
           // which value won.
@@ -480,16 +498,30 @@ export const ToolHandlers: Layer.Layer<
                     batchIndex: originOf[conflict.batchIndex] ?? conflict.batchIndex
                   }
                 }
+          // A near-duplicate's `batchIndex` is another index in `batchWrite`'s survivor space and
+          // takes the same translation, entry by entry. A store match (null `batchIndex`) passes
+          // through unchanged, and the `?? hit.batchIndex` fallback mirrors the conflict's for its
+          // reason: a suspicious number serves a caller better than a finding silently deleted.
+          const withNear =
+            translated.nearDuplicates === undefined
+              ? translated
+              : {
+                  ...translated,
+                  nearDuplicates: translated.nearDuplicates.map((hit) =>
+                    hit.batchIndex === null
+                      ? hit
+                      : { ...hit, batchIndex: originOf[hit.batchIndex] ?? hit.batchIndex }
+                  )
+                }
           // `consolidatedInto` is a second index in `batchWrite`'s survivor space and takes the
           // same translation the conflict's `batchIndex` does, for the same reason: an XOR-refused
           // op before the consolidated pair would otherwise make the pointer name the wrong op.
           reports[index] =
-            translated.consolidatedInto === undefined
-              ? translated
+            withNear.consolidatedInto === undefined
+              ? withNear
               : {
-                  ...translated,
-                  consolidatedInto:
-                    originOf[translated.consolidatedInto] ?? translated.consolidatedInto
+                  ...withNear,
+                  consolidatedInto: originOf[withNear.consolidatedInto] ?? withNear.consolidatedInto
                 }
         }
 
@@ -504,7 +536,8 @@ export const ToolHandlers: Layer.Layer<
         return {
           results: results.map(wireReport),
           summary: summarize(results),
-          commit_sha: batch.commitSha
+          commit_sha: batch.commitSha,
+          near_duplicates_degraded: batch.nearDuplicatesDegraded
         }
       })
     ),

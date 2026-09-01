@@ -79,6 +79,12 @@ interface ApplyOp {
     readonly batch_index: number | null
     readonly claim: string
   } | null
+  readonly near_duplicates: ReadonlyArray<{
+    readonly path: string | null
+    readonly batch_index: number | null
+    readonly similarity: number
+    readonly claim: string
+  }> | null
 }
 
 interface Applied {
@@ -92,6 +98,7 @@ interface Applied {
     readonly consolidated: number
   }
   readonly commit_sha: string | null
+  readonly near_duplicates_degraded: boolean
 }
 
 const applied = (stdout: string): Applied => {
@@ -216,6 +223,7 @@ describe("memhtml apply: the JSONL door", () => {
       "error",
       "existing_path",
       "index",
+      "near_duplicates",
       "ok",
       "path",
       "skipped",
@@ -431,6 +439,82 @@ describe("memhtml apply --detect-conflicts (AC-1-2)", () => {
     // Op 1's survived, and `batch_index: 0` is a number rather than a null so it survives too.
     expect(data.results[1]?.conflict?.batch_index).toBe(0)
     expect(data.results[1]?.conflict?.claim).toBe("The cache ttl is 300 seconds.")
+    expect(data.summary.written).toBe(2)
+  })
+})
+
+/**
+ * `memhtml apply --detect-near-duplicates` through the REAL binary, for the same reason the
+ * `--detect-conflicts` suite exists: a FlagSpec added to the manifest without the `run.ts` wiring —
+ * or wired to the wrong name — publishes a documented flag that silently does nothing, and the
+ * flag-on/flag-off pair below cannot both pass in that state. The assist's own semantics (thresholds,
+ * intra-batch fold, degradation channels) are `batch.test.ts`'s subject; this suite owns the door:
+ * argv, the snake_case envelope, and `--dense`.
+ */
+describe("memhtml apply --detect-near-duplicates", () => {
+  const RUNBOOK =
+    "The deploy runbook owner is Priya Raman and the runbook lives in the operations wiki."
+  const RUNBOOK_REWORDED =
+    "Priya Raman is the deploy runbook owner and the runbook lives in the operations wiki."
+
+  it("names the ACTIVE memory a line nearly restates, in snake_case, and writes the line anyway", async () => {
+    const cli = await withApply()
+    const first = await cli.fromFile([line({ title: "Runbook owner", body: RUNBOOK })])
+    const storedPath = applied(first.stdout).results[0]?.path
+
+    const second = await cli.fromFile(
+      [line({ title: "Runbook owner restated", body: RUNBOOK_REWORDED })],
+      ["--detect-near-duplicates"]
+    )
+    expect(second.exitCode).toBe(EXIT_OK)
+    const data = applied(second.stdout)
+
+    // The nested list, in snake_case, byte-comparable with `memory_write_batch`'s.
+    const hits = data.results[0]?.near_duplicates
+    expect(hits).toHaveLength(1)
+    expect(hits?.[0]?.path).toBe(storedPath)
+    expect(hits?.[0]?.claim).toBe(RUNBOOK)
+    expect(hits?.[0]?.batch_index).toBeNull()
+    expect(hits?.[0]?.similarity).toBeGreaterThanOrEqual(0.92)
+    expect(data.near_duplicates_degraded).toBe(false)
+
+    // PROPOSE-ONLY at the CLI, exit 0, and both memories on disk.
+    expect(data.results[0]?.ok).toBe(true)
+    expect(data.summary.written).toBe(1)
+    expect((await htmlOnDisk(cli.root)).length).toBe(2)
+  })
+
+  it("reports null without the flag, on the SAME pair that would light up", async () => {
+    // The flag-off lock, over lines that WOULD match — run over unrelated lines it would also pass
+    // against a build whose default was on.
+    const cli = await withApply()
+    await cli.fromFile([line({ title: "Runbook owner", body: RUNBOOK })])
+    const second = await cli.fromFile([
+      line({ title: "Runbook owner restated", body: RUNBOOK_REWORDED })
+    ])
+    const data = applied(second.stdout)
+    // Present-and-null, the same rule every nullable field follows: a client reading an absent key
+    // cannot tell "nothing matched" from "this build does not check".
+    expect(data.results[0]).toHaveProperty("near_duplicates")
+    expect(data.results[0]?.near_duplicates).toBeNull()
+    expect(data.near_duplicates_degraded).toBe(false)
+  })
+
+  it("survives --dense, which strips nulls and must not eat a real finding", async () => {
+    const cli = await withApply()
+    const result = await cli.fromFile(
+      [
+        line({ title: "Runbook owner", body: RUNBOOK }),
+        line({ title: "Runbook owner restated", body: RUNBOOK_REWORDED })
+      ],
+      ["--detect-near-duplicates", "--dense"]
+    )
+    const data = applied(result.stdout)
+    // Line 0 has no finding, so `--dense` removed the key entirely.
+    expect(data.results[0]).not.toHaveProperty("near_duplicates")
+    // Line 1's survived, with the intra-batch `batch_index: 0` intact under the null-stripping.
+    expect(data.results[1]?.near_duplicates?.[0]?.batch_index).toBe(0)
+    expect(data.results[1]?.near_duplicates?.[0]?.claim).toBe(RUNBOOK)
     expect(data.summary.written).toBe(2)
   })
 })
@@ -888,6 +972,7 @@ describe("the manifest guide (AC-6-6)", () => {
       "file",
       "continue-on-error",
       "detect-conflicts",
+      "detect-near-duplicates",
       "consolidate",
       "session-id",
       "prompt-id",

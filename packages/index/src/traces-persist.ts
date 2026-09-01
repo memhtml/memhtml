@@ -1,4 +1,5 @@
 import type { StorageFailure } from "@memhtml/contracts/errors"
+import { cosine, float32View } from "@memhtml/domain"
 import { Context, Effect } from "effect"
 
 import type { DatabaseShape, Write } from "./database.js"
@@ -111,6 +112,25 @@ export interface IndexRecorderShape {
   readonly activeFramesFor: (
     keys: ReadonlyArray<string>
   ) => Effect.Effect<ReadonlyMap<string, ReadonlyArray<FrameMatch>>, StorageFailure>
+  /**
+   * The live memories embedding-near each query vector, the near-duplicate assist's substrate.
+   *
+   * BATCH by signature for `activeFramesFor`'s reason: the corpus vectors are read and decoded ONCE
+   * for the whole query set, never once per op. The answer is positional — element `i` holds the
+   * matches for `queries[i]`, at or above `floor`, similarity descending, at most `k` — because the
+   * queries have no natural key the way frame keys do.
+   */
+  readonly activeNearestFor: (
+    queries: ReadonlyArray<Float32Array>,
+    options: {
+      /** Cosine similarity at or above which a memory is reported. */
+      readonly floor: number
+      /** Matches kept per query, best first. */
+      readonly k: number
+      /** Memory types to exclude, e.g. `arc`, since a synthesis is not a near-duplicate of its members. */
+      readonly excludeTypes?: ReadonlyArray<string> | undefined
+    }
+  ) => Effect.Effect<ReadonlyArray<ReadonlyArray<NearMatch>>, StorageFailure>
 }
 
 /**
@@ -123,6 +143,20 @@ export interface IndexRecorderShape {
 export interface FrameMatch {
   readonly path: string
   readonly gist: string
+}
+
+/**
+ * One live memory embedding-near a query vector.
+ *
+ * `gist` travels with `path` for {@link FrameMatch}'s reason: the near-duplicate is only reportable
+ * WITH the claim it restates, or every caller would re-read each candidate file to say what the
+ * repetition is. `similarity` travels too because the floor is a policy of the CALLER — a consumer
+ * choosing between "note it" and "act on it" needs the measured value, not just that it passed.
+ */
+export interface NearMatch {
+  readonly path: string
+  readonly gist: string
+  readonly similarity: number
 }
 
 export const IndexRecorder = Context.Service<IndexRecorderShape>("memhtml/IndexRecorder")
@@ -218,6 +252,63 @@ export const makeIndexRecorder = (db: DatabaseShape): IndexRecorderShape => ({
         else bucket.push(match)
       }
       return byKey
+    }),
+  /**
+   * ONE corpus read for the whole query set, decoded once, ranked in TypeScript. The shape follows
+   * `neighborPairs` (`@memhtml/sleep`) deliberately: `ordinal = 0` collapses a file to its FIRST
+   * chunk, because the format is one fact per file and almost every file is a single chunk, and the
+   * similarity runs over vectors decoded once rather than through the `vector_distance_cos` UDF,
+   * which pays a fresh decode of both blobs per call (issue #40's OOM). At m queries × n rows this
+   * loop is m·n dot products over ~12 MB decoded once at a ~3k corpus.
+   *
+   * The predicate is the dedup phase's reading of the corpus, not retrieval's: `archived = 0` plus
+   * the caller's `excludeTypes`. A row whose blob does not decode (empty or ragged) is dropped, the
+   * same exclusion the SQL UDF's NULL produces for it in the retrieval arm. A row whose file has no
+   * embedding yet — written since the last embed pass, or indexed under `--no-embed` — is simply not
+   * in the join, so the assist under-reports rather than fails, which is the same blindness the
+   * nightly `dedup-merge` has until the embed pass catches up.
+   *
+   * An empty query set short-circuits without touching the database, for `activeFramesFor`'s
+   * reason: a query with nothing to ask is not a query.
+   */
+  activeNearestFor: (queries, options) =>
+    Effect.gen(function* () {
+      if (queries.length === 0) return []
+      const excluded = options.excludeTypes ?? []
+      const rows = yield* db.all<{ path: string; gist: string; vec: Uint8Array }>(
+        `SELECT f.path AS path, f.gist AS gist, e.vec AS vec
+         FROM files f
+         JOIN chunks c ON c.path = f.path AND c.ordinal = 0
+         JOIN embeddings e ON e.chunk_id = c.chunk_id
+         WHERE f.archived = 0${
+           excluded.length === 0
+             ? ""
+             : ` AND f.memory_type NOT IN (${excluded.map(() => "?").join(", ")})`
+}`,
+        [...excluded]
+      )
+      const corpus = rows.flatMap((row) => {
+        const vec = float32View(row.vec)
+        return vec === undefined ? [] : [{ path: row.path, gist: row.gist, vec }]
+      })
+      return queries.map((query) => {
+        const passing: Array<NearMatch> = []
+        for (const entry of corpus) {
+          const similarity = cosine(query, entry.vec)
+          // `>=`, so a pair sitting exactly on the floor is reported — "at or above" is the contract.
+          if (similarity >= options.floor) {
+            passing.push({ path: entry.path, gist: entry.gist, similarity })
+          }
+        }
+        // Similarity DESC, then path ASC: the same deterministic tie-break every pair consumer uses.
+        passing.sort((left, right) => {
+          if (left.similarity !== right.similarity) {
+            return left.similarity < right.similarity ? 1 : -1
+          }
+          return left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+        })
+        return passing.slice(0, options.k)
+      })
     })
 })
 

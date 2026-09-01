@@ -1,5 +1,6 @@
 import {
   DatabaseService,
+  Embedder,
   ExtractorPort,
   Indexer,
   IndexRecorder,
@@ -121,8 +122,10 @@ const Optional = <S extends Schema.Top>(schema: S) => Schema.optionalKey(Schema.
  */
 const READS = () => [DatabaseService]
 // ExtractorPort is in the write set because `batchWrite` reads it (the write-time entity assist);
-// the port resolves to `{ extractor: undefined }` unless MEMHTML_EXTRACT_ENTITIES=on.
-const WRITES = () => [Store, Indexer, IndexRecorder, ExtractorPort]
+// the port resolves to `{ extractor: undefined }` unless MEMHTML_EXTRACT_ENTITIES=on. Embedder is
+// there for the near-duplicate assist, and it resolves to `{ document: undefined }` under
+// MEMHTML_EMBED=off, which the assist reports as `near_duplicates_degraded` rather than failing.
+const WRITES = () => [Store, Indexer, IndexRecorder, ExtractorPort, Embedder]
 const RETRIEVES = () => [Retrieval, DatabaseService]
 
 /**
@@ -249,6 +252,27 @@ const CONSOLIDATE_GUIDANCE =
   'Set consolidate to "last-wins" and the batch RESOLVES frame-key matches instead of only reporting them: for ops sharing a claim slot (the same deterministic frame key the conflict rule uses), the LATER value wins. Exactly one file is written, at the FIRST index that claimed the slot, and every later restatement reports consolidated_into naming that slot instead of a path of its own. ' +
   "A stored ACTIVE memory occupying a surviving slot is archived with a supersedes link from the new file, its archive path reported on the winner as superseded_path. " +
   "Off by default, and claims with no frame shape are never consolidated. The guards fail closed, so this only ever acts on claims the conflict rule would have matched."
+
+/**
+ * The `detect_near_duplicates` assist, stated in `memory_write_batch`'s description.
+ *
+ * A fourth constant AFTER the conflict pair, because it is the vector-space sibling of the
+ * grammatical rule: an agent has to know what the frame assist catches before "and this one catches
+ * the rewordings that rule refuses" means anything. Every clause is something a caller acts on: the
+ * distinction from BOTH dedupe and the conflict rule, because the three catch three different
+ * things; the source of the score, because a caller weighing 0.92 against 0.99 needs to know it is
+ * geometry and geometry misses polarity; the degraded flag, because an embedding assist has a
+ * standing way to be off (MEMHTML_EMBED=off) that a SQL lookup does not, and a null finding under
+ * it means "nobody looked"; and the propose-only contract with its reason, so an agent does not
+ * hand-roll the merge the nightly dedup phase owns, guards and all.
+ */
+const NEAR_DUPLICATE_GUIDANCE =
+  "Set detect_near_duplicates to true and each per-op result gains a `near_duplicates` list naming what that op's text nearly RESTATES, by embedding cosine at or above 0.92, best match first. " +
+  "This is the third distinct check: dedupe catches IDENTICAL content, detect_conflicts catches a DIFFERENT value in the same grammatical slot, and this catches a REWORDING — same fact, different words — which the other two are blind to. " +
+  "Each entry carries the other claim's text, the measured similarity, and ONE of path (an ACTIVE stored memory) or batch_index (an EARLIER op in this same call). " +
+  "The score is geometry, not judgment: negations and small numeric edits also sit above 0.92, so read the paired claim before folding anything. " +
+  "near_duplicates is null when nothing matched, when the flag was absent, on an op that used article_html (the claim is inside your markup and not read until the store renders it), and whenever near_duplicates_degraded is true — that top-level flag means the assist could not run (no embedder bound, or the embed call failed), so null then means UNCHECKED, not unique. " +
+  "THE ASSIST NEVER CHANGES WHAT IS WRITTEN, for detect_conflicts' reason. YOU decide, per finding: keep both, call memory_correct on the named path, or drop the op; left alone, the nightly dedup-merge folds true rewordings under its divergence guards."
 
 /**
  * The `facets` contract, stated in the description of every tool that scopes on one.
@@ -402,6 +426,30 @@ const BatchOpResult = Schema.Struct({
     })
   ),
   /**
+   * What this op's text embedding-matches, when `detect_near_duplicates` was on and something sat
+   * at or above the near-duplicate floor. Best first, at most a handful. Null when the flag was
+   * off, when nothing matched, on an `article_html` op, and whenever the batch-level
+   * `near_duplicates_degraded` is true — null under that flag means "unchecked", not "unique".
+   *
+   * The entry shape is `conflict`'s one-struct-two-nullable-sources design, for its reasons, plus
+   * the measured `similarity`: the floor is fixed policy while the decision is the caller's, and
+   * 0.92 and 0.99 warrant different treatment.
+   */
+  near_duplicates: Schema.NullOr(
+    Schema.Array(
+      Schema.Struct({
+        /** The ACTIVE memory whose first-chunk embedding matched. Null for an intra-batch match. */
+        path: Schema.NullOr(MemoryPath),
+        /** The EARLIER op in THIS call that matched. Null for a store match. */
+        batch_index: Schema.NullOr(Count),
+        /** Cosine similarity, in `[0.92, 1]`. */
+        similarity: Finite,
+        /** The other claim's own text — the stored gist, or the earlier op's claim. */
+        claim: Schema.String
+      })
+    )
+  ),
+  /**
    * Set on a batch-internal LOSER under `consolidate: "last-wins"`: a later op with the same frame
    * key replaced this op's value before anything was written, and the number is the caller-space
    * index of the op whose position carries the surviving value. Null everywhere else, present like
@@ -441,7 +489,9 @@ const MemoryWriteBatch = Tool.make("memory_write_batch", {
     " " +
     CONFLICT_GUIDANCE +
     " " +
-    CONSOLIDATE_GUIDANCE,
+    CONSOLIDATE_GUIDANCE +
+    " " +
+    NEAR_DUPLICATE_GUIDANCE,
   dependencies: WRITES(),
   parameters: Schema.Struct({
     ops: Schema.Array(BatchOp),
@@ -453,6 +503,12 @@ const MemoryWriteBatch = Tool.make("memory_write_batch", {
      * batch, and a caller that did not ask for the field would be paying for an answer it does not read.
      */
     detect_conflicts: Optional(Schema.Boolean),
+    /**
+     * Report each op's embedding near-duplicates as a per-op `near_duplicates` list. Propose-only,
+     * like `detect_conflicts`, and `Optional` for a stronger version of its reason: this assist
+     * costs one EMBEDDING call per batch on top of the corpus read.
+     */
+    detect_near_duplicates: Optional(Schema.Boolean),
     /**
      * Opt-in deterministic last-wins consolidation over the conflict rule's own frame keys. A
      * `Literals` of one value rather than a boolean, so the vocabulary can widen (a `first-wins`, a
@@ -481,7 +537,13 @@ const MemoryWriteBatch = Tool.make("memory_write_batch", {
       /** Batch-internal losers under `consolidate: "last-wins"`: neither written nor failed. */
       consolidated: Count
     }),
-    commit_sha: Schema.NullOr(Schema.String)
+    commit_sha: Schema.NullOr(Schema.String),
+    /**
+     * True when `detect_near_duplicates` was asked for and the assist could not run: no document
+     * embedder bound (MEMHTML_EMBED=off), or the embed call failed. Every per-op `near_duplicates`
+     * is then null and means "unchecked". Always false when the flag was off.
+     */
+    near_duplicates_degraded: Schema.Boolean
   })
 })
 

@@ -10,7 +10,13 @@ import {
   type TaskStatus,
   WRITABLE_MEMORY_TYPES
 } from "@memhtml/contracts/types"
-import { frameKeyOf, REINFORCE_SIGNALS, type ReinforceSignal } from "@memhtml/domain"
+import {
+  cosine,
+  frameKeyOf,
+  NEAR_DUPLICATE_THRESHOLD,
+  REINFORCE_SIGNALS,
+  type ReinforceSignal
+} from "@memhtml/domain"
 import { isValidDatetime, setMeta } from "@memhtml/html"
 import {
   DatabaseService,
@@ -37,7 +43,7 @@ import { attemptIo, commitSubject, Store, type WriteInput } from "@memhtml/store
 import { mergeTailExtract, type SessionExtract, scanTraceRoot } from "@memhtml/traces"
 import { Effect } from "effect"
 
-import { ExtractorPort, Roots } from "./api-layer.js"
+import { Embedder, type EmbedderShape, ExtractorPort, Roots } from "./api-layer.js"
 import type { ErrorCode } from "./envelope.js"
 import { codeFor, messageFor } from "./errors.js"
 import type { ExtractionItem } from "./extraction.js"
@@ -360,6 +366,27 @@ export interface FrameConflict {
   readonly claim: string
 }
 
+/**
+ * A vector match the `detect_near_duplicates` assist found for one op: something else already states
+ * this, at or above {@link NEAR_DUPLICATE_THRESHOLD} cosine.
+ *
+ * The same one-shape-two-nullable-sources design as {@link FrameConflict}, for its reasons: a caller
+ * reads `claim` and `similarity` unconditionally, then whichever of `path`/`batchIndex` is non-null.
+ * Exactly one of the two is non-null, always. `similarity` is published because the floor is a fixed
+ * policy while the decision is the caller's — 0.92 and 0.99 both pass, and only one of them is a
+ * near-certain restatement.
+ */
+export interface NearDuplicate {
+  /** The active memory whose first-chunk embedding matched, or null for an intra-batch match. */
+  readonly path: string | null
+  /** The earlier op in this same batch that matched, or null for a store match. */
+  readonly batchIndex: number | null
+  /** Cosine similarity, in `[floor, 1]`. */
+  readonly similarity: number
+  /** The other claim's own text — the stored gist, or the earlier op's claim. */
+  readonly claim: string
+}
+
 /** One op's outcome as the doors report it: the store's own shape, with the envelope's code. */
 export interface BatchOpReport {
   readonly index: number
@@ -378,6 +405,18 @@ export interface BatchOpReport {
    * Propose-only, so the presence of this field never changed what was written. See {@link batchWrite}.
    */
   readonly conflict?: FrameConflict | undefined
+  /**
+   * What this op's text embedding-matches, when `detectNearDuplicates` was on and something sat at
+   * or above the near-duplicate floor. Best first, at most a handful. Absent when the flag was off,
+   * when nothing matched, when the op was written as `article_html` (the claim is inside the markup
+   * and not read until the store renders it), or when the assist degraded (see
+   * {@link BatchWriteResult.nearDuplicatesDegraded}).
+   *
+   * Propose-only, exactly as `conflict` is: the presence of this field never changed what was
+   * written. The nightly `dedup-merge` — or an explicit `memory_correct` — is how a reported pair
+   * gets folded, with the divergence guards in front of it.
+   */
+  readonly nearDuplicates?: ReadonlyArray<NearDuplicate> | undefined
   /**
    * Set on a batch-internal loser under `consolidate: "last-wins"`: a later restatement of a slot
    * an earlier op already occupied. Its value won the slot, since last wins, but the write landed at
@@ -407,6 +446,14 @@ export interface BatchWriteResult {
     readonly consolidated: number
   }
   readonly commitSha: string | null
+  /**
+   * True when `detectNearDuplicates` was asked for and the assist could not run: no document
+   * embedder is bound (`MEMHTML_EMBED=off`), the embed call failed, or the store lookup failed.
+   * Retrieval's `degraded` precedent, scoped to this assist: absent findings then mean "not
+   * checked", never "no duplicates", and a caller that opted in can tell the two apart in-band
+   * rather than by reading stderr. Always false when the flag was off.
+   */
+  readonly nearDuplicatesDegraded: boolean
 }
 
 export interface BatchWriteParams extends Provenance {
@@ -421,6 +468,15 @@ export interface BatchWriteParams extends Provenance {
    * it does not read.
    */
   readonly detectConflicts?: boolean | undefined
+  /**
+   * Report each op's embedding near-duplicates as a per-op `nearDuplicates` list. Changes nothing
+   * about what is written.
+   *
+   * Off by default for `detectConflicts`' reason, plus a stronger one: this assist costs one
+   * EMBEDDING call per batch on top of the corpus read, and a caller that did not ask would be
+   * paying Bedrock for an answer it does not read.
+   */
+  readonly detectNearDuplicates?: boolean | undefined
   /**
    * Opt-in write-time consolidation: deterministic frame-key (`frameKeyOf`) last-wins.
    *
@@ -539,6 +595,150 @@ const detectFrameConflicts = (
       if (earlier === undefined) seen.set(entry.key, { index: entry.index, claim: entry.claim })
     }
     return conflicts
+  })
+
+/** Near-duplicate matches reported per op. Small on purpose: the report is a nudge, not a listing. */
+const NEAR_DUPLICATE_REPORT_K = 3
+
+/**
+ * Types the near-duplicate lookup never matches against, mirroring `dedup-merge`'s corpus: a task is
+ * working state rather than a competing statement, and an arc is a synthesis, not a near-duplicate
+ * of its members. Stated here as the assist's own policy rather than imported, because the phase
+ * keeps its list private and a silent widening there should not silently widen a write-path report.
+ */
+const NEAR_DUPLICATE_EXCLUDED_TYPES: ReadonlyArray<string> = ["arc", "task"]
+
+/** What {@link detectNearDuplicates} answers: per-op findings, and whether the assist actually ran. */
+interface NearDuplicateReport {
+  readonly findings: ReadonlyMap<number, ReadonlyArray<NearDuplicate>>
+  readonly degraded: boolean
+}
+
+const NO_NEAR_DUPLICATES: NearDuplicateReport = {
+  findings: new Map<number, ReadonlyArray<NearDuplicate>>(),
+  degraded: false
+}
+
+/**
+ * The `detect_near_duplicates` assist: which stored memories (and which earlier ops in this same
+ * batch) each op's own text embedding-matches at or above {@link NEAR_DUPLICATE_THRESHOLD}.
+ *
+ * **Propose-only, for {@link detectFrameConflicts}' exact reason.** The function returns a report per
+ * op index and writes nothing, refuses nothing, and blocks nothing. A high cosine is geometry, and
+ * geometry is weak on exactly the tokens that carry polarity and discriminators — "the deploy step
+ * is safe" and "the deploy step is NOT safe" sit above 0.92. Acting on the match here would need the
+ * divergence guards and their orientation rules, which is `dedup-merge`'s job with a model in front
+ * of it. The caller decides: write anyway, `memory_correct` the match, or drop the op.
+ *
+ * **The op has no stored embedding at write time, so the assist embeds it.** One `embed` call for
+ * the whole batch, through the same DOCUMENT port the indexer fills `embeddings` with — not
+ * `embedQuery`, because Cohere embeds documents and queries into deliberately different regions of
+ * the space, and this comparison is document-vs-document. The text is the op's claim and body
+ * joined, the same composition the extraction assist sends, which approximates the `body_text` the
+ * store is about to render and the indexer is about to chunk. An `article_html` op is not checked:
+ * its claim is `""` by both doors' construction, and deriving one would mean parsing the markup at
+ * the ops layer — a second render of bytes the store is about to render anyway, the same boundary
+ * `detectFrameConflicts` states for the same op shape.
+ *
+ * **Two match sources, like the conflict assist, with the same asymmetric fold.** The store answers
+ * for active memories via one corpus read ({@link IndexRecorderShape.activeNearestFor}); then each op
+ * is compared against the batch's own EARLIER ops, which nothing else can see because neither is
+ * stored yet. A later op reports on an earlier one, never the reverse, so one restatement is one
+ * finding. Per op the two sources merge, best first, capped at {@link NEAR_DUPLICATE_REPORT_K}.
+ *
+ * **Every failure degrades to "not checked", never to a lost write — and says so.** A missing
+ * document embedder (`MEMHTML_EMBED=off`), a failed embed call, and a failed corpus read all take
+ * the `logWarning` → neutral-value path the other assists take, so this assist structurally cannot
+ * block a write. Unlike the frame assist's silent degrade, the outcome is also REPORTED
+ * (`degraded: true`, published as `near_duplicates_degraded`), because an embedding assist has a
+ * standing way to be off that a SQL lookup does not, and a caller who opted in must be able to
+ * distinguish "no duplicates" from "nobody looked".
+ */
+const detectNearDuplicates = (
+  ops: ReadonlyArray<WriteParams>
+): Effect.Effect<NearDuplicateReport, never, IndexRecorderShape | EmbedderShape> =>
+  Effect.gen(function* () {
+    const keyed: Array<{ readonly index: number; readonly claim: string; readonly text: string }> =
+      []
+    for (const [index, op] of ops.entries()) {
+      if (op.claim.trim() === "") continue
+      keyed.push({ index, claim: op.claim, text: [op.claim, ...(op.body ?? [])].join("\n") })
+    }
+    if (keyed.length === 0) return NO_NEAR_DUPLICATES
+
+    const embedder = (yield* Embedder).document
+    if (embedder === undefined) {
+      yield* Effect.logWarning(
+        "near-duplicate assist skipped: no document embedder bound (MEMHTML_EMBED=off)"
+      )
+      return { ...NO_NEAR_DUPLICATES, degraded: true }
+    }
+    const embedded = yield* Effect.result(embedder.embed(keyed.map((entry) => entry.text)))
+    if (embedded._tag === "Failure") {
+      yield* Effect.logWarning(`near-duplicate assist skipped: ${embedded.failure.reason}`)
+      return { ...NO_NEAR_DUPLICATES, degraded: true }
+    }
+    const vectors = embedded.success
+
+    const recorder = yield* IndexRecorder
+    const lookup = yield* Effect.result(
+      recorder.activeNearestFor(vectors, {
+        floor: NEAR_DUPLICATE_THRESHOLD,
+        k: NEAR_DUPLICATE_REPORT_K,
+        excludeTypes: NEAR_DUPLICATE_EXCLUDED_TYPES
+      })
+    )
+    /**
+     * Fully degraded, intra-batch findings included, even though the vectors in hand could still
+     * answer the batch-internal half. `degraded: true` is published as "null means UNCHECKED", and
+     * a half-checked batch under that flag would make the statement false in the one state where a
+     * caller most needs to trust it.
+     */
+    if (lookup._tag === "Failure") {
+      yield* Effect.logWarning(`near-duplicate store lookup skipped: ${lookup.failure.operation}`)
+      return { ...NO_NEAR_DUPLICATES, degraded: true }
+    }
+    const stored = lookup.success
+
+    const findings = new Map<number, ReadonlyArray<NearDuplicate>>()
+    for (const [at, entry] of keyed.entries()) {
+      const hits: Array<NearDuplicate> = (stored[at] ?? []).map((match) => ({
+        path: match.path,
+        batchIndex: null,
+        similarity: match.similarity,
+        claim: match.gist
+      }))
+      const vec = vectors[at]
+      if (vec !== undefined) {
+        for (let before = 0; before < at; before += 1) {
+          const other = vectors[before]
+          const earlier = keyed[before]
+          if (other === undefined || earlier === undefined) continue
+          const similarity = cosine(vec, other)
+          if (similarity >= NEAR_DUPLICATE_THRESHOLD) {
+            hits.push({ path: null, batchIndex: earlier.index, similarity, claim: earlier.claim })
+          }
+        }
+      }
+      if (hits.length === 0) continue
+      /**
+       * Similarity DESC; on a tie the store match outranks the intra-batch one, because a fact
+       * already in the corpus is the stronger thing to reconcile against; then path/batchIndex ASC
+       * so equal inputs report in one order.
+       */
+      hits.sort((left, right) => {
+        if (left.similarity !== right.similarity) {
+          return left.similarity < right.similarity ? 1 : -1
+        }
+        if ((left.path === null) !== (right.path === null)) return left.path === null ? 1 : -1
+        if (left.path !== null && right.path !== null && left.path !== right.path) {
+          return left.path < right.path ? -1 : 1
+        }
+        return (left.batchIndex ?? 0) - (right.batchIndex ?? 0)
+      })
+      findings.set(entry.index, hits.slice(0, NEAR_DUPLICATE_REPORT_K))
+    }
+    return { findings, degraded: false }
   })
 
 /**
@@ -701,6 +901,17 @@ export const batchWrite = (params: BatchWriteParams) =>
         : new Map<number, FrameConflict>()
 
     /**
+     * The near-duplicate assist, under the same rules as the conflict assist above: over the
+     * caller's own op array, before anything is written, in the caller's index space, and never
+     * gated on the ops being valid — an op the decode is about to refuse still gets its finding, so
+     * a caller fixes the malformed field and the restatement in one round trip.
+     */
+    const proximity =
+      params.detectNearDuplicates === true
+        ? yield* detectNearDuplicates(params.ops)
+        : NO_NEAR_DUPLICATES
+
+    /**
      * The consolidation plan, before the decode fold and in the caller's index space. A
      * batch-internal loser is excluded from everything downstream, so its value never earns a file.
      * The surviving value sits at the earliest slot with its key, so every later report and
@@ -740,8 +951,13 @@ export const batchWrite = (params: BatchWriteParams) =>
      * exactly rather than inventing a second one.
      */
     if (decodeAborted) {
-      const results = withConsolidation(merged(reports, conflicts), plan)
-      return { results, summary: summarize(results), commitSha: null } satisfies BatchWriteResult
+      const results = withConsolidation(merged(reports, conflicts, proximity.findings), plan)
+      return {
+        results,
+        summary: summarize(results),
+        commitSha: null,
+        nearDuplicatesDegraded: proximity.degraded
+      } satisfies BatchWriteResult
     }
 
     /**
@@ -855,12 +1071,13 @@ export const batchWrite = (params: BatchWriteParams) =>
      * decode succeeded in a batch the store then aborted. Both are `skipped`. Losers pick up their
      * `consolidatedInto` pointer last, from their winner slot's own final report.
      */
-    const results = withConsolidation(merged(reports, conflicts), plan)
+    const results = withConsolidation(merged(reports, conflicts, proximity.findings), plan)
 
     return {
       results,
       summary: summarize(results),
-      commitSha: batch.commitSha
+      commitSha: batch.commitSha,
+      nearDuplicatesDegraded: proximity.degraded
     } satisfies BatchWriteResult
   })
 
@@ -895,12 +1112,18 @@ const provenanceOf = (params: BatchWriteParams, op: WriteParams): Provenance =>
  */
 const merged = (
   reports: ReadonlyArray<BatchOpReport | undefined>,
-  conflicts: ReadonlyMap<number, FrameConflict>
+  conflicts: ReadonlyMap<number, FrameConflict>,
+  nearDuplicates: ReadonlyMap<number, ReadonlyArray<NearDuplicate>>
 ): ReadonlyArray<BatchOpReport> =>
   reports.map((report, index) => {
     const base = report ?? ({ index, ok: false, skipped: true } satisfies BatchOpReport)
     const conflict = conflicts.get(index)
-    return conflict === undefined ? base : { ...base, conflict }
+    const near = nearDuplicates.get(index)
+    return {
+      ...base,
+      ...(conflict === undefined ? {} : { conflict }),
+      ...(near === undefined ? {} : { nearDuplicates: near })
+    }
   })
 
 /** The counts, derived from the reports in one pass so they cannot disagree with them. */
