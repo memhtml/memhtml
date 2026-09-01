@@ -578,3 +578,44 @@ const countingSpawns = async <A>(thunk: () => Promise<A>): Promise<[A, number]> 
     unsubscribe("child_process", onSpawn)
   }
 }
+
+describe("the environment cannot re-aim a call at another repository", () => {
+  /**
+   * git exports repo-selecting variables into the processes it runs: a `pre-push` hook in a linked
+   * worktree receives an ABSOLUTE `GIT_DIR`, and every descendant inherits it. Before the scrub in
+   * `gitChildEnv`, a store call that meant "the corpus at `-C <root>`" read the HOOK's repository
+   * instead — measured as `memhtml sleep run` refusing with DirtyTree over a clean corpus, naming
+   * dirt that belonged to the repo the push ran from. The variables here are the ones a hook
+   * actually exports; `GIT_REPO_SELECTION_ENV` in `src/git.ts` carries the full scrubbed set.
+   *
+   * (Mutation: dropping the `delete` loop from `gitChildEnv` makes `statusPorcelainV2` report the
+   * OTHER repo's dirty file, or fail outright, and this case names it.)
+   */
+  it("answers about the -C repo even when GIT_DIR names another", async () => {
+    const corpus = await fixture()
+    const other = await fixture()
+    await put(other.root, "left-uncommitted.txt", "dirt that belongs to the other repo")
+
+    const saved = new Map<string, string | undefined>()
+    for (const [name, value] of [
+      ["GIT_DIR", join(other.root, ".git")],
+      ["GIT_WORK_TREE", other.root],
+      ["GIT_INDEX_FILE", join(other.root, ".git", "index")]
+    ] as const) {
+      saved.set(name, process.env[name])
+      process.env[name] = value
+    }
+    try {
+      // Both halves, so a scrub that broke git entirely cannot pass: the corpus reads clean,
+      // and the same call against the dirty repo's own service really does see the dirt.
+      expect(await run(corpus.git.statusPorcelainV2())).toEqual([])
+      const dirt = await run(other.git.statusPorcelainV2())
+      expect(dirt.map((entry) => entry.path)).toContain("left-uncommitted.txt")
+    } finally {
+      for (const [name, value] of saved) {
+        if (value === undefined) delete process.env[name]
+        else process.env[name] = value
+      }
+    }
+  })
+})

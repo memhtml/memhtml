@@ -450,3 +450,72 @@ describe("the corpus snapshot is pinned, not live", () => {
     }
   })
 })
+
+describe("the environment cannot re-aim the snapshot at another repository", () => {
+  /**
+   * The same hazard `packages/store/src/git.ts` scrubs at `GIT_REPO_SELECTION_ENV`: git exports an
+   * absolute `GIT_DIR` into hook processes run from a linked worktree, every descendant inherits
+   * it, and a `git worktree add -C <corpus>` inheriting it would materialize a snapshot of the
+   * HOOK's repository — or fail on a sha that repository does not hold. The corpus named by
+   * `repoRoot` must win.
+   *
+   * (Mutation: dropping the `delete` loop from `gitChildEnv` in `mount.ts` makes the pin fail —
+   * the declared repo holds the sha and the environment-named one does not.)
+   */
+  it("pins the declared repo's sha even when GIT_DIR names another repo", async () => {
+    const corpus = await mkdtemp(join(tmpdir(), "consolidator-repo-envaim-a-"))
+    const other = await mkdtemp(join(tmpdir(), "consolidator-repo-envaim-b-"))
+    const saved = new Map<string, string | undefined>()
+    let snapshot: Awaited<ReturnType<typeof pinCorpusSnapshot>> | undefined
+    try {
+      for (const repo of [corpus, other]) {
+        const git = (...args: string[]) => run("git", ["-C", repo, ...args])
+        await git("init", "--initial-branch=main")
+        await git("config", "user.email", "t@example.com")
+        await git("config", "user.name", "t")
+        await writeFile(join(repo, "who.html"), `<mark>${repo}</mark>`)
+        await git("add", "who.html")
+        await git("commit", "-m", "base")
+      }
+      const sha = (await run("git", ["-C", corpus, "rev-parse", "HEAD"])).stdout.trim()
+
+      for (const [name, value] of [
+        ["GIT_DIR", join(other, ".git")],
+        ["GIT_WORK_TREE", other],
+        ["GIT_INDEX_FILE", join(other, ".git", "index")]
+      ] as const) {
+        saved.set(name, process.env[name])
+        process.env[name] = value
+      }
+
+      snapshot = await pinCorpusSnapshot({ repoRoot: corpus, sha })
+      const pinned = (await run("cat", [join(snapshot.hostPath, "who.html")])).stdout
+      expect(pinned).toContain(corpus)
+      expect(pinned).not.toContain(other)
+    } finally {
+      for (const [name, value] of saved) {
+        if (value === undefined) delete process.env[name]
+        else process.env[name] = value
+      }
+      await snapshot?.release()
+      await rm(corpus, { recursive: true, force: true })
+      await rm(other, { recursive: true, force: true })
+    }
+  })
+
+  /**
+   * The scrub list is restated here because this package cannot import `@memhtml/store`; this is
+   * the assertion that pins the two spellings to each other, so a variable added to one side
+   * cannot silently stay inheritable on the other.
+   */
+  it("scrubs the same variable set the store scrubs", async () => {
+    const { GIT_REPO_SELECTION_ENV } = await import("../src/mount.js")
+    const storeSource = await import("node:fs/promises").then((fs) =>
+      fs.readFile(join(dirname("."), "..", "..", "packages", "store", "src", "git.ts"), "utf8")
+    )
+    const literal = /GIT_REPO_SELECTION_ENV: ReadonlyArray<string> = \[([^\]]+)\]/.exec(storeSource)
+    expect(literal).not.toBeNull()
+    const storeNames = [...(literal?.[1] ?? "").matchAll(/"([A-Z_]+)"/g)].map((m) => m[1])
+    expect([...GIT_REPO_SELECTION_ENV]).toEqual(storeNames)
+  })
+})

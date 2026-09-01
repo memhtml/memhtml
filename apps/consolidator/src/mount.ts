@@ -257,6 +257,33 @@ export interface CorpusSnapshot {
 const run = promisify(execFile)
 
 /**
+ * The variables by which the environment, not `-C`, decides which repository a git call operates
+ * on. Removed from every git spawn here for the reason `packages/store/src/git.ts` records at its
+ * own `GIT_REPO_SELECTION_ENV`: git exports an absolute `GIT_DIR` into hook processes run from a
+ * linked worktree, and a snapshot call inheriting it would `worktree add` against the HOOK's
+ * repository rather than the corpus named by `-C`. This package cannot import `@memhtml/store`
+ * (the dependency points the other way), so the list is restated; `tests/mount.test.ts` pins the
+ * two spellings to each other.
+ */
+export const GIT_REPO_SELECTION_ENV: ReadonlyArray<string> = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_COMMON_DIR",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_PREFIX",
+  "GIT_CEILING_DIRECTORIES"
+]
+
+/** `process.env` with every repo-selecting variable removed, for the two `git worktree` calls. */
+const gitChildEnv = (): Record<string, string | undefined> => {
+  const env: Record<string, string | undefined> = { ...process.env }
+  for (const name of GIT_REPO_SELECTION_ENV) delete env[name]
+  return env
+}
+
+/**
  * Materialize one commit of a repository as a directory, for mounting.
  *
  * **A sleep run's live working tree is not a snapshot of anything.** `packages/sleep/src/run.ts:96`
@@ -276,7 +303,9 @@ export const pinCorpusSnapshot = async (input: {
 }): Promise<CorpusSnapshot> => {
   const parent = mkdtempSync(join(tmpdir(), CORPUS_SNAPSHOT_TMPDIR_PREFIX))
   const hostPath = join(parent, "tree")
-  await run("git", ["-C", input.repoRoot, "worktree", "add", "--detach", hostPath, input.sha])
+  await run("git", ["-C", input.repoRoot, "worktree", "add", "--detach", hostPath, input.sha], {
+    env: gitChildEnv()
+  })
 
   let released = false
   return {
@@ -286,9 +315,9 @@ export const pinCorpusSnapshot = async (input: {
       released = true
       // `--force` because the mount is read-only but the worktree is a real directory a reader may
       // have left something in; a refusal here would leak a worktree entry into the repo's config.
-      await run("git", ["-C", input.repoRoot, "worktree", "remove", "--force", hostPath]).catch(
-        () => {}
-      )
+      await run("git", ["-C", input.repoRoot, "worktree", "remove", "--force", hostPath], {
+        env: gitChildEnv()
+      }).catch(() => {})
       /**
        * The mkdtemp PARENT is this function's to remove, and it is a second step because `git worktree
        * remove` deletes only the tree it was handed. Releasing without it leaves one empty
