@@ -76,6 +76,28 @@ const truncatedThenFailed: SettledTurnShape = {
 }
 
 describe("unsettledTurnReason", () => {
+  /**
+   * The case an earlier version of this fix got wrong, and the reason `data` is the discriminator:
+   * eve's `emitTurnEpilogue` ends every conversation turn with `session.waiting`, success included.
+   * Measured 2026-09-02 14:53Z — a turn that emitted `result.completed` with six candidates came
+   * back `status: "waiting"`, and a classifier keyed on the status alone failed the run on it.
+   *
+   * (Mutation: dropping the `turn.data !== undefined` early return fails this case alone.)
+   */
+  it("is null for a successful conversation turn, which also ends waiting", () => {
+    expect(
+      unsettledTurnReason(
+        {
+          status: "waiting",
+          data: { candidates: [], commitments: [], readSessionIds: ["s1"] },
+          inputRequests: [],
+          events: [{ type: "result.completed" }, { type: "turn.completed" }]
+        },
+        97
+      )
+    ).toBeNull()
+  })
+
   it("names the session token-limit prompt with the numbers the operator needs", () => {
     const reason = unsettledTurnReason(sessionLimitPark, 65)
     expect(reason).toContain("session token-limit prompt")
@@ -153,24 +175,33 @@ const clientCode = async (): Promise<string> => {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
 }
 
-describe("runTurn classifies an unsettled turn before it tests for a structured result", () => {
-  it("consults unsettledTurnReason ahead of the `data === undefined` arm", async () => {
+describe("runTurn explains an absent payload before it calls the contract broken", () => {
+  it("asks unsettledTurnReason inside the `data === undefined` arm, ahead of the violation", async () => {
     const code = await clientCode()
+    const absent = code.indexOf("analysis.data === undefined")
     const unsettled = code.indexOf("unsettledTurnReason(analysis")
-    const contract = code.indexOf("analysis.data === undefined")
-    expect(unsettled).toBeGreaterThan(-1)
-    expect(contract).toBeGreaterThan(-1)
-    // Order is the whole assertion: a parked turn also has no data, so the arm that reads the park
-    // must run first or the contract-violation arm swallows it (the 2026-09-01/02 misdiagnosis).
-    expect(unsettled).toBeLessThan(contract)
+    const violation = code.indexOf("ConsolidatorContractViolation.make({")
+    expect(absent).toBeGreaterThan(-1)
+    // Both orderings are the assertion. The classifier runs only when no payload arrived — eve ends
+    // a SUCCESSFUL conversation turn `waiting` too, so asking first and failing on the status alone
+    // rejected a turn that had just answered (measured 14:53Z, 2026-09-02). And it runs BEFORE the
+    // violation, or the violation swallows a turn the harness stopped (the 09-01/02 misdiagnosis).
+    expect(unsettled).toBeGreaterThan(absent)
+    expect(unsettled).toBeLessThan(violation)
   })
 
-  it("maps it to ConsolidatorRunFailed in the turn phase, and cancels the parked turn", async () => {
+  it("maps it to ConsolidatorRunFailed in the turn phase", async () => {
     const code = await clientCode()
     expect(code).toMatch(
       /unsettledTurnReason\(analysis, llmCalls\)[\s\S]{0,240}ConsolidatorRunFailed\.make\(\{ phase: "turn", reason: unsettled \}\)/
     )
-    expect(code).toMatch(/status === "waiting"[\s\S]{0,120}cancelWithinGrace/)
+  })
+
+  it("cancels a waiting turn only when it produced no payload", async () => {
+    const code = await clientCode()
+    expect(code).toMatch(
+      /status === "waiting" &&\s*settled\.result\.data === undefined[\s\S]{0,120}cancelWithinGrace/
+    )
   })
 })
 

@@ -1280,14 +1280,22 @@ const runTurn = (
           budgetMs: turnBudgetMs
         })
         /**
-         * A turn that came back WAITING is cancelled before the server is stopped, for the reason
-         * the timeout arm cancels: eve holds its workflow run `running` in the shared state
-         * directory, parked for a next message that will never arrive, and the cancel is what marks
-         * it terminal there (issue #100's mechanism, issue #113's trigger — both observed runs left
-         * a `running` row behind). `unsettledTurnReason` below is where it becomes a typed failure;
-         * this is only the housekeeping.
+         * A turn that came back waiting with NO structured result is cancelled before the server is
+         * stopped, for the reason the timeout arm cancels: eve holds its workflow run `running` in
+         * the shared state directory, parked for a next message that will never arrive, and the
+         * cancel is what marks it terminal there (issue #100's mechanism, issue #113's trigger —
+         * both observed runs left a `running` row behind).
+         *
+         * The `data` half of the condition is not optional: eve ends EVERY conversation turn with
+         * `session.waiting`, success included, so cancelling on the status alone would cancel a turn
+         * that had just answered. `unsettledTurnReason` below is where a real one becomes a typed
+         * failure; this is only the housekeeping.
          */
-        if (settled.kind === "settled" && settled.result.status === "waiting") {
+        if (
+          settled.kind === "settled" &&
+          settled.result.status === "waiting" &&
+          settled.result.data === undefined
+        ) {
           await cancelWithinGrace(() => response.cancel())
         }
         return settled
@@ -1325,19 +1333,21 @@ const runTurn = (
       (event) => event.type === "step.completed" || event.type === "step.failed"
     ).length
 
-    /**
-     * BEFORE the structured-result check, because a turn eve parked also has no `data`, and reading
-     * that as a contract violation is the misdiagnosis two consecutive sleep runs produced (issue
-     * #113): the agent had not answered outside the schema — the harness had stopped it, in one case
-     * on the session's output-token cap and in another on a provider error, and left the session
-     * waiting for a human. `unsettledTurnReason` (`contract.ts`) holds the rule and the wording.
-     */
-    const unsettled = unsettledTurnReason(analysis, llmCalls)
-    if (unsettled !== null) {
-      return yield* Effect.fail(ConsolidatorRunFailed.make({ phase: "turn", reason: unsettled }))
-    }
-
     if (analysis.data === undefined) {
+      /**
+       * Why there is no payload, when the event stream says why: the harness stopped this turn, in
+       * one recorded case on the session's output-token cap and in another on a provider error, and
+       * parked it for a human who is not there. Reading either as a contract violation is the
+       * misdiagnosis two consecutive sleep runs produced (issue #113) — the agent had not answered
+       * outside the schema, it had not been allowed to answer. `unsettledTurnReason`
+       * (`contract.ts`) holds the rule and the wording, and returns `null` when nothing in the
+       * stream accounts for the absence, which is when the contract violation below is the honest
+       * report.
+       */
+      const unsettled = unsettledTurnReason(analysis, llmCalls)
+      if (unsettled !== null) {
+        return yield* Effect.fail(ConsolidatorRunFailed.make({ phase: "turn", reason: unsettled }))
+      }
       return yield* Effect.fail(
         ConsolidatorContractViolation.make({
           reason: "the turn settled without a structured result although an outputSchema was sent"

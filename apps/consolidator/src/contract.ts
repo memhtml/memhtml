@@ -866,6 +866,11 @@ export class ConsolidatorContractViolation extends Schema.TaggedError<Consolidat
  */
 export interface SettledTurnShape {
   readonly status: "completed" | "failed" | "waiting"
+  /**
+   * The structured payload, when the turn produced one. Its PRESENCE is what separates a successful
+   * conversation turn from an unsettled one, and nothing else does — see {@link unsettledTurnReason}.
+   */
+  readonly data?: unknown
   readonly inputRequests: ReadonlyArray<{
     readonly kind: string
     readonly prompt?: string | undefined
@@ -881,12 +886,21 @@ export interface SettledTurnShape {
 const UNSETTLED_DETAIL_CHARS = 200
 
 /**
- * Why a turn that came back `waiting` is a FAILURE for this client, or `null` when it did not.
+ * Why a turn produced no structured result, or `null` when it produced one or is not this shape.
  *
- * A CLIENT session is conversation-mode, and eve never fails such a turn outright: it PARKS it as
- * `session.waiting` and waits for the next user message. Three different things arrive that way and
- * all three are terminal here, because nobody is on the other end of this session — the phase runs
- * unattended and the agent's instructions forbid it from asking anything.
+ * **`waiting` is not a failure by itself, and assuming it was rejected a good answer.** A CLIENT
+ * session is conversation-mode, and eve ends EVERY conversation turn that way: `emitTurnEpilogue`
+ * emits `turn.completed` and then `session.waiting` on success too
+ * (node_modules/eve/dist/src/harness/emission.js), so `MessageResult.status` is `"waiting"` for a
+ * turn that answered perfectly. Measured 2026-09-02 14:53Z: a turn that emitted `result.completed`
+ * with six candidates came back `waiting`, and an earlier version of this function failed the run on
+ * it. `data` is the discriminator, so this returns `null` whenever a payload arrived, whatever the
+ * status says.
+ *
+ * With that settled, eve never FAILS a conversation turn outright either: it parks it. Three
+ * different things arrive that way and all three are terminal here, because nobody is on the other
+ * end of this session — the phase runs unattended and the agent's instructions forbid it from asking
+ * anything.
  *
  * 1. **The session token-limit prompt.** `enforceSessionTokenLimit`
  *    (node_modules/eve/dist/src/harness/session-limit-enforcement.js) routes a conversation-mode
@@ -911,6 +925,7 @@ const UNSETTLED_DETAIL_CHARS = 200
  * throwing inside a failure path.
  */
 export const unsettledTurnReason = (turn: SettledTurnShape, modelCalls: number): string | null => {
+  if (turn.data !== undefined) return null
   if (turn.status !== "waiting") return null
   const truncated = truncatedCallSuffix(turn)
   const limit = turn.inputRequests.find((request) => request.kind === "session-limit")
