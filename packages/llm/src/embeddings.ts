@@ -1,8 +1,9 @@
 import { ModelUnavailable } from "@memhtml/contracts/errors"
 import { Context, Effect, Layer } from "effect"
 
-import { type InvokeClient, invokeJson, LlmConfig, makeBedrockClient } from "./client.js"
+import { type InvokeClient, invokeJson, LlmConfig } from "./client.js"
 import { EMBED_BATCH_LIMIT, EMBED_CONCURRENCY, EMBED_DIM, EMBED_MODEL_ID } from "./constants.js"
+import { invokeClientFor } from "./proxy.js"
 
 /**
  * Cohere Embed v4 on `bedrock-runtime` InvokeModel.
@@ -155,17 +156,22 @@ export const makeEmbeddings = (client: InvokeClient): EmbeddingsShape => {
 }
 
 /**
- * `makeBedrockClient` carries `maxAttempts: 10` with adaptive retry, and the embed lane
- * is why the retries matter here: it issues hundreds of calls per index run, so a
- * throttle that failed the run instead of backing off would make a full rebuild
- * unreliable at exactly the corpus size where the rebuild matters. The same construction
- * bounds a hung socket (`REQUEST_HANDLER_OPTIONS`), so one dead connection inside a
- * batch fan-out fails that batch instead of stalling the whole rebuild.
+ * The transport is whichever `invokeClientFor` selects: Bedrock directly (`maxAttempts: 10` with
+ * adaptive retry) or the LLM proxy `MEMHTML_LLM_BASE_URL` names (jittered exponential backoff on
+ * throttles and upstream failures). The embed lane is why the retries matter: it issues hundreds
+ * of calls per index run, so a throttle that failed the run instead of backing off would make a
+ * full rebuild unreliable at exactly the corpus size where the rebuild matters. Both transports
+ * bound a hung socket (`REQUEST_HANDLER_OPTIONS`), so one dead connection inside a batch fan-out
+ * fails that batch instead of stalling the whole rebuild.
+ *
+ * Through the proxy, `output_dimension` travels as the OpenAI `dimensions` field. A proxy that
+ * drops it returns Cohere's 1536-wide default, which `readEmbeddings` refuses by width — a typed
+ * failure and a degraded search, never a vector of the wrong shape in the index.
  */
 export const EmbeddingsLive = Layer.effect(
   Embeddings,
   Effect.gen(function* () {
     const config = yield* LlmConfig
-    return makeEmbeddings(makeBedrockClient(config.region))
+    return makeEmbeddings(invokeClientFor(config))
   })
 )

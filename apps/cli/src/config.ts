@@ -1,6 +1,7 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
 
+import { PROXY_API_KEY_VAR, PROXY_BASE_URL_VAR, PROXY_MODEL_MAP_VAR } from "@memhtml/llm"
 import { expandRoot } from "@memhtml/store"
 import { Config } from "effect"
 
@@ -45,6 +46,28 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
     name: "AWS_BEARER_TOKEN_BEDROCK",
     description:
       "Bedrock bearer token, read by the AWS SDK itself. Absent means the default credential chain; retrieval then degrades to the lexical floor rather than failing.",
+    fallback: null
+  },
+  {
+    /**
+     * The three proxy names are imported from `@memhtml/llm` rather than retyped, for the reason
+     * `MCP_BIN_VAR` is: the row and the `Config.string` read must name one string.
+     */
+    name: PROXY_BASE_URL_VAR,
+    description:
+      "An OpenAI- and Anthropic-compatible LLM proxy's origin, e.g. `http://127.0.0.1:4000` for an agentgateway listener. Set, every model call leaves through it instead of going to Bedrock directly: the Anthropic sleep models and the consolidator agent on `/v1/messages`, the OpenAI sleep model on `/v1/chat/completions`, embeddings on `/v1/embeddings`, entity extraction on `/v1/responses`. Absent means Bedrock directly, under `MEMHTML_AWS_REGION` and the Bedrock credential. A set-but-malformed value fails at startup naming this variable rather than falling back to the direct path.",
+    fallback: null
+  },
+  {
+    name: PROXY_API_KEY_VAR,
+    description:
+      "A bearer token for the LLM proxy, sent as `Authorization: Bearer <key>`. Read only when `MEMHTML_LLM_BASE_URL` is set; absent means the proxy takes no credential.",
+    fallback: null
+  },
+  {
+    name: PROXY_MODEL_MAP_VAR,
+    description:
+      "`from=to` pairs, comma-separated, rewriting the model id a proxied request carries: `global.anthropic.claude-opus-5=claude-opus-5,cohere.embed-v4:0=cohere-embed-v4`. A proxy names models on its own terms; an unmapped id passes through as memhtml's Bedrock inference-profile id. Read only when `MEMHTML_LLM_BASE_URL` is set.",
     fallback: null
   },
   {

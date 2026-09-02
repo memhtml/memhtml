@@ -257,9 +257,42 @@ describe("agent/agent.ts", () => {
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "")
     expect(code).not.toMatch(/from "@memhtml\//)
-    // `contract.ts` is the one `src/` module that reaches them; `output-budget.ts` deliberately
-    // does not, which is why the batch ceiling is duplicated there with a gate on the copy.
+    // `contract.ts` is the one `src/` module that reaches them; `output-budget.ts` and
+    // `llm-proxy.ts` deliberately do not, which is why the batch ceiling and the proxy parser are
+    // duplicated there with a gate on each copy.
     expect(code).not.toContain('from "../src/contract.js"')
+  })
+
+  /**
+   * The provider is chosen at server boot from the environment: Bedrock directly, or the Anthropic
+   * provider pointed at an LLM proxy's `/v1/messages` when `MEMHTML_LLM_BASE_URL` is set. Both
+   * branches must exist and both must go through the SAME output-token wrapper, or the proxy path
+   * would reintroduce the unset per-call limit issue #113 was about.
+   *
+   * (Mutation: hard-coding `directModel()` in the wrapper fails the ternary assertion; passing the
+   * proxied model outside `wrapLanguageModel` fails the one after it.)
+   */
+  it("selects Bedrock direct or the proxy's Messages route at boot, inside one token-capped wrapper", async () => {
+    const code = (await read("agent.ts"))
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "")
+    expect(code).toContain('from "@ai-sdk/anthropic"')
+    expect(code).toContain('from "../src/llm-proxy.js"')
+    expect(code).toContain("proxyFromEnv(process.env)")
+    expect(code).toMatch(/model:\s*proxy === null \? directModel\(\) : proxiedModel\(proxy\)/)
+    expect(code).toMatch(/createAnthropic\(\{\s*baseURL:\s*`\$\{config\.baseUrl\}\/v1`/)
+  })
+
+  /**
+   * The module the agent reads the proxy from must itself import nothing, for the reason the case
+   * above records: it is compiled into the server, where a workspace or `effect` import fails the
+   * build from an installed tarball.
+   */
+  it("reads the proxy environment through a module with no imports at all", async () => {
+    const source = await readFile(resolve(agentDir, "..", "src", "llm-proxy.ts"), "utf8")
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
+    expect(code).not.toMatch(/^\s*import\s/m)
+    expect(code).toContain("MEMHTML_LLM_BASE_URL")
   })
 })
 

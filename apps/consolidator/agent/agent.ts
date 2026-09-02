@@ -1,7 +1,9 @@
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock"
+import { createAnthropic } from "@ai-sdk/anthropic"
 import { defaultSettingsMiddleware, wrapLanguageModel } from "ai"
 import { defineAgent } from "eve"
 
+import { type ConsolidatorProxy, proxyFromEnv } from "../src/llm-proxy.js"
 import {
   MODEL_CALL_OUTPUT_TOKEN_LIMIT,
   SESSION_OUTPUT_TOKEN_MAX_BATCH,
@@ -15,18 +17,64 @@ import {
  * never by a programmatic `defineAgent().run()`. `agent/instructions.md` is required and carries
  * the TRACE-2 bar. The client wrapper in `src/client.ts` drives it over HTTP.
  *
- * Bedrock direct, not the Vercel AI Gateway: the gateway is an anti-goal, and a
- * provider-authored `LanguageModel` is how eve is told to call a provider directly
- * (node_modules/eve/docs/agent-config.md, "Set the model").
+ * A provider-authored `LanguageModel`, not the Vercel AI Gateway: the gateway is an anti-goal, and
+ * a provider-authored model is how eve is told to call a provider directly
+ * (node_modules/eve/docs/agent-config.md, "Set the model"). Which provider is decided by the
+ * environment at server boot, below.
+ */
+
+/**
+ * The model, by its Bedrock inference-profile id. Through an LLM proxy the id a request carries is
+ * whatever `MEMHTML_LLM_MODEL_MAP` rewrites this to (`src/llm-proxy.ts`), since a proxy names
+ * models on its own terms.
+ */
+const CONSOLIDATOR_MODEL_ID = "global.anthropic.claude-opus-5"
+
+/**
+ * Read at SERVER BOOT, from the environment `eve start` spreads into the built server — the same
+ * environment the client spawned it with (`src/client.ts`), which is `process.env` plus the run's
+ * own values. `eve build` bakes `limits` into `.output/` but does not evaluate this file's model
+ * expression, so a deployment flips between the two paths by setting one variable and restarting
+ * nothing but the next run's server.
+ */
+const proxy = proxyFromEnv(process.env)
+
+/**
+ * Bedrock direct: the default.
  *
  * Credentials are read from the environment by the provider itself and there is NO default AWS
  * chain — `AWS_BEARER_TOKEN_BEDROCK`, else `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`. No
  * shared config file, no SSO cache, no instance metadata. The provider is also lazy: this call
- * and the `bedrock(...)` call below both succeed with zero credentials and nothing fails until
+ * and the `bedrock(...)` call both succeed with zero credentials and nothing fails until
  * the first request, which is exactly why `hasConsolidatorCredentials()` exists in
  * `src/contract.ts` and runs before a server is ever spawned.
  */
-const bedrock = createAmazonBedrock({ region: process.env.AWS_REGION ?? "us-east-1" })
+const directModel = () =>
+  createAmazonBedrock({ region: process.env.AWS_REGION ?? "us-east-1" })(CONSOLIDATOR_MODEL_ID)
+
+/**
+ * The same model through an OpenAI- and Anthropic-compatible LLM proxy, on its Anthropic Messages
+ * route (`<base>/v1/messages`), when `MEMHTML_LLM_BASE_URL` names one.
+ *
+ * `@ai-sdk/anthropic` rather than the Bedrock provider with a `baseURL`: the Bedrock provider speaks
+ * Bedrock's own InvokeModel/Converse HTTP surface with SigV4 or a Bedrock bearer token, which is
+ * not what a proxy serves. The Anthropic provider speaks the Messages API the proxy does serve, and
+ * it is the SAME `LanguageModelV4` implementation the Bedrock provider delegates Claude calls to
+ * (`@ai-sdk/amazon-bedrock@5.0.61` depends on `@ai-sdk/anthropic@4.0.41`), so `reasoning: "high"`
+ * below maps to the same adaptive-thinking request on either path, and the pinned version adds no
+ * second copy to the install.
+ *
+ * The provider's `baseURL` is the versioned prefix, so `/v1` is appended here and the provider
+ * appends `/messages`. A key travels as `Authorization: Bearer` (`authToken`), the header a proxy
+ * reads; with no key the provider still insists on some credential, so a placeholder `x-api-key`
+ * is sent that a keyless proxy ignores. The provider's own `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL`
+ * environment fallbacks never apply: both settings are always passed explicitly.
+ */
+const proxiedModel = (config: ConsolidatorProxy) =>
+  createAnthropic({
+    baseURL: `${config.baseUrl}/v1`,
+    ...(config.apiKey === null ? { apiKey: "none" } : { authToken: config.apiKey })
+  })(config.modelFor(CONSOLIDATOR_MODEL_ID))
 
 export default defineAgent({
   /**
@@ -39,7 +87,9 @@ export default defineAgent({
    * with no limit and Bedrock applies its own 4,096-token default, which the consolidator's answer
    * does not fit: measured on a four-transcript batch, 28 consecutive calls came back
    * `finishReason: "length"` at exactly 4,096 tokens and all 15 `final_output` calls were truncated
-   * JSON. `src/output-budget.ts` carries the measurement and the number.
+   * JSON. `src/output-budget.ts` carries the measurement and the number. The ceiling applies to
+   * both paths: the Anthropic provider falls back to its OWN default `max_tokens` when the call
+   * settings name none, and whatever that default is, it is not a number this agent measured.
    *
    * `defaultSettingsMiddleware` from the `ai` package rather than a hand-written wrapper: the merge
    * is per-call-setting and belongs to the SDK that owns `LanguageModelV4`. `wrapLanguageModel`
@@ -48,7 +98,7 @@ export default defineAgent({
    * (node_modules/eve/dist/src/compiler/normalize-agent-config.js).
    */
   model: wrapLanguageModel({
-    model: bedrock("global.anthropic.claude-opus-5"),
+    model: proxy === null ? directModel() : proxiedModel(proxy),
     middleware: defaultSettingsMiddleware({
       settings: { maxOutputTokens: MODEL_CALL_OUTPUT_TOKEN_LIMIT }
     })

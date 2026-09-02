@@ -32,6 +32,7 @@ import {
   Embeddings,
   EmbeddingsLive,
   type EmbeddingsShape,
+  LlmConfig,
   ModelClient,
   ModelClientLive,
   type ModelClientShape
@@ -54,7 +55,9 @@ import {
   type EntityExtractorShape,
   EXTRACTION_MODEL_ID,
   fetchMantleTransport,
-  makeEntityExtractor
+  fetchProxyTransport,
+  makeEntityExtractor,
+  proxiedExtractionModelId
 } from "./extraction.js"
 
 /**
@@ -337,6 +340,11 @@ export const layerModelFrom = (model: ModelClientShape | undefined): Layer.Layer
  * `AWS_BEARER_TOKEN_BEDROCK` the SDK chain reads. An absent token with the flag on is a configuration
  * the operator asked for and cannot have, so it degrades per batch with a logged warning rather
  * than failing at layer build, matching how a missing embedder credential degrades a search.
+ *
+ * When `MEMHTML_LLM_BASE_URL` names an LLM proxy, the same Responses-API body goes to the proxy's
+ * `/v1/responses` instead, read from the same `LlmConfig` the two `@memhtml/llm` lanes use so all
+ * four model-calling edges agree about where a run's traffic goes. The mantle token is then not
+ * consulted at all: the proxy's own key (optional) is the credential on that path.
  */
 export interface ExtractorPortShape {
   readonly extractor: EntityExtractorShape | undefined
@@ -351,6 +359,12 @@ export const layerExtractorPort: Layer.Layer<ExtractorPortShape> = Layer.effect(
       Config.map((value) => value.trim().toLowerCase() === "on")
     )
     if (!enabled) return { extractor: undefined }
+    const { proxy } = yield* LlmConfig
+    if (proxy !== null) {
+      return {
+        extractor: makeEntityExtractor(fetchProxyTransport(proxy), proxiedExtractionModelId(proxy))
+      }
+    }
     const region = yield* Config.string("MEMHTML_AWS_REGION").pipe(Config.withDefault("us-east-1"))
     const token = yield* Config.string("AWS_BEARER_TOKEN_BEDROCK").pipe(Config.withDefault(""))
     if (token === "") {
@@ -401,7 +415,8 @@ export const ConsolidatorPortService = Context.Service<ConsolidatorPortShape>(
  * `MEMHTML_LLM=off` is the same explicit opt-out `layerModelPort` reads, and it covers the consolidator
  * too, because an operator who turned the models off did not mean "except the expensive agent".
  *
- * `hasConsolidatorCredentials` is the credential preflight, read here as well as inside the client.
+ * `hasConsolidatorCredentials` is the route preflight — a Bedrock credential, or an LLM proxy named by
+ * `MEMHTML_LLM_BASE_URL` — read here as well as inside the client.
  * The redundancy is deliberate and the two reads do different jobs. This one decides whether the phase
  * sees a consolidator at all, so a credential-free environment gets `detail: "no consolidator bound"`,
  * the same shape the other three LLM phases report with no model, rather than a bound port that
@@ -443,7 +458,7 @@ export const layerConsolidatorPort = (
       if (!enabled) return { consolidator: undefined }
       if (!hasConsolidatorCredentials(env)) {
         yield* Effect.logDebug(
-          "trace consolidation unbound: no Bedrock credentials in the environment"
+          "trace consolidation unbound: neither Bedrock credentials nor an LLM proxy in the environment"
         )
         return { consolidator: undefined }
       }

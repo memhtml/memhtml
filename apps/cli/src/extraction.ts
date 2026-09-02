@@ -1,5 +1,5 @@
 import { ModelUnavailable } from "@memhtml/contracts/errors"
-import { wrapAsData } from "@memhtml/llm"
+import { type ProxyConfig, proxyModelId, wrapAsData } from "@memhtml/llm"
 import { Effect } from "effect"
 
 /**
@@ -215,24 +215,51 @@ export const makeEntityExtractor = (
 })
 
 /**
- * The production transport: bearer-token fetch against the mantle endpoint.
+ * One Responses-API endpoint over `fetch`, the shape both production transports share.
  *
- * A non-2xx status is a rejection carrying the status and the body's first line, because mantle
- * reports quota and auth failures as structured JSON the operator needs verbatim. Folding it into
- * a generic message was the mistake the embeddings lane made first.
+ * A non-2xx status is a rejection carrying the status and the body's first 200 characters, because
+ * both endpoints report quota, auth, and routing failures as structured JSON the operator needs
+ * verbatim. Folding it into a generic message was the mistake the embeddings lane made first.
  */
-export const fetchMantleTransport = (region: string, token: string): MantleTransport => ({
+const jsonPostTransport = (
+  label: string,
+  url: string,
+  headers: Record<string, string>
+): MantleTransport => ({
   post: async (body, signal) => {
-    const response = await fetch(`https://bedrock-mantle.${region}.api.aws/openai/v1/responses`, {
+    const response = await fetch(url, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      headers: { ...headers, "Content-Type": "application/json" },
       body,
       signal
     })
     const text = await response.text()
     if (!response.ok) {
-      throw new Error(`mantle ${response.status}: ${text.slice(0, 200)}`)
+      throw new Error(`${label} ${response.status}: ${text.slice(0, 200)}`)
     }
     return JSON.parse(text) as unknown
   }
 })
+
+/** The production transport: bearer-token fetch against the Bedrock mantle endpoint. */
+export const fetchMantleTransport = (region: string, token: string): MantleTransport =>
+  jsonPostTransport("mantle", `https://bedrock-mantle.${region}.api.aws/openai/v1/responses`, {
+    Authorization: `Bearer ${token}`
+  })
+
+/**
+ * The same Responses API on an LLM proxy's `/v1/responses` route, when `MEMHTML_LLM_BASE_URL` names
+ * one (`packages/llm/src/proxy-config.ts`). The proxy's key is optional, so the header is only sent
+ * when there is one. The model id the request carries is resolved by the caller through
+ * {@link proxiedExtractionModelId}, because a proxy names models on its own terms.
+ */
+export const fetchProxyTransport = (proxy: ProxyConfig): MantleTransport =>
+  jsonPostTransport(
+    "llm proxy",
+    `${proxy.baseUrl}/v1/responses`,
+    proxy.apiKey === null ? {} : { Authorization: `Bearer ${proxy.apiKey}` }
+  )
+
+/** {@link EXTRACTION_MODEL_ID} as the proxy wants it named, or unchanged when the map is silent. */
+export const proxiedExtractionModelId = (proxy: ProxyConfig): string =>
+  proxyModelId(proxy, EXTRACTION_MODEL_ID)

@@ -1,6 +1,8 @@
 import { MEMORY_TYPES, type WritableMemoryType } from "@memhtml/contracts"
 import { Schema } from "effect"
 
+import { PROXY_BASE_URL_VAR, proxyFromEnv } from "./llm-proxy.js"
+
 /**
  * What a consolidation run is allowed to return, and what a caller may act on.
  *
@@ -1015,6 +1017,10 @@ export type ConsolidatorError =
  * The provider has NO default AWS credential chain, verified live in the probe: no shared
  * config file, no SSO cache, no instance metadata, env vars only. So presence here is the whole
  * question, and a preflight cannot be fooled by a profile that only the AWS CLI can see.
+ *
+ * The third way to reach a model is not a Bedrock credential at all: an LLM proxy named by
+ * `MEMHTML_LLM_BASE_URL` (`src/llm-proxy.ts`), which the agent calls through the Anthropic provider
+ * instead of the Bedrock one. Its own key is optional, so the proxy's PRESENCE is what counts here.
  */
 const BEARER_VAR = "AWS_BEARER_TOKEN_BEDROCK"
 const SIGV4_VARS = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"] as const
@@ -1025,7 +1031,7 @@ const present = (env: Record<string, string | undefined>, name: string): boolean
 }
 
 /**
- * Whether a consolidation run could authenticate at all, without making a call.
+ * Whether a consolidation run could reach a model at all, without making a call.
  *
  * Asking cheaply matters because the provider is lazy. `createAmazonBedrock` and
  * `provider(modelId)` both succeed with zero credentials, and nothing fails until the first
@@ -1036,25 +1042,34 @@ const present = (env: Record<string, string | undefined>, name: string): boolean
  * Empty-string is treated as absent. A blank export is how a credential goes missing in
  * practice, and `""` would authenticate nothing while reading as present.
  *
+ * An LLM proxy counts as a route whether or not it takes a key, because the key is the proxy's
+ * business and a keyless loopback proxy is a supported deployment. A malformed proxy URL THROWS
+ * here rather than reading as absent: falling back to "no route" would skip the phase quietly for
+ * a run the operator configured, and the message names the variable to fix.
+ *
  * This answers "could a call be attempted", never "would it be authorized". A stale or
  * unentitled key passes here and fails at the call as {@link ConsolidatorRunFailed}, which is the
  * honest split, since the only way to know a key works is to use it.
  */
 export const hasConsolidatorCredentials = (
   env: Record<string, string | undefined> = process.env
-): boolean => present(env, BEARER_VAR) || SIGV4_VARS.every((name) => present(env, name))
+): boolean =>
+  proxyFromEnv(env) !== null ||
+  present(env, BEARER_VAR) ||
+  SIGV4_VARS.every((name) => present(env, name))
 
 /**
  * The message carried on {@link ConsolidatorCredentialsMissing}: which env vars would fix it.
  *
- * Takes no environment on purpose. It names the two accepted MECHANISMS, which never vary, and
+ * Takes no environment on purpose. It names the three accepted MECHANISMS, which never vary, and
  * says nothing about which vars are currently set. A failure message is logged and reported by
  * the sleep cycle, so naming the present-but-rejected variables would put credential-shaped
  * details into a report for no diagnostic gain. Whether a given var is set is what
  * {@link hasConsolidatorCredentials} answers.
  */
 export const credentialsMissingReason = (): string =>
-  `no Bedrock credentials in the environment: set ${BEARER_VAR}, or ${SIGV4_VARS.join(" + ")}`
+  `no way to reach a model in the environment: set ${BEARER_VAR} or ${SIGV4_VARS.join(" + ")} ` +
+  `for Bedrock directly, or ${PROXY_BASE_URL_VAR} for an LLM proxy`
 
 /**
  * Every kind is a real corpus type, restated so a reader of this file alone can see the
