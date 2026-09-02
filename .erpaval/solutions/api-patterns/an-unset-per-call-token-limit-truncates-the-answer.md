@@ -19,6 +19,8 @@ Two readings that would have caught it earlier:
 
 A second shape arrives the same way and the first version of this fix got it wrong: a provider error that survives eve's retries goes through `emitRecoverableFailedTurn` — `turn.failed` with a code, then `session.waiting` — so the turn is parked for a human retry and its code is ONLY in the events. Reporting that as "parked on an input request nobody is present to answer (no input request was recorded)" is true and useless; `MODEL_CALL_FAILED after 92 model call(s), 28 of which were cut off at the per-call output limit` is the same event stream read properly.
 
+**And the agent's import graph is not the workspace's.** Reaching one constant in `src/contract.ts` from `agent/agent.ts` pulled `effect` and `@memhtml/contracts` into the tree eve re-bundles at `eve build`. Both are BUNDLED into the published artifact rather than installed beside it, so the workspace build stayed green and the installed tarball failed with `ConsolidatorUnavailable` — three checks in `package:smoke:live`, caught only at push. Agent files import first-party `src/` modules and real externals; duplicate a constant and gate the copy instead.
+
 ## What actually catches it
 
 Classify every terminal `status` a harness can hand back, not just the failing one: `"waiting"` with no human on the other end is a failure, and its reason should carry the harness's own numbers (`action.input` on the session-limit request is `{ kind, limit, usedTokens }`). Keep the classifier pure (`parkedTurnReason` in `contract.ts`) so the test tier drives it with the recorded fixture, and order it BEFORE the `data === undefined` arm — the order is the whole guard, since a parked turn also has no data.
@@ -26,6 +28,8 @@ Classify every terminal `status` a harness can hand back, not just the failing o
 Size a budget like the time budget (#99): base plus per-transcript, computed where the batch is known and passed to the agent on the child's environment (`eve start` spreads its env into the built server, and `defineAgent` runs at server boot, so `process.env` there is per-run). A flat cap in `agent.ts` cannot know the batch.
 
 Mutation-verify text-shaped guards: `agent-files.test.ts`'s presence check `toContain("maxOutputTokensPerSession")` passed against the literal that caused the outage; the replacement strips comments and asserts the value is the env read and not a digit.
+
+Verified end to end after the fix: 4 transcripts, 63 model calls, 27,846 output tokens, zero `finishReason: "length"`, `consolidated=4`, seven memories written, no degradation (2026-09-02 15:00Z, scratch store).
 
 One more reading habit: `finishReason` on `message.completed` is the cheapest truth about a truncated answer. A run of `"length"` finishes is a per-call ceiling too small for the payload, and it is visible in the stream chunks without a model, a credential, or a rerun.
 
