@@ -40,12 +40,19 @@ export const EMBED_WATERMARK = `${EMBED_MODEL_ID}@${EMBED_DIM}`
 export const STRUCTURED_TOOL_NAME = "emit"
 
 /**
- * A generous default. A budget of 8192 has been observed truncating structured responses
- * mid-object, and a truncated structured response is a contract violation rather than a
- * partial result. `max_tokens` bounds thinking and answer together, so a tight budget is
- * consumed sooner than the answer's length alone suggests.
+ * The per-call output budget when a caller names none. A budget of 8192 has been observed
+ * truncating structured responses mid-object, and a truncated structured response is a contract
+ * violation rather than a partial result. `max_tokens` bounds thinking and answer together, so a
+ * tight budget is consumed sooner than the answer's length alone suggests, and every sleep phase
+ * here runs with reasoning on.
+ *
+ * 64,000 rather than the 16,384 that stood here: the same number the consolidator settled on for
+ * its own per-call ceiling (`apps/consolidator/src/output-budget.ts`, issue #113), half of the
+ * 128,000 ceiling below, and generous against the largest structured answer any phase asks for. A
+ * budget is a ceiling and not a spend — the model stops when the answer is done — so the cost of a
+ * high default is only paid by the answers that needed it.
  */
-export const MAX_TOKENS_DEFAULT = 16_384
+export const MAX_TOKENS_DEFAULT = 64_000
 
 /**
  * Every Claude 5 generation tops out here. Above the ceiling Bedrock raises a

@@ -36,6 +36,9 @@ describe("bedrock wire constants", () => {
 
   it("leaves headroom above the 8192 ceiling that truncated structured output", () => {
     expect(MAX_TOKENS_DEFAULT).toBeGreaterThan(8192)
+    // 64,000: the consolidator's measured per-call need (issue #113), half the model ceiling.
+    expect(MAX_TOKENS_DEFAULT).toBe(64_000)
+    expect(MAX_TOKENS_DEFAULT).toBeLessThan(MAX_TOKENS_CEILING)
     expect(STRUCTURED_TOOL_NAME).toBe("emit")
   })
 
