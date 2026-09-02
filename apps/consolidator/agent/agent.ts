@@ -2,8 +2,11 @@ import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock"
 import { defaultSettingsMiddleware, wrapLanguageModel } from "ai"
 import { defineAgent } from "eve"
 
-import { MAX_TRANSCRIPTS_PER_RUN } from "../src/contract.js"
-import { MODEL_CALL_OUTPUT_TOKEN_LIMIT, sessionOutputTokenLimit } from "../src/output-budget.js"
+import {
+  MODEL_CALL_OUTPUT_TOKEN_LIMIT,
+  SESSION_OUTPUT_TOKEN_MAX_BATCH,
+  sessionOutputTokenLimit
+} from "../src/output-budget.js"
 
 /**
  * The consolidator agent's runtime config.
@@ -102,6 +105,6 @@ export default defineAgent({
      * `session.waiting` with a `session-limit` input request; `unsettledTurnReason` in
      * `src/contract.ts` is what turns that into a typed failure naming the numbers.
      */
-    maxOutputTokensPerSession: sessionOutputTokenLimit(MAX_TRANSCRIPTS_PER_RUN)
+    maxOutputTokensPerSession: sessionOutputTokenLimit(SESSION_OUTPUT_TOKEN_MAX_BATCH)
   }
 })

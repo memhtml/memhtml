@@ -11,6 +11,7 @@ import {
 import {
   MODEL_CALL_OUTPUT_TOKEN_LIMIT,
   SESSION_OUTPUT_TOKEN_BASE,
+  SESSION_OUTPUT_TOKEN_MAX_BATCH,
   SESSION_OUTPUT_TOKEN_PER_TRANSCRIPT,
   sessionOutputTokenLimit
 } from "../src/output-budget.js"
@@ -228,8 +229,21 @@ describe("the output-token ceilings", () => {
   })
 
   it("admits a session ceiling above the per-call one, so no call is bounded by the session", () => {
-    expect(sessionOutputTokenLimit(MAX_TRANSCRIPTS_PER_RUN)).toBeGreaterThan(
+    expect(sessionOutputTokenLimit(SESSION_OUTPUT_TOKEN_MAX_BATCH)).toBeGreaterThan(
       MODEL_CALL_OUTPUT_TOKEN_LIMIT
     )
+  })
+
+  /**
+   * The copy that keeps the agent's imports first-party.
+   *
+   * `output-budget.ts` cannot import `MAX_TRANSCRIPTS_PER_RUN` from `contract.ts`, because
+   * `contract.ts` reaches `effect` and `@memhtml/contracts` and both are BUNDLED into the published
+   * artifact rather than installed beside it — an agent file that imported them failed `eve build`
+   * from an installed tarball. So the batch size is duplicated, and this is the gate that keeps the
+   * two numbers equal.
+   */
+  it("keeps its batch literal equal to the contract's transcript ceiling", () => {
+    expect(SESSION_OUTPUT_TOKEN_MAX_BATCH).toBe(MAX_TRANSCRIPTS_PER_RUN)
   })
 })

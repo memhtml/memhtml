@@ -47,6 +47,20 @@
  * `client.ts`, ten minutes plus three per transcript), which the client enforces and can cancel.
  */
 
+/**
+ * The largest batch the session ceiling is sized for.
+ *
+ * A LITERAL here rather than an import of `MAX_TRANSCRIPTS_PER_RUN`, and the duplication is the
+ * point: `contract.ts` imports `effect` and `@memhtml/contracts`, and both are bundled INTO the
+ * published artifact rather than installed beside it, so an agent file that reached them failed
+ * `eve build` from an installed tarball with `ConsolidatorUnavailable` (caught by
+ * `mise run package:smoke`, which is the only tier that installs the artifact). The agent's import
+ * graph stays first-party and dependency-free — the same rule `mount.ts` and `run-auth.ts` follow.
+ *
+ * `tests/turn-limits.test.ts` pins this to `MAX_TRANSCRIPTS_PER_RUN`, so the copy cannot drift.
+ */
+export const SESSION_OUTPUT_TOKEN_MAX_BATCH = 32
+
 /** Per model call. See the note above: unset, Bedrock applies 4,096 and the answer cannot fit. */
 export const MODEL_CALL_OUTPUT_TOKEN_LIMIT = 64_000
 

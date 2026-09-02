@@ -239,6 +239,28 @@ describe("agent/agent.ts", () => {
     expect(code).toContain("wrapLanguageModel(")
     expect(code).toContain("defaultSettingsMiddleware(")
   })
+
+  /**
+   * The agent's import graph reaches first-party `src/` files and real externals, never a bundled
+   * workspace package.
+   *
+   * eve re-bundles the authored TypeScript at `eve build`, and the twelve `@memhtml/*` packages are
+   * BUNDLED into the published artifact rather than installed beside it. So an agent file importing
+   * `src/contract.ts` — which reaches `effect` and `@memhtml/contracts` — builds fine in the
+   * workspace and fails from an installed tarball with `ConsolidatorUnavailable`. Only
+   * `mise run package:smoke` catches that, and it costs minutes; this costs nothing.
+   *
+   * (Mutation: adding `import { MAX_TRANSCRIPTS_PER_RUN } from "../src/contract.js"` fails this.)
+   */
+  it("imports no bundled workspace package, directly or through src/", async () => {
+    const code = (await read("agent.ts"))
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "")
+    expect(code).not.toMatch(/from "@memhtml\//)
+    // `contract.ts` is the one `src/` module that reaches them; `output-budget.ts` deliberately
+    // does not, which is why the batch ceiling is duplicated there with a gate on the copy.
+    expect(code).not.toContain('from "../src/contract.js"')
+  })
 })
 
 describe("agent/sandbox/sandbox.ts", () => {
