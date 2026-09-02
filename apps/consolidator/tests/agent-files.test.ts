@@ -217,8 +217,27 @@ describe("agent/agent.ts", () => {
     expect(text).not.toMatch(/^\s*(?!.*\*).*reasoningConfig/m)
   })
 
-  it("bounds output tokens per session", async () => {
-    expect(await read("agent.ts")).toContain("maxOutputTokensPerSession")
+  /**
+   * Both ceilings come from `src/output-budget.ts`, never from a literal here.
+   *
+   * The literal `50_000` that stood on the session cap bounded the READING (reasoning tokens are
+   * output tokens under `reasoning: "high"`), and the ABSENT per-call cap let Bedrock apply its own
+   * 4,096-token default, which truncated every attempt at the structured answer (issue #113).
+   * Comments are stripped before matching, because agent.ts records that history in its own prose and
+   * a raw-text search would match the story rather than the code.
+   *
+   * (Mutation: restoring `maxOutputTokensPerSession: 50_000` fails the first assertion; dropping the
+   * `wrapLanguageModel` wrapper fails the second.)
+   */
+  it("takes both output-token ceilings from output-budget.ts, not from literals", async () => {
+    const code = (await read("agent.ts"))
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "")
+    expect(code).toMatch(/maxOutputTokensPerSession:\s*sessionOutputTokenLimit\(/)
+    expect(code).not.toMatch(/maxOutputTokensPerSession:\s*\d/)
+    expect(code).toMatch(/maxOutputTokens:\s*MODEL_CALL_OUTPUT_TOKEN_LIMIT/)
+    expect(code).toContain("wrapLanguageModel(")
+    expect(code).toContain("defaultSettingsMiddleware(")
   })
 })
 

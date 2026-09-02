@@ -1,5 +1,9 @@
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock"
+import { defaultSettingsMiddleware, wrapLanguageModel } from "ai"
 import { defineAgent } from "eve"
+
+import { MAX_TRANSCRIPTS_PER_RUN } from "../src/contract.js"
+import { MODEL_CALL_OUTPUT_TOKEN_LIMIT, sessionOutputTokenLimit } from "../src/output-budget.js"
 
 /**
  * The consolidator agent's runtime config.
@@ -22,7 +26,30 @@ import { defineAgent } from "eve"
 const bedrock = createAmazonBedrock({ region: process.env.AWS_REGION ?? "us-east-1" })
 
 export default defineAgent({
-  model: bedrock("global.anthropic.claude-opus-5"),
+  /**
+   * The model, wrapped so every call carries an OUTPUT-TOKEN CEILING.
+   *
+   * The wrapper is the fix for issue #113 and it is not cosmetic. eve passes no `maxOutputTokens` for
+   * a directly-authored provider model — it resolves that number from the AI Gateway catalog, which
+   * does not know a Bedrock inference-profile id — and `@ai-sdk/amazon-bedrock` sets
+   * `inferenceConfig.maxTokens` only when the call settings name one. The request therefore goes out
+   * with no limit and Bedrock applies its own 4,096-token default, which the consolidator's answer
+   * does not fit: measured on a four-transcript batch, 28 consecutive calls came back
+   * `finishReason: "length"` at exactly 4,096 tokens and all 15 `final_output` calls were truncated
+   * JSON. `src/output-budget.ts` carries the measurement and the number.
+   *
+   * `defaultSettingsMiddleware` from the `ai` package rather than a hand-written wrapper: the merge
+   * is per-call-setting and belongs to the SDK that owns `LanguageModelV4`. `wrapLanguageModel`
+   * preserves `specificationVersion`, `provider`, and `modelId`, which is what eve's compiler
+   * validates a directly-authored model on
+   * (node_modules/eve/dist/src/compiler/normalize-agent-config.js).
+   */
+  model: wrapLanguageModel({
+    model: bedrock("global.anthropic.claude-opus-5"),
+    middleware: defaultSettingsMiddleware({
+      settings: { maxOutputTokens: MODEL_CALL_OUTPUT_TOKEN_LIMIT }
+    })
+  }),
 
   /**
    * REQUIRED here, unlike for a gateway model id. eve's window catalog does not know this
@@ -51,18 +78,30 @@ export default defineAgent({
    * and eve drops an unsupported `providerOptions` silently — so the pairing fails in the worst
    * way, looking configured while being either an error or a no-op. `reasoning: "high"` is
    * forwarded by eve to the turn's model calls and is what actually takes effect.
+   *
+   * It also decides what the ceiling above has to cover: the provider maps `"high"` to ADAPTIVE
+   * thinking for this model, whose reasoning tokens are reported as OUTPUT tokens and are NOT added
+   * on top of `maxTokens` (`resolveAmazonBedrockReasoningConfig` adds a budget only for the
+   * `type: "enabled"` shape). One ceiling covers reasoning and answer together.
    */
   reasoning: "high",
 
   limits: {
     /**
-     * A batch of transcripts is a read-heavy job with a small answer. This bounds the answer,
-     * not the reading, so a run cannot spin producing candidates.
+     * The whole turn's output-token ceiling, reasoning included, sized for the LARGEST batch the
+     * contract admits rather than a typical one — the value is baked into `.output/` at build time
+     * and serves every batch size, so a cap that fits four transcripts would starve thirty-two.
      *
-     * Crossing it does not raise a continuation prompt here: a run driven by the client wrapper
-     * has no human to ask, and eve fails the next model call with `SESSION_TOKEN_LIMIT_REACHED`
-     * for sessions that cannot reach one. That surfaces as a typed `ConsolidatorRunFailed`.
+     * The flat `50_000` that stood here was described as bounding "the answer, not the reading". It
+     * bounded the reading, and every recorded turn against the operator's corpus landed within 6% of
+     * it; two crossed it and eve PARKED them on a budget-continuation prompt nobody was there to
+     * approve, which the client then misread as a contract violation (issue #113).
+     *
+     * Crossing it does not fail the model call, whatever eve's `SESSION_TOKEN_LIMIT_REACHED`
+     * suggests — that branch is for task-mode runs. A client session is conversation-mode and gets
+     * `session.waiting` with a `session-limit` input request; `unsettledTurnReason` in
+     * `src/contract.ts` is what turns that into a typed failure naming the numbers.
      */
-    maxOutputTokensPerSession: 50_000
+    maxOutputTokensPerSession: sessionOutputTokenLimit(MAX_TRANSCRIPTS_PER_RUN)
   }
 })

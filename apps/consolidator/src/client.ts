@@ -26,6 +26,7 @@ import {
   underCitedWatermarkWarning,
   ungroundedCommitmentReason,
   ungroundedEvidenceReason,
+  unsettledTurnReason,
   watermarkableSessionIds
 } from "./contract.js"
 import {
@@ -1174,20 +1175,33 @@ export const settleTurnWithinBudget = async <A>(input: {
     const outcome = await Promise.race([settled, budgetExpired])
     if (outcome.kind === "settled") return outcome
 
-    let cancelTimer: NodeJS.Timeout | undefined
-    try {
-      await Promise.race([
-        input.turn.cancel().catch(() => undefined),
-        new Promise((settle) => {
-          cancelTimer = setTimeout(settle, input.cancelWaitMs ?? CANCEL_WAIT_MS)
-        })
-      ])
-    } finally {
-      clearTimeout(cancelTimer)
-    }
+    await cancelWithinGrace(input.turn.cancel, input.cancelWaitMs)
     return outcome
   } finally {
     clearTimeout(budgetTimer)
+  }
+}
+
+/**
+ * Ask the server to cancel a turn, waiting at most `graceMs` ({@link CANCEL_WAIT_MS}) for it to say
+ * so. Best-effort by design — see {@link settleTurnWithinBudget} for why a cancel that hangs must
+ * not change the caller's outcome — and shared by the two arms that need it: the budget timeout,
+ * and a turn the harness parked on an input request (`runTurn`).
+ */
+const cancelWithinGrace = async (
+  cancel: () => Promise<unknown>,
+  graceMs: number = CANCEL_WAIT_MS
+): Promise<void> => {
+  let cancelTimer: NodeJS.Timeout | undefined
+  try {
+    await Promise.race([
+      cancel().catch(() => undefined),
+      new Promise((settle) => {
+        cancelTimer = setTimeout(settle, graceMs)
+      })
+    ])
+  } finally {
+    clearTimeout(cancelTimer)
   }
 }
 
@@ -1261,10 +1275,22 @@ const runTurn = (
           message: turnMessage(reachable),
           outputSchema: CONSOLIDATION_OUTPUT_JSON_SCHEMA
         })
-        return await settleTurnWithinBudget({
+        const settled = await settleTurnWithinBudget({
           turn: { result: () => response.result(), cancel: () => response.cancel() },
           budgetMs: turnBudgetMs
         })
+        /**
+         * A turn that came back WAITING is cancelled before the server is stopped, for the reason
+         * the timeout arm cancels: eve holds its workflow run `running` in the shared state
+         * directory, parked for a next message that will never arrive, and the cancel is what marks
+         * it terminal there (issue #100's mechanism, issue #113's trigger — both observed runs left
+         * a `running` row behind). `unsettledTurnReason` below is where it becomes a typed failure;
+         * this is only the housekeeping.
+         */
+        if (settled.kind === "settled" && settled.result.status === "waiting") {
+          await cancelWithinGrace(() => response.cancel())
+        }
+        return settled
       },
       catch: (cause) =>
         ConsolidatorRunFailed.make({
@@ -1298,6 +1324,18 @@ const runTurn = (
     const llmCalls = analysis.events.filter(
       (event) => event.type === "step.completed" || event.type === "step.failed"
     ).length
+
+    /**
+     * BEFORE the structured-result check, because a turn eve parked also has no `data`, and reading
+     * that as a contract violation is the misdiagnosis two consecutive sleep runs produced (issue
+     * #113): the agent had not answered outside the schema — the harness had stopped it, in one case
+     * on the session's output-token cap and in another on a provider error, and left the session
+     * waiting for a human. `unsettledTurnReason` (`contract.ts`) holds the rule and the wording.
+     */
+    const unsettled = unsettledTurnReason(analysis, llmCalls)
+    if (unsettled !== null) {
+      return yield* Effect.fail(ConsolidatorRunFailed.make({ phase: "turn", reason: unsettled }))
+    }
 
     if (analysis.data === undefined) {
       return yield* Effect.fail(

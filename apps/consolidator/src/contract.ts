@@ -840,6 +840,12 @@ export class ConsolidatorRunFailed extends Schema.TaggedError<ConsolidatorRunFai
  * agent: it answered, and the answer broke the contract. Same posture as
  * `packages/llm/src/structured.ts:52-61`: a coerced object is indistinguishable from a real one
  * downstream, so nothing lenient happens here.
+ *
+ * A turn eve could not settle is not this: see {@link unsettledTurnReason}. eve ends a parked or
+ * recoverably-failed conversation turn as `session.waiting` with no structured result, and a client
+ * that tests only `data === undefined` files it here — which is what two consecutive sleep runs did
+ * (issue #113), each reporting "settled without a structured result" for a turn the harness had
+ * stopped on its output-token cap.
  */
 export class ConsolidatorContractViolation extends Schema.TaggedError<ConsolidatorContractViolation>()(
   "ConsolidatorContractViolation",
@@ -847,6 +853,139 @@ export class ConsolidatorContractViolation extends Schema.TaggedError<Consolidat
     reason: Schema.String
   }
 ) {}
+
+/**
+ * The subset of eve's `MessageResult` that {@link unsettledTurnReason} reads.
+ *
+ * Structural rather than eve's own type, so the pure test tier can drive it with a literal recorded
+ * from a real run and the classifier is pinned to the three fields it needs: `status`
+ * (node_modules/eve/dist/src/client/types.d.ts, `MessageResult.status`), a parked turn's
+ * `inputRequests` (node_modules/eve/dist/src/runtime/input/types.d.ts, `InputRequest`), and the
+ * turn's `events`, which carry the failure code when eve failed the turn rather than parking it
+ * (node_modules/eve/dist/src/protocol/message.d.ts, `createTurnFailedEvent`).
+ */
+export interface SettledTurnShape {
+  readonly status: "completed" | "failed" | "waiting"
+  readonly inputRequests: ReadonlyArray<{
+    readonly kind: string
+    readonly prompt?: string | undefined
+    readonly action?: { readonly input?: unknown } | undefined
+  }>
+  readonly events: ReadonlyArray<{ readonly type: string; readonly data?: unknown }>
+}
+
+/**
+ * How many characters of a foreign prompt or provider message the failure reason carries. Enough to
+ * name what happened; both are model-facing text of no fixed length and the reason is a log line.
+ */
+const UNSETTLED_DETAIL_CHARS = 200
+
+/**
+ * Why a turn that came back `waiting` is a FAILURE for this client, or `null` when it did not.
+ *
+ * A CLIENT session is conversation-mode, and eve never fails such a turn outright: it PARKS it as
+ * `session.waiting` and waits for the next user message. Three different things arrive that way and
+ * all three are terminal here, because nobody is on the other end of this session — the phase runs
+ * unattended and the agent's instructions forbid it from asking anything.
+ *
+ * 1. **The session token-limit prompt.** `enforceSessionTokenLimit`
+ *    (node_modules/eve/dist/src/harness/session-limit-enforcement.js) routes a conversation-mode
+ *    session to `parkOnSessionTokenLimit`, which emits an `input.requested` of kind `session-limit`
+ *    and then the turn epilogue. Only TASK-mode runs get the `SESSION_TOKEN_LIMIT_REACHED` failure.
+ * 2. **A recoverable turn failure.** A provider error that survives eve's retries goes through
+ *    `emitRecoverableFailedTurn` (harness/emission.js): `turn.failed` with a code, then
+ *    `session.waiting`. The turn is left for a human to retry, so `status` is `waiting` and not
+ *    `failed`, and the code is only in the events.
+ * 3. **An `ask_question` or tool approval**, which this agent is not supposed to raise at all.
+ *
+ * Every arm names its numbers, because they are the diagnosis. A line reading "the session spent
+ * 50368 output tokens against a cap of 50000" or "MODEL_CALL_FAILED after 92 model call(s), 28 of
+ * which were cut off at the per-call output limit" is what tells an operator which ceiling to move;
+ * `ConsolidatorContractViolation` told them the model had answered off-schema, which was false.
+ *
+ * The truncation count is included wherever it is non-zero: a `message.completed` carrying
+ * `finishReason: "length"` is a model call whose output was cut mid-answer, and a run of them is the
+ * signature of a per-call ceiling too small for the payload (issue #113 — 28 in a row at 4,096
+ * tokens). Read defensively throughout: every one of these payloads is `JsonObject` on the wire and
+ * this module does not own their shapes, so a missing field shortens the sentence rather than
+ * throwing inside a failure path.
+ */
+export const unsettledTurnReason = (turn: SettledTurnShape, modelCalls: number): string | null => {
+  if (turn.status !== "waiting") return null
+  const truncated = truncatedCallSuffix(turn)
+  const limit = turn.inputRequests.find((request) => request.kind === "session-limit")
+  if (limit !== undefined) {
+    const input = limit.action?.input
+    const detail = isRecord(input) ? describeSessionLimit(input) : ""
+    return (
+      `the consolidation turn parked on eve's session token-limit prompt after ` +
+      `${String(modelCalls)} model call(s)${detail}${truncated}; the consolidator has no human to ` +
+      `approve a fresh budget, so the turn is failed`
+    )
+  }
+  const failure = failedTurnEvent(turn)
+  if (failure !== null) {
+    return (
+      `the consolidation turn failed and was parked for a human retry: ${failure} after ` +
+      `${String(modelCalls)} model call(s)${truncated}`
+    )
+  }
+  const first = turn.inputRequests[0]
+  if (first !== undefined) {
+    return (
+      `the consolidation turn parked on an input request nobody is present to answer ` +
+      `(${first.kind}: ${cut(first.prompt ?? "")}) after ${String(modelCalls)} model call(s)`
+    )
+  }
+  return (
+    `the consolidation turn ended waiting for a next message with no result, no failure, and no ` +
+    `input request, after ${String(modelCalls)} model call(s)${truncated}`
+  )
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null
+
+const cut = (text: string): string => text.slice(0, UNSETTLED_DETAIL_CHARS)
+
+const describeSessionLimit = (input: Record<string, unknown>): string => {
+  const kind = typeof input.kind === "string" ? input.kind : "a"
+  const used = typeof input.usedTokens === "number" ? String(input.usedTokens) : null
+  const cap = typeof input.limit === "number" ? String(input.limit) : null
+  if (used === null && cap === null) return ` (${kind}-token limit)`
+  return `: the session spent ${used ?? "?"} ${kind} tokens against a cap of ${cap ?? "?"}`
+}
+
+/** `turn.failed`/`step.failed`'s code and message, as one clause, or `null` when neither is present. */
+const failedTurnEvent = (turn: SettledTurnShape): string | null => {
+  for (const event of turn.events) {
+    if (event.type !== "turn.failed" && event.type !== "step.failed") continue
+    if (!isRecord(event.data)) return event.type
+    const code = typeof event.data.code === "string" ? event.data.code : event.type
+    const message = typeof event.data.message === "string" ? cut(event.data.message) : ""
+    return message === "" ? code : `${code} (${message})`
+  }
+  return null
+}
+
+/**
+ * How many model calls were cut off at the per-call output ceiling, as a clause or the empty string.
+ *
+ * `finishReason` is on `message.completed`
+ * (node_modules/eve/dist/src/protocol/message.d.ts, `createMessageCompletedEvent`), and `"length"`
+ * means the provider stopped the call at its output limit rather than at an answer.
+ */
+const truncatedCallSuffix = (turn: SettledTurnShape): string => {
+  const cutOff = turn.events.filter(
+    (event) =>
+      event.type === "message.completed" &&
+      isRecord(event.data) &&
+      event.data.finishReason === "length"
+  ).length
+  return cutOff === 0
+    ? ""
+    : `, ${String(cutOff)} of which were cut off at the per-call output limit`
+}
 
 /** Everything the client wrapper can fail with. */
 export type ConsolidatorError =
