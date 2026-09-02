@@ -62,7 +62,12 @@ export interface ProxyConfig {
  * did not point it.
  */
 export const normalizeProxyBaseUrl = (raw: string): string => {
-  const trimmed = raw.trim().replace(/\/+$/, "")
+  // A loop rather than `/\/+$/`: that regex backtracks quadratically on a long run of slashes
+  // (CodeQL `js/polynomial-redos`), and the value arrives from an environment nobody bounds.
+  const stripped = raw.trim()
+  let end = stripped.length
+  while (end > 0 && stripped[end - 1] === "/") end -= 1
+  const trimmed = stripped.slice(0, end)
   if (!/^https?:\/\/[^/\s]+/.test(trimmed)) {
     throw new Error(
       `${PROXY_BASE_URL_VAR} must be an http(s) origin such as http://127.0.0.1:4000; got ${JSON.stringify(raw)}`
