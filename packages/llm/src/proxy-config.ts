@@ -20,13 +20,17 @@
  *
  * No `effect` import here either, so the parsers are the same plain functions in both copies.
  *
- * ## Why a model map, and why it defaults to identity
+ * ## How a model is named to the proxy
  *
- * A proxy names models on its own terms. memhtml asks for Bedrock inference-profile ids
- * (`global.anthropic.claude-opus-5`), and a proxy fronting Bedrock may accept those verbatim, or
- * may publish aliases and translate behind them. Which is the operator's choice, so the request
- * carries the Bedrock id unless {@link PROXY_MODEL_MAP_VAR} says otherwise; a mapping is a
- * deployment fact and belongs in the environment beside the URL it applies to.
+ * A proxy names models on its own terms, and memhtml asks for Bedrock inference-profile ids
+ * (`global.anthropic.claude-opus-5`). The default bridge is the LiteLLM convention: the provider,
+ * a slash, and the provider's exact id — `bedrock/global.anthropic.claude-opus-5`. It is lossless
+ * (the id after the slash is exactly what Bedrock wants, so nothing is stripped and nothing can be
+ * stripped wrong), a LiteLLM proxy routes it with one `bedrock/*` wildcard entry, and it names the
+ * provider, which matters once a proxy fronts more than Bedrock. {@link PROXY_MODEL_PREFIX_VAR}
+ * changes the prefix, or removes it (`none`) for a proxy that wants bare ids, and
+ * {@link PROXY_MODEL_MAP_VAR} overrides single models by exact name, taking precedence over the
+ * prefix.
  */
 
 /** The proxy's origin, e.g. `http://127.0.0.1:4000`. Absent or blank means Bedrock directly. */
@@ -36,17 +40,38 @@ export const PROXY_BASE_URL_VAR = "MEMHTML_LLM_BASE_URL"
 export const PROXY_API_KEY_VAR = "MEMHTML_LLM_API_KEY"
 
 /**
- * `from=to` pairs, comma-separated, rewriting the model id a request carries:
- * `global.anthropic.claude-opus-5=claude-opus-5,cohere.embed-v4:0=cohere-embed-v4`.
+ * `from=to` pairs, comma-separated, naming single models to the proxy by exact id:
+ * `cohere.embed-v4:0=cohere-embed-v4`. A mapped id is sent verbatim, with no prefix.
  */
 export const PROXY_MODEL_MAP_VAR = "MEMHTML_LLM_MODEL_MAP"
+
+/**
+ * The prefix put in front of every unmapped Bedrock id. Unset or blank means
+ * {@link DEFAULT_PROXY_MODEL_PREFIX}; the literal {@link PROXY_MODEL_PREFIX_NONE} sends bare ids.
+ */
+export const PROXY_MODEL_PREFIX_VAR = "MEMHTML_LLM_MODEL_PREFIX"
+
+/** LiteLLM's provider prefix for Bedrock: `bedrock/global.anthropic.claude-opus-5`. */
+export const DEFAULT_PROXY_MODEL_PREFIX = "bedrock/"
+
+/**
+ * The value of {@link PROXY_MODEL_PREFIX_VAR} that means "no prefix". A WORD rather than the empty
+ * string, because `effect/Config` reads an empty environment value as absent (probed against the
+ * pinned release: `Config.string` fails on `""` exactly as on a missing key, so `withDefault` fires
+ * for both). The sleep lanes read this variable through `Config` and the consolidator reads it from
+ * `process.env` directly, and "" would have meant the default on one path and no prefix on the
+ * other. Compared case-insensitively.
+ */
+export const PROXY_MODEL_PREFIX_NONE = "none"
 
 export interface ProxyConfig {
   /** The origin with no trailing slash; routes are appended to it. */
   readonly baseUrl: string
   /** `null` when the proxy takes no credential. */
   readonly apiKey: string | null
-  /** memhtml's model id → the id the proxy wants. Absent keys pass through unchanged. */
+  /** Prepended to every Bedrock id the map does not name. May be empty. */
+  readonly modelPrefix: string
+  /** memhtml's model id → the exact id the proxy wants, sent without the prefix. */
   readonly modelMap: ReadonlyMap<string, string>
 }
 
@@ -119,10 +144,27 @@ export const proxyConfigFromEnv = (
   return {
     baseUrl: normalizeProxyBaseUrl(rawBaseUrl),
     apiKey: apiKey === "" ? null : apiKey,
+    modelPrefix: proxyModelPrefix(env[PROXY_MODEL_PREFIX_VAR]),
     modelMap: parseProxyModelMap(env[PROXY_MODEL_MAP_VAR] ?? "")
   }
 }
 
-/** The id the proxy is asked for: the mapped one when the map names it, the original otherwise. */
+/**
+ * The prefix a raw {@link PROXY_MODEL_PREFIX_VAR} value means: unset or blank is the LiteLLM
+ * default, {@link PROXY_MODEL_PREFIX_NONE} is no prefix at all, anything else is taken as written
+ * after trimming. Blank reads as unset for the reason every other variable here treats it so — a
+ * blank export is how a variable goes missing — and because `Config` cannot see the difference.
+ */
+export const proxyModelPrefix = (raw: string | undefined): string => {
+  const value = raw?.trim() ?? ""
+  if (value === "") return DEFAULT_PROXY_MODEL_PREFIX
+  if (value.toLowerCase() === PROXY_MODEL_PREFIX_NONE) return ""
+  return value
+}
+
+/**
+ * The id the proxy is asked for: the map's exact name when it has one, else the prefix and the
+ * Bedrock id. The map wins so one odd model can be named by hand while the rest follow the rule.
+ */
 export const proxyModelId = (config: ProxyConfig, modelId: string): string =>
-  config.modelMap.get(modelId) ?? modelId
+  config.modelMap.get(modelId) ?? `${config.modelPrefix}${modelId}`

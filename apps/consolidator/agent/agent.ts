@@ -24,9 +24,10 @@ import {
  */
 
 /**
- * The model, by its Bedrock inference-profile id. Through an LLM proxy the id a request carries is
- * whatever `MEMHTML_LLM_MODEL_MAP` rewrites this to (`src/llm-proxy.ts`), since a proxy names
- * models on its own terms.
+ * The model, by its Bedrock inference-profile id. Through an LLM proxy the request carries
+ * `bedrock/` plus this id (the LiteLLM convention), or whatever `MEMHTML_LLM_MODEL_PREFIX` and
+ * `MEMHTML_LLM_MODEL_MAP` say instead (`src/llm-proxy.ts`), since a proxy names models on its own
+ * terms.
  */
 const CONSOLIDATOR_MODEL_ID = "global.anthropic.claude-opus-5"
 

@@ -1,7 +1,13 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-import { PROXY_API_KEY_VAR, PROXY_BASE_URL_VAR, PROXY_MODEL_MAP_VAR } from "@memhtml/llm"
+import {
+  DEFAULT_PROXY_MODEL_PREFIX,
+  PROXY_API_KEY_VAR,
+  PROXY_BASE_URL_VAR,
+  PROXY_MODEL_MAP_VAR,
+  PROXY_MODEL_PREFIX_VAR
+} from "@memhtml/llm"
 import { expandRoot } from "@memhtml/store"
 import { Config } from "effect"
 
@@ -65,9 +71,15 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
     fallback: null
   },
   {
+    name: PROXY_MODEL_PREFIX_VAR,
+    description:
+      "The prefix in front of every Bedrock model id a proxied request carries, so `global.anthropic.claude-opus-5` is asked for as `bedrock/global.anthropic.claude-opus-5`: the LiteLLM convention, which a LiteLLM proxy routes with one `bedrock/*` entry and which keeps the id after the slash exactly what Bedrock wants. Set it to `none` for a proxy that takes bare Bedrock ids. Read only when `MEMHTML_LLM_BASE_URL` is set.",
+    fallback: DEFAULT_PROXY_MODEL_PREFIX
+  },
+  {
     name: PROXY_MODEL_MAP_VAR,
     description:
-      "`from=to` pairs, comma-separated, rewriting the model id a proxied request carries: `global.anthropic.claude-opus-5=claude-opus-5,cohere.embed-v4:0=cohere-embed-v4`. A proxy names models on its own terms; an unmapped id passes through as memhtml's Bedrock inference-profile id. Read only when `MEMHTML_LLM_BASE_URL` is set.",
+      "`from=to` pairs, comma-separated, naming single models to the proxy by exact id when the prefix rule does not fit: `cohere.embed-v4:0=cohere-embed-v4`. A mapped id is sent verbatim, without the prefix; every other id follows `MEMHTML_LLM_MODEL_PREFIX`. Read only when `MEMHTML_LLM_BASE_URL` is set.",
     fallback: null
   },
   {

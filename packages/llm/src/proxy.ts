@@ -61,6 +61,9 @@ export interface ProxyRequest {
  * Translate one InvokeModel request into the proxy's request for it. Pure, so the wire test pins
  * every field against the bytes that would go out.
  *
+ * `model` is the proxy's name for the Bedrock id (`proxyModelId`: `bedrock/<id>` by default, or the
+ * map's exact name).
+ *
  * - Messages: `anthropic_version` is Bedrock's field and the Messages API has no such key, so it is
  *   dropped; `model` is added. Everything else — `max_tokens`, `system` (with any cache marker),
  *   `thinking`, `output_config`, `tools`, `tool_choice` — is already the Messages dialect.

@@ -42,14 +42,18 @@ export {
   toProxyRequest
 } from "./proxy.js"
 export {
+  DEFAULT_PROXY_MODEL_PREFIX,
   normalizeProxyBaseUrl,
   PROXY_API_KEY_VAR,
   PROXY_BASE_URL_VAR,
   PROXY_MODEL_MAP_VAR,
+  PROXY_MODEL_PREFIX_NONE,
+  PROXY_MODEL_PREFIX_VAR,
   type ProxyConfig,
   parseProxyModelMap,
   proxyConfigFromEnv,
-  proxyModelId
+  proxyModelId,
+  proxyModelPrefix
 } from "./proxy-config.js"
 export { decodeToolInput, MAX_RAW, toInputSchema } from "./structured.js"
 export {

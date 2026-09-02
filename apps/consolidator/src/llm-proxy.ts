@@ -24,16 +24,33 @@ export const PROXY_BASE_URL_VAR = "MEMHTML_LLM_BASE_URL"
 /** A bearer token the proxy requires, sent as `Authorization: Bearer <key>`. Optional. */
 export const PROXY_API_KEY_VAR = "MEMHTML_LLM_API_KEY"
 
-/** `from=to` pairs, comma-separated, rewriting the model id a request carries. */
+/** `from=to` pairs, comma-separated, naming single models to the proxy by exact id. */
 export const PROXY_MODEL_MAP_VAR = "MEMHTML_LLM_MODEL_MAP"
+
+/** The prefix in front of every unmapped Bedrock id; unset or blank is the default, `none` is none. */
+export const PROXY_MODEL_PREFIX_VAR = "MEMHTML_LLM_MODEL_PREFIX"
+
+/** LiteLLM's provider prefix for Bedrock: `bedrock/global.anthropic.claude-opus-5`. */
+export const DEFAULT_PROXY_MODEL_PREFIX = "bedrock/"
+
+/** The value meaning "no prefix". A word, not "", because `effect/Config` reads "" as absent. */
+export const PROXY_MODEL_PREFIX_NONE = "none"
 
 export interface ConsolidatorProxy {
   /** The origin with no trailing slash. */
   readonly baseUrl: string
   /** `null` when the proxy takes no credential. */
   readonly apiKey: string | null
-  /** The id the proxy is asked for: the mapped one when the map names it, the original otherwise. */
+  /** The id the proxy is asked for: the map's exact name, else the prefix and the Bedrock id. */
   readonly modelFor: (modelId: string) => string
+}
+
+/** See `proxyModelPrefix` in `packages/llm/src/proxy-config.ts`; this is that function. */
+export const proxyModelPrefix = (raw: string | undefined): string => {
+  const value = raw?.trim() ?? ""
+  if (value === "") return DEFAULT_PROXY_MODEL_PREFIX
+  if (value.toLowerCase() === PROXY_MODEL_PREFIX_NONE) return ""
+  return value
 }
 
 /** See `normalizeProxyBaseUrl` in `packages/llm/src/proxy-config.ts`; this is that function. */
@@ -87,9 +104,10 @@ export const proxyFromEnv = (
   if (rawBaseUrl === "") return null
   const apiKey = env[PROXY_API_KEY_VAR]?.trim() ?? ""
   const modelMap = parseProxyModelMap(env[PROXY_MODEL_MAP_VAR] ?? "")
+  const prefix = proxyModelPrefix(env[PROXY_MODEL_PREFIX_VAR])
   return {
     baseUrl: normalizeProxyBaseUrl(rawBaseUrl),
     apiKey: apiKey === "" ? null : apiKey,
-    modelFor: (modelId) => modelMap.get(modelId) ?? modelId
+    modelFor: (modelId) => modelMap.get(modelId) ?? `${prefix}${modelId}`
   }
 }

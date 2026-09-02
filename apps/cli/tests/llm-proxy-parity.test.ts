@@ -26,7 +26,16 @@ const SAMPLE_ENVS: ReadonlyArray<Record<string, string | undefined>> = [
     MEMHTML_LLM_MODEL_MAP:
       " global.anthropic.claude-opus-5=claude-opus-5 ,cohere.embed-v4:0=cohere-embed-v4, "
   },
-  { MEMHTML_LLM_BASE_URL: "http://h", MEMHTML_LLM_API_KEY: "   " }
+  { MEMHTML_LLM_BASE_URL: "http://h", MEMHTML_LLM_API_KEY: "   " },
+  { MEMHTML_LLM_BASE_URL: "http://h", MEMHTML_LLM_MODEL_PREFIX: "" },
+  { MEMHTML_LLM_BASE_URL: "http://h", MEMHTML_LLM_MODEL_PREFIX: "none" },
+  { MEMHTML_LLM_BASE_URL: "http://h", MEMHTML_LLM_MODEL_PREFIX: " None " },
+  { MEMHTML_LLM_BASE_URL: "http://h", MEMHTML_LLM_MODEL_PREFIX: " aws/ " },
+  {
+    MEMHTML_LLM_BASE_URL: "http://h",
+    MEMHTML_LLM_MODEL_PREFIX: "litellm/",
+    MEMHTML_LLM_MODEL_MAP: "cohere.embed-v4:0=cohere-embed-v4"
+  }
 ]
 
 const MODEL_IDS = ["global.anthropic.claude-opus-5", "cohere.embed-v4:0", "openai.gpt-5.6-luna"]
@@ -40,10 +49,13 @@ const MALFORMED: ReadonlyArray<Record<string, string | undefined>> = [
 ]
 
 describe("the consolidator's proxy reader agrees with @memhtml/llm's", () => {
-  it("names the same three variables", () => {
+  it("names the same four variables and the same default prefix", () => {
     expect(consolidator.PROXY_BASE_URL_VAR).toBe(llm.PROXY_BASE_URL_VAR)
     expect(consolidator.PROXY_API_KEY_VAR).toBe(llm.PROXY_API_KEY_VAR)
     expect(consolidator.PROXY_MODEL_MAP_VAR).toBe(llm.PROXY_MODEL_MAP_VAR)
+    expect(consolidator.PROXY_MODEL_PREFIX_VAR).toBe(llm.PROXY_MODEL_PREFIX_VAR)
+    expect(consolidator.DEFAULT_PROXY_MODEL_PREFIX).toBe(llm.DEFAULT_PROXY_MODEL_PREFIX)
+    expect(consolidator.PROXY_MODEL_PREFIX_NONE).toBe(llm.PROXY_MODEL_PREFIX_NONE)
   })
 
   it("parses every sample environment to the same origin, key, and model resolution", () => {
@@ -87,5 +99,6 @@ describe("the consolidator's proxy reader agrees with @memhtml/llm's", () => {
     expect(declared.has(llm.PROXY_BASE_URL_VAR)).toBe(true)
     expect(declared.has(llm.PROXY_API_KEY_VAR)).toBe(true)
     expect(declared.has(llm.PROXY_MODEL_MAP_VAR)).toBe(true)
+    expect(declared.has(llm.PROXY_MODEL_PREFIX_VAR)).toBe(true)
   })
 })

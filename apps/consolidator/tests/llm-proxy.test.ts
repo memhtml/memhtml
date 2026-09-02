@@ -5,8 +5,10 @@ import {
   PROXY_API_KEY_VAR,
   PROXY_BASE_URL_VAR,
   PROXY_MODEL_MAP_VAR,
+  PROXY_MODEL_PREFIX_VAR,
   parseProxyModelMap,
-  proxyFromEnv
+  proxyFromEnv,
+  proxyModelPrefix
 } from "../src/llm-proxy.js"
 
 /**
@@ -23,7 +25,7 @@ describe("proxyFromEnv", () => {
     expect(proxyFromEnv({ [PROXY_API_KEY_VAR]: "k", [PROXY_MODEL_MAP_VAR]: "a=b" })).toBeNull()
   })
 
-  it("normalizes the origin and resolves model ids through the map, identity when unmapped", () => {
+  it("normalizes the origin and names models: the map's exact name, else bedrock/ plus the id", () => {
     const proxy = proxyFromEnv({
       [PROXY_BASE_URL_VAR]: "http://127.0.0.1:4000/",
       [PROXY_MODEL_MAP_VAR]: "global.anthropic.claude-opus-5=claude-opus-5"
@@ -32,8 +34,24 @@ describe("proxyFromEnv", () => {
     expect(proxy?.apiKey).toBeNull()
     expect(proxy?.modelFor("global.anthropic.claude-opus-5")).toBe("claude-opus-5")
     expect(proxy?.modelFor("global.anthropic.claude-sonnet-5")).toBe(
-      "global.anthropic.claude-sonnet-5"
+      "bedrock/global.anthropic.claude-sonnet-5"
     )
+  })
+
+  it("takes the prefix as written, with `none` meaning bare Bedrock ids and blank the default", () => {
+    expect(proxyModelPrefix(undefined)).toBe("bedrock/")
+    expect(proxyModelPrefix("")).toBe("bedrock/")
+    expect(proxyModelPrefix("none")).toBe("")
+    const bare = proxyFromEnv({
+      [PROXY_BASE_URL_VAR]: "http://h",
+      [PROXY_MODEL_PREFIX_VAR]: "none"
+    })
+    expect(bare?.modelFor("global.anthropic.claude-opus-5")).toBe("global.anthropic.claude-opus-5")
+    const custom = proxyFromEnv({
+      [PROXY_BASE_URL_VAR]: "http://h",
+      [PROXY_MODEL_PREFIX_VAR]: " aws/ "
+    })
+    expect(custom?.modelFor("cohere.embed-v4:0")).toBe("aws/cohere.embed-v4:0")
   })
 
   it("trims the key and treats a blank one as none", () => {

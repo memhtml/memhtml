@@ -7,8 +7,10 @@ import {
   PROXY_API_KEY_VAR,
   PROXY_BASE_URL_VAR,
   PROXY_MODEL_MAP_VAR,
+  PROXY_MODEL_PREFIX_VAR,
   type ProxyConfig,
-  parseProxyModelMap
+  parseProxyModelMap,
+  proxyModelPrefix
 } from "./proxy-config.js"
 
 /**
@@ -152,14 +154,18 @@ export const LlmConfig = Config.all({
   proxy: Config.all({
     baseUrl: Config.string(PROXY_BASE_URL_VAR).pipe(Config.withDefault("")),
     apiKey: Config.string(PROXY_API_KEY_VAR).pipe(Config.withDefault("")),
+    // `Config` reads an empty value as absent, so the default lands here as "" and
+    // `proxyModelPrefix` resolves it — the same function the consolidator applies to `process.env`.
+    modelPrefix: Config.string(PROXY_MODEL_PREFIX_VAR).pipe(Config.withDefault("")),
     modelMap: Config.string(PROXY_MODEL_MAP_VAR).pipe(Config.withDefault(""))
   }).pipe(
-    Config.map(({ baseUrl, apiKey, modelMap }): ProxyConfig | null => {
+    Config.map(({ baseUrl, apiKey, modelPrefix, modelMap }): ProxyConfig | null => {
       if (baseUrl.trim() === "") return null
       const key = apiKey.trim()
       return {
         baseUrl: normalizeProxyBaseUrl(baseUrl),
         apiKey: key === "" ? null : key,
+        modelPrefix: proxyModelPrefix(modelPrefix),
         modelMap: parseProxyModelMap(modelMap)
       }
     })

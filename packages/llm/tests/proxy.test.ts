@@ -19,7 +19,8 @@ import {
   type ProxyConfig,
   parseProxyModelMap,
   proxyConfigFromEnv,
-  proxyModelId
+  proxyModelId,
+  proxyModelPrefix
 } from "../src/proxy-config.js"
 import { buildInvokeBody } from "../src/wire.js"
 
@@ -32,6 +33,7 @@ import { buildInvokeBody } from "../src/wire.js"
 const CONFIG: ProxyConfig = {
   baseUrl: "http://127.0.0.1:4000",
   apiKey: "k",
+  modelPrefix: "bedrock/",
   modelMap: new Map([
     ["global.anthropic.claude-opus-5", "claude-opus-5"],
     [EMBED_MODEL_ID, "cohere-embed-v4"]
@@ -82,7 +84,7 @@ describe("proxyConfigFromEnv", () => {
     expect(proxyConfigFromEnv({ MEMHTML_LLM_BASE_URL: "  " })).toBeNull()
   })
 
-  it("normalizes the origin, trims the key, and parses the map", () => {
+  it("normalizes the origin, trims the key, parses the map, and defaults the prefix to bedrock/", () => {
     const config = proxyConfigFromEnv({
       MEMHTML_LLM_BASE_URL: " http://127.0.0.1:4000// ",
       MEMHTML_LLM_API_KEY: " k ",
@@ -91,8 +93,28 @@ describe("proxyConfigFromEnv", () => {
     expect(config).toEqual({
       baseUrl: "http://127.0.0.1:4000",
       apiKey: "k",
+      modelPrefix: "bedrock/",
       modelMap: new Map([["a", "b"]])
     })
+  })
+
+  /**
+   * Unset and blank are the LiteLLM default; the word `none` is "this proxy wants bare Bedrock ids".
+   * A word rather than "" because `effect/Config` reads "" as absent, and the consolidator reads the
+   * same variable from `process.env` — the two paths must agree. (Mutation: dropping the `none` arm
+   * fails the second and fourth assertions.)
+   */
+  it("takes MEMHTML_LLM_MODEL_PREFIX as written, with `none` meaning no prefix and blank the default", () => {
+    expect(proxyModelPrefix(undefined)).toBe("bedrock/")
+    expect(proxyModelPrefix("none")).toBe("")
+    expect(proxyModelPrefix(" NONE ")).toBe("")
+    expect(proxyModelPrefix("")).toBe("bedrock/")
+    expect(proxyModelPrefix(" litellm/ ")).toBe("litellm/")
+    const bare = proxyConfigFromEnv({
+      MEMHTML_LLM_BASE_URL: "http://h",
+      MEMHTML_LLM_MODEL_PREFIX: "none"
+    })
+    expect(bare?.modelPrefix).toBe("")
   })
 
   it("requires an http(s) scheme", () => {
@@ -109,9 +131,14 @@ describe("proxyConfigFromEnv", () => {
     expect(parseProxyModelMap(" , ")).toEqual(new Map())
   })
 
-  it("passes an unmapped id through unchanged", () => {
-    expect(proxyModelId(CONFIG, "global.openai.gpt-5.6-sol")).toBe("global.openai.gpt-5.6-sol")
+  it("names an unmapped id with the prefix and a mapped id exactly as mapped", () => {
+    expect(proxyModelId(CONFIG, "global.openai.gpt-5.6-sol")).toBe(
+      "bedrock/global.openai.gpt-5.6-sol"
+    )
     expect(proxyModelId(CONFIG, "global.anthropic.claude-opus-5")).toBe("claude-opus-5")
+    expect(proxyModelId({ ...CONFIG, modelPrefix: "" }, "global.openai.gpt-5.6-sol")).toBe(
+      "global.openai.gpt-5.6-sol"
+    )
   })
 })
 
@@ -154,7 +181,7 @@ describe("toProxyRequest", () => {
     ) as Record<string, unknown>
     const request = toProxyRequest(CONFIG, "global.openai.gpt-5.6-sol", body)
     expect(request?.path).toBe("/v1/chat/completions")
-    expect(request?.body).toEqual({ ...body, model: "global.openai.gpt-5.6-sol" })
+    expect(request?.body).toEqual({ ...body, model: "bedrock/global.openai.gpt-5.6-sol" })
   })
 
   /**
