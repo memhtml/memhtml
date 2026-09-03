@@ -30,15 +30,15 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "3.1116.0",
+    "@aws-sdk/client-bedrock-runtime": "3.1122.0",
     "@aws/bedrock-token-generator": "1.1.0",
     "@memhtml/contracts": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.10",
+    "@biomejs/biome": "2.5.11",
     "@effect/vitest": "catalog:",
-    "@types/node": "26.2.0",
+    "@types/node": "26.4.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11"
   }
