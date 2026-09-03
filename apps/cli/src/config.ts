@@ -103,8 +103,8 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
      * lane is also not `@memhtml/llm`'s: the extractor speaks the Bedrock mantle Responses API, which
      * is why this id is absent from `ModelKey`.
      */
-    description: `\`on\` adds one \`${EXTRACTION_MODEL_ID}\` call per write batch that extracts \`memhtml-entity\` metas the ops did not declare. Opt-in, unlike MEMHTML_EMBED, because it changes what a write STORES: extracted entities land in the files as if authored, and the write itself never waits on or fails with the model. A failed extraction is a logged warning and an unextracted batch.`,
-    fallback: "off"
+    description: `\`off\` removes the one \`${EXTRACTION_MODEL_ID}\` call per write batch that extracts \`memhtml-entity\` metas the ops did not declare; \`MEMHTML_LLM=off\` removes it too. On by default, like MEMHTML_EMBED. It changes what a write STORES: extracted entities land in the files as if authored, and the write itself never waits on or fails with the model. A failed extraction is a logged warning and an unextracted batch.`,
+    fallback: "on"
   },
   {
     name: "OTEL_EXPORTER_OTLP_ENDPOINT",

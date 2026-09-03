@@ -38,7 +38,7 @@ const SAMPLE_ENVS: ReadonlyArray<Record<string, string | undefined>> = [
   }
 ]
 
-const MODEL_IDS = ["global.anthropic.claude-opus-5", "cohere.embed-v4:0", "openai.gpt-5.6-luna"]
+const MODEL_IDS = ["global.anthropic.claude-opus-5", "cohere.embed-v4:0", "openai.gpt-5.6-terra"]
 
 const MALFORMED: ReadonlyArray<Record<string, string | undefined>> = [
   { MEMHTML_LLM_BASE_URL: "127.0.0.1:4000" },

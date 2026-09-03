@@ -122,7 +122,7 @@ const Optional = <S extends Schema.Top>(schema: S) => Schema.optionalKey(Schema.
  */
 const READS = () => [DatabaseService]
 // ExtractorPort is in the write set because `batchWrite` reads it (the write-time entity assist);
-// the port resolves to `{ extractor: undefined }` unless MEMHTML_EXTRACT_ENTITIES=on. Embedder is
+// the port resolves to `{ extractor: undefined }` under MEMHTML_EXTRACT_ENTITIES=off or MEMHTML_LLM=off. Embedder is
 // there for the near-duplicate assist, and it resolves to `{ document: undefined }` under
 // MEMHTML_EMBED=off, which the assist reports as `near_duplicates_degraded` rather than failing.
 const WRITES = () => [Store, Indexer, IndexRecorder, ExtractorPort, Embedder]

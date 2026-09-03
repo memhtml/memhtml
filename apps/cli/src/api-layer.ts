@@ -325,18 +325,21 @@ export const layerModelFrom = (model: ModelClientShape | undefined): Layer.Layer
   Layer.succeed(ModelPort)({ model })
 
 /**
- * Write-time entity extraction, or absent. Absent is the default.
+ * Write-time entity extraction, or absent.
  *
- * Opt-in (`MEMHTML_EXTRACT_ENTITIES=on`) where the embedder is opt-out, and the asymmetry is
- * deliberate. The write path has never carried a generative call, extraction changes what a write
- * stores rather than what a search finds, and a default-on model call in every agent's write path
- * is a behavior change an operator must choose. The failure mode does follow the embedder
- * precedent: a bound extractor that fails costs this batch its extracted entities and never the
- * write (`batchWrite` logs and proceeds).
+ * On by default since 2026-09-02, like the embedder: `MEMHTML_EXTRACT_ENTITIES=off` removes it, and so
+ * does `MEMHTML_LLM=off`, because an operator who turned the models off did not mean "except the
+ * one in the write path" — and that switch is what keeps the credential-free tiers (`check`, the
+ * non-live smoke) from placing a live call now that the default is on. Extraction changes what a
+ * write STORES rather than what a search finds, so a store run with it on for a month and then off
+ * holds two populations of files; the docs say so where the variable is described. The failure mode
+ * follows the embedder precedent: a bound extractor that fails costs this batch its extracted
+ * entities and never the write (`batchWrite` logs and proceeds).
  *
  * The transport is a bearer-token fetch against the Bedrock mantle endpoint rather than a fourth lane
- * in `@memhtml/llm`. GPT-5.6 Luna is mantle-only (no InvokeModel, no Converse), and that package holds
- * one vendor and one call shape by design. The bearer token is the same
+ * in `@memhtml/llm`. GPT-5.6 Terra is spoken to over the Responses API, which that package's
+ * InvokeModel client does not carry, and the package holds one vendor and one call shape by
+ * design. The bearer token is the same
  * `AWS_BEARER_TOKEN_BEDROCK` the SDK chain reads. An absent token with the flag on is a configuration
  * the operator asked for and cannot have, so it degrades per batch with a logged warning rather
  * than failing at layer build, matching how a missing embedder credential degrades a search.
@@ -355,10 +358,14 @@ export const ExtractorPort = Context.Service<ExtractorPortShape>("memhtml/Extrac
 export const layerExtractorPort: Layer.Layer<ExtractorPortShape> = Layer.effect(ExtractorPort)(
   Effect.gen(function* () {
     const enabled = yield* Config.string("MEMHTML_EXTRACT_ENTITIES").pipe(
-      Config.withDefault("off"),
-      Config.map((value) => value.trim().toLowerCase() === "on")
+      Config.withDefault("on"),
+      Config.map((value) => value.trim().toLowerCase() !== "off")
     )
-    if (!enabled) return { extractor: undefined }
+    const modelsOn = yield* Config.string("MEMHTML_LLM").pipe(
+      Config.withDefault("on"),
+      Config.map((value) => value.trim().toLowerCase() !== "off")
+    )
+    if (!enabled || !modelsOn) return { extractor: undefined }
     const { proxy } = yield* LlmConfig
     if (proxy !== null) {
       return {
@@ -369,7 +376,7 @@ export const layerExtractorPort: Layer.Layer<ExtractorPortShape> = Layer.effect(
     const token = yield* Config.string("AWS_BEARER_TOKEN_BEDROCK").pipe(Config.withDefault(""))
     if (token === "") {
       yield* Effect.logWarning(
-        "MEMHTML_EXTRACT_ENTITIES=on but AWS_BEARER_TOKEN_BEDROCK is absent; writes proceed unextracted"
+        "entity extraction is on but neither AWS_BEARER_TOKEN_BEDROCK nor MEMHTML_LLM_BASE_URL is set; writes proceed unextracted"
       )
       return { extractor: undefined }
     }

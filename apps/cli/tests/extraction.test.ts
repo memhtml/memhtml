@@ -170,7 +170,7 @@ describe("makeEntityExtractor", () => {
   })
 })
 
-/** An extractor whose answers are scripted per call. The test's stand-in for Luna. */
+/** An extractor whose answers are scripted per call. The test's stand-in for Terra. */
 const scripted = (
   answers: ReadonlyArray<ReadonlyArray<ReadonlyArray<string>>>
 ): EntityExtractorShape => {
@@ -267,5 +267,61 @@ describe("batchWrite with a bound extractor", () => {
       batch.results[0]?.path ?? ""
     ])
     expect(detail.entities).toEqual([])
+  })
+})
+
+/**
+ * A Responses payload as an LLM PROXY shapes it for GPT-5.6 Terra (measured 2026-09-02 against a
+ * local agentgateway listener's `/v1/responses`): TWO `output_text` parts, the gateway's `[REDACTED]`
+ * placeholder for the model's encrypted reasoning first and the schema-constrained JSON second. The
+ * mantle endpoint sends one part. A reader that took the first part answered `[REDACTED]` and every
+ * proxied write went unextracted.
+ */
+const proxiedPayloadWith = (text: string): unknown => ({
+  model: "global.openai.gpt-5.6-terra",
+  object: "response",
+  output: [
+    {
+      type: "message",
+      role: "assistant",
+      status: "completed",
+      content: [
+        { type: "output_text", text: "[REDACTED]", annotations: [] },
+        { type: "output_text", text, annotations: [] }
+      ]
+    }
+  ]
+})
+
+describe("entitiesOf reads every output_text part", () => {
+  /** (Mutation: returning on the first `output_text` part fails this case and passes every other.) */
+  it("skips a non-JSON leading part and reads the JSON one beside it", () => {
+    const entities = entitiesOf(
+      proxiedPayloadWith(
+        JSON.stringify({ items: [{ index: 0, entities: [{ type: "person", name: "Paul" }] }] })
+      ),
+      1
+    )
+    expect(entities).toEqual([["person:Paul"]])
+  })
+
+  it("skips a JSON part of another shape and keeps looking", () => {
+    const payload = {
+      output: [
+        {
+          type: "message",
+          content: [
+            { type: "output_text", text: JSON.stringify({ note: "not the answer" }) },
+            { type: "output_text", text: JSON.stringify({ items: [{ index: 0, entities: [] }] }) }
+          ]
+        }
+      ]
+    }
+    expect(entitiesOf(payload, 1)).toEqual([[]])
+  })
+
+  it("is undefined when no part carries an items array", () => {
+    expect(entitiesOf(proxiedPayloadWith("still not json"), 1)).toBeUndefined()
+    expect(entitiesOf({ output: [{ type: "message", content: [] }] }, 1)).toBeUndefined()
   })
 })

@@ -21,7 +21,7 @@ memhtml manifest | jq '.data.config'
 | `MEMHTML_LLM_MODEL_MAP`    | none        | `from=to` pairs, comma-separated, naming single models to the proxy by exact id when the prefix rule does not fit. A mapped id is sent verbatim, without the prefix. Read only when `MEMHTML_LLM_BASE_URL` is set.                                                                                     |
 | `MEMHTML_EMBED`            | `on`        | `off` disables the embedder entirely.                                                                                                                                                                                                                                                                  |
 | `MEMHTML_LLM`              | `on`        | `off` makes the model-driven sleep phases of `LLM_PHASES` — eight as of v0.6.0 — report `no model bound` and `trace-consolidation` report `no consolidator bound`, all staying `ok`. `dedup-merge` and `entity-resolution` report counts instead, having deterministic work either way.                |
-| `MEMHTML_EXTRACT_ENTITIES` | `off`       | `on` adds one model call per write batch that extracts `memhtml-entity` metas the ops did not declare.                                                                                                                                                                                                 |
+| `MEMHTML_EXTRACT_ENTITIES` | `on`        | `off` removes the one model call per write batch that extracts `memhtml-entity` metas the ops did not declare; `MEMHTML_LLM=off` removes it too.                                                                                                                                                       |
 | `MEMHTML_MCP_BIN`          | none        | An explicit path to the `memhtml-mcp` entry point, read only by the serve supervisor (`apps/cli/src/serve.ts:58`).                                                                                                                                                                                     |
 
 `--repo <path>` overrides `MEMHTML_ROOT` for one call, which is how you operate two stores from one shell.
@@ -73,7 +73,7 @@ An agentgateway listener matches `bedrock/*` as a model pattern but does not rew
 
 ## MEMHTML_EXTRACT_ENTITIES changes what a write stores
 
-This one is opt-in where `MEMHTML_EMBED` ships on, because it changes the files rather than the ranking. Extracted entities land in the files as if an author had written them. The write itself never waits on the model and never fails with it, so a failed extraction leaves a logged warning and a batch with nothing extracted. Run a store with this on for a month and then off, though, and the tree holds two populations of files, only one of which carries entities its author did not write.
+This one ships on, like `MEMHTML_EMBED`, and unlike the embedder it changes the files rather than the ranking. Extracted entities land in the files as if an author had written them. The write itself never waits on the model and never fails with it, so a failed extraction leaves a logged warning and a batch with nothing extracted. Run a store with this on for a month and then off, though, and the tree holds two populations of files, only one of which carries entities its author did not write. `MEMHTML_LLM=off` turns it off along with every other model call, which is how a credential-free run stays free of model calls without naming each one.
 
 ## MEMHTML_MCP_BIN locates the server and nothing else
 

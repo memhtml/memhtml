@@ -7,17 +7,17 @@ import { Effect } from "effect"
  * `memhtml-entity` metas. The git tree stays the system of record and the index only ever sees the
  * rebuildable projection, exactly as if the author had declared them.
  *
- * The port is optional and the default is off (`MEMHTML_EXTRACT_ENTITIES`, config.ts). The write path
- * has never carried a generative call, and the embeddings precedent governs the failure mode: a
- * model that is down costs this batch its extracted entities and nothing else. The write proceeds,
- * the warning is logged, and `entities: []` is what an entity-free write always produced.
+ * The port is on by default and `MEMHTML_EXTRACT_ENTITIES=off` (or `MEMHTML_LLM=off`) removes it
+ * (config.ts, api-layer.ts). The embeddings precedent governs the failure mode: a model that is
+ * down costs this batch its extracted entities and nothing else. The write proceeds, the warning is
+ * logged, and `entities: []` is what an entity-free write always produced.
  *
- * The model is GPT-5.6 Luna on the Bedrock mantle endpoint, which speaks the OpenAI Responses API
- * over HTTPS and is not reachable through `@memhtml/llm`'s InvokeModel client (the model card lists
- * Invoke and Converse as unsupported; probed 2026-08-09: a strict-json-schema extraction round
- * trip completes in ~1s). The fetch transport therefore lives here rather than as a fourth lane in
- * `packages/llm`, which holds one vendor and one call shape by design. This port's transport is
- * injectable so no test needs the network.
+ * The model is GPT-5.6 Terra, spoken to over the OpenAI Responses API: on the Bedrock mantle
+ * endpoint directly, or on an LLM proxy's `/v1/responses` when `MEMHTML_LLM_BASE_URL` names one.
+ * Neither is reachable through `@memhtml/llm`'s InvokeModel client (the GPT-5.6 model cards list
+ * Invoke and Converse as unsupported for the Responses shape), so the fetch transport lives here
+ * rather than as a fourth lane in `packages/llm`, which holds one vendor and one call shape by
+ * design. This port's transport is injectable so no test needs the network.
  */
 
 /** One op's text as the extractor sees it: the title plus whichever body form the op carried. */
@@ -43,11 +43,16 @@ export interface MantleTransport {
 }
 
 /**
- * GPT-5.6 Luna, the fast high-volume model on the mantle endpoint. A constant rather than config
- * because the schema below is tested against this model's strict-mode behavior. Changing the model
- * is a code change with a test run, not an env var.
+ * GPT-5.6 Terra, the mid-tier GPT-5.6 on the mantle endpoint (Luna, the smaller one, stood here
+ * until 2026-09-02). A constant rather than config because the schema below is tested against this
+ * model's strict-mode behavior — probed live 2026-09-02 on both transports: the mantle endpoint
+ * answered the strict `json_schema` request with one `output_text` part, and an LLM proxy's
+ * `/v1/responses` answered with two, a redacted-reasoning placeholder and then the JSON, which is
+ * why {@link entitiesOf} scans every part rather than reading the first. Changing the model is a
+ * code change with a test run, not an env var; through a proxy the name it travels under is
+ * `bedrock/` plus this id (`MEMHTML_LLM_MODEL_PREFIX`), or whatever `MEMHTML_LLM_MODEL_MAP` says.
  */
-export const EXTRACTION_MODEL_ID = "openai.gpt-5.6-luna"
+export const EXTRACTION_MODEL_ID = "openai.gpt-5.6-terra"
 
 /** Entity types the prompt offers. Downstream the vocabulary is open: `unknown:` is a valid store type. */
 const ENTITY_TYPES = ["person", "org", "service", "place", "work", "concept", "event"] as const
@@ -126,16 +131,8 @@ export const entitiesOf = (
   payload: unknown,
   expected: number
 ): ReadonlyArray<ReadonlyArray<string>> | undefined => {
-  const text = outputTextOf(payload)
-  if (text === undefined) return undefined
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    return undefined
-  }
-  const items = (parsed as { items?: unknown }).items
-  if (!Array.isArray(items)) return undefined
+  const items = itemsOf(payload)
+  if (items === undefined) return undefined
 
   const results: Array<ReadonlyArray<string>> = Array.from({ length: expected }, () => [])
   for (const item of items) {
@@ -156,8 +153,21 @@ export const entitiesOf = (
   return results
 }
 
-/** The assistant message text out of a Responses payload, or `undefined` off-shape. */
-const outputTextOf = (payload: unknown): string | undefined => {
+/**
+ * The `items` array out of a Responses payload, or `undefined` when no part carries one.
+ *
+ * Every `output_text` part of every message is tried, in order, and the first that parses to an
+ * object with an `items` array wins. Reading only the FIRST part is what an earlier version did,
+ * and it is wrong on a proxied transport: measured 2026-09-02 against an LLM proxy's
+ * `/v1/responses`, GPT-5.6 Terra's answer arrived as two `output_text` parts, `[REDACTED]` (the
+ * gateway's placeholder for the model's encrypted reasoning) and then the schema-constrained JSON.
+ * The mantle endpoint sends one part, so scanning costs it nothing.
+ *
+ * A part that is not JSON, or is JSON of another shape, is skipped rather than fatal, for the same
+ * reason: it is not the answer, and the answer may still be beside it. Only when no part qualifies
+ * is the payload unreadable.
+ */
+const itemsOf = (payload: unknown): ReadonlyArray<unknown> | undefined => {
   const output = (payload as { output?: unknown }).output
   if (!Array.isArray(output)) return undefined
   for (const entry of output) {
@@ -166,9 +176,15 @@ const outputTextOf = (payload: unknown): string | undefined => {
     if (!Array.isArray(content)) continue
     for (const part of content) {
       const text = (part as { text?: unknown }).text
-      if ((part as { type?: unknown }).type === "output_text" && typeof text === "string") {
-        return text
+      if ((part as { type?: unknown }).type !== "output_text" || typeof text !== "string") continue
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(text)
+      } catch {
+        continue
       }
+      const items = (parsed as { items?: unknown } | null)?.items
+      if (Array.isArray(items)) return items
     }
   }
   return undefined
