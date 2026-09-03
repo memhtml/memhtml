@@ -91,6 +91,15 @@ import { decodeSandboxMounts, mountReadOnlyRoots } from "../../src/mount.js"
  * prewarming (node_modules/eve/dist/src/public/sandbox/just-bash-sandbox.d.ts, `filesystem`), so a
  * bad root reaching here would first appear inside a live sleep run.
  */
+/**
+ * ## `bash` does not run here any more
+ *
+ * This sandbox still serves `read_file` and `write_file`. The `bash` tool is overridden in
+ * `agent/tools/bash.ts` to run each command on a worker thread over the SAME mounts, because a
+ * command on this sandbox runs on the server's event loop and nothing can stop it there: the
+ * 2026-09-03 cron's last grep held that loop for 7.5 hours. `src/command-bound.ts` has the
+ * measurements and the mechanism.
+ */
 export default defineSandbox({
   backend: justbash({
     filesystem: ({ defaultFilesystem }) =>

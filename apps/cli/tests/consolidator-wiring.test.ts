@@ -114,6 +114,21 @@ describe("layerConsolidatorPort", () => {
     expect(await boundUnder({ config: { MEMHTML_LLM: " off " }, env: SIGV4 })).toBe(false)
   })
 
+  it("dies on a malformed MEMHTML_CONSOLIDATOR_COMMAND_TIMEOUT_MS rather than falling back", async () => {
+    /**
+     * Same posture as the turn budget: a typo'd per-command limit silently becoming the default is a
+     * night that runs unbounded while the operator believes it bounded. The valid value binds.
+     *
+     * (Mutation: dropping the `parseCommandTimeoutMs` call binds under "soon" and fails the case.)
+     */
+    await expect(
+      boundUnder({ env: { ...BEARER, MEMHTML_CONSOLIDATOR_COMMAND_TIMEOUT_MS: "soon" } })
+    ).rejects.toThrow(/MEMHTML_CONSOLIDATOR_COMMAND_TIMEOUT_MS/)
+    expect(
+      await boundUnder({ env: { ...BEARER, MEMHTML_CONSOLIDATOR_COMMAND_TIMEOUT_MS: "90000" } })
+    ).toBe(true)
+  })
+
   it("binds under any other MEMHTML_LLM value, so only `off` is the opt-out", async () => {
     // The non-vacuity control for the case above: `off` is a specific value, not "anything set".
     expect(await boundUnder({ config: { MEMHTML_LLM: "on" }, env: BEARER })).toBe(true)

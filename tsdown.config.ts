@@ -126,6 +126,8 @@ export default defineConfig({
     { from: "apps/consolidator/src", to: OUT_DIR },
     // Loaded by `node --import` in front of every spawned eve child; a path, never a module import.
     { from: "apps/consolidator/tether", to: OUT_DIR },
+    // The bounded bash tool's worker entry: loaded by `new Worker(path)`, so a file, never a module import.
+    { from: "apps/consolidator/worker", to: OUT_DIR },
     { from: "README.md", to: OUT_DIR },
     { from: "LICENSE", to: OUT_DIR }
   ]

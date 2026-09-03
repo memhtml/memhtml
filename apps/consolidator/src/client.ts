@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { chmod, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
@@ -9,6 +9,13 @@ import { Effect, Result, Schema } from "effect"
 import { eveBinPath, resolveAgentAppRoot } from "./agent-build.js"
 import { appendStderrTail, stderrMessageTail } from "./child-stderr.js"
 import { tetherEnv, tetheredNodeArgs } from "./child-tether.js"
+import {
+  BASH_WORKER_ENV,
+  bashWorkerPath,
+  COMMAND_TIMEOUT_ENV,
+  DEFAULT_COMMAND_TIMEOUT_MS,
+  SCRATCH_ROOT_ENV
+} from "./command-bound.js"
 import {
   CONSOLIDATION_OUTPUT_JSON_SCHEMA,
   ConsolidationPayload,
@@ -36,6 +43,7 @@ import {
   type ReadOnlyRoot,
   SANDBOX_MOUNTS_ENV
 } from "./mount.js"
+import { killProcessGroup } from "./process-group.js"
 import { mintRunSecret, RUN_SECRET_ENV, signRunToken } from "./run-auth.js"
 
 /**
@@ -178,6 +186,14 @@ const MANIFEST_PATH = `${MANIFEST_MOUNT}/MANIFEST.json`
 
 /** Its host filename inside the per-run temp directory. */
 const MANIFEST_FILENAME = "MANIFEST.json"
+
+/**
+ * The run directory has two halves: the manifest, mounted read-only at {@link MANIFEST_MOUNT}, and
+ * the scratch the bounded `bash` tool writes `/workspace` into (`command-bound.ts`). Siblings under
+ * one `mkdtemp` so one finalizer removes both and the sweep needs no third prefix.
+ */
+const MANIFEST_DIRNAME = "manifest"
+const SCRATCH_DIRNAME = "scratch"
 
 /**
  * The per-run temp directory prefix, named once so the orphan sweep and the mkdtemp cannot drift.
@@ -357,6 +373,13 @@ export interface ConsolidatorOptions {
    * from `MEMHTML_CONSOLIDATOR_TURN_TIMEOUT_MS` (`apps/cli/src/api-layer.ts`).
    */
   readonly turnTimeoutMs?: number
+  /**
+   * The wall-clock bound on each shell command the agent runs, in milliseconds; from
+   * `MEMHTML_CONSOLIDATOR_COMMAND_TIMEOUT_MS` (`apps/cli/src/api-layer.ts`). Absent means the default
+   * in `command-bound.ts`. Enforced by preemption on the server, which is why a runaway grep can no
+   * longer spend the turn budget (2026-09-03).
+   */
+  readonly commandTimeoutMs?: number
   /**
    * EXTRA host directories to mount read-only, beside the two {@link ConsolidatorShape.consolidate}
    * derives from its own input. Empty by default.
@@ -793,9 +816,13 @@ const startServerOnPort = (input: {
   /** This attempt's HMAC key, handed to the child on {@link RUN_SECRET_ENV}. */
   readonly secret: string
   readonly mounts: ReadonlyArray<ReadOnlyRoot>
+  /** The per-command bound the server's `bash` tool enforces; see `command-bound.ts`. */
+  readonly commandTimeoutMs: number
+  /** Host directory the bounded `bash` tool's writable `/workspace` lives under. */
+  readonly scratchRoot: string
 }): Effect.Effect<ServerHandle, StartAttemptFailure> =>
   Effect.callback<ServerHandle, StartAttemptFailure>((resume) => {
-    const { appRoot, port, secret, mounts } = input
+    const { appRoot, port, secret, mounts, commandTimeoutMs, scratchRoot } = input
     const url = `http://${LOOPBACK_HOST}:${String(port)}`
 
     const eveBin = eveBinPath()
@@ -823,6 +850,13 @@ const startServerOnPort = (input: {
         cwd: appRoot,
         stdio: ["ignore", "pipe", "pipe"],
         /**
+         * Its own process group, so `stop` can address the WHOLE tree. `eve start` is a supervisor
+         * that spawns the built server as a grandchild in the same group, and a signal to the
+         * supervisor alone leaves that grandchild running: the 2026-09-03 stall left one at 100% CPU
+         * for 7.5 hours after its client had given up. `process-group.ts` has the mechanism.
+         */
+        detached: true,
+        /**
          * Per-run values cross to the server by ENVIRONMENT, for one reason: each is consumed by
          * code loaded INSIDE the spawned process — `agent/sandbox/sandbox.ts` for the mounts,
          * `agent/channels/eve.ts` for the auth policy, the tether module for the parent pid, and
@@ -839,6 +873,9 @@ const startServerOnPort = (input: {
           [SANDBOX_MOUNTS_ENV]: encodeSandboxMounts(mounts),
           [RUN_SECRET_ENV]: secret,
           [RECOVER_ACTIVE_RUNS_ENV]: "0",
+          [COMMAND_TIMEOUT_ENV]: String(commandTimeoutMs),
+          [BASH_WORKER_ENV]: bashWorkerPath(),
+          [SCRATCH_ROOT_ENV]: scratchRoot,
           ...tetherEnv()
         }
       }
@@ -847,20 +884,8 @@ const startServerOnPort = (input: {
     let settled = false
     let stderr = ""
 
-    const stop = async (): Promise<void> => {
-      if (child.exitCode !== null || child.signalCode !== null) return
-      child.kill("SIGTERM")
-      await new Promise<void>((done) => {
-        const timer = setTimeout(() => {
-          child.kill("SIGKILL")
-          done()
-        }, 5_000)
-        child.once("exit", () => {
-          clearTimeout(timer)
-          done()
-        })
-      })
-    }
+    // The whole group, never the pid alone: see `process-group.ts` for the grandchild this reaches.
+    const stop = (): Promise<void> => killProcessGroup(child)
 
     const fail = (failure: StartAttemptFailure): void => {
       if (settled) return
@@ -931,6 +956,8 @@ const startServerOnPort = (input: {
 const startServer = (input: {
   readonly appRoot: string
   readonly mounts: ReadonlyArray<ReadOnlyRoot>
+  readonly commandTimeoutMs: number
+  readonly scratchRoot: string
 }): Effect.Effect<ServerHandle, ConsolidatorUnavailable> =>
   Effect.gen(function* () {
     let last: StartAttemptFailure | null = null
@@ -941,7 +968,9 @@ const startServer = (input: {
           appRoot: input.appRoot,
           port,
           secret: mintRunSecret(),
-          mounts: input.mounts
+          mounts: input.mounts,
+          commandTimeoutMs: input.commandTimeoutMs,
+          scratchRoot: input.scratchRoot
         })
       )
       if (Result.isSuccess(started)) return started.success
@@ -1612,16 +1641,18 @@ export const makeConsolidator = (options: ConsolidatorOptions): ConsolidatorShap
         yield* sweepOrphanedTempDirectories()
 
         return yield* Effect.acquireUseRelease(
-          writeManifestDirectory({ reachable }),
-          (manifestRoot) =>
+          writeRunDirectory({ reachable }),
+          (runRoot) =>
             Effect.acquireUseRelease(
               startServer({
                 appRoot,
                 mounts: [
                   { mountPath: TRACES_MOUNT, hostPath: traceRoot },
-                  { mountPath: MANIFEST_MOUNT, hostPath: manifestRoot },
+                  { mountPath: MANIFEST_MOUNT, hostPath: join(runRoot, MANIFEST_DIRNAME) },
                   ...extraMounts
-                ]
+                ],
+                commandTimeoutMs: options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
+                scratchRoot: join(runRoot, SCRATCH_DIRNAME)
               }),
               (server) => {
                 const turnBudgetMs = turnBudgetMsFor({
@@ -1653,7 +1684,7 @@ export const makeConsolidator = (options: ConsolidatorOptions): ConsolidatorShap
               },
               (server) => Effect.promise(server.stop)
             ),
-          (manifestRoot) => Effect.promise(() => rm(manifestRoot, { recursive: true, force: true }))
+          (runRoot) => Effect.promise(() => rm(runRoot, { recursive: true, force: true }))
         )
       }).pipe(
         Effect.withSpan("consolidator.consolidate", {
@@ -1675,14 +1706,23 @@ export const makeConsolidator = (options: ConsolidatorOptions): ConsolidatorShap
  * `mode: 0o700` on the directory: it holds session ids and corpus paths, which are metadata rather
  * than content, and a world-readable temp directory is still a wider audience than one process.
  */
-const writeManifestDirectory = (input: {
+const writeRunDirectory = (input: {
   readonly reachable: ReadonlyArray<ReachableTranscript>
 }): Effect.Effect<string, ConsolidatorUnavailable> =>
   Effect.tryPromise({
     try: async () => {
       const directory = await mkdtemp(join(tmpdir(), RUN_TMPDIR_PREFIX))
       await chmod(directory, 0o700)
-      await writeFile(join(directory, MANIFEST_FILENAME), manifestFor(input), "utf8")
+      await mkdir(join(directory, MANIFEST_DIRNAME))
+      await writeFile(
+        join(directory, MANIFEST_DIRNAME, MANIFEST_FILENAME),
+        manifestFor(input),
+        "utf8"
+      )
+      // The bounded `bash` tool's writable base: `/workspace` and `/tmp` must exist before the first
+      // command, because just-bash starts the shell in `/workspace` and creates neither.
+      await mkdir(join(directory, SCRATCH_DIRNAME, "workspace"), { recursive: true })
+      await mkdir(join(directory, SCRATCH_DIRNAME, "tmp"), { recursive: true })
       return directory
     },
     catch: (cause) =>

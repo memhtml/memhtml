@@ -7,6 +7,13 @@
  * owns trace consolidation depends on it.
  */
 export * from "./client.js"
+/**
+ * The per-command sandbox bound is exported for the composition root, which reads the operator's
+ * `MEMHTML_CONSOLIDATOR_COMMAND_TIMEOUT_MS` through `parseCommandTimeoutMs` so the CLI and the client
+ * cannot disagree about what a valid value is. `agent/tools/bash.ts` reaches the same module by
+ * relative path from inside eve's build.
+ */
+export * from "./command-bound.js"
 export * from "./contract.js"
 /**
  * The LLM-proxy environment reader is exported for one consumer: `apps/cli/tests/llm-proxy-parity.test.ts`,
