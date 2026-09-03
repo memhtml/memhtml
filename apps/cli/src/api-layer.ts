@@ -3,8 +3,7 @@ import { join } from "node:path"
 import {
   type ConsolidatorShape,
   hasConsolidatorCredentials,
-  makeConsolidator,
-  parseCommandTimeoutMs
+  makeConsolidator
 } from "@memhtml/consolidator"
 import { StorageFailure } from "@memhtml/contracts/errors"
 import {
@@ -461,17 +460,6 @@ export const layerConsolidatorPort = (
         )
       }
       /**
-       * The per-command sandbox bound, read and validated the same way as the turn budget. Absent
-       * means the default in `apps/consolidator/src/command-bound.ts`; a set-but-unparseable value
-       * dies for the same reason the turn budget's does.
-       */
-      let commandTimeoutMs: number | undefined
-      try {
-        commandTimeoutMs = parseCommandTimeoutMs(env.MEMHTML_CONSOLIDATOR_COMMAND_TIMEOUT_MS)
-      } catch (cause) {
-        return yield* Effect.die(cause)
-      }
-      /**
        * The client is built over the same environment the gate just read. A client over ambient
        * `process.env` while the gate read an injected one would pass the gate and fail at the call,
        * which is the degradation-instead-of-skip outcome this gate exists to prevent.
@@ -480,8 +468,7 @@ export const layerConsolidatorPort = (
         consolidator: makeConsolidator({
           env,
           traceRoot: roots.traceRoot,
-          ...(turnTimeoutMs === undefined ? {} : { turnTimeoutMs }),
-          ...(commandTimeoutMs === undefined ? {} : { commandTimeoutMs })
+          ...(turnTimeoutMs === undefined ? {} : { turnTimeoutMs })
         })
       }
     })

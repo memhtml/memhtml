@@ -104,7 +104,7 @@ allowBuilds:
   # msgpackr-extract: reached through effect -> msgpackr.
   #
   # @mongodb-js/zstd and node-liblzma: optional deps of just-bash, the pure-JS sandbox
-  # backend @memhtml/consolidator runs its eve agent in. They accelerate zstd/xz decompression
+  # backend `memhtml exec` runs scripts in (@memhtml/consolidator's mount composition). They accelerate zstd/xz decompression
   # inside that sandbox's virtual filesystem. The consolidator puts only plain-text JSONL
   # transcripts in there and never decompresses anything, so neither is on any path it
   # takes; both also want node-gyp, which no CI image here provides.

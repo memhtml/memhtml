@@ -38,7 +38,7 @@ interface Reproduction {
 const REPRODUCED: ReadonlyArray<Reproduction> = [
   {
     page: "internals/the-consolidator.md",
-    source: "apps/consolidator/agent/instructions.md",
+    source: "apps/consolidator/prompts/instructions.md",
     fence: "markdown",
     promise: "Section 4 reproduces it verbatim"
   }

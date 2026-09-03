@@ -940,7 +940,7 @@ describe("the kind vocabulary is a subset of the corpus vocabulary", () => {
   })
 })
 
-describe("the derived JSON Schema eve is handed", () => {
+describe("the derived JSON Schema the model is handed", () => {
   const schema = CONSOLIDATION_OUTPUT_JSON_SCHEMA as Record<string, unknown>
 
   /**
