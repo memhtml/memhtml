@@ -22,7 +22,13 @@ import { Schema } from "effect"
 export const Effort = Schema.Literals(["low", "medium", "high", "xhigh"])
 export type Effort = typeof Effort.Type
 
-export const ModelKey = Schema.Literals(["sonnet-5", "opus-5", "fable-5", "gpt-5.6-sol"])
+export const ModelKey = Schema.Literals([
+  "sonnet-5",
+  "opus-5",
+  "fable-5",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra"
+])
 export type ModelKey = typeof ModelKey.Type
 
 /** Which wire dialect a model speaks. Selected per model, never per call. */
@@ -64,6 +70,17 @@ export const MODELS: ReadonlyArray<ModelInfo> = [
     key: "gpt-5.6-sol",
     label: "GPT-5.6 Sol",
     modelId: "global.openai.gpt-5.6-sol",
+    provider: "openai"
+  },
+  /**
+   * The mid-tier GPT-5.6, the write-time entity extractor's model (`apps/cli/src/extraction.ts`).
+   * Probed live 2026-09-02 on InvokeModel: honors strict `json_schema` like Sol, answers a
+   * one-item extraction in ~12s with 32 reasoning tokens at `reasoning_effort: "low"`.
+   */
+  {
+    key: "gpt-5.6-terra",
+    label: "GPT-5.6 Terra",
+    modelId: "global.openai.gpt-5.6-terra",
     provider: "openai"
   }
 ]

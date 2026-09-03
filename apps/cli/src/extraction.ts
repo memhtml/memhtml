@@ -1,6 +1,12 @@
 import { ModelUnavailable } from "@memhtml/contracts/errors"
-import { type ProxyConfig, proxyModelId, wrapAsData } from "@memhtml/llm"
-import { Effect } from "effect"
+import {
+  type JsonSchemaObject,
+  type ModelClientShape,
+  type ModelKey,
+  modelByKey,
+  wrapAsData
+} from "@memhtml/llm"
+import { Effect, Schema } from "effect"
 
 /**
  * Write-time entity extraction: one model call per write batch, entities landing as ordinary
@@ -12,12 +18,14 @@ import { Effect } from "effect"
  * down costs this batch its extracted entities and nothing else. The write proceeds, the warning is
  * logged, and `entities: []` is what an entity-free write always produced.
  *
- * The model is GPT-5.6 Terra, spoken to over the OpenAI Responses API: on the Bedrock mantle
- * endpoint directly, or on an LLM proxy's `/v1/responses` when `MEMHTML_LLM_BASE_URL` names one.
- * Neither is reachable through `@memhtml/llm`'s InvokeModel client (the GPT-5.6 model cards list
- * Invoke and Converse as unsupported for the Responses shape), so the fetch transport lives here
- * rather than as a fourth lane in `packages/llm`, which holds one vendor and one call shape by
- * design. This port's transport is injectable so no test needs the network.
+ * The call goes through `@memhtml/llm`'s `ModelClient`, the same lane the sleep phases use: the
+ * OpenAI chat-completions dialect on bedrock-runtime `InvokeModel`, with `response_format:
+ * json_schema, strict: true` so the answer cannot leave the schema, and through an LLM proxy's
+ * `/v1/chat/completions` when `MEMHTML_LLM_BASE_URL` names one. An earlier version carried its own
+ * `fetch` transport against the Bedrock mantle Responses endpoint for GPT-5.6 Luna; the model moved
+ * to Terra on 2026-09-02, Terra answers the same strict schema over InvokeModel (probed live), and
+ * mantle is retired, so the extractor became a consumer of the one client rather than a second
+ * transport. Every test injects a `ModelClientShape`, so none needs the network.
  */
 
 /** One op's text as the extractor sees it: the title plus whichever body form the op carried. */
@@ -37,32 +45,26 @@ export interface EntityExtractorShape {
   ) => Effect.Effect<ReadonlyArray<ReadonlyArray<string>>, ModelUnavailable>
 }
 
-/** The transport: one Responses-API round trip, body in, decoded JSON out. Injectable for tests. */
-export interface MantleTransport {
-  readonly post: (body: string, signal: AbortSignal) => Promise<unknown>
-}
-
 /**
- * GPT-5.6 Terra, the mid-tier GPT-5.6 on the mantle endpoint (Luna, the smaller one, stood here
- * until 2026-09-02). A constant rather than config because the schema below is tested against this
- * model's strict-mode behavior — probed live 2026-09-02 on both transports: the mantle endpoint
- * answered the strict `json_schema` request with one `output_text` part, and an LLM proxy's
- * `/v1/responses` answered with two, a redacted-reasoning placeholder and then the JSON, which is
- * why {@link entitiesOf} scans every part rather than reading the first. Changing the model is a
- * code change with a test run, not an env var; through a proxy the name it travels under is
- * `bedrock/` plus this id (`MEMHTML_LLM_MODEL_PREFIX`), or whatever `MEMHTML_LLM_MODEL_MAP` says.
+ * GPT-5.6 Terra, by its `@memhtml/llm` key. A constant rather than config because the schema below
+ * is tested against this model's strict-mode behavior; changing the model is a code change with a
+ * test run, not an env var. `EXTRACTION_MODEL_ID` is the Bedrock inference-profile id the manifest
+ * names and a proxied request carries (under `MEMHTML_LLM_MODEL_PREFIX`, `bedrock/` by default).
  */
-export const EXTRACTION_MODEL_ID = "openai.gpt-5.6-terra"
+export const EXTRACTION_MODEL: ModelKey = "gpt-5.6-terra"
+export const EXTRACTION_MODEL_ID = modelByKey(EXTRACTION_MODEL).modelId
 
 /** Entity types the prompt offers. Downstream the vocabulary is open: `unknown:` is a valid store type. */
 const ENTITY_TYPES = ["person", "org", "service", "place", "work", "concept", "event"] as const
 
 /**
- * The strict output schema. `additionalProperties: false` and `required` on every level because
- * the Responses API's `strict: true` demands both, and a lax schema invites the model to answer
- * with prose keys the parser would then be guessing at.
+ * The strict output schema, hand-written and handed to the model as-is (`inputSchema`).
+ * `additionalProperties: false` and `required` on every level because strict mode demands both,
+ * and a lax schema invites the model to answer with prose keys the parser would then be guessing
+ * at. The `type` enum is a prompt-level nudge toward the store's common types; the decoder below
+ * accepts any string, because the store's vocabulary is open.
  */
-const RESPONSE_SCHEMA = {
+export const RESPONSE_SCHEMA: JsonSchemaObject = {
   type: "object",
   properties: {
     items: {
@@ -91,9 +93,25 @@ const RESPONSE_SCHEMA = {
   },
   required: ["items"],
   additionalProperties: false
-} as const
+}
 
-const INSTRUCTIONS =
+/**
+ * The decoded answer. `Schema.Finite` for the index (a `Schema.Number` would derive a string
+ * branch); integrality and range are checked in {@link entitiesFrom}, where an out-of-range index
+ * is dropped rather than failing the batch, because one misfiled item is not a reason to lose the
+ * others.
+ */
+export const ExtractionAnswer = Schema.Struct({
+  items: Schema.Array(
+    Schema.Struct({
+      index: Schema.Finite,
+      entities: Schema.Array(Schema.Struct({ type: Schema.String, name: Schema.String }))
+    })
+  )
+})
+export type ExtractionAnswer = typeof ExtractionAnswer.Type
+
+export const INSTRUCTIONS =
   "Extract the named entities each memory mentions. " +
   "An entity is a specific nameable thing a later search would look up: a person, an " +
   "organization, a service or system, a place, a titled work, a defined concept, or a named " +
@@ -101,181 +119,70 @@ const INSTRUCTIONS =
   "name. Return one result per input index, with an empty entities array when a memory names " +
   "nothing."
 
-/** The request body for one batch. Exported for the wire test, where the schema is the contract. */
-export const requestBodyOf = (modelId: string, items: ReadonlyArray<ExtractionItem>): string =>
-  JSON.stringify({
-    model: modelId,
-    instructions: INSTRUCTIONS,
-    input: wrapAsData(
-      "memories",
-      JSON.stringify(items.map((item, index) => ({ index, title: item.title, text: item.text })))
-    ),
-    text: {
-      format: {
-        type: "json_schema",
-        name: "entities",
-        strict: true,
-        schema: RESPONSE_SCHEMA
-      }
-    }
-  })
+/** The user turn for one batch: the items, index-tagged, inside the data-not-instructions wrapper. */
+export const extractionPrompt = (items: ReadonlyArray<ExtractionItem>): string =>
+  wrapAsData(
+    "memories",
+    JSON.stringify(items.map((item, index) => ({ index, title: item.title, text: item.text })))
+  )
 
 /**
- * Decode one Responses-API payload into index-aligned `type:name` arrays.
+ * Index-align a decoded answer into `type:name` arrays, one per input item.
  *
- * Total over unknown input: every malformed shape returns `undefined` and the caller maps that to
- * `ModelUnavailable`. A payload this code cannot read carries no answer, and treating it as
- * "no entities" would record a model failure as a fact about the corpus.
+ * An item the model skipped is an empty list, not a hole. An index that is not an integer in
+ * range, or a blank name, is dropped rather than misfiled: the caller pairs arrays with ops
+ * positionally, so a misplaced entity would land on another memory as if authored.
  */
-export const entitiesOf = (
-  payload: unknown,
+export const entitiesFrom = (
+  answer: ExtractionAnswer,
   expected: number
-): ReadonlyArray<ReadonlyArray<string>> | undefined => {
-  const items = itemsOf(payload)
-  if (items === undefined) return undefined
-
+): ReadonlyArray<ReadonlyArray<string>> => {
   const results: Array<ReadonlyArray<string>> = Array.from({ length: expected }, () => [])
-  for (const item of items) {
-    const index = (item as { index?: unknown }).index
-    const entities = (item as { entities?: unknown }).entities
-    if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index >= expected) {
-      continue
-    }
-    if (!Array.isArray(entities)) continue
-    results[index] = entities.flatMap((entity) => {
-      const type = (entity as { type?: unknown }).type
-      const name = (entity as { name?: unknown }).name
-      if (typeof type !== "string" || typeof name !== "string") return []
-      const trimmedName = name.trim()
-      return trimmedName === "" ? [] : [`${type}:${trimmedName}`]
+  for (const item of answer.items) {
+    if (!Number.isInteger(item.index) || item.index < 0 || item.index >= expected) continue
+    results[item.index] = item.entities.flatMap((entity) => {
+      const name = entity.name.trim()
+      return name === "" ? [] : [`${entity.type}:${name}`]
     })
   }
   return results
 }
 
 /**
- * The `items` array out of a Responses payload, or `undefined` when no part carries one.
+ * The extractor over a model client. The client owns the transport, the retries, and the
+ * per-request inactivity bound (300s on both the Bedrock and the proxy clients); this owns the
+ * prompt and the decode.
  *
- * Every `output_text` part of every message is tried, in order, and the first that parses to an
- * object with an `items` array wins. Reading only the FIRST part is what an earlier version did,
- * and it is wrong on a proxied transport: measured 2026-09-02 against an LLM proxy's
- * `/v1/responses`, GPT-5.6 Terra's answer arrived as two `output_text` parts, `[REDACTED]` (the
- * gateway's placeholder for the model's encrypted reasoning) and then the schema-constrained JSON.
- * The mantle endpoint sends one part, so scanning costs it nothing.
- *
- * A part that is not JSON, or is JSON of another shape, is skipped rather than fatal, for the same
- * reason: it is not the answer, and the answer may still be beside it. Only when no part qualifies
- * is the payload unreadable.
+ * `effort: "low"`: extraction is a lookup, not a judgment, and Terra spends ~32 reasoning tokens on
+ * it at this setting (probed 2026-09-02). `cacheSystem` because the instructions are the same bytes
+ * on every batch. An off-schema answer is reported as `ModelUnavailable` rather than as the
+ * contract violation the client raises, because `batchWrite`'s one branch is "the model gave no
+ * usable answer, proceed unextracted", and the reason carries the violation's own text.
  */
-const itemsOf = (payload: unknown): ReadonlyArray<unknown> | undefined => {
-  const output = (payload as { output?: unknown }).output
-  if (!Array.isArray(output)) return undefined
-  for (const entry of output) {
-    if ((entry as { type?: unknown }).type !== "message") continue
-    const content = (entry as { content?: unknown }).content
-    if (!Array.isArray(content)) continue
-    for (const part of content) {
-      const text = (part as { text?: unknown }).text
-      if ((part as { type?: unknown }).type !== "output_text" || typeof text !== "string") continue
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(text)
-      } catch {
-        continue
-      }
-      const items = (parsed as { items?: unknown } | null)?.items
-      if (Array.isArray(items)) return items
-    }
-  }
-  return undefined
-}
-
-/**
- * Per-call ceiling. Generous against the probed ~1s because a batch of 256 ops is a bigger
- * prompt than the probe's one sentence, and a late abort costs only this batch's entities. The
- * write itself is unaffected.
- */
-const EXTRACT_TIMEOUT_MS = 60_000
-
-/** The extractor over a transport. The transport owns the endpoint; this owns prompt and parse. */
-export const makeEntityExtractor = (
-  transport: MantleTransport,
-  modelId: string
-): EntityExtractorShape => ({
+export const makeEntityExtractor = (model: ModelClientShape): EntityExtractorShape => ({
   extract: (items) =>
     items.length === 0
       ? Effect.succeed([])
-      : Effect.gen(function* () {
-          const payload = yield* Effect.tryPromise({
-            try: (signal) => {
-              const timeout = AbortSignal.timeout(EXTRACT_TIMEOUT_MS)
-              return transport.post(
-                requestBodyOf(modelId, items),
-                AbortSignal.any([signal, timeout])
-              )
-            },
-            catch: (cause) =>
-              ModelUnavailable.make({
-                modelId,
-                reason: cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause)
-              })
+      : model
+          .generateObject({
+            schema: ExtractionAnswer,
+            prompt: extractionPrompt(items),
+            system: INSTRUCTIONS,
+            modelKey: EXTRACTION_MODEL,
+            effort: "low",
+            inputSchema: RESPONSE_SCHEMA,
+            toolDescription: "One result per input index; each entity as a type and a name.",
+            cacheSystem: true
           })
-          const entities = entitiesOf(payload, items.length)
-          if (entities === undefined) {
-            return yield* Effect.fail(
-              ModelUnavailable.make({ modelId, reason: "unreadable extraction payload" })
+          .pipe(
+            Effect.map((answer) => entitiesFrom(answer, items.length)),
+            Effect.mapError((cause) =>
+              cause instanceof ModelUnavailable
+                ? cause
+                : ModelUnavailable.make({
+                    modelId: EXTRACTION_MODEL_ID,
+                    reason: `off-schema extraction answer: ${cause.reason}`
+                  })
             )
-          }
-          return entities
-        })
+          )
 })
-
-/**
- * One Responses-API endpoint over `fetch`, the shape both production transports share.
- *
- * A non-2xx status is a rejection carrying the status and the body's first 200 characters, because
- * both endpoints report quota, auth, and routing failures as structured JSON the operator needs
- * verbatim. Folding it into a generic message was the mistake the embeddings lane made first.
- */
-const jsonPostTransport = (
-  label: string,
-  url: string,
-  headers: Record<string, string>
-): MantleTransport => ({
-  post: async (body, signal) => {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
-      body,
-      signal
-    })
-    const text = await response.text()
-    if (!response.ok) {
-      throw new Error(`${label} ${response.status}: ${text.slice(0, 200)}`)
-    }
-    return JSON.parse(text) as unknown
-  }
-})
-
-/** The production transport: bearer-token fetch against the Bedrock mantle endpoint. */
-export const fetchMantleTransport = (region: string, token: string): MantleTransport =>
-  jsonPostTransport("mantle", `https://bedrock-mantle.${region}.api.aws/openai/v1/responses`, {
-    Authorization: `Bearer ${token}`
-  })
-
-/**
- * The same Responses API on an LLM proxy's `/v1/responses` route, when `MEMHTML_LLM_BASE_URL` names
- * one (`packages/llm/src/proxy-config.ts`). The proxy's key is optional, so the header is only sent
- * when there is one. The model id the request carries is resolved by the caller through
- * {@link proxiedExtractionModelId}, because a proxy names models on its own terms.
- */
-export const fetchProxyTransport = (proxy: ProxyConfig): MantleTransport =>
-  jsonPostTransport(
-    "llm proxy",
-    `${proxy.baseUrl}/v1/responses`,
-    proxy.apiKey === null ? {} : { Authorization: `Bearer ${proxy.apiKey}` }
-  )
-
-/** {@link EXTRACTION_MODEL_ID} as the proxy wants it named, or unchanged when the map is silent. */
-export const proxiedExtractionModelId = (proxy: ProxyConfig): string =>
-  proxyModelId(proxy, EXTRACTION_MODEL_ID)

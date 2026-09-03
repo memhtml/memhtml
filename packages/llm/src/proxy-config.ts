@@ -10,7 +10,7 @@
  * | the Anthropic sleep models | `/v1/messages`         | Anthropic Messages               |
  * | the OpenAI sleep model     | `/v1/chat/completions` | OpenAI chat completions          |
  * | Cohere embeddings          | `/v1/embeddings`       | OpenAI embeddings (+ `input_type`) |
- * | entity extraction          | `/v1/responses`        | OpenAI Responses                 |
+ * | entity extraction          | `/v1/chat/completions` | OpenAI chat completions          |
  *
  * The consolidator agent (`apps/consolidator`) reads the SAME three variables through its own
  * dependency-free copy of this parser (`apps/consolidator/src/llm-proxy.ts`): its agent file may

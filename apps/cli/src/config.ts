@@ -61,7 +61,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
      */
     name: PROXY_BASE_URL_VAR,
     description:
-      "An OpenAI- and Anthropic-compatible LLM proxy's origin, e.g. `http://127.0.0.1:4000` for an agentgateway listener. Set, every model call leaves through it instead of going to Bedrock directly: the Anthropic sleep models and the consolidator agent on `/v1/messages`, the OpenAI sleep model on `/v1/chat/completions`, embeddings on `/v1/embeddings`, entity extraction on `/v1/responses`. Absent means Bedrock directly, under `MEMHTML_AWS_REGION` and the Bedrock credential. A set-but-malformed value fails at startup naming this variable rather than falling back to the direct path.",
+      "An OpenAI- and Anthropic-compatible LLM proxy's origin, e.g. `http://127.0.0.1:4000` for an agentgateway listener. Set, every model call leaves through it instead of going to Bedrock directly: the Anthropic sleep models and the consolidator agent on `/v1/messages`, the OpenAI sleep model and the entity extractor on `/v1/chat/completions`, embeddings on `/v1/embeddings`. Absent means Bedrock directly, under `MEMHTML_AWS_REGION` and the Bedrock credential. A set-but-malformed value fails at startup naming this variable rather than falling back to the direct path.",
     fallback: null
   },
   {
@@ -97,11 +97,10 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   {
     name: "MEMHTML_EXTRACT_ENTITIES",
     /**
-     * The model id is interpolated from `extraction.ts`, never spelled here. That constant is the
-     * one the transport calls and the one the strict output schema beside it is tested against, so a
-     * second spelling in this row is a manifest that can name a model the code does not call. The
-     * lane is also not `@memhtml/llm`'s: the extractor speaks the Bedrock mantle Responses API, which
-     * is why this id is absent from `ModelKey`.
+     * The model id is interpolated from `extraction.ts`, never spelled here. That constant resolves
+     * through `@memhtml/llm`'s model table, the one the transport calls and the strict output schema
+     * beside it is tested against, so a second spelling in this row is a manifest that can name a
+     * model the code does not call.
      */
     description: `\`off\` removes the one \`${EXTRACTION_MODEL_ID}\` call per write batch that extracts \`memhtml-entity\` metas the ops did not declare; \`MEMHTML_LLM=off\` removes it too. On by default, like MEMHTML_EMBED. It changes what a write STORES: extracted entities land in the files as if authored, and the write itself never waits on or fails with the model. A failed extraction is a logged warning and an unextracted batch.`,
     fallback: "on"

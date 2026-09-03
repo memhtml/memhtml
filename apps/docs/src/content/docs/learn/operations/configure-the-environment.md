@@ -45,14 +45,13 @@ Six phases call a model, and the other two degrade rather than reporting a reaso
 
 ## Route model calls through an LLM proxy
 
-By default memhtml calls Bedrock directly: the AWS SDK for embeddings and the sleep phases, the Bedrock mantle endpoint for entity extraction, and the AI SDK's Bedrock provider inside the consolidator agent. Set `MEMHTML_LLM_BASE_URL` and all four edges go to one proxy instead, on the routes an OpenAI- and Anthropic-compatible gateway such as agentgateway serves:
+By default memhtml calls Bedrock directly: the AWS SDK for embeddings, the sleep phases, and write-time entity extraction, and the AI SDK's Bedrock provider inside the consolidator agent. Set `MEMHTML_LLM_BASE_URL` and every edge goes to one proxy instead, on the routes an OpenAI- and Anthropic-compatible gateway such as agentgateway serves:
 
 | Edge                                               | Route                  | Wire format                                   |
 | -------------------------------------------------- | ---------------------- | --------------------------------------------- |
 | the Anthropic sleep models, the consolidator agent | `/v1/messages`         | Anthropic Messages                            |
-| the OpenAI sleep model                             | `/v1/chat/completions` | OpenAI chat completions                       |
+| the OpenAI sleep model, entity extraction          | `/v1/chat/completions` | OpenAI chat completions                       |
 | embeddings                                         | `/v1/embeddings`       | OpenAI embeddings, plus Cohere's `input_type` |
-| entity extraction                                  | `/v1/responses`        | OpenAI Responses                              |
 
 The request bodies do not change shape: Bedrock's InvokeModel body for a Claude model already is the Messages body, and its body for an OpenAI model already is the chat-completions body. Only the embedding request is translated, and `input_type` rides through because Cohere embeds documents and queries into different regions of the same space and retrieval depends on that asymmetry. A proxy that drops the `dimensions` field returns 1536-wide vectors, which the width gate refuses as a typed failure, so a misconfigured proxy degrades search and never writes a vector of the wrong shape.
 

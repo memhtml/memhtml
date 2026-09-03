@@ -32,7 +32,6 @@ import {
   Embeddings,
   EmbeddingsLive,
   type EmbeddingsShape,
-  LlmConfig,
   ModelClient,
   ModelClientLive,
   type ModelClientShape
@@ -51,14 +50,7 @@ import {
 import { Config, Context, Effect, Layer } from "effect"
 
 import { MemhtmlRoot, TraceRoot } from "./config.js"
-import {
-  type EntityExtractorShape,
-  EXTRACTION_MODEL_ID,
-  fetchMantleTransport,
-  fetchProxyTransport,
-  makeEntityExtractor,
-  proxiedExtractionModelId
-} from "./extraction.js"
+import { type EntityExtractorShape, makeEntityExtractor } from "./extraction.js"
 
 /**
  * The service tags, re-exported from the composition root.
@@ -336,18 +328,11 @@ export const layerModelFrom = (model: ModelClientShape | undefined): Layer.Layer
  * follows the embedder precedent: a bound extractor that fails costs this batch its extracted
  * entities and never the write (`batchWrite` logs and proceeds).
  *
- * The transport is a bearer-token fetch against the Bedrock mantle endpoint rather than a fourth lane
- * in `@memhtml/llm`. GPT-5.6 Terra is spoken to over the Responses API, which that package's
- * InvokeModel client does not carry, and the package holds one vendor and one call shape by
- * design. The bearer token is the same
- * `AWS_BEARER_TOKEN_BEDROCK` the SDK chain reads. An absent token with the flag on is a configuration
- * the operator asked for and cannot have, so it degrades per batch with a logged warning rather
- * than failing at layer build, matching how a missing embedder credential degrades a search.
- *
- * When `MEMHTML_LLM_BASE_URL` names an LLM proxy, the same Responses-API body goes to the proxy's
- * `/v1/responses` instead, read from the same `LlmConfig` the two `@memhtml/llm` lanes use so all
- * four model-calling edges agree about where a run's traffic goes. The mantle token is then not
- * consulted at all: the proxy's own key (optional) is the credential on that path.
+ * The extractor is a consumer of the same `ModelClient` the sleep phases use — InvokeModel on
+ * bedrock-runtime, or the LLM proxy `MEMHTML_LLM_BASE_URL` names — so there is one answer to where
+ * every model call goes and one credential story: the SDK's default chain, or the proxy's key. A
+ * missing credential is discovered at the first write batch and degrades that batch, as a missing
+ * embedder credential degrades a search; nothing is checked at layer build.
  */
 export interface ExtractorPortShape {
   readonly extractor: EntityExtractorShape | undefined
@@ -355,36 +340,21 @@ export interface ExtractorPortShape {
 
 export const ExtractorPort = Context.Service<ExtractorPortShape>("memhtml/ExtractorPort")
 
-export const layerExtractorPort: Layer.Layer<ExtractorPortShape> = Layer.effect(ExtractorPort)(
-  Effect.gen(function* () {
-    const enabled = yield* Config.string("MEMHTML_EXTRACT_ENTITIES").pipe(
-      Config.withDefault("on"),
-      Config.map((value) => value.trim().toLowerCase() !== "off")
-    )
-    const modelsOn = yield* Config.string("MEMHTML_LLM").pipe(
-      Config.withDefault("on"),
-      Config.map((value) => value.trim().toLowerCase() !== "off")
-    )
-    if (!enabled || !modelsOn) return { extractor: undefined }
-    const { proxy } = yield* LlmConfig
-    if (proxy !== null) {
-      return {
-        extractor: makeEntityExtractor(fetchProxyTransport(proxy), proxiedExtractionModelId(proxy))
-      }
-    }
-    const region = yield* Config.string("MEMHTML_AWS_REGION").pipe(Config.withDefault("us-east-1"))
-    const token = yield* Config.string("AWS_BEARER_TOKEN_BEDROCK").pipe(Config.withDefault(""))
-    if (token === "") {
-      yield* Effect.logWarning(
-        "entity extraction is on but neither AWS_BEARER_TOKEN_BEDROCK nor MEMHTML_LLM_BASE_URL is set; writes proceed unextracted"
+export const layerExtractorPort: Layer.Layer<ExtractorPortShape, never, ModelClientShape> =
+  Layer.effect(ExtractorPort)(
+    Effect.gen(function* () {
+      const enabled = yield* Config.string("MEMHTML_EXTRACT_ENTITIES").pipe(
+        Config.withDefault("on"),
+        Config.map((value) => value.trim().toLowerCase() !== "off")
       )
-      return { extractor: undefined }
-    }
-    return {
-      extractor: makeEntityExtractor(fetchMantleTransport(region, token), EXTRACTION_MODEL_ID)
-    }
-  })
-).pipe(Layer.orDie)
+      const modelsOn = yield* Config.string("MEMHTML_LLM").pipe(
+        Config.withDefault("on"),
+        Config.map((value) => value.trim().toLowerCase() !== "off")
+      )
+      if (!enabled || !modelsOn) return { extractor: undefined }
+      return { extractor: makeEntityExtractor(yield* ModelClient) }
+    })
+  ).pipe(Layer.orDie)
 
 /** A layer supplying the extractor directly, for a test that scripts the extraction answers. */
 export const layerExtractorFrom = (
@@ -559,8 +529,8 @@ export const layerCore = Layer.mergeAll(layerSleep, layerRetrieval).pipe(
 )
 
 /**
- * The production graph: roots from config, Bedrock behind both model ports, everything else over
- * them. `repoOverride` is `--repo`.
+ * The production graph: roots from config, Bedrock (or the LLM proxy) behind the embedder, the model
+ * port, and the extractor, everything else over them. `repoOverride` is `--repo`.
  *
  * This is the one composition production runs. `memhtml serve mcp` runs the same one in a child
  * process, so an MCP tool and its CLI twin cannot be looking at different databases.
@@ -571,8 +541,14 @@ export const layerApp = (repoOverride?: string | undefined) =>
       Layer.mergeAll(
         layerRoots(repoOverride),
         layerEmbedder.pipe(Layer.provide(EmbeddingsLive), Layer.orDie),
-        layerModelPort.pipe(Layer.provide(ModelClientLive), Layer.orDie),
-        layerExtractorPort,
+        /**
+         * One `ModelClient` behind both the sleep phases' port and the write-time extractor, so the
+         * two cannot resolve different transports from the same environment.
+         */
+        Layer.mergeAll(layerModelPort, layerExtractorPort).pipe(
+          Layer.provide(ModelClientLive),
+          Layer.orDie
+        ),
         /**
          * `layerRoots` is provided to the consolidator port explicitly rather than merged beside it.
          * The consolidator needs `traceRoot` to mount, and a sibling in one `mergeAll` is not a

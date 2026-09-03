@@ -102,13 +102,15 @@ export {
   readScript,
   runExec
 } from "./exec.js"
-export type { EntityExtractorShape, ExtractionItem, MantleTransport } from "./extraction.js"
+export type { EntityExtractorShape, ExtractionAnswer, ExtractionItem } from "./extraction.js"
 export {
+  EXTRACTION_MODEL,
   EXTRACTION_MODEL_ID,
-  entitiesOf,
-  fetchMantleTransport,
+  entitiesFrom,
+  extractionPrompt,
+  INSTRUCTIONS as EXTRACTION_INSTRUCTIONS,
   makeEntityExtractor,
-  requestBodyOf
+  RESPONSE_SCHEMA as EXTRACTION_RESPONSE_SCHEMA
 } from "./extraction.js"
 export * from "./operations.js"
 export { claimFromProse, proseTail } from "./prose.js"

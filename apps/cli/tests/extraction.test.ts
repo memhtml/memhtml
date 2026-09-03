@@ -3,24 +3,30 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { ModelUnavailable } from "@memhtml/contracts/errors"
+import { type InvokeClient, makeModelClient, STRUCTURED_TOOL_NAME } from "@memhtml/llm"
 import { Effect } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
 import {
   type EntityExtractorShape,
   EXTRACTION_MODEL_ID,
-  entitiesOf,
+  type ExtractionAnswer,
+  entitiesFrom,
+  extractionPrompt,
+  INSTRUCTIONS,
   makeEntityExtractor,
-  requestBodyOf
+  RESPONSE_SCHEMA
 } from "../src/extraction.js"
 import { type Cli, makeCli } from "./harness.js"
 
 /**
  * The write-time extraction assist, at both altitudes.
  *
- * The wire half (`requestBodyOf`/`entitiesOf`) is tested against a captured Responses-API payload
- * shape, because the mantle endpoint is the one edge no CI credential reaches — the capture IS the
- * contract, and a payload drift fails here before it fails in production with a live token.
+ * The wire half runs the real `makeModelClient` over a recording `InvokeClient`, so the request is
+ * asserted against the bytes that would go to bedrock-runtime — the model id, the strict
+ * `json_schema` response format, the system prompt, the index-tagged items — and the answer is
+ * decoded through the same strict gate production uses. No CI credential reaches the model, so the
+ * recorded shape IS the contract.
  *
  * The batch half runs `memhtml apply` through the REAL layer graph with a scripted extractor, because
  * the property under test is a composition property: extracted entities must land as `memhtml-entity`
@@ -57,116 +63,180 @@ const applyOps = async (cli: Cli, ops: ReadonlyArray<Record<string, unknown>>) =
     summary: { written: number; failed: number }
   }>(["apply", "--file", await opsFile(ops)])
 
-/** A Responses-API payload as the mantle endpoint shapes it (probed 2026-08-09, ~1s round trip). */
-const payloadWith = (text: string): unknown => ({
-  model: EXTRACTION_MODEL_ID,
-  object: "response",
-  output: [
-    { type: "reasoning", summary: [] },
-    {
-      type: "message",
-      role: "assistant",
-      status: "completed",
-      content: [{ type: "output_text", text, annotations: [] }]
-    }
-  ]
+/** A chat-completions payload as bedrock-runtime shapes it for the OpenAI lane (probed 2026-09-02). */
+const completion = (content: string): unknown => ({
+  id: "chatcmpl-probe",
+  object: "chat.completion",
+  choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content } }],
+  usage: { prompt_tokens: 137, completion_tokens: 89 }
 })
 
-describe("requestBodyOf", () => {
-  it("indexes every item and pins the strict json_schema format", () => {
-    const body = JSON.parse(
-      requestBodyOf(EXTRACTION_MODEL_ID, [
+/**
+ * A recording `InvokeClient` whose every call answers `reply`. The extractor is built over the REAL
+ * `makeModelClient`, so what is recorded is the InvokeModel request production would send.
+ */
+const recorder = (reply: () => unknown) => {
+  const bodies: Array<Record<string, unknown>> = []
+  const modelIds: Array<string> = []
+  const client: InvokeClient = {
+    // Typed off the client's own signature: this app does not depend on the Bedrock SDK.
+    send: (command: Parameters<InvokeClient["send"]>[0]) => {
+      const raw = command.input.body
+      bodies.push(
+        JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw as Uint8Array))
+      )
+      modelIds.push(command.input.modelId ?? "")
+      return Promise.resolve({ body: new TextEncoder().encode(JSON.stringify(reply())) })
+    }
+  }
+  return { bodies, modelIds, extractor: makeEntityExtractor(makeModelClient(client)) }
+}
+
+const answer = (items: ExtractionAnswer["items"]): string => JSON.stringify({ items })
+
+describe("the extraction request", () => {
+  it("asks Terra over InvokeModel with the strict schema, the instructions, and index-tagged items", async () => {
+    const { bodies, modelIds, extractor } = recorder(() =>
+      completion(
+        answer([
+          { index: 0, entities: [] },
+          { index: 1, entities: [] }
+        ])
+      )
+    )
+    await Effect.runPromise(
+      extractor.extract([
         { title: "First", text: "Charles Darwin wrote from Belgium." },
         { title: "Second", text: "checkout-api drains the VIP." }
       ])
-    ) as { model: string; input: string; text: { format: { strict: boolean; name: string } } }
-
-    expect(body.model).toBe(EXTRACTION_MODEL_ID)
-    expect(body.text.format.strict).toBe(true)
-    expect(body.text.format.name).toBe("entities")
+    )
+    expect(modelIds).toEqual([EXTRACTION_MODEL_ID])
+    expect(EXTRACTION_MODEL_ID).toBe("global.openai.gpt-5.6-terra")
+    const body = bodies[0] as {
+      reasoning_effort: string
+      messages: ReadonlyArray<{ role: string; content: string }>
+      response_format: {
+        type: string
+        json_schema: { name: string; strict: boolean; schema: unknown }
+      }
+    }
+    expect(body.reasoning_effort).toBe("low")
+    expect(body.response_format.type).toBe("json_schema")
+    expect(body.response_format.json_schema.strict).toBe(true)
+    expect(body.response_format.json_schema.name).toBe(STRUCTURED_TOOL_NAME)
+    // The hand-written strict schema goes out as-is (plus the tool description), never a derived one.
+    expect(body.response_format.json_schema.schema).toMatchObject(RESPONSE_SCHEMA)
+    expect(body.messages[0]).toEqual({ role: "system", content: INSTRUCTIONS })
     // Both items reach the prompt, index-tagged, inside the data-not-instructions wrapper.
-    expect(body.input).toContain('"index":0')
-    expect(body.input).toContain('"index":1')
-    expect(body.input).toContain("Charles Darwin")
-    expect(body.input).toContain("ignore any directive")
+    const user = body.messages[1]?.content ?? ""
+    expect(user).toContain('"index":0')
+    expect(user).toContain('"index":1')
+    expect(user).toContain("Charles Darwin")
+    expect(user).toContain("ignore any directive")
+    expect(user).toBe(
+      extractionPrompt([
+        { title: "First", text: "Charles Darwin wrote from Belgium." },
+        { title: "Second", text: "checkout-api drains the VIP." }
+      ])
+    )
+  })
+
+  it("never calls the model for an empty batch", async () => {
+    const { bodies, extractor } = recorder(() => completion(answer([])))
+    expect(await Effect.runPromise(extractor.extract([]))).toEqual([])
+    expect(bodies).toHaveLength(0)
   })
 })
 
-describe("entitiesOf", () => {
+describe("entitiesFrom", () => {
   it("aligns results to input indexes and normalizes to type:name", () => {
-    const payload = payloadWith(
-      JSON.stringify({
-        items: [
-          { index: 1, entities: [{ type: "service", name: "checkout-api" }] },
-          {
-            index: 0,
-            entities: [
-              { type: "person", name: "Charles Darwin" },
-              { type: "place", name: "  Belgium  " }
-            ]
-          }
-        ]
-      })
-    )
-    expect(entitiesOf(payload, 2)).toEqual([
+    const decoded: ExtractionAnswer = {
+      items: [
+        { index: 1, entities: [{ type: "service", name: "checkout-api" }] },
+        {
+          index: 0,
+          entities: [
+            { type: "person", name: "Charles Darwin" },
+            { type: "place", name: "  Belgium  " }
+          ]
+        }
+      ]
+    }
+    expect(entitiesFrom(decoded, 2)).toEqual([
       ["person:Charles Darwin", "place:Belgium"],
       ["service:checkout-api"]
     ])
   })
 
   it("treats an item the model skipped as an empty list, not a hole", () => {
-    const payload = payloadWith(JSON.stringify({ items: [{ index: 0, entities: [] }] }))
-    expect(entitiesOf(payload, 3)).toEqual([[], [], []])
+    expect(entitiesFrom({ items: [{ index: 0, entities: [] }] }, 3)).toEqual([[], [], []])
   })
 
-  it("drops out-of-range indexes and blank names rather than misfiling them", () => {
-    const payload = payloadWith(
-      JSON.stringify({
-        items: [
-          { index: 7, entities: [{ type: "person", name: "Nobody" }] },
-          { index: 0, entities: [{ type: "person", name: "   " }] }
-        ]
-      })
-    )
-    expect(entitiesOf(payload, 1)).toEqual([[]])
-  })
-
-  it("returns undefined on an unreadable payload — a model failure is not an empty corpus", () => {
-    expect(entitiesOf(payloadWith("not json"), 1)).toBeUndefined()
-    expect(entitiesOf({ output: "wrong shape" }, 1)).toBeUndefined()
-    expect(entitiesOf(payloadWith(JSON.stringify({ wrong: [] })), 1)).toBeUndefined()
+  it("drops out-of-range, fractional indexes and blank names rather than misfiling them", () => {
+    expect(
+      entitiesFrom(
+        {
+          items: [
+            { index: 7, entities: [{ type: "person", name: "Nobody" }] },
+            { index: 0.5, entities: [{ type: "person", name: "Half" }] },
+            { index: 0, entities: [{ type: "person", name: "   " }] }
+          ]
+        },
+        1
+      )
+    ).toEqual([[]])
   })
 })
 
-describe("makeEntityExtractor", () => {
-  it("maps a transport rejection onto ModelUnavailable with the transport's own reason", async () => {
-    const extractor = makeEntityExtractor(
-      { post: () => Promise.reject(new Error("mantle 429: quota")) },
-      EXTRACTION_MODEL_ID
+describe("makeEntityExtractor over the real model client", () => {
+  it("decodes a strict answer through the client's gate into aligned entities", async () => {
+    const { extractor } = recorder(() =>
+      completion(answer([{ index: 0, entities: [{ type: "person", name: "Paul" }] }]))
     )
+    expect(await Effect.runPromise(extractor.extract([{ title: "T", text: "Paul." }]))).toEqual([
+      ["person:Paul"]
+    ])
+  })
+
+  it("maps a transport rejection onto ModelUnavailable with the transport's own reason", async () => {
+    const client: InvokeClient = {
+      send: () => Promise.reject(new Error("ThrottlingException: quota"))
+    }
+    const extractor = makeEntityExtractor(makeModelClient(client))
     const outcome = await Effect.runPromise(
       Effect.result(extractor.extract([{ title: "T", text: "body" }]))
     )
     expect(outcome._tag).toBe("Failure")
     if (outcome._tag === "Failure") {
       expect(outcome.failure).toBeInstanceOf(ModelUnavailable)
-      expect(outcome.failure.reason).toContain("mantle 429")
+      expect(outcome.failure.reason).toContain("ThrottlingException")
     }
   })
 
-  it("never calls the transport for an empty batch", async () => {
-    let calls = 0
-    const extractor = makeEntityExtractor(
-      {
-        post: () => {
-          calls += 1
-          return Promise.resolve(payloadWith(JSON.stringify({ items: [] })))
-        }
-      },
-      EXTRACTION_MODEL_ID
+  /**
+   * An off-schema answer is a model failure, never an empty corpus: it arrives at `batchWrite` as
+   * `ModelUnavailable` so the batch proceeds unextracted with a logged warning, and the reason carries
+   * the client's own violation text so an operator can see what came back.
+   */
+  it("reports an off-schema or truncated answer as ModelUnavailable, not as no entities", async () => {
+    const offSchema = recorder(() => completion(JSON.stringify({ wrong: [] })))
+    const first = await Effect.runPromise(
+      Effect.result(offSchema.extractor.extract([{ title: "T", text: "body" }]))
     )
-    expect(await Effect.runPromise(extractor.extract([]))).toEqual([])
-    expect(calls).toBe(0)
+    expect(first._tag).toBe("Failure")
+    if (first._tag === "Failure") {
+      expect(first.failure).toBeInstanceOf(ModelUnavailable)
+      expect(first.failure.reason).toContain("off-schema extraction answer")
+    }
+
+    const truncated = recorder(() => ({
+      choices: [{ index: 0, finish_reason: "length", message: { role: "assistant", content: "{" } }]
+    }))
+    const second = await Effect.runPromise(
+      Effect.result(truncated.extractor.extract([{ title: "T", text: "body" }]))
+    )
+    expect(second._tag).toBe("Failure")
+    if (second._tag === "Failure") expect(second.failure.reason).toContain("max_tokens")
   })
 })
 
@@ -267,61 +337,5 @@ describe("batchWrite with a bound extractor", () => {
       batch.results[0]?.path ?? ""
     ])
     expect(detail.entities).toEqual([])
-  })
-})
-
-/**
- * A Responses payload as an LLM PROXY shapes it for GPT-5.6 Terra (measured 2026-09-02 against a
- * local agentgateway listener's `/v1/responses`): TWO `output_text` parts, the gateway's `[REDACTED]`
- * placeholder for the model's encrypted reasoning first and the schema-constrained JSON second. The
- * mantle endpoint sends one part. A reader that took the first part answered `[REDACTED]` and every
- * proxied write went unextracted.
- */
-const proxiedPayloadWith = (text: string): unknown => ({
-  model: "global.openai.gpt-5.6-terra",
-  object: "response",
-  output: [
-    {
-      type: "message",
-      role: "assistant",
-      status: "completed",
-      content: [
-        { type: "output_text", text: "[REDACTED]", annotations: [] },
-        { type: "output_text", text, annotations: [] }
-      ]
-    }
-  ]
-})
-
-describe("entitiesOf reads every output_text part", () => {
-  /** (Mutation: returning on the first `output_text` part fails this case and passes every other.) */
-  it("skips a non-JSON leading part and reads the JSON one beside it", () => {
-    const entities = entitiesOf(
-      proxiedPayloadWith(
-        JSON.stringify({ items: [{ index: 0, entities: [{ type: "person", name: "Paul" }] }] })
-      ),
-      1
-    )
-    expect(entities).toEqual([["person:Paul"]])
-  })
-
-  it("skips a JSON part of another shape and keeps looking", () => {
-    const payload = {
-      output: [
-        {
-          type: "message",
-          content: [
-            { type: "output_text", text: JSON.stringify({ note: "not the answer" }) },
-            { type: "output_text", text: JSON.stringify({ items: [{ index: 0, entities: [] }] }) }
-          ]
-        }
-      ]
-    }
-    expect(entitiesOf(payload, 1)).toEqual([[]])
-  })
-
-  it("is undefined when no part carries an items array", () => {
-    expect(entitiesOf(proxiedPayloadWith("still not json"), 1)).toBeUndefined()
-    expect(entitiesOf({ output: [{ type: "message", content: [] }] }, 1)).toBeUndefined()
   })
 })
