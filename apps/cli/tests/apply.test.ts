@@ -179,6 +179,12 @@ describe("memhtml apply: the JSONL door", () => {
     expect(paths.some((path) => path.startsWith("areas/arcs/imported-arc"))).toBe(true)
   })
 
+  /**
+   * Three spawned CLI runs in one case. Under `mise run check`, with every package's suite in
+   * parallel, this took 5.1–5.4 s and tripped vitest's 5 s default three times in six gate runs on
+   * 2026-09-02, and passed every time alone. The bound is the case's own, so a slow box fails on a
+   * hang and not on load.
+   */
   it("reads the same stream from stdin, via `apply -`, `apply --file -`, and a bare `apply`", async () => {
     // All three spellings, because the flag docs promise all three. A dash that fell through to
     // `--file` parsing would try to open a file named `-`.
@@ -190,7 +196,7 @@ describe("memhtml apply: the JSONL door", () => {
       expect(data.summary.written, argv.join(" ")).toBe(3)
       expect(data.commit_sha, argv.join(" ")).not.toBeNull()
     }
-  })
+  }, 30_000)
 
   it("refuses a positional `-` beside a real --file, as exit 2 before any op runs", async () => {
     /**

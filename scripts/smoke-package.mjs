@@ -1022,11 +1022,19 @@ const checkAgentBuild = async ({ consumer, env }) => {
     const traces = join(consumer, "traces")
     await exec("mkdir", ["-p", join(traces, "projects", "-smoke")])
     await writeFile(join(traces, "projects", "-smoke", "s1.jsonl"), "{}\n")
+    /**
+     * `detached: true` puts `eve start` at the head of its own process group, so the `finally` below
+     * can kill the GROUP. `eve start` is a supervisor and the server it builds is a grandchild; a
+     * SIGKILL to the supervisor alone orphaned that server on every run — 27 of them, the oldest two
+     * days old, were found on the dev box on 2026-09-02 (issue #118). Production does not have this
+     * hole: the real client spawns through `child-tether.ts`, and the server exits with its parent.
+     */
     const child = spawn(
       process.execPath,
       [eveBin, "start", "--host", "127.0.0.1", "--port", String(port)],
       {
         cwd: appRoot,
+        detached: true,
         stdio: ["ignore", "ignore", "pipe"],
         env: {
           ...env,
@@ -1086,9 +1094,26 @@ const checkAgentBuild = async ({ consumer, env }) => {
       // "nothing" is itself the finding, so the tail is carried either way.
       return { ok: false, detail: `never became healthy — ${tail(stderr)}` }
     } finally {
-      child.kill("SIGKILL")
+      killGroup(child)
     }
   })
+}
+
+/**
+ * Kill a detached child and everything it spawned. A negative pid addresses the process group the
+ * child leads; the fallback covers a child that never got a pid (spawn failed) or one whose group is
+ * already gone, where only the direct kill has anything left to do.
+ */
+const killGroup = (child) => {
+  if (typeof child.pid === "number") {
+    try {
+      process.kill(-child.pid, "SIGKILL")
+      return
+    } catch {
+      // The group is gone or was never created; fall through to the direct kill.
+    }
+  }
+  child.kill("SIGKILL")
 }
 
 /**
