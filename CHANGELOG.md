@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.11.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.10.0...memhtml-v0.11.0) (2026-09-03)
+
+
+### Features
+
+* **cli:** extract entities on write by default, with GPT-5.6 Terra ([2bc94fe](https://github.com/memhtml/memhtml/commit/2bc94fe47f84c1b452d2b31758221e763a554a5f))
+* **llm:** name proxied models by the LiteLLM convention, bedrock/&lt;id&gt;, by default ([e33d20c](https://github.com/memhtml/memhtml/commit/e33d20c92264cfb68b25906509906088e943645e))
+* **llm:** route every model call through an OpenAI/Anthropic-compatible LLM proxy when MEMHTML_LLM_BASE_URL is set ([040401c](https://github.com/memhtml/memhtml/commit/040401cf43f904ce5a5013461d9b81c86d557f4b))
+
+
+### Bug Fixes
+
+* **consolidator:** cap each model call's output tokens and report an unsettled turn by what stopped it; feat(llm): LLM proxy support and a 64K default budget ([256866a](https://github.com/memhtml/memhtml/commit/256866ad2685be274b19c1924d8039369d52c262))
+* **consolidator:** cap the output tokens of each model call, and fail an unsettled turn by name ([400f7dc](https://github.com/memhtml/memhtml/commit/400f7dcb80a120981f41daf1645a4df07826620f))
+* **consolidator:** keep the agent's imports out of the bundled workspace packages ([57831f8](https://github.com/memhtml/memhtml/commit/57831f803bab6d1b17089b45ba11fb84a6e3aa09))
+* **consolidator:** treat a waiting turn as a failure only when it produced no payload ([ca142ab](https://github.com/memhtml/memhtml/commit/ca142ab40e7d521d8346628fb482828493d4adea))
+* **llm:** default every model call's output budget to 64,000 tokens ([121b88d](https://github.com/memhtml/memhtml/commit/121b88d83a934f30efc54ed3c05355b35779ee5a))
+* **llm:** strip a proxy origin's trailing slashes with a loop, not a backtracking regex ([9219796](https://github.com/memhtml/memhtml/commit/9219796acef9e5ba68e313409b03c8ba785022aa))
+
 ## [0.10.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.9.1...memhtml-v0.10.0) (2026-09-01)
 
 
