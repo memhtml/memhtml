@@ -116,6 +116,9 @@ importers:
       '@ai-sdk/amazon-bedrock':
         specifier: 5.0.61
         version: 5.0.61(zod@4.4.3)
+      '@ai-sdk/anthropic':
+        specifier: 4.0.41
+        version: 4.0.41(zod@4.4.3)
       '@memhtml/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts

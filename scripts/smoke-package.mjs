@@ -22,7 +22,8 @@
  * prove them from an install: Bedrock embeddings, the sleep phases that call a model, and the
  * consolidator distilling a transcript through eve. Those three are the whole of what the default mode
  * cannot see, so `--live` is the difference between "every command answers" and "every command works".
- * It needs `AWS_BEARER_TOKEN_BEDROCK` (or SigV4 keys) and it spends real tokens.
+ * It needs `AWS_BEARER_TOKEN_BEDROCK` (or SigV4 keys, or an LLM proxy on `MEMHTML_LLM_BASE_URL`) and
+ * it spends real tokens.
  */
 import { execFile, spawn } from "node:child_process"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
@@ -895,12 +896,18 @@ const checkLiveBedrock = async ({ bin, work, env }) => {
   delete live.MEMHTML_EMBED
   delete live.MEMHTML_LLM
 
-  await check("a Bedrock credential is present", async () => {
+  await check("a route to a model is present: a Bedrock credential, or an LLM proxy", async () => {
     const bearer = Boolean(process.env.AWS_BEARER_TOKEN_BEDROCK)
     const sigv4 = Boolean(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY)
+    // `MEMHTML_LLM_BASE_URL` routes every model call through an OpenAI/Anthropic-compatible proxy
+    // instead, and a keyless loopback proxy is a supported deployment, so the URL alone is a route.
+    const proxy = Boolean(process.env.MEMHTML_LLM_BASE_URL?.trim())
     // A FAILURE, not a skip: `--live` was asked for, and quietly proving nothing is the outcome this
     // whole tier exists to prevent.
-    return { ok: bearer || sigv4, detail: bearer ? "bearer token" : sigv4 ? "sigv4" : "none" }
+    return {
+      ok: bearer || sigv4 || proxy,
+      detail: proxy ? "llm proxy" : bearer ? "bearer token" : sigv4 ? "sigv4" : "none"
+    }
   })
 
   await envelope(bin, ["init"], live)

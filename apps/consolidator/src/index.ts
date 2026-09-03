@@ -9,6 +9,12 @@
 export * from "./client.js"
 export * from "./contract.js"
 /**
+ * The LLM-proxy environment reader is exported for one consumer: `apps/cli/tests/llm-proxy-parity.test.ts`,
+ * which pins this app's dependency-free copy to `@memhtml/llm`'s original. Production callers read the
+ * environment through `hasConsolidatorCredentials` and the agent file, never through this export.
+ */
+export * from "./llm-proxy.js"
+/**
  * The mount composition is exported because `memhtml exec` builds on it: one shared helper rather than
  * the same `MountableFs` + read-only `OverlayFs` shape written twice, and this package is where
  * `just-bash` is a real dependency pinned to the version eve loads.

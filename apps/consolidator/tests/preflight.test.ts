@@ -73,11 +73,42 @@ describe("hasConsolidatorCredentials", () => {
     )
   })
 
-  it("names both accepted mechanisms in its reason, so the message is actionable", () => {
+  /**
+   * An LLM proxy is the third way to reach a model, and its key is optional: a keyless loopback proxy
+   * is a supported deployment, so the URL alone is a route. (Mutation: dropping the `proxyFromEnv`
+   * arm of `hasConsolidatorCredentials` fails these two and nothing else in this file.)
+   */
+  it("is true with an LLM proxy base URL and no Bedrock credential at all", () => {
+    expect(hasConsolidatorCredentials({ MEMHTML_LLM_BASE_URL: "http://127.0.0.1:4000" })).toBe(true)
+    expect(
+      hasConsolidatorCredentials({
+        MEMHTML_LLM_BASE_URL: "https://llm.example.internal/",
+        MEMHTML_LLM_API_KEY: "k"
+      })
+    ).toBe(true)
+  })
+
+  it("treats a blank proxy URL as absent, like a blank credential", () => {
+    expect(hasConsolidatorCredentials({ MEMHTML_LLM_BASE_URL: "   " })).toBe(false)
+  })
+
+  /**
+   * A set-but-malformed proxy URL is a configured run that cannot go where it was pointed. Reading it
+   * as "no route" would skip the phase quietly — the degradation-instead-of-skip outcome inverted —
+   * so it throws with the variable named instead.
+   */
+  it("throws, naming the variable, on a proxy URL without a scheme", () => {
+    expect(() => hasConsolidatorCredentials({ MEMHTML_LLM_BASE_URL: "127.0.0.1:4000" })).toThrow(
+      /MEMHTML_LLM_BASE_URL/
+    )
+  })
+
+  it("names all three accepted mechanisms in its reason, so the message is actionable", () => {
     const reason = credentialsMissingReason()
     expect(reason).toContain("AWS_BEARER_TOKEN_BEDROCK")
     expect(reason).toContain("AWS_ACCESS_KEY_ID")
     expect(reason).toContain("AWS_SECRET_ACCESS_KEY")
+    expect(reason).toContain("MEMHTML_LLM_BASE_URL")
   })
 })
 

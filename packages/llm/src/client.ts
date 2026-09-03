@@ -2,6 +2,17 @@ import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedroc
 import { ModelUnavailable } from "@memhtml/contracts/errors"
 import { Config, Effect } from "effect"
 
+import {
+  normalizeProxyBaseUrl,
+  PROXY_API_KEY_VAR,
+  PROXY_BASE_URL_VAR,
+  PROXY_MODEL_MAP_VAR,
+  PROXY_MODEL_PREFIX_VAR,
+  type ProxyConfig,
+  parseProxyModelMap,
+  proxyModelPrefix
+} from "./proxy-config.js"
+
 /**
  * The one Bedrock call this package makes, named as a structural type instead of the
  * SDK class. `BedrockRuntimeClient` satisfies it, and so does a fake that records the
@@ -121,18 +132,47 @@ export const makeBedrockClient = (region: string): BedrockRuntimeClient =>
   })
 
 /**
- * The region every lane resolves against. `us-east-1` is the default because it is where
+ * Where every lane sends its calls.
+ *
+ * `region` is what the direct path resolves against. `us-east-1` is the default because it is where
  * both `cohere.embed-v4:0` and the `global.anthropic.*` inference profiles are reachable.
  *
- * Auth is deliberately absent: the SDK's default chain picks up `AWS_BEARER_TOKEN_BEDROCK`
- * from the environment when it is set, and falls back to the standard credential chain
- * (instance role, profile, environment keys) otherwise. Naming a profile or a key here
- * would break both paths.
+ * Auth for the direct path is deliberately absent: the SDK's default chain picks up
+ * `AWS_BEARER_TOKEN_BEDROCK` from the environment when it is set, and falls back to the standard
+ * credential chain (instance role, profile, environment keys) otherwise. Naming a profile or a key
+ * here would break both paths.
+ *
+ * `proxy` is the LLM proxy every lane goes through instead, when `MEMHTML_LLM_BASE_URL` names one
+ * (`proxy-config.ts` has the three variables and the routes). `null` is the default and means
+ * Bedrock directly; the region is then unused but still read, so flipping a deployment between the
+ * two paths is one variable and not a reshuffle. A set-but-malformed value fails here, at
+ * construction, with the variable named — see `normalizeProxyBaseUrl` for why it does not fall
+ * back to the direct path.
  */
 export const LlmConfig = Config.all({
-  region: Config.string("MEMHTML_AWS_REGION").pipe(Config.withDefault("us-east-1"))
+  region: Config.string("MEMHTML_AWS_REGION").pipe(Config.withDefault("us-east-1")),
+  proxy: Config.all({
+    baseUrl: Config.string(PROXY_BASE_URL_VAR).pipe(Config.withDefault("")),
+    apiKey: Config.string(PROXY_API_KEY_VAR).pipe(Config.withDefault("")),
+    // `Config` reads an empty value as absent, so the default lands here as "" and
+    // `proxyModelPrefix` resolves it — the same function the consolidator applies to `process.env`.
+    modelPrefix: Config.string(PROXY_MODEL_PREFIX_VAR).pipe(Config.withDefault("")),
+    modelMap: Config.string(PROXY_MODEL_MAP_VAR).pipe(Config.withDefault(""))
+  }).pipe(
+    Config.map(({ baseUrl, apiKey, modelPrefix, modelMap }): ProxyConfig | null => {
+      if (baseUrl.trim() === "") return null
+      const key = apiKey.trim()
+      return {
+        baseUrl: normalizeProxyBaseUrl(baseUrl),
+        apiKey: key === "" ? null : key,
+        modelPrefix: proxyModelPrefix(modelPrefix),
+        modelMap: parseProxyModelMap(modelMap)
+      }
+    })
+  )
 })
 
 export interface LlmConfigShape {
   readonly region: string
+  readonly proxy: ProxyConfig | null
 }

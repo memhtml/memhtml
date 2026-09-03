@@ -217,8 +217,82 @@ describe("agent/agent.ts", () => {
     expect(text).not.toMatch(/^\s*(?!.*\*).*reasoningConfig/m)
   })
 
-  it("bounds output tokens per session", async () => {
-    expect(await read("agent.ts")).toContain("maxOutputTokensPerSession")
+  /**
+   * Both ceilings come from `src/output-budget.ts`, never from a literal here.
+   *
+   * The literal `50_000` that stood on the session cap bounded the READING (reasoning tokens are
+   * output tokens under `reasoning: "high"`), and the ABSENT per-call cap let Bedrock apply its own
+   * 4,096-token default, which truncated every attempt at the structured answer (issue #113).
+   * Comments are stripped before matching, because agent.ts records that history in its own prose and
+   * a raw-text search would match the story rather than the code.
+   *
+   * (Mutation: restoring `maxOutputTokensPerSession: 50_000` fails the first assertion; dropping the
+   * `wrapLanguageModel` wrapper fails the second.)
+   */
+  it("takes both output-token ceilings from output-budget.ts, not from literals", async () => {
+    const code = (await read("agent.ts"))
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "")
+    expect(code).toMatch(/maxOutputTokensPerSession:\s*sessionOutputTokenLimit\(/)
+    expect(code).not.toMatch(/maxOutputTokensPerSession:\s*\d/)
+    expect(code).toMatch(/maxOutputTokens:\s*MODEL_CALL_OUTPUT_TOKEN_LIMIT/)
+    expect(code).toContain("wrapLanguageModel(")
+    expect(code).toContain("defaultSettingsMiddleware(")
+  })
+
+  /**
+   * The agent's import graph reaches first-party `src/` files and real externals, never a bundled
+   * workspace package.
+   *
+   * eve re-bundles the authored TypeScript at `eve build`, and the twelve `@memhtml/*` packages are
+   * BUNDLED into the published artifact rather than installed beside it. So an agent file importing
+   * `src/contract.ts` — which reaches `effect` and `@memhtml/contracts` — builds fine in the
+   * workspace and fails from an installed tarball with `ConsolidatorUnavailable`. Only
+   * `mise run package:smoke` catches that, and it costs minutes; this costs nothing.
+   *
+   * (Mutation: adding `import { MAX_TRANSCRIPTS_PER_RUN } from "../src/contract.js"` fails this.)
+   */
+  it("imports no bundled workspace package, directly or through src/", async () => {
+    const code = (await read("agent.ts"))
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "")
+    expect(code).not.toMatch(/from "@memhtml\//)
+    // `contract.ts` is the one `src/` module that reaches them; `output-budget.ts` and
+    // `llm-proxy.ts` deliberately do not, which is why the batch ceiling and the proxy parser are
+    // duplicated there with a gate on each copy.
+    expect(code).not.toContain('from "../src/contract.js"')
+  })
+
+  /**
+   * The provider is chosen at server boot from the environment: Bedrock directly, or the Anthropic
+   * provider pointed at an LLM proxy's `/v1/messages` when `MEMHTML_LLM_BASE_URL` is set. Both
+   * branches must exist and both must go through the SAME output-token wrapper, or the proxy path
+   * would reintroduce the unset per-call limit issue #113 was about.
+   *
+   * (Mutation: hard-coding `directModel()` in the wrapper fails the ternary assertion; passing the
+   * proxied model outside `wrapLanguageModel` fails the one after it.)
+   */
+  it("selects Bedrock direct or the proxy's Messages route at boot, inside one token-capped wrapper", async () => {
+    const code = (await read("agent.ts"))
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "")
+    expect(code).toContain('from "@ai-sdk/anthropic"')
+    expect(code).toContain('from "../src/llm-proxy.js"')
+    expect(code).toContain("proxyFromEnv(process.env)")
+    expect(code).toMatch(/model:\s*proxy === null \? directModel\(\) : proxiedModel\(proxy\)/)
+    expect(code).toMatch(/createAnthropic\(\{\s*baseURL:\s*`\$\{config\.baseUrl\}\/v1`/)
+  })
+
+  /**
+   * The module the agent reads the proxy from must itself import nothing, for the reason the case
+   * above records: it is compiled into the server, where a workspace or `effect` import fails the
+   * build from an installed tarball.
+   */
+  it("reads the proxy environment through a module with no imports at all", async () => {
+    const source = await readFile(resolve(agentDir, "..", "src", "llm-proxy.ts"), "utf8")
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
+    expect(code).not.toMatch(/^\s*import\s/m)
+    expect(code).toContain("MEMHTML_LLM_BASE_URL")
   })
 })
 

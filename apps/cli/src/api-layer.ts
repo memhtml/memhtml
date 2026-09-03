@@ -50,12 +50,7 @@ import {
 import { Config, Context, Effect, Layer } from "effect"
 
 import { MemhtmlRoot, TraceRoot } from "./config.js"
-import {
-  type EntityExtractorShape,
-  EXTRACTION_MODEL_ID,
-  fetchMantleTransport,
-  makeEntityExtractor
-} from "./extraction.js"
+import { type EntityExtractorShape, makeEntityExtractor } from "./extraction.js"
 
 /**
  * The service tags, re-exported from the composition root.
@@ -322,21 +317,22 @@ export const layerModelFrom = (model: ModelClientShape | undefined): Layer.Layer
   Layer.succeed(ModelPort)({ model })
 
 /**
- * Write-time entity extraction, or absent. Absent is the default.
+ * Write-time entity extraction, or absent.
  *
- * Opt-in (`MEMHTML_EXTRACT_ENTITIES=on`) where the embedder is opt-out, and the asymmetry is
- * deliberate. The write path has never carried a generative call, extraction changes what a write
- * stores rather than what a search finds, and a default-on model call in every agent's write path
- * is a behavior change an operator must choose. The failure mode does follow the embedder
- * precedent: a bound extractor that fails costs this batch its extracted entities and never the
- * write (`batchWrite` logs and proceeds).
+ * On by default since 2026-09-02, like the embedder: `MEMHTML_EXTRACT_ENTITIES=off` removes it, and so
+ * does `MEMHTML_LLM=off`, because an operator who turned the models off did not mean "except the
+ * one in the write path" — and that switch is what keeps the credential-free tiers (`check`, the
+ * non-live smoke) from placing a live call now that the default is on. Extraction changes what a
+ * write STORES rather than what a search finds, so a store run with it on for a month and then off
+ * holds two populations of files; the docs say so where the variable is described. The failure mode
+ * follows the embedder precedent: a bound extractor that fails costs this batch its extracted
+ * entities and never the write (`batchWrite` logs and proceeds).
  *
- * The transport is a bearer-token fetch against the Bedrock mantle endpoint rather than a fourth lane
- * in `@memhtml/llm`. GPT-5.6 Luna is mantle-only (no InvokeModel, no Converse), and that package holds
- * one vendor and one call shape by design. The bearer token is the same
- * `AWS_BEARER_TOKEN_BEDROCK` the SDK chain reads. An absent token with the flag on is a configuration
- * the operator asked for and cannot have, so it degrades per batch with a logged warning rather
- * than failing at layer build, matching how a missing embedder credential degrades a search.
+ * The extractor is a consumer of the same `ModelClient` the sleep phases use — InvokeModel on
+ * bedrock-runtime, or the LLM proxy `MEMHTML_LLM_BASE_URL` names — so there is one answer to where
+ * every model call goes and one credential story: the SDK's default chain, or the proxy's key. A
+ * missing credential is discovered at the first write batch and degrades that batch, as a missing
+ * embedder credential degrades a search; nothing is checked at layer build.
  */
 export interface ExtractorPortShape {
   readonly extractor: EntityExtractorShape | undefined
@@ -344,26 +340,21 @@ export interface ExtractorPortShape {
 
 export const ExtractorPort = Context.Service<ExtractorPortShape>("memhtml/ExtractorPort")
 
-export const layerExtractorPort: Layer.Layer<ExtractorPortShape> = Layer.effect(ExtractorPort)(
-  Effect.gen(function* () {
-    const enabled = yield* Config.string("MEMHTML_EXTRACT_ENTITIES").pipe(
-      Config.withDefault("off"),
-      Config.map((value) => value.trim().toLowerCase() === "on")
-    )
-    if (!enabled) return { extractor: undefined }
-    const region = yield* Config.string("MEMHTML_AWS_REGION").pipe(Config.withDefault("us-east-1"))
-    const token = yield* Config.string("AWS_BEARER_TOKEN_BEDROCK").pipe(Config.withDefault(""))
-    if (token === "") {
-      yield* Effect.logWarning(
-        "MEMHTML_EXTRACT_ENTITIES=on but AWS_BEARER_TOKEN_BEDROCK is absent; writes proceed unextracted"
+export const layerExtractorPort: Layer.Layer<ExtractorPortShape, never, ModelClientShape> =
+  Layer.effect(ExtractorPort)(
+    Effect.gen(function* () {
+      const enabled = yield* Config.string("MEMHTML_EXTRACT_ENTITIES").pipe(
+        Config.withDefault("on"),
+        Config.map((value) => value.trim().toLowerCase() !== "off")
       )
-      return { extractor: undefined }
-    }
-    return {
-      extractor: makeEntityExtractor(fetchMantleTransport(region, token), EXTRACTION_MODEL_ID)
-    }
-  })
-).pipe(Layer.orDie)
+      const modelsOn = yield* Config.string("MEMHTML_LLM").pipe(
+        Config.withDefault("on"),
+        Config.map((value) => value.trim().toLowerCase() !== "off")
+      )
+      if (!enabled || !modelsOn) return { extractor: undefined }
+      return { extractor: makeEntityExtractor(yield* ModelClient) }
+    })
+  ).pipe(Layer.orDie)
 
 /** A layer supplying the extractor directly, for a test that scripts the extraction answers. */
 export const layerExtractorFrom = (
@@ -401,7 +392,8 @@ export const ConsolidatorPortService = Context.Service<ConsolidatorPortShape>(
  * `MEMHTML_LLM=off` is the same explicit opt-out `layerModelPort` reads, and it covers the consolidator
  * too, because an operator who turned the models off did not mean "except the expensive agent".
  *
- * `hasConsolidatorCredentials` is the credential preflight, read here as well as inside the client.
+ * `hasConsolidatorCredentials` is the route preflight — a Bedrock credential, or an LLM proxy named by
+ * `MEMHTML_LLM_BASE_URL` — read here as well as inside the client.
  * The redundancy is deliberate and the two reads do different jobs. This one decides whether the phase
  * sees a consolidator at all, so a credential-free environment gets `detail: "no consolidator bound"`,
  * the same shape the other three LLM phases report with no model, rather than a bound port that
@@ -443,7 +435,7 @@ export const layerConsolidatorPort = (
       if (!enabled) return { consolidator: undefined }
       if (!hasConsolidatorCredentials(env)) {
         yield* Effect.logDebug(
-          "trace consolidation unbound: no Bedrock credentials in the environment"
+          "trace consolidation unbound: neither Bedrock credentials nor an LLM proxy in the environment"
         )
         return { consolidator: undefined }
       }
@@ -537,8 +529,8 @@ export const layerCore = Layer.mergeAll(layerSleep, layerRetrieval).pipe(
 )
 
 /**
- * The production graph: roots from config, Bedrock behind both model ports, everything else over
- * them. `repoOverride` is `--repo`.
+ * The production graph: roots from config, Bedrock (or the LLM proxy) behind the embedder, the model
+ * port, and the extractor, everything else over them. `repoOverride` is `--repo`.
  *
  * This is the one composition production runs. `memhtml serve mcp` runs the same one in a child
  * process, so an MCP tool and its CLI twin cannot be looking at different databases.
@@ -549,8 +541,14 @@ export const layerApp = (repoOverride?: string | undefined) =>
       Layer.mergeAll(
         layerRoots(repoOverride),
         layerEmbedder.pipe(Layer.provide(EmbeddingsLive), Layer.orDie),
-        layerModelPort.pipe(Layer.provide(ModelClientLive), Layer.orDie),
-        layerExtractorPort,
+        /**
+         * One `ModelClient` behind both the sleep phases' port and the write-time extractor, so the
+         * two cannot resolve different transports from the same environment.
+         */
+        Layer.mergeAll(layerModelPort, layerExtractorPort).pipe(
+          Layer.provide(ModelClientLive),
+          Layer.orDie
+        ),
         /**
          * `layerRoots` is provided to the consolidator port explicitly rather than merged beside it.
          * The consolidator needs `traceRoot` to mount, and a sibling in one `mergeAll` is not a

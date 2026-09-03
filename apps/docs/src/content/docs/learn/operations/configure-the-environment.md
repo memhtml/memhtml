@@ -1,24 +1,28 @@
 ---
 title: Configure the environment
-description: The eight environment variables memhtml reads, what each one degrades when it is absent, and the SQLite settings every connection applies.
+description: The environment variables memhtml reads, what each one degrades when it is absent, how to route model calls through an LLM proxy, and the SQLite settings every connection applies.
 ---
 
-All eight variables below are declared in `apps/cli/src/config.ts:26` and reported by `memhtml manifest`, so the authoritative list is one command away on whatever machine you are on:
+Every variable below is declared in `apps/cli/src/config.ts` and reported by `memhtml manifest`, so the authoritative list is one command away on whatever machine you are on:
 
 ```bash
 memhtml manifest | jq '.data.config'
 ```
 
-| Variable                   | Default     | Meaning                                                                                                                                                                                                                                                                                 |
-| -------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MEMHTML_ROOT`             | `~/memhtml` | The memory repo. A leading `~` is expanded, because this value arrives from a shell profile, an MCP client config, and a cron line, and only the shell expands tildes.                                                                                                                  |
-| `MEMHTML_TRACE_ROOT`       | `~/.claude` | Where `memhtml trace index` reads transcripts. Read-only; never written.                                                                                                                                                                                                                |
-| `MEMHTML_AWS_REGION`       | `us-east-1` | Bedrock region for embeddings and the LLM sleep phases.                                                                                                                                                                                                                                 |
-| `AWS_BEARER_TOKEN_BEDROCK` | none        | Read by the AWS SDK itself. Absent means the default credential chain, and retrieval falls back to full-text search rather than failing.                                                                                                                                                |
-| `MEMHTML_EMBED`            | `on`        | `off` disables the embedder entirely.                                                                                                                                                                                                                                                   |
-| `MEMHTML_LLM`              | `on`        | `off` makes the model-driven sleep phases of `LLM_PHASES` — eight as of v0.6.0 — report `no model bound` and `trace-consolidation` report `no consolidator bound`, all staying `ok`. `dedup-merge` and `entity-resolution` report counts instead, having deterministic work either way. |
-| `MEMHTML_EXTRACT_ENTITIES` | `off`       | `on` adds one model call per write batch that extracts `memhtml-entity` metas the ops did not declare.                                                                                                                                                                                  |
-| `MEMHTML_MCP_BIN`          | none        | An explicit path to the `memhtml-mcp` entry point, read only by the serve supervisor (`apps/cli/src/serve.ts:58`).                                                                                                                                                                      |
+| Variable                   | Default     | Meaning                                                                                                                                                                                                                                                                                                |
+| -------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `MEMHTML_ROOT`             | `~/memhtml` | The memory repo. A leading `~` is expanded, because this value arrives from a shell profile, an MCP client config, and a cron line, and only the shell expands tildes.                                                                                                                                 |
+| `MEMHTML_TRACE_ROOT`       | `~/.claude` | Where `memhtml trace index` reads transcripts. Read-only; never written.                                                                                                                                                                                                                               |
+| `MEMHTML_AWS_REGION`       | `us-east-1` | Bedrock region for embeddings and the LLM sleep phases.                                                                                                                                                                                                                                                |
+| `AWS_BEARER_TOKEN_BEDROCK` | none        | Read by the AWS SDK itself. Absent means the default credential chain, and retrieval falls back to full-text search rather than failing.                                                                                                                                                               |
+| `MEMHTML_LLM_BASE_URL`     | none        | An OpenAI- and Anthropic-compatible LLM proxy's origin, such as `http://127.0.0.1:4000` for an agentgateway listener. Set, every model call leaves through it instead of going to Bedrock directly. See [route model calls through an LLM proxy](#route-model-calls-through-an-llm-proxy).             |
+| `MEMHTML_LLM_API_KEY`      | none        | A bearer token for that proxy, sent as `Authorization: Bearer <key>`. Read only when `MEMHTML_LLM_BASE_URL` is set.                                                                                                                                                                                    |
+| `MEMHTML_LLM_MODEL_PREFIX` | `bedrock/`  | The prefix in front of every Bedrock model id a proxied request carries, so `global.anthropic.claude-opus-5` is asked for as `bedrock/global.anthropic.claude-opus-5`, the LiteLLM convention. Set it to `none` for a proxy that takes bare Bedrock ids. Read only when `MEMHTML_LLM_BASE_URL` is set. |
+| `MEMHTML_LLM_MODEL_MAP`    | none        | `from=to` pairs, comma-separated, naming single models to the proxy by exact id when the prefix rule does not fit. A mapped id is sent verbatim, without the prefix. Read only when `MEMHTML_LLM_BASE_URL` is set.                                                                                     |
+| `MEMHTML_EMBED`            | `on`        | `off` disables the embedder entirely.                                                                                                                                                                                                                                                                  |
+| `MEMHTML_LLM`              | `on`        | `off` makes the model-driven sleep phases of `LLM_PHASES` — eight as of v0.6.0 — report `no model bound` and `trace-consolidation` report `no consolidator bound`, all staying `ok`. `dedup-merge` and `entity-resolution` report counts instead, having deterministic work either way.                |
+| `MEMHTML_EXTRACT_ENTITIES` | `on`        | `off` removes the one model call per write batch that extracts `memhtml-entity` metas the ops did not declare; `MEMHTML_LLM=off` removes it too.                                                                                                                                                       |
+| `MEMHTML_MCP_BIN`          | none        | An explicit path to the `memhtml-mcp` entry point, read only by the serve supervisor (`apps/cli/src/serve.ts:58`).                                                                                                                                                                                     |
 
 `--repo <path>` overrides `MEMHTML_ROOT` for one call, which is how you operate two stores from one shell.
 
@@ -39,9 +43,36 @@ trace-consolidation   | ok | no consolidator bound
 
 Six phases call a model, and the other two degrade rather than reporting a reason. `dedup-merge` mines at the 0.92 cosine floor, applies the divergence veto, and commits the folds it can prove; `entity-resolution` runs its normalization and character-overlap passes. A credential-free night still curates.
 
+## Route model calls through an LLM proxy
+
+By default memhtml calls Bedrock directly: the AWS SDK for embeddings, the sleep phases, and write-time entity extraction, and the AI SDK's Bedrock provider inside the consolidator agent. Set `MEMHTML_LLM_BASE_URL` and every edge goes to one proxy instead, on the routes an OpenAI- and Anthropic-compatible gateway such as agentgateway serves:
+
+| Edge                                               | Route                  | Wire format                                   |
+| -------------------------------------------------- | ---------------------- | --------------------------------------------- |
+| the Anthropic sleep models, the consolidator agent | `/v1/messages`         | Anthropic Messages                            |
+| the OpenAI sleep model, entity extraction          | `/v1/chat/completions` | OpenAI chat completions                       |
+| embeddings                                         | `/v1/embeddings`       | OpenAI embeddings, plus Cohere's `input_type` |
+
+The request bodies do not change shape: Bedrock's InvokeModel body for a Claude model already is the Messages body, and its body for an OpenAI model already is the chat-completions body. Only the embedding request is translated, and `input_type` rides through because Cohere embeds documents and queries into different regions of the same space and retrieval depends on that asymmetry. A proxy that drops the `dimensions` field returns 1536-wide vectors, which the width gate refuses as a typed failure, so a misconfigured proxy degrades search and never writes a vector of the wrong shape.
+
+A proxy names models on its own terms, and memhtml asks for Bedrock inference-profile ids. The bridge is the LiteLLM convention: the provider, a slash, and the provider's exact id, so a request for `global.anthropic.claude-opus-5` carries `model: "bedrock/global.anthropic.claude-opus-5"`. The id after the slash is exactly what Bedrock wants, so nothing is stripped and nothing can be stripped wrong, and a LiteLLM proxy routes every such name with one `bedrock/*` entry. For a LiteLLM-style proxy the whole configuration is the origin:
+
+```bash
+export MEMHTML_LLM_BASE_URL=http://127.0.0.1:4000
+```
+
+Two knobs cover proxies that name models differently. `MEMHTML_LLM_MODEL_PREFIX` replaces the `bedrock/` prefix, and set to `none` it sends bare Bedrock ids. `MEMHTML_LLM_MODEL_MAP` names single models by exact id and wins over the prefix, so one odd model can be named by hand while the rest follow the rule:
+
+```bash
+export MEMHTML_LLM_MODEL_PREFIX=none
+export MEMHTML_LLM_MODEL_MAP='cohere.embed-v4:0=cohere-embed-v4'
+```
+
+An agentgateway listener matches `bedrock/*` as a model pattern but does not rewrite the upstream model, so it needs either one route per name with a per-model override or a body transform that drops the prefix. A proxy that does not know a name answers `model_not_found`, which the failure reason carries verbatim so the missing entry is named. The AWS credential is not consulted on this path: `MEMHTML_LLM_BASE_URL` alone counts as a way to reach a model, so the consolidator runs with no Bedrock credential in the environment, and `MEMHTML_LLM_API_KEY` is the only credential the proxy path reads. A set-but-malformed origin or map entry fails at startup with the variable named rather than falling back to Bedrock directly, so a typo cannot quietly route a night's traffic somewhere you did not point it.
+
 ## MEMHTML_EXTRACT_ENTITIES changes what a write stores
 
-This one is opt-in where `MEMHTML_EMBED` ships on, because it changes the files rather than the ranking. Extracted entities land in the files as if an author had written them. The write itself never waits on the model and never fails with it, so a failed extraction leaves a logged warning and a batch with nothing extracted. Run a store with this on for a month and then off, though, and the tree holds two populations of files, only one of which carries entities its author did not write.
+This one ships on, like `MEMHTML_EMBED`, and unlike the embedder it changes the files rather than the ranking. Extracted entities land in the files as if an author had written them. The write itself never waits on the model and never fails with it, so a failed extraction leaves a logged warning and a batch with nothing extracted. Run a store with this on for a month and then off, though, and the tree holds two populations of files, only one of which carries entities its author did not write. `MEMHTML_LLM=off` turns it off along with every other model call, which is how a credential-free run stays free of model calls without naming each one.
 
 ## MEMHTML_MCP_BIN locates the server and nothing else
 

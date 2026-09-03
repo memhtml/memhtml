@@ -27,6 +27,34 @@ export {
   wrapAsData
 } from "./model-client.js"
 export { Effort, MODELS, type ModelInfo, ModelKey, modelByKey, thinkingFor } from "./models.js"
+export {
+  fromProxyResponse,
+  invokeClientFor,
+  isRetryableProxyFailure,
+  makeProxyClient,
+  PROXY_ROUTE_PATHS,
+  type ProxyClientOptions,
+  type ProxyFetch,
+  ProxyHttpError,
+  type ProxyRequest,
+  type ProxyRoute,
+  proxyRouteFor,
+  toProxyRequest
+} from "./proxy.js"
+export {
+  DEFAULT_PROXY_MODEL_PREFIX,
+  normalizeProxyBaseUrl,
+  PROXY_API_KEY_VAR,
+  PROXY_BASE_URL_VAR,
+  PROXY_MODEL_MAP_VAR,
+  PROXY_MODEL_PREFIX_NONE,
+  PROXY_MODEL_PREFIX_VAR,
+  type ProxyConfig,
+  parseProxyModelMap,
+  proxyConfigFromEnv,
+  proxyModelId,
+  proxyModelPrefix
+} from "./proxy-config.js"
 export { decodeToolInput, MAX_RAW, toInputSchema } from "./structured.js"
 export {
   asResponseBody,

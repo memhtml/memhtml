@@ -36,6 +36,9 @@ describe("bedrock wire constants", () => {
 
   it("leaves headroom above the 8192 ceiling that truncated structured output", () => {
     expect(MAX_TOKENS_DEFAULT).toBeGreaterThan(8192)
+    // 64,000: the consolidator's measured per-call need (issue #113), half the model ceiling.
+    expect(MAX_TOKENS_DEFAULT).toBe(64_000)
+    expect(MAX_TOKENS_DEFAULT).toBeLessThan(MAX_TOKENS_CEILING)
     expect(STRUCTURED_TOOL_NAME).toBe("emit")
   })
 
@@ -51,7 +54,8 @@ describe("MODELS", () => {
       "sonnet-5",
       "opus-5",
       "fable-5",
-      "gpt-5.6-sol"
+      "gpt-5.6-sol",
+      "gpt-5.6-terra"
     ])
     // The global. prefix is mandatory for every entry: the bare openai ids reject
     // on-demand invocation outright, and the anthropic ones would lose cross-region routing.
@@ -63,6 +67,8 @@ describe("MODELS", () => {
   it("resolves every key in the union with its provider", () => {
     expect(modelByKey("sonnet-5").modelId).toBe("global.anthropic.claude-sonnet-5")
     expect(modelByKey("opus-5").modelId).toBe("global.anthropic.claude-opus-5")
+    expect(modelByKey("gpt-5.6-terra").modelId).toBe("global.openai.gpt-5.6-terra")
+    expect(modelByKey("gpt-5.6-terra").provider).toBe("openai")
     expect(modelByKey("fable-5").modelId).toBe("global.anthropic.claude-fable-5")
     expect(modelByKey("gpt-5.6-sol").modelId).toBe("global.openai.gpt-5.6-sol")
     expect(modelByKey("gpt-5.6-sol").provider).toBe("openai")

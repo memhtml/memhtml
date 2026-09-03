@@ -1,8 +1,9 @@
 import { type LlmContractViolation, ModelUnavailable } from "@memhtml/contracts/errors"
 import { Context, Effect, Layer, type Schema } from "effect"
 
-import { type InvokeClient, invokeJson, LlmConfig, makeBedrockClient } from "./client.js"
+import { type InvokeClient, invokeJson, LlmConfig } from "./client.js"
 import { type ModelKey, modelByKey } from "./models.js"
+import { invokeClientFor } from "./proxy.js"
 import { decodeToolInput, toInputSchema } from "./structured.js"
 import {
   asResponseBody,
@@ -229,14 +230,16 @@ export const makeModelClient = (client: InvokeClient): ModelClientShape => {
 }
 
 /**
- * `makeBedrockClient` bounds a hung socket (`REQUEST_HANDLER_OPTIONS`) as well as
- * retrying throttles. The sleep phases run their model calls sequentially, so without the
- * bound one dead connection would stall a whole night's phase rather than failing it.
+ * The transport is whichever `invokeClientFor` selects from the configuration: Bedrock directly,
+ * or the LLM proxy `MEMHTML_LLM_BASE_URL` names. Both bound a hung socket
+ * (`REQUEST_HANDLER_OPTIONS`) as well as retrying throttles. The sleep phases run their model
+ * calls sequentially, so without the bound one dead connection would stall a whole night's phase
+ * rather than failing it.
  */
 export const ModelClientLive = Layer.effect(
   ModelClient,
   Effect.gen(function* () {
     const config = yield* LlmConfig
-    return makeModelClient(makeBedrockClient(config.region))
+    return makeModelClient(invokeClientFor(config))
   })
 )

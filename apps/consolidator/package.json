@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "5.0.61",
+    "@ai-sdk/anthropic": "4.0.41",
     "@memhtml/contracts": "workspace:*",
     "ai": "7.0.77",
     "effect": "catalog:",

@@ -1,6 +1,13 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
 
+import {
+  DEFAULT_PROXY_MODEL_PREFIX,
+  PROXY_API_KEY_VAR,
+  PROXY_BASE_URL_VAR,
+  PROXY_MODEL_MAP_VAR,
+  PROXY_MODEL_PREFIX_VAR
+} from "@memhtml/llm"
 import { expandRoot } from "@memhtml/store"
 import { Config } from "effect"
 
@@ -48,6 +55,34 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
     fallback: null
   },
   {
+    /**
+     * The three proxy names are imported from `@memhtml/llm` rather than retyped, for the reason
+     * `MCP_BIN_VAR` is: the row and the `Config.string` read must name one string.
+     */
+    name: PROXY_BASE_URL_VAR,
+    description:
+      "An OpenAI- and Anthropic-compatible LLM proxy's origin, e.g. `http://127.0.0.1:4000` for an agentgateway listener. Set, every model call leaves through it instead of going to Bedrock directly: the Anthropic sleep models and the consolidator agent on `/v1/messages`, the OpenAI sleep model and the entity extractor on `/v1/chat/completions`, embeddings on `/v1/embeddings`. Absent means Bedrock directly, under `MEMHTML_AWS_REGION` and the Bedrock credential. A set-but-malformed value fails at startup naming this variable rather than falling back to the direct path.",
+    fallback: null
+  },
+  {
+    name: PROXY_API_KEY_VAR,
+    description:
+      "A bearer token for the LLM proxy, sent as `Authorization: Bearer <key>`. Read only when `MEMHTML_LLM_BASE_URL` is set; absent means the proxy takes no credential.",
+    fallback: null
+  },
+  {
+    name: PROXY_MODEL_PREFIX_VAR,
+    description:
+      "The prefix in front of every Bedrock model id a proxied request carries, so `global.anthropic.claude-opus-5` is asked for as `bedrock/global.anthropic.claude-opus-5`: the LiteLLM convention, which a LiteLLM proxy routes with one `bedrock/*` entry and which keeps the id after the slash exactly what Bedrock wants. Set it to `none` for a proxy that takes bare Bedrock ids. Read only when `MEMHTML_LLM_BASE_URL` is set.",
+    fallback: DEFAULT_PROXY_MODEL_PREFIX
+  },
+  {
+    name: PROXY_MODEL_MAP_VAR,
+    description:
+      "`from=to` pairs, comma-separated, naming single models to the proxy by exact id when the prefix rule does not fit: `cohere.embed-v4:0=cohere-embed-v4`. A mapped id is sent verbatim, without the prefix; every other id follows `MEMHTML_LLM_MODEL_PREFIX`. Read only when `MEMHTML_LLM_BASE_URL` is set.",
+    fallback: null
+  },
+  {
     name: "MEMHTML_EMBED",
     description:
       "`off` disables the embedder entirely. An explicit opt-out, distinct from a missing credential: a missing credential degrades one search at call time, `off` degrades every search, and an operator reading this manifest needs those to be different states.",
@@ -62,14 +97,13 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   {
     name: "MEMHTML_EXTRACT_ENTITIES",
     /**
-     * The model id is interpolated from `extraction.ts`, never spelled here. That constant is the
-     * one the transport calls and the one the strict output schema beside it is tested against, so a
-     * second spelling in this row is a manifest that can name a model the code does not call. The
-     * lane is also not `@memhtml/llm`'s: the extractor speaks the Bedrock mantle Responses API, which
-     * is why this id is absent from `ModelKey`.
+     * The model id is interpolated from `extraction.ts`, never spelled here. That constant resolves
+     * through `@memhtml/llm`'s model table, the one the transport calls and the strict output schema
+     * beside it is tested against, so a second spelling in this row is a manifest that can name a
+     * model the code does not call.
      */
-    description: `\`on\` adds one \`${EXTRACTION_MODEL_ID}\` call per write batch that extracts \`memhtml-entity\` metas the ops did not declare. Opt-in, unlike MEMHTML_EMBED, because it changes what a write STORES: extracted entities land in the files as if authored, and the write itself never waits on or fails with the model. A failed extraction is a logged warning and an unextracted batch.`,
-    fallback: "off"
+    description: `\`off\` removes the one \`${EXTRACTION_MODEL_ID}\` call per write batch that extracts \`memhtml-entity\` metas the ops did not declare; \`MEMHTML_LLM=off\` removes it too. On by default, like MEMHTML_EMBED. It changes what a write STORES: extracted entities land in the files as if authored, and the write itself never waits on or fails with the model. A failed extraction is a logged warning and an unextracted batch.`,
+    fallback: "on"
   },
   {
     name: "OTEL_EXPORTER_OTLP_ENDPOINT",
