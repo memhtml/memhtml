@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.11.2...memhtml-v0.12.0) (2026-09-03)
+
+
+### Features
+
+* **consolidator:** run the agent as an in-process AI SDK tool loop, replacing eve ([0f9c5e2](https://github.com/memhtml/memhtml/commit/0f9c5e25ec2b689519dbbe15f2d66238b86bedaa))
+* **consolidator:** run the agent as an in-process AI SDK tool loop, replacing eve ([40511b7](https://github.com/memhtml/memhtml/commit/40511b7174883d5c094fa27e436b3608aeb4ea70))
+
 ## [0.11.2](https://github.com/memhtml/memhtml/compare/memhtml-v0.11.1...memhtml-v0.11.2) (2026-09-03)
 
 
