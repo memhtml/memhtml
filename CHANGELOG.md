@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.11.1](https://github.com/memhtml/memhtml/compare/memhtml-v0.11.0...memhtml-v0.11.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **cli:** flush the envelope before exiting, so a pipe reader gets all of it ([069e8a8](https://github.com/memhtml/memhtml/commit/069e8a8b844e32707b0ff98637f5f828600f0fde)), closes [#117](https://github.com/memhtml/memhtml/issues/117)
+* **cli:** flush the envelope before exiting; fix(smoke): kill eve's process group ([0f074aa](https://github.com/memhtml/memhtml/commit/0f074aaac56cefb0d156298d7940d1e16cbbc6e5))
+* **smoke:** kill eve's process group so the built server does not outlive the run ([c907ddf](https://github.com/memhtml/memhtml/commit/c907ddfa4862e4a294ac69ae50e2eaf167e6a1da)), closes [#118](https://github.com/memhtml/memhtml/issues/118)
+
 ## [0.11.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.10.0...memhtml-v0.11.0) (2026-09-03)
 
 
