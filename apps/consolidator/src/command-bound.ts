@@ -208,6 +208,14 @@ export const runBoundedCommand = (input: BoundedCommandInput): Promise<BashResul
     let worker: Worker
     try {
       worker = new Worker(input.workerPath, {
+        /**
+         * A worker INHERITS the parent's `execArgv` by default, and this parent is an eve child that
+         * was spawned with `--import` in front of it (`child-tether.ts`). Inheriting that would load
+         * the parent tether inside every worker — a second pid watch on a thread that has no pid —
+         * and any other flag the parent happened to carry travels the same way (`--input-type=module`
+         * broke a probe exactly this way). The worker needs no flags at all.
+         */
+        execArgv: [],
         workerData: {
           command: input.command,
           mountsEncoded: input.mountsEncoded ?? "",

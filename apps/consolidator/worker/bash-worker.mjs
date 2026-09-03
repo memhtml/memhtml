@@ -27,7 +27,14 @@ const run = async () => {
   for (const root of roots) {
     filesystem.mount(
       root.mountPath,
-      new OverlayFs({ root: root.hostPath, mountPoint: "/", readOnly: true })
+      // `maxFileReadSize` is the value `src/mount.ts` sets and explains: unset, a read over 10 MB
+      // throws EFBIG and just-bash reports it to the model as "No such file or directory".
+      new OverlayFs({
+        root: root.hostPath,
+        mountPoint: "/",
+        readOnly: true,
+        maxFileReadSize: Number.MAX_SAFE_INTEGER
+      })
     )
   }
   const bash = new Bash({
