@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.11.2](https://github.com/memhtml/memhtml/compare/memhtml-v0.11.1...memhtml-v0.11.2) (2026-09-03)
+
+
+### Bug Fixes
+
+* **consolidator:** bound every sandbox command and kill the whole eve process tree ([0416420](https://github.com/memhtml/memhtml/commit/04164205524484a7ff48add980888314bf172589))
+* **consolidator:** bound every sandbox command and kill the whole eve process tree ([245f09f](https://github.com/memhtml/memhtml/commit/245f09f68d0801e9be815b647368bcee2e128955))
+* **consolidator:** set the mounted read cap, or a large transcript reads as missing ([797f471](https://github.com/memhtml/memhtml/commit/797f47137d542d477f995d1eb4af4fec10d411e0))
+
 ## [0.11.1](https://github.com/memhtml/memhtml/compare/memhtml-v0.11.0...memhtml-v0.11.1) (2026-09-03)
 
 
