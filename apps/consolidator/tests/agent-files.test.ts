@@ -26,7 +26,40 @@ const read = (...parts: string[]): Promise<string> => readFile(join(agentDir, ..
 const readProse = async (...parts: string[]): Promise<string> =>
   (await read(...parts)).toLowerCase().replace(/\s+/g, " ")
 
+describe("agent/tools/bash.ts", () => {
+  /**
+   * The override that makes the per-command bound real. eve resolves a tool by its file slug, so the
+   * FILE existing at `tools/bash.ts` is what takes the built-in over; spreading the default keeps the
+   * model-facing schema; and `runBoundedCommand` is the worker-backed executor. Any of the three
+   * missing puts the runaway grep back on the server's event loop with a green suite.
+   *
+   * (Mutation: renaming the file, dropping the spread, or calling eve's default executor fails this.)
+   */
+  it("takes over eve's bash with the bounded, worker-backed runner", async () => {
+    const text = await read("tools", "bash.ts")
+    expect(text).toContain('from "eve/tools/defaults"')
+    expect(text).toContain("...defaults")
+    expect(text).toContain("runBoundedCommand(")
+    expect(text).toContain("commandTimeoutMsFrom(process.env)")
+  })
+})
+
 describe("agent/instructions.md", () => {
+  /**
+   * The model has no other way to learn that this shell is slow at context greps, or what a killed
+   * command looks like. Assertions on the decisions: the exit code it will see, the fixed-string
+   * alternative it should reach for, and the per-command framing.
+   */
+  it("tells the agent every bash command is bounded and how to search within the bound", async () => {
+    const text = await readProse("instructions.md")
+    expect(text).toContain("exit code 124")
+    expect(text).toContain("grep -c -f")
+    expect(text).toContain("never ask for context with")
+    expect(text).toContain("fresh shell")
+    // The tool list matches eve 0.44.1's default set: grep and glob are opt-in and never opted into.
+    expect(text).toContain("your tools are `bash` and `read_file`")
+  })
+
   /** eve REQUIRES this file. Its absence is a build failure, so assert it exists and is real. */
   it("exists and is substantial", async () => {
     const text = await read("instructions.md")

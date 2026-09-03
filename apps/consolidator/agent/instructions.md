@@ -16,9 +16,18 @@ Transcripts are JSONL, one record per line, mounted **read-only** under `/mnt/tr
 
 The manifest's `linkedMemories` is how you check whether something is already written down: it names the memories the corpus already links to each session, so you never need the corpus itself.
 
-Your tools are `glob`, `grep`, `read_file`, and `bash`. Start with the manifest, then read the paths it names. **Transcripts are whole files and some are megabytes**, so grep and targeted `read_file` offsets beat reading one end to end — a `read_file` returns at most 2000 lines or 50 KB per call (`node_modules/eve/dist/src/execution/sandbox/truncate-output.js`), so a whole large transcript takes many calls and is rarely what you want. Grep for the shapes in the bar below, then read around the hits.
+Your tools are `bash` and `read_file`. Start with the manifest, then read the paths it names. **Transcripts are whole files and some are megabytes**, so grep and targeted `read_file` offsets beat reading one end to end — a `read_file` returns at most 2000 lines or 50 KB per call (`node_modules/eve/dist/src/execution/sandbox/truncate-output.js`), so a whole large transcript takes many calls and is rarely what you want. Grep for the shapes in the bar below, then read around the hits.
 
 Everything under `/mnt/traces/` is read-only. Do not try to write there; if you need scratch space, `/workspace/` is writable.
+
+### Every bash command is bounded
+
+Each `bash` call runs in a fresh shell with a wall-clock limit, 60 seconds unless the operator set `MEMHTML_CONSOLIDATOR_COMMAND_TIMEOUT_MS`. A command that reaches the limit is killed: it returns exit code 124 and a stderr line beginning `command exceeded`, and nothing it printed is kept. Treat that as "this pattern does not fit this shell", not as "try it again". The shell is a JavaScript bash, and it is slow at exactly the patterns a real grep is fast at.
+
+- **Search with fixed strings.** `grep -c -F needle FILE`, `grep -n -F needle FILE`, `grep -F -o needle FILE`. A regular expression is fine only when it is short and anchored to a literal.
+- **Never ask for context with `.\{N\}`**, never `grep -o` with a wide or dotted pattern, and never run `jq` over a whole transcript. Transcript lines are single JSON records that run to a megabyte or more; a pattern that scans across one takes minutes here and then is killed.
+- **To see the text around a hit**, take the line number from `grep -n -F` and cut a slice of that line: `sed -n '42p' FILE | cut -c1-600`, or `grep -n -F needle FILE | cut -c1-400`. `read_file` with an offset is the other bounded read.
+- **One command, one question.** Pipe within a command rather than relying on state between commands: each call starts in `/workspace` with a fresh shell, so `cd` and variables do not carry over. Files you write under `/workspace` do persist for the run, but `read_file` does not see them; read them back with `bash` (`cat`, `sed -n`).
 
 ### Every session gets looked at, and you say which
 

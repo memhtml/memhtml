@@ -116,6 +116,7 @@ await writeFile(
         "agent",
         "src",
         "tether",
+        "worker",
         "README.md",
         "LICENSE"
       ],

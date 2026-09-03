@@ -38,6 +38,16 @@ export interface ReadOnlyRoot {
   readonly hostPath: string
 }
 
+/**
+ * The largest single file a mounted root will read, in bytes.
+ *
+ * `2**53-1`, which is what eve passes for its own sandbox filesystem
+ * (node_modules/eve/dist/src/execution/sandbox/bindings/just-bash-runtime.js). See
+ * {@link mountReadOnlyRoots} for the measurement that makes an unset cap a correctness bug rather
+ * than a safety margin.
+ */
+export const MAX_MOUNTED_FILE_READ_BYTES = Number.MAX_SAFE_INTEGER
+
 /** The composed filesystem, plus the roots that reached it in mount order. */
 export interface MountedFilesystem {
   /** Hand this to `just-bash`'s `Bash`/`Sandbox`, or return it from eve's `filesystem` factory. */
@@ -151,6 +161,22 @@ export const readOnlyRootsProblem = (roots: ReadonlyArray<ReadOnlyRoot>): string
  * is what preserves them. The default is an `InMemoryFs`, which is what a standalone caller wants
  * and what `MountableFs` would have defaulted to anyway.
  *
+ * ## The read cap has to be set, or a large transcript reads as a MISSING FILE
+ *
+ * `OverlayFs` caps a single read at `maxFileReadSize`, default 10 MB, and over that it throws
+ * `EFBIG`. just-bash's commands do not pass that code through: measured 2026-09-03 against the
+ * installed 3.4.2, `grep -c -F needle` on an 11.5 MB transcript answered
+ * `No such file or directory` while `ls -la` on the same path printed its 11553767 bytes. With the
+ * cap raised, the same command returned its count in 357 ms.
+ *
+ * That is worse than a bounded read, because the consolidator's instructions tell the agent that a
+ * transcript it cannot open is a session to leave out of the read receipt — so every session whose
+ * transcript grew past 10 MB was silently unreadable and looked absent, and the largest sessions are
+ * exactly the ones a cross-session pattern lives in. So the cap is stated here, at the value eve
+ * itself uses for its own `ReadWriteFs` (`2**53-1`, in its just-bash binding): these mounts are
+ * read-only host directories, and the bound that matters is the per-command wall clock
+ * (`command-bound.ts`), not a file size.
+ *
  * @throws {SandboxMountInvalid} when {@link readOnlyRootsProblem} rejects the roots.
  */
 export const mountReadOnlyRoots = (input: {
@@ -164,7 +190,12 @@ export const mountReadOnlyRoots = (input: {
   for (const root of input.roots) {
     filesystem.mount(
       root.mountPath,
-      new OverlayFs({ root: root.hostPath, mountPoint: "/", readOnly: true })
+      new OverlayFs({
+        root: root.hostPath,
+        mountPoint: "/",
+        readOnly: true,
+        maxFileReadSize: MAX_MOUNTED_FILE_READ_BYTES
+      })
     )
   }
   return { filesystem, roots: [...input.roots] }

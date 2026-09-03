@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { promisify } from "node:util"
-import { Bash, type IFileSystem, MountableFs, OverlayFs, ReadWriteFs } from "just-bash"
+import { Bash, type IFileSystem, InMemoryFs, MountableFs, OverlayFs, ReadWriteFs } from "just-bash"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import {
@@ -47,6 +47,12 @@ beforeAll(async () => {
   await writeFile(join(corpus, "areas", "a.html"), "<article><p><mark>alpha</mark></p></article>")
   await writeFile(join(corpus, "root.html"), "<article><p><mark>root</mark></p></article>")
   await writeFile(join(traces, "s1.jsonl"), '{"type":"user"}\n')
+  /**
+   * Over `OverlayFs`'s 10 MB default read cap, which is the whole subject of the read-cap case below.
+   * A real transcript is one JSON record per line and the fixture keeps that shape, because a
+   * command reads whole lines.
+   */
+  await writeFile(join(traces, "big.jsonl"), `{"text":"${"z".repeat(11 * 1024 * 1024)}"}\n`)
 })
 
 afterAll(async () => {
@@ -142,6 +148,35 @@ describe("read-only is enforced, not declared", () => {
       roots: [{ mountPath: "/mnt/memhtml", hostPath: corpus }]
     })
     await expect(filesystem.writeFile("/mnt/memhtml/pwn.html", "x")).rejects.toThrow(/EROFS/)
+  })
+
+  /**
+   * The read cap, which is a CORRECTNESS property rather than a limit: unset, `OverlayFs` throws
+   * `EFBIG` past 10 MB and just-bash reports that to a command as "No such file or directory", so an
+   * oversized transcript looks absent instead of unreadable — and the consolidator's instructions
+   * tell the agent to drop a session whose transcript it cannot open. Measured 2026-09-03 on an
+   * 11.5 MB transcript: `ls -la` printed its size while `grep -c -F` said the file did not exist.
+   *
+   * The first assertion is the REPRODUCTION against a default-capped overlay, so the second cannot
+   * pass vacuously; both drive the installed just-bash rather than a description of it.
+   *
+   * (Mutation: dropping `maxFileReadSize` from `mountReadOnlyRoots` makes the second block report the
+   * same "No such file" as the first.)
+   */
+  it("reads a file past the 10 MB default cap, which an uncapped overlay reports as missing", async () => {
+    const guestPath = "/mnt/traces/big.jsonl"
+    const uncapped = new MountableFs({ base: new InMemoryFs() })
+    uncapped.mount("/mnt/traces", new OverlayFs({ root: traces, mountPoint: "/", readOnly: true }))
+    const missed = await new Bash({ fs: uncapped }).exec(`grep -c -F zzz ${guestPath}`)
+    expect(missed.exitCode).not.toBe(0)
+    expect(missed.stderr).toContain("No such file or directory")
+
+    const { filesystem } = mountReadOnlyRoots({
+      roots: [{ mountPath: "/mnt/traces", hostPath: traces }]
+    })
+    const found = await new Bash({ fs: filesystem }).exec(`grep -c -F zzz ${guestPath}`)
+    expect(found.exitCode).toBe(0)
+    expect(found.stdout.trim()).toBe("1")
   })
 
   it("refuses a write from inside bash", async () => {

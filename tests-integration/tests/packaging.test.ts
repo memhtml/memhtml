@@ -96,6 +96,18 @@ const ASSET_CLAIMS: ReadonlyArray<AssetClaim> = [
     from: "apps/consolidator/tether",
     resolvedIn: "apps/consolidator/src/child-tether.ts",
     needle: 'join(packageRoot(), "tether", "parent-tether.mjs")'
+  },
+  /**
+   * The bounded `bash` tool runs each command on a worker thread whose entry is this FILE: the client
+   * resolves it and hands the path to the server on its environment, and `new Worker(path)` loads it.
+   * A module bundled into `dist/` would leave that path pointing at nothing, with a green unit suite
+   * and every sandbox command failing on the first live night (the 2026-09-03 stall's fix).
+   */
+  {
+    path: "worker",
+    from: "apps/consolidator/worker",
+    resolvedIn: "apps/consolidator/src/command-bound.ts",
+    needle: 'join(packageRoot(), "worker", "bash-worker.mjs")'
   }
 ]
 
