@@ -71,43 +71,15 @@ const ASSET_CLAIMS: ReadonlyArray<AssetClaim> = [
     needle: '"..", "guest", "corpus.mjs"'
   },
   /**
-   * eve compiles `agent/` in a build of its own and reaches the consolidator's TypeScript by relative
-   * path, so `src/` ships as SOURCE and the two travel together at their original depth.
+   * The consolidator's system prompt, read as a FILE at run time (`src/instructions.ts`) because the
+   * docs site reproduces it verbatim and one authored Markdown file is what both read. A prompt bundled
+   * into `dist/` as a string would leave the file the docs gate compares against unshipped.
    */
   {
-    path: "agent",
-    from: "apps/consolidator/agent",
-    resolvedIn: "apps/consolidator/src/client.ts",
-    needle: 'resolve(dirname(fileURLToPath(import.meta.url)), "..")'
-  },
-  {
-    path: "src",
-    from: "apps/consolidator/src",
-    resolvedIn: "apps/consolidator/agent/sandbox/sandbox.ts",
-    needle: '"../../src/mount.js"'
-  },
-  /**
-   * Loaded with `node --import` in front of every spawned eve child, so what ships must be a FILE at
-   * a resolvable path — a module bundled into `dist/` would leave the spawn's `--import` argument
-   * pointing at nothing, with a green unit suite (issue #100).
-   */
-  {
-    path: "tether",
-    from: "apps/consolidator/tether",
-    resolvedIn: "apps/consolidator/src/child-tether.ts",
-    needle: 'join(packageRoot(), "tether", "parent-tether.mjs")'
-  },
-  /**
-   * The bounded `bash` tool runs each command on a worker thread whose entry is this FILE: the client
-   * resolves it and hands the path to the server on its environment, and `new Worker(path)` loads it.
-   * A module bundled into `dist/` would leave that path pointing at nothing, with a green unit suite
-   * and every sandbox command failing on the first live night (the 2026-09-03 stall's fix).
-   */
-  {
-    path: "worker",
-    from: "apps/consolidator/worker",
-    resolvedIn: "apps/consolidator/src/command-bound.ts",
-    needle: 'join(packageRoot(), "worker", "bash-worker.mjs")'
+    path: "prompts",
+    from: "apps/consolidator/prompts",
+    resolvedIn: "apps/consolidator/src/instructions.ts",
+    needle: 'join(packageRoot(), "prompts", "instructions.md")'
   }
 ]
 
@@ -128,16 +100,6 @@ const DEPENDENCY_FILE_CLAIMS: ReadonlyArray<DependencyFileClaim> = [
     declaredIn: "packages/html",
     resolvedIn: "packages/html/src/detect.ts",
     needle: 'requireModule("highlight.js")'
-  },
-  /**
-   * eve's CLI is SPAWNED, so what matters is that its bin is a real file at a resolvable path. Reached
-   * through `eve/package.json` because eve's `exports` map declares no `./bin/*` subpath.
-   */
-  {
-    dependency: "eve",
-    declaredIn: "apps/consolidator",
-    resolvedIn: "apps/consolidator/src/agent-build.ts",
-    needle: 'require.resolve("eve/package.json")'
   }
 ]
 
@@ -297,7 +259,7 @@ describe("every run-time path resolution in shipped source is declared", () => {
     const scanned: string[] = []
     const undeclared: string[] = []
     for (const dir of BUNDLED_PACKAGES) {
-      for (const sub of ["src", "agent"]) {
+      for (const sub of ["src"]) {
         for (const path of await filesUnder(posix.join(dir, sub))) {
           scanned.push(path)
           if (!(await sourceOf(path)).includes("import.meta.url")) continue

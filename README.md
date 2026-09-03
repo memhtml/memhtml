@@ -338,21 +338,21 @@ The layering is strict and TypeScript project references enforce it. `@memhtml/c
 
 None of them is published. Every workspace package is `private`, and `mise run package:assemble` bundles the libraries and the binary-bearing apps into the single `memhtml` package that carries the two binaries — the docs site and the integration-test harness stay outside the bundle (`tsdown.config.ts` names the exact set). The table below is a map of the source, not a list of things to install. `RELEASING.md` covers how the artifact is built and what must stay outside the bundle.
 
-| Package                 | What it owns                                                                    |
-| ----------------------- | ------------------------------------------------------------------------------- |
-| `@memhtml/contracts`    | Schemas, the closed vocabularies, errors, path algebra. Zero I/O.               |
-| `@memhtml/domain`       | Pure math: retention, decay, RRF, MMR, PageRank, the anti-merge guards.         |
-| `@memhtml/html`         | The memory file format: parse, serialize, hash, surgical head editors.          |
-| `@memhtml/store`        | The git-backed file store. One commit per operation, typed conflicts.           |
-| `@memhtml/index`        | SQLite schema, the git-driven indexer, four-arm RRF retrieval, the state plane. |
-| `@memhtml/traces`       | Streaming JSONL parser over `~/.claude`, with a size+mtime+offset watermark.    |
-| `@memhtml/sleep`        | The curation phases of `SLEEP_PHASES`, each an isolated commit.                 |
-| `@memhtml/llm`          | Bedrock: Cohere embeddings and forced-tool structured output.                   |
-| `@memhtml/eval`         | The fixture corpus generator and the refusable discrimination gate.             |
-| `@memhtml/cli`          | The `memhtml` binary, the envelope contract, and the one composition root.      |
-| `@memhtml/mcp`          | The `memhtml-mcp` stdio server: 15 tools, 3 resources.                          |
-| `@memhtml/consolidator` | The sandboxed eve agent that distills candidate memories from raw transcripts.  |
-| `@memhtml/docs`         | The documentation site.                                                         |
+| Package                 | What it owns                                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `@memhtml/contracts`    | Schemas, the closed vocabularies, errors, path algebra. Zero I/O.                                                   |
+| `@memhtml/domain`       | Pure math: retention, decay, RRF, MMR, PageRank, the anti-merge guards.                                             |
+| `@memhtml/html`         | The memory file format: parse, serialize, hash, surgical head editors.                                              |
+| `@memhtml/store`        | The git-backed file store. One commit per operation, typed conflicts.                                               |
+| `@memhtml/index`        | SQLite schema, the git-driven indexer, four-arm RRF retrieval, the state plane.                                     |
+| `@memhtml/traces`       | Streaming JSONL parser over `~/.claude`, with a size+mtime+offset watermark.                                        |
+| `@memhtml/sleep`        | The curation phases of `SLEEP_PHASES`, each an isolated commit.                                                     |
+| `@memhtml/llm`          | Bedrock: Cohere embeddings and forced-tool structured output.                                                       |
+| `@memhtml/eval`         | The fixture corpus generator and the refusable discrimination gate.                                                 |
+| `@memhtml/cli`          | The `memhtml` binary, the envelope contract, and the one composition root.                                          |
+| `@memhtml/mcp`          | The `memhtml-mcp` stdio server: 15 tools, 3 resources.                                                              |
+| `@memhtml/consolidator` | The agent that distills candidate memories from raw transcripts: an AI SDK tool loop over bounded transcript tools. |
+| `@memhtml/docs`         | The documentation site.                                                                                             |
 
 ## Development
 

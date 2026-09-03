@@ -76,9 +76,7 @@ for (const required of [
   "dist/memhtml-mcp.mjs",
   "migrations",
   "guest",
-  "agent",
-  "src",
-  "tether"
+  "prompts"
 ]) {
   if (!existsSync(join(STAGING, required))) {
     throw new Error(`dist-package/${required} is missing; run \`pnpm package:assemble\``)
@@ -108,18 +106,7 @@ await writeFile(
        * importable, so declaring an entry point would promise a surface no test covers and no
        * consumer asked for. Adding one later is a minor bump — removing one would be a major.
        */
-      files: [
-        "dist",
-        "migrations",
-        "state-migrations",
-        "guest",
-        "agent",
-        "src",
-        "tether",
-        "worker",
-        "README.md",
-        "LICENSE"
-      ],
+      files: ["dist", "migrations", "state-migrations", "guest", "prompts", "README.md", "LICENSE"],
       dependencies: Object.fromEntries(
         Object.entries(dependencies).sort(([a], [b]) => a.localeCompare(b))
       ),

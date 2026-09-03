@@ -20,7 +20,7 @@
  *
  * With `--live` it additionally drives the two edges that reach the network, which is the only way to
  * prove them from an install: Bedrock embeddings, the sleep phases that call a model, and the
- * consolidator distilling a transcript through eve. Those three are the whole of what the default mode
+ * consolidator distilling a transcript through the model. Those three are the whole of what the default mode
  * cannot see, so `--live` is the difference between "every command answers" and "every command works".
  * It needs `AWS_BEARER_TOKEN_BEDROCK` (or SigV4 keys, or an LLM proxy on `MEMHTML_LLM_BASE_URL`) and
  * it spends real tokens.
@@ -119,8 +119,7 @@ const STDERR_TAIL_CHARS = 400
 /**
  * The END of what a child wrote, which is where a dying one says why.
  *
- * The same rule `apps/consolidator/src/child-stderr.ts` states for the two children the consolidator
- * spawns: a message rendered from the HEAD of a child's output shows its banner.
+ * A message rendered from the HEAD of a child's output shows its banner, not its last words.
  */
 const tail = (text) => text.slice(-STDERR_TAIL_CHARS).trim()
 
@@ -270,7 +269,6 @@ const main = async () => {
     const sleep = await checkSleepLifecycle({ bin, work, env })
     await checkEveryMcpTool({ mcpBin, env })
     await checkEveryResource({ mcpBin, env, sleep })
-    await checkAgentBuild({ consumer, env })
     if (LIVE) await checkLiveBedrock({ bin, work, env })
   } finally {
     await rm(work, { recursive: true, force: true })
@@ -944,7 +942,7 @@ const checkLiveBedrock = async ({ bin, work, env }) => {
     const phase = (slept.phases ?? []).find((entry) => entry.phase === "trace-consolidation")
     const counts = phase?.counts ?? {}
     /**
-     * `batch` proves the transcript qualified, `candidates` proves eve ran and the model answered.
+     * `batch` proves the transcript qualified, `candidates` proves the model ran and answered.
      *
      * Two channels ride along, because every way this check fails reports `candidates=0` and the counts
      * alone cannot say which: the phase's own `detail` separates "the agent found nothing" from "the
@@ -959,161 +957,6 @@ const checkLiveBedrock = async ({ bin, work, env }) => {
       detail: `llmCalls=${String(slept.llmCalls)} batch=${String(counts.batch)} candidates=${String(counts.candidates)} written=${String(counts.written)}${why}${ok ? "" : `\n     ${tail(stderr)}`}`
     }
   })
-}
-
-/**
- * The consolidator's agent: built out of `node_modules`, then booted.
- *
- * The most fragile path in the artifact and the only one the CLI commands above cannot reach — the
- * credential preflight returns before it, so a credential-free run never touches it. Without this the
- * whole eve chain is unproven: dropping `src/` from the assembled package leaves the other ten checks
- * green (measured).
- *
- * Both halves matter. `eve build` succeeding proves `agent/` resolved `../../src/*.js`. `eve start`
- * answering proves the build has the INLINED shape — built from inside `node_modules` it also exits 0
- * and then dies on an unsettled top-level await, so a build that merely succeeds proves nothing.
- */
-const checkAgentBuild = async ({ consumer, env }) => {
-  /**
-   * The installed package root, which is what the bundle's own `packageRoot()` resolves to: the
-   * emitted code sits in `dist/`, so `..` from there is here, and `agent/` and `src/` sit beside it.
-   */
-  const installed = join(consumer, "node_modules", "memhtml")
-  let appRoot
-  await check("the agent builds outside node_modules", async () => {
-    const { Effect } = await import(
-      join(consumer, "node_modules", "effect", "dist", "index.js")
-    ).catch(() => import("effect"))
-    // The bundle exports nothing, so the staged SOURCE is imported instead. It is the same file eve
-    // compiles, and importing it is how this tier reaches a path no CLI command can (the credential
-    // preflight returns before consolidation).
-    const { resolveAgentAppRoot, eveBinPath } = await import(
-      join(REPO_ROOT, "apps", "consolidator", "dist", "agent-build.js")
-    )
-    /**
-     * `process.env`, not the child `env` above: this call runs IN THIS PROCESS, and the cache location
-     * is read from the ambient environment. Passing it only to spawned children left a 17 MB build in
-     * the developer's real `~/.cache` on every run.
-     */
-    const before = process.env.XDG_CACHE_HOME
-    process.env.XDG_CACHE_HOME = env.XDG_CACHE_HOME
-    try {
-      appRoot = await Effect.runPromise(
-        resolveAgentAppRoot({ packageRoot: installed, configured: undefined, eveBin: eveBinPath() })
-      )
-    } finally {
-      if (before === undefined) delete process.env.XDG_CACHE_HOME
-      else process.env.XDG_CACHE_HOME = before
-    }
-    return {
-      ok: !appRoot.includes("node_modules") && appRoot.startsWith(env.XDG_CACHE_HOME),
-      detail: appRoot
-    }
-  })
-
-  if (appRoot === undefined) {
-    record("the built agent server answers its health route", false, "no app root to start")
-    return
-  }
-
-  await check("the built agent server answers its health route", async () => {
-    const eveBin = join(consumer, "node_modules", "eve", "bin", "eve.js")
-    const port = 47500 + Math.floor(process.pid % 500)
-    const traces = join(consumer, "traces")
-    await exec("mkdir", ["-p", join(traces, "projects", "-smoke")])
-    await writeFile(join(traces, "projects", "-smoke", "s1.jsonl"), "{}\n")
-    /**
-     * `detached: true` puts `eve start` at the head of its own process group, so the `finally` below
-     * can kill the GROUP. `eve start` is a supervisor and the server it builds is a grandchild; a
-     * SIGKILL to the supervisor alone orphaned that server on every run — 27 of them, the oldest two
-     * days old, were found on the dev box on 2026-09-02 (issue #118). Production does not have this
-     * hole: the real client spawns through `child-tether.ts`, and the server exits with its parent.
-     */
-    const child = spawn(
-      process.execPath,
-      [eveBin, "start", "--host", "127.0.0.1", "--port", String(port)],
-      {
-        cwd: appRoot,
-        detached: true,
-        stdio: ["ignore", "ignore", "pipe"],
-        env: {
-          ...env,
-          MEMHTML_SANDBOX_MOUNTS: JSON.stringify([{ mountPath: "/mnt/traces", hostPath: traces }]),
-          MEMHTML_CONSOLIDATOR_RUN_SECRET: "smoke-secret-not-a-credential",
-          AWS_REGION: env.AWS_REGION ?? "us-east-1"
-        }
-      }
-    )
-    /**
-     * eve's own stderr, which is the only place a failed boot says why.
-     *
-     * A `pipe` nobody reads is worse than `ignore` twice over: the reason is lost, and a child that
-     * wrote past the pipe's ~64 KiB buffer would BLOCK on the write and read as a hang. `eve start`
-     * failing on a relocated build writes one line and exits 1, so a check that reported only the exit
-     * code sent an operator to look for a cause the child had already handed over. Production does not
-     * have this hole — `startFailureReason` in `apps/consolidator/src/client.ts` carries the tail into
-     * its typed failure — so this is the script catching up to the client.
-     */
-    let stderr = ""
-    child.stderr.setEncoding("utf8")
-    child.stderr.on("data", (chunk) => {
-      stderr = (stderr + chunk).slice(-64 * 1024)
-    })
-    try {
-      const deadline = Date.now() + 120_000
-      while (Date.now() < deadline) {
-        if (child.exitCode !== null)
-          return {
-            ok: false,
-            detail: `eve start exited ${String(child.exitCode)} — ${tail(stderr)}`
-          }
-        const answer = await fetch(`http://127.0.0.1:${String(port)}/eve/v1/health`)
-          .then((response) => response.json())
-          .catch(() => null)
-        if (answer !== null) {
-          /**
-           * The WHOLE documented body, which is what `healthy()` in
-           * `apps/consolidator/src/client.ts` enforces in production: `ok` alone is a field any
-           * generic HTTP server can return, so a check that stopped there would pass this gate on a
-           * listener that is not eve — and this is the one gate whose subject is the artifact. The
-           * `workflowId` VALUE is not pinned; it embeds eve's own package and entry names.
-           */
-          const ready =
-            answer.ok === true &&
-            answer.status === "ready" &&
-            typeof answer.workflowId === "string" &&
-            answer.workflowId !== ""
-          return {
-            ok: ready,
-            detail: `status=${String(answer.status)} workflowId=${String(answer.workflowId)}`
-          }
-        }
-        await new Promise((done) => setTimeout(done, 1_000))
-      }
-      // A server that is alive and not answering says so on stderr too, or says nothing — and
-      // "nothing" is itself the finding, so the tail is carried either way.
-      return { ok: false, detail: `never became healthy — ${tail(stderr)}` }
-    } finally {
-      killGroup(child)
-    }
-  })
-}
-
-/**
- * Kill a detached child and everything it spawned. A negative pid addresses the process group the
- * child leads; the fallback covers a child that never got a pid (spawn failed) or one whose group is
- * already gone, where only the direct kill has anything left to do.
- */
-const killGroup = (child) => {
-  if (typeof child.pid === "number") {
-    try {
-      process.kill(-child.pid, "SIGKILL")
-      return
-    } catch {
-      // The group is gone or was never created; fall through to the direct kill.
-    }
-  }
-  child.kill("SIGKILL")
 }
 
 /**

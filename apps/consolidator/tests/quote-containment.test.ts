@@ -127,10 +127,10 @@ afterAll(async () => {
 })
 
 const reachable = (...sessionIds: ReadonlyArray<string>): ReadonlyArray<ReachableTranscript> =>
-  sessionIds.map((sessionId) => ({
-    entry: { sessionId, filePath: paths.get(sessionId) ?? join(root, `${sessionId}.jsonl`) },
-    guestPath: `/mnt/traces/${sessionId}.jsonl`
-  }))
+  sessionIds.map((sessionId) => {
+    const filePath = paths.get(sessionId) ?? join(root, `${sessionId}.jsonl`)
+    return { entry: { sessionId, filePath }, hostPath: filePath }
+  })
 
 /** One quote cited from one session, in either list — the smallest answer this check judges. */
 const answerQuoting = (
@@ -286,7 +286,7 @@ describe("fabricatedQuoteReason still REFUSES a fabricated quote", () => {
     const reason = await reasonFor(answerQuoting("session-gone", PLAIN), [
       {
         entry: { sessionId: "session-gone", filePath: join(root, "not-written.jsonl") },
-        guestPath: "/mnt/traces/not-written.jsonl"
+        hostPath: join(root, "not-written.jsonl")
       }
     ])
     expect(reason).toContain("could not be re-read")

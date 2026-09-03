@@ -15,10 +15,7 @@
   },
   "files": [
     "dist",
-    "agent",
-    "src",
-    "tether",
-    "worker",
+    "prompts",
     "!dist/.tsbuildinfo"
   ],
   "exports": {
@@ -32,9 +29,7 @@
     "dev": "tsc -b --watch",
     "typecheck": "tsc --noEmit -p tsconfig.check.json",
     "lint": "biome check src tests",
-    "test": "vitest run",
-    "build:agent": "eve build",
-    "dev:agent": "eve dev"
+    "test": "vitest run"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "5.0.61",
@@ -42,7 +37,6 @@
     "@memhtml/contracts": "workspace:*",
     "ai": "7.0.77",
     "effect": "catalog:",
-    "eve": "0.44.1",
     "just-bash": "3.4.2",
     "zod": "4.4.3"
   },

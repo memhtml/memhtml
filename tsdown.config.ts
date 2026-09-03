@@ -29,9 +29,8 @@ import { defineConfig } from "tsdown"
  *
  * - `migrations/`, `state-migrations/` — `new URL("../migrations", import.meta.url)`
  * - `guest/corpus.mjs` — read as bytes by `memhtml exec`
- * - `agent/`, `src/` — eve compiles these; `agent/` reaches `../../src/*.js`, so the two travel
- *   together at their original depth. They are SOURCE on purpose, and `agent-build.ts` explains why
- *   the build cannot happen inside `node_modules`.
+ * - `prompts/instructions.md` — the consolidator's system prompt, read as a file from
+ *   `join(packageRoot(), "prompts", "instructions.md")` in `apps/consolidator/src/instructions.ts`
  */
 
 const WORKSPACE_PACKAGES = [
@@ -110,7 +109,7 @@ export default defineConfig({
    * `migrations/index/migrations/0001_files.sql` — a directory that exists, contains no `.sql` at its
    * top level, and therefore applies zero migrations. The symptom was `no such table: files` on the
    * first write, three steps away from the cause. A directory `from` mirrors its contents, which is
-   * what `agent/sandbox/` and `agent/channels/` need and what the flat sets get anyway.
+   * what the flat sets get anyway.
    *
    * `tests-integration/tests/packaging.test.ts` asserts each of these lands where the code looks for
    * it, resolved the way the code spells the path.
@@ -122,12 +121,8 @@ export default defineConfig({
     { from: "packages/index/migrations", to: OUT_DIR },
     { from: "packages/index/state-migrations", to: OUT_DIR },
     { from: "apps/cli/guest", to: OUT_DIR },
-    { from: "apps/consolidator/agent", to: OUT_DIR },
-    { from: "apps/consolidator/src", to: OUT_DIR },
-    // Loaded by `node --import` in front of every spawned eve child; a path, never a module import.
-    { from: "apps/consolidator/tether", to: OUT_DIR },
-    // The bounded bash tool's worker entry: loaded by `new Worker(path)`, so a file, never a module import.
-    { from: "apps/consolidator/worker", to: OUT_DIR },
+    // The consolidator's system prompt, read as a FILE at run time (`src/instructions.ts`).
+    { from: "apps/consolidator/prompts", to: OUT_DIR },
     { from: "README.md", to: OUT_DIR },
     { from: "LICENSE", to: OUT_DIR }
   ]

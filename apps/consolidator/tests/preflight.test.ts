@@ -124,7 +124,6 @@ describe("consolidate() preflight ordering", () => {
   it("fails with ConsolidatorCredentialsMissing before touching the filesystem or spawning", async () => {
     const consolidator = makeConsolidator({
       env: EMPTY,
-      appRoot: "/nonexistent/app/root",
       traceRoot: "/nonexistent/trace/root"
     })
 
@@ -175,7 +174,6 @@ describe("consolidate() preflight ordering", () => {
   it("returns an empty result for an empty batch without spawning a server", async () => {
     const consolidator = makeConsolidator({
       env: { AWS_BEARER_TOKEN_BEDROCK: "test" },
-      appRoot: "/nonexistent/app/root",
       traceRoot: "/nonexistent/trace/root"
     })
     const result = await Effect.runPromise(consolidator.consolidate({ transcripts: [] }))

@@ -9,7 +9,7 @@
     "outDir": "dist-check",
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "agent/**/*.ts", "vitest.config.ts"],
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"],
   "references": [
     {
       "path": "../../packages/contracts"
