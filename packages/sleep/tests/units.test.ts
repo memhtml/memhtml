@@ -6,12 +6,15 @@ import { describe, expect, it } from "vitest"
 import { isolate } from "../src/batch.js"
 import { phaseTrailers } from "../src/commit.js"
 import {
+  appendPendingMarks,
   dependentsOf,
   HARD_PREREQUISITES,
   isSleepPhase,
+  isStateWriteMark,
   isSweepPhase,
   LLM_PHASES,
   NON_COMMITTING_PHASES,
+  parsePendingMarks,
   phaseIndexOf,
   SLEEP_PHASES,
   SWEEP_PHASES,
@@ -1141,6 +1144,36 @@ describe("the generated artifacts", () => {
   })
 })
 
+describe("the pending-mark ledger's record kind", () => {
+  it("round-trips a commitment-below-floor mark and drops a malformed one", () => {
+    const mark = {
+      kind: "commitment-below-floor" as const,
+      sessionId: "s1",
+      statement: "maybe revisit the retry budget",
+      confidence: 0.55,
+      resolved: true,
+      runId: "sleep/2026-09-04",
+      at: "2026-09-04T03:00:00Z"
+    }
+    const ledger = appendPendingMarks(undefined, [mark])
+    expect(parsePendingMarks(ledger).marks).toEqual([mark])
+    // Dedup on the rendered line, like every other kind: recording it twice appends nothing.
+    expect(appendPendingMarks(ledger, [mark])).toBe(ledger)
+    // A confidence that is not a finite number, or a resolved that is not a boolean, is not a mark.
+    const malformed = [
+      JSON.stringify({ ...mark, confidence: "0.55" }),
+      JSON.stringify({ ...mark, confidence: Number.NaN }),
+      JSON.stringify({ ...mark, resolved: "no" }),
+      JSON.stringify({ ...mark, statement: "" })
+    ].join("\n")
+    expect(parsePendingMarks(malformed).marks).toEqual([])
+    expect(isStateWriteMark(mark)).toBe(false)
+    expect(
+      isStateWriteMark({ kind: "session-consolidated", sessionId: "s1", runId: "r", at: "t" })
+    ).toBe(true)
+  })
+})
+
 describe("the run report", () => {
   it("leads with what changed and names every failure above the table", () => {
     const html = renderReport({
@@ -1185,6 +1218,62 @@ describe("the run report", () => {
     expect(html).toContain("<summary>")
     // The report is NOT a memory: no `memhtml-*` head, so it cannot enter retrieval.
     expect(html).not.toContain("memhtml-type")
+  })
+
+  it("lists the commitments the floor refused under a fold, with what a re-score needs", () => {
+    const report = {
+      runId: "sleep/2026-09-04",
+      branch: "sleep/2026-09-04",
+      baseSha: "abc",
+      headSha: "def",
+      dryRun: false,
+      llmCalls: 1,
+      phases: []
+    }
+    const ledger = appendPendingMarks(undefined, [
+      {
+        kind: "session-consolidated",
+        sessionId: "s1",
+        runId: "sleep/2026-09-04",
+        at: "2026-09-04T03:00:00Z"
+      },
+      {
+        kind: "commitment-below-floor",
+        sessionId: "s1",
+        statement: "maybe <revisit> the retry budget",
+        confidence: 0.55,
+        resolved: false,
+        runId: "sleep/2026-09-04",
+        at: "2026-09-04T03:00:00Z"
+      },
+      {
+        kind: "commitment-below-floor",
+        sessionId: "s2",
+        statement: "possibly archived the old runbooks",
+        confidence: 0.4,
+        resolved: true,
+        runId: "sleep/2026-09-04",
+        at: "2026-09-04T03:00:00Z"
+      }
+    ])
+    const marks = parsePendingMarks(ledger).marks
+    const html = renderReport(report, marks)
+    expect(html).toContain("2 commitments scored below the floor")
+    expect(html).toContain("session <code>s2</code>, stated as done")
+    // Escaped, quoted, and carrying the three fields a re-score needs.
+    expect(html).toContain("<q>maybe &lt;revisit&gt; the retry budget</q>")
+    expect(html).toContain('<data value="0.55">0.55</data>')
+    expect(html).toContain("session <code>s1</code>, open")
+    // Only the record kind is rendered; the watermark beside it is merge's business.
+    expect(html).not.toContain("session-consolidated")
+    // No fold at all when the ledger holds no refused commitment.
+    expect(
+      renderReport(
+        report,
+        marks.filter((mark) => mark.kind !== "commitment-below-floor")
+      )
+    ).not.toContain("below the floor")
+    expect(renderReport(report)).not.toContain("below the floor")
   })
 
   it("says so on a dry run rather than describing a branch that does not exist", () => {
