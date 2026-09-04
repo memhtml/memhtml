@@ -1758,6 +1758,80 @@ describe("search: the facet scope", () => {
   })
 })
 
+describe("the polarity step between fusion and MMR", () => {
+  /**
+   * The wiring, end to end, over the offline embedder. A claim-only pair sits below `TWIN_COSINE`
+   * under the bag-of-words fake, so the twins share a body long enough to make them near-copies
+   * (measured 0.977 with a shared forty-word body), which is also the shape of a real flipped twin: the
+   * same memory with one word inverted. Asserted through BOTH entry points, since `recall` has no MMR
+   * and shows the order directly in its fold.
+   *
+   * The fixture is built so FUSION puts the flipped twin first: its claim carries two query terms the
+   * target's lacks (`streamfleet indexer`) and it is the newer file, so it leads the lexical, vector,
+   * and recency arms. Only the polarity step can move the target above it, which is what makes this
+   * a pin rather than a pass-through (bypassing the step in `retrieval.ts` fails it).
+   */
+  const SHARED_BODY =
+    "The analyzer chain runs after tokenization and before scoring. It reads the interval list the " +
+    "streamfleet indexer emits for each document, walks the list once in ordinal order, and writes the " +
+    "result back beside the document so the searcher never recomputes it at query time."
+
+  const twins = (): ReadonlyArray<SeedFile> => [
+    {
+      path: "resources/search/analyzer-chain-negated.html",
+      html: memoryHtml({
+        title: "The analyzer chain does not merge intervals",
+        claim:
+          "The analyzer chain does not merge five intervals per pass of the streamfleet indexer.",
+        body: SHARED_BODY,
+        memoryType: "semantic",
+        updatedAt: "2026-07-31T00:00:00Z"
+      })
+    },
+    {
+      path: "resources/search/analyzer-chain-merges.html",
+      html: memoryHtml({
+        title: "The analyzer chain merges intervals",
+        claim: "The analyzer chain merges five intervals per pass.",
+        body: SHARED_BODY,
+        memoryType: "semantic",
+        updatedAt: "2026-07-29T00:00:00Z"
+      })
+    },
+    ...corpus()
+  ]
+
+  let repo: FixtureRepo
+
+  beforeEach(async () => {
+    repo = await makeFixtureRepo()
+    await repo.commit(twins(), "seed the corpus with a flipped-twin pair")
+  })
+
+  afterEach(() => repo.cleanup())
+
+  it("ranks the target above its negation-flipped twin in search and in the recall fold", async () => {
+    const outcome = await withIndexed(repo, ({ retrieval }) =>
+      Effect.gen(function* () {
+        const query = "analyzer chain five intervals per pass streamfleet indexer"
+        const found = yield* retrieval.search({ query, limit: 10 })
+        const pack = yield* retrieval.recall({ query })
+        return {
+          hits: found.hits.map((hit) => hit.path),
+          fold: pack.memories.disclosed.map((entry) => entry.path)
+        }
+      })
+    )
+    const target = "resources/search/analyzer-chain-merges.html"
+    const flipped = "resources/search/analyzer-chain-negated.html"
+    expect(outcome.hits).toContain(target)
+    expect(outcome.hits).toContain(flipped)
+    expect(outcome.hits.indexOf(target)).toBeLessThan(outcome.hits.indexOf(flipped))
+    expect(outcome.fold).toContain(target)
+    expect(outcome.fold.indexOf(target)).toBeLessThan(outcome.fold.indexOf(flipped))
+  })
+})
+
 describe("the archived pointer behind an empty scope", () => {
   /**
    * Issue #130: a sleep run's compress folded two daily journals into a canonical and archived both, and a

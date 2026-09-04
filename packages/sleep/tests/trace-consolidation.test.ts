@@ -33,7 +33,7 @@ import {
   scriptedConsolidator,
   withCommitments
 } from "../src/testing.js"
-import { appliedWatermarks, applyLedger, pendingSessions } from "./abort-fixture.js"
+import { appliedWatermarks, applyLedger, pendingMarks, pendingSessions } from "./abort-fixture.js"
 import {
   DEDUP_CORPUS,
   type Fixture,
@@ -2077,6 +2077,132 @@ describe("trace-consolidation mints tasks from commitments", () => {
           const open = yield* detectedIn(fixture)
           expect(open).toHaveLength(1)
           expect(open[0]?.claim).toContain("raise the retry budget")
+
+          /**
+           * Counted AND recorded (issue #131). The refused commitment is in the run's committed ledger
+           * with everything a re-score needs, so the floor's decision is reviewable rather than a
+           * number. Read at HEAD, so this also proves the ledger reached the branch.
+           */
+          const refused = (yield* pendingMarks(fixture, `sleep/${DATE}`)).filter(
+            (mark) => mark.kind === "commitment-below-floor"
+          )
+          expect(refused).toEqual([
+            {
+              kind: "commitment-below-floor",
+              sessionId: "session-a",
+              statement: "maybe revisit the retry budget",
+              confidence: COMMITMENT_FLOOR - 0.01,
+              resolved: false,
+              runId: `sleep/${DATE}`,
+              at: expect.any(String)
+            }
+          ])
+          // The at-floor commitment was admitted, so it is NOT in the ledger as refused.
+          expect(refused.some((mark) => mark.statement.includes("raise"))).toBe(false)
+
+          // `merge` applies the whole ledger: the record kind is applied as nothing, the watermark
+          // beside it still lands, and the count covers both.
+          expect(yield* applyLedger(fixture, `sleep/${DATE}`)).toBe(2)
+          expect((yield* appliedWatermarks(fixture)).map((row) => row.session_id)).toContain(
+            "session-a"
+          )
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("commits the below-floor record even when the night minted, closed, and read nothing else", async () => {
+    /**
+     * The path where the ledger would otherwise never reach the branch: no session reported read (so no
+     * watermark and no watermark commit), no admissible commitment (so nothing staged). The refused
+     * commitment must still be committed, or a night that only refused leaves nothing behind.
+     */
+    const consolidator = scriptedConsolidator(() =>
+      withCommitments(
+        [
+          commitment({
+            statement: "possibly archive the old runbooks",
+            confidence: COMMITMENT_FLOOR - 0.2,
+            resolved: true,
+            evidence: { sessionId: "session-a", quote: "I archived the old runbooks, I think" }
+          })
+        ],
+        { analyzedSessionIds: [] }
+      )
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture)
+          const outcome = yield* traceConsolidation(envFor(fixture))
+
+          expect(outcome.counts.commitmentsBelowFloor).toBe(1)
+          expect(outcome.counts.commitmentTasks).toBe(0)
+          expect(outcome.counts.consolidated).toBe(0)
+          expect(outcome.commitSha).not.toBeNull()
+
+          const marks = yield* pendingMarks(fixture, `sleep/${DATE}`)
+          expect(marks.map((mark) => mark.kind)).toEqual(["commitment-below-floor"])
+          expect(marks[0]).toMatchObject({
+            statement: "possibly archive the old runbooks",
+            resolved: true,
+            sessionId: "session-a"
+          })
+          expect(yield* pendingSessions(fixture, `sleep/${DATE}`)).toEqual([])
+          // A record-only ledger applies as nothing and still counts: no watermark row appears.
+          expect(yield* applyLedger(fixture, `sleep/${DATE}`)).toBe(1)
+          expect(yield* appliedWatermarks(fixture)).toEqual([])
+        }),
+      { seed: DEDUP_CORPUS, consolidator }
+    )
+  })
+
+  it("carries the watermark AND the refusal in one commit with the full counts on a quiet night", async () => {
+    /**
+     * The ordinary night: a session was read, nothing was distilled, nothing was admitted, one
+     * commitment fell under the floor. Both marks ride ONE commit whose counts trailer carries the
+     * whole shape, because `sleep review` reads that trailer and a commit that named only the refusal
+     * would hide `consolidated` from the review of the very night it describes.
+     */
+    const consolidator = scriptedConsolidator(() =>
+      withCommitments(
+        [
+          commitment({
+            statement: "maybe revisit the retry budget",
+            confidence: COMMITMENT_FLOOR - 0.01,
+            evidence: { sessionId: "session-a", quote: "we might revisit the retry budget" }
+          })
+        ],
+        { analyzedSessionIds: ["session-a"] }
+      )
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          yield* oneSession(fixture)
+          const before = yield* commitCount(fixture)
+          const outcome = yield* traceConsolidation(envFor(fixture))
+
+          expect(yield* commitCount(fixture)).toBe(before + 1)
+          expect(outcome.counts.consolidated).toBe(1)
+          expect(outcome.counts.commitmentsBelowFloor).toBe(1)
+          expect(outcome.counts.commitmentTasks).toBe(0)
+
+          const marks = yield* pendingMarks(fixture, `sleep/${DATE}`)
+          expect(marks.map((mark) => mark.kind).sort()).toEqual([
+            "commitment-below-floor",
+            "session-consolidated"
+          ])
+          const trailers = yield* fixture.deps.git
+            .logTrailers("HEAD~1..HEAD", TRAILER_COUNTS)
+            .pipe(Effect.orDie)
+          expect(trailers).toHaveLength(1)
+          const counts = JSON.parse(trailers[0]?.values[0] ?? "") as Record<string, number>
+          expect(counts.consolidated).toBe(1)
+          expect(counts.commitmentsBelowFloor).toBe(1)
+          expect(counts.candidates).toBe(0)
         }),
       { seed: DEDUP_CORPUS, consolidator }
     )
