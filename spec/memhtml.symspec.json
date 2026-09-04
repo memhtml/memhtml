@@ -423,7 +423,7 @@
       "status": "implemented",
       "systemName": "cli",
       "systemResponse": "derive the manifest, help, and agent guide from the one commands table",
-      "updatedAt": "2026-09-04T20:00:00.000Z",
+      "updatedAt": "2026-09-04T19:29:00.000Z",
       "verificationMethod": "test",
       "verificationNote": "AGENTS.md byte-lock; suggestion strings validated through parseArgv since T3. Per-command help is the third projection: `memhtml help <command>` / `--help` / `-h` render the same COMMANDS entry as a cli.help envelope (piped or --json) or Markdown (terminal), apps/cli/src/help.ts; helpData carries the manifest's own entry verbatim (apps/cli/tests/help.test.ts), every table example passes parseArgv + validate, and the help path builds no layer (the uncreated-repo probe).",
       "verifies": []
