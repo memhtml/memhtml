@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.13.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.12.0...memhtml-v0.13.0) (2026-09-04)
+
+
+### Features
+
+* **cli:** per-command help, Markdown on a terminal and a cli.help envelope when piped ([59b1f31](https://github.com/memhtml/memhtml/commit/59b1f31176dde56d8c98bc6a4558e17709192490))
+* **cli:** per-command help, Markdown on a terminal and a cli.help envelope when piped ([638589a](https://github.com/memhtml/memhtml/commit/638589a3af4d047b4f7f3fac4471c94161cdae0e)), closes [#133](https://github.com/memhtml/memhtml/issues/133)
+* **index:** point an empty scope at its archived matches, and keep dated journals out of compress's archive ([30c114e](https://github.com/memhtml/memhtml/commit/30c114e519899d8704f198e848a5afd7cee96fbb))
+* **index:** point an empty scope at its archived matches, and keep dated journals out of compress's archive ([5d7f30d](https://github.com/memhtml/memhtml/commit/5d7f30dd2fa4185ea3e37211b6876c8079ce2d65)), closes [#130](https://github.com/memhtml/memhtml/issues/130)
+* **sleep:** keep below-floor commitments as reviewable ledger records, not only a count ([3796a17](https://github.com/memhtml/memhtml/commit/3796a173b69d758b508cb570c8a76aaa088ea0e5))
+* **sleep:** keep below-floor commitments as reviewable ledger records, not only a count ([b88201e](https://github.com/memhtml/memhtml/commit/b88201e4ea1a65af093a6e312e1d34776563879b)), closes [#131](https://github.com/memhtml/memhtml/issues/131)
+
+
+### Bug Fixes
+
+* **index:** demote a negation-flipped twin below its agreeing twin between fusion and MMR ([b6ef61d](https://github.com/memhtml/memhtml/commit/b6ef61d7fc0674e9850cb367b73b783729f8f59f))
+* **index:** demote a negation-flipped twin below its agreeing twin between fusion and MMR ([5c0afd1](https://github.com/memhtml/memhtml/commit/5c0afd1cb2db3fb37a5f488804b5297bffae9965)), closes [#132](https://github.com/memhtml/memhtml/issues/132)
+* **index:** leave a flipped twin alone when fusion already ranks it below every agreeing copy ([f033ab8](https://github.com/memhtml/memhtml/commit/f033ab8dc97eebed1dab0084c47afa38b46fc4f3))
+
 ## [0.12.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.11.2...memhtml-v0.12.0) (2026-09-03)
 
 

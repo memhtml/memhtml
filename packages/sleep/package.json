@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/sleep",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "private": true,
   "description": "Sleep-cycle phases as git commits.",
   "type": "module",
