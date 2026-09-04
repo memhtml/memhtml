@@ -684,12 +684,15 @@ export const markPromoted = (
   ]).pipe(Effect.asVoid)
 
 /**
- * One mark as the statement that performs it. The merge-time half of the ledger, one arm per kind.
+ * One state-write mark as the statement that performs it. The merge-time half of the ledger, one arm
+ * per write kind.
  *
- * A total switch over the union, so a `PendingMark` arm added without an applier is a compile error
- * rather than a mark a merge silently drops. That direction matters more than the reverse: a kind with
- * no producer is dead code a reader can find, while a kind with no applier is a write a run earns,
- * commits, and never makes.
+ * A total switch over `StateWriteMark`, so a write kind added to `PendingMark` without an applier is a
+ * compile error rather than a mark a merge silently drops. That direction matters more than the
+ * reverse: a kind with no producer is dead code a reader can find, while a kind with no applier is a
+ * write a run earns, commits, and never makes. The record kinds are not in this union at all:
+ * `applyPendingMarks` filters them out with `isStateWriteMark` before reaching here, because there is
+ * nothing to perform for them.
  */
 const statementFor = (
   mark: StateWriteMark
