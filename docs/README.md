@@ -18,7 +18,7 @@ These pages describe what the system is and how its parts connect.
 
 These pages list the calls an agent can make and the shape each one returns.
 
-- [CLI](reference/cli.md): all 36 subcommands of the `memhtml` binary, with flags, error codes, and environment variables.
+- [CLI](reference/cli.md): all 39 subcommands of the `memhtml` binary, with flags, error codes, and environment variables. The count is the length of the `COMMANDS` array, which also generates `AGENTS.md`, so re-derive it from `apps/cli/src/commands.ts:159` rather than from this line.
 - [RPC tools](reference/rpc-tools.md): the 15 MCP tools and 3 resources of `memhtml-mcp`.
 - [Public API](reference/public-api.md): the 30 most-imported library symbols with verbatim signatures.
 
@@ -31,7 +31,7 @@ These pages trace what runs when a given event arrives.
 
 ## Diagrams
 
-- [Components](diagrams/architecture/components.md): the eight Effect service tags and their edges, as a class diagram.
+- [Components](diagrams/architecture/components.md): the MCP toolkit and the seven Effect services it reaches, with their edges, as a class diagram. `MemhtmlToolkit` is a `Toolkit.make`; the seven services are the `Context.Service` tags.
 - [Dependency graph](diagrams/structural/dependency-graph.md): internal packages and external dependencies on one page.
 - [Sequences](diagrams/behavioral/sequences.md): call order for write, search, and a sleep run.
 
