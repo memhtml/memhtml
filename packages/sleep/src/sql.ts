@@ -62,13 +62,6 @@ export interface CorpusRow {
 }
 
 /**
- * Every active memory, oldest first.
- *
- * `created_at ASC` affects the outcome. Dedup-merge orients each pair so the OLDER file is the keeper,
- * and a stable oldest-first read makes that orientation reproducible across runs on an unchanged
- * corpus. Which file survives a night follows from it.
- */
-/**
  * The facet names that make a memory a DATED RECORD: one whose identity is a time slot rather than a
  * claim. A daily journal carries `day=2026-09-02`; two journals share vocabulary and entities, so they
  * cluster, but each is the only record of its day and neither restates the other.
@@ -118,6 +111,13 @@ export const summarizedDatedRecords = (
     )
     .pipe(Effect.map((rows) => new Set(rows.map((row) => row.path))))
 
+/**
+ * Every active memory, oldest first.
+ *
+ * `created_at ASC` affects the outcome. Dedup-merge orients each pair so the OLDER file is the keeper,
+ * and a stable oldest-first read makes that orientation reproducible across runs on an unchanged
+ * corpus. Which file survives a night follows from it.
+ */
 export const activeCorpus = (
   db: DatabaseShape
 ): Effect.Effect<ReadonlyArray<CorpusRow>, StorageFailure> =>
