@@ -105,6 +105,18 @@ describe("the polarity step between fusion and MMR", () => {
     expect(scored.at(-1)?.score).toBeCloseTo((1 / 3) * POLARITY_DEMOTION, 10)
   })
 
+  it("leaves a flipped twin alone when fusion already placed it below every agreeing copy", () => {
+    // Nothing to correct: the twin is last already, and halving it would only move it past unrelated
+    // candidates further down a longer pool.
+    const scored = polarityScored("the chain merges intervals", [
+      row("a/target.html", "The chain merges intervals.", BASE),
+      row("b/unrelated.html", "The cache expires hourly.", FAR),
+      row("c/flipped.html", "The chain does not merge intervals.", TWIN)
+    ])
+    expect(order(scored)).toEqual(["a/target.html", "b/unrelated.html", "c/flipped.html"])
+    expect(scored.map(({ score }) => score)).toEqual([1, 1 / 2, 1 / 3])
+  })
+
   it("judges polarity on the body when a file has no claim", () => {
     const scored = polarityScored("the chain merges intervals", [
       row("a/flipped.html", "", TWIN, "The chain does not merge intervals."),

@@ -17,7 +17,9 @@ import { cosine, negationDivergent } from "@memhtml/domain"
  * near-identical in the vector space ({@link TWIN_COSINE}). That is the shape of a flipped twin and
  * of very little else; a lone negated memory with no affirmative near-copy is left exactly where the
  * fusion put it. The demoted twin lands below its lowest-ranked agreeing twin, scaled by
- * {@link POLARITY_DEMOTION}, so it stays in the pool and stays visible rather than vanishing.
+ * {@link POLARITY_DEMOTION}, so it stays in the pool and stays visible rather than vanishing. A twin
+ * that fusion already placed below every agreeing near-copy is left alone: there is nothing to
+ * correct, and scaling it anyway would move it past unrelated candidates for no reason.
  *
  * Symmetric in the query: a query that itself carries a negation demotes the AFFIRMATIVE twin, which
  * is what a caller asking "why does X not merge" wants above the fold.
@@ -95,7 +97,10 @@ export const polarityScored = <Row extends PolarityRow>(
       const otherScore = scores[other] as number
       if (floor === undefined || otherScore < floor) floor = otherScore
     }
-    if (floor !== undefined) scores[at] = Math.min(scores[at] as number, floor) * POLARITY_DEMOTION
+    // Only a twin ABOVE at least one agreeing near-copy is out of order; one already below them all
+    // keeps its fused score.
+    if (floor !== undefined && (scores[at] as number) > floor)
+      scores[at] = floor * POLARITY_DEMOTION
   }
 
   return rows
