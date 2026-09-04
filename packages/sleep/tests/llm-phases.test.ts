@@ -1430,6 +1430,180 @@ describe("compress", () => {
     )
   })
 
+  /**
+   * Three daily journals: `episodic`, each carrying a `day` facet, each the only record of its day.
+   * They cluster (shared vocabulary, mutual links) exactly as issue #130 describes, and the same
+   * retention shape as `COMMUNITY` so the pass bands them for compress.
+   */
+  const JOURNALS: ReadonlyArray<SeedFile> = ["01", "02", "03"].map((day, at, all) => ({
+    path: `areas/journal/2026-09-${day}.html`,
+    html: memoryHtml({
+      title: `Journal for 2026-09-${day}`,
+      claim: `Day ${String(at + 1)}: moved the analyzer chain behind the streamfleet indexer.`,
+      body: "The analyzer chain reads the interval list the streamfleet indexer emits and merges it.",
+      memoryType: "episodic",
+      // Ten days before the run: `episodic` decays on a 10-day half-life, so a May stamp would land in
+      // the evict band and never reach compress. This lands in the compress band, like `COMMUNITY`.
+      createdAt: `2026-07-2${day.slice(1)}T00:00:00Z`,
+      confidence: "0.50",
+      importance: "4",
+      facets: [
+        { name: "doc-type", value: "daily-journal" },
+        { name: "day", value: `2026-09-${day}` }
+      ],
+      links: all
+        .filter((other) => other !== day)
+        .map((other) => ({
+          rel: "memhtml-relates-to",
+          href: `/areas/journal/2026-09-${other}.html`
+        }))
+    })
+  }))
+
+  it("summarizes dated episodic records without archiving them, and links them from the canonical", async () => {
+    /**
+     * Issue #130. Compress is lossy by design and that is right for near-duplicate semantic memories;
+     * a journal is not a restatement of the day before. So the canonical is written as an ENTRY POINT:
+     * every member stays active at its own path, the facet address `day=<date>` keeps resolving, and
+     * the canonical links to the members it summarizes rather than superseding them.
+     */
+    const model = scriptedModel(() =>
+      value({
+        title: "Journals, days 1 to 3",
+        claim: "Three days went to moving the analyzer chain behind the streamfleet indexer.",
+        paragraphs: ["Day one started it, day two moved it, day three finished it."],
+        absorbedKeys: ["m1", "m2", "m3"]
+      })
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* compress(envFor(fixture))
+
+          expect(outcome.counts.canonicals).toBe(1)
+          expect(outcome.counts.archived).toBe(0)
+          expect(outcome.counts.kept).toBe(3)
+          expect(outcome.commitSha).not.toBeNull()
+
+          const canonical = "areas/journal/journals-days-1-to-3.html"
+          const doc = yield* parseMemory((yield* atHead(fixture, canonical)) ?? "")
+          expect(doc.links.filter((one) => one.rel === "supersedes")).toHaveLength(0)
+          const related = doc.links.filter((one) => one.rel === "relates_to").map((one) => one.href)
+          expect(related.sort()).toEqual(JOURNALS.map((file) => `/${file.path}`).sort())
+
+          // Every journal is still live at its own path, and none was archived under any name.
+          for (const file of JOURNALS) {
+            expect(yield* atHead(fixture, file.path)).toBeDefined()
+            expect(yield* atHead(fixture, archivePathFor(file.path, 2026))).toBeUndefined()
+          }
+        }),
+      { seed: JOURNALS, model }
+    )
+  })
+
+  it("does not fold the same journals again on the next run: the part_of stamp is the mark", async () => {
+    /**
+     * Being kept changes none of a journal's retention inputs, so without a mark the next night's pass
+     * would band the same three, spend a model call, and write `journals-days-1-to-3-2.html`. The
+     * `part_of` edge each kept member carries to its active canonical is that mark, read back through
+     * the index the next run's preflight rebuilds. The second run here reindexes, runs compress again,
+     * and must make no model call and write nothing.
+     */
+    const model = scriptedModel(() =>
+      value({
+        title: "Journals, days 1 to 3",
+        claim: "Three days went to moving the analyzer chain behind the streamfleet indexer.",
+        paragraphs: ["Day one started it, day two moved it, day three finished it."],
+        absorbedKeys: ["m1", "m2", "m3"]
+      })
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const first = yield* compress(envFor(fixture))
+          expect(first.counts.canonicals).toBe(1)
+          expect(first.counts.kept).toBe(3)
+          const callsAfterFirst = model.calls.length
+          expect(callsAfterFirst).toBeGreaterThan(0)
+
+          // Each kept journal now carries the mark, at HEAD.
+          for (const file of JOURNALS) {
+            const doc = yield* parseMemory((yield* atHead(fixture, file.path)) ?? "")
+            expect(doc.links.filter((one) => one.rel === "part_of").map((one) => one.href)).toEqual(
+              ["/areas/journal/journals-days-1-to-3.html"]
+            )
+          }
+
+          yield* fixture.reindex()
+          const second = yield* compress(envFor(fixture, false, "2026-08-03"))
+          expect(second.counts.canonicals).toBe(0)
+          expect(second.counts.kept).toBe(0)
+          // The canonical itself may band (it is semantic and in the community), but alone it is no
+          // batch; the three journals are out of the band, so nothing reaches the model.
+          expect(second.counts.batches).toBe(0)
+          expect(model.calls.length).toBe(callsAfterFirst)
+          expect(
+            yield* atHead(fixture, "areas/journal/journals-days-1-to-3-2.html")
+          ).toBeUndefined()
+        }),
+      { seed: JOURNALS, model }
+    )
+  })
+
+  it("archives the semantic members of a mixed batch and keeps its dated episodic one", async () => {
+    const journal: SeedFile = {
+      path: "areas/cache/2026-09-01.html",
+      html: memoryHtml({
+        title: "Journal for 2026-09-01",
+        claim: "Day 1: watched the build cache warm from the shared volume on the first request.",
+        body: "Warmup pulls the shared volume manifest and hydrates the local layer store slowly.",
+        memoryType: "episodic",
+        createdAt: "2026-07-23T00:00:00Z",
+        confidence: "0.50",
+        importance: "4",
+        facets: [{ name: "day", value: "2026-09-01" }],
+        links: [
+          { rel: "memhtml-relates-to", href: "/areas/cache/cache-one.html" },
+          { rel: "memhtml-relates-to", href: "/areas/cache/cache-two.html" }
+        ]
+      })
+    }
+    const model = scriptedModel(() =>
+      value({
+        title: "Build cache warmup",
+        claim:
+          "Build cache warmup reads the shared volume manifest, then hydrates the layer store.",
+        paragraphs: ["Warmup is a two-step read: the manifest first, the layer store second."],
+        // Keys follow path order: the journal sorts FIRST under areas/cache.
+        absorbedKeys: ["m1", "m2", "m3", "m4"]
+      })
+    )
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* compress(envFor(fixture))
+
+          expect(outcome.counts.canonicals).toBe(1)
+          expect(outcome.counts.archived).toBe(3)
+          expect(outcome.counts.kept).toBe(1)
+
+          const doc = yield* parseMemory(
+            (yield* atHead(fixture, "areas/cache/build-cache-warmup.html")) ?? ""
+          )
+          expect(doc.links.filter((one) => one.rel === "supersedes")).toHaveLength(3)
+          expect(
+            doc.links.filter((one) => one.rel === "relates_to").map((one) => one.href)
+          ).toEqual([`/${journal.path}`])
+          expect(yield* atHead(fixture, journal.path)).toBeDefined()
+          expect(yield* atHead(fixture, "areas/cache/cache-one.html")).toBeUndefined()
+        }),
+      { seed: [...COMMUNITY, journal], model }
+    )
+  })
+
   it("archives only the members the model names, and never one it omits", async () => {
     const model = scriptedModel(() =>
       value({

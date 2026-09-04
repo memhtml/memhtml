@@ -13,10 +13,12 @@ import { COMPRESS_SYSTEM, CompressSynthesis, compressPrompt } from "../llm.js"
 import { runRetentionPass, type ScoredMemory } from "../retention.js"
 import {
   activeCorpus,
+  datedEpisodicAmong,
   deepGroupingEdges,
   entityClaims,
   isSleepExcluded,
-  memoryEdges
+  memoryEdges,
+  summarizedDatedRecords
 } from "../sql.js"
 import { mineAllBands } from "./relationship-mining.js"
 
@@ -45,6 +47,22 @@ import { mineAllBands } from "./relationship-mining.js"
  * the members, and archiving it would destroy the file just folded into. `excludeSelfSupersede` is
  * the guard, and it exists because that case is reachable whenever the model writes a canonical whose
  * slug matches an existing one.
+ *
+ * **A dated episodic record is summarized by compress, never archived by it** (issue #130). Compress is
+ * lossy by design, and that is the right trade for near-duplicate `semantic` memories that say the same
+ * thing. A daily journal is not a restatement of the day before: it shares vocabulary and entities, so
+ * it clusters, but it is the only record of its day, and a stable facet address (`day=<date>`) has to
+ * keep resolving. So members that are `episodic` and carry a dated facet (`DATED_RECORD_FACETS`) are
+ * absorbed into the canonical, linked from it as `relates_to`, stamped `part_of` the canonical, and
+ * left active; the canonical is an entry point over them rather than a replacement. Members of every
+ * other kind are archived, so one batch can archive its semantic members and keep its dated ones. The
+ * `part_of` stamp is also the idempotence mark: a dated record that already carries one to an active
+ * canonical (`summarizedDatedRecords`), or that this run kept in an earlier pass, is not a candidate
+ * again, because being summarized changes none of its retention inputs and the pass would otherwise
+ * select the same journals every night. This phase is the only one the exemption covers: retention
+ * triage still evicts a dated record whose score falls into the evict band, and dedup-merge still
+ * folds one that clears the near-duplicate floor; both leave the archived file in place, and the
+ * search pointer (`archivedMatches`) is what makes either move legible to a faceted query.
  *
  * `dedup-merge` is a HARD prerequisite. Compressing before duplicates are folded would synthesize a
  * canonical over a pair the merge phase then archives one half of.
@@ -108,6 +126,8 @@ export const ENTITY_LABEL_PREFIX = "entity:"
 
 /** One pass's outcome, folded into the phase totals by the loop. */
 interface PassTally {
+  /** Dated episodic members a canonical was written over and which stayed active. */
+  kept: number
   candidates: number
   communities: number
   entityGroups: number
@@ -228,10 +248,13 @@ export const compress: PhaseBody = (env) =>
      * even that. The set is the half of the taken-path question disk cannot answer; see `free-path.ts`.
      */
     const claimedCanonicals = new Set<string>()
+    /** Dated members this run kept, so a later pass of the same run does not fold them again. */
+    const keptThisRun = new Set<string>()
 
     for (let passAt = 0; passAt < (env.deep === undefined ? 1 : DEEP_COMPRESS_MAX_PASSES); ) {
       passAt += 1
       const pass = yield* runRetentionPass(env.deps.db, env.at)
+      const summarized = yield* summarizedDatedRecords(env.deps.db)
       const banded = pass.scored.filter(
         (entry) =>
           entry.score.action === "compress" &&
@@ -239,7 +262,11 @@ export const compress: PhaseBody = (env) =>
           // A fold rewrites several memories into one canonical claim. Three tasks cannot become
           // one task: each is a separate thing an agent owes, and a synthesis would archive two of
           // them behind a claim that does neither.
-          !isSleepExcluded(entry.row.memory_type)
+          !isSleepExcluded(entry.row.memory_type) &&
+          // A dated record already summarized, tonight or on an earlier night, stays active and out
+          // of the band: its inputs never change by being kept, so nothing else would stop the refold.
+          !summarized.has(entry.row.path) &&
+          !keptThisRun.has(entry.row.path)
       )
 
       /**
@@ -304,6 +331,7 @@ export const compress: PhaseBody = (env) =>
         batches: batches.length,
         canonicals: 0,
         archived: 0,
+        kept: 0,
         skipped: 0,
         failed: 0,
         refused: 0,
@@ -406,18 +434,21 @@ export const compress: PhaseBody = (env) =>
         }
 
         /**
-         * The members are archived FIRST, and the canonical is written only if at least one member was
-         * actually moved. A batch whose members an earlier phase already evicted would otherwise leave a
-         * canonical behind claiming to supersede files it never absorbed.
+         * Dated episodic members are kept active and linked from the canonical; the rest are archived
+         * FIRST, and the canonical is written only if at least one member was actually moved or kept.
+         * A batch whose members an earlier phase already evicted would otherwise leave a canonical
+         * behind claiming to supersede files it never absorbed.
          */
+        const kept = yield* datedEpisodicAmong(env.deps.db, members)
         const archivedPaths: Array<string> = []
         for (const member of members) {
+          if (kept.has(member)) continue
           const archivedPath = yield* archiveFile(env, member, [
             meta("memhtml-superseded-by", hrefFor(canonicalPath))
           ])
           if (archivedPath !== null) archivedPaths.push(archivedPath)
         }
-        if (archivedPaths.length === 0) {
+        if (archivedPaths.length === 0 && kept.size === 0) {
           tally.skipped += 1
           tally.refused += 1
           yield* Effect.logWarning(
@@ -448,8 +479,19 @@ export const compress: PhaseBody = (env) =>
         for (const archivedPath of archivedPaths) {
           yield* stampFile(env, canonicalPath, [link("supersedes", hrefFor(archivedPath))])
         }
+        // The kept members stay where they are. The canonical points at them, and each of them is
+        // stamped `part_of` the canonical: the record that keeps the next pass from folding them again,
+        // and the hop that leads a reader from the journal to its summary. Neither is a supersession, so
+        // `git log --follow` on a journal reads one unbroken life.
+        for (const member of members) {
+          if (!kept.has(member)) continue
+          yield* stampFile(env, canonicalPath, [link("relates_to", hrefFor(member))])
+          yield* stampFile(env, member, [link("part_of", hrefFor(canonicalPath))])
+          keptThisRun.add(member)
+        }
         yield* env.deps.git.add([canonicalPath])
         tally.archived += archivedPaths.length
+        tally.kept += kept.size
         tally.canonicals += 1
 
         const commitSha = yield* commitPhase(
@@ -485,8 +527,8 @@ export const compress: PhaseBody = (env) =>
  * The pass tallies as one counts record. Work counters SUM across passes; `candidates` and
  * `communities` describe the corpus the run STARTED from (the first pass), because a sum of
  * re-scans of one shrinking corpus counts nothing a reviewer can reconcile. On a default
- * single-pass run every key and every number is byte-identical to what this phase has always
- * reported — the deep-only keys appear only when a deep quantity is nonzero or a second pass ran,
+ * single-pass run the keys are the single-pass set plus `kept`, and the deep-only keys appear only
+ * when a deep quantity is nonzero or a second pass ran,
  * which cannot happen without the flag. Response counts are append-only, so the deep keys are
  * additions and no shipped key changes meaning.
  */
@@ -502,6 +544,7 @@ const totalsOf = (passes: ReadonlyArray<PassTally>): Record<string, number> => {
     batches: sum((tally) => tally.batches),
     canonicals: sum((tally) => tally.canonicals),
     archived: sum((tally) => tally.archived),
+    kept: sum((tally) => tally.kept),
     skipped: sum((tally) => tally.skipped),
     failed: sum((tally) => tally.failed),
     refused: sum((tally) => tally.refused),

@@ -68,6 +68,56 @@ export interface CorpusRow {
  * and a stable oldest-first read makes that orientation reproducible across runs on an unchanged
  * corpus. Which file survives a night follows from it.
  */
+/**
+ * The facet names that make a memory a DATED RECORD: one whose identity is a time slot rather than a
+ * claim. A daily journal carries `day=2026-09-02`; two journals share vocabulary and entities, so they
+ * cluster, but each is the only record of its day and neither restates the other.
+ */
+export const DATED_RECORD_FACETS: ReadonlyArray<string> = ["day"]
+
+/**
+ * The paths among `paths` that are dated `episodic` records: the members compress summarizes but never
+ * archives (issue #130). A fold over such members writes its canonical as an entry point and leaves
+ * them active, so a facet address like `day=<date>` keeps resolving.
+ */
+export const datedEpisodicAmong = (
+  db: DatabaseShape,
+  paths: ReadonlyArray<string>
+): Effect.Effect<ReadonlySet<string>, StorageFailure> =>
+  paths.length === 0
+    ? Effect.succeed(new Set<string>())
+    : db
+        .all<{ path: string }>(
+          `SELECT f.path AS path FROM files f
+           WHERE f.memory_type = 'episodic'
+             AND f.path IN (${paths.map(() => "?").join(", ")})
+             AND EXISTS (SELECT 1 FROM file_facets x
+                          WHERE x.path = f.path
+                            AND x.name IN (${DATED_RECORD_FACETS.map(() => "?").join(", ")}))`,
+          [...paths, ...DATED_RECORD_FACETS]
+        )
+        .pipe(Effect.map((rows) => new Set(rows.map((row) => row.path))))
+
+/**
+ * The active paths that already carry an authored `part_of` edge to an ACTIVE file: the dated records
+ * compress has summarized on an earlier run. Compress stamps that edge on every member it keeps, and
+ * this is what keeps the same journals from being re-banded and re-folded into a second canonical the
+ * next night: a kept member's retention inputs do not change by being summarized, so without a mark
+ * the pass would select it again. Read at pass time, so a canonical archived since (its edge then
+ * points at an archived file) releases its members for a fresh fold.
+ */
+export const summarizedDatedRecords = (
+  db: DatabaseShape
+): Effect.Effect<ReadonlySet<string>, StorageFailure> =>
+  db
+    .all<{ path: string }>(
+      `SELECT DISTINCT e.src_path AS path FROM edges e
+       JOIN files f ON f.path = e.src_path AND f.archived = 0
+       JOIN files c ON c.path = e.dst_path AND c.archived = 0
+       WHERE e.rel = 'part_of' AND e.edge_class = 'memory' AND e.derived = 0`
+    )
+    .pipe(Effect.map((rows) => new Set(rows.map((row) => row.path))))
+
 export const activeCorpus = (
   db: DatabaseShape
 ): Effect.Effect<ReadonlyArray<CorpusRow>, StorageFailure> =>

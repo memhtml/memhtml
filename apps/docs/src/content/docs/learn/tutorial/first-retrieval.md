@@ -37,7 +37,9 @@ memhtml search "one writer many readers"
       "salience"
     ],
     "entityScope": null,
-    "scopeEmpty": false
+    "scopeEmpty": false,
+    "archivedMatches": 0,
+    "archived": []
   }
 }
 ```
@@ -48,7 +50,7 @@ Read the three fields beside `hits` before you read the hits themselves.
 
 `degraded: true` means the vector arm did not fire. memhtml surfaces that rather than staying silent, because an agent comparing two searches needs to know that one of them was ranked by fewer signals. Retrieval never errors because Bedrock is down; the search gets narrower instead.
 
-`scopeEmpty` distinguishes an empty corpus from an over-narrow scope. It is `true` only when you named a scope, the scope narrowed the query, and nothing survived it, and it stays `false` for an unscoped empty result. That is the difference between "there is no answer" and "there is a typo in your `--workspace`", and `hits.length` cannot tell you which one you got.
+`scopeEmpty` distinguishes an empty corpus from an over-narrow scope. It is `true` only when you named a scope, the scope narrowed the query, and nothing survived it, and it stays `false` for an unscoped empty result. That is the difference between "there is no answer" and "there is a typo in your `--workspace`", and `hits.length` cannot tell you which one you got. When it is `true`, `archivedMatches` says how many archived memories the same scope still matches and `archived` lists up to `limit` of them with the path that superseded each (or `null`), so a facet over a record that compress or eviction moved into `archive/` points at where it went instead of reading as never written. Both stay at `0` and `[]` otherwise.
 
 `score` is the fused RRF score. It is unitless and comparable only within one result set: a score of 0.5 in one search and 0.5 in another mean nothing to each other.
 

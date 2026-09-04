@@ -1757,3 +1757,181 @@ describe("search: the facet scope", () => {
     expect(scans, `file_facets scanned: ${scans.join(" | ")}`).toEqual([])
   })
 })
+
+describe("the archived pointer behind an empty scope", () => {
+  /**
+   * Issue #130: a sleep run's compress folded two daily journals into a canonical and archived both, and a
+   * faceted search over a real record then answered `hits: []`, `scopeEmpty: true`, and nothing about
+   * why. The pointer is the count of archived rows the SAME scope matches plus, per row, what
+   * superseded it, so an agent can follow the canonical or retry with `includeArchived` instead of
+   * concluding the record never existed.
+   */
+  const JOURNAL = "archive/2026/areas/journal/2026-09-02.html"
+  const CANONICAL = "areas/journal/journals-days-1-2.html"
+
+  const journals = (): ReadonlyArray<SeedFile> => [
+    {
+      path: JOURNAL,
+      html: memoryHtml({
+        title: "Journal for 2026-09-02",
+        claim: "Spent the day moving the analyzer chain behind the streamfleet indexer.",
+        memoryType: "episodic",
+        status: "archived",
+        archivedAt: "2026-09-03T03:00:00Z",
+        updatedAt: "2026-09-03T03:00:00Z",
+        facets: [
+          { name: "doc-type", value: "daily-journal" },
+          { name: "day", value: "2026-09-02" }
+        ]
+      })
+    },
+    {
+      path: CANONICAL,
+      html: memoryHtml({
+        title: "Journals, days 1 to 2",
+        claim: "Two days went to the analyzer chain and the streamfleet indexer.",
+        memoryType: "semantic",
+        updatedAt: "2026-09-03T03:00:00Z",
+        links: [{ rel: "memhtml-supersedes", href: `/${JOURNAL}` }]
+      })
+    },
+    ...corpus()
+  ]
+
+  let repo: FixtureRepo
+
+  beforeEach(async () => {
+    repo = await makeFixtureRepo()
+    await repo.commit(journals(), "seed a compressed journal")
+  })
+
+  afterEach(() => repo.cleanup())
+
+  it("counts the archived rows the scope matches and names what superseded each", async () => {
+    const outcome = await withIndexed(repo, ({ retrieval }) =>
+      Effect.gen(function* () {
+        const scoped = yield* retrieval.search({
+          query: "yesterday's journal",
+          facets: [
+            { name: "doc-type", value: "daily-journal" },
+            { name: "day", value: "2026-09-02" }
+          ],
+          limit: 10
+        })
+        // The same scope, widened the way the pointer suggests: the record is there.
+        const widened = yield* retrieval.search({
+          query: "yesterday's journal",
+          facets: [{ name: "day", value: "2026-09-02" }],
+          includeArchived: true,
+          limit: 10
+        })
+        return { scoped, widened: widened.hits.map((hit) => hit.path), widenedResult: widened }
+      })
+    )
+    expect(outcome.scoped.hits).toEqual([])
+    expect(outcome.scoped.scopeEmpty).toBe(true)
+    expect(outcome.scoped.archivedMatches).toBe(1)
+    expect(outcome.scoped.archived).toEqual([{ path: JOURNAL, supersededBy: CANONICAL }])
+    expect(outcome.widened).toContain(JOURNAL)
+    // Not empty, so no pointer: the fields are the zero shape rather than absent.
+    expect(outcome.widenedResult.scopeEmpty).toBe(false)
+    expect(outcome.widenedResult.archivedMatches).toBe(0)
+    expect(outcome.widenedResult.archived).toEqual([])
+  })
+
+  it("reports zero when the scope matches nothing archived either, so a missing record reads as missing", async () => {
+    const outcome = await withIndexed(repo, ({ retrieval }) =>
+      retrieval.search({
+        query: "yesterday's journal",
+        facets: [{ name: "day", value: "2026-09-09" }],
+        limit: 10
+      })
+    )
+    expect(outcome.scopeEmpty).toBe(true)
+    expect(outcome.archivedMatches).toBe(0)
+    expect(outcome.archived).toEqual([])
+  })
+
+  it("reports null supersession for an archived row nothing replaced, and bounds the list by limit", async () => {
+    await repo.commit(
+      [
+        {
+          path: "archive/2026/areas/journal/2026-09-01.html",
+          html: memoryHtml({
+            title: "Journal for 2026-09-01",
+            claim: "Started on the analyzer chain.",
+            memoryType: "episodic",
+            status: "archived",
+            archivedAt: "2026-09-03T03:00:00Z",
+            facets: [{ name: "doc-type", value: "daily-journal" }]
+          })
+        }
+      ],
+      "an evicted journal nothing superseded"
+    )
+    const outcome = await withIndexed(repo, ({ retrieval }) =>
+      retrieval.search({
+        query: "journal",
+        facets: [{ name: "doc-type", value: "daily-journal" }],
+        limit: 1
+      })
+    )
+    expect(outcome.scopeEmpty).toBe(true)
+    // Both archived journals carry the facet; the count is the whole scope, the list is bounded.
+    expect(outcome.archivedMatches).toBe(2)
+    expect(outcome.archived).toEqual([
+      { path: "archive/2026/areas/journal/2026-09-01.html", supersededBy: null }
+    ])
+  })
+
+  it("stays at the zero shape under asOf, whose lens already admits archived rows", async () => {
+    // Under `asOf` the archived flag did not empty the search; validity did. Counting archived rows
+    // would name a record that did not exist at the asked instant.
+    const outcome = await withIndexed(repo, ({ retrieval }) =>
+      retrieval.search({
+        query: "journal",
+        facets: [{ name: "day", value: "2026-09-02" }],
+        asOf: "2020-01-01T00:00:00Z",
+        limit: 10
+      })
+    )
+    expect(outcome.hits).toEqual([])
+    expect(outcome.scopeEmpty).toBe(true)
+    expect(outcome.archivedMatches).toBe(0)
+    expect(outcome.archived).toEqual([])
+  })
+
+  it("keeps a true count under limit 0, where LIMIT 0 would otherwise drop the window with the rows", async () => {
+    const outcome = await withIndexed(repo, ({ retrieval }) =>
+      retrieval.search({
+        query: "journal",
+        facets: [{ name: "day", value: "2026-09-02" }],
+        limit: 0
+      })
+    )
+    expect(outcome.scopeEmpty).toBe(true)
+    expect(outcome.archivedMatches).toBe(1)
+    expect(outcome.archived).toHaveLength(1)
+  })
+
+  it("stays at the zero shape for an unscoped empty result, which is the corpus's answer", async () => {
+    const bare = await makeFixtureRepo()
+    try {
+      const outcome = await withDb((db) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            bare.commit([{ path: "README.md", html: "# no memories here\n" }], "seed nothing")
+          )
+          yield* indexInto(db, bare, makeFakeEmbedder())
+          const retrieval = makeRetrieval({ db, embeddings: makeFakeEmbedder() })
+          return yield* retrieval.search({ query: "journal" })
+        })
+      )
+      expect(outcome.scopeEmpty).toBe(false)
+      expect(outcome.archivedMatches).toBe(0)
+      expect(outcome.archived).toEqual([])
+    } finally {
+      await bare.cleanup()
+    }
+  })
+})

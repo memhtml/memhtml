@@ -592,7 +592,12 @@ export const ToolHandlers: Layer.Layer<
           degraded: result.degraded,
           arms: result.arms,
           entity_scope: result.entityScope,
-          scope_empty: result.scopeEmpty
+          scope_empty: result.scopeEmpty,
+          archived_matches: result.archivedMatches,
+          archived: result.archived.map((entry) => ({
+            path: entry.path,
+            superseded_by: entry.supersededBy
+          }))
         }
       })
     ),

@@ -196,6 +196,8 @@ export interface MemoryFixture {
   /** `memhtml-alias` values: the other names this file's subject is recorded under. */
   readonly aliases?: ReadonlyArray<string> | undefined
   readonly links?: ReadonlyArray<{ readonly rel: string; readonly href: string }> | undefined
+  /** Authored `<dl>` facets, one `<dt>`/`<dd>` pair each; what `--facet name=value` scopes on. */
+  readonly facets?: ReadonlyArray<{ readonly name: string; readonly value: string }> | undefined
 }
 
 /**
@@ -236,6 +238,12 @@ export const memoryHtml = (fixture: MemoryFixture): string => {
     ...(fixture.links ?? []).map((one) => `<link rel="${one.rel}" href="${one.href}">`)
   ]
   const body = fixture.body === undefined ? "" : ` ${fixture.body}`
+  const facets =
+    fixture.facets === undefined || fixture.facets.length === 0
+      ? ""
+      : `\n<dl>\n${fixture.facets
+          .map((facet) => `<dt>${facet.name}</dt><dd>${facet.value}</dd>`)
+          .join("\n")}\n</dl>`
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -245,7 +253,7 @@ ${metas.join("\n")}
 </head>
 <body>
 <article>
-<p><mark>${fixture.claim}</mark>${body}</p>
+<p><mark>${fixture.claim}</mark>${body}</p>${facets}
 </article>
 </body>
 </html>

@@ -126,13 +126,15 @@ The result carries the answer twice, once as text and once as `structuredContent
       "degraded": true,
       "arms": ["fts", "recency", "salience"],
       "entity_scope": null,
-      "scope_empty": false
+      "scope_empty": false,
+      "archived_matches": 0,
+      "archived": []
     }
   }
 }
 ```
 
-The fields are the same as `memhtml search`'s, spelled in snake_case on this surface: `memory_type`, `updated_at`, `superseded_by`, `scope_empty`, where the CLI's own envelope is camelCase. Read the key from the surface you are on.
+The fields are the same as `memhtml search`'s, spelled in snake_case on this surface: `memory_type`, `updated_at`, `superseded_by`, `scope_empty`, `archived_matches`, where the CLI's own envelope is camelCase. Read the key from the surface you are on.
 
 `degraded`, `arms`, and `scope_empty` mean exactly what they mean on the [CLI](/learn/tutorial/first-retrieval/), and they are on the tool result for the same reason: a client that cannot tell a narrow answer from a complete one will present a narrow one as complete.
 

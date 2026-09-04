@@ -650,7 +650,20 @@ const MemorySearch = Tool.make("memory_search", {
      * result attributable to the scope, and it would be worth nothing if its absence had to be read
      * as `false`.
      */
-    scope_empty: Schema.Boolean
+    scope_empty: Schema.Boolean,
+    /**
+     * How many ARCHIVED memories the same scope matches, when `scope_empty` is true; `0` otherwise.
+     *
+     * The pointer behind an empty scope: eviction and compress move a file into `archive/` and the
+     * default scope excludes it, so a correct facet over a real record answers nothing. A non-zero
+     * count says the address resolves under `include_archived`, and `archived[].superseded_by` names
+     * what replaced each one. Present as a number in every case, like `scope_empty`.
+     */
+    archived_matches: Finite,
+    /** Up to `limit` of those archived paths, sorted, each with what superseded it or `null`. */
+    archived: Schema.Array(
+      Schema.Struct({ path: Schema.String, superseded_by: Schema.NullOr(Schema.String) })
+    )
   })
 })
 
