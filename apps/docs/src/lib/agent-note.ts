@@ -1,4 +1,4 @@
-import type { satteri } from "@astrojs/markdown-satteri"
+import type { MdastPluginDefinition } from "satteri"
 
 /**
  * The `:::agent` container directive: an inline note addressed to an agent rather than to a human.
@@ -39,13 +39,18 @@ export const AGENT_NOTE_CLASS = "memhtml-agent-note"
 /** The directive name. */
 export const AGENT_NOTE_DIRECTIVE = "agent"
 
-type SatteriOptions = NonNullable<Parameters<typeof satteri>[0]>
-type MdastPlugin = NonNullable<SatteriOptions["mdastPlugins"]>[number]
-type DirectiveVisitor = NonNullable<MdastPlugin["containerDirective"]>
 /*
- * Both node types are reached through the installed Sätteri types rather than through `mdast`, which
- * is a transitive dependency and so is not resolvable from this package under pnpm's isolated layout.
+ * The plugin type is Sätteri's own exported definition, not the `mdastPlugins` option type of the
+ * Astro integration. That option takes an ENTRY, and an entry is a definition OR a factory returning
+ * one OR a nested array of either OR a falsy placeholder (`MdastPluginEntry`, `satteri/dist/plugin.d.ts`),
+ * so indexing it with `[number]` yields a union carrying no visitor keys at all. Deriving from the
+ * option type used to work only because `@astrojs/markdown-satteri` declared it as
+ * `MdastPluginDefinition[]` through 0.3.7; 0.3.8 declares it as `MdastPluginList`, which is where
+ * that derivation stopped compiling. `satteri` is a direct dependency of this package, so its types
+ * resolve here under pnpm's isolated layout — unlike `mdast`, which is transitive and does not, and
+ * which is why both node types below are still reached through Sätteri.
  */
+type DirectiveVisitor = NonNullable<MdastPluginDefinition["containerDirective"]>
 type ParagraphNode = Extract<Awaited<ReturnType<DirectiveVisitor>>, { type: "paragraph" }>
 
 /**
@@ -58,7 +63,7 @@ type ParagraphNode = Extract<Awaited<ReturnType<DirectiveVisitor>>, { type: "par
  *
  * The visitor receives a readonly node, so the directive is replaced rather than mutated.
  */
-export const agentNotePlugin = (): MdastPlugin => ({
+export const agentNotePlugin = (): MdastPluginDefinition => ({
   name: "memhtml-agent-note",
   containerDirective(node) {
     if (node.name !== AGENT_NOTE_DIRECTIVE) return
