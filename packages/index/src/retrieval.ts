@@ -10,6 +10,7 @@ import {
   MEMORY_BODY_BUDGET
 } from "./disclosure.js"
 import { sanitizeFtsQuery } from "./fts-query.js"
+import { polarityScored } from "./polarity.js"
 import { buildRrfSql, buildSnippetSql, rrfParams, truncateSnippet } from "./retrieval-sql.js"
 import { assembleScope, type SearchScope } from "./scope.js"
 
@@ -361,11 +362,20 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
        * rank-derived and incomparable across queries, so a monotone substitute is the right input.
        * MMR only needs the ORDER to be right, and reciprocal position preserves it while keeping the
        * penalty term on a comparable scale to the relevance term.
+       *
+       * The polarity step (`polarity.ts`) sits between the two: it assigns that reciprocal-rank score
+       * and then demotes any negation-flipped twin of a better-agreeing candidate. It runs here, on
+       * the hydrated pool, because it needs each candidate's claim text and vector, neither of which
+       * the fused SQL carries.
        */
-      const candidates: ReadonlyArray<MmrCandidate> = rows.map((row, offset) => ({
+      const scored = polarityScored(
+        input.query,
+        rows.map((row) => ({ ...row, vector: decodeVector(row.vec) }))
+      )
+      const candidates: ReadonlyArray<MmrCandidate> = scored.map(({ row, score }) => ({
         path: row.path,
-        score: 1 / (offset + 1),
-        vector: decodeVector(row.vec)
+        score,
+        vector: row.vector
       }))
       const ordered = applyMmr(candidates, limit, MMR_LAMBDA)
       const byPath = new Map(rows.map((row) => [row.path, row]))
@@ -425,7 +435,12 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
         limit: DEFAULT_SEARCH_LIMIT * MMR_POOL_FACTOR,
         vector
       })
-      const rows = yield* hydrate(fused.paths)
+      // The same polarity step `search` applies, so a recall pack and a search over one query agree
+      // on which of two flipped twins comes first.
+      const rows = polarityScored(
+        input.query,
+        (yield* hydrate(fused.paths)).map((row) => ({ ...row, vector: decodeVector(row.vec) }))
+      ).map(({ row }) => row)
 
       const candidates = rows.map(
         (row): DisclosureCandidate => ({
