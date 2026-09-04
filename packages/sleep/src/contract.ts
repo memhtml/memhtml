@@ -325,7 +325,8 @@ export interface MergeReport {
    * Present only on a merge that happened; a refusal applies nothing and reports neither.
    *
    * TWO numbers rather than one, and they answer different questions. `marksPending` is what the
-   * branch earned, `marksApplied` is what the plane took. They agree on every ordinary merge, so a
+   * branch earned, `marksApplied` is what the plane took. A record kind (`commitment-below-floor`)
+   * counts as applied by having reached `main`; it writes no row. They agree on every ordinary merge, so a
    * merge where they disagree is the operator-visible reading of a plane write that did not land —
    * the sessions in the shortfall stay unconsolidated and are re-read on the next cycle, which costs
    * a model call and loses nothing. One number could not distinguish that from a run that earned no
@@ -390,6 +391,34 @@ export type PendingMark =
       readonly canonicalName: string
       readonly at: string
     }
+  /**
+   * A commitment the consolidator extracted that scored below `COMMITMENT_FLOOR`, kept whole.
+   *
+   * A RECORD rather than a deferred write: nothing in the state plane changes when `merge` applies it,
+   * and {@link isStateWriteMark} is what keeps it out of `applyPendingMarks`' statement list. It lives
+   * in the ledger anyway because the ledger is the run's committed, reviewable, branch-scoped record,
+   * and "did not act" and "did not record" are different decisions. The floor exists so a
+   * low-confidence commitment does not mint a task on its own; without the text, the confidence, and
+   * the session beside the count, an operator reading `commitmentsBelowFloor=2` cannot tell a floor
+   * that was rightly conservative from one that dropped a real commitment, and the floor is untunable
+   * (issue #131). The report renders these under a fold; a later run or an operator can re-score them.
+   */
+  | {
+      readonly kind: "commitment-below-floor"
+      readonly sessionId: string
+      readonly statement: string
+      readonly confidence: number
+      readonly resolved: boolean
+      readonly runId: string
+      readonly at: string
+    }
+
+/** The marks that perform a state-plane write when applied. Everything but the record kinds. */
+export type StateWriteMark = Exclude<PendingMark, { readonly kind: "commitment-below-floor" }>
+
+/** True for a mark `merge` executes as SQL; false for a record it carries and applies as nothing. */
+export const isStateWriteMark = (mark: PendingMark): mark is StateWriteMark =>
+  mark.kind !== "commitment-below-floor"
 
 /**
  * Where a run's ledger lives: beside its report, under the same run-id-to-filename rule.
@@ -415,6 +444,16 @@ const renderPendingMark = (mark: PendingMark): string => {
       return JSON.stringify({
         kind: mark.kind,
         sessionId: mark.sessionId,
+        runId: mark.runId,
+        at: mark.at
+      })
+    case "commitment-below-floor":
+      return JSON.stringify({
+        kind: mark.kind,
+        sessionId: mark.sessionId,
+        statement: mark.statement,
+        confidence: mark.confidence,
+        resolved: mark.resolved,
         runId: mark.runId,
         at: mark.at
       })
@@ -522,6 +561,20 @@ const parseOne = (line: string): PendingMark | undefined => {
     return entityType === undefined || aliasName === undefined || canonicalName === undefined
       ? undefined
       : { kind: "entity-promoted", entityType, aliasName, canonicalName, at }
+  }
+  if (fields.kind === "commitment-below-floor") {
+    const sessionId = text(fields.sessionId)
+    const statement = text(fields.statement)
+    const runId = text(fields.runId)
+    const { confidence, resolved } = fields
+    return sessionId === undefined ||
+      statement === undefined ||
+      runId === undefined ||
+      typeof confidence !== "number" ||
+      !Number.isFinite(confidence) ||
+      typeof resolved !== "boolean"
+      ? undefined
+      : { kind: "commitment-below-floor", sessionId, statement, confidence, resolved, runId, at }
   }
   return undefined
 }

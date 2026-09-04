@@ -6,7 +6,7 @@ import type { DatabaseShape } from "@memhtml/index"
 import { STATE_SCHEMA } from "@memhtml/index"
 import { Effect } from "effect"
 
-import type { PendingMark } from "./contract.js"
+import { isStateWriteMark, type PendingMark, type StateWriteMark } from "./contract.js"
 
 /**
  * Every read a phase makes against the index, in one module.
@@ -692,7 +692,7 @@ export const markPromoted = (
  * commits, and never makes.
  */
 const statementFor = (
-  mark: PendingMark
+  mark: StateWriteMark
 ): { readonly sql: string; readonly params: ReadonlyArray<string | number> } => {
   switch (mark.kind) {
     case "session-consolidated":
@@ -747,12 +747,20 @@ const statementFor = (
  * Ledger ORDER is preserved, which is the order `contract.ts`'s `appendPendingMarks` records in: a
  * promotion presumes the counter row its own phase created, and the reverse order would update a row
  * that is not there.
+ *
+ * **Every mark counts as applied, and only the state-write kinds execute SQL.** A record kind
+ * (`commitment-below-floor`) is applied by having been carried to `main`, where the report that renders
+ * it lives, and it has no row to write.
  */
 export const applyPendingMarks = (
   db: DatabaseShape,
   marks: ReadonlyArray<PendingMark>
-): Effect.Effect<number, StorageFailure> =>
-  db.writeAll(marks.map(statementFor)).pipe(Effect.as(marks.length))
+): Effect.Effect<number, StorageFailure> => {
+  const statements = marks.filter(isStateWriteMark).map(statementFor)
+  return (statements.length === 0 ? Effect.void : db.writeAll(statements)).pipe(
+    Effect.as(marks.length)
+  )
+}
 
 /** One corroboration counter on a machine-proposed entity merge. */
 export interface EntityCorroborationRow {

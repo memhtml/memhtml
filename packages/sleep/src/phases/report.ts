@@ -2,7 +2,7 @@ import { SLEEP_REPORTS_DIR } from "@memhtml/store"
 import { Effect } from "effect"
 
 import { commitPhase } from "../commit.js"
-import type { PhaseResult, RunReport } from "../contract.js"
+import { type PhaseResult, type RunReport, readPendingMarks } from "../contract.js"
 import { writeFileBytes } from "../edits.js"
 import { emptyOutcome, type PhaseEnv, type PhaseOutcome, type SleepError } from "../env.js"
 import { renderReport } from "../report.js"
@@ -33,7 +33,10 @@ export const reportPhase =
         phases: executed,
         llmCalls
       }
-      const html = renderReport(report)
+      // The ledger is read from the run's own branch so the below-floor commitments the consolidation
+      // phase recorded are rendered for the reviewer, whether or not that phase committed anything else.
+      const ledger = yield* readPendingMarks(env.deps.git.root, env.runId)
+      const html = renderReport(report, ledger)
 
       const counts = {
         phases: executed.length,

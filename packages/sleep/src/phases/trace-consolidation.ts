@@ -397,6 +397,20 @@ interface CommitmentOutcome {
   /** The tasks whose quotes go in the commit body, and the paths closed. */
   readonly mintedCommitments: ReadonlyArray<CandidateCommitmentLike>
   readonly closedPaths: ReadonlyArray<string>
+  /**
+   * The commitments the floor turned away, whole: what `commitmentsBelowFloor` counts. Recorded in the
+   * run's ledger as `commitment-below-floor` marks so the floor's refusals are reviewable, because a
+   * count alone cannot show whether the floor was rightly conservative or dropped a real commitment.
+   */
+  readonly belowFloorCommitments: ReadonlyArray<BelowFloorCommitment>
+}
+
+/** One commitment the floor refused: enough to re-score it, nothing an operator cannot see anyway. */
+export interface BelowFloorCommitment {
+  readonly sessionId: string
+  readonly statement: string
+  readonly confidence: number
+  readonly resolved: boolean
 }
 
 /** Every count at zero, so a phase that ran no commitment pass still reports the shape. */
@@ -413,7 +427,8 @@ const ZERO_COMMITMENTS: CommitmentOutcome = {
   commitmentsCapped: 0,
   staged: false,
   mintedCommitments: [],
-  closedPaths: []
+  closedPaths: [],
+  belowFloorCommitments: []
 }
 
 /**
@@ -449,6 +464,7 @@ const consolidateCommitments = (
     let belowFloor = 0
     /** Resolved commitments the floor turned away: completions this night declined to apply. */
     let belowFloorCompletions = 0
+    const belowFloorCommitments: Array<BelowFloorCommitment> = []
     const admissible: Array<CandidateCommitmentLike> = []
     for (const [offset, commitment] of commitments.entries()) {
       const refusal = commitmentRefusalFor(commitment)
@@ -480,6 +496,13 @@ const consolidateCommitments = (
          * problem on a night whose only fault was a mislabelled actor.
          */
         if (commitment.resolved) belowFloorCompletions += 1
+        // Kept whole, not only counted: the ledger and the report carry these for review.
+        belowFloorCommitments.push({
+          sessionId: commitmentSession(commitment),
+          statement: commitment.statement,
+          confidence: commitment.confidence,
+          resolved: commitment.resolved
+        })
         continue
       }
       admissible.push(commitment)
@@ -573,7 +596,8 @@ const consolidateCommitments = (
       commitmentsCapped: budget.overflow - overflowBefore,
       staged: minted.length > 0 || refreshed > 0 || closedPaths.length > 0,
       mintedCommitments: minted,
-      closedPaths
+      closedPaths,
+      belowFloorCommitments
     }
   })
 
@@ -993,6 +1017,25 @@ export const traceConsolidation: PhaseBody = (env) =>
     const llmCalls = outcome.success.llmCalls
 
     /**
+     * The answer's shape, at `info`, on EVERY night and not only a failed one. The structured answer is
+     * the one artifact that shows admission quality, so a green night leaves a trace of it beyond the
+     * counts. One line per candidate and commitment, first line only and bounded, so the log stays a
+     * log and never carries a transcript.
+     */
+    yield* Effect.logInfo(
+      `sleep.trace-consolidation answer: ${String(candidates.length)} candidates, ` +
+        `${String(outcome.success.commitments.length)} commitments, ` +
+        `${String(outcome.success.analyzedSessionIds.length)} sessions reported read` +
+        candidates.map((candidate) => `\n  candidate: ${firstLine(candidate.claim)}`).join("") +
+        outcome.success.commitments
+          .map(
+            (commitment) =>
+              `\n  commitment (${commitment.confidence.toFixed(2)}${commitment.resolved ? ", resolved" : ""}): ${firstLine(commitment.statement)}`
+          )
+          .join("")
+    )
+
+    /**
      * The watermark, recorded as a PENDING MARK on the branch and applied by `merge`. It covers exactly
      * the sessions the agent ACTUALLY READ; {@link analyzedFrom} is that set, and it is not `batch`.
      *
@@ -1177,6 +1220,25 @@ export const traceConsolidation: PhaseBody = (env) =>
       outcome.success.commitments,
       batchSessionIds
     )
+    /**
+     * The floor's refusals go into the run's ledger as `commitment-below-floor` records, beside the
+     * watermarks, and are staged with them, so the commitments commit below or the ledger commit at
+     * the end of the phase carries them onto the branch. A record kind rather than a count: the report
+     * renders them for review and `merge` applies them as nothing. The ledger is a SET keyed on the
+     * rendered line while `commitmentsBelowFloor` counts the model's list, so two byte-identical
+     * refusals in one answer count twice and are listed once.
+     */
+    const belowFloorRecorded = yield* recordPendingMarks(
+      env.deps.git.root,
+      env.runId,
+      commitments.belowFloorCommitments.map((refused) => ({
+        kind: "commitment-below-floor" as const,
+        ...refused,
+        runId: env.runId,
+        at: env.at
+      }))
+    )
+    if (belowFloorRecorded) yield* env.deps.git.add([pendingMarksPath(env.runId)])
     if (commitments.staged) {
       const commitSha = yield* commitPhase(
         env,
@@ -1236,17 +1298,31 @@ export const traceConsolidation: PhaseBody = (env) =>
      * second commit to a night that already committed a candidate, because that commit carried the
      * ledger with it.
      */
-    if (pendingRecorded && lastCommit === null) {
+    /**
+     * The ledger commit for a night that staged nothing else: watermarks, below-floor records, or
+     * both. One commit with the FULL counts, so `sleep review` reads `consolidated` beside
+     * `commitmentsBelowFloor` on the quiet night, which is the ordinary night.
+     */
+    if ((pendingRecorded || belowFloorRecorded) && lastCommit === null) {
+      const refused = commitments.belowFloorCommitments.length
       lastCommit = yield* commitPhase(
         env,
         "trace-consolidation",
-        `record ${String(analyzed.length)} consolidated sessions pending review`,
+        refused === 0
+          ? `record ${String(analyzed.length)} consolidated sessions pending review`
+          : `record ${String(analyzed.length)} consolidated sessions, ${String(refused)} commitments below the floor, pending review`,
         counts
       )
     }
 
     return { counts, commitSha: lastCommit, llmCalls }
   })
+
+/** The first line of a model-authored text, bounded, for a log line that must stay one line per item. */
+const firstLine = (text: string): string => {
+  const line = (text.split("\n")[0] ?? "").trim()
+  return line.length > 160 ? `${line.slice(0, 157)}...` : line
+}
 
 /**
  * The commitment half of the counts, from the pass's outcome.

@@ -1,6 +1,6 @@
 import { escapeAttribute, escapeText } from "@memhtml/html"
 
-import { type PhaseResult, phaseIndexOf, type RunReport } from "./contract.js"
+import { type PendingMark, type PhaseResult, phaseIndexOf, type RunReport } from "./contract.js"
 
 /**
  * The committed sleep report: `.memhtml/sleep/<run-id>.html`.
@@ -15,11 +15,26 @@ import { type PhaseResult, phaseIndexOf, type RunReport } from "./contract.js"
  * commit list, and the difference decides whether the branch should land.
  */
 
-/** A run report as one committed HTML document. */
-export const renderReport = (report: RunReport): string => {
+/** The ledger's record kinds, the ones the report renders for review rather than `merge` applies. */
+export type BelowFloorMark = Extract<PendingMark, { readonly kind: "commitment-below-floor" }>
+
+/**
+ * A run report as one committed HTML document.
+ *
+ * `ledger` is the run's pending-mark ledger, or the part of it the report renders: the
+ * `commitment-below-floor` records, listed under a fold so a reviewer can judge what the floor refused.
+ * Marks of every other kind are ignored here; they are `merge`'s to apply, not the reader's to review.
+ */
+export const renderReport = (
+  report: RunReport,
+  ledger: ReadonlyArray<PendingMark> = []
+): string => {
   const failed = report.phases.filter((phase) => phase.status === "failed")
   const skipped = report.phases.filter((phase) => phase.status === "skipped")
   const committed = report.phases.filter((phase) => phase.commitSha !== null)
+  const belowFloor = ledger.filter(
+    (mark): mark is BelowFloorMark => mark.kind === "commitment-below-floor"
+  )
 
   return `<!doctype html>
 <html lang="en">
@@ -40,7 +55,7 @@ ${report.dryRun ? "This was a DRY RUN: counts were computed and nothing was comm
 <dt>Model calls</dt><dd><data value="${escapeAttribute(String(report.llmCalls))}">${report.llmCalls}</data></dd>
 </dl>
 
-${failed.length === 0 ? "" : `${renderFailures(failed)}\n`}<table>
+${failed.length === 0 ? "" : `${renderFailures(failed)}\n`}${belowFloor.length === 0 ? "" : `${renderBelowFloor(belowFloor)}\n`}<table>
 <caption>Per-phase outcome, in execution order</caption>
 <thead><tr><th>#</th><th>Phase</th><th>Status</th><th>Commit</th><th>Model calls</th><th>Counts</th></tr></thead>
 <tbody>
@@ -68,6 +83,26 @@ ${failed
   .map(
     (phase) =>
       `<li><code>${escapeText(phase.phase)}</code> — ${escapeText(phase.detail ?? "no detail recorded")}</li>`
+  )
+  .join("\n")}
+</ul>
+</details>`
+
+/**
+ * The commitments the floor refused, above the table and behind a fold.
+ *
+ * Each item carries what re-scoring needs: the statement, the confidence the floor compared, the
+ * session it came from, and whether the same session showed it done. Ordered as the ledger holds
+ * them, which is the order the phase saw them.
+ */
+const renderBelowFloor = (marks: ReadonlyArray<BelowFloorMark>): string =>
+  `<details>
+<summary>${marks.length} ${marks.length === 1 ? "commitment" : "commitments"} scored below the floor and minted nothing; listed for review.</summary>
+<ul>
+${marks
+  .map(
+    (mark) =>
+      `<li><q>${escapeText(mark.statement)}</q> — confidence <data value="${escapeAttribute(String(mark.confidence))}">${escapeText(mark.confidence.toFixed(2))}</data>, session <code>${escapeText(mark.sessionId)}</code>, ${mark.resolved ? "stated as done" : "open"}</li>`
   )
   .join("\n")}
 </ul>
