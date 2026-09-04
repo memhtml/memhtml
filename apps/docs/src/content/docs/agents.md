@@ -7,7 +7,9 @@ This page is addressed to an AI agent working with memhtml, and it is written so
 
 ## 1. The manifest outranks this page
 
-`memhtml manifest` prints the binary's whole contract: every command, argument, flag, response type, error code, and environment variable. A bare `memhtml`, `memhtml help`, and `memhtml --help` all return the same thing. Each of them answers on a machine with no store, no database, and no credentials, which makes the manifest your liveness check as well as your contract.
+`memhtml manifest` prints the binary's whole contract: every command, argument, flag, response type, error code, and environment variable. A bare `memhtml` returns the same thing, and so do `memhtml help` and `memhtml --help` when stdout is a pipe. Each of them answers on a machine with no store, no database, and no credentials, which makes the manifest your liveness check as well as your contract.
+
+For one command, `memhtml help <command>` (or `memhtml <command> --help`, or `-h`) returns that command's entry alone: a usage line, its arguments and flags, the response type it emits, the usage-error codes, examples, and sibling commands. Piped, it is a `cli.help` envelope whose `data` is the manifest's entry for the command plus those derived fields, so nothing it says can contradict the manifest. On a terminal it is Markdown, for the person behind you; `--json` forces the envelope there too. Every usage error on a command that exists ends its `suggestions` with the `memhtml help <command>` call that shows the table you needed; an unknown command gets nearest-name candidates instead.
 
 :::agent
 

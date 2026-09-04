@@ -361,6 +361,9 @@ const checkEveryCommand = async ({ bin, work, env }) => {
   /** `[command, argv, env]`. A command with no entry here must appear in EXCUSED below. */
   const INVOCATIONS = [
     ["manifest", ["manifest"]],
+    // Piped, so the answer is the `cli.help` envelope; the Markdown shape needs a terminal, which
+    // this harness is not.
+    ["help", ["help", "search"]],
     ["init", ["init"]],
     ["write", ["write", "--title", "Third memory", "--claim", "Three.", "--type", "semantic"]],
     ["apply", ["apply", "--file", applyFile]],

@@ -374,8 +374,11 @@ describe("error envelopes", () => {
     expect(body.code).toBe("ERR_INVALID_FLAG")
     expect(body.error).toContain("--status is not a flag of list")
     const suggestions = body.suggestions as ReadonlyArray<string>
-    expect(suggestions.length).toBeGreaterThan(0)
-    for (const suggestion of suggestions) expect(suggestion).toContain("--status")
+    expect(suggestions.length).toBeGreaterThan(1)
+    // Every suggestion but the last names a command that takes the flag; the last is this command's
+    // own help, so the caller who meant `list` after all sees what it does take.
+    for (const suggestion of suggestions.slice(0, -1)) expect(suggestion).toContain("--status")
+    expect(suggestions.at(-1)).toBe("memhtml help list")
   })
 
   it("refuses an unknown flag that precedes the command, rather than eating the command", async () => {
@@ -505,7 +508,7 @@ describe("error envelopes", () => {
     const body = parse(result.stdout)
     expect(body.code).toBe("ERR_MISSING_ARGUMENT")
     expect(body.error).toContain("path")
-    expect(body.suggestions).toEqual(["memhtml read <path>"])
+    expect(body.suggestions).toEqual(["memhtml read <path>", "memhtml help read"])
   })
 
   it("names the missing required flag", async () => {
@@ -572,7 +575,8 @@ describe("error envelopes", () => {
         // The suggestions are runnable calls of the command the caller actually typed.
         expect(body.suggestions, value).toEqual([
           `memhtml ${command} --as-of 2026-08-24`,
-          `memhtml ${command} --as-of 2026-08-24T13:00:00Z`
+          `memhtml ${command} --as-of 2026-08-24T13:00:00Z`,
+          `memhtml help ${command}`
         ])
       }
     })
@@ -638,7 +642,8 @@ describe("error envelopes", () => {
         expect(body.error, name).toContain("exactly one of --claim or --article-html")
         expect(body.suggestions, name).toEqual([
           `memhtml ${name} --claim <sentence>`,
-          `memhtml ${name} --article-html '<p>…</p>'`
+          `memhtml ${name} --article-html '<p>…</p>'`,
+          `memhtml help ${name}`
         ])
       }
     })

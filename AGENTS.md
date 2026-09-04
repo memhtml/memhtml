@@ -33,7 +33,7 @@ no database, and no credentials, so it is also the liveness check.
 
 ### `first-call`
 
-You are reading this CLI's manifest: every command, argument, flag, response type, error code, and environment variable the binary accepts. A bare `memhtml`, `memhtml help`, `memhtml --help`, and `memhtml manifest` all return it, and all four answer on a machine with no repo, no database, and no credentials, so this is also the liveness check when something else has failed. Every command writes exactly ONE JSON envelope to stdout and nothing else; logs go to stderr. A success is `{apiVersion, type, data}` and a failure is `{apiVersion, error, code, suggestions}`. Branch on `code`, never on the `error` prose: the codes and response types are append-only and a shipped one never changes meaning, while the prose changes freely as wording improves. Exit 0 is success, exit 2 is a usage error you fix by changing the call, exit 1 is a runtime failure you fix by changing the repo or the environment. Add `--dense` to any command to get minified JSON with null fields dropped, which is what you want when the output goes into a prompt.
+You are reading this CLI's manifest: every command, argument, flag, response type, error code, and environment variable the binary accepts. A bare `memhtml` and `memhtml manifest` return it, and so do `memhtml help` and `memhtml --help` when stdout is a pipe; all of them answer on a machine with no repo, no database, and no credentials, so this is also the liveness check when something else has failed. For one command, `memhtml help <command>` or `memhtml <command> --help` returns that command's entry as a `cli.help` envelope with a usage line and examples (Markdown instead when stdout is a terminal; add `--json` to force the envelope). Every command writes exactly ONE JSON envelope to stdout and nothing else; logs go to stderr. A success is `{apiVersion, type, data}` and a failure is `{apiVersion, error, code, suggestions}`. Branch on `code`, never on the `error` prose: the codes and response types are append-only and a shipped one never changes meaning, while the prose changes freely as wording improves. Exit 0 is success, exit 2 is a usage error you fix by changing the call, exit 1 is a runtime failure you fix by changing the repo or the environment. Add `--dense` to any command to get minified JSON with null fields dropped, which is what you want when the output goes into a prompt.
 
 ### `write-surfaces`
 
@@ -73,6 +73,7 @@ Answering a question that takes MORE THAN ONE HOP through the corpus? Write it a
 |---|---|---|---|
 | `--dense` | boolean | false | Minify JSON and drop null fields, for pasting into a context window. |
 | `--repo` | string | — | Path to the memory repo. Defaults to $MEMHTML_ROOT. |
+| `--help` | boolean | false | Describe this command instead of running it: usage, arguments, flags, response type, examples. Also `-h`. Markdown when stdout is a terminal, a `cli.help` envelope when piped or with --json. Flags other than --json and --dense are ignored, nothing is opened or written, exit 0. |
 
 ## Commands
 
@@ -81,6 +82,7 @@ Answering a question that takes MORE THAN ONE HOP through the corpus? Write it a
 | Command | Arguments | Flags | Response type |
 |---|---|---|---|
 | `memhtml manifest` | — | — | `cli.manifest` |
+| `memhtml help` | [command] | `--json` | `cli.help`, `cli.manifest` |
 | `memhtml init` | — | — | `repo.init` |
 | `memhtml write` | — | `--title`* `--claim` `--body` `--article-html` `--type`* `--path` `--strict-path` `--workspace` `--tag` `--entity` `--importance` `--confidence` `--session-id` `--prompt-id` `--turn-uuid` | `memory.written` |
 | `memhtml apply` | — | `--file` `--continue-on-error` `--detect-conflicts` `--detect-near-duplicates` `--consolidate` `--session-id` `--prompt-id` `--turn-uuid` | `batch.applied` |
@@ -123,6 +125,14 @@ Answering a question that takes MORE THAN ONE HOP through the corpus? Write it a
 ### `memhtml manifest`
 
 Emit this CLI's full machine-readable contract.
+
+### `memhtml help`
+
+Describe one command: usage, arguments, flags, response type, examples. Markdown on a terminal, a cli.help envelope when piped.
+
+- `[command]` — The command to describe, one or two words (`search`, `index rebuild`). Omitted: the whole manifest, as Markdown on a terminal and as the cli.manifest envelope when piped.
+
+- `--json` (boolean) — Emit the cli.help envelope even when stdout is a terminal. Wins over the terminal check, so a script can never receive Markdown by accident. _(default `false`)_
 
 ### `memhtml init`
 
