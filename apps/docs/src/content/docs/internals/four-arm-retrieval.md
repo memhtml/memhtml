@@ -95,6 +95,10 @@ The match is on the facet's text with no case fold — unlike the `entity` axis,
 
 There is no numeric predicate, and that is the contract rather than a gap. `file_facets.numeric_value` carries whatever a `<data value>` parsed to, **unitless**: the unit lives in the human phrasing beside it, so `<data value="120">about two minutes</data>` is seconds only because the prose says so (`packages/index/migrations/0001_files.sql`). An inequality over that column would be a comparison whose meaning the corpus never stated. The caller owns the unit, and it owns it by matching the text it wrote.
 
+### The pointer behind an empty scope
+
+`scopeEmpty` says the scope emptied the result; `archivedMatches` and `archived` say whether the address still resolves somewhere. When `scopeEmpty` is true, `archivedInScope` (`packages/index/src/retrieval.ts`) re-runs the SAME assembled scope with the archived flag flipped, so the axes are byte-for-byte the ones that emptied the search, and returns the count of archived rows plus up to `limit` of their paths with the memory that superseded each (derived from the `supersedes` edge the way a hit's `supersededBy` is). A scope match rather than a ranked one: the question is whether `day=2026-09-02` still names a file, not how the query would rank it. Eviction and compress are a `git mv` into `archive/` and the default scope excludes archived rows, so an agent reading `hits: []` over a correct facet needs this to tell "never written" from "folded by compress" (issue #130). Both fields are the zero shape, `0` and `[]`, whenever `scopeEmpty` is false.
+
 ## 7. Diversification
 
 `search` fetches three times as many fused candidates as the caller's limit (`packages/index/src/retrieval.ts:31-35`), because a diversifier can only reorder what it was given. `applyMmr` (`packages/domain/src/mmr.ts:36`) then runs maximal marginal relevance, a greedy selection that at each step picks the candidate maximizing `λ·relevance − (1−λ)·max_sim_to_selected`, with λ = 0.5. It trades a little relevance for less redundancy against the hits it has already chosen.

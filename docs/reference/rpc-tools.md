@@ -515,7 +515,12 @@ const MemorySearch = Tool.make("memory_search", {
     /** The `entity` this search was scoped to, or `null` when it was not scoped by entity. */
     entity_scope: Schema.NullOr(Schema.String),
     // …
-    scope_empty: Schema.Boolean
+    scope_empty: Schema.Boolean,
+    // …
+    archived_matches: Schema.Finite,
+    archived: Schema.Array(
+      Schema.Struct({ path: Schema.String, superseded_by: Schema.NullOr(Schema.String) })
+    )
   })
 })
 ```
@@ -524,7 +529,7 @@ Runs ranked search over the corpus. It fuses the lexical, vector, recency, and s
 
 **Input:** `query` required; the rest optional. `limit` defaults to 10 (`packages/index/src/retrieval.ts:29`). `memory_types` draws from the nine writable types. `entity` takes one reference in `type:name` form. That is the same spelling `memory_list` accepts and the same spelling a hit's `entities` publishes, so an agent chains by copying a value rather than reconstructing one (`apps/mcp/src/tools.ts:447-451`). `facets` takes `name=value` specs over the article's authored `<dl>` pairs. The composition is a semantic contract rather than a convenience: values under the SAME name broaden (OR) and different names narrow (AND), so `["doc-type=runbook", "doc-type=guide"]` is either and `["doc-type=runbook", "tier=1"]` is both — and a caller who read it the other way round acts on a superset or on an empty set, neither of which the rows report. Matched as TEXT with no case fold, unlike `entity`: a facet is the consumer's own machine-written vocabulary. A spec with an empty half is dropped rather than refused, so a malformed one widens the answer instead of narrowing it, and the rows cannot report that either. `as_of` takes an ISO instant and returns what was believed valid at that moment, over the window `coalesce(valid_from, event_at, created_at) <= as_of < valid_until` (`apps/mcp/src/tools.ts:452-458`).
 
-**Output:** `hits` plus four result-level fields. Each hit carries `snippet`, which holds the best-matching chunk's text for this query, or the file's opening chunk on the degraded path, truncated with a trailing ellipsis when cut. `superseded_by` is present and nullable so a client can tell "not superseded" from "this build does not report supersession" (`apps/mcp/src/tools.ts:485-491`). `degraded` is true when the vector arm did not fire. `arms` names the arms that ran. `scope_empty` is true when an `entity` scope narrowed the query and nothing survived, so an empty scoped result is attributable to the scope. A scope the tool could not satisfy is reported rather than widened (`apps/mcp/src/tools.ts:499-505`). Returning a path changes nothing on the access plane, because a hit is the ranker's guess rather than a deliberate open.
+**Output:** `hits` plus six result-level fields. Each hit carries `snippet`, which holds the best-matching chunk's text for this query, or the file's opening chunk on the degraded path, truncated with a trailing ellipsis when cut. `superseded_by` is present and nullable so a client can tell "not superseded" from "this build does not report supersession" (`apps/mcp/src/tools.ts:485-491`). `degraded` is true when the vector arm did not fire. `arms` names the arms that ran. `scope_empty` is true when an `entity` scope narrowed the query and nothing survived, so an empty scoped result is attributable to the scope. A scope the tool could not satisfy is reported rather than widened (`apps/mcp/src/tools.ts:499-505`). `archived_matches` is how many archived memories that same scope matches when `scope_empty` is true (`0` otherwise), and `archived` lists up to `limit` of them with the path that superseded each or `null`: the pointer an agent follows when a record compress or eviction moved into `archive/` stops answering its facet address. Returning a path changes nothing on the access plane, because a hit is the ranker's guess rather than a deliberate open.
 
 `apps/mcp/src/tools.ts:437-508`
 

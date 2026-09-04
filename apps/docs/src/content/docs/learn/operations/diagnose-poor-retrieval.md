@@ -47,7 +47,7 @@ The indexer reads the dirty tree so your edit is searchable immediately, and sle
 
 Before you suspect the ranker, read three fields off the search envelope:
 
-- `scopeEmpty: true` means a scope was named, it narrowed the query, and nothing survived. Look for a typo in a `--workspace` or an `--entity` value. The field is never true for an unscoped empty result.
+- `scopeEmpty: true` means a scope was named, it narrowed the query, and nothing survived. Look for a typo in a `--workspace` or an `--entity` value. The field is never true for an unscoped empty result. Read `archivedMatches` beside it: a non-zero count means the scope still resolves to memories in `archive/`, and `archived[].supersededBy` names what replaced each, so retry with `--include-archived` or read the superseding path rather than concluding the record was never written.
 - `entityScope` echoes the scope back, so you can attribute an empty result. An `--entity` scope that matches nothing returns no hits and says so, and it never widens on its own.
 - `hits: []` with `degraded: false` means the corpus does not contain it. Try `--include-archived`: eviction is a `git mv`, so an archived memory still exists and search excludes it by default.
 

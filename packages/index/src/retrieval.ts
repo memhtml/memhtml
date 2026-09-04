@@ -11,7 +11,13 @@ import {
 } from "./disclosure.js"
 import { sanitizeFtsQuery } from "./fts-query.js"
 import { polarityScored } from "./polarity.js"
-import { buildRrfSql, buildSnippetSql, rrfParams, truncateSnippet } from "./retrieval-sql.js"
+import {
+  buildRrfSql,
+  buildSnippetSql,
+  PARAM_QUERY_VECTOR,
+  rrfParams,
+  truncateSnippet
+} from "./retrieval-sql.js"
 import { assembleScope, type SearchScope } from "./scope.js"
 
 /**
@@ -117,6 +123,34 @@ export interface SearchResult {
    * conflating them would make the marker mean "no hits", which `hits.length` already says.
    */
   readonly scopeEmpty: boolean
+  /**
+   * How many ARCHIVED memories the same scope matches, computed only when `scopeEmpty` is true and
+   * `0` otherwise.
+   *
+   * The pointer behind an empty scope. Eviction and compress are a `git mv` into `archive/`, and the
+   * default scope excludes archived rows, so a correct facet over a real record (`day=2026-09-02` on a
+   * journal compress folded last night) answers nothing and, without this number, says nothing about
+   * why. With it an agent can tell "never existed" from "archived": retry with `includeArchived`, or
+   * follow `archived[].supersededBy` to what replaced it (issue #130). A scope match rather than a
+   * ranked one: the question is whether the scope's address still resolves, not how the query would
+   * rank what it points at. Only the scope's own axes are re-applied; the archived flag is what flips.
+   * Zero as well under `asOf`, whose lens already admits archived rows, so the flag is not what
+   * emptied that search.
+   */
+  readonly archivedMatches: number
+  /**
+   * Up to `limit` of those archived paths, sorted, each with the path of the memory that superseded it
+   * or `null` when nothing did. Empty unless `scopeEmpty` is true. `supersededBy` is derived from the
+   * `supersedes` edge the way a hit's is, so compress's canonical and `correct`'s replacement both
+   * resolve.
+   */
+  readonly archived: ReadonlyArray<ArchivedMatch>
+}
+
+/** One archived memory the scope of an empty search still matches. */
+export interface ArchivedMatch {
+  readonly path: string
+  readonly supersededBy: string | null
 }
 
 /** A recall request. `budgetChars` bounds the quoted bodies, not the index lines. */
@@ -339,6 +373,42 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
     })
 
   /** Decode a stored float32 blob. Cheaper than `vector_extract` and the only reader of the layout. */
+  /**
+   * The archived rows a scope matches, for the `scopeEmpty` pointer.
+   *
+   * The same `assembleScope` the arms use, with the archived flag flipped rather than a second
+   * predicate written by hand: `includeArchived: true` drops the `archived = 0` condition and the
+   * `WHERE` here adds `archived = 1`, so the scope axes are byte-for-byte the ones that emptied the
+   * search. `asOf` is dropped for the same reason `scopeNarrows` ignores it: the question is whether
+   * the address resolves at all. The four leading slots are unbound (`?1`–`?4` belong to the fused
+   * statement's query, limits, and vector) so the scope's `?5`-onward placeholders bind unchanged.
+   */
+  const archivedInScope = (scope: SearchScope, limit: number) =>
+    Effect.gen(function* () {
+      const assembled = assembleScope({ ...scope, includeArchived: true, asOf: undefined })
+      const limitSlot = PARAM_QUERY_VECTOR + assembled.params.length + 1
+      // At least one row, or `LIMIT 0` returns nothing and the window count is lost with it: a caller
+      // asking for zero hits still gets a true `archivedMatches`.
+      const bounded = Math.max(1, limit)
+      const rows = yield* db.all<{ path: string; superseded_by: string | null; total: number }>(
+        `SELECT f.path AS path,
+                (SELECT g.src_path FROM edges g
+                  WHERE g.dst_path = f.path AND g.edge_class = 'memory'
+                    AND g.rel = 'supersedes' AND g.derived = 0
+                  ORDER BY g.created_at DESC, g.src_path ASC LIMIT 1) AS superseded_by,
+                COUNT(*) OVER () AS total
+         FROM files f
+         WHERE f.archived = 1${assembled.holes.fileFilter.replaceAll("{alias}", "f")}
+         ORDER BY f.path ASC
+         LIMIT ?${limitSlot}`,
+        [null, null, null, null, ...assembled.params, bounded]
+      )
+      return {
+        archivedMatches: rows[0]?.total ?? 0,
+        archived: rows.map((row) => ({ path: row.path, supersededBy: row.superseded_by }))
+      }
+    })
+
   const decodeVector = (blob: Uint8Array | null): ReadonlyArray<number> | undefined => {
     if (blob === null || blob.byteLength === 0 || blob.byteLength % 4 !== 0) return undefined
     const copy = Uint8Array.from(blob)
@@ -387,6 +457,16 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
         ordered.map((candidate) => candidate.path),
         vector
       )
+      const scopeEmpty = ordered.length === 0 && scopeNarrows(input)
+      /**
+       * Under `asOf` the archived flag is not what emptied the search: the point-in-time lens already
+       * admits archived rows and excludes by validity instead, so a count of archived rows would name
+       * records that did not exist at the asked instant. The pointer stays at the zero shape there.
+       */
+      const pointer =
+        scopeEmpty && (input.asOf === undefined || input.asOf === "")
+          ? yield* archivedInScope(input, limit)
+          : { archivedMatches: 0, archived: [] as ReadonlyArray<ArchivedMatch> }
 
       return {
         hits: ordered.flatMap((candidate) => {
@@ -421,7 +501,9 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
          * A scope that admitted candidates which MMR then dropped is not an empty scope. No branch
          * here widens anything, and the flag is the whole response to an over-narrow scope.
          */
-        scopeEmpty: ordered.length === 0 && scopeNarrows(input)
+        scopeEmpty,
+        archivedMatches: pointer.archivedMatches,
+        archived: pointer.archived
       }
     }).pipe(Effect.withSpan("retrieval.search"))
 
