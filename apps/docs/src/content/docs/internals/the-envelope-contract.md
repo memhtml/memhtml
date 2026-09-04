@@ -5,7 +5,7 @@ description: One JSON envelope per command, append-only response types and error
 
 ## 1. One envelope, three exit codes
 
-Every command writes one JSON envelope to stdout and nothing else. Logs go to stderr. The exit code is 0 for success, 2 for a usage error, and 1 for a runtime error (`apps/cli/src/envelope.ts:87-89`).
+Every command writes one JSON envelope to stdout and nothing else, with one exception: `memhtml help` on a terminal writes Markdown, and piped or with `--json` it is an envelope like every other command. Logs go to stderr. The exit code is 0 for success, 2 for a usage error, and 1 for a runtime error (`apps/cli/src/envelope.ts:87-89`).
 
 `AGENTS.md` is generated from the same `COMMANDS` array that drives argument parsing (`apps/cli/src/agents-doc.ts:24`), so it is the reference for the command list and cannot drift from the live answer. Adding a command means editing that one array.
 

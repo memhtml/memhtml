@@ -351,7 +351,7 @@ Sleep is stricter: `preflight` refuses on a dirty tree (`packages/store/src/stor
 
 ## 12. The envelope contract and the tool surface
 
-Every command writes one JSON envelope to stdout and nothing else; logs go to stderr. `AGENTS.md` is generated from the same `COMMANDS` array that drives parsing (`apps/cli/src/agents-doc.ts:24`), so it is the reference for the command list and cannot drift from the live answer.
+Every command writes one JSON envelope to stdout and nothing else, except `memhtml help` on a terminal, which writes Markdown (piped, or with `--json`, it is an envelope); logs go to stderr. `AGENTS.md` is generated from the same `COMMANDS` array that drives parsing (`apps/cli/src/agents-doc.ts:24`), so it is the reference for the command list and cannot drift from the live answer.
 
 `apiVersion` lets the envelope evolve without silently breaking parsers, and `type` is a discriminator an agent reads to know the shape of `data` before parsing it (`apps/cli/src/envelope.ts:1-6`). Both `RESPONSE_TYPES` (`apps/cli/src/envelope.ts:12`) and `ERROR_CODES` (`apps/cli/src/envelope.ts:66`) are **append-only**: once shipped, a code's meaning never changes and a code is never removed, because agents branch on `code` and never on the human `error` string, which changes freely as wording improves. Exit codes are 0 / 2 / 1 (`apps/cli/src/envelope.ts:87-89`). `--dense` strips nulls and indentation (`apps/cli/src/envelope.ts:143`), and an unknown argument comes back with Levenshtein-nearest candidates (`apps/cli/src/envelope.ts:124`) rather than a dead end.
 

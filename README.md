@@ -25,7 +25,7 @@ memhtml search "one writer many readers"      # FTS + vector + recency + salienc
 memhtml serve mcp                             # the same store over stdio: 15 tools, 3 resources
 ```
 
-`memhtml manifest` (or a bare `memhtml`) answers with every command, flag, response type, and error code the binary accepts, and it answers on a machine with no repo, no database, and no credentials. Every command writes exactly one JSON envelope to stdout, logs go to stderr, and the exit code is 0 for success, 2 for a usage error, 1 for a runtime failure. `AGENTS.md` is generated from the same table that drives parsing, so the doc cannot drift from the binary.
+`memhtml manifest` (or a bare `memhtml`) answers with every command, flag, response type, and error code the binary accepts, and it answers on a machine with no repo, no database, and no credentials. Every command writes exactly one JSON envelope to stdout (the one exception is `memhtml help` on a terminal, which writes Markdown), logs go to stderr, and the exit code is 0 for success, 2 for a usage error, 1 for a runtime failure. `AGENTS.md` is generated from the same table that drives parsing, so the doc cannot drift from the binary.
 
 ## The design in three sentences
 

@@ -78,7 +78,7 @@ There is exactly one composition root: `AppLive` in `apps/cli/src/api-layer.ts`.
 
 ### The contract surface
 
-Every command writes **one** JSON envelope to stdout and nothing else; logs go to stderr. Exit 0 success / 2 usage / 1 runtime. `type` and `code` values are **append-only**: a shipped value never changes meaning and is never removed, and callers branch on `code`, never on the `error` prose. The `COMMANDS` array in `apps/cli/src/commands.ts` drives both argument parsing and `AGENTS.md` generation, so adding a command means editing that one array.
+Every command writes **one** JSON envelope to stdout and nothing else, except `memhtml help` on a terminal, which writes Markdown (piped, or with `--json`, it is an envelope); logs go to stderr. Exit 0 success / 2 usage / 1 runtime. `type` and `code` values are **append-only**: a shipped value never changes meaning and is never removed, and callers branch on `code`, never on the `error` prose. The `COMMANDS` array in `apps/cli/src/commands.ts` drives both argument parsing and `AGENTS.md` generation, so adding a command means editing that one array.
 
 ## Non-obvious rules (each cost real debugging time)
 

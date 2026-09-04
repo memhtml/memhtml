@@ -9,7 +9,7 @@ import { parseFacetFilters } from "@memhtml/index"
 import { initRepo } from "@memhtml/store"
 import { layerTelemetry } from "@memhtml/telemetry"
 import { Effect, type Layer, Logger } from "effect"
-import { runAgentsDoc } from "./agents-doc.js"
+import { renderAgentsDoc, runAgentsDoc } from "./agents-doc.js"
 import { Git, Indexer, layerApp, Sleep } from "./api-layer.js"
 import { applyPayload, applyText, decodeApply, readStdin } from "./apply.js"
 import {
@@ -36,6 +36,7 @@ import {
 } from "./envelope.js"
 import { failureFor } from "./errors.js"
 import { DEFAULT_TIMEOUT_MS, execCommand, MAX_TIMEOUT_MS, readScript } from "./exec.js"
+import { helpData, renderCommandHelp } from "./help.js"
 import * as ops from "./operations.js"
 import { publish } from "./publish.js"
 import { serveMcp } from "./serve.js"
@@ -138,6 +139,14 @@ export const parseArgv = (argv: ReadonlyArray<string>): Parsed => {
   let index = 0
   while (index < argv.length) {
     const token = argv[index] as string
+    // The one short flag. `-h` is what a person types before reading anything, so it is spelled the
+    // way every other CLI spells it; it is `--help` and nothing else, since a positional `-h` would
+    // otherwise become a command name and answer ERR_UNKNOWN_COMMAND to a request for help.
+    if (token === "-h") {
+      push("help", true)
+      index += 1
+      continue
+    }
     if (token.startsWith("--")) {
       const body = token.slice(2)
       const eq = body.indexOf("=")
@@ -1003,6 +1012,9 @@ const surplusArgs = (parsed: Parsed, spec: CommandSpec): Failure | undefined => 
   )
 }
 
+/** The suggestion every usage error on a known command ends with: the call that shows its table. */
+const helpFor = (spec: CommandSpec): string => `memhtml help ${spec.name}`
+
 /**
  * Validate a parsed invocation against its spec. Usage errors only; nothing here touches a service.
  *
@@ -1010,10 +1022,26 @@ const surplusArgs = (parsed: Parsed, spec: CommandSpec): Failure | undefined => 
  * error is exit 2 and a runtime error is exit 1, and a validator that emitted its own envelope would
  * have to know that too.
  */
-const validate = (parsed: Parsed): Failure | undefined => {
+export const validate = (parsed: Parsed): Failure | undefined => {
   const spec = COMMANDS.find((command) => command.name === parsed.command)
   if (spec === undefined) return unknownCommand(parsed)
+  const failure = validateAgainst(parsed, spec)
+  if (failure === undefined) return undefined
+  /**
+   * Every refusal of a KNOWN command ends with that command's help, appended here once rather than
+   * in each of the dozen arms below, so a new arm cannot forget it. The first wrong invocation should
+   * lead to the flag table rather than to the whole manifest, and a refusal whose own suggestions are
+   * empty (a closed-vocabulary miss with no near spelling) is no longer a dead end. An unknown
+   * command has no table to point at and keeps its nearest-name candidates alone.
+   */
+  const pointer = helpFor(spec)
+  return failure.suggestions.includes(pointer)
+    ? failure
+    : { ...failure, suggestions: [...failure.suggestions, pointer] }
+}
 
+/** The per-command rules, in order. Nothing here touches a service. */
+const validateAgainst = (parsed: Parsed, spec: CommandSpec): Failure | undefined => {
   /**
    * Flags are validated against THIS command's spec plus the true globals, not the union of every
    * command's flags. A flag that is valid somewhere else is still a usage error here: an agent that
@@ -1111,6 +1139,112 @@ const validate = (parsed: Parsed): Failure | undefined => {
 }
 
 /**
+ * `memhtml help [command]`, `memhtml <command> --help`, and `-h`: describe, never run.
+ *
+ * Answered before {@link validate} and before any layer is built, for the same reason `manifest` is:
+ * help has to work on a machine with no repo, and a caller asking how to call a command has not
+ * called it. `--help` therefore wins over every other flag on the line — `memhtml search --type x
+ * --help` describes `search` and ignores `--type` — and the flags kept are only the ones help itself
+ * declares, so the spelled-out form `memhtml help search --limit 5` is still refused as an unknown
+ * flag of `help`.
+ *
+ * Two output shapes, chosen by one rule. When stdout is a terminal and `--json` is absent, a person
+ * is reading, and the answer is Markdown. Otherwise — a pipe, a file, a test, or `--json` — a
+ * program is reading, and the answer is the `cli.help` envelope (or `cli.manifest` when no command
+ * was named). `--json` wins over the terminal check so a script can never receive prose by accident,
+ * and it is the ONLY command whose stdout can be something other than an envelope, which is why the
+ * flag lives on this command and not on the globals.
+ *
+ * An unknown command is the usual `ERR_UNKNOWN_COMMAND`, exit 2, with the same nearest-name
+ * suggestions a mistyped invocation gets: help for a command that does not exist is a usage error,
+ * not an empty page.
+ */
+const help = (
+  parsed: Parsed,
+  stdoutIsTTY: boolean,
+  emit: (payload: Success<unknown> | Failure, exitCode: number) => RunResult
+): RunResult => {
+  const spelledOut = parsed.command === "help"
+  // `memhtml help --help` describes help itself; `memhtml help` alone is the whole manifest.
+  const words = spelledOut
+    ? parsed.positional.length === 0 && bool(parsed, "help", false)
+      ? ["help"]
+      : parsed.positional
+    : parsed.command === ""
+      ? []
+      : parsed.command.split(" ")
+  const HELP_FLAGS: ReadonlySet<string> = new Set(["help", "json", "dense", "repo"])
+  const flags = spelledOut
+    ? parsed.flags
+    : new Map([...parsed.flags].filter(([name]) => HELP_FLAGS.has(name)))
+  const invalid = validate({
+    command: "help",
+    positional: spelledOut ? parsed.positional : [],
+    flags,
+    // The strays the kept flags carry stay: `memhtml search --help false` is the inverted ask the
+    // parser recorded it as, and dropping the record here would make the flag form accept what the
+    // spelled-out form refuses.
+    strayBooleanValues: spelledOut
+      ? parsed.strayBooleanValues
+      : parsed.strayBooleanValues.filter(([name]) => HELP_FLAGS.has(name))
+  })
+  if (invalid !== undefined) return emit(invalid, EXIT_USAGE)
+
+  const markdown = stdoutIsTTY && !bool(parsed, "json", false)
+  const asMarkdown = (text: string): RunResult => ({
+    stdout: text.replace(/\n$/, ""),
+    exitCode: EXIT_OK
+  })
+
+  const target = words.join(" ")
+  if (target === "") {
+    return markdown
+      ? asMarkdown(renderAgentsDoc())
+      : emit(succeed("cli.manifest", buildManifest()), EXIT_OK)
+  }
+  const spec = COMMANDS.find((command) => command.name === target)
+  if (spec === undefined) {
+    // What the caller typed, whole. The flag form keeps its own positionals here, so
+    // `memhtml index rebuil --help` is judged as `index rebuil`, the same text the typo alone is.
+    const typedWords = spelledOut ? words : [...words, ...parsed.positional]
+    const typed = typedWords.join(" ")
+    // A known command followed by a word that is not part of any name: surplus, not unknown, the same
+    // code `memhtml read a b` answers, naming the token so the caller drops it.
+    const prefix = COMPOUND_NAMES.find((name) => typed.startsWith(`${name} `))
+    const known = prefix ?? COMMAND_NAMES.find((name) => name === typedWords[0])
+    if (known !== undefined) {
+      const extra = typedWords.slice(known.split(" ").length)
+      return emit(
+        fail(
+          "ERR_UNEXPECTED_ARGUMENT",
+          `unexpected argument: ${extra.map((token) => `"${token}"`).join(", ")}. help describes one command: ${known}`,
+          [`memhtml help ${known}`]
+        ),
+        EXIT_USAGE
+      )
+    }
+    // A noun alone (`memhtml help index`) is an ask about a family, and the family is the answer.
+    // `nearest()` cannot offer it: every `index …` name is too far from `index` by edit distance.
+    const family = COMMAND_NAMES.filter((name) => name.startsWith(`${typed} `))
+    if (family.length > 0) {
+      return emit(fail("ERR_UNKNOWN_COMMAND", `unknown command: ${typed}`, family), EXIT_USAGE)
+    }
+    return emit(
+      unknownCommand({
+        command: typedWords[0] ?? "",
+        positional: typedWords.slice(1),
+        flags,
+        strayBooleanValues: []
+      }),
+      EXIT_USAGE
+    )
+  }
+  return markdown
+    ? asMarkdown(renderCommandHelp(spec))
+    : emit(succeed("cli.help", helpData(spec)), EXIT_OK)
+}
+
+/**
  * Returns the rendered envelope and an exit code rather than writing to the process, so tests
  * assert on the exact bytes an agent would parse.
  *
@@ -1125,7 +1259,8 @@ const validate = (parsed: Parsed): Failure | undefined => {
 export const run = async (
   argv: ReadonlyArray<string>,
   layer?: Layer.Layer<DispatchServices>,
-  stdin: () => Promise<string> = readStdin
+  stdin: () => Promise<string> = readStdin,
+  stdoutIsTTY: boolean = process.stdout.isTTY === true
 ): Promise<RunResult> => {
   const parsed = parseArgv(argv)
   const dense = bool(parsed, "dense", false)
@@ -1135,9 +1270,13 @@ export const run = async (
     exitCode
   })
 
-  if (parsed.command === "" || parsed.command === "help") {
-    return emit(succeed("cli.manifest", buildManifest()), EXIT_OK)
+  // Before the bare-invocation check: `memhtml --help` and `memhtml -h` parse to an empty command
+  // with the flag set, and they are asks for help, not liveness probes.
+  if (parsed.command === "help" || bool(parsed, "help", false)) {
+    return help(parsed, stdoutIsTTY, emit)
   }
+
+  if (parsed.command === "") return emit(succeed("cli.manifest", buildManifest()), EXIT_OK)
 
   const invalid = validate(parsed)
   if (invalid !== undefined) return emit(invalid, EXIT_USAGE)

@@ -841,13 +841,13 @@ describe("the manifest guide (AC-6-6)", () => {
      * All four with NO layer, which is the point: the guide is the FIRST thing an agent reads and it
      * must answer on a machine with no repo, no database, and no credentials.
      *
-     * `--help` is the case worth pinning. It is not a command — `parseArgv` reads it as a bare flag on
-     * an EMPTY command, so it reaches the manifest arm through `parsed.command === ""` (`run.ts`).
-     * That behavior is incidental to the parser rather than designed, so an agent typing the most
-     * obvious thing depends on it staying true. Verified live against the built binary 2026-08-04.
+     * `help` and `--help` are answered by the help arm in `run.ts`, which returns the manifest when no
+     * command is named and stdout is a pipe. The pipe is passed explicitly (`stdoutIsTTY = false`)
+     * rather than inherited from the test runner, because on a terminal the same two spellings render
+     * the agent doc as Markdown, and a runner that kept a TTY would otherwise decide this assertion.
      */
     for (const argv of [[], ["help"], ["--help"], ["manifest"]]) {
-      const result = await run(argv)
+      const result = await run(argv, undefined, undefined, false)
       expect(result.exitCode, argv.join(" ")).toBe(EXIT_OK)
       const body = parse(result.stdout)
       expect(body.type, argv.join(" ")).toBe("cli.manifest")

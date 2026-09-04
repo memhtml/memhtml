@@ -23,7 +23,47 @@ import { API_VERSION, ERROR_CODES, EXIT_OK, EXIT_RUNTIME, EXIT_USAGE } from "./e
 /** Where the doc lives by default: the repo root, next to `package.json`. */
 export const AGENTS_DOC_PATH = "AGENTS.md"
 
-const escapeCell = (text: string): string => text.replaceAll("|", "\\|")
+export const escapeCell = (text: string): string => text.replaceAll("|", "\\|")
+
+/**
+ * One argument as a Markdown list item: the placeholder in the shape the usage line uses, then the
+ * description. Shared with `memhtml help <command>` so the two projections of one `ArgSpec` cannot
+ * describe it in two vocabularies.
+ */
+export const argLine = (arg: {
+  readonly name: string
+  readonly description: string
+  readonly required: boolean
+}): string =>
+  `- \`${arg.required ? `<${arg.name}>` : `[${arg.name}]`}\` — ${escapeCell(arg.description)}`
+
+/**
+ * One flag as a Markdown list item: name, type, description, then the qualifiers the table declares
+ * (required, repeatable, default, closed vocabulary) in a fixed order. Shared with `memhtml help`.
+ */
+export const flagLine = (flag: {
+  readonly name: string
+  readonly type: string
+  readonly description: string
+  readonly required?: boolean
+  readonly repeatable?: boolean
+  readonly default?: string | number | boolean
+  readonly values?: ReadonlyArray<string>
+}): string => {
+  const suffix = [
+    flag.required === true ? "**required**" : undefined,
+    flag.repeatable === true ? "repeatable" : undefined,
+    flag.default === undefined || flag.default === ""
+      ? undefined
+      : `default \`${String(flag.default)}\``,
+    flag.values === undefined
+      ? undefined
+      : `one of: ${flag.values.map((value) => `\`${value}\``).join(", ")}`
+  ]
+    .filter((part) => part !== undefined)
+    .join("; ")
+  return `- \`--${flag.name}\` (${flag.type}) — ${escapeCell(flag.description)}${suffix === "" ? "" : ` _(${suffix})_`}`
+}
 
 const flagCell = (flags: ReadonlyArray<{ readonly name: string; readonly required?: boolean }>) =>
   flags.length === 0
@@ -79,7 +119,12 @@ export const renderAgentsDoc = (): string => {
   lines.push(
     "`memhtml` is the CLI over a git-backed memory repo. Every command writes exactly ONE JSON envelope"
   )
-  lines.push("to stdout and nothing else; logs go to stderr.")
+  lines.push(
+    "to stdout and nothing else, with one exception: `memhtml help` on a terminal writes Markdown, and"
+  )
+  lines.push(
+    "piped or with `--json` it is an envelope like every other command. Logs go to stderr."
+  )
   lines.push("")
   lines.push("## The envelope")
   lines.push("")
@@ -151,29 +196,11 @@ export const renderAgentsDoc = (): string => {
     lines.push(command.summary)
     lines.push("")
     if (command.args.length > 0) {
-      for (const arg of command.args) {
-        lines.push(
-          `- \`${arg.required ? `<${arg.name}>` : `[${arg.name}]`}\` — ${escapeCell(arg.description)}`
-        )
-      }
+      for (const arg of command.args) lines.push(argLine(arg))
       lines.push("")
     }
     if (command.flags.length > 0) {
-      for (const flag of command.flags) {
-        const suffix = [
-          flag.required === true ? "**required**" : undefined,
-          flag.repeatable === true ? "repeatable" : undefined,
-          flag.default === undefined ? undefined : `default \`${String(flag.default)}\``,
-          flag.values === undefined
-            ? undefined
-            : `one of: ${flag.values.map((value) => `\`${value}\``).join(", ")}`
-        ]
-          .filter((part) => part !== undefined)
-          .join("; ")
-        lines.push(
-          `- \`--${flag.name}\` (${flag.type}) — ${escapeCell(flag.description)}${suffix === "" ? "" : ` _(${suffix})_`}`
-        )
-      }
+      for (const flag of command.flags) lines.push(flagLine(flag))
       lines.push("")
     }
   }
