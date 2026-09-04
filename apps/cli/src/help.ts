@@ -115,10 +115,15 @@ export const renderCommandHelp = (spec: CommandSpec): string => {
   lines.push("")
   lines.push("## Response")
   lines.push("")
+  const envelope = `\`{ "apiVersion": "${API_VERSION}", "type": ${spec.responseTypes
+    .map((type) => `"${type}"`)
+    .join(" | ")}, "data": { } }\``
+  // `help` is the one command with a second shape, and its own page has to say so, or the page a
+  // person is reading on a terminal would describe an output they are not looking at.
   lines.push(
-    `One JSON envelope on stdout: \`{ "apiVersion": "${API_VERSION}", "type": ${spec.responseTypes
-      .map((type) => `"${type}"`)
-      .join(" | ")}, "data": { } }\`. Logs go to stderr.`
+    spec.name === "help"
+      ? `Piped, or with \`--json\`: one JSON envelope on stdout, ${envelope}. On a terminal without \`--json\`: this Markdown. Logs go to stderr either way.`
+      : `One JSON envelope on stdout: ${envelope}. Logs go to stderr.`
   )
   lines.push("")
   lines.push("## Errors")

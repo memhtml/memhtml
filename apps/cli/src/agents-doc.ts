@@ -119,7 +119,12 @@ export const renderAgentsDoc = (): string => {
   lines.push(
     "`memhtml` is the CLI over a git-backed memory repo. Every command writes exactly ONE JSON envelope"
   )
-  lines.push("to stdout and nothing else; logs go to stderr.")
+  lines.push(
+    "to stdout and nothing else, with one exception: `memhtml help` on a terminal writes Markdown, and"
+  )
+  lines.push(
+    "piped or with `--json` it is an envelope like every other command. Logs go to stderr."
+  )
   lines.push("")
   lines.push("## The envelope")
   lines.push("")

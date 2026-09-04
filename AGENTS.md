@@ -3,7 +3,8 @@
 # `memhtml` — agent instructions
 
 `memhtml` is the CLI over a git-backed memory repo. Every command writes exactly ONE JSON envelope
-to stdout and nothing else; logs go to stderr.
+to stdout and nothing else, with one exception: `memhtml help` on a terminal writes Markdown, and
+piped or with `--json` it is an envelope like every other command. Logs go to stderr.
 
 ## The envelope
 
@@ -33,7 +34,7 @@ no database, and no credentials, so it is also the liveness check.
 
 ### `first-call`
 
-You are reading this CLI's manifest: every command, argument, flag, response type, error code, and environment variable the binary accepts. A bare `memhtml` and `memhtml manifest` return it, and so do `memhtml help` and `memhtml --help` when stdout is a pipe; all of them answer on a machine with no repo, no database, and no credentials, so this is also the liveness check when something else has failed. For one command, `memhtml help <command>` or `memhtml <command> --help` returns that command's entry as a `cli.help` envelope with a usage line and examples (Markdown instead when stdout is a terminal; add `--json` to force the envelope). Every command writes exactly ONE JSON envelope to stdout and nothing else; logs go to stderr. A success is `{apiVersion, type, data}` and a failure is `{apiVersion, error, code, suggestions}`. Branch on `code`, never on the `error` prose: the codes and response types are append-only and a shipped one never changes meaning, while the prose changes freely as wording improves. Exit 0 is success, exit 2 is a usage error you fix by changing the call, exit 1 is a runtime failure you fix by changing the repo or the environment. Add `--dense` to any command to get minified JSON with null fields dropped, which is what you want when the output goes into a prompt.
+You are reading this CLI's manifest: every command, argument, flag, response type, error code, and environment variable the binary accepts. A bare `memhtml` and `memhtml manifest` return it, and so do `memhtml help` and `memhtml --help` when stdout is a pipe; all of them answer on a machine with no repo, no database, and no credentials, so this is also the liveness check when something else has failed. For one command, `memhtml help <command>` or `memhtml <command> --help` returns that command's entry as a `cli.help` envelope with a usage line and examples (Markdown instead when stdout is a terminal; add `--json` to force the envelope). Every command writes exactly ONE JSON envelope to stdout and nothing else, with one exception: help on a terminal writes Markdown, and piped or with `--json` it is an envelope like every other command. Logs go to stderr. A success is `{apiVersion, type, data}` and a failure is `{apiVersion, error, code, suggestions}`. Branch on `code`, never on the `error` prose: the codes and response types are append-only and a shipped one never changes meaning, while the prose changes freely as wording improves. Exit 0 is success, exit 2 is a usage error you fix by changing the call, exit 1 is a runtime failure you fix by changing the repo or the environment. Add `--dense` to any command to get minified JSON with null fields dropped, which is what you want when the output goes into a prompt.
 
 ### `write-surfaces`
 

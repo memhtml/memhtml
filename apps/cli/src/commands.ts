@@ -1105,7 +1105,9 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "failed. For one command, `memhtml help <command>` or `memhtml <command> --help` returns that command's " +
       "entry as a `cli.help` envelope with a usage line and examples (Markdown instead when stdout is a " +
       "terminal; add `--json` to force the envelope). " +
-      "Every command writes exactly ONE JSON envelope to stdout and nothing else; logs go to stderr. " +
+      "Every command writes exactly ONE JSON envelope to stdout and nothing else, with one exception: help " +
+      "on a terminal writes Markdown, and piped or with `--json` it is an envelope like every other command. " +
+      "Logs go to stderr. " +
       "A success is `{apiVersion, type, data}` and a failure is `{apiVersion, error, code, suggestions}`. " +
       "Branch on `code`, never on the `error` prose: the codes and response types are append-only and a " +
       "shipped one never changes meaning, while the prose changes freely as wording improves. " +

@@ -62,7 +62,7 @@ memhtml search "prose, not a query language" --dense
 
 Make `--dense` a habit on every call. It emits minified JSON with null fields dropped, which is what you want when the output goes into a prompt. `memhtml recall` runs the same retrieval under a character budget, for when you want a context pack rather than a hit list.
 
-Every command writes exactly one JSON envelope to stdout and nothing else, and sends its logs to stderr. Exit 0 is success. Exit 2 is a usage error you fix by changing the call. Exit 1 is a runtime failure you fix by changing the store or the environment.
+Every command writes exactly one JSON envelope to stdout and nothing else, and sends its logs to stderr. The one exception is `memhtml help` on a terminal, which writes Markdown; piped, or with `--json`, it is an envelope like every other command. Exit 0 is success. Exit 2 is a usage error you fix by changing the call. Exit 1 is a runtime failure you fix by changing the store or the environment.
 
 ## 5. What to avoid
 
