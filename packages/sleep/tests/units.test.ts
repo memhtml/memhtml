@@ -1207,10 +1207,13 @@ describe("the run report", () => {
           llmCalls: 0,
           detail: "hard prerequisite dedup-merge failed"
         }
-      ]
+      ],
+      reaped: [{ runId: "sleep/2026-07-30", reason: "branch gone" }]
     })
 
     expect(html).toContain("<mark>")
+    // The rows the reaper closed are part of what the night did to the ledger, so the report names them.
+    expect(html).toContain("<dt>Reaped</dt><dd><code>sleep/2026-07-30</code> (branch gone)</dd>")
     expect(html).toContain("1 committed, 1 failed, 1 skipped")
     expect(html).toContain("ModelUnavailable: throttled")
     expect(html).toContain("merged=7 vetoed=4")
@@ -1228,7 +1231,8 @@ describe("the run report", () => {
       headSha: "def",
       dryRun: false,
       llmCalls: 1,
-      phases: []
+      phases: [],
+      reaped: []
     }
     const ledger = appendPendingMarks(undefined, [
       {
@@ -1284,9 +1288,11 @@ describe("the run report", () => {
       headSha: "abc",
       dryRun: true,
       llmCalls: 0,
-      phases: []
+      phases: [],
+      reaped: []
     })
     expect(html).toContain("DRY RUN")
+    expect(html).toContain("<dt>Reaped</dt><dd>none</dd>")
   })
 
   it("names the report file without a slash, since a run id carries one", () => {

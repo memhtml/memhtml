@@ -132,5 +132,10 @@ export const sleepRunReport = (report: RunReport) => ({
   phases: report.phases,
   /** Phases that ended `failed`. Present so a caller does not have to filter to know. */
   failedPhases: report.phases.flatMap((phase) => (phase.status === "failed" ? [phase.phase] : [])),
-  commits: report.phases.flatMap((phase) => (phase.commitSha === null ? [] : [phase.commitSha]))
+  commits: report.phases.flatMap((phase) => (phase.commitSha === null ? [] : [phase.commitSha])),
+  /**
+   * Earlier runs' rows this run stamped `abandoned` before starting, each with its reason. Always
+   * present and usually empty; a resume reports it empty by construction.
+   */
+  reaped: report.reaped
 })

@@ -14,9 +14,11 @@ import {
   hrefFor,
   link,
   meta,
+  runningRuns,
+  stuckRunReason,
   unlink
 } from "@memhtml/sleep"
-import { attemptIo, commitSubject, readFileOrNull } from "@memhtml/store"
+import { attemptIo, commitSubject, type GitShape, readFileOrNull } from "@memhtml/store"
 import { Effect } from "effect"
 
 import { Git, Store } from "./api-layer.js"
@@ -25,7 +27,7 @@ import { Git, Store } from "./api-layer.js"
  * `memhtml doctor`: the corpus's own health check, and `--fix` for the two findings a repair can settle
  * without a judgement call.
  *
- * Nine checks, and each one is a claim the design makes about the corpus rather than a lint:
+ * Ten checks, and each one is a claim the design makes about the corpus rather than a lint:
  *
  * 1. **Dangling `<link>` hrefs**: an authored edge pointing at a path the tree does not hold. Design
  *    §2.3 has no foreign key on `edges` deliberately (a `<link>` may name a file the indexer has not
@@ -53,8 +55,13 @@ import { Git, Store } from "./api-layer.js"
  *    `unknown` type, which is supported, and is therefore unreachable by the typed reference the
  *    `entity` scope requires. The query returns an empty set rather than an error, so a producer
  *    emitting bare names makes its memories unfindable with nothing anywhere reporting it.
+ * 10. **Stuck sleep runs**: a `sleep_runs` row still `running` whose branch is gone, or whose start is
+ *     further back than `SLEEP_RUN_STALE_AFTER_MS`. A run writes its row `running` before the first
+ *     phase and rewrites it after the last, so a process killed in between leaves a row nothing
+ *     finishes (issue #146). A defect in the ledger, like an orphan access row. A row that is young
+ *     and whose branch exists is a live run and is not a finding.
  *
- * **`--fix` repairs exactly two of the nine, and the repair logic is imported from the sleep
+ * **`--fix` repairs exactly two of the ten, and the repair logic is imported from the sleep
  * integrity phase rather than re-ported.** `archivedFormOf` decides whether a dangling target moved
  * to the archive or is genuinely gone, and `applyHeadEdits`/`link`/`unlink`/`meta` are the byte-splice
  * editors that change one head line without touching the article. A parse→serialize round trip drops
@@ -62,12 +69,15 @@ import { Git, Store } from "./api-layer.js"
  * every file it touched. A second implementation of either would be the consumer-side reimplementation
  * of producer semantics the fleet has paid for repeatedly.
  *
- * The other seven report and do not repair. An inbox memory or task needs a human or an agent to decide
+ * The other eight report and do not repair. An inbox memory or task needs a human or an agent to decide
  * where it belongs, a vocabulary warning needs the author's intent, and a stale index needs
  * `memhtml index update`, which doctor names in its own suggestions rather than running behind the
  * operator's back. An overdue task needs the work done or the deadline moved, and a stale blocker
  * needs someone to decide whether the blocked task is actually ready. An untyped entity needs the
- * producer that wrote it to name a type, which is a vocabulary decision no repair can make.
+ * producer that wrote it to name a type, which is a vocabulary decision no repair can make. A stuck
+ * sleep run is closed by the next `memhtml sleep run` (`--dry-run` reaps too), which is the process
+ * that owns the ledger; doctor names that command and reads the same rule it applies, so the two
+ * cannot disagree about which rows are stuck.
  */
 
 /** How deep the inbox may get before doctor calls it a finding. */
@@ -129,6 +139,20 @@ export interface UntypedEntityFinding {
   readonly files: number
 }
 
+/** One `sleep_runs` row a killed process left `running`. */
+export interface StuckSleepRunFinding {
+  readonly runId: string
+  readonly branch: string
+  /** The row's `started_at`, verbatim. */
+  readonly startedAt: string
+  /**
+   * `false` when the run's branch is gone, which alone makes the row stuck. `true` when the branch
+   * is still there and the row is stuck on age alone, so `memhtml sleep resume <run-id>` can still
+   * finish it. `null` when git could not answer; the row is then listed on age alone.
+   */
+  readonly branchExists: boolean | null
+}
+
 /** What a doctor pass found. Every list is present and possibly empty, so a parser never branches. */
 export interface DoctorReport {
   readonly root: string
@@ -155,6 +179,11 @@ export interface DoctorReport {
   readonly untypedEntities: ReadonlyArray<UntypedEntityFinding>
   /** Distinct untyped entity names, whether or not they fit in the sample above. */
   readonly untypedEntityTotal: number
+  /**
+   * `sleep_runs` rows still `running` that no process will finish: branch gone, or older than
+   * `SLEEP_RUN_STALE_AFTER_MS`. `memhtml sleep run` (or `memhtml sleep run --dry-run`) reaps them.
+   */
+  readonly stuckSleepRuns: ReadonlyArray<StuckSleepRunFinding>
   readonly warnings: ReadonlyArray<WarningFinding>
   /** Files the index holds that failed to parse when doctor re-read them. */
   readonly unparseable: ReadonlyArray<string>
@@ -359,6 +388,49 @@ const untypedEntities = (
     )
 
 /**
+ * `sleep_runs` rows a killed process left `running`, oldest first.
+ *
+ * The rule is `stuckRunReason`, imported from `@memhtml/sleep` rather than restated: it is the rule
+ * the reaper at the start of `sleep run` applies, and a second copy here would let doctor report a
+ * row the reaper then declines, or the reverse. Doctor supplies the two inputs the rule needs and
+ * the package cannot know, whether the branch exists and what time it is. A git read that fails is
+ * `null` on the finding and an `undefined` to the rule, which then judges on age alone; treating an
+ * unreadable branch as absent would list a live run.
+ *
+ * Report-only, and it counts toward `healthy`: a row that says `running` about a process that is
+ * gone is a false statement in the ledger, the same class of defect as an orphan access row. The
+ * remedy is the next `memhtml sleep run`, which owns that table.
+ */
+const stuckSleepRuns = (
+  db: DatabaseShape,
+  git: GitShape,
+  nowMillis: number
+): Effect.Effect<ReadonlyArray<StuckSleepRunFinding>, never, never> =>
+  Effect.gen(function* () {
+    const rows = yield* runningRuns(db).pipe(Effect.orElseSucceed(() => []))
+    const findings: Array<StuckSleepRunFinding> = []
+    for (const row of rows) {
+      const branchExists = yield* git.branchExists(row.branch).pipe(
+        Effect.map((exists): boolean | null => exists),
+        Effect.orElseSucceed(() => null)
+      )
+      const reason = stuckRunReason({
+        startedAt: row.started_at,
+        branchExists: branchExists ?? undefined,
+        nowMillis
+      })
+      if (reason === undefined) continue
+      findings.push({
+        runId: row.run_id,
+        branch: row.branch,
+        startedAt: row.started_at,
+        branchExists
+      })
+    }
+    return findings
+  })
+
+/**
  * Re-read every active file and collect its format warnings.
  *
  * Re-read rather than taken from the index, because a warning is not a stored column. The indexer
@@ -393,6 +465,9 @@ const collectWarnings = (
 const currentYear = Effect.clockWith((clock) =>
   Effect.map(clock.currentTimeMillis, (millis) => new Date(millis).getUTCFullYear())
 )
+
+/** Now in milliseconds, through the Effect clock, so a test can pin how old a stuck run is. */
+const nowMillis = Effect.clockWith((clock) => clock.currentTimeMillis)
 
 /** Today as `YYYY-MM-DD`, through the Effect clock so a test can pin what "overdue" means. */
 const todayDate = Effect.clockWith((clock) =>
@@ -551,6 +626,7 @@ export const doctor = (options: { readonly fix: boolean }) =>
     const overdue = yield* overdueTasks(db, yield* todayDate)
     const stale = yield* staleBlockers(db)
     const untyped = yield* untypedEntities(db)
+    const stuck = yield* stuckSleepRuns(db, git, yield* nowMillis)
 
     const active = yield* db
       .all<{ path: string }>("SELECT path FROM files WHERE archived = 0 ORDER BY path ASC")
@@ -587,8 +663,13 @@ export const doctor = (options: { readonly fix: boolean }) =>
          * `untypedEntities` is excluded for a third reason: `unknown` is a supported storage type, so a
          * bare entity name is a reachability cost rather than a defect. Gating on it would turn a
          * corpus of hand-authored files red for writing its metas the way the format allows.
+         *
+         * `stuckSleepRuns` is INCLUDED, with `orphanAccessRows`: both are rows asserting something about
+         * the corpus that stopped being true, and a ledger that says `running` about a dead process is
+         * wrong in the same way a row describing a path with no file is.
          */
         taskDepth <= INBOX_TASK_WARN_DEPTH &&
+        stuck.length === 0 &&
         warnings.length === 0 &&
         unparseable.length === 0 &&
         indexFresh &&
@@ -603,6 +684,7 @@ export const doctor = (options: { readonly fix: boolean }) =>
       staleBlockers: stale,
       untypedEntities: untyped.sample,
       untypedEntityTotal: untyped.total,
+      stuckSleepRuns: stuck,
       warnings,
       unparseable,
       indexFresh,

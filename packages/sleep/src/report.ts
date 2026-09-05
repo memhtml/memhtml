@@ -53,6 +53,13 @@ ${report.dryRun ? "This was a DRY RUN: counts were computed and nothing was comm
 <dt>Base</dt><dd><code>${escapeText(report.baseSha)}</code></dd>
 <dt>Head</dt><dd><code>${escapeText(report.headSha)}</code></dd>
 <dt>Model calls</dt><dd><data value="${escapeAttribute(String(report.llmCalls))}">${report.llmCalls}</data></dd>
+<dt>Reaped</dt><dd>${
+    report.reaped.length === 0
+      ? "none"
+      : report.reaped
+          .map((row) => `<code>${escapeText(row.runId)}</code> (${escapeText(row.reason)})`)
+          .join(", ")
+  }</dd>
 </dl>
 
 ${failed.length === 0 ? "" : `${renderFailures(failed)}\n`}${belowFloor.length === 0 ? "" : `${renderBelowFloor(belowFloor)}\n`}<table>

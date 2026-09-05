@@ -2,7 +2,7 @@ import { SLEEP_REPORTS_DIR } from "@memhtml/store"
 import { Effect } from "effect"
 
 import { commitPhase } from "../commit.js"
-import { type PhaseResult, type RunReport, readPendingMarks } from "../contract.js"
+import { type PhaseResult, type ReapedRun, type RunReport, readPendingMarks } from "../contract.js"
 import { writeFileBytes } from "../edits.js"
 import { emptyOutcome, type PhaseEnv, type PhaseOutcome, type SleepError } from "../env.js"
 import { renderReport } from "../report.js"
@@ -17,9 +17,12 @@ import { renderReport } from "../report.js"
  *
  * The report describes fourteen phases, not fifteen, because it cannot describe itself. Its own row in
  * `sleep_phases` records the commit, and its file records everything before it.
+ *
+ * `reaped` is the other run-level input: the earlier rows the runner closed before the first phase.
+ * They are part of what this night did to the ledger, so the committed report names them too.
  */
 export const reportPhase =
-  (executed: ReadonlyArray<PhaseResult>) =>
+  (executed: ReadonlyArray<PhaseResult>, reaped: ReadonlyArray<ReapedRun>) =>
   (env: PhaseEnv): Effect.Effect<PhaseOutcome, SleepError> =>
     Effect.gen(function* () {
       const path = `${SLEEP_REPORTS_DIR}/${reportFilename(env.runId)}`
@@ -31,7 +34,8 @@ export const reportPhase =
         headSha: yield* headOf(env),
         dryRun: env.dryRun,
         phases: executed,
-        llmCalls
+        llmCalls,
+        reaped
       }
       // The ledger is read from the run's own branch so the below-floor commitments the consolidation
       // phase recorded are rendered for the reviewer, whether or not that phase committed anything else.

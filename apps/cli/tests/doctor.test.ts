@@ -187,3 +187,74 @@ describe("doctor counts untyped entity references", () => {
     expect(report.healthy).toBe(true)
   })
 })
+
+/**
+ * Stuck sleep runs: a `sleep_runs` row a killed process left `running` (issue #146).
+ *
+ * A run writes its row as `running` before the first phase and rewrites it after the last. A process
+ * killed in between never makes the second write, and nothing else revisits earlier rows, so the row
+ * says `running` forever. That is a defect in the ledger, like an orphan access row, and doctor is the
+ * surface that reports ledger defects. The remedy is not `--fix`: the next `memhtml sleep run` (or
+ * `memhtml sleep run --dry-run`) reaps such rows, and the second half of this suite drives exactly that.
+ */
+describe("doctor reports sleep runs stuck at running", () => {
+  let cli: Cli
+  const stuck = "sleep/2026-08-18"
+  const live = "sleep/2026-08-31"
+  let liveStartedAt: string
+
+  beforeAll(async () => {
+    cli = await makeCli()
+    // One committed memory, so the store has a HEAD, a fresh index, and a clean tree for the dry run.
+    await cli.json([
+      "write",
+      "--type",
+      "semantic",
+      "--title",
+      "A memory so the store is not empty",
+      "--claim",
+      "The doctor suite needs one committed memory."
+    ])
+
+    // The live neighbour's branch exists; the stuck row's does not.
+    await git("git", ["-C", cli.root, "branch", live])
+    liveStartedAt = `${new Date(Date.now() - 5 * 60 * 1000).toISOString().slice(0, 19)}Z`
+
+    const { DatabaseService } = await import("@memhtml/index")
+    const { Effect } = await import("effect")
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const db = yield* DatabaseService
+        const insert = `INSERT INTO sleep_runs (run_id, branch, base_sha, head_sha, status, started_at, ended_at)
+                        VALUES (?, ?, 'c0ffee00', NULL, 'running', ?, NULL)`
+        // Weeks old, `running`, branch gone: the production row the issue names.
+        yield* db.run(insert, [stuck, stuck, "2026-08-18T02:00:00Z"])
+        // Minutes old, `running`, branch present: a run executing right now on another process.
+        yield* db.run(insert, [live, live, liveStartedAt])
+      }).pipe(Effect.provide(cli.layer), Effect.scoped, Effect.orDie)
+    )
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  it("names the stuck row, leaves the live one out, and is unhealthy", async () => {
+    const report = await cli.json<DoctorReport>(["doctor"])
+    expect(report.stuckSleepRuns).toEqual([
+      { runId: stuck, branch: stuck, startedAt: "2026-08-18T02:00:00Z", branchExists: false }
+    ])
+    expect(report.healthy).toBe(false)
+  })
+
+  it("is healthy again once a sleep run has reaped the row", async () => {
+    const reaped = await cli.json<{
+      readonly reaped: ReadonlyArray<{ readonly runId: string; readonly reason: string }>
+    }>(["sleep", "run", "--dry-run", "--phases", "preflight"])
+    expect(reaped.reaped).toEqual([{ runId: stuck, reason: "branch gone" }])
+
+    const report = await cli.json<DoctorReport>(["doctor"])
+    expect(report.stuckSleepRuns).toEqual([])
+    expect(report.healthy).toBe(true)
+  })
+})

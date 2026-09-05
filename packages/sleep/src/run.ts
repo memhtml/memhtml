@@ -1,11 +1,25 @@
 import { Effect, Result, Schema } from "effect"
 
-import type { PhaseCounts, PhaseResult, RunReport, SleepPhase } from "./contract.js"
-import { dependentsOf, phaseIndexOf, SLEEP_PHASES, TRAILER_PHASE } from "./contract.js"
+import type { PhaseCounts, PhaseResult, ReapedRun, RunReport, SleepPhase } from "./contract.js"
+import {
+  dependentsOf,
+  phaseIndexOf,
+  SLEEP_PHASES,
+  SLEEP_RUN_STALE_AFTER_MS,
+  TRAILER_PHASE
+} from "./contract.js"
 import { makeLlmBudget, type PhaseBody, type PhaseEnv, type SleepDeps } from "./env.js"
 import { PHASE_BODIES } from "./phases/index.js"
 import { reportPhase } from "./phases/report.js"
-import { readPhases, readRun, recordPhase, recordRun } from "./sql.js"
+import {
+  abandonRun,
+  type RunRow,
+  readPhases,
+  readRun,
+  recordPhase,
+  recordRun,
+  runningRuns
+} from "./sql.js"
 import { makeDetectionBudget } from "./tasks.js"
 
 /**
@@ -130,6 +144,11 @@ export const run = (deps: SleepDeps, options: RunOptions): Effect.Effect<RunRepo
       })
     }
     const instant = instantFor(options.date)
+    /**
+     * Earlier rows a killed run left `running` are closed here, before this run's own row exists and
+     * whether or not this is a dry run. See {@link reapStuckRuns} for the two rules and the reasons.
+     */
+    const reaped = yield* reapStuckRuns(deps, started)
 
     const env: PhaseEnv = {
       deps,
@@ -176,23 +195,33 @@ export const run = (deps: SleepDeps, options: RunOptions): Effect.Effect<RunRepo
           baseSha: env.baseSha,
           dryRun,
           phases: selected,
-          reason: entered.failure.reason
+          reason: entered.failure.reason,
+          reaped
         })
       }
     }
-    yield* ignoreFailure(
-      recordRun(deps.db, {
-        runId,
-        branch: runId,
-        baseSha: env.baseSha,
-        headSha: null,
-        status: "running",
-        startedAt: started,
-        endedAt: null
-      })
-    )
+    /**
+     * The `running` row is written only for a REAL run. A dry run has no branch, so its row would be
+     * exactly the shape the reaper and `doctor` read as a killed run (`running`, branch gone), and a
+     * concurrent run or doctor pass during the dry run would reap or report it. Nothing reads a dry
+     * run's row mid-run, since `resume` cannot target one, so the single closing write below is the
+     * one row a dry run makes.
+     */
+    if (!dryRun) {
+      yield* ignoreFailure(
+        recordRun(deps.db, {
+          runId,
+          branch: runId,
+          baseSha: env.baseSha,
+          headSha: null,
+          status: "running",
+          startedAt: started,
+          endedAt: null
+        })
+      )
+    }
 
-    const executed = yield* executePhases(env, selected, new Set())
+    const executed = yield* executePhases(env, selected, new Set(), reaped)
     const headSha = yield* deps.git.revParseHead().pipe(Effect.orElseSucceed(() => baseSha))
     const ended = yield* nowIso
     const anyFailed = executed.some((phase) => phase.status === "failed")
@@ -216,7 +245,8 @@ export const run = (deps: SleepDeps, options: RunOptions): Effect.Effect<RunRepo
       headSha: headSha ?? env.baseSha,
       dryRun,
       phases: executed,
-      llmCalls: executed.reduce((total, phase) => total + phase.llmCalls, 0)
+      llmCalls: executed.reduce((total, phase) => total + phase.llmCalls, 0),
+      reaped
     }
   }).pipe(Effect.withSpan("sleep.run"))
 
@@ -313,7 +343,7 @@ export const resume = (
     }
 
     const remaining = SLEEP_PHASES.filter((phase) => !completed.has(phase))
-    const executed = yield* executePhases(env, remaining, new Set())
+    const executed = yield* executePhases(env, remaining, new Set(), [])
     const headSha = yield* deps.git.revParseHead().pipe(Effect.orElseSucceed(() => baseSha))
     const ended = yield* nowIso
 
@@ -360,7 +390,9 @@ export const resume = (
       headSha: headSha ?? baseSha,
       dryRun: false,
       phases: all,
-      llmCalls: all.reduce((total, phase) => total + phase.llmCalls, 0)
+      llmCalls: all.reduce((total, phase) => total + phase.llmCalls, 0),
+      /** A resume reaps nothing: it exists to finish a `running` row, not to close one. */
+      reaped: []
     }
   }).pipe(Effect.withSpan("sleep.resume"))
 
@@ -433,6 +465,8 @@ const abortedRun = (input: {
   readonly dryRun: boolean
   readonly phases: ReadonlyArray<SleepPhase>
   readonly reason: string
+  /** Rows the reaper closed before the abort, when the abort came after it ran. */
+  readonly reaped?: ReadonlyArray<ReapedRun> | undefined
 }): Effect.Effect<RunReport, never, never> =>
   Effect.gen(function* () {
     const detail = describeFailure(SleepRunAborted.make({ reason: input.reason }))
@@ -451,8 +485,101 @@ const abortedRun = (input: {
         llmCalls: 0,
         detail
       })),
-      llmCalls: 0
+      llmCalls: 0,
+      reaped: input.reaped ?? []
     }
+  })
+
+const HOUR_MS = 60 * 60 * 1000
+
+/**
+ * Why an earlier `running` row is stuck, or `undefined` when it may be a live run.
+ *
+ * Two rules, either one sufficient. A branch that no longer exists cannot be resumed, so whatever
+ * process owned the row has nothing left to finish. A row that started longer ago than
+ * {@link SLEEP_RUN_STALE_AFTER_MS} belongs to a night the schedule has already moved past. A row that
+ * is young AND whose branch exists is what a run executing right now on another process looks like,
+ * and it is left alone.
+ *
+ * `branchExists: undefined` means git could not say, and the branch rule is then skipped rather than
+ * read as absence: reaping a live run because `show-ref` failed would be the reaper causing the defect
+ * it exists to repair. An unparseable `started_at` skips the age rule for the same reason.
+ *
+ * Shared with `memhtml doctor`, which reports the rows a `sleep run` would reap, so the two cannot
+ * disagree about what stuck means.
+ */
+export const stuckRunReason = (input: {
+  readonly startedAt: string
+  readonly branchExists: boolean | undefined
+  readonly nowMillis: number
+}): string | undefined => {
+  if (input.branchExists === false) return "branch gone"
+  const started = Date.parse(input.startedAt)
+  if (!Number.isFinite(started)) return undefined
+  const age = input.nowMillis - started
+  if (age > SLEEP_RUN_STALE_AFTER_MS) {
+    return `started ${String(Math.floor(age / HOUR_MS))}h ago, past budget`
+  }
+  return undefined
+}
+
+/**
+ * Close every earlier run's row that a killed process left `running` (issue #146).
+ *
+ * Runs at the start of `run`, before this run's own row exists, and on a dry run too: the reaper
+ * touches only the reporting table, which a dry run already writes for its own row, and a stuck row is
+ * a ledger defect whether or not tonight commits. `resume` never calls it, because a resume targets a
+ * `running` row on purpose. Reaping closes the ROW and touches nothing in git: a reaped run whose
+ * branch still exists can still be resumed, and the resume then rewrites the row.
+ *
+ * The row under THIS run's own id is a candidate like any other. A run id is reused when a date's
+ * branch was deleted and the sleep rerun (#110), so a killed run's row can sit under the id the new
+ * run is about to take; it is reaped as `branch gone`, listed in `reaped`, and then overwritten by this
+ * run's own `recordRun`. The report therefore names the run's own id, which is the truth: the earlier
+ * run under that id was closed before the id was reused.
+ *
+ * One INFO line per reaped row, naming the run and the reason, so a night's log says what the ledger
+ * lost. Every failure here is a warning and a shorter list: the reaper is housekeeping, and a run's
+ * facts are its commits. A row is listed only after a read-back shows the write landed, because
+ * `abandonRun` is conditional on `status = 'running'` and a run that finished in between keeps its own
+ * outcome; the list must not name a row that is not `abandoned`.
+ */
+const reapStuckRuns = (
+  deps: SleepDeps,
+  now: string
+): Effect.Effect<ReadonlyArray<ReapedRun>, never, never> =>
+  Effect.gen(function* () {
+    const candidates = yield* runningRuns(deps.db).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning(`sleep reaper skipped: running rows unreadable: ${String(cause)}`).pipe(
+          Effect.as([] as ReadonlyArray<RunRow>)
+        )
+      )
+    )
+    const nowMillis = Date.parse(now)
+    const reaped: Array<ReapedRun> = []
+    for (const row of candidates) {
+      const branchExists = yield* deps.git.branchExists(row.branch).pipe(
+        Effect.map((exists): boolean | undefined => exists),
+        Effect.orElseSucceed(() => undefined)
+      )
+      const reason = stuckRunReason({ startedAt: row.started_at, branchExists, nowMillis })
+      if (reason === undefined) continue
+      const written = yield* abandonRun(deps.db, { runId: row.run_id, endedAt: now }).pipe(
+        Effect.as(true),
+        Effect.catchCause((cause) =>
+          Effect.logWarning(`sleep reap of ${row.run_id} skipped: ${String(cause)}`).pipe(
+            Effect.as(false)
+          )
+        )
+      )
+      if (!written) continue
+      const after = yield* readRun(deps.db, row.run_id).pipe(Effect.orElseSucceed(() => undefined))
+      if (after?.status !== "abandoned" || after.ended_at !== now) continue
+      yield* Effect.logInfo(`sleep reaped ${row.run_id}: ${reason}`)
+      reaped.push({ runId: row.run_id, reason })
+    }
+    return reaped
   })
 
 /**
@@ -466,7 +593,9 @@ const abortedRun = (input: {
 const executePhases = (
   env: PhaseEnv,
   phases: ReadonlyArray<SleepPhase>,
-  alreadyFailed: Set<SleepPhase>
+  alreadyFailed: Set<SleepPhase>,
+  /** What the reaper closed before the first phase, handed to `report` so the night's file says so. */
+  reaped: ReadonlyArray<ReapedRun>
 ): Effect.Effect<ReadonlyArray<PhaseResult>, never, never> =>
   Effect.gen(function* () {
     const results: Array<PhaseResult> = []
@@ -508,7 +637,8 @@ const executePhases = (
        */
       const dirtyBefore = env.dryRun ? undefined : yield* dirtyPathSet(env)
       const startedAt = yield* nowIso
-      const body: PhaseBody = phase === "report" ? reportPhase(results) : PHASE_BODIES[phase]
+      const body: PhaseBody =
+        phase === "report" ? reportPhase(results, reaped) : PHASE_BODIES[phase]
       const outcome = yield* Effect.result(body(env))
       const endedAt = yield* nowIso
 
@@ -760,7 +890,7 @@ export const describeFailure = (failure: unknown): string => {
 }
 
 /** Wall clock as an ISO second, through the injected clock so a test can pin it. */
-const nowIso = Effect.clockWith((clock) =>
+export const nowIso = Effect.clockWith((clock) =>
   Effect.map(clock.currentTimeMillis, (millis) => `${new Date(millis).toISOString().slice(0, 19)}Z`)
 )
 
