@@ -18,7 +18,7 @@ import {
   TRAILER_PHASE
 } from "./contract.js"
 import type { SleepDeps } from "./env.js"
-import { parseCounts } from "./run.js"
+import { nowIso, parseCounts } from "./run.js"
 import { applyPendingMarks, latestRun, type RunRow, readPhases, readRun, recordRun } from "./sql.js"
 
 /**
@@ -341,6 +341,14 @@ export const merge = (
 
     const marks = yield* applyMarks(deps, row)
 
+    /**
+     * The row this writes is a FINISHED run, whatever state it was read in. A run killed after its
+     * first `recordRun` sits at `running` with `ended_at` NULL, and nothing above reads status, so an
+     * operator can land that branch; the merge is then the run's end, and `ended_at` takes the merge's
+     * own instant (issue #146). A timestamp column takes a timestamp: the merge sha is a different
+     * fact and already sits in `head_sha`.
+     */
+    const endedAt = row.ended_at ?? (yield* nowIso)
     yield* recordRun(deps.db, {
       runId: row.run_id,
       branch: row.branch,
@@ -348,7 +356,7 @@ export const merge = (
       headSha: merged,
       status: "merged",
       startedAt: row.started_at,
-      endedAt: row.ended_at ?? merged
+      endedAt
     }).pipe(Effect.catchCause(() => Effect.void))
 
     return {

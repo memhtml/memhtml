@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 
 import { merge, review } from "../src/review.js"
 import { run } from "../src/run.js"
+import { readRun, recordRun } from "../src/sql.js"
 import {
   candidate,
   candidates,
@@ -175,6 +176,50 @@ describe("merge", () => {
           expect(parents.split(" ").length).toBe(2)
         }),
       { seed: DEDUP_CORPUS, model: inertModel() }
+    )
+  })
+
+  it("closes a row still marked running with a timestamp, never a sha, when it merges the run", async () => {
+    /**
+     * Issue #146. A run killed after its first `recordRun` leaves the row `running` with `ended_at`
+     * NULL, and `merge` does not read status, so an operator can land that branch. The row it writes
+     * then has to be a finished run: `merged`, with an `ended_at` that is a TIME. The merge's own
+     * commit sha is what stands in for a missing `ended_at` otherwise, and a sha in a timestamp column
+     * is a row every reader of `started_at`/`ended_at` misparses.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const report = yield* run(fixture.deps, { date: DATE, phases: ["preflight"] })
+          // Put the row back the way a killed process leaves it. The branch and its commits stay.
+          yield* recordRun(fixture.db, {
+            runId: report.runId,
+            branch: report.branch,
+            baseSha: report.baseSha,
+            headSha: null,
+            status: "running",
+            startedAt: "2026-08-02T00:10:00Z",
+            endedAt: null
+          }).pipe(Effect.orDie)
+
+          const merged = yield* merge(fixture.deps, report.runId)
+          expect(merged.merged).toBe(true)
+
+          const row = yield* readRun(fixture.db, report.runId).pipe(Effect.orDie)
+          expect(row?.status).toBe("merged")
+          expect(row?.ended_at).not.toBeNull()
+          expect(row?.ended_at).not.toBe(merged.headSha)
+          expect(row?.ended_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
+          // No row for this run id is left `running`: the merge is the run's end.
+          const running = yield* fixture.db
+            .all<{ run_id: string }>(
+              "SELECT run_id FROM sleep_runs WHERE status = 'running' AND run_id = ?",
+              [report.runId]
+            )
+            .pipe(Effect.orDie)
+          expect(running).toEqual([])
+        }),
+      { seed: DEDUP_CORPUS }
     )
   })
 

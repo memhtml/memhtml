@@ -1325,6 +1325,41 @@ export const recordRun = (
     ]
   )
 
+/**
+ * Every row still `running`, oldest first. The reaper's candidates, and doctor's.
+ *
+ * A predicate on `status` alone, deliberately not on age and not on `ended_at`. Which of these rows
+ * is stuck is a judgment that needs git (does the branch still exist) and a clock (how long ago), and
+ * both belong to the caller. `review`, `failed`, `merged`, and `abandoned` are rows a process finished
+ * writing, whatever their age, so none of them is a candidate.
+ */
+export const runningRuns = (
+  db: DatabaseShape
+): Effect.Effect<ReadonlyArray<RunRow>, StorageFailure> =>
+  db.all<RunRow>(
+    `SELECT run_id, branch, base_sha, head_sha, status, started_at, ended_at
+     FROM sleep_runs WHERE status = 'running' ORDER BY started_at ASC, run_id ASC`
+  )
+
+/**
+ * Close a run nothing will finish: `abandoned`, ended at `endedAt`.
+ *
+ * `AND status = 'running'` in the predicate, so the write is conditional on the state the caller read.
+ * A run that finished between the reaper's read and this write has already rewritten its own row, and
+ * an unconditional update would stamp a completed run `abandoned` over its real outcome. `head_sha` is
+ * left as it was: the row records what the run reached, and this write records only that it stopped.
+ * A lost race is therefore a no-op; the caller reads the row back and reports only a row it closed.
+ */
+export const abandonRun = (
+  db: DatabaseShape,
+  input: { readonly runId: string; readonly endedAt: string }
+): Effect.Effect<void, StorageFailure> =>
+  db.run(
+    `UPDATE sleep_runs SET status = 'abandoned', ended_at = ?
+     WHERE run_id = ? AND status = 'running'`,
+    [input.endedAt, input.runId]
+  )
+
 /** Record one phase row. Reporting only; the commit trailers are what a resume reads. */
 export const recordPhase = (
   db: DatabaseShape,

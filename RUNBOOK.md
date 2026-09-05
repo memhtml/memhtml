@@ -251,7 +251,7 @@ Every probe must outrank its own wrong-fact twins. The default MRR floor is `0.8
 ## 9. Doctor and publish
 
 ```bash
-memhtml doctor          # eight checks
+memhtml doctor          # ten checks
 memhtml doctor --fix    # repairs the two that need no judgement call
 memhtml publish         # regenerate index.html listings and sitemap.xml, and commit
 ```
@@ -260,6 +260,7 @@ memhtml publish         # regenerate index.html listings and sitemap.xml, and co
 | -------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `dangling`                 | A `<link>` points at a path the tree does not hold.                                                | `--fix` rewrites it to the archive path, or drops it when the target is gone.                                          |
 | `orphanAccessRows`         | A `state.access` row whose path left the tree.                                                     | `--fix` prunes it.                                                                                                     |
+| `stuckSleepRuns`           | A `sleep_runs` row still `running` whose branch is gone or whose start is over 20 hours old.       | `memhtml sleep run` reaps it at start; `memhtml sleep run --dry-run` does too.                                         |
 | `inboxCrowded`             | Over 20 active memories in `areas/inbox/`: the placement rules stopped matching what agents write. | Re-place them, or revisit the rules.                                                                                   |
 | `inboxTasksCrowded`        | Over 10 open tasks in `areas/inbox/tasks/`: work with no project.                                  | Drain it. A task inbox is meant to be drained, not accumulated.                                                        |
 | `overdueTasks`             | An open task whose `memhtml-due` has passed.                                                       | Doctor is the ONLY surface reading `due_at` — a task is default-excluded from search and skipped by every sleep phase. |

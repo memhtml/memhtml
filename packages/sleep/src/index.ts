@@ -37,6 +37,7 @@ export type {
   PhaseCounts,
   PhaseResult,
   PhaseStatus,
+  ReapedRun,
   ReviewCommit,
   ReviewFile,
   ReviewReport,
@@ -57,6 +58,7 @@ export {
   readPendingMarks,
   recordPendingMarks,
   SLEEP_PHASES,
+  SLEEP_RUN_STALE_AFTER_MS,
   SWEEP_PHASES,
   TRAILER_COUNTS,
   TRAILER_PHASE,
@@ -165,7 +167,8 @@ export {
   parseCounts,
   resume,
   run,
-  runIdFor
+  runIdFor,
+  stuckRunReason
 } from "./run.js"
 export type { SleepShape } from "./service.js"
 export { layerSleep, makeSleep, Sleep } from "./service.js"
@@ -187,6 +190,7 @@ export type {
   UnconsolidatedSession
 } from "./sql.js"
 export {
+  abandonRun,
   accessRows,
   activeCorpus,
   activeEntities,
@@ -219,6 +223,7 @@ export {
   recordRun,
   replaceMinedEdges,
   retentionEdgeCounts,
+  runningRuns,
   sessionManifestRows,
   sharedEntityPairs,
   unconsolidatedSessions,

@@ -87,12 +87,15 @@ memhtml sleep run --dry-run
       }
     ],
     "failedPhases": [],
-    "commits": []
+    "commits": [],
+    "reaped": []
   }
 }
 ```
 
 Every phase reports `status`, a `counts` object shaped to that phase, a `commitSha`, and its own `llmCalls`. `commitSha` is null on a dry run and on the phases that commit nothing by design. `failedPhases` is there so you can see whether anything failed without filtering the array yourself.
+
+`reaped` lists earlier runs' `sleep_runs` rows this run stamped `abandoned` before it started, each as `{ "runId", "reason" }`. A run writes its row `running` before the first phase and rewrites it after the last, so a process killed in between leaves a row nothing finishes. At start, every `sleep run` (a dry run too) closes such a row when its branch is gone (`"branch gone"`) or when it started more than 20 hours ago (`"started 41h ago, past budget"`), and logs one line per row. A row that is young and whose branch exists is a run executing right now and is left alone. `memhtml doctor` lists the same rows under `stuckSleepRuns` until a run reaps them. `sleep resume` reaps nothing, because it exists to finish a `running` row.
 
 Two phases commit nothing even on a real run, by design. `preflight` only refreshes the index, and `relationship-mining` writes its derived edges into the index alone, because thousands of edges the system can derive again would bury every real diff.
 

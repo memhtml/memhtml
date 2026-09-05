@@ -43,7 +43,7 @@ export const PHASE_BODIES: Readonly<Record<SleepPhase, PhaseBody>> = {
   "placement-triage": placementTriage,
   integrity,
   "state-export": stateExport,
-  report: reportPhase([])
+  report: reportPhase([], [])
 }
 
 export { arcSynthesis } from "./arc-synthesis.js"

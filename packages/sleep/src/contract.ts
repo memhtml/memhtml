@@ -258,6 +258,36 @@ export interface PhaseResult {
   readonly detail?: string | undefined
 }
 
+/**
+ * How long a `sleep_runs` row may stay `running` before a later run treats it as killed.
+ *
+ * Twenty hours. This bounds how long ONE run can still plausibly be executing; it says nothing about
+ * when the next run comes, because the cycle has no schedule of its own and a caller decides that. A
+ * run writes its row `running` before the first phase and rewrites it after the last, and a process
+ * killed in between leaves the first write in place with nothing else ever revisiting it (issue
+ * #146). No phase budget bounds a whole run's wall-clock duration (the caps in this package count
+ * model calls and detected tasks), so the bound is stated here. A full run over the production corpus
+ * is a multi-hour process, and twenty hours is several times that.
+ *
+ * Why twenty and not a round day: the RUNBOOK's example wiring runs `sleep run` once a day, and a bound
+ * equal to that interval turns the boundary into a coin flip. Measured: a run started at 02:00:07 and a
+ * next start at 02:00:03 the following day are 86,396,000 ms apart, which is under a 24-hour bound by
+ * four seconds, so the killed row survives one more day. Four hours of margin absorb cron drift and a
+ * host that booted late, so a once-a-day caller always reaps the previous run on the next start.
+ *
+ * The comparison is between two wall-clock stamps of the same kind, the stuck row's `started_at` and
+ * the new run's own start. The run's `--date` parameter is the wrong reference: a backdated run would
+ * make every earlier row read as far older or far younger than it is.
+ */
+export const SLEEP_RUN_STALE_AFTER_MS = 20 * 60 * 60 * 1000
+
+/** One earlier run's row the reaper closed at the start of this run, and why. */
+export interface ReapedRun {
+  readonly runId: string
+  /** `branch gone`, or `started <n>h ago, past budget`. */
+  readonly reason: string
+}
+
 /** A whole run's outcome. */
 export interface RunReport {
   /** `sleep/<YYYY-MM-DD>`, suffixed `-2` on a same-day rerun. Also the branch name. */
@@ -271,6 +301,12 @@ export interface RunReport {
   readonly phases: ReadonlyArray<PhaseResult>
   /** Total model calls across {@link LLM_PHASES}. */
   readonly llmCalls: number
+  /**
+   * Rows of EARLIER runs this run stamped `abandoned` before it started, with the reason for each.
+   * Empty on a resume, which targets a `running` row on purpose, and on a run that refused to start
+   * before it reached the ledger.
+   */
+  readonly reaped: ReadonlyArray<ReapedRun>
 }
 
 /** How one file changed across a run, for the review surface. */

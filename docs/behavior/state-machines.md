@@ -40,6 +40,7 @@ stateDiagram-v2
     running --> review : run
     running --> failed : run
     running --> abandoned : run
+    running --> abandoned : reaper (next run)
     failed --> review : resume
     failed --> failed : resume
     review --> merged : merge
@@ -54,7 +55,9 @@ stateDiagram-v2
 
 `merge` lands the sleep branch on the target branch and writes `merged` (`packages/sleep/src/review.ts:326-360`) — a fast-forward when the target has not moved, a merge commit when it advanced on paths provably disjoint from the branch (issue #108). It stops in three cases and writes nothing in any of them, so a stopped run stays in `review` and the operator can retry. The three refusal labels come verbatim from `MergeReport.refusal` (`packages/sleep/src/contract.ts:315`). `no-run` means no row resolves. `main-advanced` means the target branch moved past the run's `base_sha` AND the advance overlaps the branch's own touched paths (named in `MergeReport.overlap`), or the touched sets could not be read, or the merge itself failed (`packages/sleep/src/review.ts:271-310`, `packages/sleep/src/review.ts:326-338`). `gate-failed` means the caller's `preMergeGate` rejected the run (`packages/sleep/src/review.ts:312-324`).
 
-`abandoned` has no outgoing transition in source, and neither does `merged`. Nothing reads a run's status to gate a transition. `merge` keys on `base_sha` against the target branch head rather than on the status value.
+A process killed between the first `recordRun` and the last leaves the row at `running` with `ended_at` NULL, and the run itself never revisits it. The reaper does: at the start of every later `run` (a dry run included, never a `resume`), each row still `running` is stamped `abandoned` with `ended_at` set when its branch no longer exists or when its `started_at` is more than `SLEEP_RUN_STALE_AFTER_MS` (20 hours: a bound on one run's duration, four hours short of a day so a once-a-day caller is never on the boundary) before the new run's own start (`packages/sleep/src/run.ts`, `reapStuckRuns`; `packages/sleep/src/contract.ts`, `SLEEP_RUN_STALE_AFTER_MS`). The update carries `AND status = 'running'`, so a run that finished between the read and the write keeps its own outcome. A row that is young and whose branch exists is a live run and is not touched. The new run's report lists each closed row under `reaped` with its reason, and `memhtml doctor` lists the same rows under `stuckSleepRuns` until a run closes them. `merge` writes `merged` over a `running` row as well, since it reads no status, and stamps `ended_at` with the merge's own instant when the row had none.
+
+`abandoned` has no outgoing transition in source, and neither does `merged`. The reaper is the one reader of a run's status that gates a transition, and it reads only `running`. `merge` keys on `base_sha` against the target branch head rather than on the status value.
 
 Defined at: `packages/sleep/src/sql.ts:730`
 
