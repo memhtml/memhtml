@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.14.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.13.0...memhtml-v0.14.0) (2026-09-05)
+
+
+### Features
+
+* **index:** keep vectors across a rebuild, add index embed, interlock rebuilds that cannot embed ([#151](https://github.com/memhtml/memhtml/issues/151)) ([b8abf16](https://github.com/memhtml/memhtml/commit/b8abf160bdf59c6c17f4ebd4d1fb5f3598a792cb)), closes [#142](https://github.com/memhtml/memhtml/issues/142)
+* **search:** gate the vector arm on vector coverage and report it on status, doctor and sleep ([#148](https://github.com/memhtml/memhtml/issues/148)) ([68e1775](https://github.com/memhtml/memhtml/commit/68e1775860a17bacac3f45562d150ae3ef259670))
+
+
+### Bug Fixes
+
+* **cli:** pin test runs to a throwaway MEMHTML_ROOT and add MEMHTML_REFUSE_ENV_ROOT ([#152](https://github.com/memhtml/memhtml/issues/152)) ([f2ef54f](https://github.com/memhtml/memhtml/commit/f2ef54f34aa020cdf830e1d2b30f70d443c59dd6)), closes [#144](https://github.com/memhtml/memhtml/issues/144)
+* **search:** read a query as any-of when no memory holds every word, keep quoted phrases adjacent ([#149](https://github.com/memhtml/memhtml/issues/149)) ([0a90fcd](https://github.com/memhtml/memhtml/commit/0a90fcd8bde6aa0d44909eb8954ca4c71b3fe410)), closes [#143](https://github.com/memhtml/memhtml/issues/143)
+* **sleep:** project the merged commit into the index when sleep merge lands ([#153](https://github.com/memhtml/memhtml/issues/153)) ([2e8d2da](https://github.com/memhtml/memhtml/commit/2e8d2dae0c583be829f3567bbe64eeff0dcb7ac8))
+* **sleep:** reap sleep_runs rows a killed run left running, and report them in doctor ([#147](https://github.com/memhtml/memhtml/issues/147)) ([10c3fbf](https://github.com/memhtml/memhtml/commit/10c3fbfd6e3c3000b68f4b791810f5847ac04075)), closes [#146](https://github.com/memhtml/memhtml/issues/146)
+
 ## [0.13.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.12.0...memhtml-v0.13.0) (2026-09-04)
 
 
