@@ -5,7 +5,7 @@
 # betterleaks 1.7.4 from mise. Never a bare `biome`, whose resolution depends on the
 # committer's shell.
 #
-# The split: pre-commit is the fast, file-scoped pass; pre-push is the two whole-repo
+# The split: pre-commit is the fast, file-scoped pass; pre-push is the whole-repo
 # gates that catch what a per-file pass cannot. The test tiers are deliberately absent —
 # ~1850 unit tests across 13 packages, and the integration tier runs one file at a time
 # with 180-second timeouts. `mise run check` is CI's job, and CI is where it gates.
@@ -65,26 +65,39 @@ pre-push:
   jobs:
     - name: lint
       run: mise run lint
-    - name: typecheck
-      # Typecheck depends on build in turbo, so this is also the cheapest proof that the
-      # project-reference graph still compiles before anything reaches origin.
-      run: mise run typecheck
-    - name: smoke-package
-      # The published artifact, installed and driven. ~60s credential-free, ~105s with `--live`, which
-      # additionally spends real Bedrock tokens on the three edges nothing else can reach from an
-      # install: embeddings, the sleep phases that call a model, and the consolidator distilling a
-      # transcript through eve.
-      #
-      # Live WHEN A CREDENTIAL IS PRESENT, and the fallback says so on stderr rather than quietly
-      # proving less — a push from a machine with no Bedrock access should still gate the artifact, and
-      # should not be able to mistake the smaller gate for the larger one.
-      #
-      # This is the slowest hook in the repo by an order of magnitude. `--no-verify` skips it; CI runs
-      # the credential-free half on every PR regardless.
-      run: |
-        if [ -n "$AWS_BEARER_TOKEN_BEDROCK" ] || { [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ]; }; then
-          mise run package:smoke:live
-        else
-          echo "pre-push: no Bedrock credential, running the credential-free smoke — the embedder, the model, and the consolidator go unproven" >&2
-          mise run package:smoke
-        fi
+    # typecheck and smoke-package are SERIAL, inside one group, and the reason is turbo. Both reach
+    # `@memhtml/docs#build` — typecheck through `turbo run typecheck` (docs typecheck dependsOn build),
+    # smoke-package through `package:assemble`'s `turbo run build` — and two turbo processes started
+    # side by side do not share one task graph, so on a cold cache each ran its own `astro build`
+    # into the same `apps/docs/dist`. One build clears `dist/.prerender` while the other is still
+    # rendering, and the second dies with `Cannot find module dist/.prerender/chunks/llms_*.mjs`.
+    # Measured 2026-09-05: the first push after a change failed this way twice in a row and passed on
+    # retry both times, because the retry found a warm cache; two concurrent `astro build`s in one
+    # checkout reproduce it directly. Serial, the second job hits the cache the first one wrote, so
+    # the cost is the ~45 s typecheck no longer overlapping the smoke rather than a second build.
+    - group:
+        parallel: false
+        jobs:
+          - name: typecheck
+            # Typecheck depends on build in turbo, so this is also the cheapest proof that the
+            # project-reference graph still compiles before anything reaches origin.
+            run: mise run typecheck
+          - name: smoke-package
+            # The published artifact, installed and driven. ~60s credential-free, ~105s with `--live`, which
+            # additionally spends real Bedrock tokens on the three edges nothing else can reach from an
+            # install: embeddings, the sleep phases that call a model, and the consolidator distilling a
+            # transcript through eve.
+            #
+            # Live WHEN A CREDENTIAL IS PRESENT, and the fallback says so on stderr rather than quietly
+            # proving less — a push from a machine with no Bedrock access should still gate the artifact, and
+            # should not be able to mistake the smaller gate for the larger one.
+            #
+            # This is the slowest hook in the repo by an order of magnitude. `--no-verify` skips it; CI runs
+            # the credential-free half on every PR regardless.
+            run: |
+              if [ -n "$AWS_BEARER_TOKEN_BEDROCK" ] || { [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ]; }; then
+                mise run package:smoke:live
+              else
+                echo "pre-push: no Bedrock credential, running the credential-free smoke — the embedder, the model, and the consolidator go unproven" >&2
+                mise run package:smoke
+              fi
