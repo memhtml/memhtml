@@ -743,18 +743,31 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   },
   {
     name: "index rebuild",
-    summary: "Rebuild index.db from the git tree at HEAD. Destroys nothing outside .memhtml/.",
+    summary:
+      "Rebuild index.db from the git tree at HEAD, keeping every stored vector whose chunk survives. Destroys nothing outside .memhtml/.",
     args: [],
     flags: [
       {
         name: "embed",
         type: "boolean",
-        description: "Fill missing vectors from Bedrock. --no-embed makes the rebuild instant.",
+        description:
+          "Fill missing vectors from Bedrock. --no-embed makes the rebuild instant and leaves new or changed chunks without a vector; the vectors already stored survive either way when the model is unchanged. With MEMHTML_EMBED=off, --embed is held to the same rules as --no-embed.",
         default: true
+      },
+      {
+        name: "force",
+        type: "boolean",
+        description:
+          "Run a rebuild that cannot write vectors (--no-embed, or --embed with MEMHTML_EMBED=off) over a store that already carries them. Without it that call is refused with ERR_REBUILD_NO_EMBED_REFUSED, because a store with vectors was embedded on purpose. Accepted and inert when the rebuild can embed.",
+        default: false
       }
     ],
     responseTypes: ["index.report"],
-    examples: ["memhtml index rebuild --no-embed", "memhtml index rebuild --repo /srv/memory"]
+    examples: [
+      "memhtml index rebuild --no-embed",
+      "memhtml index rebuild --no-embed --force",
+      "memhtml index rebuild --repo /srv/memory"
+    ]
   },
   {
     name: "index update",
@@ -764,6 +777,22 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       { name: "embed", type: "boolean", description: "Fill missing vectors.", default: true }
     ],
     responseTypes: ["index.report"]
+  },
+  {
+    name: "index embed",
+    summary:
+      "Fill every chunk that has no vector in the configured space, without a rebuild. Safe to rerun; reports the gap it left.",
+    args: [],
+    flags: [
+      {
+        name: "dry-run",
+        type: "boolean",
+        description: "Report the gap (embeddingsRemaining) and write nothing.",
+        default: false
+      }
+    ],
+    responseTypes: ["index.report"],
+    examples: ["memhtml index embed", "memhtml index embed --dry-run"]
   },
   {
     name: "index status",

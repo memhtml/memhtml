@@ -101,8 +101,9 @@ Answering a question that takes MORE THAN ONE HOP through the corpus? Write it a
 | `memhtml task add` | — | `--title`* `--claim` `--body` `--status` `--due` `--workspace` `--tag` `--entity` `--session-id` `--prompt-id` `--turn-uuid` | `task.written` |
 | `memhtml task status` | <path> <status> | `--reason` | `task.updated` |
 | `memhtml task list` | — | `--status` `--workspace` `--due-before` `--limit` `--cursor` `--include-archived` `--detected` | `task.list` |
-| `memhtml index rebuild` | — | `--embed` | `index.report` |
+| `memhtml index rebuild` | — | `--embed` `--force` | `index.report` |
 | `memhtml index update` | — | `--embed` | `index.report` |
+| `memhtml index embed` | — | `--dry-run` | `index.report` |
 | `memhtml index status` | — | — | `index.report` |
 | `memhtml trace index` | — | — | `trace.report` |
 | `memhtml trace search` | <query> | `--cwd` `--since` `--limit` | `trace.sessions` |
@@ -329,15 +330,22 @@ The task working set: a direct indexed scan with blockers, never ranked retrieva
 
 ### `memhtml index rebuild`
 
-Rebuild index.db from the git tree at HEAD. Destroys nothing outside .memhtml/.
+Rebuild index.db from the git tree at HEAD, keeping every stored vector whose chunk survives. Destroys nothing outside .memhtml/.
 
-- `--embed` (boolean) — Fill missing vectors from Bedrock. --no-embed makes the rebuild instant. _(default `true`)_
+- `--embed` (boolean) — Fill missing vectors from Bedrock. --no-embed makes the rebuild instant and leaves new or changed chunks without a vector; the vectors already stored survive either way when the model is unchanged. With MEMHTML_EMBED=off, --embed is held to the same rules as --no-embed. _(default `true`)_
+- `--force` (boolean) — Run a rebuild that cannot write vectors (--no-embed, or --embed with MEMHTML_EMBED=off) over a store that already carries them. Without it that call is refused with ERR_REBUILD_NO_EMBED_REFUSED, because a store with vectors was embedded on purpose. Accepted and inert when the rebuild can embed. _(default `false`)_
 
 ### `memhtml index update`
 
 Index only what moved since the recorded watermark, plus the dirty working tree.
 
 - `--embed` (boolean) — Fill missing vectors. _(default `true`)_
+
+### `memhtml index embed`
+
+Fill every chunk that has no vector in the configured space, without a rebuild. Safe to rerun; reports the gap it left.
+
+- `--dry-run` (boolean) — Report the gap (embeddingsRemaining) and write nothing. _(default `false`)_
 
 ### `memhtml index status`
 
@@ -477,6 +485,7 @@ Run the `memhtml-mcp` stdio server: 15 tools and 3 resources over this same repo
 - `ERR_GIT`
 - `ERR_DISCRIMINATION_FAILED`
 - `ERR_UNKNOWN`
+- `ERR_REBUILD_NO_EMBED_REFUSED`
 
 ## Configuration
 

@@ -120,7 +120,7 @@ The top level is fixed at four PARA buckets: `projects/`, `areas/`, `resources/`
 memhtml index rebuild --embed
 ```
 
-`--embed` fills vectors from Bedrock. With no AWS credentials yet, pass `--no-embed`: the rebuild becomes instant, retrieval runs on its lexical floor, and you fill the vectors later by running `memhtml index rebuild --embed`. Both states are honest ones to be in:
+`--embed` fills vectors from Bedrock. With no AWS credentials yet, pass `--no-embed`: the rebuild becomes instant, retrieval runs on its lexical floor, and you fill the vectors later by running `memhtml index embed`, which embeds every chunk that has no vector and rebuilds nothing. Both states are honest ones to be in:
 
 ```bash
 export MEMHTML_EMBED=off      # an explicit opt-out, distinct from a missing credential
