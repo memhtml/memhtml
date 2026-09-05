@@ -40,11 +40,16 @@ const routes = (): ReadonlyArray<string> => {
   return walk(dist, BASE_SEGMENT)
 }
 
-/** The visible text of a document, roughly: tags, scripts and styles removed, whitespace folded. */
+/**
+ * The visible text of a document, roughly: tags, scripts and styles removed, whitespace folded.
+ *
+ * A closing tag may carry whitespace before its `>`, so the end-tag patterns allow it; a stripper
+ * that stopped at `</script>` alone would count the rest of a script as prose.
+ */
 const visibleText = (html: string): string =>
   html
-    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script\b[\s\S]*?<\/script\s*>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style\s*>/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/&[a-z#0-9]+;/gi, " ")
     .replace(/\s+/g, " ")
