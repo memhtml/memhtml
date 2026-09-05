@@ -776,14 +776,22 @@ describe("usage errors are exit 2, decided before anything is mounted", () => {
     }
   })
 
+  // `--repo` on these two because the suite pins `MEMHTML_REFUSE_ENV_ROOT`, and that refusal is
+  // decided before this arm's own checks; the repo is incidental to what each asserts.
   it("refuses a blank script rather than reporting an empty answer", async () => {
-    const result = await run(["exec", "--script", "   "])
+    const result = await run(["exec", "--script", "   ", "--repo", fixture.root])
     expect(result.exitCode).toBe(2)
     expect((JSON.parse(result.stdout) as { code: string }).code).toBe("ERR_MISSING_ARGUMENT")
   })
 
   it("refuses an unreadable --file with a path-not-found code", async () => {
-    const result = await run(["exec", "--file", join(host, "definitely-absent.mjs")])
+    const result = await run([
+      "exec",
+      "--file",
+      join(host, "definitely-absent.mjs"),
+      "--repo",
+      fixture.root
+    ])
     expect(result.exitCode).toBe(2)
     expect((JSON.parse(result.stdout) as { code: string }).code).toBe("ERR_PATH_NOT_FOUND")
   })

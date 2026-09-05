@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -132,3 +132,73 @@ export const writeInput = (
   at: "2026-08-02T12:00:00Z",
   ...overrides
 })
+
+/**
+ * A throwaway `MEMHTML_ROOT` for one test process, and the check that nothing created it.
+ *
+ * Issue #144. `run()` in `@memhtml/cli`, called in-process without `--repo` or an injected layer,
+ * resolves its repo from the environment, so a test that reached the app layer opened whatever store
+ * the developer's shell named, and a help mutant rebuilt a live index that way. Every vitest config
+ * whose tests can reach that layer sets `test.env` from {@link throwawayTestEnv}, so the only store an
+ * unpinned invocation can touch is a path under the OS temp dir that nothing else uses. The path is
+ * per process, so two runs on one machine cannot share it, and nothing here creates it: a test that
+ * opens it IS the defect, and {@link assertThrowawayRootUntouched} is the run's teardown that says so.
+ */
+export const THROWAWAY_ROOT_PREFIX = "memhtml-vitest-root-"
+
+/** The throwaway root for this process. Read `process.env.MEMHTML_ROOT` inside a test worker instead. */
+export const throwawayRoot = (): string => join(tmpdir(), `${THROWAWAY_ROOT_PREFIX}${process.pid}`)
+
+/**
+ * The environment a test run is pinned to: the throwaway root, both network edges off so a layer
+ * built from it neither embeds nor resolves a Bedrock credential, and `MEMHTML_REFUSE_ENV_ROOT` on so
+ * an in-process `run()` that names no repo is refused at exit 2 instead of reaching the throwaway at
+ * all. The root pin and the teardown stay as the backstop for a layer built outside `run()`.
+ */
+export const throwawayTestEnv = (): Record<string, string> => ({
+  MEMHTML_ROOT: throwawayRoot(),
+  MEMHTML_EMBED: "off",
+  MEMHTML_LLM: "off",
+  MEMHTML_REFUSE_ENV_ROOT: "1"
+})
+
+/**
+ * Rejects when the throwaway root exists, naming what it holds. Pure of process state so it can be
+ * unit-tested; {@link throwawayRootGlobalSetup} is what wires it into a run's exit code.
+ */
+export const assertThrowawayRootUntouched = async (): Promise<void> => {
+  const root = throwawayRoot()
+  let entries: ReadonlyArray<string>
+  try {
+    entries = await readdir(root)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return
+    throw error
+  }
+  throw new Error(
+    `a test reached the app layer through the environment: ${root} exists and holds ${entries.join(", ")}. Pass --repo or inject a layer (issue #144).`
+  )
+}
+
+/**
+ * The vitest `globalSetup` default export: runs once in the main process, before any test file, and
+ * returns the teardown that runs after the last one.
+ *
+ * Setup removes a stale root first. The path is named by this process's own pid, so anything already
+ * there is from a killed run whose pid the OS has recycled, and reporting it would blame this run for
+ * another's leftovers. Teardown sets `process.exitCode` before rethrowing, because vitest catches a
+ * teardown rejection in `close()`, logs it as `error during close`, and ends with a bare
+ * `process.exit()`: without the exit code the message would print under a green summary and CI would
+ * pass. Probed in vitest 4.1.11.
+ */
+export const throwawayRootGlobalSetup = async (): Promise<() => Promise<void>> => {
+  await rm(throwawayRoot(), { recursive: true, force: true })
+  return async () => {
+    try {
+      await assertThrowawayRootUntouched()
+    } catch (error) {
+      process.exitCode = 1
+      throw error
+    }
+  }
+}

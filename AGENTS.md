@@ -464,6 +464,7 @@ Run the `memhtml-mcp` stdio server: 15 tools and 3 resources over this same repo
 - `ERR_MISSING_ARGUMENT`
 - `ERR_INVALID_FLAG`
 - `ERR_UNEXPECTED_ARGUMENT`
+- `ERR_REPO_REQUIRED`
 - `ERR_PATH_NOT_FOUND`
 - `ERR_INVALID_MEMORY`
 - `ERR_DUPLICATE_CONTENT`
@@ -482,6 +483,7 @@ Run the `memhtml-mcp` stdio server: 15 tools and 3 resources over this same repo
 | Variable | Default | Meaning |
 |---|---|---|
 | `MEMHTML_ROOT` | `~/memhtml` | The memory repo's root: a git repository holding the corpus and `.memhtml/`. |
+| `MEMHTML_REFUSE_ENV_ROOT` | — | Set to any value but `0`, `false`, `no`, or `off` (absent or blank is off; case-insensitive) makes `memhtml` take its repo from `--repo` alone: `MEMHTML_ROOT` and the `~/memhtml` default stop being doors, and a call that opens a repo without `--repo` is refused with ERR_REPO_REQUIRED at exit 2 before `memhtml` opens anything. For CI, for a test suite calling the CLI in-process, and for an agent runtime that exports `MEMHTML_ROOT` to every subprocess it starts. Commands that never open a repo (`manifest`, `help`, `agents-doc`, `eval discriminate`) are unaffected. It governs the roots `memhtml` resolves from its own environment: a caller that hands the in-process `run()` a layer it built states that layer's root itself. Read by `memhtml` only: `memhtml-mcp` takes its root from `MEMHTML_ROOT`, which `memhtml serve mcp --repo` sets for the child explicitly. |
 | `MEMHTML_TRACE_ROOT` | `~/.claude` | Where `memhtml trace index` reads Claude Code transcripts from. Read-only; never written. |
 | `MEMHTML_AWS_REGION` | `us-east-1` | The Bedrock region for embeddings and the sleep cycle's model-calling phases. |
 | `AWS_BEARER_TOKEN_BEDROCK` | — | Bedrock bearer token, read by the AWS SDK itself. Absent means the default credential chain; retrieval then degrades to the lexical floor rather than failing. |

@@ -76,6 +76,9 @@ export const ERROR_CODES = [
   // offending token is not a flag, and distinct from `ERR_MISSING_ARGUMENT` because it is surplus
   // rather than absent: the caller drops a word instead of adding one.
   "ERR_UNEXPECTED_ARGUMENT",
+  // The call opens a repo, names none with `--repo`, and `MEMHTML_REFUSE_ENV_ROOT` forbids reading
+  // one from the environment. A usage code, since the fix is on the line rather than in the store.
+  "ERR_REPO_REQUIRED",
   "ERR_PATH_NOT_FOUND",
   "ERR_INVALID_MEMORY",
   "ERR_DUPLICATE_CONTENT",
