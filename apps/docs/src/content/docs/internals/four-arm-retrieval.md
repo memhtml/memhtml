@@ -5,9 +5,9 @@ description: Four rankers folded into one SQL statement, weighted rank fusion, d
 
 ## 1. One fused statement, two entry points
 
-Retrieval runs four rankers independently and merges their ordered result lists. That merge is a standard technique called reciprocal rank fusion, and this page calls each ranker an arm. `search` and `recall` sit on the same fused SQL and the same diversification pass (`packages/index/src/retrieval.ts:16-23`), so a ranking change cannot apply to one and miss the other.
+Retrieval runs four rankers independently and merges their ordered result lists. That merge is a standard technique called reciprocal rank fusion, and this page calls each ranker an arm. `search` and `recall` sit on the same fused SQL and the same diversification pass (`packages/index/src/retrieval.ts:17-24`), so a ranking change cannot apply to one and miss the other.
 
-Each arm is an entry in a registry, and `buildRrfSql` folds over that registry to assemble the statement (`packages/index/src/retrieval-sql.ts:198`, `packages/index/src/retrieval-sql.ts:237`). Adding a fifth arm therefore means adding a table entry, and dropping one means filtering the registry. Each arm returns exactly `(path, rank)`, with rank counted from 1.
+Each arm is an entry in a registry, and `buildRrfSql` folds over that registry to assemble the statement (`packages/index/src/retrieval-sql.ts:223`, `packages/index/src/retrieval-sql.ts:262`). Adding a fifth arm therefore means adding a table entry, and dropping one means filtering the registry. Each arm returns exactly `(path, rank)`, with rank counted from 1.
 
 Figure 1 draws the whole path, and labels the diversification pass by its usual name, maximal marginal relevance, abbreviated MMR. Everything down to the per-path sum is one SQL statement, and MMR is TypeScript over what that statement returned.
 
@@ -18,7 +18,7 @@ Figure 1 draws the whole path, and labels the diversification pass by its usual 
 
 ## 2. The four arms
 
-`RANK_ARMS` (`packages/index/src/retrieval-sql.ts:243`) holds four members in fold order: `fts` for full-text search, `vector` for embedding similarity, `recency`, and `salience`. The order is presentation only, since a sum commutes.
+`RANK_ARMS` (`packages/index/src/retrieval-sql.ts:268`) holds four members in fold order: `fts` for full-text search, `vector` for embedding similarity, `recency`, and `salience`. The order is presentation only, since a sum commutes.
 
 | Arm        | Weight | Needs        | Rank source                                                                          |
 | ---------- | ------ | ------------ | ------------------------------------------------------------------------------------ |
@@ -29,19 +29,19 @@ Figure 1 draws the whole path, and labels the diversification pass by its usual 
 
 ### 2.1. fts
 
-`packages/index/src/retrieval-sql.ts:114`. `ROW_NUMBER() OVER ()` with no `ORDER BY` captures the row order MATCH itself produced, which is the only relevance signal this driver exposes. There is no `rank` column and no `bm25()` function available. The window sits outside the `LIMIT`ed subquery, since inside it the numbering would apply to the pre-limit scan.
+`packages/index/src/retrieval-sql.ts:124`. `ROW_NUMBER() OVER ()` with no `ORDER BY` captures the row order MATCH itself produced, which is the only relevance signal this driver exposes. There is no `rank` column and no `bm25()` function available. The window sits outside the `LIMIT`ed subquery, since inside it the numbering would apply to the pre-limit scan.
 
 ### 2.2. vector
 
-`packages/index/src/retrieval-sql.ts:139`. Exact brute-force comparison. `GROUP BY c.path` with `min(distance)` collapses a file to its best-matching chunk. Without that collapse a three-chunk file would contribute three ranks, consume three slots of the arm's candidate budget, and have three reciprocal-rank contributions summed, so length would beat relevance.
+`packages/index/src/retrieval-sql.ts:164`. Exact brute-force comparison. `GROUP BY c.path` with `min(distance)` collapses a file to its best-matching chunk. Without that collapse a three-chunk file would contribute three ranks, consume three slots of the arm's candidate budget, and have three reciprocal-rank contributions summed, so length would beat relevance.
 
 ### 2.3. recency
 
-`packages/index/src/retrieval-sql.ts:118`. Event time comes first, so an episodic memory sorts by when the incident happened rather than by when someone wrote it down.
+`packages/index/src/retrieval-sql.ts:128`. Event time comes first, so an episodic memory sorts by when the incident happened rather than by when someone wrote it down.
 
 ### 2.4. salience
 
-Salience is this system's measure of how much a memory has proved itself in use: how recently it was read, how often, and how the outcomes went. The arm computes it as `exp(-0.01·hours)` + `ln(1 + access_count)` + `max(outcome_score, 0.0)` over the attached state plane (`packages/index/src/retrieval-sql.ts:154`).
+Salience is this system's measure of how much a memory has proved itself in use: how recently it was read, how often, and how the outcomes went. The arm computes it as `exp(-0.01·hours)` + `ln(1 + access_count)` + `max(outcome_score, 0.0)` over the attached state plane (`packages/index/src/retrieval-sql.ts:179`).
 
 The clamp on the third term is a guard against double-counting a bad outcome. A negative outcome earns no boost here and takes no penalty either, because the retention scorer owns punishment and applying it twice would let one bad outcome bury a memory that is still the best answer.
 
@@ -53,7 +53,7 @@ Both predicates sit inside the arm and never in the shared `fileFilter` (`packag
 
 ## 3. Fusion
 
-Fusion is one statement. Each active arm is a common table expression, each contributes `weight × 1/(rank + 60)`, the contributions are combined with `UNION ALL`, and the result is summed per path (`packages/index/src/retrieval-sql.ts:246-248`, `packages/domain/src/ranking.ts:8`).
+Fusion is one statement. Each active arm is a common table expression, each contributes `weight × 1/(rank + 60)`, the contributions are combined with `UNION ALL`, and the result is summed per path (`packages/index/src/retrieval-sql.ts:271-273`, `packages/domain/src/ranking.ts:8`).
 
 Ties break on `path ASC`, which makes the ordering total, so two runs over an unchanged corpus produce the same list. The quality gate described in [Testing posture](/internals/testing-posture/) compares against that. `buildRrfSql` returns `undefined` when no arm is active, and a caller has to read that as an empty result. Assembling the statement anyway would produce `SELECT … FROM ()`.
 
@@ -61,17 +61,19 @@ The arithmetic has a pure twin in `@memhtml/domain` (`packages/domain/src/rrf.ts
 
 ## 4. Numbered placeholders and degraded mode
 
-The placeholder prefix is fixed at four positions (`packages/index/src/retrieval-sql.ts:24-27`): `?1` is the query text, `?2` the per-arm limit, `?3` the final limit, and `?4` the query vector. Scope values bind from `?5` upward (`packages/index/src/scope.ts:95`), and the caller always binds a four-value prefix with `null` at `?4` even when the assembled SQL references no `?4` (`packages/index/src/retrieval.ts:196-203`).
+The placeholder prefix is fixed at four positions (`packages/index/src/retrieval-sql.ts:24-27`): `?1` is the query text, `?2` the per-arm limit, `?3` the final limit, and `?4` the query vector. Scope values bind from `?5` upward (`packages/index/src/scope.ts:95`), and the caller always binds a four-value prefix with `null` at `?4` even when the assembled SQL references no `?4` (`packages/index/src/retrieval.ts:197-204`).
 
 Fixed numbering is what keeps scope values at fixed positions whether or not the vector arm fired. With positional `?` markers the numbering would shift, and every remaining arm would silently read the wrong parameter. Weights are inlined as literals rather than bound, because they are trusted configuration and inlining keeps the parameter tuple at four values however many arms fire.
 
-Degradation drops arms and never fails the query. `activeArms` (`packages/index/src/retrieval-sql.ts:263`) filters out any arm whose `needsEmbedding`, `needsState`, or `needsQueryTerms` precondition is unmet. An embedder failure is caught, logged, and turned into `undefined` (`packages/index/src/retrieval.ts:173-194`), so retrieval keeps answering when the embedding provider is down. The result set gets narrower, and the response's `degraded` field says so.
+Degradation drops arms and never fails the query. `activeArms` (`packages/index/src/retrieval-sql.ts:288`) filters out any arm whose `needsEmbedding`, `needsState`, or `needsQueryTerms` precondition is unmet. An embedder failure is caught, logged, and turned into `undefined` (`packages/index/src/retrieval.ts:174-195`), so retrieval keeps answering when the embedding provider is down. The result set gets narrower, and the response's `degraded` field says so.
 
 ## 5. Query sanitization
 
-`needsQueryTerms` exists because several forms an agent writes are hard driver errors rather than empty results: an apostrophe, a colon (which is this system's own entity notation), a leading hyphen, and a bare boolean operator (`packages/index/src/fts-query.ts:1-26`).
+`needsQueryTerms` exists because several forms an agent writes are hard driver errors rather than empty results: an apostrophe, a colon (which is this system's own entity notation), a leading hyphen, and a bare boolean operator (`packages/index/src/fts-query.ts:1-50`).
 
-`sanitizeFtsQuery` (`packages/index/src/fts-query.ts:41`) reduces a query to runs of Unicode letters and digits, and returns `""` when nothing survives, at which point the lexical arm leaves the fold. Dropping the offending characters beats escaping them: `query` is prose rather than a query language, and supporting negation would let an agent invoke it by accident every time it wrote a hyphenated word. The character class is `\p{L}\p{N}` rather than `[a-z0-9]`, which keeps `déployé` as one token.
+`sanitizeFtsQuery` (`packages/index/src/fts-query.ts:71`) reduces a query to runs of Unicode letters and digits, and returns `""` when nothing survives, at which point the lexical arm leaves the fold. Dropping the offending characters beats escaping them: `query` is prose rather than a query language, and supporting negation would let an agent invoke it by accident every time it wrote a hyphenated word. The character class is `\p{L}\p{N}` rather than `[a-z0-9]`, which keeps `déployé` as one token.
+
+`ftsQueryForms` (`packages/index/src/fts-query.ts:97`) builds two MATCH forms from those terms: every term joined with `AND`, and every term joined with `OR`. The lexical arm binds the all-terms form when `buildFtsProbeSql` (`packages/index/src/retrieval-sql.ts:174`) finds a file in scope holding every term, and the any-of form otherwise (`packages/index/src/retrieval.ts:328`). FTS5 reads space-separated terms as AND, so under the all-terms form alone a natural-language sentence that is not a verbatim quote of stored text matches nothing lexically and the arm contributes nothing to the fold; the any-of form lets one proper noun in the sentence find its file and bm25 rank the files holding more of the words first. The all-terms form is kept where it can answer because the fold, not bm25, needs it: bm25 ranks the all-terms file first under either form, but the any-of form hands the fold 40 candidates instead of a few, RRF's `1/(rank + 60)` is nearly flat across 40 positions, and recency and salience then outvote the lexical lead (corpus MRR 1.0 against 0.28 on the gate's fixture, seed 20260802). A double-quoted span in the query is one FTS5 phrase in either form, so `"drain the vip"` demands those words in that order; the words inside the quotes are sanitized like the rest, and an unbalanced quote is read as no quote at all.
 
 ## 6. Scoping
 
@@ -101,15 +103,15 @@ There is no numeric predicate, and that is the contract rather than a gap. `file
 
 ## 7. Diversification
 
-`search` fetches three times as many fused candidates as the caller's limit (`packages/index/src/retrieval.ts:31-35`), because a diversifier can only reorder what it was given. `applyMmr` (`packages/domain/src/mmr.ts:36`) then runs maximal marginal relevance, a greedy selection that at each step picks the candidate maximizing `λ·relevance − (1−λ)·max_sim_to_selected`, with λ = 0.5. It trades a little relevance for less redundancy against the hits it has already chosen.
+`search` fetches three times as many fused candidates as the caller's limit (`packages/index/src/retrieval.ts:32-36`), because a diversifier can only reorder what it was given. `applyMmr` (`packages/domain/src/mmr.ts:36`) then runs maximal marginal relevance, a greedy selection that at each step picks the candidate maximizing `λ·relevance − (1−λ)·max_sim_to_selected`, with λ = 0.5. It trades a little relevance for less redundancy against the hits it has already chosen.
 
-Fusion rank stands in for relevance (`packages/index/src/retrieval.ts:327-337`). Fused scores are derived from ranks and are not comparable across queries, so a monotone substitute is the honest input, and diversification needs only the order to be right. A candidate with no vector takes penalty 0, which is the honest reading of an unknown similarity, so those candidates keep their relative fusion order instead of being shuffled by a fabricated distance. At λ ≥ 1 the function returns its input rather than burning O(n²) cosine computations to reproduce the order it was handed.
+Fusion rank stands in for relevance (`packages/index/src/retrieval.ts:358-368`). Fused scores are derived from ranks and are not comparable across queries, so a monotone substitute is the honest input, and diversification needs only the order to be right. A candidate with no vector takes penalty 0, which is the honest reading of an unknown similarity, so those candidates keep their relative fusion order instead of being shuffled by a fabricated distance. At λ ≥ 1 the function returns its input rather than burning O(n²) cosine computations to reproduce the order it was handed.
 
 ### 7.1. Polarity
 
 Between fusion and MMR sits one more step, and it exists because none of the four arms can see a `not`. A memory saying "X merges 5 intervals" and one saying "X does not merge 5 intervals" share every term the lexical arm matches, sit a hair apart in the vector space, and tie on recency and salience, so the fused order between them is decided by noise. `polarityScored` (`packages/index/src/polarity.ts`) assigns the reciprocal-rank score MMR consumes and then demotes a candidate only when three things hold at once: its claim disagrees with the query's polarity (the same `negationDivergent` marker set the discrimination gate builds its controls from), another candidate in the pool agrees with the query, and the two are near-identical in the vector space (cosine at or above `TWIN_COSINE`, 0.9). The demoted twin lands below its lowest-ranked agreeing twin, scaled by `POLARITY_DEMOTION` (0.5), so it stays in the pool rather than vanishing; a twin fusion already placed below every agreeing copy is left alone. A lone negated memory with no affirmative near-copy is left exactly where fusion put it, which is what keeps this from being a blanket penalty on every true negative fact. The step is symmetric in the query: "why does X not merge" demotes the affirmative twin. Two trade-offs follow from reading the query's phrasing as the wanted polarity, and both are pinned by tests: two live memories that contradict each other rank the half matching the question's phrasing first (a resolved contradiction never reaches the step, because `memhtml correct` archives the superseded half), and outcome words in the marker set (`without`, `fail`, `avoid`) make a query like "deploy without downtime" read as negated. `recall` applies the same step to its fused order, so the two entry points agree on which twin comes first. Measured live (Bedrock embeddings, default fixture, 2026-09-04): 36 of 36 probes discriminated at MRR 1.0, zero inversions.
 
-Each hit carries a `snippet`, its best-matching chunk for this query, capped at 700 characters with an ellipsis that fits inside the ceiling (`packages/index/src/retrieval-sql.ts:294`). One statement computes it over the final paths only, after diversification rather than after fusion, so the fused query never changes shape (`packages/index/src/retrieval.ts:286`). A NULL distance loses to any scored chunk and ordinal breaks the remaining ties, which makes the winner deterministic (`packages/index/src/retrieval.ts:457-467`).
+Each hit carries a `snippet`, its best-matching chunk for this query, capped at 700 characters with an ellipsis that fits inside the ceiling (`packages/index/src/retrieval-sql.ts:319`). One statement computes it over the final paths only, after diversification rather than after fusion, so the fused query never changes shape (`packages/index/src/retrieval.ts:317`). A NULL distance loses to any scored chunk and ordinal breaks the remaining ties, which makes the winner deterministic (`packages/index/src/retrieval.ts:488-498`).
 
 ## 8. The disclosure fold
 
@@ -119,7 +121,7 @@ Each hit carries a `snippet`, its best-matching chunk for this query, capped at 
 
 `MAX_PER_ENTITY = 2` caps full quotes per entity name rather than per path (`packages/index/src/disclosure.ts:25-32`). A per-path cap would be no cap at all, since twelve memories about one service are twelve paths. A capped memory still gets its index line, so the cap reduces depth without dropping the memory.
 
-Arcs fold under their own 9,000-character envelope instead of competing with the 16,000 characters memories share (`packages/index/src/retrieval.ts:408-421`). An arc is a synthesis of many memories, so letting the two compete would let one arc crowd out every concrete memory behind it, and the pack would then explain a pattern while citing none of the evidence for it.
+Arcs fold under their own 9,000-character envelope instead of competing with the 16,000 characters memories share (`packages/index/src/retrieval.ts:439-452`). An arc is a synthesis of many memories, so letting the two compete would let one arc crowd out every concrete memory behind it, and the pack would then explain a pattern while citing none of the evidence for it.
 
 ## 9. Reinforcement
 

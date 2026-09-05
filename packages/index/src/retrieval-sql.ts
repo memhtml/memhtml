@@ -108,6 +108,16 @@ export interface RankArm {
  * and `ROW_NUMBER()` sits outside it so the fused rank numbers the survivors rather than the
  * pre-limit scan.
  *
+ * `?1` is one of the two MATCH forms `ftsQueryForms` builds (`fts-query.ts`): the query's sanitized
+ * terms joined with `AND`, or joined with `OR`, with a double-quoted span kept as one phrase in
+ * either. The caller binds the all-terms form when {@link buildFtsProbeSql} finds a file in scope
+ * holding every term, and the any-of form otherwise. A sentence that is not a verbatim quote of stored
+ * text satisfies no all-terms MATCH, so the any-of form is what lets one proper noun in it find its
+ * file (issue #143); the all-terms form is kept where it can answer because RRF's `1/(rank + 60)` is
+ * nearly flat across this arm's 40 candidates, and 40 any-of candidates let recency and salience
+ * outvote a lexical lead that 3 all-terms candidates would have kept (corpus MRR 1.0 against 0.28 on
+ * the gate's fixture). Whichever form is bound, the bm25 order the fold sees is that form's own.
+ *
  * The join is on `rowid`. `files_fts` is external-content over `files`, so it stores no copy of the
  * row and the rowid is the only handle back to the path.
  */
@@ -126,6 +136,21 @@ const ftsArm: RankArm = {
        LIMIT ?${PARAM_ARM_LIMIT}
      )`
 }
+
+/**
+ * Does any file IN SCOPE hold every term of the all-terms MATCH form? One row or none.
+ *
+ * The lexical arm's own join and the same `fileFilter` the arm carries, so the answer is about the
+ * candidates the arm would actually see: an all-terms match on an archived row, or on a row outside
+ * the caller's workspace, is not a reason to bind the all-terms form and have the arm return nothing.
+ * Binds `?1` as the all-terms text and the scope's `?5`-onward slots unchanged, so `rrfParams` builds
+ * its tuple for this statement the way it does for the fused one.
+ */
+export const buildFtsProbeSql = ({ fileFilter }: ArmHoles): string =>
+  `SELECT 1 AS hit FROM ${FTS_INDEX_NAME}
+   JOIN files ON files.rowid = ${FTS_INDEX_NAME}.rowid
+   WHERE ${FTS_INDEX_NAME} MATCH ?${PARAM_QUERY}${fileFilter.replaceAll("{alias}", "files")}
+   LIMIT 1`
 
 /**
  * Semantic. Exact brute force over the whole `embeddings` table, so 2000 files × 1024 dims, top 40,

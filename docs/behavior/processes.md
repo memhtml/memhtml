@@ -77,21 +77,21 @@ Entry point: `apps/cli/src/operations.ts:641`
 
 ## Ranked retrieval
 
-Entry point: `packages/index/src/retrieval.ts:331`
+Entry point: `packages/index/src/retrieval.ts:362`
 
 1. The `search` and `recall` dispatch arms build one shared scope object from the same flag set, so the two commands cannot narrow differently `apps/cli/src/run.ts:150-157`, `apps/cli/src/commands.ts:58-99`.
-2. `queryVector` embeds the query text, catching a model failure and returning undefined so the search degrades rather than erroring `packages/index/src/retrieval.ts:193-207`.
-3. `sanitizeFtsQuery` reduces the caller's prose to indexable terms, because an apostrophe or a leading hyphen causes a hard driver error rather than an empty result `packages/index/src/retrieval.ts:231`.
-4. `activeArms` drops any arm whose precondition is absent, and that dropping is the entire degradation mechanism. The vector arm needs the query vector, the salience arm needs the attached state plane, and the lexical arm needs surviving query terms `packages/index/src/retrieval-sql.ts:263-270`.
-5. `buildRrfSql` assembles the surviving arms as CTEs, unions their weighted reciprocal ranks, and sums per path with `path ASC` breaking ties. It returns undefined when no arm fires `packages/index/src/retrieval-sql.ts:282-294`.
-6. `hydrate` fetches the full rows for the fused paths in fused order, including both entity projections, the supersedes edge, and the first chunk's vector, in one statement `packages/index/src/retrieval.ts:266-290`.
-7. `applyMmr` reorders the 3x candidate pool down to the limit, using reciprocal fused position as the relevance term `packages/index/src/retrieval.ts:349-354`.
-8. `search` fetches snippets for the final paths only and returns hits plus `degraded`, `arms`, `entityScope`, and `scopeEmpty`. `recall` instead folds arcs and ordinary memories under separate character budgets `packages/index/src/retrieval.ts:360-399`, `packages/index/src/retrieval.ts:402-447`.
+2. `queryVector` embeds the query text, catching a model failure and returning undefined so the search degrades rather than erroring `packages/index/src/retrieval.ts:194-208`.
+3. `ftsQueryForms` reduces the caller's prose to indexable terms in two MATCH forms, all-terms and any-of, keeping a double-quoted span as one phrase, because an apostrophe or a leading hyphen causes a hard driver error rather than an empty result `packages/index/src/fts-query.ts:97`. A one-row probe through the caller's scope decides which form the lexical arm binds: all-terms when some file in scope holds every term, any-of otherwise `packages/index/src/retrieval.ts:328`, `packages/index/src/retrieval-sql.ts:174`.
+4. `activeArms` drops any arm whose precondition is absent, and that dropping is the entire degradation mechanism. The vector arm needs the query vector, the salience arm needs the attached state plane, and the lexical arm needs surviving query terms `packages/index/src/retrieval-sql.ts:288-295`.
+5. `buildRrfSql` assembles the surviving arms as CTEs, unions their weighted reciprocal ranks, and sums per path with `path ASC` breaking ties. It returns undefined when no arm fires `packages/index/src/retrieval-sql.ts:307-319`.
+6. `hydrate` fetches the full rows for the fused paths in fused order, including both entity projections, the supersedes edge, and the first chunk's vector, in one statement `packages/index/src/retrieval.ts:283-321`.
+7. `applyMmr` reorders the 3x candidate pool down to the limit, using reciprocal fused position as the relevance term `packages/index/src/retrieval.ts:380-385`.
+8. `search` fetches snippets for the final paths only and returns hits plus `degraded`, `arms`, `entityScope`, and `scopeEmpty`. `recall` instead folds arcs and ordinary memories under separate character budgets `packages/index/src/retrieval.ts:391-430`, `packages/index/src/retrieval.ts:433-478`.
 
 ### Related
 
-- `packages/index/src/retrieval-sql.ts:243`
-- `packages/index/src/retrieval-sql.ts:318`
+- `packages/index/src/retrieval-sql.ts:268`
+- `packages/index/src/retrieval-sql.ts:343`
 - `packages/index/src/scope.ts:1`
 - `packages/index/src/fts-query.ts:1`
 - `packages/index/src/disclosure.ts:1`

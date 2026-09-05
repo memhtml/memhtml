@@ -9,9 +9,10 @@ import {
   foldDisclosure,
   MEMORY_BODY_BUDGET
 } from "./disclosure.js"
-import { sanitizeFtsQuery } from "./fts-query.js"
+import { ftsQueryForms } from "./fts-query.js"
 import { polarityScored } from "./polarity.js"
 import {
+  buildFtsProbeSql,
   buildRrfSql,
   buildSnippetSql,
   PARAM_QUERY_VECTOR,
@@ -245,6 +246,22 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
           Effect.orElseSucceed(() => undefined)
         )
 
+  /** Does some file the scope admits hold every term of the all-terms MATCH form? */
+  const holdsEveryTerm = (all: string, assembled: ReturnType<typeof assembleScope>) =>
+    Effect.gen(function* () {
+      const sql = buildFtsProbeSql(assembled.holes)
+      const rows = yield* db.all<{ hit: number }>(
+        sql,
+        rrfParams(sql, {
+          matchQuery: all,
+          armLimit: DEFAULT_ARM_LIMIT,
+          finalLimit: 1,
+          scopeParams: assembled.params
+        })
+      )
+      return rows.length > 0
+    })
+
   /**
    * Run the fold and return fused paths, best first.
    *
@@ -264,10 +281,24 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
       /**
        * The MATCH text, not the caller's prose. Several forms that appear in ordinary agent queries
        * are HARD driver errors rather than empty results: an apostrophe, a `type:name` entity
-       * reference, a leading hyphen. So the query is reduced to indexable terms and the lexical arm
+       * reference, a leading hyphen. So the query is reduced to indexable terms, and the lexical arm
        * is dropped entirely when nothing survives.
+       *
+       * Two forms, all-terms first. FTS5 reads space-separated terms as AND and returns a file only
+       * when it holds every one, so a natural-language sentence that is not a verbatim quote of stored
+       * text gets zero lexical rows and the arm contributes nothing (issue #143). The any-of form
+       * always answers and bm25 still ranks the all-terms file first, but the arm then hands the
+       * fold 40 candidates instead of a few, and RRF's flat `1/(rank + 60)` lets recency and salience
+       * decide among them, which the discrimination gate measured as corpus MRR falling from 1.0 to
+       * 0.28. So the arm binds the all-terms form when some file in scope satisfies it, and the
+       * any-of form otherwise. The probe is one indexed `LIMIT 1` statement and is skipped when the
+       * two forms are the same string (one term, or none).
        */
-      const matchQuery = sanitizeFtsQuery(input.query)
+      const forms = ftsQueryForms(input.query)
+      const matchQuery =
+        forms.all === forms.any || (yield* holdsEveryTerm(forms.all, assembled))
+          ? forms.all
+          : forms.any
       const sql = buildRrfSql({
         hasQueryVector: input.vector !== undefined,
         hasState: db.hasState,

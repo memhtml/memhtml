@@ -186,7 +186,7 @@ Read one memory: its metas, links, article, and format warnings.
 
 Ranked search: four RRF arms plus MMR. Degrades to the lexical floor.
 
-- `<query>` — Prose. Never a query language.
+- `<query>` — Prose. A double-quoted span demands those words in that order; nothing else is syntax.
 
 - `--type` (string) — Restrict to one memory type. Repeatable; each occurrence broadens (ANY-of). _(repeatable; one of: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `task`)_
 - `--workspace` (string) — Restrict to one workspace. STRICT: a scoped query never returns a memory with no workspace.
@@ -201,7 +201,7 @@ Ranked search: four RRF arms plus MMR. Degrades to the lexical floor.
 
 A disclosure pack under a character budget: arcs and memories folded separately.
 
-- `<query>` — Prose.
+- `<query>` — Prose. A double-quoted span demands those words in that order; nothing else is syntax.
 
 - `--type` (string) — Restrict to one memory type. Repeatable; each occurrence broadens (ANY-of). _(repeatable; one of: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `task`)_
 - `--workspace` (string) — Restrict to one workspace. STRICT: a scoped query never returns a memory with no workspace.
@@ -351,7 +351,7 @@ Scan $MEMHTML_TRACE_ROOT for Claude Code transcripts, reading only what changed.
 
 FTS over session first-prompts and AI titles. Never enters memory retrieval.
 
-- `<query>` — Prose.
+- `<query>` — Prose. A double-quoted span demands those words in that order; nothing else is syntax.
 
 - `--cwd` (string) — Restrict to sessions from this directory.
 - `--since` (string) — ISO-8601 lower bound on started_at.

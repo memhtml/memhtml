@@ -52,4 +52,4 @@ Three pages sit beside the chapters. [The consolidator](/internals/the-consolida
 
 ## 3. How to read a citation
 
-Every architectural claim on these pages names the code that implements it, in repo-relative `path:line` form, as in `packages/index/src/retrieval-sql.ts:246-248`. A line number points into the commit the site was built from, so treat it as a pointer rather than a permanent address. Where a claim rests on a measurement rather than on code, the measurement carries its date, because a probed number is a fact about one specific build of one specific dependency.
+Every architectural claim on these pages names the code that implements it, in repo-relative `path:line` form, as in `packages/index/src/retrieval-sql.ts:271-273`. A line number points into the commit the site was built from, so treat it as a pointer rather than a permanent address. Where a claim rests on a measurement rather than on code, the measurement carries its date, because a probed number is a fact about one specific build of one specific dependency.

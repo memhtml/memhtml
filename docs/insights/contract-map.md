@@ -360,7 +360,7 @@ export interface DatabaseShape {
 
 **Assumptions consumers make:**
 
-- Every caller of `get` and `all` supplies its own row type parameter `A` and assumes the driver's rows match it, because there is no runtime decode at this boundary. `packages/index/src/retrieval.ts:153-167` declares `HitRow` with snake_case column names and hands it to `all<HitRow>`, so a column rename becomes a silent `undefined` rather than a type error.
+- Every caller of `get` and `all` supplies its own row type parameter `A` and assumes the driver's rows match it, because there is no runtime decode at this boundary. `packages/index/src/retrieval.ts:154-168` declares `HitRow` with snake_case column names and hands it to `all<HitRow>`, so a column rename becomes a silent `undefined` rather than a type error.
 - `packages/index/src/project.ts:373-380` assumes `writeAll` is one transaction and therefore deduplicates rows before sending them, because a duplicate primary key from one file with a repeated `<dt>`/`<dd>` pair would roll back every other row in the batch.
 - `packages/index/src/indexer.ts` assumes it must split a whole-store pass into batches instead of sending one transaction. `packages/index/src/schema-const.ts:77-85` sets `WRITE_BATCH_SIZE` at 500 and states the reason, which is to bound how much work a single failure discards and how long one write holds the WAL write lock.
 - Callers assume a concurrent writer blocks rather than fails. `packages/index/src/database.ts:13-22` sets a 5000 ms busy timeout and states that the fleet runs many short-lived CLI invocations plus a long-lived MCP server against one store, serializing by waiting.
@@ -618,7 +618,7 @@ This is the machine contract an agent parses. It declares two envelope shapes, t
 - `apps/cli/src/agents-doc.ts:9` imports `API_VERSION`, `ERROR_CODES`, and all three exit codes, and writes them into the generated agent documentation at `apps/cli/src/agents-doc.ts:104-106`.
 - `apps/mcp/src/failure.ts:1` imports `codeFor` and `messageFor` from `@memhtml/cli`, so the MCP server reports the same code vocabulary (`apps/mcp/src/failure.ts:32-34`).
 - `tests-integration/tests/harness.ts:141-150` parses the envelope for every integration assertion: `body.error !== undefined` is the failure test and `body.data` is the payload.
-- `packages/index/src/retrieval.ts:110-113` cites `apps/cli/src/envelope.ts:139` by line to explain why `scopeEmpty` is always a boolean.
+- `packages/index/src/retrieval.ts:111-114` cites `apps/cli/src/envelope.ts:139` by line to explain why `scopeEmpty` is always a boolean.
 
 **Shape:**
 
@@ -667,7 +667,7 @@ export const EXIT_RUNTIME = 1
 - An agent is assumed to branch on `code` and never on the human `error` string. `apps/cli/src/envelope.ts:62-66` states that a code's meaning never changes and a code is never removed, while the prose changes freely as wording improves.
 - A parser is assumed to read `type` before parsing `data`. `apps/cli/src/envelope.ts:8-11` states that a new payload shape gets a new discriminator rather than reusing one, so a discriminator's meaning is fixed once shipped.
 - `apps/cli/src/errors.ts:110-116` assumes suggestions are part of the contract that a caller may rely on, and that absent suggestions arrive as an empty array rather than a null, so a parser never branches on presence.
-- Payload shapes assume `--dense` drops null-valued keys, so a field that is null when absent disappears from the output an agent pastes into a prompt. `apps/cli/src/envelope.ts:140-154` implements `stripNulls`, and `packages/index/src/retrieval.ts:108-118` cites that behavior as the reason `scopeEmpty` is a boolean in every case.
+- Payload shapes assume `--dense` drops null-valued keys, so a field that is null when absent disappears from the output an agent pastes into a prompt. `apps/cli/src/envelope.ts:140-154` implements `stripNulls`, and `packages/index/src/retrieval.ts:109-119` cites that behavior as the reason `scopeEmpty` is a boolean in every case.
 - `apps/cli/src/errors.ts:117-126` assumes a suggestion string names a real command from the table in `apps/cli/src/commands.ts:111`, and enforces that with a walkable record rather than a switch so the suite can run every suggestion through the real `parseArgv`. The same comment states the import stays out of `apps/cli/src/errors.ts` because it would close a cycle through `apps/cli/src/operations.ts`.
 - The MCP server assumes only `.message` reaches the wire, so it folds code, reason, and suggestions into one string at construction. `apps/mcp/src/failure.ts:17-23` states that `code` and `suggestions` are not wire fields because MCP's tool-error channel is one text block, and puts the code first behind a colon so a reader can recover it from the prefix.
 - `apps/mcp/src/failure.ts:8-16` assumes a tool must declare a failure schema for its own message to reach the agent. `McpServer` has three catch branches and only one passes the message through. Without the declared schema the agent receives the string "Tool execution failed due to an internal server error".
@@ -679,13 +679,13 @@ export const EXIT_RUNTIME = 1
 
 Search and recall over the projection, with the scope contract every arm receives and the hit shape an agent chains from.
 
-**Producer:** `packages/index/src/retrieval.ts:37-146` and `packages/index/src/scope.ts:29-94`
+**Producer:** `packages/index/src/retrieval.ts:38-147` and `packages/index/src/scope.ts:29-94`
 
 **Consumer(s):**
 
 - `apps/cli/src/operations.ts` calls `search` and `recall` behind the CLI commands.
 - `apps/mcp/src/handlers.ts` calls the same two behind the MCP tools.
-- `packages/index/src/retrieval.ts:14` imports `assembleScope` and `SearchScope` from the scope module, and `packages/index/src/retrieval.ts:38,122` extends `SearchScope` into both input types.
+- `packages/index/src/retrieval.ts:14` imports `assembleScope` and `SearchScope` from the scope module, and `packages/index/src/retrieval.ts:39,122` extends `SearchScope` into both input types.
 - `packages/index/src/index.ts:69-83,114-119` publishes `SearchInput`, `SearchHit`, `SearchResult`, `RecallInput`, `RecallPack`, `RetrievalShape`, `QueryEmbedPort`, `SearchScope`, `assembleScope`, `EXCLUDED_BY_DEFAULT`.
 - `apps/cli/src/api-layer.ts` wires the `Retrieval` service.
 
@@ -736,13 +736,13 @@ export interface RetrievalShape {
 
 **Assumptions consumers make:**
 
-- An agent is assumed to chain a second search off a hit's own `entities` array verbatim. `packages/index/src/retrieval.ts:61-73` calls the `type:name` form a contract with the `entity` scope rather than a display choice, and `packages/index/src/scope.ts:49-61` states the same spelling on the scope side because `file_entities` is keyed on `(type, name)` and a bare name would be ambiguous.
-- Consumers assume `entities` is an empty array rather than absent when a memory names none, because a caller reading an absent key cannot tell "no entities" from "this server does not report them" (`packages/index/src/retrieval.ts:70-72`).
-- Consumers assume `supersededBy` is present and nullable in every result for the same reason (`packages/index/src/retrieval.ts:74-79`), and that it comes from the `edges` table rather than the head meta, since the meta reaches no SQL column and reading it would cost a file open per hit (`packages/index/src/retrieval.ts:81-84`).
-- Consumers assume `score` is comparable only within one result set (`packages/index/src/retrieval.ts:49`), so two searches cannot be merged by score.
-- Consumers assume search never fails because the embedder is down, it gets narrower. `packages/index/src/retrieval.ts:186-192` catches the model failure and logs it, and `packages/index/src/retrieval.ts:90-96` surfaces `degraded` so an agent comparing two searches knows one was ranked by fewer signals.
-- Consumers assume `scopeEmpty` distinguishes an over-narrow scope from an empty corpus, and is never `true` for an unscoped empty result (`packages/index/src/retrieval.ts:114-117`). `packages/index/src/scope.ts:169-181` defines `scopeNarrows` and excludes `includeArchived` because it widens.
-- Consumers assume `snippet` is an empty string only when the file has no chunk at all, never absent (`packages/index/src/retrieval.ts:53-59`).
+- An agent is assumed to chain a second search off a hit's own `entities` array verbatim. `packages/index/src/retrieval.ts:62-74` calls the `type:name` form a contract with the `entity` scope rather than a display choice, and `packages/index/src/scope.ts:49-61` states the same spelling on the scope side because `file_entities` is keyed on `(type, name)` and a bare name would be ambiguous.
+- Consumers assume `entities` is an empty array rather than absent when a memory names none, because a caller reading an absent key cannot tell "no entities" from "this server does not report them" (`packages/index/src/retrieval.ts:71-73`).
+- Consumers assume `supersededBy` is present and nullable in every result for the same reason (`packages/index/src/retrieval.ts:75-80`), and that it comes from the `edges` table rather than the head meta, since the meta reaches no SQL column and reading it would cost a file open per hit (`packages/index/src/retrieval.ts:82-85`).
+- Consumers assume `score` is comparable only within one result set (`packages/index/src/retrieval.ts:50`), so two searches cannot be merged by score.
+- Consumers assume search never fails because the embedder is down, it gets narrower. `packages/index/src/retrieval.ts:187-193` catches the model failure and logs it, and `packages/index/src/retrieval.ts:91-97` surfaces `degraded` so an agent comparing two searches knows one was ranked by fewer signals.
+- Consumers assume `scopeEmpty` distinguishes an over-narrow scope from an empty corpus, and is never `true` for an unscoped empty result (`packages/index/src/retrieval.ts:115-118`). `packages/index/src/scope.ts:169-181` defines `scopeNarrows` and excludes `includeArchived` because it widens.
+- Consumers assume `snippet` is an empty string only when the file has no chunk at all, never absent (`packages/index/src/retrieval.ts:54-60`).
 - Both entry points assume the scope filter is built once and handed to every arm identically. `packages/index/src/scope.ts:6-13` states that per-arm filters would let a scope apply to three arms and not the fourth, which surfaces as a scoped query returning a result from outside the scope, and that no type catches it.
 - The scope assumes parameter numbering starts at `?5` and holds whether or not the vector arm fired, because the caller always binds a four-value prefix with `null` at `?4`. `packages/index/src/scope.ts:22-26` records that an unbound numbered parameter reads as NULL on this driver rather than failing, so a shifted number would silently match nothing.
 - The scope assumes `workspace` is strict equality, so a workspace-scoped query never sees a NULL-workspace file (`packages/index/src/scope.ts:41-46`).
@@ -877,7 +877,7 @@ export const MERGE_OURS_DRIVER = { key: "merge.ours.driver", value: "true" } as 
 
 ## Other contracts
 
-- **`EmbedPort` and `QueryEmbedPort`**: two narrow ports the index declares over `@memhtml/llm`'s `EmbeddingsShape`, split because the document and query halves use different Bedrock `input_type` values and reusing one silently degrades retrieval (`packages/index/src/indexer.ts:26-31`, `packages/index/src/retrieval.ts:143-146`, `packages/llm/src/embeddings.ts:14-27`).
+- **`EmbedPort` and `QueryEmbedPort`**: two narrow ports the index declares over `@memhtml/llm`'s `EmbeddingsShape`, split because the document and query halves use different Bedrock `input_type` values and reusing one silently degrades retrieval (`packages/index/src/indexer.ts:26-31`, `packages/index/src/retrieval.ts:144-147`, `packages/llm/src/embeddings.ts:14-27`).
 - **`IndexerShape` and its reports**: `RebuildReport` and `UpdateReport` carry counted skips so one unparseable file never fails a pass, and `EmbedMissingOptions` distinguishes a whole-store model migration from an incremental pass by the presence of a candidate list (`packages/index/src/indexer.ts:33-96`).
 - **`SLEEP_PHASES` and `HARD_PREREQUISITES`**: 15 ordered phase names plus the pairs that must not be reordered, consumed by the sleep runner and by `memhtml sleep review` (`packages/sleep/src/contract.ts:17,35,42,57`).
 - **`CONSOLIDATION_KINDS` and `ConsolidationResult`**: the consolidator's kinds are proven a subset of `WritableMemoryType` at compile time by an unused typed binding rather than a test (`apps/consolidator/src/contract.ts:28,44,85-86,116-117`).
