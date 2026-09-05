@@ -592,7 +592,7 @@ This command exits 0 even when the run it describes failed. It reports a run it 
 memhtml sleep merge <run-id> [--skip-gate]
 ```
 
-Fast-forward main to the run's branch, after the discrimination gate passes. `apps/cli/src/run.ts:614-645`
+Fast-forward main to the run's branch after the discrimination gate passes, then project the merged commit into the index. `apps/cli/src/run.ts:614-645`
 
 Arguments:
 
@@ -607,6 +607,8 @@ The gate is composed here rather than defaulted inside the sleep package. A fail
 The merge is also where a run's deferred state-plane writes land. `git branch -D` is this design's abort and `main` never moves during a run, so a write into `.memhtml/state.db` performed DURING a phase would outlive the branch that earned it — and for the consolidation watermark that is data loss rather than bookkeeping, because the watermark is an anti-join and a session it covers is never selected again. So `trace-consolidation`, `edge-typing`, and `entity-resolution` record their writes as marks in a committed ledger, `.memhtml/sleep/<run-id>.pending.jsonl`, and this command reads that ledger as a blob at the branch tip and applies the marks after the fast-forward succeeds. `packages/sleep/src/contract.ts:306-352`, `packages/sleep/src/review.ts:344-366`
 
 The report carries `marksPending` and `marksApplied`, two numbers rather than one because they answer different questions: what the branch earned, and what the plane took. They agree on an ordinary merge, so a disagreement is the operator-visible reading of a plane write that did not land — the sessions in the shortfall stay unconsolidated and are re-read next cycle, which costs a model call and loses nothing. A failed apply does not fail the merge: `main` has already moved and the memories are landed. `packages/sleep/src/contract.ts:272-286`
+
+Once `main` has moved, the merge projects the merged commit into the index with the same incremental update `memhtml index update --embed` runs, so the run's memories are searchable when the command returns. The report carries `indexUpdated`, `indexHeadSha`, `indexAdded`, `indexModified`, `indexRemoved`, `indexRenamed`, and `embeddingsWritten`. A failed update does not fail the merge either, for the same reason a failed mark apply does not: the report says `indexUpdated: false` with `indexError`, and a WARN on stderr names the recovery. `reindex` in `packages/sleep/src/review.ts`
 
 ## sleep status
 

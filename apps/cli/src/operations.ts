@@ -2702,6 +2702,27 @@ export const statusReport = () =>
       )
       .pipe(Effect.orElseSucceed(() => undefined))
 
+    const indexFresh = state?.head_sha !== null && state?.head_sha === headSha
+    /**
+     * A stale index is also said on stderr, once per call (issue #145). The payload already carries
+     * `indexFresh`, and the reader who needs the warning is the one who cannot read the payload: the
+     * operator of a `serve mcp` process, whose agents call `memory_status` and whose only view of the
+     * store is the server's log. The line names both commits and the one recovery.
+     *
+     * The predicate is `indexFresh` itself, so the WARN fires exactly where the flag is false. Two
+     * cases that are correct rather than noise: an absent watermark row is stale by definition
+     * (`memhtml init` commits the layout and indexes nothing, so the first `status` after it warns
+     * "index describes no commit" until the first `index update`), and between `sleep run` and
+     * `sleep merge` HEAD is the sleep branch tip while the index describes `main`, so every `status`
+     * in that window warns.
+     */
+    if (!indexFresh) {
+      yield* Effect.logWarning(
+        `index describes ${state?.head_sha ?? "no commit"}, HEAD is ${headSha}; ` +
+          `run memhtml index update --embed`
+      )
+    }
+
     return {
       root: store.root,
       headSha,
@@ -2714,7 +2735,7 @@ export const statusReport = () =>
       chunks,
       embeddings,
       traces,
-      indexFresh: state?.head_sha !== null && state?.head_sha === headSha,
+      indexFresh,
       indexHeadSha: state?.head_sha ?? null,
       embedModel: state?.embed_model ?? null,
       // A stored watermark that disagrees with the configured one means every cosine in this index

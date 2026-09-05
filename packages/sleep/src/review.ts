@@ -1,5 +1,7 @@
+import type { StorageFailure } from "@memhtml/contracts/errors"
 import { isArchivePath } from "@memhtml/contracts/paths"
 import { contentHash } from "@memhtml/html"
+import type { EmbedModelMismatch, IndexStale } from "@memhtml/index"
 import { Effect } from "effect"
 
 import type {
@@ -243,6 +245,13 @@ export interface MergeOptions {
  * loss, because the watermark is an anti-join and the session it covers is never selected again. So a
  * phase records each such write in `pendingMarksPath(runId)`, a committed artifact on the branch, and
  * {@link applyMarks} performs them here, once the memories they describe are on `main`.
+ *
+ * **The merge ends by projecting the merged commit into the index** ({@link reindex}, issue #145).
+ * The index describes one commit and this merge produced a new one, so until `index_state.head_sha`
+ * names it, every memory the run distilled, rewrote, or archived is invisible to `search` and a
+ * long-lived `serve mcp` over the same `index.db` serves the pre-merge projection. The report
+ * carries the update's counts beside `headSha`, so a cron log answers "is it searchable" without a
+ * second command.
  */
 export const merge = (
   deps: SleepDeps,
@@ -359,15 +368,110 @@ export const merge = (
       endedAt
     }).pipe(Effect.catchCause(() => Effect.void))
 
+    /**
+     * AFTER the run row, on purpose. The update includes the night's embedding pass, which can take
+     * minutes against Bedrock, and a process killed inside it must leave a row that says `merged`:
+     * `main` has moved, so the run IS merged, and the index is a projection an operator can redo. A
+     * row still saying `review` would make the next `sleep merge <id>` read `main` as advanced past
+     * the run's base, find the branch's own paths in the overlap, and refuse `main-advanced` forever.
+     */
+    const index = yield* reindex(deps, merged)
+
     return {
       runId: row.run_id,
       branch: row.branch,
       merged: true,
       headSha: merged,
       marksPending: marks.pending,
-      marksApplied: marks.applied
+      marksApplied: marks.applied,
+      ...index
     }
   }).pipe(Effect.withSpan("sleep.merge"))
+
+/** What {@link reindex} adds to a merge that happened: the projection landed, or why it did not. */
+type IndexOutcome =
+  | {
+      readonly indexUpdated: true
+      readonly indexHeadSha: string
+      readonly indexAdded: number
+      readonly indexModified: number
+      readonly indexRemoved: number
+      readonly indexRenamed: number
+      readonly embeddingsWritten: number
+      readonly indexSkipped: number
+    }
+  | { readonly indexUpdated: false; readonly indexError: string }
+
+/**
+ * Project the merged commit into the index, and report what that took.
+ *
+ * An incremental `update` rather than a rebuild: the watermark is the pre-merge commit, so the diff
+ * is exactly the run's own writes, renames tracked and new canonicals embedded, and its cost is the
+ * size of the night rather than the size of the store.
+ *
+ * **A failed update does NOT fail the merge**, on the reasoning {@link applyMarks} follows: `main`
+ * has already moved and the memories are landed, so the outcome is reported (`indexUpdated: false`
+ * with `indexError`) and logged with its recovery, instead of a merge that reports failure over a
+ * `main` that moved. Each failure has one recovery and the warning names it. `IndexStale` is a
+ * rebuild that died mid-way and `EmbedModelMismatch` is a vector space the configured model does not
+ * match; `memhtml index rebuild --embed` is the one path past either guard. A `StorageFailure` is
+ * a transient the next `memhtml index update --embed` retries.
+ */
+const reindex = (deps: SleepDeps, headSha: string): Effect.Effect<IndexOutcome, never, never> =>
+  deps.indexer.update({ embed: true }).pipe(
+    /**
+     * A skipped file is on `main` and absent from the index, so `indexUpdated: true` alone would
+     * stand over a merged memory nobody can search. The count travels on the report as preflight's
+     * `indexSkipped` does, and the paths go to the log, where `memhtml doctor` is the reader's next step.
+     */
+    Effect.tap((update) => {
+      if (update.skipped.length === 0) return Effect.void
+      const named = update.skipped
+        .slice(0, 5)
+        .map((one) => `${one.path} (${one.reason})`)
+        .join(", ")
+      const rest = update.skipped.length > 5 ? ` and ${update.skipped.length - 5} more` : ""
+      return Effect.logWarning(
+        `sleep.merge indexed ${headSha} with ${String(update.skipped.length)} file(s) skipped: ` +
+          `${named}${rest}; they are on main and not in the index; run memhtml doctor`
+      )
+    }),
+    Effect.map(
+      (update): IndexOutcome => ({
+        indexUpdated: true,
+        indexHeadSha: update.headSha,
+        indexAdded: update.added,
+        indexModified: update.modified,
+        indexRemoved: update.removed,
+        indexRenamed: update.renamed,
+        embeddingsWritten: update.embeddingsWritten,
+        indexSkipped: update.skipped.length
+      })
+    ),
+    Effect.catch((error) => {
+      const reason = describeIndexError(error)
+      const recovery =
+        error._tag === "StorageFailure"
+          ? "memhtml index update --embed"
+          : "memhtml index rebuild --embed"
+      return Effect.logWarning(
+        `sleep.merge landed ${headSha} on main but the index still describes the pre-merge ` +
+          `commit: ${reason}; run ${recovery}`
+      ).pipe(Effect.as<IndexOutcome>({ indexUpdated: false, indexError: reason }))
+    })
+  )
+
+/** One line an operator can act on, per failure the indexer's `update` can raise. */
+const describeIndexError = (error: StorageFailure | EmbedModelMismatch | IndexStale): string => {
+  switch (error._tag) {
+    case "IndexStale":
+      return `IndexStale: ${error.reason}`
+    case "EmbedModelMismatch":
+      return `EmbedModelMismatch: index holds ${error.stored}, configured ${error.configured}`
+    case "StorageFailure":
+      return `StorageFailure: ${error.operation}`
+  }
+}
 
 /**
  * The paths BOTH sides touched since the base, sorted. Empty is the proof a disjoint merge needs.

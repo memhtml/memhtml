@@ -98,6 +98,8 @@ Working-tree edits are legitimate too: `memhtml index update` projects uncommitt
 
 Each is idempotent: an unchanged HEAD and a clean tree touch nothing. `memhtml sleep merge` is deliberately NOT on the cron — a run rewrites confidence across the corpus and archives memories, so the branch exists for a human to read `memhtml sleep review` first.
 
+When you do merge, the command projects the merged commit into the index itself, with the same incremental update the cron line runs, and reports that update on its envelope: `indexUpdated: true` with `indexHeadSha` equal to `headSha`, and `indexAdded`, `indexModified`, `indexRemoved`, `indexRenamed`, `embeddingsWritten` as the counts. The run's memories are searchable when the command returns, and no `index update` follows it. `indexUpdated: false` means `main` moved and the index did not follow; `indexError` says why and the WARN on stderr names the recovery (section 7).
+
 ---
 
 ## 4. The MCP server, and sharing a store
@@ -118,6 +120,8 @@ What still needs one writer is `memhtml sleep run`, for a reason that is about g
 `memhtml serve mcp` holds no database of its own — it spawns `memhtml-mcp` with inherited stdio and waits (`apps/cli/src/serve.ts:87`), so the supervisor has no handle to conflict with the child. Interrupting it kills the child, so Ctrl-C never leaves an orphaned server holding the database open (`apps/cli/src/serve.ts:108`).
 
 The one exception is `memhtml eval discriminate`, which never builds the app layer (`apps/cli/src/run.ts:891`): it measures the ranking stack against its own generated fixture corpus in a temp directory with an in-memory database and never reads your `index.db`. Deliberate — checking the gate is exactly what an operator wants while the server is up.
+
+`memhtml status`, and `memory_status` through the same `statusReport`, write one WARN to stderr per call while the index is stale: `index describes <sha>, HEAD is <sha>; run memhtml index update --embed`. That line is for the operator of a `serve mcp` process, whose only view of the store is the server's log; the payload's `indexFresh` is for the caller who parses it.
 
 ---
 
@@ -177,7 +181,7 @@ memhtml sleep resume <run-id>
 memhtml sleep merge <run-id>
 ```
 
-The phases in order, seventeen as of v0.6.0: `preflight`, `dedup-merge`, `entity-resolution`, `person-links`, `relationship-mining`, `edge-typing`, `confidence-decay`, `arc-synthesis`, `retention-triage`, `compress`, `reprieve`, `trace-consolidation`, `task-detection`, `placement-triage`, `integrity`, `state-export`, `report` (`packages/sleep/src/contract.ts:43`). Fifteen of them commit; `preflight` and `relationship-mining` are the two that cannot (`packages/sleep/src/contract.ts:197`). The branch is created BEFORE any phase runs and every commit lands on it, so `main` is never touched by a run (`packages/sleep/src/run.ts:96`). A second run on the same date takes `sleep/<date>-2` and upward (`packages/sleep/src/run.ts:45`). A dry run creates no branch. A real run leaves you checked out on the sleep branch; `memhtml sleep merge` checks out the target itself.
+The phases in order, seventeen as of v0.6.0: `preflight`, `dedup-merge`, `entity-resolution`, `person-links`, `relationship-mining`, `edge-typing`, `confidence-decay`, `arc-synthesis`, `retention-triage`, `compress`, `reprieve`, `trace-consolidation`, `task-detection`, `placement-triage`, `integrity`, `state-export`, `report` (`packages/sleep/src/contract.ts:43`). Fifteen of them commit; `preflight` and `relationship-mining` are the two that cannot (`packages/sleep/src/contract.ts:197`). The branch is created BEFORE any phase runs and every commit lands on it, so `main` is never touched by a run (`packages/sleep/src/run.ts:96`). A second run on the same date takes `sleep/<date>-2` and upward (`packages/sleep/src/run.ts:45`). A dry run creates no branch. A real run leaves you checked out on the sleep branch; `memhtml sleep merge` checks out the target itself, and once `main` has moved it runs the same incremental index update `memhtml index update --embed` would, so the watermark names the merged commit and the night's memories are searchable when the command returns (`reindex` in `packages/sleep/src/review.ts`). The report carries that update's counts beside `headSha`: `indexUpdated`, `indexHeadSha`, `indexAdded`, `indexModified`, `indexRemoved`, `indexRenamed`, `embeddingsWritten`.
 
 `placement-triage` is deep-only. Without `--deep` it returns immediately, writes nothing, and commits nothing, so a default run behaves exactly as it does without the phase in the list (`packages/sleep/src/contract.ts:33`). `--deep` mines a lower grouping band, groups by shared entity, re-files inbox singletons, and iterates `compress` until a pass folds nothing; `--max-llm-calls` caps what the deep mechanisms may spend across all of them, and exhaustion skips the remaining batches with reason `budget` while the run stays green.
 
@@ -235,6 +239,10 @@ The refusal is a value on the report, never an error (`packages/sleep/src/contra
 | `gate-failed`   | The discrimination gate refused: this run degrades retrieval.                                                                                   | `memhtml eval discriminate` to see which probes inverted, then `git branch -D <run-id>`. |
 
 `--skip-gate` merges without re-running discrimination and logs a warning (`apps/cli/src/run.ts:617-620`) — a deliberate override, never a default. The gate always runs in FAKE mode (`apps/cli/src/run.ts:641`), precisely so an unattended merge is not conditional on a token being valid whenever the run fires.
+
+**The gate's own log lines.** The gate builds its fixture corpus into a `:memory:` database with the shipped migrations and rebuilds that throwaway index (`packages/eval/src/harness.ts`), so every `memhtml sleep merge` writes fourteen `applied migration` lines and one `indexer.rebuild: 304 files` line to its log. They describe the eval's fixture, never the store, and each carries the annotation `{ eval: 'fixture-corpus', database: ':memory:' }` so they cannot be read as the store's index being rebuilt. The store's own line from the merge is the unannotated `indexer.update: N added, ...` that follows the fast-forward.
+
+**`indexUpdated: false` on a merge that happened is not a refusal.** `main` moved and the memories are landed, but the index still describes the pre-merge commit, so nothing the run wrote is searchable yet. `indexError` carries the reason and the WARN on stderr names the recovery: `memhtml index rebuild --embed` for `IndexStale` or `EmbedModelMismatch`, `memhtml index update --embed` for a `StorageFailure`. Until you run it, `memhtml status` reports `indexFresh: false` and says so on stderr on every call.
 
 ---
 

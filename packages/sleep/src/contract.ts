@@ -371,6 +371,35 @@ export interface MergeReport {
    */
   readonly marksPending?: number | undefined
   readonly marksApplied?: number | undefined
+  /**
+   * Whether this merge projected the merged commit into the index (issue #145). Present only on a
+   * merge that happened; a refusal moves nothing and so has nothing to project.
+   *
+   * The index is a projection of ONE commit, and the merge made a new one, so a merge is not
+   * finished until `index_state.head_sha` names `headSha`. `true` means it does, and every memory
+   * the run distilled, rewrote, or archived is searchable when the command returns. `false` means
+   * `main` moved and the index did not follow: `indexError` says why, and the WARN on stderr names
+   * the recovery (`memhtml index rebuild --embed` for a stale index or a mixed vector space,
+   * `memhtml index update --embed` otherwise). The merge itself is never failed over an index the
+   * operator can rebuild, for the reason `marksApplied` follows: `main` has already moved.
+   */
+  readonly indexUpdated?: boolean | undefined
+  /** The commit the index describes after the update. Equals `headSha` when `indexUpdated`. */
+  readonly indexHeadSha?: string | undefined
+  /** The incremental pass's counts, the same numbers `memhtml index update` reports. */
+  readonly indexAdded?: number | undefined
+  readonly indexModified?: number | undefined
+  readonly indexRemoved?: number | undefined
+  readonly indexRenamed?: number | undefined
+  readonly embeddingsWritten?: number | undefined
+  /**
+   * Files the update could not project, the same count preflight reports. Each is on `main` and
+   * absent from the index, so a non-zero value beside `indexUpdated: true` is a merged memory nobody
+   * can search; the paths are in the log and `memhtml doctor` names the defect.
+   */
+  readonly indexSkipped?: number | undefined
+  /** Why the index did not follow `main`, when `indexUpdated` is false. */
+  readonly indexError?: string | undefined
 }
 
 /**

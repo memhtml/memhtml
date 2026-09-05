@@ -399,7 +399,7 @@ Per-phase counts, the commit list, diff --stat, and a per-file classification.
 
 ### `memhtml sleep merge`
 
-Fast-forward main to the run's branch, after the discrimination gate passes.
+Fast-forward main to the run's branch after the discrimination gate passes, then project the merged commit into the index.
 
 - `<run-id>` — The run id.
 
