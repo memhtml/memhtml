@@ -43,13 +43,15 @@ const routes = (): ReadonlyArray<string> => {
 /**
  * The visible text of a document, roughly: tags, scripts and styles removed, whitespace folded.
  *
- * A closing tag may carry whitespace before its `>`, so the end-tag patterns allow it; a stripper
- * that stopped at `</script>` alone would count the rest of a script as prose.
+ * A tag may carry anything up to its `>`, whitespace and stray attributes included, so both the
+ * opening and the closing patterns accept `[^>]*` there (CodeQL's `js/bad-tag-filter` names
+ * `</script\t\n bar>` as the shape a stricter pattern misses). A stripper that stopped at
+ * `</script>` alone would count the rest of a script as prose.
  */
 const visibleText = (html: string): string =>
   html
-    .replace(/<script\b[\s\S]*?<\/script\s*>/gi, " ")
-    .replace(/<style\b[\s\S]*?<\/style\s*>/gi, " ")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\b[^>]*>/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/&[a-z#0-9]+;/gi, " ")
     .replace(/\s+/g, " ")
