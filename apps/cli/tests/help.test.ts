@@ -1,11 +1,12 @@
 import { access, mkdtemp, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { afterEach, describe, expect, it } from "vitest"
 
 import { renderAgentsDoc } from "../src/agents-doc.js"
 import { buildManifest, COMMANDS, type CommandSpec, GLOBAL_FLAGS } from "../src/commands.js"
+import { REFUSE_ENV_ROOT_VAR } from "../src/config.js"
 import { EXIT_OK, EXIT_USAGE, RESPONSE_TYPES } from "../src/envelope.js"
 import {
   type helpData,
@@ -20,6 +21,12 @@ const parse = (stdout: string) => JSON.parse(stdout) as Record<string, unknown>
 
 /** stdout is a pipe: what a test runner, a shell pipeline, and an agent all are. */
 const piped = (argv: ReadonlyArray<string>) => run(argv, undefined, undefined, false)
+
+/**
+ * The `MEMHTML_ROOT` this run started with, read once before any test overrides it. `vitest.config.ts`
+ * pins it to a throwaway under the OS temp dir, and the pin is asserted below rather than assumed.
+ */
+const PINNED_ROOT = process.env.MEMHTML_ROOT
 /** stdout is a terminal: a person is reading. */
 const terminal = (argv: ReadonlyArray<string>) => run(argv, undefined, undefined, true)
 
@@ -303,38 +310,96 @@ describe("help's refusals", () => {
   })
 })
 
+describe("the vitest config's throwaway MEMHTML_ROOT", () => {
+  it("is in force: under the temp dir, never ~/memhtml, both network edges off, the flag on", () => {
+    /**
+     * Issue #144. A test calling `run()` in-process without `--repo` or a layer resolves its repo
+     * from the environment, so on a developer machine it reaches the developer's store. The config
+     * pins the variable to a throwaway so that path can only ever be a temp directory. A config
+     * change that dropped the pin would fail here, which is what stops it being removed in silence.
+     */
+    expect(PINNED_ROOT).toBeDefined()
+    expect(PINNED_ROOT?.startsWith(join(tmpdir(), "memhtml-vitest-root-")), PINNED_ROOT).toBe(true)
+    expect(PINNED_ROOT).not.toBe(join(homedir(), "memhtml"))
+    expect(process.env.MEMHTML_EMBED).toBe("off")
+    expect(process.env.MEMHTML_LLM).toBe("off")
+    expect(process.env[REFUSE_ENV_ROOT_VAR]).toBe("1")
+  })
+})
+
 describe("help has no side effects", () => {
   const roots: Array<string> = []
   afterEach(async () => {
     for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
   })
 
-  it("opens nothing: a repo named by --repo and by $MEMHTML_ROOT is left uncreated", async () => {
+  /** The `help` command itself, or any command carrying `--help` / `-h`. */
+  const helpShaped = (argv: ReadonlyArray<string>): boolean => {
+    const parsed = parseArgv(argv)
+    return parsed.command === "help" || parsed.flags.get("help")?.at(-1) === true
+  }
+
+  /**
+   * Every help-shaped invocation: the flag form in its three spellings, the spelled-out form with
+   * and without a target, and every example in the COMMANDS table that asks for help. The examples
+   * come from the table rather than being restated, so a new help example is covered the day it
+   * lands. `search` and `index rebuild` are the targets because they are the two commands that most
+   * obviously need the layer when they RUN, and `index rebuild` is the one that rewrote a live index
+   * in the incident behind issue #144.
+   */
+  const invocations: ReadonlyArray<ReadonlyArray<string>> = [
+    ["help"],
+    ["-h"],
+    ["--help"],
+    ["help", "search"],
+    ["search", "--help"],
+    ["search", "-h"],
+    ["index", "rebuild", "--help"],
+    ...COMMANDS.flatMap((spec) => spec.examples ?? [])
+      .map((example) => shellWords(example).slice(1))
+      .filter(helpShaped)
+  ]
+
+  it("covers the table's help examples, so the case below cannot pass vacuously", () => {
+    expect(invocations.length).toBeGreaterThan(7)
+  })
+
+  it("opens nothing: no index.db appears under $MEMHTML_ROOT, under --repo, or under the run's pinned root", async () => {
     /**
-     * `layerApp` creates `$MEMHTML_ROOT/.memhtml/index.db` on its way up, so a help that built the
-     * layer would scaffold a store as a side effect of asking a question. The probe is the directory:
-     * absent before, absent after. `search` is the command because it is the one that most obviously
-     * needs the layer when it RUNS.
+     * `layerApp` creates `<root>/.memhtml/index.db` on its way up, so a help that built the layer
+     * would scaffold a store as a side effect of asking a question. Three roots are probed, because
+     * each is a door a help that stopped intercepting would walk through: the `MEMHTML_ROOT` this
+     * test sets, a `--repo` on the line, and the throwaway the whole run is pinned to.
+     *
+     * Every invocation runs first and the filesystem is asserted before the exit codes, so a
+     * regression reads as the side effect it is rather than as a wrong exit code that happens to
+     * have one.
      */
     const parent = await mkdtemp(join(tmpdir(), "memhtml-help-"))
     roots.push(parent)
-    const root = join(parent, "never-created")
+    const envRoot = join(parent, "env-root")
+    const repoRoot = join(parent, "repo-root")
     const before = process.env.MEMHTML_ROOT
-    process.env.MEMHTML_ROOT = root
+    process.env.MEMHTML_ROOT = envRoot
+    const outcomes: Array<readonly [string, number]> = []
     try {
-      for (const argv of [
-        ["search", "--help"],
-        ["help", "search", "--repo", root],
-        ["search", "--help", "--repo", root]
-      ]) {
-        const result = await piped(argv)
-        expect(result.exitCode, argv.join(" ")).toBe(EXIT_OK)
+      for (const argv of invocations) {
+        for (const full of [argv, [...argv, "--repo", repoRoot]]) {
+          const result = await piped(full)
+          outcomes.push([full.join(" "), result.exitCode])
+        }
       }
     } finally {
       if (before === undefined) delete process.env.MEMHTML_ROOT
       else process.env.MEMHTML_ROOT = before
     }
-    await expect(access(root)).rejects.toThrow()
+    for (const root of [envRoot, repoRoot, ...(PINNED_ROOT === undefined ? [] : [PINNED_ROOT])]) {
+      await expect(access(join(root, ".memhtml", "index.db")), root).rejects.toThrow()
+    }
+    // The two roots this test named were never created at all, not merely left without a database.
+    await expect(access(envRoot)).rejects.toThrow()
+    await expect(access(repoRoot)).rejects.toThrow()
+    for (const [line, exitCode] of outcomes) expect(exitCode, line).toBe(EXIT_OK)
   })
 })
 

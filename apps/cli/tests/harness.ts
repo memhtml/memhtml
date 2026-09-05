@@ -113,7 +113,9 @@ export interface Cli {
  * `--repo` is threaded on every invocation rather than set in the environment, because a test suite
  * running in parallel would otherwise share one `MEMHTML_ROOT` and two tests would write into one
  * corpus. The flag is also the path production takes for an operator running against a second repo,
- * so it is not a test-only affordance.
+ * so it is not a test-only affordance. The other half is `vitest.config.ts`, which pins `MEMHTML_ROOT`
+ * to a throwaway under the temp dir and whose teardown fails the run if anything created it, so an
+ * invocation that drops the flag lands nowhere that matters (issue #144).
  */
 export const makeCli = async (
   options: {

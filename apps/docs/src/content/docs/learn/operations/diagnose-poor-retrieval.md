@@ -61,12 +61,15 @@ Also remember that search excludes `task` memories by default. Use `memhtml task
 
 ```
 ERR_UNKNOWN_COMMAND  ERR_MISSING_ARGUMENT  ERR_INVALID_FLAG           ERR_UNEXPECTED_ARGUMENT
-ERR_PATH_NOT_FOUND   ERR_INVALID_MEMORY    ERR_DUPLICATE_CONTENT      ERR_WRITE_CONFLICT
-ERR_DIRTY_TREE       ERR_INDEX_STALE       ERR_EMBED_MODEL_MISMATCH   ERR_MODEL_UNAVAILABLE
-ERR_STORAGE          ERR_GIT               ERR_DISCRIMINATION_FAILED  ERR_UNKNOWN
+ERR_REPO_REQUIRED    ERR_PATH_NOT_FOUND    ERR_INVALID_MEMORY         ERR_DUPLICATE_CONTENT
+ERR_WRITE_CONFLICT   ERR_DIRTY_TREE        ERR_INDEX_STALE            ERR_EMBED_MODEL_MISMATCH
+ERR_MODEL_UNAVAILABLE ERR_STORAGE          ERR_GIT                    ERR_DISCRIMINATION_FAILED
+ERR_UNKNOWN
 ```
 
-Sixteen codes (`apps/cli/src/envelope.ts:67`), append-only: a shipped code keeps its meaning forever and is never removed.
+Seventeen codes (`apps/cli/src/envelope.ts:67`), append-only: a shipped code keeps its meaning forever and is never removed.
+
+`ERR_REPO_REQUIRED` is the exit-2 refusal `MEMHTML_REFUSE_ENV_ROOT` produces for a call that opens a repo without `--repo`; see [configure the environment](/learn/operations/configure-the-environment/#memhtml_refuse_env_root-closes-the-environment-door).
 
 `ERR_UNEXPECTED_ARGUMENT` (`apps/cli/src/envelope.ts:74`) is a positional past what the command declares, and it carries its own code rather than reusing a neighbour's because it is a different mistake from either. It is not `ERR_INVALID_FLAG`, since the offending token is not a flag; and it is not `ERR_MISSING_ARGUMENT`, since the argument is surplus rather than absent, so the fix is dropping a word rather than adding one. `memhtml read a.html b.html` reads one memory, and without this code it would say nothing at all about the second.
 

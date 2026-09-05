@@ -20,7 +20,7 @@ import {
   type FlagSpec,
   GLOBAL_FLAGS
 } from "./commands.js"
-import { MemhtmlRoot } from "./config.js"
+import { MemhtmlRoot, REFUSE_ENV_ROOT_VAR, refusesEnvRoot } from "./config.js"
 import { doctor } from "./doctor.js"
 import {
   API_VERSION,
@@ -1012,6 +1012,53 @@ const surplusArgs = (parsed: Parsed, spec: CommandSpec): Failure | undefined => 
   )
 }
 
+/**
+ * The arms that resolve the repo root themselves, with no layer: `serve mcp` supervises a child over
+ * it and `exec` mounts a worktree of it. For them an injected layer is not a door to the root, so
+ * under {@link envRootRefusal} only `--repo` counts.
+ */
+const ROOT_WITHOUT_LAYER: ReadonlySet<string> = new Set(["serve mcp", "exec"])
+
+/**
+ * `MEMHTML_REFUSE_ENV_ROOT`: the environment is not a door to a repo.
+ *
+ * Every arm past the point this is called resolves a repo root, and without `--repo` that root is
+ * `MEMHTML_ROOT` or `~/memhtml`, read from the process environment. A test calling `run()`
+ * in-process, and any subprocess in an agent runtime that exports `MEMHTML_ROOT` to everything it
+ * starts, therefore reaches whatever store the environment names the moment an interception stops
+ * firing: issue #144 is a help mutant that rebuilt a live index exactly that way. With the variable
+ * set, the root has to come from `--repo` or from an injected layer, and a call that names neither is
+ * a usage error at exit 2, decided here before any service is built, so nothing is opened.
+ *
+ * `ERR_REPO_REQUIRED` rather than `ERR_MISSING_ARGUMENT`: the flag is optional on every command, so
+ * "missing" would name a rule the manifest does not state, and a caller branching on the code needs
+ * to learn one fact, that this environment wants `--repo`. The suggestions are the flag spelling and
+ * the command's help, the pointer every refusal of a known command ends with.
+ *
+ * An injected layer is the injector's statement of the root. `run()` cannot look inside a `Layer`, so
+ * a caller that built one from the environment (`layerApp()` with no repo) has walked through the
+ * door itself; the vitest pin and its teardown are the backstop for that case, not this guard.
+ *
+ * The guard runs before the arms' own input checks, so under the flag `exec` with a blank script and
+ * `apply` with a malformed file answer `ERR_REPO_REQUIRED` rather than their own usage codes. Both
+ * are exit 2 and both are fixed on the line; the repo question comes first because it is the one the
+ * flag exists to ask.
+ */
+const envRootRefusal = (
+  parsed: Parsed,
+  layer: Layer.Layer<DispatchServices> | undefined
+): Failure | undefined => {
+  if (!refusesEnvRoot()) return undefined
+  const override = str(parsed, "repo")
+  if (override !== undefined && override.trim() !== "") return undefined
+  if (layer !== undefined && !ROOT_WITHOUT_LAYER.has(parsed.command)) return undefined
+  return fail(
+    "ERR_REPO_REQUIRED",
+    `${parsed.command} opens a repo and ${REFUSE_ENV_ROOT_VAR} is set, so the root is not read from MEMHTML_ROOT or ~/memhtml: name it with --repo`,
+    [`memhtml ${parsed.command} --repo <path>`, `memhtml help ${parsed.command}`]
+  )
+}
+
 /** The suggestion every usage error on a known command ends with: the call that shows its table. */
 const helpFor = (spec: CommandSpec): string => `memhtml help ${spec.name}`
 
@@ -1309,41 +1356,7 @@ export const run = async (
   }
 
   /**
-   * `serve mcp` must not build the app layer either, and here the reason is the database.
-   *
-   * The supervisor's only job is to spawn the server and wait. Building `layerApp` first would open
-   * `$MEMHTML_ROOT/.memhtml/index.db` and run its migrations in the parent. That is a second writer
-   * against the store the child exists to serve, held open for as long as the child lives, by a process
-   * that never issues a query. The parent needs the resolved repo root, which is config rather than a
-   * service.
-   *
-   * Nothing is emitted until the child exits, because stdout belongs to the child from the moment it
-   * is spawned. The `serve.exit` envelope describes how the server ended, and it is written after
-   * the descriptors are the parent's again.
-   */
-  if (parsed.command === "serve mcp") {
-    return Effect.runPromise(
-      Effect.gen(function* () {
-        const override = str(parsed, "repo")
-        const configured = yield* MemhtmlRoot
-        const memhtmlRoot =
-          override !== undefined && override.trim() !== "" ? override.trim() : configured
-        return yield* serveMcp(memhtmlRoot)
-      }).pipe(
-        Effect.map((data) => emit(succeed("serve.exit", data), EXIT_OK)),
-        Effect.catch((error) => Effect.succeed(emit(failureFor(error), EXIT_RUNTIME))),
-        Effect.catchCause((cause) =>
-          Effect.succeed(
-            emit(fail("ERR_UNKNOWN", `unexpected failure: ${String(cause)}`, []), EXIT_RUNTIME)
-          )
-        ),
-        Effect.provideService(Logger.LogToStderr, true)
-      )
-    )
-  }
-
-  /**
-   * `eval discriminate` does not build the app layer either, for the reason the command above gives.
+   * `eval discriminate` does not build the app layer either, for the reason `agents-doc` gives.
    * The gate measures the ranking stack against its own generated fixture corpus in a temp directory
    * with an in-memory database, and reads the operator's `index.db` not at all. Building `layerApp`
    * would open and migrate a store this command never queries, and an operator checking the gate is
@@ -1388,7 +1401,49 @@ export const run = async (
   }
 
   /**
-   * `memhtml exec` does not build the app layer either, for the reason two commands over.
+   * From here down every arm resolves a repo root, and this is the one place the environment is
+   * refused as the source of it. Everything above answers without a repo and keeps working under
+   * `MEMHTML_REFUSE_ENV_ROOT`; everything below needs `--repo` when it is set.
+   */
+  const refused = envRootRefusal(parsed, layer)
+  if (refused !== undefined) return emit(refused, EXIT_USAGE)
+
+  /**
+   * `serve mcp` must not build the app layer either, and here the reason is the database.
+   *
+   * The supervisor's only job is to spawn the server and wait. Building `layerApp` first would open
+   * `$MEMHTML_ROOT/.memhtml/index.db` and run its migrations in the parent. That is a second writer
+   * against the store the child exists to serve, held open for as long as the child lives, by a process
+   * that never issues a query. The parent needs the resolved repo root, which is config rather than a
+   * service.
+   *
+   * Nothing is emitted until the child exits, because stdout belongs to the child from the moment it
+   * is spawned. The `serve.exit` envelope describes how the server ended, and it is written after
+   * the descriptors are the parent's again.
+   */
+  if (parsed.command === "serve mcp") {
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const override = str(parsed, "repo")
+        const configured = yield* MemhtmlRoot
+        const memhtmlRoot =
+          override !== undefined && override.trim() !== "" ? override.trim() : configured
+        return yield* serveMcp(memhtmlRoot)
+      }).pipe(
+        Effect.map((data) => emit(succeed("serve.exit", data), EXIT_OK)),
+        Effect.catch((error) => Effect.succeed(emit(failureFor(error), EXIT_RUNTIME))),
+        Effect.catchCause((cause) =>
+          Effect.succeed(
+            emit(fail("ERR_UNKNOWN", `unexpected failure: ${String(cause)}`, []), EXIT_RUNTIME)
+          )
+        ),
+        Effect.provideService(Logger.LogToStderr, true)
+      )
+    )
+  }
+
+  /**
+   * `memhtml exec` does not build the app layer either, for the reason `serve mcp` gives.
    *
    * The command reads a git tree and nothing else. It materializes a commit as a detached worktree and
    * mounts that directory read-only. It never queries `index.db`, so building `layerApp` would open and

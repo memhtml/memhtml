@@ -763,7 +763,9 @@ The override variable's name is declared once as a constant, and the config tabl
 
 A caller should branch on `code` rather than on the `error` prose. The code list is append-only. A shipped code keeps its meaning and is not removed. `apps/cli/src/envelope.ts:62-87`
 
-The sixteen codes, in `ERROR_CODES` order, are `ERR_UNKNOWN_COMMAND`, `ERR_MISSING_ARGUMENT`, `ERR_INVALID_FLAG`, `ERR_UNEXPECTED_ARGUMENT`, `ERR_PATH_NOT_FOUND`, `ERR_INVALID_MEMORY`, `ERR_DUPLICATE_CONTENT`, `ERR_WRITE_CONFLICT`, `ERR_DIRTY_TREE`, `ERR_INDEX_STALE`, `ERR_EMBED_MODEL_MISMATCH`, `ERR_MODEL_UNAVAILABLE`, `ERR_STORAGE`, `ERR_GIT`, `ERR_DISCRIMINATION_FAILED`, `ERR_UNKNOWN`. `apps/cli/src/envelope.ts:67-87`
+The seventeen codes, in `ERROR_CODES` order, are `ERR_UNKNOWN_COMMAND`, `ERR_MISSING_ARGUMENT`, `ERR_INVALID_FLAG`, `ERR_UNEXPECTED_ARGUMENT`, `ERR_REPO_REQUIRED`, `ERR_PATH_NOT_FOUND`, `ERR_INVALID_MEMORY`, `ERR_DUPLICATE_CONTENT`, `ERR_WRITE_CONFLICT`, `ERR_DIRTY_TREE`, `ERR_INDEX_STALE`, `ERR_EMBED_MODEL_MISMATCH`, `ERR_MODEL_UNAVAILABLE`, `ERR_STORAGE`, `ERR_GIT`, `ERR_DISCRIMINATION_FAILED`, `ERR_UNKNOWN`. `apps/cli/src/envelope.ts:67-87`
+
+`ERR_REPO_REQUIRED` is the exit-2 refusal `MEMHTML_REFUSE_ENV_ROOT` produces for a call that opens a repo and names none with `--repo`. It is a usage code because the fix is on the line, and its suggestion is the flag spelling. `apps/cli/src/run.ts`
 
 `ERR_UNEXPECTED_ARGUMENT` names a positional past what the command declares. It is its own code rather than a reuse of a neighbor, because the offending token is not a flag, which rules out `ERR_INVALID_FLAG`, and it is surplus rather than absent, which rules out `ERR_MISSING_ARGUMENT`: the caller fixes it by dropping a word instead of adding one. `apps/cli/src/envelope.ts:71-74`
 
@@ -778,6 +780,7 @@ For a two-word command the distance is measured against the whole typed invocati
 Every environment variable is declared in one array, which is what `memhtml manifest` reads to describe them. `apps/cli/src/config.ts:26-78`
 
 - `MEMHTML_ROOT`: The memory repo's root: a git repository holding the corpus and `.memhtml/`. Defaults to `~/memhtml`. `apps/cli/src/config.ts:28-31`
+- `MEMHTML_REFUSE_ENV_ROOT`: Set to any value but `0`, `false`, `no`, or `off` (absent or blank is off; case-insensitive) makes `memhtml` take its repo from `--repo` alone, so `MEMHTML_ROOT` and the `~/memhtml` default stop being doors and a call that opens a repo without `--repo` is refused with `ERR_REPO_REQUIRED` at exit 2 before anything is opened. Meant for CI, for a suite calling the CLI in-process, and for an agent runtime that exports `MEMHTML_ROOT` to every subprocess. Read by `memhtml` only; `memhtml-mcp` takes its root from `MEMHTML_ROOT`, which `memhtml serve mcp --repo` sets for the child. `apps/cli/src/config.ts`
 - `MEMHTML_TRACE_ROOT`: Where `memhtml trace index` reads Claude Code transcripts from. Read-only. Defaults to `~/.claude`. `apps/cli/src/config.ts:33-36`
 - `MEMHTML_AWS_REGION`: The Bedrock region for embeddings and the sleep cycle's model-calling phases. Defaults to `us-east-1`. `apps/cli/src/config.ts:39-41`
 - `AWS_BEARER_TOKEN_BEDROCK`: Bedrock bearer token, read by the AWS SDK itself. When it is absent the SDK falls back to the default credential chain, and retrieval degrades to the lexical floor instead of failing. `apps/cli/src/config.ts:44-47`

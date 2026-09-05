@@ -108,7 +108,9 @@ export interface CliOptions {
  * `--repo` is threaded on every invocation rather than exported into the environment, because a suite
  * running in parallel would otherwise share one `MEMHTML_ROOT` and two tests would write into one corpus.
  * The flag is also the path an operator takes to run against a second repo, so it is not a test-only
- * affordance.
+ * affordance. The other half is `vitest.config.ts`, which pins `MEMHTML_ROOT` to a throwaway under the
+ * temp dir and whose teardown fails the run if anything created it, so an invocation that drops the
+ * flag lands nowhere that matters (issue #144).
  *
  * `memhtml init` is the REAL one — so the fixture carries the real `.gitignore`, the real
  * `.gitattributes`, and the `merge.ours.driver` config, which is per-clone and which the `merge=ours`

@@ -16,7 +16,7 @@ import {
   succeed
 } from "../src/envelope.js"
 import { codeFor, messageFor, SUGGESTIONS } from "../src/errors.js"
-import { parseArgv, run } from "../src/run.js"
+import { parseArgv, run, validate } from "../src/run.js"
 
 const parse = (stdout: string) => JSON.parse(stdout) as Record<string, unknown>
 
@@ -529,15 +529,17 @@ describe("error envelopes", () => {
     expect(body.suggestions).toContain("episodic")
   })
 
-  it("admits `arc` on the operator surface, which flag validation must not refuse (issue #88)", async () => {
+  it("admits `arc` on the operator surface, which flag validation must not refuse (issue #88)", () => {
     /**
-     * The inversion of the refusal this case used to pin: `memhtml write --type arc` is the
-     * operator's door for curated import and deliberately authored rules, so the closed-vocabulary
-     * gate must pass it through. Still no layer, so the run fails LATER, at the service boundary —
-     * the assertion is that the failure is not the flag validator's.
+     * `memhtml write --type arc` is the operator's door for curated import and deliberately authored
+     * rules, so the closed-vocabulary gate must pass it through. `validate` alone is the subject, and
+     * `run()` is deliberately not called: a `run()` with no layer that passes validation builds the
+     * app layer from the environment and WRITES this memory into whatever store `MEMHTML_ROOT` names,
+     * which is how sixty `areas/arcs/x-N.html` files landed in one developer's `~/memhtml` (issue #144).
      */
-    const result = await run(["write", "--title", "x", "--claim", "y", "--type", "arc"])
-    expect(parse(result.stdout).code).not.toBe("ERR_INVALID_FLAG")
+    expect(
+      validate(parseArgv(["write", "--title", "x", "--claim", "y", "--type", "arc"]))
+    ).toBeUndefined()
   })
 
   describe("--as-of, which SQL compares as a string", () => {

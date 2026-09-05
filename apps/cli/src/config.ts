@@ -31,11 +31,47 @@ export interface ConfigVar {
   readonly fallback: string | null
 }
 
+/**
+ * `MEMHTML_REFUSE_ENV_ROOT`: the environment is not a door to a repo.
+ *
+ * Declared as a constant so the manifest row below and the read in {@link refusesEnvRoot} cannot
+ * name two different strings.
+ */
+export const REFUSE_ENV_ROOT_VAR = "MEMHTML_REFUSE_ENV_ROOT"
+
+/** The spellings that leave the refusal OFF. Absent and blank are off; any other value is on. */
+const REFUSE_ENV_ROOT_OFF: ReadonlySet<string> = new Set(["", "0", "false", "no", "off"])
+
+/**
+ * Whether `run()` may resolve the repo from `MEMHTML_ROOT` or the `~/memhtml` default.
+ *
+ * Fails closed. The variable is a safety switch, so a spelling it does not know (`y`, `enabled`)
+ * turns it ON rather than silently off, the way `bool()` in `run.ts` reads a flag value and the
+ * inverse of how `MEMHTML_EMBED` reads its one opt-out `off`. Only the five spellings above, and
+ * absence, leave the environment as a door.
+ *
+ * Read from `process.env` directly rather than through `effect/Config`, like `MEMHTML_MCP_BIN`: the
+ * answer is needed synchronously before any Effect runs, because the refusal it drives is a usage
+ * error decided before a layer is built (`run.ts`). `env` is a parameter so a test can hand in a map.
+ */
+export const refusesEnvRoot = (env: NodeJS.ProcessEnv = process.env): boolean =>
+  !REFUSE_ENV_ROOT_OFF.has((env[REFUSE_ENV_ROOT_VAR] ?? "").trim().toLowerCase())
+
 export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   {
     name: "MEMHTML_ROOT",
     description: "The memory repo's root: a git repository holding the corpus and `.memhtml/`.",
     fallback: join("~", "memhtml")
+  },
+  {
+    /**
+     * Imported rather than retyped, for the reason `MCP_BIN_VAR` is: this row and the `process.env`
+     * read in {@link refusesEnvRoot} must name one string.
+     */
+    name: REFUSE_ENV_ROOT_VAR,
+    description:
+      "Set to any value but `0`, `false`, `no`, or `off` (absent or blank is off; case-insensitive) makes `memhtml` take its repo from `--repo` alone: `MEMHTML_ROOT` and the `~/memhtml` default stop being doors, and a call that opens a repo without `--repo` is refused with ERR_REPO_REQUIRED at exit 2 before `memhtml` opens anything. For CI, for a test suite calling the CLI in-process, and for an agent runtime that exports `MEMHTML_ROOT` to every subprocess it starts. Commands that never open a repo (`manifest`, `help`, `agents-doc`, `eval discriminate`) are unaffected. It governs the roots `memhtml` resolves from its own environment: a caller that hands the in-process `run()` a layer it built states that layer's root itself. Read by `memhtml` only: `memhtml-mcp` takes its root from `MEMHTML_ROOT`, which `memhtml serve mcp --repo` sets for the child explicitly.",
+    fallback: null
   },
   {
     name: "MEMHTML_TRACE_ROOT",
