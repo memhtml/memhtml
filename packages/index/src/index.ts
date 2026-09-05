@@ -27,7 +27,8 @@ export {
   MAX_PER_ENTITY,
   MEMORY_BODY_BUDGET
 } from "./disclosure.js"
-export { hasFtsTerms, sanitizeFtsQuery } from "./fts-query.js"
+export type { FtsQueryForms } from "./fts-query.js"
+export { ftsQueryForms, hasFtsTerms, sanitizeFtsQuery } from "./fts-query.js"
 export {
   type GitAdapterDeps,
   makeGitPort,

@@ -45,12 +45,12 @@ An agent runs `memhtml search "<prose>"`. The process embeds the query when a cr
 
 1. The `search` dispatch arm calls `ops.searchMemories` with the query, the limit, and the shared retrieval scope, then names the response type `memory.hits` `apps/cli/src/run.ts:268`.
 2. `searchMemories` delegates to the retrieval service and records no access bump, so a ranked hit does not feed back into salience `apps/cli/src/operations.ts:927`.
-3. `search` asks for the query vector first `packages/index/src/retrieval.ts:334`.
-4. `queryVector` catches an embedder failure, logs it, and returns `undefined`, which becomes `degraded: true` on the response rather than an error `packages/index/src/retrieval.ts:193`.
-5. `fuse` sanitizes the FTS match text, assembles the RRF statement over the arms that can fire, and runs one query for the fused paths `packages/index/src/retrieval.ts:232`.
-6. `hydrate` reads the fused paths' rows, entity names, entity references, superseding edge, and first chunk vector in one statement `packages/index/src/retrieval.ts:266`.
-7. `applyMmr` reorders the pool down to the caller's limit, using fused rank as the relevance term `packages/index/src/retrieval.ts:354`.
-8. `snippets` runs over the final paths only, picking each file's chunk nearest the query vector, and the hits go back with `degraded`, `arms`, `entityScope`, and `scopeEmpty` `packages/index/src/retrieval.ts:360`.
+3. `search` asks for the query vector first `packages/index/src/retrieval.ts:365`.
+4. `queryVector` catches an embedder failure, logs it, and returns `undefined`, which becomes `degraded: true` on the response rather than an error `packages/index/src/retrieval.ts:194`.
+5. `fuse` sanitizes the FTS match text, assembles the RRF statement over the arms that can fire, and runs one query for the fused paths `packages/index/src/retrieval.ts:233`.
+6. `hydrate` reads the fused paths' rows, entity names, entity references, superseding edge, and first chunk vector in one statement `packages/index/src/retrieval.ts:283`.
+7. `applyMmr` reorders the pool down to the caller's limit, using fused rank as the relevance term `packages/index/src/retrieval.ts:385`.
+8. `snippets` runs over the final paths only, picking each file's chunk nearest the query vector, and the hits go back with `degraded`, `arms`, `entityScope`, and `scopeEmpty` `packages/index/src/retrieval.ts:391`.
 
 ```mermaid
 sequenceDiagram
@@ -82,7 +82,7 @@ An MCP client runs `memhtml serve mcp`, which spawns the `memhtml-mcp` server as
 4. `layerServer` merges the 15-tool toolkit and the 3 resources over `layerApp(repoOverride)`, the CLI's own composition, and routes every log to stderr so stdout stays the NDJSON-RPC stream `apps/mcp/src/server.ts:52`.
 5. A `tools/call` lands on the handler table that `MemhtmlToolkit.toLayer` type-checks against the toolkit's own parameter and success schemas `apps/mcp/src/handlers.ts:309`.
 6. The `memory_search` handler renames the snake_case wire parameters and calls the same `searchMemories` the CLI arm calls `apps/mcp/src/handlers.ts:527`.
-7. Retrieval runs the flow-2 chain: query vector, fused RRF statement, hydrate, MMR, snippets `packages/index/src/retrieval.ts:331`.
+7. Retrieval runs the flow-2 chain: query vector, fused RRF statement, hydrate, MMR, snippets `packages/index/src/retrieval.ts:362`.
 8. The handler renames the result fields back to snake_case for the wire. Any typed failure passes through `toToolFailure`, which carries the stable code and its suggestions through the single prose error channel MCP offers `apps/mcp/src/handlers.ts:537`.
 
 ```mermaid

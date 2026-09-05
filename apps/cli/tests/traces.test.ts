@@ -131,6 +131,38 @@ describe("memhtml trace index", () => {
     expect(session?.firstPrompt).toContain("why did the checkout deploy")
   })
 
+  it("finds the session from a sentence sharing one word with what was asked, ranked by bm25", async () => {
+    /**
+     * `checkout` is in the first prompt and the other three words are in no transcript, so the
+     * all-terms MATCH answers nothing and the any-of rerun is what finds the session. Under a
+     * space-joined MATCH alone FTS5 reads the words as AND and this query returns no session.
+     */
+    const result = await cli.json<{
+      readonly sessions: ReadonlyArray<{ readonly sessionId: string }>
+      readonly degraded: boolean
+    }>(["trace", "search", "checkout something about pancakes"])
+    expect(result.sessions.map((session) => session.sessionId)).toEqual([SESSION])
+    // A query with terms is never the degraded listing, whichever form answered it.
+    expect(result.degraded).toBe(false)
+  })
+
+  it("keeps the cwd scope through the any-of rerun", async () => {
+    // Both statements bind `[match, cwd, limit]` in that order; a rerun that shifted the scope
+    // values would either fail the bind or match the wrong directory.
+    const scoped = await cli.json<{
+      readonly sessions: ReadonlyArray<{ readonly sessionId: string }>
+    }>(["trace", "search", "checkout something about pancakes", "--cwd", "/home/dev/checkout-api"])
+    expect(scoped.sessions.map((session) => session.sessionId)).toEqual([SESSION])
+    const elsewhere = await cli.json<{ readonly sessions: ReadonlyArray<unknown> }>([
+      "trace",
+      "search",
+      "checkout something about pancakes",
+      "--cwd",
+      "/home/dev/elsewhere"
+    ])
+    expect(elsewhere.sessions).toEqual([])
+  })
+
   it("answers a trace query whose raw text is a MATCH syntax error", async () => {
     // Same sanitizer, same reason as the memory arms: an apostrophe is a hard driver error and
     // "what did I ask about don't-repeat-yourself" is an ordinary query.

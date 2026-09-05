@@ -24,6 +24,7 @@ import {
   type FacetFilter,
   type FrameMatch,
   facetConditions,
+  ftsQueryForms,
   Indexer,
   IndexRecorder,
   type IndexRecorderShape,
@@ -34,7 +35,6 @@ import {
   readWatermark,
   reinforce,
   type SearchScope,
-  sanitizeFtsQuery,
   type TailMerger
 } from "@memhtml/index"
 import { EMBED_WATERMARK } from "@memhtml/llm"
@@ -2515,8 +2515,14 @@ export interface TraceSearchParams {
  *
  * The query goes through the same sanitizer the memory arms use, and it has to. An apostrophe is a
  * hard driver error rather than an empty result, and "what did I ask about don't-repeat-yourself"
- * is an ordinary trace query. An empty sanitized query returns the most recent sessions rather
- * than nothing, because a caller with no terms wants a listing and an empty MATCH is not a listing.
+ * is an ordinary trace query. The two MATCH forms are used the way the memory arm uses them: the
+ * all-terms form first, and when it returns no session the any-of form, ranked by bm25. A first
+ * prompt is a sentence and a trace query is a sentence about it, so the two share some words rather
+ * than all of them, and the all-terms form alone finds a session only when its prompt holds every
+ * word of the query. The rerun is the whole statement with the other form bound, so the order a
+ * caller sees is bm25's own order for the form that answered. An empty sanitized query returns the
+ * most recent sessions rather than nothing, because a caller with no terms wants a listing and an
+ * empty MATCH is not a listing.
  *
  * This is the trace plane and it stops here. No memory table is named, and nothing in the
  * retrieval assembler names `traces`. The firewall is by table name, in both directions.
@@ -2524,38 +2530,36 @@ export interface TraceSearchParams {
 export const searchTraces = (params: TraceSearchParams) =>
   Effect.gen(function* () {
     const db = yield* DatabaseService
-    const match = sanitizeFtsQuery(params.query)
+    const forms = ftsQueryForms(params.query)
     const limit = Math.min(200, Math.max(1, Math.trunc(params.limit ?? 20)))
 
-    const conditions: Array<string> = []
-    const values: Array<string | number> = []
     /**
      * The MATCH names `traces_fts` rather than a column of `traces`. The index is an external-content
      * FTS5 table, so it is joined in by rowid and only reached when there is something to match. Without
      * a query the statement never mentions it, which is what keeps a bare listing a plain table scan.
      */
-    const matched = match !== ""
+    const matched = forms.any !== ""
     const from = matched
       ? "FROM traces_fts JOIN traces t ON t.rowid = traces_fts.rowid"
       : "FROM traces t"
-    if (matched) {
-      conditions.push("traces_fts MATCH ?")
-      values.push(match)
-    }
+    const conditions: Array<string> = matched ? ["traces_fts MATCH ?"] : []
+    const scopeValues: Array<string | number> = []
     if (params.cwd !== undefined && params.cwd !== "") {
       conditions.push("t.cwd = ?")
-      values.push(params.cwd)
+      scopeValues.push(params.cwd)
     }
     if (params.since !== undefined && params.since !== "") {
       conditions.push("t.started_at >= ?")
-      values.push(params.since)
+      scopeValues.push(params.since)
     }
 
     const where = conditions.length === 0 ? "" : `WHERE ${conditions.join(" AND ")}`
     // A matched query orders by relevance, ascending because FTS5's bm25 is negative-is-better.
     // Without a match there is no relevance to order by and recency is the useful order.
     const order = matched ? "ORDER BY bm25(traces_fts)" : "ORDER BY t.started_at DESC"
-    const rows = yield* db.all<{
+    const sql = `SELECT t.session_id, t.slug, t.cwd, t.started_at, t.prompt_count, t.first_prompt, t.ai_title
+       ${from} ${where} ${order} LIMIT ?`
+    interface TraceRow {
       session_id: string
       slug: string
       cwd: string | null
@@ -2563,11 +2567,14 @@ export const searchTraces = (params: TraceSearchParams) =>
       prompt_count: number
       first_prompt: string
       ai_title: string | null
-    }>(
-      `SELECT t.session_id, t.slug, t.cwd, t.started_at, t.prompt_count, t.first_prompt, t.ai_title
-       ${from} ${where} ${order} LIMIT ?`,
-      [...values, limit]
-    )
+    }
+    const query = (match: string | undefined) =>
+      db.all<TraceRow>(sql, [...(match === undefined ? [] : [match]), ...scopeValues, limit])
+    const strict = yield* query(matched ? forms.all : undefined)
+    // The any-of rerun only when the all-terms form answered nothing and the two forms differ, so
+    // a one-word query and a listing each run one statement.
+    const rows =
+      strict.length === 0 && matched && forms.all !== forms.any ? yield* query(forms.any) : strict
 
     return {
       sessions: rows.map((row) => ({
@@ -2579,7 +2586,7 @@ export const searchTraces = (params: TraceSearchParams) =>
         firstPrompt: row.first_prompt,
         aiTitle: row.ai_title
       })),
-      degraded: match === ""
+      degraded: forms.any === ""
     }
   })
 

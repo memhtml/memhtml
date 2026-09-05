@@ -304,7 +304,7 @@ memhtml doctor
 - `degraded: true` on a search response → the query embedder returned nothing. Search still works on the lexical floor; check `MEMHTML_AWS_REGION` and the Bedrock credential.
 - Quality feels wrong but nothing errors → `memhtml eval discriminate`. That is what it is for.
 
-**A search should never error instead of returning nothing.** Query text goes through `sanitizeFtsQuery` before it reaches MATCH (`packages/index/src/fts-query.ts:41`), because several forms common in prose are hard driver errors rather than empty results: an apostrophe (`don't`), a `type:name` entity reference (`service:checkout-api`), and a leading hyphen, which FTS reads as negation. A query that errors means the sanitizer was bypassed — a bug, not a configuration problem.
+**A search should never error instead of returning nothing.** Query text goes through `sanitizeFtsQuery` before it reaches MATCH (`packages/index/src/fts-query.ts:71`), because several forms common in prose are hard driver errors rather than empty results: an apostrophe (`don't`), a `type:name` entity reference (`service:checkout-api`), and a leading hyphen, which FTS reads as negation. A query that errors means the sanitizer was bypassed — a bug, not a configuration problem.
 
 **The tree is dirty and sleep refuses.** Preflight calls `requireCleanTree()` (`packages/sleep/src/phases/preflight.ts:22`) and fails with `ERR_DIRTY_TREE` listing the paths: a phase reading the index while the tree holds uncommitted edits would curate a corpus nobody has. The refusal lands in phase one, so it costs nothing. Inspect with `git -C "$MEMHTML_ROOT" status --porcelain`, run `memhtml index update --embed` (the indexer DOES read dirty paths), then commit or stash and re-run.
 

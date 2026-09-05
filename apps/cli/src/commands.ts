@@ -374,7 +374,14 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   {
     name: "search",
     summary: "Ranked search: four RRF arms plus MMR. Degrades to the lexical floor.",
-    args: [{ name: "query", description: "Prose. Never a query language.", required: true }],
+    args: [
+      {
+        name: "query",
+        description:
+          "Prose. A double-quoted span demands those words in that order; nothing else is syntax.",
+        required: true
+      }
+    ],
     flags: [
       ...SCOPE_FLAGS,
       { name: "limit", type: "int", description: "Hits to return.", default: 10 }
@@ -389,7 +396,14 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   {
     name: "recall",
     summary: "A disclosure pack under a character budget: arcs and memories folded separately.",
-    args: [{ name: "query", description: "Prose.", required: true }],
+    args: [
+      {
+        name: "query",
+        description:
+          "Prose. A double-quoted span demands those words in that order; nothing else is syntax.",
+        required: true
+      }
+    ],
     flags: [
       ...SCOPE_FLAGS,
       {
@@ -768,7 +782,14 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   {
     name: "trace search",
     summary: "FTS over session first-prompts and AI titles. Never enters memory retrieval.",
-    args: [{ name: "query", description: "Prose.", required: true }],
+    args: [
+      {
+        name: "query",
+        description:
+          "Prose. A double-quoted span demands those words in that order; nothing else is syntax.",
+        required: true
+      }
+    ],
     flags: [
       { name: "cwd", type: "string", description: "Restrict to sessions from this directory." },
       { name: "since", type: "string", description: "ISO-8601 lower bound on started_at." },

@@ -46,7 +46,7 @@ memhtml search "one writer many readers"
 
 Read the three fields beside `hits` before you read the hits themselves.
 
-`arms` is which ranking arms contributed to this ordering. There are four: `fts`, `vector`, `recency`, and `salience` (`packages/index/src/retrieval-sql.ts:243`). One SQL statement fuses them by reciprocal rank fusion, and a pass in TypeScript then diversifies the result with MMR. The output above lists three because that store has no embedder bound, so memhtml dropped the arm needing a query vector before assembly. With an embedder bound, `arms` includes `"vector"` and `degraded` is `false`.
+`arms` is which ranking arms contributed to this ordering. There are four: `fts`, `vector`, `recency`, and `salience` (`packages/index/src/retrieval-sql.ts:268`). One SQL statement fuses them by reciprocal rank fusion, and a pass in TypeScript then diversifies the result with MMR. The output above lists three because that store has no embedder bound, so memhtml dropped the arm needing a query vector before assembly. With an embedder bound, `arms` includes `"vector"` and `degraded` is `false`.
 
 `degraded: true` means the vector arm did not fire. memhtml surfaces that rather than staying silent, because an agent comparing two searches needs to know that one of them was ranked by fewer signals. Retrieval never errors because Bedrock is down; the search gets narrower instead.
 
@@ -70,7 +70,7 @@ memhtml search "rollback" --as-of 2026-06-01T00:00:00Z
 
 `--type` and `--tag` are repeatable, and each occurrence broadens the query as an ANY-of. `--workspace` is strict: a scoped query never returns a memory with no workspace. `--as-of` is a point-in-time view, returning what was believed valid at that instant, including since-superseded memories, each marked `supersededBy`. That history is read from validity windows stamped in the files, so it survives a full index rebuild.
 
-A query is prose rather than a query language. You can type an apostrophe, a `type:name` reference, or a leading hyphen and get results instead of a driver error, because memhtml sanitizes the query text before it reaches `MATCH` (`packages/index/src/fts-query.ts:35`). A search that errors is a bug, and a bad query is not.
+A query is prose rather than a query language. You can type an apostrophe, a `type:name` reference, or a leading hyphen and get results instead of a driver error, because memhtml sanitizes the query text before it reaches `MATCH` (`packages/index/src/fts-query.ts:59`). A search that errors is a bug, and a bad query is not. A sentence finds a memory even when only one of its words is stored: the lexical arm requires every word first and falls back to any of them, ranked by how many of the words a memory holds and how rare they are. The one piece of syntax is a double-quoted span, which demands those words in that order: `"drain the vip"`.
 
 ## Recall
 

@@ -1429,6 +1429,107 @@ describe("search", () => {
     expect(cold.get(competitor)).toBeDefined()
   })
 
+  it("lifts a memory on the one proper noun a sentence names, ranked first on the lexical floor", async () => {
+    /**
+     * The corpus's OLDEST file, so recency and salience both rank it last and only the lexical arm
+     * can lift it. The query is a four-word sentence whose other three words appear in no file:
+     * FTS5 reads space-separated terms as AND, so a sanitizer that joins with spaces gives this
+     * sentence zero bm25 rows and the file stays at the bottom. `arms` still names `fts` either way,
+     * because the arm RAN; the rank is what says whether it contributed.
+     */
+    const orion = "areas/team/orion-standup-slot.html"
+    await repo.commit(
+      [
+        {
+          path: orion,
+          html: memoryHtml({
+            title: "Orion keeps the Tuesday standup slot",
+            claim: "Orion runs the Tuesday standup and owns its agenda.",
+            body: "Orion also keeps the notes for it.",
+            memoryType: "semantic",
+            updatedAt: "2026-05-01T00:00:00Z"
+          })
+        }
+      ],
+      "seed the proper noun"
+    )
+    const result = await withIndexed(
+      repo,
+      ({ retrieval }) => retrieval.search({ query: "what does orion own" }),
+      { queryEmbedder: null }
+    )
+    expect(result.degraded).toBe(true)
+    expect(result.arms).toContain("fts")
+    expect(result.hits.map((hit) => hit.path)[0]).toBe(orion)
+  })
+
+  /**
+   * The two MATCH forms, read off the statements retrieval itself issued. The bound `?1` of the fused
+   * statement is the only place the choice is observable: both forms return the target here, and a
+   * result assertion alone would pass against an arm that always bound one of them.
+   */
+  const issuedBy = (input: { readonly query: string; readonly tags?: ReadonlyArray<string> }) =>
+    withDb((db) =>
+      Effect.gen(function* () {
+        yield* indexInto(db, repo, makeFakeEmbedder())
+        const issued: Array<{ sql: string; params: ReadonlyArray<unknown> }> = []
+        const capturing: DatabaseShape = {
+          ...db,
+          all: (<A>(sql: string, params?: ReadonlyArray<unknown>) => {
+            issued.push({ sql, params: params ?? [] })
+            return (db.all as never as (s: string, p?: ReadonlyArray<unknown>) => Effect.Effect<A>)(
+              sql,
+              params
+            )
+          }) as DatabaseShape["all"]
+        }
+        const result = yield* makeRetrieval({ db: capturing }).search({ ...input, limit: 20 })
+        const fused = issued.find((statement) => statement.sql.includes("rrf AS ("))
+        return {
+          paths: result.hits.map((hit) => hit.path),
+          match: fused?.params[0],
+          probes: issued.filter((statement) => statement.sql.includes("AS hit")).length
+        }
+      })
+    )
+
+  it("binds the all-terms form when a file in scope holds every term, so the arm stays a filter", async () => {
+    const outcome = await issuedBy({ query: "drain the VIP before reverting the deploy" })
+    expect(outcome.probes).toBe(1)
+    expect(outcome.match).toBe("drain AND the AND vip AND before AND reverting AND the AND deploy")
+    expect(outcome.paths).toContain("areas/oncall/vip-drain-before-rollback.html")
+  })
+
+  it("falls back to the any-of form when no file holds every term", async () => {
+    // `pancakes` is in no file, so the all-terms form matches nothing and the sentence would get
+    // zero lexical rows; the any-of form is what lets the words it does share find the file.
+    const outcome = await issuedBy({ query: "drain the VIP before pancakes" })
+    expect(outcome.probes).toBe(1)
+    expect(outcome.match).toBe("drain OR the OR vip OR before OR pancakes")
+    expect(outcome.paths).toContain("areas/oncall/vip-drain-before-rollback.html")
+  })
+
+  it("issues no probe for a one-term query, whose two forms are one string", async () => {
+    const outcome = await issuedBy({ query: "drain" })
+    expect(outcome.probes).toBe(0)
+    expect(outcome.match).toBe("drain")
+  })
+
+  it("probes THROUGH the caller's scope, so an all-terms match outside it does not bind the all-terms form", async () => {
+    /**
+     * Every term is held by the oncall files, none of which carries the `bm25` tag. A probe that
+     * ignored the scope would see them, bind the all-terms form, and hand the fold a lexical arm that
+     * matches nothing the scope admits: the same silent nothing the fallback exists to end.
+     */
+    const outcome = await issuedBy({
+      query: "drain the VIP before reverting the deploy",
+      tags: ["bm25"]
+    })
+    expect(outcome.probes).toBe(1)
+    expect(outcome.match).toBe("drain OR the OR vip OR before OR reverting OR the OR deploy")
+    expect(outcome.paths).toEqual(["projects/memhtml/bm25-sort-direction.html"])
+  })
+
   it("is deterministic: the same query over an unchanged corpus yields the same order", async () => {
     const outcome = await withIndexed(repo, ({ retrieval }) =>
       Effect.gen(function* () {

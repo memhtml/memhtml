@@ -23,13 +23,17 @@ Quality feels wrong while nothing errors, so run `memhtml eval discriminate`. Th
 
 ## A search returns an empty result, never a driver error
 
-Query text goes through `sanitizeFtsQuery` before it reaches `MATCH` (`packages/index/src/fts-query.ts:35`), because several forms common in prose are hard driver errors in SQLite's full-text search rather than empty results:
+Query text goes through `sanitizeFtsQuery` before it reaches `MATCH` (`packages/index/src/fts-query.ts:59`), because several forms common in prose are hard driver errors in SQLite's full-text search rather than empty results:
 
 - an apostrophe, as in `don't`;
 - a `type:name` entity reference such as `service:checkout-api`, which is exactly the form a hit's `entities` publishes;
 - a leading hyphen, which the full-text search engine reads as negation.
 
 A query that errors means something bypassed the sanitizer. Report that as a bug, and leave your own side unsanitized.
+
+## A long query finds less than a short one
+
+It should not. The lexical arm tries the query's words as all-required first and, when no memory in scope holds every word, as any-of ranked by bm25 (`packages/index/src/fts-query.ts:97`, `packages/index/src/retrieval.ts:328`). A sentence with one proper noun in it finds that noun's memory even when the rest of the sentence appears nowhere in the corpus. If a long query still misses, the words it shares with the memory are not in that memory's title, gist, or body, which is all the lexical index holds; confirm with `memhtml search "<the one word you are sure of>"`. To demand adjacency rather than any-of, quote the span: `"drain the vip"` matches those three words in that order and nothing else.
 
 ## The tree is dirty and sleep refuses
 
