@@ -3,6 +3,8 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 
+import { DIST_DIR } from "../src/gates.js"
+
 /**
  * The raw `.md` routes are this site's agent surface, and their links have to resolve there rather
  * than only in the HTML twin.
@@ -24,7 +26,7 @@ import { describe, expect, it } from "vitest"
  * output directly.
  */
 
-const distDir = join(dirname(dirname(fileURLToPath(import.meta.url))), "dist")
+const distDir = join(dirname(dirname(fileURLToPath(import.meta.url))), DIST_DIR)
 const BASE = process.env.DOCS_BASE ?? "/"
 const segment = BASE.endsWith("/") ? BASE : `${BASE}/`
 

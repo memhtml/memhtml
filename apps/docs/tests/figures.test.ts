@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 
+import { DIST_DIR } from "../src/gates.js"
 import { mdxExpressions } from "./mdx-braces.js"
 
 /**
@@ -23,7 +24,7 @@ import { mdxExpressions } from "./mdx-braces.js"
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const figureDir = join(root, "src", "content", "docs", "internals", "_figures")
 const pageDir = join(root, "src", "content", "docs", "internals")
-const distDir = join(root, "dist")
+const distDir = join(root, DIST_DIR)
 const repoRoot = dirname(dirname(root))
 
 /** Every figure source, excluding the `_`-prefixed register the others import. */

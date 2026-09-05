@@ -539,3 +539,103 @@ const factoryReturnedArray = (
   }
   return body
 }
+
+/** One exported declaration of a module, as a reference page states it. */
+export interface ExportedSymbol {
+  readonly name: string
+  /** What kind of thing was exported, in the vocabulary a reader of the page uses. */
+  readonly kind: "constant" | "function" | "schema" | "class" | "interface" | "type"
+  /** The declaration's head — its first line, without the doc comment and the `export` keyword. */
+  readonly signature: string
+  readonly doc: string | undefined
+}
+
+const kindOfInitializer = (initializer: ts.Expression): ExportedSymbol["kind"] => {
+  if (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)) return "function"
+  if (ts.isCallExpression(initializer)) {
+    const callee = initializer.expression
+    const root = ts.isPropertyAccessExpression(callee)
+      ? callee.expression
+      : ts.isCallExpression(callee) && ts.isPropertyAccessExpression(callee.expression)
+        ? callee.expression.expression
+        : callee
+    if (ts.isIdentifier(root) && root.text === "Schema") return "schema"
+  }
+  return "constant"
+}
+
+/**
+ * The head of a declaration: its first line, `export` dropped, a trailing `{` or `=` trimmed, and an
+ * ellipsis when the declaration continues past that line — so a reader can tell `const X = [` from a
+ * one-line constant and knows the source is where the rest is.
+ */
+const headOf = (file: ts.SourceFile, node: ts.Node): string => {
+  const lines = node.getText(file).split("\n")
+  const head = (lines[0] ?? "")
+    .replace(/^export\s+(declare\s+)?/, "")
+    .replace(/\s*[{=]\s*$/, "")
+    .trim()
+  return lines.length > 1 ? `${head} …` : head
+}
+
+/**
+ * Every `export`ed top-level declaration of a module, in source order, with its doc comment.
+ *
+ * This is how a package's TSDoc reaches the Reference tier: the doc comments the maintainers already
+ * write on `@memhtml/contracts` are the page, and the signature beside each is the declaration's own
+ * first line. A declaration that exports several names (`export const a = 1, b = 2`) yields one
+ * symbol per name. Re-exports (`export * from`) and default exports are skipped: the former point at
+ * a module read on its own, the latter this repository does not write.
+ */
+export const exportedSymbolsOf = (relativePath: string): ReadonlyArray<ExportedSymbol> => {
+  const file = sourceAst(relativePath)
+  const symbols: Array<ExportedSymbol> = []
+  const isExported = (node: ts.Node): boolean =>
+    (ts.canHaveModifiers(node) ? (ts.getModifiers(node) ?? []) : []).some(
+      (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword
+    )
+  for (const statement of file.statements) {
+    if (!isExported(statement)) continue
+    const doc = docCommentOf(file, statement)
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue
+        symbols.push({
+          name: declaration.name.text,
+          kind: kindOfInitializer(unwrap(declaration.initializer)),
+          signature: headOf(file, statement),
+          doc
+        })
+      }
+    } else if (ts.isFunctionDeclaration(statement) && statement.name) {
+      symbols.push({
+        name: statement.name.text,
+        kind: "function",
+        signature: headOf(file, statement),
+        doc
+      })
+    } else if (ts.isClassDeclaration(statement) && statement.name) {
+      symbols.push({
+        name: statement.name.text,
+        kind: "class",
+        signature: headOf(file, statement),
+        doc
+      })
+    } else if (ts.isInterfaceDeclaration(statement)) {
+      symbols.push({
+        name: statement.name.text,
+        kind: "interface",
+        signature: headOf(file, statement),
+        doc
+      })
+    } else if (ts.isTypeAliasDeclaration(statement)) {
+      symbols.push({
+        name: statement.name.text,
+        kind: "type",
+        signature: headOf(file, statement),
+        doc
+      })
+    }
+  }
+  return symbols
+}
