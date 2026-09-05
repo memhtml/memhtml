@@ -5,10 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import type { DatabaseShape, SqlValue, Write } from "../src/database.js"
 import {
+  EmbedModelMismatch,
+  type EmbedPort,
   type IndexerShape,
   isIndexablePath,
   makeIndexer,
-  PENDING_SCAN_ID_BATCH
+  PENDING_SCAN_ID_BATCH,
+  RebuildNoEmbedRefused
 } from "../src/indexer.js"
 import { FTS_INDEX_NAME } from "../src/schema-const.js"
 import { makeIndexRecorder } from "../src/traces-persist.js"
@@ -1323,6 +1326,22 @@ describe("an interrupted rebuild", () => {
       now: () => AT
     })
 
+  it("lets backfill run inside the window and report the null watermark honestly", async () => {
+    // `index embed` touches only `embeddings`, so it needs no watermark and never misreads the
+    // half-state; it reports `headSha: null` so an operator can see the window is open.
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* indexerOver(db).rebuild({ embed: false })
+        yield* Effect.result(indexerOver(failOnProjection(db)).rebuild({ embed: false }))
+        return yield* indexerOver(db).backfill({ dryRun: true })
+      })
+    )
+    expect(outcome.headSha).toBeNull()
+    expect(outcome.chunks).toBe(0)
+    expect(outcome.embeddingsRemaining).toBe(0)
+    expect(outcome.embeddingsWritten).toBe(0)
+  })
+
   it("leaves a NULL watermark over empty tables, which update reads as IndexStale", async () => {
     const outcome = await withDb((db) =>
       Effect.gen(function* () {
@@ -1795,3 +1814,329 @@ const snapshot = (db: DatabaseShape) =>
     )
     return { files, tags, entities, facets, citations, chunks, edges }
   })
+
+describe("rebuild preserves the vectors a content-addressed chunk id still owns (issue #142)", () => {
+  /**
+   * The incident this block reproduces: a `--no-embed` rebuild over a live store, then ten hours of
+   * `update --embed` passes, left 183 embeddings under 9,332 chunks. Chunk ids are
+   * `sha256(content_hash:ordinal)`, so every vector the rebuild deleted was still valid for the chunk
+   * that came back with the same id, and no incremental pass ever revisited them.
+   */
+  let repo: FixtureRepo
+
+  beforeEach(async () => {
+    repo = await makeFixtureRepo()
+    await repo.commit(seedCorpus(), "seed the corpus")
+  })
+
+  afterEach(() => repo.cleanup())
+
+  const countEmbeddings = (db: DatabaseShape) =>
+    db
+      .get<{ n: number }>("SELECT count(*) AS n FROM embeddings")
+      .pipe(Effect.map((row) => row?.n ?? 0))
+
+  it("keeps every vector across a forced --no-embed rebuild when the stored model matches, byte for byte", async () => {
+    const outcome = await withRig(repo, ({ db, indexer }) =>
+      Effect.gen(function* () {
+        const first = yield* indexer.rebuild({ embed: true })
+        const before = yield* countEmbeddings(db)
+        const sample = yield* db.get<{ chunk_id: string; vec: Uint8Array }>(
+          "SELECT chunk_id, vec FROM embeddings ORDER BY chunk_id LIMIT 1"
+        )
+        const second = yield* indexer.rebuild({ embed: false, force: true })
+        const after = yield* countEmbeddings(db)
+        const same = yield* db.get<{ vec: Uint8Array }>(
+          "SELECT vec FROM embeddings WHERE chunk_id = ?",
+          [sample?.chunk_id ?? ""]
+        )
+        return { first, before, second, after, sampleVec: sample?.vec, sameVec: same?.vec }
+      })
+    )
+    expect(outcome.first.embeddingsWritten).toBe(20)
+    expect(outcome.before).toBe(20)
+    // The whole point: the rows survive the rebuild rather than being truncated with the tables.
+    expect(outcome.after).toBe(20)
+    expect(outcome.second.embeddingsPreserved).toBe(20)
+    expect(outcome.second.embeddingsWritten).toBe(0)
+    expect(outcome.sampleVec).toBeDefined()
+    expect(Buffer.from(outcome.sameVec ?? new Uint8Array())).toEqual(
+      Buffer.from(outcome.sampleVec ?? new Uint8Array([1]))
+    )
+  })
+
+  it("issues zero embed calls on a --embed rebuild over an unchanged tree", async () => {
+    const outcome = await withRig(repo, ({ db, indexer, embedder }) =>
+      Effect.gen(function* () {
+        yield* indexer.rebuild({ embed: true })
+        const callsAfterFirst = embedder.calls()
+        const second = yield* indexer.rebuild({ embed: true })
+        return {
+          callsAfterFirst,
+          callsAfterSecond: embedder.calls(),
+          second,
+          n: yield* countEmbeddings(db)
+        }
+      })
+    )
+    expect(outcome.callsAfterFirst).toBe(1)
+    expect(outcome.callsAfterSecond).toBe(1)
+    expect(outcome.second.embeddingsPreserved).toBe(20)
+    expect(outcome.second.embeddingsWritten).toBe(0)
+    expect(outcome.n).toBe(20)
+  })
+
+  it("drops only the vectors whose chunk left the tree, and leaves no orphan behind", async () => {
+    await withRig(repo, ({ indexer }) => indexer.rebuild({ embed: true }))
+    // One body edited (its chunk id changes) and one file removed: two vectors lose their chunk.
+    await repo.commit(
+      [
+        {
+          path: "areas/oncall/vip-drain-before-rollback.html",
+          html: memoryHtml({
+            title: "Prod rollbacks drain the VIP before the deploy is reverted",
+            claim: "If a prod rollback is issued, drain the VIP before reverting the deploy.",
+            body: "Edited so the content hash, and with it the chunk id, moves."
+          })
+        }
+      ],
+      "edit one body"
+    )
+    await repo.remove("areas/notes/entry-01.html", "remove one memory")
+
+    const outcome = await withRig(repo, ({ db, indexer }) =>
+      Effect.gen(function* () {
+        // A second database: the first rig's in-memory plane is gone, so embed once more here.
+        yield* indexer.rebuild({ embed: true })
+        const report = yield* indexer.rebuild({ embed: false, force: true })
+        const orphans = yield* db.get<{ n: number }>(
+          `SELECT count(*) AS n FROM embeddings e
+             LEFT JOIN chunks c ON c.chunk_id = e.chunk_id
+            WHERE c.chunk_id IS NULL`
+        )
+        const chunks = yield* db.get<{ n: number }>("SELECT count(*) AS n FROM chunks")
+        return { report, orphans: orphans?.n, chunks: chunks?.n, n: yield* countEmbeddings(db) }
+      })
+    )
+    expect(outcome.chunks).toBe(19)
+    expect(outcome.n).toBe(19)
+    expect(outcome.report.embeddingsPreserved).toBe(19)
+    expect(outcome.orphans).toBe(0)
+  })
+
+  it("truncates the vector plane outright on a model change, which is the migration path", async () => {
+    await withDb((db) =>
+      Effect.gen(function* () {
+        const under = (watermark: string) =>
+          makeIndexer({
+            db,
+            git: repo.git,
+            embedWatermark: watermark,
+            embedDim: EMBED_DIM,
+            embeddings: makeFakeEmbedder(),
+            now: () => AT
+          })
+        yield* under("old-model@1024").rebuild({ embed: true })
+        const migrated = yield* under("new-model@1024").rebuild({ embed: true })
+        const byModel = yield* db.all<{ model: string; n: number }>(
+          "SELECT model, count(*) AS n FROM embeddings GROUP BY model ORDER BY model"
+        )
+        expect(migrated.embeddingsPreserved).toBe(0)
+        expect(migrated.embeddingsWritten).toBe(20)
+        expect(byModel).toEqual([{ model: "new-model@1024", n: 20 }])
+      })
+    )
+  })
+
+  it("refuses a --no-embed rebuild over a store that carries vectors, naming the count, unless forced", async () => {
+    /**
+     * `--no-embed` is the harness flag, and it was run against a live store by accident. A store
+     * that carries vectors is a store somebody embedded on purpose, so the bare call refuses and the
+     * vectors stay exactly where they were.
+     */
+    const outcome = await withRig(repo, ({ db, indexer }) =>
+      Effect.gen(function* () {
+        yield* indexer.rebuild({ embed: true })
+        const refused = yield* Effect.result(indexer.rebuild({ embed: false }))
+        const still = yield* countEmbeddings(db)
+        const forced = yield* Effect.result(indexer.rebuild({ embed: false, force: true }))
+        return { refused, still, forced, after: yield* countEmbeddings(db) }
+      })
+    )
+    expect(outcome.refused._tag).toBe("Failure")
+    if (outcome.refused._tag === "Failure") {
+      expect(outcome.refused.failure).toBeInstanceOf(RebuildNoEmbedRefused)
+      expect((outcome.refused.failure as RebuildNoEmbedRefused).embeddings).toBe(20)
+    }
+    expect(outcome.still).toBe(20)
+    expect(outcome.forced._tag).toBe("Success")
+    expect(outcome.after).toBe(20)
+  })
+
+  it("holds --embed with no embedder configured to the same interlock, and --force preserves", async () => {
+    /**
+     * `MEMHTML_EMBED=off memhtml index rebuild` is the incident's own scenario spelled with the
+     * environment variable the harness uses: `embed: true`, no embedder, so `embedMissing` writes
+     * nothing. Held to the flag's rules, so it refuses over vectors and `--force` keeps them.
+     */
+    await withDb((db) =>
+      Effect.gen(function* () {
+        const under = (embeddings: EmbedPort | undefined) =>
+          makeIndexer({
+            db,
+            git: repo.git,
+            embedWatermark: EMBED_WATERMARK,
+            embedDim: EMBED_DIM,
+            embeddings,
+            now: () => AT
+          })
+        yield* under(makeFakeEmbedder()).rebuild({ embed: true })
+        const bare = under(undefined)
+        const refused = yield* Effect.result(bare.rebuild({ embed: true }))
+        expect(refused._tag).toBe("Failure")
+        if (refused._tag === "Failure") {
+          expect(refused.failure).toBeInstanceOf(RebuildNoEmbedRefused)
+          expect((refused.failure as RebuildNoEmbedRefused).embeddings).toBe(20)
+          expect((refused.failure as RebuildNoEmbedRefused).because).toBe("no-embedder")
+        }
+        const forced = yield* bare.rebuild({ embed: true, force: true })
+        expect(forced.embeddingsPreserved).toBe(20)
+        expect(forced.embeddingsWritten).toBe(0)
+        expect(yield* countEmbeddings(db)).toBe(20)
+      })
+    )
+  })
+
+  it("refuses a model change under --embed when no embedder is configured, keeping the old space", async () => {
+    // Without an embedder a "migration" would stash nothing, delete every vector, record the new
+    // space, and write zero vectors, into a state `index embed` cannot refill while the embedder is off.
+    await withDb((db) =>
+      Effect.gen(function* () {
+        const under = (watermark: string, embeddings: EmbedPort | undefined) =>
+          makeIndexer({
+            db,
+            git: repo.git,
+            embedWatermark: watermark,
+            embedDim: EMBED_DIM,
+            embeddings,
+            now: () => AT
+          })
+        yield* under("old-model@1024", makeFakeEmbedder()).rebuild({ embed: true })
+        const refused = yield* Effect.result(
+          under("new-model@1024", undefined).rebuild({ embed: true })
+        )
+        expect(refused._tag).toBe("Failure")
+        if (refused._tag === "Failure") {
+          expect(refused.failure).toBeInstanceOf(EmbedModelMismatch)
+        }
+        expect(yield* countEmbeddings(db)).toBe(20)
+      })
+    )
+  })
+
+  it("does not refuse over an empty vector plane, which is every credential-free run", async () => {
+    const outcome = await withRig(repo, ({ indexer }) =>
+      Effect.gen(function* () {
+        yield* indexer.rebuild({ embed: false })
+        return yield* Effect.result(indexer.rebuild({ embed: false }))
+      })
+    )
+    expect(outcome._tag).toBe("Success")
+  })
+
+  it("backfills the one chunk an incremental update never revisits, and reports the gap closed", async () => {
+    const outcome = await withRig(repo, ({ db, indexer }) =>
+      Effect.gen(function* () {
+        yield* indexer.rebuild({ embed: true })
+        const victim = yield* db.get<{ chunk_id: string }>(
+          "SELECT chunk_id FROM embeddings ORDER BY chunk_id LIMIT 1"
+        )
+        const victimId = victim?.chunk_id ?? ""
+        // The incident's shape: one chunk loses its vector while its row stays.
+        yield* db.run("DELETE FROM embeddings WHERE chunk_id = ?", [victimId])
+
+        yield* Effect.promise(() =>
+          repo.commit(
+            [
+              {
+                path: "areas/notes/unrelated-new-memory.html",
+                html: memoryHtml({
+                  title: "An unrelated new memory",
+                  claim: "A new fact lands after the vector was lost."
+                })
+              }
+            ],
+            "add an unrelated memory"
+          )
+        )
+        const update = yield* indexer.update({ embed: true })
+        const victimAfterUpdate = yield* db.get<{ n: number }>(
+          "SELECT count(*) AS n FROM embeddings WHERE chunk_id = ?",
+          [victimId]
+        )
+
+        const dry = yield* indexer.backfill({ dryRun: true })
+        const victimAfterDry = yield* db.get<{ n: number }>(
+          "SELECT count(*) AS n FROM embeddings WHERE chunk_id = ?",
+          [victimId]
+        )
+        const wet = yield* indexer.backfill({ dryRun: false })
+        const victimAfterWet = yield* db.get<{ n: number }>(
+          "SELECT count(*) AS n FROM embeddings WHERE chunk_id = ?",
+          [victimId]
+        )
+        const again = yield* indexer.backfill({ dryRun: false })
+        return {
+          update,
+          victimAfterUpdate: victimAfterUpdate?.n,
+          dry,
+          victimAfterDry: victimAfterDry?.n,
+          wet,
+          victimAfterWet: victimAfterWet?.n,
+          again
+        }
+      })
+    )
+    // Today's behavior, and the reason the command exists: the update embeds its own chunk only.
+    expect(outcome.update.embeddingsWritten).toBe(1)
+    expect(outcome.victimAfterUpdate).toBe(0)
+
+    expect(outcome.dry.embeddingsWritten).toBe(0)
+    expect(outcome.dry.embeddingsRemaining).toBe(1)
+    expect(outcome.dry.chunks).toBe(21)
+    expect(outcome.dry.embeddings).toBe(20)
+    expect(outcome.victimAfterDry).toBe(0)
+
+    expect(outcome.wet.embeddingsWritten).toBe(1)
+    expect(outcome.wet.embeddingsRemaining).toBe(0)
+    expect(outcome.wet.chunks).toBe(21)
+    expect(outcome.wet.embeddings).toBe(21)
+    expect(outcome.wet.headSha).toMatch(/^[0-9a-f]{40}$/)
+    expect(outcome.victimAfterWet).toBe(1)
+
+    // Safe to rerun: nothing pending, nothing written.
+    expect(outcome.again.embeddingsWritten).toBe(0)
+    expect(outcome.again.embeddingsRemaining).toBe(0)
+  })
+
+  it("backfill with no embedder writes nothing and reports the gap it could not close", async () => {
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        const bare = makeIndexer({
+          db,
+          git: repo.git,
+          embedWatermark: EMBED_WATERMARK,
+          embedDim: EMBED_DIM,
+          embeddings: undefined,
+          now: () => AT
+        })
+        yield* bare.rebuild({ embed: false })
+        return yield* bare.backfill({ dryRun: false })
+      })
+    )
+    expect(outcome.embeddingsWritten).toBe(0)
+    expect(outcome.embeddingsRemaining).toBe(20)
+    expect(outcome.chunks).toBe(20)
+    expect(outcome.embeddings).toBe(0)
+  })
+})

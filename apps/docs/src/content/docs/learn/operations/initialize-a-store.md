@@ -86,4 +86,4 @@ Every scaffold file is written only when it is absent, so a re-run leaves an edi
 memhtml index rebuild --embed
 ```
 
-`--embed` fills in the vectors by calling Bedrock, and it is the only step here that costs money. `--no-embed` finishes instantly and leaves retrieval running on full-text search, recency, and salience; a later `memhtml index rebuild --embed` fills the vectors in and closes the gap. [Rebuild the index](/learn/operations/rebuild-the-index/) covers when `update` is enough instead of `rebuild`, and the one refusal a rebuild alone cannot clear.
+`--embed` fills in the vectors by calling Bedrock, and it is the only step here that costs money. `--no-embed` finishes instantly and leaves retrieval running on full-text search, recency, and salience; a later `memhtml index embed` fills the vectors in and closes the gap without a rebuild. [Rebuild the index](/learn/operations/rebuild-the-index/) covers when `update` is enough instead of `rebuild`, and the one refusal a rebuild alone cannot clear.

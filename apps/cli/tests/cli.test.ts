@@ -210,6 +210,7 @@ describe("manifest", () => {
       "list",
       "index rebuild",
       "index update",
+      "index embed",
       "index status",
       "trace index",
       "trace search",

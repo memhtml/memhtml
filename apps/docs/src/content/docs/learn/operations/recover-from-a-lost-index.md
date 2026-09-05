@@ -69,10 +69,10 @@ memhtml state import
 memhtml index rebuild --embed
 ```
 
-If only the database file is gone, the next cron pass rebuilds it with no action from you. `memhtml index update` with no recorded watermark falls through to a rebuild on its own (`packages/index/src/indexer.ts:565`), so that pass just takes longer than usual.
+If only the database file is gone, the next cron pass rebuilds it with no action from you. `memhtml index update` with no recorded watermark falls through to a rebuild on its own (`update` in `packages/index/src/indexer.ts`), so that pass just takes longer than usual.
 
 ## What a rebuild leaves alone
 
-A rebuild drops the full-text search index, deletes every memory table, reads the tree again, and recreates the search index (`packages/index/src/indexer.ts:389`). It destroys nothing outside `.memhtml/`, and inside `.memhtml/` it leaves the trace tables and the attached state plane untouched.
+A rebuild deletes every memory table, reads the tree again, and reprojects it, keeping every stored vector whose chunk id comes back (`truncateForRebuild` in `packages/index/src/indexer.ts`). It destroys nothing outside `.memhtml/`, and inside `.memhtml/` it leaves the trace tables and the attached state plane untouched.
 
 So running `memhtml index rebuild` as a diagnostic is cheap and safe: it cannot lose an access count, and it cannot cost you a re-walk of `$MEMHTML_TRACE_ROOT`.

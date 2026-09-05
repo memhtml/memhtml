@@ -43,6 +43,7 @@ export {
 } from "./git-port.js"
 export { IndexStateRow, readIndexState } from "./index-state.js"
 export {
+  type BackfillReport,
   EmbedModelMismatch,
   type EmbedPort,
   GENERATED_NAMES,
@@ -52,6 +53,7 @@ export {
   IndexStale,
   isIndexablePath,
   makeIndexer,
+  RebuildNoEmbedRefused,
   type RebuildReport,
   TREE_PREFIXES,
   type UpdateReport

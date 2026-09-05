@@ -110,7 +110,7 @@ describe("memhtml help <command>, piped", () => {
       const data = parse(result.stdout).data as ReturnType<typeof helpData>
       expect(data.name).toBe("index rebuild")
       expect(data.usage).toBe("memhtml index rebuild [flags]")
-      expect(data.seeAlso).toEqual(["index update", "index status"])
+      expect(data.seeAlso).toEqual(["index update", "index embed", "index status"])
     }
   })
 
@@ -264,7 +264,12 @@ describe("help's refusals", () => {
     expect(result.exitCode).toBe(EXIT_USAGE)
     const body = parse(result.stdout)
     expect(body.code).toBe("ERR_UNKNOWN_COMMAND")
-    expect(body.suggestions).toEqual(["index rebuild", "index update", "index status"])
+    expect(body.suggestions).toEqual([
+      "index rebuild",
+      "index update",
+      "index embed",
+      "index status"
+    ])
   })
 
   it("refuses a surplus word after a real command as ERR_UNEXPECTED_ARGUMENT, naming the word", async () => {

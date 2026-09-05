@@ -419,18 +419,37 @@ Flags:
 ## index rebuild
 
 ```
-memhtml index rebuild [--no-embed]
+memhtml index rebuild [--no-embed] [--force]
 ```
 
-Rebuild `index.db` from the git tree at HEAD. Destroys nothing outside `.memhtml/`. `apps/cli/src/run.ts:528-534`
+Rebuild `index.db` from the git tree at HEAD, keeping every stored vector whose chunk survives. Destroys nothing outside `.memhtml/`. `apps/cli/src/run.ts`
 
 Flags:
 
-- `--embed`: Fill missing vectors from Bedrock. `--no-embed` makes the rebuild instant. Boolean, default true. `apps/cli/src/commands.ts:567`
+- `--embed`: Fill missing vectors from Bedrock. `--no-embed` makes the rebuild instant and leaves new or changed chunks without a vector; the vectors already stored survive either way. Boolean, default true. `apps/cli/src/commands.ts`
+- `--force`: Run `--no-embed` over a store that already carries vectors. Without it that call is refused with `ERR_REBUILD_NO_EMBED_REFUSED`. Boolean, default false. `apps/cli/src/commands.ts`
+
+A rebuild keeps its vectors. `truncateForRebuild` stashes the `embeddings` rows in the configured vector space into a temp table before it empties the memory tables, and after the projections land it re-inserts every row whose chunk id exists again. Chunk ids are `sha256(content_hash:ordinal)`, so a chunk that came back with the same id has the same text and the stored vector is still the right one. The report's `embeddingsPreserved` is that count. Only a model change empties the vector plane, because the stash keeps rows in the configured space and on a model change there are none. `packages/index/src/indexer.ts`
+
+`--no-embed` over a store that carries vectors is refused unless `--force` is given: exit 1, `ERR_REBUILD_NO_EMBED_REFUSED`, the count in `error` and in a WARN on stderr, nothing written. `--no-embed` is the harness flag, and it was run against a live store by accident; a store with vectors is a store somebody embedded on purpose. `packages/index/src/indexer.ts`, `apps/cli/src/errors.ts`
 
 `memhtml index rebuild --embed` is the embed-model migration path: it is the one call that rewrites the vector space, and `EmbedModelMismatch` names it as its own recovery. There is no flag naming a model, because the model comes from the environment and a rebuild fills every missing vector in whatever space is configured. `apps/cli/src/errors.ts:157`
 
-It is also the recovery from `ERR_INDEX_STALE`, and the only one. A rebuild that emptied the tables and did not finish repopulating them is detectable, and `memhtml index update` is what raises the tag — it refuses a watermark row with no commit on it rather than diffing from nothing — so a rebuild is the one call that repopulates what the interrupted pass left partial. `packages/index/src/indexer.ts:125`, `packages/index/src/indexer.ts:605-609`, `apps/cli/src/errors.ts:158`
+It is also the recovery from `ERR_INDEX_STALE`, and the only one. A rebuild that emptied the tables and did not finish repopulating them is detectable, and `memhtml index update` is what raises the tag — it refuses a watermark row with no commit on it rather than diffing from nothing — so a rebuild is the one call that repopulates what the interrupted pass left partial. `IndexStale` and `update` in `packages/index/src/indexer.ts`, `apps/cli/src/errors.ts`
+
+## index embed
+
+```
+memhtml index embed [--dry-run]
+```
+
+Fill every chunk that has no vector in the configured space, without a rebuild. Runs the bare unscoped `embedMissing()` in persisted slices, writes vectors and nothing else, and is safe to rerun. `apps/cli/src/run.ts`, `packages/index/src/indexer.ts`
+
+Flags:
+
+- `--dry-run`: Report the gap and write nothing. Boolean, default false. `apps/cli/src/commands.ts`
+
+The response is an `index.report` with `mode: "embed"`, `headSha` (the recorded watermark), `chunks`, `embeddings`, `embeddingsWritten`, and `embeddingsRemaining`, the chunks still without a vector after the pass. With no embedder configured (`MEMHTML_EMBED=off`) it writes 0 and reports the remaining gap. This is the recovery from a sparse vector plane: `index update --embed` embeds only its own batch's chunks and never revisits a chunk that lost its vector, which is how a live store came to hold 183 embeddings under 9,332 chunks.
 
 ## index update
 
@@ -763,9 +782,11 @@ The override variable's name is declared once as a constant, and the config tabl
 
 A caller should branch on `code` rather than on the `error` prose. The code list is append-only. A shipped code keeps its meaning and is not removed. `apps/cli/src/envelope.ts:62-87`
 
-The seventeen codes, in `ERROR_CODES` order, are `ERR_UNKNOWN_COMMAND`, `ERR_MISSING_ARGUMENT`, `ERR_INVALID_FLAG`, `ERR_UNEXPECTED_ARGUMENT`, `ERR_REPO_REQUIRED`, `ERR_PATH_NOT_FOUND`, `ERR_INVALID_MEMORY`, `ERR_DUPLICATE_CONTENT`, `ERR_WRITE_CONFLICT`, `ERR_DIRTY_TREE`, `ERR_INDEX_STALE`, `ERR_EMBED_MODEL_MISMATCH`, `ERR_MODEL_UNAVAILABLE`, `ERR_STORAGE`, `ERR_GIT`, `ERR_DISCRIMINATION_FAILED`, `ERR_UNKNOWN`. `apps/cli/src/envelope.ts:67-87`
+The eighteen codes, in `ERROR_CODES` order, are `ERR_UNKNOWN_COMMAND`, `ERR_MISSING_ARGUMENT`, `ERR_INVALID_FLAG`, `ERR_UNEXPECTED_ARGUMENT`, `ERR_REPO_REQUIRED`, `ERR_PATH_NOT_FOUND`, `ERR_INVALID_MEMORY`, `ERR_DUPLICATE_CONTENT`, `ERR_WRITE_CONFLICT`, `ERR_DIRTY_TREE`, `ERR_INDEX_STALE`, `ERR_EMBED_MODEL_MISMATCH`, `ERR_MODEL_UNAVAILABLE`, `ERR_STORAGE`, `ERR_GIT`, `ERR_DISCRIMINATION_FAILED`, `ERR_UNKNOWN`, `ERR_REBUILD_NO_EMBED_REFUSED`. `apps/cli/src/envelope.ts:67-87`
 
 `ERR_REPO_REQUIRED` is the exit-2 refusal `MEMHTML_REFUSE_ENV_ROOT` produces for a call that opens a repo and names none with `--repo`. It is a usage code because the fix is on the line, and its suggestion is the flag spelling. `apps/cli/src/run.ts`
+
+`ERR_REBUILD_NO_EMBED_REFUSED` is `index rebuild --no-embed` over a store that carries vectors in the configured space, without `--force`. Its suggestions are `memhtml index rebuild --embed`, `memhtml index rebuild --no-embed --force`, and `memhtml index embed`. `apps/cli/src/errors.ts`
 
 `ERR_UNEXPECTED_ARGUMENT` names a positional past what the command declares. It is its own code rather than a reuse of a neighbor, because the offending token is not a flag, which rules out `ERR_INVALID_FLAG`, and it is surplus rather than absent, which rules out `ERR_MISSING_ARGUMENT`: the caller fixes it by dropping a word instead of adding one. `apps/cli/src/envelope.ts:71-74`
 

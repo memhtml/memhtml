@@ -90,7 +90,11 @@ export const ERROR_CODES = [
   "ERR_STORAGE",
   "ERR_GIT",
   "ERR_DISCRIMINATION_FAILED",
-  "ERR_UNKNOWN"
+  "ERR_UNKNOWN",
+  // `index rebuild --no-embed` over a store that carries vectors in the configured space, without
+  // `--force`. Exit 1: the call parsed, and the work was declined. Appended after `ERR_UNKNOWN`
+  // because the list is append-only and AGENTS.md prints it in this order.
+  "ERR_REBUILD_NO_EMBED_REFUSED"
 ] as const
 
 export type ErrorCode = (typeof ERROR_CODES)[number]

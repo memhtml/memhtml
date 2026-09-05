@@ -37,8 +37,31 @@ export interface RebuildReport {
   readonly chunksIndexed: number
   readonly edgesIndexed: number
   readonly embeddingsWritten: number
+  /**
+   * Vectors carried across the rebuild rather than re-embedded. Chunk ids are content-addressed, so
+   * a vector in the configured space is still the right vector for a chunk that came back with the
+   * same id; see {@link truncateForRebuild}. Zero on a model change, where nothing is carried.
+   */
+  readonly embeddingsPreserved: number
   /** Files git offered that failed to parse. Counted, never fatal. One bad file is not a bad tree. */
   readonly skipped: ReadonlyArray<{ readonly path: string; readonly reason: string }>
+}
+
+/**
+ * A backfill pass's outcome, what `memhtml index embed` answers.
+ *
+ * `embeddingsRemaining` is the honest half: the chunks still without a vector in the configured space
+ * after this pass. It is non-zero when no embedder is configured (`MEMHTML_EMBED=off`), when a slice
+ * failed partway, or under `dryRun`, and it is what an operator compares against `chunks` to see the
+ * size of the gap. The incident this exists for read 183 embeddings against 9,332 chunks.
+ */
+export interface BackfillReport {
+  /** The recorded watermark, or null while an interrupted rebuild's window is open. */
+  readonly headSha: string | null
+  readonly chunks: number
+  readonly embeddings: number
+  readonly embeddingsWritten: number
+  readonly embeddingsRemaining: number
 }
 
 /** An incremental pass's outcome. `unchanged: true` means the watermark and the tree already agreed. */
@@ -75,12 +98,26 @@ export interface EmbedMissingOptions {
 }
 
 export interface IndexerShape {
+  /**
+   * Reproject the whole tree at HEAD. Vectors in the configured space survive it (see
+   * {@link truncateForRebuild}). `embed: false` over a store that carries vectors is refused with
+   * {@link RebuildNoEmbedRefused} unless `force` is set.
+   */
   readonly rebuild: (opts: {
     readonly embed: boolean
-  }) => Effect.Effect<RebuildReport, StorageFailure | EmbedModelMismatch>
+    readonly force?: boolean | undefined
+  }) => Effect.Effect<RebuildReport, StorageFailure | EmbedModelMismatch | RebuildNoEmbedRefused>
   readonly update: (opts: {
     readonly embed: boolean
   }) => Effect.Effect<UpdateReport, StorageFailure | EmbedModelMismatch | IndexStale>
+  /**
+   * Fill every chunk that has no vector in the configured space, over the WHOLE `chunks` table, in
+   * persisted slices, and report the gap that is left. The recovery from a sparse vector plane that
+   * does not empty the index first. `dryRun` reports the gap and writes nothing.
+   */
+  readonly backfill: (opts: {
+    readonly dryRun: boolean
+  }) => Effect.Effect<BackfillReport, StorageFailure | EmbedModelMismatch>
   /**
    * Fill vectors for chunks that have none, or whose vector belongs to another model.
    *
@@ -99,9 +136,10 @@ export const Indexer = Context.Service<IndexerShape>("memhtml/Indexer")
  *
  * A hard failure rather than a silent reindex. A half-migrated vector space degrades every
  * cosine while every test still passes, because each vector is well-formed. `memhtml index rebuild
- * --embed` is the one path allowed past this guard: a rebuild empties `embeddings` with the other
- * memory tables and records the configured model before any vector is written, so it migrates the
- * whole space rather than mixing two.
+ * --embed` is the one path allowed past this guard: on a model change its truncate carries no vector
+ * across (the stash in {@link truncateForRebuild} keeps only rows in the CONFIGURED space, and none
+ * are), and it records the configured model before any vector is written, so it migrates the whole
+ * space rather than mixing two.
  */
 export class EmbedModelMismatch {
   readonly _tag = "EmbedModelMismatch"
@@ -116,15 +154,47 @@ export class EmbedModelMismatch {
  * finish repopulating them.
  *
  * A rebuild clears `index_state.head_sha` in the same transaction as its truncate and writes the
- * commit back only after every projection landed, so an EXISTING row whose `head_sha` is NULL is
- * exactly a rebuild that died inside that window. That is a different state from no row at all,
- * which is a store nothing has indexed yet and which `update` answers with a full rebuild. Here the
- * tables are half-empty and there is no watermark to diff from, so a diff would report
- * `unchanged: true` over rows the tree still holds. The CLI maps this tag to `ERR_INDEX_STALE`.
+ * commit back only after every projection landed and the preserved vectors were re-inserted, so an
+ * EXISTING row whose `head_sha` is NULL is exactly a rebuild that died inside that window. That is a
+ * different state from no row at all, which is a store nothing has indexed yet and which `update`
+ * answers with a full rebuild. Here the tables are half-empty and there is no watermark to diff
+ * from, so a diff would report `unchanged: true` over rows the tree still holds. The CLI maps this
+ * tag to `ERR_INDEX_STALE`. The vector stash lives in the `temp` schema, so a process that dies in
+ * the window takes it along; the rebuild that recovers the window re-embeds, which costs model calls
+ * and loses nothing.
  */
 export class IndexStale {
   readonly _tag = "IndexStale"
   constructor(readonly reason: string) {}
+}
+
+/**
+ * `rebuild --no-embed` asked over a store that carries vectors in the configured space, without
+ * `--force`.
+ *
+ * `--no-embed` is the harness flag: every credential-free test run and every fresh install without a
+ * Bedrock credential passes it. It was invoked against a live store by accident, and ten hours of
+ * incremental updates later that store held 183 embeddings under 9,332 chunks, because an update
+ * embeds only its own batch's chunks and nothing revisits the rest. A store that carries vectors is
+ * a store somebody embedded on purpose, so the bare call refuses and names the count. The vectors
+ * are preserved by the rebuild either way (see {@link truncateForRebuild}); what `--no-embed` costs
+ * on a live store is that every new or changed chunk stays unembedded, and `--force` is the operator
+ * saying that is understood. The CLI maps this tag to `ERR_REBUILD_NO_EMBED_REFUSED`.
+ */
+export class RebuildNoEmbedRefused {
+  readonly _tag = "RebuildNoEmbedRefused"
+  constructor(
+    /** How many vectors the store carries, all in `model`. */
+    readonly embeddings: number,
+    /** The configured space, which the guard already proved is the stored one. */
+    readonly model: string,
+    /**
+     * Which of the two no-embed spellings was seen: the `--no-embed` flag, or `--embed` with no
+     * embedder configured (`MEMHTML_EMBED=off`, the harness's own variable). Both leave every new
+     * or changed chunk without a vector, and the prose names the one the operator can change.
+     */
+    readonly because: "flag" | "no-embedder"
+  ) {}
 }
 
 /** How an indexer is built. `embedWatermark` is `@memhtml/llm`'s `EMBED_WATERMARK`, never re-derived. */
@@ -238,9 +308,11 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
    * Fail when the stored vector space is not the configured one.
    *
    * Checked before any write, so an index built under one model can never accumulate rows under
-   * another. `rebuild --embed` is the one caller that does NOT consult this, because it empties
-   * `embeddings` and records the configured space before any vector is written — see
-   * {@link EmbedModelMismatch} and {@link truncateForRebuild}.
+   * another. `rebuild --embed` is the one caller that does NOT consult this, because its truncate
+   * carries no vector from another space across (the stash keeps rows in the configured space
+   * only) and records the configured space before any vector is written; see
+   * {@link EmbedModelMismatch} and {@link truncateForRebuild}. `rebuild --no-embed`, `update`, and
+   * `backfill` all consult it.
    */
   const guardEmbedModel = () =>
     Effect.gen(function* () {
@@ -250,22 +322,72 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
       }
     })
 
+  /** One row count. */
+  const countRows = (table: "chunks" | "embeddings") =>
+    db
+      .get<{ n: number }>(`SELECT count(*) AS n FROM ${table}`)
+      .pipe(Effect.map((row) => row?.n ?? 0))
+
+  /**
+   * Refuse `rebuild --no-embed` over a store that carries vectors, unless forced.
+   *
+   * Runs after {@link guardEmbedModel}, so every vector counted here is in the configured space: the
+   * store never carries two. The count goes to stderr as a WARN as well as into the failure, because
+   * the accident this interlocks against is a shell invocation whose envelope nobody read. See
+   * {@link RebuildNoEmbedRefused} for why a bare `--no-embed` over vectors is treated as a mistake.
+   */
+  const refuseNoEmbedOverVectors = (because: "flag" | "no-embedder") =>
+    Effect.gen(function* () {
+      const embeddings = yield* countRows("embeddings")
+      if (embeddings === 0) return
+      const seen =
+        because === "flag"
+          ? "--no-embed"
+          : "--embed with no embedder configured (MEMHTML_EMBED=off)"
+      yield* Effect.logWarning(
+        `index rebuild refused: this store carries ${embeddings} embeddings in ${deps.embedWatermark}, so somebody embedded it on purpose, and ${seen} would keep those vectors but leave every new or changed chunk without one. Pass --force to run it anyway, or run it with an embedder configured.`
+      )
+      return yield* Effect.fail(new RebuildNoEmbedRefused(embeddings, deps.embedWatermark, because))
+    })
+
+  /**
+   * Where a rebuild parks the vectors it will carry across. In the `temp` schema, so it is private to
+   * this connection and dies with the process: a rebuild that dies inside the {@link IndexStale}
+   * window leaves no table behind for the next one to trip on.
+   */
+  const EMBEDDINGS_STASH = "temp.embeddings_stash"
+
   /**
    * Empty every memory table and clear the watermark, in ONE transaction, before a rebuild
-   * repopulates.
+   * repopulates, keeping the vectors the rebuild will still own.
    *
    * Atomic with the truncate on purpose: `index_state.head_sha` is NULL for exactly as long as the
    * tables are half-populated, which is what makes {@link IndexStale} detectable. A failure inside
    * this transaction leaves the previous index whole; a failure after it commits and before the
    * projections land leaves the row `update` refuses to diff from.
    *
-   * The configured vector space is recorded here too, and that is what makes `--embed` the migration
-   * path: `embeddings` is emptied and the new space is on the row before any vector is written, so
-   * the store never carries two spaces at once.
+   * The `embeddings` rows in the CONFIGURED space are copied into {@link EMBEDDINGS_STASH} before the
+   * deletes, and {@link restoreEmbeddings} puts back the ones whose chunk id the reprojection
+   * produced again. Chunk ids are `sha256(content_hash:ordinal)`, so a chunk that comes back with the
+   * same id has the same text, and the vector the store already paid for is still the right vector.
+   * Deleting it, which is what `DELETE FROM embeddings` did for every rebuild, cost one model call
+   * per unchanged chunk and, under `--no-embed`, left the store with no vectors at all. The
+   * precedent for the stash is migration 0008, which snapshots the same table around a cascade.
+   *
+   * The `WHERE model = ?` is what makes `--embed` still the migration path: on a model change no
+   * stored row is in the configured space, the stash is empty, and `embeddings` is emptied outright,
+   * with the new space recorded on the row before any vector is written. So the store never carries
+   * two spaces at once, and the migration case and the preservation case are one statement rather
+   * than two branches that could drift.
    */
   const truncateForRebuild = () => {
     const at = deps.now()
     return db.writeAll([
+      { sql: `DROP TABLE IF EXISTS ${EMBEDDINGS_STASH}`, params: [] },
+      {
+        sql: `CREATE TEMP TABLE embeddings_stash AS SELECT * FROM embeddings WHERE model = ?`,
+        params: [deps.embedWatermark]
+      },
       {
         sql: `INSERT INTO index_state (id, head_sha, embed_model, embed_dim, rebuilt_at, updated_at)
               VALUES (?, NULL, ?, ?, ?, ?)
@@ -277,6 +399,27 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
       ...MEMORY_TABLES.map((table) => ({ sql: `DELETE FROM ${table}`, params: [] }))
     ])
   }
+
+  /**
+   * Put back every stashed vector whose chunk the reprojection produced again, and drop the stash.
+   *
+   * Filtered on `chunks` so the insert is FK-valid on its own rather than by the constraints being
+   * off, and so a vector whose text left the tree leaves with it. Returns the count carried across,
+   * which is exact because `embeddings` is empty when this runs. Called after the projections land
+   * and before the watermark is written, so a death here still reads as {@link IndexStale}.
+   */
+  const restoreEmbeddings = () =>
+    Effect.gen(function* () {
+      yield* db.writeAll([
+        {
+          sql: `INSERT INTO embeddings SELECT * FROM ${EMBEDDINGS_STASH}
+                 WHERE chunk_id IN (SELECT chunk_id FROM chunks)`,
+          params: []
+        },
+        { sql: `DROP TABLE ${EMBEDDINGS_STASH}`, params: [] }
+      ])
+      return yield* countRows("embeddings")
+    })
 
   const writeState = (headSha: string, rebuilt: boolean) => {
     const at = deps.now()
@@ -309,19 +452,31 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
    * quote, but a query assembled by concatenation is one refactor away from being handed something
    * that can, and the binding costs nothing.
    */
+  /** The join every pending scan reads: each chunk beside the vector it has, if any. */
+  const PENDING_JOIN = `FROM chunks c
+         LEFT JOIN embeddings e ON e.chunk_id = c.chunk_id`
+  /**
+   * Parenthesized, and that is not cosmetic. SQL binds `AND` tighter than `OR`, so appending
+   * `AND c.chunk_id IN (…)` to a bare `e.chunk_id IS NULL OR e.model <> ?` parses as
+   * `IS NULL OR (model <> ? AND IN (…))`. The vector-less disjunct escapes the scoping and the
+   * statement silently reads the whole table again. The candidate-list test is what holds it:
+   * unparenthesized, a one-chunk batch embeds every vector-less chunk in the store.
+   */
+  const PENDING_PREDICATE = "WHERE (e.chunk_id IS NULL OR e.model <> ?)"
+
+  /** How many chunks lack a vector in the configured space: the gap `backfill` reports. */
+  const countPending = () =>
+    db
+      .get<{ n: number }>(`SELECT count(*) AS n ${PENDING_JOIN} ${PENDING_PREDICATE}`, [
+        deps.embedWatermark
+      ])
+      .pipe(Effect.map((row) => row?.n ?? 0))
+
   const pendingChunks = (candidateChunkIds: ReadonlyArray<string> | undefined) =>
     Effect.gen(function* () {
       const select = `SELECT c.chunk_id AS chunk_id, c.text AS text
-         FROM chunks c
-         LEFT JOIN embeddings e ON e.chunk_id = c.chunk_id`
-      /**
-       * Parenthesized, and that is not cosmetic. SQL binds `AND` tighter than `OR`, so appending
-       * `AND c.chunk_id IN (…)` to a bare `e.chunk_id IS NULL OR e.model <> ?` parses as
-       * `IS NULL OR (model <> ? AND IN (…))`. The vector-less disjunct escapes the scoping and the
-       * statement silently reads the whole table again. The candidate-list test is what holds it:
-       * unparenthesized, a one-chunk batch embeds every vector-less chunk in the store.
-       */
-      const predicate = "WHERE (e.chunk_id IS NULL OR e.model <> ?)"
+         ${PENDING_JOIN}`
+      const predicate = PENDING_PREDICATE
 
       if (candidateChunkIds === undefined) {
         return yield* db.all<{ chunk_id: string; text: string }>(
@@ -365,8 +520,9 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
    * the embed lane partially filled would mean a throttled Bedrock turns a complete FTS index into no
    * index at all. That costs something under a candidate list. A chunk whose embed call failed is no
    * longer picked up incidentally by the next unrelated `update`, because that update now only asks
-   * about its own chunks. `memhtml index rebuild --embed` and a bare `embedMissing()` remain the paths
-   * that close a store-wide gap, and both keep the full scan.
+   * about its own chunks. `memhtml index embed` (the bare `embedMissing()` behind {@link backfill})
+   * and `memhtml index rebuild --embed` are the paths that close a store-wide gap, and both keep the
+   * full scan. The first does it without emptying the index.
    */
   const embedMissing = (
     options?: EmbedMissingOptions
@@ -438,16 +594,14 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
       return written
     }).pipe(Effect.withSpan("indexer.embedMissing"))
 
-  const rebuild = (opts: { readonly embed: boolean }) =>
+  /**
+   * The rebuild proper: read the whole tree at HEAD, truncate, reproject, restore the kept vectors,
+   * record the watermark, then embed what is missing if asked. No guard and no interlock here; those
+   * belong to {@link rebuild}, so that `update`'s first-index fallthrough can reproject without
+   * carrying a refusal it can never raise.
+   */
+  const reproject = (embed: boolean) =>
     Effect.gen(function* () {
-      /**
-       * `--embed` passes where the guard refuses, and that is the vector-space migration: the
-       * truncate below empties `embeddings` and records the configured space before any vector is
-       * written, so no pass can mix two spaces. `--no-embed` still refuses, because it would leave
-       * the recorded space with no vectors under it while the published remedy
-       * (`memhtml index rebuild --embed`) went unrun.
-       */
-      if (!opts.embed) yield* guardEmbedModel()
       const headSha = yield* git.revParseHead()
       const entries = (yield* git.lsTreeR(headSha, TREE_PREFIXES)).filter((entry) =>
         isIndexablePath(entry.path)
@@ -478,13 +632,18 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
        * that make a bracket not worth the window it opens.
        */
       yield* applyWrites(projections.flatMap((projection) => projection.writes))
+      /**
+       * The chunk rows exist again, so the stashed vectors can find theirs. Before the watermark is
+       * written, so the {@link IndexStale} window closes only once the vectors are back too.
+       */
+      const embeddingsPreserved = yield* restoreEmbeddings()
       yield* writeState(headSha, true)
 
-      const embeddingsWritten = opts.embed ? yield* embedMissing() : 0
+      const embeddingsWritten = embed ? yield* embedMissing() : 0
       const edgesIndexed = yield* countEdges(db)
 
       yield* Effect.log(
-        `indexer.rebuild: ${projections.length} files, ${skipped.length} skipped at ${headSha}`
+        `indexer.rebuild: ${projections.length} files, ${skipped.length} skipped, ${embeddingsPreserved} vectors kept at ${headSha}`
       )
       return {
         headSha,
@@ -492,9 +651,64 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
         chunksIndexed: projections.reduce((total, one) => total + one.chunks.length, 0),
         edgesIndexed,
         embeddingsWritten,
+        embeddingsPreserved,
         skipped
+      } satisfies RebuildReport
+    })
+
+  const rebuild = (opts: { readonly embed: boolean; readonly force?: boolean | undefined }) =>
+    Effect.gen(function* () {
+      /**
+       * A rebuild that can write vectors passes where the guard refuses, and that is the
+       * vector-space migration: the truncate carries no vector from the old space across and
+       * records the configured space before any vector is written, so no pass can mix two spaces.
+       *
+       * "Can write vectors" is `--embed` AND an embedder present. `--embed` with no embedder
+       * (`MEMHTML_EMBED=off`) is the same no-embed rebuild spelled with the environment variable
+       * the harness actually uses, and it is held to the same two rules: it refuses a model
+       * mismatch, because a pass that writes no vectors must not record a new space (it would stash
+       * nothing, delete every vector, and leave a store `index embed` cannot refill while the
+       * embedder is off), and it refuses a store that carries vectors unless forced, see
+       * {@link RebuildNoEmbedRefused}.
+       */
+      const cannotEmbed = !opts.embed || deps.embeddings === undefined
+      if (cannotEmbed) {
+        yield* guardEmbedModel()
+        if (opts.force !== true) {
+          yield* refuseNoEmbedOverVectors(opts.embed ? "no-embedder" : "flag")
+        }
       }
+      return yield* reproject(opts.embed)
     }).pipe(Effect.withSpan("indexer.rebuild"))
+
+  /**
+   * The store-wide backfill behind `memhtml index embed`.
+   *
+   * The bare {@link embedMissing} (full scan, no candidate list), then a count of what is still
+   * pending, so the report says how much of the gap this pass closed and how much is left. It runs
+   * the guard through `embedMissing`, so a model mismatch is refused here like everywhere else, and it
+   * never touches a table other than `embeddings`, so it can be re-run at any time and needs no
+   * watermark: the index keeps serving on every arm throughout.
+   */
+  const backfill = (opts: { readonly dryRun: boolean }) =>
+    Effect.gen(function* () {
+      yield* guardEmbedModel()
+      const embeddingsWritten = opts.dryRun ? 0 : yield* embedMissing()
+      const state = yield* readState()
+      const chunks = yield* countRows("chunks")
+      const embeddings = yield* countRows("embeddings")
+      const embeddingsRemaining = yield* countPending()
+      yield* Effect.log(
+        `indexer.backfill: ${embeddingsWritten} written, ${embeddingsRemaining} of ${chunks} chunks still without a vector`
+      )
+      return {
+        headSha: state?.head_sha ?? null,
+        chunks,
+        embeddings,
+        embeddingsWritten,
+        embeddingsRemaining
+      }
+    }).pipe(Effect.withSpan("indexer.backfill"))
 
   /**
    * Remove one path entirely. `files` cascades to tags, entities, facets, citations, and chunks, and
@@ -582,9 +796,15 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
       const headSha = yield* git.revParseHead()
       const state = yield* readState()
 
-      /** No row means no index. Falling through to a diff would index the delta of nothing. */
+      /**
+       * No row means no index. Falling through to a diff would index the delta of nothing. This
+       * reprojects without the `--no-embed` interlock, which belongs to an operator's explicit
+       * `rebuild`: a store with no watermark row has never been embedded, so there is nothing for
+       * the interlock to protect, and `index update` declares no `--force` for a refusal to point at.
+       * The model guard already ran above.
+       */
       if (state === undefined) {
-        const report = yield* rebuild(opts)
+        const report = yield* reproject(opts.embed)
         return {
           headSha: report.headSha,
           unchanged: false,
@@ -783,7 +1003,7 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
       }
     }).pipe(Effect.withSpan("indexer.update"))
 
-  return { rebuild, update, embedMissing }
+  return { rebuild, update, embedMissing, backfill }
 }
 
 const countEdges = (db: DatabaseShape) =>

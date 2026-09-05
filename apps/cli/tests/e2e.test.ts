@@ -429,7 +429,9 @@ describe("the write path, end to end", () => {
       readonly entities: number
     }>(["index", "status"])
 
-    await cli.json(["index", "rebuild", "--no-embed"])
+    // `--force`, because this store carries vectors (the fake embedder embedded every write) and a
+    // bare `--no-embed` rebuild over such a store is refused as the harness flag it is.
+    await cli.json(["index", "rebuild", "--no-embed", "--force"])
 
     const after = await cli.json<typeof before>(["index", "status"])
     expect(after.files).toBe(before.files)

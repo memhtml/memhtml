@@ -561,8 +561,18 @@ const dispatch = (
     case "index rebuild":
       return Effect.gen(function* () {
         const indexer = yield* Indexer
-        const report = yield* indexer.rebuild({ embed: bool(parsed, "embed", true) })
+        const report = yield* indexer.rebuild({
+          embed: bool(parsed, "embed", true),
+          force: bool(parsed, "force", false)
+        })
         return ["index.report", { mode: "rebuild", ...report }] as const
+      })
+
+    case "index embed":
+      return Effect.gen(function* () {
+        const indexer = yield* Indexer
+        const report = yield* indexer.backfill({ dryRun: bool(parsed, "dry-run", false) })
+        return ["index.report", { mode: "embed", ...report }] as const
       })
 
     case "index update":

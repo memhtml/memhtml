@@ -63,6 +63,10 @@ export const codeFor = (error: unknown): ErrorCode => {
     // recovery is a re-index, carried in SUGGESTIONS below, so an agent recovers in one step.
     case "IndexStale":
       return "ERR_INDEX_STALE"
+    // A bare `rebuild --no-embed` over a store that carries vectors. The count is in the prose and
+    // on stderr; the recovery is one of the two flag forms carried in SUGGESTIONS below.
+    case "RebuildNoEmbedRefused":
+      return "ERR_REBUILD_NO_EMBED_REFUSED"
     case "DiscriminationFailed":
       return "ERR_DISCRIMINATION_FAILED"
     default:
@@ -102,6 +106,8 @@ export const messageFor = (error: unknown): string => {
       return `the index was built in vector space ${text(error.stored) ?? "?"}, configured is ${text(error.configured) ?? "?"}`
     case "IndexStale":
       return `the index is stale: ${text(error.reason) ?? "it does not describe the current commit"}`
+    case "RebuildNoEmbedRefused":
+      return `index rebuild refused: this store carries ${String(error.embeddings ?? "?")} embeddings in ${text(error.model) ?? "the configured space"}, so it was embedded on purpose, and ${error.because === "no-embedder" ? "--embed with no embedder configured (MEMHTML_EMBED=off)" : "--no-embed"} would leave every new or changed chunk without a vector`
     case "LlmContractViolation":
       return `the model broke its structured-output contract: ${text(error.reason) ?? "no reason given"}`
     case "DiscriminationFailed":
@@ -166,6 +172,14 @@ export const SUGGESTIONS: Readonly<Record<string, SuggestionsFor>> = {
   // commit on it rather than diffing from nothing — so suggesting it would send the operator in a
   // circle. A rebuild is the one call that repopulates the tables the interrupted pass left partial.
   IndexStale: () => ["memhtml index rebuild"],
+  // The embedding form first, because it is what a live store wants. `--force` second, for the
+  // operator who meant it: the stored vectors survive either way, and what `--no-embed` costs is that
+  // new or changed chunks stay unembedded until `memhtml index embed` runs.
+  RebuildNoEmbedRefused: () => [
+    "memhtml index rebuild --embed",
+    "memhtml index rebuild --no-embed --force",
+    "memhtml index embed"
+  ],
   ModelUnavailable: () => ["retry: search still works on the lexical floor", "memhtml status"],
   InvalidMemory: () => ["memhtml manifest"],
   // No `--json`: there is no such flag — the JSON envelope is the binary's only output — so naming

@@ -395,6 +395,7 @@ const checkEveryCommand = async ({ bin, work, env }) => {
     ["task list", ["task", "list"]],
     ["task status", ["task", "status", taskPath, "doing"]],
     ["index update", ["index", "update"]],
+    ["index embed", ["index", "embed"]],
     ["index rebuild", ["index", "rebuild"]],
     ["index status", ["index", "status"]],
     ["trace index", ["trace", "index"], traced],
