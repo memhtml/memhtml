@@ -2000,6 +2000,26 @@
       "verificationNote": "IndexerShape.backfill (packages/index/src/indexer.ts) is the bare embedMissing() plus countPending over the same PENDING_JOIN and PENDING_PREDICATE the scan uses, answered as BackfillReport (headSha, chunks, embeddings, embeddingsWritten, embeddingsRemaining); dryRun writes nothing. memhtml index embed (apps/cli/src/commands.ts, apps/cli/src/run.ts) answers index.report with mode embed. With no embedder configured it writes 0 and reports the remaining gap. It touches only embeddings, so search keeps serving on every arm while it runs and it is safe to rerun. packages/index/tests/indexer.test.ts asserts that update --embed never revisits a chunk that lost its vector and that backfill closes the gap to 0 and is idempotent; tests-integration/tests/embed-backfill.test.ts drives the same through the CLI and through the built binary under MEMHTML_EMBED=off.",
       "updatedAt": "2026-09-05T00:00:00.000Z",
       "verifies": []
+    },
+    "112831de-9419-4833-b183-a0670fed49a8": {
+      "createdAt": "2026-09-05T00:00:00.000Z",
+      "derives": [],
+      "id": "112831de-9419-4833-b183-a0670fed49a8",
+      "key": "SLEEP-13",
+      "negated": false,
+      "patternType": "event-driven",
+      "priority": "critical",
+      "refines": [],
+      "satisfies": [],
+      "sentence": "When a merge lands the run's branch on main, the sleep merge shall project the merged commit into the index and report indexUpdated with the update's counts.",
+      "status": "implemented",
+      "systemName": "sleep merge",
+      "systemResponse": "project the merged commit into the index and report indexUpdated with the update's counts",
+      "trigger": "a merge lands the run's branch on main",
+      "updatedAt": "2026-09-05T00:00:00.000Z",
+      "verificationMethod": "test",
+      "verificationNote": "reindex (packages/sleep/src/review.ts) runs the indexer's incremental update with embeddings on after the fast-forward or merge commit and after the run row is rewritten as merged, so index_state.head_sha names headSha and every memory the run distilled, rewrote, or archived is searchable when the command returns (issue #145). The report carries indexUpdated, indexHeadSha, indexAdded, indexModified, indexRemoved, indexRenamed, embeddingsWritten, indexSkipped. A failed update never fails the merge, because main has already moved: the report says indexUpdated: false with indexError and a stderr WARN names the recovery. tests-integration/tests/sleep.test.ts 'leaves the index describing the merged head, so the run is searchable when merge returns' (mutation-verified: with the update call unreachable the watermark stays at the pre-merge commit); packages/sleep/tests/review.test.ts 'reports a failed index update without failing a merge whose main has moved'.",
+      "verifies": []
     }
   },
   "stateModel": {
