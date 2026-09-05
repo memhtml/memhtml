@@ -20,6 +20,12 @@ import {
   truncateSnippet
 } from "./retrieval-sql.js"
 import { assembleScope, type SearchScope } from "./scope.js"
+import {
+  formatCoverage,
+  readVectorCoverage,
+  VECTOR_COVERAGE_FLOOR,
+  VECTOR_COVERAGE_REMEDY
+} from "./vector-coverage.js"
 
 /**
  * The retrieval surface: `search` returns ranked hits, `recall` returns a pack under a budget.
@@ -97,11 +103,19 @@ export interface SearchHit {
 export interface SearchResult {
   readonly hits: ReadonlyArray<SearchHit>
   /**
-   * True when the vector arm did not fire, because the embedder failed or the index has no vectors,
-   * so the result came from the lexical floor. Reported rather than silent, because an agent
-   * comparing two searches needs to know one of them was ranked by fewer signals.
+   * True when the vector arm did not fire, so the result came from the lexical floor. Three causes:
+   * no embedder is bound, the embedder failed, or `vectorCoverage` is below the floor and the arm was
+   * dropped on purpose (a sparse plane ranks the embedded few above every lexical match, issue #141).
+   * Reported rather than silent, because an agent comparing two searches needs to know one of them
+   * was ranked by fewer signals. `vectorCoverage` tells the third cause from the first two.
    */
   readonly degraded: boolean
+  /**
+   * The share of the index's chunks carrying a vector in the configured space, `0` to `1`, read once
+   * per call. Present on every result so a caller can tell a coverage degradation (this is low) from
+   * an embedder outage (this is high and `degraded` is still true). `1` on an index with no chunks.
+   */
+  readonly vectorCoverage: number
   /** The arms that actually contributed, for the operator envelope. */
   readonly arms: ReadonlyArray<string>
   /**
@@ -167,6 +181,8 @@ export interface RecallPack {
   readonly spentChars: number
   readonly truncated: boolean
   readonly degraded: boolean
+  /** The same ratio `search` reports, for the same reason: it names which degradation this is. */
+  readonly vectorCoverage: number
 }
 
 export interface RetrievalShape {
@@ -184,6 +200,18 @@ export interface QueryEmbedPort {
 export interface RetrievalDeps {
   readonly db: DatabaseShape
   readonly embeddings?: QueryEmbedPort | undefined
+  /**
+   * The configured vector space, `@memhtml/llm`'s `EMBED_WATERMARK`, so coverage counts only vectors
+   * the query vector is comparable with. Absent falls back to the stored watermark, which is the
+   * same string whenever the indexer has been allowed to write (`readVectorCoverage`).
+   */
+  readonly embedWatermark?: string | undefined
+  /**
+   * Coverage below which the vector arm is dropped. Defaults to {@link VECTOR_COVERAGE_FLOOR}; the
+   * CLI passes `MEMHTML_VECTOR_COVERAGE_FLOOR` and a test moves it to prove the gate is this
+   * comparison and nothing else.
+   */
+  readonly vectorCoverageFloor?: number | undefined
 }
 
 /** The columns `search` and `recall` both read off a fused path list. */
@@ -222,6 +250,7 @@ const scopeNarrows = (scope: SearchScope): boolean =>
 
 export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
   const { db } = deps
+  const coverageFloor = deps.vectorCoverageFloor ?? VECTOR_COVERAGE_FLOOR
 
   /**
    * The query vector, or `undefined` when there is none.
@@ -260,6 +289,30 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
         })
       )
       return rows.length > 0
+    })
+
+  /**
+   * The query vector behind the coverage gate, with the coverage that decided it.
+   *
+   * ONE count statement per call, before any embedding. Below the floor the vector arm is dropped
+   * deliberately and the query is never embedded: a sparse plane ranks the embedded few above every
+   * lexical match (issue #141), so running the arm would make the result worse, and a Bedrock call for
+   * an arm that will not fire is waste. The warning names the counts and the remedy so an operator
+   * reading stderr learns which degradation this is, and it is logged only when an embedder is bound,
+   * because an embedder-less store at zero coverage is the deliberate lexical-only configuration.
+   */
+  const gatedQueryVector = (query: string) =>
+    Effect.gen(function* () {
+      const coverage = yield* readVectorCoverage(db, deps.embedWatermark)
+      if (coverage.coverage < coverageFloor) {
+        if (deps.embeddings !== undefined) {
+          yield* Effect.logWarning(
+            `retrieval: lexical floor, vector coverage ${formatCoverage(coverage.coverage)} (${coverage.embeddings} of ${coverage.chunks} chunks) is below ${coverageFloor}; ${VECTOR_COVERAGE_REMEDY}`
+          )
+        }
+        return { vector: undefined, coverage: coverage.coverage }
+      }
+      return { vector: yield* queryVector(query), coverage: coverage.coverage }
     })
 
   /**
@@ -449,7 +502,8 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
   const search = (input: SearchInput) =>
     Effect.gen(function* () {
       const limit = input.limit ?? DEFAULT_SEARCH_LIMIT
-      const vector = yield* queryVector(input.query)
+      const gated = yield* gatedQueryVector(input.query)
+      const vector = gated.vector
       const fused = yield* fuse({
         query: input.query,
         scope: input,
@@ -525,6 +579,7 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
               ]
         }),
         degraded: vector === undefined,
+        vectorCoverage: gated.coverage,
         arms: armNamesIn(fused.sql),
         entityScope: input.entity === undefined || input.entity === "" ? null : input.entity,
         /**
@@ -541,7 +596,8 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
   const recall = (input: RecallInput) =>
     Effect.gen(function* () {
       const budget = input.budgetChars ?? MEMORY_BODY_BUDGET
-      const vector = yield* queryVector(input.query)
+      const gated = yield* gatedQueryVector(input.query)
+      const vector = gated.vector
       const fused = yield* fuse({
         query: input.query,
         scope: input,
@@ -586,7 +642,8 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
         memories,
         spentChars: arcs.spentChars + memories.spentChars,
         truncated: arcs.truncated || memories.truncated,
-        degraded: vector === undefined
+        degraded: vector === undefined,
+        vectorCoverage: gated.coverage
       }
     }).pipe(Effect.withSpan("retrieval.recall"))
 

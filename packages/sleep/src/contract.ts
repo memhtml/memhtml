@@ -79,15 +79,16 @@ export const phaseIndexOf = (phase: SleepPhase): number => SLEEP_PHASES.indexOf(
  * twelve that had already succeeded.
  *
  * **`preflight` gates the WHOLE run: every one of the sixteen phases after it.** It establishes the
- * three preconditions the rest of the night reads, and each of its failures makes every later phase's
+ * four preconditions the rest of the night reads, and each of its failures makes every later phase's
  * commit wrong rather than merely unhelpful. `requireCleanTree` failing means the operator has
  * uncommitted work in the tree, so a later phase stages and commits the operator's bytes under
  * sleep's own trailers. `EmbedModelMismatch` is a half-migrated vector space, which degrades every
  * cosine in the run while each individual vector stays well-formed — dedup, mining, and conflict
  * detection all come back plausible and wrong. `IndexStale` is an index a rebuild emptied and did not
  * finish repopulating, and every later phase reads the index, so their counts describe a corpus
- * fragment. All three end in the one outcome per-phase isolation is not a defense against: a corrupt
- * night with a green report.
+ * fragment. `VectorCoverageLow` is a vector plane covering under half the chunks, so every cosine
+ * pass compares a sample of the corpus against itself and calls the rest unique. All four end in the
+ * one outcome per-phase isolation is not a defense against: a corrupt night with a green report.
  *
  * `dedup-merge` gates `compress` and `retention-triage`: both operate on the post-merge set, and
  * running them over a corpus that still holds the duplicates would compress a near-duplicate pair

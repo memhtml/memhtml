@@ -32,6 +32,7 @@ import {
   persistScanned,
   Retrieval,
   readIndexState,
+  readVectorCoverage,
   readWatermark,
   reinforce,
   type SearchScope,
@@ -43,7 +44,7 @@ import { attemptIo, commitSubject, Store, type WriteInput } from "@memhtml/store
 import { mergeTailExtract, type SessionExtract, scanTraceRoot } from "@memhtml/traces"
 import { Effect } from "effect"
 
-import { Embedder, type EmbedderShape, ExtractorPort, Roots } from "./api-layer.js"
+import { Embedder, type EmbedderShape, ExtractorPort, RetrievalPolicy, Roots } from "./api-layer.js"
 import type { ErrorCode } from "./envelope.js"
 import { codeFor, messageFor } from "./errors.js"
 import type { ExtractionItem } from "./extraction.js"
@@ -2666,11 +2667,17 @@ export const traceLinks = (params: {
  * `embedderUp` is read off the stored watermark rather than by probing Bedrock. A status call that
  * made a network request would fail for a reason unrelated to the corpus, and what a caller
  * needs to know is whether the vectors in this index are usable.
+ *
+ * `vectorCoverage` is the comparison `chunks` and `embeddings` side by side never made (issue #141):
+ * the share of chunks with a vector in the configured space, beside the floor a search degrades at.
+ * `embedderUp` can be true at 2 percent coverage, because one vector in the right space satisfies it;
+ * this is the number that says how much of the corpus the vector arm can see.
  */
 export const statusReport = () =>
   Effect.gen(function* () {
     const store = yield* Store
     const db = yield* DatabaseService
+    const policy = yield* RetrievalPolicy
 
     const headSha = yield* store.git.revParseHead()
     const dirty = yield* store.dirtyPaths()
@@ -2687,6 +2694,7 @@ export const statusReport = () =>
     const embeddings = yield* countOne(db, "SELECT count(*) AS n FROM embeddings")
     const chunks = yield* countOne(db, "SELECT count(*) AS n FROM chunks")
     const traces = yield* countOne(db, "SELECT count(*) AS n FROM traces")
+    const coverage = yield* readVectorCoverage(db, EMBED_WATERMARK)
 
     const lastSleep = yield* db
       .get<{ run_id: string; status: string; started_at: string }>(
@@ -2713,6 +2721,8 @@ export const statusReport = () =>
       // is against a different vector space. Reporting it as "up" would be the silent half-migration
       // the indexer refuses at write time.
       embedderUp: state !== undefined && state.embed_model === EMBED_WATERMARK && embeddings > 0,
+      vectorCoverage: coverage.coverage,
+      vectorCoverageFloor: policy.vectorCoverageFloor,
       hasState: db.hasState,
       lastSleep:
         lastSleep === undefined

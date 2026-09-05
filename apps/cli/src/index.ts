@@ -14,6 +14,7 @@ export type {
   EmbedderShape,
   ExtractorPortShape,
   ModelPortShape,
+  RetrievalPolicyShape,
   RootsShape
 } from "./api-layer.js"
 export {
@@ -43,12 +44,15 @@ export {
   layerModelPort,
   layerRecorder,
   layerRetrieval,
+  layerRetrievalPolicy,
+  layerRetrievalPolicyFrom,
   layerRoots,
   layerSleep,
   layerStore,
   ModelClient,
   ModelPort,
   Retrieval,
+  RetrievalPolicy,
   Roots,
   Sleep,
   Store

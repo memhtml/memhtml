@@ -151,3 +151,13 @@ export {
   type WatermarkLike,
   writeWatermark
 } from "./traces-persist.js"
+export {
+  formatCoverage,
+  readVectorCoverage,
+  VECTOR_COVERAGE_FLOOR,
+  VECTOR_COVERAGE_HARD_FLOOR,
+  VECTOR_COVERAGE_NO_VECTORS_REMEDY,
+  VECTOR_COVERAGE_REMEDY,
+  type VectorCoverage,
+  VectorCoverageLow
+} from "./vector-coverage.js"

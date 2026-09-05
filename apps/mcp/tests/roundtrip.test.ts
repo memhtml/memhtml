@@ -181,6 +181,9 @@ describe("a tool call through the toolkit layer", () => {
     expect(hits[0]?.gist).toBe("Drain the VIP before reverting the deploy.")
     expect(result.degraded).toBe(false)
     expect(result.arms).toContain("vector")
+    // Every chunk the fixture indexed carries a vector, and the ratio travels THROUGH THE WIRE so a
+    // client can tell a sparse-index degradation from an embedder outage (issue #141).
+    expect(result.vector_coverage).toBe(1)
   })
 
   it("memory_search hits carry a snippet whose text comes from the matched file", async () => {
@@ -385,6 +388,9 @@ describe("a tool call through the toolkit layer", () => {
     expect(result.index_fresh).toBe(true)
     expect(Object.keys(result.counts_by_type as Record<string, number>).length).toBeGreaterThan(0)
     expect(result.last_sleep).toBeNull()
+    // The comparison `embedder_up` cannot make: how much of the index the vector arm can see.
+    expect(result.vector_coverage).toBe(1)
+    expect(result.vector_coverage_floor).toBe(0.95)
   })
 
   it("memory_list pages with a keyset cursor", async () => {
@@ -410,6 +416,8 @@ describe("a tool call through the toolkit layer", () => {
     // truncated one.
     expect(Array.isArray(sections.lateral)).toBe(true)
     expect(result.truncated).toBe(false)
+    expect(result.degraded).toBe(false)
+    expect(result.vector_coverage).toBe(1)
   })
 
   it("memory_link, memory_neighbors, and memory_archive round-trip", async () => {

@@ -1,6 +1,6 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
-
+import { VECTOR_COVERAGE_FLOOR } from "@memhtml/index"
 import {
   DEFAULT_PROXY_MODEL_PREFIX,
   PROXY_API_KEY_VAR,
@@ -125,6 +125,12 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
     fallback: "on"
   },
   {
+    name: "MEMHTML_VECTOR_COVERAGE_FLOOR",
+    description:
+      "The share of indexed chunks that must carry a vector in the configured space, `0` to `1`, before the vector arm is trusted. Below it `search` and `recall` drop the vector arm and report `degraded: true` with `vectorCoverage`, `doctor` reports `vectorCoverageLow` and `healthy: false`, and a sleep run warns. A sparse plane ranks the few embedded files above every exact match, so it is treated as absent rather than run. Sleep also refuses below a fixed hard floor of `0.5`, which this variable does not move: a value under `0.5` keeps search and doctor accepting a plane sleep still refuses. Remedy: `memhtml index embed`, or `memhtml index rebuild --embed`.",
+    fallback: "0.95"
+  },
+  {
     name: "MEMHTML_LLM",
     description:
       "`off` makes every model-calling sleep phase report `no model bound` and stay `ok`, so a credential-free run is honest rather than red. `entity-resolution` still runs its deterministic normalization and character-overlap passes; the others do nothing.",
@@ -185,4 +191,17 @@ export const MemhtmlRoot = Config.string("MEMHTML_ROOT").pipe(
 export const TraceRoot = Config.string("MEMHTML_TRACE_ROOT").pipe(
   Config.withDefault(join(homedir(), ".claude")),
   Config.map(expandRoot)
+)
+
+/**
+ * `MEMHTML_VECTOR_COVERAGE_FLOOR`: the coverage below which the vector arm is treated as absent.
+ *
+ * Read as a NUMBER here, so a value that does not parse fails at startup naming the variable rather
+ * than becoming a floor of `NaN` that no comparison ever crosses (`NaN < floor` is false, which would
+ * silently switch the gate OFF). The range check, `(0, 1]`, lives in the composition root beside the
+ * other set-but-unusable refusals (`layerRetrievalPolicy` in `api-layer.ts`). The hard floor sleep
+ * refuses below is `VECTOR_COVERAGE_HARD_FLOOR` and is not configurable.
+ */
+export const VectorCoverageFloor = Config.number("MEMHTML_VECTOR_COVERAGE_FLOOR").pipe(
+  Config.withDefault(VECTOR_COVERAGE_FLOOR)
 )

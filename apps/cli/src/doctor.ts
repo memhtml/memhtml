@@ -4,7 +4,13 @@ import { dirname, join } from "node:path"
 import { type EdgeRel, isEdgeRel } from "@memhtml/contracts/edges"
 import { INBOX_DIR, normalizePath, TASKS_SUBDIR } from "@memhtml/contracts/paths"
 import { checkMemory } from "@memhtml/html"
-import { DatabaseService, type DatabaseShape, STATE_SCHEMA } from "@memhtml/index"
+import {
+  DatabaseService,
+  type DatabaseShape,
+  readVectorCoverage,
+  STATE_SCHEMA,
+  VECTOR_COVERAGE_REMEDY
+} from "@memhtml/index"
 import { EMBED_WATERMARK } from "@memhtml/llm"
 import {
   allPaths,
@@ -21,7 +27,7 @@ import {
 import { attemptIo, commitSubject, type GitShape, readFileOrNull } from "@memhtml/store"
 import { Effect } from "effect"
 
-import { Git, Store } from "./api-layer.js"
+import { Embedder, Git, RetrievalPolicy, Store } from "./api-layer.js"
 
 /**
  * `memhtml doctor`: the corpus's own health check, and `--fix` for the two findings a repair can settle
@@ -61,6 +67,22 @@ import { Git, Store } from "./api-layer.js"
  *     finishes (issue #146). A defect in the ledger, like an orphan access row. A row that is young
  *     and whose branch exists is a live run and is not a finding.
  *
+ * 11. **Vector coverage**: the share of chunks carrying a vector in the configured space
+ *    (`readVectorCoverage` in `@memhtml/index`). A SPARSE plane inverts ranking (issue #141): the
+ *    vector arm's whole list is the few embedded files, each collects a vector rank on top of its
+ *    recency rank, and an exact lexical match on an unembedded file loses to all of them, while
+ *    `degraded` stays false because the arm did fire. `chunks` and `embeddings` sat side by side in
+ *    `status` and nothing compared them; this is the comparison. Below `MEMHTML_VECTOR_COVERAGE_FLOOR`
+ *    the report says `vectorCoverageLow` and `healthy` is false.
+ *
+ *    **Scope rule: the finding applies only when the vector plane is IN USE**, meaning at least one
+ *    vector exists OR an embedder is configured (`MEMHTML_EMBED` not `off` and a document embedder in
+ *    the layer). A store with zero vectors and no embedder is the deliberate lexical-only
+ *    configuration, and it is healthy: every search on it is honestly `degraded`, and flagging it would
+ *    make `healthy: false` the normal state of a supported setup. A store with zero vectors and an
+ *    embedder bound is the incident's shape one step earlier (a `rebuild --no-embed` nobody
+ *    backfilled), and it is low. The same rule governs sleep's preflight.
+ *
  * **`--fix` repairs exactly two of the ten, and the repair logic is imported from the sleep
  * integrity phase rather than re-ported.** `archivedFormOf` decides whether a dangling target moved
  * to the archive or is genuinely gone, and `applyHeadEdits`/`link`/`unlink`/`meta` are the byte-splice
@@ -69,7 +91,7 @@ import { Git, Store } from "./api-layer.js"
  * every file it touched. A second implementation of either would be the consumer-side reimplementation
  * of producer semantics the fleet has paid for repeatedly.
  *
- * The other eight report and do not repair. An inbox memory or task needs a human or an agent to decide
+ * The other nine report and do not repair. An inbox memory or task needs a human or an agent to decide
  * where it belongs, a vocabulary warning needs the author's intent, and a stale index needs
  * `memhtml index update`, which doctor names in its own suggestions rather than running behind the
  * operator's back. An overdue task needs the work done or the deadline moved, and a stale blocker
@@ -77,7 +99,9 @@ import { Git, Store } from "./api-layer.js"
  * producer that wrote it to name a type, which is a vocabulary decision no repair can make. A stuck
  * sleep run is closed by the next `memhtml sleep run` (`--dry-run` reaps too), which is the process
  * that owns the ledger; doctor names that command and reads the same rule it applies, so the two
- * cannot disagree about which rows are stuck.
+ * cannot disagree about which rows are stuck. Low vector
+ * coverage needs embedding calls, which cost money and time an operator chooses to spend; the report
+ * names the two commands that spend them (`vectorCoverageRemedy`) and runs neither.
  */
 
 /** How deep the inbox may get before doctor calls it a finding. */
@@ -194,6 +218,27 @@ export interface DoctorReport {
   readonly embedModelMatches: boolean
   readonly storedEmbedModel: string | null
   readonly configuredEmbedModel: string
+  /**
+   * The share of chunks carrying a vector in the configured space, `0` to `1`. `1` on an index with
+   * no chunks. Counted for `configuredEmbedModel` only, so vectors left over from another space do
+   * not read as coverage.
+   */
+  readonly vectorCoverage: number
+  /** The floor `vectorCoverageLow` is judged against: `MEMHTML_VECTOR_COVERAGE_FLOOR`, default 0.95. */
+  readonly vectorCoverageFloor: number
+  /**
+   * True when the vector plane is in use (some vector exists, or an embedder is configured) and its
+   * coverage is below the floor. Flips `healthy`. False for the embedder-less lexical-only store.
+   */
+  readonly vectorCoverageLow: boolean
+  /** Every chunk in the index, and how many carry a vector in the configured space. */
+  readonly chunks: number
+  readonly embeddings: number
+  /**
+   * What to do about `vectorCoverageLow`, or `null` when it is not low: `memhtml index embed`
+   * backfills only the missing vectors, `memhtml index rebuild --embed` rebuilds everything.
+   */
+  readonly vectorCoverageRemedy: string | null
   readonly dirty: ReadonlyArray<string>
   /** Present under `--fix`: what the repair actually did. */
   readonly repaired?: RepairReport | undefined
@@ -595,6 +640,8 @@ export const doctor = (options: { readonly fix: boolean }) =>
     const git = yield* Git
     const store = yield* Store
     const db = yield* DatabaseService
+    const embedder = yield* Embedder
+    const policy = yield* RetrievalPolicy
 
     const headSha = yield* git.revParseHead().pipe(Effect.orElseSucceed(() => null))
     const dirty = yield* store.dirtyPaths().pipe(Effect.orElseSucceed(() => []))
@@ -641,6 +688,18 @@ export const doctor = (options: { readonly fix: boolean }) =>
     const indexFresh = state?.head_sha !== null && state?.head_sha === headSha
     const embedModelMatches = state?.embed_model === EMBED_WATERMARK
 
+    /**
+     * An unreadable coverage reads as full rather than as empty. Every other check here degrades to
+     * "nothing found" when its query fails, and a database that cannot count its chunks is reported by
+     * the freshness check, not by a coverage finding that would blame the vector plane for it.
+     */
+    const coverage = yield* readVectorCoverage(db, EMBED_WATERMARK).pipe(
+      Effect.orElseSucceed(() => ({ chunks: 0, embeddings: 0, coverage: 1, model: null }))
+    )
+    // The scope rule from the module comment: zero vectors and no embedder is lexical-only, not low.
+    const vectorPlaneInUse = coverage.embeddings > 0 || embedder.document !== undefined
+    const vectorCoverageLow = vectorPlaneInUse && coverage.coverage < policy.vectorCoverageFloor
+
     return {
       root: git.root,
       /**
@@ -673,7 +732,13 @@ export const doctor = (options: { readonly fix: boolean }) =>
         warnings.length === 0 &&
         unparseable.length === 0 &&
         indexFresh &&
-        embedModelMatches,
+        embedModelMatches &&
+        /**
+         * A sparse vector plane is a defect in the index rather than a fact about the work: search
+         * returns the wrong files with `degraded: false` until it is backfilled. The scope rule above
+         * keeps the embedder-less store out of this term.
+         */
+        !vectorCoverageLow,
       dangling,
       orphanAccessRows,
       inboxDepth: depth,
@@ -693,6 +758,12 @@ export const doctor = (options: { readonly fix: boolean }) =>
       embedModelMatches,
       storedEmbedModel: state?.embed_model ?? null,
       configuredEmbedModel: EMBED_WATERMARK,
+      vectorCoverage: coverage.coverage,
+      vectorCoverageFloor: policy.vectorCoverageFloor,
+      vectorCoverageLow,
+      chunks: coverage.chunks,
+      embeddings: coverage.embeddings,
+      vectorCoverageRemedy: vectorCoverageLow ? VECTOR_COVERAGE_REMEDY : null,
       dirty,
       ...(repaired === undefined ? {} : { repaired })
     } satisfies DoctorReport

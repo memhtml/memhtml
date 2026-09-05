@@ -2110,3 +2110,182 @@ describe("the archived pointer behind an empty scope", () => {
     }
   })
 })
+
+/**
+ * The vector coverage gate (issue #141).
+ *
+ * A SPARSE vector plane is worse than none. When only a few chunks carry vectors, the vector arm's
+ * whole candidate list is those few files, so each of them collects a vector contribution on top of
+ * whatever else it earned, and the files that happen to be embedded outrank an exact lexical match on
+ * every query. In production the embedded few were the newest files (an incremental `index update
+ * --embed` only reaches changed files), so every search returned the newest files regardless of the
+ * query, with `degraded: false` because the arm did fire.
+ *
+ * The corpus here is built to that shape: one OLD file whose title holds a proper noun nothing else
+ * carries, ninety-seven older fillers, and two NEWEST files. Everything is embedded, then every vector
+ * but the two newest files' is deleted, which leaves coverage at 2 percent and puts the vector arm's
+ * entire list on the recency arm's top two.
+ */
+const COVERAGE_TARGET = "areas/billing/quillhaven-owns-the-ledger.html"
+const COVERAGE_NEWEST: ReadonlyArray<string> = [
+  "areas/deploy/newest-rollout-note-1.html",
+  "areas/deploy/newest-rollout-note-2.html"
+]
+const COVERAGE_FILLERS = 97
+
+const sparseCorpus = (): ReadonlyArray<SeedFile> => [
+  {
+    path: COVERAGE_TARGET,
+    html: memoryHtml({
+      title: "Quillhaven owns the billing ledger",
+      claim: "The Quillhaven team owns the billing ledger and its end-of-day reconciliation job.",
+      memoryType: "semantic",
+      tags: ["billing"],
+      createdAt: "2026-01-05T00:00:00Z",
+      updatedAt: "2026-01-05T00:00:00Z"
+    })
+  },
+  ...Array.from({ length: COVERAGE_FILLERS }, (_, offset): SeedFile => {
+    const index = offset + 1
+    const day = new Date(Date.UTC(2026, 1, 1 + offset)).toISOString().slice(0, 10)
+    return {
+      path: `resources/misc/coverage-filler-${String(index).padStart(3, "0")}.html`,
+      html: memoryHtml({
+        title: `Coverage filler ${index}`,
+        claim: `An unrelated observation about okapi and wildebeest number ${index}.`,
+        memoryType: "episodic",
+        tags: ["filler"],
+        createdAt: `${day}T00:00:00Z`,
+        updatedAt: `${day}T00:00:00Z`
+      })
+    }
+  }),
+  ...COVERAGE_NEWEST.map((path, offset): SeedFile => {
+    const day = `2026-08-0${offset + 1}`
+    return {
+      path,
+      html: memoryHtml({
+        title: `Newest rollout note ${offset + 1}`,
+        claim: `The rollout window on the newest cluster opened on ${day} without incident.`,
+        memoryType: "episodic",
+        tags: ["deploy"],
+        createdAt: `${day}T00:00:00Z`,
+        updatedAt: `${day}T00:00:00Z`
+      })
+    }
+  })
+]
+
+/** Delete every vector except the ones on the two newest files. */
+const keepOnlyNewestVectors = (db: DatabaseShape) =>
+  db.run(
+    `DELETE FROM embeddings WHERE chunk_id NOT IN (SELECT chunk_id FROM chunks WHERE path IN (?, ?))`,
+    [...COVERAGE_NEWEST]
+  )
+
+/** The fixture's real coverage, read directly so the test proves its own premise. */
+const rawCoverage = (db: DatabaseShape) =>
+  db
+    .get<{ chunks: number; embedded: number }>(
+      "SELECT (SELECT count(*) FROM chunks) AS chunks, (SELECT count(*) FROM embeddings) AS embedded"
+    )
+    .pipe(Effect.map((row) => (row?.embedded ?? 0) / (row?.chunks ?? 1)))
+
+describe("the vector coverage gate", () => {
+  let repo: FixtureRepo
+
+  beforeEach(async () => {
+    repo = await makeFixtureRepo()
+    await repo.commit(sparseCorpus(), "seed a corpus the vector plane will only partly cover")
+  })
+
+  afterEach(() => repo.cleanup())
+
+  it("ranks the exact-title match first and reports degraded when 2 percent of chunks carry vectors, all on the newest files", async () => {
+    const outcome = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* indexInto(db, repo, makeFakeEmbedder())
+        yield* keepOnlyNewestVectors(db)
+        const coverage = yield* rawCoverage(db)
+        const query = makeFakeEmbedder()
+        const result = yield* makeRetrieval({ db, embeddings: query }).search({
+          query: "Quillhaven",
+          limit: 5
+        })
+        return { coverage, result, queryCalls: query.calls() }
+      })
+    )
+    // The premise: the plane really is sparse, and sparse in the recency arm's favour.
+    expect(outcome.coverage).toBeGreaterThan(0)
+    expect(outcome.coverage).toBeLessThan(0.05)
+
+    // THE PROPERTY. The one file whose title holds the noun wins, and the result says it was ranked
+    // by fewer signals.
+    expect(outcome.result.hits[0]?.path).toBe(COVERAGE_TARGET)
+    expect(outcome.result.degraded).toBe(true)
+    expect(outcome.result.arms).not.toContain("vector")
+    // The coverage travels with the result, so a caller can tell this degradation from an embedder
+    // outage, and the query was never embedded: a Bedrock call for an arm that will not fire is waste.
+    expect(outcome.result.vectorCoverage).toBeCloseTo(0.02, 2)
+    expect(outcome.queryCalls).toBe(0)
+  })
+
+  it("fires the vector arm at full coverage, and the same query still ranks the same file first", async () => {
+    const result = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* indexInto(db, repo, makeFakeEmbedder())
+        expect(yield* rawCoverage(db)).toBe(1)
+        return yield* makeRetrieval({ db, embeddings: makeFakeEmbedder() }).search({
+          query: "Quillhaven",
+          limit: 5
+        })
+      })
+    )
+    expect(result.degraded).toBe(false)
+    expect(result.arms).toContain("vector")
+    expect(result.vectorCoverage).toBe(1)
+    expect(result.hits[0]?.path).toBe(COVERAGE_TARGET)
+  })
+
+  it("honors an injected floor: below the fixture's coverage the arm fires, and the inversion is visible", async () => {
+    /**
+     * The floor is a dependency so a test can move it. With the floor UNDER the fixture's coverage the
+     * gate stays open, and this is the defect in the raw: the two embedded files outrank the exact
+     * title match because each collects a vector rank on top of its recency rank. Pinned here so the
+     * mechanism the gate exists for is a fact the suite states rather than a story in a comment.
+     */
+    const result = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* indexInto(db, repo, makeFakeEmbedder())
+        yield* keepOnlyNewestVectors(db)
+        return yield* makeRetrieval({
+          db,
+          embeddings: makeFakeEmbedder(),
+          vectorCoverageFloor: 0.01
+        }).search({ query: "Quillhaven", limit: 5 })
+      })
+    )
+    expect(result.degraded).toBe(false)
+    expect(result.arms).toContain("vector")
+    expect(result.vectorCoverage).toBeCloseTo(0.02, 2)
+    expect(COVERAGE_NEWEST).toContain(result.hits[0]?.path)
+  })
+
+  it("recall reports the same coverage and the same degradation as search", async () => {
+    const pack = await withDb((db) =>
+      Effect.gen(function* () {
+        yield* indexInto(db, repo, makeFakeEmbedder())
+        yield* keepOnlyNewestVectors(db)
+        const query = makeFakeEmbedder()
+        const pack = yield* makeRetrieval({ db, embeddings: query }).recall({
+          query: "Quillhaven"
+        })
+        return { pack, queryCalls: query.calls() }
+      })
+    )
+    expect(pack.pack.degraded).toBe(true)
+    expect(pack.pack.vectorCoverage).toBeCloseTo(0.02, 2)
+    expect(pack.queryCalls).toBe(0)
+    expect(pack.pack.memories.disclosed[0]?.path).toBe(COVERAGE_TARGET)
+  })
+})
