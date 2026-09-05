@@ -24,6 +24,9 @@ import { type Cli, makeCli, writeMemory } from "./harness.js"
 
 const DATE = "2026-08-02"
 
+/** The memory built to be evicted; the merged tree holds it only under `archive/<YYYY>/`. */
+const STALE_PATH = "areas/stale/a-forgotten-detail.html"
+
 /** A model that answers every LLM phase with "nothing to do", so no LLM phase commits. */
 const inertModel = () =>
   scriptedModel((request) =>
@@ -102,9 +105,25 @@ interface SleepReport {
   readonly commits: ReadonlyArray<string>
 }
 
+/** The `sleep.merge` payload, with the index fields a merge that happened reports (issue #145). */
+interface MergeEnvelope {
+  readonly merged: boolean
+  readonly headSha: string
+  readonly refusal?: string | undefined
+  readonly indexUpdated?: boolean | undefined
+  readonly indexHeadSha?: string | undefined
+  readonly indexAdded?: number | undefined
+  readonly indexModified?: number | undefined
+  readonly indexRemoved?: number | undefined
+  readonly indexRenamed?: number | undefined
+  readonly embeddingsWritten?: number | undefined
+  readonly indexError?: string | undefined
+}
+
 describe("verification item 6 — sleep run, review, and merge through the discrimination gate", () => {
   let cli: Cli
   let report: SleepReport
+  let merged: MergeEnvelope
 
   beforeAll(async () => {
     cli = await makeCli({ model: inertModel() })
@@ -125,7 +144,7 @@ describe("verification item 6 — sleep run, review, and merge through the discr
      * the content-density signal is penalized.
      */
     await commitAgedMemory(cli, {
-      path: "areas/stale/a-forgotten-detail.html",
+      path: STALE_PATH,
       title: "A forgotten detail about the staging bastion",
       claim: "The staging bastion listened on port 2222.",
       memoryType: "episodic",
@@ -264,11 +283,7 @@ describe("verification item 6 — sleep run, review, and merge through the discr
      * that succeeded with the gate unsupplied would look identical from the outside, which is why the
      * refusal case below is asserted too.
      */
-    const merged = await cli.json<{
-      readonly merged: boolean
-      readonly headSha: string
-      readonly refusal?: string | undefined
-    }>(["sleep", "merge", `sleep/${DATE}`])
+    merged = await cli.json<MergeEnvelope>(["sleep", "merge", `sleep/${DATE}`])
 
     expect(merged.refusal).toBeUndefined()
     expect(merged.merged).toBe(true)
@@ -277,6 +292,59 @@ describe("verification item 6 — sleep run, review, and merge through the discr
     expect((await cli.git("rev-parse", "HEAD")).trim()).toBe(merged.headSha)
     expect((await cli.git("rev-parse", "--abbrev-ref", "HEAD")).trim()).toBe("main")
     expect((await cli.git("rev-parse", `sleep/${DATE}`)).trim()).toBe(merged.headSha)
+  })
+
+  it("leaves the index describing the merged head, so the run is searchable when merge returns", async () => {
+    /**
+     * Issue #145. The index is a projection of one commit and the merge produced a new one, so the
+     * merge is not finished until the watermark names it. Read on three surfaces, because each has
+     * its own consumer: `index status` is the watermark itself, `status` is the health flag a
+     * `serve mcp` operator reads, and `search` is what an agent sees. The run's eviction is the
+     * probe: an index left at the pre-merge commit still lists the evicted memory ACTIVE at its old
+     * path, while the merged tree holds it only under `archive/<YYYY>/`.
+     */
+    const mainHead = (await cli.git("rev-parse", "main")).trim()
+    expect(mainHead).toBe(merged.headSha)
+
+    const index = await cli.json<{ readonly headSha: string | null }>(["index", "status"])
+    expect(index.headSha).toBe(mainHead)
+
+    const status = await cli.json<{
+      readonly indexFresh: boolean
+      readonly indexHeadSha: string | null
+    }>(["status"])
+    expect(status.indexHeadSha).toBe(mainHead)
+    expect(status.indexFresh).toBe(true)
+
+    // The archive path is read from the merged tree and inverted with `originalPathFor`, never typed.
+    const archived = (await cli.git("ls-tree", "-r", "--name-only", "main", "archive/"))
+      .split("\n")
+      .map((line) => line.trim())
+      .find((path) => originalPathFor(path) === STALE_PATH)
+    expect(archived).toBeDefined()
+
+    const found = await cli.json<{ readonly hits: ReadonlyArray<{ readonly path: string }> }>([
+      "search",
+      "staging bastion listened on port 2222",
+      "--include-archived"
+    ])
+    const paths = found.hits.map((hit) => hit.path)
+    expect(paths).toContain(archived)
+    expect(paths).not.toContain(STALE_PATH)
+
+    // The envelope reports the update it performed, so a cron log can be read without a second call.
+    expect(merged.indexUpdated).toBe(true)
+    expect(merged.indexHeadSha).toBe(mainHead)
+    expect(merged.indexError).toBeUndefined()
+    for (const field of [
+      "indexAdded",
+      "indexModified",
+      "indexRemoved",
+      "indexRenamed",
+      "embeddingsWritten"
+    ] as const) {
+      expect(typeof merged[field], field).toBe("number")
+    }
   })
 
   it("refuses to merge a run whose base main has advanced past", async () => {

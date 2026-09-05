@@ -522,15 +522,20 @@ describe("verification item 2 — the task lifecycle across every plane", () => 
      * head, so a rebuild reading the tree alone must reach the same values — which is what makes the
      * columns a projection rather than state, and `index.db` disposable.
      */
-    await cli.json(["sleep", "merge", `sleep/${DATE}`])
+    const merged = await cli.json<{ readonly indexUpdated?: boolean | undefined }>([
+      "sleep",
+      "merge",
+      `sleep/${DATE}`
+    ])
     /**
-     * `index update` after the merge, deliberately. `memhtml sleep merge` fast-forwards `main` and does
-     * NOT reindex — probed live 2026-08-02: `memhtml status` reports `indexFresh: false` immediately
-     * after a successful merge, which is why `RUNBOOK.md` §3 has `memhtml index update` as the next step
-     * and why `sleep.test.ts` rebuilds before its own post-merge assertions. Comparing a stale index
-     * against a fresh rebuild would make this test fail for the watermark rather than for the columns.
+     * The merge projects the merged commit into the index itself (issue #145), so the incremental
+     * row set compared below describes the merged tree with no second command. Asserted rather than
+     * assumed, because a watermark left at the pre-merge commit would make this test fail for the
+     * watermark rather than for the columns.
      */
-    await cli.json(["index", "update"])
+    expect(merged.indexUpdated).toBe(true)
+    const fresh = await cli.json<{ readonly indexFresh: boolean }>(["status"])
+    expect(fresh.indexFresh).toBe(true)
     const before = await cli.json<TaskList>([
       "task",
       "list",

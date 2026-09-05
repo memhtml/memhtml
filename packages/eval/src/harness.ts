@@ -218,7 +218,25 @@ export const buildStack = (
       indexed: report.filesIndexed,
       embedCalls: () => embedder.calls()
     }
-  })
+  }).pipe(
+    /**
+     * Every log line this stack emits names the throwaway it describes. The migrations and the
+     * `indexer.rebuild` above run against the `:memory:` fixture database, and `memhtml sleep merge`
+     * runs this stack as its gate, so those lines land in the operator's sleep log beside the store's
+     * own index lines. Unannotated, "indexer.rebuild: 304 files" reads as the store's index being
+     * rebuilt (issue #145). The annotation is the smallest change that makes the two unmistakable.
+     */
+    Effect.annotateLogs(EVAL_LOG_ANNOTATIONS)
+  )
+
+/**
+ * The annotations on every log line the eval stack writes. Exported so a test can assert the
+ * fixture's `indexer.rebuild` line carries them rather than restating the values.
+ */
+export const EVAL_LOG_ANNOTATIONS: Readonly<Record<string, string>> = {
+  eval: "fixture-corpus",
+  database: ":memory:"
+}
 
 /**
  * Build the stack, run `body`, then tear both down.

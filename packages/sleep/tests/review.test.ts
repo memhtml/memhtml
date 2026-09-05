@@ -1,6 +1,9 @@
-import { Effect } from "effect"
+import { StorageFailure } from "@memhtml/contracts/errors"
+import { EmbedModelMismatch, IndexStale } from "@memhtml/index"
+import { Effect, Logger } from "effect"
 import { describe, expect, it } from "vitest"
 
+import type { SleepDeps } from "../src/env.js"
 import { merge, review } from "../src/review.js"
 import { run } from "../src/run.js"
 import { readRun, recordRun } from "../src/sql.js"
@@ -36,6 +39,13 @@ const inertModel = () =>
 
 const headOf = (fixture: Fixture, ref = "HEAD"): Effect.Effect<string> =>
   fixture.raw("rev-parse", ref).pipe(Effect.map((text) => text.trim()))
+
+/** The commit the index describes, read off the watermark row rather than off any report. */
+const indexHeadOf = (fixture: Fixture): Effect.Effect<string | null | undefined> =>
+  fixture.db.get<{ head_sha: string | null }>("SELECT head_sha FROM index_state LIMIT 1").pipe(
+    Effect.map((row) => row?.head_sha),
+    Effect.orDie
+  )
 
 /** One path's bytes as HEAD holds them, or `null` when HEAD does not hold the path. */
 const blobAt = (fixture: Fixture, path: string): Effect.Effect<string | null> =>
@@ -174,6 +184,19 @@ describe("merge", () => {
           // Fast-forward only: the tip has exactly one parent.
           const parents = (yield* fixture.raw("rev-list", "--parents", "-n", "1", "HEAD")).trim()
           expect(parents.split(" ").length).toBe(2)
+
+          /**
+           * Issue #145: the merge is not finished until the index describes the commit it produced.
+           * The watermark is read from its row, because a report saying `indexUpdated` over a row
+           * still naming the pre-merge commit would be the defect itself.
+           */
+          expect(yield* indexHeadOf(fixture)).toBe(branchHead)
+          expect(merged.indexUpdated).toBe(true)
+          expect(merged.indexHeadSha).toBe(branchHead)
+          expect(merged.indexError).toBeUndefined()
+          expect(typeof merged.indexAdded).toBe("number")
+          expect(typeof merged.embeddingsWritten).toBe("number")
+          expect(merged.indexSkipped).toBe(0)
         }),
       { seed: DEDUP_CORPUS, model: inertModel() }
     )
@@ -223,6 +246,71 @@ describe("merge", () => {
     )
   })
 
+  it.each([
+    {
+      tag: "IndexStale",
+      error: new IndexStale("a rebuild died inside its window"),
+      recovery: "memhtml index rebuild --embed"
+    },
+    {
+      tag: "EmbedModelMismatch",
+      error: new EmbedModelMismatch("old-model@1024", "new-model@1024"),
+      recovery: "memhtml index rebuild --embed"
+    },
+    {
+      tag: "StorageFailure",
+      error: StorageFailure.make({ operation: "index.write" }),
+      recovery: "memhtml index update --embed"
+    }
+  ])(
+    "reports a failed index update ($tag) without failing a merge whose main has moved",
+    async ({ tag, error, recovery }) => {
+      /**
+       * Issue #145, the failure arm, once per error the indexer's `update` can raise. `main` has moved
+       * and the memories are landed, so the outcome is a value on the report plus a WARN naming that
+       * error's one recovery, never a merge that reports failure over a `main` that moved. Asserted
+       * against git as well: the fast-forward happened.
+       */
+      await withFixture(
+        (fixture) =>
+          Effect.gen(function* () {
+            const report = yield* run(fixture.deps, { date: DATE })
+            const branchHead = yield* headOf(fixture)
+            const watermarkBefore = yield* indexHeadOf(fixture)
+
+            const deps: SleepDeps = {
+              ...fixture.deps,
+              indexer: {
+                ...fixture.deps.indexer,
+                update: () => Effect.fail(error)
+              }
+            }
+            const warnings: Array<string> = []
+            const captured = Logger.make((options) => {
+              if (options.logLevel === "Warn") warnings.push(String(options.message))
+            })
+
+            const merged = yield* merge(deps, report.runId).pipe(
+              Effect.provide(Logger.layer([captured]))
+            )
+
+            expect(merged.merged).toBe(true)
+            expect(merged.refusal).toBeUndefined()
+            expect(yield* headOf(fixture, "main")).toBe(branchHead)
+            expect(merged.indexUpdated).toBe(false)
+            expect(merged.indexError).toContain(tag)
+            expect(merged.indexHeadSha).toBeUndefined()
+            // The watermark is exactly where the failed update left it, and the warning says which recovery.
+            expect(yield* indexHeadOf(fixture)).toBe(watermarkBefore)
+            const warning = warnings.find((line) => line.startsWith("sleep.merge landed"))
+            expect(warning).toContain(branchHead)
+            expect(warning).toContain(recovery)
+          }),
+        { seed: DEDUP_CORPUS, model: inertModel() }
+      )
+    }
+  )
+
   it("merges a disjoint advance with a merge commit that keeps both sides", async () => {
     /**
      * Issue #108. An agent writing an UNRELATED memory on main while the sleep branch sits in
@@ -262,6 +350,23 @@ describe("merge", () => {
           // Both sides are on main: the agent's write and the branch's work.
           expect((yield* fixture.raw("rev-parse", "--abbrev-ref", "HEAD")).trim()).toBe("main")
           expect(yield* blobAt(fixture, "areas/team/written-during-review.html")).not.toBeNull()
+
+          /**
+           * Issue #145 on the merge-commit shape. HEAD is main after `mergeBothSides`, so the update
+           * projects the merged tree: the watermark names the merge commit and the agent's own write,
+           * which the branch never saw, has a `files` row beside the night's work.
+           */
+          const mergedHead = yield* headOf(fixture, "main")
+          expect(yield* indexHeadOf(fixture)).toBe(mergedHead)
+          expect(merged.indexUpdated).toBe(true)
+          expect(merged.indexHeadSha).toBe(mergedHead)
+          const projected = yield* fixture.db
+            .get<{ path: string }>("SELECT path FROM files WHERE path = ?", [
+              "areas/team/written-during-review.html"
+            ])
+            .pipe(Effect.orDie)
+          expect(projected?.path).toBe("areas/team/written-during-review.html")
+
           const merges = yield* fixture.raw("rev-list", "--merges", "-n", "1", "HEAD")
           expect(merges.trim()).not.toBe("")
           const branchReachable = yield* fixture.raw(

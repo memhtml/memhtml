@@ -509,12 +509,18 @@ const checkSleepLifecycle = async ({ bin, work, env }) => {
   await check("sleep merge lands the run on main", async () => {
     const merged = await envelope(bin, ["sleep", "merge", runId], sleepEnv)
     const after = (await exec("git", ["-C", corpus, "rev-parse", "main"])).stdout.trim()
-    // Both halves: the envelope says it merged, and git agrees that main moved.
+    // Three halves: the envelope says it merged, git agrees that main moved, and the index followed
+    // (issue #145), so the night's memories are searchable when the command returns.
     return {
-      ok: merged.type === "sleep.merge" && merged.data?.merged === true && after !== beforeMerge,
+      ok:
+        merged.type === "sleep.merge" &&
+        merged.data?.merged === true &&
+        after !== beforeMerge &&
+        merged.data?.indexUpdated === true &&
+        merged.data?.indexHeadSha === after,
       detail:
         merged.data?.merged === true
-          ? `main moved to ${after.slice(0, 8)}`
+          ? `main moved to ${after.slice(0, 8)}, indexUpdated=${String(merged.data?.indexUpdated)}`
           : `refusal=${String(merged.data?.refusal)}`
     }
   })

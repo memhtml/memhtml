@@ -911,7 +911,8 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   },
   {
     name: "sleep merge",
-    summary: "Fast-forward main to the run's branch, after the discrimination gate passes.",
+    summary:
+      "Fast-forward main to the run's branch after the discrimination gate passes, then project the merged commit into the index.",
     args: [{ name: "run-id", description: "The run id.", required: true }],
     flags: [
       {
