@@ -122,11 +122,18 @@ export const makeCli = async (
     readonly embedder?: EmbedderShape | undefined
     /** Bound only by extraction tests; absent is the production default (writes unextracted). */
     readonly extractor?: EntityExtractorShape | undefined
+    /** Absent reads the configured floor (the default in tests); a coverage test moves it. */
+    readonly vectorCoverageFloor?: number | undefined
   } = {}
 ): Promise<Cli> => {
   const fixture = await Effect.runPromise(makeFixtureRepo())
   const embedder = options.embedder ?? fakeEmbedder()
-  const layer = layerAppWith({ repo: fixture.root, embedder, extractor: options.extractor })
+  const layer = layerAppWith({
+    repo: fixture.root,
+    embedder,
+    extractor: options.extractor,
+    vectorCoverageFloor: options.vectorCoverageFloor
+  })
 
   const invoke = (argv: ReadonlyArray<string>) => run([...argv, "--repo", fixture.root], layer)
 

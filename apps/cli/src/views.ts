@@ -1,8 +1,15 @@
 import { InvalidMemory } from "@memhtml/contracts/errors"
-import { DatabaseService, type DatabaseShape, readIndexState } from "@memhtml/index"
+import {
+  DatabaseService,
+  type DatabaseShape,
+  readIndexState,
+  readVectorCoverage
+} from "@memhtml/index"
 import { EMBED_WATERMARK } from "@memhtml/llm"
 import { isSleepPhase, type RunReport, SLEEP_PHASES, type SleepPhase } from "@memhtml/sleep"
 import { Effect } from "effect"
+
+import { RetrievalPolicy } from "./api-layer.js"
 
 /**
  * Response shaping: the few places a payload is not simply the use case's own return value.
@@ -22,7 +29,11 @@ import { Effect } from "effect"
 export const indexReport = () =>
   Effect.gen(function* () {
     const db = yield* DatabaseService
+    const policy = yield* RetrievalPolicy
     const state = yield* readIndexState(db).pipe(Effect.orElseSucceed(() => undefined))
+    const coverage = yield* readVectorCoverage(db, EMBED_WATERMARK).pipe(
+      Effect.orElseSucceed(() => ({ chunks: 0, embeddings: 0, coverage: 1, model: null }))
+    )
 
     return {
       mode: "status",
@@ -42,6 +53,13 @@ export const indexReport = () =>
       activeFiles: yield* count(db, "SELECT count(*) AS n FROM files WHERE archived = 0"),
       chunks: yield* count(db, "SELECT count(*) AS n FROM chunks"),
       embeddings: yield* count(db, "SELECT count(*) AS n FROM embeddings"),
+      /**
+       * `embeddings` above counts every vector; this counts the ones in the CONFIGURED space over the
+       * chunks, which is the number that decides whether the vector arm runs (issue #141). The floor
+       * travels with it so an operator reads the judgement and the threshold in one envelope.
+       */
+      vectorCoverage: coverage.coverage,
+      vectorCoverageFloor: policy.vectorCoverageFloor,
       edges: yield* count(db, "SELECT count(*) AS n FROM edges"),
       derivedEdges: yield* count(db, "SELECT count(*) AS n FROM edges WHERE derived = 1"),
       tags: yield* count(db, "SELECT count(DISTINCT tag) AS n FROM file_tags"),

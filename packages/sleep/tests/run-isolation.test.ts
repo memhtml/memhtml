@@ -648,3 +648,161 @@ describe("a same-day rerun's row describes the rerun", () => {
     }).pipe(Effect.scoped, Effect.runPromise)
   })
 })
+
+/**
+ * Thin the vector plane: delete the vectors of `fraction` of the chunks, lowest chunk id first, and
+ * report the coverage the indexer now reads.
+ *
+ * Direct SQL rather than `rebuild --no-embed` followed by writes, because the incident's shape is a
+ * property of the TABLE (few vectors, many chunks) and not of the path that produced it, and the sibling
+ * fix for that path (issue #142, rebuild keeping the vectors it can) must not change what these tests
+ * measure. The next `update` inside preflight embeds nothing here: the tree is unchanged, so the
+ * candidate list is empty and the thinned plane is what preflight judges.
+ */
+const thinVectors = (fixture: Fixture, fraction: number) =>
+  Effect.gen(function* () {
+    const total = yield* fixture.db
+      .get<{ n: number }>("SELECT count(*) AS n FROM chunks")
+      .pipe(Effect.orDie)
+    const drop = Math.round((total?.n ?? 0) * fraction)
+    yield* fixture.db
+      .run(
+        `DELETE FROM embeddings
+         WHERE chunk_id IN (SELECT chunk_id FROM chunks ORDER BY chunk_id LIMIT ?)`,
+        [drop]
+      )
+      .pipe(Effect.orDie)
+    return yield* fixture.deps.indexer.vectorCoverage().pipe(Effect.orDie)
+  })
+
+describe("preflight gates the night on vector coverage", () => {
+  it("refuses the run below the hard floor, blocking every phase after it, the way a mixed vector space does", async () => {
+    /**
+     * Issue #141's fourth precondition. Under half the chunks embedded means dedup compares a sample of
+     * the corpus against itself and calls the rest unique, with a green report. The failure has to travel
+     * the same channel as `EmbedModelMismatch` and `IndexStale`: a typed phase failure whose `detail`
+     * names the tag and the remedy, with the sixteen phases after it skipped and nothing committed.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const coverage = yield* thinVectors(fixture, 0.6)
+          expect(coverage.coverage).toBeGreaterThan(0)
+          expect(coverage.coverage).toBeLessThan(0.5)
+          // The plane is IN USE: vectors exist and an embedder is bound, so the scope rule admits it.
+          expect(coverage.embeddings).toBeGreaterThan(0)
+          expect(fixture.deps.indexer.embedderBound).toBe(true)
+          expect(yield* fixture.deps.store.dirtyPaths().pipe(Effect.orDie)).toEqual([])
+
+          const before = yield* commitCount(fixture)
+          const report = yield* run(fixture.deps, { date: DATE })
+
+          expectPreflightBlockedTheRest(report, (text) => {
+            expect(text).toContain("VectorCoverageLow")
+            expect(text).toContain("below the hard floor 0.5")
+            expect(text).toContain("memhtml index embed")
+          })
+          expect(yield* commitCount(fixture)).toBe(before)
+          expect((yield* readRun(fixture.db, report.runId).pipe(Effect.orDie))?.status).toBe(
+            "failed"
+          )
+        }),
+      { seed: DEDUP_CORPUS }
+    )
+  })
+
+  it("warns and continues between the hard floor and the soft floor, recording the ratio in its counts", async () => {
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const coverage = yield* thinVectors(fixture, 0.3)
+          expect(coverage.coverage).toBeGreaterThanOrEqual(0.5)
+          expect(coverage.coverage).toBeLessThan(0.95)
+
+          const report = yield* run(fixture.deps, { date: DATE })
+
+          const preflight = report.phases[0]
+          expect(preflight?.phase).toBe("preflight")
+          expect(preflight?.status).toBe("ok")
+          expect(preflight?.detail).toContain("vector coverage")
+          expect(preflight?.detail).toContain(`${coverage.embeddings} of ${coverage.chunks} chunks`)
+          expect(preflight?.detail).toContain("memhtml index embed")
+          expect(preflight?.counts.vectorCoverage).toBeCloseTo(coverage.coverage, 10)
+          // Continued: nothing after preflight was blocked by it.
+          expect(
+            report.phases.filter((phase) => phase.detail === "hard prerequisite preflight failed")
+          ).toEqual([])
+          expect(report.phases.filter((phase) => phase.status === "failed")).toEqual([])
+        }),
+      { seed: DEDUP_CORPUS }
+    )
+  })
+
+  it("reads a fully embedded plane as clean: ratio 1 in the counts and no detail", async () => {
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const report = yield* run(fixture.deps, { date: DATE, phases: ["preflight"] })
+          const preflight = report.phases[0]
+          expect(preflight?.status).toBe("ok")
+          expect(preflight?.counts.vectorCoverage).toBe(1)
+          expect(preflight?.detail).toBeUndefined()
+        }),
+      { seed: DEDUP_CORPUS }
+    )
+  })
+
+  it("refuses a run whose bound embedder wrote nothing, naming MEMHTML_EMBED=off as the way out", async () => {
+    /**
+     * The default `MEMHTML_EMBED=on` with no credential: the embedder is bound, every embed call fails
+     * softly (the indexer logs and keeps going), and the plane holds zero vectors. Under the in-use rule
+     * that store is not exempt, because an embedder is bound; and neither `index embed` nor `rebuild
+     * --embed` can fix it, so the refusal has to name the opt-out or the operator has no move.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const coverage = yield* fixture.deps.indexer.vectorCoverage().pipe(Effect.orDie)
+          expect(coverage.chunks).toBeGreaterThan(0)
+          expect(coverage.embeddings).toBe(0)
+          expect(fixture.deps.indexer.embedderBound).toBe(true)
+
+          const before = yield* commitCount(fixture)
+          const report = yield* run(fixture.deps, { date: DATE })
+          expectPreflightBlockedTheRest(report, (text) => {
+            expect(text).toContain("VectorCoverageLow")
+            expect(text).toContain("0 of")
+            expect(text).toContain("MEMHTML_EMBED=off")
+          })
+          expect(yield* commitCount(fixture)).toBe(before)
+        }),
+      { seed: DEDUP_CORPUS, failingEmbedder: true }
+    )
+  })
+
+  it("does not refuse an embedder-less run: zero vectors with no embedder is the lexical-only store", async () => {
+    /**
+     * The other side of the scope rule. A credential-free night, or `MEMHTML_EMBED=off`, indexes with no
+     * embedder and holds no vectors at all, which is coverage 0. That store is a supported configuration
+     * whose deterministic phases already work without cosines, so preflight must pass it without a
+     * warning. Refusing it would turn `MEMHTML_EMBED=off` into a sleep that never runs.
+     */
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const coverage = yield* fixture.deps.indexer.vectorCoverage().pipe(Effect.orDie)
+          expect(coverage.chunks).toBeGreaterThan(0)
+          expect(coverage.embeddings).toBe(0)
+          expect(coverage.coverage).toBe(0)
+          expect(fixture.deps.indexer.embedderBound).toBe(false)
+
+          const report = yield* run(fixture.deps, { date: DATE, phases: ["preflight"] })
+          const preflight = report.phases[0]
+          expect(preflight?.status).toBe("ok")
+          expect(preflight?.counts.vectorCoverage).toBe(0)
+          expect(preflight?.detail).toBeUndefined()
+        }),
+      { seed: DEDUP_CORPUS, withoutEmbedder: true }
+    )
+  })
+})

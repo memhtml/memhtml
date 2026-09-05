@@ -23,7 +23,7 @@ import { Effect } from "effect"
 
 import type { ConsolidatorPort } from "../src/consolidator.js"
 import type { SleepDeps } from "../src/env.js"
-import { makeFakeEmbedder, type ScriptedModel } from "../src/testing.js"
+import { failingEmbedder, makeFakeEmbedder, type ScriptedModel } from "../src/testing.js"
 
 /**
  * The sleep test fixture: a real temp-dir git repo, a real in-memory SQLite database with the shipped
@@ -67,6 +67,18 @@ export interface FixtureOptions {
   /** Absent leaves trace-consolidation skipped, which is what a credential-free run produces. */
   readonly consolidator?: ConsolidatorPort | undefined
   readonly seed?: ReadonlyArray<SeedFile> | undefined
+  /**
+   * Build the indexer with NO embedder, the `MEMHTML_EMBED=off` shape. The vector plane then holds zero
+   * vectors, and preflight must read that as the deliberate lexical-only configuration rather than as a
+   * plane that lost its vectors.
+   */
+  readonly withoutEmbedder?: boolean | undefined
+  /**
+   * Bind an embedder whose every call fails, the default `MEMHTML_EMBED=on` with no credential. The
+   * indexer logs and writes nothing, so the plane stays at zero vectors with an embedder bound, which
+   * is the shape the in-use rule must refuse rather than exempt.
+   */
+  readonly failingEmbedder?: boolean | undefined
 }
 
 /**
@@ -92,7 +104,12 @@ export const withFixture = <A, E>(
           migrationsDir: STATE_MIGRATIONS_DIR
         })
 
-        const embeddings = makeFakeEmbedder()
+        const embeddings =
+          options.withoutEmbedder === true
+            ? undefined
+            : options.failingEmbedder === true
+              ? failingEmbedder()
+              : makeFakeEmbedder()
         const gitPort = makeGitPort({
           git: repo.git,
           /**
@@ -118,7 +135,7 @@ export const withFixture = <A, E>(
           git: gitPort,
           embedWatermark: EMBED_WATERMARK,
           embedDim: EMBED_DIM,
-          embeddings,
+          ...(embeddings === undefined ? {} : { embeddings }),
           now: () => "2026-08-02T00:00:00Z"
         })
 

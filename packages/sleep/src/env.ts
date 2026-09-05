@@ -1,4 +1,10 @@
-import type { DatabaseShape, EmbedModelMismatch, IndexerShape, IndexStale } from "@memhtml/index"
+import type {
+  DatabaseShape,
+  EmbedModelMismatch,
+  IndexerShape,
+  IndexStale,
+  VectorCoverageLow
+} from "@memhtml/index"
 import type { ModelClientShape, ModelKey } from "@memhtml/llm"
 import type { GitShape, StoreError, StoreShape } from "@memhtml/store"
 import type { Effect } from "effect"
@@ -27,6 +33,12 @@ export interface SleepDeps {
   readonly store: StoreShape
   readonly db: DatabaseShape
   readonly indexer: IndexerShape
+  /**
+   * Vector coverage below which preflight WARNS, or absent for `VECTOR_COVERAGE_FLOOR`. The CLI
+   * passes `MEMHTML_VECTOR_COVERAGE_FLOOR` so a night and a search agree on what "sparse" means. The
+   * hard floor that fails the phase is not a dependency: it is the constant.
+   */
+  readonly vectorCoverageFloor?: number | undefined
   /**
    * The model behind the LLM phases. Absent DEGRADES each of them; it never fails a run.
    *
@@ -96,7 +108,7 @@ export const modelFor = (deps: SleepDeps, phase: SleepPhase): ModelKey =>
  * typed. A phase that could fail with something outside it would be a phase whose failure the runner
  * cannot describe in a report line.
  */
-export type SleepError = StoreError | EmbedModelMismatch | IndexStale
+export type SleepError = StoreError | EmbedModelMismatch | IndexStale | VectorCoverageLow
 
 /** One phase's environment: the run's identity, the injected clock reading, and the deps. */
 export interface PhaseEnv {

@@ -13,6 +13,7 @@ import type { GitPort } from "./git-port.js"
 import { readIndexState } from "./index-state.js"
 import { type FileProjection, projectFile } from "./project.js"
 import { INDEX_STATE_ID, MEMORY_TABLES, WRITE_BATCH_SIZE } from "./schema-const.js"
+import { readVectorCoverage, type VectorCoverage } from "./vector-coverage.js"
 
 /**
  * The indexer. Git is the source of truth, and `index.db` is a projection of it.
@@ -127,6 +128,20 @@ export interface IndexerShape {
   readonly embedMissing: (
     options?: EmbedMissingOptions
   ) => Effect.Effect<number, StorageFailure | EmbedModelMismatch>
+  /**
+   * True when a document embedder is bound, so `embed: true` on `rebuild` and `update` writes vectors.
+   *
+   * What sleep's preflight reads to tell a deliberate lexical-only store (no embedder, zero vectors,
+   * healthy) from a store whose vector plane is IN USE and sparse. The indexer is the one holder of
+   * the embedder on that side of the composition root, so the fact is published here rather than
+   * threaded through a second dependency.
+   */
+  readonly embedderBound: boolean
+  /**
+   * Vector coverage for the configured space (`vector-coverage.ts`): the share of chunks carrying a
+   * vector under this indexer's `embedWatermark`. The same reader `search` and `doctor` use.
+   */
+  readonly vectorCoverage: () => Effect.Effect<VectorCoverage, StorageFailure>
 }
 
 export const Indexer = Context.Service<IndexerShape>("memhtml/Indexer")
@@ -1003,7 +1018,14 @@ export const makeIndexer = (deps: IndexerDeps): IndexerShape => {
       }
     }).pipe(Effect.withSpan("indexer.update"))
 
-  return { rebuild, update, embedMissing, backfill }
+  return {
+    rebuild,
+    update,
+    embedMissing,
+    backfill,
+    embedderBound: deps.embeddings !== undefined,
+    vectorCoverage: () => readVectorCoverage(db, deps.embedWatermark)
+  }
 }
 
 const countEdges = (db: DatabaseShape) =>

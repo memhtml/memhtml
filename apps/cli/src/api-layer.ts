@@ -49,7 +49,7 @@ import {
 } from "@memhtml/store"
 import { Config, Context, Effect, Layer } from "effect"
 
-import { MemhtmlRoot, TraceRoot } from "./config.js"
+import { MemhtmlRoot, TraceRoot, VectorCoverageFloor } from "./config.js"
 import { type EntityExtractorShape, makeEntityExtractor } from "./extraction.js"
 
 /**
@@ -277,15 +277,76 @@ export const layerIndexer: Layer.Layer<
   })
 )
 
-/** Retrieval, over the database and the query embedder. */
-export const layerRetrieval: Layer.Layer<RetrievalShape, never, DatabaseShape | EmbedderShape> =
-  Layer.effect(Retrieval)(
-    Effect.gen(function* () {
-      const db = yield* DatabaseService
-      const embedder = yield* Embedder
-      return makeRetrieval({ db, embeddings: embedder.query })
+/**
+ * The retrieval policy: the one retrieval tunable the environment sets.
+ *
+ * A service rather than a constant read at each site, because THREE surfaces judge the same ratio
+ * against it: `search`/`recall` drop the vector arm below it, `doctor` reports `vectorCoverageLow`
+ * below it, and a sleep run warns below it. One resolution of `MEMHTML_VECTOR_COVERAGE_FLOOR` is what
+ * keeps a search that degraded and a doctor that says healthy from being the same store read through
+ * two floors. The hard floor sleep refuses below is a constant and is not here.
+ */
+export interface RetrievalPolicyShape {
+  /** `MEMHTML_VECTOR_COVERAGE_FLOOR`, in `(0, 1]`. */
+  readonly vectorCoverageFloor: number
+}
+
+export const RetrievalPolicy = Context.Service<RetrievalPolicyShape>("memhtml/RetrievalPolicy")
+
+/**
+ * The policy from config. A set-but-unusable value DIES naming the variable, following the consolidator
+ * turn-timeout precedent: `0` or a negative would switch the gate off silently (nothing is below zero),
+ * a value above `1` would drop the vector arm on a fully covered index, and neither is a floor anyone
+ * meant. A value that does not parse as a number already fails inside `Config.number`.
+ *
+ * A floor UNDER `VECTOR_COVERAGE_HARD_FLOOR` (0.5) is accepted: it keeps search and doctor accepting a
+ * plane that sleep still refuses, because the hard floor is sleep's alone and this knob does not move
+ * it. That split is deliberate. Search on a half-embedded index is a quality trade an operator may
+ * take for a day; a night of cosine passes over half the corpus is not.
+ */
+export const layerRetrievalPolicy: Layer.Layer<RetrievalPolicyShape> = Layer.effect(
+  RetrievalPolicy
+)(
+  Effect.gen(function* () {
+    const floor = yield* VectorCoverageFloor
+    if (!Number.isFinite(floor) || floor <= 0 || floor > 1) {
+      return yield* Effect.die(
+        new Error(`MEMHTML_VECTOR_COVERAGE_FLOOR must be a number in (0, 1]; got ${String(floor)}`)
+      )
+    }
+    return { vectorCoverageFloor: floor }
+  })
+).pipe(Layer.orDie)
+
+/** A layer supplying the policy directly, for a test that moves the floor. */
+export const layerRetrievalPolicyFrom = (
+  vectorCoverageFloor: number
+): Layer.Layer<RetrievalPolicyShape> => Layer.succeed(RetrievalPolicy)({ vectorCoverageFloor })
+
+/**
+ * Retrieval, over the database, the query embedder, and the policy.
+ *
+ * `embedWatermark` is the configured space, so coverage counts only the vectors a query vector from
+ * this embedder is comparable with. It is the same constant the indexer writes under, passed from the
+ * same place, which is what keeps the two from disagreeing about which space is "configured".
+ */
+export const layerRetrieval: Layer.Layer<
+  RetrievalShape,
+  never,
+  DatabaseShape | EmbedderShape | RetrievalPolicyShape
+> = Layer.effect(Retrieval)(
+  Effect.gen(function* () {
+    const db = yield* DatabaseService
+    const embedder = yield* Embedder
+    const policy = yield* RetrievalPolicy
+    return makeRetrieval({
+      db,
+      embeddings: embedder.query,
+      embedWatermark: EMBED_WATERMARK,
+      vectorCoverageFloor: policy.vectorCoverageFloor
     })
-  )
+  })
+)
 
 /**
  * The model behind the four LLM sleep phases, or absent.
@@ -489,7 +550,13 @@ export const layerConsolidatorFrom = (
 export const layerSleep: Layer.Layer<
   SleepShape,
   never,
-  GitShape | StoreShape | DatabaseShape | IndexerShape | ModelPortShape | ConsolidatorPortShape
+  | GitShape
+  | StoreShape
+  | DatabaseShape
+  | IndexerShape
+  | ModelPortShape
+  | ConsolidatorPortShape
+  | RetrievalPolicyShape
 > = Layer.effect(Sleep)(
   Effect.gen(function* () {
     const git = yield* Git
@@ -498,13 +565,16 @@ export const layerSleep: Layer.Layer<
     const indexer = yield* Indexer
     const modelPort = yield* ModelPort
     const consolidatorPort = yield* ConsolidatorPortService
+    const policy = yield* RetrievalPolicy
     return makeSleep({
       git,
       store,
       db,
       indexer,
       model: modelPort.model,
-      consolidator: consolidatorPort.consolidator
+      consolidator: consolidatorPort.consolidator,
+      // The same floor a search degrades at, so a night's warning and a search's `degraded` agree.
+      vectorCoverageFloor: policy.vectorCoverageFloor
     })
   })
 )
@@ -555,7 +625,8 @@ export const layerApp = (repoOverride?: string | undefined) =>
          * dependency. The roots layer is built once with `repoOverride` and fed in, so a `--repo`
          * run and the mounted trace root cannot come from two different resolutions.
          */
-        layerConsolidatorPort().pipe(Layer.provide(layerRoots(repoOverride)))
+        layerConsolidatorPort().pipe(Layer.provide(layerRoots(repoOverride))),
+        layerRetrievalPolicy
       )
     )
   )
@@ -578,6 +649,11 @@ export const layerAppWith = (options: {
   readonly consolidator?: ConsolidatorShape | undefined
   /** Absent leaves writes unextracted, the production default. Only extraction tests bind one. */
   readonly extractor?: EntityExtractorShape | undefined
+  /**
+   * Absent reads `MEMHTML_VECTOR_COVERAGE_FLOOR` the way production does, which in a credential-free
+   * test environment is the default. A test that moves the floor names it here.
+   */
+  readonly vectorCoverageFloor?: number | undefined
 }) =>
   layerCore.pipe(
     Layer.provideMerge(
@@ -586,7 +662,10 @@ export const layerAppWith = (options: {
         layerEmbedderFrom(options.embedder),
         layerModelFrom(options.model),
         layerConsolidatorFrom(options.consolidator),
-        layerExtractorFrom(options.extractor)
+        layerExtractorFrom(options.extractor),
+        options.vectorCoverageFloor === undefined
+          ? layerRetrievalPolicy
+          : layerRetrievalPolicyFrom(options.vectorCoverageFloor)
       )
     )
   )
