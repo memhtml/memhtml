@@ -1,7 +1,11 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+
 import { describe, expect, it } from "vitest"
 
 import { commandSlug, referencePages, TIER } from "../src/loaders/pages.js"
 import { collectRegistry } from "../src/loaders/registry.js"
+import { REPO_ROOT } from "../src/loaders/repo-sources.js"
 import { mdxExpressions } from "./mdx-braces.js"
 
 /**
@@ -192,9 +196,41 @@ describe("every registry member reaches a page", () => {
     for (const entry of registry.packages) expect(body).toContain(`\`${entry.name}\``)
   })
 
+  it("lists every exported symbol of every contracts module exactly once, with its doc", () => {
+    const body = page(`${TIER}/contracts`).body
+    // Independently derived: the `export` lines of the modules the barrel names, read as text.
+    const barrel = readFileSync(join(REPO_ROOT, "packages/contracts/src/index.ts"), "utf8")
+    const modules = [...barrel.matchAll(/^export \* from "\.\/([^"]+)\.js"/gm)].map(
+      (match) => `${match[1]}.ts`
+    )
+    expect(modules.length).toBeGreaterThan(3)
+    expect(body.split("\n").filter((line) => line.startsWith("### "))).toHaveLength(modules.length)
+    let expected = 0
+    for (const file of modules) {
+      const source = readFileSync(join(REPO_ROOT, "packages/contracts/src", file), "utf8")
+      // Unique names: the package declares a schema value and its type under one name, and the page
+      // folds the pair into one row.
+      const names = new Set(
+        [
+          ...source.matchAll(/^export (?:const|function|class|interface|type) ([A-Za-z_$][\w$]*)/gm)
+        ].map((match) => match[1] ?? "")
+      )
+      expect(names.size, file).toBeGreaterThan(0)
+      expected += names.size
+      for (const name of names) {
+        expect(
+          tableRows(body).filter((row) => row.startsWith(`| \`${name}\` |`)),
+          `${file} → ${name}`
+        ).toHaveLength(1)
+      }
+    }
+    // The overview's census row and the page's own count are the same number.
+    expect(body).toContain(`${expected} across ${modules.length} modules`)
+  })
+
   it("counts every registry on the overview, and links each page that has one", () => {
     const body = page(TIER).body
-    expect(tableRows(body)).toHaveLength(registry.commands.length + 14)
+    expect(tableRows(body)).toHaveLength(registry.commands.length + 15)
     for (const command of registry.commands) {
       expect(body).toContain(`/memhtml/${TIER}/commands/${commandSlug(command.name)}/`)
     }

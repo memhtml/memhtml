@@ -160,10 +160,14 @@ const undecidedSvg = (): Finding[] => {
   for (const svg of document.querySelectorAll("svg")) {
     if (svg.closest('[aria-hidden="true"]') !== null) continue
     if (svg.closest("[aria-label], [aria-labelledby]") !== null) continue
+    const role = svg.getAttribute("role")
+    // An explicit ARIA role other than `img` (a `progressbar`, say) is decided by that role, and axe's
+    // role-specific name rules judge it; this probe exists for the SVG that claims nothing.
+    if (role !== null && role !== "img") continue
     const name =
       svg.getAttribute("aria-label") ?? svg.querySelector("title")?.textContent?.trim() ?? ""
     const why =
-      svg.getAttribute("role") !== "img"
+      role !== "img"
         ? "carries no role and is not hidden, so assistive technology meets bare shapes"
         : name === ""
           ? 'declares role="img" and has no accessible name'

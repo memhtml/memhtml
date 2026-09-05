@@ -196,7 +196,13 @@ const overviewPage = (registry: Registry, base: string): ReferencePage => {
     [`${TIER}/rrf-arms`, "RRF arms", registry.rankArms.length, SOURCES.retrieval],
     [`${TIER}/schema`, "Migrations", registry.migrations.length, SOURCES.migrations],
     [`${TIER}/requirements`, "Requirements", registry.requirements.length, SOURCES.symspec],
-    [`${TIER}/packages`, "Workspace packages", registry.packages.length, "apps/, packages/"]
+    [`${TIER}/packages`, "Workspace packages", registry.packages.length, "apps/, packages/"],
+    [
+      `${TIER}/contracts`,
+      "Contract symbols",
+      registry.contracts.reduce((total, module) => total + foldedSymbols(module.symbols).length, 0),
+      SOURCES.contracts
+    ]
   ]
   return {
     id: TIER,
@@ -905,6 +911,117 @@ const packagesPage = (registry: Registry): ReferencePage => {
   }
 }
 
+/**
+ * A contracts module's symbols with each value/type pair folded into one row.
+ *
+ * The package declares most contracts twice under one name — `export const X = Schema.Literals(…)`
+ * and `export type X = typeof X.Type` — and a reader wants one row per name, not a documented value
+ * beside an *undocumented* type. The kinds are listed together, the signature is the value's, and the
+ * doc comment comes from whichever half carries one.
+ */
+const foldedSymbols = (
+  symbols: ReadonlyArray<Registry["contracts"][number]["symbols"][number]>
+): ReadonlyArray<{
+  readonly name: string
+  readonly kinds: ReadonlyArray<string>
+  readonly signature: string
+  readonly doc: string | undefined
+}> => {
+  const rows: Array<{
+    name: string
+    kinds: Array<string>
+    signature: string
+    doc: string | undefined
+  }> = []
+  for (const symbol of symbols) {
+    const existing = rows.find((row) => row.name === symbol.name)
+    if (existing === undefined) {
+      rows.push({
+        name: symbol.name,
+        kinds: [symbol.kind],
+        signature: symbol.signature,
+        doc: symbol.doc
+      })
+      continue
+    }
+    existing.kinds.push(symbol.kind)
+    existing.doc ??= symbol.doc
+  }
+  return rows
+}
+
+/** The first paragraph of a doc comment, for a table cell; the rest is quoted under the symbol. */
+const summaryOf = (doc: string | undefined): string =>
+  doc === undefined ? "*undocumented*" : cell(doc.split(/\n\s*\n/)[0] ?? "")
+
+/**
+ * The contracts package, from its TSDoc.
+ *
+ * One section per module, each with a table of every exported symbol and, beneath it, the doc comment
+ * of every symbol that carries more than a one-paragraph summary. The doc comments are the ones the
+ * maintainers write beside the code, so this page cannot describe a contract the package does not
+ * export, and a symbol added without a comment shows up as *undocumented* rather than not at all.
+ */
+const contractsPage = (registry: Registry, base: string): ReferencePage => {
+  const total = registry.contracts.reduce(
+    (sum, module) => sum + foldedSymbols(module.symbols).length,
+    0
+  )
+  return {
+    id: `${TIER}/contracts`,
+    title: "Contracts",
+    description:
+      "Every symbol @memhtml/contracts exports, with the doc comment written beside it in the source.",
+    source: SOURCES.contracts,
+    filePath: `${DOCS_COLLECTION}/${TIER}/contracts.md`,
+    lastUpdated: registry.commitDates.contracts,
+    body: sections([
+      {
+        title: "What the package is",
+        body: [
+          `${code("@memhtml/contracts")} is the innermost workspace package: it imports only ${code("effect")}, and every other package imports it. It holds the closed vocabularies, the path algebra, the edge model, and the typed failures — the words the rest of the system agrees on. ${pageLink(base, `${TIER}/vocabulary`, "Closed vocabularies")} lists the vocabularies' values; this page lists every exported symbol, ${total} across ${registry.contracts.length} modules, as the source documents it.`,
+          table(
+            ["Module", "Exports", "What it holds"],
+            registry.contracts.map((module) => [
+              code(module.file),
+              String(foldedSymbols(module.symbols).length),
+              summaryOf(module.doc)
+            ])
+          )
+        ].join("\n\n")
+      },
+      {
+        title: "By module",
+        body: "Each table row is one exported name: what kind of thing it is (a name declared as both a schema value and its type is one row), its declaration's own first line, and the first paragraph of its doc comment. A symbol whose comment runs longer is quoted in full beneath the table.",
+        children: registry.contracts.map((module) => ({
+          title: module.file,
+          body: [
+            ...(module.doc === undefined ? [] : [paragraphs(module.doc)]),
+            table(
+              ["Symbol", "Kind", "Declaration", "Summary"],
+              foldedSymbols(module.symbols).map((symbol) => [
+                code(symbol.name),
+                symbol.kinds.join(", "),
+                code(symbol.signature.replaceAll("`", "'")),
+                summaryOf(symbol.doc)
+              ])
+            ),
+            ...foldedSymbols(module.symbols)
+              .filter((symbol) => symbol.doc !== undefined && /\n\s*\n/.test(symbol.doc))
+              .map((symbol) =>
+                [`**${code(symbol.name)}**`, paragraphs(symbol.doc ?? "")].join("\n\n")
+              )
+          ].join("\n\n")
+        }))
+      },
+      provenance(
+        SOURCES.contracts,
+        `the modules are the ones ${code("index.ts")} re-exports, each symbol is an ${code("export")}ed declaration read with the TypeScript compiler, and every description is the doc comment above it.`
+      )
+    ])
+  }
+}
+
 /** Every page in the tier, in a stable order. */
 export const referencePages = (
   registry: Registry,
@@ -928,6 +1045,7 @@ export const referencePages = (
     rrfArmsPage(registry, base),
     schemaPage(registry, base),
     requirementsPage(registry),
-    packagesPage(registry)
+    packagesPage(registry),
+    contractsPage(registry, base)
   ]
 }

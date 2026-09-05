@@ -15,6 +15,7 @@ import { agentNotePlugin } from "./src/lib/agent-note.js"
 import { siteUrl } from "./src/lib/agent-surface.js"
 import { baseRawLinks } from "./src/lib/base-raw-links.js"
 import { focusableScrollers } from "./src/lib/focusable-scrollers.js"
+import { llmsPages } from "./src/lib/llms-pages.js"
 
 /**
  * The origin and the base segment are configuration carrying the production values as defaults, so a
@@ -125,6 +126,12 @@ export default defineConfig({
      * surface its producer touched, and 450 links were wrong on the one agents read.
      */
     baseRawLinks(base),
+    /*
+     * Also on `astro:build:done`, after `starlight-llms-txt` has written `llms.txt`: appends the
+     * per-page index an agent navigates by. The plugin's own options can place nothing after the
+     * documentation sets, so this is a post-build step rather than a configuration.
+     */
+    llmsPages({ site: new URL(origin), base }),
     starlight({
       title: "memhtml",
       description: "Memory for agents, in HTML.",

@@ -23,6 +23,8 @@ import {
   booleanProperty,
   callArgumentIdentifiers,
   docCommentFor,
+  type ExportedSymbol,
+  exportedSymbolsOf,
   factoryCallsOf,
   identifierListProperty,
   makeCallsOf,
@@ -64,7 +66,8 @@ export const SOURCES = {
   retrieval: "packages/index/src/retrieval-sql.ts",
   migrations: "packages/index/migrations",
   stateMigrations: "packages/index/state-migrations",
-  symspec: "spec/memhtml.symspec.json"
+  symspec: "spec/memhtml.symspec.json",
+  contracts: "packages/contracts/src"
 } as const
 
 /** One MCP tool, as `tools/list` publishes it. */
@@ -149,6 +152,14 @@ export interface Requirement {
   readonly systemName: string
 }
 
+/** One module of `@memhtml/contracts`: its prologue and every exported symbol with its TSDoc. */
+export interface ContractModule {
+  /** The file name inside the package's `src/`, e.g. `edges.ts`. */
+  readonly file: string
+  readonly doc: string | undefined
+  readonly symbols: ReadonlyArray<ExportedSymbol>
+}
+
 /** One workspace package. */
 export interface PackageRow {
   readonly name: string
@@ -176,6 +187,8 @@ export interface Registry {
   readonly migrations: ReadonlyArray<MigrationRow>
   readonly requirements: ReadonlyArray<Requirement>
   readonly packages: ReadonlyArray<PackageRow>
+  /** The contracts package, module by module, symbol by symbol. */
+  readonly contracts: ReadonlyArray<ContractModule>
   /** Doc comments quoted as page prose, keyed by the registry they document. */
   readonly prose: Readonly<Record<string, string | undefined>>
   /** The newest commit date of each source, for the derived page's `lastUpdated`. */
@@ -400,6 +413,27 @@ const packageRegistry = (): ReadonlyArray<PackageRow> =>
   )
 
 /**
+ * `@memhtml/contracts`, read from its source: every module `index.ts` re-exports, in the order it
+ * re-exports them, and every exported symbol of each with its TSDoc.
+ *
+ * The barrel is the authority on what the package publishes. A module present in `src/` and absent
+ * from `index.ts` is internal, and reading the directory instead would document it as public.
+ */
+const contractRegistry = (): ReadonlyArray<ContractModule> => {
+  const barrel = `${SOURCES.contracts}/index.ts`
+  const modules = [...sourceText(barrel).matchAll(/^export \* from "\.\/([^"]+)\.js"/gm)].map(
+    (match) => `${match[1] ?? ""}.ts`
+  )
+  if (modules.length === 0) throw new Error(`${barrel} re-exports nothing`)
+  return modules.map((file) => {
+    const path = `${SOURCES.contracts}/${file}`
+    const symbols = exportedSymbolsOf(path)
+    if (symbols.length === 0) throw new Error(`${path} exports nothing`)
+    return { file, doc: moduleDocOf(path), symbols }
+  })
+}
+
+/**
  * The newest commit touching a file, or `undefined` when git cannot answer.
  *
  * A generated page has no file of its own, so Starlight's git lookup would have nothing to read.
@@ -454,6 +488,7 @@ export const collectRegistry = (): Registry => {
     migrations,
     requirements: requirementRegistry(),
     packages: packageRegistry(),
+    contracts: contractRegistry(),
     prose: {
       commands: docCommentFor(SOURCES.commands, "COMMANDS"),
       globalFlags: docCommentFor(SOURCES.commands, "GLOBAL_FLAGS"),

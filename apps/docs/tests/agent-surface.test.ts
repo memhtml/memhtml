@@ -3,6 +3,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 
+import { DIST_DIR } from "../src/gates.js"
 import { AGENT_NOTE_CLASS, AGENT_NOTE_LABEL } from "../src/lib/agent-note.js"
 import {
   DEEP_LINK_BUDGET,
@@ -27,7 +28,7 @@ import {
  */
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
-const dist = join(root, "dist")
+const dist = join(root, DIST_DIR)
 
 /*
  * Several cases below read `dist/`. `turbo.json` gives `@memhtml/docs#test` a dependency on this
@@ -366,6 +367,26 @@ describe("the agent page's own entry points", () => {
     )
     expect(listed.length).toBeGreaterThan(1)
     expect(listed[0]).toBe(`https://memhtml.github.io${BUILT_BASE}agents.md`)
+  })
+
+  it("lists every built page's raw route in `llms.txt`, exactly once, after the start-here link", () => {
+    const text = readDist("llms.txt")
+    const pagesAt = text.indexOf("## Pages")
+    expect(pagesAt, "llms.txt has no Pages section").toBeGreaterThan(0)
+    const listed = [...text.slice(pagesAt).matchAll(/^- \[[^\]]+\]\(([^)]+)\)/gm)].map(
+      (match) => match[1] ?? ""
+    )
+    const expected = builtPages()
+      .filter((path) => path !== `${BUILT_BASE}404/`)
+      .map((path) => {
+        const id = path.replace(BUILT_BASE, "").replace(/\/$/, "")
+        return rawMarkdownUrl(id, { site: new URL("https://memhtml.github.io"), base: BUILT_BASE })
+          .href
+      })
+    expect(listed.length).toBe(new Set(listed).size)
+    expect([...listed].sort()).toEqual([...expected].sort())
+    // The index follows `Start here`, so an agent still meets the agent page before the list.
+    expect(text.indexOf("Start here")).toBeLessThan(pagesAt)
   })
 
   it("is reachable from the site navigation on every page", () => {
