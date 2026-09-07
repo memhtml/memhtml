@@ -116,7 +116,14 @@ export const ENTITY_SEPARATOR = ":"
 /** Split an entity reference into its type and name. Absent separator ⇒ `None` type. */
 export const parseEntity = (
   entity: string
-): { readonly entityType: string; readonly entityName: string } | undefined => {
+):
+  | {
+      /** The prefix before the first separator. */
+      readonly entityType: string
+      /** Everything after the first separator, colons included. */
+      readonly entityName: string
+    }
+  | undefined => {
   const at = entity.indexOf(ENTITY_SEPARATOR)
   if (at <= 0 || at === entity.length - 1) return undefined
   return { entityType: entity.slice(0, at), entityName: entity.slice(at + 1) }

@@ -1,3 +1,5 @@
+import { join } from "node:path"
+
 import { satteri } from "@astrojs/markdown-satteri"
 import starlight from "@astrojs/starlight"
 import { pluginCollapsibleSections } from "@expressive-code/plugin-collapsible-sections"
@@ -10,12 +12,14 @@ import starlightLinksValidator from "starlight-links-validator"
 import starlightLlmsTxt from "starlight-llms-txt"
 import starlightMdTxt from "starlight-md-txt"
 import starlightScrollToTop from "starlight-scroll-to-top"
+import starlightTypeDoc from "starlight-typedoc"
 
 import { agentNotePlugin } from "./src/lib/agent-note.js"
 import { siteUrl } from "./src/lib/agent-surface.js"
 import { baseRawLinks } from "./src/lib/base-raw-links.js"
 import { focusableScrollers } from "./src/lib/focusable-scrollers.js"
 import { llmsPages } from "./src/lib/llms-pages.js"
+import { REPO_ROOT } from "./src/loaders/repo-sources.js"
 
 /**
  * The origin and the base segment are configuration carrying the production values as defaults, so a
@@ -260,7 +264,58 @@ export default defineConfig({
          */
         starlightLinksValidator({ exclude: referenceLinks }),
         starlightHeadingBadges(),
-        starlightScrollToTop()
+        starlightScrollToTop(),
+        /*
+         * The API tier: one page per module of `@memhtml/contracts`, generated from the TSDoc on its
+         * exported surface. The `entryPoints` are the five modules the package's `exports` map
+         * publishes, so a page here is one import path there; `index.ts` only re-exports them and is
+         * left out because it would repeat every symbol on a sixth page.
+         *
+         * TypeDoc runs on this package's own TypeScript (6.0.x): the repo root pins 7.x, which no
+         * TypeDoc release peers on yet, and `tsconfig` points it at the package's project so the
+         * compiler options are the ones the package is built with.
+         *
+         * The pages are written into `src/content/docs/api/` on every `astro check` and `astro build`
+         * and that directory is gitignored: a committed copy would be a second source of truth for
+         * what the source already states, and the Reference tier's `contracts` page already shows the
+         * one-file-per-registry pattern this repo prefers.
+         *
+         * `outputFileStrategy: "modules"` keeps the tier small: five pages and an index rather than one
+         * page per symbol. `useCodeBlocks` renders each declaration as a fenced block, which is also
+         * what keeps a brace in a type literal out of `remark-mdx`'s reach on the raw Markdown route;
+         * `tests/figures.test.ts` walks these pages with the authored ones and holds them to the same
+         * rule, so a type the plugin can only render as escaped prose fails that probe before it can
+         * reach the raw route.
+         */
+        starlightTypeDoc({
+          entryPoints: ["edges", "errors", "paths", "slug", "types"].map((module) =>
+            join(REPO_ROOT, "packages", "contracts", "src", `${module}.ts`)
+          ),
+          tsconfig: join(REPO_ROOT, "packages", "contracts", "tsconfig.json"),
+          output: "api",
+          typeDoc: {
+            outputFileStrategy: "modules",
+            useCodeBlocks: true,
+            // A list, not a table: a table cell renders an object-literal parameter type inline with
+            // escaped braces, which `tests/figures.test.ts` reads as an MDX expression. A list gives
+            // the type its own line inside a code span.
+            parametersFormat: "list",
+            excludeExternals: true,
+            // The package README is the tier's index page, with the module list appended to it.
+            readme: join(REPO_ROOT, "packages", "contracts", "README.md"),
+            mergeReadme: true,
+            entryFileName: "index",
+            /*
+             * No "Defined in" lines, for now. The seven error classes inherit their constructor from
+             * Effect's `Schema.TaggedError`, and TypeDoc records that constructor's source as a path
+             * into `node_modules`, which no link template can turn into a real URL; `excludeExternals`
+             * does not remove an inherited member and `excludeNotDocumented` skips inherited members
+             * by design. The Reference tier's `contracts` page names each symbol's module, and each
+             * page here is one module, so the file is never in doubt; the line number is the loss.
+             */
+            disableSources: true
+          }
+        })
       ],
       /*
        * Diátaxis, three tiers: Learn is task-shaped, Reference is derived from the registries, and
@@ -281,6 +336,13 @@ export default defineConfig({
           collapsed: true,
           items: [{ autogenerate: { directory: "reference" } }]
         },
+        /*
+         * The generated API tier, one page per module of `@memhtml/contracts` plus its README as the
+         * index. A plain `autogenerate` over the directory the plugin writes, rather than the plugin's
+         * own `typeDocSidebarGroup`: that helper builds one group per module and fills each from a
+         * per-member directory, so under `outputFileStrategy: "modules"` every group renders empty.
+         */
+        { label: "API", collapsed: true, items: [{ autogenerate: { directory: "api" } }] },
         {
           label: "Internals",
           collapsed: true,
