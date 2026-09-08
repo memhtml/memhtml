@@ -3,7 +3,7 @@ title: API
 description: The generated reference for the workspace packages, one directory per package and one page per module, built from the TSDoc in the source on every site build.
 ---
 
-The pages under this heading are generated from the TSDoc on each package's exported surface. Nothing here is written by hand and nothing here is committed: `starlight-typedoc` regenerates the whole tier on every `astro check` and `astro build`, so a page always describes the source at the commit the site was built from. When a signature on a page and a signature in the source disagree, the source is newer and the site is behind.
+Every page below this one is generated from the TSDoc on a package's exported surface; this index is the tier's one authored page. The generated pages are not committed: `starlight-typedoc` writes them into `api/<package>/` on every `astro check` and `astro build`, those directories are gitignored, and so a page always describes the source at the commit the site was built from. When a signature on a page and a signature in the source disagree, the source is newer and the site is behind.
 
 ## What is covered
 
