@@ -35,6 +35,6 @@ dist-typecheck-probe/
 # apps/docs/src/content/docs/internals/_figures/. The source is the .d2 file; the SVG is a build output,
 # declared as one in turbo.json so a cache hit restores it.
 apps/docs/public/d2/
-# starlight-typedoc writes the API tier here from the TSDoc on packages/contracts during `astro check`
-# and `astro build`. The source is the TSDoc; the Markdown is a build output.
-apps/docs/src/content/docs/api/
+# starlight-typedoc writes the API tier here, one directory per package, from the TSDoc during `astro check`
+# and `astro build`. The source is the TSDoc; the Markdown is a build output. `api/index.md` is authored.
+apps/docs/src/content/docs/api/*/

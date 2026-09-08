@@ -266,8 +266,13 @@ export default defineConfig({
         starlightHeadingBadges(),
         starlightScrollToTop(),
         /*
-         * The API tier: one page per module of `@memhtml/contracts`, generated from the TSDoc on its
-         * exported surface. The `entryPoints` are the five modules the package's `exports` map
+         * The API tier: one directory per workspace package under `api/`, one page per module,
+         * generated from the TSDoc on the package's exported surface. Each package is its own plugin
+         * instance because the plugin refuses two instances whose `output` directories nest or overlap,
+         * and `api/index.md` (authored) is the tier's own index. The options below are stated once, on
+         * this first instance, and every later instance repeats them unchanged.
+         *
+         * `@memhtml/contracts`: the `entryPoints` are the five modules the package's `exports` map
          * publishes, so a page here is one import path there; `index.ts` only re-exports them and is
          * left out because it would repeat every symbol on a sixth page.
          *
@@ -275,8 +280,8 @@ export default defineConfig({
          * TypeDoc release peers on yet, and `tsconfig` points it at the package's project so the
          * compiler options are the ones the package is built with.
          *
-         * The pages are written into `src/content/docs/api/` on every `astro check` and `astro build`
-         * and that directory is gitignored: a committed copy would be a second source of truth for
+         * The pages are written into `src/content/docs/api/<package>/` on every `astro check` and
+         * `astro build` and those directories are gitignored: a committed copy would be a second source of truth for
          * what the source already states, and the Reference tier's `contracts` page already shows the
          * one-file-per-registry pattern this repo prefers.
          *
@@ -292,7 +297,7 @@ export default defineConfig({
             join(REPO_ROOT, "packages", "contracts", "src", `${module}.ts`)
           ),
           tsconfig: join(REPO_ROOT, "packages", "contracts", "tsconfig.json"),
-          output: "api",
+          output: "api/contracts",
           typeDoc: {
             outputFileStrategy: "modules",
             useCodeBlocks: true,
@@ -313,6 +318,27 @@ export default defineConfig({
              * by design. The Reference tier's `contracts` page names each symbol's module, and each
              * page here is one module, so the file is never in doubt; the line number is the loss.
              */
+            disableSources: true
+          }
+        }),
+        /*
+         * `@memhtml/traces`: one import path, so one entry point and one page, with the package README
+         * merged in as that page's opening. Same options as above; a difference here would be a
+         * difference in how two packages' pages read, which is the one thing a generated tier must not
+         * have.
+         */
+        starlightTypeDoc({
+          entryPoints: [join(REPO_ROOT, "packages", "traces", "src", "index.ts")],
+          tsconfig: join(REPO_ROOT, "packages", "traces", "tsconfig.json"),
+          output: "api/traces",
+          typeDoc: {
+            outputFileStrategy: "modules",
+            useCodeBlocks: true,
+            parametersFormat: "list",
+            excludeExternals: true,
+            readme: join(REPO_ROOT, "packages", "traces", "README.md"),
+            mergeReadme: true,
+            entryFileName: "index",
             disableSources: true
           }
         })
@@ -337,12 +363,29 @@ export default defineConfig({
           items: [{ autogenerate: { directory: "reference" } }]
         },
         /*
-         * The generated API tier, one page per module of `@memhtml/contracts` plus its README as the
-         * index. A plain `autogenerate` over the directory the plugin writes, rather than the plugin's
-         * own `typeDocSidebarGroup`: that helper builds one group per module and fills each from a
+         * The generated API tier: the authored index, then one group per package over the directory
+         * its plugin instance writes (the package README as that group's index page, then one page
+         * per module). A plain `autogenerate` per directory, rather than the plugin's own
+         * `typeDocSidebarGroup`: that helper builds one group per module and fills each from a
          * per-member directory, so under `outputFileStrategy: "modules"` every group renders empty.
          */
-        { label: "API", collapsed: true, items: [{ autogenerate: { directory: "api" } }] },
+        {
+          label: "API",
+          collapsed: true,
+          items: [
+            { label: "Overview", link: "/api/" },
+            {
+              label: "@memhtml/contracts",
+              collapsed: true,
+              items: [{ autogenerate: { directory: "api/contracts" } }]
+            },
+            {
+              label: "@memhtml/traces",
+              collapsed: true,
+              items: [{ autogenerate: { directory: "api/traces" } }]
+            }
+          ]
+        },
         {
           label: "Internals",
           collapsed: true,
