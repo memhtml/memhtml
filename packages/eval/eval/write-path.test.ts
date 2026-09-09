@@ -5,6 +5,7 @@ import { KNOWN_GAP_CLASSES, WRITE_PATH_CORPUS } from "../src/write-path-corpus.j
 import { agrees, summarizeWritePath } from "../src/write-path-metrics.js"
 import {
   corpusSha256,
+  MANIFEST_FILENAME,
   readManifest,
   replayDrift,
   runWritePathDiscrimination,
@@ -27,6 +28,9 @@ import {
  */
 
 const run = () => Effect.runPromise(runWritePathDiscrimination())
+
+/** `packages/eval/fixtures/<manifest>`, resolved from this test's own location. */
+const MANIFEST_URL = new URL(`../fixtures/${MANIFEST_FILENAME}`, import.meta.url)
 
 describe("the write-path gate on the labeled corpus", () => {
   it("clears the F1 floor, which is the measured baseline minus five points", async () => {
@@ -75,7 +79,10 @@ describe("the write-path gate on the labeled corpus", () => {
      * drift here is not automatically a defect (a fixed gap is a drift too), but it is always a
      * change the manifest has to record, which is why the message names the freeze command.
      */
-    const [report, frozen] = await Promise.all([run(), Effect.runPromise(readManifest())])
+    const [report, frozen] = await Promise.all([
+      run(),
+      Effect.runPromise(readManifest(MANIFEST_URL))
+    ])
     expect(frozen.corpusSha256).toBe(corpusSha256())
     expect(frozen.transcriptsSha256).toBe(transcriptsSha256())
     expect(frozen.f1Floor).toBe(report.f1Floor)

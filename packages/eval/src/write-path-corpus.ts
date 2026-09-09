@@ -73,10 +73,10 @@ const assistant = (sessionId: string, text: string) =>
  * The quotable spans, named so a candidate can cite one by name and the corpus test can check it.
  *
  * Session A: a deploy pipeline failing on lockfile drift, then a browser-download timeout. Session B:
- * Bedrock throttling on the nightly cron, a truncated consolidator turn, a port race.
+ * Bedrock throttling on the evening cron, a truncated consolidator turn, a port race.
  */
 export const A = {
-  q1: "The nightly deploy failed again on the frozen lockfile step.",
+  q1: "The evening deploy failed again on the frozen lockfile step.",
   q2: "The lockfile step fails because the catalog pin for effect moved and pnpm-lock.yaml was not regenerated.",
   q3: "Running pnpm install --frozen-lockfile refuses on that drift by design.",
   q4: "So the fix is to regenerate the lockfile locally and commit it, not to drop the frozen flag.",
@@ -112,7 +112,7 @@ export const B = {
   q1: "The sleep cron threw ThrottlingException from Bedrock three nights running.",
   q2: "The embed client retries three times with exponential backoff starting at 200 milliseconds.",
   q3: "Three nights of throttling at the same 06:30 window suggests we are colliding with another tenant's batch, so the budget is not the root cause.",
-  q4: "We bumped the retry budget from three to five after the third timeout on the nightly, and it still failed.",
+  q4: "We bumped the retry budget from three to five after the third timeout on the deploy job, and it still failed.",
   q5: "Then the fix is scheduling, not retries.",
   q6: "Moving the cron to 06:50 avoided the collision on the two nights we measured, and the embed calls completed with zero throttles.",
   q7: "the consolidator turn settled without structured output once",
@@ -300,7 +300,7 @@ const GOOD: ReadonlyArray<LabeledCandidate> = [
     ...base,
     kind: "episodic",
     claim:
-      "On 2026-09-03 the nightly deploy failed on the frozen lockfile step after a catalog pin moved.",
+      "On 2026-09-03 the evening deploy failed on the frozen lockfile step after a catalog pin moved.",
     evidence: [a(A.q1), a(A.q2)]
   }),
   good("g02", "plain/semantic", `${TRACE2}; two verbatim lines from one readable session`, {
@@ -337,7 +337,7 @@ const GOOD: ReadonlyArray<LabeledCandidate> = [
   good("g07", "cross-session/episodic", `${TRACE2}; quotes from two readable sessions`, {
     ...base,
     kind: "episodic",
-    claim: "Both nightly failures this week were configuration drift rather than code defects.",
+    claim: "Both evening failures this week were configuration drift rather than code defects.",
     evidence: [a(A.q2), b(B.q3)]
   }),
   good("g08", "cross-session/semantic", `${TRACE2}; quotes from two readable sessions`, {
@@ -401,7 +401,7 @@ const GOOD: ReadonlyArray<LabeledCandidate> = [
       claim: "Retries were raised from three to five before the cause was found.",
       evidence: [
         b(
-          "We bumped the retry budget\n  from three to five   after the third timeout on the nightly"
+          "We bumped the retry budget\n  from three to five   after the third timeout on the deploy job"
         ),
         b(B.q5)
       ]
@@ -538,7 +538,7 @@ const BAD: ReadonlyArray<LabeledCandidate> = [
     `${QUOTE}; a paraphrase of a real line is not in the file`,
     {
       ...base,
-      evidence: [a("The nightly deploy broke again at the lockfile step."), a(A.q4)]
+      evidence: [a("The evening deploy broke again at the lockfile step."), a(A.q4)]
     }
   ),
   bad(

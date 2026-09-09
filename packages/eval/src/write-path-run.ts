@@ -48,11 +48,17 @@ export const WRITE_PATH_BASELINE_F1 = 0.9333
  */
 export const WRITE_PATH_F1_FLOOR = Math.floor((WRITE_PATH_BASELINE_F1 - 0.05) * 100) / 100
 
-/** Where the frozen manifest lives, relative to this module (`src/` and `dist/` are siblings). */
-export const MANIFEST_URL = new URL(
-  "../fixtures/write-path-discrimination.manifest.json",
-  import.meta.url
-)
+/**
+ * The frozen manifest's file name, under `packages/eval/fixtures/`.
+ *
+ * The PATH is the caller's to resolve: the eval tier resolves it from its own location and
+ * `scripts/freeze-write-path.mjs` from its own. This module deliberately holds no module-relative URL
+ * resolution, because `@memhtml/eval` is bundled into the published binary and the packaging census
+ * (`tests-integration/tests/packaging.test.ts`) requires every run-time asset resolution in shipped
+ * source to be a declared, shipped asset. The manifest is a repo fixture, not a shipped one: no
+ * command reads it, so declaring it would ship a file nothing in the package uses.
+ */
+export const MANIFEST_FILENAME = "write-path-discrimination.manifest.json"
 
 export const MANIFEST_SCHEMA_VERSION = 1
 
@@ -250,10 +256,13 @@ export const replayDrift = (
   return drift
 }
 
-/** Read the frozen manifest beside this package. */
-export const readManifest = (): Effect.Effect<WritePathManifest> =>
-  Effect.promise(async () => JSON.parse(await readFile(MANIFEST_URL, "utf8")) as WritePathManifest)
+/** Read a frozen manifest from `path`. */
+export const readManifest = (path: string | URL): Effect.Effect<WritePathManifest> =>
+  Effect.promise(async () => JSON.parse(await readFile(path, "utf8")) as WritePathManifest)
 
-/** Write the frozen manifest beside this package. Only `freeze-write-path.ts` calls this. */
-export const writeManifest = (manifest: WritePathManifest): Effect.Effect<void> =>
-  Effect.promise(() => writeFile(MANIFEST_URL, `${JSON.stringify(manifest, null, 2)}\n`, "utf8"))
+/** Write a frozen manifest to `path`. Only `scripts/freeze-write-path.mjs` calls this. */
+export const writeManifest = (
+  manifest: WritePathManifest,
+  path: string | URL
+): Effect.Effect<void> =>
+  Effect.promise(() => writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`, "utf8"))
