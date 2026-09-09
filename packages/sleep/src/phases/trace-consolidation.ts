@@ -779,10 +779,20 @@ export const candidateRefusalFor = (candidate: CandidateMemoryLike): string | nu
 const titleFor = (claim: string): string => {
   const flat = claim.replace(/\s+/g, " ").trim()
   const firstSentence = /^(.*?[.!?])(\s|$)/.exec(flat)?.[1] ?? flat
-  return firstSentence
-    .replace(/[.!?]+$/, "")
-    .slice(0, 90)
-    .trim()
+  return stripTrailingSentencePunctuation(firstSentence).slice(0, 90).trim()
+}
+
+/**
+ * The trailing run of `.`, `!` and `?` removed, by a scan rather than `/[.!?]+$/`.
+ *
+ * The regex is polynomial on a claim that is mostly punctuation (`!!!!…x` backtracks once per `!`),
+ * and the claim is a value an injected collaborator supplies, so CodeQL's `js/polynomial-redos` is
+ * right to name it now that {@link candidateRefusalFor} is exported. Same result on every input.
+ */
+const stripTrailingSentencePunctuation = (text: string): string => {
+  let end = text.length
+  while (end > 0 && ".!?".includes(text.charAt(end - 1))) end -= 1
+  return text.slice(0, end)
 }
 
 /**
