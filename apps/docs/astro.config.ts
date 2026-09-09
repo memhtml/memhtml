@@ -341,6 +341,26 @@ export default defineConfig({
             entryFileName: "index",
             disableSources: true
           }
+        }),
+        /*
+         * `@memhtml/eval`: also one import path, one entry point and one page. The generator warns that
+         * `AccessSpec` is referenced by `CorpusSpec.access` but not exported from the package's index;
+         * the warning is the source's to resolve, and the page renders the reference as a bare name.
+         */
+        starlightTypeDoc({
+          entryPoints: [join(REPO_ROOT, "packages", "eval", "src", "index.ts")],
+          tsconfig: join(REPO_ROOT, "packages", "eval", "tsconfig.json"),
+          output: "api/eval",
+          typeDoc: {
+            outputFileStrategy: "modules",
+            useCodeBlocks: true,
+            parametersFormat: "list",
+            excludeExternals: true,
+            readme: join(REPO_ROOT, "packages", "eval", "README.md"),
+            mergeReadme: true,
+            entryFileName: "index",
+            disableSources: true
+          }
         })
       ],
       /*
@@ -383,6 +403,11 @@ export default defineConfig({
               label: "@memhtml/traces",
               collapsed: true,
               items: [{ autogenerate: { directory: "api/traces" } }]
+            },
+            {
+              label: "@memhtml/eval",
+              collapsed: true,
+              items: [{ autogenerate: { directory: "api/eval" } }]
             }
           ]
         },
