@@ -163,6 +163,7 @@ export {
   taskDetection
 } from "./task-detection.js"
 export {
+  candidateRefusalFor,
   TRACE_MIN_BYTES,
   TRACE_QUIET_MILLIS,
   TRACE_SESSIONS_PER_RUN,

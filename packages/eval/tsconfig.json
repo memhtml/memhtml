@@ -25,6 +25,12 @@
     },
     {
       "path": "../llm"
+    },
+    {
+      "path": "../sleep"
+    },
+    {
+      "path": "../../apps/consolidator"
     }
   ]
 }

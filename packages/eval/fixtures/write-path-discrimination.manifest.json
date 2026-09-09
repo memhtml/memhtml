@@ -1,0 +1,475 @@
+{
+  "schemaVersion": 1,
+  "memhtmlVersion": "0.14.0",
+  "frozenAt": "2026-09-09T14:03:48.727Z",
+  "corpusSha256": "0616bf9271a63332f04d4341dc546980efa5c7132f623ee650cc134a92261990",
+  "transcriptsSha256": "22707e8f19d143ed2a35537defc590656a601a51336c995f2842783d6da58ac3",
+  "gate": [
+    {
+      "stage": "door:schema",
+      "source": "apps/consolidator/src/contract.ts CandidateMemory, decoded with onExcessProperty: error"
+    },
+    {
+      "stage": "door:grounding",
+      "source": "apps/consolidator/src/contract.ts ungroundedEvidenceReason"
+    },
+    {
+      "stage": "door:quote",
+      "source": "apps/consolidator/src/client.ts fabricatedQuoteReason"
+    },
+    {
+      "stage": "phase:refusal",
+      "source": "packages/sleep/src/phases/trace-consolidation.ts candidateRefusalFor"
+    }
+  ],
+  "f1Floor": 0.88,
+  "metrics": {
+    "items": 62,
+    "precision": 0.9655,
+    "recall": 0.9032,
+    "f1": 0.9333,
+    "accuracy": 0.9355,
+    "confusion": {
+      "badRejected": 28,
+      "goodRejected": 1,
+      "badAccepted": 3,
+      "goodAccepted": 30
+    }
+  },
+  "decisions": [
+    {
+      "id": "g01",
+      "label": "good",
+      "class": "plain/episodic",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g02",
+      "label": "good",
+      "class": "plain/semantic",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g03",
+      "label": "good",
+      "class": "plain/procedural",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g04",
+      "label": "good",
+      "class": "plain/agent_insight",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g05",
+      "label": "good",
+      "class": "plain/error_pattern",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g06",
+      "label": "good",
+      "class": "plain/precedent",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g07",
+      "label": "good",
+      "class": "cross-session/episodic",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g08",
+      "label": "good",
+      "class": "cross-session/semantic",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g09",
+      "label": "good",
+      "class": "cross-session/procedural",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g10",
+      "label": "good",
+      "class": "cross-session/agent_insight",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g11",
+      "label": "good",
+      "class": "cross-session/error_pattern",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g12",
+      "label": "good",
+      "class": "cross-session/precedent",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g13",
+      "label": "good",
+      "class": "encoding/typed-quote",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g14",
+      "label": "good",
+      "class": "encoding/internal-newline",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g15",
+      "label": "good",
+      "class": "encoding/rewrapped-whitespace",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g16",
+      "label": "good",
+      "class": "encoding/nested-tool-result",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g17",
+      "label": "good",
+      "class": "encoding/non-ascii",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g18",
+      "label": "good",
+      "class": "ceiling/claim-300",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g19",
+      "label": "good",
+      "class": "ceiling/gist-1500",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g20",
+      "label": "good",
+      "class": "ceiling/quote-600",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g21",
+      "label": "good",
+      "class": "ceiling/evidence-32",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g22",
+      "label": "good",
+      "class": "ceiling/entities-64",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g23",
+      "label": "good",
+      "class": "shape/no-entities",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g24",
+      "label": "good",
+      "class": "shape/unknown-entity-type",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g25",
+      "label": "good",
+      "class": "shape/multi-sentence-claim",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g26",
+      "label": "good",
+      "class": "shape/path-and-digits",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g27",
+      "label": "good",
+      "class": "shape/short-quotes",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g28",
+      "label": "good",
+      "class": "shape/three-quotes-two-sessions",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g29",
+      "label": "good",
+      "class": "shape/padded-session-id",
+      "accepted": false,
+      "stage": "door:grounding"
+    },
+    {
+      "id": "g30",
+      "label": "good",
+      "class": "shape/gist-with-code",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "g31",
+      "label": "good",
+      "class": "shape/long-line-window",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "b01",
+      "label": "bad",
+      "class": "fabricated-quote/paraphrase",
+      "accepted": false,
+      "stage": "door:quote"
+    },
+    {
+      "id": "b02",
+      "label": "bad",
+      "class": "fabricated-quote/stitched",
+      "accepted": false,
+      "stage": "door:quote"
+    },
+    {
+      "id": "b03",
+      "label": "bad",
+      "class": "fabricated-quote/reordered",
+      "accepted": false,
+      "stage": "door:quote"
+    },
+    {
+      "id": "b04",
+      "label": "bad",
+      "class": "fabricated-quote/misattributed",
+      "accepted": false,
+      "stage": "door:quote"
+    },
+    {
+      "id": "b05",
+      "label": "bad",
+      "class": "fabricated-quote/mixed",
+      "accepted": false,
+      "stage": "door:quote"
+    },
+    {
+      "id": "b06",
+      "label": "bad",
+      "class": "ungrounded-session/one",
+      "accepted": false,
+      "stage": "door:grounding"
+    },
+    {
+      "id": "b07",
+      "label": "bad",
+      "class": "ungrounded-session/both",
+      "accepted": false,
+      "stage": "door:grounding"
+    },
+    {
+      "id": "b08",
+      "label": "bad",
+      "class": "under-evidenced/one-quote",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b09",
+      "label": "bad",
+      "class": "under-evidenced/no-quotes",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b10",
+      "label": "bad",
+      "class": "restatement/duplicate-quote",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "b11",
+      "label": "bad",
+      "class": "restatement/duplicate-quote-rewrapped",
+      "accepted": true,
+      "stage": "accepted"
+    },
+    {
+      "id": "b12",
+      "label": "bad",
+      "class": "disallowed-kind/task",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b13",
+      "label": "bad",
+      "class": "disallowed-kind/user_preference",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b14",
+      "label": "bad",
+      "class": "disallowed-kind/verdict",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b15",
+      "label": "bad",
+      "class": "disallowed-kind/arc",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b16",
+      "label": "bad",
+      "class": "disallowed-kind/unknown",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b17",
+      "label": "bad",
+      "class": "empty-claim/empty",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b18",
+      "label": "bad",
+      "class": "empty-claim/whitespace",
+      "accepted": false,
+      "stage": "phase:refusal"
+    },
+    {
+      "id": "b19",
+      "label": "bad",
+      "class": "empty-gist/empty",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b20",
+      "label": "bad",
+      "class": "oversize/claim-301",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b21",
+      "label": "bad",
+      "class": "oversize/gist-1501",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b22",
+      "label": "bad",
+      "class": "oversize/quote-601",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b23",
+      "label": "bad",
+      "class": "oversize/evidence-33",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b24",
+      "label": "bad",
+      "class": "oversize/entities-65",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b25",
+      "label": "bad",
+      "class": "malformed-entity/empty-name",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b26",
+      "label": "bad",
+      "class": "malformed-entity/bare-string",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b27",
+      "label": "bad",
+      "class": "empty-session-id",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b28",
+      "label": "bad",
+      "class": "unslugable-claim/cjk",
+      "accepted": false,
+      "stage": "phase:refusal"
+    },
+    {
+      "id": "b29",
+      "label": "bad",
+      "class": "unslugable-claim/punctuation",
+      "accepted": false,
+      "stage": "phase:refusal"
+    },
+    {
+      "id": "b30",
+      "label": "bad",
+      "class": "excess-property",
+      "accepted": false,
+      "stage": "door:schema"
+    },
+    {
+      "id": "b31",
+      "label": "bad",
+      "class": "content-leak/verbatim-claim",
+      "accepted": true,
+      "stage": "accepted"
+    }
+  ]
+}

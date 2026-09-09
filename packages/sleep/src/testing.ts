@@ -355,7 +355,7 @@ export const candidate = (
  * Unlike {@link scriptedModel} there is no production decoder to route through. The real client
  * decodes eve's structured output against `ConsolidationPayload` and hands back already-typed values,
  * so the boundary a fake could get wrong is the one this fake IS. The phase's own gate
- * (`refusalFor`) is therefore the thing under test here, and a scripted candidate deliberately CAN
+ * (`candidateRefusalFor`) is therefore the thing under test here, and a scripted candidate deliberately CAN
  * violate it, which is the per-candidate isolation arm.
  */
 export const scriptedConsolidator = (

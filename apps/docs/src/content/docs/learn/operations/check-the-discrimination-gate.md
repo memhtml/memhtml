@@ -80,3 +80,16 @@ Two places:
 Run this command. It tells you whether the ranking stack is broken or this corpus never held the answer, and reading search output will not settle that.
 
 A pass here alongside bad answers in practice points at the corpus or the index rather than the ranker. Go to [diagnose poor retrieval](/learn/operations/diagnose-poor-retrieval/).
+
+## The write-path arm
+
+The retrieval gate above asks whether the READ path ranks the right memory. The write-path arm asks whether the WRITE path admits the right candidate. It runs inside `mise run check` as part of `test:eval` and has no command of its own yet.
+
+```bash
+pnpm --filter @memhtml/eval test:eval      # both arms, credential-free
+pnpm freeze:write-path                      # rewrite the frozen manifest after an intended change
+```
+
+It feeds 62 labeled candidate memories (31 the gate should write, 31 it should refuse) through the production gate, composed from the consolidator door's own decode, grounding and verbatim-quote checks and the sleep phase's per-candidate refusal. Refusal is the positive class: precision is the share of refusals that deserved it, recall the share of bad candidates that were caught. The floor is F1 0.88, the measured baseline (0.9333) minus five points, because the 2026-08-27 plan named no floor for this arm.
+
+Every decision is frozen in `packages/eval/fixtures/write-path-discrimination.manifest.json` and replayed on each run. A drifted decision fails the tier naming the candidate id and where it now stops. If the change was intended, run `pnpm freeze:write-path` and review the manifest diff; the script refuses to freeze a report below the floor. The corpus also states the gate's known gaps (`KNOWN_GAP_CLASSES`): a duplicated evidence quote clears the two-quote bar, a claim that is a verbatim transcript span is written as prose, and a real quote from a session id padded with whitespace is refused at the door. The tier fails if that set moves in either direction, so closing a gap is a visible change rather than a silent one.

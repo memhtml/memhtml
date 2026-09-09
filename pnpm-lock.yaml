@@ -364,6 +364,9 @@ importers:
 
   packages/eval:
     dependencies:
+      '@memhtml/consolidator':
+        specifier: workspace:*
+        version: link:../../apps/consolidator
       '@memhtml/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -379,6 +382,9 @@ importers:
       '@memhtml/llm':
         specifier: workspace:*
         version: link:../llm
+      '@memhtml/sleep':
+        specifier: workspace:*
+        version: link:../sleep
       '@memhtml/store':
         specifier: workspace:*
         version: link:../store

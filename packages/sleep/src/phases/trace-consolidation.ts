@@ -213,7 +213,7 @@ const FIRST_PERSON_ACTORS: ReadonlySet<string> = new Set(["user", "agent"])
 /**
  * A commitment this phase will act on, or the reason it was refused.
  *
- * Deterministic and between the model and the tree, the same position {@link refusalFor} occupies for a
+ * Deterministic and between the model and the tree, the same position {@link candidateRefusalFor} occupies for a
  * candidate memory, and every clause is a real failure mode rather than a restatement of the schema:
  *
  * - **An actor outside `user`/`agent`.** Issue #44 asks for first-person commitments only, and the
@@ -752,8 +752,12 @@ const corpusEntitySpellings = (env: PhaseEnv): Effect.Effect<ReadonlyMap<string,
  *   `untitled-3.html`: a path is the id in this corpus, and an id carrying no subject is not one a
  *   reviewer or a later correction can address. The consolidator writes English prose, so this gates
  *   a value it should not send instead of filtering ordinary output.
+ *
+ * Exported, because this is the write path's per-candidate decision and `@memhtml/eval`'s write-path
+ * discrimination arm scores exactly this function on a labeled corpus (`packages/eval/src/write-path-gate.ts`).
+ * The phase calls it and nothing else in this package does; the export adds a reader, not a caller.
  */
-const refusalFor = (candidate: CandidateMemoryLike): string | null => {
+export const candidateRefusalFor = (candidate: CandidateMemoryLike): string | null => {
   if (!(WRITABLE_MEMORY_TYPES as ReadonlyArray<string>).includes(candidate.kind)) {
     return `kind ${candidate.kind} is not a writable memory type`
   }
@@ -794,7 +798,7 @@ const titleFor = (claim: string): string => {
  *
  * The id is TRIMMED and an empty result yields `undefined`. Nothing upstream refuses a whitespace-only
  * one: the schema's check is `Schema.isMinLength(1)` (`apps/consolidator/src/contract.ts`), which admits
- * `"   "`, and {@link refusalFor} tests kind, claim, gist, quote count, and the slug fallback but says
+ * `"   "`, and {@link candidateRefusalFor} tests kind, claim, gist, quote count, and the slug fallback but says
  * nothing about a session id — `commitmentRefusalFor` is the arm that refuses an empty evidence session,
  * and that is the other surface. So this trim is the only guard, and removing it would stamp a
  * `memhtml-session` meta holding whitespace.
@@ -1104,7 +1108,7 @@ export const traceConsolidation: PhaseBody = (env) =>
     const claimed = new Set<string>()
 
     for (const [offset, candidate] of candidates.entries()) {
-      const refusal = refusalFor(candidate)
+      const refusal = candidateRefusalFor(candidate)
       if (refusal !== null) {
         yield* Effect.logWarning(
           `sleep.trace-consolidation candidate ${offset} skipped: ${refusal}`

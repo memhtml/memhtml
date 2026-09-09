@@ -194,6 +194,12 @@ description = "Write a browsable fixture corpus: mise run gen:fixture --out DIR 
 raw_args = true
 run = "pnpm gen:fixture"
 
+[tasks."eval:freeze-write-path"]
+description = "Re-run the write-path discrimination arm and rewrite its frozen manifest (review the diff)"
+# The manifest under packages/eval/fixtures is the per-decision record the eval tier replays against.
+# Refuses to freeze a failing report, so the floor and the replay cannot disagree about one run.
+run = "pnpm freeze:write-path"
+
 [tasks.agents-doc]
 description = "Regenerate AGENTS.md from the BUILT CLI's own command table"
 # The build must precede the invocation: agents-doc reads the compiled COMMANDS array,

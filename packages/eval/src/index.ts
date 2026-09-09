@@ -68,3 +68,55 @@ export {
   hasBedrockCredentials,
   runDiscrimination
 } from "./run.js"
+export type { FixtureTranscript, LabeledCandidate, WritePathLabel } from "./write-path-corpus.js"
+export {
+  BATCH_SESSION_IDS,
+  CEILINGS,
+  KNOWN_GAP_CLASSES,
+  MANY_SPANS,
+  padTo,
+  SESSION_A,
+  SESSION_B,
+  SESSION_OUTSIDE_BATCH,
+  TRANSCRIPT_A,
+  TRANSCRIPT_B,
+  TRANSCRIPTS,
+  WRITE_PATH_CORPUS
+} from "./write-path-corpus.js"
+export type { GateBatch, GateDecision, GateStage } from "./write-path-gate.js"
+export { admitCandidate, GATE_STAGES } from "./write-path-gate.js"
+export type {
+  ClassBreakdown,
+  ConfusionMatrix,
+  LabeledDecision,
+  WritePathReport
+} from "./write-path-metrics.js"
+export {
+  agrees,
+  breakdownByClass,
+  confusionOf,
+  describeWritePath,
+  summarizeWritePath
+} from "./write-path-metrics.js"
+export type {
+  FrozenDecision,
+  ReplayDrift,
+  WritePathManifest,
+  WritePathOptions
+} from "./write-path-run.js"
+export {
+  corpusSha256,
+  decideAll,
+  GATE_SOURCES,
+  MANIFEST_SCHEMA_VERSION,
+  MANIFEST_URL,
+  manifestFor,
+  readManifest,
+  replayDrift,
+  runWritePathDiscrimination,
+  transcriptsSha256,
+  WRITE_PATH_BASELINE_F1,
+  WRITE_PATH_F1_FLOOR,
+  withBatch,
+  writeManifest
+} from "./write-path-run.js"

@@ -9,20 +9,20 @@ Two properties hold the design together:
 
 ## 1. Packages and dependency direction
 
-| Package                | Role                                                                |
-| ---------------------- | ------------------------------------------------------------------- |
-| `contracts`            | Schemas, enums, errors, path algebra. Zero I/O.                     |
-| `domain`               | Pure math: retention, decay, RRF, MMR, graph, merge guards.         |
-| `html`                 | Parse, serialize, hash, and byte-splice the memory file format.     |
-| `store`                | Git-backed file store: write, read, correct, archive, link, commit. |
-| `index`                | SQLite service, migrations, indexer, projection, retrieval.         |
-| `traces`               | Streaming session-JSONL parser and scanner.                         |
-| `sleep`                | The curation phases of `SLEEP_PHASES`, each committing on its own.  |
-| `llm`                  | Bedrock embeddings and forced-tool structured output.               |
-| `eval`                 | The discrimination gate and its generated fixture corpus.           |
-| `apps/cli`, `apps/mcp` | The `memhtml` binary and the `memhtml-mcp` stdio server.            |
+| Package                | Role                                                                                    |
+| ---------------------- | --------------------------------------------------------------------------------------- |
+| `contracts`            | Schemas, enums, errors, path algebra. Zero I/O.                                         |
+| `domain`               | Pure math: retention, decay, RRF, MMR, graph, merge guards.                             |
+| `html`                 | Parse, serialize, hash, and byte-splice the memory file format.                         |
+| `store`                | Git-backed file store: write, read, correct, archive, link, commit.                     |
+| `index`                | SQLite service, migrations, indexer, projection, retrieval.                             |
+| `traces`               | Streaming session-JSONL parser and scanner.                                             |
+| `sleep`                | The curation phases of `SLEEP_PHASES`, each committing on its own.                      |
+| `llm`                  | Bedrock embeddings and forced-tool structured output.                                   |
+| `eval`                 | Two discrimination gates: retrieval (generated corpus) and write path (labeled corpus). |
+| `apps/cli`, `apps/mcp` | The `memhtml` binary and the `memhtml-mcp` stdio server.                                |
 
-Arrows point inward: `contracts` imports only `effect`; `domain` and `html` import `contracts`; `store` adds `html`; `index` adds `domain` and `llm`; `traces`, `sleep`, and `eval` sit above `index`. `apps/mcp` depends on `@memhtml/cli` rather than re-composing the service graph, so there is one answer to which database, which git root, which vector space (`apps/mcp/src/server.ts:13-18`).
+Arrows point inward: `contracts` imports only `effect`; `domain` and `html` import `contracts`; `store` adds `html`; `index` adds `domain` and `llm`; `traces`, `sleep`, and `eval` sit above `index`; `eval` additionally imports `sleep` and `apps/consolidator`, because its write-path arm scores those two packages' own gate functions (`packages/eval/src/write-path-gate.ts`) and a measurement that re-implemented the thing it measures would measure the copy. `apps/mcp` depends on `@memhtml/cli` rather than re-composing the service graph, so there is one answer to which database, which git root, which vector space (`apps/mcp/src/server.ts:13-18`).
 
 `@memhtml/domain`'s purity is enforced, not documented: `packages/domain/tests/layering.test.ts` greps the emitted `dist/*.js` for a runtime import of `node:sqlite`, `@aws-sdk`, or `node:fs`. Math that needed infrastructure to test would let a caller's I/O failure surface as a scoring bug.
 
