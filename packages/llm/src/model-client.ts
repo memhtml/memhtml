@@ -112,7 +112,7 @@ const closingTagsFor = (label: string): RegExp => {
  * The delimiters only hold if the content cannot produce them: a body carrying the literal
  * closing tag would end the data block early and place its own remainder OUTSIDE the
  * boundary, where it reads as the caller's instructions. So every end tag
- * {@link closingTagsFor} names is neutralized in the content before wrapping — the slash
+ * `closingTagsFor` names is neutralized in the content before wrapping — the slash
  * gains a backslash, which keeps the text legible, and the attribute text if any is kept, so
  * the neutralizer rewrites nothing but the one character that made the text a delimiter.
  * Case-insensitive, because the boundary is prose to the model rather than parsed markup, and

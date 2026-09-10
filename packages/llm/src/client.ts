@@ -25,7 +25,16 @@ export interface InvokeClient {
   readonly send: (
     command: InvokeModelCommand,
     options: { readonly abortSignal: AbortSignal }
-  ) => Promise<{ readonly body?: Uint8Array | undefined }>
+  ) => Promise<InvokeResult>
+}
+
+/**
+ * What `InvokeClient.send` resolves to: the SDK's InvokeModel output narrowed to the one
+ * field either lane reads. `BedrockRuntimeClient`'s own output type satisfies it.
+ */
+export interface InvokeResult {
+  /** The raw response payload, absent when the SDK returned no body. */
+  readonly body?: Uint8Array | undefined
 }
 
 /**

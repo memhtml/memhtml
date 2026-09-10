@@ -137,11 +137,17 @@ export type ProxyFetch = (
     readonly body: string
     readonly signal: AbortSignal
   }
-) => Promise<{
+) => Promise<ProxyFetchResponse>
+
+/** The part of a `fetch` `Response` the proxy client reads; the platform `Response` satisfies it. */
+export interface ProxyFetchResponse {
+  /** `true` for a 2xx status, as the platform `fetch` reports it. */
   readonly ok: boolean
+  /** The HTTP status code the proxy answered with. */
   readonly status: number
+  /** Reads the whole response body as text, once. */
   readonly text: () => Promise<string>
-}>
+}
 
 /**
  * A non-2xx answer, carrying the status and the body's first 200 characters. The body is kept
@@ -203,7 +209,7 @@ const decodeBody = (command: InvokeModelCommand): Record<string, unknown> => {
  *
  * Each attempt is bounded by the same per-request inactivity window the Bedrock client uses
  * (`REQUEST_HANDLER_OPTIONS.requestTimeout`), composed with the caller's own signal, and a
- * rejected attempt is retried under {@link PROXY_BACKOFF} when {@link isRetryableProxyFailure}
+ * rejected attempt is retried under `PROXY_BACKOFF` when {@link isRetryableProxyFailure}
  * says so. The proxy's response bytes are returned verbatim for the two chat lanes and re-encoded
  * for the embedding lane after {@link fromProxyResponse}.
  */
