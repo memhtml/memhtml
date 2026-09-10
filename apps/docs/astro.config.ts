@@ -361,6 +361,28 @@ export default defineConfig({
             entryFileName: "index",
             disableSources: true
           }
+        }),
+        /*
+         * `@memhtml/llm`: one import path, one entry point and one page. Two of its exported
+         * signatures resolve to `Promise<...>` of an object shape; the plugin renders an object
+         * literal inside a type argument as escaped-brace prose, which `tests/figures.test.ts`
+         * rejects, so the source names those shapes (`InvokeResult`, `ProxyFetchResponse`) and the
+         * page links them as declarations instead.
+         */
+        starlightTypeDoc({
+          entryPoints: [join(REPO_ROOT, "packages", "llm", "src", "index.ts")],
+          tsconfig: join(REPO_ROOT, "packages", "llm", "tsconfig.json"),
+          output: "api/llm",
+          typeDoc: {
+            outputFileStrategy: "modules",
+            useCodeBlocks: true,
+            parametersFormat: "list",
+            excludeExternals: true,
+            readme: join(REPO_ROOT, "packages", "llm", "README.md"),
+            mergeReadme: true,
+            entryFileName: "index",
+            disableSources: true
+          }
         })
       ],
       /*
@@ -408,6 +430,11 @@ export default defineConfig({
               label: "@memhtml/eval",
               collapsed: true,
               items: [{ autogenerate: { directory: "api/eval" } }]
+            },
+            {
+              label: "@memhtml/llm",
+              collapsed: true,
+              items: [{ autogenerate: { directory: "api/llm" } }]
             }
           ]
         },
