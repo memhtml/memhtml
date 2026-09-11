@@ -1,5 +1,6 @@
 export {
   type InvokeClient,
+  type InvokeResult,
   invokeJson,
   LlmConfig,
   type LlmConfigShape,
@@ -26,7 +27,15 @@ export {
   type StructuredRequest,
   wrapAsData
 } from "./model-client.js"
-export { Effort, MODELS, type ModelInfo, ModelKey, modelByKey, thinkingFor } from "./models.js"
+export {
+  Effort,
+  MODELS,
+  type ModelInfo,
+  ModelKey,
+  modelByKey,
+  type Provider,
+  thinkingFor
+} from "./models.js"
 export {
   fromProxyResponse,
   invokeClientFor,
@@ -35,6 +44,7 @@ export {
   PROXY_ROUTE_PATHS,
   type ProxyClientOptions,
   type ProxyFetch,
+  type ProxyFetchResponse,
   ProxyHttpError,
   type ProxyRequest,
   type ProxyRoute,

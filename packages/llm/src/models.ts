@@ -109,5 +109,9 @@ export const modelByKey = (key: ModelKey): ModelInfo => {
  * Verified live 2026-08-02: all three Claude models accept this shape alongside a forced
  * `tool_choice`, so structured output and adaptive thinking compose.
  */
-export const thinkingFor = (key: ModelKey): { readonly type: "adaptive" } | null =>
-  key === "opus-5" || key === "fable-5" ? { type: "adaptive" } : null
+export const thinkingFor = (
+  key: ModelKey
+): {
+  /** The only thinking mode the Claude 5 models accept here. */
+  readonly type: "adaptive"
+} | null => (key === "opus-5" || key === "fable-5" ? { type: "adaptive" } : null)

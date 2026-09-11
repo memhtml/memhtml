@@ -119,7 +119,7 @@ const unwrapDoubleEncoded = (schema: Schema.Top, input: unknown): unknown => {
  * vanish.
  *
  * One failure shape is repaired before the violation is constructed: a top-level container
- * field double-encoded as a JSON string ({@link unwrapDoubleEncoded}). The repaired payload
+ * field double-encoded as a JSON string (`unwrapDoubleEncoded`). The repaired payload
  * goes through the SAME strict decode, and a repair that still does not satisfy the schema
  * reports the original payload's violation, so the repair cannot mask a genuinely off-schema
  * answer.
