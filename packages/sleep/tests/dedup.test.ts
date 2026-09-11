@@ -464,45 +464,86 @@ describe("dedup-merge with a model", () => {
           expect(yield* atHead(fixture, VETO_REFUSED_PATH)).not.toContain("memhtml-supersedes")
           expect(yield* atHead(fixture, archivePathFor(VETO_REFUSED_PATH, 2026))).toBeUndefined()
           expect(outcome.counts.vetoed).toBeGreaterThan(0)
+          // The refusal is the predicate's, and the report says so: no guard skip is folded into it.
+          expect(outcome.counts.roleGuarded).toBe(0)
         }),
       { seed: [...DEDUP_CORPUS, ...DEDUP_VETO_TRIPLE], model }
     )
   })
 
-  it("holds the both-roles guard ACROSS two model groups that share a path", async () => {
+  it("drops a SPANNING group whole even when it repeats a committed keeper, with no guard skip", async () => {
     /**
-     * The corruption the guard exists to stop, arriving from ONE model answer instead of from two
-     * nights: given `(gf → a)` then `(b → gf)`, both commit, `gf` absorbs `a` and is then archived into
-     * `b`, superseding `a`'s content into a file the same batch destroyed.
-     *
-     * The two groups below overlap on the oncall keeper. The phase must commit the first and refuse the
-     * second, so the shared path holds ONE role: three files, one archive, and the keeper never moved.
+     * Two groups naming the same keeper are one page with two duplicates, not a transitive chain, and
+     * the guard admits them — but containment is checked first. The oncall pair and the metrics memory
+     * share no mined edge, so the second group names members of two components and is dropped whole
+     * before any pair reaches the filter: the metrics memory stays live, and the report shows zero guard
+     * skips because nothing was refused by the guard. (An earlier version of this test asserted the
+     * second drop was refused "because its keeper was already claimed"; it never got that far.) The
+     * repeated-keeper case that stays inside one component is the wide-frame test below.
      */
     const model = partitionsBy((prompt) => [
       keysMatching(prompt, ["drain the VIP", "Drain the VIP"]),
-      // The same keeper again, this time paired with the metrics memory. Refused.
       keysMatching(prompt, ["drain the VIP", "scrapes every exporter"])
     ])
 
     await withFixture(
       (fixture) =>
         Effect.gen(function* () {
-          yield* dedupMerge(envFor(fixture))
+          const outcome = yield* dedupMerge(envFor(fixture))
 
           const keeper = "areas/oncall/drain-the-vip-first.html"
           const firstDrop = "areas/oncall/vip-drain-precedes-revert.html"
           const secondDrop = "areas/metrics/scrape-cadence.html"
 
-          // The keeper is still at its own path: it was never itself archived.
           expect(yield* atHead(fixture, keeper)).toBeDefined()
           expect(yield* atHead(fixture, archivePathFor(keeper, 2026))).toBeUndefined()
-          // The first group's drop is archived…
           expect(yield* atHead(fixture, archivePathFor(firstDrop, 2026))).toBeDefined()
-          // …and the second group's is NOT, because its keeper was already claimed.
+          // The spanning group was dropped whole, so nothing about the metrics memory changed.
           expect(yield* atHead(fixture, secondDrop)).toBeDefined()
           expect(yield* atHead(fixture, archivePathFor(secondDrop, 2026))).toBeUndefined()
+          expect(outcome.counts.roleGuarded).toBe(0)
         }),
       { seed: DEDUP_CORPUS, model }
+    )
+  })
+
+  it("REFUSES to drop a path that already kept this batch, and counts it as the guard, not a veto", async () => {
+    /**
+     * The corruption the guard exists to stop, arriving from ONE model answer: given `(gf → a)` then
+     * `(b → gf)`, both would commit, `gf` absorbs `a` and is then archived into `b`, superseding `a`'s
+     * content into a file the same batch destroyed.
+     *
+     * Inside the wide frame component the members age in path order (`alfa` oldest), so the group
+     * `{bravo, cielo}` folds `cielo` into `bravo`, and the group `{alfa, bravo}` then asks to drop
+     * `bravo` into `alfa`. The second is refused: `bravo` kept this batch. And the refusal is reported
+     * as `roleGuarded`, with `vetoed` at zero, because no predicate fired — none of these bodies carries
+     * a marker, a number, or a qualifier (measured, see the fixture).
+     */
+    const model = partitionsBy((prompt) => [
+      keysMatching(prompt, ["is bravo.", "is cielo."]),
+      keysMatching(prompt, ["is alfa.", "is bravo."])
+    ])
+
+    await withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const outcome = yield* dedupMerge(envFor(fixture))
+
+          const alfa = "areas/ingest/primary-region-alfa.html"
+          const bravo = "areas/ingest/primary-region-bravo.html"
+          const cielo = "areas/ingest/primary-region-cielo.html"
+
+          expect(outcome.counts.llmGroups).toBe(2)
+          expect(outcome.counts.merged).toBe(1)
+          expect(outcome.counts.roleGuarded).toBe(1)
+          expect(outcome.counts.vetoed).toBe(0)
+          // `bravo` absorbed `cielo` and is still at its own path; `alfa` absorbed nothing.
+          expect(yield* atHead(fixture, archivePathFor(cielo, 2026))).toBeDefined()
+          expect(yield* atHead(fixture, bravo)).toContain("memhtml-supersedes")
+          expect(yield* atHead(fixture, archivePathFor(bravo, 2026))).toBeUndefined()
+          expect(yield* atHead(fixture, alfa)).not.toContain("memhtml-supersedes")
+        }),
+      { seed: DEDUP_WIDE_FRAME_CORPUS, model }
     )
   })
 
@@ -603,9 +644,9 @@ describe("dedup-merge with a model", () => {
      * them — the component is purely frame-derived) against a cap of eight.
      *
      * The assertion is on what the model was OFFERED, not on what merged. The cap governs which members
-     * reach a call, and reading it off the prompt is the only place it is observable: the both-roles
-     * guard then limits the whole component to one fold whatever the cap admitted (asserted separately
-     * below), so a merge count could not tell 8 offered from 10.
+     * reach a call, and reading it off the prompt is where it is observable directly: a merge count
+     * would tell 8 offered from 10 only through the model's answer, which is the thing under test in the
+     * fold assertion below and not here.
      */
     const model = partitionsBy(() => [])
 
@@ -641,15 +682,17 @@ describe("dedup-merge with a model", () => {
     }
   })
 
-  it("folds ONE pair of a large component per night, because a path holds one role", async () => {
+  it("folds EVERY pair of a large component in one run: the keeper absorbs all seven", async () => {
     /**
-     * The other half of the story above, and the reason the truncation test reads the prompt.
+     * A model that groups eight members implies seven pairs, all sharing one keeper. The role guard
+     * admits a repeated keeper, so all seven commit: the oldest member carries seven `supersedes` links
+     * and the seven others are archived pointing at it. Nothing on that chain is folded into a file the
+     * batch archives, which is the corruption the guard is for. Under the earlier both-roles guard this
+     * folded ONE pair and reported six vetoes on a component in which no predicate fired — the
+     * mechanism behind the 2026-09-10 and 2026-09-11 all-veto runs.
      *
-     * A model that groups eight members implies seven pairs, all sharing one keeper — and the
-     * both-roles guard fixes a path's role for the batch, so the first pair commits and the remaining
-     * six are refused. That is not a shortfall: superseding six files into a keeper in one commit is
-     * exactly the transitive chain the guard exists to break, and the survivors are candidates again
-     * tomorrow against a keeper that now carries the absorbed content.
+     * The two members past the cap were never offered, so they are live and unsuperseded; they are
+     * candidates again on the next run against a keeper that now carries the absorbed content.
      */
     const model = partitionsBy((prompt) => [
       [...prompt.matchAll(/<member_(m\d+)>/g)].map((match) => match[1] ?? "")
@@ -660,21 +703,28 @@ describe("dedup-merge with a model", () => {
         Effect.gen(function* () {
           const outcome = yield* dedupMerge(envFor(fixture))
 
-          // One group proposed, one fold committed.
           expect(outcome.counts.llmGroups).toBe(1)
-          expect(outcome.counts.merged).toBe(1)
+          expect(outcome.counts.merged).toBe(DEDUP_MAX_COMPONENT - 1)
+          expect(outcome.counts.vetoed).toBe(0)
+          expect(outcome.counts.roleGuarded).toBe(0)
 
           const paths = DEDUP_WIDE_FRAME_CORPUS.map((file) => file.path).toSorted()
           const keeper = paths[0] ?? ""
-          const firstDrop = paths[1] ?? ""
 
-          // The lowest path is the keeper and the second lowest is its drop.
+          // The lowest path is the keeper, still at its own path, pointing at every archive.
           expect(yield* atHead(fixture, keeper)).toBeDefined()
-          expect(yield* atHead(fixture, archivePathFor(firstDrop, 2026))).toBeDefined()
-          expect(yield* atHead(fixture, keeper)).toContain("memhtml-supersedes")
-          // Every other member is still live: the guard refused six pairs on the shared keeper.
-          for (const path of paths.slice(2)) {
+          expect(yield* atHead(fixture, archivePathFor(keeper, 2026))).toBeUndefined()
+          for (const path of paths.slice(1, DEDUP_MAX_COMPONENT)) {
+            const archived = archivePathFor(path, 2026)
+            expect(yield* atHead(fixture, archived)).toBeDefined()
+            expect(yield* atHead(fixture, keeper)).toContain(
+              `<link rel="memhtml-supersedes" href="/${archived}">`
+            )
+          }
+          // The two the cap deferred were never offered and are untouched.
+          for (const path of paths.slice(DEDUP_MAX_COMPONENT)) {
             expect(yield* atHead(fixture, path)).toBeDefined()
+            expect(yield* atHead(fixture, path)).not.toContain("memhtml-supersedes")
             expect(yield* atHead(fixture, archivePathFor(path, 2026))).toBeUndefined()
           }
         }),

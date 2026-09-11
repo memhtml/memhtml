@@ -11,16 +11,20 @@
  * labeled `merge` (the phase should fold every member into the oldest) or `keep` (the phase must fold
  * none), with the provenance of that label. The group is what the corpus stands in for: the same
  * substitution the discrimination arm makes when its labeled candidates stand in for the consolidator
- * model. Everything after the model's answer is production code, imported: the phase's own text join
- * (`dedupTextFor`), its own group fan-out (`groupPairsFor`), and the domain's `mergeCandidates` under
- * the phase's own `DEDUP_ADMIT_FLOOR`.
+ * model. Everything after the model's answer is production code, imported: the phase's own veto texts
+ * (`dedupMergeTextFor`), its own group fan-out (`groupPairsFor`), and the domain's `mergeOutcomes`
+ * under the phase's own `DEDUP_ADMIT_FLOOR`.
  *
- * Three `merge` classes are labeled from the phase's CONTRACT rather than from what it does today, and
- * the arm reports them as known gaps: a pair whose bodies differ only in an incidental number (a date,
- * a ticket id, an exit code) is vetoed by `numericTokenDivergent`, which compares the numeric token
- * SETS of the whole article text, and a group of three folds one member instead of two because
- * `mergeCandidates`' in-batch role guard claims the keeper after the first commit. Both are the
- * mechanism behind the two all-veto nights; see `docs/…/check-the-discrimination-gate.md`.
+ * Two `merge` classes were first labeled from the phase's CONTRACT against what it then did, and the
+ * arm reported them as known gaps: a pair whose bodies differed only in an incidental number (a date, a
+ * ticket id, an exit code) was vetoed by `numericTokenDivergent` over the whole article text, and a
+ * group of three folded one member instead of two because the role guard claimed the keeper after the
+ * first commit. Both were the mechanism behind the two all-veto runs. The numeric predicate now reads
+ * the gist alone and the guard admits a repeated keeper, so both classes fold; they stay in the corpus
+ * as the regression alarm for either rule coming back. The `keep` side carries the counterexamples the
+ * new rules must still refuse: a numeric conflict IN the claim, a negation or a variant qualifier stated
+ * only in the body, and a templated series whose claims differ by an id. See
+ * `docs/…/check-the-discrimination-gate.md`.
  *
  * Member bodies are plain prose with the article's text content in mind: `body` is what
  * `files.body_text` holds for the file, the `<article>`'s text, so a date inside `<time>` or a ticket
@@ -66,19 +70,49 @@ const member = (path: string, gist: string, body: string): AcceptanceMember => (
 })
 
 /**
- * The `merge` classes the phase gets WRONG today, stated so the tier fails if the set moves.
+ * The classes whose label the fold path is KNOWN to disagree with, stated so the tier fails if the set
+ * moves in either direction. Empty as of the rules measured 2026-09-11: every `merge` pair folds and
+ * every `keep` pair is refused.
  *
- * - `incidental-number`: the same claim, one side carrying a number the other lacks (a date, a ticket,
- *   an exit code). `numericTokenDivergent` requires the two numeric token sets to be EQUAL over the
- *   whole `gist\nbody_text`, so any incidental number on one side vetoes. This is the predicate that
- *   fired on every review task the two all-veto nights minted ("the two carry different numbers").
- * - `group-fanout`: a group of three implies two pairs with one keeper; `mergeCandidates` claims the
- *   keeper after the first commit and skips the second pair as a role-guard hit. One of two folds.
+ * Two classes used to be here. `incidental-number` (the same claim, one side carrying a date, a ticket
+ * id, or an exit code the other lacks) stopped at `veto:numeric` while `numericTokenDivergent` read the
+ * whole `gist\nbody_text`; it reads the gist now. `group-fanout` (a group of three implying two pairs
+ * with one keeper) stopped its second pair at `role-guard` while the guard claimed both roles of a
+ * committed pair; it admits a repeated keeper now.
  */
-export const ACCEPTANCE_KNOWN_GAP_CLASSES: ReadonlyArray<string> = [
-  "incidental-number",
-  "group-fanout"
-]
+export const ACCEPTANCE_KNOWN_GAP_CLASSES: ReadonlyArray<string> = []
+
+/**
+ * A shape the new numeric rule NO LONGER refuses, kept out of the labeled corpus and measured on its
+ * own: two number-free claims whose bodies cite different numbers. Under the whole-article predicate the
+ * veto refused this pair ("the two carry different numbers"); under the gist-scoped predicate it folds,
+ * because nothing in either CLAIM differs. Whether it should fold is the model's question — a body that
+ * cites exit code 1 and one that cites exit code 2 are one lesson twice or two records, and only a
+ * reader of the two objectives can say — so the phase leaves it to the partition and the veto stays out
+ * of it. This is the precision the gist rule trades for the acceptance it buys, stated so the trade is
+ * a measured fact rather than a surprise. `keep`-labeled here so `decideAcceptance` reports its fold as
+ * the disagreement it is; it is not in `ACCEPTANCE_CORPUS` because the tier's zero-keep-fold gate is
+ * absolute and this pair's label is the model's to earn, not the veto's.
+ */
+export const BODY_NUMBER_ONLY_GROUP: LabeledGroup = {
+  id: "x01",
+  label: "keep",
+  class: "body-number-only",
+  provenance:
+    "packages/domain/src/merge.ts MergeText: the numeric predicate reads the gist alone, so a citation that differs only in the body is not a divergence the veto sees; packages/sleep/src/llm.ts DEDUP_SYSTEM is the layer that must keep two records apart",
+  members: [
+    member(
+      "areas/review/suppressed-failure-exit-1.html",
+      "A completion message must disclose every tool failure the ledger recorded.",
+      "The reviewer flagged a message that asserted success over a Bash exit code 1 in the same session."
+    ),
+    member(
+      "areas/review/suppressed-failure-exit-2.html",
+      "A completion message must disclose every tool failure the ledger recorded.",
+      "The reviewer flagged a message that asserted success over a Bash exit code 2 in the same session."
+    )
+  ]
+}
 
 export const ACCEPTANCE_CORPUS: ReadonlyArray<LabeledGroup> = [
   // ---- merge: the phase should fold every member into the oldest -------------------------------
@@ -289,6 +323,30 @@ export const ACCEPTANCE_CORPUS: ReadonlyArray<LabeledGroup> = [
       )
     ]
   },
+  {
+    id: "m12",
+    label: "merge",
+    class: "group-fanout-incidental",
+    provenance:
+      "both rules at once: packages/sleep/src/phases/dedup-merge.ts groupPairsFor implies two folds into the oldest, and packages/sleep/src/llm.ts DEDUP_SYSTEM reads a pull-request id and a date in the bodies as citations of one fact, not as three facts",
+    members: [
+      member(
+        "areas/sleep/vetoed-pairs-become-tasks.html",
+        "A pair the dedup veto refuses becomes a review task in the same commit as the folds.",
+        "The task names the predicate that fired."
+      ),
+      member(
+        "areas/sleep/review-task-per-veto.html",
+        "Every dedup pair refused by the veto is written as a review task alongside the folds.",
+        "Landed in pull request 92; the task names which predicate refused the pair."
+      ),
+      member(
+        "areas/sleep/veto-opens-a-task.html",
+        "When the dedup veto refuses a pair, the phase opens a review task for it in the fold commit.",
+        "Observed on 2026-08-20: the task carries the predicate's name."
+      )
+    ]
+  },
   // ---- keep: the phase must fold none ---------------------------------------------------------
   {
     id: "k01",
@@ -352,17 +410,17 @@ export const ACCEPTANCE_CORPUS: ReadonlyArray<LabeledGroup> = [
     label: "keep",
     class: "templated-series",
     provenance:
-      "modeled on the store's areas/inbox/verdict-suppressed-failure-<n> series, whose pairs the 2026-09-10 and 2026-09-11 nights vetoed at cosine 1.000 for differing numbers: two verdicts on two objectives are two records, and the veto's refusal is the right outcome",
+      "modeled on the store's areas/inbox/verdict-suppressed-failure-45 and -48, which the 2026-09-10 and 2026-09-11 runs vetoed for differing numbers: their claims each quote the objective under review, one naming a channel id and the other a creation date, so the numeric predicate over the GIST still refuses them — two verdicts on two objectives are two records",
     members: [
       member(
         "areas/inbox/verdict-suppressed-failure-a.html",
-        "Review verdict for objective: wire the new CLI to the inference endpoint.",
-        "Category: suppressed_failure. Claim reviewed: the completion message asserts the cutover is done and verified, but a recorded Bash exit code 1 is never acknowledged. Durable lesson: disclose the failure before claiming done."
+        "Review verdict for objective: end-of-day triage tick for the collaboration channel C0A9Z2Q4XYZ, on behalf of the operator.",
+        "Category: suppressed_failure. Claim reviewed: the completion message asserts the tick is done and verified, but a recorded Bash exit code 1 is never acknowledged. Durable lesson: disclose the failure before claiming done."
       ),
       member(
         "areas/inbox/verdict-suppressed-failure-b.html",
-        "Review verdict for objective: what is waiting for me this morning.",
-        "Category: suppressed_failure. Claim reviewed: the completion message lists the waiting items, but a recorded Bash exit code 2 is never acknowledged. Durable lesson: disclose the failure before reporting the queue."
+        "Review verdict for objective: weekday maintenance run for the memory system, created 2026-09-03 from the thread that granted the standing authority.",
+        "Category: suppressed_failure. Claim reviewed: the completion message reports the run as clean, but a recorded Bash exit code 1 is never acknowledged. Durable lesson: disclose the failure before reporting the run."
       )
     ]
   },
@@ -382,6 +440,44 @@ export const ACCEPTANCE_CORPUS: ReadonlyArray<LabeledGroup> = [
         "areas/cli/use-the-deprecated-sync-flag.html",
         "Use the deprecated sync flag to refresh the index before a search.",
         "It still runs the incremental update."
+      )
+    ]
+  },
+  {
+    id: "k06",
+    label: "keep",
+    class: "negation-in-body",
+    provenance:
+      "packages/domain/src/merge.ts MergeText: negationDivergent reads the JOINED text, so a polarity flip stated only in the body is still a veto — the claims here are identical and the bodies contradict",
+    members: [
+      member(
+        "areas/deploy/cutover-draining-completes.html",
+        "Run the blue-green cutover on the payments gateway during business hours.",
+        "Connection draining completes before the old fleet retires, so every in-flight request finishes."
+      ),
+      member(
+        "areas/deploy/cutover-draining-does-not-complete.html",
+        "Run the blue-green cutover on the payments gateway during business hours.",
+        "Connection draining does not complete before the old fleet retires, so in-flight requests are dropped."
+      )
+    ]
+  },
+  {
+    id: "k07",
+    label: "keep",
+    class: "variant-in-body",
+    provenance:
+      "packages/domain/src/merge.ts MergeText: variantQualifierDivergent reads the JOINED text, so a qualifier only one body carries is still a veto — the claims here are identical and the bodies name different hardware",
+    members: [
+      member(
+        "areas/build/laptops-need-arm-image.html",
+        "Builds on the laptops need the arm64 toolchain image.",
+        "Verified on the M1 machines; the default image targets the other architecture."
+      ),
+      member(
+        "areas/build/laptops-need-arm-image-pro.html",
+        "Builds on the laptops need the arm64 toolchain image.",
+        "Verified on the M1 Pro machines; the default image targets the other architecture."
       )
     ]
   }

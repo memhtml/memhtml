@@ -1,12 +1,5 @@
-import {
-  MAX_MERGE_PAIRS,
-  type MergePair,
-  mergeCandidates,
-  negationDivergent,
-  numericTokenDivergent,
-  variantQualifierDivergent
-} from "@memhtml/domain"
-import { DEDUP_ADMIT_FLOOR, dedupTextFor, groupPairsFor } from "@memhtml/sleep"
+import { type MergeOutcome, type MergePair, mergeOutcomes, mergeVetoReasons } from "@memhtml/domain"
+import { DEDUP_ADMIT_FLOOR, dedupMergeTextFor, groupPairsFor } from "@memhtml/sleep"
 
 import {
   ACCEPTANCE_CORPUS,
@@ -20,12 +13,12 @@ import {
  * Composed from the production functions in the order the phase runs them once the model has
  * answered. Nothing here is re-implemented:
  *
- * 1. `dedupTextFor` — the phase's own text join (`${gist}\n${body_text}`), which is the string the
- *    divergence veto reads.
+ * 1. `dedupMergeTextFor` — the phase's own `{ gist, body }` for a member, the two texts the divergence
+ *    veto reads (numeric over the gist, negation and variant over the join).
  * 2. `groupPairsFor` — the phase's own fan-out of a model group into oriented pairs: the oldest member
  *    keeps, every other member drops, similarity is the recall floor for a pair the corpus never mined.
- * 3. `mergeCandidates` under `DEDUP_ADMIT_FLOOR` — the domain filter exactly as the model arm calls it:
- *    the veto, the self check, the in-batch role guard, and the per-night cap, with the similarity
+ * 3. `mergeOutcomes` under `DEDUP_ADMIT_FLOOR` — the domain filter exactly as the model arm calls it:
+ *    the veto, the self check, the in-batch role guard, and the per-run cap, with the similarity
  *    comparison disarmed because admission was the model's.
  *
  * **The positive class is a FOLD.** The discrimination arm scores refusal, because a gate exists to
@@ -36,9 +29,10 @@ import {
  * `keep` pair is a SAFETY failure and fails the tier outright whatever the rate, because it is the
  * blind-merge-of-a-correction the veto exists to prevent.
  *
- * Each pair's outcome names WHERE it stopped, in the filter's own order. The veto stages name the
- * predicate by re-running the three exported predicates, the way the phase's `vetoedPairs` does for its
- * review tasks; `role-guard` is what the phase counts under `vetoed` although no predicate fired.
+ * Each pair's outcome names WHERE it stopped, in the filter's own order, read off the filter's own
+ * `MergeOutcome` rather than re-derived. The veto stages name the predicate through `mergeVetoReasons`,
+ * the way the phase's `vetoedPairs` does for its review tasks; `role-guard` is what the phase counts
+ * under `roleGuarded`.
  */
 
 /** Where a pair's fate was decided. `folded` is the outcome the corpus's `merge` label asks for. */
@@ -107,12 +101,14 @@ export interface AcceptanceReport {
 /**
  * The measured baseline this floor was derived from, so the derivation is checkable.
  *
- * Measured 2026-09-11 at memhtml 0.14.0 on corpus v1 (11 merge groups implying 12 pairs, 5 keep
- * groups implying 5 pairs): acceptance 0.6667 (8 of 12), precision 1.0 (no keep pair folded). The four
- * eligible pairs that did not fold are the two known-gap classes: three `incidental-number` pairs
- * stopped at `veto:numeric`, one `group-fanout` pair stopped at `role-guard`.
+ * Measured 2026-09-11 at memhtml 0.14.0 on corpus v2 (12 merge groups implying 14 pairs, 7 keep groups
+ * implying 7 pairs): acceptance 1.0 (14 of 14), precision 1.0 (no keep pair folded). Corpus v1 under
+ * the rules before this one measured 0.6667 (8 of 12): three `incidental-number` pairs stopped at
+ * `veto:numeric` because the numeric predicate read the whole article, and one `group-fanout` pair
+ * stopped at `role-guard` because the guard claimed the keeper after the first fold. Both classes now
+ * fold, and the known-gap set is empty.
  */
-export const ACCEPTANCE_BASELINE = 0.6667
+export const ACCEPTANCE_BASELINE = 1
 
 /**
  * Acceptance floor: the baseline minus five points, floored to two decimals — the discrimination arm's
@@ -132,16 +128,25 @@ const basenameOf = (path: string): string =>
 /**
  * The oriented pairs the corpus implies, in group order, exactly as the phase would hand them to
  * `mergeCandidates`: `groupPairsFor` over each group, with corpus order as the age order and
- * `dedupTextFor` as the offered text. `simFor` is empty because no pair here was mined, so every
+ * `dedupMergeTextFor` as the veto's texts. `simFor` is empty because no pair here was mined, so every
  * similarity is the recall floor — the phase's own value for a group pair it never scored.
+ *
+ * A path named by two groups takes its age from its FIRST appearance, the way one corpus row has one
+ * offset however many groups a model puts it in. The labeled corpus never repeats a path; the
+ * role-guard cases the tests build do, and a last-wins map would re-age a keeper under them.
  */
 export const impliedPairs = (
   corpus: ReadonlyArray<LabeledGroup> = ACCEPTANCE_CORPUS
 ): ReadonlyArray<{ readonly group: LabeledGroup; readonly pair: MergePair }> => {
   const flat = corpus.flatMap((group) => group.members)
-  const order = new Map(flat.map((one, offset) => [one.path, offset] as const))
+  const order = new Map<string, number>()
+  for (const [offset, one] of flat.entries()) {
+    if (!order.has(one.path)) order.set(one.path, offset)
+  }
   const textOf = new Map(
-    flat.map((one) => [one.path, dedupTextFor({ gist: one.gist, body_text: one.body })] as const)
+    flat.map(
+      (one) => [one.path, dedupMergeTextFor({ gist: one.gist, body_text: one.body })] as const
+    )
   )
   const simFor = new Map<string, number>()
   return corpus.flatMap((group) =>
@@ -149,26 +154,17 @@ export const impliedPairs = (
   )
 }
 
-/** Which stage stopped a pair the filter did not commit, in the filter's own order. */
-const stoppedAt = (
-  pair: MergePair,
-  offset: number,
-  committedBefore: number,
-  threshold: number
-): AcceptanceStage => {
-  if (committedBefore >= MAX_MERGE_PAIRS) return "cap"
-  if (pair.similarity <= threshold) return "threshold"
-  const keep = pair.keepText ?? ""
-  const drop = pair.dropText ?? ""
-  if (pair.keepText !== undefined && pair.dropText !== undefined) {
-    if (negationDivergent(keep, drop)) return "veto:negation"
-    if (numericTokenDivergent(keep, drop)) return "veto:numeric"
-    if (variantQualifierDivergent(keep, drop)) return "veto:variant"
-  }
-  if (pair.keepPath === pair.dropPath) return "self"
-  // The only remaining reason the filter skips a pair at `offset` is a path already claimed.
-  void offset
-  return "role-guard"
+/**
+ * The filter's own stage, with a veto refined to the FIRST predicate that fired, in the veto's
+ * disjunction order — the same reading the phase's review tasks give.
+ */
+const stageOf = ({ pair, stage }: MergeOutcome): AcceptanceStage => {
+  if (stage !== "vetoed") return stage === "committed" ? "folded" : stage
+  const keep = pair.keepText
+  const drop = pair.dropText
+  const first =
+    keep === undefined || drop === undefined ? undefined : mergeVetoReasons(keep, drop)[0]
+  return first === undefined ? "role-guard" : `veto:${first}`
 }
 
 /** Run the corpus through the composed fold path. Pure. */
@@ -176,16 +172,14 @@ export const decideAcceptance = (
   corpus: ReadonlyArray<LabeledGroup> = ACCEPTANCE_CORPUS
 ): ReadonlyArray<PairDecision> => {
   const implied = impliedPairs(corpus)
-  const decisions = mergeCandidates(
+  const outcomes = mergeOutcomes(
     implied.map((one) => one.pair),
     { threshold: DEDUP_ADMIT_FLOOR }
   )
-  const committed = new Set(decisions.map((one) => `${one.keepPath} ${one.dropPath}`))
-  let committedBefore = 0
   return implied.map(({ group, pair }, offset) => {
-    const folded = committed.has(`${pair.keepPath} ${pair.dropPath}`)
-    const stage = folded ? "folded" : stoppedAt(pair, offset, committedBefore, DEDUP_ADMIT_FLOOR)
-    if (folded) committedBefore += 1
+    const outcome = outcomes[offset]
+    const stage = outcome === undefined ? "role-guard" : stageOf(outcome)
+    const folded = stage === "folded"
     return {
       id: `${group.id}/${basenameOf(pair.dropPath)}`,
       group: group.id,
