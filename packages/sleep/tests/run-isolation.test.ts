@@ -27,6 +27,11 @@ import { DEDUP_CORPUS, type Fixture, LAST_DROP_PATH, withFixture } from "./fixtu
  * 4. A resume of a run nothing recorded refuses rather than treating the missing watermark as an
  *    empty one — an empty watermark reads all of `HEAD`, where a merged run's trailers name every
  *    phase.
+ * 5. A run that FAILS leaves `HEAD` on the branch it found, so the writes that follow it land where
+ *    they would have landed had it never run. The process exits 1 on any failed phase, which stops a
+ *    cron's `sleep run && sleep merge` chain before `merge` — the one step that used to put `HEAD`
+ *    back — so a night whose preflight refused left the store on an empty `sleep/<date>` and every
+ *    memory written until morning landed there instead of on `main` (2026-09-09).
  */
 
 const DATE = "2026-08-02"
@@ -46,8 +51,8 @@ const headBranch = (fixture: Fixture): Effect.Effect<string> =>
  * and arrives here as a DEFECT, which `orElseSucceed` does not answer — it would take the test down
  * instead of reporting the absence this helper exists to report.
  */
-const blobAt = (fixture: Fixture, path: string): Effect.Effect<string | null> =>
-  fixture.raw("show", `HEAD:${path}`).pipe(Effect.catchCause(() => Effect.succeed(null)))
+const blobAt = (fixture: Fixture, path: string, ref = "HEAD"): Effect.Effect<string | null> =>
+  fixture.raw("show", `${ref}:${path}`).pipe(Effect.catchCause(() => Effect.succeed(null)))
 
 describe("a run commits only to its own branch", () => {
   it("aborts when the branch cannot be created, leaving the current branch and the tables untouched", async () => {
@@ -191,7 +196,7 @@ describe("a failed phase leaves nothing for a later phase to commit", () => {
            * because nothing staged the path at all, which is the vacuous version of this test.
            */
           const changes = yield* fixture.deps.git
-            .diffNameStatus(report.baseSha, "HEAD")
+            .diffNameStatus(report.baseSha, report.runId)
             .pipe(Effect.orDie)
           const keeperChange = changes.find((change) => change.path === keeperPath)
           expect(keeperChange?.kind).toBe("modified")
@@ -200,13 +205,22 @@ describe("a failed phase leaves nothing for a later phase to commit", () => {
            * THE PROPERTY: that later commit carries the later phase's work and NOT the failed
            * phase's. The supersedes link is the failed phase's own byte-level signature.
            */
-          const keeper = yield* blobAt(fixture, keeperPath)
+          const keeper = yield* blobAt(fixture, keeperPath, report.runId)
           expect(keeper).not.toBeNull()
           expect(keeper).not.toContain("memhtml-supersedes")
           expect(keeper).not.toContain("archive/2026")
 
+          /**
+           * A run with a failed phase exits 1, so nothing after it in a cron chain runs — `merge`
+           * included. The branch keeps its commits for review, and `HEAD` is back on `main`, where the
+           * next write belongs.
+           */
+          expect(yield* headBranch(fixture)).toBe("main")
+          expect(yield* fixture.deps.git.branchExists(report.runId).pipe(Effect.orDie)).toBe(true)
+          expect(yield* fixture.deps.store.dirtyPaths().pipe(Effect.orDie)).toEqual([])
+
           // The half-archived file is back at its live path, in the tree AND on disk.
-          expect(yield* blobAt(fixture, dropPath)).not.toBeNull()
+          expect(yield* blobAt(fixture, dropPath, report.runId)).not.toBeNull()
           const onDisk = yield* Effect.promise(async () => {
             const { readFile } = await import("node:fs/promises")
             const { join } = await import("node:path")
@@ -352,14 +366,22 @@ describe("a failed preflight stops every phase after it", () => {
           /**
            * THE PROPERTY, in GIT, and asserted FIRST because it is the one that matters: a report can
            * say whatever it likes, and what makes this bug expensive is bytes landing in commits. The
-           * branch was created and HEAD is on it — the run started — and the branch carries no commit
-           * at all, so `main` and the run branch are the same commit.
+           * branch was created — the run started — and it carries no commit at all, so `main` and the
+           * run branch are the same commit.
+           *
+           * And `HEAD` is back on `main`. This is the deliberate break of the invariant the runner
+           * restores: an operator's uncommitted edit, a `sleep/<date>` branch created over it, a
+           * preflight that refuses. Before the restore the store stayed checked out on that empty
+           * branch, and because the process exits 1 the cron never reached `merge` to move it back,
+           * so every write until someone noticed landed on the branch instead of `main`.
            */
-          expect(yield* headBranch(fixture)).toBe(report.runId)
+          expect(yield* headBranch(fixture)).toBe("main")
+          expect(yield* fixture.deps.git.branchExists(report.runId).pipe(Effect.orDie)).toBe(true)
+          expect((yield* fixture.raw("rev-parse", report.runId)).trim()).toBe(report.baseSha)
           expect(yield* commitCount(fixture)).toBe(before)
           expect(report.headSha).toBe(report.baseSha)
           expect(
-            yield* fixture.deps.git.diffNameStatus(report.baseSha, "HEAD").pipe(Effect.orDie)
+            yield* fixture.deps.git.diffNameStatus(report.baseSha, report.runId).pipe(Effect.orDie)
           ).toEqual([])
 
           // And no commit in the repository carries the operator's bytes, under any trailer.
@@ -369,9 +391,10 @@ describe("a failed preflight stops every phase after it", () => {
           expect(report.llmCalls).toBe(0)
 
           /**
-           * The operator's work is also still THERE. The run neither commits it nor cleans it up:
-           * `discardPhaseWrites` restores only paths the failed phase itself made dirty, and this one
-           * was dirty before preflight ran.
+           * The operator's work is also still THERE, on `main`, modified and unstaged exactly as it
+           * was found. The run neither commits it nor cleans it up: `discardPhaseWrites` restores only
+           * paths the failed phase itself made dirty, and this one was dirty before preflight ran; and
+           * the checkout back to `main` carries an uncommitted edit across two branches at one commit.
            */
           const onDisk = yield* Effect.promise(async () => {
             const { readFile } = await import("node:fs/promises")
@@ -462,10 +485,12 @@ describe("a failed preflight stops every phase after it", () => {
             expect(text).toContain("IndexStale")
             expect(text).toContain("did not finish repopulating")
           })
-          expect(yield* headBranch(fixture)).toBe(report.runId)
+          // Same restore as the dirty-tree case: the branch exists, empty, and `HEAD` is on `main`.
+          expect(yield* headBranch(fixture)).toBe("main")
+          expect(yield* fixture.deps.git.branchExists(report.runId).pipe(Effect.orDie)).toBe(true)
           expect(yield* commitCount(fixture)).toBe(before)
           expect(
-            yield* fixture.deps.git.diffNameStatus(report.baseSha, "HEAD").pipe(Effect.orDie)
+            yield* fixture.deps.git.diffNameStatus(report.baseSha, report.runId).pipe(Effect.orDie)
           ).toEqual([])
           expect((yield* readRun(fixture.db, report.runId).pipe(Effect.orDie))?.status).toBe(
             "failed"

@@ -41,6 +41,14 @@ import { makeDetectionBudget } from "./tasks.js"
  * **Nothing is ever rolled back.** `git branch -D` on the sleep branch is the abort, and `main` never
  * moved. So a failed run costs nothing, and a bad run is reviewed and discarded instead of
  * recovered.
+ *
+ * **A failed run leaves `HEAD` where it found it.** A run with a failed phase makes the process exit
+ * 1, which stops a cron's `sleep run && sleep merge` chain before `merge`, and `merge` was the only
+ * step that checked `main` back out. So the night of 2026-09-09, whose preflight refused a dirty tree,
+ * left the store on an empty `sleep/<date>` and every memory written until morning landed on that
+ * branch instead of on `main`. {@link leaveRunBranch} puts `HEAD` back on the starting branch after
+ * any failed run; the sleep branch keeps its commits for review, and the working tree comes along
+ * unchanged, because the operator's uncommitted edit is exactly what preflight refused to touch.
  */
 
 /** What `run` takes. `date` is a parameter: a worker passes wall-clock, a test passes a fixed date. */
@@ -187,6 +195,7 @@ export const run = (deps: SleepDeps, options: RunOptions): Effect.Effect<RunRepo
       ...(options.traceSessions === undefined ? {} : { traceSessions: options.traceSessions })
     }
 
+    const startBranch = dryRun ? null : yield* currentBranch(deps)
     if (!dryRun) {
       const entered = yield* Effect.result(enterRunBranch(deps, runId, { create: true }))
       if (Result.isFailure(entered)) {
@@ -237,6 +246,7 @@ export const run = (deps: SleepDeps, options: RunOptions): Effect.Effect<RunRepo
         endedAt: ended
       })
     )
+    if (!dryRun && anyFailed) yield* leaveRunBranch(deps, runId, startBranch)
 
     return {
       runId,
@@ -300,6 +310,7 @@ export const resume = (
     }
     const baseSha = row.base_sha
 
+    const startBranch = yield* currentBranch(deps)
     const entered = yield* Effect.result(enterRunBranch(deps, runId, { create: false }))
     if (Result.isFailure(entered)) {
       return yield* abortedRun({
@@ -371,17 +382,19 @@ export const resume = (
       return found === undefined ? [] : [found]
     })
 
+    const anyFailed = all.some((phase) => phase.status === "failed")
     yield* ignoreFailure(
       recordRun(deps.db, {
         runId,
         branch: runId,
         baseSha,
         headSha: headSha ?? baseSha,
-        status: all.some((phase) => phase.status === "failed") ? "failed" : "review",
+        status: anyFailed ? "failed" : "review",
         startedAt: row.started_at,
         endedAt: ended
       })
     )
+    if (anyFailed) yield* leaveRunBranch(deps, runId, startBranch)
 
     return {
       runId,
@@ -446,6 +459,54 @@ const currentBranch = (deps: SleepDeps): Effect.Effect<string | null, never, nev
     }),
     Effect.orElseSucceed(() => null)
   )
+
+/**
+ * Put `HEAD` back on the branch a failed run started from, and PROVE it landed there.
+ *
+ * Only a FAILED run comes here. A run in `review` hands `HEAD` to `merge`, which checks the target
+ * out itself, and the CLI exits 0 so the cron chain reaches it. A failed run exits 1, the chain stops,
+ * and nothing after this runner would move `HEAD` — so the store would stay on the sleep branch and
+ * every later write would land there (the night of 2026-09-09, see the module comment).
+ *
+ * The sleep branch is left as it is: its commits are the failed run's evidence and `sleep review`
+ * reads them, and `git branch -D` stays the operator's abort. The working tree is left as it is too:
+ * `git checkout` refuses to lose an uncommitted change, so the edit preflight refused to run over
+ * either rides across (both branches hold the same commit) or stops the checkout, and a stop is a
+ * warning here rather than a failure. The run's facts are its commits and its rows, and both are
+ * already written; a run that could not restore `HEAD` must still report the phases it ran.
+ *
+ * A `null` start is a detached or unreadable `HEAD` before the run; there is no branch name to return
+ * to, and guessing `main` would move a checkout the operator put somewhere on purpose.
+ */
+const leaveRunBranch = (
+  deps: SleepDeps,
+  runId: string,
+  startBranch: string | null
+): Effect.Effect<void, never, never> =>
+  Effect.gen(function* () {
+    if (startBranch === null) {
+      yield* Effect.logWarning(
+        `sleep left HEAD on ${runId}: no branch was checked out before the run, so there is none to return to`
+      )
+      return
+    }
+    if (startBranch === runId) return
+    const checkout = yield* Effect.result(deps.git.checkoutBranch(startBranch))
+    if (Result.isFailure(checkout)) {
+      yield* Effect.logWarning(
+        `sleep left HEAD on ${runId}: cannot check out ${startBranch}: ${describeFailure(checkout.failure)}`
+      )
+      return
+    }
+    const current = yield* currentBranch(deps)
+    if (current !== startBranch) {
+      yield* Effect.logWarning(
+        `sleep left HEAD on ${current ?? "no branch"} after checking out ${startBranch}`
+      )
+      return
+    }
+    yield* Effect.logInfo(`sleep ${runId} failed; HEAD is back on ${startBranch}`)
+  })
 
 /**
  * The report of a run that never started: every selected phase `failed`, one shared reason, no commit.
