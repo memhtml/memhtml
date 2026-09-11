@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.15.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.14.0...memhtml-v0.15.0) (2026-09-11)
+
+
+### Features
+
+* **eval:** write-path acceptance arm for dedup-merge, with the root cause of the all-veto nights ([#179](https://github.com/memhtml/memhtml/issues/179)) ([33710d8](https://github.com/memhtml/memhtml/commit/33710d8812287133e37355a4f9e81211c278cc70))
+* **eval:** write-path discrimination arm (labeled corpus, composed gate, F1 floor, freeze/replay) ([#168](https://github.com/memhtml/memhtml/issues/168)) ([9ad7240](https://github.com/memhtml/memhtml/commit/9ad7240f311a6de80de7dbcb6929409c9abd9dfa))
+
+
+### Bug Fixes
+
+* **domain,sleep:** numeric divergence on the gist only; role guard admits a repeated keeper ([#181](https://github.com/memhtml/memhtml/issues/181)) ([cde574a](https://github.com/memhtml/memhtml/commit/cde574aea436f5d815eec8608b49b7b3e0c6f879))
+* **llm:** turn off Bedrock's implicit prompt-cache writes on the OpenAI dialect ([#180](https://github.com/memhtml/memhtml/issues/180)) ([5ac790c](https://github.com/memhtml/memhtml/commit/5ac790c7c415374a2c1601e2817818ece274f1ee))
+* **sleep:** put HEAD back on the starting branch when a run fails ([#178](https://github.com/memhtml/memhtml/issues/178)) ([9db2d8c](https://github.com/memhtml/memhtml/commit/9db2d8c978407270196265e1d934f0642b107c7d))
+
 ## [0.14.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.13.0...memhtml-v0.14.0) (2026-09-05)
 
 
