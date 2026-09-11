@@ -200,8 +200,60 @@ export const DEDUP_BATCH_CHARS = DEDUP_MEMBER_CHARS * DEDUP_BATCH_MEMBERS
  */
 export const DEDUP_ADMIT_FLOOR = 0
 
-/** The text a member is offered under: its claim and its body, the same join compress uses. */
-const textFor = (row: CorpusRow): string => `${row.gist}\n${row.body_text}`
+/**
+ * The text a member is offered under, and the text the divergence veto reads: its claim and its body,
+ * the same join compress uses. Exported so the write-path acceptance arm (`@memhtml/eval`) vetoes
+ * the SAME string the phase does rather than a re-statement of it.
+ */
+export const dedupTextFor = (row: Pick<CorpusRow, "gist" | "body_text">): string =>
+  `${row.gist}\n${row.body_text}`
+
+const textFor = dedupTextFor
+
+/** What {@link groupPairsFor} reads: corpus order, offered texts, and the mined similarities. */
+export interface GroupPairContext {
+  /** Path -> offset in `activeCorpus` order (oldest first). The keeper is the lowest offset. */
+  readonly order: ReadonlyMap<string, number>
+  /** Path -> the text the veto reads, `dedupTextFor` of the row. */
+  readonly textOf: ReadonlyMap<string, string>
+  /** `keepPath dropPath` -> the mined similarity, when the pair was itself mined. */
+  readonly simFor: ReadonlyMap<string, number>
+}
+
+/**
+ * The pairs one model group implies, oriented: the OLDEST member (lowest corpus offset) keeps, every
+ * other member drops into it. Pure, so the acceptance arm can hand `mergeCandidates` exactly the pairs
+ * the phase would have.
+ *
+ * `similarity` is the mined value when this pair was itself mined, else the recall floor. A
+ * frame-seeded pair and a transitive pair inside a component were never scored, and the floor is the
+ * honest value for "at least this near, never measured closer" — see {@link DEDUP_ADMIT_FLOOR} for why
+ * the filter must not compare against it.
+ *
+ * **Every pair names the same keeper, and that interacts with the domain's in-batch role guard.**
+ * `mergeCandidates` claims BOTH roles of a committed pair, so once `(keeper, m2)` commits, `(keeper,
+ * m3)` is skipped because the keeper is already claimed — a group of N members folds at most ONE of
+ * them per night, and the other N-2 are counted under `vetoed` although no predicate fired. The
+ * acceptance arm measures this (`group-fanout`); it is stated here rather than changed, because
+ * loosening the guard is a domain decision with its own test suite.
+ */
+export const groupPairsFor = (
+  members: ReadonlyArray<{ readonly path: string }>,
+  context: GroupPairContext
+): ReadonlyArray<MergePair> => {
+  const sorted = [...members].sort(
+    (left, right) => (context.order.get(left.path) ?? 0) - (context.order.get(right.path) ?? 0)
+  )
+  const keeper = sorted[0]
+  if (keeper === undefined) return []
+  return sorted.slice(1).map((member) => ({
+    keepPath: keeper.path,
+    dropPath: member.path,
+    similarity: context.simFor.get(`${keeper.path} ${member.path}`) ?? DEDUP_COMPONENT_FLOOR,
+    keepText: context.textOf.get(keeper.path),
+    dropText: context.textOf.get(member.path)
+  }))
+}
 
 /**
  * `arc` is excluded from the candidate set. An arc is a synthesis of many memories, so it is
@@ -437,29 +489,14 @@ export const dedupMerge: PhaseBody = (env) =>
         if (componentIds.size !== 1) continue
 
         /** The keeper is the OLDEST member: the lowest corpus offset, the same rule a pair uses. */
-        const sorted = [...members].sort(
-          (left, right) => (order.get(left.path) ?? 0) - (order.get(right.path) ?? 0)
-        )
-        const keeper = sorted[0]
-        if (keeper === undefined) continue
+        const implied = groupPairsFor(members, { order, textOf, simFor })
+        if (implied.length === 0) continue
         llmGroups += 1
-        for (const member of sorted.slice(1)) {
-          groupPairs.push({
-            keepPath: keeper.path,
-            dropPath: member.path,
-            /**
-             * The mined similarity when this pair was itself mined, else the floor. A frame-seeded
-             * pair and a transitive pair inside a component were never scored, and the floor is the
-             * honest value for "at least this near, never measured closer" — see
-             * {@link DEDUP_ADMIT_FLOOR} for why the filter must not compare against it.
-             */
-            similarity: simFor.get(`${keeper.path} ${member.path}`) ?? DEDUP_COMPONENT_FLOOR,
-            keepText: textOf.get(keeper.path),
-            dropText: textOf.get(member.path)
-          })
-          grouped.add(member.path)
+        for (const pair of implied) {
+          groupPairs.push(pair)
+          grouped.add(pair.dropPath)
+          grouped.add(pair.keepPath)
         }
-        grouped.add(keeper.path)
       }
 
       if (unresolvedKeys.length > 0) {
