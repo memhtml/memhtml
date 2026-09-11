@@ -228,14 +228,16 @@ const textOf = (element: Element): string =>
     .slice(0, 40)
 
 /**
- * Constraint 3: no `class`, no `style`, no `<script>`/`<style>`, no `on*` handler. A memory
- * file is data; presentation belongs to a stylesheet and behavior belongs nowhere.
+ * Constraint 3: no `class`, no `style`, no `<script>`/`<style>`, no `on*` handler, no
+ * `http-equiv`, and no URL with a scheme beyond `http`/`https`/`mailto`. A memory file is
+ * data; presentation belongs to a stylesheet, behavior belongs nowhere, and a link target
+ * belongs to the repo (root-relative), the page (fragment), or a named-document protocol.
  */
 const checkNoPresentationOrScript = (document: Document): ReadonlyArray<string> => {
   const violations: Array<string> = []
   for (const element of elementsOf(document)) {
     if (FORBIDDEN_ELEMENTS.has(element.tagName)) {
-      violations.push(`<${element.tagName}> is forbidden: a memory file does not execute or style`)
+      violations.push(`<${element.tagName}> is forbidden: a memory file does not execute or embed`)
     }
     for (const { name } of element.attrs) {
       const lowered = name.toLowerCase()
@@ -250,8 +252,54 @@ const checkNoPresentationOrScript = (document: Document): ReadonlyArray<string> 
         )
       }
     }
+    if (element.tagName === "meta" && attr(element, "http-equiv") !== undefined) {
+      violations.push("http-equiv on <meta>: a memory file does not redirect or set browser policy")
+    }
+    for (const urlAttr of ["href", "cite"] as const) {
+      const value = attr(element, urlAttr)
+      if (value === undefined) continue
+      const scheme = urlSchemeOf(value)
+      if (scheme === undefined) continue
+      if (scheme === "http" || scheme === "https" || scheme === "mailto") continue
+      violations.push(
+        `<${element.tagName} ${urlAttr}="${value}"> uses the "${scheme}:" scheme: only http, https, and mailto may carry one`
+      )
+    }
   }
   return violations
+}
+
+/**
+ * The URL scheme an attribute value carries, or `undefined` when it carries none (a
+ * root-relative path, a relative path, or an in-page fragment).
+ *
+ * The value is preprocessed exactly as the URL specification orders it before a browser reads a
+ * scheme: strip the leading and trailing C0-controls-and-space run, then delete every U+0009,
+ * U+000A, and U+000D from the whole remainder. The second step is load-bearing on its own —
+ * `href="java&#9;script:alert(1)"` arrives entity-decoded as `java\tscript:alert(1)`, which the
+ * scheme regex stops reading at the tab, while the browser has already deleted the tab and
+ * navigates to `javascript:alert(1)`. The value arrives entity-decoded from the parser, so
+ * `&colon;` spellings are already unfolded.
+ *
+ * A scheme-bearing URL is exactly the case that can leave the corpus's own origin on click, so
+ * this is the predicate the constraint allows `http`/`https`/`mailto` through and nothing else.
+ */
+const urlSchemeOf = (value: string): string | undefined => {
+  // Strip the leading and trailing U+0000-U+0020 runs — the exact set the URL specification
+  // removes before reading a scheme — with a code walk rather than a regex, so the control
+  // range is stated as numbers. `trimStart`/`trimEnd` are not enough, because they do not strip
+  // the C0 controls.
+  let start = 0
+  let end = value.length
+  while (start < end && value.charCodeAt(start) <= 0x20) start += 1
+  while (end > start && value.charCodeAt(end - 1) <= 0x20) end -= 1
+  // Delete every ASCII tab or newline from the remainder — the specification's second
+  // preprocessing step, and the one a scheme like `java\tscript:` slips through without.
+  const match = value
+    .slice(start, end)
+    .replace(/[\t\n\r]/g, "")
+    .match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/)
+  return match === null || match[1] === undefined ? undefined : match[1].toLowerCase()
 }
 
 /** Constraint 4: every `<link rel="memhtml-*">` names a closed-vocabulary rel and a root-relative href. */
