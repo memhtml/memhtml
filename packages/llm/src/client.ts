@@ -12,6 +12,7 @@ import {
   parseProxyModelMap,
   proxyModelPrefix
 } from "./proxy-config.js"
+import { OPENAI_PROMPT_CACHE_VAR, type OpenAiPromptCache, openAiPromptCacheFrom } from "./wire.js"
 
 /**
  * The one Bedrock call this package makes, named as a structural type instead of the
@@ -151,6 +152,16 @@ export const makeBedrockClient = (region: string): BedrockRuntimeClient =>
  */
 export const LlmConfig = Config.all({
   region: Config.string("MEMHTML_AWS_REGION").pipe(Config.withDefault("us-east-1")),
+  /**
+   * How the OpenAI lane asks Bedrock to treat prompt caching (`wire.ts`, `OpenAiPromptCache`).
+   * Read on both paths, direct and proxied: the body is the same chat-completions body either way,
+   * and the write premium it turns off is Bedrock's, not the proxy's. `Config` reads a blank value
+   * as absent, so the default lands here as "" and `openAiPromptCacheFrom` resolves it.
+   */
+  openaiPromptCache: Config.string(OPENAI_PROMPT_CACHE_VAR).pipe(
+    Config.withDefault(""),
+    Config.map(openAiPromptCacheFrom)
+  ),
   proxy: Config.all({
     baseUrl: Config.string(PROXY_BASE_URL_VAR).pipe(Config.withDefault("")),
     apiKey: Config.string(PROXY_API_KEY_VAR).pipe(Config.withDefault("")),
@@ -174,5 +185,6 @@ export const LlmConfig = Config.all({
 
 export interface LlmConfigShape {
   readonly region: string
+  readonly openaiPromptCache: OpenAiPromptCache
   readonly proxy: ProxyConfig | null
 }
