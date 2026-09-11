@@ -364,8 +364,9 @@ export default defineConfig({
         }),
         /*
          * `@memhtml/domain`: one import path, one entry point and one page. The package is pure
-         * arithmetic over plain values, so every exported type is a literal or an alias the generator
-         * renders as a fenced block: no warnings and no escaped braces, measured with the TypeDoc CLI.
+         * arithmetic over plain values, and every exported declaration (a constant, a function, a plain
+         * interface or a type alias) renders as a fenced block: no warnings and no escaped braces,
+         * measured with the TypeDoc CLI.
          */
         starlightTypeDoc({
           entryPoints: [join(REPO_ROOT, "packages", "domain", "src", "index.ts")],
