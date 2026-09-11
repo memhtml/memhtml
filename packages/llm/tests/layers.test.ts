@@ -24,14 +24,44 @@ const withEnv = <A, E, R>(env: Record<string, string>, program: Effect.Effect<A,
 
 describe("LlmConfig", () => {
   it("defaults the region to where both model families are reachable, and to Bedrock direct", async () => {
-    expect(await withEnv({}, LlmConfig)).toEqual({ region: "us-east-1", proxy: null })
+    expect(await withEnv({}, LlmConfig)).toEqual({
+      region: "us-east-1",
+      openaiPromptCache: "off",
+      proxy: null
+    })
   })
 
   it("honors MEMHTML_AWS_REGION", async () => {
     expect(await withEnv({ MEMHTML_AWS_REGION: "us-west-2" }, LlmConfig)).toEqual({
       region: "us-west-2",
+      openaiPromptCache: "off",
       proxy: null
     })
+  })
+
+  /**
+   * The OpenAI lane's cache switch is read on both paths — the body is the same chat-completions
+   * body direct or proxied — and an unknown value dies naming the variable, for the reason the
+   * proxy origin does: a typo that fell back to the default would put the write premium back on.
+   */
+  it("reads MEMHTML_OPENAI_PROMPT_CACHE with or without a proxy, and refuses an unknown value", async () => {
+    expect(
+      (await withEnv({ MEMHTML_OPENAI_PROMPT_CACHE: "implicit" }, LlmConfig)).openaiPromptCache
+    ).toBe("implicit")
+    expect(
+      (
+        await withEnv(
+          { MEMHTML_LLM_BASE_URL: "http://h", MEMHTML_OPENAI_PROMPT_CACHE: " OFF " },
+          LlmConfig
+        )
+      ).openaiPromptCache
+    ).toBe("off")
+    expect((await withEnv({ MEMHTML_OPENAI_PROMPT_CACHE: "" }, LlmConfig)).openaiPromptCache).toBe(
+      "off"
+    )
+    await expect(withEnv({ MEMHTML_OPENAI_PROMPT_CACHE: "explicit" }, LlmConfig)).rejects.toThrow(
+      /MEMHTML_OPENAI_PROMPT_CACHE.*"explicit"/
+    )
   })
 
   /**
