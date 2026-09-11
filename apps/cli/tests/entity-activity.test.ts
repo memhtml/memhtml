@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process"
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 
 import { DatabaseService } from "@memhtml/index"
@@ -408,12 +409,12 @@ describe("memhtml entity activity", () => {
       return named
     }
 
-    const cliDist = new URL("../dist", import.meta.url).pathname
+    const cliDist = fileURLToPath(new URL("../dist", import.meta.url))
     // The control: the layer that MAY have it does, so a matcher that never matched cannot pass below.
     expect(await namesTheSymbol(cliDist)).not.toEqual([])
 
     for (const layer of ["index", "domain"]) {
-      const dist = new URL(`../../../packages/${layer}/dist`, import.meta.url).pathname
+      const dist = fileURLToPath(new URL(`../../../packages/${layer}/dist`, import.meta.url))
       expect(await namesTheSymbol(dist), `${layer} names entityActivity`).toEqual([])
     }
     expect(typeof entityActivity).toBe("function")

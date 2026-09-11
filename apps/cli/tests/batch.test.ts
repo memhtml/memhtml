@@ -89,12 +89,16 @@ const NO_MARK = "<p>No mark at all.</p>"
 
 const badOp = (title: string) => op({ title, claim: "", articleHtml: NO_MARK })
 
-/** Every `.html` on disk under the repo, excluding the scaffold's own `README.html`. */
+/** Every `.html` on disk under the repo, excluding the scaffold's own `README.html`. Normalized to the repo's forward-slash paths (readdir yields the platform separator). */
 const htmlOnDisk = async (root: string): Promise<ReadonlyArray<string>> => {
   const entries = await readdir(root, { recursive: true, withFileTypes: true })
   return entries
     .filter((entry) => entry.isFile() && entry.name.endsWith(".html"))
-    .map((entry) => join(entry.parentPath, entry.name).slice(root.length + 1))
+    .map((entry) =>
+      join(entry.parentPath, entry.name)
+        .slice(root.length + 1)
+        .replaceAll("\\", "/")
+    )
     .filter((path) => path !== "README.html")
     .sort()
 }
@@ -429,6 +433,63 @@ describe("decode failures are per-op, in the caller's index space", () => {
       })
     )
     expect(result.results[0]?.error).toContain("unknown task status: maybe")
+  })
+
+  it("refuses a task STATUS on a non-task op rather than silently dropping it", async () => {
+    /**
+     * The parser refuses `memhtml-task-status` on a non-task FILE in both directions, and the op
+     * door held only the value half of that rule: a non-task op naming `status` had the field
+     * silently dropped and came back `ok: true` for a memory that quietly lacks the lifecycle the
+     * caller stated — the wrong answer that looks right. Refused now, naming the type mismatch.
+     */
+    const cli = await withCounter()
+    const result = await cli.run(
+      batch({
+        continueOnError: true,
+        ops: [
+          op({
+            title: "A semantic memory",
+            claim: "A fact.",
+            memoryType: "semantic",
+            taskStatus: "todo"
+          })
+        ]
+      })
+    )
+    expect(result.results[0]?.code).toBe("ERR_INVALID_MEMORY")
+    expect(result.results[0]?.error).toContain("a semantic memory takes no task status")
+  })
+
+  it("stamps a DUE date on a non-task op, as the format allows any memory to", async () => {
+    /**
+     * `memhtml-due` is documented as NOT type-coupled (`docs/format.md`: "a non-task may carry
+     * one"), the template stamps it for every type, and `files.due_at` projects for every row —
+     * so an op stating a deadline on a semantic memory means it. Before this the field was
+     * silently dropped, and the caller got `ok: true` for a memory with no deadline.
+     */
+    const cli = await withCounter()
+    const result = await cli.run(
+      batch({
+        ops: [
+          op({
+            title: "A review due with the audit",
+            claim: "The audit closes on time.",
+            memoryType: "semantic",
+            dueAt: "2026-09-30"
+          })
+        ]
+      })
+    )
+    expect(result.results[0]?.ok).toBe(true)
+    const due = await cli.run(
+      Effect.gen(function* () {
+        const store = yield* Store
+        return yield* store
+          .readMemory(result.results[0]?.path ?? "")
+          .pipe(Effect.map((read) => read.doc.metas.dueAt))
+      })
+    )
+    expect(due).toBe("2026-09-30")
   })
 })
 

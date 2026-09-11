@@ -9,7 +9,7 @@ import {
   StorageFailure,
   WriteConflict
 } from "@memhtml/contracts/errors"
-import { EmbedModelMismatch } from "@memhtml/index"
+import { EmbedModelMismatch, IndexStale } from "@memhtml/index"
 import { GitFailure } from "@memhtml/store"
 import { Schema } from "effect"
 import { describe, expect, it } from "vitest"
@@ -162,11 +162,31 @@ describe("the wire failure a tool call produces", () => {
 
   it("omits the Try clause entirely when there is nothing to suggest", () => {
     // Rather than a dangling "Try:" — an empty recovery list is information, and a trailing empty
-    // clause reads as a truncated response.
-    const failure = toToolFailure(new LlmContractViolation({ reason: "undecodable payload" }))
+    // clause reads as a truncated response. `IndexStale`: an agent cannot rebuild the index from a
+    // tool call, so it genuinely has no recovery to name.
+    const failure = toToolFailure(new IndexStale("the index does not describe the current commit"))
     expect(failure.suggestions).toEqual([])
     expect(failure.message).not.toContain("Try:")
-    expect(failure.message.startsWith("ERR_UNKNOWN: ")).toBe(true)
+    expect(failure.message.startsWith("ERR_INDEX_STALE: ")).toBe(true)
+  })
+
+  it("maps LlmContractViolation to ERR_MODEL_UNAVAILABLE with a recovery an agent can act on", () => {
+    /**
+     * An off-schema model turn is a MODEL failure, not an unknown one: `ERR_UNKNOWN` is the code
+     * reserved for tags this table has not met, and a known class landing there mislocates the
+     * fault for every caller branching on it. The recovery names the agent-side move — retry,
+     * then `memory_status` — because the phase-level isolation has already degraded the run, so
+     * there is nothing for the agent to repair in the corpus itself.
+     */
+    const failure = toToolFailure(
+      new LlmContractViolation({ reason: "the tool payload did not decode" })
+    )
+    expect(failure.code).toBe("ERR_MODEL_UNAVAILABLE")
+    expect(failure.message).toContain("the tool payload did not decode")
+    expect(failure.suggestions).toEqual([
+      "retry — a turn that settles off-schema is usually transient",
+      "call memory_status to see when the model-calling phases last succeeded"
+    ])
   })
 
   it("degrades an unrecognized failure to a coded message, never to the internal-error string", () => {
@@ -416,7 +436,7 @@ describe("the suggestions, as an MCP agent can act on them", () => {
 
   it("returns an empty array, never a null, for a failure with no recovery", () => {
     // So a consumer never branches on presence — the same contract `suggestionsFor` holds at the CLI.
-    expect(mcpSuggestionsFor(new LlmContractViolation({ reason: "x" }))).toEqual([])
+    expect(mcpSuggestionsFor(new IndexStale("x"))).toEqual([])
     expect(mcpSuggestionsFor("not tagged at all")).toEqual([])
   })
 })

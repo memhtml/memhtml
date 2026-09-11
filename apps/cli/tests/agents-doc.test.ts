@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { describe, expect, it } from "vitest"
 
@@ -10,7 +11,7 @@ import { ERROR_CODES, EXIT_OK, EXIT_RUNTIME } from "../src/envelope.js"
 import { run } from "../src/run.js"
 
 /** The repo root, three levels up from this file: `apps/cli/tests` → `memhtml`. */
-const REPO_ROOT = new URL("../../..", import.meta.url).pathname
+const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url))
 const DOC_PATH = join(REPO_ROOT, "AGENTS.md")
 
 describe("the generated agent doc", () => {

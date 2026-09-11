@@ -57,6 +57,15 @@ export const codeFor = (error: unknown): ErrorCode => {
       return "ERR_DUPLICATE_CONTENT"
     case "ModelUnavailable":
       return "ERR_MODEL_UNAVAILABLE"
+    /**
+     * The model answered outside its structured-output contract — an unsettled turn, a payload
+     * that is not the schema sent. The failure is on the MODEL side, and the documented recovery
+     * for a model that cannot serve a call is `ERR_MODEL_UNAVAILABLE`: leaving it to the default
+     * arm would file a known, named class under `ERR_UNKNOWN`, the code reserved for classes this
+     * table has not met.
+     */
+    case "LlmContractViolation":
+      return "ERR_MODEL_UNAVAILABLE"
     case "EmbedModelMismatch":
       return "ERR_EMBED_MODEL_MISMATCH"
     // The index describes a commit it is not on, or a rebuild that did not finish. The published
@@ -181,6 +190,12 @@ export const SUGGESTIONS: Readonly<Record<string, SuggestionsFor>> = {
     "memhtml index embed"
   ],
   ModelUnavailable: () => ["retry: search still works on the lexical floor", "memhtml status"],
+  // The same recovery shape as ModelUnavailable: an off-schema turn is usually transient, and the
+  // phase-level isolation already decided to degrade rather than fail the run.
+  LlmContractViolation: () => [
+    "retry: a turn that settles off-schema is usually transient",
+    "memhtml status"
+  ],
   InvalidMemory: () => ["memhtml manifest"],
   // No `--json`: there is no such flag — the JSON envelope is the binary's only output — so naming
   // it here would make the suggestion itself a usage error.

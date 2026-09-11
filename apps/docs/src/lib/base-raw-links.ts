@@ -1,5 +1,6 @@
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import type { AstroIntegration } from "astro"
 
 /**
@@ -54,7 +55,7 @@ export const baseRawLinks = (base: string): AstroIntegration => ({
       // A root base already makes every link correct, so there is nothing to rewrite.
       if (segment === "/") return
       let rewritten = 0
-      for (const file of await markdownFiles(dir.pathname)) {
+      for (const file of await markdownFiles(fileURLToPath(dir))) {
         const body = await readFile(file, "utf8")
         const next = rewrite(body, segment)
         if (next === body) continue

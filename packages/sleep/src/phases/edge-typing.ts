@@ -179,7 +179,9 @@ interface TypingCandidate {
  * `@memhtml/domain` — the house rule every other pair consumer already follows, so two runs over an
  * unchanged corpus select and batch the same pairs.
  */
-export const unionPairs = (arms: ReadonlyArray<ReadonlyArray<PairRow>>): ReadonlyArray<PairRow> => {
+export const rankUnionPairs = (
+  arms: ReadonlyArray<ReadonlyArray<PairRow>>
+): ReadonlyArray<PairRow> => {
   const seen = new Set<string>()
   const out: Array<PairRow> = []
   for (const arm of arms) {
@@ -200,7 +202,7 @@ export const unionPairs = (arms: ReadonlyArray<ReadonlyArray<PairRow>>): Readonl
 /**
  * The night's candidate pairs: the union of both arms, ranked `sim` DESC, then capped.
  *
- * The rank is {@link unionPairs}' and the cap is applied AFTER it, so the cap selects the strongest
+ * The rank is {@link rankUnionPairs}' and the cap is applied AFTER it, so the cap selects the strongest
  * {@link EDGE_TYPING_CANDIDATE_LIMIT} pairs the corpus offers rather than the alphabetically first
  * ones. That ordering is also the batch order's first input, so a night's strongest pairs are judged
  * even when the cap bites.
@@ -226,7 +228,7 @@ export const edgeTypingCandidates = (
       limit: EDGE_TYPING_CANDIDATE_LIMIT,
       excludeTypes: SLEEP_EXCLUDED_TYPES
     })
-    return unionPairs([mined, shared]).slice(0, EDGE_TYPING_CANDIDATE_LIMIT)
+    return rankUnionPairs([mined, shared]).slice(0, EDGE_TYPING_CANDIDATE_LIMIT)
   })
 
 /**
@@ -326,7 +328,7 @@ export const edgeTyping: PhaseBody = (env) =>
      * one call whenever they fit, and the call count is `ceil(pairs / EDGE_PAIRS_PER_CALL)`.
      *
      * The sort is this phase's and the kernel keeps the order it produces: group key first, then the
-     * `src`/`dst` order `unionPairs` already fixed, so a night's batch boundaries and `m1`..`mN` keys
+     * `src`/`dst` order `rankUnionPairs` already fixed, so a night's batch boundaries and `m1`..`mN` keys
      * are a function of the corpus alone.
      */
     const sorted = [...withText].sort((left, right) => {
@@ -411,7 +413,7 @@ export const edgeTyping: PhaseBody = (env) =>
        * each memory caused the other. `resolveKeys` does not help: it is called one key at a time
        * here, because a verdict names one pair, so its own repeat-collapsing never sees the pair.
        *
-       * FIRST wins rather than last, and the choice is the same one {@link unionPairs} makes: the
+       * FIRST wins rather than last, and the choice is the same one {@link rankUnionPairs} makes: the
        * batch's order is deterministic, so which verdict is first is reproducible, and a later verdict
        * cannot revise a write already committed to the tree. Repeats are counted in `duplicates`
        * rather than silently swallowed, so a model doing this is visible in a night's report.
@@ -643,7 +645,7 @@ export const edgeTyping: PhaseBody = (env) =>
  * (The review TASK's key is sorted, and for the opposite reason: it asks a human one unordered
  * question. See {@link contradictionFinding}.)
  *
- * A SPACE separates the three parts, which is unambiguous here for the reason {@link unionPairs}' key
+ * A SPACE separates the three parts, which is unambiguous here for the reason {@link rankUnionPairs}' key
  * relies on: a corpus path is a slug plus `/` and `.html`, and a rel comes from a closed vocabulary, so
  * no part can contain one.
  */

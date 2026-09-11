@@ -240,6 +240,14 @@ export interface DoctorReport {
    */
   readonly vectorCoverageRemedy: string | null
   readonly dirty: ReadonlyArray<string>
+  /**
+   * Checks whose read failed, named by the report field the consumer would otherwise trust. A
+   * non-empty list also forces `healthy: false`: the flag claims every check ran clean, and a
+   * check that could not run is unknown, not clean. The finding fields for a degraded check carry
+   * their typed empty values, so a parser that ignores `degraded` sees the same shapes it always
+   * did — it just also sees `healthy: false`.
+   */
+  readonly degraded: ReadonlyArray<string>
   /** Present under `--fix`: what the repair actually did. */
   readonly repaired?: RepairReport | undefined
 }
@@ -262,8 +270,39 @@ export interface RepairReport {
   readonly commitSha: string | null
 }
 
+/**
+ * One check's read outcome. A read that failed is NOT an empty finding: reporting it as one would
+ * make a doctor whose SQL failed (a `SQLITE_BUSY` past `busy_timeout`, a corrupted page) answer
+ * `healthy: true` computed from checks it never ran — the wrong answer that looks right, on the
+ * one command an operator runs precisely when something is wrong. A degraded check carries its
+ * typed empty value (so every list stays present) AND its name in the report's `degraded` list,
+ * and any degradation makes `healthy: false`.
+ */
+export interface CheckRead<T> {
+  readonly value: T
+  readonly degraded: boolean
+}
+
+/**
+ * Read a check, catching a storage failure as degradation rather than as an empty result.
+ *
+ * Data-last so it pipes: `query.pipe(readCheck([]))`. The typed empty value is the SAME literal
+ * each helper used to fall back to, so a degraded read changes no consumer's parsing: every list
+ * stays an array, every count stays a number. What changes is that the report now says the check
+ * did not run.
+ */
+const readCheck =
+  <T>(empty: T) =>
+  (effect: Effect.Effect<T, unknown>): Effect.Effect<CheckRead<T>, never> =>
+    effect.pipe(
+      Effect.map((rows: T) => ({ value: rows, degraded: false })),
+      Effect.orElseSucceed(() => ({ value: empty, degraded: true }))
+    )
+
 /** Every `state.access` path the index has no `files` row for. */
-const orphanAccess = (db: DatabaseShape): Effect.Effect<ReadonlyArray<string>, never, never> =>
+const orphanAccess = (
+  db: DatabaseShape
+): Effect.Effect<CheckRead<ReadonlyArray<string>>, never, never> =>
   db.hasState
     ? db
         .all<{ path: string }>(
@@ -273,12 +312,12 @@ const orphanAccess = (db: DatabaseShape): Effect.Effect<ReadonlyArray<string>, n
         )
         .pipe(
           Effect.map((rows) => rows.map((row) => row.path)),
-          Effect.orElseSucceed(() => [])
+          readCheck<ReadonlyArray<string>>([])
         )
-    : Effect.succeed([])
+    : Effect.succeed({ value: [] as ReadonlyArray<string>, degraded: false })
 
 /** How many ACTIVE memories sit in the inbox. An archived one is no longer awaiting placement. */
-const inboxDepth = (db: DatabaseShape): Effect.Effect<number, never, never> =>
+const inboxDepth = (db: DatabaseShape): Effect.Effect<CheckRead<number>, never, never> =>
   db
     .get<{ n: number }>(
       "SELECT count(*) AS n FROM files WHERE archived = 0 AND path LIKE ? || '/%'",
@@ -286,7 +325,7 @@ const inboxDepth = (db: DatabaseShape): Effect.Effect<number, never, never> =>
     )
     .pipe(
       Effect.map((row) => row?.n ?? 0),
-      Effect.orElseSucceed(() => 0)
+      readCheck<number>(0)
     )
 
 /**
@@ -296,7 +335,7 @@ const inboxDepth = (db: DatabaseShape): Effect.Effect<number, never, never> =>
  * a directory is not a type: a hand-authored memory filed there would inflate the task count and make
  * the finding say something it does not mean.
  */
-const inboxTaskDepth = (db: DatabaseShape): Effect.Effect<number, never, never> =>
+const inboxTaskDepth = (db: DatabaseShape): Effect.Effect<CheckRead<number>, never, never> =>
   db
     .get<{ n: number }>(
       `SELECT count(*) AS n FROM files
@@ -305,7 +344,7 @@ const inboxTaskDepth = (db: DatabaseShape): Effect.Effect<number, never, never> 
     )
     .pipe(
       Effect.map((row) => row?.n ?? 0),
-      Effect.orElseSucceed(() => 0)
+      readCheck<number>(0)
     )
 
 /**
@@ -325,7 +364,7 @@ const inboxTaskDepth = (db: DatabaseShape): Effect.Effect<number, never, never> 
 const overdueTasks = (
   db: DatabaseShape,
   today: string
-): Effect.Effect<ReadonlyArray<OverdueTaskFinding>, never, never> =>
+): Effect.Effect<CheckRead<ReadonlyArray<OverdueTaskFinding>>, never, never> =>
   db
     .all<{ path: string; task_status: string | null; due_at: string }>(
       `SELECT path, task_status, due_at FROM files
@@ -338,7 +377,7 @@ const overdueTasks = (
       Effect.map((rows) =>
         rows.map((row) => ({ path: row.path, taskStatus: row.task_status, dueAt: row.due_at }))
       ),
-      Effect.orElseSucceed(() => [])
+      readCheck<ReadonlyArray<OverdueTaskFinding>>([])
     )
 
 /**
@@ -368,7 +407,7 @@ const overdueTasks = (
  */
 const staleBlockers = (
   db: DatabaseShape
-): Effect.Effect<ReadonlyArray<StaleBlockerFinding>, never, never> =>
+): Effect.Effect<CheckRead<ReadonlyArray<StaleBlockerFinding>>, never, never> =>
   db
     .all<{ path: string; blocker_path: string; blocker_state: string }>(
       `SELECT t.path AS path, e.src_path AS blocker_path,
@@ -389,7 +428,7 @@ const staleBlockers = (
             row.blocker_state === "missing" ? ("missing" as const) : ("archived" as const)
         }))
       ),
-      Effect.orElseSucceed(() => [])
+      readCheck<ReadonlyArray<StaleBlockerFinding>>([])
     )
 
 /**
@@ -410,7 +449,7 @@ const staleBlockers = (
 const untypedEntities = (
   db: DatabaseShape
 ): Effect.Effect<
-  { readonly sample: ReadonlyArray<UntypedEntityFinding>; readonly total: number },
+  CheckRead<{ readonly sample: ReadonlyArray<UntypedEntityFinding>; readonly total: number }>,
   never,
   never
 > =>
@@ -429,7 +468,10 @@ const untypedEntities = (
           .map((row) => ({ entityName: row.entity_name, files: row.files })),
         total: rows.length
       })),
-      Effect.orElseSucceed(() => ({ sample: [], total: 0 }))
+      readCheck<{ readonly sample: ReadonlyArray<UntypedEntityFinding>; readonly total: number }>({
+        sample: [],
+        total: 0
+      })
     )
 
 /**
@@ -450,11 +492,19 @@ const stuckSleepRuns = (
   db: DatabaseShape,
   git: GitShape,
   nowMillis: number
-): Effect.Effect<ReadonlyArray<StuckSleepRunFinding>, never, never> =>
+): Effect.Effect<CheckRead<ReadonlyArray<StuckSleepRunFinding>>, never, never> =>
   Effect.gen(function* () {
-    const rows = yield* runningRuns(db).pipe(Effect.orElseSucceed(() => []))
+    // A ledger that cannot be read is a DEGRADED check, not an empty one: reporting `[]` here would
+    // fold a wedged database into a clean ledger and let `healthy` believe the check ran.
+    const rowsRead = yield* runningRuns(db).pipe(
+      Effect.map((rows) => ({ rows, failed: false })),
+      Effect.orElseSucceed(() => ({
+        rows: [] as ReadonlyArray<{ run_id: string; branch: string; started_at: string }>,
+        failed: true
+      }))
+    )
     const findings: Array<StuckSleepRunFinding> = []
-    for (const row of rows) {
+    for (const row of rowsRead.rows) {
       const branchExists = yield* git.branchExists(row.branch).pipe(
         Effect.map((exists): boolean | null => exists),
         Effect.orElseSucceed(() => null)
@@ -472,7 +522,7 @@ const stuckSleepRuns = (
         branchExists
       })
     }
-    return findings
+    return { value: findings, degraded: rowsRead.failed }
   })
 
 /**
@@ -643,21 +693,48 @@ export const doctor = (options: { readonly fix: boolean }) =>
     const embedder = yield* Embedder
     const policy = yield* RetrievalPolicy
 
+    /**
+     * Every check that could not run, by name. Collected from the same reads the findings come
+     * from, so `degraded` and the finding lists can never disagree about what ran. The names are
+     * the DoctorReport field a consumer already knows (`orphanAccessRows`, `inboxDepth`, …), so an
+     * operator reading `degraded: ["overdueTasks"]` knows exactly which number not to trust.
+     */
+    const degraded: Array<string> = []
+
     const headSha = yield* git.revParseHead().pipe(Effect.orElseSucceed(() => null))
     const dirty = yield* store.dirtyPaths().pipe(Effect.orElseSucceed(() => []))
 
+    /**
+     * The index-state read is degradation, not absence: `state === undefined` from a failed read
+     * would otherwise read as "no index_state row" and report `indexFresh: false` with the
+     * `degraded` list silent about why.
+     */
     const state = yield* db
       .get<{ head_sha: string | null; embed_model: string }>(
         "SELECT head_sha, embed_model FROM index_state WHERE id = 1"
       )
-      .pipe(Effect.orElseSucceed(() => undefined))
+      .pipe(
+        Effect.map((row) => ({ row, failed: false })),
+        Effect.orElseSucceed(() => ({ row: undefined, failed: true }))
+      )
+    if (state.failed) degraded.push("indexState")
 
-    const known = new Set(
-      (yield* allPaths(db).pipe(Effect.orElseSucceed(() => []))).map((row) => row.path)
+    const knownRead = yield* allPaths(db).pipe(
+      Effect.map((rows) => ({ rows, failed: false })),
+      Effect.orElseSucceed(() => ({ rows: [] as ReadonlyArray<{ path: string }>, failed: true }))
     )
+    if (knownRead.failed) degraded.push("allPaths")
+    const known = new Set(knownRead.rows.map((row) => row.path))
     const year = yield* currentYear
-    const edges = yield* danglingEdges(db).pipe(Effect.orElseSucceed(() => []))
-    const dangling: ReadonlyArray<DanglingFinding> = edges.map((edge) => {
+    const edges = yield* danglingEdges(db).pipe(
+      Effect.map((rows) => ({ rows, failed: false })),
+      Effect.orElseSucceed(() => ({
+        rows: [] as ReadonlyArray<{ src_path: string; rel: string; dst_path: string }>,
+        failed: true
+      }))
+    )
+    if (edges.failed) degraded.push("dangling")
+    const dangling: ReadonlyArray<DanglingFinding> = edges.rows.map((edge) => {
       const dstPath = normalizePath(edge.dst_path)
       return {
         srcPath: edge.src_path,
@@ -667,26 +744,44 @@ export const doctor = (options: { readonly fix: boolean }) =>
       }
     })
 
-    const orphanAccessRows = yield* orphanAccess(db)
-    const depth = yield* inboxDepth(db)
-    const taskDepth = yield* inboxTaskDepth(db)
-    const overdue = yield* overdueTasks(db, yield* todayDate)
-    const stale = yield* staleBlockers(db)
-    const untyped = yield* untypedEntities(db)
-    const stuck = yield* stuckSleepRuns(db, git, yield* nowMillis)
+    const orphanRead = yield* orphanAccess(db)
+    if (orphanRead.degraded) degraded.push("orphanAccessRows")
+    const orphanAccessRows = orphanRead.value
+    const depthRead = yield* inboxDepth(db)
+    if (depthRead.degraded) degraded.push("inboxDepth")
+    const depth = depthRead.value
+    const taskDepthRead = yield* inboxTaskDepth(db)
+    if (taskDepthRead.degraded) degraded.push("inboxTaskDepth")
+    const taskDepth = taskDepthRead.value
+    const overdueRead = yield* overdueTasks(db, yield* todayDate)
+    if (overdueRead.degraded) degraded.push("overdueTasks")
+    const overdue = overdueRead.value
+    const staleRead = yield* staleBlockers(db)
+    if (staleRead.degraded) degraded.push("staleBlockers")
+    const stale = staleRead.value
+    const untypedRead = yield* untypedEntities(db)
+    if (untypedRead.degraded) degraded.push("untypedEntities")
+    const untyped = untypedRead.value
+    const stuckRead = yield* stuckSleepRuns(db, git, yield* nowMillis)
+    if (stuckRead.degraded) degraded.push("stuckSleepRuns")
+    const stuck = stuckRead.value
 
-    const active = yield* db
+    const activeRead = yield* db
       .all<{ path: string }>("SELECT path FROM files WHERE archived = 0 ORDER BY path ASC")
-      .pipe(Effect.orElseSucceed(() => []))
+      .pipe(
+        Effect.map((rows) => ({ rows, failed: false })),
+        Effect.orElseSucceed(() => ({ rows: [] as Array<{ path: string }>, failed: true }))
+      )
+    if (activeRead.failed) degraded.push("warnings")
     const { warnings, unparseable } = yield* collectWarnings(
       git.root,
-      active.map((row) => row.path)
+      activeRead.rows.map((row) => row.path)
     )
 
     const repaired = options.fix ? yield* repair(git.root, dangling, orphanAccessRows) : undefined
 
-    const indexFresh = state?.head_sha !== null && state?.head_sha === headSha
-    const embedModelMatches = state?.embed_model === EMBED_WATERMARK
+    const indexFresh = state.row?.head_sha !== null && state.row?.head_sha === headSha
+    const embedModelMatches = state.row?.embed_model === EMBED_WATERMARK
 
     /**
      * An unreadable coverage reads as full rather than as empty. Every other check here degrades to
@@ -706,8 +801,14 @@ export const doctor = (options: { readonly fix: boolean }) =>
        * `healthy` is computed from the findings and not from the repair. A `--fix` run that repaired
        * everything still reports the corpus as it was found. A command that flipped itself green by
        * fixing what it found would make "doctor is clean" unfalsifiable.
+       *
+       * A degraded check makes `healthy: false` whatever the findings say, because the flag's
+       * contract is "every check is clean", and a check that did not run is not clean — it is
+       * unknown. Computing `healthy` from unread checks is how a doctor answers green on a
+       * database it could not open.
        */
       healthy:
+        degraded.length === 0 &&
         dangling.length === 0 &&
         orphanAccessRows.length === 0 &&
         depth <= INBOX_WARN_DEPTH &&
@@ -753,10 +854,10 @@ export const doctor = (options: { readonly fix: boolean }) =>
       warnings,
       unparseable,
       indexFresh,
-      indexHeadSha: state?.head_sha ?? null,
+      indexHeadSha: state.row?.head_sha ?? null,
       headSha,
       embedModelMatches,
-      storedEmbedModel: state?.embed_model ?? null,
+      storedEmbedModel: state.row?.embed_model ?? null,
       configuredEmbedModel: EMBED_WATERMARK,
       vectorCoverage: coverage.coverage,
       vectorCoverageFloor: policy.vectorCoverageFloor,
@@ -765,6 +866,8 @@ export const doctor = (options: { readonly fix: boolean }) =>
       embeddings: coverage.embeddings,
       vectorCoverageRemedy: vectorCoverageLow ? VECTOR_COVERAGE_REMEDY : null,
       dirty,
+      /** Checks whose read failed, by report field name. Empty when every check ran. */
+      degraded,
       ...(repaired === undefined ? {} : { repaired })
     } satisfies DoctorReport
   })

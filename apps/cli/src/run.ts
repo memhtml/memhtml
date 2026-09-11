@@ -650,10 +650,23 @@ const dispatch = (
         // size is unbounded, and a review that always carried it would make the default response
         // unusable in a context window.
         const git = yield* Git
-        const diff = yield* git
-          .run(["diff", `${report.baseSha}..${report.headSha}`])
-          .pipe(Effect.orElseSucceed(() => ""))
-        return ["sleep.review", { ...report, diff }] as const
+        /**
+         * A diff that could not be fetched is `null`, never `""`: the empty string is also the
+         * honest answer for "the branch equals its base", and a reviewer reading `diff: ""` on a
+         * night whose phases did nothing would approve either way — while a reviewer reading `""`
+         * on a night whose diff simply failed to run was just shown a clean review of a run they
+         * know committed. `diffUnavailable` names the failure without expanding an unbounded
+         * field, and `dense` drops both the null and the false, so an unaffected reader sees no
+         * new keys.
+         */
+        const diff = yield* git.run(["diff", `${report.baseSha}..${report.headSha}`]).pipe(
+          Effect.map((out) => ({ diff: out as string | null, unavailable: false })),
+          Effect.orElseSucceed(() => ({ diff: null, unavailable: true }))
+        )
+        return [
+          "sleep.review",
+          { ...report, diff: diff.diff, diffUnavailable: diff.unavailable }
+        ] as const
       })
 
     case "sleep merge":
@@ -865,6 +878,23 @@ const execFlags = (parsed: Parsed): Failure | undefined => {
     }
   }
 
+  /**
+   * `--sha` reaches `git worktree add` argv, so it is a commit name the command accepts on its
+   * own terms, not a string git gets to interpret. The refusal is hex-only (4, the shortest
+   * unambiguous abbreviation git resolves, through 40, a full SHA-1): anything else — a branch
+   * name, a `--flag`, a `HEAD~1` range — would otherwise be parsed by git as an option or a
+   * ref, and the mount would succeed or fail on semantics this command never promised. This
+   * mirrors `git.ts`'s `diffTreeNames`, which pins the same shape for the same reason.
+   */
+  const sha = str(parsed, "sha")
+  if (sha !== undefined && !/^[0-9a-fA-F]{4,40}$/.test(sha.trim())) {
+    return fail(
+      "ERR_INVALID_FLAG",
+      `--sha must be 4 to 40 hex characters of a commit hash: exec pins a commit to mount, and anything else git would parse as an option or a ref`,
+      ["git rev-parse HEAD", "memhtml exec --sha <sha>"]
+    )
+  }
+
   return undefined
 }
 
@@ -958,6 +988,30 @@ const asOfFlag = (parsed: Parsed): Failure | undefined => {
       `memhtml ${parsed.command} --as-of 2026-08-24`,
       `memhtml ${parsed.command} --as-of 2026-08-24T13:00:00Z`
     ]
+  )
+}
+
+/**
+ * `sleep run --date` must be a calendar date, because the value is not just compared — it NAMES
+ * the run branch (`sleep/<date>`) and anchors every phase's stamps. A malformed value does not
+ * fail on its own: `instantFor` falls back to epoch 0 (`Date.parse` of garbage is NaN), so
+ * `--date yesterday` would stamp a run's commits 1970-01-01 and order them before every real
+ * memory in the recency arms. The date-only form, never the datetime form: a run is a night,
+ * not an instant, and `runIdFor` interpolates the value raw into a refname.
+ *
+ * {@link isValidDatetime}'s calendar round-trip is reused (a `2026-02-30` that parses but does
+ * not exist is a refusal), pinned to the bare-date shape by the same regex the due meta's two
+ * forms are split on.
+ */
+const sleepDateFlag = (parsed: Parsed): Failure | undefined => {
+  if (parsed.command !== "sleep run") return undefined
+  const value = str(parsed, "date")
+  if (value === undefined) return undefined
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value) && isValidDatetime(value)) return undefined
+  return fail(
+    "ERR_INVALID_FLAG",
+    `--date must be a calendar date as YYYY-MM-DD${value === "" ? "" : `, not "${value}"`}: the date names the run branch and anchors every phase's stamps, so a value that is not a real date would stamp the run at the epoch instead of failing`,
+    ["memhtml sleep run --date 2026-09-03", "memhtml sleep run"]
   )
 }
 
@@ -1172,6 +1226,9 @@ const validateAgainst = (parsed: Parsed, spec: CommandSpec): Failure | undefined
   const asOf = asOfFlag(parsed)
   if (asOf !== undefined) return asOf
 
+  const sleepDate = sleepDateFlag(parsed)
+  if (sleepDate !== undefined) return sleepDate
+
   /**
    * A closed-vocabulary flag is checked here rather than at the service, so a typo answers with the
    * whole vocabulary and never touches the database. Every value of a repeatable flag is checked, not
@@ -1327,6 +1384,17 @@ export const run = async (
     exitCode
   })
 
+  /**
+   * A defect as the one envelope shape every top-level wrapper answers with. Written once because
+   * four wrappers (the dispatch pipeline, `serve mcp`, `eval discriminate`, `exec`) each ended in
+   * this same lambda, and a fifth copy is how the shape drifts — one wrapper gaining a stack
+   * trace on stdout is a broken parser for every caller. The design's rule that failure shaping
+   * happens once in `run` (docs/design.md) covers the typed arm through `failureFor`; this is the
+   * defect arm's half of the same rule.
+   */
+  const causeFailure = (cause: unknown): RunResult =>
+    emit(fail("ERR_UNKNOWN", `unexpected failure: ${String(cause)}`, []), EXIT_RUNTIME)
+
   // Before the bare-invocation check: `memhtml --help` and `memhtml -h` parse to an empty command
   // with the flag set, and they are asks for help, not liveness probes.
   if (parsed.command === "help" || bool(parsed, "help", false)) {
@@ -1397,11 +1465,7 @@ export const run = async (
             ? emit(succeed("eval.discrimination", outcome), EXIT_OK)
             : emit(failureFor(new DiscriminationFailed(outcome)), EXIT_RUNTIME)
         ),
-        Effect.catchCause((cause) =>
-          Effect.succeed(
-            emit(fail("ERR_UNKNOWN", `unexpected failure: ${String(cause)}`, []), EXIT_RUNTIME)
-          )
-        ),
+        Effect.catchCause((cause) => Effect.succeed(causeFailure(cause))),
         // The gate drives the real ranking stack, whose `retrieval.*` and `db.*` spans are worth
         // exporting for exactly the runs an operator is tuning. Same opt-in as the main pipeline.
         Effect.provide(layerTelemetry({ serviceName: "memhtml-cli" })),
@@ -1442,11 +1506,7 @@ export const run = async (
       }).pipe(
         Effect.map((data) => emit(succeed("serve.exit", data), EXIT_OK)),
         Effect.catch((error) => Effect.succeed(emit(failureFor(error), EXIT_RUNTIME))),
-        Effect.catchCause((cause) =>
-          Effect.succeed(
-            emit(fail("ERR_UNKNOWN", `unexpected failure: ${String(cause)}`, []), EXIT_RUNTIME)
-          )
-        ),
+        Effect.catchCause((cause) => Effect.succeed(causeFailure(cause))),
         Effect.provideService(Logger.LogToStderr, true)
       )
     )
@@ -1508,11 +1568,7 @@ export const run = async (
       }).pipe(
         Effect.map((report) => emit(succeed("exec.report", report), EXIT_OK)),
         Effect.catch((error) => Effect.succeed(emit(failureFor(error), EXIT_RUNTIME))),
-        Effect.catchCause((cause) =>
-          Effect.succeed(
-            emit(fail("ERR_UNKNOWN", `unexpected failure: ${String(cause)}`, []), EXIT_RUNTIME)
-          )
-        ),
+        Effect.catchCause((cause) => Effect.succeed(causeFailure(cause))),
         // The worktree dance under `exec` runs through `makeGit`, whose dynamic `git.<command>`
         // spans answer "what took eight seconds" for a large corpus snapshot. Same opt-in gate.
         Effect.provide(layerTelemetry({ serviceName: "memhtml-cli" })),
@@ -1553,11 +1609,7 @@ export const run = async (
     // A defect is still an answer. An unexpected throw anywhere below would otherwise reach the
     // process as an unhandled rejection and print a stack trace onto stdout. Stdout is a parse
     // target, so it carries the envelope and nothing else.
-    Effect.catchCause((cause) =>
-      Effect.succeed(
-        emit(fail("ERR_UNKNOWN", `unexpected failure: ${String(cause)}`, []), EXIT_RUNTIME)
-      )
-    ),
+    Effect.catchCause((cause) => Effect.succeed(causeFailure(cause))),
     Effect.provide(layer ?? layerApp(str(parsed, "repo"))),
     /**
      * The tracer, provided AFTER the app layer so the layer's own construction work (migrations,

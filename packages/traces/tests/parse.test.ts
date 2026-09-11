@@ -1,6 +1,7 @@
 import { chmod, mkdtemp, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
@@ -9,7 +10,7 @@ import { PROJECTS_DIR, SUBAGENTS_DIR } from "../src/discover.js"
 import { parseSessionFile, slugFromPath } from "../src/parse.js"
 import { advanceWatermark, watermarkPlan } from "../src/watermark.js"
 
-const FIXTURE_ROOT = new URL("./fixtures", import.meta.url).pathname
+const FIXTURE_ROOT = fileURLToPath(new URL("./fixtures", import.meta.url))
 const ALPHA = "11111111-1111-4111-8111-111111111111"
 const ALPHA_FILE = join(FIXTURE_ROOT, PROJECTS_DIR, "-tmp-fixture-alpha", `${ALPHA}.jsonl`)
 const SIDECAR_FILE = join(
@@ -27,9 +28,16 @@ const run = <A>(effect: Effect.Effect<A, never>) => Effect.runPromise(effect)
  * `chmod(path, 0o000)` is how the permission probe denies a read, and uid 0 IGNORES the mode bits —
  * root opens a mode-000 file. Under root the denial never happens, the read SUCCEEDS, and the
  * assertion would be describing a successful read. Skipped there with the reason on the record.
+ *
+ * win32 is the same class: the mode bits are stored but not enforced for the file's own owner,
+ * so the denial cannot be staged there either.
  */
 const RUNNING_AS_ROOT = process.getuid?.() === 0
-const CHMOD_INEFFECTIVE = "chmod 000 does not deny a read to uid 0, so the denial cannot be staged"
+const CHMOD_INEFFECTIVE =
+  process.platform === "win32"
+    ? "win32 stores but does not enforce the POSIX mode bits for the owner, so the denial cannot be staged"
+    : "chmod 000 does not deny a read to uid 0, so the denial cannot be staged"
+const CHMOD_CANNOT_DENY = RUNNING_AS_ROOT || process.platform === "win32"
 
 const tempFile = async (name: string, content: string): Promise<string> => {
   const dir = await mkdtemp(join(tmpdir(), "memhtml-traces-parse-"))
@@ -164,7 +172,7 @@ describe("parseSessionFile failure degradation", () => {
   })
 
   it("flags a permission rejection as readFailed rather than an empty file", async (ctx) => {
-    ctx.skip(RUNNING_AS_ROOT, CHMOD_INEFFECTIVE)
+    ctx.skip(CHMOD_CANNOT_DENY, CHMOD_INEFFECTIVE)
     const path = await tempFile(
       "denied.jsonl",
       `${JSON.stringify({ type: "mode", mode: "default", sessionId: "s1" })}\n`

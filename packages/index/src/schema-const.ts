@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url"
+
 /**
  * The identifiers the SQL and the TypeScript both name. Stated here once so a table rename is a
  * compile error at every reader rather than a query that silently matches nothing. A truncate
@@ -5,15 +7,22 @@
  * not a rebuild.
  */
 
-/** Where the rebuildable index's migrations live, applied in filename order. */
-export const MIGRATIONS_DIR = new URL("../migrations", import.meta.url).pathname
+/**
+ * Where the rebuildable index's migrations live, applied in filename order.
+ *
+ * `fileURLToPath`, never `URL.pathname`: a pathname keeps its leading slash on Windows
+ * (`/E:/…`), which `readdir` then misreads as a doubled drive and the migration scan dies with
+ * ENOENT before the first statement runs. The bug is invisible on Linux/macOS, where the
+ * pathname happens to be a legal path.
+ */
+export const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations", import.meta.url))
 
 /**
  * The state plane's own migration ledger. A separate directory because these statements are applied
  * to the ATTACHed `state` database, which has its own `schema_migrations` table. The two planes have
  * independent lifetimes, and `index.db` is deleted and rebuilt without touching `state.db`.
  */
-export const STATE_MIGRATIONS_DIR = new URL("../state-migrations", import.meta.url).pathname
+export const STATE_MIGRATIONS_DIR = fileURLToPath(new URL("../state-migrations", import.meta.url))
 
 /** The schema name `state.db` is ATTACHed under. Every cross-plane query qualifies with it. */
 export const STATE_SCHEMA = "state"

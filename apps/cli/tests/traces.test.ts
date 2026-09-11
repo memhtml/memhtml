@@ -52,9 +52,13 @@ const snapshotLine = () => `${JSON.stringify({ type: "file-history-snapshot", me
  * `chmod(path, 0o000)` is how the unreadable-transcript probe denies a read, and uid 0 IGNORES the
  * mode bits — root opens a mode-000 file. Under root the read SUCCEEDS, so the assertions would be
  * describing an indexed file rather than a failed one. Skipped there with the reason on the record.
+ * win32 is the same class: the mode bits are stored but not enforced for the file's own owner.
  */
-const RUNNING_AS_ROOT = process.getuid?.() === 0
-const CHMOD_INEFFECTIVE = "chmod 000 does not deny a read to uid 0, so the denial cannot be staged"
+const CHMOD_CANNOT_DENY = process.getuid?.() === 0 || process.platform === "win32"
+const CHMOD_INEFFECTIVE =
+  process.platform === "win32"
+    ? "win32 stores but does not enforce the POSIX mode bits for the owner, so the denial cannot be staged"
+    : "chmod 000 does not deny a read to uid 0, so the denial cannot be staged"
 
 describe("memhtml trace index", () => {
   let cli: Cli
@@ -227,7 +231,7 @@ describe("memhtml trace index", () => {
   })
 
   it("reports a transcript it could not read as failed, never as a session written", async (ctx) => {
-    ctx.skip(RUNNING_AS_ROOT, CHMOD_INEFFECTIVE)
+    ctx.skip(CHMOD_CANNOT_DENY, CHMOD_INEFFECTIVE)
     /**
      * The wrong count that reads as a finding. A failed read keeps the action the PLAN named —
      * `tail` or `rescan`, because the watermark logic needs to know what was attempted — so an

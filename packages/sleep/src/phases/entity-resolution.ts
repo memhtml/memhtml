@@ -39,7 +39,7 @@ import { budgetFor, closeVanishedDetections, detectionKey, mintDetectedTask } fr
  *    every name of one type as a numbered member list and returns a PARTITION into subjects. Never one
  *    call per pair: 59 entities on the measured corpus is one call, and the pair space is 1,711.
  * 3. **Post (deterministic, the one-way-door guards).** Which name survives a merge is decided by
- *    {@link unionPairs}'s weight-then-lexicographic rule and never by the model. All THREE pair sources
+ *    {@link canonicalUnionFind}'s weight-then-lexicographic rule and never by the model. All THREE pair sources
  *    — the character pass, the declarations, and the model — feed that ONE union-find, so no two of them
  *    can disagree about a canonical. A merge backed by a DECLARED alias applies at once and is never
  *    counted; a merge the model alone proposes is counted in `state.entity_corroboration` and applies
@@ -227,7 +227,7 @@ export const pairKey = (left: string, right: string): string =>
  * `names` is walked in sorted order and the pairs in the order given, so the partition is a function of
  * the input alone and a corpus that did not change resolves the same way twice.
  */
-export const unionPairs = (
+export const canonicalUnionFind = (
   counts: ReadonlyMap<string, number>,
   pairs: ReadonlyArray<NamePair>
 ): ReadonlyMap<string, string> => {
@@ -309,7 +309,7 @@ export interface EntityClusters {
 export const resolveClusters = (counts: ReadonlyMap<string, number>): EntityClusters => {
   const pairs = characterPairs([...counts.keys()])
   return {
-    aliasToCanonical: unionPairs(counts, pairs.auto),
+    aliasToCanonical: canonicalUnionFind(counts, pairs.auto),
     reviewCandidates: pairs.review.length
   }
 }
@@ -487,7 +487,7 @@ export const entityMemberText = (input: {
 /**
  * One merge as the post-pass will perform it: which name is rewritten away, and onto which.
  *
- * The orientation is the CODE's, from {@link unionPairs}'s weight-then-lexicographic rule. A model that
+ * The orientation is the CODE's, from {@link canonicalUnionFind}'s weight-then-lexicographic rule. A model that
  * named the shorter form as its canonical still gets the rewrite the corpus's own file counts imply.
  */
 export interface ProposedMerge {
@@ -986,7 +986,7 @@ export const entityResolution: PhaseBody = (env) =>
       }
 
       /** One union-find over every accepted pair, so the three sources cannot disagree on a root. */
-      const aliasToCanonical = unionPairs(counts, accepted)
+      const aliasToCanonical = canonicalUnionFind(counts, accepted)
 
       for (const entity of bucket) {
         const afterNormalize = normalizedOf.get(entity.entity_name) ?? entity.entity_name

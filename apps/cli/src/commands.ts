@@ -1063,14 +1063,14 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "timeout-ms",
         type: "int",
         description:
-          "Wall-clock bound on the script. Exceeding it is `exitCode` 124 with `timedOut: true`, not an error envelope. Capped at 600000.",
+          "Wall-clock bound on the script. Exceeding it is `exitCode` 124 with `timedOut: true`, not an error envelope. Values above 600000 are REFUSED, not clamped.",
         default: 30000
       },
       {
         name: "sha",
         type: "string",
         description:
-          "The commit to mount, materialized as a detached worktree. Defaults to HEAD. Never the live working tree, whose gitignored .memhtml/index.db a worktree omits."
+          "The commit to mount, 4-40 hex characters, materialized as a detached worktree. Defaults to HEAD. Never the live working tree, whose gitignored .memhtml/index.db a worktree omits."
       }
     ],
     responseTypes: ["exec.report"]
@@ -1201,8 +1201,10 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       `${GUIDE_OP_EXAMPLE}\n` +
       "`op` is `write` (the only verb in the vocabulary today), `title` and `type` are required, and each " +
       "op carries the same optional fields `memhtml write` takes, in snake_case: `path`, `strict_path`, " +
-      "`workspace`, `tag`, `entity`, `importance`, `confidence`, `status`, `due`, `session_id`, " +
-      "`prompt_id`, `turn_uuid`. " +
+      "`workspace`, `tag`, `entity`, `importance`, `confidence`, `session_id`, `prompt_id`, `turn_uuid` — " +
+      "plus two more the singular write door has no flag for: `status` (a task lifecycle position, " +
+      "refused on a non-task op exactly as the parser refuses it on a non-task file) and `due` " +
+      "(a deadline any memory may carry, stamped as memhtml-due). " +
       "The whole file is validated for shape before ANY op executes, so a malformed line 7 is exit 2 " +
       "naming line 7 with nothing written. A failed apply costs you nothing but the call. " +
       "You get one result per op in INPUT ORDER, each naming its own `index`, so you can match results " +
