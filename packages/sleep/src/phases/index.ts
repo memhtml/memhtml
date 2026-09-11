@@ -71,6 +71,7 @@ export {
   DEDUP_MEMBER_CHARS,
   DEDUP_PAIR_LIMIT,
   dedupMerge,
+  dedupMergeTextFor,
   dedupTextFor,
   groupPairsFor
 } from "./dedup-merge.js"

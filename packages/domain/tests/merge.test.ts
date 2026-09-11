@@ -4,22 +4,24 @@ import { describe, expect, it } from "vitest"
 import {
   connectedComponents,
   excludeSelfSupersede,
+  joinMergeText,
   MAX_MERGE_PAIRS,
   type MergePair,
+  type MergeText,
   mergeCandidates,
+  mergeOutcomes,
   mergeVetoed,
+  mergeVetoReasons,
   NEAR_DUPLICATE_THRESHOLD,
   negationDivergent,
   numericTokenDivergent,
   variantQualifierDivergent
 } from "../src/merge.js"
 
-const PREDICATES = [
-  negationDivergent,
-  numericTokenDivergent,
-  variantQualifierDivergent,
-  mergeVetoed
-] as const
+const PREDICATES = [negationDivergent, numericTokenDivergent, variantQualifierDivergent] as const
+
+/** A memory's veto texts from one string: the claim is the string, the article repeats it. */
+const same = (text: string): MergeText => ({ gist: text, body: text })
 
 /** Prose drawn from the vocabularies the guards key on, so divergence actually occurs. */
 const body = fc
@@ -48,6 +50,11 @@ const body = fc
   )
   .map((words) => words.join(" "))
 
+/** A gist and a body drawn independently, so the two texts the veto reads really can disagree. */
+const mergeText = fc
+  .tuple(body, body)
+  .map(([gist, article]): MergeText => ({ gist, body: article }))
+
 const path = fc.stringMatching(/^[a-z]{1,6}$/).map((stem) => `areas/oncall/${stem}.html`)
 
 describe("divergence predicates", () => {
@@ -57,6 +64,13 @@ describe("divergence predicates", () => {
         for (const predicate of PREDICATES) {
           expect(predicate(a, b)).toBe(predicate(b, a))
         }
+      }),
+      { numRuns: 1000 }
+    )
+    fc.assert(
+      fc.property(mergeText, mergeText, (a, b) => {
+        expect(mergeVetoed(a, b)).toBe(mergeVetoed(b, a))
+        expect(mergeVetoReasons(a, b)).toEqual(mergeVetoReasons(b, a))
       }),
       { numRuns: 1000 }
     )
@@ -71,22 +85,79 @@ describe("divergence predicates", () => {
       }),
       { numRuns: 1000 }
     )
-  })
-
-  it("is exactly the disjunction of the three families", () => {
     fc.assert(
-      fc.property(body, body, (a, b) => {
-        expect(mergeVetoed(a, b)).toBe(
-          negationDivergent(a, b) || numericTokenDivergent(a, b) || variantQualifierDivergent(a, b)
-        )
+      fc.property(mergeText, (text) => {
+        expect(mergeVetoed(text, text)).toBe(false)
+        expect(mergeVetoReasons(text, text)).toEqual([])
       }),
       { numRuns: 1000 }
     )
   })
 
+  it("is exactly the disjunction of the three families, each over the text it reads", () => {
+    /**
+     * Negation and variant read the JOINED text; numeric reads the GIST alone. The property holds the
+     * veto to that scoping exactly, so a predicate quietly widened to the article, or narrowed to the
+     * claim, fails here and not only on a corpus.
+     */
+    fc.assert(
+      fc.property(mergeText, mergeText, (a, b) => {
+        const joinedA = joinMergeText(a)
+        const joinedB = joinMergeText(b)
+        const expected =
+          negationDivergent(joinedA, joinedB) ||
+          numericTokenDivergent(a.gist, b.gist) ||
+          variantQualifierDivergent(joinedA, joinedB)
+        expect(mergeVetoed(a, b)).toBe(expected)
+        expect(mergeVetoReasons(a, b).length > 0).toBe(expected)
+        expect(mergeVetoReasons(a, b)).toEqual([
+          ...(negationDivergent(joinedA, joinedB) ? ["negation"] : []),
+          ...(numericTokenDivergent(a.gist, b.gist) ? ["numeric"] : []),
+          ...(variantQualifierDivergent(joinedA, joinedB) ? ["variant"] : [])
+        ])
+      }),
+      { numRuns: 1000 }
+    )
+  })
+
+  it("reads numbers off the GIST alone: a citation in the body is not a divergence", () => {
+    /**
+     * The rule behind the two all-veto runs. Two tellings of one claim cite different evidence — a
+     * date, a pull-request id, an exit code — and the whole-article set-equality refused every one.
+     */
+    const rule = "drain the vip before reverting"
+    expect(
+      mergeVetoed(
+        { gist: rule, body: "observed on 2026-07-28 during the checkout incident" },
+        { gist: rule, body: "tracked in pull request 178, exit code 1" }
+      )
+    ).toBe(false)
+    // The same numbers moved into the claim ARE a divergence.
+    expect(mergeVetoed(same("retry 3 times"), same("retry 13 times"))).toBe(true)
+    expect(mergeVetoReasons(same("retry 3 times"), same("retry 13 times"))).toEqual(["numeric"])
+  })
+
+  it("still reads negation and variant qualifiers off the whole article", () => {
+    const claim = "run the cutover during business hours"
+    expect(
+      mergeVetoReasons(
+        { gist: claim, body: "draining completes before the old fleet retires" },
+        { gist: claim, body: "draining does not complete before the old fleet retires" }
+      )
+    ).toEqual(["negation"])
+    expect(
+      mergeVetoReasons(
+        { gist: "the laptops need the arm image", body: "verified on the M1 machines" },
+        { gist: "the laptops need the arm image", body: "verified on the M1 Pro machines" }
+      )
+    ).toEqual(["variant"])
+  })
+
   it("catches the polarity flip an embedding scores as near-identical", () => {
     expect(negationDivergent("the deploy step is safe", "the deploy step is not safe")).toBe(true)
-    expect(mergeVetoed("the deploy step is safe", "the deploy step is not safe")).toBe(true)
+    expect(mergeVetoed(same("the deploy step is safe"), same("the deploy step is not safe"))).toBe(
+      true
+    )
   })
 
   it("reads a contraction as its expansion, so isn't surfaces the not", () => {
@@ -116,7 +187,7 @@ describe("divergence predicates", () => {
 
   it("is case- and unicode-normalization-insensitive", () => {
     expect(negationDivergent("NOT SAFE", "not safe")).toBe(false)
-    expect(mergeVetoed("Retry 3 Times", "retry 3 times")).toBe(false)
+    expect(mergeVetoed(same("Retry 3 Times"), same("retry 3 times"))).toBe(false)
   })
 })
 
@@ -140,24 +211,36 @@ describe("mergeCandidates", () => {
 
   it("vetoes a divergent pair no matter how high its cosine", () => {
     fc.assert(
-      fc.property(body, body, fc.double({ min: 0.93, max: 1, noNaN: true }), (a, b, similarity) => {
-        const decisions = mergeCandidates([pair({ similarity, keepText: a, dropText: b })])
-        expect(decisions.length).toBe(mergeVetoed(a, b) ? 0 : 1)
-      }),
+      fc.property(
+        mergeText,
+        mergeText,
+        fc.double({ min: 0.93, max: 1, noNaN: true }),
+        (a, b, similarity) => {
+          const decisions = mergeCandidates([pair({ similarity, keepText: a, dropText: b })])
+          expect(decisions.length).toBe(mergeVetoed(a, b) ? 0 : 1)
+        }
+      ),
       { numRuns: 1000 }
     )
   })
 
   it("skips the guards when either text is absent, so a text-less caller is unchanged", () => {
-    expect(mergeCandidates([pair({ keepText: "safe", dropText: undefined })])).toHaveLength(1)
-    expect(mergeCandidates([pair({ keepText: undefined, dropText: "not safe" })])).toHaveLength(1)
+    expect(mergeCandidates([pair({ keepText: same("safe"), dropText: undefined })])).toHaveLength(1)
+    expect(
+      mergeCandidates([pair({ keepText: undefined, dropText: same("not safe") })])
+    ).toHaveLength(1)
   })
 
   it("refuses a self-merge", () => {
     expect(mergeCandidates([pair({ dropPath: "areas/oncall/a.html" })])).toHaveLength(0)
   })
 
-  it("fixes each path in one role for the batch: no path is twice a drop, twice a keeper, or both", () => {
+  it("never drops a path twice, and never lets one path be both dropped and kept", () => {
+    /**
+     * The guard's two invariants. A keeper MAY appear in several decisions — that is one page absorbing
+     * several duplicates — so `kept` is not asserted unique; every path in `dropped` is, and the two
+     * sets are disjoint.
+     */
     fc.assert(
       fc.property(
         fc.array(
@@ -171,16 +254,81 @@ describe("mergeCandidates", () => {
         (pairs) => {
           const decisions = mergeCandidates(pairs)
           const dropped = decisions.map((decision) => decision.dropPath)
-          const kept = decisions.map((decision) => decision.keepPath)
+          const kept = new Set(decisions.map((decision) => decision.keepPath))
           expect(new Set(dropped).size).toBe(dropped.length)
-          expect(new Set(kept).size).toBe(kept.length)
-          for (const keeper of kept) {
-            expect(dropped).not.toContain(keeper)
+          for (const drop of dropped) {
+            expect(kept.has(drop)).toBe(false)
           }
         }
       ),
       { numRuns: 1000 }
     )
+  })
+
+  it("admits a repeated KEEPER: one page absorbs several duplicates in one batch", () => {
+    /**
+     * The rule the all-veto runs needed. A model group of N members implies N-1 pairs naming one
+     * keeper; under a guard that claimed both roles only the first committed, and the phase reported
+     * the rest as vetoes.
+     */
+    const decisions = mergeCandidates([
+      { keepPath: "k.html", dropPath: "a.html", similarity: 0.99 },
+      { keepPath: "k.html", dropPath: "b.html", similarity: 0.99 },
+      { keepPath: "k.html", dropPath: "c.html", similarity: 0.99 }
+    ])
+    expect(decisions.map((decision) => decision.dropPath)).toEqual(["a.html", "b.html", "c.html"])
+    expect(new Set(decisions.map((decision) => decision.keepPath))).toEqual(new Set(["k.html"]))
+  })
+
+  it("refuses to drop a path twice, whichever keeper asks second", () => {
+    const decisions = mergeCandidates([
+      { keepPath: "a.html", dropPath: "x.html", similarity: 0.99 },
+      { keepPath: "b.html", dropPath: "x.html", similarity: 0.99 }
+    ])
+    expect(decisions).toEqual([{ keepPath: "a.html", dropPath: "x.html", similarity: 0.99 }])
+  })
+
+  it("names each refusal's stage, so a caller can count vetoes apart from guard skips", () => {
+    const outcomes = mergeOutcomes(
+      [
+        { keepPath: "k.html", dropPath: "a.html", similarity: 0.99 },
+        {
+          keepPath: "k.html",
+          dropPath: "n.html",
+          similarity: 0.99,
+          keepText: same("safe"),
+          dropText: same("not safe")
+        },
+        { keepPath: "k.html", dropPath: "a.html", similarity: 0.99 },
+        { keepPath: "a.html", dropPath: "z.html", similarity: 0.99 },
+        { keepPath: "q.html", dropPath: "k.html", similarity: 0.99 },
+        { keepPath: "s.html", dropPath: "s.html", similarity: 0.99 },
+        { keepPath: "t.html", dropPath: "u.html", similarity: 0.5 }
+      ],
+      { maxPairs: 1 }
+    )
+    expect(outcomes.map((outcome) => outcome.stage)).toEqual([
+      "committed",
+      "cap",
+      "cap",
+      "cap",
+      "cap",
+      "cap",
+      "cap"
+    ])
+    const uncapped = mergeOutcomes(outcomes.map((outcome) => outcome.pair))
+    expect(uncapped.map((outcome) => outcome.stage)).toEqual([
+      "committed",
+      "vetoed",
+      "role-guard", // `a` already dropped
+      "role-guard", // `a` dropped, cannot keep
+      "role-guard", // `k` kept, cannot be dropped
+      "self",
+      "threshold"
+    ])
+    expect(mergeCandidates(outcomes.map((outcome) => outcome.pair))).toEqual([
+      { keepPath: "k.html", dropPath: "a.html", similarity: 0.99 }
+    ])
   })
 
   it("breaks a forward transitive chain rather than folding into an archived file", () => {

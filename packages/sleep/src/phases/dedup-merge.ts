@@ -1,13 +1,15 @@
 import {
   connectedComponents,
+  joinMergeText,
   MAX_MERGE_PAIRS,
   type MergeDecision,
+  type MergeOutcome,
   type MergePair,
-  mergeCandidates,
-  NEAR_DUPLICATE_THRESHOLD,
-  negationDivergent,
-  numericTokenDivergent,
-  variantQualifierDivergent
+  type MergeText,
+  type MergeVetoReason,
+  mergeOutcomes,
+  mergeVetoReasons,
+  NEAR_DUPLICATE_THRESHOLD
 } from "@memhtml/domain"
 import type { GitFailure } from "@memhtml/store"
 import { Effect } from "effect"
@@ -55,8 +57,8 @@ import { budgetFor, closeVanishedDetections, detectionKey, mintDetectedTask } fr
  * not ten pair calls.
  *
  * Everything the fold writes is derived afterwards. Orientation is arithmetic over corpus order, and
- * every pair a group implies is routed through `mergeCandidates`, which applies the divergence veto,
- * the self-merge check, the both-roles guard, and the per-night cap. So the set of pairs that CAN be
+ * every pair a group implies is routed through `mergeOutcomes`, which applies the divergence veto,
+ * the self-merge check, the role guard, and the per-run cap. So the set of pairs that CAN be
  * committed does not widen when a model is bound: it is the same predicate over a different candidate
  * set.
  *
@@ -67,29 +69,32 @@ import { budgetFor, closeVanishedDetections, detectionKey, mintDetectedTask } fr
  * Inside a model-proposed group the keeper is the member with the lowest corpus offset, which is the
  * same rule applied to more than two files at once.
  *
- * **The veto and the in-batch role guard both live in `@memhtml/domain`.** `mergeCandidates` claims BOTH
- * roles for every committed pair. A path that was a keeper cannot later be dropped, and a path that
- * was dropped cannot later become a keeper. The predecessor memory system recorded only the drop side, so given
- * `(gf → a)` then `(b → gf)` both decisions committed: `gf` absorbed `a` and was then archived into
- * `b`, superseding `a`'s content into a file the same batch destroyed. Batching makes that guard carry
- * MORE, not less: one model answer names several groups, and two groups overlapping on one path is
- * exactly that chain, arriving from one call instead of from two nights.
+ * **The veto and the in-batch role guard both live in `@memhtml/domain`.** `mergeOutcomes` fixes each
+ * committed pair's drop as DROPPED and its keeper as KEPT. A path that was a keeper cannot later be
+ * dropped, and a path that was dropped cannot later be dropped again or become a keeper. The predecessor
+ * memory system recorded only the drop side, so given `(gf → a)` then `(b → gf)` both decisions
+ * committed: `gf` absorbed `a` and was then archived into `b`, superseding `a`'s content into a file the
+ * same batch destroyed. Batching makes that guard carry MORE, not less: one model answer names several
+ * groups, and two groups overlapping on one path is exactly that chain, arriving from one call instead
+ * of from two runs. A keeper MAY keep again, which is what lets a group of N fold all N-1 of its
+ * duplicates in one run; the guard used to claim both roles, so a group folded one member per run and
+ * the rest were reported as vetoes (`roleGuarded` now counts them apart from `vetoed`).
  *
  * **With no model bound the phase is the deterministic floor, unchanged.** It mines at
- * {@link NEAR_DUPLICATE_THRESHOLD}, orients, and hands the pairs to `mergeCandidates`. That is not a
+ * {@link NEAR_DUPLICATE_THRESHOLD}, orients, and hands the pairs to `mergeOutcomes`. That is not a
  * degraded mode to be repaired later: a night with no credentials still folds every duplicate a cosine
  * can prove, and every count it reports is what this phase reported before it could call a model.
  *
  * ## Precedence between the two candidate sets
  *
- * Model groups are offered to `mergeCandidates` FIRST, then the mined pairs above the deterministic
+ * Model groups are offered to `mergeOutcomes` FIRST, then the mined pairs above the deterministic
  * floor that no group already claimed. Two properties follow, and both are the reason for the order:
  *
  * - The deterministic floor never regresses. Every pair the no-model path would have merged is still
  *   in the list, so binding a model cannot make a night fold less than it did.
  * - Where the two disagree the semantic answer wins the path. A pair above 0.92 whose two files the
- *   model instead grouped with a third folds as the model's group, because the both-roles guard gives
- *   a path to whichever decision claims it first. The model read both files; the cosine read neither.
+ *   model instead grouped with a third folds as the model's group, because the mined arm skips every
+ *   path a group already claimed. The model read both files; the cosine read neither.
  *
  * Within each half the order is fixed: groups follow the batch, component, and group order they were
  * packed and answered in, and mined pairs stay in the kernel's `sim` DESC ordering.
@@ -185,12 +190,12 @@ export const DEDUP_MEMBER_CHARS = 1200
 export const DEDUP_BATCH_CHARS = DEDUP_MEMBER_CHARS * DEDUP_BATCH_MEMBERS
 
 /**
- * The threshold the batched arm hands `mergeCandidates`, which must NOT re-gate on similarity.
+ * The threshold the batched arm hands `mergeOutcomes`, which must NOT re-gate on similarity.
  *
  * Admission on that arm is already decided when the filter runs. A group pair got there because the
  * model grouped it, and a mined pair got there because it cleared {@link NEAR_DUPLICATE_THRESHOLD} in
- * the phase's own filter. What is left for `mergeCandidates` to apply is the veto, the self check, the
- * both-roles guard, and the cap — the four that are about safety rather than about a number.
+ * the phase's own filter. What is left for `mergeOutcomes` to apply is the veto, the self check, the
+ * role guard, and the cap — the four that are about safety rather than about a number.
  *
  * Zero rather than {@link DEDUP_COMPONENT_FLOOR} because that comparison is STRICT (`<= threshold`
  * skips), and a group pair the corpus never mined carries the floor itself as its similarity. A
@@ -201,12 +206,22 @@ export const DEDUP_BATCH_CHARS = DEDUP_MEMBER_CHARS * DEDUP_BATCH_MEMBERS
 export const DEDUP_ADMIT_FLOOR = 0
 
 /**
- * The text a member is offered under, and the text the divergence veto reads: its claim and its body,
- * the same join compress uses. Exported so the write-path acceptance arm (`@memhtml/eval`) vetoes
- * the SAME string the phase does rather than a re-statement of it.
+ * The two texts the divergence veto reads for a member: its claim (`gist`) and its article
+ * (`body_text`). The numeric predicate reads the claim alone; negation and variant read the join. See
+ * `MergeText` in `@memhtml/domain` for why they differ. Exported so the write-path acceptance arm
+ * (`@memhtml/eval`) vetoes the SAME texts the phase does rather than a re-statement of them.
+ */
+export const dedupMergeTextFor = (row: Pick<CorpusRow, "gist" | "body_text">): MergeText => ({
+  gist: row.gist,
+  body: row.body_text
+})
+
+/**
+ * The text a member is OFFERED to the model under: its claim and its body joined, the same join
+ * compress uses. The model reads the whole article; only the veto's numeric predicate does not.
  */
 export const dedupTextFor = (row: Pick<CorpusRow, "gist" | "body_text">): string =>
-  `${row.gist}\n${row.body_text}`
+  joinMergeText(dedupMergeTextFor(row))
 
 const textFor = dedupTextFor
 
@@ -214,15 +229,15 @@ const textFor = dedupTextFor
 export interface GroupPairContext {
   /** Path -> offset in `activeCorpus` order (oldest first). The keeper is the lowest offset. */
   readonly order: ReadonlyMap<string, number>
-  /** Path -> the text the veto reads, `dedupTextFor` of the row. */
-  readonly textOf: ReadonlyMap<string, string>
+  /** Path -> the texts the veto reads, `dedupMergeTextFor` of the row. */
+  readonly textOf: ReadonlyMap<string, MergeText>
   /** `keepPath dropPath` -> the mined similarity, when the pair was itself mined. */
   readonly simFor: ReadonlyMap<string, number>
 }
 
 /**
  * The pairs one model group implies, oriented: the OLDEST member (lowest corpus offset) keeps, every
- * other member drops into it. Pure, so the acceptance arm can hand `mergeCandidates` exactly the pairs
+ * other member drops into it. Pure, so the acceptance arm can hand `mergeOutcomes` exactly the pairs
  * the phase would have.
  *
  * `similarity` is the mined value when this pair was itself mined, else the recall floor. A
@@ -230,12 +245,11 @@ export interface GroupPairContext {
  * honest value for "at least this near, never measured closer" — see {@link DEDUP_ADMIT_FLOOR} for why
  * the filter must not compare against it.
  *
- * **Every pair names the same keeper, and that interacts with the domain's in-batch role guard.**
- * `mergeCandidates` claims BOTH roles of a committed pair, so once `(keeper, m2)` commits, `(keeper,
- * m3)` is skipped because the keeper is already claimed — a group of N members folds at most ONE of
- * them per night, and the other N-2 are counted under `vetoed` although no predicate fired. The
- * acceptance arm measures this (`group-fanout`); it is stated here rather than changed, because
- * loosening the guard is a domain decision with its own test suite.
+ * **Every pair names the same keeper, and the domain's role guard admits that.** A keeper may keep
+ * again within a batch, so a group of N members folds all N-1 duplicates into the oldest in one run.
+ * The guard still refuses the same path as a drop twice, or as a drop after it kept, or as a keeper
+ * after it was dropped — none of which a single group's pairs can produce, since the keeper is one
+ * member and every drop is a different one.
  */
 export const groupPairsFor = (
   members: ReadonlyArray<{ readonly path: string }>,
@@ -272,7 +286,7 @@ export const dedupMerge: PhaseBody = (env) =>
     const corpus = yield* activeCorpus(env.deps.db)
     const order = new Map(corpus.map((row, offset) => [row.path, offset]))
     const rowFor = new Map(corpus.map((row) => [row.path, row]))
-    const textOf = new Map(corpus.map((row) => [row.path, textFor(row)]))
+    const textOf = new Map(corpus.map((row) => [row.path, dedupMergeTextFor(row)]))
 
     const model = env.deps.model
     const pairs = yield* neighborPairs(env.deps.db, {
@@ -314,15 +328,15 @@ export const dedupMerge: PhaseBody = (env) =>
        * own default threshold. Every count and every write here is what this phase produced before it
        * could call a model, which is what makes the existing dedup tests an oracle for the rest.
        */
-      const decisions = mergeCandidates(oriented)
+      const outcomes = mergeOutcomes(oriented)
       return yield* commitMerges(
         env,
-        decisions,
+        decisionsOf(outcomes),
         {
           candidates: oriented.length,
           components: 0,
           llmGroups: 0,
-          vetoed: oriented.length - decisions.length,
+          ...refusalCounts(outcomes),
           skipped: 0,
           unresolved: 0
         },
@@ -521,16 +535,16 @@ export const dedupMerge: PhaseBody = (env) =>
         !grouped.has(pair.dropPath)
     )
     const proposed = [...groupPairs, ...remaining]
-    const decisions = mergeCandidates(proposed, { threshold: DEDUP_ADMIT_FLOOR })
+    const outcomes = mergeOutcomes(proposed, { threshold: DEDUP_ADMIT_FLOOR })
 
     const outcome = yield* commitMerges(
       env,
-      decisions,
+      decisionsOf(outcomes),
       {
         candidates: proposed.length,
         components: components.length,
         llmGroups,
-        vetoed: proposed.length - decisions.length,
+        ...refusalCounts(outcomes),
         skipped,
         unresolved
       },
@@ -555,19 +569,59 @@ export const dedupMerge: PhaseBody = (env) =>
 /** The detector name every near-duplicate review task is keyed and swept under. */
 export const DEDUP_REVIEW_DETECTOR = "dedup-merge"
 
+/** The committed outcomes as decisions, in input order. */
+const decisionsOf = (outcomes: ReadonlyArray<MergeOutcome>): ReadonlyArray<MergeDecision> =>
+  outcomes.flatMap(({ pair, stage }) =>
+    stage === "committed"
+      ? [{ keepPath: pair.keepPath, dropPath: pair.dropPath, similarity: pair.similarity }]
+      : []
+  )
+
+/**
+ * The refusals BY CAUSE, so the report can tell a predicate's veto from a guard's skip.
+ *
+ * `vetoed` used to be `candidates - decisions`, and on the two all-refusing runs that number read as
+ * "every candidate diverged" when a share of it was the role guard declining a keeper's second and third
+ * duplicate. The three keys are the three refusals a candidate on either arm can meet: `vetoed` (a
+ * divergence predicate fired), `roleGuarded` (the path was already dropped, or was a keeper and is now a
+ * drop), `capped` (the per-run cap was reached first). The filter's two other stages cannot occur here:
+ * the model arm's threshold is {@link DEDUP_ADMIT_FLOOR} and every similarity is at least the recall
+ * floor, the deterministic arm mines strictly above its own threshold, and neither arm ever pairs a
+ * path with itself. They are counted anyway under `unadmitted` so that, should either assumption
+ * break, the sum `merged + vanished + vetoed + roleGuarded + capped + unadmitted` still equals
+ * `candidates`.
+ */
+const refusalCounts = (
+  outcomes: ReadonlyArray<MergeOutcome>
+): { vetoed: number; roleGuarded: number; capped: number; unadmitted: number } => {
+  let vetoed = 0
+  let roleGuarded = 0
+  let capped = 0
+  let unadmitted = 0
+  for (const { stage } of outcomes) {
+    if (stage === "vetoed") vetoed += 1
+    else if (stage === "role-guard") roleGuarded += 1
+    else if (stage === "cap") capped += 1
+    else if (stage === "threshold" || stage === "self") unadmitted += 1
+  }
+  return { vetoed, roleGuarded, capped, unadmitted }
+}
+
 /**
  * The proposed pairs the divergence veto refused, with WHICH predicate fired.
  *
- * The three predicates are pure, exported, and independently callable, so the phase can name the one
- * that fired instead of reporting "vetoed". That distinction is the whole value of the task: "these two
- * carry different numbers" tells a reviewer to compare the numbers, "exactly one of them is negated"
+ * `mergeVetoReasons` is pure and exported, so the phase can name the predicate that fired instead of
+ * reporting "vetoed". That distinction is the whole value of the task: "these two carry different
+ * numbers" tells a reviewer to compare the numbers in the two CLAIMS, "exactly one of them is negated"
  * tells them one is probably a correction of the other, and "vetoed" tells them to read both files from
- * scratch.
+ * scratch. Reading the reasons from the domain rather than re-running the three predicates here keeps
+ * the scoping in one place: the domain decides which text each predicate sees, and a task cannot name a
+ * predicate over a text the filter never showed it.
  *
- * Re-running the predicates rather than threading a reason out of `mergeCandidates` keeps the domain
- * filter's signature alone: it returns the decisions it made, and asking it to also return a
- * per-refusal reason would make every caller carry a channel one caller reads. The predicates are pure
- * token-set comparisons over text already in memory, and this runs over the proposed set once.
+ * Re-running the reasons rather than threading them out of `mergeOutcomes` keeps that filter's stage a
+ * single word: it says WHERE a pair stopped, and asking it to also carry which predicate would make every
+ * caller carry a channel one caller reads. The predicates are pure token-set comparisons over text
+ * already in memory, and this runs over the proposed set once.
  *
  * A pair with either text missing is NOT vetoed — the filter skips the veto for it too, since it cannot
  * evaluate one — so those are absent here, which is correct: an unevaluated pair is not a divergence
@@ -578,20 +632,19 @@ const vetoedPairs = (proposed: ReadonlyArray<MergePair>): ReadonlyArray<VetoedPa
     const keepText = pair.keepText
     const dropText = pair.dropText
     if (keepText === undefined || dropText === undefined) return []
-    const predicates = [
-      ...(negationDivergent(keepText, dropText)
-        ? ["one side is negated and the other is not"]
-        : []),
-      ...(numericTokenDivergent(keepText, dropText) ? ["the two carry different numbers"] : []),
-      ...(variantQualifierDivergent(keepText, dropText)
-        ? ["the two name different product variants"]
-        : [])
-    ]
+    const predicates = mergeVetoReasons(keepText, dropText).map((reason) => VETO_WORDING[reason])
     if (predicates.length === 0) return []
     return [
       { keepPath: pair.keepPath, dropPath: pair.dropPath, similarity: pair.similarity, predicates }
     ]
   })
+
+/** How a review task states each reason. The numeric one names the claims, which is what it read. */
+const VETO_WORDING: Readonly<Record<MergeVetoReason, string>> = {
+  negation: "one side is negated and the other is not",
+  numeric: "the two claims carry different numbers",
+  variant: "the two name different product variants"
+}
 
 /** One vetoed pair and the predicates behind the refusal, in the veto's own disjunction order. */
 interface VetoedPair {
@@ -718,7 +771,7 @@ const basenameOf = (path: string): string =>
  *
  * Shared by both arms so the WRITES do not fork on whether a model was bound: the two differ in how
  * they choose pairs and in nothing else. A pair that reached here has already passed the veto, the self
- * check, the both-roles guard, and the cap, whichever arm proposed it.
+ * check, the role guard, and the cap, whichever arm proposed it.
  *
  * The counts are real on a dry run — including the veto — because an operator sizing a night needs to
  * know what it would have folded. Only the writes are withheld.
