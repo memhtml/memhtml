@@ -1107,7 +1107,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   },
   {
     name: "serve mcp",
-    summary: "Run the `memhtml-mcp` stdio server: 15 tools and 3 resources over this same repo.",
+    summary: "Run the `memhtml-mcp` stdio server: 18 tools and 3 resources over this same repo.",
     args: [],
     flags: [],
     responseTypes: ["serve.exit"]

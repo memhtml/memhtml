@@ -362,8 +362,8 @@ describe("spec 004 success metric — the 20-op Alice fixture through memory_wri
     await cli.cleanup()
   })
 
-  it("publishes fifteen tools, the batch among them", () => {
-    expect(toolCount).toBe(15)
+  it("publishes eighteen tools, the batch among them", () => {
+    expect(toolCount).toBe(18)
   })
 
   it("returns twenty per-op results in input order, eighteen written and two deduped", () => {

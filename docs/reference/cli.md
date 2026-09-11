@@ -799,7 +799,7 @@ This command builds no app layer, so running it in CI does not scaffold a memhtm
 memhtml serve mcp
 ```
 
-Run the `memhtml-mcp` stdio server: 15 tools and 3 resources over this same repo. `apps/cli/src/run.ts:1434-1453`
+Run the `memhtml-mcp` stdio server: 18 tools and 3 resources over this same repo. `apps/cli/src/run.ts:1434-1453`
 
 This command takes no arguments and no command-specific flags. `apps/cli/src/commands.ts:1108-1114`
 

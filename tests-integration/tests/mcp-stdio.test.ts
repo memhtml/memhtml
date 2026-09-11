@@ -194,14 +194,18 @@ describe("the event_at bug report, inverted: article_html over real MCP stdio", 
 
   it("completes initialize -> tools/list with article_html on the published wire", () => {
     /**
-     * Fifteen, and the delta is auditable rather than a number that drifts: `article_html` cost NO
-     * tool (it is a parameter on `memory_write`), while `memory_write_batch` and `memory_resolve` cost
-     * exactly one each. So the count is asserted alongside the names that raised it, and a regression
-     * that added a sixteenth tool fails on the count while one that renamed a tool fails on the name.
+     * Eighteen, and the delta is auditable rather than a number that drifts: `article_html` cost NO
+     * tool (it is a parameter on `memory_write`), `memory_write_batch` and `memory_resolve` cost
+     * exactly one each, and the task family costs exactly three. So the count is asserted alongside
+     * the names that raised it, and a regression that added a nineteenth tool fails on the count
+     * while one that renamed a tool fails on the name.
      */
-    expect(tools).toHaveLength(15)
+    expect(tools).toHaveLength(18)
     expect(tools.map((tool) => tool.name)).toContain("memory_write_batch")
     expect(tools.map((tool) => tool.name)).toContain("memory_resolve")
+    expect(tools.map((tool) => tool.name)).toContain("task_add")
+    expect(tools.map((tool) => tool.name)).toContain("task_status")
+    expect(tools.map((tool) => tool.name)).toContain("task_list")
     const write = tools.find((tool) => tool.name === "memory_write")
     const schema = write?.inputSchema as {
       readonly properties: Record<string, unknown>

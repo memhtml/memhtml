@@ -16,9 +16,9 @@ The eval harness adapter (memhtml-evals `src/adapter/memhtml.ts`) still ingests 
 
 Resolution: the adapter buffers ingest() and flushes ONE memory_write_batch per reset() window (at first answer(), close(), or flush()), each fact as article_html with the dataset timestamp as a <time datetime> element. Live smoke: event_at carries the dataset timestamps. Hardening: escapeHtmlText proven load-bearing via <script>; unsortable timestamps degrade to escaped text per-op rather than aborting the window's atomic batch.
 
-## 4. Expose the task family over MCP (medium)
+## ~~4. Expose the task family over MCP~~ — DONE (task_add / task_status / task_list)
 
-The `memhtml task` CRUDL family (docs/tasks.md) is CLI-only; MCP agents cannot open or move tasks. Looked like sequencing, not a decision (this session's surface enumeration). Shape: task_add / task_status / task_list tools over the same operations, ToolFailure + description discipline already established.
+`task_add` / `task_status` / `task_list` are registered over the same operations the CLI commands call (`writeMemory`, `setTaskStatus`, `listTasks`), with `task_add` writing through the identical `writeMemory` call `memhtml task add` makes so the two doors cannot disagree about what a task file is. ToolFailure + description discipline carried over; `task_status`'s `done` stamps and archives in one commit, matching the CLI. The toolkit is eighteen tools; docs/tasks.md's MCP section and docs/reference/rpc-tools.md carry the entries.
 
 ## 5. Batch op vocabulary v2 (defer until pulled)
 

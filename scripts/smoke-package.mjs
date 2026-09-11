@@ -713,7 +713,17 @@ const checkEveryMcpTool = async ({ mcpBin, env }) => {
     memory_neighbors: { path: "PLACEHOLDER" },
     memory_resolve: { path: "PLACEHOLDER" },
     memory_reinforce: { paths: ["PLACEHOLDER"], signal: "positive" },
-    memory_archive: { path: "DOOMED", reason: "written by the MCP smoke tier" }
+    memory_archive: { path: "DOOMED", reason: "written by the MCP smoke tier" },
+    task_add: {
+      title: "A task written through the MCP door",
+      body: "The smoke tier's own task, for task_status to move.",
+      status: "todo",
+      workspace: "checkout-api"
+    },
+    // `doing` rather than `done`: done archives the task, and the smoke wants the file to stay
+    // where task_add put it. The path is TASK, substituted below with a task the run wrote.
+    task_status: { path: "TASK", status: "doing" },
+    task_list: {}
   }
 
   const session = await mcpSession(mcpBin, env)
@@ -761,6 +771,13 @@ const checkEveryMcpTool = async ({ mcpBin, env }) => {
       "A memory written to be corrected",
       "The fourth body, distinct too."
     )
+    // The task task_status addresses, written through task_add itself before the census loop so
+    // the in-loop task_add call dedupes onto it and task_status finds the file on disk.
+    const taskAnswer = await session.request("tools/call", {
+      name: "task_add",
+      arguments: ARGUMENTS.task_add
+    })
+    const task = JSON.parse(taskAnswer.result?.content?.[0]?.text ?? "{}").path
 
     for (const tool of tools) {
       if (tool.name === "memory_write") continue
@@ -774,7 +791,9 @@ const checkEveryMcpTool = async ({ mcpBin, env }) => {
                 ? doomed
                 : value === "CORRECTED"
                   ? corrected
-                  : value
+                  : value === "TASK"
+                    ? task
+                    : value
         const args = Object.fromEntries(
           Object.entries(ARGUMENTS[tool.name] ?? {}).map(([key, value]) => [
             key,

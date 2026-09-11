@@ -464,7 +464,7 @@ Regenerate AGENTS.md from this command table. --check fails on drift.
 
 ### `memhtml serve mcp`
 
-Run the `memhtml-mcp` stdio server: 15 tools and 3 resources over this same repo.
+Run the `memhtml-mcp` stdio server: 18 tools and 3 resources over this same repo.
 
 ## Error codes
 

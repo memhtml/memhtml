@@ -16,7 +16,8 @@ import { MemhtmlToolkit, TOOL_NAMES } from "../src/tools.js"
  * hand-maintained list would let a toolkit that builds fourteen tools pass a test asserting fifteen.
  */
 
-/** The fifteen names: design.md §8's table in its own order, with the batch behind the singular. */
+/** The eighteen names: design.md §8's table in its own order, the batch behind the singular and the
+ * task family after the memory-graph tools and before the trace plane. */
 const EXPECTED = [
   "memory_write",
   "memory_write_batch",
@@ -30,6 +31,9 @@ const EXPECTED = [
   "memory_archive",
   "memory_reinforce",
   "memory_list",
+  "task_add",
+  "task_status",
+  "task_list",
   "trace_search",
   "trace_links",
   "memory_status"
@@ -48,9 +52,9 @@ const schemaFor = (name: string): JsonSchemaObject =>
   ) as unknown as JsonSchemaObject
 
 describe("tool surface", () => {
-  it("declares exactly fifteen distinct tools, in design §8's order", () => {
-    expect(TOOL_NAMES).toHaveLength(15)
-    expect(new Set(TOOL_NAMES).size).toBe(15)
+  it("declares exactly eighteen distinct tools, in design §8's order", () => {
+    expect(TOOL_NAMES).toHaveLength(18)
+    expect(new Set(TOOL_NAMES).size).toBe(18)
     expect([...TOOL_NAMES]).toEqual([...EXPECTED])
   })
 

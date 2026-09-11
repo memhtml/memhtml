@@ -10,6 +10,7 @@ import {
   type layerApp,
   linkMemories,
   listMemories,
+  listTasks,
   messageFor,
   neighborsOf,
   proseTail,
@@ -19,6 +20,7 @@ import {
   resolveMemory,
   searchMemories,
   searchTraces,
+  setTaskStatus,
   statusReport,
   traceLinks,
   type WriteParams,
@@ -100,7 +102,7 @@ const metaRecord = (doc: MemoryDoc): Readonly<Record<string, string>> => {
  * derived JSON Schema advertises `null`, and a client that reads the schema and sends
  * `{"workspace": null}` for "no workspace" is doing the documented thing. The operations layer speaks
  * `undefined` for "not supplied" because `exactOptionalPropertyTypes` distinguishes an absent key from
- * a present one, so the two vocabularies meet HERE, once, rather than at each of fifteen call sites.
+ * a present one, so the two vocabularies meet HERE, once, rather than at each call site.
  */
 const opt = <A>(value: A | null | undefined): A | undefined => value ?? undefined
 
@@ -792,6 +794,91 @@ export const ToolHandlers: Layer.Layer<
             importance: file.importance,
             archived: file.archived,
             updated_at: file.updatedAt
+          })),
+          next_cursor: result.nextCursor
+        }
+      })
+    ),
+
+  task_add: (params) =>
+    handled(
+      Effect.gen(function* () {
+        /**
+         * `writeMemory` with `memoryType: "task"`, the same call `memhtml task add` makes, so the
+         * two doors cannot disagree about what a task file is. The claim defaults to the title for
+         * the CLI's stated reason: a task's statement and its name are usually the same sentence.
+         * A `body` string splits into paragraphs the way `memory_write`'s does, through the same
+         * `claimFromProse`/`proseTail` pair the singular write uses.
+         */
+        const body = opt(params.body)
+        const hasBody = body !== undefined && body.trim() !== ""
+        const result = yield* writeMemory({
+          title: params.title,
+          claim: hasBody ? claimFromProse(body as string) : params.title,
+          body: hasBody ? proseTail(body as string) : [],
+          memoryType: "task",
+          workspace: opt(params.workspace),
+          tags: arr(params.tags),
+          entities: arr(params.entities),
+          taskStatus: opt(params.status),
+          dueAt: opt(params.due),
+          sessionId: opt(params.session_id),
+          promptId: opt(params.prompt_id),
+          turnUuid: opt(params.turn_uuid)
+        })
+        return {
+          path: result.path,
+          created: result.created,
+          deduped: result.deduped,
+          existing_path: result.existingPath ?? null,
+          task_status: opt(params.status) ?? "todo",
+          due_at: opt(params.due) ?? null,
+          commit_sha: result.commitSha ?? null
+        }
+      })
+    ),
+
+  task_status: (params) =>
+    handled(
+      Effect.gen(function* () {
+        const result = yield* setTaskStatus({
+          path: params.path,
+          status: params.status,
+          reason: opt(params.reason)
+        })
+        return {
+          path: result.path,
+          task_status: result.taskStatus,
+          archived: result.archived,
+          archive_path: result.archivePath ?? null,
+          commit_sha: result.commitSha,
+          unchanged: result.unchanged
+        }
+      })
+    ),
+
+  task_list: (params) =>
+    handled(
+      Effect.gen(function* () {
+        const result = yield* listTasks({
+          status: opt(params.status),
+          workspace: opt(params.workspace),
+          dueBefore: opt(params.due_before),
+          limit: opt(params.limit),
+          cursor: opt(params.cursor),
+          includeArchived: opt(params.include_archived),
+          detected: opt(params.detected)
+        })
+        return {
+          tasks: result.tasks.map((task) => ({
+            path: task.path,
+            title: task.title,
+            task_status: task.taskStatus,
+            due_at: task.dueAt,
+            workspace: task.workspace,
+            archived: task.archived,
+            updated_at: task.updatedAt,
+            blocked_by: task.blockedBy
           })),
           next_cursor: result.nextCursor
         }

@@ -1,5 +1,5 @@
 /**
- * `@memhtml/mcp` is the `memhtml-mcp` stdio server: fifteen tools and three resources over the memory repo.
+ * `@memhtml/mcp` is the `memhtml-mcp` stdio server: eighteen tools and three resources over the memory repo.
  *
  * Sleep is deliberately absent from the tool surface. It is a cron/operator action producing a
  * reviewable branch. A run rewrites confidence across the corpus, archives memories, and creates a

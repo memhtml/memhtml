@@ -431,7 +431,7 @@ describe("the declared failure schema on every tool", () => {
      * matter how good `toToolFailure`'s prose was.
      */
     const failure = toToolFailure(new PathNotFound({ path: "areas/x.html" }))
-    expect(TOOL_NAMES).toHaveLength(15)
+    expect(TOOL_NAMES).toHaveLength(18)
     for (const name of TOOL_NAMES) {
       const isDeclaredFailure = Schema.is(MemhtmlToolkit.tools[name].failureSchema)
       expect(isDeclaredFailure(failure)).toBe(true)

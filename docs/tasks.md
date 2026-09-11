@@ -77,14 +77,15 @@ All three are **report-only**: `--fix` repairs dangling hrefs and orphan `state.
 
 The first two do not affect `healthy` (`:488`): they are facts about the work, not defects in the corpus, and folding them in would make `healthy: false` normal. The task inbox does count, at ten — half the memory inbox's twenty, because an unplaced memory is a routing rule that stopped matching while an unplaced task is work nobody owns (`:78`). Doctor is the only surface that reports a _passed_ deadline; `--due-before` reads `due_at` only against a caller-supplied bound.
 
-## MCP status: read and create, never advance
+## MCP status: the full CRUDL, same operations as the CLI
 
-The toolkit is fifteen tools and none is a task tool (`apps/mcp/src/tools.ts`).
+The toolkit is eighteen tools and the task family is three of them — `task_add`, `task_status`, `task_list` (`apps/mcp/src/tools.ts:990-1078`) — calling the same operations the CLI commands call.
 
-- `memory_write` takes `memory_type: "task"` — the enum derives from `WRITABLE_MEMORY_TYPES` (`:45`). There is no `status` or `due` field in the write parameters (`:237-246`), so a task authored over MCP opens in `todo` with no deadline.
-- `memory_list` filters `memory_type: "task"` and `memory_search` opts in through `memory_types: ["task"]` (`:650`, `:444`). `memory_recall` takes no type parameter at all (`:514-518`), so over MCP a task is unreachable through recall with no opt-in available.
-- `memory_link`'s `rel` is `MemoryRelSchema`, the nine memory rels, so a task rel is refused at **decode** (`:578`). The task graph is authored from the CLI: asserting `blocks` is planning.
-- **No status transition and no archive-on-done.** `memory_archive` moves a task into the archive without touching `task_status`, leaving a `todo` file under `archive/`.
+- `task_add` opens a task through the same `writeMemory` call `memhtml task add` makes, so the two doors cannot disagree about what a task file is. It takes `status` and `due` directly; the claim defaults to the title when no `body` is given.
+- `memory_write` STILL takes `memory_type: "task"` — the enum derives from `WRITABLE_MEMORY_TYPES` (`:45`) — and STILL has no `status` or `due` field in its parameters (`:237-246`), so a task authored through the singular write door opens in `todo` with no deadline. `task_add` is the door that stamps them.
+- `task_status` advances a status, and `done` stamps AND archives in one commit — a `git mv` into `archive/<YYYY>/` — so finished work leaves the working set by design (`apps/mcp/src/tools.ts:1023-1043`). `memory_archive` remains available and still moves a task into the archive without touching `task_status`.
+- `task_list` is the working-set scan: filters, a keyset cursor, and `blocked_by` per row. `memory_list` filters `memory_type: "task"` and `memory_search` opts in through `memory_types: ["task"]` (`:650`, `:444`). `memory_recall` takes no type parameter at all (`:514-518`), so over MCP a task is unreachable through recall with no opt-in available.
+- `memory_link`'s `rel` is still `MemoryRelSchema`, the nine memory rels, so a task rel is refused at **decode** (`:578`). The task graph is authored from the CLI: asserting `blocks` is planning — `task_list`'s `blocked_by` reads the edges, it does not write them.
 
 ## Worked sequence
 

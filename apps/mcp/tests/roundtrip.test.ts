@@ -574,11 +574,12 @@ describe("a tool call through the toolkit layer", () => {
     ).rejects.toThrow()
   })
 
-  it("writes a TASK through memory_write, with no tool added and no schema edited", async () => {
+  it("writes a TASK through memory_write, which still works beside the task family", async () => {
     /**
-     * The whole MCP half of the task feature, and it is a non-change: `WritableType` derives from
-     * `WRITABLE_MEMORY_TYPES`, so widening the contract widened the published enum, the decoder, and
-     * this path together. The tool count stays 13.
+     * `memory_write` with `memory_type: "task"` predates the dedicated `task_add` and stays the
+     * caller's choice when a task is one op of a larger write. `WritableType` derives from
+     * `WRITABLE_MEMORY_TYPES`, so the published enum, the decoder, and this path widened together
+     * when the type was admitted.
      *
      * Asserted through `kit.handle` rather than by calling the handler, so the parameter DECODE and
      * the success ENCODE both run — a task's write is only usable if `memory_type: "task"` survives
@@ -601,6 +602,87 @@ describe("a tool call through the toolkit layer", () => {
     expect(meta.memoryType).toBe("task")
     expect(meta.taskStatus).toBe("todo")
     expect(read.archived).toBe(false)
+  })
+
+  it("runs the task family end to end: task_add, task_list, task_status done", async () => {
+    /**
+     * Backlog #4's MCP half: the three-tool family over the same operations the CLI commands call.
+     * The full lifecycle in one test because the transitions ARE the contract — `done` archives in
+     * the same commit (a `git mv` under `archive/`), so the task leaves the default `task_list`
+     * working set the moment it finishes, and only `include_archived` brings it back.
+     */
+    const opened = await call("task_add", {
+      title: "Water the deploy checklist's dry-run step",
+      body: "The dry-run step names a command that was renamed in July and nobody has updated the checklist.",
+      status: "todo",
+      due: "2026-09-30",
+      workspace: "memhtml",
+      tags: ["deploy"]
+    })
+    expect(opened.created).toBe(true)
+    expect(opened.task_status).toBe("todo")
+    expect(opened.due_at).toBe("2026-09-30")
+    expect(opened.path).toMatch(/^projects\/memhtml\/tasks\/.*\.html$/)
+
+    const listed = await call("task_list", { status: "todo", workspace: "memhtml" })
+    const tasks = listed.tasks as ReadonlyArray<{
+      path: string
+      task_status: string | null
+      due_at: string | null
+      blocked_by: ReadonlyArray<string>
+    }>
+    const row = tasks.find((task) => task.path === opened.path)
+    expect(row).toBeDefined()
+    expect(row?.task_status).toBe("todo")
+    expect(row?.due_at).toBe("2026-09-30")
+    expect(row?.blocked_by).toEqual([])
+
+    const moved = await call("task_status", {
+      path: opened.path as string,
+      status: "doing",
+      reason: "started during the audit"
+    })
+    expect(moved.task_status).toBe("doing")
+    expect(moved.archived).toBe(false)
+    expect(moved.unchanged).toBe(false)
+    expect(moved.commit_sha).not.toBeNull()
+
+    // Re-stamping the status the file already carries writes nothing.
+    const noop = await call("task_status", { path: opened.path as string, status: "doing" })
+    expect(noop.unchanged).toBe(true)
+    expect(noop.commit_sha).toBeNull()
+
+    const done = await call("task_status", {
+      path: opened.path as string,
+      status: "done",
+      reason: "the checklist step now names the current command"
+    })
+    expect(done.archived).toBe(true)
+    expect(done.archive_path).toMatch(/^archive\/2026\//)
+
+    // Finished work left the working set: absent by default, present under include_archived.
+    const openOnly = await call("task_list", {})
+    expect(
+      (openOnly.tasks as ReadonlyArray<{ path: string }>).some((task) => task.path === opened.path)
+    ).toBe(false)
+    const withArchive = await call("task_list", { include_archived: true })
+    expect(
+      (withArchive.tasks as ReadonlyArray<{ path: string }>).some(
+        (task) => task.path === (done.archive_path as string)
+      )
+    ).toBe(true)
+  })
+
+  it("refuses task_status on a non-task, through the shared operation", async () => {
+    // The same refusal `memhtml task status` produces: a memory file has no lifecycle to move.
+    const written = await call("memory_write", {
+      title: "A semantic memory with no lifecycle",
+      body: "A fact, not a to-do.",
+      memory_type: "semantic"
+    })
+    await expect(
+      call("task_status", { path: written.path as string, status: "done" })
+    ).rejects.toThrow(/not a task/)
   })
 
   it("hides tasks from memory_search by default, and includes them when named", async () => {

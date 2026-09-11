@@ -12,7 +12,7 @@ import {
   Store
 } from "@memhtml/cli"
 import { MEMORY_RELS } from "@memhtml/contracts/edges"
-import { PARA_BUCKETS, WRITABLE_MEMORY_TYPES } from "@memhtml/contracts/types"
+import { PARA_BUCKETS, TASK_STATUSES, WRITABLE_MEMORY_TYPES } from "@memhtml/contracts/types"
 import { REINFORCE_SIGNALS } from "@memhtml/domain"
 import { Schema } from "effect"
 import { Tool, Toolkit } from "effect/unstable/ai"
@@ -20,8 +20,8 @@ import { Tool, Toolkit } from "effect/unstable/ai"
 import { ToolFailure } from "./failure.js"
 
 /**
- * The fifteen tools: design.md §8 verbatim, plus `memory_write_batch` (spec 004 D7) and
- * `memory_resolve`.
+ * The eighteen tools: design.md §8 verbatim, plus `memory_write_batch` (spec 004 D7),
+ * `memory_resolve`, and the three-tool task family (backlog #4).
  *
  * **`parameters` is always `Schema.Struct`, never `Schema.Class`.** A client sends a plain object
  * literal, and a class schema's decode expects an instance. The failure is a decode error on every
@@ -118,8 +118,8 @@ const Optional = <S extends Schema.Top>(schema: S) => Schema.optionalKey(Schema.
  * which keeps `memory_search` provably unable to reach the store and write.
  *
  * A FUNCTION per set, not a shared constant: the option's type is a mutable array, so handing the
- * same array to fifteen tools would let one tool's construction mutate the dependency list of the
- * other fourteen.
+ * same array to every tool would let one tool's construction mutate the dependency list of the
+ * others.
  */
 const READS = () => [DatabaseService]
 // ExtractorPort is in the write set because `batchWrite` reads it (the write-time entity assist);
@@ -974,6 +974,109 @@ const MemoryList = Tool.make("memory_list", {
   })
 })
 
+/**
+ * The task family (docs/tasks.md, backlog #4): the `memhtml task` CRUDL surface over MCP.
+ *
+ * `task_add` writes through `writeMemory` with `memoryType: "task"`, exactly as the CLI command
+ * does (`run.ts`'s `task add` arm), so the two doors cannot disagree about what a task file is.
+ * The claim defaults to the title for the CLI's stated reason: a task's statement and its name
+ * are usually the same sentence, and a required second phrasing would be restated verbatim.
+ * `task_status` and `task_list` call their operations directly.
+ *
+ * Placed after the memory-graph family and before the trace plane: an agent reads the toolkit
+ * top-down as write → read → retrieve → graph → tasks → trace → status, which is also the order
+ * the CLI's own command table lists the family.
+ */
+const TaskAdd = Tool.make("task_add", {
+  description:
+    "Open a task: a `task`-typed memory in projects/<workspace>/tasks/ or areas/inbox/tasks/. " +
+    "The claim defaults to the title when no body is given. `status` defaults to todo; `done` is not a sensible opening but is admitted for recording work already finished. " +
+    "`due` is YYYY-MM-DD or YYYY-MM-DDThh:mm:ssZ, compared as a string, so the form is the contract. " +
+    "Tags scope search but never route a task; only `workspace` routes it.",
+  dependencies: WRITES(),
+  parameters: Schema.Struct({
+    title: Schema.String,
+    /** One prose paragraph of working notes. Split into paragraphs on blank lines, as `memory_write` does. */
+    body: Optional(Schema.String),
+    status: Optional(Schema.Literals(TASK_STATUSES)),
+    due: Optional(Schema.String),
+    workspace: Optional(Schema.String),
+    tags: Optional(Schema.Array(Schema.String)),
+    entities: Optional(Schema.Array(Schema.String)),
+    session_id: Optional(Schema.String),
+    prompt_id: Optional(Schema.String),
+    turn_uuid: Optional(Schema.String)
+  }),
+  failure: ToolFailure,
+  success: Schema.Struct({
+    path: MemoryPath,
+    created: Schema.Boolean,
+    deduped: Schema.Boolean,
+    /** Present when deduped: the existing task this call returned instead of writing. */
+    existing_path: Schema.NullOr(MemoryPath),
+    task_status: Schema.String,
+    due_at: Schema.NullOr(Schema.String),
+    commit_sha: Schema.NullOr(Schema.String)
+  })
+})
+
+const TaskStatus = Tool.make("task_status", {
+  description:
+    "Move a task's status. `done` stamps the status AND archives the task (a git mv into archive/<YYYY>/) in one commit, so finished work leaves the working set by design. " +
+    "A status the task already carries writes nothing and returns unchanged: true. `reason` is recorded on the archive commit when the status is done.",
+  dependencies: WRITES(),
+  parameters: Schema.Struct({
+    path: MemoryPath,
+    status: Schema.Literals(TASK_STATUSES),
+    reason: Optional(Schema.String)
+  }),
+  failure: ToolFailure,
+  success: Schema.Struct({
+    path: MemoryPath,
+    task_status: Schema.String,
+    archived: Schema.Boolean,
+    /** Present iff archived: the archive/<YYYY>/ path the file moved to. */
+    archive_path: Schema.NullOr(MemoryPath),
+    commit_sha: Schema.NullOr(Schema.String),
+    unchanged: Schema.Boolean
+  })
+})
+
+const TaskList = Tool.make("task_list", {
+  description:
+    "The task working set: a direct indexed scan with blockers, never ranked retrieval. " +
+    "`next_cursor` is a keyset on the path (the last path returned), so a page stays correct while a sleep cycle archives files. " +
+    "`due_before` is an ISO DATE compared by calendar day, strictly before, so `due_before <today>` is the overdue queue. " +
+    "`done` tasks are archived and therefore absent unless include_archived is set. `detected` lists only the sleep cycle's proposed tasks, never ones opened by hand.",
+  dependencies: READS(),
+  parameters: Schema.Struct({
+    status: Optional(Schema.Literals(TASK_STATUSES)),
+    workspace: Optional(Schema.String),
+    due_before: Optional(Schema.String),
+    limit: Optional(Count),
+    cursor: Optional(Schema.String),
+    include_archived: Optional(Schema.Boolean),
+    detected: Optional(Schema.Boolean)
+  }),
+  failure: ToolFailure,
+  success: Schema.Struct({
+    tasks: Schema.Array(
+      Schema.Struct({
+        path: MemoryPath,
+        title: Schema.String,
+        task_status: Schema.NullOr(Schema.String),
+        due_at: Schema.NullOr(Schema.String),
+        workspace: Schema.NullOr(Schema.String),
+        archived: Schema.Boolean,
+        updated_at: Schema.String,
+        /** Paths of tasks blocking this one, via `blocks` edges. Empty when none. */
+        blocked_by: Schema.Array(MemoryPath)
+      })
+    ),
+    next_cursor: Schema.NullOr(Schema.String)
+  })
+})
+
 const TraceSearch = Tool.make("trace_search", {
   description:
     "Find past Claude Code sessions by what was asked in them. A read-only index over transcript files: no session content is stored, only pointers and capped heads.",
@@ -1067,12 +1170,12 @@ const MemoryStatus = Tool.make("memory_status", {
 })
 
 /**
- * The toolkit. Exactly fifteen: design.md §8's thirteen, plus `memory_write_batch` and
- * `memory_resolve`.
+ * The toolkit. Exactly eighteen: design.md §8's thirteen, plus `memory_write_batch`,
+ * `memory_resolve`, and the three-tool task family (backlog #4).
  *
  * Order is the read order of the table in §8, which is also roughly the order an agent needs them:
- * write and read, then the three retrieval shapes, then the graph operations, then the trace plane,
- * then status.
+ * write and read, then the three retrieval shapes, then the graph operations, then the task
+ * family, then the trace plane, then status.
  *
  * The batch sits SECOND, directly after `memory_write`, rather than appended at the end. `tools/list`
  * publishes this order and an agent reads it top-down, so the tool `memory_write`'s own description
@@ -1092,6 +1195,9 @@ export const MemhtmlToolkit = Toolkit.make(
   MemoryArchive,
   MemoryReinforce,
   MemoryList,
+  TaskAdd,
+  TaskStatus,
+  TaskList,
   TraceSearch,
   TraceLinks,
   MemoryStatus

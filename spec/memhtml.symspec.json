@@ -675,12 +675,12 @@
       "refines": [],
       "satisfies": [],
       "sentence": "The mcp server shall expose the task family as task_add, task_status, and task_list tools.",
-      "status": "draft",
+      "status": "implemented",
       "systemName": "mcp server",
       "systemResponse": "expose the task family as task_add, task_status, and task_list tools",
-      "updatedAt": "2026-08-08T02:00:00.328Z",
+      "updatedAt": "2026-09-09T14:21:22Z",
       "verificationMethod": "test",
-      "verificationNote": "shape settled (backlog 4); ToolFailure discipline applies",
+      "verificationNote": "apps/mcp/src/tools.ts TaskAdd/TaskStatus/TaskList (the task family after the memory-graph tools, before the trace plane); handlers.ts task_add/task_status/task_list over writeMemory, setTaskStatus, listTasks — the same operations the CLI commands call; apps/mcp/tests/roundtrip.test.ts the task family end to end (task_add, task_list, task_status done) beside the write-door gates; tests-integration/tests/mcp-stdio.test.ts the eighteen-tool census naming the three; scripts/smoke-package.mjs ARGUMENTS covers all three against the installed artifact.",
       "verifies": []
     },
     "6aa08e96-1958-4171-8c7c-90705ff6f91e": {

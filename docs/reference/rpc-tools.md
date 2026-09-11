@@ -1,6 +1,6 @@
 # memhtml-public · RPC tools
 
-This repository ships an MCP server, `memhtml-mcp`, over stdio. It publishes fifteen tools and three resource templates, and a coding agent calls it to operate a memhtml root. The repository stores no memory of its own. The server acts on whatever root `$MEMHTML_ROOT` points the process at, and the same binary serves many roots.
+This repository ships an MCP server, `memhtml-mcp`, over stdio. It publishes eighteen tools and three resource templates, and a coding agent calls it to operate a memhtml root. The repository stores no memory of its own. The server acts on whatever root `$MEMHTML_ROOT` points the process at, and the same binary serves many roots.
 
 The server is one Effect layer that merges `McpServer.toolkit(MemhtmlToolkit)` with the three resources, over the CLI's own app layer, on the stdio transport at protocol revision `v2025_06_18`, the only adapter this dependency ships (`apps/mcp/src/server.ts:40-53`). The server shares the CLI's layer, so an agent's `memory_write` and an operator's `memhtml search` resolve to one database, one git root, and one vector space (`apps/mcp/src/server.ts:12-19`). Logs are pinned to stderr with `Logger.LogToStderr` because stdout carries the NDJSON-RPC frames, and Effect's default logger writes to stdout (`apps/mcp/src/server.ts:20-22`, `apps/mcp/src/server.ts:53`, `apps/mcp/src/bin.ts:7-13`).
 
@@ -642,6 +642,116 @@ Writes many memories in one commit. It validates every op first, stages every su
 **Output:** `results`, `summary`, and `commit_sha`. `results` holds one `BatchOpResult` per op in input order, each with `index`, `ok`, `path`, `deduped`, `existing_path`, `code`, `error`, `skipped`, `conflict`, `near_duplicates`, `consolidated_into`, and `superseded_path`. Every nullable field is present rather than optional, so an absent key never has to be read as a negative answer (`apps/mcp/src/tools.ts:280-341`). `conflict` names what an op's claim contradicts, by `path` for a stored active memory or by `batch_index` for an earlier op in the same call, plus that other claim's `claim` text. `near_duplicates` lists what an op's text embedding-matches at or above cosine 0.92, each entry carrying `path` or `batch_index`, the measured `similarity`, and the other `claim`; it is null when the flag was off, when nothing matched, on an `article_html` op, and whenever the top-level `near_duplicates_degraded` is true — that flag means the assist could not run (no embedder bound, or the call failed), so null then reads as unchecked rather than unique. The handler translates `batch_index` (on `conflict` and on every `near_duplicates` entry) and `consolidated_into` from the survivor-array space `batchWrite` saw back into the caller's own op indices, so a refused op earlier in the batch cannot make a pointer name the wrong op (`apps/mcp/src/handlers.ts:486-526`). `summary` is derived from `results` in one pass so the counts cannot disagree with the array (`apps/mcp/src/handlers.ts:285-297`). `commit_sha` is null when nothing was written, which covers an all-deduped batch and an aborted one. An atomic abort does not arrive here at all. It reaches the caller through the error channel as `batchAbortFailure`, whose message names the offending op as `ops[N]` and states that nothing was written (`apps/mcp/src/failure.ts:206-219`, `apps/mcp/src/handlers.ts:431-444`).
 
 `apps/mcp/src/tools.ts:468-548`
+
+## `task_add`
+
+```ts
+const TaskAdd = Tool.make("task_add", {
+  description: /* … */,
+  dependencies: WRITES(),
+  parameters: Schema.Struct({
+    title: Schema.String,
+    body: Optional(Schema.String),
+    status: Optional(Schema.Literals(TASK_STATUSES)),
+    due: Optional(Schema.String),
+    workspace: Optional(Schema.String),
+    tags: Optional(Schema.Array(Schema.String)),
+    entities: Optional(Schema.Array(Schema.String)),
+    // … provenance: session_id, prompt_id, turn_uuid
+  }),
+  failure: ToolFailure,
+  success: Schema.Struct({
+    path: MemoryPath,
+    created: Schema.Boolean,
+    deduped: Schema.Boolean,
+    existing_path: Schema.NullOr(MemoryPath),
+    task_status: Schema.String,
+    due_at: Schema.NullOr(Schema.String),
+    commit_sha: Schema.NullOr(Schema.String)
+  })
+})
+```
+
+Opens a task: a `task`-typed memory in `projects/<workspace>/tasks/` or `areas/inbox/tasks/`, written through the SAME `writeMemory` call `memhtml task add` makes, so the two doors cannot disagree about what a task file is. The claim defaults to the title when no `body` is given; a `body` splits into paragraphs through the same `claimFromProse`/`proseTail` pair `memory_write` uses. Only `workspace` routes the file — tags scope search but never placement.
+
+**Input:** `title` (required); everything else optional. `status` is one of `todo`, `doing`, `blocked`, `done` and defaults to `todo` — `done` is admitted for recording work already finished, not as a sensible opening. `due` is `YYYY-MM-DD` or `YYYY-MM-DDThh:mm:ssZ`, compared as a string, so the form is the contract.
+
+**Output:** `path`, `created`, `deduped`, `existing_path` (the existing task when deduped), `task_status`, `due_at`, and `commit_sha` (null when nothing was committed). Content-hash dedupe applies as on `memory_write`. NOTE: on a dedup hit `task_status` and `due_at` echo the values this call REQUESTED rather than the values on the stored file (`apps/mcp/src/handlers.ts:834-835`), mirroring the CLI door (`apps/cli/src/run.ts:530-531`); both doors can misreport on that path.
+
+`apps/mcp/src/tools.ts:990-1021`
+
+## `task_list`
+
+```ts
+const TaskList = Tool.make("task_list", {
+  description: /* … */,
+  dependencies: READS(),
+  parameters: Schema.Struct({
+    status: Optional(Schema.Literals(TASK_STATUSES)),
+    workspace: Optional(Schema.String),
+    due_before: Optional(Schema.String),
+    limit: Optional(Count),
+    cursor: Optional(Schema.String),
+    include_archived: Optional(Schema.Boolean),
+    detected: Optional(Schema.Boolean)
+  }),
+  failure: ToolFailure,
+  success: Schema.Struct({
+    tasks: Schema.Array(
+      Schema.Struct({
+        path: MemoryPath,
+        title: Schema.String,
+        task_status: Schema.NullOr(Schema.String),
+        due_at: Schema.NullOr(Schema.String),
+        workspace: Schema.NullOr(Schema.String),
+        archived: Schema.Boolean,
+        updated_at: Schema.String,
+        blocked_by: Schema.Array(MemoryPath)
+      })
+    ),
+    next_cursor: Schema.NullOr(Schema.String)
+  })
+})
+```
+
+The task working set: a direct indexed scan with blockers, never ranked retrieval. `next_cursor` is a keyset on the path (the last path returned), so a page stays correct while a sleep cycle archives files.
+
+**Input:** every parameter optional. `due_before` is an ISO DATE compared by calendar day, strictly before, so `due_before <today>` is the overdue queue. `include_archived` reaches finished tasks — `done` archives, so they are otherwise absent. `detected` lists only the tasks the sleep cycle proposed, never ones opened by hand.
+
+**Output:** `tasks`, eight-field rows each carrying `blocked_by` (the paths of tasks blocking this one via `blocks` edges, empty when none), and `next_cursor`, null on the last page.
+
+`apps/mcp/src/tools.ts:1045-1078`
+
+## `task_status`
+
+```ts
+const TaskStatus = Tool.make("task_status", {
+  description: /* … */,
+  dependencies: WRITES(),
+  parameters: Schema.Struct({
+    path: MemoryPath,
+    status: Schema.Literals(TASK_STATUSES),
+    reason: Optional(Schema.String)
+  }),
+  failure: ToolFailure,
+  success: Schema.Struct({
+    path: MemoryPath,
+    task_status: Schema.String,
+    archived: Schema.Boolean,
+    archive_path: Schema.NullOr(MemoryPath),
+    commit_sha: Schema.NullOr(Schema.String),
+    unchanged: Schema.Boolean
+  })
+})
+```
+
+Moves a task's status. `done` stamps the status AND archives the task (a `git mv` into `archive/<YYYY>/`) in one commit, so finished work leaves the working set by design; `reason` is recorded on the archive commit when the status is `done`.
+
+**Input:** `path` and `status` (required), `reason` optional.
+
+**Output:** `path`, `task_status`, `archived`, `archive_path` (the `archive/<YYYY>/` path when archived), `commit_sha`, and `unchanged` — true when the task already carried the requested status, in which case nothing is written.
+
+`apps/mcp/src/tools.ts:1023-1043`
 
 ## `trace_links`
 

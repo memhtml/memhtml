@@ -3,7 +3,7 @@ title: Wire up the MCP server
 description: Run memhtml serve mcp over stdio, see the tools and resources a client gets, and call one by hand.
 ---
 
-`memhtml serve mcp` exposes the same store over the Model Context Protocol on stdio: fifteen tools and three resources (`apps/mcp/src/tools.ts`). This tutorial starts the server, lists what a client sees, calls a tool by hand so you can verify the wiring without a client, and then configures a client.
+`memhtml serve mcp` exposes the same store over the Model Context Protocol on stdio: eighteen tools and three resources (`apps/mcp/src/tools.ts`). This tutorial starts the server, lists what a client sees, calls a tool by hand so you can verify the wiring without a client, and then configures a client.
 
 You need a store with something in it, so [write a memory](/learn/tutorial/first-memory/) first.
 
@@ -60,10 +60,11 @@ The handshake answers:
 memory_write        memory_write_batch  memory_read      memory_search
 memory_recall       memory_correct      memory_link      memory_neighbors
 memory_resolve      memory_archive      memory_reinforce memory_list
-trace_search        trace_links         memory_status
+task_add            task_status         task_list        trace_search
+trace_links         memory_status
 ```
 
-The order is deliberate, because a client publishes it and an agent reads it top-down. `memory_write_batch` sits second, directly after `memory_write`, so the tool that `memory_write`'s own description points at is the very next entry rather than thirteen tools away.
+The order is deliberate, because a client publishes it and an agent reads it top-down. `memory_write_batch` sits second, directly after `memory_write`, so the tool that `memory_write`'s own description points at is the very next entry rather than sixteen tools away. The task family sits after the memory-graph tools and before the trace plane (`apps/mcp/src/tools.ts`).
 
 Three resource templates come with them:
 
