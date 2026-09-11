@@ -60,6 +60,7 @@ export {
   ENTITY_LABEL_PREFIX
 } from "./compress.js"
 export { confidenceDecay } from "./confidence-decay.js"
+export type { GroupPairContext } from "./dedup-merge.js"
 export {
   DEDUP_ADMIT_FLOOR,
   DEDUP_BATCH_CHARS,
@@ -69,7 +70,9 @@ export {
   DEDUP_MAX_COMPONENTS,
   DEDUP_MEMBER_CHARS,
   DEDUP_PAIR_LIMIT,
-  dedupMerge
+  dedupMerge,
+  dedupTextFor,
+  groupPairsFor
 } from "./dedup-merge.js"
 export {
   EDGE_COSINE_FLOOR,
