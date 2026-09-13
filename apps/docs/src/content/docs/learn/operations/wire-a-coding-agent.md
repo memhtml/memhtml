@@ -178,6 +178,12 @@ ERR_INTEGRATION_MODIFIED
 
 The refusal is per entry, and nothing is written when one fires. It fires when the bytes install owns no longer hash to what the receipt claims, which means either you edited the block or another tool rewrote the file around it. Read the entry, decide which version you want, then either keep your edit by removing the receipt's claim on it with `uninstall`, or overwrite it with `--force`. `--force` keeps the prior bytes beside the file as a timestamped backup, and the report names the backup path.
 
+The same refusal covers a receipt that is present and can't be read, whether it's truncated, of the wrong shape, copied in from another host or root, or claims a path outside its own root. Install won't plan over it as if the host were never installed, and uninstall won't guess at what to remove from it; `--force` on install proceeds as a fresh install and keeps the unreadable bytes beside it. Uninstall also stops when another host's receipt at the same scope can't be read, because that receipt may claim the skill the three non-Claude hosts share.
+
+With no host named, install plans every detected host before it writes to any of them, so a refusal on the third host leaves the first two untouched. If a disk error interrupts the real pass, the failure names the hosts that did land and the uninstall command for each.
+
+Re-running install with a narrower `--hooks` mode removes the events it no longer wants, and `--hooks none` removes every hook the previous install wrote, including OpenCode's plugin file, in the same transaction that drops them from the receipt. The report lists those rows as `removed`. Your own hook entries beside ours stay where they are.
+
 `uninstall` refuses a modified entry with the same code and has no `--force`. That asymmetry is deliberate: overwriting your edit is recoverable from the backup, and deleting a file you had made your own isn't.
 
 ## List and doctor

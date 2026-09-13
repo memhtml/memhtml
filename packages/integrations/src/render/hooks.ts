@@ -18,7 +18,7 @@
 
 import type { HookCommandOptions } from "../command-line.js"
 import { hookCommand, shellJoin } from "../command-line.js"
-import type { BinaryLocation, HookEvent, HookMode } from "../types.js"
+import { type BinaryLocation, HOOK_EVENTS, HOSTS, type HookEvent, type HookMode } from "../types.js"
 
 /** One command handler inside a Claude Code or Codex hook group. */
 export interface CommandHook {
@@ -143,22 +143,32 @@ const commandsOf = (entry: unknown): ReadonlyArray<string> => {
 }
 
 /**
+ * The argument shape `hookCommand` writes and nothing else does: `hook <event> --host <host>`, with both
+ * vocabularies closed. `other-tool hook session-start` fails it on `--host`; a path that merely contains
+ * the word `hook` fails it on the event.
+ */
+const HOOK_SHAPE = new RegExp(
+  `(^|\\s)hook\\s+(${HOOK_EVENTS.join("|")})\\s+--host\\s+(${HOSTS.join("|")})(\\s|$)`
+)
+
+/**
  * Is this entry from an existing hooks file one of OURS? Used by install to replace and by uninstall to
  * remove, so a human's own `SessionStart` hook survives both.
  *
- * The signal is the invocation itself: `" hook "` (with both spaces, so a path containing the word
- * `hook` cannot match) and, when a `binary` is given and it was not installed bare, the exact entry
- * script the receipt names. EVERY command in the entry must match — a group someone else has added a
- * second handler to is not ours to rewrite — and an entry carrying no command at all is never ours.
+ * The signal is the invocation itself: the `hook <event> --host <host>` shape only `hookCommand`
+ * renders, then the program. Installed bare, the program is the literal `memhtml` the line starts with;
+ * installed absolute, it is the entry script the receipt names. EVERY command in the entry must match —
+ * a group someone else has added a second handler to is not ours to rewrite — and an entry carrying no
+ * command at all is never ours.
  */
 export const claudeOwned = (entry: unknown, binary?: BinaryLocation, bare?: boolean): boolean => {
   const commands = commandsOf(entry)
   if (commands.length === 0) return false
-  return commands.every(
-    (command) =>
-      command.includes(" hook ") &&
-      (bare === true || binary === undefined || command.includes(binary.cli))
-  )
+  return commands.every((command) => {
+    if (!HOOK_SHAPE.test(command)) return false
+    if (bare === true) return command.startsWith("memhtml hook ")
+    return binary === undefined || command.includes(binary.cli)
+  })
 }
 
 /** Codex writes Claude Code's entry shape, so ownership is decided the same way. */

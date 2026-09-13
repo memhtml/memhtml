@@ -22,6 +22,7 @@
  * never ran.
  */
 
+import { rm } from "node:fs/promises"
 import { homedir } from "node:os"
 import { parse as parsePath, resolve as resolvePath } from "node:path"
 
@@ -56,7 +57,7 @@ import {
   writeTextAtomic
 } from "./fs.js"
 import { type HostSpec, hostSpec } from "./hosts.js"
-import { compareEntries, readReceipt, receiptPath, writeReceipt } from "./receipt.js"
+import { compareEntries, inspectReceiptFile, receiptPath, writeReceipt } from "./receipt.js"
 import {
   renderClaudeImportBlock,
   renderCursorRules,
@@ -86,12 +87,19 @@ export type EntryAction = (typeof ENTRY_ACTIONS)[number]
 
 /** One artifact, plus the three total functions that make it a transaction step. */
 export interface PlannedWrite extends ManagedWrite {
-  /** The whole new file, given its current text (`null` when absent). */
-  readonly apply: (current: string | null) => string
+  /** The whole new file, given its current text (`null` when absent); `null` means the file goes. */
+  readonly apply: (current: string | null) => string | null
   /** The file with our part removed; `null` when nothing of the caller's would be left. */
   readonly strip: (current: string | null) => string | null
   /** The bytes we claim as they are on disk NOW, or `null` when our part is absent. */
   readonly ownedNow: (current: string | null) => string | null
+  /**
+   * A write that REMOVES an artifact the previous receipt claims and claims nothing itself: the hooks or
+   * plugin of an install being re-run with `--hooks none`. Reported as `removed`, absent from the new
+   * receipt. Without it the new receipt would drop the entry while the hooks stayed armed on disk, with
+   * no record left to remove them by.
+   */
+  readonly retire?: true
 }
 
 export interface InstallPlan {
@@ -104,6 +112,8 @@ export interface InstallPlan {
   readonly receiptPath: string
   /** The receipt as it stands, or `null` when this host is not installed at this scope. */
   readonly previous: Receipt | null
+  /** Set when a receipt is present but unreadable, which only `--force` gets past; it is backed up. */
+  readonly previousProblem?: string
 }
 
 export interface EntryReport {
@@ -444,7 +454,20 @@ const wholeFile = (role: ManagedRole, path: string, content: string): PlannedWri
 export const planInstall = async (options: InstallOptions): Promise<InstallPlan> => {
   const spec = hostSpec(options.host, options.scope, options.root)
   const receipt = receiptPath(options.scope, options.root, options.host)
-  const previous = await readReceipt(receipt)
+  const inspected = await inspectReceiptFile(receipt)
+  /**
+   * A receipt that is there and cannot be read is not "not installed". Planning over it as a fresh
+   * install would overwrite the only record of what an earlier install wrote, so it refuses like any
+   * other edit we cannot account for; `--force` proceeds as a fresh install and keeps the bytes beside it.
+   */
+  if (inspected.state === "invalid" && !options.force) {
+    throw new IntegrationModified({
+      host: options.host,
+      path: receipt,
+      detail: `the receipt cannot be read (${inspected.problem ?? "unknown problem"}), and install never overwrites a receipt it cannot account for`
+    })
+  }
+  const previous = inspected.receipt
   const bare = options.bareCommand
   const mcp = mcpCommand(options.binary, bare)
   const cli = cliCommand(options.binary, bare)
@@ -527,6 +550,23 @@ export const planInstall = async (options: InstallOptions): Promise<InstallPlan>
       const plugin = renderOpenCodePlugin(options.binary, bare, options.hooks, hookOpts)
       if (plugin.length > 0) writes.push(wholeFile("plugin", spec.hooks.file, plugin))
     }
+  } else if (previous !== null) {
+    // `--hooks none` over an install that wrote hooks: strip what the previous receipt claims, so the
+    // hooks leave the disk in the same transaction that drops them from the receipt.
+    for (const entry of previous.entries) {
+      if (entry.role !== "hooks" && entry.role !== "plugin") continue
+      const editor = editorFor(spec, entry, previous.binary, previous.bareCommand)
+      writes.push({
+        kind: entry.kind,
+        role: entry.role,
+        path: entry.path,
+        content: "",
+        apply: editor.strip,
+        strip: editor.strip,
+        ownedNow: editor.ownedNow,
+        retire: true
+      })
+    }
   }
 
   // The instruction prose.
@@ -586,7 +626,10 @@ export const planInstall = async (options: InstallOptions): Promise<InstallPlan>
     writes,
     nextSteps: spec.nextSteps,
     receiptPath: receipt,
-    previous
+    previous,
+    ...(inspected.state === "invalid" && inspected.problem !== undefined
+      ? { previousProblem: inspected.problem }
+      : {})
   }
 }
 
@@ -666,6 +709,7 @@ export const install = async (options: InstallOptions): Promise<InstallReport> =
    */
   const unowned = new Set<string>()
   for (const write of plan.writes) {
+    if (write.retire === true) continue
     if (claimOf(plan.previous, write.path, write.role) !== undefined) continue
     const text = before.get(write.path) ?? null
     const owned = write.ownedNow(text)
@@ -709,17 +753,19 @@ export const install = async (options: InstallOptions): Promise<InstallReport> =
     }
   }
 
-  // The new text of each file, folded so two artifacts in one file compose in plan order.
-  const next = new Map<string, string>()
+  // The new text of each file, folded so two artifacts in one file compose in plan order. `null` is a
+  // file that goes: a retired plugin, or a hooks file that held nothing but ours.
+  const next = new Map<string, string | null>()
   for (const path of paths) {
     let text = before.get(path) ?? null
     for (const write of plan.writes) {
       if (write.path === path) text = write.apply(text)
     }
-    next.set(path, text ?? "")
+    next.set(path, text)
   }
 
-  const entries: ReadonlyArray<ReceiptEntry> = plan.writes.map((write) => ({
+  const claimed = plan.writes.filter((write) => write.retire !== true)
+  const entries: ReadonlyArray<ReceiptEntry> = claimed.map((write) => ({
     path: write.path,
     role: write.role,
     kind: write.kind,
@@ -753,6 +799,7 @@ export const install = async (options: InstallOptions): Promise<InstallReport> =
   const changed = !(sameEntries && sameOptions && filesUnchanged)
 
   const actionOf = (write: PlannedWrite): EntryAction => {
+    if (write.retire === true) return "removed"
     if (options.dryRun) return "planned"
     const text = before.get(write.path) ?? null
     if (write.ownedNow(text) === write.content && next.get(write.path) === text) return "unchanged"
@@ -782,7 +829,13 @@ export const install = async (options: InstallOptions): Promise<InstallReport> =
   if (options.dryRun) {
     return {
       ...report([]),
-      contents: Object.fromEntries(paths.map((path) => [path, next.get(path) ?? ""]))
+      // A retired file has no content to show; its row above says `removed`.
+      contents: Object.fromEntries(
+        paths.flatMap((path) => {
+          const text = next.get(path)
+          return text === null || text === undefined ? [] : [[path, text] as const]
+        })
+      )
     }
   }
 
@@ -796,6 +849,14 @@ export const install = async (options: InstallOptions): Promise<InstallReport> =
     for (const path of [...paths, plan.receiptPath]) snapshots.push(await snapshotOf(path))
     if (options.force) {
       const stamp = stampNow()
+      if (plan.previousProblem !== undefined) {
+        const text = await currentText(plan.receiptPath)
+        if (text !== null) {
+          const backup = backupPathFor(plan.receiptPath, stamp)
+          await writeTextAtomic(backup, text)
+          backups.push(backup)
+        }
+      }
       for (const path of paths) {
         if (!drifted.has(path) && !unowned.has(path)) continue
         const text = before.get(path)
@@ -805,7 +866,11 @@ export const install = async (options: InstallOptions): Promise<InstallReport> =
         backups.push(backup)
       }
     }
-    for (const path of paths) await writeTextAtomic(path, next.get(path) ?? "")
+    for (const path of paths) {
+      const text = next.get(path) ?? null
+      if (text === null) await rm(path, { force: true })
+      else await writeTextAtomic(path, text)
+    }
     const receipt: Receipt = {
       package: "memhtml",
       version: options.binary.version,

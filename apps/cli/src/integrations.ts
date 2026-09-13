@@ -211,16 +211,27 @@ const hostsOf = async (input: IntegrationsInput, home: string): Promise<Readonly
  * that. `ERR_UNKNOWN` would tell a caller nothing it could act on, where the suggestions below name the
  * two calls that describe the problem.
  */
-const failureOf = (error: unknown, host: HostId | undefined): IntegrationsAnswer => {
-  if (typeof error === "object" && error !== null && "_tag" in error) {
-    return { payload: failureFor(error), exitCode: EXIT_RUNTIME }
-  }
-  const message = error instanceof Error ? error.message : String(error)
+const failureOf = (
+  error: unknown,
+  host: HostId | undefined,
+  applied: ReadonlyArray<HostId> = []
+): IntegrationsAnswer => {
+  const base: Failure =
+    typeof error === "object" && error !== null && "_tag" in error
+      ? failureFor(error)
+      : fail("ERR_STORAGE", error instanceof Error ? error.message : String(error), [
+          `memhtml integrations doctor${host === undefined ? "" : ` ${host}`}`,
+          `memhtml integrations install${host === undefined ? "" : ` ${host}`} --dry-run`
+        ])
+  if (applied.length === 0) return { payload: base, exitCode: EXIT_RUNTIME }
+  // A multi-host install that failed part-way: the hosts before it are wired and say so, because a
+  // failure envelope that hides them would leave the operator believing nothing was written.
   return {
-    payload: fail("ERR_STORAGE", message, [
-      `memhtml integrations doctor${host === undefined ? "" : ` ${host}`}`,
-      `memhtml integrations install${host === undefined ? "" : ` ${host}`} --dry-run`
-    ]),
+    payload: fail(
+      base.code,
+      `${base.error} (${applied.join(", ")} ${applied.length === 1 ? "was" : "were"} installed before this failure and remain installed)`,
+      [...base.suggestions, ...applied.map((one) => `memhtml integrations uninstall ${one}`)]
+    ),
     exitCode: EXIT_RUNTIME
   }
 }
@@ -265,12 +276,12 @@ export const integrationsInstall = async (
   const hosts = await hostsOf(input, home)
   const memhtmlRoot = storeRootOf(input, home)
   const dryRun = input.dryRun === true
+  const applied: Array<HostId> = []
   try {
     const binary = await binaryOf(input)
-    const reports: Array<HostReport> = []
-    for (const host of hosts) {
+    const optionsFor = (host: HostId, asDryRun: boolean) => {
       const traceRoot = traceRootOf(host, home)
-      const report = await install({
+      return {
         host,
         scope,
         root,
@@ -280,8 +291,23 @@ export const integrationsInstall = async (
         bareCommand: input.bareCommand === true,
         binary,
         force: input.force === true,
-        dryRun
-      })
+        dryRun: asDryRun
+      }
+    }
+    /**
+     * Each host is its own transaction, so with several hosts a refusal on the third would leave the first
+     * two wired. Every refusal install can raise (a modified receipt, a foreign artifact, a hand-written
+     * Codex table, a symlinked path) is raised by the same code path in dry-run form, so planning every
+     * host first turns "partly applied" into "nothing written" for all of them. What remains is a disk
+     * failure during the real pass, which `failureOf` reports with the hosts that did land.
+     */
+    if (!dryRun && hosts.length > 1) {
+      for (const host of hosts) await install(optionsFor(host, true))
+    }
+    const reports: Array<HostReport> = []
+    for (const host of hosts) {
+      const report = await install(optionsFor(host, dryRun))
+      if (!dryRun) applied.push(host)
       reports.push({
         host,
         changed: report.changed,
@@ -306,7 +332,7 @@ export const integrationsInstall = async (
       exitCode: EXIT_OK
     }
   } catch (error) {
-    return failureOf(error, hosts.length === 1 ? hosts[0] : undefined)
+    return failureOf(error, hosts.length === 1 ? hosts[0] : undefined, applied)
   }
 }
 

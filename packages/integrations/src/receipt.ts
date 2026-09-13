@@ -8,13 +8,13 @@
  * claims and only the second one licenses a delete.
  *
  * A malformed receipt is reported, never repaired and never guessed at. `readReceipt` answers `null` for
- * both absent and invalid because most callers only need "can I trust this"; `inspectReceiptFile` splits
- * the two apart, so `doctor` can say "the receipt at … is not valid JSON" instead of "not installed",
- * which would invite an install that then overwrites a real one.
+ * both absent and invalid and is for readers that only display; every writer (`install`, `uninstall`)
+ * goes through `inspectReceiptFile`, which splits the two apart, so a present-but-unreadable receipt
+ * refuses rather than reading as "not installed" and inviting an install that overwrites a real one.
  */
 
 import { rm } from "node:fs/promises"
-import { join } from "node:path"
+import { isAbsolute, join, normalize, resolve, sep } from "node:path"
 
 import { readTextOrNull, writeTextAtomic } from "./fs.js"
 import {
@@ -53,6 +53,17 @@ const oneOf = (value: unknown, allowed: ReadonlyArray<string>): boolean =>
 const KINDS = ["file", "fragment"] as const
 
 /**
+ * Every path a receipt may claim sits under its own `root`: `$HOME` at user scope, the repository at
+ * project scope, by construction of `hostSpec`. A receipt naming anything else is not one install wrote,
+ * and honouring it would let an edited receipt point `uninstall` at a file this integration never owned.
+ * Normalized-and-absolute also rules out a `..` segment walking back out.
+ */
+const insideRoot = (path: string, root: string): boolean =>
+  isAbsolute(path) &&
+  normalize(path) === path &&
+  (path === root || path.startsWith(root.endsWith(sep) ? root : `${root}${sep}`))
+
+/**
  * The shape check, hand-rolled rather than an Effect `Schema`, for the same reason the rest of this layer
  * is plain async: the validator runs on the rollback and doctor paths, and it returns a sentence a human
  * reads. It names the first field that is wrong, and it is exhaustive over `Receipt` — a field added to
@@ -65,6 +76,9 @@ const validate = (value: unknown): string | null => {
   if (!oneOf(value.host, HOSTS)) return `\`host\` is not one of ${HOSTS.join(", ")}`
   if (!oneOf(value.scope, SCOPES)) return `\`scope\` is not one of ${SCOPES.join(", ")}`
   if (!isString(value.root)) return "`root` is not a string"
+  if (!isAbsolute(value.root) || normalize(value.root) !== value.root) {
+    return "`root` is not an absolute, normalized path"
+  }
   if (!isString(value.memhtmlRoot)) return "`memhtmlRoot` is not a string"
   const binary = value.binary
   if (!isRecord(binary)) return "`binary` is not an object"
@@ -78,6 +92,9 @@ const validate = (value: unknown): string | null => {
   for (const [index, entry] of value.entries.entries()) {
     if (!isRecord(entry)) return `\`entries[${index}]\` is not an object`
     if (!isString(entry.path)) return `\`entries[${index}].path\` is not a string`
+    if (!insideRoot(entry.path, value.root)) {
+      return `\`entries[${index}].path\` is not an absolute, normalized path under \`root\``
+    }
     if (!oneOf(entry.role, MANAGED_ROLES)) {
       return `\`entries[${index}].role\` is not one of ${MANAGED_ROLES.join(", ")}`
     }
@@ -100,7 +117,18 @@ export const inspectReceiptFile = async (path: string): Promise<ReceiptFileInspe
   }
   const problem = validate(parsed)
   if (problem !== null) return { state: "invalid", receipt: null, problem }
-  return { state: "valid", receipt: parsed as Receipt }
+  const receipt = parsed as Receipt
+  // The receipt must be the one that belongs at this path: a Codex receipt copied over Cursor's, or one
+  // from another root, would otherwise license edits to files its host and scope never wrote.
+  const expected = receiptPath(receipt.scope, receipt.root, receipt.host)
+  if (resolve(expected) !== resolve(path)) {
+    return {
+      state: "invalid",
+      receipt: null,
+      problem: `names ${receipt.host} at ${receipt.scope} scope under ${receipt.root}, which belongs at ${expected}`
+    }
+  }
+  return { state: "valid", receipt }
 }
 
 /** The receipt, or `null` when there is none or it cannot be trusted. */

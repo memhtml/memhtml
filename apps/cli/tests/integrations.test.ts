@@ -145,6 +145,24 @@ describe("integrations install", () => {
     expect(report.hosts.map((host) => host.host)).toEqual(["claude", "cursor"])
   })
 
+  it("writes nothing for any host when one detected host would refuse", async () => {
+    const where = await sandbox([".claude", ".cursor"])
+    // Somebody else's `mcpServers.memhtml` in Cursor's file: the second host refuses, so the first must
+    // not have been wired on the way there.
+    await writeFile(
+      join(where.home, ".cursor", "mcp.json"),
+      '{ "mcpServers": { "memhtml": { "command": "their-own-server" } } }\n',
+      "utf8"
+    )
+    const result = await run(["integrations", "install", "--repo", where.store])
+    expect(result.exitCode).toBe(EXIT_RUNTIME)
+    const failure = parse(result.stdout)
+    expect(failure.code).toBe("ERR_INTEGRATION_MODIFIED")
+    expect(failure.error).not.toContain("remain installed")
+    expect(await readdir(where.home)).toEqual([".claude", ".cursor"])
+    expect(await readdir(join(where.home, ".claude"))).toEqual([])
+  })
+
   it("is idempotent through the CLI: the second run reports changed: false", async () => {
     const where = await sandbox()
     await run(["integrations", "install", "claude", "--repo", where.store])

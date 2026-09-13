@@ -24,13 +24,7 @@ import {
 } from "./fs.js"
 import { hostSpec } from "./hosts.js"
 import { type EntryReport, editorFor, receiptDriftReader } from "./install.js"
-import {
-  compareEntries,
-  inspectReceiptFile,
-  readReceipt,
-  receiptPath,
-  removeReceipt
-} from "./receipt.js"
+import { compareEntries, inspectReceiptFile, receiptPath, removeReceipt } from "./receipt.js"
 import { SKILL_DIR_NAME } from "./render/skill.js"
 import { HOSTS, type HostId, type InstallState, type Receipt, type Scope } from "./types.js"
 
@@ -78,9 +72,18 @@ const claimedElsewhere = async (receipt: Receipt): Promise<ReadonlySet<string>> 
   const claimed = new Set<string>()
   for (const other of HOSTS) {
     if (other === receipt.host) continue
-    const sibling = await readReceipt(receiptPath(receipt.scope, receipt.root, other))
-    if (sibling === null) continue
-    for (const entry of sibling.entries) claimed.add(entry.path)
+    const siblingPath = receiptPath(receipt.scope, receipt.root, other)
+    const sibling = await inspectReceiptFile(siblingPath)
+    if (sibling.state === "absent") continue
+    if (sibling.receipt === null) {
+      // Unreadable is not "claims nothing": it may claim the very skill this uninstall is about to remove.
+      throw new IntegrationModified({
+        host: other,
+        path: siblingPath,
+        detail: `the ${other} receipt cannot be read (${sibling.problem ?? "unknown problem"}), so a file it may share with ${receipt.host} cannot be told from ${receipt.host}'s own; repair or remove that receipt first`
+      })
+    }
+    for (const entry of sibling.receipt.entries) claimed.add(entry.path)
   }
   return claimed
 }

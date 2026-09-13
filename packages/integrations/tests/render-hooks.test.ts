@@ -204,6 +204,16 @@ describe("ownership predicates", () => {
     expect(claudeOwned("memhtml hook session-start")).toBe(false)
   })
 
+  it("in bare mode owns only a line that starts with the bare memhtml command", () => {
+    const shape = "hook session-start --host claude --repo /m"
+    expect(claudeOwned({ command: `memhtml ${shape}` }, BINARY, true)).toBe(true)
+    expect(claudeOwned({ command: `other-tool ${shape}` }, BINARY, true)).toBe(false)
+    expect(claudeOwned({ command: `/opt/other/memhtml ${shape}` }, BINARY, true)).toBe(false)
+    // The word alone is not the shape: no event, no --host.
+    expect(claudeOwned({ command: "memhtml hook something-else" }, BINARY, true)).toBe(false)
+    expect(claudeOwned({ command: "other-tool hook session-start" }, BINARY, true)).toBe(false)
+  })
+
   it("refuses a group a human has added a second handler to", () => {
     const mixed = {
       hooks: [

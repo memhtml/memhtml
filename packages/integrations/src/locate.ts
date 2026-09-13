@@ -63,10 +63,16 @@ export const locateBinary = async (input: LocateInput): Promise<BinaryLocation> 
   const cli = await realpathOrSelf(resolvePath(input.entry))
   const override = input.mcpOverride?.trim()
   if (override !== undefined && override !== "") {
+    const named = resolvePath(override)
+    // Checked like the sibling candidates below: an override that names nothing would be written into
+    // every host's MCP entry and fail only when an editor tried to spawn it.
+    if (!(await present(named))) {
+      throw new Error(`MEMHTML_MCP_BIN names ${named}, which does not exist`)
+    }
     return {
       node: process.execPath,
       cli,
-      mcp: await realpathOrSelf(resolvePath(override)),
+      mcp: await realpathOrSelf(named),
       version: input.version
     }
   }

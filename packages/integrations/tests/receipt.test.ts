@@ -44,23 +44,24 @@ const entry = (path: string, sha: string): ReceiptEntry => ({
   sha256: sha
 })
 
-const receipt = (overrides: Partial<Receipt> = {}): Receipt => ({
+/** A receipt rooted where the test keeps it: a receipt is only valid at its own root's receipt path. */
+const receipt = (overrides: Partial<Receipt> = {}, root = "/home/ada"): Receipt => ({
   package: "memhtml",
   version: "0.14.0",
   host: "claude",
   scope: "user",
-  root: "/home/ada",
-  memhtmlRoot: "/home/ada/memory",
+  root,
+  memhtmlRoot: join(root, "memory"),
   binary: {
     node: "/usr/bin/node",
-    cli: "/home/ada/.local/bin/memhtml",
-    mcp: "/home/ada/.local/bin/memhtml-mcp",
+    cli: join(root, ".local", "bin", "memhtml"),
+    mcp: join(root, ".local", "bin", "memhtml-mcp"),
     version: "0.14.0"
   },
   bareCommand: false,
   hooks: "all",
   installedAt: "2026-09-13T00:00:00.000Z",
-  entries: [entry("/home/ada/.claude.json", sha256('{"command":"memhtml-mcp"}'))],
+  entries: [entry(join(root, ".claude.json"), sha256('{"command":"memhtml-mcp"}'))],
   ...overrides
 })
 
@@ -86,7 +87,7 @@ describe("write / read / remove", () => {
   it("round-trips through disk, creating the directory, pretty-printed with a trailing newline", async () => {
     const root = await tempRoot()
     const path = receiptPath("user", root, "claude")
-    const written = receipt()
+    const written = receipt({}, root)
     await writeReceipt(path, written)
     expect(await readReceipt(path)).toEqual(written)
     const text = await readFile(path, "utf8")
@@ -98,8 +99,8 @@ describe("write / read / remove", () => {
   it("overwrites an existing receipt rather than appending to it", async () => {
     const root = await tempRoot()
     const path = receiptPath("project", root, "cursor")
-    await writeReceipt(path, receipt({ host: "cursor", scope: "project", hooks: "session" }))
-    await writeReceipt(path, receipt({ host: "cursor", scope: "project", hooks: "none" }))
+    await writeReceipt(path, receipt({ host: "cursor", scope: "project", hooks: "session" }, root))
+    await writeReceipt(path, receipt({ host: "cursor", scope: "project", hooks: "none" }, root))
     const back = await readReceipt(path)
     expect(back?.hooks).toBe("none")
   })
@@ -107,7 +108,7 @@ describe("write / read / remove", () => {
   it("removes the file, and removing an absent one is success", async () => {
     const root = await tempRoot()
     const path = receiptPath("user", root, "codex")
-    await writeReceipt(path, receipt({ host: "codex" }))
+    await writeReceipt(path, receipt({ host: "codex" }, root))
     await removeReceipt(path)
     expect(await readReceipt(path)).toBeNull()
     await removeReceipt(path)
@@ -126,11 +127,11 @@ describe("inspectReceiptFile", () => {
 
   it("reports valid and hands back the receipt", async () => {
     const root = await tempRoot()
-    const path = join(root, "claude.json")
-    await writeReceipt(path, receipt())
+    const path = receiptPath("user", root, "claude")
+    await writeReceipt(path, receipt({}, root))
     const inspected = await inspectReceiptFile(path)
     expect(inspected.state).toBe("valid")
-    expect(inspected.receipt).toEqual(receipt())
+    expect(inspected.receipt).toEqual(receipt({}, root))
     expect(inspected.problem).toBeUndefined()
   })
 
@@ -149,16 +150,22 @@ describe("inspectReceiptFile", () => {
     const root = await tempRoot()
     const cases: ReadonlyArray<readonly [unknown, RegExp]> = [
       [[], /not a JSON object/],
-      [{ ...receipt(), package: "openwiki" }, /`package`/],
-      [{ ...receipt(), host: "vscode" }, /`host`/],
-      [{ ...receipt(), scope: "global" }, /`scope`/],
-      [{ ...receipt(), hooks: "some" }, /`hooks`/],
-      [{ ...receipt(), bareCommand: "no" }, /`bareCommand`/],
-      [{ ...receipt(), binary: { node: "/usr/bin/node" } }, /`binary\.cli`/],
-      [{ ...receipt(), entries: {} }, /`entries` is not an array/],
-      [{ ...receipt(), entries: [{ path: "/x", role: "hooks", kind: "file" }] }, /sha256/],
+      [{ ...receipt({}, root), package: "openwiki" }, /`package`/],
+      [{ ...receipt({}, root), host: "vscode" }, /`host`/],
+      [{ ...receipt({}, root), scope: "global" }, /`scope`/],
+      [{ ...receipt({}, root), hooks: "some" }, /`hooks`/],
+      [{ ...receipt({}, root), bareCommand: "no" }, /`bareCommand`/],
+      [{ ...receipt({}, root), binary: { node: "/usr/bin/node" } }, /`binary\.cli`/],
+      [{ ...receipt({}, root), entries: {} }, /`entries` is not an array/],
       [
-        { ...receipt(), entries: [{ path: "/x", role: "banner", kind: "file", sha256: "a" }] },
+        { ...receipt({}, root), entries: [{ path: join(root, "x"), role: "hooks", kind: "file" }] },
+        /sha256/
+      ],
+      [
+        {
+          ...receipt({}, root),
+          entries: [{ path: join(root, "x"), role: "banner", kind: "file", sha256: "a" }]
+        },
         /role/
       ]
     ]
@@ -173,8 +180,8 @@ describe("inspectReceiptFile", () => {
 
   it("accepts a receipt with no entries, which is what a dry-run-then-real install can produce", async () => {
     const root = await tempRoot()
-    const path = join(root, "claude.json")
-    await writeReceipt(path, receipt({ entries: [] }))
+    const path = receiptPath("user", root, "claude")
+    await writeReceipt(path, receipt({ entries: [] }, root))
     expect((await inspectReceiptFile(path)).state).toBe("valid")
   })
 })
@@ -217,5 +224,59 @@ describe("compareEntries", () => {
   it("is installed for an empty entry list, since not-installed is the caller's question", async () => {
     const result = await compareEntries([], async () => null)
     expect(result.state).toBe("installed")
+  })
+})
+
+describe("a receipt is bound to where it sits and what it may claim", () => {
+  const valid = (root: string): Receipt => ({
+    package: "memhtml",
+    version: "9.9.9",
+    host: "claude",
+    scope: "user",
+    root,
+    memhtmlRoot: join(root, "memory"),
+    binary: {
+      node: "/usr/bin/node",
+      cli: "/opt/memhtml/cli.mjs",
+      mcp: "/opt/memhtml/mcp.mjs",
+      version: "9.9.9"
+    },
+    bareCommand: false,
+    hooks: "all",
+    installedAt: "2026-09-13T00:00:00.000Z",
+    entries: [entry(join(root, ".claude", "CLAUDE.md"), sha256("x"))]
+  })
+
+  it("is invalid at another host's path", async () => {
+    const root = await tempRoot()
+    const path = receiptPath("user", root, "cursor")
+    await writeReceipt(path, valid(root))
+    const inspected = await inspectReceiptFile(path)
+    expect(inspected.state).toBe("invalid")
+    expect(inspected.problem).toContain("belongs at")
+    expect(inspected.problem).toContain(receiptPath("user", root, "claude"))
+  })
+
+  it("is invalid when an entry reaches outside its root", async () => {
+    const root = await tempRoot()
+    const path = receiptPath("user", root, "claude")
+    for (const outside of [
+      "/etc/passwd",
+      join(root, "..", "elsewhere"),
+      "relative/file",
+      `${root}/a/../../b`
+    ]) {
+      await writeReceipt(path, { ...valid(root), entries: [entry(outside, sha256("x"))] })
+      const inspected = await inspectReceiptFile(path)
+      expect(inspected.state, outside).toBe("invalid")
+      expect(inspected.problem, outside).toContain("under `root`")
+    }
+  })
+
+  it("is invalid when root itself is relative", async () => {
+    const root = await tempRoot()
+    const path = receiptPath("user", root, "claude")
+    await writeReceipt(path, { ...valid(root), root: "home/someone" })
+    expect((await inspectReceiptFile(path)).problem).toContain("`root`")
   })
 })

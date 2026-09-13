@@ -131,8 +131,13 @@ describe("writeTextAtomic", () => {
       // The reader that opened the first file still reads the whole first file: the write landed as a
       // rename over the path, never as bytes into the inode that reader holds.
       expect(await held.readFile("utf8")).toBe("first\n")
-      expect(await readFile(path, "utf8")).toBe("second\n")
-      expect((await stat(path)).ino).not.toBe((await held.stat()).ino)
+      const replaced = await open(path, "r")
+      try {
+        expect(await replaced.readFile("utf8")).toBe("second\n")
+        expect((await replaced.stat()).ino).not.toBe((await held.stat()).ino)
+      } finally {
+        await replaced.close()
+      }
     } finally {
       await held.close()
     }

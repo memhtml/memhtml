@@ -651,3 +651,96 @@ describe("planInstall", () => {
     }
   })
 })
+
+describe("a re-install with --hooks none retires the hooks the previous install wrote", () => {
+  it("removes Claude Code's hook entries and drops them from the receipt in one transaction", async () => {
+    const where = await fixture()
+    await install(optionsFor("claude", where))
+    const hooksFile = join(where.home, ".claude", "settings.json")
+    // An operator's own hook beside ours: it must be exactly what survives.
+    const theirs = { hooks: [{ type: "command", command: "./bin/lint-staged" }] }
+    const withTheirs = JSON.parse(await text(hooksFile)) as {
+      hooks: Record<string, Array<unknown>>
+    }
+    withTheirs.hooks.PostToolUse = [theirs]
+    await writeFile(hooksFile, `${JSON.stringify(withTheirs, null, 2)}\n`, "utf8")
+
+    const report = await install(optionsFor("claude", where, { hooks: "none" }))
+    expect(report.changed).toBe(true)
+    expect(report.entries.find((one) => one.role === "hooks")?.action).toBe("removed")
+    const receipt = await readReceipt(receiptPath("user", where.home, "claude"))
+    expect(receipt?.hooks).toBe("none")
+    expect(receipt?.entries.map((one) => one.role)).not.toContain("hooks")
+    const after = JSON.parse(await text(hooksFile)) as { hooks: Record<string, Array<unknown>> }
+    expect(after.hooks).toEqual({ PostToolUse: [theirs] })
+
+    // The receipt now describes disk exactly, so uninstall has nothing to trip over and leaves theirs.
+    await uninstall("claude", "user", where.home)
+    expect(JSON.parse(await text(hooksFile))).toEqual({ hooks: { PostToolUse: [theirs] } })
+  })
+
+  it("removes the OpenCode plugin file it wrote", async () => {
+    const where = await fixture()
+    await install(optionsFor("opencode", where, { traceRoot: join(where.home, "traces") }))
+    const plugin = hostSpec("opencode", "user", where.home).hooks.file
+    expect((await files(where.home)).some((one) => join(where.home, one) === plugin)).toBe(true)
+
+    const report = await install(optionsFor("opencode", where, { hooks: "none" }))
+    expect(report.entries.find((one) => one.role === "plugin")?.action).toBe("removed")
+    expect((await files(where.home)).some((one) => join(where.home, one) === plugin)).toBe(false)
+    const receipt = await readReceipt(receiptPath("user", where.home, "opencode"))
+    expect(receipt?.entries.map((one) => one.role)).not.toContain("plugin")
+  })
+
+  it("plans the removal on a dry run without touching disk", async () => {
+    const where = await fixture()
+    await install(optionsFor("claude", where))
+    const before = await digest(where.home)
+    const report = await install(optionsFor("claude", where, { hooks: "none", dryRun: true }))
+    expect(report.entries.find((one) => one.role === "hooks")?.action).toBe("removed")
+    expect(await digest(where.home)).toEqual(before)
+  })
+})
+
+describe("a receipt that is present and unreadable", () => {
+  it("refuses install without --force, and writes nothing", async () => {
+    const where = await fixture()
+    const path = receiptPath("user", where.home, "claude")
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, "{ not json", "utf8")
+    const before = await digest(where.home)
+    await expect(install(optionsFor("claude", where))).rejects.toMatchObject({
+      _tag: "IntegrationModified",
+      path
+    })
+    expect(await digest(where.home)).toEqual(before)
+  })
+
+  it("proceeds as a fresh install with --force and keeps the unreadable bytes beside it", async () => {
+    const where = await fixture()
+    const path = receiptPath("user", where.home, "claude")
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, "{ not json", "utf8")
+    const report = await install(optionsFor("claude", where, { force: true }))
+    expect(report.backups.some((one) => one.startsWith(`${path}.memhtml-backup-`))).toBe(true)
+    const backup = report.backups.find((one) => one.startsWith(`${path}.memhtml-backup-`))
+    expect(backup === undefined ? null : await text(backup)).toBe("{ not json")
+    expect((await readReceipt(path))?.host).toBe("claude")
+  })
+
+  it("refuses to uninstall a host while a sibling receipt cannot be read", async () => {
+    const where = await fixture()
+    await install(optionsFor("codex", where))
+    await install(optionsFor("cursor", where))
+    const cursorReceipt = receiptPath("user", where.home, "cursor")
+    await writeFile(cursorReceipt, "{ not json", "utf8")
+    const before = await digest(where.home)
+    await expect(uninstall("codex", "user", where.home)).rejects.toMatchObject({
+      _tag: "IntegrationModified",
+      host: "cursor",
+      path: cursorReceipt
+    })
+    // The shared skill and everything else are exactly as they were.
+    expect(await digest(where.home)).toEqual(before)
+  })
+})
