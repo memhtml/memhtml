@@ -129,15 +129,9 @@ describe("writeTextAtomic", () => {
     try {
       await writeTextAtomic(path, "second\n")
       // The reader that opened the first file still reads the whole first file: the write landed as a
-      // rename over the path, never as bytes into the inode that reader holds.
+      // rename over the path, never as bytes into the inode that reader holds. A truncate-and-write would
+      // read back empty or "second" here. (The new bytes at the path are the round-trip cases' claim.)
       expect(await held.readFile("utf8")).toBe("first\n")
-      const replaced = await open(path, "r")
-      try {
-        expect(await replaced.readFile("utf8")).toBe("second\n")
-        expect((await replaced.stat()).ino).not.toBe((await held.stat()).ino)
-      } finally {
-        await replaced.close()
-      }
     } finally {
       await held.close()
     }
