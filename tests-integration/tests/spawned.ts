@@ -85,6 +85,39 @@ export const runBuilt = (
   })
 
 /**
+ * One `memhtml <argv>` against a repo, with a PAYLOAD on its stdin.
+ *
+ * {@link runBuilt} closes stdin (`stdio: ["ignore", …]`), which is the right shape for every command
+ * whose input is its argv and the wrong one for `memhtml hook`: a hook's input is the host's JSON
+ * payload on stdin, and a hook reading a closed descriptor takes the "no payload" path, so the same
+ * assertion would pass over a hook that never read anything. The payload is written and stdin closed
+ * immediately, because a hook reads to EOF.
+ */
+export const runBuiltWithStdin = (
+  root: string,
+  argv: ReadonlyArray<string>,
+  stdin: string,
+  extraEnv: NodeJS.ProcessEnv = {}
+): Promise<Spawned> =>
+  new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [cliEntryPoint, ...argv, "--repo", root], {
+      env: { ...childEnv(root), ...extraEnv },
+      stdio: ["pipe", "pipe", "pipe"]
+    })
+    let stdout = ""
+    let stderr = ""
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8")
+    })
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8")
+    })
+    child.once("error", reject)
+    child.once("close", (code) => resolve({ exitCode: code ?? 0, stdout, stderr }))
+    child.stdin.end(stdin)
+  })
+
+/**
  * The BARE binary: no repo, no `--repo`, no arguments.
  *
  * Separate from {@link runBuilt} precisely because it passes no `--repo` — the manifest's own claim is

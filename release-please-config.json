@@ -16,6 +16,7 @@
         { "type": "json", "path": "packages/eval/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/html/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/index/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "packages/integrations/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/llm/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/sleep/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/store/package.json", "jsonpath": "$.version" },

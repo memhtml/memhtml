@@ -50,6 +50,13 @@ import {
   readHookPayload,
   runHook
 } from "./hook.js"
+import {
+  integrationsDoctor,
+  integrationsInstall,
+  integrationsList,
+  integrationsShell,
+  integrationsUninstall
+} from "./integrations.js"
 import * as ops from "./operations.js"
 import { publish } from "./publish.js"
 import { serveMcp } from "./serve.js"
@@ -1596,7 +1603,59 @@ export const run = async (
     return { stdout: renderHookOutput(host, event, text), exitCode: EXIT_OK }
   }
 
-  // integrations dispatch: added in a later commit
+  /**
+   * The five `integrations` arms, answered here for the reason `agents-doc` is: they must work on a
+   * machine with no store. They are also the arms an operator reaches for FIRST, before any store exists,
+   * so building `layerApp` would scaffold `$MEMHTML_ROOT/.memhtml` and run every migration as a side
+   * effect of writing a host's config file.
+   *
+   * They sit ABOVE {@link envRootRefusal} deliberately, and that is not an exemption. The refusal exists
+   * so a call that OPENS a repo has to name it with `--repo`; these calls open none. `--repo` here is a
+   * value RECORDED into a host's config, for a store that may not exist yet, so a refusal would block
+   * `memhtml integrations install` on exactly the machine it is meant to set up.
+   *
+   * Each arm returns a rendered payload and an exit code rather than going through `dispatch`, whose
+   * service set is the app layer's. `process.argv[1]` is passed as the entry script the config will name.
+   */
+  if (parsed.command.startsWith("integrations ")) {
+    const entry = process.argv[1]
+    const shared = {
+      host: parsed.positional[0],
+      project: str(parsed, "project"),
+      repo: str(parsed, "repo"),
+      ...(entry === undefined ? {} : { entry })
+    }
+    if (parsed.command === "integrations install") {
+      const answer = await integrationsInstall({
+        ...shared,
+        hooks: str(parsed, "hooks"),
+        bareCommand: bool(parsed, "bare-command", false),
+        force: bool(parsed, "force", false),
+        dryRun: bool(parsed, "dry-run", false)
+      })
+      return emit(answer.payload, answer.exitCode)
+    }
+    if (parsed.command === "integrations uninstall") {
+      const answer = await integrationsUninstall(shared)
+      return emit(answer.payload, answer.exitCode)
+    }
+    if (parsed.command === "integrations list") {
+      const answer = await integrationsList(shared)
+      return emit(answer.payload, answer.exitCode)
+    }
+    if (parsed.command === "integrations doctor") {
+      const answer = await integrationsDoctor(shared)
+      return emit(answer.payload, answer.exitCode)
+    }
+    if (parsed.command === "integrations shell") {
+      const answer = await integrationsShell({
+        ...shared,
+        write: bool(parsed, "write", false),
+        rc: str(parsed, "rc")
+      })
+      return emit(answer.payload, answer.exitCode)
+    }
+  }
 
   /**
    * From here down every arm resolves a repo root, and this is the one place the environment is

@@ -14,7 +14,7 @@ import { defineConfig } from "tsdown"
  *
  * ## What is bundled, and what must not be
  *
- * The twelve `@memhtml/*` packages are the bundle. Every real dependency stays external, and two of
+ * The fourteen `@memhtml/*` packages are the bundle. Every real dependency stays external, and two of
  * them MUST: `memhtml exec` reads `node-html-parser`'s published `dist/index.mjs` as BYTES to seed the
  * QuickJS guest, and `@memhtml/html` loads `highlight.js` through `createRequire` on the first
  * detection. Inlined, each becomes a module in this graph rather than a file on disk, and both break

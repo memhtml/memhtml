@@ -98,6 +98,49 @@ const envelope = async (bin, args, env) => {
 }
 
 /**
+ * One command's RAW stdout, its exit code, and a payload written to its stdin.
+ *
+ * `envelope` cannot express `memhtml hook`, and that is a contract rather than an inconvenience: a hook's
+ * stdout is the HOST'S protocol — plain text for Claude Code and OpenCode, that host's JSON for Codex and
+ * Cursor, or nothing at all — so parsing it as an envelope would fail on the one command whose success is
+ * defined by never writing one. A hook also reads its payload on stdin, which `execFile` gives no seam
+ * for. stderr comes back too, because a hook that decided to print nothing says why on that stream.
+ */
+const runRaw = (bin, args, env, stdin = "") =>
+  new Promise((done, fail) => {
+    const child = spawn(bin, args, { env, stdio: ["pipe", "pipe", "pipe"] })
+    let stdout = ""
+    let stderr = ""
+    child.stdout.setEncoding("utf8")
+    child.stderr.setEncoding("utf8")
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk
+    })
+    child.once("error", fail)
+    child.once("close", (code) => done({ stdout, stderr, exitCode: code ?? 0 }))
+    child.stdin.end(stdin)
+  })
+
+/**
+ * Is this stdout one of THIS tool's envelopes?
+ *
+ * Asserted NEGATIVELY for `memhtml hook`: a hook that wrote `{"apiVersion":"1",…}` into a host's context
+ * window would exit 0, print something, and be wrong in the only way that matters. `apiVersion` is the
+ * discriminator rather than "parses as JSON", because two hosts' hook protocols ARE JSON.
+ */
+const looksLikeEnvelope = (text) => {
+  try {
+    const parsed = JSON.parse(text)
+    return typeof parsed === "object" && parsed !== null && "apiVersion" in parsed
+  } catch {
+    return false
+  }
+}
+
+/**
  * A command's envelope AND what it logged, for a check whose failure mode is a run that SUCCEEDED.
  *
  * `envelope` is the right shape for the other checks: the envelope is the contract, stderr is a log,
@@ -193,6 +236,15 @@ const main = async () => {
       return { ok: init.data?.created === true && typeof init.data?.headSha === "string" }
     })
 
+    /**
+     * The first memory's path, captured for the hook census.
+     *
+     * `memhtml hook user-prompt-submit` proves itself by naming a memory this corpus holds, and the path
+     * is taken from the write's own report rather than composed from the title — the slug rule is the
+     * store's, and a check that restated it would assert this script's guess at it.
+     */
+    let vipPath = ""
+
     await check("write commits one memory", async () => {
       const written = await envelope(
         bin,
@@ -211,6 +263,7 @@ const main = async () => {
         ],
         env
       )
+      vipPath = written.data?.path ?? ""
       return { ok: written.data?.created === true && Boolean(written.data?.commitSha) }
     })
 
@@ -265,7 +318,7 @@ const main = async () => {
       })
     }
 
-    await checkEveryCommand({ bin, work, env })
+    await checkEveryCommand({ bin, work, env, vipPath })
     const sleep = await checkSleepLifecycle({ bin, work, env })
     await checkEveryMcpTool({ mcpBin, env })
     await checkEveryResource({ mcpBin, env, sleep })
@@ -289,11 +342,26 @@ const main = async () => {
  * Ordering is state, not taste: `read` needs something written, `link` needs two paths, `neighbors`
  * needs the link, and `archive` moves a file so it runs last.
  */
-const checkEveryCommand = async ({ bin, work, env }) => {
+const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
   const manifest = await envelope(bin, ["manifest"], env)
   const declared = manifest.data.commands.map((command) => command.name)
 
   const corpus = env.MEMHTML_ROOT
+
+  /**
+   * A throwaway `$HOME` for the `integrations` family, which is the one family that writes OUTSIDE the
+   * corpus.
+   *
+   * `integrations install` at user scope writes `~/.claude.json`, `~/.claude/settings.json`, an
+   * instruction file, a skill, and a receipt under `~/.config/memhtml`. Run with the inherited `HOME`
+   * this tier would rewire the operator's own coding agents — and lefthook runs it on pre-push. So HOME
+   * is a directory under `work`, which the `finally` in {@link main} removes. `~/.claude` is created
+   * first because that is the directory a host's presence is detected by, so the install runs against
+   * the shape a real machine has rather than an empty home.
+   */
+  const home = join(work, "home")
+  await exec("mkdir", ["-p", join(home, ".claude")])
+  const homed = { ...env, HOME: home }
   const traceRoot = join(work, "traces")
   await exec("mkdir", ["-p", join(traceRoot, "projects", "-smoke")])
   await writeFile(
@@ -358,7 +426,13 @@ const checkEveryCommand = async ({ bin, work, env }) => {
   const sleepRun = await envelope(bin, ["sleep", "run", "--dry-run"], env)
   const runId = sleepRun.data?.runId
 
-  /** `[command, argv, env]`. A command with no entry here must appear in EXCUSED below. */
+  /**
+   * `[command, argv, env, assert]`. A command with no entry here must appear in COVERED_ELSEWHERE below.
+   *
+   * `assert` is optional and takes the parsed envelope: the loop's own bar is "it answered with a
+   * `type`", which is the right bar for a command whose payload other tiers assert, and too low for one
+   * whose whole point is a particular payload. A row that names an assertion gets both.
+   */
   const INVOCATIONS = [
     ["manifest", ["manifest"]],
     // Piped, so the answer is the `cli.help` envelope; the Markdown shape needs a terminal, which
@@ -418,6 +492,108 @@ const checkEveryCommand = async ({ bin, work, env }) => {
     ["state export", ["state", "export"]],
     ["state import", ["state", "import"]],
     ["agents-doc", ["agents-doc", "--out", join(work, "AGENTS.md")]],
+    /*
+     * The `integrations` family, in the order one host's life takes: install it, see it listed, check it,
+     * print the shell snippet, remove it. Every row carries the throwaway `HOME`, because these are the
+     * only commands here that write outside the corpus.
+     *
+     * `install` names a host explicitly. Bare `install` would detect hosts by home directory, and under a
+     * home this script just created that is a check on this script's own mkdir.
+     */
+    [
+      "integrations install",
+      ["integrations", "install", "claude"],
+      homed,
+      (answer) => {
+        /*
+         * One ROW per host, because a bare `integrations install` installs every host whose home
+         * directory exists and a single-host payload could not describe that run. This row is read by
+         * name rather than by position.
+         */
+        const row = (answer.data?.hosts ?? []).find((one) => one.host === "claude")
+        const entries = row?.entries ?? []
+        return {
+          ok:
+            answer.type === "integrations.report" &&
+            answer.data?.scope === "user" &&
+            row?.changed === true &&
+            entries.length > 0 &&
+            entries.every(
+              (entry) =>
+                typeof entry.path === "string" &&
+                typeof entry.role === "string" &&
+                typeof entry.kind === "string"
+            ),
+          detail: `${String(entries.length)} entries under ${String(answer.data?.scope)} scope: ${entries.map((entry) => entry.role).join(", ")}`
+        }
+      }
+    ],
+    [
+      "integrations list",
+      ["integrations", "list"],
+      homed,
+      (answer) => {
+        const rows = answer.data?.rows ?? []
+        const claude = rows.find((one) => one.host === "claude")
+        return {
+          ok: answer.type === "integrations.list" && claude?.state === "installed",
+          detail: rows.map((one) => `${String(one.host)}=${String(one.state)}`).join(" ")
+        }
+      }
+    ],
+    /*
+     * `doctor` is the one row whose answer reaches back out of the tarball: its last check spawns the
+     * `memhtml-mcp` the MCP entry names and waits for an `initialize` reply, so a bundle whose second
+     * binary cannot start fails HERE rather than in a user's editor. The detail names every failing check
+     * so a red run says which one.
+     */
+    [
+      "integrations doctor",
+      ["integrations", "doctor", "claude"],
+      homed,
+      (answer) => {
+        const checks = (answer.data?.hosts ?? []).flatMap((host) => host.checks ?? [])
+        const failing = checks.filter((one) => one.ok !== true)
+        return {
+          ok:
+            answer.type === "integrations.doctor" &&
+            checks.length > 0 &&
+            checks.some((one) => one.name === "mcp-handshake") &&
+            answer.data?.healthy === true,
+          detail: `healthy=${String(answer.data?.healthy)}, ${String(checks.length)} checks${
+            failing.length > 0
+              ? `, FAILING: ${failing.map((one) => `${String(one.name)} (${String(one.detail)})`).join("; ")}`
+              : ""
+          }`
+        }
+      }
+    ],
+    // No `--write`: the snippet is reported and no rc file is touched, which is the default and the only
+    // form that leaves nothing behind.
+    [
+      "integrations shell",
+      ["integrations", "shell"],
+      homed,
+      (answer) => ({
+        ok:
+          answer.type === "integrations.shell" &&
+          typeof answer.data?.snippet === "string" &&
+          answer.data.snippet.includes("MEMHTML_ROOT"),
+        detail: `${String((answer.data?.snippet ?? "").length)} chars`
+      })
+    ],
+    [
+      "integrations uninstall",
+      ["integrations", "uninstall", "claude"],
+      homed,
+      (answer) => {
+        const row = (answer.data?.hosts ?? []).find((one) => one.host === "claude")
+        return {
+          ok: answer.type === "integrations.report" && row?.changed === true,
+          detail: `${String((row?.entries ?? []).length)} entries removed`
+        }
+      }
+    ],
     // Last: it `git mv`s a memory into archive/, which every command above would rather read.
     ["archive", ["archive", pathA, "--reason", "superseded by the corrected memory"]]
   ]
@@ -428,12 +604,15 @@ const checkEveryCommand = async ({ bin, work, env }) => {
    * Not excuses. `serve mcp` is a long-running server, so its check is a handshake rather than an
    * envelope, and the sleep lifecycle needs a corpus whose `main` has not advanced — every write above
    * moves `main`, which makes `sleep merge` refuse with `main-advanced`, a correct answer that proves
-   * the refusal rather than the merge. Both are invoked, just elsewhere.
+   * the refusal rather than the merge. `hook` is the one command whose stdout is NOT an envelope: it
+   * writes the host's own hook protocol, so the table's shared "it answered with a `type`" assertion
+   * would fail on the command working correctly. All four are invoked, just elsewhere.
    */
   const COVERED_ELSEWHERE = {
     "serve mcp": "`memhtml serve mcp answers the MCP handshake`",
     "sleep resume": "`checkSleepLifecycle`",
-    "sleep merge": "`checkSleepLifecycle`"
+    "sleep merge": "`checkSleepLifecycle`",
+    hook: "`hook writes the host's protocol on stdout and never an envelope`"
   }
 
   const invoked = new Set([...INVOCATIONS.map(([name]) => name), ...Object.keys(COVERED_ELSEWHERE)])
@@ -443,14 +622,45 @@ const checkEveryCommand = async ({ bin, work, env }) => {
     detail: `${String(invoked.size)}/${String(declared.length)}, ${String(Object.keys(COVERED_ELSEWHERE).length)} by a dedicated check${missing.length > 0 ? `, MISSING: ${missing.join(", ")}` : ""}`
   }))
 
-  for (const [name, argv, commandEnv] of INVOCATIONS) {
+  for (const [name, argv, commandEnv, assert] of INVOCATIONS) {
     await check(`${name} answers from the installed binary`, async () => {
       const answer = await envelope(bin, argv, commandEnv ?? env)
       // The envelope's own contract: a `type` on success, a `code` on failure. Either is a real
       // answer; a crash, a non-zero exit, or unparseable stdout is not, and `envelope` throws on those.
-      return { ok: typeof answer.type === "string", detail: answer.type ?? answer.code }
+      const extra = assert === undefined ? undefined : assert(answer)
+      return {
+        ok: typeof answer.type === "string" && (extra?.ok ?? true),
+        detail: extra === undefined ? (answer.type ?? answer.code) : extra.detail
+      }
     })
   }
+
+  /**
+   * `memhtml hook`, driven the way an installed hook is: a host's payload on stdin, and stdout read as
+   * the HOST'S protocol rather than as an envelope.
+   *
+   * Three halves, and the third is the one that needs a check of its own. Exit 0, because a hook that
+   * exits non-zero can block a turn on some hosts and is a refusal a user never asked for. Non-empty
+   * stdout naming the memory this corpus holds, because a hook that prints nothing is indistinguishable
+   * from one whose retrieval never ran — the failure mode the design deliberately makes silent. And
+   * stdout that is NOT an envelope: `{"apiVersion":"1",…}` in a model's context window would satisfy
+   * every other check here and be wrong in the only way that matters.
+   */
+  await check("hook writes the host's protocol on stdout and never an envelope", async () => {
+    const ran = await runRaw(
+      bin,
+      ["hook", "user-prompt-submit", "--host", "claude"],
+      homed,
+      `${JSON.stringify({ prompt: "VIP revert" })}\n`
+    )
+    const named = vipPath !== "" && ran.stdout.includes(vipPath)
+    return {
+      ok: ran.exitCode === 0 && named && !looksLikeEnvelope(ran.stdout),
+      detail: named
+        ? `exit ${String(ran.exitCode)}, ${String(ran.stdout.length)} chars naming ${vipPath}`
+        : `exit ${String(ran.exitCode)}, stdout did not name ${vipPath || "the first memory"}: ${ran.stdout.slice(0, 200) || `(empty) ${tail(ran.stderr)}`}`
+    }
+  })
 
   void corpus
 }

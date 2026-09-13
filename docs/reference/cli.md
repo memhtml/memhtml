@@ -1,8 +1,10 @@
 # memhtml-public · CLI
 
-The `memhtml` CLI has 41 subcommands, one entry each in the `COMMANDS` array that also drives parsing and `AGENTS.md`. Each one writes exactly one JSON envelope to stdout, so a calling agent can parse the result instead of scraping prose; the one exception is `help` on a terminal, which writes Markdown. `apps/cli/src/commands.ts:177`
+Every `memhtml` subcommand is one entry in the `COMMANDS` array that also drives parsing and `AGENTS.md`, so the set is whatever that array holds rather than a count restated here. Each one writes exactly one JSON envelope to stdout, so a calling agent can parse the result instead of scraping prose; the one exception is `help` on a terminal, which writes Markdown. `apps/cli/src/commands.ts:177`
 
 Start with `memhtml manifest`, which returns the whole contract: every command, argument, flag, response type, error code, and environment variable the binary accepts. `apps/cli/src/commands.ts:1354-1382`
+
+The `integrations install|uninstall|list|doctor|shell` family and `hook` have no section below: `design.md` §12.1 covers the receipt, the fragment grain, and the hook posture, and the docs site carries the two task pages.
 
 The code in this repository is the software. The memory tree it manages lives elsewhere, in an external git repository holding the corpus, called the memhtml root. Every command acts on that root, found through `$MEMHTML_ROOT` or overridden per call with `--repo`. `apps/cli/src/config.ts:61-65`
 
@@ -817,7 +819,7 @@ The override variable's name is declared once as a constant, and the config tabl
 
 A caller should branch on `code` rather than on the `error` prose. The code list is append-only. A shipped code keeps its meaning and is not removed. `apps/cli/src/envelope.ts:66-98`
 
-The eighteen codes, in `ERROR_CODES` order, are `ERR_UNKNOWN_COMMAND`, `ERR_MISSING_ARGUMENT`, `ERR_INVALID_FLAG`, `ERR_UNEXPECTED_ARGUMENT`, `ERR_REPO_REQUIRED`, `ERR_PATH_NOT_FOUND`, `ERR_INVALID_MEMORY`, `ERR_DUPLICATE_CONTENT`, `ERR_WRITE_CONFLICT`, `ERR_DIRTY_TREE`, `ERR_INDEX_STALE`, `ERR_EMBED_MODEL_MISMATCH`, `ERR_MODEL_UNAVAILABLE`, `ERR_STORAGE`, `ERR_GIT`, `ERR_DISCRIMINATION_FAILED`, `ERR_UNKNOWN`, `ERR_REBUILD_NO_EMBED_REFUSED`. `apps/cli/src/envelope.ts:71-98`
+The twenty-one codes, in `ERROR_CODES` order, are `ERR_UNKNOWN_COMMAND`, `ERR_MISSING_ARGUMENT`, `ERR_INVALID_FLAG`, `ERR_UNEXPECTED_ARGUMENT`, `ERR_REPO_REQUIRED`, `ERR_PATH_NOT_FOUND`, `ERR_INVALID_MEMORY`, `ERR_DUPLICATE_CONTENT`, `ERR_WRITE_CONFLICT`, `ERR_DIRTY_TREE`, `ERR_INDEX_STALE`, `ERR_EMBED_MODEL_MISMATCH`, `ERR_MODEL_UNAVAILABLE`, `ERR_STORAGE`, `ERR_GIT`, `ERR_DISCRIMINATION_FAILED`, `ERR_UNKNOWN`, `ERR_REBUILD_NO_EMBED_REFUSED`, `ERR_UNKNOWN_HOST`, `ERR_UNKNOWN_HOOK_EVENT`, `ERR_INTEGRATION_MODIFIED`. `apps/cli/src/envelope.ts:71-98`
 
 `ERR_REPO_REQUIRED` is the exit-2 refusal `MEMHTML_REFUSE_ENV_ROOT` produces for a call that opens a repo and names none with `--repo`. It is a usage code because the fix is on the line, and it carries two suggestions: the flag spelling, `memhtml <cmd> --repo <path>`, and that command's help, `memhtml help <cmd>`. `apps/cli/src/run.ts:1057-1070`, `apps/cli/src/envelope.ts:79-81`
 

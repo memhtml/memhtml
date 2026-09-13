@@ -37,12 +37,12 @@ memhtml integrations install claude           # or codex, cursor, opencode
 memhtml integrations install --dry-run        # what it would write, and the rendered content
 ```
 
-| Host        | What gets written                                                                                              | Your step                                 |
-| ----------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| Claude Code | `~/.claude.json` MCP entry, four hooks in `~/.claude/settings.json`, a block in `~/.claude/CLAUDE.md`, a skill | none, the files are watched               |
-| Codex CLI   | `[mcp_servers.memhtml]` in `~/.codex/config.toml`, two hooks in `~/.codex/hooks.json`, a block, a skill        | restart, then trust the hooks in `/hooks` |
-| Cursor      | `~/.cursor/mcp.json` entry, `sessionStart` in `~/.cursor/hooks.json`, `.cursor/rules/memhtml.mdc`, a skill     | restart for the MCP entry                 |
-| OpenCode    | `mcp.memhtml` in `opencode.json`, a generated plugin, a block in `AGENTS.md`, a skill                          | restart, plugins load at startup          |
+| Host        | What gets written                                                                                                            | Your step                                 |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Claude Code | `~/.claude.json` MCP entry, four hooks in `~/.claude/settings.json`, a block in `~/.claude/CLAUDE.md`, a skill               | none, the files are watched               |
+| Codex CLI   | `[mcp_servers.memhtml]` in `~/.codex/config.toml`, two hooks in `~/.codex/hooks.json`, a block, a skill                      | restart, then trust the hooks in `/hooks` |
+| Cursor      | `~/.cursor/mcp.json` entry, `sessionStart` in `~/.cursor/hooks.json`, a skill; with `--project`, `.cursor/rules/memhtml.mdc` | restart for the MCP entry                 |
+| OpenCode    | `mcp.memhtml` in `opencode.json`, a generated plugin, a block in `AGENTS.md`, a skill                                        | restart, plugins load at startup          |
 
 A hook reads the host's payload on stdin, runs recall or transcript indexing under a hard time bound, and prints the host's own protocol, so the agent starts a session and each prompt with the memories that matter. No hook writes a memory: memhtml is single-writer, and distilling a transcript into a durable fact belongs to `memhtml sleep run` on a reviewable branch. Any failure inside a hook prints nothing and exits 0, so a hook can never block a turn.
 
