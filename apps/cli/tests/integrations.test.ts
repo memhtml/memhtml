@@ -7,6 +7,13 @@ import { afterEach, describe, expect, it } from "vitest"
 import { EXIT_OK, EXIT_RUNTIME, EXIT_USAGE } from "../src/envelope.js"
 import { run } from "../src/run.js"
 
+/** The version this build reports, read from the manifest release-please bumps. */
+const CLI_VERSION = (
+  JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+    readonly version: string
+  }
+).version
+
 /**
  * The `integrations` family through `run()`, with `$HOME` pinned to a temp directory.
  *
@@ -235,7 +242,9 @@ describe("integrations list and uninstall", () => {
       readonly rows: ReadonlyArray<{ host: string; scope: string; state: string; version?: string }>
     }>(listed.stdout).rows
     expect(rows.find((row) => row.host === "claude")?.state).toBe("installed")
-    expect(rows.find((row) => row.host === "claude")?.version).toBe("0.14.0")
+    // The version the receipt records is the one the CLI manifest reports, which release-please moves on
+    // every release: a literal here would fail the first `pnpm check` of every tag.
+    expect(rows.find((row) => row.host === "claude")?.version).toBe(CLI_VERSION)
     expect(rows.filter((row) => row.scope === "user")).toHaveLength(4)
 
     const removed = await run(["integrations", "uninstall", "claude"])
