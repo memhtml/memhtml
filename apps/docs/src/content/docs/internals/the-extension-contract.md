@@ -77,7 +77,7 @@ Against that, this page is the promise:
 - A value on an open axis that is not a RESERVED name keeps working. Nothing reads it, so no rule can start reading it differently. A new reserved name on an open axis is a minor, and it is why each axis above names the ones it has.
 - A closed vocabulary may GROW in a minor release. A new memory type, a new `memhtml-*` meta name, a new envelope `type` or `code` is an addition, and a consumer that branches on the values it handles is unaffected.
 - A closed vocabulary shrinking, or a member changing meaning, is a major. That is the case the append-only rule exists to make loud rather than silent.
-- The two published binaries are the contract surface, and the twelve workspace packages are private and cannot be installed (`scripts/package-manifest.mjs`). There is no `exports` map on the published package: adding an import surface later would be a minor, and removing one a major, so today there is nothing there to depend on.
+- The two published binaries are the contract surface, and every workspace package is private and cannot be installed (`scripts/package-manifest.mjs`). There is no `exports` map on the published package: adding an import surface later would be a minor, and removing one a major, so today there is nothing there to depend on.
 
 ## 4. Where to model what
 

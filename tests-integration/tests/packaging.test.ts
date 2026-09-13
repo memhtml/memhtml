@@ -113,6 +113,7 @@ const BUNDLED_PACKAGES = [
   "packages/eval",
   "packages/html",
   "packages/index",
+  "packages/integrations",
   "packages/llm",
   "packages/sleep",
   "packages/store",
@@ -186,6 +187,23 @@ describe("a dependency read as a file stays external and declared", () => {
   })
 })
 
+describe("the bundled set is the shipper's own list", () => {
+  /**
+   * The list above is what the census below scans, so a package the shipper bundles and this file does
+   * not name is a package whose `import.meta.url` resolutions nobody checks — the exact blindness the
+   * claim tables exist to close, reopened one directory at a time. Derived from `tsdown.config.ts`'s
+   * `WORKSPACE_PACKAGES` rather than restated, because the shipper is the authority on what it bundles.
+   */
+  it("names every package tsdown bundles, and no other", async () => {
+    const config = await sourceOf("tsdown.config.ts")
+    const block = /const WORKSPACE_PACKAGES = \[([^\]]+)\] as const/.exec(config)?.[1]
+    expect(block, "tsdown.config.ts no longer declares WORKSPACE_PACKAGES").toBeDefined()
+    const shipped = [...(block ?? "").matchAll(/"([^"]+)"/g)].map((match) => match[1] ?? "")
+    expect(shipped.length).toBeGreaterThan(10)
+    expect([...shipped].sort()).toEqual([...BUNDLED_PACKAGES].sort())
+  })
+})
+
 describe("only the assembled package can publish", () => {
   /**
    * The twelve were configured to publish in lockstep and never did, which is the only reason changing
@@ -242,6 +260,15 @@ describe("every run-time path resolution in shipped source is declared", () => {
     // `serve.ts` resolves the sibling MCP bin, which is emitted BY the bundle rather than copied into
     // it, so it belongs to neither table. Named here so the census still refuses anything else.
     declared.add("apps/cli/src/serve.ts")
+    /*
+     * `integrations.ts` resolves its OWN entry script for the same reason and in the same class: the path
+     * it writes into a host's config has to be `dist/memhtml.mjs` in the published bundle and
+     * `apps/cli/dist/bin.js` in the workspace, and both are emitted rather than copied. What no offline
+     * claim can check is that the resolved path is the one a host can spawn, so `scripts/smoke-package.mjs`
+     * installs the tarball, runs `integrations install claude`, and asserts `integrations doctor`'s
+     * `mcp-handshake` check — a live `initialize` against the server that entry names.
+     */
+    declared.add("apps/cli/src/integrations.ts")
 
     /** Repo-relative `.ts` paths under a directory, at any depth, or none when it does not exist. */
     const filesUnder = async (dir: string): Promise<ReadonlyArray<string>> => {

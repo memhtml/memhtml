@@ -64,6 +64,12 @@ Make `--dense` a habit on every call. It emits minified JSON with null fields dr
 
 Every command writes exactly one JSON envelope to stdout and nothing else, and sends its logs to stderr. The one exception is `memhtml help` on a terminal, which writes Markdown; piped, or with `--json`, it is an envelope like every other command. Exit 0 is success. Exit 2 is a usage error you fix by changing the call. Exit 1 is a runtime failure you fix by changing the store or the environment.
 
+When you are the operator wiring a host agent rather than the agent being wired, one command is the whole path: it writes the host's MCP entry, its hooks, an instruction block, and a skill, and records them in a receipt so uninstall removes exactly that.
+
+```bash
+memhtml integrations install    # claude, codex, cursor, opencode; omitted, it detects them
+```
+
 ## 5. What to avoid
 
 - Scraping these pages. Every one of them is served as Markdown; section 7 has the URLs.

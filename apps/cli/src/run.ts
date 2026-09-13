@@ -6,9 +6,10 @@ import {
 } from "@memhtml/eval"
 import { isValidDatetime } from "@memhtml/html"
 import { parseFacetFilters } from "@memhtml/index"
+import { HOOK_EVENTS, HOSTS, isHookEvent, isHostId, renderHookOutput } from "@memhtml/integrations"
 import { initRepo } from "@memhtml/store"
 import { layerTelemetry } from "@memhtml/telemetry"
-import { Effect, type Layer, Logger } from "effect"
+import { ConfigProvider, Effect, type Layer, Logger } from "effect"
 import { renderAgentsDoc, runAgentsDoc } from "./agents-doc.js"
 import { Git, Indexer, layerApp, Sleep } from "./api-layer.js"
 import { applyPayload, applyText, decodeApply, readStdin } from "./apply.js"
@@ -37,6 +38,25 @@ import {
 import { failureFor } from "./errors.js"
 import { DEFAULT_TIMEOUT_MS, execCommand, MAX_TIMEOUT_MS, readScript } from "./exec.js"
 import { helpData, renderCommandHelp } from "./help.js"
+import {
+  HOOK_BUDGET_DEFAULT,
+  HOOK_INDEX_DEADLINE_MS,
+  HOOK_LIMIT_DEFAULT,
+  HOOK_RECALL_DEADLINE_MS,
+  type HookInput,
+  hookConfigProvider,
+  hookStoreReady,
+  INDEXING_EVENTS,
+  readHookPayload,
+  runHook
+} from "./hook.js"
+import {
+  integrationsDoctor,
+  integrationsInstall,
+  integrationsList,
+  integrationsShell,
+  integrationsUninstall
+} from "./integrations.js"
 import * as ops from "./operations.js"
 import { publish } from "./publish.js"
 import { serveMcp } from "./serve.js"
@@ -1072,6 +1092,56 @@ const envRootRefusal = (
 /** The suggestion every usage error on a known command ends with: the call that shows its table. */
 const helpFor = (spec: CommandSpec): string => `memhtml help ${spec.name}`
 
+/** The `integrations` verbs that take a host as their first positional. `list` and `shell` take none. */
+const HOST_POSITIONAL_COMMANDS: ReadonlySet<string> = new Set([
+  "integrations install",
+  "integrations uninstall",
+  "integrations doctor"
+])
+
+/**
+ * The two closed vocabularies that arrive as POSITIONALS: `hook`'s event and the `integrations` verbs'
+ * host.
+ *
+ * Here rather than in a dispatch arm, and that placement is the repo's lesson rather than a preference.
+ * A closed-vocabulary miss is a usage error the caller fixes on the line, so it is exit 2 with the whole
+ * vocabulary named — while a refusal raised inside `dispatch` travels through `failureFor` and becomes
+ * exit 1, after the app layer has been built and a database opened for a call that was never going to
+ * run. Nothing here touches a service, so `memhtml hook nope --host claude` answers on a machine with
+ * no store.
+ *
+ * A closed-vocabulary FLAG needs no entry: `--host` declares `values` in `commands.ts`, so
+ * `validateAgainst`'s existing check already refuses `--host nope` with `ERR_INVALID_FLAG` and the
+ * nearest spellings. That check is also why the host interpolated into the suggestions below is always
+ * a real one: an invalid `--host` is refused before this runs, and an absent one is refused as a missing
+ * required flag.
+ *
+ * The suggestions enumerate the vocabulary rather than guessing at the nearest spelling, because both
+ * lists are short enough to read and neither is something a caller types from memory — an event name
+ * is copied out of a host's hook config, so the useful answer is the four lines it could have been.
+ */
+const vocabularyPositionals = (parsed: Parsed): Failure | undefined => {
+  if (parsed.command === "hook") {
+    const event = parsed.positional[0]
+    if (event === undefined || isHookEvent(event)) return undefined
+    const host = str(parsed, "host") ?? HOSTS[0]
+    return fail(
+      "ERR_UNKNOWN_HOOK_EVENT",
+      `unknown hook event: ${event}. One of: ${HOOK_EVENTS.join(", ")}`,
+      HOOK_EVENTS.map((known) => `memhtml hook ${known} --host ${host}`)
+    )
+  }
+  if (!HOST_POSITIONAL_COMMANDS.has(parsed.command)) return undefined
+  const host = parsed.positional[0]
+  if (host === undefined || isHostId(host)) return undefined
+  const verb = parsed.command.slice("integrations ".length)
+  return fail(
+    "ERR_UNKNOWN_HOST",
+    `unknown host: ${host}. One of: ${HOSTS.join(", ")}`,
+    HOSTS.map((known) => `memhtml integrations ${verb} ${known}`)
+  )
+}
+
 /**
  * Validate a parsed invocation against its spec. Usage errors only; nothing here touches a service.
  *
@@ -1082,7 +1152,12 @@ const helpFor = (spec: CommandSpec): string => `memhtml help ${spec.name}`
 export const validate = (parsed: Parsed): Failure | undefined => {
   const spec = COMMANDS.find((command) => command.name === parsed.command)
   if (spec === undefined) return unknownCommand(parsed)
-  const failure = validateAgainst(parsed, spec)
+  /**
+   * The spec's own rules first, then the positional vocabularies. Order matters in one direction only:
+   * a missing `--host` and a misspelled one are both refused by `validateAgainst`, so by the time
+   * {@link vocabularyPositionals} names a host in a suggestion, that host is real.
+   */
+  const failure = validateAgainst(parsed, spec) ?? vocabularyPositionals(parsed)
   if (failure === undefined) return undefined
   /**
    * Every refusal of a KNOWN command ends with that command's help, appended here once rather than
@@ -1302,6 +1377,39 @@ const help = (
 }
 
 /**
+ * The hook engine, run against a layer, with the LAYER's own failures caught too.
+ *
+ * `runHook`'s error channel is `never`, and that covers everything inside the program. It cannot cover
+ * building the graph around it: `layerDatabase` is `Layer.orDie`, so an unreadable database or a failed
+ * migration is a defect raised while the layer is constructed, outside the program's `catchCause`, and
+ * it would reach `bin.ts` as an unhandled rejection with a stack trace on stdout. Caught here, that is
+ * the same answer as every other failure — the empty string, exit 0, a turn that proceeds.
+ */
+const hookText = async (
+  input: HookInput & { readonly layer: Layer.Layer<DispatchServices> }
+): Promise<string> => {
+  const { layer, ...hook } = input
+  try {
+    return await Effect.runPromise(
+      runHook(hook).pipe(
+        Effect.provide(layer),
+        /**
+         * The config provider is installed AFTER the app layer for the reason the tracer is elsewhere
+         * in this file: the layer's own construction is what reads config, and `--trace-root` has to
+         * reach exactly that read.
+         */
+        Effect.provideService(ConfigProvider.ConfigProvider, hookConfigProvider(hook.traceRoot)),
+        // Logs go to stderr for the usual reason, and for one more: stdout is the host's channel.
+        Effect.provideService(Logger.LogToStderr, true),
+        Effect.scoped
+      )
+    )
+  } catch {
+    return ""
+  }
+}
+
+/**
  * Returns the rendered envelope and an exit code rather than writing to the process, so tests
  * assert on the exact bytes an agent would parse.
  *
@@ -1408,6 +1516,145 @@ export const run = async (
         Effect.provideService(Logger.LogToStderr, true)
       )
     )
+  }
+
+  /**
+   * `memhtml hook` is the SECOND exception to the one-envelope contract, and the only one that opens a
+   * store.
+   *
+   * `help` on a terminal is the first, and it is an exception because a person is reading. This one is
+   * an exception because a HOST is reading, and it is not reading this CLI's protocol: Claude Code takes
+   * a hook's plain stdout as context, Codex and Cursor take one specific JSON shape of their own, and
+   * OpenCode's plugin takes text. An envelope on that stream would be pasted verbatim into a developer's
+   * context window as if it were a memory. So stdout carries `renderHookOutput(...)` and nothing else,
+   * byte for byte as the dialect rendered it, and `--dense` and `--json` do not reach it.
+   *
+   * **Every path exits 0 and every failure prints nothing.** A hook runs inside a host's turn, and on
+   * `UserPromptSubmit` a non-zero exit is how a hook BLOCKS the prompt. So a missing store, an
+   * unparseable payload, a layer that will not build, a blown deadline, and a refused root are all one
+   * answer: empty stdout, exit 0. The turn proceeds without memory rather than not proceeding.
+   *
+   * It is answered here rather than through `dispatch` for that reason and one more: `dispatch` returns
+   * a payload that `run` wraps in an envelope, which is exactly what this command must not produce.
+   * Everything above it in this function still applies — `--help` describes it and `validate` has
+   * already refused an unknown event or host at exit 2, which is the one case where a hook DOES answer
+   * with an envelope, because a malformed hook config is a thing an operator has to be told about and
+   * `memhtml hook` typed by hand is how they find out.
+   *
+   * It sits ABOVE {@link envRootRefusal} because that refusal is an exit-2 envelope, and under
+   * `MEMHTML_REFUSE_ENV_ROOT` every installed hook that names no `--repo` would print one into a
+   * context window and block the prompt. The rule itself is still honored — the root has to come from
+   * `--repo` or from an injected layer — it just answers in this command's own protocol: a warning on
+   * stderr, where hosts show hook diagnostics, and silence on stdout.
+   */
+  if (parsed.command === "hook") {
+    const event = parsed.positional[0] ?? ""
+    const host = str(parsed, "host") ?? ""
+    const quiet: RunResult = { stdout: "", exitCode: EXIT_OK }
+    // `validate` has proven both vocabularies. Belt and braces, because the cost of being wrong here
+    // is an unhandled throw inside a turn: an unknown event or host is silence, never a crash.
+    if (!isHookEvent(event) || !isHostId(host)) return quiet
+
+    const warn = async (message: string): Promise<RunResult> => {
+      await Effect.runPromise(
+        Effect.logWarning(message).pipe(Effect.provideService(Logger.LogToStderr, true))
+      )
+      return quiet
+    }
+
+    if (envRootRefusal(parsed, layer) !== undefined) {
+      return await warn(
+        `hook: ${REFUSE_ENV_ROOT_VAR} is set and no --repo was given, so no store was opened and nothing was injected`
+      )
+    }
+
+    /**
+     * `--trace-root` reaches the indexer as `MEMHTML_TRACE_ROOT`, which is the only door there is:
+     * `indexTraces()` reads `Roots.traceRoot`, `layerRoots` resolves that from the variable, and
+     * neither it nor `layerApp` takes an override. It is applied through a `ConfigProvider` built
+     * beside the layer rather than by assigning `process.env` — see `hookConfigProvider` for the probe
+     * that says why — and `runHook` re-reads the resolved root and declines to index when the two
+     * disagree, so a door that stopped working cannot silently advance a watermark over `~/.claude`.
+     */
+    const traceRoot = str(parsed, "trace-root")?.trim()
+
+    /**
+     * A hook never SCAFFOLDS a store. `layerDatabase` `mkdir -p`s `<root>/.memhtml` before it opens the
+     * database, so a host config carrying a stale root would create a memory repo nothing reads, once
+     * per session, forever. An injected layer is the injector's statement of the root, the way
+     * {@link envRootRefusal} treats one.
+     */
+    if (layer === undefined && !(await Effect.runPromise(hookStoreReady(str(parsed, "repo"))))) {
+      return quiet
+    }
+
+    const payload = await readHookPayload(stdin)
+    const deadlineMs = INDEXING_EVENTS.has(event) ? HOOK_INDEX_DEADLINE_MS : HOOK_RECALL_DEADLINE_MS
+    const text = await hookText({
+      event,
+      host,
+      payload,
+      limit: int(parsed, "limit") ?? HOOK_LIMIT_DEFAULT,
+      budget: int(parsed, "budget") ?? HOOK_BUDGET_DEFAULT,
+      ...(traceRoot === undefined || traceRoot === "" ? {} : { traceRoot }),
+      deadlineMs,
+      layer: layer ?? layerApp(str(parsed, "repo"))
+    })
+    return { stdout: renderHookOutput(host, event, text), exitCode: EXIT_OK }
+  }
+
+  /**
+   * The five `integrations` arms, answered here for the reason `agents-doc` is: they must work on a
+   * machine with no store. They are also the arms an operator reaches for FIRST, before any store exists,
+   * so building `layerApp` would scaffold `$MEMHTML_ROOT/.memhtml` and run every migration as a side
+   * effect of writing a host's config file.
+   *
+   * They sit ABOVE {@link envRootRefusal} deliberately, and that is not an exemption. The refusal exists
+   * so a call that OPENS a repo has to name it with `--repo`; these calls open none. `--repo` here is a
+   * value RECORDED into a host's config, for a store that may not exist yet, so a refusal would block
+   * `memhtml integrations install` on exactly the machine it is meant to set up.
+   *
+   * Each arm returns a rendered payload and an exit code rather than going through `dispatch`, whose
+   * service set is the app layer's. `process.argv[1]` is passed as the entry script the config will name.
+   */
+  if (parsed.command.startsWith("integrations ")) {
+    const entry = process.argv[1]
+    const shared = {
+      host: parsed.positional[0],
+      project: str(parsed, "project"),
+      repo: str(parsed, "repo"),
+      ...(entry === undefined ? {} : { entry })
+    }
+    if (parsed.command === "integrations install") {
+      const answer = await integrationsInstall({
+        ...shared,
+        hooks: str(parsed, "hooks"),
+        bareCommand: bool(parsed, "bare-command", false),
+        force: bool(parsed, "force", false),
+        dryRun: bool(parsed, "dry-run", false)
+      })
+      return emit(answer.payload, answer.exitCode)
+    }
+    if (parsed.command === "integrations uninstall") {
+      const answer = await integrationsUninstall(shared)
+      return emit(answer.payload, answer.exitCode)
+    }
+    if (parsed.command === "integrations list") {
+      const answer = await integrationsList(shared)
+      return emit(answer.payload, answer.exitCode)
+    }
+    if (parsed.command === "integrations doctor") {
+      const answer = await integrationsDoctor(shared)
+      return emit(answer.payload, answer.exitCode)
+    }
+    if (parsed.command === "integrations shell") {
+      const answer = await integrationsShell({
+        ...shared,
+        write: bool(parsed, "write", false),
+        rc: str(parsed, "rc")
+      })
+      return emit(answer.payload, answer.exitCode)
+    }
   }
 
   /**

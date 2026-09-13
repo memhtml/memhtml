@@ -1,0 +1,44 @@
+{
+  "name": "@memhtml/integrations",
+  "version": "0.14.0",
+  "private": true,
+  "description": "Wire a coding agent (Claude Code, Codex, Cursor, OpenCode) to a memhtml store: MCP entry, hooks, instruction block, skill, receipt.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/memhtml/memhtml.git",
+    "directory": "packages/integrations"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "dist",
+    "!dist/.tsbuildinfo"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
+    "lint": "biome check src tests",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@memhtml/contracts": "workspace:*",
+    "effect": "catalog:",
+    "jsonc-parser": "3.3.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.12",
+    "@effect/vitest": "catalog:",
+    "@types/node": "26.4.1",
+    "typescript": "7.0.2",
+    "vitest": "5.0.0"
+  }
+}

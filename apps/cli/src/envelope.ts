@@ -45,7 +45,16 @@ export const RESPONSE_TYPES = [
   "entity.activity",
   "memory.resolved",
   "sleep.plan",
-  "cli.help"
+  "cli.help",
+  // `memhtml integrations install|uninstall` (report), `list`, `doctor`, and `shell`, appended in the
+  // order the family shipped. `hook.output` is declared for `memhtml hook`, whose SUCCESS stdout is a
+  // host's hook protocol rather than this envelope (the second exception after `help` on a terminal);
+  // its usage errors are still the failure envelope, so the type names the command in the manifest.
+  "integrations.report",
+  "integrations.list",
+  "integrations.doctor",
+  "integrations.shell",
+  "hook.output"
 ] as const
 
 export type ResponseType = (typeof RESPONSE_TYPES)[number]
@@ -94,7 +103,15 @@ export const ERROR_CODES = [
   // `index rebuild --no-embed` over a store that carries vectors in the configured space, without
   // `--force`. Exit 1: the call parsed, and the work was declined. Appended after `ERR_UNKNOWN`
   // because the list is append-only and AGENTS.md prints it in this order.
-  "ERR_REBUILD_NO_EMBED_REFUSED"
+  "ERR_REBUILD_NO_EMBED_REFUSED",
+  // The integrations family. `ERR_UNKNOWN_HOST` and `ERR_UNKNOWN_HOOK_EVENT` are usage errors (exit 2):
+  // the host or event named on the command line is outside the closed vocabulary, and the fix is on
+  // the command line. `ERR_INTEGRATION_MODIFIED` is a runtime refusal (exit 1): a file or config entry
+  // the receipt owns no longer matches it, so install without --force and uninstall both stop rather
+  // than overwrite a change a human made.
+  "ERR_UNKNOWN_HOST",
+  "ERR_UNKNOWN_HOOK_EVENT",
+  "ERR_INTEGRATION_MODIFIED"
 ] as const
 
 export type ErrorCode = (typeof ERROR_CODES)[number]

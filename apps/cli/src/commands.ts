@@ -1,6 +1,8 @@
 import { MEMORY_RELS } from "@memhtml/contracts/edges"
+import { RECALL_DISCIPLINE_TEXT } from "@memhtml/contracts/guidance"
 import { MEMORY_TYPES, TASK_STATUSES, WRITABLE_MEMORY_TYPES } from "@memhtml/contracts/types"
 import { REINFORCE_SIGNALS } from "@memhtml/domain"
+import { HOOK_EVENTS, HOSTS } from "@memhtml/integrations"
 import { SLEEP_PHASES } from "@memhtml/sleep"
 
 import { CONFIG_VARS } from "./config.js"
@@ -1111,6 +1113,191 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     args: [],
     flags: [],
     responseTypes: ["serve.exit"]
+  },
+  {
+    name: "integrations install",
+    summary:
+      "Wire a coding agent to this store: its MCP entry, its hooks, a fenced block in its instruction file, and a skill, recorded in a receipt so uninstall removes exactly what install wrote.",
+    args: [
+      {
+        name: "host",
+        description: `Which coding agent to wire: one of ${HOSTS.join(", ")}. Omitted: every host whose home directory exists is installed (Claude Code by \`~/.claude\`, Codex by \`~/.codex\`, Cursor by \`~/.cursor\`, OpenCode by \`~/.config/opencode\`).`,
+        required: false
+      }
+    ],
+    flags: [
+      {
+        name: "project",
+        type: "string",
+        description:
+          "Install at repository scope instead of user scope: the path is resolved to its git root, and the host's PROJECT files are written (`.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `opencode.json`, root `AGENTS.md`/`CLAUDE.md`). `/` and `$HOME` are refused as a root."
+      },
+      {
+        name: "hooks",
+        type: "string",
+        description:
+          "Which hooks to install. `all` (default) adds session-start recall, per-prompt recall where the host can inject it, and transcript indexing before compaction where a transcript format exists; `session` adds session-start recall only; `none` writes the MCP entry, block, and skill and no hook.",
+        values: ["all", "session", "none"],
+        default: "all"
+      },
+      {
+        name: "bare-command",
+        type: "boolean",
+        description:
+          "Write bare `memhtml` / `memhtml-mcp` commands into the host config instead of the absolute path of this binary. Absolute is the default because GUI hosts do not inherit a shell PATH and a moved toolchain alias has orphaned a bare command before; choose bare when you manage PATH yourself.",
+        default: false
+      },
+      {
+        name: "force",
+        type: "boolean",
+        description:
+          "Overwrite a managed file or entry that was modified since the last install. Without it a modification is refused with ERR_INTEGRATION_MODIFIED and nothing is written; with it the prior bytes are kept beside the file as a timestamped backup named in the report.",
+        default: false
+      },
+      {
+        name: "dry-run",
+        type: "boolean",
+        description:
+          "Report every file and entry install WOULD write, with the rendered content, and write nothing.",
+        default: false
+      }
+    ],
+    responseTypes: ["integrations.report"],
+    examples: [
+      "memhtml integrations install",
+      "memhtml integrations install claude",
+      "memhtml integrations install codex --hooks session",
+      "memhtml integrations install cursor --project .",
+      "memhtml integrations install opencode --dry-run"
+    ]
+  },
+  {
+    name: "integrations uninstall",
+    summary:
+      "Remove exactly what install wrote for one host, matched against the receipt; a managed file that was modified since is refused.",
+    args: [
+      {
+        name: "host",
+        description: `Which coding agent to unwire: one of ${HOSTS.join(", ")}.`,
+        required: true
+      }
+    ],
+    flags: [
+      {
+        name: "project",
+        type: "string",
+        description: "Uninstall the repository-scope integration rooted at this path's git root."
+      }
+    ],
+    responseTypes: ["integrations.report"],
+    examples: [
+      "memhtml integrations uninstall claude",
+      "memhtml integrations uninstall cursor --project ."
+    ]
+  },
+  {
+    name: "integrations list",
+    summary:
+      "For every host: installed, modified, or not installed, at user scope and at the named project scope.",
+    args: [],
+    flags: [
+      {
+        name: "project",
+        type: "string",
+        description: "Also report the repository-scope integration rooted at this path's git root."
+      }
+    ],
+    responseTypes: ["integrations.list"],
+    examples: ["memhtml integrations list", "memhtml integrations list --project ."]
+  },
+  {
+    name: "integrations doctor",
+    summary:
+      "Check a host's wiring end to end: binary path and version, store root, MCP entry, hooks, instruction block, skill, transcript root, and a live `initialize` handshake with the server the entry names.",
+    args: [
+      {
+        name: "host",
+        description: `Which coding agent to check: one of ${HOSTS.join(", ")}. Omitted: every host with a receipt.`,
+        required: false
+      }
+    ],
+    flags: [
+      {
+        name: "project",
+        type: "string",
+        description: "Check the repository-scope integration rooted at this path's git root."
+      }
+    ],
+    responseTypes: ["integrations.doctor"],
+    examples: ["memhtml integrations doctor", "memhtml integrations doctor claude"]
+  },
+  {
+    name: "integrations shell",
+    summary:
+      "Print an eval-able shell snippet that exports MEMHTML_ROOT and puts this binary's directory on PATH; --write appends it to your rc file inside a fence.",
+    args: [],
+    flags: [
+      {
+        name: "write",
+        type: "boolean",
+        description:
+          "Append the snippet to the rc file inside `# MEMHTML:START` / `# MEMHTML:END` markers, replacing a prior fenced block. Without it the snippet is only reported.",
+        default: false
+      },
+      {
+        name: "rc",
+        type: "string",
+        description:
+          "The rc file to write. Defaults to `~/.zshrc` when $SHELL ends in zsh, else `~/.bashrc`."
+      }
+    ],
+    responseTypes: ["integrations.shell"],
+    examples: ["memhtml integrations shell", "memhtml integrations shell --write"]
+  },
+  {
+    name: "hook",
+    summary:
+      "The engine every installed hook calls. Reads the host's hook payload on stdin, runs recall or transcript indexing under a hard time bound, and writes the HOST'S protocol to stdout (plain text or the host's JSON), never this envelope; any failure prints nothing and exits 0, so a hook can never block a turn.",
+    args: [
+      {
+        name: "event",
+        description: `Which lifecycle event fired: one of ${HOOK_EVENTS.join(", ")}.`,
+        required: true
+      }
+    ],
+    flags: [
+      {
+        name: "host",
+        type: "string",
+        description: "Which host's payload shape to read and which output dialect to write.",
+        values: [...HOSTS],
+        required: true
+      },
+      {
+        name: "trace-root",
+        type: "string",
+        description:
+          "Where this host writes transcripts, for the events that index them. Defaults to $MEMHTML_TRACE_ROOT."
+      },
+      {
+        name: "limit",
+        type: "int",
+        description: "Hits to inject on a per-prompt recall.",
+        default: 5
+      },
+      {
+        name: "budget",
+        type: "int",
+        description: "Character budget for the session-start context pack.",
+        default: 3000
+      }
+    ],
+    responseTypes: ["hook.output"],
+    examples: [
+      "memhtml hook session-start --host claude",
+      "memhtml hook user-prompt-submit --host codex --limit 3",
+      "memhtml hook pre-compact --host claude --trace-root ~/.claude"
+    ]
   }
 ]
 
@@ -1341,6 +1528,16 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "`--timeout-ms` (default 30000) comes back `exitCode: 124` with `timedOut: true`. " +
       "The tree you get is a pinned commit, HEAD by default, named in `data.sha`, so an answer is " +
       "reproducible with `--sha`, and an uncommitted edit is NOT visible to the script."
+  },
+  /**
+   * The one topic whose text lives in `@memhtml/contracts/guidance` rather than here, because it is
+   * rendered by three more surfaces (the instruction block and the skill `memhtml integrations install`
+   * writes, and the retrieval tools' descriptions), and four hand-written copies of one discipline
+   * would drift the first time a rule moved.
+   */
+  {
+    topic: "recall-discipline",
+    body: RECALL_DISCIPLINE_TEXT
   }
 ]
 

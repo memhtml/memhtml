@@ -42,6 +42,7 @@
     "@memhtml/eval": "workspace:*",
     "@memhtml/html": "workspace:*",
     "@memhtml/index": "workspace:*",
+    "@memhtml/integrations": "workspace:*",
     "@memhtml/llm": "workspace:*",
     "@memhtml/sleep": "workspace:*",
     "@memhtml/store": "workspace:*",

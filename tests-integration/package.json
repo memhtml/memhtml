@@ -27,6 +27,7 @@
     "@biomejs/biome": "2.5.12",
     "@effect/vitest": "catalog:",
     "@types/node": "26.4.1",
+    "jsonc-parser": "3.3.1",
     "typescript": "7.0.2",
     "vitest": "5.0.0"
   }

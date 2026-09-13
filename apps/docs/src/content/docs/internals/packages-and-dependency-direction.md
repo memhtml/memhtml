@@ -1,6 +1,6 @@
 ---
 title: Packages and dependency direction
-description: The layering, the test that enforces the pure packages' purity, the single place every service is wired together, and why twelve packages ship as one.
+description: The layering, the test that enforces the pure packages' purity, the single place every service is wired together, and why fourteen packages ship as one.
 ---
 
 ## 1. The packages
@@ -16,14 +16,16 @@ description: The layering, the test that enforces the pure packages' purity, the
 | `sleep`                | The seventeen curation phases, each a git commit.                                        |
 | `llm`                  | Bedrock embeddings and forced-tool structured output.                                    |
 | `eval`                 | The retrieval quality gate and its generated fixture corpus.                             |
+| `integrations`         | Render and transact a coding agent's wiring: MCP entry, hooks, block, skill, receipt.    |
 | `apps/cli`, `apps/mcp` | The `memhtml` binary and the `memhtml-mcp` stdio server.                                 |
 
 ## 2. Direction
 
-Dependencies point inward. `contracts` imports only `effect`. `domain` and `html` import `contracts`. `store` adds `html`. `index` adds `domain` and `llm`. `traces`, `sleep`, and `eval` sit above `index`.
+Dependencies point inward. `contracts` imports only `effect`. `domain` and `html` import `contracts`. `store` adds `html`. `index` adds `domain` and `llm`. `traces`, `sleep`, and `eval` sit above `index`. `integrations` sits directly on `contracts` and nothing else, because rendering a host's config and editing a file need neither the store nor the index.
 
 ```
 contracts ← domain, html ← store ← index (+domain, +llm) ← traces, sleep, eval ← apps/cli ← apps/mcp
+contracts ← integrations ← apps/cli
 ```
 
 TypeScript project references enforce the direction, and a second, test-inclusive typecheck configuration applies the same check to the test files.
@@ -52,7 +54,7 @@ Every package above is `private`. `npm publish` refuses a private package, so no
 
 The published contract is the two binaries and the JSON envelope they write. The package declares no `exports` map, deliberately: an entry point is a promise, adding one later is a minor version bump, and removing one is a major, so the reversible direction is the one left open.
 
-Assembly bundles the twelve with [tsdown](https://tsdown.dev) and copies out the files that cannot be bundled. Three things resolve a path from their own module location at run time — the index's two migration directories, the CLI's `guest/corpus.mjs`, and the consolidator's `prompts/instructions.md` read by `src/instructions.ts`, with the rest of that sentence: `../../src/*.js` — and after bundling that location is `dist/`, so each is copied to the package root one level above it. Two dependencies additionally stay outside the bundle because their FILES are read rather than imported: `node-html-parser`, read as bytes into the QuickJS guest that [code-mode](/internals/the-envelope-contract/) runs, and `highlight.js`, loaded through `createRequire` on the first language detection. A third, `eve`, is spawned rather than imported.
+Assembly bundles them with [tsdown](https://tsdown.dev) and copies out the files that cannot be bundled. Three things resolve a path from their own module location at run time — the index's two migration directories, the CLI's `guest/corpus.mjs`, and the consolidator's `prompts/instructions.md` read by `src/instructions.ts`, with the rest of that sentence: `../../src/*.js` — and after bundling that location is `dist/`, so each is copied to the package root one level above it. Two dependencies additionally stay outside the bundle because their FILES are read rather than imported: `node-html-parser`, read as bytes into the QuickJS guest that [code-mode](/internals/the-envelope-contract/) runs, and `highlight.js`, loaded through `createRequire` on the first language detection. A third, `eve`, is spawned rather than imported.
 
 The artifact has a gate of its own, because no other tier can see it. Every suite described in [Testing posture](/internals/testing-posture/) resolves `@memhtml/*` through the workspace, where each asset is present whether or not anything declares it. `mise run package:smoke` installs the tarball into a throwaway directory and drives every command, every MCP tool, and every published MCP resource template through the installed binary — 66 checks as of v0.6.0. All three surfaces are ENUMERATED from the artifact itself, out of `memhtml manifest`, `tools/list`, and `resources/templates/list`, so a new command, tool, or template fails a census rather than going untested. The script names no count of its own; it reports `checks: results.length`.
 

@@ -140,7 +140,16 @@ The fields are the same as `memhtml search`'s, spelled in snake_case on this sur
 
 ## Configure a client
 
-An MCP client launches the server as a subprocess. The entry looks like this, and while the wrapper key differs between clients, the `command` / `args` / `env` triple is the shape they share:
+For Claude Code, Codex, Cursor, or OpenCode, one command writes the entry for you:
+
+```bash
+memhtml integrations install claude   # or codex, cursor, opencode
+memhtml integrations install          # every host whose home directory exists
+```
+
+It writes that host's MCP entry with an absolute command and an explicit `MEMHTML_ROOT`, and it records what it wrote in a receipt so `memhtml integrations uninstall claude` removes exactly that. It also installs hooks, an instruction block, and a skill, which is more than a client entry: `--hooks none` writes the entry, block, and skill and no hook. [Wire up your coding agent](/learn/operations/wire-a-coding-agent/) is the full page, with the per-host files and the restart or trust step each one needs.
+
+Write the entry by hand for any other client, or when you want to see the shape the command produces. An MCP client launches the server as a subprocess, and while the wrapper key differs between clients, the `command` / `args` / `env` triple is the shape they share:
 
 ```json
 {
