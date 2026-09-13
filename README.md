@@ -15,7 +15,7 @@ npx memhtml manifest   # every command, flag, and error code, without installing
 
 Point it at a corpus with `MEMHTML_ROOT` (default `~/memhtml`), and at your transcripts with `MEMHTML_TRACE_ROOT` (default `~/.claude`). Reading and writing memories needs no credentials; embeddings and the sleep cycle's model calls use Bedrock through the default AWS credential chain, and `MEMHTML_EMBED=off` / `MEMHTML_LLM=off` turn both off.
 
-To register the MCP server with a client, the command is `memhtml-mcp` over stdio.
+To register the MCP server with a coding agent, use `memhtml integrations install` in the next section, which writes the entry for you.
 
 ```bash
 memhtml init                                  # scaffold $MEMHTML_ROOT: git init, PARA dirs, merge driver
@@ -26,6 +26,32 @@ memhtml serve mcp                             # the same store over stdio: 15 to
 ```
 
 `memhtml manifest` (or a bare `memhtml`) answers with every command, flag, response type, and error code the binary accepts, and it answers on a machine with no repo, no database, and no credentials. Every command writes exactly one JSON envelope to stdout (the one exception is `memhtml help` on a terminal, which writes Markdown), logs go to stderr, and the exit code is 0 for success, 2 for a usage error, 1 for a runtime failure. `AGENTS.md` is generated from the same table that drives parsing, so the doc cannot drift from the binary.
+
+## Wire up your coding agent
+
+One command wires an agent to the store: the MCP server entry, hooks, a fenced block in the host's instruction file, and a skill, all recorded in a receipt with the SHA-256 of every owned file or fragment, so uninstall removes exactly what install wrote and nothing you added beside it.
+
+```bash
+npx memhtml@latest integrations install       # every host whose home directory exists
+memhtml integrations install claude           # or codex, cursor, opencode
+memhtml integrations install --dry-run        # what it would write, and the rendered content
+```
+
+| Host        | What gets written                                                                                              | Your step                                 |
+| ----------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Claude Code | `~/.claude.json` MCP entry, four hooks in `~/.claude/settings.json`, a block in `~/.claude/CLAUDE.md`, a skill | none, the files are watched               |
+| Codex CLI   | `[mcp_servers.memhtml]` in `~/.codex/config.toml`, two hooks in `~/.codex/hooks.json`, a block, a skill        | restart, then trust the hooks in `/hooks` |
+| Cursor      | `~/.cursor/mcp.json` entry, `sessionStart` in `~/.cursor/hooks.json`, `.cursor/rules/memhtml.mdc`, a skill     | restart for the MCP entry                 |
+| OpenCode    | `mcp.memhtml` in `opencode.json`, a generated plugin, a block in `AGENTS.md`, a skill                          | restart, plugins load at startup          |
+
+A hook reads the host's payload on stdin, runs recall or transcript indexing under a hard time bound, and prints the host's own protocol, so the agent starts a session and each prompt with the memories that matter. No hook writes a memory: memhtml is single-writer, and distilling a transcript into a durable fact belongs to `memhtml sleep run` on a reviewable branch. Any failure inside a hook prints nothing and exits 0, so a hook can never block a turn.
+
+```bash
+memhtml integrations doctor     # binary path and version, store root, MCP entry, hooks, block, skill, live handshake
+memhtml integrations list       # installed, modified, or not installed, per host and scope
+```
+
+Re-running is idempotent, `--project <path>` installs at repository scope instead, and a managed fragment a human changed is refused with `ERR_INTEGRATION_MODIFIED` until you pass `--force`, which keeps a timestamped backup. [Wire up your coding agent](apps/docs/src/content/docs/learn/operations/wire-a-coding-agent.md) has the per-host files and flags; [hooks and recall](apps/docs/src/content/docs/learn/operations/hooks-and-recall.md) has what each hook injects and how to run one by hand.
 
 ## The design in three sentences
 

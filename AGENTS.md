@@ -68,6 +68,26 @@ Every write authors the article in exactly one of two ways, and supplying both o
 
 Answering a question that takes MORE THAN ONE HOP through the corpus? Write it as a script and run `memhtml exec` once, instead of spending a tool call per hop. Supersedence ancestry, live contradiction pairs, orphan census, entity co-occurrence, 'which of these 40 paths has no backlink': each of those is one traversal in code and N round trips through `memhtml read` and `memhtml neighbors`. Measured on a 305-file corpus: a full census in 598ms, and 410 edges resolved into 201 chains, longest 8 hops, in one execution at 430ms. The script runs under QuickJS in a sandbox with the corpus mounted READ-ONLY at `/mnt/memhtml`, and a helper is already seeded for you at `/workspace/lib/corpus.mjs`. Import it: `import { corpus, backlinks, chain, edges } from "/workspace/lib/corpus.mjs"`. `corpus()` returns a Map keyed by root-absolute path (the SAME string an edge's href holds, so `memories.get(link.href)` resolves with no path juggling) and each value carries `claim`, `memoryType`, `status`, `tags`, `entities`, `links`, `facets`, `citations`, `eventAt`, and a `document` escape hatch for any selector the fields do not cover. Print your answer as JSON on stdout with `console.log`; it comes back verbatim in `data.stdout`, so keep it small and structured rather than dumping the corpus. THREE THINGS IT CANNOT DO, by design. It cannot write: the corpus is read-only and a write answers EROFS, so every write still goes through `memhtml write` / `memhtml apply`, which own commits, dedup, and conflict detection. It cannot rank: no cosine, no RRF, no salience, and no index database. For ranked retrieval shell out to `memhtml search` and parse its envelope, which the one-envelope-per-command contract already makes a code-mode API. And it cannot reach the network: there is no curl and the guest's `fetch` refuses on call. The intended opening move is ranked retrieval FIRST, code-mode second: `memhtml search` or `memhtml recall` to get the handful of paths the ranking stack says matter, then `memhtml exec` to walk, join, count, and filter from there. Starting in code-mode means starting with a full-corpus scan and no relevance signal. A non-zero `exitCode` in the response is YOUR script failing, not the command failing. Read `data.stderr` for the diagnostic and the exit code is still 0. A script that runs past `--timeout-ms` (default 30000) comes back `exitCode: 124` with `timedOut: true`. The tree you get is a pinned commit, HEAD by default, named in `data.sha`, so an answer is reproducible with `--sha`, and an uncommitted edit is NOT visible to the script.
 
+### `recall-discipline`
+
+Search before you answer from memory. Start every task that could touch a past decision, an incident, a preference, or a person with `memory_search` (MCP) or `memhtml search --dense` (CLI), phrased as prose. For a context pack rather than a hit list use `memory_recall` / `memhtml recall` and ALWAYS pass a character budget (`budget_chars`, `--budget`; 6000 covers most questions), so one long page cannot fill your window.
+
+
+
+A hit is the ranker's guess, never a citation. Its `snippet` is the chunk that best matched YOUR query, which may not be the sentence you need. Open the one or two paths you will rely on with `memory_read` / `memhtml read` before you quote, attribute, or act on a memory. Pass one of a hit's `entities` (`type:name`) back as the `entity` scope to make the next call a second hop rather than a guess about spelling.
+
+
+
+Recalled memories say what was true when they were written. Before you recommend a file, flag, endpoint, or schedule a memory names, verify it still exists. An absent path was archived, not deleted: retry with `include_archived` / `--include-archived` before concluding the fact is gone, and `memory_resolve` / `memhtml resolve` walks a superseded path forward to its live successor. Cite a path only when `stop_reason` is `live`, and prefer the pinned `memhtml://at/{commit}/{path}` form when the citation must not move.
+
+
+
+Reinforce after use. When a memory helped, call `memory_reinforce` / `memhtml reinforce` with `positive`; when it misled, `negative`. That signal is the salience arm's only outcome channel, and a hit you merely saw does not count: only an opened path and an explicit signal move it.
+
+
+
+Write what is durable, one fact per memory. A decision and its reason, a correction to something stored, an incident and what fixed it, a stated preference, a fact about a person or a system you had to look up. Not transcripts, not summaries of a session, not anything you can re-derive from the code in front of you. State the claim in one sentence, put the evidence and the source in the body, and prefer `memory_correct` / `memhtml correct` over a second memory when you are replacing a fact rather than adding one.
+
 ## Global flags
 
 | Flag | Type | Default | Meaning |
@@ -123,6 +143,12 @@ Answering a question that takes MORE THAN ONE HOP through the corpus? Write it a
 | `memhtml state import` | — | — | `state.import` |
 | `memhtml agents-doc` | — | `--check` `--out` | `agents.doc` |
 | `memhtml serve mcp` | — | — | `serve.exit` |
+| `memhtml integrations install` | [host] | `--project` `--hooks` `--bare-command` `--force` `--dry-run` | `integrations.report` |
+| `memhtml integrations uninstall` | <host> | `--project` | `integrations.report` |
+| `memhtml integrations list` | — | `--project` | `integrations.list` |
+| `memhtml integrations doctor` | [host] | `--project` | `integrations.doctor` |
+| `memhtml integrations shell` | — | `--write` `--rc` | `integrations.shell` |
+| `memhtml hook` | <event> | `--host`* `--trace-root` `--limit` `--budget` | `hook.output` |
 
 ### `memhtml manifest`
 
@@ -466,6 +492,58 @@ Regenerate AGENTS.md from this command table. --check fails on drift.
 
 Run the `memhtml-mcp` stdio server: 15 tools and 3 resources over this same repo.
 
+### `memhtml integrations install`
+
+Wire a coding agent to this store: its MCP entry, its hooks, a fenced block in its instruction file, and a skill, recorded in a receipt so uninstall removes exactly what install wrote.
+
+- `[host]` — Which coding agent to wire: one of claude, codex, cursor, opencode. Omitted: every host whose home directory exists is installed (Claude Code by `~/.claude`, Codex by `~/.codex`, Cursor by `~/.cursor`, OpenCode by `~/.config/opencode`).
+
+- `--project` (string) — Install at repository scope instead of user scope: the path is resolved to its git root, and the host's PROJECT files are written (`.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `opencode.json`, root `AGENTS.md`/`CLAUDE.md`). `/` and `$HOME` are refused as a root.
+- `--hooks` (string) — Which hooks to install. `all` (default) adds session-start recall, per-prompt recall where the host can inject it, and transcript indexing before compaction where a transcript format exists; `session` adds session-start recall only; `none` writes the MCP entry, block, and skill and no hook. _(default `all`; one of: `all`, `session`, `none`)_
+- `--bare-command` (boolean) — Write bare `memhtml` / `memhtml-mcp` commands into the host config instead of the absolute path of this binary. Absolute is the default because GUI hosts do not inherit a shell PATH and a moved toolchain alias has orphaned a bare command before; choose bare when you manage PATH yourself. _(default `false`)_
+- `--force` (boolean) — Overwrite a managed file or entry that was modified since the last install. Without it a modification is refused with ERR_INTEGRATION_MODIFIED and nothing is written; with it the prior bytes are kept beside the file as a timestamped backup named in the report. _(default `false`)_
+- `--dry-run` (boolean) — Report every file and entry install WOULD write, with the rendered content, and write nothing. _(default `false`)_
+
+### `memhtml integrations uninstall`
+
+Remove exactly what install wrote for one host, matched against the receipt; a managed file that was modified since is refused.
+
+- `<host>` — Which coding agent to unwire: one of claude, codex, cursor, opencode.
+
+- `--project` (string) — Uninstall the repository-scope integration rooted at this path's git root.
+
+### `memhtml integrations list`
+
+For every host: installed, modified, or not installed, at user scope and at the named project scope.
+
+- `--project` (string) — Also report the repository-scope integration rooted at this path's git root.
+
+### `memhtml integrations doctor`
+
+Check a host's wiring end to end: binary path and version, store root, MCP entry, hooks, instruction block, skill, transcript root, and a live `initialize` handshake with the server the entry names.
+
+- `[host]` — Which coding agent to check: one of claude, codex, cursor, opencode. Omitted: every host with a receipt.
+
+- `--project` (string) — Check the repository-scope integration rooted at this path's git root.
+
+### `memhtml integrations shell`
+
+Print an eval-able shell snippet that exports MEMHTML_ROOT and puts this binary's directory on PATH; --write appends it to your rc file inside a fence.
+
+- `--write` (boolean) — Append the snippet to the rc file inside `# MEMHTML:START` / `# MEMHTML:END` markers, replacing a prior fenced block. Without it the snippet is only reported. _(default `false`)_
+- `--rc` (string) — The rc file to write. Defaults to `~/.zshrc` when $SHELL ends in zsh, else `~/.bashrc`.
+
+### `memhtml hook`
+
+The engine every installed hook calls. Reads the host's hook payload on stdin, runs recall or transcript indexing under a hard time bound, and writes the HOST'S protocol to stdout (plain text or the host's JSON), never this envelope; any failure prints nothing and exits 0, so a hook can never block a turn.
+
+- `<event>` — Which lifecycle event fired: one of session-start, user-prompt-submit, pre-compact, session-end.
+
+- `--host` (string) — Which host's payload shape to read and which output dialect to write. _(**required**; one of: `claude`, `codex`, `cursor`, `opencode`)_
+- `--trace-root` (string) — Where this host writes transcripts, for the events that index them. Defaults to $MEMHTML_TRACE_ROOT.
+- `--limit` (int) — Hits to inject on a per-prompt recall. _(default `5`)_
+- `--budget` (int) — Character budget for the session-start context pack. _(default `3000`)_
+
 ## Error codes
 
 - `ERR_UNKNOWN_COMMAND`
@@ -486,6 +564,9 @@ Run the `memhtml-mcp` stdio server: 15 tools and 3 resources over this same repo
 - `ERR_DISCRIMINATION_FAILED`
 - `ERR_UNKNOWN`
 - `ERR_REBUILD_NO_EMBED_REFUSED`
+- `ERR_UNKNOWN_HOST`
+- `ERR_UNKNOWN_HOOK_EVENT`
+- `ERR_INTEGRATION_MODIFIED`
 
 ## Configuration
 
