@@ -18,15 +18,17 @@ With no host argument, install detects one by home directory: `~/.claude`, `~/.c
 
 Four components per host, plus the receipt that owns them:
 
-| Component         | What it does                                                                                                               |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| MCP entry         | Registers `memhtml-mcp` over stdio, so the host gets the fifteen tools and three resources                                 |
-| Hooks             | Session-start recall, per-prompt recall where the host can inject it, transcript indexing where a transcript format exists |
-| Instruction block | A fenced block in the host's instruction file carrying the recall discipline                                               |
-| Skill             | A `SKILL.md` the host loads on demand, carrying the same discipline                                                        |
-| Receipt           | `~/.config/memhtml/integrations/<host>.json`: the SHA-256 of every owned file or fragment                                  |
+| Component         | What it does                                                                                                          |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------- |
+| MCP entry         | Registers `memhtml-mcp` over stdio, so the host gets the fifteen tools and three resources                            |
+| Hooks             | Session-start recall, per-prompt recall where the host can inject it, transcript indexing where a trace root is known |
+| Instruction block | A fenced block in the host's instruction file carrying the recall discipline                                          |
+| Skill             | A `SKILL.md` the host loads on demand, carrying the same discipline                                                   |
+| Receipt           | `~/.config/memhtml/integrations/<host>.json`: the SHA-256 of every owned file or fragment                             |
 
-Two kinds of thing get written, and the difference is how ownership is checked. A **file** is wholly memhtml's, so the receipt claims the hash of the whole thing: the skill, the OpenCode plugin, the Cursor rule. A **fragment** lives inside a file other tools also own, so the receipt claims only the rendered bytes of the fragment: a JSON key, a fenced TOML table, a Markdown block, one entry in a hooks array. Your own MCP servers, hooks, and prose in the same files are untouched by install and survive uninstall.
+Two kinds of thing get written, and the difference is how ownership is checked. A **file** is wholly memhtml's, so the receipt claims the hash of the whole thing: the skill, the OpenCode plugin, the Cursor rule. A **fragment** lives inside a file other tools also own, so the receipt claims only the rendered bytes of the fragment: a JSON key, a fenced TOML table, a Markdown block, one entry in a hooks array. Your own entries, comments, key order, and line breaking survive both directions byte for byte: the editor splices only the owned bytes and never reformats a neighbor.
+
+One file is shared on purpose. Codex, Cursor, and OpenCode all read `~/.agents/skills/memhtml/SKILL.md`, so install adopts a byte-identical twin instead of refusing it as somebody else's file, and uninstall leaves it on disk while another host's receipt still claims it.
 
 ## Per host
 
@@ -43,9 +45,9 @@ memhtml integrations install claude
 | Instruction block | `~/.claude/CLAUDE.md`, inside `<!-- MEMHTML:START -->` / `<!-- MEMHTML:END -->`           |
 | Skill             | `~/.claude/skills/memhtml/SKILL.md`                                                       |
 
-Claude Code watches its settings, hooks, and skills files and picks up a change live, so there's no restart step at user scope. A project `.mcp.json` server needs the interactive approval prompt the host shows on the next launch.
+Claude Code watches its settings, hooks, and skills files and picks up a change live, so a user-scope install asks nothing of you and its `nextSteps` is empty. A project install carries exactly one step, because a project `.mcp.json` server needs the approval prompt the host shows on the next launch: `Approve the project .mcp.json prompt the next time Claude Code opens this repository.`
 
-This is the one host whose transcript format `@memhtml/traces` reads, so it's the one host that gets the two indexing hooks. See [index session transcripts](/learn/operations/index-session-transcripts/) for what those hooks feed.
+This is the one host with a default trace root, `~/.claude`, so it's the one host that gets the two indexing hooks with no configuration. `MEMHTML_TRACE_ROOT` names a trace root for any host, and on OpenCode it's what arms the plugin's indexing handler; Codex and Cursor have no indexing event to write one into. See [index session transcripts](/learn/operations/index-session-transcripts/) for what those hooks feed.
 
 ### Codex CLI
 
@@ -60,7 +62,7 @@ memhtml integrations install codex
 | Instruction block | `~/.codex/AGENTS.md`, inside the same Markdown fence                                       |
 | Skill             | `~/.agents/skills/memhtml/SKILL.md`                                                        |
 
-Codex needs two steps from you, and the report names both. Restart Codex, because an edit to `config.toml` is read at startup. Then trust the hooks in `/hooks`: Codex keys trust to a hook's hash and skips an untrusted one, so a hook an installer wrote does nothing at all until you approve it there. Neither step can be automated, and `doctor` can't verify the trust decision from outside the host, so it prints the reminder rather than a check.
+Codex needs two steps from you, and the report names both. Restart Codex, because an edit to `config.toml` is read at startup. Then trust the hooks in `/hooks`: Codex keys trust to a hook's hash and skips an untrusted one, so a hook an installer wrote does nothing at all until you approve it there. Neither step can be automated, and nothing outside Codex can read the trust decision, so `doctor` carries it as an informational green `hook-trust` row rather than a verdict.
 
 `config.toml` is TOML that you also edit, which is why the MCP table lives inside a comment fence: the fence is the fragment install owns, and everything outside it is yours.
 
@@ -97,34 +99,48 @@ memhtml integrations install opencode
 | Instruction block | `~/.config/opencode/AGENTS.md`, inside the same Markdown fence |
 | Skill             | `~/.agents/skills/memhtml/SKILL.md`                            |
 
-OpenCode's hook system is its plugin system, so install generates a JavaScript file rather than a config entry, and the receipt claims the whole file. The plugin wires three hooks: `chat.message` pushes recall onto each user message, `experimental.session.compacting` pushes context into the compaction prompt, and `session.idle` indexes the session's transcript at turn end. Restart OpenCode after install, because it loads plugins and config at startup.
+OpenCode's hook system is its plugin system, so install generates a JavaScript file rather than a config entry, and the receipt claims the whole file. The plugin wires two handlers by default: `chat.message` pushes recall onto each user message, and `experimental.session.compacting` pushes the session-start pack into the compaction prompt. A third handler, `session.idle`, indexes the session's transcript at turn end, and install writes it only when a trace root is known, which for OpenCode means `MEMHTML_TRACE_ROOT`. Restart OpenCode after install, because it loads plugins and config at startup.
 
 ## What the report says
 
-`install` answers one `integrations.report` envelope. The shape:
+`install` answers one `integrations.report` envelope, keyed by host. This is a real `memhtml integrations install claude --dry-run` answer with the `contents` map trimmed off:
 
 ```json
 {
   "apiVersion": "1",
   "type": "integrations.report",
   "data": {
-    "host": "claude",
+    "action": "install",
     "scope": "user",
+    "root": "/home/you",
+    "memhtmlRoot": "/home/you/memhtml",
+    "dryRun": true,
     "changed": true,
-    "entries": [
-      { "path": "/home/you/.claude.json", "role": "mcp-entry", "kind": "fragment" },
-      { "path": "/home/you/.claude/settings.json", "role": "hooks", "kind": "fragment" },
-      { "path": "/home/you/.claude/CLAUDE.md", "role": "instruction-block", "kind": "fragment" },
-      { "path": "/home/you/.claude/skills/memhtml/SKILL.md", "role": "skill", "kind": "file" }
-    ],
-    "nextSteps": ["Restart Claude Code to pick up the new MCP server."]
+    "hosts": [
+      {
+        "host": "claude",
+        "changed": true,
+        "memhtmlRoot": "/home/you/memhtml",
+        "entries": [
+          { "path": "/home/you/.claude.json", "role": "mcp-entry", "kind": "fragment", "action": "planned" },
+          { "path": "/home/you/.claude/settings.json", "role": "hooks", "kind": "fragment", "action": "planned" },
+          { "path": "/home/you/.claude/CLAUDE.md", "role": "instruction-block", "kind": "fragment", "action": "planned" },
+          { "path": "/home/you/.claude/skills/memhtml/SKILL.md", "role": "skill", "kind": "file", "action": "planned" }
+        ],
+        "backups": [],
+        "receiptPath": "/home/you/.config/memhtml/integrations/claude.json",
+        "nextSteps": []
+      }
+    ]
   }
 }
 ```
 
-Read `changed` rather than counting entries. A re-run that finds every managed fragment already correct reports `changed: false` and writes nothing, which is what makes install safe on a cron line or in a machine-setup script. `nextSteps` is the host's manual half: the restart, the trust step, the approval prompt. Uninstall answers the same type, with the entries it removed.
+The report is keyed by host because the host argument is optional: `memhtml integrations install` wires every host it detects, and one flat report could describe only the last of them. A row's `action` is `created`, `updated`, or `unchanged` on a real run, `planned` on a dry run, and `removed` on an uninstall. `backups` names the prior bytes `--force` kept beside a file. `nextSteps` is that host's manual half, and it's the empty array for a host that asks nothing of you.
 
-`--dry-run` reports the same envelope plus the rendered content of every entry, and writes nothing. Run it first when you want to read the block and the hook lines before they land in your home directory.
+Read `changed` rather than counting entries: at the top it's true when any host changed, and each host carries its own. A re-run that finds every managed fragment already correct reports `changed: false` and writes nothing, which is what makes install safe on a cron line or in a machine-setup script. Uninstall answers the same type with `action: "uninstall"` and one host row, which carries a `state` of `installed` or `not-installed` beside the entries it removed.
+
+`--dry-run` adds `contents`, a map from every path the install would touch to that file's whole new text, and writes nothing. Run it first when you want to read the block and the hook lines before they land in your home directory.
 
 ## Why the entry carries an absolute path
 
@@ -138,7 +154,9 @@ The entry also carries `MEMHTML_ROOT` in its `env`, absolute, rather than relyin
 
 ## Project scope
 
-`--project <path>` installs at repository scope instead of user scope. The path is resolved to its git top level, and the host's project files are written there: `.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `opencode.json`, a root `AGENTS.md` or `CLAUDE.md`. The receipt moves with them, to `<root>/.memhtml-integrations/<host>.json`.
+`--project <path>` installs at repository scope instead of user scope. The path is resolved to its git top level, and the host's project files are written there: `.mcp.json`, `.claude/settings.json`, `.cursor/mcp.json`, `.cursor/rules/memhtml.mdc`, `.codex/config.toml`, `.codex/hooks.json`, `opencode.json`, `.opencode/plugins/memhtml.js`, a root `AGENTS.md` or `CLAUDE.md`, and the skill under `.claude/skills/memhtml/` for Claude Code or `.agents/skills/memhtml/` for the other three. The receipt moves with them, to `<root>/.memhtml-integrations/<host>.json`.
+
+Claude Code's block goes where the repository already keeps its instructions. A repository with an `AGENTS.md` gets the block there and a fenced `@AGENTS.md` import in `CLAUDE.md`, so the prose exists once and both readers see it; a `CLAUDE.md` that is already only that import is left alone.
 
 ```bash
 memhtml integrations install claude --project .
@@ -164,23 +182,27 @@ The refusal is per entry, and nothing is written when one fires. It fires when t
 
 ## List and doctor
 
-`integrations list` reports one row per host per scope, each `not-installed`, `installed`, or `modified`:
+`integrations list` answers an `integrations.list` envelope: `home`, a `projectRoot` that is `null` without `--project`, and `rows`, one row per host per scope:
 
 ```bash
 memhtml integrations list
 memhtml integrations list --project .
 ```
 
-`integrations doctor` checks a host's wiring end to end and answers one row per check with `suggestions` on every failure:
+A row carries `host`, `scope`, `root`, `state` (`not-installed`, `installed`, or `modified`), and `receiptPath`, plus `version` and `memhtmlRoot` when the receipt was readable and a `detail` sentence when it wasn't or when something drifted.
+
+`integrations doctor` checks a host's wiring end to end and answers an `integrations.doctor` envelope: `scope`, `root`, `healthy`, and `hosts`, each with its own `healthy` and a `checks` array of `{name, ok, detail, suggestions}`:
 
 ```bash
 memhtml integrations doctor          # every host with a receipt
 memhtml integrations doctor claude   # one host
 ```
 
-It checks that the binary resolves at the recorded absolute path and reports the version the receipt recorded, that the store root exists and holds a `.memhtml/` directory, that the MCP entry matches the receipt byte for byte, that the hooks are present, that the instruction block is present, that the skill is present, that the trace root holds transcripts for this host, and then it spawns the server the entry names with the env the entry carries and completes a live `initialize` handshake. That last check is the one that catches a config which reads correctly and starts nothing.
+The check names, in the order a healthy host reports them: `receipt`, `binary-node`, `binary-cli`, `binary-mcp`, `cli-version`, `store-root`, one `entry:<role>` per receipt entry, `hooks`, `instruction-block`, `skill`, `trace-root` when an installed hook names one, `mcp-handshake`, and `hook-trust` on Codex. An absent or unreadable receipt answers with that one `receipt` row and stops, because nothing else is knowable without it.
 
-The store-root check reads the directory rather than calling `memhtml status`, because `status` on a bare directory creates a store, and a diagnostic that creates the thing it's checking always passes.
+`cli-version` runs the recorded CLI's `manifest` and compares the version it prints with the version the receipt records, so an upgrade reads differently from a binary that moved. `mcp-handshake` spawns the server the entry names, with the env the entry carries, and completes a live `initialize`. That last check is the one that catches a config which reads correctly and starts nothing.
+
+The store-root check reads the directory rather than calling `memhtml status`, because `status` on a bare directory creates a store, and a diagnostic that creates the thing it's checking always passes. The same rule gates the handshake: when `store-root` failed, `mcp-handshake` reads `not attempted`, because starting the server would scaffold the `.memhtml/` the row above just reported missing and the next run would read green.
 
 ## The shell snippet
 
@@ -191,7 +213,7 @@ memhtml integrations shell           # print the snippet
 memhtml integrations shell --write   # append it to your rc file
 ```
 
-It exports `MEMHTML_ROOT` and puts this binary's directory on `PATH`. `--write` appends the snippet inside `# MEMHTML:START` / `# MEMHTML:END` markers, replacing a prior fenced block rather than stacking a second one, to `~/.zshrc` when `$SHELL` ends in `zsh` and `~/.bashrc` otherwise. `--rc` names a different file.
+It exports `MEMHTML_ROOT` and puts this binary's directory on `PATH`. `--write` appends the snippet inside `# MEMHTML:START` / `# MEMHTML:END` markers, replacing a prior fenced block rather than stacking a second one, to `~/.zshrc` when `$SHELL` ends in `zsh` and `~/.bashrc` otherwise. `--rc` names a different file. The `integrations.shell` envelope carries `rc`, `snippet`, `written`, and `changed`, so a script can tell a fresh append from a no-op.
 
 ## Read next
 

@@ -271,8 +271,8 @@ describe("a file other tools own", () => {
       '{\n  // the operator\'s own note\n  "mcpServers": {\n    "other": {\n      "command": "other-mcp"\n    }\n  }\n}\n',
       "utf8"
     )
-    // Written out over lines, the way a formatter leaves it: see the case below for what an inline
-    // member costs, which is the one thing install does not preserve byte for byte.
+    // Written out over lines, the way a formatter leaves it. The case below is the same round trip over
+    // a member the operator kept on ONE line, which is the shape that is easy to re-flow by accident.
     await writeFile(
       settings,
       [
@@ -316,22 +316,23 @@ describe("a file other tools own", () => {
     expect(await text(settings)).toBe(originals.settings)
   })
 
-  it("re-prints an inline sibling member, which is jsonc-parser's minimal edit and not a loss", async () => {
+  it("keeps an inline sibling member on its own line, and hands the file back byte for byte", async () => {
     /**
-     * Measured, and the one thing an install does NOT keep byte for byte. `jsonc-parser` computes a
-     * minimal text edit, and inserting a sibling key re-prints a member the operator had written on one
-     * line: `"other": { "command": "other-mcp" }` comes back over three. Comments, key order, and every
-     * value survive — the line breaking of the member beside ours does not.
+     * The sharp shape, and the reason every JSON edit is a splice computed from `parseTree`'s offsets
+     * rather than a `modify` with `formattingOptions`: that widens each edit to whole lines and re-prints
+     * them, so `"other": { "command": "other-mcp" }` came back over three lines and an uninstall could
+     * never restore the file. Our entry goes in straight after the end of that member's node, so the only
+     * byte the operator's line gains is the comma JSON requires.
      */
     const where = await fixture()
     const claudeJson = join(where.home, ".claude.json")
     const original = '{\n  "mcpServers": {\n    "other": { "command": "other-mcp" }\n  }\n}\n'
     await writeFile(claudeJson, original, "utf8")
     await install(optionsFor("claude", where))
+    const installed = await text(claudeJson)
+    expect(installed).toContain('\n    "other": { "command": "other-mcp" },\n')
     await uninstall("claude", "user", where.home)
-    const after = await text(claudeJson)
-    expect(after).not.toBe(original)
-    expect(JSON.parse(after)).toEqual(JSON.parse(original))
+    expect(await text(claudeJson)).toBe(original)
   })
 
   it("keeps an OpenCode opencode.json's comments and its own mcp server", async () => {

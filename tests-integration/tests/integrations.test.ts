@@ -417,6 +417,11 @@ describe("Claude Code, wired to a store through the built binary", () => {
   })
 
   it("answers a doctor report whose checks each carry a verdict", async () => {
+    // The install above armed the indexing hooks at `~/.claude`, and doctor's `trace-root` row fails on a
+    // root with nothing to index. Seed one transcript so the row reads as it does on a machine that has
+    // used Claude Code, which is the case the rest of this assertion is about.
+    await mkdir(join(home, ".claude", "projects", "seed"), { recursive: true })
+    await writeFile(join(home, ".claude", "projects", "seed", "session.jsonl"), "{}\n", "utf8")
     const spawned = await runBuilt(cli.root, ["integrations", "doctor", "claude"], { HOME: home })
     expect(spawned.exitCode, spawned.stderr).toBe(0)
     const envelope = envelopeOf(spawned)

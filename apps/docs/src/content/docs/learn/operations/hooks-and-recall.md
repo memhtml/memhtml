@@ -23,22 +23,24 @@ Every hook `memhtml integrations install` writes is one invocation of `memhtml h
 | `pre-compact`        | Indexes this session's transcript into the trace plane before the host discards it           |
 | `session-end`        | Indexes this session's transcript into the trace plane                                       |
 
-The two recall events inject context. The two indexing events don't inject anything, and on most hosts they couldn't: a pre-compaction or session-end hook is an observer there. Their value is timing, because a transcript is worth indexing at exactly the moment the host is about to compact it away.
+The two recall events inject context. The two indexing events don't inject anything, and no host reads their stdout anyway: a pre-compaction or session-end hook is an observer. Their value is timing, because a transcript is worth indexing at exactly the moment the host is about to compact it away.
 
 ## What each host gets
 
-| Host        | session-start                   | per-prompt                  | pre-compact                                | session-end             |
-| ----------- | ------------------------------- | --------------------------- | ------------------------------------------ | ----------------------- |
-| Claude Code | `SessionStart`, injects         | `UserPromptSubmit`, injects | `PreCompact`, indexes                      | `SessionEnd`, indexes   |
-| Codex CLI   | `SessionStart`, injects         | `UserPromptSubmit`, injects | none                                       | none                    |
-| Cursor      | `sessionStart`, injects         | none                        | none                                       | none                    |
-| OpenCode    | covered by the per-message hook | `chat.message`, injects     | `experimental.session.compacting`, injects | `session.idle`, indexes |
+| Host        | session-start                         | per-prompt                  | pre-compact                                | session-end                                |
+| ----------- | ------------------------------------- | --------------------------- | ------------------------------------------ | ------------------------------------------ |
+| Claude Code | `SessionStart`, injects               | `UserPromptSubmit`, injects | `PreCompact`, indexes, with a trace root   | `SessionEnd`, indexes, with a trace root   |
+| Codex CLI   | `SessionStart`, injects               | `UserPromptSubmit`, injects | none                                       | none                                       |
+| Cursor      | `sessionStart`, injects               | none                        | none                                       | none                                       |
+| OpenCode    | no event; the compaction hook runs it | `chat.message`, injects     | `experimental.session.compacting`, injects | `session.idle`, indexes, with a trace root |
 
-Three of those cells say `none`, and each one is a host limit rather than a gap in this build.
+Five of those cells say `none`, and each one is a host limit rather than a gap in this build.
 
 Cursor has no per-prompt injection channel. Its `beforeSubmitPrompt` hook can stop a turn and can pass a message to you, and it has no documented way to add context to the prompt the model reads, so install writes no per-prompt hook for Cursor at all rather than one that runs and is discarded. Mid-turn recall on Cursor is the MCP tools.
 
-Codex gets no indexing hooks, and neither does Cursor, because `@memhtml/traces` reads Claude Code's transcript format and no other. Install prints that gap in `nextSteps` rather than writing a hook with nothing to read. OpenCode's `session.idle` hook is written because the plugin owns the call.
+Codex and Cursor never get an indexing hook. Codex's hooks file carries the two injecting events and nothing else, Cursor's carries `sessionStart` alone, and neither host writes a transcript in a format `@memhtml/traces` reads.
+
+Claude Code's two indexing hooks and OpenCode's `session.idle` handler exist only when a trace root is known. Only Claude Code has a default one, `~/.claude`, because `@memhtml/traces` reads Claude Code's transcript format and no other. `MEMHTML_TRACE_ROOT` sets a trace root for any host, so exporting it is what arms OpenCode's indexer. Without one, install writes no indexing hook at all rather than one with nothing to read.
 
 The output protocol differs too, and the engine writes whichever one the `--host` flag names. Claude Code takes plain text on stdout and puts it in the model's context. Codex takes `hookSpecificOutput.additionalContext` JSON, which Claude Code also accepts, so Codex gets the JSON form. Cursor takes `{"additional_context": "…"}`. The OpenCode plugin calls the binary itself and pushes the text as a message part, so it wants plain text. Read from the vendor docs on 2026-09-13, Codex caps injected context at roughly 2,500 tokens, which the 3000-character default budget sits under.
 
@@ -105,7 +107,7 @@ echo '{"cwd":"/home/you/work/checkout-api"}' |
 
 `cwd` is read where the host sends one, and it's how a session in a project directory gets a pack about that project. Cursor sends `workspace_roots` instead and the engine reads the first entry.
 
-The indexing events want a trace root, which defaults to `$MEMHTML_TRACE_ROOT`:
+The indexing events want a trace root, which defaults to `$MEMHTML_TRACE_ROOT`; an installed indexing hook always names one explicitly on its command line:
 
 ```bash
 echo '{"session_id":"…"}' | memhtml hook pre-compact --host claude --trace-root ~/.claude
@@ -115,7 +117,7 @@ That one prints nothing on success, because no host reads its stdout. Check that
 
 ## What the injected text says
 
-The session-start pack is a `memhtml recall` answer under the character budget: claims with their paths, folded disclosure where a memory has elaboration, and an index line for everything past the budget. The per-prompt injection is a `memhtml search` answer at `--limit` hits.
+The session-start pack is a `memhtml recall` answer rendered as a bounded index: one line per memory carrying its title, a gist clipped to 240 characters, and the path an agent hands straight to `memory_read`, arcs before ordinary memories, then up to five open tasks. `--budget` decides which memories `recall` thought were worth spending on rather than how much prose lands in the session: the disclosed bodies stay out of the block, and the disclosed tier is simply ordered first within each fold. The per-prompt injection is a `memhtml search` answer at `--limit` hits, in the same one-line form.
 
 Neither one is a citation, and the instruction block install writes is where that's stated to the agent. A hit is the ranker's guess about your prompt, its snippet is the chunk that best matched, and an agent that quotes it without opening the path quotes something the ranker chose. The block and the skill carry that discipline, the manifest carries it as the `recall-discipline` guide topic, and all three render from one prose module in `@memhtml/contracts`, so they can't drift from each other.
 
