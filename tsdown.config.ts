@@ -42,6 +42,7 @@ const WORKSPACE_PACKAGES = [
   "packages/eval",
   "packages/html",
   "packages/index",
+  "packages/integrations",
   "packages/llm",
   "packages/sleep",
   "packages/store",

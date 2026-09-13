@@ -30,6 +30,10 @@
       "types": "./dist/errors.d.ts",
       "default": "./dist/errors.js"
     },
+    "./guidance": {
+      "types": "./dist/guidance.d.ts",
+      "default": "./dist/guidance.js"
+    },
     "./paths": {
       "types": "./dist/paths.d.ts",
       "default": "./dist/paths.js"

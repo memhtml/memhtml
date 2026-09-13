@@ -1,26 +1,22 @@
 {
-  "name": "@memhtml/cli",
+  "name": "@memhtml/integrations",
   "version": "0.14.0",
   "private": true,
-  "description": "The `memhtml` binary.",
+  "description": "Wire a coding agent (Claude Code, Codex, Cursor, OpenCode) to a memhtml store: MCP entry, hooks, instruction block, skill, receipt.",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/memhtml/memhtml.git",
-    "directory": "apps/cli"
+    "directory": "packages/integrations"
   },
   "engines": {
     "node": ">=24"
   },
   "files": [
     "dist",
-    "guest",
     "!dist/.tsbuildinfo"
   ],
-  "bin": {
-    "memhtml": "./dist/bin.js"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -29,28 +25,14 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "dev": "tsc -b --watch",
     "typecheck": "tsc --noEmit -p tsconfig.check.json",
     "lint": "biome check src tests",
-    "test": "vitest run",
-    "start": "node dist/bin.js"
+    "test": "vitest run"
   },
   "dependencies": {
-    "@memhtml/consolidator": "workspace:*",
     "@memhtml/contracts": "workspace:*",
-    "@memhtml/domain": "workspace:*",
-    "@memhtml/eval": "workspace:*",
-    "@memhtml/html": "workspace:*",
-    "@memhtml/index": "workspace:*",
-    "@memhtml/integrations": "workspace:*",
-    "@memhtml/llm": "workspace:*",
-    "@memhtml/sleep": "workspace:*",
-    "@memhtml/store": "workspace:*",
-    "@memhtml/telemetry": "workspace:*",
-    "@memhtml/traces": "workspace:*",
     "effect": "catalog:",
-    "just-bash": "3.4.2",
-    "node-html-parser": "9.0.3"
+    "jsonc-parser": "3.3.1"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.12",
