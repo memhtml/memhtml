@@ -361,7 +361,11 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
    */
   const home = join(work, "home")
   await exec("mkdir", ["-p", join(home, ".claude")])
-  const homed = { ...env, HOME: home }
+  // An operator's own `MEMHTML_TRACE_ROOT` would point the installed hooks at a real transcript tree and
+  // make `doctor` read green here while failing on a clean runner, so the family sees the default root.
+  const homed = Object.fromEntries(
+    Object.entries({ ...env, HOME: home }).filter(([key]) => key !== "MEMHTML_TRACE_ROOT")
+  )
   const traceRoot = join(work, "traces")
   await exec("mkdir", ["-p", join(traceRoot, "projects", "-smoke")])
   await writeFile(

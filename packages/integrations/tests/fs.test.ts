@@ -3,6 +3,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readdir,
   readFile,
   realpath,
@@ -124,11 +125,17 @@ describe("writeTextAtomic", () => {
     const root = await tempRoot()
     const path = join(root, "swap.json")
     await writeTextAtomic(path, "first\n")
-    const before = await stat(path)
-    await writeTextAtomic(path, "second\n")
-    const after = await stat(path)
-    expect(await readFile(path, "utf8")).toBe("second\n")
-    expect(after.ino).not.toBe(before.ino)
+    const held = await open(path, "r")
+    try {
+      await writeTextAtomic(path, "second\n")
+      // The reader that opened the first file still reads the whole first file: the write landed as a
+      // rename over the path, never as bytes into the inode that reader holds.
+      expect(await held.readFile("utf8")).toBe("first\n")
+      expect(await readFile(path, "utf8")).toBe("second\n")
+      expect((await stat(path)).ino).not.toBe((await held.stat()).ino)
+    } finally {
+      await held.close()
+    }
   })
 })
 

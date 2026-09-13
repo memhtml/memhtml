@@ -198,7 +198,7 @@ memhtml integrations doctor          # every host with a receipt
 memhtml integrations doctor claude   # one host
 ```
 
-The check names, in the order a healthy host reports them: `receipt`, `binary-node`, `binary-cli`, `binary-mcp`, `cli-version`, `store-root`, one `entry:<role>` per receipt entry, `hooks`, `instruction-block`, `skill`, `trace-root` when an installed hook names one, `mcp-handshake`, and `hook-trust` on Codex. An absent or unreadable receipt answers with that one `receipt` row and stops, because nothing else is knowable without it.
+The check names, in the order a healthy host reports them: `receipt`, `binary-node`, `binary-cli`, `binary-mcp`, `cli-version`, `store-root`, one `entry:<role>` per receipt entry, `hooks`, `instruction-block`, `skill`, `trace-root` when an installed hook names one, `mcp-handshake`, and `hook-trust` on Codex. An absent or unreadable receipt answers with that one `receipt` row and stops, because nothing else is knowable without it. `trace-root` passes on a root that exists and holds no transcript yet, which is every machine before its first session, and fails only on a root that cannot be listed.
 
 `cli-version` runs the recorded CLI's `manifest` and compares the version it prints with the version the receipt records, so an upgrade reads differently from a binary that moved. `mcp-handshake` spawns the server the entry names, with the env the entry carries, and completes a live `initialize`. That last check is the one that catches a config which reads correctly and starts nothing.
 

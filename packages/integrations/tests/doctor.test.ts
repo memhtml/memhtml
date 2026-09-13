@@ -247,13 +247,27 @@ describe("doctor on a broken install", () => {
     expect(handshake?.suggestions).toContain("memhtml integrations install claude")
   })
 
-  it("fails the trace-root row when the recorded tree holds no transcript", async () => {
+  it("passes the trace-root row on a root that exists and holds no transcript yet", async () => {
+    // A host installed on a machine that has not run a session: the common first-run shape, and a healthy one.
     const where = await fixture()
     await install(optionsFor("claude", where))
     const result = await doctor("claude", "user", where.home, { probes: healthyProbes("9.9.9") })
     const trace = row(result.checks, "trace-root")
+    expect(trace?.ok).toBe(true)
+    expect(trace?.detail).toContain("holds no *.jsonl yet")
+    expect(trace?.suggestions).toEqual([])
+    expect(result.healthy).toBe(true)
+  })
+
+  it("fails the trace-root row when the recorded root cannot be listed", async () => {
+    const where = await fixture()
+    await install(optionsFor("claude", where, { traceRoot: join(where.home, "nowhere") }))
+    const result = await doctor("claude", "user", where.home, { probes: healthyProbes("9.9.9") })
+    const trace = row(result.checks, "trace-root")
     expect(trace?.ok).toBe(false)
-    expect(trace?.detail).toContain("no *.jsonl within two levels")
+    expect(trace?.detail).toContain("cannot be listed")
+    expect(trace?.suggestions.join(" ")).toContain("MEMHTML_TRACE_ROOT=")
+    expect(result.healthy).toBe(false)
   })
 
   it("fails the hooks row when every owned entry was deleted by hand", async () => {

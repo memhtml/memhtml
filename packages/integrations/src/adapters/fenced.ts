@@ -43,7 +43,7 @@ const locate = (text: string, startMarker: string, endMarker: string): FenceLoca
 }
 
 /** Trailing blank lines removed; a body is stored without its own trailing newline. */
-const trimTrailingBlank = (body: string): string => body.replace(/\s+$/, "")
+const trimTrailingBlank = (body: string): string => body.trimEnd()
 
 const withTrailingNewline = (text: string): string =>
   text.length === 0 || text.endsWith("\n") ? text : `${text}\n`

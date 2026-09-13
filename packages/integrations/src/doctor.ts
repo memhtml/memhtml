@@ -275,22 +275,32 @@ export const traceRootIn = (text: string): string | undefined => {
   return found === undefined || found.length === 0 ? undefined : found
 }
 
-/** True when `root` holds a `*.jsonl` within two directory levels. */
-const hasTranscript = async (root: string, depth = 2): Promise<boolean> => {
+/**
+ * What a transcript root holds: `missing` when it cannot be listed, `populated` when a `*.jsonl` sits
+ * within two directory levels, `empty` otherwise.
+ */
+type TraceRootState = "missing" | "empty" | "populated"
+
+const traceRootState = async (root: string, depth = 2): Promise<TraceRootState> => {
   let entries: ReadonlyArray<Dirent<string>>
   try {
     entries = await readdir(root, { withFileTypes: true })
   } catch {
-    return false
+    return "missing"
   }
   for (const entry of entries) {
-    if (entry.isFile() && entry.name.endsWith(".jsonl")) return true
+    if (entry.isFile() && entry.name.endsWith(".jsonl")) return "populated"
   }
-  if (depth === 0) return false
+  if (depth === 0) return "empty"
   for (const entry of entries) {
-    if (entry.isDirectory() && (await hasTranscript(join(root, entry.name), depth - 1))) return true
+    if (
+      entry.isDirectory() &&
+      (await traceRootState(join(root, entry.name), depth - 1)) === "populated"
+    ) {
+      return "populated"
+    }
   }
-  return false
+  return "empty"
 }
 
 /**
@@ -493,7 +503,10 @@ export const doctor = async (
   /**
    * The transcript root, when a hook names one. Absent is not a failure: three of the four hosts have no
    * transcript format memhtml can read, so no indexing hook is installed for them and there is nothing to
-   * check. An empty root IS a failure, because the hook is armed and reading nothing.
+   * check. A root that exists but holds no transcript yet passes too, with a detail that says so: that is
+   * every machine that installed a host and has not run a session, and the hooks read it once one lands.
+   * Only a root that cannot be listed fails, because then the hooks name a directory this host does not
+   * write and nothing will ever be indexed.
    */
   const hookText = await readTextOrNull(spec.hooks.file)
   const commands =
@@ -504,15 +517,22 @@ export const doctor = async (
         : [hookText]
   const traceRoot = commands.map((line) => traceRootIn(line)).find((found) => found !== undefined)
   if (traceRoot !== undefined) {
-    const populated = await hasTranscript(traceRoot)
+    const state = await traceRootState(traceRoot)
     checks.push(
       check(
         "trace-root",
-        populated,
-        populated
+        state !== "missing",
+        state === "populated"
           ? `${traceRoot} holds transcripts`
-          : `${traceRoot} holds no *.jsonl within two levels: the indexing hooks have nothing to read`,
-        populated ? [] : ["memhtml trace index --trace-root <where this host writes transcripts>"]
+          : state === "empty"
+            ? `${traceRoot} exists and holds no *.jsonl yet: the indexing hooks read it once this host writes a session`
+            : `${traceRoot} cannot be listed: the indexing hooks name a transcript root this host does not write`,
+        state === "missing"
+          ? [
+              "MEMHTML_TRACE_ROOT=<where this host writes transcripts> memhtml integrations install " +
+                `${host} --force`
+            ]
+          : []
       )
     )
   }
