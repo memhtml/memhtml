@@ -382,6 +382,30 @@ export default defineConfig({
             entryFileName: "index",
             disableSources: true
           }
+        }),
+        /*
+         * `@memhtml/html`: one import path, one entry point and one page. Its six document shapes
+         * (`MemoryDoc`, `MemoryMetas`, `ArticleExtractions`, `MemoryLink`, `Facet`, `Citation`) are
+         * interfaces that extend the `Schema.Struct` type, so a signature that takes or returns one
+         * renders the name as a link. As bare `typeof X.Type` aliases they were expanded inline, which
+         * printed seven escaped braces (`metaPairs`, `serializeMemory`, `parseMemory`) and left six
+         * `{@link MemoryMetas.status}` references unresolved; the interfaces cleared both, measured
+         * with the TypeDoc CLI.
+         */
+        starlightTypeDoc({
+          entryPoints: [join(REPO_ROOT, "packages", "html", "src", "index.ts")],
+          tsconfig: join(REPO_ROOT, "packages", "html", "tsconfig.json"),
+          output: "api/html",
+          typeDoc: {
+            outputFileStrategy: "modules",
+            useCodeBlocks: true,
+            parametersFormat: "list",
+            excludeExternals: true,
+            readme: join(REPO_ROOT, "packages", "html", "README.md"),
+            mergeReadme: true,
+            entryFileName: "index",
+            disableSources: true
+          }
         })
       ],
       /*
@@ -434,6 +458,11 @@ export default defineConfig({
               label: "@memhtml/domain",
               collapsed: true,
               items: [{ autogenerate: { directory: "api/domain" } }]
+            },
+            {
+              label: "@memhtml/html",
+              collapsed: true,
+              items: [{ autogenerate: { directory: "api/html" } }]
             }
           ]
         },

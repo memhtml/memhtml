@@ -13,6 +13,7 @@ Every page below this one is generated from the TSDoc on a package's exported su
 | `@memhtml/traces`    | [One page](/api/traces/), because the package publishes a single import path.                                                                                                                                             |
 | `@memhtml/eval`      | [One page](/api/eval/): the corpus generator and the discrimination gate, one import path.                                                                                                                                |
 | `@memhtml/domain`    | [One page](/api/domain/): the pure arithmetic of retention, decay, fusion, diversification, merge guards and graph scores, one import path.                                                                               |
+| `@memhtml/html`      | [One page](/api/html/): the memory file format, its parser, serializer, hash, head editors, template, fence-language detector and closed vocabulary, one import path.                                                     |
 
 Each package's overview page is its `README.md` from the repository, with the module list appended by the generator. The remaining workspace packages are added one per maintenance run, smallest exported surface first, once their generated pages pass the same gates as the authored ones.
 
