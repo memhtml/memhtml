@@ -31,7 +31,7 @@
     "package:smoke:live": "pnpm package:assemble && pnpm package:lint && node scripts/smoke-package.mjs --live"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.12",
+    "@biomejs/biome": "2.5.13",
     "effect": "catalog:",
     "publint": "0.3.24",
     "tsdown": "0.23.0",
