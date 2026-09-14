@@ -259,8 +259,29 @@ export const INLINE_ELEMENTS: ReadonlySet<string> = new Set([
 /** Attributes forbidden anywhere: presentation is the stylesheet's job, not the memory's. */
 export const FORBIDDEN_ATTRIBUTES: ReadonlySet<string> = new Set(["class", "style"])
 
-/** Elements forbidden anywhere: a memory file is data, and data does not execute. */
-export const FORBIDDEN_ELEMENTS: ReadonlySet<string> = new Set(["script", "style"])
+/**
+ * Elements forbidden anywhere: a memory file is data, and data does not execute.
+ *
+ * Beyond the script/style pair, the list bans every element that embeds a browsing context or
+ * foreign resource (`iframe`, `frame`, `frameset`, `object`, `embed`, `applet`), rewrites the
+ * document's own URL space (`base`), or submits data to a target (`form`). These are violations
+ * rather than constraint-6 warnings because the corpus is published as a static site: a file
+ * carrying one would execute, embed, or navigate in every reader's browser under the corpus's
+ * own origin. `link`/`meta` need attribute-level rules instead (the scheme check and the
+ * `http-equiv` refusal in `constraints.ts`), since both are required skeleton elements.
+ */
+export const FORBIDDEN_ELEMENTS: ReadonlySet<string> = new Set([
+  "script",
+  "style",
+  "iframe",
+  "frame",
+  "frameset",
+  "object",
+  "embed",
+  "applet",
+  "base",
+  "form"
+])
 
 /** The prefix every DOM event-handler attribute carries. */
 export const EVENT_HANDLER_PREFIX = "on"
