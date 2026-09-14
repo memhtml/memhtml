@@ -111,6 +111,16 @@ export const mcpSuggestionsFor = (error: unknown): ReadonlyArray<string> => {
         "retry — search degrades to the lexical floor without the embedder, so results are narrower but real",
         "call memory_status to see whether the embedder is up"
       ]
+    /**
+     * The same recovery shape as `ModelUnavailable`, for the CLI door's reason: an off-schema turn
+     * is a model-side failure, and `codeFor` files it under the same `ERR_MODEL_UNAVAILABLE`. The
+     * phase-level isolation has already degraded the run, so the agent's move is the same retry.
+     */
+    case "LlmContractViolation":
+      return [
+        "retry — a turn that settles off-schema is usually transient",
+        "call memory_status to see when the model-calling phases last succeeded"
+      ]
     case "EmbedModelMismatch":
       return [
         "keep working — memory_search still runs on the lexical, recency, and salience arms",

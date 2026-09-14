@@ -59,10 +59,11 @@ import {
   DEDUP_MEMBER_CHARS,
   DEDUP_PAIR_LIMIT
 } from "../src/phases/dedup-merge.js"
-import { unionPairs as candidateUnion } from "../src/phases/edge-typing.js"
+import { rankUnionPairs as candidateUnion } from "../src/phases/edge-typing.js"
 import {
   AUTO_MERGE_THRESHOLD,
   aliasBacked,
+  canonicalUnionFind,
   capQuadraticNames,
   characterPairs,
   decomposeCluster,
@@ -73,8 +74,7 @@ import {
   nearestCentroids,
   normalizeEntityName,
   REVIEW_THRESHOLD,
-  resolveClusters,
-  unionPairs
+  resolveClusters
 } from "../src/phases/entity-resolution.js"
 import { PHASE_BODIES } from "../src/phases/index.js"
 import { archivedFormOf } from "../src/phases/integrity.js"
@@ -536,7 +536,7 @@ describe("entity resolution", () => {
       ["checkout api", 9],
       ["the checkout service", 2]
     ])
-    const merged = unionPairs(counts, [
+    const merged = canonicalUnionFind(counts, [
       // What the character pass finds: 0.92.
       ["checkout-api", "checkout api"],
       // What only a model can find: 0.42 by character overlap.

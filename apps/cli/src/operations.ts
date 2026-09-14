@@ -293,12 +293,30 @@ const reindex = () =>
 const toWriteInput = (params: WriteParams, at: string): Effect.Effect<WriteInput, InvalidMemory> =>
   Effect.gen(function* () {
     const memoryType = yield* decodeOperatorType(params.memoryType)
+    /**
+     * A non-task op naming `status` is refused, not silently stripped. The parser holds the same
+     * rule on the FILE (`memhtml-task-status` on a non-task is a parse violation), and a silent
+     * drop here would hand a caller back `ok: true` for a memory that quietly lacks the lifecycle
+     * the op stated — the wrong answer that looks right.
+     *
+     * `due` is deliberately NOT gated on the type: `memhtml-due` is documented as a deadline any
+     * memory may carry (`docs/format.md`: "NOT coupled to the type"), the template stamps it for
+     * every type, and `files.due_at` projects for every row. An op stating a deadline on a
+     * semantic memory means it, so the value is decoded and stamped rather than dropped.
+     */
+    if (memoryType !== "task" && params.taskStatus !== undefined && params.taskStatus !== "") {
+      return yield* Effect.fail(
+        InvalidMemory.make({
+          reason: `a ${memoryType} memory takes no task status: memhtml-task-status belongs to a task, and the parser would refuse the file this op renders`
+        })
+      )
+    }
     const taskStatus =
       memoryType === "task" && params.taskStatus !== undefined && params.taskStatus !== ""
         ? yield* decodeTaskStatus(params.taskStatus)
         : undefined
     const dueAt =
-      memoryType === "task" && params.dueAt !== undefined && params.dueAt !== ""
+      params.dueAt !== undefined && params.dueAt !== ""
         ? yield* decodeDueAt(params.dueAt)
         : undefined
 

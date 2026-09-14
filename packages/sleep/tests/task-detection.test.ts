@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
+import { fileURLToPath } from "node:url"
 
 import { frameKeyOf } from "@memhtml/domain"
 import { Effect } from "effect"
@@ -220,7 +221,10 @@ describe("the detection key's delimiter", () => {
      * blind spot on exactly the file holding this delimiter. The escape is what keeps the file
      * greppable, and this is the assertion that stops the byte coming back.
      */
-    const source = await readFile(new URL("../src/tasks.ts", import.meta.url).pathname, "utf8")
+    const source = await readFile(
+      fileURLToPath(new URL("../src/tasks.ts", import.meta.url)),
+      "utf8"
+    )
     expect(source.includes(String.fromCharCode(0))).toBe(false)
     expect(source).toContain("\\u0000")
   })

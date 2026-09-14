@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
@@ -13,10 +14,22 @@ import {
 } from "../src/discover.js"
 
 /** The checked-in fixture tree: two slugs, one main session each, one sidecar under the first. */
-const FIXTURE_ROOT = new URL("./fixtures", import.meta.url).pathname
+const FIXTURE_ROOT = fileURLToPath(new URL("./fixtures", import.meta.url))
 
 const ALPHA = "11111111-1111-4111-8111-111111111111"
 const BETA = "22222222-2222-4222-8222-222222222222"
+
+/**
+ * `chmod(dir, 0o000)` is how the unreadable-directory probe denies a read, and two environments
+ * store the bits without enforcing them for the owner: uid 0 and win32. There the denial never
+ * happens and the assertions would describe a successful scan. Skipped with the reason on the
+ * record, matching scan.test.ts/parse.test.ts's guard for the same class.
+ */
+const CHMOD_CANNOT_DENY = process.getuid?.() === 0 || process.platform === "win32"
+const CHMOD_INEFFECTIVE =
+  process.platform === "win32"
+    ? "win32 stores but does not enforce the POSIX mode bits for the owner, so the denial cannot be staged"
+    : "chmod 000 does not deny a read to uid 0, so the denial cannot be staged"
 
 /** Fails the test on an unexpected `StorageFailure`, which is what a rejected promise does. */
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
@@ -91,7 +104,8 @@ describe("discoverSessions", () => {
     expect(files.map((file) => file.kind)).toEqual(["session"])
   })
 
-  it("reports an unreadable projects directory as a StorageFailure rather than as empty", async () => {
+  it("reports an unreadable projects directory as a StorageFailure rather than as empty", async (ctx) => {
+    ctx.skip(CHMOD_CANNOT_DENY, CHMOD_INEFFECTIVE)
     const root = await tempRoot("denied")
     const projects = join(root, PROJECTS_DIR)
     await mkdir(projects, { recursive: true })

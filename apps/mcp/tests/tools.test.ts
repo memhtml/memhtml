@@ -923,9 +923,10 @@ describe("the body-to-claim split", () => {
   it("holds no second copy of the prose split anywhere in its emitted bytes", async () => {
     const { readdir, readFile } = await import("node:fs/promises")
     const { join } = await import("node:path")
+    const { fileURLToPath } = await import("node:url")
     /** `claimFromProse`'s first-sentence pattern and `proseTail`'s blank-line pattern, as emitted. */
     const SIGNATURES = ["(.*?[.!?])(\\s|$)", "\\n\\s*\\n"]
-    const dist = new URL("../dist", import.meta.url).pathname
+    const dist = fileURLToPath(new URL("../dist", import.meta.url))
     const entries = await readdir(dist, { recursive: true, withFileTypes: true })
     const files = entries
       .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))

@@ -1,0 +1,6 @@
+# One line-ending policy for every platform: text files check out with LF even on
+# Windows (where a global `core.autocrlf=true` would otherwise hand every editor and
+# formatter CRLF bytes). biome and dprint both compare against LF, so a CRLF working
+# tree fails `lint` and `lint:md` for reasons unrelated to any change. `text=auto`
+# keeps binary files byte-exact by content detection.
+* text=auto eol=lf

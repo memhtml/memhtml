@@ -1,7 +1,9 @@
+import { DatabaseService, RetrievalPolicy } from "@memhtml/cli"
+import type { DatabaseShape } from "@memhtml/index"
 import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
 
-import { traceSessionsFlag } from "../src/views.js"
+import { indexReport, traceSessionsFlag } from "../src/views.js"
 
 /**
  * The `--trace-sessions` validation (issue #99). The refusal arm is the one worth pinning: the
@@ -27,5 +29,33 @@ describe("traceSessionsFlag", () => {
     if (Result.isFailure(result)) {
       expect(result.failure.reason).toContain("--trace-sessions")
     }
+  })
+})
+
+/**
+ * A count the query could not read is `null`, never `0`: zero is a real, healthy answer for an
+ * empty corpus, and a caller reading `files: 0` on a database the query could not open was just
+ * told the corpus is empty. `degraded: true` names the state, and the watermark read failing sets
+ * it too — `headSha: null` from a failed read is indistinguishable from "no row yet" without it.
+ */
+describe("indexReport degrades a failed read honestly", () => {
+  const failingDb = {
+    hasState: false,
+    get: () => Effect.fail(new Error("database is locked")),
+    all: () => Effect.fail(new Error("database is locked")),
+    run: () => Effect.fail(new Error("database is locked"))
+  } as unknown as DatabaseShape
+
+  it("reports null counts and degraded: true when every read fails", async () => {
+    const report = await Effect.runPromise(
+      indexReport().pipe(
+        Effect.provideService(DatabaseService, failingDb),
+        Effect.provideService(RetrievalPolicy, { vectorCoverageFloor: 0.5 })
+      )
+    )
+    expect(report.degraded).toBe(true)
+    expect(report.files).toBeNull()
+    expect(report.edges).toBeNull()
+    expect(report.headSha).toBeNull()
   })
 })

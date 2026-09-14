@@ -117,12 +117,22 @@ const THREE = [
   line({ title: "Third applied fact", body: "The third thing happened." })
 ]
 
-/** Every `.html` under the repo, excluding the scaffold's own `README.html`. */
+/**
+ * Every `.html` under the repo, excluding the scaffold's own `README.html`.
+ *
+ * Paths are normalized to the repo's forward-slash form: `readdir` yields the platform separator,
+ * and on win32 the backslash form would not equal the forward-slash paths every assertion and the
+ * index itself speak.
+ */
 const htmlOnDisk = async (root: string): Promise<ReadonlyArray<string>> => {
   const entries = await readdir(root, { recursive: true, withFileTypes: true })
   return entries
     .filter((entry) => entry.isFile() && entry.name.endsWith(".html"))
-    .map((entry) => join(entry.parentPath, entry.name).slice(root.length + 1))
+    .map((entry) =>
+      join(entry.parentPath, entry.name)
+        .slice(root.length + 1)
+        .replaceAll("\\", "/")
+    )
     .filter((path) => path !== "README.html")
     .sort()
 }

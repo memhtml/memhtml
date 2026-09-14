@@ -1599,6 +1599,17 @@ describe("expandRoot", () => {
     expect(expandRoot("~")).toBe(homedir())
   })
 
+  it("expands the backslash spelling a Windows-native config surface produces", async () => {
+    /**
+     * `MEMHTML_ROOT=~\memhtml` in a `.env` or an MCP client's env block carries the platform's own
+     * separator, and the forward-slash-only check let it fall through as a literal path — observed
+     * as an unexplained `apps/cli/~/memhtml/.memhtml/` under the repo. Both spellings expand.
+     */
+    const { homedir } = await import("node:os")
+    expect(expandRoot("~\\memhtml")).toBe(join(homedir(), "memhtml"))
+    expect(expandRoot("~\\")).toBe(homedir())
+  })
+
   it("leaves an absolute path alone and resolves a relative one", () => {
     expect(expandRoot("/srv/memory")).toBe("/srv/memory")
     expect(expandRoot("  /srv/memory  ")).toBe("/srv/memory")

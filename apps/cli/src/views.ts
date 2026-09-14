@@ -30,10 +30,43 @@ export const indexReport = () =>
   Effect.gen(function* () {
     const db = yield* DatabaseService
     const policy = yield* RetrievalPolicy
-    const state = yield* readIndexState(db).pipe(Effect.orElseSucceed(() => undefined))
+    /**
+     * A failed watermark read is degradation, not absence: `undefined` from a failed read would
+     * otherwise be indistinguishable from "no row yet" and report `headSha: null` beside counts it
+     * also could not read. `degraded` names the plane that did not answer.
+     */
+    const stateRead = yield* readIndexState(db).pipe(
+      Effect.map((row) => ({ row, failed: false })),
+      Effect.orElseSucceed(() => ({ row: undefined, failed: true }))
+    )
+    const state = stateRead.row
+    // An unreadable coverage reads as full rather than as empty — the scope rule the doctor's copy
+    // of this read states: a database that cannot count its chunks is reported by the freshness
+    // check, not by a coverage finding blaming the vector plane for it.
     const coverage = yield* readVectorCoverage(db, EMBED_WATERMARK).pipe(
       Effect.orElseSucceed(() => ({ chunks: 0, embeddings: 0, coverage: 1, model: null }))
     )
+
+    /**
+     * Counts degrade to `null` rather than `0`: zero is a real, healthy answer for an empty
+     * corpus, and a caller reading `files: 0` on a database the query could not open was just
+     * told the corpus is empty. One `degraded` list carries which planes failed, so a dense
+     * consumer that only wants numbers still parses and an operator sees what not to trust.
+     */
+    const counts = yield* Effect.all({
+      files: count(db, "SELECT count(*) AS n FROM files"),
+      activeFiles: count(db, "SELECT count(*) AS n FROM files WHERE archived = 0"),
+      chunks: count(db, "SELECT count(*) AS n FROM chunks"),
+      embeddings: count(db, "SELECT count(*) AS n FROM embeddings"),
+      edges: count(db, "SELECT count(*) AS n FROM edges"),
+      derivedEdges: count(db, "SELECT count(*) AS n FROM edges WHERE derived = 1"),
+      tags: count(db, "SELECT count(DISTINCT tag) AS n FROM file_tags"),
+      entities: count(
+        db,
+        "SELECT count(DISTINCT entity_type || ':' || entity_name) AS n FROM file_entities"
+      ),
+      traces: count(db, "SELECT count(*) AS n FROM traces")
+    })
 
     return {
       mode: "status",
@@ -49,10 +82,10 @@ export const indexReport = () =>
       configuredEmbedModel: EMBED_WATERMARK,
       rebuiltAt: state?.rebuilt_at ?? null,
       updatedAt: state?.updated_at ?? null,
-      files: yield* count(db, "SELECT count(*) AS n FROM files"),
-      activeFiles: yield* count(db, "SELECT count(*) AS n FROM files WHERE archived = 0"),
-      chunks: yield* count(db, "SELECT count(*) AS n FROM chunks"),
-      embeddings: yield* count(db, "SELECT count(*) AS n FROM embeddings"),
+      files: counts.files.value,
+      activeFiles: counts.activeFiles.value,
+      chunks: counts.chunks.value,
+      embeddings: counts.embeddings.value,
       /**
        * `embeddings` above counts every vector; this counts the ones in the CONFIGURED space over the
        * chunks, which is the number that decides whether the vector arm runs (issue #141). The floor
@@ -60,22 +93,25 @@ export const indexReport = () =>
        */
       vectorCoverage: coverage.coverage,
       vectorCoverageFloor: policy.vectorCoverageFloor,
-      edges: yield* count(db, "SELECT count(*) AS n FROM edges"),
-      derivedEdges: yield* count(db, "SELECT count(*) AS n FROM edges WHERE derived = 1"),
-      tags: yield* count(db, "SELECT count(DISTINCT tag) AS n FROM file_tags"),
-      entities: yield* count(
-        db,
-        "SELECT count(DISTINCT entity_type || ':' || entity_name) AS n FROM file_entities"
-      ),
-      traces: yield* count(db, "SELECT count(*) AS n FROM traces"),
+      edges: counts.edges.value,
+      derivedEdges: counts.derivedEdges.value,
+      tags: counts.tags.value,
+      entities: counts.entities.value,
+      traces: counts.traces.value,
+      /** True when any count or the watermark read failed; failed counts read as null, not 0. */
+      degraded: stateRead.failed || Object.values(counts).some((read) => read.degraded),
       hasState: db.hasState
     }
   })
 
-const count = (db: DatabaseShape, sql: string) =>
+/** One count as `{ value, degraded }`, so a failed read is never a confident zero. */
+const count = (
+  db: DatabaseShape,
+  sql: string
+): Effect.Effect<{ readonly value: number | null; readonly degraded: boolean }, never> =>
   db.get<{ n: number }>(sql).pipe(
-    Effect.map((row) => row?.n ?? 0),
-    Effect.orElseSucceed(() => 0)
+    Effect.map((row) => ({ value: row?.n ?? 0, degraded: false })),
+    Effect.orElseSucceed(() => ({ value: null, degraded: true }))
   )
 
 /**

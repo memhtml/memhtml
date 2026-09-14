@@ -3,9 +3,14 @@ import { chmod } from "node:fs/promises"
 import { join } from "node:path"
 import { promisify } from "node:util"
 
+import { DatabaseService, Embedder, Git, RetrievalPolicy, Store } from "@memhtml/cli"
+import type { DatabaseShape } from "@memhtml/index"
+import { EMBED_WATERMARK } from "@memhtml/llm"
+import { Effect } from "effect"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import type { DoctorReport } from "../src/doctor.js"
+import { doctor } from "../src/doctor.js"
 import { type Cli, makeCli } from "./harness.js"
 
 const git = promisify(execFile)
@@ -256,5 +261,120 @@ describe("doctor reports sleep runs stuck at running", () => {
     const report = await cli.json<DoctorReport>(["doctor"])
     expect(report.stuckSleepRuns).toEqual([])
     expect(report.healthy).toBe(true)
+  })
+})
+
+/**
+ * A doctor whose database cannot answer must not report `healthy: true`.
+ *
+ * Every check used to degrade its read to the typed empty value — `[]`, `0`, `undefined` — so a
+ * `SQLITE_BUSY` past `busy_timeout` produced a report computed from checks that never ran, every
+ * one of them reading clean. That is the wrong answer that looks right, on the one command an
+ * operator runs precisely when something is wrong. The fix is the `degraded` list: a check whose
+ * read failed is named there (by the report field a consumer would otherwise trust) and forces
+ * `healthy: false`, while its finding fields keep their typed empty shapes so a parser that
+ * ignores `degraded` still sees the structures it always did.
+ *
+ * Staged by providing the real `doctor` with a database whose every call fails and git/store
+ * halves that succeed, which is the shape of a wedged database on an intact repo.
+ */
+describe("doctor reports a degraded read rather than a clean one", () => {
+  const failingDb = {
+    hasState: false,
+    get: () => Effect.fail(new Error("database is locked")),
+    all: () => Effect.fail(new Error("database is locked")),
+    run: () => Effect.fail(new Error("database is locked"))
+  } as unknown as DatabaseShape
+
+  // The methods the doctor body itself reaches for: HEAD for the freshness check, branchExists for
+  // the stuck-run rule (a failed read is `null` on a finding, not a degraded check), root for the
+  // warning walk's join base. Every database read below them fails through `failingDb`.
+  const gitHalf = {
+    root: "/tmp/doctor-degraded-root",
+    revParseHead: () => Effect.succeed("1111111111111111111111111111111111111111"),
+    branchExists: () => Effect.succeed(false),
+    run: () => Effect.fail(new Error("unused"))
+  } as never
+
+  const storeHalf = {
+    dirtyPaths: () => Effect.succeed([]),
+    readMemory: () => Effect.fail(new Error("unused"))
+  } as never
+
+  it("names the checks that failed and refuses healthy", async () => {
+    const report = await Effect.runPromise(
+      doctor({ fix: false }).pipe(
+        Effect.provideService(Git, gitHalf),
+        Effect.provideService(Store, storeHalf),
+        Effect.provideService(DatabaseService, failingDb),
+        // The coverage gate's two inputs: an embedder-less store is lexical-only (not low), and the
+        // floor never gets evaluated because the coverage read degraded to full.
+        Effect.provideService(Embedder, { document: undefined, query: undefined } as never),
+        Effect.provideService(RetrievalPolicy, { vectorCoverageFloor: 0.5 })
+      )
+    )
+    expect(report.degraded.length).toBeGreaterThan(0)
+    // The load-bearing one is healthy: a doctor that could not read answers "unknown", not "clean".
+    expect(report.healthy).toBe(false)
+    for (const name of report.degraded) {
+      expect(typeof name).toBe("string")
+      expect(name.length).toBeGreaterThan(0)
+    }
+    // The typed empty shapes survive, so a parser that ignores `degraded` sees what it always did.
+    expect(report.dangling).toEqual([])
+    expect(report.overdueTasks).toEqual([])
+    expect(report.stuckSleepRuns).toEqual([])
+    expect(report.warnings).toEqual([])
+    expect(report.inboxDepth).toBe(0)
+  })
+
+  /**
+   * The sharper staging, and the one that pins the clause this contract exists for: the watermark
+   * read SUCCEEDS — a fresh index_state row naming the very HEAD git reports, in the configured
+   * embedding space — while every finding read fails. Freshness and the model watermark are both
+   * true and every finding list is empty, so `healthy` has exactly one way left to be false: the
+   * degraded checks. A fully-failing database cannot pin this, because a failed watermark read
+   * already makes `indexFresh` false and forces `healthy: false` for free.
+   */
+  const freshWatermarkDb = {
+    hasState: true,
+    get: (query: string) =>
+      typeof query === "string" && query.includes("index_state")
+        ? Effect.succeed({
+            head_sha: "1111111111111111111111111111111111111111",
+            embed_model: EMBED_WATERMARK
+          })
+        : Effect.fail(new Error("database is locked")),
+    all: () => Effect.fail(new Error("database is locked")),
+    run: () => Effect.fail(new Error("database is locked"))
+  } as unknown as DatabaseShape
+
+  it("refuses healthy on the degraded list alone when the watermark read is fresh", async () => {
+    const report = await Effect.runPromise(
+      doctor({ fix: false }).pipe(
+        Effect.provideService(Git, gitHalf),
+        Effect.provideService(Store, storeHalf),
+        Effect.provideService(DatabaseService, freshWatermarkDb),
+        Effect.provideService(Embedder, { document: undefined, query: undefined } as never),
+        Effect.provideService(RetrievalPolicy, { vectorCoverageFloor: 0.5 })
+      )
+    )
+    // Every check whose read failed is named, by the report field a consumer would otherwise
+    // trust — and only those: the watermark read succeeded, so `indexState` is absent.
+    expect(report.degraded).toEqual([
+      "allPaths",
+      "dangling",
+      "orphanAccessRows",
+      "inboxDepth",
+      "inboxTaskDepth",
+      "overdueTasks",
+      "staleBlockers",
+      "untypedEntities",
+      "stuckSleepRuns",
+      "warnings"
+    ])
+    // The load-bearing one: with every finding clean and freshness true, healthy is false BECAUSE
+    // the checks above never ran.
+    expect(report.healthy).toBe(false)
   })
 })

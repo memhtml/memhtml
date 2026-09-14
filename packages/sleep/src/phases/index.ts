@@ -87,8 +87,7 @@ export {
   PROMOTION_DETECTIONS,
   pairGroupKey,
   promotionKey,
-  // Aliased: entity-resolution exports its own `unionPairs` (name pairs, not path pairs).
-  unionPairs as unionEdgePairs
+  rankUnionPairs
 } from "./edge-typing.js"
 export type {
   AliasGroup,
@@ -102,6 +101,7 @@ export type {
 export {
   AUTO_MERGE_THRESHOLD,
   aliasBacked,
+  canonicalUnionFind,
   capQuadraticNames,
   characterPairs,
   decomposeCluster,
@@ -120,9 +120,7 @@ export {
   normalizeEntityName,
   pairKey,
   REVIEW_THRESHOLD,
-  resolveClusters,
-  // Aliased: edge-typing exports its own `unionPairs` (path pairs, not name pairs).
-  unionPairs as unionNamePairs
+  resolveClusters
 } from "./entity-resolution.js"
 export { ARCHIVE_LOOKBACK_YEARS, archivedFormOf, integrity } from "./integrity.js"
 export { personLinks } from "./person-links.js"

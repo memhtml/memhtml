@@ -313,15 +313,21 @@ export const Store = Context.Service<StoreShape>("memhtml/Store")
  * shell expands a tilde, so the other two would otherwise create a literal `./~` directory. The
  * `MEMHTML_ROOT` config that reads it lives in the composition root, which owns every environment
  * lookup; this package is handed a root rather than resolving one.
+ *
+ * Both separators are accepted after the tilde: a value that reached the process through a
+ * Windows-native config surface (`~\memhtml` in a `.env` or an MCP client's env block) must expand
+ * like the forward-slash spelling, or it resolves as a literal `~` directory relative to the
+ * process CWD — which is where an unexplained `apps/cli/~/memhtml/.memhtml/` came from.
  */
 export function expandRoot(raw: string): string {
   const trimmed = raw.trim()
-  const expanded =
+  const rest =
     trimmed === "~"
-      ? homedir()
-      : trimmed.startsWith("~/")
-        ? join(homedir(), trimmed.slice(2))
-        : trimmed
+      ? ""
+      : trimmed.startsWith("~/") || trimmed.startsWith("~\\")
+        ? trimmed.slice(2)
+        : undefined
+  const expanded = rest === undefined ? trimmed : join(homedir(), rest)
   return isAbsolute(expanded) ? expanded : resolve(expanded)
 }
 
@@ -632,6 +638,40 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
     const existing = readMeta(loserHtml, "memhtml-valid-until")
     if (existing !== undefined && existing !== "" && existing < winnerValidFrom) return []
     return [["memhtml-valid-until", winnerValidFrom]]
+  }
+
+  /**
+   * The stamps every supersede puts on the memory being archived: `correctMemory` and
+   * `supersedeMemories` close the same validity window, so the stamp block is written once. A
+   * third writer here is how the two halves drift and an `--as-of` query starts reading a window
+   * one door closed differently. `archiveMemory` does NOT use this — a plain eviction supersedes
+   * nothing, so it stamps only the three archive bookkeeping lines.
+   */
+  const supersedeStamps = (
+    at: string,
+    winnerHref: string,
+    loserHtml: string,
+    winnerValidFrom: string
+  ): ReadonlyArray<readonly [string, string]> => [
+    ["memhtml-status", "archived"],
+    ["memhtml-updated", at],
+    ["memhtml-archived", at],
+    ["memhtml-superseded-by", winnerHref],
+    ...validUntilStampFor(loserHtml, winnerValidFrom)
+  ]
+
+  /**
+   * The winner's half of the hand-off: a `supersedes` link at the loser's ARCHIVE path (where the
+   * file is once the commit lands — the pre-archive path would dangle in the same commit that
+   * made it dangle), plus the `memhtml-valid-from` this window opens at, stated only when the
+   * winner does not already state one. The html comes back unchanged when both are present, which
+   * is what makes a repeat supersede a no-op rather than a duplicate link.
+   */
+  const stampWinner = (html: string, archiveHref: string, validFrom: string): string => {
+    const linked = addLink(html, "supersedes", archiveHref)
+    return readMeta(linked, "memhtml-valid-from") === undefined
+      ? setMeta(linked, "memhtml-valid-from", validFrom)
+      : linked
   }
 
   /**
@@ -1075,12 +1115,9 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       )
       // The supersedes link points at the target's ARCHIVE path, which is where the file will
       // be once this commit lands. Pointing at the pre-archive path would create a dangling
-      // href in the same commit that made it dangle.
-      const linked = addLink(html, "supersedes", hrefFor(archivePath))
-      const corrected =
-        readMeta(linked, "memhtml-valid-from") === undefined
-          ? setMeta(linked, "memhtml-valid-from", validFrom)
-          : linked
+      // href in the same commit that made it dangle. `stampWinner`, shared with
+      // `supersedeMemories`, closes this half of the validity hand-off.
+      const corrected = stampWinner(html, hrefFor(archivePath), validFrom)
 
       /**
        * A failure between the `git mv` and the commit would otherwise leave the worst state this
@@ -1103,13 +1140,11 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
            * archived. The order is invisible in every other case, since both halves land in one
            * commit.
            */
-          const archivedPath = yield* stageArchive(normalizedTarget, millis, [
-            ["memhtml-status", "archived"],
-            ["memhtml-updated", at],
-            ["memhtml-archived", at],
-            ["memhtml-superseded-by", hrefFor(path)],
-            ...validUntilStampFor(targetHtml, validFrom)
-          ])
+          const archivedPath = yield* stageArchive(
+            normalizedTarget,
+            millis,
+            supersedeStamps(at, hrefFor(path), targetHtml, validFrom)
+          )
           yield* writeFileAt(path, corrected)
           yield* git.add([path])
 
@@ -1211,22 +1246,15 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
             yield* journal.note(pair.loser)
             yield* journal.note(archivePathFor(pair.loser, yearOf(millis)))
             yield* journal.note(pair.winner)
-            const archivePath = yield* stageArchive(pair.loser, millis, [
-              ["memhtml-status", "archived"],
-              ["memhtml-updated", at],
-              ["memhtml-archived", at],
-              ["memhtml-superseded-by", hrefFor(pair.winner)],
-              ...validUntilStampFor(loserHtml.get(pair.loser) ?? "", validFrom)
-            ])
-            // The supersedes link points at the loser's ARCHIVE path, where the file is once this
-            // commit lands. Pointing at the pre-archive path would create a dangling href in the
-            // same commit that made it dangle, correctMemory's exact rule.
+            const archivePath = yield* stageArchive(
+              pair.loser,
+              millis,
+              supersedeStamps(at, hrefFor(pair.winner), loserHtml.get(pair.loser) ?? "", validFrom)
+            )
+            // The winner's own valid-from is stamped (when it states none) so an as-of query reads
+            // both ends of the hand-off from the files rather than inferring one from the commit.
             const html = winnerHtml.get(pair.winner) ?? (yield* readRaw(pair.winner))
-            const linked = addLink(html, "supersedes", hrefFor(archivePath))
-            const stamped =
-              readMeta(linked, "memhtml-valid-from") === undefined
-                ? setMeta(linked, "memhtml-valid-from", validFrom)
-                : linked
+            const stamped = stampWinner(html, hrefFor(archivePath), validFrom)
             if (stamped !== html) {
               winnerHtml.set(pair.winner, stamped)
               yield* writeFileAt(pair.winner, stamped)
