@@ -1,5 +1,7 @@
 # memhtml-public · Contract map
 
+Describes the source at 0.15.1 (main, 2026-09-15). Citations are `path:line` into that tree.
+
 A contract here is any declaration in one file that a file in another package or app depends on. Four kinds appear below.
 
 1. A TypeScript type or an `effect` `Schema` declared in one package and imported by another.
@@ -11,13 +13,13 @@ Most of this repo's shared types are `effect` `Schema` declarations with a deriv
 
 Two facts apply to the whole map. First, this repository stores no memory. It is the software that manages a separate directory called the memhtml root, located by `$MEMHTML_ROOT` and defaulting to `~/memhtml` (`apps/cli/src/config.ts:61-65`). Second, memhtml manages that root with git. The root's git tree is the system of record, and `.memhtml/index.db` inside the root is a projection that is deleted and rebuilt without loss (`packages/index/src/index.ts:1-7`). When a contract below says "the root" it means that external directory, never this repository.
 
-The primary consumer of every boundary here is a coding agent. The CLI answers in JSON envelopes with stable codes rather than prose, the MCP server publishes the same vocabularies as tool parameter enums, and the agent-facing documentation is generated from the command table. The notes below judge each surface by what an agent can parse and act on.
+The primary consumer of every boundary here is a coding agent. The CLI answers in JSON envelopes with stable codes rather than prose, with two declared exceptions (`help` on a terminal prints Markdown, and a successful `memhtml hook` prints the host's own hook protocol; `apps/cli/src/envelope.ts:49-57`), the MCP server publishes the same vocabularies as tool parameter enums, and the agent-facing documentation is generated from the command table. The notes below judge each surface by what an agent can parse and act on.
 
 Contracts are ordered by how many files across package boundaries depend on them.
 
 ## The typed error vocabulary
 
-Eight error classes in the shared contracts package define how every other package reports failure. `@memhtml/contracts/errors` is imported by 39 non-test files across 8 packages and 2 apps, which makes it the most widely imported contract in the repo.
+Eight error classes in the shared contracts package define how every other package reports failure. `@memhtml/contracts/errors` is imported by 40 non-test files across 8 packages and 2 apps (the 40th is the hook engine, `apps/cli/src/hook.ts:4`), which makes it the most widely imported contract in the repo.
 
 **Producer:** `packages/contracts/src/errors.ts:9-64`
 
@@ -30,8 +32,8 @@ Eight error classes in the shared contracts package define how every other packa
 - `packages/index/src/indexer.ts:1-5` imports `InvalidMemory`, `ModelUnavailable`, `StorageFailure`.
 - `packages/html/src/parse.ts:2` imports `InvalidMemory` as `parseMemory`'s failure type (`packages/html/src/parse.ts:385`).
 - `packages/llm/src/client.ts:2` and `packages/llm/src/embeddings.ts:1` import `ModelUnavailable`; `packages/llm/src/model-client.ts:1` imports both `LlmContractViolation` and `ModelUnavailable`; `packages/llm/src/structured.ts:1` imports `LlmContractViolation`.
-- `apps/cli/src/errors.ts:41-75` switches on the `_tag` of every class to produce an `ErrorCode`.
-- `apps/mcp/src/failure.ts:80-131` switches on the same tags to produce agent-executable suggestions.
+- `apps/cli/src/errors.ts:41-79` switches on `_tag` to produce an `ErrorCode`. Its 13 arms do not cover every class: `LlmContractViolation` has no arm, so it falls to `default` and reports `ERR_UNKNOWN`, although `messageFor` handles it at `apps/cli/src/errors.ts:115-116`.
+- `apps/mcp/src/failure.ts:80-131` switches on the same tags to produce agent-executable suggestions, covering 10 of them; `IndexStale`, `RebuildNoEmbedRefused`, `IntegrationModified`, and `LlmContractViolation` have no MCP arm and get the empty array.
 
 **Shape:**
 
@@ -79,12 +81,12 @@ export class LlmContractViolation extends Schema.TaggedError<LlmContractViolatio
 **Assumptions consumers make:**
 
 - Consumers assume the payload carries no driver text, no SQL, and no memory body, so the whole payload is safe to return to an agent. `packages/contracts/src/errors.ts:3-8` states that the driver's own message goes to `Effect.logError` at the adapter edge instead, and `apps/cli/src/errors.ts:77-85` relies on that by naming only actionable fields in its human message.
-- Two consumers assume the tag set is open, not closed, and each handles an unknown tag rather than failing. `apps/cli/src/errors.ts:72-73` returns `ERR_UNKNOWN` from a `default` arm, and `apps/mcp/src/failure.ts:128-129` returns an empty suggestion array.
+- Two consumers assume the tag set is open, not closed, and each handles an unknown tag rather than failing. `apps/cli/src/errors.ts:76-77` returns `ERR_UNKNOWN` from a `default` arm, and `apps/mcp/src/failure.ts:128-129` returns an empty suggestion array.
 - `apps/cli/src/errors.ts:86-118` assumes every payload field it reads may be absent or the wrong type at runtime, and guards each with `text(...) ?? "<fallback>"` because the value arrives as `unknown` through the `TaggedError` interface at `apps/cli/src/errors.ts:16-19`.
-- `apps/cli/src/errors.ts:33-39` assumes two error classes that are NOT in this file arrive with the same `_tag` shape: `GitFailure` from `@memhtml/store`, and `EmbedModelMismatch`, which predates the contracts package. Both are handled in the same switch.
+- `apps/cli/src/errors.ts:44-75` assumes six tags declared outside `packages/contracts/src/errors.ts` arrive with the same `_tag` shape: `GitFailure` from `@memhtml/store`, `EmbedModelMismatch` (a plain class that predates the contracts package), `IndexStale`, `RebuildNoEmbedRefused`, `DiscriminationFailed`, and `IntegrationModified` from `@memhtml/integrations` (`packages/integrations/src/errors.ts:8-15`). The header comment at `apps/cli/src/errors.ts:33-39` names only the first two; all six are handled in the same switch.
 - `apps/mcp/src/failure.ts:56-63` assumes the CLI's suggestions are unusable inside an MCP call, because they name shell commands an agent holding only tools cannot run, and maintains a deliberately parallel mapping.
 
-**Drift risk:** Adding a ninth error class silently degrades it to `ERR_UNKNOWN` at the CLI edge and to zero suggestions at the MCP edge, so an agent receives a documented but uninformative code rather than a crash. Mitigation: when adding a class, add its arm to `codeFor`, `messageFor`, and `mcpSuggestionsFor` in the same change, and add its code to `ERROR_CODES` at `apps/cli/src/envelope.ts:71-98`.
+**Drift risk:** Adding an error class silently degrades it to `ERR_UNKNOWN` at the CLI edge and to zero suggestions at the MCP edge, so an agent receives a documented but uninformative code rather than a crash. `LlmContractViolation` is a live instance: it has a `messageFor` arm and no `codeFor` arm. Mitigation: when adding a class, add its arm to `codeFor`, `messageFor`, the walkable `SUGGESTIONS` record (`apps/cli/src/errors.ts:148-204`), and `mcpSuggestionsFor` in the same change, and add its code to `ERROR_CODES` at `apps/cli/src/envelope.ts:80-115`.
 
 ## The edge vocabulary and its derived class
 
@@ -100,8 +102,8 @@ This module declares four edge classes that do not mix, four rel vocabularies, a
 - `packages/html/src/parse.ts:1` imports `relForToken`; `packages/html/src/parse.ts:285-286` drops a link whose token is outside the vocabulary.
 - `packages/html/src/constraints.ts:1` imports `relForToken`; `packages/html/src/constraints.ts:266-268` reports the same token as a violation.
 - `packages/html/src/document.ts:1` imports `EdgeRel` as the type of `MemoryLink.rel`.
-- `packages/html/src/template.ts:1` and `packages/html/src/editors.ts:1-2` import `EdgeRel` and `relTokenFor`.
-- `packages/sleep/src/edits.ts:1` and `packages/sleep/src/phases/integrity.ts:1` import `EdgeRel` and `isEdgeRel`.
+- `packages/html/src/template.ts:1` imports `EdgeRel` alone, as the type of a `NewMemoryInput` link (`packages/html/src/template.ts:58`); `packages/html/src/editors.ts:1-2` imports `EdgeRel`, `relForToken`, and `relTokenFor`.
+- `packages/sleep/src/edits.ts:1` imports `EdgeRel` alone; `packages/sleep/src/phases/integrity.ts:1` imports `EdgeRel` and `isEdgeRel`.
 - `apps/cli/src/operations.ts:1` imports `isEdgeRel`, `MEMORY_RELS`, `relClassFor`, `TASK_RELS`; `apps/cli/src/operations.ts:1495` filters to memory-class rels.
 - `apps/cli/src/commands.ts:1` and `apps/mcp/src/tools.ts:14` import `MEMORY_RELS` to build the authorable-rel enum; `apps/mcp/src/tools.ts:62` turns it into `Schema.Literals(MEMORY_RELS)`.
 - `packages/index/migrations/0008_tasks.sql:194-199` restates all four rel vocabularies as per-class CHECK constraints.
@@ -156,7 +158,7 @@ export const Edge = Schema.Struct({
 - The two HTML consumers handle an unknown rel token differently, on purpose. The parser drops it so the file still parses (`packages/html/src/parse.ts:285-286`), while the constraint checker reports it (`packages/html/src/constraints.ts:266-268`).
 - The store assumes it is the only module that can see both endpoints' memory types, so it checks the endpoint rule that SQL cannot check. `packages/store/src/store.ts:1264-1296` rejects a memory-class rel touching a task file, and rejects a task-class rel touching a non-task. `packages/store/src/store.ts:288-289` states that the `edges` CHECK cannot read the endpoints' types at all.
 - Every memory-graph query assumes `edge_class = 'memory'` is enough to keep a person or task edge out of PageRank, MMR, and the retention bridge count (`packages/contracts/src/edges.ts:4-8`, restated at `packages/index/migrations/0008_tasks.sql:177-181`).
-- `packages/index/src/project.ts:343-344` assumes a self-loop must be dropped at projection time rather than sent to the driver, because the table's `CHECK (src_path <> dst_path)` at `packages/index/migrations/0008_tasks.sql:193` would reject the whole write batch over one hand-authored file.
+- `packages/index/src/project.ts:349-350` assumes a self-loop must be dropped at projection time rather than sent to the driver (the drop is at `packages/index/src/project.ts:361`), because the table's `CHECK (src_path <> dst_path)` at `packages/index/migrations/0008_tasks.sql:193` would reject the whole write batch over one hand-authored file.
 - `relTokenFor` and `relForToken` assume the underscore-to-hyphen mapping is injective on the vocabulary (`packages/contracts/src/edges.ts:109-120`). No rel in `ALL_RELS` contains a hyphen, so the inverse is unambiguous.
 
 **Drift risk:** Adding a rel to a class in TypeScript without widening the matching SQL CHECK makes every write carrying that rel fail at the driver. Because `writeAll` is one transaction (`packages/index/src/database.ts:74-75`), one new rel fails the whole batch. Mitigation: add the rel and its migration in the same change, following the recreate-and-copy pattern at `packages/index/migrations/0008_tasks.sql:173-209`.
@@ -169,7 +171,7 @@ This module provides placement, archival, and normalization as pure total functi
 
 **Consumer(s):**
 
-- `packages/store/src/store.ts:12-19` imports `archivePathFor`, `isValidMemoryPath`, `memoryPathFor`, `normalizePath`, and `PlacementInput`.
+- `packages/store/src/store.ts:12-19` imports six names: `archivePathFor`, `isValidMemoryPath`, `memoryPathFor`, `memoryPathViolation`, `normalizePath`, and `PlacementInput`. `memoryPathViolation` (`packages/store/src/store.ts:16`) is the one the `strictPath` refusal quotes at `packages/store/src/store.ts:692-705`.
 - `packages/store/src/layout.ts:5` imports `ARCS_DIR`, `INBOX_DIR`, `PEOPLE_DIR` and puts all three in `SCAFFOLD_DIRS` (`packages/store/src/layout.ts:41-48`).
 - `packages/index/src/indexer.ts:6` imports `MEMORY_EXTENSION` and `normalizePath`.
 - `packages/index/src/project.ts:2` imports `normalizePath` and `paraBucketOf`; `packages/index/src/project.ts:360` normalizes a link's `href` before storing it as `dst_path`.
@@ -206,7 +208,7 @@ export const placementFor = (input: PlacementInput): string => {
       : `${INBOX_DIR}/${TASKS_SUBDIR}`
   }
 
-  const namesPerson = (input.entities ?? []).some((entity) => entity.startsWith("person:"))
+  const namesPerson = (input.entities ?? []).some(isPersonEntity)
   if (namesPerson && input.memoryType === "semantic") return PEOPLE_DIR
 
   if (input.workspace !== undefined && input.workspace !== "") {
@@ -234,6 +236,7 @@ export const originalPathFor = (archivePath: string): string | undefined => {
 **Assumptions consumers make:**
 
 - Every caller assumes `placementFor` never fails and never returns a directory outside a PARA bucket, so the write path does not guess twice (`packages/contracts/src/paths.ts:129-144`). An unusable explicit `path` is ignored rather than propagated, which is how totality is preserved.
+- The person rule delegates to `isPersonEntity` (`packages/contracts/src/types.ts:183-184`), which requires a `person:` prefix and a name that survives `trim()`, so `person:` with a blank name routes nowhere special; `packages/contracts/src/paths.ts:164-169` states that the same predicate governs the tag rule and the sleep phase that mints person files, so the three cannot disagree on a boundary.
 - `packages/store/src/layout.ts:36-48` assumes the three directory constants `placementFor` can return already exist on disk, so `memhtml init` creates all of them and an agent's first write lands somewhere real.
 - `packages/index/src/project.ts:344-347` assumes the leading slash in a link's `href` must be stripped before it becomes a `dst_path`, because the `edges` table stores the git-tree form and a slashed value would fail to join `files.path` while looking exactly like a corpus with no edges.
 - A caller that wants an invalid path rejected instead of re-derived asks the store for it, with `strictPath` on a `WriteInput` (`packages/store/src/store.ts`, `strictPathRefusal`).
@@ -258,7 +261,7 @@ This module declares ten memory types, nine of which an agent may write, and the
 - `packages/store/src/index.ts:16` re-exports `PARA_BUCKETS` and `ParaBucket` rather than restating them.
 - `packages/sleep/src/phases/person-links.ts:3` imports `PERSON_ENTITY_PREFIX`.
 - `apps/mcp/src/tools.ts:15` imports `PARA_BUCKETS` and `WRITABLE_MEMORY_TYPES`; `apps/mcp/src/tools.ts:59` becomes `Schema.Literals(WRITABLE_MEMORY_TYPES)` and `apps/mcp/src/tools.ts:953` becomes `Schema.Literals(PARA_BUCKETS)`.
-- `apps/cli/src/commands.ts:2` imports `TASK_STATUSES` and `WRITABLE_MEMORY_TYPES` for the flag enums.
+- `apps/cli/src/commands.ts:3` imports `MEMORY_TYPES`, `TASK_STATUSES`, and `WRITABLE_MEMORY_TYPES` for the flag enums.
 - `apps/cli/src/operations.ts:11` imports from it.
 - `packages/index/migrations/0001_files.sql:18,34` and `packages/index/migrations/0008_tasks.sql:38-40,46` restate `memory_type` and `para` as CHECK constraints.
 
@@ -301,7 +304,7 @@ para            TEXT NOT NULL CHECK (para IN ('projects','areas','resources','ar
 
 **Assumptions consumers make:**
 
-- The agent surface (`apps/mcp/src/tools.ts:59`) derives its enum as the storage vocabulary minus `arc`; the CLI is the operator surface and admits the full set (`apps/cli/src/commands.ts:2`, issue #88). `packages/contracts/src/types.ts:34-37` gives the agent-side reason. An arc is synthesized by the sleep cycle from many memories, so an agent naming one directly would assert a conclusion the corpus has not earned; an operator importing or deliberately authoring one is asserting a conclusion earned elsewhere.
+- The agent surface (`apps/mcp/src/tools.ts:59`) derives its enum as the storage vocabulary minus `arc`; the CLI is the operator surface and admits the full set (`apps/cli/src/commands.ts:3`, issue #88). The comment above the MCP enum at `apps/mcp/src/tools.ts:58` says "The eight types an agent may write" over a nine-entry `WRITABLE_MEMORY_TYPES`; the count in the source comment is stale, the array is not. `packages/contracts/src/types.ts:34-37` gives the agent-side reason. An arc is synthesized by the sleep cycle from many memories, so an agent naming one directly would assert a conclusion the corpus has not earned; an operator importing or deliberately authoring one is asserting a conclusion earned elsewhere.
 - Retrieval assumes `task` is the one type an unscoped query does not see, and names it as a single constant so three copies of the string cannot drift (`packages/index/src/scope.ts:211-218`). `packages/index/src/scope.ts:122-130` states that a corpus with fifty open to-do items would otherwise crowd out the knowledge an agent asked for.
 - `packages/html/src/document.ts:69-74` assumes `taskStatus` is present if and only if `memoryType` is `task`, and the parser reports a violation either way round. `packages/index/migrations/0008_tasks.sql:66-72` admits NULL in the `task_status` CHECK so one column serves both cases.
 - The dedup index assumes tasks are exempt from content deduplication. `packages/index/migrations/0008_tasks.sql:119-127` adds `AND memory_type <> 'task'` to the partial unique index, so two open tasks may share a body while two memories may not.
@@ -311,7 +314,7 @@ para            TEXT NOT NULL CHECK (para IN ('projects','areas','resources','ar
 
 ## `DatabaseShape`
 
-This is the one interface between every SQL-writing module and the driver. 17 non-test source files reference it, which makes it the most widely referenced service interface in the repo.
+This is the one interface between every SQL-writing module and the driver. 18 non-test source files reference it (the 18th is `apps/cli/src/hook.ts:5`), which makes it the most widely referenced service interface in the repo.
 
 **Producer:** `packages/index/src/database.ts:54-93`
 
@@ -320,7 +323,7 @@ This is the one interface between every SQL-writing module and the driver. 17 no
 - `packages/index/src/retrieval.ts:5,200-201` takes it as `RetrievalDeps.db`.
 - `packages/index/src/indexer.ts:11` takes it as an indexer dependency.
 - `packages/index/src/traces-persist.ts` and `packages/index/src/index-state.ts` and `packages/index/src/reinforce.ts` all reference it.
-- `packages/sleep/src/sql.ts`, `packages/sleep/src/retention.ts`, `packages/sleep/src/env.ts` reference it, so the whole sleep cycle reaches SQL only through this shape.
+- `packages/sleep/src/sql.ts`, `packages/sleep/src/retention.ts`, `packages/sleep/src/env.ts`, and `packages/sleep/src/plan.ts:2,125,156` reference it, so the whole sleep cycle reaches SQL only through this shape.
 - `packages/eval/src/harness.ts` references it.
 - `apps/cli/src/api-layer.ts` wires it, and `apps/cli/src/operations.ts`, `apps/cli/src/views.ts`, `apps/cli/src/doctor.ts` consume it.
 - `packages/index/src/index.ts:10-18` publishes `DatabaseService`, `DatabaseShape`, `SqlValue`, `Write`, `attachState`, `makeDatabase`, `runStateMigrations` as the package's SQL surface.
@@ -364,7 +367,7 @@ export interface DatabaseShape {
 - `packages/index/src/project.ts:379-387` assumes `writeAll` is one transaction and therefore deduplicates rows before sending them, because a duplicate primary key from one file with a repeated `<dt>`/`<dd>` pair would roll back every other row in the batch.
 - `packages/index/src/indexer.ts` assumes it must split a whole-store pass into batches instead of sending one transaction. `packages/index/src/schema-const.ts:79-87` sets `WRITE_BATCH_SIZE` at 500 and states the reason, which is to bound how much work a single failure discards and how long one write holds the WAL write lock.
 - Callers assume a concurrent writer blocks rather than fails. `packages/index/src/database.ts:13-22` sets a 5000 ms busy timeout and states that the fleet runs many short-lived CLI invocations plus a long-lived MCP server against one store, serializing by waiting.
-- Retrieval assumes the connection has `vector_distance_cos` registered, and that it computes the same arithmetic as the TypeScript MMR pass. `packages/index/src/database.ts:38-52` registers it from `@memhtml/domain`'s `cosineDistance` and states that two copies of the arithmetic could disagree about a clamp or a zero-magnitude vector while both looked right.
+- Retrieval assumes the connection has `vector_distance_cos` registered, and that it computes the same arithmetic as the TypeScript MMR pass. `packages/index/src/database.ts:24-52` registers it from `@memhtml/domain`'s `cosineDistance` (registration at `:45-52`) and states at `:28-30` that two copies of the arithmetic could disagree about a clamp or a zero-magnitude vector while both looked right.
 - Cross-plane callers assume `hasState` before qualifying a query with the `state` schema, because `state.db` is ATTACHed rather than always present (`packages/index/src/database.ts:91-92`).
 
 **Drift risk:** A column rename in a migration passes type-check everywhere, because the row types are declared at the call sites and never checked against the schema. Mitigation: `packages/index/src/schema-const.ts:1-5` names identifiers the SQL and the TypeScript both use so a table rename is a compile error at every reader; extend that pattern to a column when one starts drifting.
@@ -457,8 +460,34 @@ export const MemoryLink = Schema.Struct({
 ```typescript
 export type WriteInput = NewMemoryInput &
   WriteProvenance & {
-    /** An explicit path override. Ignored when it is not a usable memory path. */
+    /**
+     * An explicit path override. Re-derived through the placement rule when it is not a usable
+     * memory path unless {@link strictPath} is set, and refused with `WriteConflict` when a file
+     * already sits there: nothing in this corpus is overwritten, so a revision is `correctMemory`
+     * (which archives the file it replaces) and never a second write to the same path.
+     */
     readonly path?: string | undefined
+    /**
+     * Refuse an unusable {@link path} instead of re-deriving one.
+     *
+     * OPT-IN, because the lenient branch is shipped behavior that callers depend on. It exists for
+     * the caller that places documents at deterministic paths, where a silent re-derivation makes a
+     * write APPEAR to succeed somewhere the caller did not name — the file lands in `areas/inbox`,
+     * the response reports a path, and nothing says the two disagree with the ask.
+     *
+     * `InvalidMemory` is the refusal, carrying `memoryPathViolation`'s own reason. NOT `WriteConflict`,
+     * which is what an OCCUPIED path earns: that error's payload is two blob shas and its published
+     * recovery is `memhtml read <path>` then `memhtml correct <path>`, and both of those are calls that
+     * cannot succeed against a path no file can occupy. An unusable path is malformed caller input,
+     * which is `InvalidMemory`'s subject and what every other decode on this write path already uses.
+     *
+     * Governs a path the caller NAMED. With no `path` there is nothing to be strict about, so the
+     * flag is a no-op rather than a refusal: a caller may set it once and still let the placement rule
+     * file the memories it deliberately leaves unplaced. A path that is present and BLANK is named
+     * rather than absent, and it is refused — it is what a caller's own path template renders when it
+     * produced nothing, which is the case the flag exists for.
+     */
+    readonly strictPath?: boolean | undefined
     readonly workspace?: string | undefined
   }
 
@@ -515,6 +544,7 @@ export interface StoreShape {
 **Assumptions consumers make:**
 
 - Callers assume one operation is one commit, and that the store owns staging. `packages/store/src/store.ts:37-44` states that a caller staging its own files could bundle two unrelated writes into one commit, which would stop `git log` from reading as a history and stop `diff base..HEAD` from being a reviewable sleep run.
+- Callers assume an explicit `path` is re-derived, never refused, unless they opt in with `strictPath` (`packages/store/src/store.ts:55-86`); with it set, `strictPathRefusal` at `packages/store/src/store.ts:692-705` fails with `InvalidMemory` quoting `memoryPathViolation`'s reason, and an occupied path is refused with `WriteConflict` either way.
 - Callers assume `created` and `deduped` are mutually exclusive and that exactly one is true (`packages/store/src/store.ts:88-99`), so they branch on either.
 - Callers assume `commitSha` is `null` exactly when nothing was written. `packages/store/src/store.ts:101-102` says so for a single write, `packages/store/src/store.ts:130-146` for a batch, and `packages/store/src/store.ts:175-181` for a supersede.
 - Batch callers assume the error channel means the batch mechanism failed, and never that a single op was rejected. `packages/store/src/store.ts:242-244` states that a rejected op is a `BatchOpResult` with `ok: false`, including in atomic mode, so a caller always gets its per-op array back.
@@ -530,7 +560,7 @@ export interface StoreShape {
 
 The indexer declares its own read-only view of git instead of importing the store's client, and one adapter bridges them. No other contract in the repo ships a written analysis of why its two sides do not fit together directly.
 
-**Producer:** `packages/index/src/git-port.ts:17-82`
+**Producer:** `packages/index/src/git-port.ts:17-82` for the port, and `packages/index/src/git-adapter.ts:34-88` for the store's side as the indexer declares it (`StoreGitShape`, `StoreTreeEntry`, `StoreChangedPath`, `StoreStatusEntry`, `GitAdapterDeps`)
 
 **Consumer(s):**
 
@@ -591,7 +621,7 @@ export interface GitPort {
 }
 ```
 
-The indexer re-declares the store's side instead of importing it. That declaration is the second half of the contract.
+The indexer re-declares the store's side instead of importing it. That declaration, at `packages/index/src/git-adapter.ts:33-49`, is the second half of the contract.
 
 ```typescript
 /** The subset of `@memhtml/store`'s `GitShape` the indexer consumes. Declared, not imported. */
@@ -616,7 +646,7 @@ export interface StoreGitShape {
 **Assumptions consumers make:**
 
 - The indexer assumes every port method is read-only, so an index cannot commit. `packages/index/src/git-port.ts:11-14` states that an index that could commit would make "rebuildable from git" circular.
-- The indexer assumes `revParseHead` returns a commit, never `null`. The adapter turns an unborn HEAD into a typed failure at `packages/index/src/git-adapter.ts:167-180`, and `packages/index/src/git-adapter.ts:12-13` states that letting `null` through would surface as an opaque `git diff null HEAD` error.
+- The indexer assumes `revParseHead` returns a commit, never `null`. The adapter turns an unborn HEAD into a typed failure at `packages/index/src/git-adapter.ts:167-180`, and `packages/index/src/git-adapter.ts:167-172` states that letting `null` through would surface as an opaque `git diff null HEAD` error.
 - The indexer assumes `catFileBatch` yields text. The adapter decodes UTF-8 at `packages/index/src/git-adapter.ts:200-206`.
 - The indexer assumes a `copied` entry is NOT a rename. `packages/index/src/git-adapter.ts:113-118` maps it to `A` and states that `R` would make the indexer move the source's row to the destination and drop a live file from the index.
 - The indexer assumes a rename carries `fromPath`, which is how the embedding survives an archive move. `packages/index/src/git-adapter.ts:106-112` downgrades a source-less rename to `A` rather than moving a row out from under an unknown path.
@@ -631,16 +661,18 @@ export interface StoreGitShape {
 
 This is the machine contract an agent parses. It declares two envelope shapes, the response discriminators, the error codes, and 3 exit codes, and all of those lists are append-only — the counts are deliberately not restated here, because an append-only list grows and a number beside it in prose is a number nothing re-derives.
 
-**Producer:** `apps/cli/src/envelope.ts:6-172`
+The integrations family appended to both lists. `RESPONSE_TYPES` gained five discriminators, `integrations.report`, `integrations.list`, `integrations.doctor`, `integrations.shell`, and `hook.output` (`apps/cli/src/envelope.ts:49-57`), and `ERROR_CODES` gained three codes: `ERR_UNKNOWN_HOST` and `ERR_UNKNOWN_HOOK_EVENT` are usage errors at exit 2 because the fix is on the command line, and `ERR_INTEGRATION_MODIFIED` is a runtime refusal at exit 1 because a receipt-owned file no longer matches its receipt (`apps/cli/src/envelope.ts:107-114`). The same comment records the two deliberate exceptions to the one-envelope rule: `help` on a terminal prints Markdown, and `memhtml hook`, whose SUCCESS stdout is the host's hook protocol rather than this envelope; its usage errors still arrive as the failure envelope, which is why `hook.output` is declared at all (`apps/cli/src/envelope.ts:50-52`).
+
+**Producer:** `apps/cli/src/envelope.ts:6-189`
 
 **Consumer(s):**
 
-- `apps/cli/src/run.ts:25-36` imports the exit codes and pairs each envelope with one; `apps/cli/src/run.ts:1248-1558` emits every command's response.
-- `apps/cli/src/errors.ts:1` imports `ErrorCode`, `Failure`, `fail` and produces the failure envelope at `apps/cli/src/errors.ts:199-201`.
+- `apps/cli/src/run.ts:25-36` imports the exit codes and pairs each envelope with one; `apps/cli/src/run.ts:1323-1805` emits every command's response (the exported `run` starts at `apps/cli/src/run.ts:1424`).
+- `apps/cli/src/errors.ts:1` imports `ErrorCode`, `Failure`, `fail` and produces the failure envelope in `failureFor` at `apps/cli/src/errors.ts:211-213`.
 - `apps/cli/src/agents-doc.ts:9` imports `API_VERSION`, `ERROR_CODES`, and all three exit codes, and writes them into the generated agent documentation at `apps/cli/src/agents-doc.ts:132-151` and `apps/cli/src/agents-doc.ts:210`.
 - `apps/mcp/src/failure.ts:1` imports `codeFor` and `messageFor` from `@memhtml/cli`, so the MCP server reports the same code vocabulary (`apps/mcp/src/failure.ts:34-36`).
 - `tests-integration/tests/harness.ts:141-150` parses the envelope for every integration assertion: `body.error !== undefined` is the failure test and `body.data` is the payload.
-- `packages/index/src/retrieval.ts:129-140` cites `apps/cli/src/envelope.ts` by line to explain why `scopeEmpty` is always a boolean; the line it names has since moved, and `stripNulls` now sits at `apps/cli/src/envelope.ts:155-169`.
+- `packages/index/src/retrieval.ts:129-140` cites `apps/cli/src/envelope.ts` by line to explain why `scopeEmpty` is always a boolean; the line it names (`:139`, at `packages/index/src/retrieval.ts:133`) has since moved, and `stripNulls` now sits at `apps/cli/src/envelope.ts:172-186`.
 
 **Shape:**
 
@@ -686,7 +718,15 @@ export const ERROR_CODES = [
   // `index rebuild --no-embed` over a store that carries vectors in the configured space, without
   // `--force`. Exit 1: the call parsed, and the work was declined. Appended after `ERR_UNKNOWN`
   // because the list is append-only and AGENTS.md prints it in this order.
-  "ERR_REBUILD_NO_EMBED_REFUSED"
+  "ERR_REBUILD_NO_EMBED_REFUSED",
+  // The integrations family. `ERR_UNKNOWN_HOST` and `ERR_UNKNOWN_HOOK_EVENT` are usage errors (exit 2):
+  // the host or event named on the command line is outside the closed vocabulary, and the fix is on
+  // the command line. `ERR_INTEGRATION_MODIFIED` is a runtime refusal (exit 1): a file or config entry
+  // the receipt owns no longer matches it, so install without --force and uninstall both stop rather
+  // than overwrite a change a human made.
+  "ERR_UNKNOWN_HOST",
+  "ERR_UNKNOWN_HOOK_EVENT",
+  "ERR_INTEGRATION_MODIFIED"
 ] as const
 
 /** Exit codes stay stable so a shell caller can branch without parsing output. */
@@ -697,14 +737,14 @@ export const EXIT_RUNTIME = 1
 
 **Assumptions consumers make:**
 
-- An agent is assumed to branch on `code` and never on the human `error` string. `apps/cli/src/envelope.ts:66-70` states that a code's meaning never changes and a code is never removed, while the prose changes freely as wording improves.
+- An agent is assumed to branch on `code` and never on the human `error` string. `apps/cli/src/envelope.ts:75-79` states that a code's meaning never changes and a code is never removed, while the prose changes freely as wording improves.
 - A parser is assumed to read `type` before parsing `data`. `apps/cli/src/envelope.ts:1-11` states that a new payload shape gets a new discriminator rather than reusing one, so a discriminator's meaning is fixed once shipped.
-- `apps/cli/src/errors.ts:123-130` assumes suggestions are part of the contract that a caller may rely on, and that absent suggestions arrive as an empty array rather than a null, so a parser never branches on presence.
-- Payload shapes assume `--dense` drops null-valued keys, so a field that is null when absent disappears from the output an agent pastes into a prompt. `apps/cli/src/envelope.ts:155-169` implements `stripNulls`, and `packages/index/src/retrieval.ts:129-140` cites that behavior as the reason `scopeEmpty` is a boolean in every case.
-- `apps/cli/src/errors.ts:132-141` assumes a suggestion string names a real command from the table in `apps/cli/src/commands.ts:177`, and enforces that with a walkable record rather than a switch so the suite can run every suggestion through the real `parseArgv`. The same comment states the import stays out of `apps/cli/src/errors.ts` because it would close a cycle through `apps/cli/src/operations.ts`.
+- `apps/cli/src/errors.ts:129-136` assumes suggestions are part of the contract that a caller may rely on, and that absent suggestions arrive as an empty array rather than a null, so a parser never branches on presence.
+- Payload shapes assume `--dense` drops null-valued keys, so a field that is null when absent disappears from the output an agent pastes into a prompt. `apps/cli/src/envelope.ts:172-186` implements `stripNulls`, and `packages/index/src/retrieval.ts:129-140` cites that behavior as the reason `scopeEmpty` is a boolean in every case.
+- `apps/cli/src/errors.ts:138-147` assumes a suggestion string names a real command from the table in `apps/cli/src/commands.ts:179`, and enforces that with a walkable record rather than a switch (`:138-142`) so the suite can run every suggestion through the real `parseArgv`. The same comment (`:144-146`) states the import stays out of `apps/cli/src/errors.ts` because it would close the cycle `commands.ts` → `operations.ts` → `errors.ts` (`apps/cli/src/commands.ts:8`, `apps/cli/src/operations.ts:35`).
 - The MCP server assumes only `.message` reaches the wire, so it folds code, reason, and suggestions into one string at construction. `apps/mcp/src/failure.ts:20-25` states that `code` and `suggestions` are not wire fields because MCP's tool-error channel is one text block, and puts the code first behind a colon so a reader can recover it from the prefix.
 - `apps/mcp/src/failure.ts:8-16` assumes a tool must declare a failure schema for its own message to reach the agent. `McpServer` has three catch branches and only one passes the message through. Without the declared schema the agent receives the string "Tool execution failed due to an internal server error".
-- A shell caller is assumed to branch on the exit code without parsing output (`apps/cli/src/envelope.ts:102-105`), and `apps/cli/src/run.ts:1248,1280,1287,1296,1339,1419,1480,1492,1544,1546` pair every usage refusal with `EXIT_USAGE` while `apps/cli/src/run.ts:1362,1398,1402,1444,1447,1510,1513,1552,1558` pair every runtime failure with `EXIT_RUNTIME`.
+- A shell caller is assumed to branch on the exit code without parsing output (`apps/cli/src/envelope.ts:119-122`), and `apps/cli/src/run.ts:1323,1355,1362,1371,1447,1666,1727,1739,1791,1793` pair every usage refusal with `EXIT_USAGE` while `apps/cli/src/run.ts:1470,1506,1510,1691,1694,1757,1760,1799,1805` pair every runtime failure with `EXIT_RUNTIME`.
 
 **Drift risk:** Reusing an existing `RESPONSE_TYPES` discriminator for a changed payload shape breaks every parser silently, since `apiVersion` stays `"1"` and the discriminator still matches. Mitigation: treat both lists as append-only as the file states, and add a new discriminator for any payload change that is not purely additive.
 
@@ -826,6 +866,8 @@ export interface RetrievalShape {
 }
 ```
 
+The `apps/cli/src/envelope.ts:139` inside the quoted `scopeEmpty` comment is the source's own citation, reproduced verbatim from `packages/index/src/retrieval.ts:133`; it is stale, and `stripNulls` sits at `apps/cli/src/envelope.ts:172-186`.
+
 **Assumptions consumers make:**
 
 - An agent is assumed to chain a second search off a hit's own `entities` array verbatim. `packages/index/src/retrieval.ts:75-87` calls the `type:name` form a contract with the `entity` scope rather than a display choice, and `packages/index/src/scope.ts:140-164` states the same spelling on the scope side because `file_entities` is keyed on `(type, name)` and a bare name would be ambiguous.
@@ -913,7 +955,7 @@ export const FORBIDDEN_ELEMENTS: ReadonlySet<string> = new Set(["script", "style
 - The serializer assumes position in `META_ORDER` is a diff-stability contract, so a new scalar meta goes at the end of the scalar block. `packages/html/src/vocabulary.ts:53-75` states that inserting one mid-list would move every line below it in every file the next bookkeeping pass touches, and `packages/html/src/vocabulary.ts:48-52` states that a stable order is what makes a meta-only edit a one-line git diff.
 - The parser and the constraint checker assume an out-of-vocabulary token means two different things: the parser drops the link so the file still parses (`packages/html/src/parse.ts:285-286`), the checker reports the violation (`packages/html/src/constraints.ts:266-268`).
 - The checker assumes a duplicate `memhtml-type` is a violation rather than a last-wins pick, because two writers disagreeing about a memory's type should stop a write (`packages/html/src/constraints.ts:282-283`).
-- The vocabulary assumes three metas are deliberately absent from `REQUIRED_META` because the `files` table documents a default for each, so a hand-authored file missing them is completed rather than refused (`packages/html/src/vocabulary.ts:34-40`). Those defaults are at `packages/index/migrations/0008_tasks.sql:48-49`.
+- The vocabulary assumes three metas are deliberately absent from `REQUIRED_META` because the `files` table documents a default for each, so a hand-authored file missing them is completed rather than refused (`packages/html/src/vocabulary.ts:34-40`). Those defaults are at `packages/index/migrations/0008_tasks.sql:48-49`. The same comment says "Each of the five" over a four-entry `REQUIRED_META` (`packages/html/src/vocabulary.ts:35`); the array is the contract and the count in the comment is stale.
 - The serializer assumes `<pre>` needs a second newline emitted, because a newline immediately after the start tag is swallowed on parse. `packages/html/src/vocabulary.ts:213-218` states that without this, `<pre>` text starting with a newline loses one on every parse and serialize cycle and the content hash drifts.
 - `bodyText` assumes a word boundary at every block-level edge and none at a phrasing-level edge, so `<dt>Applies to</dt><dd>ALB</dd>` yields two searchable words. `packages/html/src/vocabulary.ts:231-240` also states the content hash deliberately does NOT use `INLINE_ELEMENTS`, because making the digest a function of that list would move every hash on every future vocabulary change.
 - The serializer assumes it must round-trip a file carrying `<script>` or `<style>` before the constraint is reported, which is why both appear in `RAW_TEXT_ELEMENTS` while also being forbidden (`packages/html/src/vocabulary.ts:197-211`, `:263`).
@@ -930,7 +972,7 @@ Where memhtml puts things inside the external root, and which of those things su
 **Consumer(s):**
 
 - `packages/store/src/store.ts:35` imports `attemptIo` and `readFileOrNull` from the same module, and `packages/store/src/store.ts:309-326` declares `expandRoot`, the tilde expansion every `MEMHTML_ROOT` value passes through.
-- `apps/cli/src/config.ts:11` imports `expandRoot` from `@memhtml/store`, and `apps/cli/src/config.ts:175-183` declares `MemhtmlRoot` on top of it rather than redeclaring the expansion.
+- `apps/cli/src/config.ts:11` imports `expandRoot` from `@memhtml/store`, and `apps/cli/src/config.ts:183-191` declares `MemhtmlRoot` on top of it rather than redeclaring the expansion.
 - `apps/cli/src/config.ts:61-65` documents `MEMHTML_ROOT` for `memhtml manifest` and the generated agent doc.
 - `packages/index/src/schema-const.ts:7-18` names the migrations directories and the `state` schema the ATTACH uses.
 - `tests-integration/tests/rebuild.test.ts:210-217` deletes both databases from `.memhtml/` and rebuilds, asserting the whole claim.
@@ -993,11 +1035,200 @@ export const MERGE_OURS_DRIVER = { key: "merge.ours.driver", value: "true" } as 
 - The rebuild path assumes `index.db` is reproducible from the tree and `state.db` is not. `packages/index/src/index.ts:5-6` states it, and `tests-integration/tests/rebuild.test.ts:205-209` states that deleting only the index would leave the harder half of the claim untested.
 - The rebuild assumes its truncate list matches the schema. `packages/index/src/schema-const.ts:43-56` orders `MEMORY_TABLES` children before parents and states that a truncate list that has drifted leaves rows behind, so a rebuild is no longer a rebuild.
 - The store assumes it must never create the root implicitly. `packages/store/src/layout.ts:12-19` states that a typo in `MEMHTML_ROOT` silently scaffolding a second empty memory repo would be worse than an error, because the agent would go on writing into it and only a later search would come up empty.
-- Both config declarations assume `~` must be expanded in process rather than by a shell, because the value arrives from a shell profile, an MCP client config, and a cron line. `packages/store/src/store.ts:309-315` states that the other two would otherwise create a literal `./~` directory.
+- Both config declarations assume `~` must be expanded in process rather than by a shell, because the value arrives from a shell profile, an MCP client config, and a non-interactive job's command line, and only the shell expands tildes on its own. `packages/store/src/store.ts:309-315` states that the other two would otherwise create a literal `./~` directory.
 - `packages/store/src/layout.ts:61-76` assumes the `merge=ours` attribute alone does nothing, and records a live probe: with the attribute set and no driver configured, git still writes conflict markers. Since git config is per-clone, `memhtml init` must set `MERGE_OURS_DRIVER` again on every fresh clone.
 - `packages/store/src/layout.ts:36-40` assumes an agent's first write must land in a directory that already exists, so `SCAFFOLD_DIRS` covers the four PARA buckets plus the three system directories `placementFor` can return.
 
 **Drift risk:** Adding a generated artifact under the root without adding it to `.gitignore` or to `.gitattributes` makes it either a committed file that conflicts on every merge or a rebuildable file that is committed anyway. Mitigation: `packages/store/src/layout.ts:61-64` names the generated artifacts as the design's one merge-conflict source and `merge=ours` plus regeneration as the resolution; classify any new artifact into rebuildable-and-ignored or committed-and-merge-ours at the time it is added.
+
+## The integrations family
+
+`@memhtml/integrations` wires a coding agent host to the store: an MCP server entry, lifecycle hooks, an instruction block, and a skill file, each written under a receipt that proves ownership. The package declares six closed vocabularies, one serialized artifact, and one error class, and `apps/cli` is its only consumer outside the package: `apps/cli/src/run.ts:9` and `apps/cli/src/commands.ts:5` import the vocabularies, `apps/cli/src/hook.ts:6-12` imports the dialect, and `apps/cli/src/integrations.ts:26` imports the transaction layer.
+
+**Producer:** `packages/integrations/src/types.ts:10-137`, published with the rest of the package by `packages/integrations/src/index.ts:15-21`
+
+**Consumer(s):**
+
+- `apps/cli/src/run.ts:9` imports `HOSTS`, `HOOK_EVENTS`, `isHostId`, `isHookEvent`, and `renderHookOutput`; `apps/cli/src/run.ts:1126-1141` turns an out-of-vocabulary event or host into `ERR_UNKNOWN_HOOK_EVENT` or `ERR_UNKNOWN_HOST` with one suggestion per known value, and `apps/cli/src/run.ts:1556` re-checks both before the hook engine runs.
+- `apps/cli/src/commands.ts:5` imports `HOSTS` and `HOOK_EVENTS` and interpolates them into flag descriptions at `apps/cli/src/commands.ts:1124,1181,1220,1264` and into an enum at `:1273`, so the manifest and the generated agent doc name every host the parser accepts.
+- `apps/cli/src/integrations.ts:61-83` declares `IntegrationsAnswer` (an envelope plus an exit code) and `IntegrationsInput`, and `apps/cli/src/integrations.ts:264-499` runs the five verbs `integrationsInstall`, `integrationsUninstall`, `integrationsList`, `integrationsDoctor`, and `integrationsShell`.
+- Inside the package, `packages/integrations/src/install.ts:60`, `uninstall.ts:27`, `list.ts:14`, and `doctor.ts:28` all read the receipt through `inspectReceiptFile` and `compareEntries`, so four verbs share one reading of what "installed" means.
+
+**Shape:**
+
+```typescript
+/** The four coding agents this package can wire, in the order the docs present them. */
+export const HOSTS = ["claude", "codex", "cursor", "opencode"] as const
+export type HostId = (typeof HOSTS)[number]
+
+export const HOOK_EVENTS = [
+  "session-start",
+  "user-prompt-submit",
+  "pre-compact",
+  "session-end"
+] as const
+export type HookEvent = (typeof HOOK_EVENTS)[number]
+```
+
+The other four vocabularies are `SCOPES` (`user` anchors at `$HOME`, `project` at a git repository's top level; `packages/integrations/src/types.ts:17-18`), `HOOK_MODES` (`all`, `session`, `none`; `:37-38`), `MANAGED_ROLES` (the six things a receipt entry can be: `mcp-entry`, `hooks`, `instruction-block`, `skill`, `plugin`, `rules`; `:93-101`), and `INSTALL_STATES` (`not-installed`, `installed`, `modified`; `:128-129`). `compareEntries` at `packages/integrations/src/receipt.ts:166-176` produces two of the three states and never `not-installed`, which `:163-164` says is the absence of a receipt and the caller's question.
+
+The receipt is contract kind 4, a serialized artifact one verb writes and four read.
+
+```typescript
+export interface Receipt {
+  readonly package: "memhtml"
+  readonly version: string
+  readonly host: HostId
+  readonly scope: Scope
+  readonly root: string
+  readonly memhtmlRoot: string
+  readonly binary: BinaryLocation
+  readonly bareCommand: boolean
+  readonly hooks: HookMode
+  readonly installedAt: string
+  readonly entries: ReadonlyArray<ReceiptEntry>
+}
+
+export interface ReceiptEntry {
+  readonly path: string
+  readonly role: ManagedRole
+  readonly kind: "file" | "fragment"
+  readonly sha256: string
+}
+```
+
+`install` writes it through `writeReceipt` (`packages/integrations/src/receipt.ts:139`, called at `packages/integrations/src/install.ts:887`), and `list`, `doctor`, `uninstall`, and a re-run `install` read it back through `inspectReceiptFile` (`receipt.ts:108`), which is the only reader that distinguishes absent, valid, and invalid-with-a-reason (`receipt.ts:38-43`). It lives at `receiptPath` (`receipt.ts:33-36`): `~/.config/memhtml/integrations/<host>.json` at user scope, `.memhtml-integrations/<host>.json` at project scope, one per host per scope. Each entry hashes only the bytes install owns, the whole file for `kind: "file"` and the rendered fragment for `kind: "fragment"` (`packages/integrations/src/types.ts:78-82`, `receipt.ts:157-161`), so a human's edit anywhere else in a shared config file is not drift, and a deleted fragment is drift rather than a separate state.
+
+`IntegrationModified` (`packages/integrations/src/errors.ts:8-15`) is the one error class the package declares, carrying `host`, `path`, and `detail`. It is raised at `packages/integrations/src/install.ts:464,689,726,747` and `packages/integrations/src/uninstall.ts:80,130` when a receipt-owned entry no longer hashes to its receipt or a hand-written twin of our entry sits outside the fence. The CLI maps it in three places: `codeFor` returns `ERR_INTEGRATION_MODIFIED` (`apps/cli/src/errors.ts:74-75`), `messageFor` names the host, path, and detail (`apps/cli/src/errors.ts:119-120`), and the `SUGGESTIONS` record offers `integrations doctor <host>` then `integrations install <host> --force` (`apps/cli/src/errors.ts:200-203`). `apps/cli/src/integrations.ts:206-212` routes every other failure in this family to `ERR_STORAGE` rather than `ERR_UNKNOWN`, on the reading that the remaining failures are filesystem ones. The MCP server has no arm for the tag (`apps/mcp/src/failure.ts:80-131`), which is harmless only as long as no MCP tool reaches the transaction layer.
+
+The per-host algebra is `HostSpec` (`packages/integrations/src/hosts.ts:92-106`), whose `mcp`, `hooks`, and `instruction` fields are the discriminated unions `McpTarget` (`json` or `toml-fence`; `:33-43`), `HooksTarget` (`json-arrays` or `plugin-file`; `:54-65`), and `InstructionTarget` (`markdown-block` or `cursor-rules`, with `agentsFile` present only for Claude Code at project scope; `:80-89`). `hostSpec(host, scope, root)` at `packages/integrations/src/hosts.ts:161` is the function from the two vocabularies to a spec, a `switch` over `HostId` with no default arm, so a fifth host is a compile error until it has a spec. `detectHosts` at `:271-277` walks `DETECT_DIRS` (`:122-127`) to decide which hosts an argument-less install wires, and `DEFAULT_TRACE_ROOT` (`:136-141`) is non-null for Claude Code alone, because `@memhtml/traces` reads only its transcript format, so the other three hosts install no indexing hook. `DISPLAY_NAMES` (`:109-114`) and `CODEX_MCP_TABLE` (`:153`) are the remaining per-host constants.
+
+The wire shapes the installer merges into a host's own files are in `render/`. `packages/integrations/src/render/mcp.ts:15-32` declares `MCP_SERVER_KEY`, `JsonMcpEntry` (Claude Code and Cursor, under `mcpServers.memhtml`, with `args` omitted rather than `[]`), and `OpenCodeMcpEntry` (one command array, `environment` rather than `env`), and `codexMcpToml` at `:75-85` renders the `[mcp_servers.memhtml]` table with its `env` sub-table last. `packages/integrations/src/render/hooks.ts:24-46` declares `CommandHook`, `CommandHookGroup` (no `matcher`, on purpose), `CursorHookEntry`, and `CURSOR_HOOKS_VERSION`; `claudeOwned` at `:164-172` is how install and doctor recognize their own entries, by the `hook <event> --host <host>` shape every command in the entry must match (`:150-152`), and `codexOwned` and `cursorOwned` (`:175-178`) are the same function. `packages/integrations/src/install.ts:66-67` imports both renderers and `:483-514` is where a spec's `format` picks one.
+
+The fence contract is what lets three adapters edit files other tools also own. `packages/integrations/src/adapters/fenced.ts:52-63` declares `FencedText` (`upsert`, `remove`, `read`, `has`, plus the two markers) over one marker pair, `fenced()` at `:70-127` builds it, and three adapters bind it to their own markers: `adapters/toml.ts:16-17` (`# MEMHTML:START` / `# MEMHTML:END`, for Codex's `config.toml`), `adapters/markdown.ts:12-13` (`<!-- MEMHTML:START -->` / `<!-- MEMHTML:END -->`, for `CLAUDE.md` and `AGENTS.md`), and `adapters/shellrc.ts:12-13` (the same `#` pair as TOML, for an rc file). Markers match a trimmed line so a hand-reindented file does not grow a second region (`fenced.ts:66-68`), malformed or duplicated markers throw rather than guess (`fenced.ts:40-41`), and `linesOutsideFence` at `fenced.ts:134-153` is what lets `hasUnfencedTable` (`adapters/toml.ts:48-57`) refuse a hand-written `[mcp_servers.memhtml]` outside the fence. `adapters/markdown.ts:42-43` adds the one Markdown-specific rule, that a `CLAUDE.md` which is only `@AGENTS.md` is a pointer the block must not be written into.
+
+**Assumptions consumers make:**
+
+- The CLI assumes the two lists it validates against are the only vocabularies a hook call can be wrong about, so `apps/cli/src/run.ts:1556` checks `isHookEvent` and `isHostId` and nothing else before running the engine.
+- Every verb assumes the receipt is the sole ownership proof and that ownership is per fragment, so `install` without `--force` and `uninstall` both stop on drift rather than overwrite (`packages/integrations/src/install.ts:16`, `packages/integrations/src/uninstall.ts:5`).
+- The TOML adapter assumes it may not parse the file, so a collision is detected by table name outside the fence rather than by structure (`packages/integrations/src/hosts.ts:30-31`, `adapters/toml.ts:35-38`).
+
+**Drift risk:** Adding a `HookEvent` is not a compile error anywhere: `renderHookOutput` (`packages/integrations/src/dialect.ts:17-37`) returns the empty string for an event a host's arm does not name, so a new event installs and silently injects nothing, and `injects(host, event)` reads that silence as "this host cannot inject here". Mitigation: add the dialect arm, the `CODEX_EVENT_NAMES` entry (`dialect.ts:40-45`), and the per-host event mapping in `render/hooks.ts` in the same change as the vocabulary entry.
+
+## The hook engine
+
+`apps/cli/src/hook.ts` is what an installed host hook runs. Two properties hold it together, stated at `apps/cli/src/hook.ts:20-39`: it never fails, and it is bounded. It produces text and knows nothing about which host reads which stream; the host's protocol is applied one layer out by `renderHookOutput`.
+
+**Producer:** `apps/cli/src/hook.ts:42-113` for the input, the constants, and the headers, and `packages/integrations/src/dialect.ts:17-70` for the per-host dialect
+
+**Consumer(s):**
+
+- `apps/cli/src/run.ts:48-51` imports `hookStoreReady`, `readHookPayload`, and `runHook`; the `hook` arm at `apps/cli/src/run.ts:1550-1600` checks the store exists without creating it (`:1587`), reads the payload (`:1591`), picks the deadline by event (`:1592`), and prints `renderHookOutput(...)` and nothing else, with `--dense` and `--json` not reaching that stream (`apps/cli/src/run.ts:1529-1530`).
+- `packages/integrations/src/render/hooks.ts:63,92,114` render the `memhtml hook <event> --host <host>` command lines that the hosts' config files call, with a host-side timeout of `RECALL_TIMEOUT_SECONDS` 10 for injecting events and `INDEX_TIMEOUT_SECONDS` 30 for indexing ones (`:49-52`).
+- The engine requires `RetrievalShape | DatabaseShape | RootsShape` (`apps/cli/src/hook.ts:297-299`) and reaches the store through `apps/cli/src/operations.ts` (`apps/cli/src/hook.ts:18`).
+
+**Shape:**
+
+```typescript
+/** What the engine needs to answer one hook call. */
+export interface HookInput {
+  readonly event: HookEvent
+  /**
+   * Which host fired. Read for one decision only: whether this host can inject at all on this event
+   * ({@link injects}). The output DIALECT is applied by the caller.
+   */
+  readonly host: HostId
+  /** The host's hook payload, already JSON-parsed, or `undefined` when it was not parseable. */
+  readonly payload: unknown
+  /** Hits to inject on a per-prompt recall. */
+  readonly limit: number
+  /** Character budget handed to `recall` for the session-start pack. */
+  readonly budget: number
+  /**
+   * `--trace-root`, when the caller named one.
+   *
+   * The indexer takes its root from the `Roots` service, which `layerRoots` resolves from
+   * `MEMHTML_TRACE_ROOT` — there is no override parameter on `indexTraces()` and no roots-override
+   * layer, so the CALLER applies this as that variable, through {@link hookConfigProvider} beside the
+   * layer. It is carried here to be VERIFIED rather than to be applied: indexing the wrong transcript tree
+   * would advance a watermark over files the host never wrote, which is worse than indexing none, so a
+   * mismatch between this value and the resolved root declines the work with a warning.
+   */
+  readonly traceRoot?: string
+  /** The hard bound on the whole engine. Expiry is the empty string. */
+  readonly deadlineMs: number
+}
+```
+
+The constants beside it are the budget and deadline contract: `INDEXING_EVENTS` is `pre-compact` and `session-end`, the two events that index transcripts and never print (`apps/cli/src/hook.ts:71`); `HOOK_LIMIT_DEFAULT` 5 and `HOOK_BUDGET_DEFAULT` 3000 are the flag defaults `commands.ts` also states (`:74,77`); `HOOK_RECALL_DEADLINE_MS` 1500 bounds an injecting event and `HOOK_INDEX_DEADLINE_MS` 10000 bounds an indexing one (`:80,87`); `GIST_MAX_CHARS` 240, `OPEN_TASK_LIMIT` 5, and `OPEN_TASK_STATUSES` (`todo`, `doing`) shape the session-start block (`:90-96`); and `HOOK_STDIN_DEADLINE_MS` 500 bounds the read the engine's own deadline cannot (`:393`). `PROMPT_HEADER`, `sessionHeader`, and `OPEN_TASKS_HEADER` (`:105-113`) are the three lines an injection starts with; the per-prompt header deliberately says the hits are the ranker's guess and names `memory_read` and `memory_reinforce`, because salience only moves on a read or an outcome (`:98-104`).
+
+The injection matrix is `injects(host, event)` at `apps/cli/src/hook.ts:222-223`, which asks the dialect with a probe string rather than restating a table, so the one function that knows a host cannot inject on an event is the one that renders it. That function is `renderHookOutput` at `packages/integrations/src/dialect.ts:17-37`: Claude Code takes plain stdout on `session-start` and `user-prompt-submit`; Codex takes a `hookSpecificOutput.additionalContext` JSON on the same two, with the event name spelled from `CODEX_EVENT_NAMES` (`:40-45`); Cursor takes `{additional_context}` on `session-start` only, so a Cursor per-prompt hook is never installed; OpenCode's generated plugin takes plain text on the two injecting events. Every host's arm returns the empty string for an event it does not name, and an empty `text` renders as an empty string on every host. `promptOf` and `cwdOf` (`dialect.ts:52-70`) read the prompt and the working directory out of the payload, taking `cwd` or the first of Cursor's `workspace_roots`.
+
+The stdin protocol is the other half of the boundary. `readHookPayload` (`apps/cli/src/hook.ts:402-414`) races the host's stdin against an `unref`'d `HOOK_STDIN_DEADLINE_MS` timer and hands the raw text to `parseHookPayload` (`:424-431`), which returns `undefined` for anything empty or unparseable rather than an error. `runHook` (`:329-333`) wraps the engine in `Effect.timeout(input.deadlineMs)` and `Effect.catchCause(() => Effect.succeed(""))`, so a storage failure, a defect, and a blown deadline are all the empty string, and `apps/cli/src/run.ts:1532-1534` states why every path exits 0: on `UserPromptSubmit` a non-zero exit is how a hook BLOCKS the prompt. `hookStoreReady` (`:347-356`) probes `<root>/.git` rather than building the layer, because `makeDatabase` would `mkdir -p` a store at a mistyped root, and `hookConfigProvider` (`:373-383`) applies `--trace-root` as `MEMHTML_TRACE_ROOT` through a `ConfigProvider` rather than by mutating `process.env`, for the reason `:362-367` records. The renderers `renderPromptHits` (`:138-141`) and `renderSessionPack` (`:173-195`) are pure over the structural `HookEntry`, `HookPack`, and `HookTask` (`:122-160`), and `queryForCwd` (`:205-210`) turns a working directory into the two-token query a session start recalls on.
+
+**Drift risk:** The engine's deadlines and the host-side timeouts are two constants in two packages that must keep their order. `HOOK_RECALL_DEADLINE_MS` (1500 ms) plus process startup must stay under `RECALL_TIMEOUT_SECONDS` (10 s) and `HOOK_INDEX_DEADLINE_MS` (10 s) under `INDEX_TIMEOUT_SECONDS` (30 s), or the host kills the process before the engine's own timeout returns the empty string and an indexing scan is lost mid-pass. Mitigation: change the pair together, and keep the deadline names beside each other in `apps/cli/src/hook.ts:79-87` and `packages/integrations/src/render/hooks.ts:48-52` as they are now.
+
+## `ModelClientShape` and the model table
+
+The one door every model call in the system goes through, and the closed table of models it can name. `ModelClient` is a `Context.Service`, contract kind 3, bound once at the composition root and consumed by the sleep phases and the write-time entity extractor alike.
+
+**Producer:** `packages/llm/src/model-client.ts:28-81` and `packages/llm/src/models.ts:22-117`
+
+**Consumer(s):**
+
+- `apps/cli/src/api-layer.ts:35-37` imports `ModelClient` and `ModelClientShape`; `apps/cli/src/api-layer.ts:363-372` builds the sleep phases' model port from it and `:404-416` builds the extractor port from it, and `:615` states that one `ModelClient` sits behind both. `apps/cli/src/api-layer.ts:64` re-exports the tag.
+- `apps/cli/src/extraction.ts:4,162` takes a `ModelClientShape` into `makeEntityExtractor`, so every extraction test injects one and none needs the network (`apps/cli/src/extraction.ts:28`).
+- `packages/sleep/src/env.ts:8,55` carries an optional `ModelClientShape` in the sleep deps, and `packages/sleep/src/env.ts:88-101` maps each phase to a `ModelKey` through `DEFAULT_MODELS`, defaulting to `sonnet-5`.
+- `packages/sleep/src/batch.ts:2,279` takes a `ModelClientShape` and a `StructuredRequest` for the batched phases.
+- `packages/llm/src/proxy.ts:11,49` reads `MODELS` to find a model by its Bedrock id when a call leaves through the LLM proxy.
+
+**Shape:**
+
+```typescript
+export interface ModelClientShape {
+  readonly generate: (
+    modelKey: ModelKey,
+    prompt: string,
+    options: GenerateOptions
+  ) => Effect.Effect<Generation, ModelUnavailable>
+  readonly generateObject: <A, I>(
+    request: StructuredRequest<A, I>
+  ) => Effect.Effect<A, ModelUnavailable | LlmContractViolation>
+}
+
+export const ModelClient = Context.Service<ModelClientShape>("memhtml/ModelClient")
+```
+
+```typescript
+export const ModelKey = Schema.Literals([
+  "sonnet-5",
+  "opus-5",
+  "fable-5",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra"
+])
+export type ModelKey = typeof ModelKey.Type
+
+/** Which wire dialect a model speaks. Selected per model, never per call. */
+export type Provider = "anthropic" | "openai"
+
+export interface ModelInfo {
+  readonly key: ModelKey
+  readonly label: string
+  readonly modelId: string
+  readonly provider: Provider
+}
+```
+
+`MODELS` (`packages/llm/src/models.ts:50-86`) is the five-row table behind `ModelKey`, every `modelId` a `global.` Bedrock inference profile because the OpenAI ids reject on-demand invocation without one (`:44-49`). `modelByKey` (`:95-101`) is total over `ModelKey` and throws only if the table is edited out of agreement with the literal union. `thinkingFor` (`:112-117`) is the per-model `thinking` object: `{type: "adaptive"}` for Opus 5 and Fable 5, `null` for Sonnet 5, which rejects any thinking key, and never consulted on the OpenAI lane. `Generation` (`packages/llm/src/model-client.ts:28-33`) carries the text plus nullable token counts and a latency, `StructuredRequest` (`:35-58`) carries the schema, the prompt, the model key, the effort, and the optional `inputSchema` override and `cacheSystem` flag, and `ModelClientDefaults` (`:78-81`) is where a deployment's wire defaults meet a call's options.
+
+**Assumptions consumers make:**
+
+- Callers assume `generateObject` returns a value that honors its schema or a typed failure, never a string to re-parse (`packages/llm/src/model-client.ts:24-25`), so `LlmContractViolation` is the only channel a shape mismatch reaches them on. The CLI edge has no `codeFor` arm for that tag (`apps/cli/src/errors.ts:41-79`), so it surfaces to an agent as `ERR_UNKNOWN` with the right message.
+- Callers assume the provider is a property of the model, never of the call (`packages/llm/src/models.ts:34-35`), so a `ModelKey` alone decides which wire dialect a request takes.
+- The sleep deps assume the client is optional, so a credential-free run reports `no model bound` and stays `ok` rather than failing (`packages/sleep/src/env.ts:55`, `apps/cli/src/config.ts:141-146`).
+
+**Drift risk:** Adding a `ModelKey` literal without a `MODELS` row type-checks and throws at the first `modelByKey` call, which is the intended loud failure, but adding a row whose `provider` is wrong for its id type-checks and fails only at Bedrock. Mitigation: `packages/llm/src/models.ts:90-94` states that the throw exists to fail loudly on a table edited out of agreement with the union; keep the live-probe dates in the table's comments current when a row changes, since they are the only record of which shape each model accepted.
 
 ## Other contracts
 
@@ -1005,14 +1236,16 @@ export const MERGE_OURS_DRIVER = { key: "merge.ours.driver", value: "true" } as 
 - **`IndexerShape` and its reports**: `RebuildReport` and `UpdateReport` carry counted skips so one unparseable file never fails a pass, and `EmbedMissingOptions` distinguishes a whole-store model migration from an incremental pass by the presence of a candidate list (`packages/index/src/indexer.ts:34-146`).
 - **`SLEEP_PHASES` and `HARD_PREREQUISITES`**: 17 ordered phase names plus the pairs that must not be reordered, consumed by the sleep runner and by `memhtml sleep review` (`packages/sleep/src/contract.ts:43-61` and `packages/sleep/src/contract.ts:108`).
 - **`CONSOLIDATION_KINDS` and `ConsolidationResult`**: the consolidator's kinds are proven a subset of `WritableMemoryType` at compile time by an unused typed binding rather than a test (`apps/consolidator/src/contract.ts:30,46-47,262`).
-- **`CONFIG_VARS`**: 16 documented environment variables in one array so `memhtml manifest` can describe the whole environment surface and an agent does not have to grep for `process.env`; the last entry's `name` is the imported `MCP_BIN_VAR` rather than a literal, so a rename cannot disclose a variable nothing reads (`apps/cli/src/config.ts:60-173`).
-- **`COMMANDS`, `GLOBAL_FLAGS`, and `buildManifest`**: the command table is the single source for the `cli.manifest` response and for the generated `AGENTS.md`, both derived by walking it (`apps/cli/src/commands.ts:60,177,1354`, `apps/cli/src/agents-doc.ts:7,174-193`).
+- **`CONFIG_VARS`**: 17 documented environment variables in one array so `memhtml manifest` can describe the whole environment surface and an agent does not have to grep for `process.env`; the last entry's `name` is the imported `MCP_BIN_VAR` rather than a literal, so a rename cannot disclose a variable nothing reads (`apps/cli/src/config.ts:62-181`).
+- **`COMMANDS`, `GLOBAL_FLAGS`, and `buildManifest`**: the command table is the single source for the `cli.manifest` response and for the generated `AGENTS.md`, both derived by walking it (`apps/cli/src/commands.ts:62,179,1551`, `apps/cli/src/agents-doc.ts:7,174-193`).
 - **`ToolFailure`**: the MCP wire failure, whose `.message` is the whole agent-visible response; `toToolFailure` passes an already-composed `ToolFailure` through unchanged so a handler-built failure is not rewritten to its own class name (`apps/mcp/src/failure.ts:34-41,173-190`).
 - **`Chunk` and `chunkIdFor`**: content-derived chunk ids are what let a `git mv` cost zero Bedrock calls, since `chunks` and `embeddings` key on the content hash (`packages/index/src/index.ts:9`, `packages/index/src/git-port.ts:26-30`).
-- **`DisclosureCandidate` and `foldDisclosure`**: the tiered disclosure fold recall packs are built from, budgeted in characters (`packages/index/src/disclosure.ts` via `packages/index/src/index.ts:19-29`, consumed at `packages/index/src/retrieval.ts:6-11,128-134`).
+- **`DisclosureCandidate` and `foldDisclosure`**: the tiered disclosure fold recall packs are built from, budgeted in characters (`packages/index/src/disclosure.ts` via `packages/index/src/index.ts:19-29`, consumed at `packages/index/src/retrieval.ts:6-11` for the import, `:178-186` where `RecallPack` is typed by its return, and `:598-637` where `recall` folds arcs and memories under separate budgets).
 - **`DedupeLookup` and `MoveCallback`**: two injected functions rather than repository methods, because `@memhtml/store` is SQL-free by design and cross-database foreign keys do not exist (`packages/store/src/store.ts:188-208`).
 - **`Edge` and `isWellFormedEdge`**: the edge struct plus a caller-side well-formedness check that states the two `edges` CHECK conditions once in TypeScript so a bad edge can be refused before the driver refuses the batch (`packages/contracts/src/edges.ts:122-149`).
-- **`spec/memhtml.symspec.json`**: a 101-entry EARS requirement ledger keyed by UUID, each entry carrying between 16 and 20 of 22 field names including `key`, `sentence`, `status`, `systemName`, and `verificationMethod`; its one code consumer decodes `key`, `sentence`, `status`, `priority`, `patternType`, `verificationMethod`, and `systemName` as required strings and throws on the file's own path when one is missing (`apps/docs/src/loaders/registry.ts:69,372-385`).
+- **`spec/memhtml.symspec.json`**: a 107-entry EARS requirement ledger keyed by UUID, each entry carrying between 16 and 20 of 22 field names including `key`, `sentence`, `status`, `systemName`, and `verificationMethod`; its one code consumer decodes `key`, `sentence`, `status`, `priority`, `patternType`, `verificationMethod`, and `systemName` as required strings and throws on the file's own path when one is missing (`apps/docs/src/loaders/registry.ts:69,371-387`).
+- **`RECALL_DISCIPLINE`, `RECALL_DISCIPLINE_TEXT`, `RECALL_DISCIPLINE_SHORT`**: five paragraphs of agent guidance stated once in `packages/contracts/src/guidance.ts:17-53` so every surface renders the same words. Three consumers: `apps/cli/src/commands.ts:2,1540` renders the joined text as the `recall-discipline` guide topic, `packages/integrations/src/render/block.ts:15,59` writes the paragraphs into the fenced instruction block, and `packages/integrations/src/render/skill.ts:13,58` writes them into the installed `SKILL.md`. `RECALL_DISCIPLINE_SHORT` (`packages/contracts/src/guidance.ts:51-53`) is declared for the retrieval tools' descriptions and has no consumer in the tree; `apps/mcp/src/tools.ts` does not import from the module.
+- **Write-path acceptance and the write-path gate**: the eval package's acceptance surface is `AcceptanceStage`, `PairDecision`, `AcceptanceClassBreakdown`, and `AcceptanceReport` (`packages/eval/src/write-path-acceptance.ts:39-99`) over the labeled corpus in `packages/eval/src/write-path-acceptance-corpus.ts:36-117`; `ACCEPTANCE_BASELINE` is `1` and `ACCEPTANCE_FLOOR` is the baseline minus five points floored to two decimals (`packages/eval/src/write-path-acceptance.ts:111-119`), and a report passes only when both labels are present, no `keep` pair folded, and `acceptance >= acceptanceFloor` (`:92-96`). `runWritePathAcceptance` (`:263`) has one caller, the eval-tier test. The gate is `GateStage` and the five-entry `GATE_STAGES` (`packages/eval/src/write-path-gate.ts:39-52`), `GateDecision` and `GateBatch` (`:55-65`), and `admitCandidate` (`:76`), which never fails; `packages/eval/src/write-path-run.ts:14,159` runs each candidate through it, and `packages/eval/src/index.ts:80-86,114` publishes both surfaces.
 
 ## See also
 

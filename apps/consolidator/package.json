@@ -32,8 +32,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ai-sdk/amazon-bedrock": "5.0.75",
-    "@ai-sdk/anthropic": "4.0.49",
+    "@ai-sdk/amazon-bedrock": "5.0.81",
+    "@ai-sdk/anthropic": "4.0.52",
     "@memhtml/contracts": "workspace:*",
     "ai": "7.0.93",
     "effect": "catalog:",
@@ -41,9 +41,9 @@
     "zod": "4.5.4"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.12",
+    "@biomejs/biome": "2.5.13",
     "@effect/vitest": "catalog:",
-    "@types/node": "26.4.1",
+    "@types/node": "26.5.1",
     "typescript": "7.0.2",
     "vitest": "5.0.0"
   }

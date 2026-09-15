@@ -35,9 +35,9 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.12",
+    "@biomejs/biome": "2.5.13",
     "@effect/vitest": "catalog:",
-    "@types/node": "26.4.1",
+    "@types/node": "26.5.1",
     "typescript": "7.0.2",
     "vitest": "5.0.0"
   }
