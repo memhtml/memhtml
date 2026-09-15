@@ -92,7 +92,7 @@ overrides:
 catalog:
   effect: 4.0.0-rc.112
   "@effect/platform-node": 4.0.0-rc.112
-  "@effect/platform-node-shared": 4.0.0-rc.112
+  "@effect/platform-node-shared": 4.0.0-rc.115
   "@effect/vitest": 4.0.0-rc.112
   fast-check: 4.10.0
 
