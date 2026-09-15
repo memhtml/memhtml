@@ -42,7 +42,7 @@ export const MAX_RAW = 800
  * number field with the string `"NaN"`.
  */
 export const toInputSchema = (schema: Schema.Top): JsonSchemaObject => {
-  const document = Schema.toJsonSchemaDocument(schema)
+  const document = Schema.toJsonSchemaDocument(schema, { onExcessProperty: "error" })
   const definitions = document.definitions
   return Object.keys(definitions).length === 0
     ? document.schema

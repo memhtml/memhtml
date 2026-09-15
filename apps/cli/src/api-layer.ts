@@ -240,7 +240,7 @@ export const layerEmbedder: Layer.Layer<EmbedderShape, never, EmbeddingsShape> =
   Embedder
 )(
   Effect.gen(function* () {
-    const enabled = yield* Config.string("MEMHTML_EMBED").pipe(
+    const enabled = yield* Config.String("MEMHTML_EMBED").pipe(
       Config.withDefault("on"),
       Config.map((value) => value.trim().toLowerCase() !== "off")
     )
@@ -297,7 +297,7 @@ export const RetrievalPolicy = Context.Service<RetrievalPolicyShape>("memhtml/Re
  * The policy from config. A set-but-unusable value DIES naming the variable, following the consolidator
  * turn-timeout precedent: `0` or a negative would switch the gate off silently (nothing is below zero),
  * a value above `1` would drop the vector arm on a fully covered index, and neither is a floor anyone
- * meant. A value that does not parse as a number already fails inside `Config.number`.
+ * meant. A value that does not parse as a number already fails inside `Config.Number`.
  *
  * A floor UNDER `VECTOR_COVERAGE_HARD_FLOOR` (0.5) is accepted: it keeps search and doctor accepting a
  * plane that sleep still refuses, because the hard floor is sleep's alone and this knob does not move
@@ -364,7 +364,7 @@ export const layerModelPort: Layer.Layer<ModelPortShape, never, ModelClientShape
   ModelPort
 )(
   Effect.gen(function* () {
-    const enabled = yield* Config.string("MEMHTML_LLM").pipe(
+    const enabled = yield* Config.String("MEMHTML_LLM").pipe(
       Config.withDefault("on"),
       Config.map((value) => value.trim().toLowerCase() !== "off")
     )
@@ -404,11 +404,11 @@ export const ExtractorPort = Context.Service<ExtractorPortShape>("memhtml/Extrac
 export const layerExtractorPort: Layer.Layer<ExtractorPortShape, never, ModelClientShape> =
   Layer.effect(ExtractorPort)(
     Effect.gen(function* () {
-      const enabled = yield* Config.string("MEMHTML_EXTRACT_ENTITIES").pipe(
+      const enabled = yield* Config.String("MEMHTML_EXTRACT_ENTITIES").pipe(
         Config.withDefault("on"),
         Config.map((value) => value.trim().toLowerCase() !== "off")
       )
-      const modelsOn = yield* Config.string("MEMHTML_LLM").pipe(
+      const modelsOn = yield* Config.String("MEMHTML_LLM").pipe(
         Config.withDefault("on"),
         Config.map((value) => value.trim().toLowerCase() !== "off")
       )
@@ -468,7 +468,7 @@ export const ConsolidatorPortService = Context.Service<ConsolidatorPortShape>(
  * **`env` is a parameter, and it has to be.** `Config` reads its values through a `ConfigProvider`,
  * which a test substitutes, while `hasConsolidatorCredentials` reads `process.env` directly, and
  * effect's default provider snapshots `process.env` at module load, so mutating
- * `process.env.MEMHTML_LLM` after importing `effect` changes nothing `Config.string` returns. A test
+ * `process.env.MEMHTML_LLM` after importing `effect` changes nothing `Config.String` returns. A test
  * that set both by mutation would read a stale snapshot for one gate and a live object for the other,
  * and the two gates would disagree about which environment they are in. Threading the credential
  * environment through as an argument makes both injectable from one call. See
@@ -481,7 +481,7 @@ export const ConsolidatorPortService = Context.Service<ConsolidatorPortShape>(
  * The root is `MEMHTML_TRACE_ROOT` and this file is where config becomes services, so it is read from the
  * same `Roots` service `memhtml trace index` scans with. One resolution of one variable is what
  * keeps the mounted tree and the indexed `traces` rows describing the same directory. A second
- * `Config.string("MEMHTML_TRACE_ROOT")` here would be a second place the `~/.claude` default lives.
+ * `Config.String("MEMHTML_TRACE_ROOT")` here would be a second place the `~/.claude` default lives.
  */
 export const layerConsolidatorPort = (
   env: Record<string, string | undefined> = process.env
@@ -489,7 +489,7 @@ export const layerConsolidatorPort = (
   Layer.effect(ConsolidatorPortService)(
     Effect.gen(function* () {
       const roots = yield* Roots
-      const enabled = yield* Config.string("MEMHTML_LLM").pipe(
+      const enabled = yield* Config.String("MEMHTML_LLM").pipe(
         Config.withDefault("on"),
         Config.map((value) => value.trim().toLowerCase() !== "off")
       )

@@ -160,24 +160,24 @@ export const makeBedrockClient = (region: string): BedrockRuntimeClient =>
  * back to the direct path.
  */
 export const LlmConfig = Config.all({
-  region: Config.string("MEMHTML_AWS_REGION").pipe(Config.withDefault("us-east-1")),
+  region: Config.String("MEMHTML_AWS_REGION").pipe(Config.withDefault("us-east-1")),
   /**
    * How the OpenAI lane asks Bedrock to treat prompt caching (`wire.ts`, `OpenAiPromptCache`).
    * Read on both paths, direct and proxied: the body is the same chat-completions body either way,
    * and the write premium it turns off is Bedrock's, not the proxy's. `Config` reads a blank value
    * as absent, so the default lands here as "" and `openAiPromptCacheFrom` resolves it.
    */
-  openaiPromptCache: Config.string(OPENAI_PROMPT_CACHE_VAR).pipe(
+  openaiPromptCache: Config.String(OPENAI_PROMPT_CACHE_VAR).pipe(
     Config.withDefault(""),
     Config.map(openAiPromptCacheFrom)
   ),
   proxy: Config.all({
-    baseUrl: Config.string(PROXY_BASE_URL_VAR).pipe(Config.withDefault("")),
-    apiKey: Config.string(PROXY_API_KEY_VAR).pipe(Config.withDefault("")),
+    baseUrl: Config.String(PROXY_BASE_URL_VAR).pipe(Config.withDefault("")),
+    apiKey: Config.String(PROXY_API_KEY_VAR).pipe(Config.withDefault("")),
     // `Config` reads an empty value as absent, so the default lands here as "" and
     // `proxyModelPrefix` resolves it — the same function the consolidator applies to `process.env`.
-    modelPrefix: Config.string(PROXY_MODEL_PREFIX_VAR).pipe(Config.withDefault("")),
-    modelMap: Config.string(PROXY_MODEL_MAP_VAR).pipe(Config.withDefault(""))
+    modelPrefix: Config.String(PROXY_MODEL_PREFIX_VAR).pipe(Config.withDefault("")),
+    modelMap: Config.String(PROXY_MODEL_MAP_VAR).pipe(Config.withDefault(""))
   }).pipe(
     Config.map(({ baseUrl, apiKey, modelPrefix, modelMap }): ProxyConfig | null => {
       if (baseUrl.trim() === "") return null

@@ -735,7 +735,7 @@ export interface JsonObject {
  * for the nested refs that point at them.
  */
 export const toJsonSchema = (schema: Schema.Top): JsonObject => {
-  const document = Schema.toJsonSchemaDocument(schema)
+  const document = Schema.toJsonSchemaDocument(schema, { onExcessProperty: "error" })
   const serializable = JSON.parse(
     JSON.stringify({ ...document.schema, $defs: document.definitions })
   ) as Record<string, JsonValue>

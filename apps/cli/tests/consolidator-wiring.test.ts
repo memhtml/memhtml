@@ -20,7 +20,7 @@ import { ConsolidatorPortService, layerConsolidatorPort, Roots } from "../src/ap
  * MODULE LOAD.
  *
  * That was probed, not assumed (2026-08-08): setting `process.env.MEMHTML_LLM = "off"` after importing
- * `effect` leaves `Config.string("MEMHTML_LLM")` returning `"on"` forever, while setting it BEFORE the
+ * `effect` leaves `Config.String("MEMHTML_LLM")` returning `"on"` forever, while setting it BEFORE the
  * import works and then cannot be changed back. A first attempt at this coverage mutated
  * `process.env` between cases and reported `MEMHTML_LLM=off` as BOUND — a false defect, caused entirely
  * by the probe reading a stale snapshot for one gate and a live object for the other. Re-probed with

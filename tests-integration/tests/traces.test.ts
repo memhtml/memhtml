@@ -18,7 +18,7 @@ import { type Cli, makeCli, writeMemory } from "./harness.js"
  *
  * The consequence is not a failed assertion, it is a test that scans the developer's REAL transcript
  * corpus: measured on this machine at 3.67 GB across 5,387 files, which built a 38 MB `index.db` in a
- * temp repo and hung the suite well past any timeout. Verified directly — a `Config.string(...)` with a
+ * temp repo and hung the suite well past any timeout. Verified directly — a `Config.String(...)` with a
  * default read once before the variable is set returns the default forever after, in the same process.
  *
  * Setting the variable at MODULE SCOPE, before any test or hook runs, is what makes the synthesized

@@ -95,7 +95,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   {
     /**
      * The three proxy names are imported from `@memhtml/llm` rather than retyped, for the reason
-     * `MCP_BIN_VAR` is: the row and the `Config.string` read must name one string.
+     * `MCP_BIN_VAR` is: the row and the `Config.String` read must name one string.
      */
     name: PROXY_BASE_URL_VAR,
     description:
@@ -185,7 +185,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
  * store's config expands a leading `~`. This value arrives from a shell profile, an MCP client
  * config, and a cron line, and only the shell expands tildes on its own.
  */
-export const MemhtmlRoot = Config.string("MEMHTML_ROOT").pipe(
+export const MemhtmlRoot = Config.String("MEMHTML_ROOT").pipe(
   Config.withDefault(join("~", "memhtml")),
   Config.map(expandRoot)
 )
@@ -196,7 +196,7 @@ export const MemhtmlRoot = Config.string("MEMHTML_ROOT").pipe(
  * A parameter rather than a constant so the trace indexer is drivable against a fixture tree and
  * against an archived copy, which is also what keeps real transcripts out of the test suite.
  */
-export const TraceRoot = Config.string("MEMHTML_TRACE_ROOT").pipe(
+export const TraceRoot = Config.String("MEMHTML_TRACE_ROOT").pipe(
   Config.withDefault(join(homedir(), ".claude")),
   Config.map(expandRoot)
 )
@@ -210,6 +210,6 @@ export const TraceRoot = Config.string("MEMHTML_TRACE_ROOT").pipe(
  * other set-but-unusable refusals (`layerRetrievalPolicy` in `api-layer.ts`). The hard floor sleep
  * refuses below is `VECTOR_COVERAGE_HARD_FLOOR` and is not configurable.
  */
-export const VectorCoverageFloor = Config.number("MEMHTML_VECTOR_COVERAGE_FLOOR").pipe(
+export const VectorCoverageFloor = Config.Number("MEMHTML_VECTOR_COVERAGE_FLOOR").pipe(
   Config.withDefault(VECTOR_COVERAGE_FLOOR)
 )

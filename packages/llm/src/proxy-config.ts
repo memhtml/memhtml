@@ -57,7 +57,7 @@ export const DEFAULT_PROXY_MODEL_PREFIX = "bedrock/"
 /**
  * The value of {@link PROXY_MODEL_PREFIX_VAR} that means "no prefix". A WORD rather than the empty
  * string, because `effect/Config` reads an empty environment value as absent (probed against the
- * pinned release: `Config.string` fails on `""` exactly as on a missing key, so `withDefault` fires
+ * pinned release: `Config.String` fails on `""` exactly as on a missing key, so `withDefault` fires
  * for both). The sleep lanes read this variable through `Config` and the consolidator reads it from
  * `process.env` directly, and "" would have meant the default on one path and no prefix on the
  * other. Compared case-insensitively.
