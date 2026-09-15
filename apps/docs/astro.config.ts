@@ -363,6 +363,27 @@ export default defineConfig({
           }
         }),
         /*
+         * `@memhtml/domain`: one import path, one entry point and one page. The package is pure
+         * arithmetic over plain values, and every exported declaration (a constant, a function, a plain
+         * interface or a type alias) renders as a fenced block: no warnings and no escaped braces,
+         * measured with the TypeDoc CLI.
+         */
+        starlightTypeDoc({
+          entryPoints: [join(REPO_ROOT, "packages", "domain", "src", "index.ts")],
+          tsconfig: join(REPO_ROOT, "packages", "domain", "tsconfig.json"),
+          output: "api/domain",
+          typeDoc: {
+            outputFileStrategy: "modules",
+            useCodeBlocks: true,
+            parametersFormat: "list",
+            excludeExternals: true,
+            readme: join(REPO_ROOT, "packages", "domain", "README.md"),
+            mergeReadme: true,
+            entryFileName: "index",
+            disableSources: true
+          }
+        }),
+        /*
          * `@memhtml/llm`: one import path, one entry point and one page. Two of its exported
          * signatures resolve to `Promise<...>` of an object shape; the plugin renders an object
          * literal inside a type argument as escaped-brace prose, which `tests/figures.test.ts`
@@ -430,6 +451,11 @@ export default defineConfig({
               label: "@memhtml/eval",
               collapsed: true,
               items: [{ autogenerate: { directory: "api/eval" } }]
+            },
+            {
+              label: "@memhtml/domain",
+              collapsed: true,
+              items: [{ autogenerate: { directory: "api/domain" } }]
             },
             {
               label: "@memhtml/llm",

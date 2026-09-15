@@ -7,7 +7,7 @@ Versions are cut by [release-please][rp] from Conventional Commit subjects, and 
 
 ## One package, two binaries
 
-`memhtml` is the whole system. Installing it gives `memhtml` and `memhtml-mcp`, and with them the CLI, code mode, the sleep cycle (the phases of `SLEEP_PHASES` — seventeen as of v0.6.0), the trace indexer, the discrimination gate, and the MCP server. There is no `@memhtml/*` package on npm: the thirteen workspace packages are `private`, and `npm publish` refuses a private package, so the assembled artifact is the only thing that can ship.
+`memhtml` is the whole system. Installing it gives `memhtml` and `memhtml-mcp`, and with them the CLI, code mode, the sleep cycle (the phases of `SLEEP_PHASES` — seventeen as of v0.6.0), the trace indexer, the discrimination gate, and the MCP server. There is no `@memhtml/*` package on npm: every workspace package is `private`, and `npm publish` refuses a private package, so the assembled artifact is the only thing that can ship.
 
 The JS API is not part of the contract yet. The published surface is the two binaries and the JSON envelope they write. Adding an importable subpath later is a minor bump; removing one would be a major, so the cheap direction stays available.
 
@@ -21,7 +21,7 @@ npm i -g memhtml     # or: npx memhtml manifest
 
 [td]: https://tsdown.dev
 
-The thirteen `@memhtml/*` packages are the bundle. **Every real dependency stays external**, and two of them must, because their FILES are read rather than imported:
+The fourteen `@memhtml/*` packages are the bundle. **Every real dependency stays external**, and two of them must, because their FILES are read rather than imported:
 
 | What               | How it resolves                                              | Consequence                             |
 | ------------------ | ------------------------------------------------------------ | --------------------------------------- |
@@ -68,7 +68,7 @@ gh workflow run release-please.yml -f tag=memhtml-v0.2.0
 
 This exists because the first real release failed that way: the publish job had no mise, so the `d2` binary was absent, and the docs build inside `pnpm check` died in `astro:config:setup` — nothing to do with the bytes being published.
 
-The version lives in **sixteen** places and release-please updates all of them from the one root manifest: the root `package.json`, the thirteen workspace manifests via `json` extra-files, and two source constants carrying an `x-release-please-version` comment on the version's own line (`apps/cli/src/commands.ts` `buildManifest`, `apps/mcp/src/server.ts` `SERVER_VERSION`). The generic updater is a per-line substring match, so those comments must stay on the version's line.
+The version lives in **seventeen** places and release-please updates all of them from the one root manifest: the root `package.json`, the fourteen workspace manifests via `json` extra-files, and two source constants carrying an `x-release-please-version` comment on the version's own line (`apps/cli/src/commands.ts` `buildManifest`, `apps/mcp/src/server.ts` `SERVER_VERSION`). The generic updater is a per-line substring match, so those comments must stay on the version's line.
 
 The workspace manifests still move even though none of them publishes and the bundle carries none of them. Keeping them in lockstep is bookkeeping, not a runtime requirement: a reader who opens `packages/index/package.json` sees which release that code belongs to, and a version that never moved would read as an unreleased package rather than as a private one.
 
@@ -106,7 +106,7 @@ Read it top to bottom: GitHub issued the OIDC token (`200`, so `id-token: write`
 #    memhtml org. Transfer it afterwards if org ownership is wanted:
 #      npm owner add memhtml-org-member memhtml
 
-# 1. Land the release PR so the tag and all sixteen version sites agree, then check out the tag
+# 1. Land the release PR so the tag and all seventeen version sites agree, then check out the tag
 #    and assemble from it. The bytes that get published have to be the bytes that were released.
 git checkout memhtml-v0.2.0 && pnpm install --frozen-lockfile
 pnpm package:smoke            # assembles, lints, and proves the artifact works

@@ -732,7 +732,7 @@ export const FRAME_DROP_PATH = "areas/deploy/runbook-owner-full-name.html"
  *
  * `safe` is the OLDEST of the three (2026-05-03 against 05-04 and 05-07), so it is the keeper the
  * orientation picks and the two others are the drops — which is what makes the vetoed pair and the
- * merged pair share a keeper, the arrangement the both-roles guard also has to survive.
+ * merged pair share a keeper, the arrangement the role guard also has to survive.
  */
 export const DEDUP_VETO_TRIPLE: ReadonlyArray<SeedFile> = [
   {

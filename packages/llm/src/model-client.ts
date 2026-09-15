@@ -11,6 +11,7 @@ import {
   type GenerateOptions,
   incompleteReason,
   normalizeOpenAiResponse,
+  type OpenAiPromptCache,
   readText,
   readToolInput
 } from "./wire.js"
@@ -69,6 +70,16 @@ export interface ModelClientShape {
 
 export const ModelClient = Context.Service<ModelClientShape>("memhtml/ModelClient")
 
+/**
+ * Per-deployment wire defaults a caller's `GenerateOptions` does not name. The sleep phases say
+ * what a call IS (system, effort, budget); the environment says how the transport should carry
+ * it, and this is where the two meet. A field set on the call wins over the default.
+ */
+export interface ModelClientDefaults {
+  /** See {@link OpenAiPromptCache}; `LlmConfig` reads it from `MEMHTML_OPENAI_PROMPT_CACHE`. */
+  readonly openaiPromptCache?: OpenAiPromptCache | undefined
+}
+
 /** Escape regex metacharacters, so a label can be matched literally whatever it contains. */
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
@@ -126,7 +137,10 @@ export const wrapAsData = (label: string, text: string): string => {
   )
 }
 
-export const makeModelClient = (client: InvokeClient): ModelClientShape => {
+export const makeModelClient = (
+  client: InvokeClient,
+  defaults: ModelClientDefaults = {}
+): ModelClientShape => {
   const invoke = (
     modelKey: ModelKey,
     prompt: string,
@@ -142,7 +156,10 @@ export const makeModelClient = (client: InvokeClient): ModelClientShape => {
         buildInvokeBody(
           modelKey,
           prompt,
-          options,
+          {
+            ...options,
+            openaiPromptCache: options.openaiPromptCache ?? defaults.openaiPromptCache
+          },
           tool === undefined
             ? undefined
             : { inputSchema: tool.inputSchema, description: tool.description }
@@ -240,6 +257,6 @@ export const ModelClientLive = Layer.effect(
   ModelClient,
   Effect.gen(function* () {
     const config = yield* LlmConfig
-    return makeModelClient(invokeClientFor(config))
+    return makeModelClient(invokeClientFor(config), { openaiPromptCache: config.openaiPromptCache })
   })
 )

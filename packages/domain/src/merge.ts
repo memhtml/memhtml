@@ -25,6 +25,31 @@ export const NEAR_DUPLICATE_THRESHOLD = 0.92
 export const MAX_MERGE_PAIRS = 100
 
 /**
+ * The two texts the veto reads for one memory: its one-line claim (the `<mark>` gist) and the whole
+ * article's text. The predicates do not all read the same one, and that is the point of the split.
+ *
+ * `numericTokenDivergent` reads the GIST alone. A body is where a memory cites its evidence — a date, a
+ * pull-request or ticket id, an exit code, a cosine — and two honest tellings of one fact almost never
+ * cite the same numbers, so a numeric set-equality over the whole article vetoed nearly every true
+ * duplicate the store proposed (349 of 349 candidates over two consecutive runs, every review task
+ * naming this predicate). A number in the CLAIM is the fact itself: "retry 3" against "retry 13" is two
+ * claims, and the gist is where that difference lives.
+ *
+ * `negationDivergent` and `variantQualifierDivergent` read the JOINED text, gist and body together.
+ * Their markers are rare, load-bearing words ("not", "never", "pro", "deprecated") that a body does not
+ * carry incidentally the way it carries a citation, and a polarity flip stated only in the body — the
+ * claim "run the cutover during business hours" over a body that says draining does NOT complete — is a
+ * contradiction the veto has to see. The two all-veto runs named neither predicate once.
+ */
+export interface MergeText {
+  readonly gist: string
+  readonly body: string
+}
+
+/** The joined text the negation and variant predicates read: the claim, a newline, the article. */
+export const joinMergeText = (text: MergeText): string => `${text.gist}\n${text.body}`
+
+/**
  * One oriented candidate pair. `keepPath` is already the canonical (the older file). The
  * orientation is the caller's, because it depends on commit dates this module does not read.
  * The texts are optional; when either is absent the divergence guards are skipped.
@@ -33,8 +58,8 @@ export interface MergePair {
   readonly keepPath: string
   readonly dropPath: string
   readonly similarity: number
-  readonly keepText?: string | undefined
-  readonly dropText?: string | undefined
+  readonly keepText?: MergeText | undefined
+  readonly dropText?: MergeText | undefined
 }
 
 /** A committed merge: fold `dropPath` into `keepPath`. */
@@ -147,9 +172,10 @@ export const negationDivergent = (textA: string, textB: string): boolean => {
 }
 
 /**
- * True when the two bodies carry different numeric tokens: "retry 3 times" against "retry 13
- * times". Two bodies with no numbers at all, or with identical numbers, do not trip it.
- * Symmetric.
+ * True when the two texts carry different numeric tokens: "retry 3 times" against "retry 13
+ * times". Two texts with no numbers at all, or with identical numbers, do not trip it.
+ * Symmetric. {@link mergeVetoReasons} hands it the GIST of each memory, not the article — see
+ * {@link MergeText} for why.
  */
 export const numericTokenDivergent = (textA: string, textB: string): boolean => {
   const numA = numericTokens(tokensOf(textA))
@@ -168,36 +194,121 @@ export const variantQualifierDivergent = (textA: string, textB: string): boolean
   return !sameSet(qualA, qualB)
 }
 
-/**
- * The veto: the disjunction of the three divergence predicates. Symmetric, pure, total. A
- * vetoed pair is never a duplicate no matter its cosine.
- */
-export const mergeVetoed = (textA: string, textB: string): boolean =>
-  negationDivergent(textA, textB) ||
-  numericTokenDivergent(textA, textB) ||
-  variantQualifierDivergent(textA, textB)
+/** The three divergence families, in the veto's own disjunction order. */
+export type MergeVetoReason = "negation" | "numeric" | "variant"
 
 /**
- * Filter oriented candidate pairs into an in-batch-consistent decision list, applying in
- * order: the strict similarity threshold, the divergence veto (only when both texts are
- * present), a self-merge check, the in-batch role guard, and the per-cycle cap.
+ * Which divergence predicates fire on a pair, each over the text it reads (see {@link MergeText}):
+ * negation and variant over the joined text, numeric over the gist alone. Symmetric, pure, total.
+ * Empty exactly when {@link mergeVetoed} is false. Exported so a caller that must NAME the refusal
+ * (the review task a vetoed pair becomes, the acceptance arm's per-pair stage) reads the same scoping
+ * the filter applied, instead of re-deriving which text each predicate saw.
+ */
+export const mergeVetoReasons = (
+  textA: MergeText,
+  textB: MergeText
+): ReadonlyArray<MergeVetoReason> => {
+  const joinedA = joinMergeText(textA)
+  const joinedB = joinMergeText(textB)
+  return [
+    ...(negationDivergent(joinedA, joinedB) ? (["negation"] as const) : []),
+    ...(numericTokenDivergent(textA.gist, textB.gist) ? (["numeric"] as const) : []),
+    ...(variantQualifierDivergent(joinedA, joinedB) ? (["variant"] as const) : [])
+  ]
+}
+
+/**
+ * The veto: the disjunction of the three divergence predicates, each over its own text. Symmetric,
+ * pure, total. A vetoed pair is never a duplicate no matter its cosine.
+ */
+export const mergeVetoed = (textA: MergeText, textB: MergeText): boolean =>
+  mergeVetoReasons(textA, textB).length > 0
+
+/** Where a candidate pair stopped in {@link mergeOutcomes}, in the filter's own order. */
+export type MergeStage = "cap" | "threshold" | "vetoed" | "self" | "role-guard" | "committed"
+
+/** One candidate pair's fate. `committed` is the only stage that produces a {@link MergeDecision}. */
+export interface MergeOutcome {
+  readonly pair: MergePair
+  readonly stage: MergeStage
+}
+
+/**
+ * Classify every oriented candidate pair, applying in order: the per-cycle cap, the strict similarity
+ * threshold, the divergence veto (only when both texts are present), a self-merge check, and the
+ * in-batch role guard. {@link mergeCandidates} is the committed subset; this form exists so a caller
+ * can COUNT the refusals by cause. A phase that reported `candidates - decisions` as "vetoed" told an
+ * operator that a predicate fired on pairs no predicate had seen, which is how two all-refusing runs
+ * read as a divergence problem when half of them were role-guard skips.
  *
- * The **in-batch role guard** needs the most explanation of the five. A path that appears in
- * any committed decision, as the keeper or as the drop, is fixed in that role for the batch
- * and cannot appear again in either. Both directions are required, and each rules out a
- * distinct corruption on a transitive chain:
+ * The **in-batch role guard** needs the most explanation of the five. Every committed decision fixes
+ * its drop path as DROPPED and its keep path as KEPT for the rest of the batch, and three later uses
+ * are refused, each ruling out a distinct corruption on a transitive chain:
  *
- * - A path already **dropped** cannot be dropped again (two keepers would each believe they
- *   absorbed it) nor become a keeper (content folded into a file this same batch archives).
- * - A path already a **keeper** cannot later be dropped. This is the case that survives if
- *   only the drop side is recorded: given `(gf, a)` then `(b, gf)`, both decisions commit,
- *   `gf` absorbs `a` and is then archived into `b`, so `a`'s content is superseded into a
- *   file that no longer exists. That is the loss the guard exists to prevent.
+ * - A path already **dropped** cannot be dropped again (two keepers would each believe they absorbed
+ *   it) nor become a keeper (content folded into a file this same batch archives).
+ * - A path already a **keeper** cannot later be dropped. Given `(gf, a)` then `(b, gf)`, both would
+ *   commit, `gf` absorbs `a` and is then archived into `b`, so `a`'s content is superseded into a file
+ *   that no longer exists. That is the loss the guard exists to prevent.
  *   Verified against the input `[(gf → a), (b → gf)]`.
  *
- * Fixing a role rather than a membership also keeps the output a function of input order
- * alone. The first decision claiming a path wins, matching the SQL result-set iteration
- * upstream, and a later pair naming it is skipped rather than reordering anything.
+ * A path already a **keeper** MAY keep again. `(k, a)` then `(k, b)` is one page absorbing two
+ * duplicates in one batch, and nothing on that chain is archived twice or archived after being folded
+ * into: `k` survives with two `supersedes` links and both drops point at it. The earlier rule claimed
+ * BOTH roles of a committed pair, which made a model group of N members fold at most ONE of them per
+ * run — every pair a group implies names the same keeper — and reported the other N-2 as vetoes. The
+ * guard's job is the two corruptions above, not a fold budget per keeper; the per-cycle cap is that.
+ *
+ * Fixing roles rather than memberships keeps the output a function of input order alone. The first
+ * decision claiming a path in a role wins, matching the SQL result-set iteration upstream, and a later
+ * pair contradicting it is skipped rather than reordering anything.
+ */
+export const mergeOutcomes = (
+  pairs: ReadonlyArray<MergePair>,
+  options: {
+    readonly threshold?: number | undefined
+    readonly maxPairs?: number | undefined
+  } = {}
+): ReadonlyArray<MergeOutcome> => {
+  const threshold = options.threshold ?? NEAR_DUPLICATE_THRESHOLD
+  const maxPairs = options.maxPairs ?? MAX_MERGE_PAIRS
+  const outcomes: Array<MergeOutcome> = []
+  let committed = 0
+  const dropped = new Set<string>()
+  const kept = new Set<string>()
+
+  const stageOf = (pair: MergePair): MergeStage => {
+    if (committed >= maxPairs) return "cap"
+    if (pair.similarity <= threshold) return "threshold"
+    if (
+      pair.keepText !== undefined &&
+      pair.dropText !== undefined &&
+      mergeVetoed(pair.keepText, pair.dropText)
+    ) {
+      return "vetoed"
+    }
+    if (pair.keepPath === pair.dropPath) return "self"
+    if (dropped.has(pair.dropPath) || kept.has(pair.dropPath) || dropped.has(pair.keepPath)) {
+      return "role-guard"
+    }
+    return "committed"
+  }
+
+  for (const pair of pairs) {
+    const stage = stageOf(pair)
+    outcomes.push({ pair, stage })
+    if (stage !== "committed") continue
+    committed += 1
+    dropped.add(pair.dropPath)
+    kept.add(pair.keepPath)
+  }
+
+  return outcomes
+}
+
+/**
+ * Filter oriented candidate pairs into an in-batch-consistent decision list: the `committed` outcomes
+ * of {@link mergeOutcomes}, in input order, as decisions.
  */
 export const mergeCandidates = (
   pairs: ReadonlyArray<MergePair>,
@@ -205,36 +316,12 @@ export const mergeCandidates = (
     readonly threshold?: number | undefined
     readonly maxPairs?: number | undefined
   } = {}
-): ReadonlyArray<MergeDecision> => {
-  const threshold = options.threshold ?? NEAR_DUPLICATE_THRESHOLD
-  const maxPairs = options.maxPairs ?? MAX_MERGE_PAIRS
-  const decisions: Array<MergeDecision> = []
-  const claimed = new Set<string>()
-
-  for (const pair of pairs) {
-    if (decisions.length >= maxPairs) break
-    if (pair.similarity <= threshold) continue
-    if (
-      pair.keepText !== undefined &&
-      pair.dropText !== undefined &&
-      mergeVetoed(pair.keepText, pair.dropText)
-    ) {
-      continue
-    }
-    if (pair.keepPath === pair.dropPath) continue
-    if (claimed.has(pair.dropPath) || claimed.has(pair.keepPath)) continue
-
-    decisions.push({
-      keepPath: pair.keepPath,
-      dropPath: pair.dropPath,
-      similarity: pair.similarity
-    })
-    claimed.add(pair.dropPath)
-    claimed.add(pair.keepPath)
-  }
-
-  return decisions
-}
+): ReadonlyArray<MergeDecision> =>
+  mergeOutcomes(pairs, options).flatMap(({ pair, stage }) =>
+    stage === "committed"
+      ? [{ keepPath: pair.keepPath, dropPath: pair.dropPath, similarity: pair.similarity }]
+      : []
+  )
 
 /**
  * Connected components over an undirected edge list, as sorted member lists.

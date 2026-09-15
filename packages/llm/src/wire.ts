@@ -36,6 +36,65 @@ export interface GenerateOptions {
    * change and not only gain a field.
    */
   readonly cacheSystem?: boolean | undefined
+  /**
+   * How the OpenAI dialect asks Bedrock to treat prompt caching. See {@link OpenAiPromptCache}.
+   * Absent means {@link DEFAULT_OPENAI_PROMPT_CACHE}. The Anthropic dialect ignores it: that lane
+   * names its cache prefix with `cacheSystem` and has no automatic breakpoint to turn off.
+   */
+  readonly openaiPromptCache?: OpenAiPromptCache | undefined
+}
+
+/**
+ * The two things the OpenAI dialect can say about prompt caching.
+ *
+ * - `off` sends `prompt_cache_options: {mode: "explicit"}` with no breakpoints, which Bedrock
+ *   documents as "the request does not use prompt caching or incur cache-write charges"
+ *   (https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html, "GPT-5.6 models").
+ * - `implicit` sends no caching field at all, leaving the endpoint's default in place.
+ *
+ * `off` is the default because of what the sleep prompts are. Bedrock's implicit mode for GPT-5.6
+ * places an automatic breakpoint on the LATEST message, so with a 1,024-token minimum every call
+ * whose whole prompt clears the minimum writes that whole prompt to the cache at 1.25x the input
+ * rate; and the eight sleep system prompts are 189 to 496 tokens, so the only prefix that could be
+ * reused never reaches the minimum and the only prefix that does reach it — system plus a unique
+ * batch — is never seen twice. Measured 2026-09-11 on the access log: every OpenAI-lane call reported
+ * `cache_write_tokens` about equal to its input and `cached_tokens: 0`, a pure premium with no read
+ * to pay it back. `implicit` is for a request whose prefix WILL repeat and clear the minimum, and
+ * for an OpenAI-compatible endpoint that rejects the Bedrock-only field.
+ *
+ * Probed live 2026-09-11 against `bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions`
+ * with `global.openai.gpt-5.6-sol`: the field is accepted on Chat Completions (200) and honored
+ * (`prompt_tokens: 3424, cache_write_tokens: 0` on a prompt that wrote 2,641 tokens without it).
+ */
+export type OpenAiPromptCache = "off" | "implicit"
+
+/** The environment variable {@link openAiPromptCacheFrom} reads. */
+export const OPENAI_PROMPT_CACHE_VAR = "MEMHTML_OPENAI_PROMPT_CACHE"
+
+export const DEFAULT_OPENAI_PROMPT_CACHE: OpenAiPromptCache = "off"
+
+export const OPENAI_PROMPT_CACHE_VALUES: ReadonlyArray<OpenAiPromptCache> = ["off", "implicit"]
+
+/** The wire field `off` emits. One constant, so the body and the tests spell it once. */
+export const OPENAI_PROMPT_CACHE_OFF_FIELD = { mode: "explicit" } as const
+
+/**
+ * Parse a raw {@link OPENAI_PROMPT_CACHE_VAR} value. Unset or blank is the default, for the reason
+ * every proxy variable treats blank so — a blank export is how a variable goes missing. Compared
+ * case-insensitively after trimming. Anything else throws with the variable named, matching
+ * `normalizeProxyBaseUrl`: a typo that silently fell back to the default would put the write
+ * premium back on every call while the environment claimed to have turned it off.
+ */
+export const openAiPromptCacheFrom = (raw: string | undefined): OpenAiPromptCache => {
+  const value = raw?.trim().toLowerCase() ?? ""
+  if (value === "") return DEFAULT_OPENAI_PROMPT_CACHE
+  const match = OPENAI_PROMPT_CACHE_VALUES.find((candidate) => candidate === value)
+  if (match === undefined) {
+    throw new Error(
+      `${OPENAI_PROMPT_CACHE_VAR} must be one of ${OPENAI_PROMPT_CACHE_VALUES.join(", ")}; got ${JSON.stringify(raw)}`
+    )
+  }
+  return match
 }
 
 /**
@@ -140,9 +199,11 @@ const buildAnthropicBody = (
  *   together, so the same clamp applies. 128k accepted at the ceiling.
  * - Effort is `reasoning_effort`, taking the same four values.
  * - `system` rides as a leading `{role: "system"}` message; there is no `system` field.
- *   `cacheSystem` has no OpenAI-side marker — Bedrock reports `cache_write_tokens` in
- *   this dialect's usage without an opt-in field — so the flag is accepted and unused
- *   rather than rejected, keeping the option surface identical across lanes.
+ *   `cacheSystem` has no OpenAI-side marker, so the flag is accepted and unused rather than
+ *   rejected, keeping the option surface identical across lanes. What this dialect DOES carry
+ *   about caching is `prompt_cache_options`, and it carries it to turn caching off: Bedrock
+ *   reports `cache_write_tokens` in this dialect's usage without an opt-in field, because its
+ *   implicit mode writes the whole prompt on every call. See {@link OpenAiPromptCache}.
  * - The structured mechanism is `response_format.json_schema` with `strict: true`, named
  *   `emit` so logs read the same across providers. `description` becomes the schema's
  *   own `description`, the closest surface this dialect has to a tool description.
@@ -161,6 +222,9 @@ const buildOpenAiBody = (
     max_completion_tokens: clampTokens(options.maxTokens),
     messages,
     reasoning_effort: options.effort
+  }
+  if ((options.openaiPromptCache ?? DEFAULT_OPENAI_PROMPT_CACHE) === "off") {
+    body.prompt_cache_options = OPENAI_PROMPT_CACHE_OFF_FIELD
   }
   if (tool !== undefined) {
     body.response_format = {

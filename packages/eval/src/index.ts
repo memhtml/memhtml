@@ -68,6 +68,33 @@ export {
   hasBedrockCredentials,
   runDiscrimination
 } from "./run.js"
+export type {
+  AcceptanceClassBreakdown,
+  AcceptanceOptions,
+  AcceptanceReport,
+  AcceptanceStage,
+  PairDecision
+} from "./write-path-acceptance.js"
+export {
+  ACCEPTANCE_BASELINE,
+  ACCEPTANCE_FLOOR,
+  acceptanceAgrees,
+  acceptanceByClass,
+  decideAcceptance,
+  describeAcceptance,
+  impliedPairs,
+  runWritePathAcceptance,
+  summarizeAcceptance
+} from "./write-path-acceptance.js"
+export type {
+  AcceptanceLabel,
+  AcceptanceMember,
+  LabeledGroup
+} from "./write-path-acceptance-corpus.js"
+export {
+  ACCEPTANCE_CORPUS,
+  ACCEPTANCE_KNOWN_GAP_CLASSES
+} from "./write-path-acceptance-corpus.js"
 export type { FixtureTranscript, LabeledCandidate, WritePathLabel } from "./write-path-corpus.js"
 export {
   BATCH_SESSION_IDS,

@@ -33,6 +33,9 @@
       "path": "../../packages/traces"
     },
     {
+      "path": "../../packages/integrations"
+    },
+    {
       "path": "../../packages/sleep"
     },
     {

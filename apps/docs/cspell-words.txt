@@ -84,3 +84,7 @@ llms
 Grayscale
 agentgateway
 litellm
+# `opencode` is one of the four host ids `memhtml integrations install` accepts and the directory the
+# agent of that name keeps its config in (`~/.config/opencode/`). Prose spells the product `OpenCode`,
+# which cspell splits on case; the lowercase identifier is the form that needs the entry.
+opencode

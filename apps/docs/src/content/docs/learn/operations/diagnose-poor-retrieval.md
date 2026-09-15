@@ -69,7 +69,7 @@ ERR_MODEL_UNAVAILABLE ERR_STORAGE          ERR_GIT                    ERR_DISCRI
 ERR_UNKNOWN          ERR_REBUILD_NO_EMBED_REFUSED
 ```
 
-Eighteen codes (`apps/cli/src/envelope.ts:67`), append-only: a shipped code keeps its meaning forever and is never removed.
+Twenty-one codes (`apps/cli/src/envelope.ts:67`), append-only: a shipped code keeps its meaning forever and is never removed.
 
 `ERR_REPO_REQUIRED` is the exit-2 refusal `MEMHTML_REFUSE_ENV_ROOT` produces for a call that opens a repo without `--repo`; see [configure the environment](/learn/operations/configure-the-environment/#memhtml_refuse_env_root-closes-the-environment-door).
 

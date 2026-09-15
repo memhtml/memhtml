@@ -862,7 +862,8 @@ describe("the manifest guide (AC-6-6)", () => {
         "when-to-batch",
         "conflicts",
         "authoring",
-        "code-mode"
+        "code-mode",
+        "recall-discipline"
       ])
     }
   })

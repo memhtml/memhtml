@@ -182,6 +182,8 @@ describe("toProxyRequest", () => {
     const request = toProxyRequest(CONFIG, "global.openai.gpt-5.6-sol", body)
     expect(request?.path).toBe("/v1/chat/completions")
     expect(request?.body).toEqual({ ...body, model: "bedrock/global.openai.gpt-5.6-sol" })
+    // The cache-off field is part of that body and rides through to the proxy untouched.
+    expect(request?.body.prompt_cache_options).toEqual({ mode: "explicit" })
   })
 
   /**
@@ -278,6 +280,38 @@ describe("makeProxyClient", () => {
     )
     await client.send(command("global.openai.gpt-5.6-sol", "{}"), { abortSignal: signal() })
     expect(calls[0]?.headers).toEqual({ "content-type": "application/json" })
+  })
+
+  /**
+   * The bytes on the wire to the proxy's chat-completions route carry the cache-off field under the
+   * default, and not under `implicit`. Asserted here and not only in `wire.test.ts` because this is
+   * the transport memhtml runs behind in practice, and a proxy translation that rebuilt the body
+   * from known fields would drop exactly this one.
+   */
+  it("carries prompt_cache_options to the chat-completions route by default, and omits it under implicit", async () => {
+    const reply = () => ({
+      status: 200,
+      body: {
+        choices: [{ finish_reason: "stop", message: { content: "ok" } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 }
+      }
+    })
+    const byDefault = recorder(reply)
+    await Effect.runPromise(
+      makeModelClient(
+        makeProxyClient(CONFIG, { fetch: byDefault.fetchImpl, schedule: IMMEDIATE })
+      ).generate("gpt-5.6-sol", "hi", { effort: "low", system: "s" })
+    )
+    expect(byDefault.calls[0]?.url).toBe("http://127.0.0.1:4000/v1/chat/completions")
+    expect(byDefault.calls[0]?.body.prompt_cache_options).toEqual({ mode: "explicit" })
+
+    const implicit = recorder(reply)
+    await Effect.runPromise(
+      makeModelClient(makeProxyClient(CONFIG, { fetch: implicit.fetchImpl, schedule: IMMEDIATE }), {
+        openaiPromptCache: "implicit"
+      }).generate("gpt-5.6-sol", "hi", { effort: "low", system: "s" })
+    )
+    expect(implicit.calls[0]?.body).not.toHaveProperty("prompt_cache_options")
   })
 
   /** End to end through the real embedder: the fold is what lets `readEmbeddings` accept the answer. */

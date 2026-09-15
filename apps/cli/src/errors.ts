@@ -69,6 +69,10 @@ export const codeFor = (error: unknown): ErrorCode => {
       return "ERR_REBUILD_NO_EMBED_REFUSED"
     case "DiscriminationFailed":
       return "ERR_DISCRIMINATION_FAILED"
+    // A receipt-owned file or config entry that a human changed since install. Exit 1: the call
+    // parsed, and the work was declined so the change survives. `--force` on install is the override.
+    case "IntegrationModified":
+      return "ERR_INTEGRATION_MODIFIED"
     default:
       return "ERR_UNKNOWN"
   }
@@ -112,6 +116,8 @@ export const messageFor = (error: unknown): string => {
       return `the model broke its structured-output contract: ${text(error.reason) ?? "no reason given"}`
     case "DiscriminationFailed":
       return text(error.reason) ?? "the discrimination gate refused"
+    case "IntegrationModified":
+      return `${text(error.host) ?? "the host"} integration was modified since install at ${text(error.path) ?? "a managed path"}: ${text(error.detail) ?? "the receipt no longer matches"}`
     default:
       return `unexpected failure: ${error._tag}`
   }
@@ -188,6 +194,12 @@ export const SUGGESTIONS: Readonly<Record<string, SuggestionsFor>> = {
     "memhtml eval discriminate",
     "memhtml sleep review",
     "git branch -D <run-id>"
+  ],
+  // `doctor` first, because it names every managed path and which one moved; `--force` second, for
+  // the operator who meant to overwrite and wants the prior bytes kept as a timestamped backup.
+  IntegrationModified: (error) => [
+    `memhtml integrations doctor ${text(error.host) ?? "<host>"}`,
+    `memhtml integrations install ${text(error.host) ?? "<host>"} --force`
   ]
 }
 

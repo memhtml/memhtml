@@ -15,9 +15,14 @@ import {
   asResponseBody,
   buildInvokeBody,
   clampTokens,
+  DEFAULT_OPENAI_PROMPT_CACHE,
   INCOMPLETE_STOP_REASONS,
   incompleteReason,
   normalizeOpenAiResponse,
+  OPENAI_PROMPT_CACHE_OFF_FIELD,
+  OPENAI_PROMPT_CACHE_VALUES,
+  OPENAI_PROMPT_CACHE_VAR,
+  openAiPromptCacheFrom,
   readText,
   readToolInput
 } from "../src/wire.js"
@@ -282,6 +287,81 @@ describe("buildInvokeBody for the openai dialect", () => {
   it("clamps the completion budget at the same ceiling as the anthropic lane", () => {
     const body = parse(buildInvokeBody("gpt-5.6-sol", "ask", { effort: "low", maxTokens: 999_999 }))
     expect(body.max_completion_tokens).toBe(MAX_TOKENS_CEILING)
+  })
+})
+
+/**
+ * The OpenAI dialect's one word about prompt caching, and it says no. Bedrock's implicit mode for
+ * GPT-5.6 writes the whole prompt at 1.25x the input rate on every call that clears 1,024 tokens,
+ * and the sleep prompts never present a repeated prefix that long, so the default is the field that
+ * turns caching off (`prompt_cache_options: {mode: "explicit"}` with no breakpoints). Pinned on the
+ * BYTES per dialect, because the failure is a silent premium and not an error.
+ */
+describe("prompt caching on the openai dialect", () => {
+  it("turns implicit caching off by default", () => {
+    expect(DEFAULT_OPENAI_PROMPT_CACHE).toBe("off")
+    const body = parse(buildInvokeBody("gpt-5.6-sol", "fold these", { effort: "low", system: "s" }))
+    expect(body.prompt_cache_options).toEqual({ mode: "explicit" })
+    expect(body.prompt_cache_options).toEqual(OPENAI_PROMPT_CACHE_OFF_FIELD)
+    // No breakpoints anywhere: explicit mode with none is what makes the request cache-free.
+    expect(JSON.stringify(body)).not.toContain("prompt_cache_breakpoint")
+  })
+
+  it("emits the same field when `off` is named, for both prose and structured calls", () => {
+    const prose = parse(
+      buildInvokeBody("gpt-5.6-sol", "ask", { effort: "low", openaiPromptCache: "off" })
+    )
+    const structured = parse(
+      buildInvokeBody(
+        "gpt-5.6-sol",
+        "ask",
+        { effort: "low", openaiPromptCache: "off" },
+        { inputSchema: { type: "object", properties: {}, additionalProperties: false } }
+      )
+    )
+    expect(prose.prompt_cache_options).toEqual({ mode: "explicit" })
+    expect(structured.prompt_cache_options).toEqual({ mode: "explicit" })
+  })
+
+  it("omits the field entirely under `implicit`, rather than sending mode: implicit", () => {
+    // Absent is the endpoint's default on Bedrock AND on an OpenAI-compatible endpoint that would
+    // reject the Bedrock-only key, which is what `implicit` exists for.
+    const body = parse(
+      buildInvokeBody("gpt-5.6-sol", "ask", { effort: "low", openaiPromptCache: "implicit" })
+    )
+    expect("prompt_cache_options" in body).toBe(false)
+  })
+
+  it("never puts the field on the anthropic dialect, whatever the option says", () => {
+    for (const openaiPromptCache of [undefined, "off", "implicit"] as const) {
+      const body = parse(
+        buildInvokeBody("sonnet-5", "hi", { effort: "low", cacheSystem: true, openaiPromptCache })
+      )
+      expect("prompt_cache_options" in body).toBe(false)
+    }
+  })
+})
+
+describe("openAiPromptCacheFrom", () => {
+  it("reads unset and blank as the default", () => {
+    expect(openAiPromptCacheFrom(undefined)).toBe("off")
+    expect(openAiPromptCacheFrom("")).toBe("off")
+    expect(openAiPromptCacheFrom("   ")).toBe("off")
+  })
+
+  it("accepts both values, trimmed and case-insensitively", () => {
+    expect(openAiPromptCacheFrom("implicit")).toBe("implicit")
+    expect(openAiPromptCacheFrom(" Implicit ")).toBe("implicit")
+    expect(openAiPromptCacheFrom("OFF")).toBe("off")
+    expect(OPENAI_PROMPT_CACHE_VALUES).toEqual(["off", "implicit"])
+  })
+
+  it("refuses any other value, naming the variable and quoting the value", () => {
+    // A typo that fell back to the default would silently put the premium back on every call.
+    expect(() => openAiPromptCacheFrom("explicit")).toThrow(
+      new RegExp(`${OPENAI_PROMPT_CACHE_VAR}.*"explicit"`)
+    )
+    expect(() => openAiPromptCacheFrom("on")).toThrow(/MEMHTML_OPENAI_PROMPT_CACHE/)
   })
 })
 

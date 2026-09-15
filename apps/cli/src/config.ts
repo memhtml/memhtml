@@ -2,7 +2,9 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { VECTOR_COVERAGE_FLOOR } from "@memhtml/index"
 import {
+  DEFAULT_OPENAI_PROMPT_CACHE,
   DEFAULT_PROXY_MODEL_PREFIX,
+  OPENAI_PROMPT_CACHE_VAR,
   PROXY_API_KEY_VAR,
   PROXY_BASE_URL_VAR,
   PROXY_MODEL_MAP_VAR,
@@ -117,6 +119,12 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
     description:
       "`from=to` pairs, comma-separated, naming single models to the proxy by exact id when the prefix rule does not fit: `cohere.embed-v4:0=cohere-embed-v4`. A mapped id is sent verbatim, without the prefix; every other id follows `MEMHTML_LLM_MODEL_PREFIX`. Read only when `MEMHTML_LLM_BASE_URL` is set.",
     fallback: null
+  },
+  {
+    name: OPENAI_PROMPT_CACHE_VAR,
+    description:
+      "How the OpenAI sleep model's chat-completions requests ask Bedrock to treat prompt caching. `off` sends `prompt_cache_options: {mode: \"explicit\"}` with no breakpoints, which Bedrock documents as no prompt caching and no cache-write charge; `implicit` sends no caching field and leaves the endpoint's default in place. Off by default because Bedrock's implicit mode for GPT-5.6 writes the whole prompt to the cache at 1.25x the input rate on every call that clears the 1,024-token minimum, and the sleep prompts share no prefix long enough to ever be read back. Set `implicit` for an OpenAI-compatible endpoint that rejects the Bedrock-only field. Read on the direct path and the proxy path alike. Any other value fails at startup naming this variable.",
+    fallback: DEFAULT_OPENAI_PROMPT_CACHE
   },
   {
     name: "MEMHTML_EMBED",
