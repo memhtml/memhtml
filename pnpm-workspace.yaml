@@ -101,8 +101,6 @@ allowBuilds:
   # sufficient for this repo, so each is denied. pnpm refuses to install while any of them
   # is undecided, which is why absent packages must be answered rather than ignored.
   #
-  # msgpackr-extract: reached through effect -> msgpackr.
-  #
   # @mongodb-js/zstd and node-liblzma: optional deps of just-bash, the pure-JS sandbox
   # backend `memhtml exec` runs scripts in (@memhtml/consolidator's mount composition). They accelerate zstd/xz decompression
   # inside that sandbox's virtual filesystem. The consolidator puts only plain-text JSONL
@@ -115,6 +113,5 @@ allowBuilds:
   # so denying the script leaves esbuild.transform() and `astro build` working — measured, both
   # exit 0. Denied like every other native accelerator here.
   "@mongodb-js/zstd": false
-  msgpackr-extract: false
   node-liblzma: false
   esbuild: false
