@@ -31,11 +31,11 @@
     "package:smoke:live": "pnpm package:assemble && pnpm package:lint && node scripts/smoke-package.mjs --live"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.13",
+    "@biomejs/biome": "2.5.14",
     "effect": "catalog:",
     "publint": "0.3.24",
     "tsdown": "0.23.0",
-    "turbo": "2.10.12",
+    "turbo": "2.10.13",
     "typescript": "7.0.2"
   }
 }
