@@ -53,7 +53,7 @@
     "node-html-parser": "9.0.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.13",
+    "@biomejs/biome": "2.5.14",
     "@effect/vitest": "catalog:",
     "@types/node": "26.6.1",
     "typescript": "7.0.2",

@@ -284,7 +284,7 @@ export const makeIndexRecorder = (db: DatabaseShape): IndexRecorderShape => ({
            excluded.length === 0
              ? ""
              : ` AND f.memory_type NOT IN (${excluded.map(() => "?").join(", ")})`
-}`,
+         }`,
         [...excluded]
       )
       const corpus = rows.flatMap((row) => {
