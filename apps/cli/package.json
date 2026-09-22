@@ -50,10 +50,10 @@
     "@memhtml/traces": "workspace:*",
     "effect": "catalog:",
     "just-bash": "3.4.2",
-    "node-html-parser": "9.0.4"
+    "node-html-parser": "9.0.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.14",
+    "@biomejs/biome": "2.5.13",
     "@effect/vitest": "catalog:",
     "@types/node": "26.6.1",
     "typescript": "7.0.2",

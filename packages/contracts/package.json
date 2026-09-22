@@ -57,7 +57,7 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.14",
+    "@biomejs/biome": "2.5.13",
     "@effect/vitest": "catalog:",
     "@types/node": "26.6.1",
     "fast-check": "catalog:",
