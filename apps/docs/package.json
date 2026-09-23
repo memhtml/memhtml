@@ -38,7 +38,7 @@
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
     "@axe-core/playwright": "^4.13.0",
-    "@biomejs/biome": "2.5.13",
+    "@biomejs/biome": "2.5.14",
     "@expo-google-fonts/tinos": "^0.4.2",
     "@lhci/cli": "^0.15.1",
     "@types/hast": "^3.0.5",

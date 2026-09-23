@@ -36,7 +36,7 @@
     "parse5": "8.0.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.13",
+    "@biomejs/biome": "2.5.14",
     "@effect/vitest": "catalog:",
     "@types/node": "26.6.2",
     "fast-check": "catalog:",
