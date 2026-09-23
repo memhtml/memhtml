@@ -54,7 +54,19 @@ export const RESPONSE_TYPES = [
   "integrations.list",
   "integrations.doctor",
   "integrations.shell",
-  "hook.output"
+  "hook.output",
+  // The v2 proof of concept (`docs/v2-poc.md`): the session family and the head family, appended in
+  // the order the spec's command table lists them, plus `session.rebased` for the rebase step the
+  // commit path hands back to the caller rather than retrying itself.
+  "session.started",
+  "session.appended",
+  "session.exec.report",
+  "session.committed",
+  "session.status",
+  "session.rebased",
+  "head.status",
+  "head.search",
+  "head.snapshot"
 ] as const
 
 export type ResponseType = (typeof RESPONSE_TYPES)[number]

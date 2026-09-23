@@ -149,6 +149,15 @@ Write what is durable, one fact per memory. A decision and its reason, a correct
 | `memhtml integrations doctor` | [host] | `--project` | `integrations.doctor` |
 | `memhtml integrations shell` | — | `--write` `--rc` | `integrations.shell` |
 | `memhtml hook` | <event> | `--host`* `--trace-root` `--limit` `--budget` | `hook.output` |
+| `memhtml session start` | — | `--id`* `--ref` | `session.started` |
+| `memhtml session put` | — | `--id`* `--file`* | `session.appended` |
+| `memhtml session exec` | — | `--id`* `--file` `--script` `--timeout-ms` | `session.exec.report` |
+| `memhtml session commit` | — | `--id`* `--message`* `--sync-worktree` | `session.committed` |
+| `memhtml session rebase` | — | `--id`* | `session.rebased` |
+| `memhtml session status` | — | `--id`* | `session.status` |
+| `memhtml head status` | — | — | `head.status` |
+| `memhtml head search` | <query> | `--limit` | `head.search` |
+| `memhtml head snapshot` | — | `--write` `--read` | `head.snapshot` |
 
 ### `memhtml manifest`
 
@@ -543,6 +552,68 @@ The engine every installed hook calls. Reads the host's hook payload on stdin, r
 - `--trace-root` (string) — Where this host writes transcripts, for the events that index them. Defaults to $MEMHTML_TRACE_ROOT.
 - `--limit` (int) — Hits to inject on a per-prompt recall. _(default `5`)_
 - `--budget` (int) — Character budget for the session-start context pack. _(default `3000`)_
+
+### `memhtml session start`
+
+Open a v2 session on the ref's tip: a pointer to that version plus an empty overlay log.
+
+- `--id` (string) — The session id: one path segment, letters, digits, `.`, `_`, `-`. State lives at .memhtml/sessions/<id>.idx (the session's git index) and <id>.json (its overlay log). _(**required**)_
+- `--ref` (string) — The ref commits land on. Defaults to refs/heads/main. A ref that does not exist yet (a curator's refs/heads/curate/<date>) starts from HEAD and is created by the first commit.
+
+### `memhtml session put`
+
+Append write ops to a session's overlay from a JSONL file in the shape `memhtml apply` takes.
+
+- `--id` (string) — The session to append to. _(**required**)_
+- `--file` (string) — JSONL of `write` ops, one object per line, the same fields `memhtml apply` accepts. `-` reads stdin. Each op is rendered to the file the store would write and lands at the path the store would choose. A malformed op or a reserved path refuses the whole call and appends nothing. _(**required**)_
+
+### `memhtml session exec`
+
+Run a script over the session's view (head plus overlay) in a writable sandbox and harvest its writes into the overlay.
+
+- `--id` (string) — The session whose view the script sees. _(**required**)_
+- `--file` (string) — The script, as a path on the HOST. Omit it, pass `--file -`, or a positional `-` to read stdin. Mutually exclusive with `--script`.
+- `--script` (string) — The script source, inline. Mutually exclusive with `--file` and with stdin.
+- `--timeout-ms` (int) — Wall-clock bound on the script. Exceeding it is `exitCode` 124 with `timedOut: true`. Capped at 600000. _(default `30000`)_
+
+### `memhtml session commit`
+
+Land the session's overlay on its ref as one commit, or report why it cannot: `refused` or `rebase-needed`.
+
+- `--id` (string) — The session to commit. _(**required**)_
+- `--message` (string) — The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer. _(**required**)_
+- `--sync-worktree` (boolean) — Move the shared index and working tree to the new commit when HEAD is the session's ref and the working tree is clean. Otherwise the working tree is left alone and `worktreeSynced` is false. _(default `false`)_
+
+### `memhtml session rebase`
+
+Move a session's base to its ref's tip, keeping every op. Run it after a `rebase-needed` commit outcome, then commit again.
+
+- `--id` (string) — The session to rebase. _(**required**)_
+
+### `memhtml session status`
+
+The session's base, ref, and overlay log as persisted, and whether the ref has moved past the base.
+
+- `--id` (string) — The session to describe. _(**required**)_
+
+### `memhtml head status`
+
+Build the corpus version at HEAD and report its sha, record count, skipped files, load time, and whether it came from a snapshot or from git.
+
+### `memhtml head search`
+
+Two-arm retrieval (BM25 plus recency, RRF-fused) over the version at HEAD. No index database.
+
+- `<query>` — Free text to rank against.
+
+- `--limit` (int) — Hits to return. _(default `10`)_
+
+### `memhtml head snapshot`
+
+Write the version at HEAD as .memhtml/snapshots/<sha>.arrow, the cold-start cache, or read that file back and report it.
+
+- `--write` (boolean) — Build the head from git and write its snapshot. Exactly one of --write / --read. _(default `false`)_
+- `--read` (boolean) — Open HEAD's snapshot and report its row count and sha. Exactly one of --write / --read. _(default `false`)_
 
 ## Error codes
 

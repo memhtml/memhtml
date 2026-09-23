@@ -290,7 +290,16 @@ const reindex = () =>
  * refuses `arc` at decode, before this function runs). `placementFor` already routes an arc to
  * `areas/arcs/`, so nothing downstream changes.
  */
-const toWriteInput = (params: WriteParams, at: string): Effect.Effect<WriteInput, InvalidMemory> =>
+/**
+ * A `WriteParams` as the store's `WriteInput`: the type decoded into the vocabulary, a task's status
+ * and due date decoded when present, and every absent optional dropped. Exported because `session put`
+ * renders the same bytes the store would write (`v2.ts`), and two decodes of one wire shape would
+ * drift at the first field either one added.
+ */
+export const toWriteInput = (
+  params: WriteParams,
+  at: string
+): Effect.Effect<WriteInput, InvalidMemory> =>
   Effect.gen(function* () {
     const memoryType = yield* decodeOperatorType(params.memoryType)
     const taskStatus =

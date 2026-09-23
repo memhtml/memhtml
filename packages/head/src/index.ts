@@ -5,7 +5,7 @@
  */
 
 export type { Indexes } from "./indexes.js"
-export { emptyIndexes, indexesOf, insertRecord, removeRecord } from "./indexes.js"
+export { emptyIndexes, indexesOf, insertRecord, removeRecord, viewOf } from "./indexes.js"
 export type { LexicalIndex } from "./lexical.js"
 export { STOP_WORDS, tokenize } from "./lexical.js"
 export { withOverlay } from "./overlay.js"

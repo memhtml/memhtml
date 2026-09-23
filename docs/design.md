@@ -418,7 +418,7 @@ Two thirds of active memories sit in `areas/inbox/`. Placement is decided at wri
 
 Retention triage put 2,851 of 2,955 scored memories in the compress band while compress processed 7 a night. The sixteen-phase pipeline disagrees with itself about the corpus: one phase says nearly everything should shrink and the next phase shrinks almost nothing.
 
-One 124 s `memory_search` holding the single SQLite writer blocked the nightly index. Every reader and every writer share one process and one database, so a slow read is a stalled write.
+One 124 s `memory_search` holding the single SQLite writer blocked the index update behind it. Every reader and every writer share one process and one database, so a slow read is a stalled write.
 
 ### Five clusters
 

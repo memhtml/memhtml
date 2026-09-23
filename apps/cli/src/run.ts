@@ -61,6 +61,7 @@ import * as ops from "./operations.js"
 import { publish } from "./publish.js"
 import { serveMcp } from "./serve.js"
 import { stateExport, stateImport } from "./state.js"
+import { runV2 } from "./v2.js"
 import { indexReport, sleepPhases, sleepRunReport, traceSessionsFlag } from "./views.js"
 
 export interface Parsed {
@@ -844,8 +845,11 @@ const EITHER_CLAIM_OR_ARTICLE: ReadonlySet<string> = new Set(["write", "correct"
  * rather than clamped, because just-bash treats a non-positive `maxJsTimeoutMs` as no bound at all, so
  * `--timeout-ms 0` would read as "be quick" and mean "run forever".
  */
+const SCRIPT_COMMANDS: ReadonlySet<string> = new Set(["exec", "session exec"])
+
 const execFlags = (parsed: Parsed): Failure | undefined => {
-  if (parsed.command !== "exec") return undefined
+  if (!SCRIPT_COMMANDS.has(parsed.command)) return undefined
+  const name = parsed.command
 
   const file = str(parsed, "file")
   const doors = [
@@ -856,11 +860,11 @@ const execFlags = (parsed: Parsed): Failure | undefined => {
   if (doors.length > 1) {
     return fail(
       "ERR_INVALID_FLAG",
-      "exec takes at most one of --file or --script, not both: two scripts cannot both be the one that runs",
+      `${name} takes at most one of --file or --script, not both: two scripts cannot both be the one that runs`,
       [
-        "memhtml exec --file traverse.mjs",
-        "memhtml exec --script 'console.log(1)'",
-        "cat s.mjs | memhtml exec"
+        `memhtml ${name} --file traverse.mjs`,
+        `memhtml ${name} --script 'console.log(1)'`,
+        `cat s.mjs | memhtml ${name}`
       ]
     )
   }
@@ -868,8 +872,8 @@ const execFlags = (parsed: Parsed): Failure | undefined => {
   if (doors.length === 1 && (parsed.positional[0] === "-" || file === "-")) {
     return fail(
       "ERR_INVALID_FLAG",
-      `exec cannot read stdin and ${doors[0]} in the same call: \`-\` names stdin as the script source`,
-      ["cat s.mjs | memhtml exec", `memhtml exec ${doors[0]} …`]
+      `${name} cannot read stdin and ${doors[0]} in the same call: \`-\` names stdin as the script source`,
+      [`cat s.mjs | memhtml ${name}`, `memhtml ${name} ${doors[0]} …`]
     )
   }
 
@@ -880,7 +884,7 @@ const execFlags = (parsed: Parsed): Failure | undefined => {
       return fail(
         "ERR_INVALID_FLAG",
         `--timeout-ms must be a positive integer of at most ${MAX_TIMEOUT_MS}: a non-positive bound is no bound at all, which is the one thing a sandbox may not be`,
-        [`memhtml exec --timeout-ms ${DEFAULT_TIMEOUT_MS}`]
+        [`memhtml ${name} --timeout-ms ${DEFAULT_TIMEOUT_MS}`]
       )
     }
   }
@@ -905,6 +909,35 @@ const applyFlags = (parsed: Parsed): Failure | undefined => {
       "apply cannot read stdin and --file in the same call: `-` names stdin as the op stream",
       ["cat ops.jsonl | memhtml apply", "memhtml apply --file ops.jsonl"]
     )
+  }
+  return undefined
+}
+
+/**
+ * `memhtml head snapshot` takes exactly one of `--write` / `--read`.
+ *
+ * Two boolean flags rather than one enum flag, so each direction is a word an agent already knows
+ * and neither is a default: a bare `head snapshot` that silently wrote a file, or silently read one,
+ * would do work the caller did not name. Both together is `ERR_INVALID_FLAG` (present, unusable as
+ * given) and neither is `ERR_MISSING_ARGUMENT` (absent), the two codes this function already uses for
+ * those two conditions.
+ */
+const headSnapshotFlags = (parsed: Parsed): Failure | undefined => {
+  if (parsed.command !== "head snapshot") return undefined
+  const write = bool(parsed, "write", false)
+  const read = bool(parsed, "read", false)
+  if (write && read) {
+    return fail(
+      "ERR_INVALID_FLAG",
+      "head snapshot takes exactly one of --write or --read, not both: a call cannot both build the cache and report it",
+      ["memhtml head snapshot --write", "memhtml head snapshot --read"]
+    )
+  }
+  if (!write && !read) {
+    return fail("ERR_MISSING_ARGUMENT", "head snapshot requires exactly one of --write or --read", [
+      "memhtml head snapshot --write",
+      "memhtml head snapshot --read"
+    ])
   }
   return undefined
 }
@@ -1011,7 +1044,12 @@ const strayBooleanFlags = (parsed: Parsed): Failure | undefined => {
  * token. Their own mutual-exclusion checks (`execFlags`, `applyFlags`) refuse a dash beside a real
  * `--file`.
  */
-const STDIN_MARKER_COMMANDS: ReadonlySet<string> = new Set(["apply", "exec"])
+const STDIN_MARKER_COMMANDS: ReadonlySet<string> = new Set([
+  "apply",
+  "exec",
+  "session exec",
+  "session put"
+])
 
 /**
  * Positionals past what the command declares.
@@ -1050,6 +1088,17 @@ const surplusArgs = (parsed: Parsed, spec: CommandSpec): Failure | undefined => 
 const ROOT_WITHOUT_LAYER: ReadonlySet<string> = new Set(["serve mcp", "exec"])
 
 /**
+ * The v2 arms (`v2.ts`) resolve the root themselves too: every `session` and `head` command reads
+ * git and a session's own files under `.memhtml/sessions/`, and none opens `index.db`, so the app
+ * layer is never built for them and an injected one is not a door to the root.
+ */
+const isV2Command = (command: string): boolean =>
+  command.startsWith("session ") || command.startsWith("head ")
+
+const resolvesRootItself = (command: string): boolean =>
+  ROOT_WITHOUT_LAYER.has(command) || isV2Command(command)
+
+/**
  * `MEMHTML_REFUSE_ENV_ROOT`: the environment is not a door to a repo.
  *
  * Every arm past the point this is called resolves a repo root, and without `--repo` that root is
@@ -1081,7 +1130,7 @@ const envRootRefusal = (
   if (!refusesEnvRoot()) return undefined
   const override = str(parsed, "repo")
   if (override !== undefined && override.trim() !== "") return undefined
-  if (layer !== undefined && !ROOT_WITHOUT_LAYER.has(parsed.command)) return undefined
+  if (layer !== undefined && !resolvesRootItself(parsed.command)) return undefined
   return fail(
     "ERR_REPO_REQUIRED",
     `${parsed.command} opens a repo and ${REFUSE_ENV_ROOT_VAR} is set, so the root is not read from MEMHTML_ROOT or ~/memhtml: name it with --repo`,
@@ -1241,6 +1290,9 @@ const validateAgainst = (parsed: Parsed, spec: CommandSpec): Failure | undefined
 
   const apply = applyFlags(parsed)
   if (apply !== undefined) return apply
+
+  const snapshot = headSnapshotFlags(parsed)
+  if (snapshot !== undefined) return snapshot
 
   // After the unknown-flag loop above, so reaching this with `--as-of` present means this command
   // declares it. The value check therefore needs no command list of its own.
@@ -1762,6 +1814,83 @@ export const run = async (
         ),
         // The worktree dance under `exec` runs through `makeGit`, whose dynamic `git.<command>`
         // spans answer "what took eight seconds" for a large corpus snapshot. Same opt-in gate.
+        Effect.provide(layerTelemetry({ serviceName: "memhtml-cli" })),
+        Effect.provideService(Logger.LogToStderr, true),
+        Effect.scoped
+      )
+    )
+  }
+
+  /**
+   * The v2 arms (`session …`, `head …`) do not build the app layer, for the reason `exec` gives: they
+   * read git and a session's own state files and never open `index.db`. See `v2.ts`.
+   *
+   * The two inputs that are files are read HERE so their failures are exit 2: `session exec`'s script
+   * takes the same three doors `exec` takes (`--script`, `--file`, stdin), and `session put`'s op
+   * stream is the same JSONL `apply` takes, decoded by the same `decodeApply` so a bad line 7 is
+   * refused naming line 7 with nothing appended.
+   */
+  if (isV2Command(parsed.command)) {
+    let script = ""
+    if (parsed.command === "session exec") {
+      const inline = str(parsed, "script")
+      const flagFile = str(parsed, "file")
+      const file = parsed.positional[0] === "-" || flagFile === "-" ? undefined : flagFile
+      const read =
+        inline !== undefined ? inline : file === undefined ? await stdin() : await readScript(file)
+      if (typeof read !== "string") return emit(read, EXIT_USAGE)
+      if (read.trim() === "") {
+        return emit(
+          fail(
+            "ERR_MISSING_ARGUMENT",
+            "session exec needs a script: a blank one would harvest nothing and report an empty answer rather than an error",
+            [
+              "memhtml session exec --id s1 --script 'console.log(1)'",
+              "memhtml session exec --id s1 --file curate.mjs"
+            ]
+          ),
+          EXIT_USAGE
+        )
+      }
+      script = read
+    }
+    let sessionOps: ReadonlyArray<ops.WriteParams> = []
+    if (parsed.command === "session put") {
+      const flagFile = str(parsed, "file")
+      const file = parsed.positional[0] === "-" || flagFile === "-" ? undefined : flagFile
+      const text = await applyText(file, stdin)
+      if (typeof text !== "string") return emit(text, EXIT_USAGE)
+      const decoded = decodeApply(text)
+      if (!decoded.ok) return emit(decoded.failure, EXIT_USAGE)
+      sessionOps = decoded.ops
+    }
+
+    const override = str(parsed, "repo")
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const configured = yield* MemhtmlRoot
+        const root = override !== undefined && override.trim() !== "" ? override.trim() : configured
+        return yield* runV2(parsed.command, {
+          root,
+          id: str(parsed, "id") ?? "",
+          ref: str(parsed, "ref"),
+          message: str(parsed, "message") ?? "",
+          syncWorktree: bool(parsed, "sync-worktree", false),
+          script,
+          timeoutMs: int(parsed, "timeout-ms"),
+          query: parsed.positional[0] ?? "",
+          limit: int(parsed, "limit"),
+          snapshotMode: bool(parsed, "read", false) ? "read" : "write",
+          ops: sessionOps
+        })
+      }).pipe(
+        Effect.map(([type, data]) => emit(succeed(type, data), EXIT_OK)),
+        Effect.catch((error) => Effect.succeed(emit(failureFor(error), EXIT_RUNTIME))),
+        Effect.catchCause((cause) =>
+          Effect.succeed(
+            emit(fail("ERR_UNKNOWN", `unexpected failure: ${String(cause)}`, []), EXIT_RUNTIME)
+          )
+        ),
         Effect.provide(layerTelemetry({ serviceName: "memhtml-cli" })),
         Effect.provideService(Logger.LogToStderr, true),
         Effect.scoped

@@ -229,7 +229,20 @@ describe("manifest", () => {
        */
       "task add",
       "task status",
-      "task list"
+      "task list",
+      /**
+       * The v2 proof of concept (`docs/v2-poc.md`, "CLI commands"): the session family and the head
+       * family, plus `session rebase`, the step the commit path hands back to the caller.
+       */
+      "session start",
+      "session put",
+      "session exec",
+      "session commit",
+      "session rebase",
+      "session status",
+      "head status",
+      "head search",
+      "head snapshot"
     ]
     const names = new Set(COMMANDS.map((command) => command.name))
     for (const name of required) expect(names.has(name)).toBe(true)

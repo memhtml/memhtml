@@ -421,6 +421,12 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
     `${JSON.stringify({ op: "write", title: "Applied through the batch door", body: "Batch writes share one commit.", type: "semantic", workspace: "checkout-api" })}\n`
   )
 
+  const sessionOpsFile = join(work, "session-ops.jsonl")
+  await writeFile(
+    sessionOpsFile,
+    `${JSON.stringify({ op: "write", title: "Landed through a v2 session", body: "A session's overlay lands as one commit through its own index file.", type: "semantic" })}\n`
+  )
+
   const execFile_ = join(work, "census.mjs")
   await writeFile(
     execFile_,
@@ -597,6 +603,32 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
           detail: `${String((row?.entries ?? []).length)} entries removed`
         }
       }
+    ],
+    /*
+     * The v2 proof of concept, in the order one session's life takes: start it on main, append a put
+     * from JSONL, run a script over head plus overlay, read it back, commit it with the working tree
+     * following (HEAD is main and the tree is clean here, so `worktreeSynced` is the branch that runs),
+     * and rebase it. The head commands run after the commit so the snapshot they write and read is of a
+     * tree that holds a session's commit.
+     */
+    ["session start", ["session", "start", "--id", "smoke"]],
+    ["session put", ["session", "put", "--id", "smoke", "--file", sessionOpsFile]],
+    ["session exec", ["session", "exec", "--id", "smoke", "--file", execFile_]],
+    ["session status", ["session", "status", "--id", "smoke"]],
+    [
+      "session commit",
+      ["session", "commit", "--id", "smoke", "--message", "smoke session", "--sync-worktree"],
+      env,
+      (answer) => ({ ok: answer.data?.kind === "committed", detail: answer.data?.kind })
+    ],
+    ["session rebase", ["session", "rebase", "--id", "smoke"]],
+    ["head status", ["head", "status"]],
+    ["head search", ["head", "search", "VIP revert"]],
+    [
+      "head snapshot",
+      ["head", "snapshot", "--write"],
+      env,
+      (answer) => ({ ok: answer.data?.rows > 0, detail: `rows ${String(answer.data?.rows)}` })
     ],
     // Last: it `git mv`s a memory into archive/, which every command above would rather read.
     ["archive", ["archive", pathA, "--reason", "superseded by the corrected memory"]]

@@ -59,7 +59,7 @@ const fixture = async () => {
     }),
     memory("areas/inbox/postgres-vacuum.html", {
       title: "Postgres vacuum",
-      claim: "Autovacuum runs nightly on the ledger database.",
+      claim: "Autovacuum runs each evening on the ledger database.",
       at: "2026-06-01T00:00:00Z"
     }),
     memory("archive/2025/areas/inbox/kafka-old.html", {

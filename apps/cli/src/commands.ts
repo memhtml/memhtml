@@ -1298,6 +1298,189 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       "memhtml hook user-prompt-submit --host codex --limit 3",
       "memhtml hook pre-compact --host claude --trace-root ~/.claude"
     ]
+  },
+  /**
+   * The v2 proof of concept (`docs/v2-poc.md`): a session is a pointer to one corpus version plus an
+   * overlay log of its own operations, and a commit is mechanical (validate, check disjointness
+   * against the ref, mark frame-key contradictions, write a tree through the session's own git index,
+   * compare-and-swap the ref). None of these commands opens `index.db`: the head is built from git or
+   * from a columnar snapshot on every call, and `head status` says which.
+   *
+   * `--id` is required everywhere because the session's state lives under `.memhtml/sessions/<id>`
+   * and there is no ambient current session. A commit that finds the ref moved over a path it touched
+   * answers `rebase-needed` rather than retrying, so `session rebase` is its own command and the
+   * caller owns the loop.
+   */
+  {
+    name: "session start",
+    summary:
+      "Open a v2 session on the ref's tip: a pointer to that version plus an empty overlay log.",
+    args: [],
+    flags: [
+      {
+        name: "id",
+        type: "string",
+        description:
+          "The session id: one path segment, letters, digits, `.`, `_`, `-`. State lives at .memhtml/sessions/<id>.idx (the session's git index) and <id>.json (its overlay log).",
+        required: true
+      },
+      {
+        name: "ref",
+        type: "string",
+        description:
+          "The ref commits land on. Defaults to refs/heads/main. A ref that does not exist yet (a curator's refs/heads/curate/<date>) starts from HEAD and is created by the first commit."
+      }
+    ],
+    responseTypes: ["session.started"],
+    examples: [
+      "memhtml session start --id s1",
+      "memhtml session start --id curate-2026-09-23 --ref refs/heads/curate/2026-09-23"
+    ]
+  },
+  {
+    name: "session put",
+    summary:
+      "Append write ops to a session's overlay from a JSONL file in the shape `memhtml apply` takes.",
+    args: [],
+    flags: [
+      { name: "id", type: "string", description: "The session to append to.", required: true },
+      {
+        name: "file",
+        type: "string",
+        description:
+          "JSONL of `write` ops, one object per line, the same fields `memhtml apply` accepts. `-` reads stdin. Each op is rendered to the file the store would write and lands at the path the store would choose. A malformed op or a reserved path refuses the whole call and appends nothing.",
+        required: true
+      }
+    ],
+    responseTypes: ["session.appended"],
+    examples: ["memhtml session put --id s1 --file ops.jsonl"]
+  },
+  {
+    name: "session exec",
+    summary:
+      "Run a script over the session's view (head plus overlay) in a writable sandbox and harvest its writes into the overlay.",
+    args: [],
+    flags: [
+      {
+        name: "id",
+        type: "string",
+        description: "The session whose view the script sees.",
+        required: true
+      },
+      {
+        name: "file",
+        type: "string",
+        description:
+          "The script, as a path on the HOST. Omit it, pass `--file -`, or a positional `-` to read stdin. Mutually exclusive with `--script`."
+      },
+      {
+        name: "script",
+        type: "string",
+        description: "The script source, inline. Mutually exclusive with `--file` and with stdin."
+      },
+      {
+        name: "timeout-ms",
+        type: "int",
+        description:
+          "Wall-clock bound on the script. Exceeding it is `exitCode` 124 with `timedOut: true`. Capped at 600000.",
+        default: 30000
+      }
+    ],
+    responseTypes: ["session.exec.report"],
+    examples: [
+      "memhtml session exec --id s1 --file curate.mjs",
+      "memhtml session exec --id s1 --script 'console.log(1)' --timeout-ms 5000"
+    ]
+  },
+  {
+    name: "session commit",
+    summary:
+      "Land the session's overlay on its ref as one commit, or report why it cannot: `refused` or `rebase-needed`.",
+    args: [],
+    flags: [
+      { name: "id", type: "string", description: "The session to commit.", required: true },
+      {
+        name: "message",
+        type: "string",
+        description:
+          "The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer.",
+        required: true
+      },
+      {
+        name: "sync-worktree",
+        type: "boolean",
+        description:
+          "Move the shared index and working tree to the new commit when HEAD is the session's ref and the working tree is clean. Otherwise the working tree is left alone and `worktreeSynced` is false.",
+        default: false
+      }
+    ],
+    responseTypes: ["session.committed"],
+    examples: [
+      "memhtml session commit --id s1 --message 'three facts about the checkout api'",
+      "memhtml session commit --id s1 --message 'curated' --sync-worktree"
+    ]
+  },
+  {
+    name: "session rebase",
+    summary:
+      "Move a session's base to its ref's tip, keeping every op. Run it after a `rebase-needed` commit outcome, then commit again.",
+    args: [],
+    flags: [{ name: "id", type: "string", description: "The session to rebase.", required: true }],
+    responseTypes: ["session.rebased"],
+    examples: ["memhtml session rebase --id s1"]
+  },
+  {
+    name: "session status",
+    summary:
+      "The session's base, ref, and overlay log as persisted, and whether the ref has moved past the base.",
+    args: [],
+    flags: [
+      { name: "id", type: "string", description: "The session to describe.", required: true }
+    ],
+    responseTypes: ["session.status"],
+    examples: ["memhtml session status --id s1"]
+  },
+  {
+    name: "head status",
+    summary:
+      "Build the corpus version at HEAD and report its sha, record count, skipped files, load time, and whether it came from a snapshot or from git.",
+    args: [],
+    flags: [],
+    responseTypes: ["head.status"],
+    examples: ["memhtml head status"]
+  },
+  {
+    name: "head search",
+    summary:
+      "Two-arm retrieval (BM25 plus recency, RRF-fused) over the version at HEAD. No index database.",
+    args: [{ name: "query", description: "Free text to rank against.", required: true }],
+    flags: [{ name: "limit", type: "int", description: "Hits to return.", default: 10 }],
+    responseTypes: ["head.search"],
+    examples: ["memhtml head search 'vip drain' --limit 5"]
+  },
+  {
+    name: "head snapshot",
+    summary:
+      "Write the version at HEAD as .memhtml/snapshots/<sha>.arrow, the cold-start cache, or read that file back and report it.",
+    args: [],
+    flags: [
+      {
+        name: "write",
+        type: "boolean",
+        description:
+          "Build the head from git and write its snapshot. Exactly one of --write / --read.",
+        default: false
+      },
+      {
+        name: "read",
+        type: "boolean",
+        description:
+          "Open HEAD's snapshot and report its row count and sha. Exactly one of --write / --read.",
+        default: false
+      }
+    ],
+    responseTypes: ["head.snapshot"],
+    examples: ["memhtml head snapshot --write", "memhtml head snapshot --read"]
   }
 ]
 

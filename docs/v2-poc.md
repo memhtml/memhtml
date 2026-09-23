@@ -4,7 +4,7 @@ Branch `v2-poc`. This document is the spec every implementer on the branch reads
 
 ## Why
 
-Three measurements on the live store (2026-09-22, 8,213 files, 2,216 commits) motivate the change. Two thirds of active memories sit in `areas/inbox/` because placement is decided at write time and retrieval never reads paths. Retention triage put 2,851 of 2,955 scored memories in the compress band while compress processed 7 a night, so the sixteen-phase pipeline disagrees with itself about the corpus. One 124 s `memory_search` holding the single SQLite writer blocked the nightly index, because every reader and every writer share one process and one database.
+Three measurements on the live store (2026-09-22, 8,213 files, 2,216 commits) motivate the change. Two thirds of active memories sit in `areas/inbox/` because placement is decided at write time and retrieval never reads paths. Retention triage put 2,851 of 2,955 scored memories in the compress band while compress processed 7 a night, so the sixteen-phase pipeline disagrees with itself about the corpus. One 124 s `memory_search` holding the single SQLite writer blocked the index update behind it, because every reader and every writer share one process and one database.
 
 The v2 shape keeps what the benchmark campaign and the filesystem-memory literature both support: git as the system of record, one fact per file, the closed HTML vocabulary, and a human at the merge of curation. It changes how the corpus is held in memory, how a session writes, and how conflicts are settled.
 
@@ -57,6 +57,12 @@ Rules:
 - `searchHead` fuses a lexical arm (BM25 over title plus claim plus body, or a simpler TF-IDF, stated in a comment) and a recency arm (`eventAt ?? updatedAt`) with RRF k=60, weights 1.0 and 0.5, over active records only. Ranking is deterministic.
 - `withOverlay` applies ops in order: `put` parses and inserts, `archive` moves the record to `to` with `archived: true`, `link` re-parses the file with the edge added (use `@memhtml/html` `addLink`, whose head-only splice leaves the content hash unchanged). The result is a `HeadView` whose `sha` is the base's.
 - Census tests: a generated fixture of at least 300 files (`@memhtml/eval` `gen-fixture` writes one; or build one inline from `renderTemplate`) loaded through a real temp git repo, asserting the record count equals the `ls-tree` count minus the skipped count, computed independently.
+
+Deltas landed, where the implementation departs from the contract above:
+
+- `advanceHead` reads the changed paths with `git diff-tree -r -z --name-only --no-renames <from> <to>` through `GitShape.run` plus `parseNulPathList`, rather than the store's `diffTreeNames`. The two trees are compared directly, so a range of many commits costs one subprocess, and a rename contributes both of its paths.
+- `loadHead` reports `skipped` (a count) and `skippedFiles` (path plus the parser's reason), so a census can name what it left out.
+- `README.html` at the repository root is skipped by design: the scaffold writes it memory-shaped, it predates the format's constraints, and `isCandidatePath` admits it so the skip is counted rather than hidden.
 
 ## `@memhtml/session`
 
@@ -124,6 +130,14 @@ Tests, all against a real temp git repo created with `git init -b main` and the 
 - `updateRef` race: advance the ref by hand between validation and update, assert `rebase-needed`.
 - Every guard is mutation-verified: the test file states, per guard, the one-line change that makes it fail (a comment naming the function and condition), and the suite was run once with that change applied.
 
+Deltas landed, where the implementation departs from the contract above:
+
+- `Session` carries `root` (the repository root). It is not persisted: the log is found by root plus id, so the two cannot disagree.
+- `CommitOutcome.committed` carries `worktreeSynced: boolean`, so a caller can tell a commit whose working tree followed from one whose working tree was left alone.
+- `Plumbing` gains `headRef()` (the branch `HEAD` points at, or `null` when detached) and `worktreeStatus()` (`status --porcelain --untracked-files=no` over the shared index). Both read the shared index, and step 6 reads them before the ref moves.
+- `commitSession` takes an optional `archivedAt`, the instant archive ops stamp, so a test can pin it. It defaults to now.
+- `saveSession` is exported, so a caller that rebased can persist the moved base without appending an op.
+
 ## `@memhtml/snapshot`
 
 Owns `packages/snapshot`. Depends on contracts and `apache-arrow`.
@@ -157,12 +171,13 @@ Add to `COMMANDS`, `RESPONSE_TYPES`, and `dispatch`, then regenerate `AGENTS.md`
 | `session put`    | `--id`, `--file` (JSONL of `write` ops as `apply` takes) | `session.appended`                                 |
 | `session exec`   | `--id`, `--script` or `--file`, `--timeout-ms`           | `session.exec.report`                              |
 | `session commit` | `--id`, `--message`, `--sync-worktree`                   | `session.committed` (data carries `CommitOutcome`) |
+| `session rebase` | `--id`                                                   | `session.rebased`                                  |
 | `session status` | `--id`                                                   | `session.status`                                   |
 | `head status`    |                                                          | `head.status` (sha, records, skipped, load ms)     |
 | `head search`    | `query`, `--limit`                                       | `head.search`                                      |
 | `head snapshot`  | `--write` / `--read`                                     | `head.snapshot`                                    |
 
-The head is loaded per invocation in this proof of concept: from the snapshot at `.memhtml/snapshots/<sha>.arrow` when one exists for `HEAD`, else from git, and `head status` reports which. A long-lived head process is deferred.
+`session rebase` is the caller's half of the retry loop: `session commit` answers `rebase-needed` and never retries on its own, so a caller reloads the base with `session rebase` and commits again, or reads the `refused` that follows and decides. The head is loaded per invocation in this proof of concept: from the snapshot at `.memhtml/snapshots/<sha>.arrow` when one exists for `HEAD`, else from git, and `head status` reports which. A long-lived head process is deferred.
 
 ## Integration test (integrator)
 

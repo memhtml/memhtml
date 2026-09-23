@@ -1,7 +1,4 @@
 import { readFile } from "node:fs/promises"
-import { createRequire } from "node:module"
-import { dirname, resolve } from "node:path"
-import { fileURLToPath } from "node:url"
 
 import type { HeadView, OverlayOp } from "@memhtml/contracts"
 import { StorageFailure } from "@memhtml/contracts/errors"
@@ -11,11 +8,17 @@ import { Effect } from "effect"
 import type { InMemoryFs as InMemoryFsShape } from "just-bash"
 
 import {
+  ATOB_BOOTSTRAP,
   CORPUS_MOUNT,
   cutOffByTheRuntime,
   DEFAULT_TIMEOUT_MS,
   type ExecReport,
+  GUEST_LIB,
+  GUEST_SCRIPT,
+  guestHelperPath,
   MAX_TIMEOUT_MS,
+  parserSourcePath,
+  SHELL_TIMEOUT_GRACE_MS,
   withBridgeRetry
 } from "./exec.js"
 
@@ -42,53 +45,18 @@ import {
  *   generated `index.html` or `sitemap.xml`, a vanished file with no archive twin, and a vanished file
  *   whose twin holds a different article.
  *
- * ## Reuse and duplication
+ * ## Reuse
  *
- * The bridge-fault classification and retry loop, the timeout classifier, the mount path, and the
- * report shape are imported from `./exec.ts`. Three things exec.ts does not export are restated here
- * byte-for-byte in intent: the `atob` bootstrap, the guest helper's host path, and the parser's host
- * path ({@link ATOB_BOOTSTRAP}, {@link guestHelperPath}, {@link parserSourcePath}). Exporting them
- * from exec.ts would remove the duplication; that is a shared-file change and is requested rather
- * than made. `apps/consolidator/src/mount.ts`'s `mountReadOnlyRoots` is not used because its one
- * job is to put a HOST directory into the guest read-only, and this runtime has neither a host
- * directory nor a read-only mount.
+ * The bridge-fault classification and retry loop, the timeout classifier, the mount path, the report
+ * shape, the `atob` bootstrap, the guest paths, and the two host paths (the guest helper and the
+ * parser bundle) are all imported from `./exec.ts`. Nothing about the sandbox is restated here, so
+ * the two runtimes cannot drift on how a guest is built, and this module resolves no path from its
+ * own module location: the packaging census (`tests-integration/tests/packaging.test.ts`) names
+ * `exec.ts` as the one place `guest/corpus.mjs` and `node-html-parser` are resolved.
+ * `apps/consolidator/src/mount.ts`'s `mountReadOnlyRoots` is not used because its one job is to put
+ * a HOST directory into the guest read-only, and this runtime has neither a host directory nor a
+ * read-only mount.
  */
-
-/** Where the seeded modules live. Same paths as `exec.ts`, so the preloaded helper resolves its import. */
-const GUEST_LIB = "/workspace/lib"
-const GUEST_SCRIPT = "/workspace/script.mjs"
-
-/** The margin between the JS bound and the shell bound; see `exec.ts` for the measured table. */
-const SHELL_TIMEOUT_GRACE_MS = 2_000
-
-/**
- * The `atob` shim `exec.ts` installs through `javascript.bootstrap`. QuickJS has no base64 builtins
- * and `node-html-parser` decodes a base64 entity table at load, so without this every script fails at
- * `import`. Duplicated from `exec.ts`, which does not export it.
- */
-const ATOB_BOOTSTRAP = `globalThis.atob = globalThis.atob || function (encoded) {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-  let decoded = "", bits = 0, accumulator = 0
-  for (const character of String(encoded).replace(/=+$/, "")) {
-    const value = alphabet.indexOf(character)
-    if (value < 0) continue
-    accumulator = (accumulator << 6) | value
-    bits += 6
-    if (bits >= 8) { bits -= 8; decoded += String.fromCharCode((accumulator >> bits) & 0xff) }
-  }
-  return decoded
-}
-`
-
-/** `apps/cli/guest/corpus.mjs`, resolved from `dist/`, exactly as `exec.ts` resolves it. */
-const guestHelperPath = (): string =>
-  resolve(dirname(fileURLToPath(import.meta.url)), "..", "guest", "corpus.mjs")
-
-/** `node-html-parser`'s self-contained ESM bundle, read as text and never imported on the host. */
-const parserSourcePath = (): string =>
-  createRequire(import.meta.url)
-    .resolve("node-html-parser")
-    .replace(/index\.cjs$/, "index.mjs")
 
 /** What `session exec` reports: the script's run plus what the harvester made of the tree it left. */
 export interface SessionExecReport extends ExecReport {

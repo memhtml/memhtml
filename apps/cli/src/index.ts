@@ -120,4 +120,21 @@ export * from "./operations.js"
 export { claimFromProse, proseTail } from "./prose.js"
 export { type Parsed, parseArgv, type RunResult, run } from "./run.js"
 export { MCP_BIN_VAR, mcpEntryPoint, type ServeResult, serveMcp } from "./serve.js"
+export {
+  type HeadStats,
+  headSearch,
+  headSnapshot,
+  headStats,
+  headStatus,
+  type LoadedHead,
+  loadHeadAt,
+  runV2,
+  sessionCommit,
+  sessionExec,
+  sessionPut,
+  sessionRebase,
+  sessionStart,
+  sessionStatus,
+  type V2Input
+} from "./v2.js"
 export { indexReport, sleepPhases, sleepRunReport } from "./views.js"

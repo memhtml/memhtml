@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process"
-import { Context, Effect, Layer, Schema } from "effect"
+import { GitFailure } from "@memhtml/contracts/errors"
+import { Context, Effect, Layer } from "effect"
 
 import {
   type ChangedPath,
@@ -27,16 +28,12 @@ import {
  */
 
 /**
- * A git subprocess exited non-zero, or could not be spawned. `command` is the subcommand
- * name only, and never the full argv, because arguments carry memory paths and commit subjects
- * carry memory titles, and a `GitFailure` is returned to an agent through a tool response.
- * The stderr text goes to `Effect.logError` at the boundary below instead of into the payload.
+ * The typed failure every method below raises. Declared in `@memhtml/contracts` (`errors.ts`) so the
+ * session package, which spawns git itself, raises the same class; re-exported here so every
+ * `import { GitFailure } from "@memhtml/store"` keeps resolving. The stderr text goes to
+ * `Effect.logError` at the boundary below instead of into the payload.
  */
-export class GitFailure extends Schema.TaggedError<GitFailure>()("GitFailure", {
-  command: Schema.String,
-  /** The process exit code, or `null` when the process never started. */
-  exitCode: Schema.NullOr(Schema.Int)
-}) {}
+export { GitFailure }
 
 /** What {@link GitShape.commit} stamps below the subject line. */
 export interface Trailers {

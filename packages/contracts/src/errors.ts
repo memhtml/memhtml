@@ -11,6 +11,23 @@ export class StorageFailure extends Schema.TaggedError<StorageFailure>()("Storag
 }) {}
 
 /**
+ * A git subprocess exited non-zero, or could not be spawned. `command` is the subcommand name
+ * only, never the full argv, because arguments carry memory paths and commit subjects carry memory
+ * titles, and a `GitFailure` is returned to an agent through a tool response. The stderr text goes
+ * to `Effect.logError` at the spawning boundary instead of into the payload.
+ *
+ * Declared here rather than in `@memhtml/store` because two packages spawn git: the store through
+ * its `Git` service, and `@memhtml/session` through its own `execFile` (it needs `GIT_INDEX_FILE`,
+ * which the store scrubs). One class means one `_tag`, so the CLI's `ERR_GIT` mapping and an
+ * `instanceof` check hold for either producer.
+ */
+export class GitFailure extends Schema.TaggedError<GitFailure>()("GitFailure", {
+  command: Schema.String,
+  /** The process exit code, or `null` when the process never started. */
+  exitCode: Schema.NullOr(Schema.Int)
+}) {}
+
+/**
  * Two writers touched the same file. `ourSha` is the blob sha this process wrote
  * from, `theirSha` the blob sha now in the tree. Recovery belongs to the caller:
  * re-read the current content and reapply.

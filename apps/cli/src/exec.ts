@@ -32,9 +32,13 @@ import { type Failure, fail } from "./envelope.js"
 /** Where the corpus appears in the guest. Matches `ROOT` in `apps/cli/guest/corpus.mjs`. */
 export const CORPUS_MOUNT = "/mnt/memhtml"
 
-/** Where the seeded modules live. `/workspace` is writable; the corpus mount is not. */
-const GUEST_LIB = "/workspace/lib"
-const GUEST_SCRIPT = "/workspace/script.mjs"
+/**
+ * Where the seeded modules live. `/workspace` is writable; the corpus mount is not. Exported so
+ * `session-exec.ts` seeds the same paths and the preloaded helper resolves its import in both
+ * runtimes.
+ */
+export const GUEST_LIB = "/workspace/lib"
+export const GUEST_SCRIPT = "/workspace/script.mjs"
 
 /**
  * The default wall-clock bound on the script, in milliseconds.
@@ -63,7 +67,7 @@ export const MAX_TIMEOUT_MS = 600_000
  * value. It is the margin that decides which of the two bounds reports, and therefore whether `stderr`
  * carries the message naming the limit. See {@link runExec} for the measured table.
  */
-const SHELL_TIMEOUT_GRACE_MS = 2_000
+export const SHELL_TIMEOUT_GRACE_MS = 2_000
 
 /**
  * The `atob` shim, installed through just-bash's `javascript.bootstrap` before any guest module loads.
@@ -78,7 +82,7 @@ const SHELL_TIMEOUT_GRACE_MS = 2_000
  * Base64 only, no `btoa`. The parser decodes and never encodes, and a shim for a capability nothing
  * uses is a capability added to the guest for free.
  */
-const ATOB_BOOTSTRAP = `globalThis.atob = globalThis.atob || function (encoded) {
+export const ATOB_BOOTSTRAP = `globalThis.atob = globalThis.atob || function (encoded) {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
   let decoded = "", bits = 0, accumulator = 0
   for (const character of String(encoded).replace(/=+$/, "")) {
@@ -103,7 +107,7 @@ const ATOB_BOOTSTRAP = `globalThis.atob = globalThis.atob || function (encoded) 
  * Resolved from `import.meta.url` rather than from `process.cwd()`, so `memhtml exec` works from any
  * directory. `dist/exec.js` sits one level under the package root, which is where `guest/` is.
  */
-const guestHelperPath = (): string =>
+export const guestHelperPath = (): string =>
   resolve(dirname(fileURLToPath(import.meta.url)), "..", "guest", "corpus.mjs")
 
 /**
@@ -131,7 +135,7 @@ const guestHelperPath = (): string =>
  * host at all, only read as text, and a static `import` would put a 200 KB module on the graph of
  * every `memhtml` command to obtain a path.
  */
-const parserSourcePath = (): string =>
+export const parserSourcePath = (): string =>
   createRequire(import.meta.url)
     .resolve("node-html-parser")
     .replace(/index\.cjs$/, "index.mjs")
