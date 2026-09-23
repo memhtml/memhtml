@@ -150,6 +150,7 @@ Write what is durable, one fact per memory. A decision and its reason, a correct
 | `memhtml head status` | — | — | `head.status` |
 | `memhtml head search` | <query> | `--limit` | `head.search` |
 | `memhtml head snapshot` | — | `--write` `--read` | `head.snapshot` |
+| `memhtml curate merge` | <ref> | `--into` `--skip-gate` | `curate.merged` |
 
 ### `memhtml manifest`
 
@@ -564,6 +565,15 @@ Write the version at HEAD as .memhtml/snapshots/<sha>.arrow, the cold-start cach
 
 - `--write` (boolean) — Build the head from git and write its snapshot. Exactly one of --write / --read. _(default `false`)_
 - `--read` (boolean) — Open HEAD's snapshot and report its row count and sha. Exactly one of --write / --read. _(default `false`)_
+
+### `memhtml curate merge`
+
+Land a curator branch on its target: refuse unless the ref descends from --into, run the discrimination gate, then fast-forward --into to the ref with a compare-and-swap, bringing the checkout along when --into is HEAD.
+
+- `<ref>` — The curator branch, as `curate/2026-09-23` or `refs/heads/curate/2026-09-23`; `refs/heads/` is prepended when absent. Refused (ERR_INVALID_MEMORY) when it does not exist or is not a descendant of --into.
+
+- `--into` (string) — The branch to fast-forward, `refs/heads/` prepended when absent. When HEAD is this branch and the checkout is clean at every path the landing changes, the shared index and working tree move with it (`worktreeSynced: true`); an uncommitted edit at one of those paths is refused (ERR_DIRTY_TREE) and nothing moves. _(default `main`)_
+- `--skip-gate` (boolean) — Land without running the discrimination gate. A deliberate, logged override for a repository without the eval corpus, never a default. A failing gate is ERR_DISCRIMINATION_FAILED with its numbers in the message, and nothing moves. _(default `false`)_
 
 ## Error codes
 

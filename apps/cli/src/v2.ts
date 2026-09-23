@@ -1,9 +1,11 @@
 import { access } from "node:fs/promises"
+import { join } from "node:path"
 
 import type { HeadView, OverlayOp } from "@memhtml/contracts"
-import { InvalidMemory, StorageFailure } from "@memhtml/contracts/errors"
+import { DirtyTree, InvalidMemory, StorageFailure } from "@memhtml/contracts/errors"
 import { isValidMemoryPath, memoryPathFor } from "@memhtml/contracts/paths"
 import { filenameFor, slugify, withCollisionOrdinal } from "@memhtml/contracts/slug"
+import { type DiscriminationFailed, discriminationGate, type EvalOutcome } from "@memhtml/eval"
 import {
   emptyIndexes,
   insertRecord,
@@ -19,6 +21,7 @@ import {
   type CommitOutcome,
   commitSession,
   DEFAULT_REF,
+  makePlumbing,
   rebaseSession,
   resumeSession,
   saveSession,
@@ -37,7 +40,7 @@ import { runSessionExec } from "./session-exec.js"
 
 /**
  * The v2 proof-of-concept commands (`docs/v2-poc.md`, "CLI commands"): `session start|put|exec|
- * commit|rebase|status` and `head status|search|snapshot`.
+ * commit|rebase|status`, `head status|search|snapshot`, and the curation door `curate merge`.
  *
  * ## No app layer
  *
@@ -180,6 +183,16 @@ const baseShaFor = (root: string, ref: string): Effect.Effect<string, GitFailure
     return sha
   })
 
+/**
+ * A branch name as a full ref: `curate/2026-09-23` becomes `refs/heads/curate/2026-09-23`, and a
+ * name already under `refs/` is kept. Every v2 arm that takes a ref from the command line spells it
+ * this way, so `session start --ref curate/x` and `curate merge curate/x` name the same branch.
+ */
+export const qualifyRef = (name: string): string => {
+  const trimmed = name.trim()
+  return trimmed.startsWith("refs/") ? trimmed : `refs/heads/${trimmed}`
+}
+
 /** `HEAD`'s commit, or the refusal an unborn repository earns. */
 const headSha = (root: string): Effect.Effect<string, GitFailure | InvalidMemory> =>
   Effect.gen(function* () {
@@ -266,7 +279,8 @@ export const sessionStart = (input: {
   readonly force?: boolean | undefined
 }) =>
   Effect.gen(function* () {
-    const ref = input.ref === undefined || input.ref.trim() === "" ? DEFAULT_REF : input.ref.trim()
+    const ref =
+      input.ref === undefined || input.ref.trim() === "" ? DEFAULT_REF : qualifyRef(input.ref)
     const sha = yield* baseShaFor(input.root, ref)
     const head = yield* loadHeadAt(input.root, sha)
     const session = yield* startSession({
@@ -504,6 +518,151 @@ export const headSnapshot = (input: { readonly root: string; readonly mode: "wri
     return { mode: "read" as const, sha: snapshot.sha, path, rows: snapshot.records.length }
   })
 
+/** What `curate merge` reports about the gate it ran, or did not. */
+export interface GateReport {
+  /** False under `--skip-gate`; then `passed` is `null` and there is no `mrr`. */
+  readonly ran: boolean
+  /** True when it ran (a failing gate fails the command instead), `null` when it did not. */
+  readonly passed: boolean | null
+  readonly mode?: EvalOutcome["mode"]
+  readonly mrr?: number
+  readonly mrrFloor?: number
+  readonly probes?: number
+  readonly inversions?: number
+}
+
+/** What `curate merge` answers when the target moved. */
+export interface CurateMerged {
+  readonly ref: string
+  readonly into: string
+  /** The target's commit before the landing. */
+  readonly from: string
+  /** The curator branch's commit, and the target's after the landing. */
+  readonly to: string
+  /** False when `from` already equaled `to`: nothing to land, nothing moved. */
+  readonly moved: boolean
+  readonly gate: GateReport
+  /** True when HEAD is `into` and the shared index and working tree followed the ref. */
+  readonly worktreeSynced: boolean
+}
+
+/**
+ * The index file the merge's plumbing is built with. `curate merge` never reads or writes a session
+ * index (it moves a ref between two commits that already exist), so the file is never created; the
+ * plumbing wants a path because a session's commit path does.
+ */
+const MERGE_INDEX_FILE = "curate-merge.idx"
+
+/**
+ * `curate merge`: land a curator branch on its target (`docs/v2-poc.md`, "Curation door").
+ *
+ * The order is refusals first, gate second, movement last, so a call that fails leaves the
+ * repository exactly as it found it:
+ *
+ * 1. Both refs must resolve, and `ref` must be a descendant of `into` (`merge-base --is-ancestor`),
+ *    so the landing is a fast-forward and never a merge commit. A curator that started before `into`
+ *    moved rebases its session and commits again; this command does not settle that for it.
+ * 2. The discrimination gate (`@memhtml/eval`), in `fake` mode always: the gate measures the ranking
+ *    stack against its own generated fixture corpus, so a live-Bedrock run would make a merge
+ *    conditional on a network call and a credential. A failing gate fails this effect with the
+ *    gate's numbers, and nothing has moved yet. `skipGate` is a logged override for a checkout
+ *    without the eval corpus, and the report says the gate did not run.
+ * 3. When HEAD is `into`, the checkout follows BEFORE the ref moves, the way `commitSession` does it:
+ *    a dirty path among those the landing changes is `DirtyTree` and nothing moves; otherwise
+ *    `read-tree -m -u from to` brings the shared index and working tree to the new tree.
+ * 4. `update-ref into to from` as a compare-and-swap. A `raced` answer means another writer advanced
+ *    `into` between step 1 and now; the checkout is rolled back and the call refuses.
+ *
+ * `gate` is injectable so a test can drive a failing gate without an eval corpus that fails; the
+ * default is the real one.
+ */
+export const curateMerge = (input: {
+  readonly root: string
+  readonly ref: string
+  readonly into?: string | undefined
+  readonly skipGate?: boolean | undefined
+  readonly gate?: Effect.Effect<EvalOutcome, DiscriminationFailed> | undefined
+}): Effect.Effect<CurateMerged, GitFailure | InvalidMemory | DirtyTree | DiscriminationFailed> =>
+  Effect.gen(function* () {
+    const ref = qualifyRef(input.ref)
+    const into = qualifyRef(input.into ?? "main")
+    const git = makePlumbing({
+      root: input.root,
+      indexFile: join(input.root, ".memhtml", "sessions", MERGE_INDEX_FILE)
+    })
+
+    const to = yield* git.revParse(ref)
+    if (to === null) {
+      return yield* Effect.fail(
+        InvalidMemory.make({
+          reason: `curate merge: ${ref} does not exist, so there is nothing to land`
+        })
+      )
+    }
+    const from = yield* git.revParse(into)
+    if (from === null) {
+      return yield* Effect.fail(
+        InvalidMemory.make({
+          reason: `curate merge: ${into} does not exist, so there is no branch to fast-forward`
+        })
+      )
+    }
+    if (!(yield* git.isAncestor(from, to))) {
+      return yield* Effect.fail(
+        InvalidMemory.make({
+          reason: `curate merge: ${ref} (${to}) is not a descendant of ${into} (${from}), so landing it is not a fast-forward; rebase the curator session onto ${into} and commit again`
+        })
+      )
+    }
+
+    let gate: GateReport = { ran: false, passed: null }
+    if (input.skipGate === true) {
+      yield* Effect.logWarning(
+        `curate merge --skip-gate: landing ${ref} on ${into} without running discrimination`
+      )
+    } else {
+      const outcome = yield* input.gate ?? discriminationGate({ mode: "fake" })
+      gate = {
+        ran: true,
+        passed: outcome.passed,
+        mode: outcome.mode,
+        mrr: outcome.mrr,
+        mrrFloor: outcome.mrrFloor,
+        probes: outcome.probes,
+        inversions: outcome.inversions.length
+      }
+    }
+
+    if (from === to) {
+      return { ref, into, from, to, moved: false, gate, worktreeSynced: false }
+    }
+
+    const checkedOut = (yield* git.headRef()) === into
+    if (checkedOut) {
+      const paths = yield* git.diffTreePaths(from, to)
+      const dirty = yield* git.dirtyPaths(paths)
+      if (dirty.length > 0) return yield* Effect.fail(DirtyTree.make({ paths: dirty }))
+      yield* git.readTreeIntoWorktree(from, to)
+    }
+
+    const swapped = yield* git.updateRef(into, to, from)
+    if (swapped === "raced") {
+      if (checkedOut) {
+        yield* git
+          .readTreeIntoWorktree(to, from)
+          .pipe(Effect.catch(() => Effect.logWarning("curate merge: checkout not rolled back")))
+      }
+      const moved = yield* git.revParse(into)
+      return yield* Effect.fail(
+        InvalidMemory.make({
+          reason: `curate merge: ${into} moved from ${from} to ${moved ?? "an unresolved commit"} while the gate ran; nothing was landed, re-run to judge ${ref} against the new tip`
+        })
+      )
+    }
+
+    return { ref, into, from, to, moved: true, gate, worktreeSynced: checkedOut }
+  })
+
 /** What `run.ts` hands each arm, already decoded from argv. */
 export interface V2Input {
   readonly root: string
@@ -517,13 +676,20 @@ export interface V2Input {
   readonly limit?: number | undefined
   readonly snapshotMode: "write" | "read"
   readonly ops: ReadonlyArray<WriteParams>
+  /** `curate merge`'s positional: the curator branch. */
+  readonly target: string
+  readonly into?: string | undefined
+  readonly skipGate: boolean
 }
 
 /** One arm per command, each returning its response type beside its payload. */
 export const runV2 = (
   command: string,
   input: V2Input
-): Effect.Effect<readonly [ResponseType, unknown], GitFailure | InvalidMemory | StorageFailure> => {
+): Effect.Effect<
+  readonly [ResponseType, unknown],
+  GitFailure | InvalidMemory | StorageFailure | DirtyTree | DiscriminationFailed
+> => {
   switch (command) {
     case "session start":
       return sessionStart(input).pipe(Effect.map((data) => ["session.started", data] as const))
@@ -545,6 +711,13 @@ export const runV2 = (
       return headSnapshot({ root: input.root, mode: input.snapshotMode }).pipe(
         Effect.map((data) => ["head.snapshot", data] as const)
       )
+    case "curate merge":
+      return curateMerge({
+        root: input.root,
+        ref: input.target,
+        into: input.into,
+        skipGate: input.skipGate
+      }).pipe(Effect.map((data) => ["curate.merged", data] as const))
     default:
       return Effect.fail(InvalidMemory.make({ reason: `no v2 arm for ${command}` }))
   }

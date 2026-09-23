@@ -57,7 +57,7 @@ import * as ops from "./operations.js"
 import { publish } from "./publish.js"
 import { serveMcp } from "./serve.js"
 import { stateExport, stateImport } from "./state.js"
-import { runV2 } from "./v2.js"
+import { qualifyRef, runV2 } from "./v2.js"
 import { indexReport } from "./views.js"
 
 export interface Parsed {
@@ -773,6 +773,34 @@ const applyFlags = (parsed: Parsed): Failure | undefined => {
 }
 
 /**
+ * `memhtml curate merge <ref> --into <branch>`: the two names must differ and neither may be blank.
+ *
+ * Both are qualified the way the arm qualifies them (`refs/heads/` prepended when absent), so
+ * `curate merge main --into refs/heads/main` is the same self-landing as `curate merge main`. A
+ * self-landing would pass the descendant check trivially (every commit descends from itself) and
+ * report a merge that moved nothing, which is the shape of answer a caller mistakes for success. A
+ * blank `--into` would land on `refs/heads/`, a ref no branch can be.
+ */
+const curateMergeFlags = (parsed: Parsed): Failure | undefined => {
+  if (parsed.command !== "curate merge") return undefined
+  const into = str(parsed, "into")
+  if (into !== undefined && into.trim() === "") {
+    return fail("ERR_INVALID_FLAG", "--into names the branch to fast-forward and cannot be blank", [
+      "memhtml curate merge curate/2026-09-23 --into main"
+    ])
+  }
+  const target = parsed.positional[0]
+  if (target !== undefined && qualifyRef(target) === qualifyRef(into ?? "main")) {
+    return fail(
+      "ERR_INVALID_FLAG",
+      `curate merge ${target} would land ${qualifyRef(target)} on itself; the ref is the curator branch and --into is where it lands`,
+      ["memhtml curate merge curate/2026-09-23 --into main"]
+    )
+  }
+  return undefined
+}
+
+/**
  * `memhtml head snapshot` takes exactly one of `--write` / `--read`.
  *
  * Two boolean flags rather than one enum flag, so each direction is a word an agent already knows
@@ -970,7 +998,7 @@ const ROOT_WITHOUT_LAYER: ReadonlySet<string> = new Set(["serve mcp", "exec"])
  * layer is never built for them and an injected one is not a door to the root.
  */
 const isV2Command = (command: string): boolean =>
-  command.startsWith("session ") || command.startsWith("head ")
+  command.startsWith("session ") || command.startsWith("head ") || command.startsWith("curate ")
 
 const resolvesRootItself = (command: string): boolean =>
   ROOT_WITHOUT_LAYER.has(command) || isV2Command(command)
@@ -1173,6 +1201,9 @@ const validateAgainst = (parsed: Parsed, spec: CommandSpec): Failure | undefined
 
   const sessionId = sessionIdFlag(parsed)
   if (sessionId !== undefined) return sessionId
+
+  const curate = curateMergeFlags(parsed)
+  if (curate !== undefined) return curate
 
   // After the unknown-flag loop above, so reaching this with `--as-of` present means this command
   // declares it. The value check therefore needs no command list of its own.
@@ -1761,7 +1792,10 @@ export const run = async (
           query: parsed.positional[0] ?? "",
           limit: int(parsed, "limit"),
           snapshotMode: bool(parsed, "read", false) ? "read" : "write",
-          ops: sessionOps
+          ops: sessionOps,
+          target: parsed.positional[0] ?? "",
+          into: str(parsed, "into"),
+          skipGate: bool(parsed, "skip-gate", false)
         })
       }).pipe(
         Effect.map(([type, data]) => emit(succeed(type, data), EXIT_OK)),

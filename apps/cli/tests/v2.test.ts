@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -5,7 +6,7 @@ import { join } from "node:path"
 import { afterAll, describe, expect, it } from "vitest"
 
 import { COMMANDS } from "../src/commands.js"
-import { EXIT_USAGE, RESPONSE_TYPES } from "../src/envelope.js"
+import { EXIT_RUNTIME, EXIT_USAGE, RESPONSE_TYPES } from "../src/envelope.js"
 import { parseArgv, run, validate } from "../src/run.js"
 
 /**
@@ -20,6 +21,8 @@ import { parseArgv, run, validate } from "../src/run.js"
  * - drop the `sessionIdFlag(parsed)` call from `validate` -> "a session id is one path segment"
  *   (the traversal case answers undefined instead of exit 2).
  * - drop the blank-script check in the v2 branch of `run` -> "session exec refuses a blank script".
+ * - drop the `curateMergeFlags(parsed)` call from `validateAgainst` -> "curate merge refuses landing
+ *   a branch on itself" and "curate merge refuses a blank --into".
  */
 
 const parse = (stdout: string): Record<string, unknown> =>
@@ -47,7 +50,8 @@ describe("the v2 command table", () => {
     "session status",
     "head status",
     "head search",
-    "head snapshot"
+    "head snapshot",
+    "curate merge"
   ]
 
   it("declares every v2 command with at least one example and a response type the envelope knows", () => {
@@ -173,5 +177,76 @@ describe("a session id is one path segment, judged before any repo opens", () =>
 
   it("passes a plain id through to the command", () => {
     expect(validate(parseArgv(["session", "status", "--id", "curate-2026-09-23"]))).toBeUndefined()
+  })
+})
+
+describe("curate merge takes one ref and lands it somewhere else", () => {
+  it("requires the ref positional, as a missing-argument usage error", () => {
+    const failure = validate(parseArgv(["curate", "merge"]))
+    expect(failure?.code).toBe("ERR_MISSING_ARGUMENT")
+    expect(failure?.error).toContain("ref")
+  })
+
+  it("refuses landing a branch on itself, under either spelling of the name", () => {
+    for (const argv of [
+      ["curate", "merge", "main"],
+      ["curate", "merge", "refs/heads/main"],
+      ["curate", "merge", "curate/x", "--into", "refs/heads/curate/x"],
+      ["curate", "merge", "refs/heads/curate/x", "--into", "curate/x"]
+    ]) {
+      const failure = validate(parseArgv(argv))
+      expect(failure?.code, argv.join(" ")).toBe("ERR_INVALID_FLAG")
+      expect(failure?.error, argv.join(" ")).toContain("on itself")
+    }
+  })
+
+  it("refuses a blank --into", () => {
+    const failure = validate(parseArgv(["curate", "merge", "curate/x", "--into", "  "]))
+    expect(failure?.code).toBe("ERR_INVALID_FLAG")
+    expect(failure?.error).toContain("--into")
+  })
+
+  it("refuses a value-shaped token after --skip-gate, which is boolean", () => {
+    const failure = validate(parseArgv(["curate", "merge", "curate/x", "--skip-gate", "true"]))
+    expect(failure?.code).toBe("ERR_INVALID_FLAG")
+    expect(failure?.suggestions).toContain("memhtml curate merge --skip-gate=true")
+  })
+
+  it("refuses a second positional", () => {
+    const failure = validate(parseArgv(["curate", "merge", "curate/x", "curate/y"]))
+    expect(failure?.code).toBe("ERR_UNEXPECTED_ARGUMENT")
+  })
+
+  it("accepts a bare branch, a full ref, --into, and --skip-gate", () => {
+    expect(validate(parseArgv(["curate", "merge", "curate/2026-09-23"]))).toBeUndefined()
+    expect(
+      validate(parseArgv(["curate", "merge", "refs/heads/curate/2026-09-23", "--into", "main"]))
+    ).toBeUndefined()
+    expect(validate(parseArgv(["curate", "merge", "curate/x", "--skip-gate"]))).toBeUndefined()
+  })
+
+  it("refuses a ref that does not exist at exit 1 with ERR_INVALID_MEMORY once a repo is open", async () => {
+    const root = await scratch()
+    const git = (...args: ReadonlyArray<string>) =>
+      new Promise<void>((resolve, reject) => {
+        execFile("git", ["-C", root, ...args], (error) => (error ? reject(error) : resolve()))
+      })
+    await git("init", "-q", "-b", "main", ".")
+    await git(
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "seed"
+    )
+    const result = await run(["curate", "merge", "curate/absent", "--skip-gate", "--repo", root])
+    expect(result.exitCode).toBe(EXIT_RUNTIME)
+    const body = parse(result.stdout)
+    expect(body.code).toBe("ERR_INVALID_MEMORY")
+    expect(body.error).toContain("refs/heads/curate/absent")
   })
 })

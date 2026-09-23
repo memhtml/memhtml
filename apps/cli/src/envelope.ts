@@ -68,7 +68,9 @@ export const RESPONSE_TYPES = [
   "session.rebased",
   "head.status",
   "head.search",
-  "head.snapshot"
+  "head.snapshot",
+  // The curation door (`docs/v2-poc.md`, "Curation door"): a curator branch landed on its target.
+  "curate.merged"
 ] as const
 
 export type ResponseType = (typeof RESPONSE_TYPES)[number]

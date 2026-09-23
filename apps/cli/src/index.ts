@@ -111,6 +111,9 @@ export { claimFromProse, proseTail } from "./prose.js"
 export { type Parsed, parseArgv, type RunResult, run } from "./run.js"
 export { MCP_BIN_VAR, mcpEntryPoint, type ServeResult, serveMcp } from "./serve.js"
 export {
+  type CurateMerged,
+  curateMerge,
+  type GateReport,
   type HeadStats,
   headSearch,
   headSnapshot,
@@ -118,6 +121,7 @@ export {
   headStatus,
   type LoadedHead,
   loadHeadAt,
+  qualifyRef,
   runV2,
   sessionCommit,
   sessionExec,

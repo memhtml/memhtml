@@ -1369,6 +1369,48 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     ],
     responseTypes: ["head.snapshot"],
     examples: ["memhtml head snapshot --write", "memhtml head snapshot --read"]
+  },
+  /**
+   * The curation door (`docs/v2-poc.md`, "Curation door"). A curator is a session on a
+   * `curate/<date>` branch, and this is the one command that moves `main` to what it committed. It
+   * never merges: the branch must already be a descendant of the target, so the landing is a
+   * fast-forward, and the compare-and-swap on the target ref means a writer that advanced it in
+   * between makes the call refuse rather than overwrite.
+   */
+  {
+    name: "curate merge",
+    summary:
+      "Land a curator branch on its target: refuse unless the ref descends from --into, run the discrimination gate, then fast-forward --into to the ref with a compare-and-swap, bringing the checkout along when --into is HEAD.",
+    args: [
+      {
+        name: "ref",
+        description:
+          "The curator branch, as `curate/2026-09-23` or `refs/heads/curate/2026-09-23`; `refs/heads/` is prepended when absent. Refused (ERR_INVALID_MEMORY) when it does not exist or is not a descendant of --into.",
+        required: true
+      }
+    ],
+    flags: [
+      {
+        name: "into",
+        type: "string",
+        description:
+          "The branch to fast-forward, `refs/heads/` prepended when absent. When HEAD is this branch and the checkout is clean at every path the landing changes, the shared index and working tree move with it (`worktreeSynced: true`); an uncommitted edit at one of those paths is refused (ERR_DIRTY_TREE) and nothing moves.",
+        default: "main"
+      },
+      {
+        name: "skip-gate",
+        type: "boolean",
+        description:
+          "Land without running the discrimination gate. A deliberate, logged override for a repository without the eval corpus, never a default. A failing gate is ERR_DISCRIMINATION_FAILED with its numbers in the message, and nothing moves.",
+        default: false
+      }
+    ],
+    responseTypes: ["curate.merged"],
+    examples: [
+      "memhtml curate merge curate/2026-09-23",
+      "memhtml curate merge refs/heads/curate/2026-09-23 --into main",
+      "memhtml curate merge curate/2026-09-23 --skip-gate"
+    ]
   }
 ]
 

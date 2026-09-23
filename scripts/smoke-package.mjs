@@ -401,6 +401,12 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
     `${JSON.stringify({ op: "write", title: "Landed through a v2 session", body: "A session's overlay lands as one commit through its own index file.", type: "semantic" })}\n`
   )
 
+  const curatorOpsFile = join(work, "curator-ops.jsonl")
+  await writeFile(
+    curatorOpsFile,
+    `${JSON.stringify({ op: "write", title: "Landed through the curation door", body: "A curator session commits to its own branch and curate merge fast-forwards main to it.", type: "semantic" })}\n`
+  )
+
   const execFile_ = join(work, "census.mjs")
   await writeFile(
     execFile_,
@@ -593,6 +599,37 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
       })
     ],
     ["session rebase", ["session", "rebase", "--id", "smoke"]],
+    /*
+     * The curation door: a second session on the unborn `curate/smoke`, created by its commit (HEAD
+     * is main, so nothing follows: `worktreeSynced` is asserted false), then `curate merge` lands it
+     * on main with the checkout following. `--skip-gate` because the gate's own row above already
+     * runs the eval at a size this harness can afford, and here the subject is the landing. The
+     * refusals (a missing ref, a non-descendant) are the integration tier's; `envelope` throws on a
+     * non-zero exit, so a refusing row could not pass this table.
+     */
+    ["session start (curator)", ["session", "start", "--id", "curator", "--ref", "curate/smoke"]],
+    ["session put (curator)", ["session", "put", "--id", "curator", "--file", curatorOpsFile]],
+    [
+      "session commit (curator)",
+      ["session", "commit", "--id", "curator", "--message", "smoke curation"],
+      env,
+      (answer) => ({
+        ok: answer.data?.kind === "committed" && answer.data?.worktreeSynced === false,
+        detail: `${String(answer.data?.kind)} on ${String(answer.data?.ref)}`
+      })
+    ],
+    [
+      "curate merge",
+      ["curate", "merge", "curate/smoke", "--skip-gate"],
+      env,
+      (answer) => ({
+        ok:
+          answer.data?.moved === true &&
+          answer.data?.worktreeSynced === true &&
+          answer.data?.gate?.ran === false,
+        detail: `${String(answer.data?.from).slice(0, 7)} -> ${String(answer.data?.to).slice(0, 7)}, worktreeSynced ${String(answer.data?.worktreeSynced)}`
+      })
+    ],
     ["head status", ["head", "status"]],
     ["head search", ["head", "search", "VIP revert"]],
     [

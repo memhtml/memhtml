@@ -191,8 +191,22 @@ Add to `COMMANDS`, `RESPONSE_TYPES`, and `dispatch`, then regenerate `AGENTS.md`
 | `head status`    |                                                          | `head.status` (sha, records, skipped, load ms)     |
 | `head search`    | `query`, `--limit`                                       | `head.search`                                      |
 | `head snapshot`  | `--write` / `--read`                                     | `head.snapshot`                                    |
+| `curate merge`   | `ref`, `--into` (default `main`), `--skip-gate`          | `curate.merged`                                    |
 
 `session rebase` is the caller's half of the retry loop: `session commit` answers `rebase-needed` whenever the ref has moved past the session's base and never retries on its own, so a caller reloads the base with `session rebase` and commits again, or reads the `refused` that follows and decides. `session exec` appends its harvest only when the script exited 0 and no harvested op carries a violation a rebase cannot cure (format, reserved path, batch cap), judged the way `session put` judges its puts; the report carries `violations` and `blocking` either way. `session start` on an id that already has a log is refused (`ERR_STORAGE`, `session.exists`) unless `--force`. The head is loaded per invocation in this proof of concept: from the snapshot at `.memhtml/snapshots/<sha>.arrow` when one exists for `HEAD`, else from git, and `head status` reports which. A long-lived head process is deferred.
+
+### Curation door
+
+A curator is a session on a branch. `session start --id curate-2026-09-23 --ref curate/2026-09-23` opens it on `main`'s tip (a bare branch name gets `refs/heads/` prepended; the ref does not exist yet, so the base is `HEAD`), the curator works through `session put` and `session exec` like any other session, and its first `session commit` creates the branch: step 2 finds no ref, so the parent is the base, and the compare-and-swap in step 6 expects the ref to be absent. `main` and the checkout do not move, because the ref committed to is not the one `HEAD` points at.
+
+`curate merge <ref> [--into main] [--skip-gate]` is the door back. In order, and a call that fails leaves the repository as it found it:
+
+1. Both refs must resolve and `ref` must be a descendant of `--into` (`merge-base --is-ancestor`), so the landing is a fast-forward and never a merge commit. A curator whose base `main` has moved past rebases its session and commits again; the door does not settle that.
+2. The discrimination gate from `@memhtml/eval` runs in `fake` mode over its generated fixture corpus, the same call the v1 merge composed. A failing gate is exit 1, `ERR_DISCRIMINATION_FAILED`, with the inversion count, probe count, MRR, and floor in the message, and nothing has moved. `--skip-gate` is a logged override for a checkout without the eval corpus; the payload's `gate.ran` says which happened.
+3. When `HEAD` is `--into`, the checkout follows before the ref moves, the way `commitSession` step 5 does it: an uncommitted change at a path the landing touches is `ERR_DIRTY_TREE` and nothing moves; otherwise `read-tree -m -u from to` brings the shared index and working tree along.
+4. `update-ref --into to from` as a compare-and-swap through the session package's `Plumbing.updateRef`. A `raced` answer means another writer advanced `--into` while the gate ran: the checkout is rolled back and the call refuses naming the new tip.
+
+The payload is `{ ref, into, from, to, moved, gate: { ran, passed, mode?, mrr?, mrrFloor?, probes?, inversions? }, worktreeSynced }`. `from === to` is `moved: false`, an answer rather than an error. The arm lives in `apps/cli/src/v2.ts` (`curateMerge`), takes the gate as an injectable effect so a test can drive a failing one, and is covered by `tests-integration/tests/v2-curate.test.ts`.
 
 ## Integration test (integrator)
 
