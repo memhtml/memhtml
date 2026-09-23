@@ -405,3 +405,74 @@ Twelve workspace packages, one published package. All twelve are `private`, so `
 Two dependencies must additionally stay OUTSIDE the bundle, because their files are read rather than imported: `node-html-parser`, whose published `dist/index.mjs` is read as bytes into the QuickJS guest (`apps/cli/src/exec.ts:136`), and `highlight.js`, loaded through `createRequire` on the first detection (`packages/html/src/detect.ts:51`).
 
 **The artifact has its own gate, because no other tier can see it.** Every suite in §13 resolves `@memhtml/*` through pnpm's links, where each asset is on disk whether or not anything declares it — three assets shipped absent from every tarball under exactly that blindness. `mise run package:smoke` installs the tarball into a throwaway directory and drives every command, every MCP tool, and every published MCP resource template through the installed binary — 66 checks as of v0.6.0. All three surfaces are enumerated from the artifact itself (`memhtml manifest`, `tools/list`, `resources/templates/list`) and the script prints `checks: results.length` rather than asserting a literal, so a new command, tool, or template fails a census rather than going untested (`scripts/smoke-package.mjs:1058`). `resources/read` earns its own family of checks because it is a second RPC family with a ROUTER of its own, which no `tools/call` check reaches (`scripts/smoke-package.mjs:456-531`). It is outside `pnpm check` because it needs the registry, and `check` is offline by construction. `--live` adds the three edges the credential-free run cannot reach: Bedrock embeddings, the sleep phases that call a model, and the consolidator distilling a transcript through eve.
+
+## 15. v2 proof of concept: the corpus as a value
+
+Everything above describes the shipped v1 system. This section describes the proof of concept on the `v2-poc` branch, whose spec is `docs/v2-poc.md`. Read that file for the exact contracts; read this section for why the shape changed and which of the decisions above it keeps.
+
+### The three measurements
+
+Three measurements on the live store (2026-09-22, 8,213 files, 2,216 commits) motivate the change. Each one names a cost that the v1 shape pays by construction rather than by accident.
+
+Two thirds of active memories sit in `areas/inbox/`. Placement is decided at write time by whoever writes, and retrieval never reads a path, so a wrong placement costs nothing at read time and there's no pressure to get it right at write time.
+
+Retention triage put 2,851 of 2,955 scored memories in the compress band while compress processed 7 a night. The sixteen-phase pipeline disagrees with itself about the corpus: one phase says nearly everything should shrink and the next phase shrinks almost nothing.
+
+One 124 s `memory_search` holding the single SQLite writer blocked the nightly index. Every reader and every writer share one process and one database, so a slow read is a stalled write.
+
+### Five clusters
+
+The corpus is a value. Every version is immutable, a session sees exactly one version plus its own deltas, sharing is by pointer, and change is by append. Five clusters, top to bottom:
+
+1. Agents. N sessions. Each holds a pointer to a head version, an overlay log of its own operations, and nothing else. `packages/session/src` owns the session: start, resume, append, validate, commit, rebase.
+2. DRAM. One head process holds the parsed corpus as a persistent `effect` `HashMap` from path to `MemoryRecord`, with derived indexes as persistent structures too. `packages/head/src` owns it. Advancing to a new commit re-parses only the paths `diff-tree` names and builds a new version that shares every untouched node with the old one, and a `fast-check` property proves the sharing by object identity.
+3. Commit path. Mechanical, no model call. Validate, check disjointness against `main`, check frame-key conflicts, write blobs, write tree, commit, update the ref with compare-and-swap. This is the commit algorithm below, and it lives in `packages/session/src`.
+4. Disk. The git object store is truth. A columnar Arrow snapshot per commit at `.memhtml/snapshots/<sha>.arrow` is the cold-start cache, owned by `packages/snapshot/src`. A per-session git index file plus a ref under `refs/memhtml/sessions/` is the durable twin of a session's overlay.
+5. Curation. Judgment runs as a session on a `curate/<date>` branch behind the existing gate. It's never in the write path.
+
+The sandbox that lets a script act on head plus overlay is `apps/cli/src/session-exec.ts`. It seeds the guest filesystem from `view.records()` with no disk worktree, runs the script over a writable mount, and harvests new or changed `.html` files into `put` ops and paired moves into `archive` ops. It reuses the mount construction that `memhtml exec` already has.
+
+### What does not change
+
+Four decisions from the sections above carry over unchanged, and they're the ones the benchmark campaign and the filesystem-memory literature both support.
+
+Git is the system of record (section 2). The head, the snapshot, the session index, and the overlay log are all projections of commits, and every one of them is rebuildable from the object store.
+
+One fact per file (section 3). A `MemoryRecord` is a flat projection of one file, a `put` is one file, and a changed claim is a new file plus an archive of the old one, never an edit in place.
+
+The closed HTML vocabulary (sections 3 and 4). `parseMemory` is the same parser, `contentHash` is the same hash, and a session's `put` fails validation for the same reasons a v1 write does.
+
+A human at the merge of curation (section 10). Curation proposes on a branch and the gate decides; the proof of concept moves curation out of the write path but doesn't move the human out of the loop.
+
+### What moves from schema into the gate
+
+Two decisions that v1 fixes in the schema at write time become gate decisions over time, because the measurements above say the schema is deciding them badly.
+
+The relation set. Today the closed set of `memhtml-*` rels is a schema constant that every parser and every writer share. Under v2 the commit gate is the one place that admits an edge, so a relation can be introduced as a gate rule with a validator before it becomes a vocabulary constant, and the frame-key check that adds a `memhtml-contradicts` edge at commit time is the first example of the gate writing an edge nobody authored.
+
+Placement. Today the writer picks a directory and the inbox absorbs every unsure guess. Under v2 placement is a curator's move on a `curate/<date>` branch, checked by the same gate as any other commit, and retrieval over the head never reads a path, so a wrong placement costs a curation pass rather than a recall.
+
+### The commit algorithm
+
+The commit path is mechanical and runs in `packages/session/src` in this order:
+
+1. `validateOps(head, session.ops)`. Any violation (format, duplicate content hash, claim edit over an active path, reserved path, batch over 200 ops) returns `refused` and writes nothing.
+2. Read the ref. If `main` moved past `session.baseSha`, compute the paths changed on `main` and the paths the ops touch. A non-empty intersection returns `rebase-needed`. A disjoint advance continues with `main` as the parent.
+3. Frame-key check against the head. A `put` whose frame key resolves to a different active path gets a `memhtml-contradicts` link spliced into its head and the pair is recorded. Both stay live. Nothing is auto-archived.
+4. Build the tree in the session's own index file: `read-tree` the parent, `hash-object -w` each body, `update-index` adds and removes, `write-tree`, `commit-tree` with the `memhtml(session):` subject and a `Memhtml-Session` trailer.
+5. `update-ref` with the parent as the expected old value. A race returns `rebase-needed` with the new `main` sha, and the caller rebases and retries. The session ref under `refs/memhtml/sessions/` records provenance.
+6. If asked and the working tree at that ref is clean, `read-tree -m -u` moves the working tree and shared index forward. Otherwise the working tree is left alone and the outcome says so.
+
+### Three conflict tiers
+
+Conflicts sort into three tiers, and each tier has one owner.
+
+Syntactic conflicts belong to git. Two sessions touching the same path surface as `rebase-needed` at step 2 or as a raced ref at step 5, and the resolution is a rebase plus a retry with validation running again over the new base. A duplicate content hash or a claim edit is refused at step 1 with the path it collides with.
+
+Detectable semantic conflicts belong to the frame key. Two live claims about the same subject with different content are not an error; step 3 keeps both live and connects them with a `contradicts` edge so the head's `byFrameKey` and `inbound` indexes can find the pair without a model call.
+
+Judgment belongs to a curator on a branch. Deciding which of two contradicting claims is right, merging near-duplicates, and moving files out of the inbox are sessions on `curate/<date>`, committed through the same six steps and merged by the existing gate with a human at it.
+
+### Non-goals of the proof of concept
+
+The following are out of scope on purpose, so nobody builds them by accident: the curator prompt and any model call; a long-lived head server process, so the CLI loads the head per invocation from the snapshot when one matches `HEAD` and from git otherwise; vector retrieval over the head, where the interface exists and the fake embedder is the only implementation; any change to the v1 write path, sleep pipeline, or MCP server; and migration of the live store.

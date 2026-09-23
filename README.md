@@ -339,6 +339,10 @@ The closed vocabulary makes the corpus a queryable API with no new surface: `art
 
 Read the cross-judge numbers as reference points rather than as a ranking: the judges here are verbatim prompt ports running haiku-4.5, where the papers used gpt-4o and gpt-4.1-mini. `ROADMAP.md` carries these numbers and the horizons they rank.
 
+## v2 proof of concept
+
+The `v2-poc` branch holds a proof of concept that changes how the corpus is held and written without changing what a memory file is. The corpus becomes a value: one head process holds a parsed, immutable version in persistent maps, each session works over that version plus its own overlay of operations, and a mechanical commit path (validate, check disjointness, check frame keys, write objects, compare-and-swap the ref) lands the overlay as one commit. Conflicts sort into three tiers: git settles path collisions with a rebase, a frame-key match keeps both claims live with a `contradicts` edge, and judgment runs as a curator session on a branch behind the existing gate. Three new packages carry it (`@memhtml/head`, `@memhtml/session`, `@memhtml/snapshot`) plus `session` and `head` CLI commands. Nothing in the v1 write path, sleep pipeline, or MCP server changes on the branch, and the live store isn't migrated. The motivation, the contracts, the commit algorithm, and the explicit non-goals are in `docs/v2-poc.md`; `docs/design.md` section 15 records which v1 decisions it keeps.
+
 ## Layout
 
 ```
