@@ -12,7 +12,9 @@ import {
   sessionRef,
   withSessionLock
 } from "./session.js"
-import { touchedPaths, type Violation, validateOps } from "./validate.js"
+import { type CommitScope, touchedPaths, type Violation, validateOps } from "./validate.js"
+
+export type { CommitScope } from "./validate.js"
 
 /**
  * The commit path. Mechanical, no model call: validate, check disjointness against the ref,
@@ -61,13 +63,6 @@ export const COMMIT_SUBJECT_MAX = 72
 export const SESSION_TRAILER = "Memhtml-Session"
 
 const oneLine = (value: string): string => value.replace(/\s+/g, " ").trim()
-
-/**
- * The Conventional Commits scope a session commit carries: `session` for an ordinary session,
- * `curate` for a run of the curator (`@memhtml/curator`), so `git log --grep` on either scope
- * finds the commits it names.
- */
-export type CommitScope = "session" | "curate"
 
 /** `memhtml(<scope>): <summary>`, one line, capped, never empty. */
 export const commitSubject = (summary: string, scope: CommitScope = "session"): string => {
@@ -204,7 +199,7 @@ const recordProvenance = (
  * 0. Recovery. A log carrying `pending` names a commit an earlier call built and may have landed
  *    before it was killed. Reachable from the ref: it landed, so answer `committed` for it and clear
  *    the log. Not reachable: roll the checkout back if it had followed, drop `pending`, continue.
- * 1. `validateOps(head, ops)`; any violation is `refused` and writes nothing.
+ * 1. `validateOps(head, ops, { scope })`; any violation is `refused` and writes nothing.
  * 2. The ref must be at the version that was validated. A ref that moved past `head.sha` is
  *    `rebase-needed` whether or not the changed paths overlap: duplicate hashes and frame keys are
  *    collisions between different paths, so a path-disjoint advance can still carry one, and only
@@ -230,7 +225,10 @@ export const commitSession = (input: {
   readonly message: string
   /** The instant archive ops stamp; defaults to now. Explicit so a test can pin it. */
   readonly archivedAt?: string | undefined
-  /** The subject's scope; `session` unless a curator run says otherwise. */
+  /**
+   * The subject's scope and the validator's; `session` unless a curator run says otherwise. Under
+   * `curate` the arcs and people prefixes are writable.
+   */
   readonly scope?: CommitScope | undefined
 }): Effect.Effect<CommitOutcome, GitFailure | StorageFailure> =>
   withSessionLock(
@@ -275,8 +273,9 @@ export const commitSession = (input: {
         session = { ...session, pending: undefined }
       }
 
-      // 1. Validate. Any violation refuses the whole batch and writes nothing.
-      const violations = validateOps(head, session.ops)
+      // 1. Validate under the caller's scope. Any violation refuses the whole batch and writes
+      //    nothing; a curator's scope is what lets an arcs or people path through here.
+      const violations = validateOps(head, session.ops, { scope: input.scope ?? "session" })
       if (violations.length > 0) return { kind: "refused", violations } as const
 
       // 2. The ref must be at the validated version.

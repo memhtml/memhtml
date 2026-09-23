@@ -3,9 +3,9 @@ import { readFile } from "node:fs/promises"
 import type { HeadView, OverlayOp } from "@memhtml/contracts"
 import { StorageFailure } from "@memhtml/contracts/errors"
 import { memoryPathViolation, originalPathFor } from "@memhtml/contracts/paths"
-import { contentHash } from "@memhtml/html"
-import { isReservedPath } from "@memhtml/session"
-import { Effect } from "effect"
+import { contentHash, LINK_REL_PREFIX, type MemoryDoc, parseMemory } from "@memhtml/html"
+import { type CommitScope, isReservedPath } from "@memhtml/session"
+import { Effect, Result } from "effect"
 import type { InMemoryFs as InMemoryFsShape } from "just-bash"
 
 import {
@@ -37,17 +37,35 @@ import {
  *
  * ## What the harvester emits
  *
- * - A new or changed `.html` file is a `put` carrying the file's bytes.
+ * - A new `.html` file is a `put` carrying the file's bytes. So is a seeded file whose article
+ *   changed (its content hash differs): the store's rule that a claim is never edited in place is
+ *   `validateOps`'s `claim-edit` refusal, not the harvester's, so the put is reported and refused
+ *   there.
+ * - A seeded file whose bytes changed but whose article content hash did not is a head edit
+ *   candidate. The hash digests the article's canonical TEXT, not its bytes, so a markup change
+ *   that keeps the words (a `<dfn>` wrap, a new `<aside>`) also keeps the hash; the harvester
+ *   therefore parses both versions with `@memhtml/html`'s parser and compares the article markup
+ *   as well as the heads. Every `<link rel="memhtml-...">` present after and absent before becomes
+ *   one `link` op, because placing an edge is the one head edit the store's operations can express.
+ *   A link removed, a title or meta changed, article markup changed, or any other head content
+ *   changed is `rejected` ("head edit other than adding links is not an operation"), and when
+ *   links were added beside such a change the reason names both, so the script's author can split
+ *   the edit into a `link` and a new file plus an archive. Nothing a script changed goes
+ *   unreported: an edit is an op or it is a rejection.
  * - A seeded file that is gone, paired with a new `archive/<YYYY>/<its path>` file whose article
  *   content hash equals the seeded record's, is one `archive` op. Deletion is not an operation in
  *   this store (nothing is ever deleted; eviction is a move), so the pair is the only shape a
- *   vanished file can legitimately take.
+ *   vanished file can legitimately take. The twin's head is held to the same rule as a file that
+ *   stays put: links added to the copy become `link` ops on the SOURCE path, emitted before the
+ *   archive so the commit's staging carries the edge into the archived copy (`commitSession`
+ *   builds the destination from the source as the batch left it, never from the op's bytes); any
+ *   other head or markup difference rejects the source and leaves the twin as a put.
  * - Everything else is `rejected` with a reason: a non-`.html` file, anything under `.git`, a
- *   generated `index.html` or `sitemap.xml`, a path only curation writes (`areas/arcs/`,
- *   `resources/people/`, `.memhtml/`), a path outside the PARA buckets, a vanished file with no
- *   archive twin, and a vanished file whose twin holds a different article. What the harvester lets
- *   through is then judged by `validateOps` before it is appended, so one bad file cannot make the
- *   whole session uncommittable.
+ *   generated `index.html` or `sitemap.xml`, a reserved path (`.memhtml/` under every scope,
+ *   `areas/arcs/` and `resources/people/` unless the scope is `curate`), a path outside the PARA
+ *   buckets, a vanished file with no archive twin, and a vanished file whose twin holds a different
+ *   article. What the harvester lets through is then judged by `validateOps` before it is appended,
+ *   so one bad file cannot make the whole session uncommittable.
  *
  * ## Reuse
  *
@@ -64,18 +82,29 @@ import {
 
 /** What `session exec` reports: the script's run plus what the harvester made of the tree it left. */
 export interface SessionExecReport extends ExecReport {
-  /** Overlay ops harvested from the guest tree, `put`s first then `archive`s, each sorted by path. */
+  /**
+   * Overlay ops harvested from the guest tree: `put`s, then `link`s, then `archive`s, each group
+   * sorted by path (a file's links in document order).
+   */
   readonly ops: ReadonlyArray<OverlayOp>
   /** Files the harvester could not turn into an op, each with the reason, sorted by path. */
   readonly rejected: ReadonlyArray<{ readonly path: string; readonly reason: string }>
 }
 
-/** Everything `session exec` needs: a version to see, a script to run, and an optional bound. */
+/**
+ * Everything `session exec` needs: a version to see, a script to run, an optional bound, and the
+ * writer's scope (`session` unless a curator run says `curate`, which opens the arcs and people
+ * prefixes the way `validateOps` does under the same scope).
+ */
 export interface SessionExecInput {
   readonly view: HeadView
   readonly script: string
   readonly timeoutMs?: number | undefined
+  readonly scope?: CommitScope | undefined
 }
+
+/** The stated reason a head edit that is not purely added links is refused. */
+export const HEAD_EDIT_REASON = "head edit other than adding links is not an operation"
 
 /** One file the walk found in the guest tree after the run. */
 interface GuestFile {
@@ -133,45 +162,155 @@ const contentHashOrNull = (html: string): string | null => {
 
 /**
  * The reason a present file cannot be an op, or `null` when it can. The same reserved-path and
- * PARA-root rules `validateOps` applies, asked here so the file lands in `rejected` with a reason
- * instead of in the log as an op no commit will ever accept.
+ * PARA-root rules `validateOps` applies under the same scope, asked here so the file lands in
+ * `rejected` with a reason instead of in the log as an op no commit will ever accept.
  */
-const presentFileProblem = (path: string): string | null => {
+const presentFileProblem = (path: string, scope: CommitScope): string | null => {
   const name = path.slice(path.lastIndexOf("/") + 1)
   if (name === "index.html") return "index.html is a generated listing, not a memory"
   if (name === "sitemap.xml") return "sitemap.xml is generated, not a memory"
   if (!path.endsWith(".html")) return "not an .html file"
-  if (isReservedPath(path)) return "a reserved path only curation writes"
+  if (isReservedPath(path, scope)) {
+    return scope === "curate"
+      ? "a reserved path no session writes"
+      : "a reserved path only curation writes"
+  }
   const pathReason = memoryPathViolation(path)
   if (pathReason !== undefined) return `not a memory path: ${pathReason}`
   return null
+}
+
+/** `parseMemory` as a plain value: the doc, or `null` when the bytes are not a memory. */
+const parsedOrNull = (html: string): MemoryDoc | null => {
+  const result = Effect.runSync(Effect.result(parseMemory(html)))
+  return Result.isSuccess(result) ? result.success : null
+}
+
+const linkKey = (link: { readonly rel: string; readonly href: string }): string =>
+  `${link.rel} -> ${link.href}`
+
+/**
+ * Markup with the whitespace the content hash ignores taken out: runs of ASCII whitespace become
+ * one space and whitespace between tags is dropped, so a reindented document compares equal to
+ * the original while any change to an element or attribute still shows.
+ */
+const collapseMarkup = (html: string): string =>
+  html.replace(/>\s+</g, "><").replace(/\s+/g, " ").trim()
+
+/**
+ * Every `<link rel="memhtml-...">` element, whatever its attribute order or spelling of the rel.
+ * Matched on the bytes rather than cut by `removeLink`, because the parser accepts a token the
+ * editor does not spell (`memhtml-relates_to` parses as `relates_to`; the editor writes and cuts
+ * `memhtml-relates-to`), and a link the parser counted must be the link this strips.
+ */
+const MEMHTML_LINK_ELEMENT = new RegExp(
+  `<link\\s[^>]*\\brel\\s*=\\s*["']${LINK_REL_PREFIX}[^"']*["'][^>]*>`,
+  "gi"
+)
+
+/** The document with its memhtml links taken out, so two heads compare on everything else. */
+const withoutMemhtmlLinks = (html: string): string => html.replace(MEMHTML_LINK_ELEMENT, "")
+
+/**
+ * What a head edit amounts to: the `link` ops for every edge added, or the reason it cannot be an
+ * op. Called only for a seeded file whose bytes changed and whose article content hash did not.
+ * That hash is a digest of the article's canonical TEXT (`@memhtml/html` `canonicalText`), so an
+ * equal hash proves the words are the same and nothing more: the article's markup, the head, or
+ * only whitespace may differ, and this function tells those apart. `null` when either version
+ * does not parse, in which case the caller falls back to a `put` and `validateOps` reports the
+ * format violation.
+ *
+ * Four named differences reject the edit (title, meta, removed link, article markup); a fifth,
+ * "the head changed beyond the added links", catches head content the parser accepts and
+ * `MemoryDoc` does not surface (a comment, a `<meta>` outside the vocabulary): with every memhtml
+ * link taken out of both versions, what remains must collapse to the same bytes. It runs only when
+ * links were added, so the fallthrough alone names a byte change that added nothing, and no edit
+ * leaves here unnamed.
+ */
+const headEdit = (
+  path: string,
+  before: string,
+  after: string
+): { readonly links: ReadonlyArray<OverlayOp> } | { readonly reason: string } | null => {
+  const was = parsedOrNull(before)
+  const now = parsedOrNull(after)
+  if (was === null || now === null) return null
+
+  const hadLinks = new Set(was.links.map(linkKey))
+  const hasLinks = new Set(now.links.map(linkKey))
+  const added = now.links.filter((link) => !hadLinks.has(linkKey(link)))
+  const removed = was.links.filter((link) => !hasLinks.has(linkKey(link)))
+
+  const otherChanges: Array<string> = []
+  if (was.title !== now.title) otherChanges.push("the title changed")
+  const metasOf = (doc: MemoryDoc): string =>
+    JSON.stringify([doc.metas, doc.entities, doc.tags, doc.aliases])
+  if (metasOf(was) !== metasOf(now)) otherChanges.push("a meta changed")
+  if (removed.length > 0) {
+    otherChanges.push(`removed link(s) ${removed.map(linkKey).join(", ")}`)
+  }
+  if (collapseMarkup(was.article.html) !== collapseMarkup(now.article.html)) {
+    otherChanges.push("the article markup changed")
+  }
+  if (
+    added.length > 0 &&
+    otherChanges.length === 0 &&
+    collapseMarkup(withoutMemhtmlLinks(after)) !== collapseMarkup(withoutMemhtmlLinks(before))
+  ) {
+    otherChanges.push("the head changed beyond the added links")
+  }
+  if (added.length === 0 && otherChanges.length === 0) {
+    otherChanges.push("the bytes changed with no link added")
+  }
+
+  if (otherChanges.length > 0) {
+    const addedNote =
+      added.length === 0 ? "" : `added link(s) ${added.map(linkKey).join(", ")}, but also `
+    return { reason: `${HEAD_EDIT_REASON}: ${addedNote}${otherChanges.join("; ")}` }
+  }
+  return {
+    links: added.map((link): OverlayOp => ({ kind: "link", path, rel: link.rel, href: link.href }))
+  }
 }
 
 /**
  * Turn the tree a script left behind into overlay ops and rejections.
  *
  * Exported and pure over plain values so the pairing rules are testable without a sandbox. The
- * order of the result is fixed: `put`s sorted by path, then `archive`s sorted by source path, then
- * `rejected` sorted by path, so two runs over the same tree produce equal reports.
+ * order of the result is fixed: `put`s sorted by path, then `link`s sorted by path, then `archive`s
+ * sorted by source path, then `rejected` sorted by path, so two runs over the same tree produce
+ * equal reports.
  */
 export const harvestOps = (input: {
   readonly seeded: ReadonlyMap<string, Seeded>
   readonly after: ReadonlyArray<GuestFile>
   readonly skippedGitDir: boolean
+  readonly scope?: CommitScope | undefined
 }): { ops: ReadonlyArray<OverlayOp>; rejected: SessionExecReport["rejected"] } => {
+  const scope = input.scope ?? "session"
   const rejected: { path: string; reason: string }[] = []
   const puts = new Map<string, string>()
+  const links: Array<{ readonly path: string; readonly ops: ReadonlyArray<OverlayOp> }> = []
   const present = new Set<string>()
 
   for (const file of input.after) {
     present.add(file.path)
-    const problem = presentFileProblem(file.path)
+    const problem = presentFileProblem(file.path, scope)
     if (problem !== null) {
       rejected.push({ path: file.path, reason: problem })
       continue
     }
     const before = input.seeded.get(file.path)
     if (before !== undefined && before.html === file.html) continue
+    // Same article, different bytes: a head edit. Only added links can be an op.
+    if (before !== undefined && contentHashOrNull(file.html) === before.contentHash) {
+      const edit = headEdit(file.path, before.html, file.html)
+      if (edit !== null) {
+        if ("reason" in edit) rejected.push({ path: file.path, reason: edit.reason })
+        else links.push({ path: file.path, ops: edit.links })
+        continue
+      }
+    }
     puts.set(file.path, file.html)
   }
   if (input.skippedGitDir) {
@@ -199,7 +338,19 @@ export const harvestOps = (input: {
       })
       continue
     }
+    // The same words, so this is the file archived. Its head is held to the stays-put rule: links
+    // the copy gained are `link` ops on the source (staged before the archive, so the commit
+    // carries them into the copy); anything else rejects the source and leaves the twin a put.
+    const edit = twinHtml === before.html ? null : headEdit(source, before.html, twinHtml)
+    if (edit !== null && "reason" in edit) {
+      rejected.push({
+        path: source,
+        reason: `vanished, and ${twin} holds this article under an edited head; ${edit.reason}`
+      })
+      continue
+    }
     puts.delete(twin)
+    if (edit !== null && edit.links.length > 0) links.push({ path: source, ops: edit.links })
     archives.push({ kind: "archive", path: source, to: twin, html: twinHtml })
   }
 
@@ -208,8 +359,9 @@ export const harvestOps = (input: {
   const putOps: OverlayOp[] = [...puts]
     .map(([path, html]): OverlayOp => ({ kind: "put", path, html }))
     .sort(byPath)
+  const linkOps = links.sort(byPath).flatMap((entry) => entry.ops)
   return {
-    ops: [...putOps, ...archives.sort(byPath)],
+    ops: [...putOps, ...linkOps, ...archives.sort(byPath)],
     rejected: rejected.sort(byPath)
   }
 }
@@ -326,6 +478,6 @@ export const runSessionExec = (
       try: () => walkGuestTree(corpus),
       catch: (cause) => StorageFailure.make({ operation: `session-exec.harvest: ${String(cause)}` })
     })
-    const harvested = harvestOps({ seeded, after: files, skippedGitDir })
+    const harvested = harvestOps({ seeded, after: files, skippedGitDir, scope: input.scope })
     return { ...report, ops: harvested.ops, rejected: harvested.rejected }
   })

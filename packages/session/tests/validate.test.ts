@@ -11,6 +11,9 @@ import { mapHead, memory, recordFrom } from "./helpers.js"
  * Mutation notes, one per guard, each run once with the change applied and the named test red:
  * - batch-cap: `ops.length > BATCH_CAP` -> `ops.length > Infinity` -> "refuses more than 200 ops".
  * - reserved-path: `isReservedPath` returns false -> "refuses every reserved surface".
+ * - scope: the `scope !== "curate"` guard on the curation prefixes removed -> "the curate scope
+ *   opens areas/arcs/ and resources/people/ and nothing else" (the curator is refused its own paths);
+ *   `.memhtml/` moved under that guard -> the same case (`.memhtml/` lands under curate).
  * - duplicate: drop the `existing !== undefined` branch -> "names the existing path of a duplicate".
  * - claim-edit: drop the `isActiveIn` branch -> "refuses a put over an active path with a new claim".
  * - format: skip `checkMemory` -> "collects format violations".
@@ -75,6 +78,51 @@ describe("validateOps", () => {
       })
     }
     expect(isReservedPath("areas/inbox/arcs-note.html")).toBe(false)
+  })
+
+  it("the curate scope opens areas/arcs/ and resources/people/ and nothing else", async () => {
+    const view = await head()
+    const curation = ["areas/arcs/reversibility.html", "resources/people/laith.html"]
+    const everyone = [".memhtml/sessions/x.html", "areas/index.html", "projects/x/sitemap.xml"]
+    for (const path of curation) {
+      // The default scope is `session`, stated or not.
+      expect(isReservedPath(path)).toBe(true)
+      expect(isReservedPath(path, "session")).toBe(true)
+      expect(validateOps(view, [put(path, memory("R", `Reserved at ${path}.`))])).toEqual([
+        { kind: "reserved-path", path }
+      ])
+      expect(validateOps(view, [put(path, memory("R", `Reserved at ${path}.`))], {})).toEqual([
+        { kind: "reserved-path", path }
+      ])
+      // Under `curate` the same put is clean.
+      expect(isReservedPath(path, "curate")).toBe(false)
+      expect(
+        validateOps(view, [put(path, memory("R", `Reserved at ${path}.`))], { scope: "curate" })
+      ).toEqual([])
+    }
+    for (const path of everyone) {
+      for (const scope of ["session", "curate"] as const) {
+        expect(isReservedPath(path, scope), `${path} under ${scope}`).toBe(true)
+        expect(
+          validateOps(view, [put(path, memory("R", "Reserved."))], { scope }),
+          `${path} under ${scope}`
+        ).toContainEqual({ kind: "reserved-path", path })
+      }
+    }
+    // A link op on a people record is judged under the same scope as a put.
+    const link = {
+      kind: "link" as const,
+      path: "resources/people/laith.html",
+      rel: "relates_to",
+      href: "/areas/inbox/alpha.html"
+    }
+    expect(validateOps(view, [put(link.path, memory("L", "Laith.")), link])).toEqual([
+      { kind: "reserved-path", path: link.path },
+      { kind: "reserved-path", path: link.path }
+    ])
+    expect(
+      validateOps(view, [put(link.path, memory("L", "Laith.")), link], { scope: "curate" })
+    ).toEqual([])
   })
 
   it("names the existing path of a duplicate, in the head or earlier in the batch", async () => {

@@ -24,6 +24,7 @@ import {
 import { searchHead, withOverlay } from "@memhtml/head"
 import {
   appendOps,
+  type CommitScope,
   commitSession,
   rebaseSession,
   resumeSession,
@@ -66,8 +67,10 @@ import {
  *
  * The head is loaded at the base (`main`'s tip, or the session's own base on `--resume`), the
  * session is started on the curator ref (refused with `session.exists` unless `--resume`), and every
- * tool judges its writes the way a curator's commit would: an op carrying any violation is refused
- * with the violations handed back to the model, and a clean one is appended. `exec` and `propose`
+ * tool judges its writes the way a curator's commit would, under the `curate` scope: an op carrying
+ * any violation is refused with the violations handed back to the model, and a clean one is
+ * appended. A link a script splices into a file's head in the sandbox is harvested as a `link` op,
+ * so an edge can be placed from code mode without a `propose`. `exec` and `propose`
  * refuse alike, `duplicate` and `claim-edit` included, because a curator's own ref has no rebase
  * that cures them (the ref does not exist before the first commit), so an appended op the commit
  * refuses would poison the log for every `--resume` after it. A dry run keeps the same shape over an
@@ -86,6 +89,14 @@ import {
 
 /** How many `rebase-needed` answers the landing tolerates before it gives up. */
 export const COMMIT_ATTEMPTS = 8
+
+/**
+ * The scope every judgment in this module runs under: the harvester, `validateOps`, and
+ * `commitSession` all see `curate`, so the arcs and people prefixes the charter asks the curator to
+ * write (`areas/arcs/` syntheses, `resources/people/` identity records) are writable here and
+ * nowhere else. `.memhtml/` and the generated filenames stay refused under every scope.
+ */
+export const CURATE_SCOPE: CommitScope = "curate"
 
 export const CURATE_REF_PREFIX = "curate/"
 
@@ -314,7 +325,7 @@ export const bindTools = (input: {
     ops: ReadonlyArray<OverlayOp>
   ): { violations: ReadonlyArray<Violation>; blocking: ReadonlyArray<Violation> } => {
     const touched = new Set(ops.flatMap(touchedPaths))
-    const violations = validateOps(base, [...input.overlay.ops(), ...ops])
+    const violations = validateOps(base, [...input.overlay.ops(), ...ops], { scope: CURATE_SCOPE })
     return {
       violations,
       blocking: violations.filter(
@@ -342,7 +353,7 @@ export const bindTools = (input: {
       promise(
         Effect.gen(function* () {
           const view = yield* current()
-          const report = yield* runSessionExec({ view, script })
+          const report = yield* runSessionExec({ view, script, scope: CURATE_SCOPE })
           const { violations, blocking } = judge(report.ops)
           const clean = report.exitCode === 0 && blocking.length === 0
           if (clean && report.ops.length > 0) yield* input.overlay.append(report.ops)
@@ -401,7 +412,7 @@ const land = (input: {
         session,
         head: head.view,
         message: input.message,
-        scope: "curate"
+        scope: CURATE_SCOPE
       })
       switch (outcome.kind) {
         case "committed":

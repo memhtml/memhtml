@@ -50,6 +50,8 @@ import { type LoadedHead, revParse } from "../src/v2.js"
  * - `curate-run.ts` `bindTools` `judge`: `blocking` narrowed back to `format | reserved-path |
  *   batch-cap` -> "exec refuses a harvest carrying a claim-edit" (`appended` is 1 and the overlay
  *   holds an op `validateOps` refuses).
+ * - `curate-run.ts` `CURATE_SCOPE` set to `"session"` -> "exec harvests an arcs put and a head link
+ *   splice under the curator's scope" (the arcs file is rejected as a reserved path, `appended` is 1).
  * - `curate-run.ts` `curateRun`: the `modelError` branch made unreachable -> "a model the run cannot
  *   reach is exit 1 with ERR_MODEL_UNAVAILABLE" (the run answers exit 0 with `no-ops`). The case
  *   takes about six seconds: the AI SDK retries a refused connection twice with backoff before the
@@ -406,6 +408,59 @@ describe("the exec tool refuses what the commit would refuse", () => {
     expect(archive.appended).toBe(1)
     expect(overlay.ops().map((op) => op.kind)).toEqual(["archive"])
     expect(validateOps(head.view, overlay.ops())).toEqual([])
+  }, 120_000)
+
+  it("exec harvests an arcs put and a head link splice under the curator's scope", async () => {
+    const records = await Effect.runPromise(
+      Effect.all([
+        memory(EDITED, "The capital of Newland is Newtown.", "Body one."),
+        memory(ARCHIVED, "The capital of Otherland is Othertown.", "Body two.")
+      ])
+    )
+    const head = headOver(records)
+    const overlay = memoryOverlay()
+    const tools = bindTools({ head, overlay, ref: "refs/heads/curate/2026-09-23" })
+    const arc = renderTemplate({
+      title: "Arc",
+      claim: "Newland and Otherland both name their capital after the land.",
+      body: ["Two capitals, one naming rule."],
+      memoryType: "semantic",
+      at: "2026-09-20T00:00:00Z"
+    })
+    const link = `<link rel="memhtml-part_of" href="/areas/arcs/naming.html">`
+    const result = await tools.exec(
+      [
+        'import * as fs from "node:fs"',
+        'const root = "/mnt/memhtml"',
+        'fs.mkdirSync(root + "/areas/arcs", { recursive: true })',
+        `fs.writeFileSync(root + "/areas/arcs/naming.html", ${JSON.stringify(arc)})`,
+        `const path = root + "/${EDITED}"`,
+        'const before = fs.readFileSync(path, "utf8")',
+        `fs.writeFileSync(path, before.replace("</head>", ${JSON.stringify(`${link}\n</head>`)}))`
+      ].join("\n")
+    )
+    expect(result.exitCode, result.stderr).toBe(0)
+    expect(result.rejected).toEqual([])
+    expect(result.violations).toEqual([])
+    expect(result.ops).toEqual([
+      { kind: "put", path: "areas/arcs/naming.html" },
+      { kind: "link", path: EDITED }
+    ])
+    expect(result.appended).toBe(2)
+    expect(overlay.ops()).toEqual([
+      { kind: "put", path: "areas/arcs/naming.html", html: arc },
+      { kind: "link", path: EDITED, rel: "part_of", href: "/areas/arcs/naming.html" }
+    ])
+    expect(await tools.status()).toEqual({
+      baseSha: VIEW_SHA,
+      ref: "refs/heads/curate/2026-09-23",
+      ops: { put: 1, archive: 0, link: 1 }
+    })
+    // The same overlay is what the landing validates, under the same scope.
+    expect(validateOps(head.view, overlay.ops(), { scope: "curate" })).toEqual([])
+    expect(validateOps(head.view, overlay.ops())).toEqual([
+      { kind: "reserved-path", path: "areas/arcs/naming.html" }
+    ])
   }, 120_000)
 })
 

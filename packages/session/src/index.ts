@@ -32,6 +32,7 @@ export {
   BATCH_CAP,
   isReservedPath,
   touchedPaths,
+  type ValidateOptions,
   type Violation,
   validateOps
 } from "./validate.js"

@@ -32,6 +32,8 @@ import {
  * Mutation notes, one per guard, each run once with the change applied and the named test red:
  * - step 0: `isAncestor` result treated as false -> "a commit killed after the swap is recovered".
  * - step 1: `if (violations.length > 0)` -> `if (false)` -> "refuses ... and writes nothing".
+ * - step 1 scope: `validateOps(head, session.ops)` with no scope -> "the curate scope lands an
+ *   areas/arcs/ file that the session scope refuses" (the curator's commit is `refused`).
  * - step 2: `mainSha !== head.sha` -> `overlapping.length > 0` (the path-disjoint fast path) ->
  *   "a disjoint advance ... is rebase-needed" and "duplicate hash ... never lands without a rebase".
  * - step 3: drop the `addLink(linked, "contradicts", ...)` call -> "frame-key conflict ...".
@@ -168,6 +170,56 @@ describe("commitSession", () => {
     })
     expect(await commitOf(root, "refs/heads/main")).toBe(base)
     await expect(commitOf(root, sessionRef("bad"))).rejects.toThrow()
+  })
+
+  it("the curate scope lands an areas/arcs/ file that the session scope refuses", async () => {
+    const { root, base, head } = await seeded()
+    const arc = memory("Arc", "Four memories together show the port trade follows the region.")
+    const refused = await start(root, "arc-session", head, [putOp("areas/arcs/trade.html", arc)])
+    expect(await run(commitSession({ session: refused, head, message: "arc" }))).toEqual({
+      kind: "refused",
+      violations: [{ kind: "reserved-path", path: "areas/arcs/trade.html" }]
+    })
+    expect(
+      await run(commitSession({ session: refused, head, message: "arc", scope: "session" }))
+    ).toEqual({
+      kind: "refused",
+      violations: [{ kind: "reserved-path", path: "areas/arcs/trade.html" }]
+    })
+    expect(await commitOf(root, "refs/heads/main")).toBe(base)
+
+    // The curator's ref is unborn and not checked out, the way `curate run` opens it.
+    const curator = await run(
+      startSession({ root, id: "arc-curate", base: head, ref: "refs/heads/curate/arcs" }).pipe(
+        Effect.flatMap((s) => appendOps(s, [putOp("areas/arcs/trade.html", arc)]))
+      )
+    )
+    const landed = await run(
+      commitSession({ session: curator, head, message: "arc", scope: "curate" })
+    )
+    expect(landed.kind).toBe("committed")
+    if (landed.kind !== "committed") return
+    expect(landed.paths).toEqual(["areas/arcs/trade.html"])
+    expect(await commitOf(root, "refs/heads/curate/arcs")).toBe(landed.sha)
+    expect(await fileAt(root, landed.sha, "areas/arcs/trade.html")).toBe(arc)
+    expect(await git(root, ["log", "-1", "--format=%s", landed.sha])).toBe("memhtml(curate): arc")
+    // `.memhtml/` is refused under the curator's scope too.
+    const smuggled = await run(
+      startSession({ root, id: "smuggle", base: head, ref: "refs/heads/curate/smuggle" }).pipe(
+        Effect.flatMap((s) => appendOps(s, [putOp(".memhtml/state.html", arc)]))
+      )
+    )
+    const outcome = await run(
+      commitSession({ session: smuggled, head, message: "smuggle", scope: "curate" })
+    )
+    expect(outcome.kind).toBe("refused")
+    if (outcome.kind === "refused") {
+      expect(outcome.violations).toContainEqual({
+        kind: "reserved-path",
+        path: ".memhtml/state.html"
+      })
+    }
+    expect(await commitOf(root, "refs/heads/main")).toBe(base)
   })
 
   it("a disjoint advance of the ref is rebase-needed with no overlap, then lands after one rebase", async () => {

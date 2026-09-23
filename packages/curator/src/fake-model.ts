@@ -7,17 +7,18 @@ import type {
 import { MockLanguageModelV4 } from "ai/test"
 
 import { type Briefing, parseBriefing } from "./briefing.js"
-import type { ProposedOp } from "./tools.js"
 
 /**
  * The scripted model behind `--model fake`: credential-free, deterministic, and useful.
  *
  * It plays the dedup rule of the charter and nothing else. Its script is fixed: `status` once, then
  * one `exec` whose script lists every frame-key group in the briefing that holds more than one
- * active path and archives every path but the first of each, then one `propose` that links each
- * surviving record to the archive it supersedes, then `finish`. On a fixture that holds a duplicate
- * pair the harvester yields one `archive` and the proposal yields one `link`, so `curate run --model
- * fake` lands a real commit in the smoke run and the integration tier with no model on the network.
+ * active path, archives every path but the first of each, and splices a `supersedes` link into the
+ * kept file's head for each archive, then `finish`. On a fixture that holds a duplicate pair the
+ * harvester yields one `archive` and one `link` from that one `exec` (the head edit becomes a
+ * `link` op; no `propose` is needed), so `curate run --model fake` lands a real commit in the smoke
+ * run and the integration tier with no model on the network, and proves the code-mode edge path
+ * end to end.
  *
  * It reads the briefing back out of the user message (`parseBriefing`) and the archive list out of
  * the `exec` tool result, so the only coupling is to shapes this package owns.
@@ -44,6 +45,11 @@ export const fakeDedupScript = (
     '    fs.mkdirSync(ROOT + "/" + to.slice(0, to.lastIndexOf("/")), { recursive: true })',
     '    fs.writeFileSync(ROOT + "/" + to, fs.readFileSync(ROOT + "/" + path, "utf8"))',
     '    fs.unlinkSync(ROOT + "/" + path)',
+    // The edge, placed from code mode: one <link> line spliced before </head> of the kept file,
+    // which the harvester turns into a link op because the article is untouched.
+    '    const keptHtml = fs.readFileSync(ROOT + "/" + kept, "utf8")',
+    "    const link = '<link rel=\"memhtml-supersedes\" href=\"/' + to + '\">'",
+    '    fs.writeFileSync(ROOT + "/" + kept, keptHtml.replace("</head>", link + "\\n</head>"))',
     "    archived.push({ kept, from: path, to })",
     "  }",
     "}",
@@ -137,15 +143,6 @@ export const fakeNextCall = (
     return toolCall("exec", { script: fakeDedupScript(groups, year) })
   }
   const archived = archivedFrom(options)
-  if (step === 2 && archived.length > 0) {
-    const ops: ReadonlyArray<ProposedOp> = archived.map((entry) => ({
-      kind: "link",
-      path: entry.kept,
-      rel: "supersedes",
-      href: `/${entry.to}`
-    }))
-    return toolCall("propose", { ops })
-  }
   const report =
     archived.length === 0
       ? [

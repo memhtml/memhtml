@@ -119,7 +119,7 @@ describe("curatorModel", () => {
 })
 
 describe("the fake model through the loop", () => {
-  it("calls status, exec, propose, finish and links each kept record to what it archived", async () => {
+  it("calls status, exec, finish; the exec script archives and splices the supersedes link itself", async () => {
     const briefing = {
       ...emptyBriefing,
       frameKeyGroups: [
@@ -149,8 +149,11 @@ describe("the fake model through the loop", () => {
             }
           ]
         })}\n`,
-        appended: 1,
+        // What the real harvester yields for that script: the archive plus the link the script
+        // spliced into the kept file's head.
+        appended: 2,
         ops: [
+          { kind: "link", path: "areas/inbox/capital-a.html" },
           {
             kind: "archive",
             path: "areas/inbox/capital-b.html",
@@ -161,7 +164,8 @@ describe("the fake model through the loop", () => {
     })
     const model = await Effect.runPromise(curatorModel("fake"))
     const result = await Effect.runPromise(runCurator({ tools, model, briefing, charter: "c" }))
-    expect(result.toolCalls).toEqual(["status", "exec", "propose", "finish"])
+    expect(result.toolCalls).toEqual(["status", "exec", "finish"])
+    expect(result.toolCalls).not.toContain("propose")
     expect(result.stoppedBy).toBe("finish")
     expect(result.report.split("\n")[0]).toBe(
       "Archived 1 duplicate record(s) behind their canonical twins."
@@ -169,16 +173,8 @@ describe("the fake model through the loop", () => {
     expect(result.opsAppended).toBe(2)
     const script = tools.calls.find((call) => call.name === "exec")?.input
     expect(script).toContain('"areas/inbox/capital-a.html","areas/inbox/capital-b.html"')
-    expect(tools.proposed).toEqual([
-      [
-        {
-          kind: "link",
-          path: "areas/inbox/capital-a.html",
-          rel: "supersedes",
-          href: "/archive/2026/areas/inbox/capital-b.html"
-        }
-      ]
-    ])
+    expect(script).toContain("memhtml-supersedes")
+    expect(tools.proposed).toEqual([])
   })
 
   it("finishes after exec when the briefing holds no duplicate group", async () => {
@@ -191,10 +187,12 @@ describe("the fake model through the loop", () => {
     expect(result.report).toContain("nothing archived")
   })
 
-  it("the dedup script sorts each group and keeps its first path", () => {
+  it("the dedup script sorts each group, keeps its first path, and links it to each archive", () => {
     const script = fakeDedupScript([{ paths: ["b.html", "a.html"] }], "2026")
     expect(script).toContain('[["a.html","b.html"]]')
     expect(script).toContain('"2026"')
     expect(script).toContain("fs.unlinkSync")
+    expect(script).toContain(`'<link rel="memhtml-supersedes" href="/' + to + '">'`)
+    expect(script).toContain('keptHtml.replace("</head>", link + "\\n</head>")')
   })
 })

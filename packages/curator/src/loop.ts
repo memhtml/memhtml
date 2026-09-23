@@ -146,7 +146,7 @@ export const runCurator = (input: CuratorRunInput): Effect.Effect<CuratorRun, St
         execute: ({ path }) => guarded("read", () => input.tools.read(path))()
       }),
       exec: tool({
-        description: `Run a JavaScript module over the corpus in a sandbox. The files are mounted writable at /mnt/memhtml; import { corpus } from "/workspace/lib/corpus.mjs" to parse them. A new or changed .html file is harvested as a put; a file copied unchanged to archive/<YYYY>/<its path> with the original removed is harvested as an archive. The harvest is appended to the session only when the script exits 0 and no op is unlandable; the result says what was appended, what was rejected, and every violation. ${capNote}`,
+        description: `Run a JavaScript module over the corpus in a sandbox. The files are mounted writable at /mnt/memhtml; import { corpus } from "/workspace/lib/corpus.mjs" to parse them. A new .html file is harvested as a put; a <link rel="memhtml-..."> added to an existing file's head (article untouched) is harvested as a link op, one per link added; a file copied unchanged to archive/<YYYY>/<its path> with the original removed is harvested as an archive. Any other edit to an existing file is refused: revising a claim is a new file plus an archive of the old one, joined by a supersedes link, and a head edit other than adding links is not an operation. The harvest is appended to the session only when the script exits 0 and no op is unlandable; the result says what was appended, what was rejected, and every violation. ${capNote}`,
         inputSchema: z.object({ script: z.string().min(1) }),
         execute: ({ script }) =>
           guarded("exec", async () => {

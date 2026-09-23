@@ -10,8 +10,10 @@ import { type Cli, makeCli } from "./harness.js"
 /**
  * The curator end to end (`docs/v2-poc.md`, "Curator"): `curate run --model fake` over a 300-memory
  * fixture that holds one deliberate frame-key duplicate pair lands one archive plus one link on
- * `curate/<date>`, a second run without `--resume` refuses `session.exists`, `curate merge` lands
- * the branch on `main`, and a dry run leaves no session, no ref, and no commit.
+ * `curate/<date>`, both from the one `exec` (the fake's script splices the `supersedes` link into the
+ * kept file's head, and the harvester turns that head edit into a `link` op, so no `propose` runs),
+ * a second run without `--resume` refuses `session.exists`, `curate merge` lands the branch on
+ * `main`, and a dry run leaves no session, no ref, and no commit.
  *
  * Every ref position is read back with `rev-parse` and every file claim with `git show` or `access`,
  * independently of the payload under test. The fixture is committed with porcelain, not through the
@@ -138,9 +140,11 @@ describe("curate run --model fake", () => {
     expect(report.outcome).toBe("dry-run")
     expect(report.commit).toBeNull()
     expect(report.stoppedBy).toBe("finish")
-    // The would-be proposal is reported: the fake archives the duplicate and links the kept record.
+    // The would-be harvest is reported: the fake's one exec archives the duplicate and links the
+    // kept record, so the link op came from code mode and no propose call was made.
     expect(report.ops).toEqual({ put: 0, archive: 1, link: 1 })
-    expect(report.toolCalls).toEqual(["status", "exec", "propose", "finish"])
+    expect(report.toolCalls).toEqual(["status", "exec", "finish"])
+    expect(report.toolCalls).not.toContain("propose")
     expect(await rev(QUALIFIED)).toBeNull()
     expect(await rev("refs/heads/main")).toBe(main)
     expect(await sessionLog("curate-2026-09-23")).toBe(false)
@@ -195,8 +199,11 @@ describe("curate run --model fake", () => {
     expect(report.baseSha).toBe(main)
     expect(report.stoppedBy).toBe("finish")
     expect(report.outcome).toBe("committed")
+    // One archive and one link, both harvested from the exec: the fake never calls propose.
     expect(report.ops).toEqual({ put: 0, archive: 1, link: 1 })
-    expect(report.steps).toBe(4)
+    expect(report.toolCalls).toEqual(["status", "exec", "finish"])
+    expect(report.toolCalls).not.toContain("propose")
+    expect(report.steps).toBe(3)
     expect(report.tokens.input).toBeGreaterThan(0)
     expect(report.briefing.frameKeyGroups).toEqual([
       {
@@ -269,5 +276,9 @@ describe("curate run --model fake", () => {
     expect(await rev("refs/heads/main")).toBe(target)
     expect(await onDisk(DUPLICATE)).toBe(false)
     expect(await onDisk(`archive/${YEAR}/${DUPLICATE}`)).toBe(true)
+    // The edge placed from code mode is on main's tree and in the checkout.
+    const kept = await cli.git("show", `refs/heads/main:${KEPT}`)
+    expect(kept).toContain(`<link rel="memhtml-supersedes" href="/archive/${YEAR}/${DUPLICATE}">`)
+    expect(await readFile(join(cli.root, KEPT), "utf8")).toBe(kept)
   })
 })

@@ -19,23 +19,45 @@ export type Violation =
   | { readonly kind: "duplicate"; readonly path: string; readonly existing: string }
   /** A put over an active path with a different content hash. Claims are never edited in place. */
   | { readonly kind: "claim-edit"; readonly path: string }
-  /** `areas/arcs/`, `resources/people/`, `.memhtml/`, `index.html`, `sitemap.xml`. */
+  /**
+   * `.memhtml/`, `index.html`, `sitemap.xml` under every scope; `areas/arcs/` and `resources/people/`
+   * too unless the scope is `curate`.
+   */
   | { readonly kind: "reserved-path"; readonly path: string }
   | { readonly kind: "batch-cap"; readonly count: number; readonly cap: number }
 
 /** The most ops one commit carries. A larger batch is two sessions. */
 export const BATCH_CAP = 200
 
-/** Directory prefixes only curation writes. */
-const RESERVED_PREFIXES: ReadonlyArray<string> = [`${ARCS_DIR}/`, `${PEOPLE_DIR}/`, ".memhtml/"]
+/**
+ * Who is writing. `session` is an ordinary session on `main`; `curate` is a run of the curator
+ * (`@memhtml/curator`) on its own `curate/<date>` branch. The scope names the commit subject
+ * (`memhtml(<scope>): ...`) and widens what the validator lets through: the arcs and people
+ * prefixes are the curator's to write and nobody else's.
+ */
+export type CommitScope = "session" | "curate"
 
-/** Filenames the site generator owns at any depth. */
+/** The options `validateOps` and `isReservedPath` take. `scope` defaults to `session`. */
+export interface ValidateOptions {
+  readonly scope?: CommitScope | undefined
+}
+
+/** Directory prefixes only curation writes: refused under `session`, writable under `curate`. */
+const CURATION_PREFIXES: ReadonlyArray<string> = [`${ARCS_DIR}/`, `${PEOPLE_DIR}/`]
+
+/** The store's own state, which no scope writes through a session. */
+const STORE_PREFIXES: ReadonlyArray<string> = [".memhtml/"]
+
+/** Filenames the site generator owns at any depth; no scope writes them. */
 const RESERVED_FILENAMES: ReadonlyArray<string> = ["index.html", "sitemap.xml"]
 
-/** True when a session may not write the path. */
-export const isReservedPath = (path: string): boolean => {
+/** True when a writer under `scope` may not write the path. */
+export const isReservedPath = (path: string, scope: CommitScope = "session"): boolean => {
   const normalized = normalizePath(path)
-  if (RESERVED_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return true
+  if (STORE_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return true
+  if (scope !== "curate" && CURATION_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
+    return true
+  }
   const slash = normalized.lastIndexOf("/")
   const filename = slash === -1 ? normalized : normalized.slice(slash + 1)
   return RESERVED_FILENAMES.includes(filename)
@@ -67,8 +89,10 @@ const activeHashIn = (view: HeadView, path: string): string | undefined => {
 
 export const validateOps = (
   view: HeadView,
-  ops: ReadonlyArray<OverlayOp>
+  ops: ReadonlyArray<OverlayOp>,
+  options: ValidateOptions = {}
 ): ReadonlyArray<Violation> => {
+  const scope = options.scope ?? "session"
   if (ops.length > BATCH_CAP) return [{ kind: "batch-cap", count: ops.length, cap: BATCH_CAP }]
 
   const violations: Array<Violation> = []
@@ -79,7 +103,7 @@ export const validateOps = (
 
   for (const op of ops) {
     for (const path of touchedPaths(op)) {
-      if (isReservedPath(path)) violations.push({ kind: "reserved-path", path })
+      if (isReservedPath(path, scope)) violations.push({ kind: "reserved-path", path })
     }
 
     switch (op.kind) {
