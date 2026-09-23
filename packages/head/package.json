@@ -1,0 +1,40 @@
+{
+  "name": "@memhtml/head",
+  "version": "0.15.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "dist",
+    "!dist/.tsbuildinfo"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
+    "lint": "biome check src tests",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@memhtml/contracts": "workspace:*",
+    "@memhtml/domain": "workspace:*",
+    "@memhtml/html": "workspace:*",
+    "@memhtml/store": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@effect/vitest": "catalog:",
+    "@types/node": "26.6.2",
+    "fast-check": "catalog:",
+    "typescript": "7.0.2",
+    "vitest": "5.0.1"
+  }
+}

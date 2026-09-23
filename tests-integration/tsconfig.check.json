@@ -39,6 +39,15 @@
       "path": "../packages/eval"
     },
     {
+      "path": "../packages/head"
+    },
+    {
+      "path": "../packages/session"
+    },
+    {
+      "path": "../packages/snapshot"
+    },
+    {
       "path": "../apps/cli"
     }
   ]
