@@ -2,7 +2,7 @@ import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
 import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { basename, dirname, join } from "node:path"
 import { promisify } from "node:util"
 import { Bash, type IFileSystem, InMemoryFs, MountableFs, OverlayFs, ReadWriteFs } from "just-bash"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
@@ -450,15 +450,16 @@ describe("the corpus snapshot is pinned, not live", () => {
    * nothing failing and nothing to look at.
    *
    * The census across two cycles is what makes it a leak assertion rather than a path assertion: the
-   * name is a random suffix, and one-per-run is exactly what an unswept prefix looks like.
+   * name is a random suffix, and one-per-run is exactly what an unswept prefix looks like. The census
+   * reads only the names THIS case created: `reachability.test.ts` makes and removes directories under
+   * the same prefix in a parallel worker, so a count of every entry moved with its schedule (5 before,
+   * 3 after, 2026-09-08).
    *
    * (Mutation: dropping the `rm(parent)` from `release` leaves both parents and fails the count.)
    */
   it("removes the temp parent it created, not only the worktree", async () => {
     const repo = await mkdtemp(join(tmpdir(), "consolidator-repo-parent-"))
-    const countSnapshots = async (): Promise<number> =>
-      (await readdir(tmpdir())).filter((name) => name.startsWith(CORPUS_SNAPSHOT_TMPDIR_PREFIX))
-        .length
+    const created: Array<string> = []
     try {
       const git = (...args: string[]) => run("git", ["-C", repo, ...args])
       await git("init", "--initial-branch=main")
@@ -469,17 +470,18 @@ describe("the corpus snapshot is pinned, not live", () => {
       await git("commit", "-m", "base")
       const sha = (await git("rev-parse", "HEAD")).stdout.trim()
 
-      const before = await countSnapshots()
       for (let cycle = 0; cycle < 2; cycle += 1) {
         const snapshot = await pinCorpusSnapshot({ repoRoot: repo, sha })
         const parent = dirname(snapshot.hostPath)
         // The prefix is the one the sweep in `client.ts` matches; a mkdtemp under any other name would
         // be unreachable by it.
         expect(parent.startsWith(join(tmpdir(), CORPUS_SNAPSHOT_TMPDIR_PREFIX))).toBe(true)
+        created.push(basename(parent))
         await snapshot.release()
         expect(existsSync(parent)).toBe(false)
       }
-      expect(await countSnapshots()).toBe(before)
+      const remaining = (await readdir(tmpdir())).filter((name) => created.includes(name))
+      expect(remaining).toEqual([])
     } finally {
       await rm(repo, { recursive: true, force: true })
     }

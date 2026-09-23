@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { DirtyTree, InvalidMemory, PathNotFound, WriteConflict } from "@memhtml/contracts/errors"
 import { archivePathFor, originalPathFor } from "@memhtml/contracts/paths"
 import { contentHash, readMeta } from "@memhtml/html"
-import { Effect, Result } from "effect"
+import { Deferred, Effect, Exit, Fiber, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { PROMPT_TRAILER, SESSION_TRAILER } from "../src/plumbing.js"
@@ -1493,16 +1493,30 @@ describe("a failed commit is compensated, for every singular operation", () => {
      * happens to be, which can be after `git mv` staged the rename and before the commit. A
      * compensation attached to the failure channel alone would never run.
      *
-     * Driven by a git whose `commit` never returns, so the interruption lands at exactly that point.
+     * Driven by a git whose `commit` signals that it was reached and then never returns, and an
+     * interrupt sent only after that signal, so the interruption lands at exactly that point. A
+     * wall-clock timeout is not the same instrument: on a loaded box 200 ms landed inside `git mv`
+     * or `git add`, whose child was then killed while the compensation's own `git reset` raced it for
+     * `.git/index.lock`, lost, and left the moved file where it was (CI, 2026-09-23: ENOENT on the
+     * first `readFile` below).
      */
     const repo = await fixture()
     const written = await run(repo.store.writeMemory(writeInput()))
     const before = await readFile(join(repo.root, written.path), "utf8")
     const commitsBefore = await commitCount(repo)
-    const hangingGit = { ...repo.git, commit: () => Effect.never as never }
+    const reachedCommit = Deferred.makeUnsafe<void>()
+    const hangingGit = {
+      ...repo.git,
+      commit: () =>
+        Deferred.succeed(reachedCommit, undefined).pipe(Effect.flatMap(() => Effect.never)) as never
+    }
     const store = makeStore(hangingGit)
 
-    await runErr(store.archiveMemory(written.path, "eviction").pipe(Effect.timeout(200)))
+    const fiber = await run(Effect.forkDetach(store.archiveMemory(written.path, "eviction")))
+    await run(Deferred.await(reachedCommit))
+    await run(Fiber.interrupt(fiber))
+    // Interrupted, not failed: the compensation ran off the interrupt cause, which is the claim.
+    expect(Exit.hasInterrupts(await run(Fiber.await(fiber)))).toBe(true)
 
     expect(await readFile(join(repo.root, written.path), "utf8")).toBe(before)
     expect(await runErr(repo.store.readMemory(archivePathFor(written.path, 2026)))).toBeInstanceOf(

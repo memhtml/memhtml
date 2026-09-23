@@ -297,7 +297,9 @@ describe("integrations doctor", () => {
     expect(checks.find((check) => check.name === "cli-version")?.ok).toBe(true)
     expect(checks.filter((check) => !check.ok)).toEqual([])
     expect(report.healthy).toBe(true)
-  }, 30_000)
+    // Above the sum of the two probe bounds (10 s + 20 s) plus install, so a slow box fails on the
+    // doctor's own row rather than on vitest's clock.
+  }, 45_000)
 
   it("answers one receipt row when the host is not installed", async () => {
     await sandbox()

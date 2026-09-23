@@ -67,8 +67,15 @@ export interface DoctorResult {
   readonly checks: ReadonlyArray<DoctorCheck>
 }
 
-/** How long the handshake may take. A stdio server that has not answered by then is not wired. */
-export const HANDSHAKE_TIMEOUT_MS = 5_000
+/**
+ * How long the handshake may take. A stdio server that has not answered by then is not wired.
+ *
+ * Twice the version probe, because it does strictly more: `initialize` is answered only after the
+ * server has loaded the CLI's module graph and opened and migrated the store's database. On a loaded
+ * box (the full `mise run check` on a 2-vCPU runner) that cold start exceeded 5 s on 2026-09-14 and
+ * 2026-09-22, against a server that answered in under a second alone.
+ */
+export const HANDSHAKE_TIMEOUT_MS = 20_000
 
 /** How long the version probe may take. `manifest` opens nothing, so this is generous already. */
 export const VERSION_TIMEOUT_MS = 10_000
