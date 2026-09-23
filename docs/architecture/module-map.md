@@ -115,7 +115,6 @@ This repository is the software that manages a memory root, a separate git repos
 - `apps/consolidator/src/client.ts` (1123 LOC)
 - `apps/consolidator/src/contract.ts` (443 LOC)
 - `apps/consolidator/src/mount.ts` (279 LOC)
-- `apps/consolidator/src/run-auth.ts` (231 LOC)
 - `tests-integration/tests/harness.ts` (198 LOC)
 - `tests-integration/tests/sleep.test.ts` (324 LOC)
 - `scripts/probe-sqlite-concurrency.mjs` (86 LOC)
@@ -124,7 +123,7 @@ This repository is the software that manages a memory root, a separate git repos
 ## See also
 
 - [memhtml-public · Impact analysis](../insights/impact-analysis.md): 6 shared source citations
-- [memhtml-public · Dependency graph](../diagrams/structural/dependency-graph.md): 5 shared source citations
+- [memhtml-public · Dependency graph](../diagrams/structural/dependency-graph.md): 24 shared source citations
 - [memhtml-public · Contract map](../insights/contract-map.md): 5 shared source citations
 - [memhtml-public · System overview](../architecture/system-overview.md): 4 shared source citations
 - [memhtml-public · CLI](../reference/cli.md): 4 shared source citations
