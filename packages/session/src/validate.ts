@@ -1,6 +1,7 @@
 import type { HeadView, OverlayOp } from "@memhtml/contracts"
 import {
   ARCS_DIR,
+  hrefToPath,
   isEdgeRel,
   memoryPathViolation,
   normalizePath,
@@ -100,6 +101,20 @@ export const validateOps = (
   const batchHashes = new Map<string, string>()
   /** Paths this batch puts with their content hash, so a later `link` or `archive` can name them. */
   const batchPuts = new Map<string, string>()
+  /**
+   * Every path this batch creates, puts and archive destinations alike, gathered before the walk so
+   * a link may name a target its batch creates later in the order. The harvester emits links before
+   * archives, so the archive a `supersedes` edge points at comes after the edge.
+   */
+  const batchCreates = new Set<string>(
+    ops.flatMap((op) =>
+      op.kind === "put"
+        ? [normalizePath(op.path)]
+        : op.kind === "archive"
+          ? [normalizePath(op.to)]
+          : []
+    )
+  )
 
   for (const op of ops) {
     for (const path of touchedPaths(op)) {
@@ -158,7 +173,18 @@ export const validateOps = (
           reasons.push("link source is not an active record in the head")
         }
         if (!isEdgeRel(op.rel)) reasons.push(`rel \`${op.rel}\` is outside the edge vocabulary`)
-        if (!isRootRelativeHref(op.href)) reasons.push("href is not root-relative")
+        if (!isRootRelativeHref(op.href)) {
+          reasons.push("href is not root-relative")
+        } else {
+          // The target must be a record: active or archived in the head (a `supersedes` edge points
+          // at an archive by design, and a repaired dangling link points at the archived form), or
+          // one this batch puts or archives. The first live run minted 23 links in two minutes; a
+          // dangling one would have landed unnoticed.
+          const target = normalizePath(hrefToPath(op.href))
+          if (view.get(target) === undefined && !batchCreates.has(target)) {
+            reasons.push("link target is not a record in the head or this batch")
+          }
+        }
         if (reasons.length > 0) violations.push({ kind: "format", path: op.path, reasons })
         break
       }

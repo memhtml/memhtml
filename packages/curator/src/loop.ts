@@ -205,7 +205,11 @@ export const runCurator = (input: CuratorRunInput): Effect.Effect<CuratorRun, St
           system: charter,
           prompt,
           tools,
-          toolChoice: "required",
+          // "auto", not "required": under "required" the AI SDK throws when a step carries no tool
+          // call, and the first live run (2026-09-23, Opus 5.5 through the proxy) ended exactly so,
+          // with 23 ops in the session and its closing text lost. A text-only step now ends the run
+          // and the text is the report.
+          toolChoice: "auto",
           abortSignal: signal,
           stopWhen: [
             () => report !== null,
@@ -220,8 +224,7 @@ export const runCurator = (input: CuratorRunInput): Effect.Effect<CuratorRun, St
           }
         })
         // A model that answered with text and no tool call ended the loop on its own; the text is
-        // the closest thing to a report it gave. `toolChoice: "required"` makes this rare, not
-        // impossible.
+        // its report, and the run stopped by `finish` as surely as through the tool.
         if (
           report === null &&
           result.text.trim() !== "" &&

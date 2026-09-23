@@ -114,6 +114,26 @@ describe("the happy path", () => {
   })
 })
 
+describe("a text-only answer", () => {
+  it("ends the run as finish with the text as the report, no tool call needed", async () => {
+    // The first live run (Opus 5.5 through the proxy, 2026-09-23) closed with prose instead of a
+    // `finish` call; under `toolChoice: "required"` that threw and the run was reported as a model
+    // failure with its ops stranded. The text is the report.
+    const tools = fakeTools({ exec: { appended: 2 } })
+    const model = scriptedModel([
+      { tool: "exec", args: { script: "console.log(1)" } },
+      { text: "Linked two records.\n\nLeft undone: everything else." }
+    ])
+    const result = await run({ tools, model, briefing: emptyBriefing, charter: CHARTER })
+    expect(result.stoppedBy).toBe("finish")
+    expect(result.report).toBe("Linked two records.\n\nLeft undone: everything else.")
+    expect(result.toolCalls).toEqual(["exec"])
+    expect(result.opsAppended).toBe(2)
+    expect(result.error).toBeNull()
+    expect(model.doGenerateCalls[0]?.toolChoice).toEqual({ type: "auto" })
+  })
+})
+
 describe("the budget stops", () => {
   it("a model that never finishes is stopped at maxSteps", async () => {
     const tools = fakeTools()

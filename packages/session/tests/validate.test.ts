@@ -19,6 +19,8 @@ import { mapHead, memory, recordFrom } from "./helpers.js"
  * - format: skip `checkMemory` -> "collects format violations".
  * - archive hash: drop the `contentHash(op.html) !== sourceHash` reason -> "refuses an archive op
  *   whose article is not the source's".
+ * - link target: drop the `view.get(target) === undefined` check -> "a link must point at a record
+ *   in the head or in the batch" (the missing target passes).
  */
 
 const CAPITAL = memory("Capital", "The capital of India is New Delhi.")
@@ -202,6 +204,50 @@ describe("validateOps", () => {
         reasons: ["rel `bogus` is outside the edge vocabulary", "href is not root-relative"]
       }
     ])
+  })
+
+  it("a link must point at a record in the head or in the batch", async () => {
+    const view = await head()
+    const link = (href: string): OverlayOp => ({
+      kind: "link",
+      path: "areas/inbox/alpha.html",
+      rel: "supports",
+      href
+    })
+    // Active and archived targets in the head both count: a `supersedes` edge points at an archive
+    // by design, and the repair of a dangling link points at the archived form.
+    expect(validateOps(view, [link("/areas/inbox/capital.html")])).toEqual([])
+    expect(validateOps(view, [link("/archive/2025/areas/inbox/old.html")])).toEqual([])
+    expect(validateOps(view, [link("/areas/inbox/nowhere.html")])).toEqual([
+      {
+        kind: "format",
+        path: "areas/inbox/alpha.html",
+        reasons: ["link target is not a record in the head or this batch"]
+      }
+    ])
+    // A target this batch creates counts too: a put, and an archive's destination, in either order.
+    // The harvester emits links before archives, so the archive a `supersedes` edge names comes
+    // after the edge; the first cut of this check walked in order and refused every such harvest.
+    expect(
+      validateOps(view, [
+        put("areas/inbox/fresh.html", memory("Fresh", "A fresh fact.")),
+        link("/areas/inbox/fresh.html")
+      ])
+    ).toEqual([])
+    const supersedes: OverlayOp = {
+      kind: "link",
+      path: "areas/inbox/alpha.html",
+      rel: "supersedes",
+      href: "/archive/2026/areas/inbox/capital.html"
+    }
+    const archive: OverlayOp = {
+      kind: "archive",
+      path: "areas/inbox/capital.html",
+      to: "archive/2026/areas/inbox/capital.html",
+      html: CAPITAL
+    }
+    expect(validateOps(view, [archive, supersedes])).toEqual([])
+    expect(validateOps(view, [supersedes, archive])).toEqual([])
   })
 
   it("refuses an archive op whose article is not the source's, and takes one whose head differs", async () => {
