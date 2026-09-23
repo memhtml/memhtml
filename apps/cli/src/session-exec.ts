@@ -2,8 +2,9 @@ import { readFile } from "node:fs/promises"
 
 import type { HeadView, OverlayOp } from "@memhtml/contracts"
 import { StorageFailure } from "@memhtml/contracts/errors"
-import { originalPathFor } from "@memhtml/contracts/paths"
+import { memoryPathViolation, originalPathFor } from "@memhtml/contracts/paths"
 import { contentHash } from "@memhtml/html"
+import { isReservedPath } from "@memhtml/session"
 import { Effect } from "effect"
 import type { InMemoryFs as InMemoryFsShape } from "just-bash"
 
@@ -42,8 +43,11 @@ import {
  *   this store (nothing is ever deleted; eviction is a move), so the pair is the only shape a
  *   vanished file can legitimately take.
  * - Everything else is `rejected` with a reason: a non-`.html` file, anything under `.git`, a
- *   generated `index.html` or `sitemap.xml`, a vanished file with no archive twin, and a vanished file
- *   whose twin holds a different article.
+ *   generated `index.html` or `sitemap.xml`, a path only curation writes (`areas/arcs/`,
+ *   `resources/people/`, `.memhtml/`), a path outside the PARA buckets, a vanished file with no
+ *   archive twin, and a vanished file whose twin holds a different article. What the harvester lets
+ *   through is then judged by `validateOps` before it is appended, so one bad file cannot make the
+ *   whole session uncommittable.
  *
  * ## Reuse
  *
@@ -127,12 +131,19 @@ const contentHashOrNull = (html: string): string | null => {
   }
 }
 
-/** The reason a present file cannot be an op, or `null` when it can. */
+/**
+ * The reason a present file cannot be an op, or `null` when it can. The same reserved-path and
+ * PARA-root rules `validateOps` applies, asked here so the file lands in `rejected` with a reason
+ * instead of in the log as an op no commit will ever accept.
+ */
 const presentFileProblem = (path: string): string | null => {
   const name = path.slice(path.lastIndexOf("/") + 1)
   if (name === "index.html") return "index.html is a generated listing, not a memory"
   if (name === "sitemap.xml") return "sitemap.xml is generated, not a memory"
   if (!path.endsWith(".html")) return "not an .html file"
+  if (isReservedPath(path)) return "a reserved path only curation writes"
+  const pathReason = memoryPathViolation(path)
+  if (pathReason !== undefined) return `not a memory path: ${pathReason}`
   return null
 }
 

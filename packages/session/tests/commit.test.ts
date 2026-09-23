@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process"
-import { readFile, stat, writeFile } from "node:fs/promises"
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { Effect } from "effect"
+import { Effect, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { commitMessage, commitSession, commitSubject } from "../src/commit.js"
@@ -10,6 +10,7 @@ import {
   rebaseSession,
   resumeSession,
   sessionRef,
+  sessionStateFile,
   startSession
 } from "../src/session.js"
 import {
@@ -25,17 +26,24 @@ import {
 } from "./helpers.js"
 
 /**
- * The six-step commit algorithm against real temp repos.
+ * The commit algorithm against real temp repos. Every repo here has `main` checked out, so the
+ * checkout-follows path (step 5) runs in most cases; the curator-ref case is the one where it does not.
  *
  * Mutation notes, one per guard, each run once with the change applied and the named test red:
+ * - step 0: `isAncestor` result treated as false -> "a commit killed after the swap is recovered".
  * - step 1: `if (violations.length > 0)` -> `if (false)` -> "refuses ... and writes nothing".
- * - step 2: `overlapping.length > 0` -> `false` -> "same path: rebase-needed, then refused".
+ * - step 2: `mainSha !== head.sha` -> `overlapping.length > 0` (the path-disjoint fast path) ->
+ *   "a disjoint advance ... is rebase-needed" and "duplicate hash ... never lands without a rebase".
  * - step 3: drop the `addLink(linked, "contradicts", ...)` call -> "frame-key conflict ...".
  * - step 4: drop `updateIndexRemove` -> "archives through the index ..." (source still in tree).
  * - step 4: `archiveBody` returns `html` unchanged -> same test (stamps missing).
- * - step 5: treat `raced` as `updated` -> "ref race between validation and update".
- * - step 5: drop the `sessionRef` update -> "sets refs/memhtml/sessions/<id>".
- * - step 6: `worktreeEligible` ignores `worktreeStatus` -> "leaves a dirty working tree alone".
+ * - stage: archive body from `op.html` instead of the head's copy -> "an archive carries a link ...".
+ * - step 5: drop the `dirtyPaths` check -> "refuses to move a checked-out ref over ...".
+ * - step 5: drop `readTreeIntoWorktree` -> "a checked-out ref follows ..." and "a v1-style commit
+ *   from the shared index keeps ...".
+ * - step 6: treat `raced` as `updated` -> "ref race between validation and update".
+ * - step 7: drop the `sessionRef` update -> "sets refs/memhtml/sessions/<id>".
+ * - lock: `withSessionLock` runs `effect` without taking the lock -> "two commits of one session".
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
@@ -83,7 +91,7 @@ describe("commit message", () => {
 })
 
 describe("commitSession", () => {
-  it("lands a put on main, stamps the trailer, clears the log, and leaves the working tree alone", async () => {
+  it("lands a put on main, stamps the trailer, clears the log, and the checkout follows", async () => {
     const { root, base, head } = await seeded()
     const html = memory("Beta", "Beta is the second letter of the Greek alphabet.")
     const session = await start(root, "s1", head, [putOp("areas/inbox/beta.html", html)])
@@ -92,18 +100,41 @@ describe("commitSession", () => {
     if (outcome.kind !== "committed") return
     expect(outcome.paths).toEqual(["areas/inbox/beta.html"])
     expect(outcome.contradictions).toEqual([])
-    expect(outcome.worktreeSynced).toBe(false)
+    expect(outcome.recovered).toBe(false)
+    // HEAD is main here, so the shared index and working tree moved with the ref.
+    expect(outcome.worktreeSynced).toBe(true)
     expect(await commitOf(root, "refs/heads/main")).toBe(outcome.sha)
     expect(await git(root, ["rev-parse", `${outcome.sha}^`])).toBe(base)
     expect(await fileAt(root, outcome.sha, "areas/inbox/beta.html")).toBe(html)
     expect(
       await git(root, ["log", "-1", "--format=%s%n%(trailers:key=Memhtml-Session)", outcome.sha])
     ).toBe("memhtml(session): add beta\nMemhtml-Session: s1")
-    // Not through the working tree: the file is in the commit and not on disk.
-    await expect(stat(join(root, "areas/inbox/beta.html"))).rejects.toThrow()
+    // The commit was built through the session's index, and the checkout caught up: git sees a
+    // clean tree at the new HEAD rather than the session's file as a staged deletion.
+    expect(await readFile(join(root, "areas/inbox/beta.html"), "utf8")).toBe(html)
+    expect(await git(root, ["status", "--porcelain"])).toBe("")
     const resumed = await run(resumeSession({ root, id: "s1" }))
     expect(resumed.ops).toEqual([])
     expect(resumed.baseSha).toBe(outcome.sha)
+    expect(resumed.pending).toBeUndefined()
+  })
+
+  it("a v1-style commit from the shared index keeps the session's file on main", async () => {
+    const { root, head } = await seeded()
+    const html = memory("Kept", "A session's file survives the next porcelain commit.")
+    const session = await start(root, "keep", head, [putOp("areas/inbox/kept.html", html)])
+    const outcome = await run(commitSession({ session, head, message: "kept" }))
+    if (outcome.kind !== "committed") throw new Error(outcome.kind)
+    // The v1 store commits from the shared index: `git add -- <paths>` then `git commit`.
+    await writeFile(join(root, "areas/inbox/later.html"), memory("Later", "A v1 write."), "utf8")
+    await git(root, ["add", "--", "areas/inbox/later.html"])
+    await git(root, ["commit", "-q", "-m", "v1 write"])
+    const paths = await treePaths(root, "main")
+    expect(paths).toContain("areas/inbox/kept.html")
+    expect(paths).toContain("areas/inbox/later.html")
+    expect(await git(root, ["diff", "--name-status", `${outcome.sha}`, "main"])).toBe(
+      "A\tareas/inbox/later.html"
+    )
   })
 
   it("sets refs/memhtml/sessions/<id> to the commit, and moves it on a second commit", async () => {
@@ -139,7 +170,7 @@ describe("commitSession", () => {
     await expect(commitOf(root, sessionRef("bad"))).rejects.toThrow()
   })
 
-  it("two sessions on one base committing disjoint files both land", async () => {
+  it("a disjoint advance of the ref is rebase-needed with no overlap, then lands after one rebase", async () => {
     const { root, base, head } = await seeded()
     const s1 = await start(root, "one", head, [
       putOp("areas/inbox/one.html", memory("One", "One."))
@@ -149,10 +180,18 @@ describe("commitSession", () => {
     ])
     const first = await run(commitSession({ session: s1, head, message: "one" }))
     expect(first.kind).toBe("committed")
-    // The second sees main moved, finds no overlap, and commits on top without a rebase.
-    const second = await run(commitSession({ session: s2, head, message: "two" }))
+    if (first.kind !== "committed") return
+    // The second sees main past the version it validated against. The paths are disjoint, so
+    // `overlapping` is empty, but dedup and frame keys were judged at the old head, so it rebases.
+    const stale = await run(commitSession({ session: s2, head, message: "two" }))
+    expect(stale).toEqual({ kind: "rebase-needed", overlapping: [], mainSha: first.sha })
+    expect(await commitOf(root, "refs/heads/main")).toBe(first.sha)
+    const advanced = await loadHead(root)
+    const second = await run(
+      commitSession({ session: rebaseSession(s2, advanced), head: advanced, message: "two" })
+    )
     expect(second.kind).toBe("committed")
-    if (second.kind !== "committed" || first.kind !== "committed") return
+    if (second.kind !== "committed") return
     expect(await git(root, ["rev-parse", `${second.sha}^`])).toBe(first.sha)
     expect((await git(root, ["log", "--format=%s", `${base}..main`])).split("\n")).toEqual([
       "memhtml(session): two",
@@ -209,6 +248,11 @@ describe("commitSession", () => {
     ])
     const first = await run(commitSession({ session: s1, head, message: "a" }))
     if (first.kind !== "committed") throw new Error(first.kind)
+    // Without a rebase the twin is judged against a head that never saw twin-a, and the paths are
+    // disjoint: the commit must still not land, or main holds two active records with one hash.
+    const stale = await run(commitSession({ session: s2, head, message: "b" }))
+    expect(stale).toEqual({ kind: "rebase-needed", overlapping: [], mainSha: first.sha })
+    expect(await treePaths(root, "main")).not.toContain("areas/inbox/twin-b.html")
     const advanced = await loadHead(root)
     const second = await run(
       commitSession({ session: rebaseSession(s2, advanced), head: advanced, message: "b" })
@@ -219,6 +263,31 @@ describe("commitSession", () => {
         { kind: "duplicate", path: "areas/inbox/twin-b.html", existing: "areas/inbox/twin-a.html" }
       ]
     })
+  })
+
+  it("frame-key rivals from two sessions never land without a rebase, and the second links both", async () => {
+    const { root, head } = await seeded()
+    const x = await start(root, "fx", head, [
+      putOp("areas/inbox/cap-x.html", memory("Capital x", "The capital of India is Mumbai."))
+    ])
+    const y = await start(root, "fy", head, [
+      putOp("areas/inbox/cap-y.html", memory("Capital y", "The capital of India is Chennai."))
+    ])
+    const first = await run(commitSession({ session: x, head, message: "x" }))
+    if (first.kind !== "committed") throw new Error(first.kind)
+    const stale = await run(commitSession({ session: y, head, message: "y" }))
+    expect(stale.kind).toBe("rebase-needed")
+    const advanced = await loadHead(root)
+    const second = await run(
+      commitSession({ session: rebaseSession(y, advanced), head: advanced, message: "y" })
+    )
+    if (second.kind !== "committed") throw new Error(second.kind)
+    expect(second.contradictions.map((entry) => entry.against).sort()).toEqual([
+      "areas/inbox/cap-x.html",
+      "areas/inbox/capital.html"
+    ])
+    const landed = await fileAt(root, second.sha, "areas/inbox/cap-y.html")
+    expect(landed).toContain('<link rel="memhtml-contradicts" href="/areas/inbox/cap-x.html">')
   })
 
   it("frame-key conflict: both files live, the new one carries the contradicts link", async () => {
@@ -271,7 +340,84 @@ describe("commitSession", () => {
     expect(
       await git(root, ["diff", "--name-status", "-M", `${outcome.sha}^`, outcome.sha])
     ).toMatch(/^R0\d\d\tareas\/inbox\/alpha\.html\tarchive\/2026\/areas\/inbox\/alpha\.html$/)
-    expect(await readFile(join(root, "areas/inbox/alpha.html"), "utf8")).toBe(ALPHA)
+    // The checkout followed: the source is gone from disk and the archived copy is on it.
+    await expect(stat(join(root, "areas/inbox/alpha.html"))).rejects.toThrow()
+    expect(await readFile(join(root, "archive/2026/areas/inbox/alpha.html"), "utf8")).toBe(archived)
+  })
+
+  it("an archive carries a link added by an earlier link op in the same batch", async () => {
+    const { root, head } = await seeded()
+    const session = await run(
+      startSession({ root, id: "arch-link", base: head }).pipe(
+        Effect.flatMap((s) =>
+          appendOps(s, [
+            {
+              kind: "link",
+              path: "areas/inbox/alpha.html",
+              rel: "supports",
+              href: "/areas/inbox/capital.html"
+            },
+            {
+              kind: "archive",
+              path: "areas/inbox/alpha.html",
+              to: "archive/2026/areas/inbox/alpha.html",
+              html: ALPHA
+            }
+          ])
+        )
+      )
+    )
+    const outcome = await run(commitSession({ session, head, message: "link then archive" }))
+    if (outcome.kind !== "committed") throw new Error(outcome.kind)
+    const archived = await fileAt(root, outcome.sha, "archive/2026/areas/inbox/alpha.html")
+    expect(archived).toContain('<link rel="memhtml-supports" href="/areas/inbox/capital.html">')
+    expect(archived).toContain('<meta name="memhtml-status" content="archived">')
+  })
+
+  it("an archive minted before main linked its source carries main's link after the rebase", async () => {
+    const { root, head } = await seeded()
+    // Session lk adds an inbound edge to beta's future source and lands it.
+    const lk = await run(
+      startSession({ root, id: "lk", base: head }).pipe(
+        Effect.flatMap((s) =>
+          appendOps(s, [
+            {
+              kind: "link",
+              path: "areas/inbox/alpha.html",
+              rel: "relates_to",
+              href: "/areas/inbox/capital.html"
+            }
+          ])
+        )
+      )
+    )
+    // Session ar, on the older base, archives alpha with the bytes it saw.
+    const ar = await run(
+      startSession({ root, id: "ar", base: head }).pipe(
+        Effect.flatMap((s) =>
+          appendOps(s, [
+            {
+              kind: "archive",
+              path: "areas/inbox/alpha.html",
+              to: "archive/2026/areas/inbox/alpha.html",
+              html: ALPHA
+            }
+          ])
+        )
+      )
+    )
+    const linked = await run(commitSession({ session: lk, head, message: "link" }))
+    if (linked.kind !== "committed") throw new Error(linked.kind)
+    const blocked = await run(commitSession({ session: ar, head, message: "archive" }))
+    expect(blocked.kind).toBe("rebase-needed")
+    const advanced = await loadHead(root)
+    const outcome = await run(
+      commitSession({ session: rebaseSession(ar, advanced), head: advanced, message: "archive" })
+    )
+    if (outcome.kind !== "committed") throw new Error(outcome.kind)
+    const archived = await fileAt(root, outcome.sha, "archive/2026/areas/inbox/alpha.html")
+    expect(archived).toContain('<link rel="memhtml-relates-to" href="/areas/inbox/capital.html">')
+    expect(await treePaths(root, outcome.sha)).not.toContain("areas/inbox/alpha.html")
   })
 
   it("applies a link op to the head's copy of the file", async () => {
@@ -323,34 +469,182 @@ describe("commitSession", () => {
     expect(outcome).toEqual({ kind: "rebase-needed", overlapping: [], mainSha: intruder })
     expect(await commitOf(root, "refs/heads/main")).toBe(intruder)
     await expect(commitOf(root, sessionRef("race"))).rejects.toThrow()
-    // The session keeps its ops for the retry.
-    expect((await run(resumeSession({ root, id: "race" }))).ops).toHaveLength(1)
-  })
-
-  it("syncWorktree moves a clean checkout of the ref to the new commit", async () => {
-    const { root, head } = await seeded()
-    const html = memory("Synced", "This file reaches the working tree.")
-    const session = await start(root, "sync", head, [putOp("areas/inbox/synced.html", html)])
-    const outcome = await run(commitSession({ session, head, message: "sync", syncWorktree: true }))
-    if (outcome.kind !== "committed") throw new Error(outcome.kind)
-    expect(outcome.worktreeSynced).toBe(true)
-    expect(await readFile(join(root, "areas/inbox/synced.html"), "utf8")).toBe(html)
+    // The session keeps its ops for the retry, carries no pending commit, and the checkout was
+    // rolled back to the ref's value: the raced tree is not on disk.
+    const resumed = await run(resumeSession({ root, id: "race" }))
+    expect(resumed.ops).toHaveLength(1)
+    expect(resumed.pending).toBeUndefined()
+    await expect(stat(join(root, "areas/inbox/capital-3.html"))).rejects.toThrow()
     expect(await git(root, ["status", "--porcelain"])).toBe("")
   })
 
-  it("leaves a dirty working tree alone and reports worktreeSynced false", async () => {
+  it("a commit killed after the swap is recovered by the next commit, not refused as its own duplicate", async () => {
     const { root, head } = await seeded()
-    await writeFile(join(root, "areas/inbox/alpha.html"), `${ALPHA}<!-- local edit -->\n`, "utf8")
-    const session = await start(root, "dirty", head, [
-      putOp("areas/inbox/other.html", memory("Other", "Another fact."))
-    ])
-    const outcome = await run(
-      commitSession({ session, head, message: "dirty", syncWorktree: true })
+    const html = memory("Killed", "The process died after update-ref returned.")
+    const session = await start(root, "kill", head, [putOp("areas/inbox/killed.html", html)])
+    const before = await readFile(sessionStateFile(root, "kill"), "utf8")
+    const first = await run(commitSession({ session, head, message: "killed" }))
+    if (first.kind !== "committed") throw new Error(first.kind)
+    // Simulate the kill: the log is as it was before the call, plus the intent written before the
+    // swap. The commit is on main; the caller never heard so.
+    await writeFile(
+      sessionStateFile(root, "kill"),
+      JSON.stringify({ ...JSON.parse(before), pending: first.sha }),
+      "utf8"
     )
-    if (outcome.kind !== "committed") throw new Error(outcome.kind)
-    expect(outcome.worktreeSynced).toBe(false)
+    const retry = await run(
+      commitSession({ session: await run(resumeSession({ root, id: "kill" })), head, message: "x" })
+    )
+    expect(retry).toEqual({
+      kind: "committed",
+      sha: first.sha,
+      paths: ["areas/inbox/killed.html"],
+      contradictions: [],
+      worktreeSynced: true,
+      recovered: true
+    })
+    const resumed = await run(resumeSession({ root, id: "kill" }))
+    expect(resumed).toMatchObject({ baseSha: first.sha, ops: [] })
+    expect(resumed.pending).toBeUndefined()
+    expect(await commitOf(root, sessionRef("kill"))).toBe(first.sha)
+    expect(await git(root, ["rev-list", "--count", "main"])).toBe("2")
+  })
+
+  it("a pending commit that never reached the ref is dropped and the checkout rolled back", async () => {
+    const { root, base, head } = await seeded()
+    const html = memory("Orphan", "A tree built and staged, then the process died before the swap.")
+    await start(root, "orphan", head, [putOp("areas/inbox/orphan.html", html)])
+    // An orphan commit with the session's tree, and a checkout left one step ahead by the kill.
+    const blob = await git(root, ["hash-object", "-w", "--stdin"], html)
+    const orphan = await run(
+      Effect.gen(function* () {
+        const { plumbingFor } = yield* Effect.promise(() => import("../src/session.js"))
+        const plumbing = plumbingFor(root, "orphan-tree")
+        yield* plumbing.readTree(base)
+        yield* plumbing.updateIndexAdd([
+          { mode: "100644", sha: blob, path: "areas/inbox/orphan.html" }
+        ])
+        const tree = yield* plumbing.writeTree()
+        return yield* plumbing.commitTree(tree, [base], "orphan\n")
+      })
+    )
+    await git(root, ["read-tree", "-m", "-u", base, orphan])
+    expect(await git(root, ["status", "--porcelain"])).toBe("A  areas/inbox/orphan.html")
+    await writeFile(
+      sessionStateFile(root, "orphan"),
+      JSON.stringify({
+        ...JSON.parse(await readFile(sessionStateFile(root, "orphan"), "utf8")),
+        pending: orphan
+      }),
+      "utf8"
+    )
+    const outcome = await run(
+      commitSession({
+        session: await run(resumeSession({ root, id: "orphan" })),
+        head,
+        message: "again"
+      })
+    )
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(outcome.recovered).toBe(false)
+    expect(outcome.sha).not.toBe(orphan)
     expect(await commitOf(root, "refs/heads/main")).toBe(outcome.sha)
-    await expect(stat(join(root, "areas/inbox/other.html"))).rejects.toThrow()
+    expect(await git(root, ["status", "--porcelain"])).toBe("")
+    expect(await readFile(join(root, "areas/inbox/orphan.html"), "utf8")).toBe(html)
+  })
+
+  it("two commits of one session at once: one lands, the other is refused as locked, nothing is lost", async () => {
+    const { root, head } = await seeded()
+    const html = memory("Same", "Two callers submitted the same session's commit.")
+    const session = await start(root, "same", head, [putOp("areas/inbox/new.html", html)])
+    const results = await run(
+      Effect.all(
+        [
+          Effect.result(commitSession({ session, head, message: "a" })),
+          Effect.result(commitSession({ session, head, message: "b" }))
+        ],
+        { concurrency: "unbounded" }
+      )
+    )
+    const landed = results.filter(Result.isSuccess).map((result) => result.success)
+    const refused = results.filter(Result.isFailure).map((result) => result.failure)
+    expect(landed).toHaveLength(1)
+    expect(refused).toHaveLength(1)
+    expect(refused[0]).toMatchObject({ _tag: "StorageFailure", operation: "session.locked" })
+    expect(landed[0]?.kind).toBe("committed")
+    expect(await treePaths(root, "main")).toContain("areas/inbox/new.html")
+    expect(await fileAt(root, "main", "areas/inbox/new.html")).toBe(html)
+    expect((await run(resumeSession({ root, id: "same" }))).ops).toEqual([])
+  })
+
+  it("a checked-out ref follows the commit even beside an unrelated uncommitted edit", async () => {
+    const { root, head } = await seeded()
+    const edited = `${ALPHA}<!-- local edit -->\n`
+    await writeFile(join(root, "areas/inbox/alpha.html"), edited, "utf8")
+    const other = memory("Other", "Another fact.")
+    const session = await start(root, "dirty", head, [putOp("areas/inbox/other.html", other)])
+    const outcome = await run(commitSession({ session, head, message: "dirty" }))
+    if (outcome.kind !== "committed") throw new Error(outcome.kind)
+    expect(outcome.worktreeSynced).toBe(true)
+    expect(await commitOf(root, "refs/heads/main")).toBe(outcome.sha)
+    // The session's file reached the working tree, the human's edit is untouched, and git reports
+    // exactly that edit: no staged deletion of the session's file for a `git commit -a` to land.
+    expect(await readFile(join(root, "areas/inbox/other.html"), "utf8")).toBe(other)
+    expect(await readFile(join(root, "areas/inbox/alpha.html"), "utf8")).toBe(edited)
+    // (The helper trims stdout, so the leading unstaged-column space is gone.)
+    expect(await git(root, ["status", "--porcelain"])).toBe("M areas/inbox/alpha.html")
+    await git(root, ["commit", "-q", "-am", "human edit"])
+    expect(await treePaths(root, "main")).toContain("areas/inbox/other.html")
+  })
+
+  it("refuses to move a checked-out ref over a session path the checkout holds uncommitted", async () => {
+    const { root, base, head } = await seeded()
+    // An untracked file at the very path the session puts, and a modified file at the one it archives.
+    await mkdir(join(root, "areas/inbox"), { recursive: true })
+    await writeFile(join(root, "areas/inbox/new.html"), "<!-- a draft -->\n", "utf8")
+    await writeFile(join(root, "areas/inbox/alpha.html"), `${ALPHA}<!-- edit -->\n`, "utf8")
+    const session = await run(
+      startSession({ root, id: "clash", base: head }).pipe(
+        Effect.flatMap((s) =>
+          appendOps(s, [
+            putOp("areas/inbox/new.html", memory("New", "A new fact.")),
+            {
+              kind: "archive",
+              path: "areas/inbox/alpha.html",
+              to: "archive/2026/areas/inbox/alpha.html",
+              html: ALPHA
+            }
+          ])
+        )
+      )
+    )
+    const outcome = await run(commitSession({ session, head, message: "clash" }))
+    expect(outcome).toEqual({
+      kind: "worktree-dirty",
+      paths: ["areas/inbox/alpha.html", "areas/inbox/new.html"]
+    })
+    // Nothing moved: not the ref, not the checkout, not the log.
+    expect(await commitOf(root, "refs/heads/main")).toBe(base)
+    expect(await readFile(join(root, "areas/inbox/new.html"), "utf8")).toBe("<!-- a draft -->\n")
+    await expect(commitOf(root, sessionRef("clash"))).rejects.toThrow()
+    const resumed = await run(resumeSession({ root, id: "clash" }))
+    expect(resumed.ops).toHaveLength(2)
+    expect(resumed.pending).toBeUndefined()
+  })
+
+  it("a blocked provenance ref does not fail a commit that landed", async () => {
+    const { root, head } = await seeded()
+    // A ref UNDER the session's provenance name makes that name unwritable (directory/file clash).
+    await git(root, ["update-ref", `${sessionRef("prov-blocked")}/child`, head.sha])
+    const session = await start(root, "prov-blocked", head, [
+      putOp("areas/inbox/pb.html", memory("PB", "Provenance is a best effort."))
+    ])
+    const outcome = await run(commitSession({ session, head, message: "pb" }))
+    expect(outcome.kind).toBe("committed")
+    if (outcome.kind !== "committed") return
+    expect(await commitOf(root, "refs/heads/main")).toBe(outcome.sha)
+    await expect(commitOf(root, sessionRef("prov-blocked"))).rejects.toThrow()
+    expect((await run(resumeSession({ root, id: "prov-blocked" }))).baseSha).toBe(outcome.sha)
   })
 
   it("creates a curator ref that does not exist yet", async () => {
@@ -368,5 +662,9 @@ describe("commitSession", () => {
     expect(await commitOf(root, ref)).toBe(outcome.sha)
     expect(await git(root, ["rev-parse", `${outcome.sha}^`])).toBe(base)
     expect(await commitOf(root, "refs/heads/main")).toBe(base)
+    // HEAD is main, not the curator ref: nothing to follow, and the checkout is untouched.
+    expect(outcome.worktreeSynced).toBe(false)
+    await expect(stat(join(root, "areas/inbox/cur.html"))).rejects.toThrow()
+    expect(await git(root, ["status", "--porcelain"])).toBe("")
   })
 })

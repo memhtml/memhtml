@@ -81,7 +81,10 @@ export interface Plumbing {
   updateRef(ref: string, next: string, expected: string | null): Effect<"updated" | "raced", GitFailure>   // update-ref with old value; a non-zero exit whose stderr names the ref as changed is "raced"
   revParse(ref: string): Effect<string | null, GitFailure>
   diffTreePaths(from: string, to: string): Effect<ReadonlyArray<string>, GitFailure>   // diff-tree -r --name-only --no-renames
-  readTreeIntoWorktree(from: string, to: string): Effect<void, GitFailure>   // read-tree -m -u from to, on the shared index (no GIT_INDEX_FILE)
+  readTreeIntoWorktree(from: string, to: string): Effect<void, GitFailure>   // read-tree -m -u from to, on the shared index (no GIT_INDEX_FILE); waits briefly on a held index.lock
+  headRef(): Effect<string | null, GitFailure>                              // the branch HEAD points at, null when detached
+  dirtyPaths(paths: ReadonlyArray<string>): Effect<ReadonlyArray<string>, GitFailure>   // status --porcelain over the shared index, limited to paths; staged, modified, or untracked
+  isAncestor(sha: string, ref: string): Effect<boolean, GitFailure>         // merge-base --is-ancestor
 }
 export const makePlumbing: (input: { root: string; indexFile: string }) => Plumbing
 
@@ -90,10 +93,12 @@ export interface Session {
   readonly baseSha: string
   readonly ref: string                 // refs/heads/main by default, refs/heads/curate/<date> for a curator
   readonly ops: ReadonlyArray<OverlayOp>
+  readonly pending?: string            // a commit built and possibly landed by a call that was killed; settled by the next commit
 }
-export const startSession: (input: { root: string; id: string; base: HeadView & { sha: string }; ref?: string }) => Effect<Session, GitFailure | StorageFailure>
+export const startSession: (input: { root: string; id: string; base: HeadView & { sha: string }; ref?: string; force?: boolean }) => Effect<Session, GitFailure | StorageFailure>   // an id that already has a log fails with StorageFailure `session.exists` unless force
 export const resumeSession: (input: { root: string; id: string }) => Effect<Session, StorageFailure>
-export const appendOps: (session: Session, ops: ReadonlyArray<OverlayOp>) => Effect<Session, StorageFailure>   // persists the log
+export const appendOps: (session: Session, ops: ReadonlyArray<OverlayOp>) => Effect<Session, StorageFailure>   // persists the log, under the session's lock
+export const withSessionLock: <A, E, R>(root: string, id: string, effect: Effect<A, E, R>) => Effect<A, E | StorageFailure, R>   // exclusive per id; a held lock fails at once with `session.locked`
 export const validateOps: (view: HeadView, ops: ReadonlyArray<OverlayOp>) => ReadonlyArray<Violation>
 export type Violation =
   | { kind: "format"; path: string; reasons: ReadonlyArray<string> }
@@ -101,31 +106,39 @@ export type Violation =
   | { kind: "claim-edit"; path: string }          // put over an active path with a different content hash
   | { kind: "reserved-path"; path: string }       // areas/arcs/, resources/people/, .memhtml/, index.html, sitemap.xml
   | { kind: "batch-cap"; count: number; cap: number }   // cap 200 ops
-export const commitSession: (input: { session: Session; head: HeadView & { sha: string }; message: string; syncWorktree?: boolean }) => Effect<CommitOutcome, GitFailure | StorageFailure>
+export const commitSession: (input: { session: Session; head: HeadView & { sha: string }; message: string; archivedAt?: string }) => Effect<CommitOutcome, GitFailure | StorageFailure>
 export type CommitOutcome =
-  | { kind: "committed"; sha: string; paths: ReadonlyArray<string>; contradictions: ReadonlyArray<{ path: string; against: string }> }
+  | { kind: "committed"; sha: string; paths: ReadonlyArray<string>; contradictions: ReadonlyArray<{ path: string; against: string }>; worktreeSynced: boolean; recovered: boolean }
   | { kind: "rebase-needed"; overlapping: ReadonlyArray<string>; mainSha: string }
   | { kind: "refused"; violations: ReadonlyArray<Violation> }
+  | { kind: "worktree-dirty"; paths: ReadonlyArray<string> }   // HEAD is the ref and the checkout holds uncommitted state at a path this commit writes or removes; nothing moved
 export const rebaseSession: (session: Session, onto: HeadView & { sha: string }) => Session   // moves baseSha, keeps ops; validation happens at the next commit
 ```
 
-Commit algorithm, in order:
+Commit algorithm, in order. The whole call holds the session's lock (`withSessionLock`), so two commits of one id cannot interleave on the shared `.idx` and a `put` cannot rewrite the log mid-commit; a second writer fails with `session.locked` rather than waiting.
 
-1. `validateOps(head, session.ops)`; any violation returns `refused` and writes nothing.
-2. `mainSha = revParse(session.ref)`. If it differs from `session.baseSha`, compute `changed = diffTreePaths(baseSha, mainSha)` and `touched = paths of ops (put path, archive path and to, link path)`. If the intersection is non-empty, return `rebase-needed`. A disjoint advance continues with `parent = mainSha`.
+0. Recovery. A log carrying `pending` names a commit an earlier call built and may have landed before it was killed. If `isAncestor(pending, ref)` it landed: answer `committed` for it with `recovered: true` (paths from `diff-tree`, contradictions not re-derived), clear the log, record provenance. Otherwise roll the checkout back if it had followed (`readTreeIntoWorktree(pending, pending^)`), drop `pending`, and continue.
+1. `validateOps(head, session.ops)`; any violation returns `refused` and writes nothing. An `archive` op's `html` must carry the source record's article (`contentHash` equal), because the body written is the source as the commit sees it, not the op's bytes.
+2. `mainSha = revParse(session.ref)`. If it differs from `head.sha`, the version that was validated, return `rebase-needed` with `mainSha` and `overlapping` = the paths the ops touch that `diffTreePaths(head.sha, mainSha)` names (possibly empty). There is no path-disjoint fast path: a duplicate content hash or a frame-key rival is a collision between different paths, so only a head rebuilt at the tip can judge it, and the CAS in step 6 must cover the version step 1 and step 3 read. `parent = mainSha ?? head.sha`.
 3. Frame-key check against the head: for each `put` whose record has a frame key that `head.byFrameKey` resolves to a different active path, add `<link rel="memhtml-contradicts" href="/that/path">` to the new file's head (`addLink`) and record the pair in `contradictions`. Both stay live. Nothing is auto-archived.
-4. `readTree(parent)` into the session index file; `hashObjectWrite` each put and archive body; `updateIndexAdd` for puts and archive destinations; `updateIndexRemove` for archive sources; `writeTree`; `commitTree(tree, [parent], message)` with the `memhtml(session): ...` subject form and a `Memhtml-Session: <id>` trailer.
-5. `updateRef(ref, commit, expected = parent)`. `raced` means someone else advanced between step 2 and now: return `rebase-needed` with the new `mainSha`; the caller rebases and retries. Also set `refs/memhtml/sessions/<id>` to the commit for provenance.
-6. If `syncWorktree` and the repo has a working tree checked out at `ref` whose `status --porcelain` is empty, `readTreeIntoWorktree(parent, commit)` so the working tree and shared index follow. Otherwise leave the working tree alone and report `worktreeSynced: false`.
+4. `readTree(parent)` into the session index file; `hashObjectWrite` each body; `updateIndexAdd` for puts and archive destinations; `updateIndexRemove` for archive sources; `writeTree`; `commitTree(tree, [parent], message)` with the `memhtml(session): ...` subject form and a `Memhtml-Session: <id>` trailer. An archive destination's body is the source as staged (an earlier op in the batch, else `head.get(path).html`) with the archive stamps, so a link the source gained since the op was minted travels with the copy.
+5. If `headRef()` is `session.ref`, the checkout follows before the ref moves: `dirtyPaths(paths)` non-empty returns `worktree-dirty` and nothing moves; else `readTreeIntoWorktree(parent, commit)` brings the shared index and working tree to the new tree (a two-tree merge, so uncommitted edits at other paths survive). Moving the ref first would leave `HEAD` ahead of the index on any failure, and git then reports the session's own files as staged deletions that the next `git commit -a` or v1 `write` commits; a checkout left one step ahead by a failure here shows them as staged additions, which step 0 reverts and no human commit can turn into a loss.
+6. Write `pending: commit` to the log. `updateRef(ref, commit, expected = mainSha)`. `raced` means someone else advanced between step 2 and now: roll the checkout back, clear `pending`, return `rebase-needed` with the new `mainSha`; the caller rebases and retries.
+7. Persist the log at once (`baseSha: commit`, `ops: []`, no `pending`), then set `refs/memhtml/sessions/<id>` to the commit for provenance as a best effort (a failure is logged, never raised). `worktreeSynced` is true when the checkout followed in step 5 and false when the ref is not checked out.
 
-Session state on disk: `.memhtml/sessions/<id>.idx` (the git index file) and `.memhtml/sessions/<id>.json` (`{ id, baseSha, ref, ops }`). Both are gitignored by `.memhtml/`.
+Session state on disk: `.memhtml/sessions/<id>.idx` (the git index file), `.memhtml/sessions/<id>.json` (`{ id, baseSha, ref, ops, pending? }`, written atomically via a temp file and rename), and `.memhtml/sessions/<id>.lock` while a writer holds the session (proper-lockfile: an atomic `mkdir` whose mtime is refreshed while held, so a lock left by a killed process goes stale in 30 s and is reclaimed). All are gitignored by `.memhtml/`.
 
 Tests, all against a real temp git repo created with `git init -b main` and the store's `configureIdentity`:
 
 - `blobShaOf` equals `git hash-object` for ASCII and multibyte content.
-- Two sessions on the same base committing disjoint files both land; the second sees `committed` after one `rebase-needed` at most, and `git log` shows two commits.
+- Two sessions on the same base committing disjoint files both land; the second sees exactly one `rebase-needed` with `overlapping: []`, then `committed` after a rebase, and `git log` shows two commits.
 - Two sessions putting the same path: the second gets `rebase-needed`, rebases, and then `refused` with `claim-edit` if its hash differs or `duplicate` if identical.
-- Same content hash from two sessions: the second is `refused` with `duplicate` naming the first's path.
+- Same content hash from two sessions: the second is `rebase-needed` while its head is stale (the duplicate never lands on a disjoint advance) and `refused` with `duplicate` naming the first's path once rebased. Frame-key rivals from two sessions behave the same way, and the second carries a contradicts link to the first.
+- An archive op carries a link added by an earlier link op in the same batch, and one minted before main linked its source carries main's link after the rebase.
+- A checkout of the ref follows the commit, also beside an unrelated uncommitted edit; a session path the checkout holds uncommitted is `worktree-dirty` with nothing moved; a porcelain commit from the shared index after a session commit keeps the session's file on main.
+- A commit killed after the swap (log restored with `pending`) is `committed` with `recovered: true` on the next call; a `pending` that never reached the ref is dropped and the checkout rolled back.
+- Two commits of one session at once: one lands, the other fails with `session.locked`, the log is empty and the file is on main.
+- `startSession` on an id that has a log fails with `session.exists` and keeps the log; `force` replaces it.
 - Frame-key conflict: both files live after commit, the new one carries the contradicts link, `git cat-file` shows it.
 - `updateRef` race: advance the ref by hand between validation and update, assert `rebase-needed`.
 - Every guard is mutation-verified: the test file states, per guard, the one-line change that makes it fail (a comment naming the function and condition), and the suite was run once with that change applied.
@@ -133,10 +146,12 @@ Tests, all against a real temp git repo created with `git init -b main` and the 
 Deltas landed, where the implementation departs from the contract above:
 
 - `Session` carries `root` (the repository root). It is not persisted: the log is found by root plus id, so the two cannot disagree.
-- `CommitOutcome.committed` carries `worktreeSynced: boolean`, so a caller can tell a commit whose working tree followed from one whose working tree was left alone.
-- `Plumbing` gains `headRef()` (the branch `HEAD` points at, or `null` when detached) and `worktreeStatus()` (`status --porcelain --untracked-files=no` over the shared index). Both read the shared index, and step 6 reads them before the ref moves.
+- `CommitOutcome.committed` carries `worktreeSynced: boolean` (the ref was checked out and the shared index and working tree moved with it) and `recovered: boolean` (step 0 answered for an earlier call's commit). `worktree-dirty` is a fourth outcome kind.
+- `Plumbing` gains `headRef()`, `dirtyPaths(paths)`, and `isAncestor(sha, ref)`. All read the shared index or the object graph, and step 5 reads them before the ref moves.
+- There is no `syncWorktree` option: when `HEAD` is the session's ref the checkout always follows, because a ref that moves without its index makes git report the session's own files as deletions; when it is not, there is nothing to follow.
 - `commitSession` takes an optional `archivedAt`, the instant archive ops stamp, so a test can pin it. It defaults to now.
-- `saveSession` is exported, so a caller that rebased can persist the moved base without appending an op.
+- `saveSession` is exported, so a caller that rebased can persist the moved base without appending an op. It takes the session's lock; `saveSessionLocked` is the variant for a caller already holding it.
+- `Session.pending` and `startSession`'s `force` are as described above; `session status` reports `pending` (`null` when none).
 
 ## `@memhtml/snapshot`
 
@@ -167,17 +182,17 @@ Add to `COMMANDS`, `RESPONSE_TYPES`, and `dispatch`, then regenerate `AGENTS.md`
 
 | command          | flags                                                    | response type                                      |
 | ---------------- | -------------------------------------------------------- | -------------------------------------------------- |
-| `session start`  | `--id`, `--ref`                                          | `session.started`                                  |
+| `session start`  | `--id`, `--ref`, `--force`                               | `session.started`                                  |
 | `session put`    | `--id`, `--file` (JSONL of `write` ops as `apply` takes) | `session.appended`                                 |
 | `session exec`   | `--id`, `--script` or `--file`, `--timeout-ms`           | `session.exec.report`                              |
-| `session commit` | `--id`, `--message`, `--sync-worktree`                   | `session.committed` (data carries `CommitOutcome`) |
+| `session commit` | `--id`, `--message`                                      | `session.committed` (data carries `CommitOutcome`) |
 | `session rebase` | `--id`                                                   | `session.rebased`                                  |
 | `session status` | `--id`                                                   | `session.status`                                   |
 | `head status`    |                                                          | `head.status` (sha, records, skipped, load ms)     |
 | `head search`    | `query`, `--limit`                                       | `head.search`                                      |
 | `head snapshot`  | `--write` / `--read`                                     | `head.snapshot`                                    |
 
-`session rebase` is the caller's half of the retry loop: `session commit` answers `rebase-needed` and never retries on its own, so a caller reloads the base with `session rebase` and commits again, or reads the `refused` that follows and decides. The head is loaded per invocation in this proof of concept: from the snapshot at `.memhtml/snapshots/<sha>.arrow` when one exists for `HEAD`, else from git, and `head status` reports which. A long-lived head process is deferred.
+`session rebase` is the caller's half of the retry loop: `session commit` answers `rebase-needed` whenever the ref has moved past the session's base and never retries on its own, so a caller reloads the base with `session rebase` and commits again, or reads the `refused` that follows and decides. `session exec` appends its harvest only when the script exited 0 and no harvested op carries a violation a rebase cannot cure (format, reserved path, batch cap), judged the way `session put` judges its puts; the report carries `violations` and `blocking` either way. `session start` on an id that already has a log is refused (`ERR_STORAGE`, `session.exists`) unless `--force`. The head is loaded per invocation in this proof of concept: from the snapshot at `.memhtml/snapshots/<sha>.arrow` when one exists for `HEAD`, else from git, and `head status` reports which. A long-lived head process is deferred.
 
 ## Integration test (integrator)
 

@@ -54,9 +54,9 @@ import { runSessionExec } from "./session-exec.js"
  * git, and every payload that loaded one says which ({@link HeadStats}). A session command loads the
  * head at the SESSION's base sha, not at the ref's tip, because a session sees exactly one version
  * plus its own deltas: `session commit` validates against that base and reports `rebase-needed`
- * when the ref moved over a path it touched, and `session rebase` is the one arm that reloads at the
- * ref's tip and moves the base. Dedup and frame-key checks are therefore only as fresh as the base a
- * caller last rebased onto, which is the documented trade.
+ * whenever the ref has moved past it, and `session rebase` is the one arm that reloads at the ref's
+ * tip and moves the base. Dedup and frame-key checks are judged at the base, so a commit lands only
+ * when the ref still IS that base; the rebase-and-retry loop is what makes them fresh.
  */
 
 /** What every head-loading payload reports about the version it built. */
@@ -254,17 +254,28 @@ const opSummary = (op: OverlayOp) =>
     ? { kind: op.kind, path: op.path, to: op.to }
     : { kind: op.kind, path: op.path }
 
-/** `session start`: a new session on the ref's tip (or `HEAD`), its index seeded from that tree. */
+/**
+ * `session start`: a new session on the ref's tip (or `HEAD`), its index seeded from that tree. An
+ * id that already has a log is refused (`session.exists`) unless `force` is set, so a retried start
+ * cannot discard an overlay in progress; `session status` reads the existing one.
+ */
 export const sessionStart = (input: {
   readonly root: string
   readonly id: string
   readonly ref?: string | undefined
+  readonly force?: boolean | undefined
 }) =>
   Effect.gen(function* () {
     const ref = input.ref === undefined || input.ref.trim() === "" ? DEFAULT_REF : input.ref.trim()
     const sha = yield* baseShaFor(input.root, ref)
     const head = yield* loadHeadAt(input.root, sha)
-    const session = yield* startSession({ root: input.root, id: input.id, base: head.view, ref })
+    const session = yield* startSession({
+      root: input.root,
+      id: input.id,
+      base: head.view,
+      ref,
+      force: input.force
+    })
     return {
       id: session.id,
       baseSha: session.baseSha,
@@ -329,10 +340,12 @@ export const sessionPut = (input: {
 /**
  * `session exec`: run a script over head plus overlay and append what it wrote.
  *
- * The harvest is appended only when the script exited 0. A script that threw halfway has left a
- * tree it did not mean to leave, and the log has no removal op, so appending its partial writes would
- * poison every later commit of the session. The harvest is still reported, so the caller can see
- * what a clean run would have taken.
+ * The harvest is appended only when the script exited 0 AND no harvested op carries a violation no
+ * rebase can cure ({@link BLOCKING_VIOLATIONS}), judged the way `session put` judges its puts. A
+ * script that threw halfway has left a tree it did not mean to leave, and one that wrote a malformed
+ * file beside forty good ones has too; the log has no removal op, so appending either would poison
+ * every later commit of the session. The harvest and its violations are still reported, so the
+ * caller can see what a clean run would have taken.
  */
 export const sessionExec = (input: {
   readonly root: string
@@ -345,7 +358,14 @@ export const sessionExec = (input: {
     const head = yield* loadHeadAt(input.root, session.baseSha)
     const view = yield* withOverlay(head.view, session.ops)
     const report = yield* runSessionExec({ view, script: input.script, timeoutMs: input.timeoutMs })
-    const clean = report.exitCode === 0
+    const harvested = new Set(report.ops.flatMap(touchedPaths))
+    const violations = validateOps(head.view, [...session.ops, ...report.ops])
+    const blocking = violations.filter(
+      (violation) =>
+        BLOCKING_VIOLATIONS.has(violation.kind) &&
+        (violation.kind === "batch-cap" || harvested.has(violation.path))
+    )
+    const clean = report.exitCode === 0 && blocking.length === 0
     const next = clean ? yield* appendOps(session, report.ops) : session
     return {
       id: session.id,
@@ -360,25 +380,33 @@ export const sessionExec = (input: {
       timedOut: report.timedOut,
       /** Ops the harvester produced from the tree the script left. */
       ops: report.ops.length,
-      /** How many of those were appended to the log: all of them on exit 0, none otherwise. */
+      /**
+       * How many of those were appended to the log: all of them on exit 0 with no blocking
+       * violation, none otherwise.
+       */
       appended: clean ? report.ops.length : 0,
       /** The log's length after this call. */
       opsTotal: next.ops.length,
       harvested: report.ops.map(opSummary),
-      rejected: report.rejected
+      rejected: report.rejected,
+      /** Every violation over the session's ops plus the harvest, judged against the base. */
+      violations,
+      /** The violations that kept the harvest out of the log, described. */
+      blocking: blocking.map(describeViolation)
     }
   })
 
 /**
- * `session commit`: the six-step commit against the session's base. `rebase-needed` is returned, not
- * retried: the caller decides whether to `session rebase` and try again, because a rebase can turn
- * the outcome into `refused` and that is a decision, not a retry.
+ * `session commit`: the commit algorithm against the session's base. `rebase-needed` is returned,
+ * not retried: the caller decides whether to `session rebase` and try again, because a rebase can
+ * turn the outcome into `refused` and that is a decision, not a retry. When `HEAD` is the session's
+ * ref, the shared index and working tree follow the commit (`worktreeSynced`), or the commit is
+ * `worktree-dirty` and nothing moves.
  */
 export const sessionCommit = (input: {
   readonly root: string
   readonly id: string
   readonly message: string
-  readonly syncWorktree: boolean
 }) =>
   Effect.gen(function* () {
     const session = yield* resumeSession({ root: input.root, id: input.id })
@@ -386,8 +414,7 @@ export const sessionCommit = (input: {
     const outcome: CommitOutcome = yield* commitSession({
       session,
       head: head.view,
-      message: input.message,
-      syncWorktree: input.syncWorktree
+      message: input.message
     })
     return { id: session.id, ref: session.ref, baseSha: session.baseSha, ...outcome }
   })
@@ -430,7 +457,9 @@ export const sessionStatus = (input: { readonly root: string; readonly id: strin
       puts: count("put"),
       archives: count("archive"),
       links: count("link"),
-      paths: [...new Set(session.ops.flatMap(touchedPaths))].sort()
+      paths: [...new Set(session.ops.flatMap(touchedPaths))].sort(),
+      /** A commit built and possibly landed by a call that was killed; the next commit settles it. */
+      pending: session.pending ?? null
     }
   })
 
@@ -480,8 +509,8 @@ export interface V2Input {
   readonly root: string
   readonly id: string
   readonly ref?: string | undefined
+  readonly force: boolean
   readonly message: string
-  readonly syncWorktree: boolean
   readonly script: string
   readonly timeoutMs?: number | undefined
   readonly query: string

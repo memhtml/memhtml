@@ -14,6 +14,8 @@ import { mapHead, memory, recordFrom } from "./helpers.js"
  * - duplicate: drop the `existing !== undefined` branch -> "names the existing path of a duplicate".
  * - claim-edit: drop the `isActiveIn` branch -> "refuses a put over an active path with a new claim".
  * - format: skip `checkMemory` -> "collects format violations".
+ * - archive hash: drop the `contentHash(op.html) !== sourceHash` reason -> "refuses an archive op
+ *   whose article is not the source's".
  */
 
 const CAPITAL = memory("Capital", "The capital of India is New Delhi.")
@@ -150,6 +152,60 @@ describe("validateOps", () => {
         kind: "format",
         path: "areas/inbox/alpha.html",
         reasons: ["rel `bogus` is outside the edge vocabulary", "href is not root-relative"]
+      }
+    ])
+  })
+
+  it("refuses an archive op whose article is not the source's, and takes one whose head differs", async () => {
+    const view = await head()
+    const to = "archive/2026/areas/inbox/alpha.html"
+    // A different article at the source's path: the op names an article the head does not hold.
+    const wrong = validateOps(view, [
+      { kind: "archive", path: "areas/inbox/alpha.html", to, html: CAPITAL }
+    ])
+    expect(wrong).toEqual([
+      {
+        kind: "format",
+        path: "areas/inbox/alpha.html",
+        reasons: ["archive op's article differs from the source record's"]
+      }
+    ])
+    // The same article under a head that gained a link: the hash is the article's, so it passes.
+    const linked = ALPHA.replace(
+      "</head>",
+      '<link rel="memhtml-supports" href="/areas/inbox/capital.html"></head>'
+    )
+    expect(
+      validateOps(view, [{ kind: "archive", path: "areas/inbox/alpha.html", to, html: linked }])
+    ).toEqual([])
+    // An archive of a put earlier in the batch is judged against that put's article.
+    const fresh = memory("Fresh", "A fresh fact to archive at once.")
+    expect(
+      validateOps(view, [
+        put("areas/inbox/fresh.html", fresh),
+        {
+          kind: "archive",
+          path: "areas/inbox/fresh.html",
+          to: "archive/2026/areas/inbox/fresh.html",
+          html: fresh
+        }
+      ])
+    ).toEqual([])
+    expect(
+      validateOps(view, [
+        put("areas/inbox/fresh.html", fresh),
+        {
+          kind: "archive",
+          path: "areas/inbox/fresh.html",
+          to: "archive/2026/areas/inbox/fresh.html",
+          html: CAPITAL
+        }
+      ])
+    ).toEqual([
+      {
+        kind: "format",
+        path: "areas/inbox/fresh.html",
+        reasons: ["archive op's article differs from the source record's"]
       }
     ])
   })

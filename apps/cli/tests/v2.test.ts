@@ -17,6 +17,8 @@ import { parseArgv, run, validate } from "../src/run.js"
  * - drop the `headSnapshotFlags(parsed)` call from `validateAgainst` -> "head snapshot takes exactly
  *   one of --write / --read" (both arms).
  * - `SCRIPT_COMMANDS` back to `["exec"]` -> "session exec takes at most one script door".
+ * - drop the `sessionIdFlag(parsed)` call from `validate` -> "a session id is one path segment"
+ *   (the traversal case answers undefined instead of exit 2).
  * - drop the blank-script check in the v2 branch of `run` -> "session exec refuses a blank script".
  */
 
@@ -145,5 +147,31 @@ describe("session put judges the whole op stream before any service is built", (
     ])
     expect(result.exitCode).toBe(EXIT_USAGE)
     expect(parse(result.stdout).code).toBe("ERR_PATH_NOT_FOUND")
+  })
+})
+
+describe("a session id is one path segment, judged before any repo opens", () => {
+  it("refuses a traversal or malformed id at exit 2 on every session command", () => {
+    // Each command's other required flags are supplied, so the id rule is the only thing judged.
+    const REST: Record<string, ReadonlyArray<string>> = {
+      start: [],
+      put: ["--file", "ops.jsonl"],
+      exec: ["--script", "1"],
+      commit: ["--message", "m"],
+      rebase: [],
+      status: []
+    }
+    for (const [command, rest] of Object.entries(REST)) {
+      for (const bad of ["../evil", "a/b", ".hidden", "x".repeat(129)]) {
+        const failure = validate(parseArgv(["session", command, "--id", bad, ...rest]))
+        expect(failure, `${command} ${JSON.stringify(bad)}`).toBeDefined()
+        expect(failure?.code, `${command} ${JSON.stringify(bad)}`).toBe("ERR_INVALID_FLAG")
+        expect(failure?.suggestions[0]).toContain("memhtml session start --id s1")
+      }
+    }
+  })
+
+  it("passes a plain id through to the command", () => {
+    expect(validate(parseArgv(["session", "status", "--id", "curate-2026-09-23"]))).toBeUndefined()
   })
 })

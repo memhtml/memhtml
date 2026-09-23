@@ -133,13 +133,28 @@ export interface Plumbing {
   revParse(ref: string): Effect.Effect<string | null, GitFailure>
   /** `diff-tree -r --name-only --no-renames -z from to`. */
   diffTreePaths(from: string, to: string): Effect.Effect<ReadonlyArray<string>, GitFailure>
-  /** `read-tree -m -u from to` on the SHARED index, so the working tree follows a commit. */
+  /**
+   * `read-tree -m -u from to` on the SHARED index, so the working tree follows a commit. A two-tree
+   * merge: a path unchanged between `from` and `to` keeps whatever the index and working tree hold,
+   * so uncommitted edits elsewhere survive; a path that changed must be clean or git refuses. The
+   * shared index lock is contended by every writer of the checkout, so `index.lock` being held is
+   * retried briefly before it is a failure.
+   */
   readTreeIntoWorktree(from: string, to: string): Effect.Effect<void, GitFailure>
   /** The branch `HEAD` points at (`refs/heads/...`), or `null` when detached. Shared index. */
   headRef(): Effect.Effect<string | null, GitFailure>
-  /** `status --porcelain --untracked-files=no` over the shared index and working tree. */
-  worktreeStatus(): Effect.Effect<string, GitFailure>
+  /**
+   * The subset of `paths` that `status --porcelain` reports over the shared index and working tree:
+   * staged, modified, or untracked. Empty when every named path is clean and absent when untracked.
+   */
+  dirtyPaths(paths: ReadonlyArray<string>): Effect.Effect<ReadonlyArray<string>, GitFailure>
+  /** `merge-base --is-ancestor sha ref`: true when `sha` is reachable from `ref`. */
+  isAncestor(sha: string, ref: string): Effect.Effect<boolean, GitFailure>
 }
+
+/** How many times a shared-index write waits for another writer's `index.lock`, and how long. */
+const INDEX_LOCK_ATTEMPTS = 40
+const INDEX_LOCK_WAIT_MS = 50
 
 export const makePlumbing = (input: {
   readonly root: string
@@ -262,7 +277,24 @@ export const makePlumbing = (input: {
       ),
 
     readTreeIntoWorktree: (from, to) =>
-      run(sharedEnv, "read-tree", ["read-tree", "-m", "-u", from, to]).pipe(Effect.asVoid),
+      Effect.gen(function* () {
+        for (let attempt = 1; ; attempt += 1) {
+          const result = yield* spawnGit(root, ["read-tree", "-m", "-u", from, to], sharedEnv)
+          if (result.exitCode === 0) return
+          // Probed git 2.50.1: a held shared index reports `Unable to create '<...>/index.lock':
+          // File exists.` Another writer of this checkout holds it for milliseconds; wait for it.
+          if (result.stderr.includes("index.lock") && attempt < INDEX_LOCK_ATTEMPTS) {
+            yield* Effect.sleep(INDEX_LOCK_WAIT_MS)
+            continue
+          }
+          yield* Effect.logError(
+            `git read-tree exited ${String(result.exitCode)}: ${result.stderr.trim()}`
+          )
+          return yield* Effect.fail(
+            GitFailure.make({ command: "read-tree", exitCode: result.exitCode })
+          )
+        }
+      }).pipe(Effect.withSpan("session.git.read-tree-worktree")),
 
     headRef: () =>
       run(sharedEnv, "symbolic-ref", ["symbolic-ref", "-q", "HEAD"], {
@@ -275,9 +307,32 @@ export const makePlumbing = (input: {
         })
       ),
 
-    worktreeStatus: () =>
-      run(sharedEnv, "status", ["status", "--porcelain", "--untracked-files=no"]).pipe(
-        Effect.map(text)
-      )
+    dirtyPaths: (paths) =>
+      paths.length === 0
+        ? Effect.succeed([])
+        : run(sharedEnv, "status", [
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--no-renames",
+            "--untracked-files=all",
+            "--",
+            ...paths
+          ]).pipe(
+            // `-z` records are `XY<space><path>NUL`; `--no-renames` keeps each to one path.
+            Effect.map((result) =>
+              text(result)
+                .split("\0")
+                .filter((entry) => entry.length > 3)
+                .map((entry) => entry.slice(3))
+                .sort()
+            )
+          ),
+
+    isAncestor: (sha, ref) =>
+      run(sharedEnv, "merge-base", ["merge-base", "--is-ancestor", sha, ref], {
+        // Exit 1 is "not an ancestor", an answer rather than a failure.
+        okExitCodes: [0, 1]
+      }).pipe(Effect.map((result) => result.exitCode === 0))
   }
 }

@@ -149,10 +149,10 @@ Write what is durable, one fact per memory. A decision and its reason, a correct
 | `memhtml integrations doctor` | [host] | `--project` | `integrations.doctor` |
 | `memhtml integrations shell` | — | `--write` `--rc` | `integrations.shell` |
 | `memhtml hook` | <event> | `--host`* `--trace-root` `--limit` `--budget` | `hook.output` |
-| `memhtml session start` | — | `--id`* `--ref` | `session.started` |
+| `memhtml session start` | — | `--id`* `--ref` `--force` | `session.started` |
 | `memhtml session put` | — | `--id`* `--file`* | `session.appended` |
 | `memhtml session exec` | — | `--id`* `--file` `--script` `--timeout-ms` | `session.exec.report` |
-| `memhtml session commit` | — | `--id`* `--message`* `--sync-worktree` | `session.committed` |
+| `memhtml session commit` | — | `--id`* `--message`* | `session.committed` |
 | `memhtml session rebase` | — | `--id`* | `session.rebased` |
 | `memhtml session status` | — | `--id`* | `session.status` |
 | `memhtml head status` | — | — | `head.status` |
@@ -559,6 +559,7 @@ Open a v2 session on the ref's tip: a pointer to that version plus an empty over
 
 - `--id` (string) — The session id: one path segment, letters, digits, `.`, `_`, `-`. State lives at .memhtml/sessions/<id>.idx (the session's git index) and <id>.json (its overlay log). _(**required**)_
 - `--ref` (string) — The ref commits land on. Defaults to refs/heads/main. A ref that does not exist yet (a curator's refs/heads/curate/<date>) starts from HEAD and is created by the first commit.
+- `--force` (boolean) — Discard an existing log under this id and start over. Without it, an id that already has a log is refused with ERR_STORAGE (session.exists) so a retried start cannot lose an overlay in progress; `session status --id <id>` reads the existing one. _(default `false`)_
 
 ### `memhtml session put`
 
@@ -578,11 +579,10 @@ Run a script over the session's view (head plus overlay) in a writable sandbox a
 
 ### `memhtml session commit`
 
-Land the session's overlay on its ref as one commit, or report why it cannot: `refused` or `rebase-needed`.
+Land the session's overlay on its ref as one commit, or report why it cannot: `refused`, `rebase-needed`, or `worktree-dirty`.
 
 - `--id` (string) — The session to commit. _(**required**)_
-- `--message` (string) — The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer. _(**required**)_
-- `--sync-worktree` (boolean) — Move the shared index and working tree to the new commit when HEAD is the session's ref and the working tree is clean. Otherwise the working tree is left alone and `worktreeSynced` is false. _(default `false`)_
+- `--message` (string) — The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer. When HEAD is the session's ref, the shared index and working tree move to the new commit with it (`worktreeSynced: true`); uncommitted state at a path the commit writes or removes is answered `worktree-dirty` and nothing moves. A ref that moved past the session's base is `rebase-needed`: run `session rebase` and commit again. _(**required**)_
 
 ### `memhtml session rebase`
 

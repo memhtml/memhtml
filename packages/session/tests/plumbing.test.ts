@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises"
+import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { Effect, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
@@ -80,7 +80,7 @@ describe("the session index", () => {
       await run(plumbing.readTree(base))
       // The shared-index call must not inherit the ambient variable either: with it, `status`
       // would read an index that does not exist and report every file deleted.
-      expect(await run(plumbing.worktreeStatus())).toBe("")
+      expect(await run(plumbing.dirtyPaths(["areas/inbox/a.html", ".gitignore"]))).toEqual([])
     } finally {
       if (previous === undefined) delete process.env.GIT_INDEX_FILE
       else process.env.GIT_INDEX_FILE = previous
@@ -169,6 +169,28 @@ describe("the shared side", () => {
     await run(plumbing.updateRef("refs/heads/main", commit, base))
     await run(plumbing.readTreeIntoWorktree(base, commit))
     expect(await readFile(join(root, "areas/inbox/c.html"), "utf8")).toBe(memory("C", "C."))
-    expect(await run(plumbing.worktreeStatus())).toBe("")
+    expect(await run(plumbing.dirtyPaths(["areas/inbox/c.html", "areas/inbox/a.html"]))).toEqual([])
+    expect(await run(plumbing.isAncestor(base, "refs/heads/main"))).toBe(true)
+    expect(await run(plumbing.isAncestor(commit, base))).toBe(false)
+  })
+
+  it("dirtyPaths names a modified, a staged, and an untracked path among those asked, and no other", async () => {
+    const { root, git: plumbing } = await seeded()
+    await writeFile(join(root, "areas/inbox/a.html"), `${memory("A", "A.")}<!-- edit -->\n`, "utf8")
+    await writeFile(join(root, "areas/inbox/new.html"), memory("New", "New."), "utf8")
+    await writeFile(join(root, "areas/inbox/staged.html"), memory("Staged", "Staged."), "utf8")
+    await git(root, ["add", "areas/inbox/staged.html"])
+    expect(
+      await run(
+        plumbing.dirtyPaths([
+          "areas/inbox/a.html",
+          "areas/inbox/b.html",
+          "areas/inbox/new.html",
+          "areas/inbox/staged.html",
+          "areas/inbox/absent.html"
+        ])
+      )
+    ).toEqual(["areas/inbox/a.html", "areas/inbox/new.html", "areas/inbox/staged.html"])
+    expect(await run(plumbing.dirtyPaths([]))).toEqual([])
   })
 })

@@ -26,12 +26,16 @@
     "@memhtml/contracts": "workspace:*",
     "@memhtml/domain": "workspace:*",
     "@memhtml/html": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "proper-lockfile": "4.1.2",
+    "write-file-atomic": "8.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
     "@effect/vitest": "catalog:",
     "@types/node": "26.6.2",
+    "@types/proper-lockfile": "4.1.4",
+    "@types/write-file-atomic": "4.0.3",
     "fast-check": "catalog:",
     "typescript": "7.0.2",
     "vitest": "5.0.1"

@@ -606,10 +606,11 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
     ],
     /*
      * The v2 proof of concept, in the order one session's life takes: start it on main, append a put
-     * from JSONL, run a script over head plus overlay, read it back, commit it with the working tree
-     * following (HEAD is main and the tree is clean here, so `worktreeSynced` is the branch that runs),
-     * and rebase it. The head commands run after the commit so the snapshot they write and read is of a
-     * tree that holds a session's commit.
+     * from JSONL, run a script over head plus overlay, read it back, commit it (HEAD is main here, so
+     * the shared index and working tree must follow: `worktreeSynced` is asserted, because a commit
+     * that moved the ref without the index would be undone by the `archive` row below), and rebase
+     * it. The head commands run after the commit so the snapshot they write and read is of a tree that
+     * holds a session's commit.
      */
     ["session start", ["session", "start", "--id", "smoke"]],
     ["session put", ["session", "put", "--id", "smoke", "--file", sessionOpsFile]],
@@ -617,9 +618,12 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
     ["session status", ["session", "status", "--id", "smoke"]],
     [
       "session commit",
-      ["session", "commit", "--id", "smoke", "--message", "smoke session", "--sync-worktree"],
+      ["session", "commit", "--id", "smoke", "--message", "smoke session"],
       env,
-      (answer) => ({ ok: answer.data?.kind === "committed", detail: answer.data?.kind })
+      (answer) => ({
+        ok: answer.data?.kind === "committed" && answer.data?.worktreeSynced === true,
+        detail: `${String(answer.data?.kind)}, worktreeSynced ${String(answer.data?.worktreeSynced)}`
+      })
     ],
     ["session rebase", ["session", "rebase", "--id", "smoke"]],
     ["head status", ["head", "status"]],

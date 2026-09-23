@@ -1329,12 +1329,20 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         type: "string",
         description:
           "The ref commits land on. Defaults to refs/heads/main. A ref that does not exist yet (a curator's refs/heads/curate/<date>) starts from HEAD and is created by the first commit."
+      },
+      {
+        name: "force",
+        type: "boolean",
+        description:
+          "Discard an existing log under this id and start over. Without it, an id that already has a log is refused with ERR_STORAGE (session.exists) so a retried start cannot lose an overlay in progress; `session status --id <id>` reads the existing one.",
+        default: false
       }
     ],
     responseTypes: ["session.started"],
     examples: [
       "memhtml session start --id s1",
-      "memhtml session start --id curate-2026-09-23 --ref refs/heads/curate/2026-09-23"
+      "memhtml session start --id curate-2026-09-23 --ref refs/heads/curate/2026-09-23",
+      "memhtml session start --id s1 --force"
     ]
   },
   {
@@ -1395,7 +1403,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   {
     name: "session commit",
     summary:
-      "Land the session's overlay on its ref as one commit, or report why it cannot: `refused` or `rebase-needed`.",
+      "Land the session's overlay on its ref as one commit, or report why it cannot: `refused`, `rebase-needed`, or `worktree-dirty`.",
     args: [],
     flags: [
       { name: "id", type: "string", description: "The session to commit.", required: true },
@@ -1403,21 +1411,14 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "message",
         type: "string",
         description:
-          "The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer.",
+          "The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer. When HEAD is the session's ref, the shared index and working tree move to the new commit with it (`worktreeSynced: true`); uncommitted state at a path the commit writes or removes is answered `worktree-dirty` and nothing moves. A ref that moved past the session's base is `rebase-needed`: run `session rebase` and commit again.",
         required: true
-      },
-      {
-        name: "sync-worktree",
-        type: "boolean",
-        description:
-          "Move the shared index and working tree to the new commit when HEAD is the session's ref and the working tree is clean. Otherwise the working tree is left alone and `worktreeSynced` is false.",
-        default: false
       }
     ],
     responseTypes: ["session.committed"],
     examples: [
       "memhtml session commit --id s1 --message 'three facts about the checkout api'",
-      "memhtml session commit --id s1 --message 'curated' --sync-worktree"
+      "memhtml session commit --id curate-2026-09-23 --message 'curated'"
     ]
   },
   {

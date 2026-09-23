@@ -9,15 +9,18 @@ export { GIT_REPO_SELECTION_ENV, makePlumbing, type Plumbing } from "./plumbing.
 export {
   appendOps,
   DEFAULT_REF,
+  isSessionId,
   rebaseSession,
   resumeSession,
+  SESSION_ID,
   SESSIONS_DIR,
   type Session,
   saveSession,
   sessionIndexFile,
   sessionRef,
   sessionStateFile,
-  startSession
+  startSession,
+  withSessionLock
 } from "./session.js"
 export {
   BATCH_CAP,

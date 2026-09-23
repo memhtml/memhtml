@@ -327,6 +327,32 @@ describe("harvestOps over plain values", () => {
     })
   })
 
+  it("rejects a reserved path and a non-PARA root with a reason, so neither reaches the log", () => {
+    // Mutation: `presentFileProblem` drops the `isReservedPath` and `memoryPathViolation` clauses ->
+    // these four come back as puts and the case is red.
+    const junk = "<html><article><p><mark>J</mark></p></article></html>"
+    const after = [
+      ...[...seededSet].map(([path, file]) => ({ path, html: file.html })),
+      { path: ".memhtml/smuggled.html", html: junk },
+      { path: "areas/arcs/arc.html", html: junk },
+      { path: "resources/people/someone.html", html: junk },
+      { path: "README.html", html: junk },
+      { path: "areas/inbox/good.html", html: junk }
+    ]
+    const report = harvestOps({ seeded: seededSet, after, skippedGitDir: false })
+    expect(report.ops).toEqual([{ kind: "put", path: "areas/inbox/good.html", html: junk }])
+    expect(report.rejected).toEqual([
+      { path: ".memhtml/smuggled.html", reason: "a reserved path only curation writes" },
+      {
+        path: "README.html",
+        reason:
+          "not a memory path: it is not rooted in a PARA bucket (projects, areas, resources, archive)"
+      },
+      { path: "areas/arcs/arc.html", reason: "a reserved path only curation writes" },
+      { path: "resources/people/someone.html", reason: "a reserved path only curation writes" }
+    ])
+  })
+
   it("sitemap.xml and a nested index.html are rejected by name, a .txt by extension", () => {
     const after = [
       ...[...seededSet].map(([path, file]) => ({ path, html: file.html })),

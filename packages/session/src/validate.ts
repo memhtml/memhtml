@@ -59,6 +59,12 @@ const isActiveIn = (view: HeadView, path: string): boolean => {
   return record !== undefined && !record.archived
 }
 
+/** The content hash of the live record at `path`, or undefined when there is none. */
+const activeHashIn = (view: HeadView, path: string): string | undefined => {
+  const record = view.get(path)
+  return record !== undefined && !record.archived ? record.contentHash : undefined
+}
+
 export const validateOps = (
   view: HeadView,
   ops: ReadonlyArray<OverlayOp>
@@ -68,8 +74,8 @@ export const validateOps = (
   const violations: Array<Violation> = []
   /** Content hashes this batch introduces, so two puts of one claim in one session collide too. */
   const batchHashes = new Map<string, string>()
-  /** Paths this batch puts, so a later `link` or `archive` in the same batch can name them. */
-  const batchPuts = new Set<string>()
+  /** Paths this batch puts with their content hash, so a later `link` or `archive` can name them. */
+  const batchPuts = new Map<string, string>()
 
   for (const op of ops) {
     for (const path of touchedPaths(op)) {
@@ -94,19 +100,31 @@ export const validateOps = (
           violations.push({ kind: "claim-edit", path: op.path })
         }
         batchHashes.set(hash, op.path)
-        batchPuts.add(op.path)
+        batchPuts.set(op.path, hash)
         break
       }
       case "archive": {
         const reasons: Array<string> = []
-        if (!isActiveIn(view, op.path) && !batchPuts.has(op.path)) {
+        const sourceHash = batchPuts.get(op.path) ?? activeHashIn(view, op.path)
+        if (sourceHash === undefined) {
           reasons.push("archive source is not an active record in the head")
         }
         if (originalPathFor(op.to) !== normalizePath(op.path)) {
           reasons.push("archive destination is not archive/<YYYY>/<original path>")
         }
         if (view.get(op.to) !== undefined) reasons.push("archive destination already exists")
-        reasons.push(...checkMemory(op.html).violations)
+        const format = checkMemory(op.html).violations
+        reasons.push(...format)
+        // `op.html` names which article is meant; the bytes written come from the head (or an
+        // earlier op in the batch), so its article must be the source's. A head-only link the
+        // source gained since the op was minted leaves the hash equal and is carried by the copy.
+        if (
+          format.length === 0 &&
+          sourceHash !== undefined &&
+          contentHash(op.html) !== sourceHash
+        ) {
+          reasons.push("archive op's article differs from the source record's")
+        }
         if (reasons.length > 0) violations.push({ kind: "format", path: op.path, reasons })
         break
       }

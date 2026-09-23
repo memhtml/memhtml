@@ -38,8 +38,13 @@ import { type Cli, makeCli } from "./harness.js"
  * Mutations, each run once with the change applied and the named case red:
  * - `v2.ts` `sessionPut`: `if (blocking.length > 0)` -> `if (false)` -> "session put refuses a
  *   reserved path and appends nothing".
- * - `v2.ts` `sessionExec`: `const clean = report.exitCode === 0` -> `const clean = true` -> "session
- *   exec appends the harvest only when the script exited 0".
+ * - `v2.ts` `sessionExec`: `const clean = report.exitCode === 0 && blocking.length === 0` -> `const
+ *   clean = true` -> "session exec appends the harvest only when the script exited 0" and "session
+ *   exec with one malformed file appends nothing".
+ * - `commit.ts` step 5: drop `readTreeIntoWorktree(parent, commit)` -> "a v1 write after a session
+ *   commit keeps the session's file on main".
+ * - `session.ts` `startSession`: drop the `exists` check -> "session start on an existing id is
+ *   refused and keeps the log".
  */
 
 const SESSIONS = 8
@@ -357,6 +362,28 @@ describe("the conflict cases, through the CLI envelopes", () => {
     ])
   })
 
+  it("session start on an existing id is refused and keeps the log, unless --force", async () => {
+    await start("twice")
+    await put(
+      "twice",
+      await opsFile("twice", [
+        {
+          op: "write",
+          title: "Kept op",
+          type: "semantic",
+          body: "A retried start must not lose me."
+        }
+      ])
+    )
+    const again = await cli.envelope(["session", "start", "--id", "twice"])
+    expect(again.code).toBe("ERR_STORAGE")
+    expect(String(again.error)).toContain("session.exists")
+    const status = await cli.json<{ ops: number }>(["session", "status", "--id", "twice"])
+    expect(status.ops).toBe(1)
+    const forced = await cli.json<{ ops: number }>(["session", "start", "--id", "twice", "--force"])
+    expect(forced.ops).toBe(0)
+  })
+
   it("frame-key contradiction: both files live and the new one carries the contradicts link", async () => {
     await start("fk")
     await put(
@@ -373,6 +400,9 @@ describe("the conflict cases, through the CLI envelopes", () => {
     const outcome = await commit("fk")
     expect(outcome.kind).toBe("committed")
     if (outcome.kind !== "committed") return
+    // HEAD is main in this repo, so the checkout followed and git reports a clean tree at the tip.
+    expect(outcome.worktreeSynced).toBe(true)
+    expect((await cli.git("status", "--porcelain", "--untracked-files=no")).trim()).toBe("")
     const rival = "areas/inbox/capital-revised.html"
     expect(outcome.contradictions).toEqual([{ path: rival, against: CAPITAL_PATH }])
     const paths = await treePaths(outcome.sha)
@@ -418,6 +448,49 @@ describe("the conflict cases, through the CLI envelopes", () => {
     if (landed.kind !== "committed") return
     expect(landed.paths).toEqual(["areas/inbox/raced-note.html"])
     expect((await cli.git("rev-parse", "refs/heads/main")).trim()).toBe(landed.sha)
+  })
+})
+
+describe("the v1 write path beside a session commit", () => {
+  it("a v1 write after a session commit keeps the session's file on main", async () => {
+    await cli.json(["session", "start", "--id", "v1-after"])
+    await cli.json([
+      "session",
+      "put",
+      "--id",
+      "v1-after",
+      "--file",
+      await opsFile("v1-after", [
+        { op: "write", title: "Session fact one", type: "semantic", body: "Landed by a session." }
+      ])
+    ])
+    const landed = await cli.json<CommitOutcome>([
+      "session",
+      "commit",
+      "--id",
+      "v1-after",
+      "--message",
+      "one session fact"
+    ])
+    expect(landed.kind).toBe("committed")
+    if (landed.kind !== "committed") return
+    expect(landed.paths).toEqual(["areas/inbox/session-fact-one.html"])
+    // The v1 store commits from the shared index. Had the ref moved without it, this commit would
+    // record a tree without the session's file, with no error anywhere.
+    const written = await cli.json<{ path: string }>([
+      "write",
+      "--title",
+      "V1 fact after",
+      "--type",
+      "semantic",
+      "--claim",
+      "Written through the v1 store right after a session landed."
+    ])
+    const paths = await treePaths("main")
+    expect(paths.has("areas/inbox/session-fact-one.html")).toBe(true)
+    expect(paths.has(written.path)).toBe(true)
+    const stat = await cli.git("show", "--stat", "--format=", "HEAD")
+    expect(stat).not.toContain("session-fact-one")
   })
 })
 
@@ -514,6 +587,37 @@ describe("the put and exec doors", () => {
     ])
     expect(outcome.kind).toBe("committed")
     expect((await treePaths("main")).has("areas/inbox/from-script.html")).toBe(true)
+  }, 120_000)
+
+  it("session exec with one malformed file appends nothing and names the violation", async () => {
+    await cli.json(["session", "start", "--id", "ex-bad"])
+    const good = renderTemplate({
+      title: "Good beside bad",
+      claim: "A well-formed memory written beside a malformed one.",
+      memoryType: "semantic",
+      at: AT
+    })
+    const script = [
+      'import { writeFileSync } from "node:fs"',
+      `writeFileSync("/mnt/memhtml/areas/inbox/good-beside-bad.html", ${JSON.stringify(good)})`,
+      'writeFileSync("/mnt/memhtml/areas/inbox/junk.html", "<html><body>no article</body></html>")',
+      ""
+    ].join("\n")
+    const report = await cli.json<{
+      readonly exitCode: number
+      readonly ops: number
+      readonly appended: number
+      readonly opsTotal: number
+      readonly blocking: ReadonlyArray<string>
+      readonly rejected: ReadonlyArray<{ path: string }>
+    }>(["session", "exec", "--id", "ex-bad", "--script", script])
+    expect(report.exitCode).toBe(0)
+    expect(report.ops).toBe(2)
+    expect(report.appended).toBe(0)
+    expect(report.opsTotal).toBe(0)
+    expect(report.blocking.some((line) => line.startsWith("areas/inbox/junk.html:"))).toBe(true)
+    const status = await cli.json<{ ops: number }>(["session", "status", "--id", "ex-bad"])
+    expect(status.ops).toBe(0)
   }, 120_000)
 })
 

@@ -454,20 +454,22 @@ Placement. Today the writer picks a directory and the inbox absorbs every unsure
 
 ### The commit algorithm
 
-The commit path is mechanical and runs in `packages/session/src` in this order:
+The commit path is mechanical and runs in `packages/session/src` under an exclusive per-session lock, in this order:
 
-1. `validateOps(head, session.ops)`. Any violation (format, duplicate content hash, claim edit over an active path, reserved path, batch over 200 ops) returns `refused` and writes nothing.
-2. Read the ref. If `main` moved past `session.baseSha`, compute the paths changed on `main` and the paths the ops touch. A non-empty intersection returns `rebase-needed`. A disjoint advance continues with `main` as the parent.
+0. Recovery. A log carrying a `pending` commit from a call that was killed is settled first: reachable from the ref means it landed and is answered as `committed` (`recovered: true`); unreachable means the checkout is rolled back and the intent dropped.
+1. `validateOps(head, session.ops)`. Any violation (format, duplicate content hash, claim edit over an active path, reserved path, batch over 200 ops, an archive op whose article is not its source's) returns `refused` and writes nothing.
+2. Read the ref. If it moved past the version that was validated, return `rebase-needed` with the paths that collide (possibly none). There is no disjoint fast path: duplicate hashes and frame-key rivals are collisions between different paths, and the compare-and-swap in step 6 has to cover the version step 1 and step 3 read.
 3. Frame-key check against the head. A `put` whose frame key resolves to a different active path gets a `memhtml-contradicts` link spliced into its head and the pair is recorded. Both stay live. Nothing is auto-archived.
-4. Build the tree in the session's own index file: `read-tree` the parent, `hash-object -w` each body, `update-index` adds and removes, `write-tree`, `commit-tree` with the `memhtml(session):` subject and a `Memhtml-Session` trailer.
-5. `update-ref` with the parent as the expected old value. A race returns `rebase-needed` with the new `main` sha, and the caller rebases and retries. The session ref under `refs/memhtml/sessions/` records provenance.
-6. If asked and the working tree at that ref is clean, `read-tree -m -u` moves the working tree and shared index forward. Otherwise the working tree is left alone and the outcome says so.
+4. Build the tree in the session's own index file: `read-tree` the parent, `hash-object -w` each body (an archive body is the source as the commit sees it, stamped), `update-index` adds and removes, `write-tree`, `commit-tree` with the `memhtml(session):` subject and a `Memhtml-Session` trailer.
+5. If `HEAD` is the session's ref, the checkout follows before the ref moves: uncommitted state at a path the commit touches is `worktree-dirty` and nothing moves; otherwise `read-tree -m -u parent commit` brings the shared index and working tree to the new tree while `HEAD` still names the parent. The order matters: a ref that moves without its index makes git report the session's own files as staged deletions, and the next `git commit -a` or v1 `write` commits them away; an index one step ahead shows staged additions, which the next commit of the session reverts.
+6. Write the intent (`pending`) to the log, then `update-ref` with the parent as the expected old value. A race rolls the checkout back and returns `rebase-needed` with the new sha, and the caller rebases and retries.
+7. Persist the log right after the swap, then record provenance under `refs/memhtml/sessions/` as a best effort.
 
 ### Three conflict tiers
 
 Conflicts sort into three tiers, and each tier has one owner.
 
-Syntactic conflicts belong to git. Two sessions touching the same path surface as `rebase-needed` at step 2 or as a raced ref at step 5, and the resolution is a rebase plus a retry with validation running again over the new base. A duplicate content hash or a claim edit is refused at step 1 with the path it collides with.
+Syntactic conflicts belong to git. Two sessions touching the same path surface as `rebase-needed` at step 2 or as a raced ref at step 6, and the resolution is a rebase plus a retry with validation running again over the new base. A duplicate content hash or a claim edit is refused at step 1 with the path it collides with, and step 2 guarantees step 1 judged the version the commit lands on.
 
 Detectable semantic conflicts belong to the frame key. Two live claims about the same subject with different content are not an error; step 3 keeps both live and connects them with a `contradicts` edge so the head's `byFrameKey` and `inbound` indexes can find the pair without a model call.
 

@@ -8,6 +8,7 @@ import {
   DEFAULT_REF,
   rebaseSession,
   resumeSession,
+  saveSession,
   sessionIndexFile,
   sessionStateFile,
   startSession
@@ -18,7 +19,8 @@ import { commitFiles, loadHead, makeRepo, mapHead, memory, type Repo } from "./h
  * Session state on disk: `.memhtml/sessions/<id>.idx` and `<id>.json`.
  *
  * Mutation notes: `checkId` always succeeds -> "refuses an id that is not one path segment";
- * `resumeSession` skips the `state.id !== input.id` check -> "refuses a log whose id disagrees".
+ * `resumeSession` skips the `state.id !== input.id` check -> "refuses a log whose id disagrees";
+ * `startSession` skips the `exists` check -> "refuses to start over an id that already has a log".
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
@@ -56,6 +58,23 @@ describe("startSession", () => {
     const ref = "refs/heads/curate/2026-09-23"
     const session = await run(startSession({ root, id: "cur", base: head, ref }))
     expect(session.ref).toBe(ref)
+  })
+
+  it("refuses to start over an id that already has a log, unless forced", async () => {
+    const { root, head } = await seeded()
+    const started = await run(startSession({ root, id: "again", base: head }))
+    const html = memory("B", "Beta is the second letter.")
+    await run(appendOps(started, [{ kind: "put", path: "areas/inbox/b.html", html }]))
+    const result = await run(Effect.result(startSession({ root, id: "again", base: head })))
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toMatchObject({ _tag: "StorageFailure", operation: "session.exists" })
+    }
+    // The in-progress overlay is intact.
+    expect((await run(resumeSession({ root, id: "again" }))).ops).toHaveLength(1)
+    const forced = await run(startSession({ root, id: "again", base: head, force: true }))
+    expect(forced.ops).toEqual([])
+    expect((await run(resumeSession({ root, id: "again" }))).ops).toEqual([])
   })
 
   it("refuses an id that is not one path segment", async () => {
@@ -100,6 +119,18 @@ describe("appendOps and resumeSession", () => {
     const result = await run(Effect.result(resumeSession({ root, id: "s3" })))
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) expect(result.failure.operation).toBe("session.id-mismatch")
+  })
+
+  it("round-trips a pending commit sha and omits the key when there is none", async () => {
+    const { root, head } = await seeded()
+    const started = await run(startSession({ root, id: "pend", base: head }))
+    expect(JSON.parse(await readFile(sessionStateFile(root, "pend"), "utf8"))).not.toHaveProperty(
+      "pending"
+    )
+    await run(saveSession({ ...started, pending: "a".repeat(40) }))
+    expect((await run(resumeSession({ root, id: "pend" }))).pending).toBe("a".repeat(40))
+    await run(saveSession({ ...started, pending: undefined }))
+    expect((await run(resumeSession({ root, id: "pend" }))).pending).toBeUndefined()
   })
 
   it("rejects an op of an unknown kind on resume", async () => {

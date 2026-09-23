@@ -7,6 +7,7 @@ import {
 import { isValidDatetime } from "@memhtml/html"
 import { parseFacetFilters } from "@memhtml/index"
 import { HOOK_EVENTS, HOSTS, isHookEvent, isHostId, renderHookOutput } from "@memhtml/integrations"
+import { isSessionId } from "@memhtml/session"
 import { initRepo } from "@memhtml/store"
 import { layerTelemetry } from "@memhtml/telemetry"
 import { ConfigProvider, Effect, type Layer, Logger } from "effect"
@@ -922,6 +923,24 @@ const applyFlags = (parsed: Parsed): Failure | undefined => {
  * given) and neither is `ERR_MISSING_ARGUMENT` (absent), the two codes this function already uses for
  * those two conditions.
  */
+/**
+ * `--id` on every `session` command is one path segment (`SESSION_ID` in `@memhtml/session`). The
+ * session package refuses a bad id too, but that refusal is a storage failure at exit 1; a wrong id is
+ * something the caller fixes by changing the call, so it is judged here as exit 2 before any repo opens.
+ */
+const sessionIdFlag = (parsed: Parsed): Failure | undefined => {
+  if (!parsed.command.startsWith("session ")) return undefined
+  for (const id of parsed.flags.get("id") ?? []) {
+    if (typeof id !== "string" || isSessionId(id)) continue
+    return fail(
+      "ERR_INVALID_FLAG",
+      `--id ${JSON.stringify(id)} is not a session id: one segment of letters, digits, ".", "_" or "-", starting with a letter or digit, at most 128 characters`,
+      ["memhtml session start --id s1", "memhtml session status --id curate-2026-09-23"]
+    )
+  }
+  return undefined
+}
+
 const headSnapshotFlags = (parsed: Parsed): Failure | undefined => {
   if (parsed.command !== "head snapshot") return undefined
   const write = bool(parsed, "write", false)
@@ -1293,6 +1312,9 @@ const validateAgainst = (parsed: Parsed, spec: CommandSpec): Failure | undefined
 
   const snapshot = headSnapshotFlags(parsed)
   if (snapshot !== undefined) return snapshot
+
+  const sessionId = sessionIdFlag(parsed)
+  if (sessionId !== undefined) return sessionId
 
   // After the unknown-flag loop above, so reaching this with `--as-of` present means this command
   // declares it. The value check therefore needs no command list of its own.
@@ -1875,7 +1897,7 @@ export const run = async (
           id: str(parsed, "id") ?? "",
           ref: str(parsed, "ref"),
           message: str(parsed, "message") ?? "",
-          syncWorktree: bool(parsed, "sync-worktree", false),
+          force: bool(parsed, "force", false),
           script,
           timeoutMs: int(parsed, "timeout-ms"),
           query: parsed.positional[0] ?? "",
