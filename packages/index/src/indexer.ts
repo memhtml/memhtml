@@ -131,7 +131,7 @@ export interface IndexerShape {
   /**
    * True when a document embedder is bound, so `embed: true` on `rebuild` and `update` writes vectors.
    *
-   * What sleep's preflight reads to tell a deliberate lexical-only store (no embedder, zero vectors,
+   * What `doctor` reads to tell a deliberate lexical-only store (no embedder, zero vectors,
    * healthy) from a store whose vector plane is IN USE and sparse. The indexer is the one holder of
    * the embedder on that side of the composition root, so the fact is published here rather than
    * threaded through a second dependency.

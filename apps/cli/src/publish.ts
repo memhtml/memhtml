@@ -1,23 +1,22 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { DatabaseService } from "@memhtml/index"
-import { type GeneratedFile, generateArtifacts, publishRows } from "@memhtml/sleep"
 import { attemptIo, commitSubject, readFileOrNull } from "@memhtml/store"
 import { Effect } from "effect"
 
 import { Git } from "./api-layer.js"
+import { type GeneratedFile, generateArtifacts, publishRows } from "./artifacts.js"
 
 /**
  * `memhtml publish`: regenerate the per-directory `index.html` listings and the root `sitemap.xml`, and
  * commit whatever changed.
  *
- * **The generator is imported from `@memhtml/sleep` and never re-derived.** `generateArtifacts` lives
- * there because a listing needs `files.title`/`gist`/`updated_at`, all of them index projections, and
+ * **The generator is `./artifacts.ts` and is never re-derived.** `generateArtifacts` lives there because
+ * a listing needs `files.title`/`gist`/`updated_at`, all of them index projections, and
  * `@memhtml/store` is SQL-free by design. Two generators would produce two byte sequences for one tree,
  * and these files are the design's one merge-conflict source. `.gitattributes` marks them
  * `merge=ours` and a conflict is resolved by regenerating, which only works if regeneration is
- * unambiguous. The sleep integrity phase and this command therefore call the same function, and the
- * only difference between them is which commit the result lands in.
+ * unambiguous. This command is the one regenerator.
  *
  * The output is deterministic to the byte: the rows arrive path-ordered from SQL, every string is
  * escaped, and no timestamp of generation appears anywhere. Two runs over an unchanged corpus write

@@ -44,7 +44,6 @@ Narrowing to one package — the positional is a filename substring, `-t` matche
 ```bash
 mise run test-pkg domain rrf -t "strictly"   # one case
 mise run test-pkg index retrieval            # one file
-mise run test-pkg integration sleep          # tests-integration
 ```
 
 `test-pkg` is a **file task**, not a TOML one, and that is forced: mise appends a task's trailing args to the END of an inline `run` string, so an inline task can neither consume the package name nor place the rest mid-command, and only a file task sees real `$@`. It also cannot go through the root script — `pnpm test` is `turbo run test`, so `mise run test rrf` would become `turbo run test rrf` and turbo would read `rrf` as a second task name. Because it calls the package's vitest directly it **skips turbo and does not build first** — see the rebuild discipline below.
@@ -67,15 +66,13 @@ Two invariants hold the whole design together, and most bugs are a violation of 
 Dependencies point inward, enforced by TypeScript project references (`tsconfig.json` `references`) plus `tsconfig.check.json` for the test-inclusive typecheck:
 
 ```
-contracts ← domain, html ← store ← index (+domain, +llm) ← traces, sleep, eval ← apps/cli ← apps/mcp
+contracts ← domain, html ← store ← index (+domain, +llm) ← traces, eval ← apps/cli ← apps/mcp
 contracts ← integrations ← apps/cli
 ```
 
 `@memhtml/contracts` imports only `effect`. `@memhtml/domain`'s purity is a **test**, not a convention: `packages/domain/tests/layering.test.ts` greps the emitted `dist/*.js` for `node:sqlite`, `@aws-sdk`, or `node:fs`. `apps/mcp` depends on `@memhtml/cli` rather than re-composing services, so there is one answer to which database, which git root, which vector space.
 
 There is exactly one composition root: `AppLive` in `apps/cli/src/api-layer.ts`. The design's single dependency cycle is broken there — the store needs a SQL lookup for content dedup and `@memhtml/store` is SQL-free, so the lookup arrives as an injected function.
-
-`apps/consolidator` (`@memhtml/consolidator`) is the agent that distills candidate memories from raw transcripts: one AI SDK `generateText` tool loop over three bounded read-only transcript tools, in-process, with the Effect boundary at `makeConsolidator`. It is the one package outside the Effect service graph (ai-sdk + zod; `just-bash` stays for `memhtml exec`'s mount composition).
 
 ### The contract surface
 
@@ -87,7 +84,7 @@ Every command writes **one** JSON envelope to stdout and nothing else, except `m
 
 **`AGENTS.md` regenerates from the BUILT CLI**, and the drift gate is a vitest case (`apps/cli/tests/agents-doc.test.ts`), not a pipeline step. After touching `commands.ts`: `mise run agents-doc`, which builds `@memhtml/cli` first for exactly this reason.
 
-**A green suite says nothing about the published artifact.** Every tier resolves `@memhtml/*` through pnpm's links, where `guest/`, `prompts/`, and `migrations/` are on disk whether or not a manifest names them — while `npm publish` ships only what `files` names. Three assets were absent from every tarball under exactly that blindness: `guest/corpus.mjs` (so code mode could not start) and the consolidator's agent sources (so its build failed with an unresolved import), with the migrations surviving only because `packages/index` happened to name them. Two gates hold it now: a claim table over the pack manifest (`tests-integration/tests/packaging.test.ts`), where each claim also names the source line that resolves it so a guard cannot outlive the thing it guards, and `mise run package:smoke`, which installs the tarball and runs the binary. **A new run-time asset means a claim in that table**, or the census over `import.meta.url` resolutions in shipped source fails at the commit that adds it.
+**A green suite says nothing about the published artifact.** Every tier resolves `@memhtml/*` through pnpm's links, where `guest/` and `migrations/` are on disk whether or not a manifest names them — while `npm publish` ships only what `files` names. Three assets were absent from every tarball under exactly that blindness: `guest/corpus.mjs` (so code mode could not start) and the consolidator's agent sources (so its build failed with an unresolved import), with the migrations surviving only because `packages/index` happened to name them. Two gates hold it now: a claim table over the pack manifest (`tests-integration/tests/packaging.test.ts`), where each claim also names the source line that resolves it so a guard cannot outlive the thing it guards, and `mise run package:smoke`, which installs the tarball and runs the binary. **A new run-time asset means a claim in that table**, or the census over `import.meta.url` resolutions in shipped source fails at the commit that adds it.
 
 **Effect v4 is a pre-release and breaks between versions.** The catalog in `pnpm-workspace.yaml` moves `effect`, `@effect/platform-node`, `@effect/platform-node-shared`, and `@effect/vitest` as one set — never one of the four. `@effect/platform-node-shared` is in the set even though no code imports it: it is `@effect/platform-node`'s own caret-ranged dependency, and `apps/mcp` declares it so the published manifest pins it — otherwise a consumer's installer resolves the newest rc and ships a mixed set the gates never ran against (`catalog.test.ts` + the packaging claim gate this). A typed error is `Schema.TaggedError<Self>()("Tag", fields)`, which supplies `_tag` itself, so the fields must NOT declare one; and `McpServer.layerStdio` requires `protocols: [McpProtocol.v2025_06_18]`, the only adapter shipped. `minimumReleaseAge: 4320` also means the newest release is not installable for its first 72 hours (Dependabot security PRs bypass the cooldown; for a fresh CVE fix inside the window, override per-package with `minimumReleaseAgeExclude`) — a blocked install is that policy working, not a broken lockfile.
 
@@ -138,7 +135,7 @@ Releases are cut by release-please from those Conventional Commit subjects and p
 
 `mise run package:smoke` is the only gate whose subject is the artifact: publint, then install the tarball and drive **every command `memhtml manifest` declares, all 15 MCP tools, and all three MCP resource templates** through the installed binary. The check total is whatever that run reports (`checks` in its own summary) rather than a number restated here, because only the run can count it and a stale total reads as a finding. The surface is enumerated from `memhtml manifest`, `tools/list`, and `resources/templates/list`, each diffed for set equality against the script's own invocation table, so a new command, tool, or resource fails a census rather than going untested. The resource census also asserts its read paths are multi-segment: a single-segment read passes under a route no client can use, which is how the `memhtml://file/{path}` routing defect reached a release. It is outside `check` because it needs the registry, and `check` is offline by construction.
 
-`package:smoke:live` adds the three edges the credential-free run cannot see — Bedrock embeddings, the sleep phases that call a model, and the consolidator distilling a transcript through the model — and is what lefthook's pre-push runs when a credential is present, saying so on stderr when it cannot. Reaching the consolidation phase needs a transcript over `TRACE_MIN_BYTES` (8 KB) whose mtime predates `TRACE_QUIET_MILLIS` (1 hour); a fresh fixture fails both and the phase reports `batch: 0`, which is correct behavior that reads as coverage.
+`package:smoke:live` adds the edge the credential-free run cannot see, Bedrock embeddings through the installed binary, and is what lefthook's pre-push runs when a credential is present, saying so on stderr when it cannot.
 
 `spec/memhtml.symspec.json` is the EARS requirements ledger (keys like `RET-3`, `STORE-2`, each naming its verification method and the code that satisfies it) — retiring or adding a requirement is its own `spec:` commit. `docs/backlog.md` is the fine-grained ledger, `ROADMAP.md` the system-level view with measured benchmark standing. Durable lessons land in `.erpaval/solutions/**` as the rule, never the diff.
 

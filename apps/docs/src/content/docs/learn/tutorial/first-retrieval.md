@@ -112,7 +112,7 @@ memhtml recall "one writer many readers" --budget 2000
 
 `recall` runs the same ranking and then layers a disclosure fold on top of it:
 
-- Two envelopes rather than one list. `arcs` and `memories` are folded separately under their own character budgets, so an arc, which is a behavioral summary sleep synthesizes, does not compete with the memories it summarizes.
+- Two envelopes rather than one list. `arcs` and `memories` are folded separately under their own character budgets, so an arc, which is a behavioral summary curation synthesizes, does not compete with the memories it summarizes.
 - `disclosed` is quoted and `indexLines` is not. A candidate that fits the budget arrives with its body. One that does not becomes an index line, carrying the claim plus the path, so you drill down deliberately with `memhtml read`. Rank order is authoritative, so a candidate is never promoted past a better-ranked one to make it fit, and the fold continues past a candidate that did not fit, because the budget counts characters rather than positions. Without that, one long memory in the middle of the list would silently truncate every shorter one after it.
 - `spentChars` never exceeds the budget, and `truncated: true` says at least one candidate became an index line instead of a quote. That is the signal to raise `--budget` (default 16000) or narrow the scope.
 - Both folds cap quotes at two memories per entity name. A capped memory still gets its index line, so the cap narrows depth and keeps the memory.

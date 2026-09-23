@@ -10,7 +10,7 @@ import { makeStore, type StoreHooks, type StoreShape } from "./store.js"
 
 /**
  * A real git repository in a temp directory, for tests in this package and in every package
- * downstream. Exported at the `@memhtml/store/testing` subpath so `@memhtml/index` and `@memhtml/sleep`
+ * downstream. Exported at the `@memhtml/store/testing` subpath so `@memhtml/index` and `@memhtml/head`
  * build their fixtures the same way this package does.
  *
  * Deliberately not a fake. A stateless fake verifies the shape of a call and misses the state

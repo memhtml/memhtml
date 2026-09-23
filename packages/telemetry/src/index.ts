@@ -5,7 +5,7 @@ import type { HttpClient } from "effect/unstable/http"
  * The opt-in OTLP trace exporter, gated on `OTEL_EXPORTER_OTLP_ENDPOINT`.
  *
  * Every interesting phase of this system already carries an `Effect.withSpan` annotation —
- * retrieval, embeddings, model calls, indexing, the sleep cycle, store writes, trace scanning, plus
+ * retrieval, embeddings, model calls, indexing, store writes, trace scanning, plus
  * the dynamic `db.<operation>` and `git.<command>` families. Effect's tracer is a `Context.Reference`
  * with an in-process default, so those spans are constructed and discarded unless a runtime assembly
  * overrides the reference. This layer is that override, and the call sites need no changes: providing
@@ -62,7 +62,7 @@ export interface TelemetryOptions {
  * disables itself for sixty seconds, and emits only a DEBUG log — invisible at the default level. A
  * command pointed at a down collector would silently export nothing, and "opt-in that silently does
  * nothing" is indistinguishable from "opt-in that was never read". One warning names the failure;
- * one rather than one-per-batch because a long `sleep run` against a dead collector would
+ * one rather than one-per-batch because a long batched command against a dead collector would
  * otherwise write hundreds of identical lines into a log someone has to read. It goes through
  * `Effect.logWarning`, so it lands wherever the assembly's logger writes — stderr in both, because
  * both set `Logger.LogToStderr` (stdout is the envelope / the RPC stream).

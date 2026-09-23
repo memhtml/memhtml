@@ -1,8 +1,13 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 
-import { DatabaseService, STATE_SCHEMA } from "@memhtml/index"
-import { accessRows, parseSidecar, renderSidecar } from "@memhtml/sleep"
+import {
+  accessRows,
+  DatabaseService,
+  parseSidecar,
+  renderSidecar,
+  STATE_SCHEMA
+} from "@memhtml/index"
 import { attemptIo, commitSubject, readFileOrNull, STATE_SIDECAR_PATH } from "@memhtml/store"
 import { Effect } from "effect"
 
@@ -16,10 +21,9 @@ import { Git } from "./api-layer.js"
  * the committed sidecar that survives, so a fresh clone plus `memhtml state import` plus
  * `memhtml index rebuild` reproduces the whole system rather than a system with amnesia.
  *
- * Both halves reuse `@memhtml/sleep`'s own functions, `renderSidecar` for the export and `parseSidecar`
- * for the import, because the sleep cycle's state-export phase writes this file every night and two
- * writers producing two byte sequences for one plane would churn the file on alternating nights. The
- * only difference between this command and that phase is which commit the result lands in.
+ * Both halves use `@memhtml/index`'s sidecar functions, `renderSidecar` for the export and
+ * `parseSidecar` for the import, so the one writer and the one reader of this file agree on its bytes
+ * and an unchanged plane never churns it.
  */
 
 /** What an export wrote. `written: false` means the sidecar already matched the plane. */

@@ -23,7 +23,7 @@ Reading the corpus with an HTML parser and a script instead of a chain of tool c
 
 ### Committed sidecar
 
-`.memhtml/state/access.jsonl`, the state plane's only durable copy. It is byte-stable, path-ordered, and four-decimal, and the sleep cycle commits it once per night, so an unchanged plane commits nothing. See [The index plane and the state plane](/internals/index-plane-and-state-plane/).
+`.memhtml/state/access.jsonl`, the state plane's only durable copy. It is byte-stable, path-ordered, and four-decimal, and `memhtml state export` writes it, so an unchanged plane commits nothing. See [The index plane and the state plane](/internals/index-plane-and-state-plane/).
 
 ### Conflict assist and frame key
 
@@ -87,7 +87,7 @@ A derived, disposable representation of the tree. The index is one, and `project
 
 ### Retention triage and reprieve
 
-Sleep's eviction decision and its appeal. Triage archives EVICT-band files by the eight-signal retention score; reprieve extends a bounded validity instead, up to a capped number of times. See [The sleep pipeline](/internals/the-sleep-pipeline/).
+The v1 eviction decision and its appeal, retired with the sleep pipeline. Triage archived EVICT-band files by the eight-signal retention score (`@memhtml/domain`); reprieve extended a bounded validity instead, up to a capped number of times. The scorer remains in `@memhtml/domain`.
 
 ### RRF arm
 
@@ -96,10 +96,6 @@ One ranking source in the retrieval registry. It returns exactly `(path, rank)` 
 ### Salience arm
 
 The arm that reads the state plane over the ATTACH: decayed recency of use, log access count, and a clamped outcome score. It excludes tasks and `resources/people/`, where salience would reward a stale task and decay a person's identity. See [Four-arm retrieval](/internals/four-arm-retrieval/).
-
-### Sleep phase
-
-One of the ordered curation steps named by `SLEEP_PHASES` — seventeen as of v0.6.0. Each is an isolated commit on a `sleep/<date>` branch carrying machine-readable trailers, so a failure stays contained and a resume reads what is already done out of `git log`. See [The sleep pipeline](/internals/the-sleep-pipeline/).
 
 ### State plane
 

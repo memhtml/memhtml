@@ -17,6 +17,8 @@ export const RESPONSE_TYPES = [
   "recall.pack",
   "index.report",
   "trace.sessions",
+  // Retired: no command answers `sleep.report`, `sleep.review`, `sleep.merge`, or `sleep.plan` any
+  // more. The strings stay because this list is append-only; a parser that learned them keeps parsing.
   "sleep.report",
   "sleep.review",
   "eval.discrimination",

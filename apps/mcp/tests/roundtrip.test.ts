@@ -387,7 +387,6 @@ describe("a tool call through the toolkit layer", () => {
     expect(result.head_sha).toMatch(/^[0-9a-f]{40}$/)
     expect(result.index_fresh).toBe(true)
     expect(Object.keys(result.counts_by_type as Record<string, number>).length).toBeGreaterThan(0)
-    expect(result.last_sleep).toBeNull()
     // The comparison `embedder_up` cannot make: how much of the index the vector arm can see.
     expect(result.vector_coverage).toBe(1)
     expect(result.vector_coverage_floor).toBe(0.95)
@@ -398,7 +397,7 @@ describe("a tool call through the toolkit layer", () => {
     const files = first.files as ReadonlyArray<{ path: string }>
     expect(files).toHaveLength(1)
     // A next page exists, and the cursor is the last path returned rather than an offset: `files.path`
-    // is the primary key AND it moves, so an offset page taken while sleep archives a file would skip
+    // is the primary key AND it moves, so an offset page taken while a curator archives a file would skip
     // a row or repeat one.
     expect(first.next_cursor).toBe(files[0]?.path)
 
@@ -465,7 +464,7 @@ describe("a tool call through the toolkit layer", () => {
     expect(neighbors.edges).not.toBe(nodes.length)
     /**
      * `derived` THROUGH THE WIRE, false for an authored `<link>`. The tool's description advertises
-     * sleep-mined edges as the point of the tool, so a success schema that dropped this field would
+     * machine-mined edges as the point of the tool, so a success schema that dropped this field would
      * publish a graph in which an agent cannot tell a machine's suspicion from a human's assertion.
      */
     expect(nodes.every((node) => node.derived === false)).toBe(true)
@@ -985,8 +984,7 @@ describe("a tool call through the toolkit layer", () => {
         written: 3,
         deduped: 0,
         failed: 0,
-        skipped: 0,
-        consolidated: 0
+        skipped: 0
       })
 
       const after = (await call("memory_status", {})).head_sha as string
@@ -1052,8 +1050,7 @@ describe("a tool call through the toolkit layer", () => {
         written: 0,
         deduped: 2,
         failed: 0,
-        skipped: 0,
-        consolidated: 0
+        skipped: 0
       })
       // An all-deduped batch wrote no file, so it made NO commit — and says so with a null sha rather
       // than by reporting the previous HEAD, which would look like it had committed.
@@ -1233,8 +1230,7 @@ describe("a tool call through the toolkit layer", () => {
         written: 2,
         deduped: 0,
         failed: 1,
-        skipped: 0,
-        consolidated: 0
+        skipped: 0
       })
       // `total` counts the ops the CALLER sent, not the ones `batchWrite` saw — a summary a client
       // could not reconcile with `results.length` is one it cannot use.
@@ -1332,8 +1328,7 @@ describe("a tool call through the toolkit layer", () => {
         written: 1,
         deduped: 0,
         failed: 1,
-        skipped: 0,
-        consolidated: 0
+        skipped: 0
       })
       expect(await commitCount()).toBe(commitsBefore + 1)
     })
@@ -1350,8 +1345,7 @@ describe("a tool call through the toolkit layer", () => {
         written: 0,
         deduped: 0,
         failed: 0,
-        skipped: 0,
-        consolidated: 0
+        skipped: 0
       })
       expect(batch.commit_sha).toBeNull()
       expect((await call("memory_status", {})).head_sha).toBe(before)
@@ -1460,8 +1454,7 @@ describe("a tool call through the toolkit layer", () => {
           written: 1,
           deduped: 0,
           failed: 0,
-          skipped: 0,
-          consolidated: 0
+          skipped: 0
         })
         expect(second.commit_sha).not.toBeNull()
         expect(await commitCount()).toBe(commitsBefore + 1)
@@ -1502,8 +1495,7 @@ describe("a tool call through the toolkit layer", () => {
           written: 2,
           deduped: 0,
           failed: 0,
-          skipped: 0,
-          consolidated: 0
+          skipped: 0
         })
       })
 
@@ -1537,8 +1529,7 @@ describe("a tool call through the toolkit layer", () => {
           written: 2,
           deduped: 0,
           failed: 0,
-          skipped: 0,
-          consolidated: 0
+          skipped: 0
         })
         const listed = await call("memory_list", { workspace: "batch-conflict-intra" })
         expect(listed.files as ReadonlyArray<unknown>).toHaveLength(2)
@@ -1594,8 +1585,7 @@ describe("a tool call through the toolkit layer", () => {
           written: 2,
           deduped: 0,
           failed: 1,
-          skipped: 0,
-          consolidated: 0
+          skipped: 0
         })
       })
 

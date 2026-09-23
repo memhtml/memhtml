@@ -1,9 +1,4 @@
-import {
-  DiscriminationFailed,
-  discriminationGate,
-  type EvalMode,
-  runDiscrimination
-} from "@memhtml/eval"
+import { DiscriminationFailed, type EvalMode, runDiscrimination } from "@memhtml/eval"
 import { isValidDatetime } from "@memhtml/html"
 import { parseFacetFilters } from "@memhtml/index"
 import { HOOK_EVENTS, HOSTS, isHookEvent, isHostId, renderHookOutput } from "@memhtml/integrations"
@@ -12,7 +7,7 @@ import { initRepo } from "@memhtml/store"
 import { layerTelemetry } from "@memhtml/telemetry"
 import { ConfigProvider, Effect, type Layer, Logger } from "effect"
 import { renderAgentsDoc, runAgentsDoc } from "./agents-doc.js"
-import { Git, Indexer, layerApp, Sleep } from "./api-layer.js"
+import { Git, Indexer, layerApp } from "./api-layer.js"
 import { applyPayload, applyText, decodeApply, readStdin } from "./apply.js"
 import {
   buildManifest,
@@ -63,7 +58,7 @@ import { publish } from "./publish.js"
 import { serveMcp } from "./serve.js"
 import { stateExport, stateImport } from "./state.js"
 import { runV2 } from "./v2.js"
-import { indexReport, sleepPhases, sleepRunReport, traceSessionsFlag } from "./views.js"
+import { indexReport } from "./views.js"
 
 export interface Parsed {
   readonly command: string
@@ -291,34 +286,11 @@ export interface RunResult {
  * What a handler returns: a response type, its payload, and optionally the exit code that payload
  * implies. The envelope is added once, below, and an absent third element is {@link EXIT_OK}.
  *
- * The third element exists for the two commands whose own failures are DATA. `@memhtml/sleep` types
- * `run` and `resume` with error channel `never` on purpose — a phase that failed is a normal terminal
- * state with a report row — so the report is a success envelope and the process still has to say the
- * curation did not happen. Everywhere else a returned payload is success, so the element is absent
- * rather than restated on every other arm.
+ * The third element exists for a command whose own failures are DATA: a report that is a success
+ * envelope while the process still has to say the work did not happen. Everywhere else a returned
+ * payload is success, so the element is absent rather than restated on every other arm.
  */
 type Handled = readonly [Success<unknown>["type"], unknown, number?]
-
-/**
- * Exit 1 when a sleep run has a failed phase.
- *
- * **A partially-failed run and a fully-aborted run exit the same**, and that is a decision rather
- * than an omission. A caller reading the exit code is asking one question — did the curation this
- * invocation was for happen — and both answers are no. The difference between them is already stated
- * in the payload, precisely: an abort is every selected phase `failed` with `headSha === baseSha` and
- * no commits, while a partial run names the phases that landed. A second exit code would be a
- * second, weaker copy of that, and a caller would have to learn it to recover a fact the envelope
- * already carries.
- *
- * Exit 1 rather than 2: the call was well-formed, so this is a runtime failure an operator fixes by
- * changing the repo or the environment ({@link EXIT_USAGE} is reserved for fixing the call).
- *
- * `sleep status` and `sleep review` are deliberately not routed through here. They REPORT a run they
- * did not perform, and a read that exited non-zero because the thing it describes failed would make
- * "tell me what happened" indistinguishable from "I could not tell you".
- */
-const sleepExit = (report: { readonly failedPhases: ReadonlyArray<string> }): number =>
-  report.failedPhases.length > 0 ? EXIT_RUNTIME : EXIT_OK
 
 /**
  * Dispatch one parsed invocation against the provided services.
@@ -383,11 +355,6 @@ const dispatch = (
           continueOnError: bool(parsed, "continue-on-error", false),
           detectConflicts: bool(parsed, "detect-conflicts", false),
           detectNearDuplicates: bool(parsed, "detect-near-duplicates", false),
-          // `validate` has already refused any value outside the flag's closed vocabulary, so the
-          // narrowing here cannot silently drop a caller's ask.
-          ...(str(parsed, "consolidate") === "last-wins"
-            ? { consolidate: "last-wins" as const }
-            : {}),
           ...provenanceOf(parsed)
         })
         return ["batch.applied", applyPayload(result)] as const
@@ -636,80 +603,6 @@ const dispatch = (
         return ["trace.links", result] as const
       })
 
-    case "sleep run":
-      return Effect.gen(function* () {
-        const sleep = yield* Sleep
-        const phases = yield* sleepPhases(str(parsed, "phases"))
-        const maxLlmCalls = int(parsed, "max-llm-calls")
-        const traceSessions = yield* traceSessionsFlag(int(parsed, "trace-sessions"))
-        const report = yield* sleep.run({
-          date: str(parsed, "date") ?? (yield* today),
-          ...(phases === undefined ? {} : { phases }),
-          dryRun: bool(parsed, "dry-run", false),
-          deep: bool(parsed, "deep", false),
-          ...(maxLlmCalls === undefined ? {} : { maxLlmCalls }),
-          ...(traceSessions === undefined ? {} : { traceSessions })
-        })
-        const payload = sleepRunReport(report)
-        return ["sleep.report", payload, sleepExit(payload)] as const
-      })
-
-    case "sleep resume":
-      return Effect.gen(function* () {
-        const sleep = yield* Sleep
-        const report = yield* sleep.resume(parsed.positional[0] ?? "")
-        const payload = sleepRunReport(report)
-        return ["sleep.report", payload, sleepExit(payload)] as const
-      })
-
-    case "sleep review":
-      return Effect.gen(function* () {
-        const sleep = yield* Sleep
-        const report = yield* sleep.review(parsed.positional[0])
-        const withDiff = bool(parsed, "diff", false)
-        if (!withDiff) return ["sleep.review", report] as const
-        // The raw diff is fetched here rather than inside `review`, because it is the one field whose
-        // size is unbounded, and a review that always carried it would make the default response
-        // unusable in a context window.
-        const git = yield* Git
-        const diff = yield* git
-          .run(["diff", `${report.baseSha}..${report.headSha}`])
-          .pipe(Effect.orElseSucceed(() => ""))
-        return ["sleep.review", { ...report, diff }] as const
-      })
-
-    case "sleep merge":
-      return Effect.gen(function* () {
-        const sleep = yield* Sleep
-        const skipGate = bool(parsed, "skip-gate", false)
-        if (skipGate) {
-          yield* Effect.logWarning(
-            "sleep merge --skip-gate: merging without re-running discrimination"
-          )
-        }
-        /**
-         * **The discrimination gate, composed here.** A sleep run that degrades retrieval quality
-         * cannot land. `@memhtml/sleep` takes the gate as a parameter and supplies none, so a package
-         * that cannot import the eval also cannot silently default it. The composition is visible in
-         * this wiring or it does not exist.
-         *
-         * `discriminationGate` fails on an inversion, `merge` wraps it in `Effect.result`, and the
-         * failure becomes `refusal: "gate-failed"` with `main` never moving.
-         *
-         * `fake` mode, always. The gate measures the ranking stack against its own generated fixture
-         * corpus, so a live-Bedrock run would make an unattended merge conditional on a network call and
-         * on credentials being present at 3am. The deterministic embedder's cosine relations are
-         * a pure function of the text, which is the property a regression gate needs. A
-         * cron whose merge silently skipped its gate because a token expired is the failure this
-         * arrangement prevents.
-         */
-        const report = yield* sleep.merge(
-          parsed.positional[0] ?? "",
-          skipGate ? {} : { preMergeGate: discriminationGate().pipe(Effect.asVoid) }
-        )
-        return ["sleep.merge", report] as const
-      })
-
     case "publish":
       return Effect.gen(function* () {
         const report = yield* publish()
@@ -734,36 +627,6 @@ const dispatch = (
         return ["state.import", report] as const
       })
 
-    case "sleep plan":
-      return Effect.gen(function* () {
-        const sleep = yield* Sleep
-        /**
-         * The instant is read HERE and passed in, which keeps the one clock reading anywhere near sleep
-         * on the caller's side. The settled-transcript cutoff is derived from it, and a plan that read a
-         * clock inside the package would be the first thing in sleep that consults one to decide
-         * something.
-         */
-        const millis = yield* Effect.clockWith((clock) => clock.currentTimeMillis)
-        return ["sleep.plan", yield* sleep.plan(millis)] as const
-      })
-
-    case "sleep status":
-      return Effect.gen(function* () {
-        const sleep = yield* Sleep
-        const report = yield* sleep.review()
-        return [
-          "sleep.report",
-          {
-            runId: report.runId,
-            branch: report.branch,
-            baseSha: report.baseSha,
-            headSha: report.headSha,
-            phases: report.phases,
-            commits: report.commits.length
-          }
-        ] as const
-      })
-
     case "status":
       return Effect.gen(function* () {
         const report = yield* ops.statusReport()
@@ -776,11 +639,6 @@ const dispatch = (
       return Effect.fail({ _tag: "UnhandledCommand", command: parsed.command })
   }
 }
-
-/** Today as `YYYY-MM-DD`, through the Effect clock so a test can pin the run date. */
-const today = Effect.clockWith((clock) =>
-  Effect.map(clock.currentTimeMillis, (millis) => new Date(millis).toISOString().slice(0, 10))
-)
 
 /**
  * The services `dispatch` may reach for, derived from the app layer's own output.

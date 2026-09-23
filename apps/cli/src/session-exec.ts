@@ -57,7 +57,7 @@ import {
  * the two runtimes cannot drift on how a guest is built, and this module resolves no path from its
  * own module location: the packaging census (`tests-integration/tests/packaging.test.ts`) names
  * `exec.ts` as the one place `guest/corpus.mjs` and `node-html-parser` are resolved.
- * `apps/consolidator/src/mount.ts`'s `mountReadOnlyRoots` is not used because its one job is to put
+ * `./mount.ts`'s `mountReadOnlyRoots` is not used because its one job is to put
  * a HOST directory into the guest read-only, and this runtime has neither a host directory nor a
  * read-only mount.
  */

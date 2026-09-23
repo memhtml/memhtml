@@ -95,7 +95,6 @@ interface Applied {
     readonly deduped: number
     readonly failed: number
     readonly skipped: number
-    readonly consolidated: number
   }
   readonly commit_sha: string | null
   readonly near_duplicates_degraded: boolean
@@ -147,8 +146,7 @@ describe("memhtml apply: the JSONL door", () => {
       written: 3,
       deduped: 0,
       failed: 0,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
     expect(data.commit_sha).not.toBeNull()
     // The whole point of the door: three memories, ONE commit. Three `memhtml write` calls make three.
@@ -224,7 +222,6 @@ describe("memhtml apply: the JSONL door", () => {
     expect(Object.keys(op as object).sort()).toEqual([
       "code",
       "conflict",
-      "consolidated_into",
       "deduped",
       "error",
       "existing_path",
@@ -232,8 +229,7 @@ describe("memhtml apply: the JSONL door", () => {
       "near_duplicates",
       "ok",
       "path",
-      "skipped",
-      "superseded_path"
+      "skipped"
     ])
     expect(op?.code).toBeNull()
     expect(op?.error).toBeNull()
@@ -304,8 +300,7 @@ describe("memhtml apply: the JSONL door", () => {
       written: 1,
       deduped: 0,
       failed: 1,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
   })
 
@@ -323,8 +318,7 @@ describe("memhtml apply: the JSONL door", () => {
       written: 0,
       deduped: 0,
       failed: 1,
-      skipped: 1,
-      consolidated: 0
+      skipped: 1
     })
     expect(data.commit_sha).toBeNull()
     expect(await htmlOnDisk(cli.root)).toEqual([])
@@ -384,8 +378,7 @@ describe("memhtml apply --detect-conflicts (AC-1-2)", () => {
       written: 1,
       deduped: 0,
       failed: 0,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
     expect(data.commit_sha).not.toBeNull()
     expect((await htmlOnDisk(cli.root)).length).toBe(2)
@@ -822,8 +815,7 @@ describe("claim derivation: prose becomes a claim and a tail", () => {
       written: 1,
       deduped: 0,
       failed: 0,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
     const { readMemory } = await import("../src/operations.js")
     const read = await Effect.runPromise(
@@ -894,12 +886,12 @@ describe("the manifest guide (AC-6-6)", () => {
     /**
      * And the concurrency rule, which is the one an agent most needs to have right: it decides
      * whether writing while a server runs is safe. Both halves are asserted because each is
-     * separately load-bearing — that concurrent use IS allowed, and that `sleep run` is the
-     * exception. A guide carrying only the permission would have an agent write onto a sleep
-     * branch; a guide carrying only the exception would have it refuse ordinary concurrent work.
+     * separately load-bearing — that concurrent use IS allowed, and that a checked-out curation
+     * branch is the exception. A guide carrying only the permission would have an agent write onto a
+     * curation branch; a guide carrying only the exception would have it refuse ordinary concurrent work.
      */
     expect(body).toContain("may share one store")
-    expect(body).toContain("`sleep/<date>` branch")
+    expect(body).toContain("`curate/<date>` branch")
   })
 
   it("teaches when to batch, with an example line the test PARSES", async () => {
@@ -980,7 +972,6 @@ describe("the manifest guide (AC-6-6)", () => {
       "continue-on-error",
       "detect-conflicts",
       "detect-near-duplicates",
-      "consolidate",
       "session-id",
       "prompt-id",
       "turn-uuid"

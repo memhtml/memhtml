@@ -270,7 +270,7 @@ export const runFloor = (
   )
 
 /**
- * A one-line summary of a failure, for stderr and for the sleep merge's refusal log.
+ * A one-line summary of a failure, for stderr and for a merge's refusal log.
  *
  * Names the first inversion rather than every one, because an operator needs a probe to reproduce
  * and a thirty-line dump of a failing gate is a thirty-line dump nobody reads. The full list is on

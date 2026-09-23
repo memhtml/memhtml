@@ -17,9 +17,8 @@ import { INDEX_STATE_ID } from "./schema-const.js"
  * regardless of the query while `degraded` stayed false: the arm did fire.
  *
  * This module is the ONE reader of that ratio. `search` and `recall` consult it before embedding a
- * query, `memhtml status`, `memhtml index status` and `memhtml doctor` report it, and sleep's preflight
- * gates the night on it. One statement, so the four surfaces cannot disagree about what "coverage"
- * counts.
+ * query, and `memhtml status`, `memhtml index status` and `memhtml doctor` report it. One statement, so
+ * the surfaces cannot disagree about what "coverage" counts.
  *
  * **Only vectors in the CONFIGURED space count.** `embeddings.model` carries `<model-id>@<dim>`, and a
  * vector in another space is incomparable with the query vector, so for ranking purposes it is not
@@ -33,8 +32,8 @@ import { INDEX_STATE_ID } from "./schema-const.js"
 
 /**
  * Below this, the vector plane is treated as absent: `search` and `recall` drop the vector arm and
- * report `degraded: true`, `doctor` reports `vectorCoverageLow` and `healthy: false`, and sleep's
- * preflight logs a warning. The CLI reads `MEMHTML_VECTOR_COVERAGE_FLOOR` over this default.
+ * report `degraded: true`, and `doctor` reports `vectorCoverageLow` and `healthy: false`. The CLI
+ * reads `MEMHTML_VECTOR_COVERAGE_FLOOR` over this default.
  *
  * 0.95 rather than 1.0 because coverage is never exactly complete on a live store: a write lands, its
  * chunks are projected, and its vectors follow in the same `update` a moment later, so a reader
@@ -44,10 +43,10 @@ import { INDEX_STATE_ID } from "./schema-const.js"
 export const VECTOR_COVERAGE_FLOOR = 0.95
 
 /**
- * Below this, sleep's preflight REFUSES the run, the way it refuses a mixed vector space. Half the
- * corpus without vectors means dedup, mining and conflict detection compare a sample against itself
- * and call the rest unique, with a green report. Not configurable: the soft floor is a quality knob,
- * this is the point past which the night's arithmetic stops describing the corpus.
+ * Below this, a curation pass over vectors describes a sample rather than the corpus: half the corpus
+ * without vectors means dedup, mining and conflict detection compare a sample against itself and call
+ * the rest unique, with a green report. Not configurable: the soft floor is a quality knob, this is
+ * the point past which vector arithmetic stops describing the corpus.
  */
 export const VECTOR_COVERAGE_HARD_FLOOR = 0.5
 
@@ -131,12 +130,12 @@ export const formatCoverage = (coverage: number): string =>
   `${Number((coverage * 100).toFixed(1))}%`
 
 /**
- * The vector plane covers too little of the corpus for the night to run.
+ * The vector plane covers too little of the corpus for a vector-driven pass to run.
  *
- * Sleep's preflight fails with this below {@link VECTOR_COVERAGE_HARD_FLOOR}, and it travels the same
- * channel as `EmbedModelMismatch` and `IndexStale`: a typed phase failure the runner reports by
- * `_tag` and `reason`, so the report line names the ratio, the counts and the remedy. Defined here
- * beside the reader rather than in the sleep package because the ratio's meaning is this module's.
+ * Raised below {@link VECTOR_COVERAGE_HARD_FLOOR}, on the same channel as `EmbedModelMismatch` and
+ * `IndexStale`: a typed failure a caller reports by `_tag` and `reason`, so the report line names the
+ * ratio, the counts and the remedy. Defined here beside the reader because the ratio's meaning is this
+ * module's.
  */
 export class VectorCoverageLow {
   readonly _tag = "VectorCoverageLow"

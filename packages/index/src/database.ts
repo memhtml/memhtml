@@ -39,8 +39,8 @@ const BUSY_TIMEOUT_MS = 5_000
  * That measurement is the 1×n shape — one bound query vector against the table, n calls, n blob
  * copies — and it is the ONLY shape this function serves. Each invocation materializes a fresh
  * `Uint8Array` per blob argument, so an n×n consumer pays the corpus re-copied n times (probed
- * 2026-08-18, issue #40: 8.45M calls and an OOM at n = 2,907). The sleep pair scans decode once
- * and rank in `@memhtml/domain`'s neighbors module instead.
+ * 2026-08-18, issue #40: 8.45M calls and an OOM at n = 2,907). Pairwise scans decode once and rank
+ * in `@memhtml/domain`'s neighbors module instead.
  */
 const registerVectorDistance = (db: Database): void => {
   db.function("vector_distance_cos", { deterministic: true }, (a: unknown, b: unknown) => {
@@ -133,8 +133,8 @@ class DriverRejection {
  *
  * `busy_timeout` covers a short wait inside one call, and stops covering anything past its
  * deadline. A probe against a held `BEGIN IMMEDIATE` throws `database is locked` rather than
- * queueing indefinitely. This deployment has many short-lived CLI processes plus an unattended sleep run
- * writing to one file, and **Effect coordinates nothing across processes**, so the driver's
+ * queueing indefinitely. This deployment has many short-lived CLI processes plus an unattended MCP
+ * server writing to one file, and **Effect coordinates nothing across processes**, so the driver's
  * timeout plus this retry is the whole of the answer.
  *
  * Jittered because the contending processes are cron-triggered and would otherwise retry in

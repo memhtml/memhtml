@@ -37,7 +37,7 @@ const readmePath = join(repoRoot, "README.md")
  * are authored against its limits: short ASCII-only labels, no `\n`, and none of the shapes it draws
  * in asterisks.
  */
-const FIGURES = ["system-topology", "three-actors", "memory-lifecycle", "sleep-branch"]
+const FIGURES = ["system-topology", "three-actors", "memory-lifecycle"]
 
 const renderAscii = (name) => {
   const source = join(figureDir, `${name}.d2`)

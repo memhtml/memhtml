@@ -20,7 +20,6 @@
     "@memhtml/llm": "workspace:*",
     "@memhtml/mcp": "workspace:*",
     "@memhtml/session": "workspace:*",
-    "@memhtml/sleep": "workspace:*",
     "@memhtml/snapshot": "workspace:*",
     "@memhtml/store": "workspace:*",
     "@memhtml/traces": "workspace:*",

@@ -77,8 +77,7 @@ export interface GitShape {
    * Every path the given commits changed, unioned, in ONE subprocess. FULL object names only.
    *
    * The shas go in on stdin, exactly as {@link catFileBatch} does, because the caller's set is one
-   * per commit in a range and a range can hold hundreds — `sleep`'s compress phase commits inside
-   * its fold loop. One process either way.
+   * per commit in a range and a range can hold hundreds. One process either way.
    *
    * A rename contributes BOTH of its paths. The union answers "which paths did these commits
    * write", and a caller asking that about a `git mv` needs the path that went away as much as the
@@ -118,7 +117,7 @@ export interface GitShape {
    * This is where `WriteConflict.ourSha`/`theirSha` come from.
    */
   readonly unmergedStages: () => Effect.Effect<ReadonlyArray<UnmergedStage>, GitFailure>
-  /** One trailer key's values per commit in a range, newest first. Drives `sleep resume`. */
+  /** One trailer key's values per commit in a range, newest first. */
   readonly logTrailers: (
     range: string,
     key: string
@@ -173,10 +172,10 @@ const GIT_ENV: Readonly<Record<string, string>> = {
  * Every spawn removes them, because git exports them into hook processes: a `pre-push` hook in a
  * linked worktree receives an ABSOLUTE `GIT_DIR`, every descendant inherits it, and a store call
  * that meant "the corpus at `-C <root>`" silently reads and writes the repository the hook ran in.
- * Measured here: `memhtml sleep run` under such a hook refused with DirtyTree naming the CALLING
+ * Measured here: a v1 curation run under such a hook refused with DirtyTree naming the CALLING
  * repo's tree, with the corpus clean. (A primary checkout exports the relative `.git`, which a child
  * running elsewhere fails to resolve and falls back from — which is why hooks from a primary
- * checkout never surfaced this.) `apps/consolidator/src/mount.ts` scrubs the same set for its
+ * checkout never surfaced this.) `apps/cli/src/mount.ts` scrubs the same set for its
  * `git worktree` calls; the two lists are pinned to each other by tests on both sides.
  */
 export const GIT_REPO_SELECTION_ENV: ReadonlyArray<string> = [
@@ -476,6 +475,6 @@ const parseUnmergedStages = (output: string): ReadonlyArray<UnmergedStage> =>
 /**
  * The live layer, rooted at a caller-supplied path. There is no `MEMHTML_ROOT` read here. The
  * root is config the store owns (`store.ts`), and a git service that resolved its own root
- * could not be pointed at a fixture repo or at a sleep worktree.
+ * could not be pointed at a fixture repo or at a detached worktree.
  */
 export const layerGit = (root: string): Layer.Layer<GitShape> => Layer.succeed(Git)(makeGit(root))

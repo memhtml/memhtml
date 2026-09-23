@@ -23,7 +23,6 @@ const STAGING = join(REPO_ROOT, "dist-package")
 const WORKSPACE_PACKAGES = [
   "apps/cli",
   "apps/mcp",
-  "apps/consolidator",
   "packages/contracts",
   "packages/domain",
   "packages/eval",
@@ -34,7 +33,6 @@ const WORKSPACE_PACKAGES = [
   "packages/llm",
   "packages/session",
   "packages/snapshot",
-  "packages/sleep",
   "packages/store",
   "packages/telemetry",
   "packages/traces"
@@ -75,13 +73,7 @@ for (const dir of WORKSPACE_PACKAGES) {
   }
 }
 
-for (const required of [
-  "dist/memhtml.mjs",
-  "dist/memhtml-mcp.mjs",
-  "migrations",
-  "guest",
-  "prompts"
-]) {
+for (const required of ["dist/memhtml.mjs", "dist/memhtml-mcp.mjs", "migrations", "guest"]) {
   if (!existsSync(join(STAGING, required))) {
     throw new Error(`dist-package/${required} is missing; run \`pnpm package:assemble\``)
   }
@@ -96,7 +88,7 @@ await writeFile(
       name: "memhtml",
       version: root.version,
       description:
-        "An agent's long-term memory: one fact per semantic HTML file in git, four-arm retrieval, and a curation sleep cycle.",
+        "An agent's long-term memory: one fact per semantic HTML file in git, four-arm retrieval, and curator sessions on a branch.",
       keywords: ["memory", "agent", "mcp", "retrieval", "sqlite", "git", "semantic-html", "cli"],
       homepage: "https://github.com/memhtml/memhtml",
       bugs: { url: "https://github.com/memhtml/memhtml/issues" },
@@ -110,7 +102,7 @@ await writeFile(
        * importable, so declaring an entry point would promise a surface no test covers and no
        * consumer asked for. Adding one later is a minor bump — removing one would be a major.
        */
-      files: ["dist", "migrations", "state-migrations", "guest", "prompts", "README.md", "LICENSE"],
+      files: ["dist", "migrations", "state-migrations", "guest", "README.md", "LICENSE"],
       dependencies: Object.fromEntries(
         Object.entries(dependencies).sort(([a], [b]) => a.localeCompare(b))
       ),

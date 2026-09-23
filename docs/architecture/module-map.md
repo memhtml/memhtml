@@ -28,19 +28,6 @@ This repository is the software that manages a memory root, a separate git repos
 - `packages/index/src/scope.ts` (186 LOC)
 - `packages/index/src/schema-const.ts` (85 LOC)
 
-## packages/sleep
-
-`@memhtml/sleep` runs the curation cycle over the root as one git commit per committing phase on a `sleep/<date>` branch (`packages/sleep/src/index.ts:2`). The phase names, their execution order, and their prerequisite graph live in one contract module, and the commit trailer, the `sleep_phases` row, and the `--phases` flag all read a phase name from there (`SLEEP_PHASES` at `packages/sleep/src/contract.ts:43` — seventeen phases as of v0.6.0; `HARD_PREREQUISITES` at `packages/sleep/src/contract.ts:107`). Two of the seventeen commit nothing by construction, `preflight` and `relationship-mining` (`NON_COMMITTING_PHASES`, `packages/sleep/src/contract.ts:197`), so a full run lands fifteen commits at most — count from the enum rather than from this sentence, since a new phase moves both numbers. Each commit carries a `Memhtml-Run` / `Memhtml-Phase` / `Memhtml-Counts` trailer block written in exactly one place. `memhtml sleep resume` reads those trailers out of the branch's git log to decide what a run already did, so the git log rather than a journal table is the record of progress (`packages/sleep/src/commit.ts:10`). The package constructs none of its own services. Every dependency arrives as a caller-supplied shape, so a test can point a run at a temp-dir git repo (`packages/sleep/src/env.ts:10`).
-
-- `packages/sleep/src/sql.ts` (835 LOC)
-- `packages/sleep/src/phases/trace-consolidation.ts` (682 LOC)
-- `packages/sleep/src/run.ts` (445 LOC)
-- `packages/sleep/src/review.ts` (302 LOC)
-- `packages/sleep/src/edits.ts` (228 LOC)
-- `packages/sleep/src/publish.ts` (171 LOC)
-- `packages/sleep/src/contract.ts` (170 LOC)
-- `packages/sleep/src/env.ts` (113 LOC)
-
 ## packages/store
 
 `@memhtml/store` is the git-backed file store and the only writer to the root. Every operation that changes the corpus is one commit, and every git failure is a typed value (`packages/store/src/index.ts:2`). The tree is the system of record and the index is derived from it, so an operation that changed a file without committing would leave the index describing a state git does not have (`packages/store/src/index.ts:2`). Git's `-z` plumbing formats are parsed by pure total functions in `plumbing.ts`, pinned against captured bytes so that a truncated stream from a killed subprocess is a tested case (`packages/store/src/plumbing.ts:2`). `layout.ts` holds the scaffold `memhtml init` writes, including the PARA directories and the `merge=ours` driver registration. Creating a root is always an explicit step, so a typo in `MEMHTML_ROOT` is an error and does not produce a second empty root (`packages/store/src/layout.ts:41`, `packages/store/src/layout.ts:76`, `packages/store/src/layout.ts:15`).
@@ -67,7 +54,7 @@ This repository is the software that manages a memory root, a separate git repos
 
 ## apps/mcp
 
-`apps/mcp` builds the `memhtml-mcp` stdio server declared at `apps/mcp/package.json:8`, exposing fifteen tools and three resources over the same root the CLI reads (`apps/mcp/src/index.ts:2`). It imports `layerApp` from `apps/cli` rather than composing its own service graph, so both agent surfaces resolve to exactly one database file, one git root, and one vector space (`apps/mcp/src/server.ts:1`, `apps/cli/src/index.ts:2`). Sleep is left off the tool surface on purpose, because a run rewrites confidence across the corpus and creates a branch a human is expected to read. `memhtml sleep run` is its only entry point, and no tool fires it (`apps/mcp/src/index.ts:2`). `failure.ts` declares one wire error class whose message survives the MCP framework's rewrite of generic tool failures, so the agent reads the message the tool wrote (`apps/mcp/src/failure.ts:5`).
+`apps/mcp` builds the `memhtml-mcp` stdio server declared at `apps/mcp/package.json:8`, exposing fifteen tools and two resources over the same root the CLI reads (`apps/mcp/src/index.ts:2`). It imports `layerApp` from `apps/cli` rather than composing its own service graph, so both agent surfaces resolve to exactly one database file, one git root, and one vector space (`apps/mcp/src/server.ts:1`, `apps/cli/src/index.ts:2`). Sleep is left off the tool surface on purpose, because a run rewrites confidence across the corpus and creates a branch a human is expected to read. `memhtml sleep run` is its only entry point, and no tool fires it (`apps/mcp/src/index.ts:2`). `failure.ts` declares one wire error class whose message survives the MCP framework's rewrite of generic tool failures, so the agent reads the message the tool wrote (`apps/mcp/src/failure.ts:5`).
 
 - `apps/mcp/src/tools.ts` (801 LOC)
 - `apps/mcp/src/handlers.ts` (769 LOC)
@@ -112,11 +99,7 @@ This repository is the software that manages a memory root, a separate git repos
 - `packages/eval/src/discriminate.ts` (294 LOC)
 - `packages/eval/src/harness.ts` (239 LOC)
 - `packages/eval/src/controls.ts` (198 LOC)
-- `apps/consolidator/src/client.ts` (1123 LOC)
-- `apps/consolidator/src/contract.ts` (443 LOC)
-- `apps/consolidator/src/mount.ts` (279 LOC)
 - `tests-integration/tests/harness.ts` (198 LOC)
-- `tests-integration/tests/sleep.test.ts` (324 LOC)
 - `scripts/probe-sqlite-concurrency.mjs` (86 LOC)
 - `scripts/readme-figures.mjs` (104 LOC)
 

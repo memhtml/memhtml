@@ -162,7 +162,7 @@ export const SUGGESTIONS: Readonly<Record<string, SuggestionsFor>> = {
    *
    * An occupied EXPLICIT `--path` is refused rather than overwritten — nothing in this corpus is
    * deleted — and the recovery is `memhtml correct <path>`, which writes the superseding memory and
-   * archives what it replaces in one commit. A merge conflict on a sleep branch carries two blob
+   * archives what it replaces in one commit. A merge conflict on a curation branch carries two blob
    * shas instead, and there the recovery is to read the current content and re-apply. The read is
    * first because it is the step both branches start with.
    */
@@ -190,11 +190,7 @@ export const SUGGESTIONS: Readonly<Record<string, SuggestionsFor>> = {
   InvalidMemory: () => ["memhtml manifest"],
   // No `--json`: there is no such flag — the JSON envelope is the binary's only output — so naming
   // it here would make the suggestion itself a usage error.
-  DiscriminationFailed: () => [
-    "memhtml eval discriminate",
-    "memhtml sleep review",
-    "git branch -D <run-id>"
-  ],
+  DiscriminationFailed: () => ["memhtml eval discriminate"],
   // `doctor` first, because it names every managed path and which one moved; `--force` second, for
   // the operator who meant to overwrite and wants the prior bytes kept as a timestamped backup.
   IntegrationModified: (error) => [

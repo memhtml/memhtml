@@ -7,7 +7,7 @@ Versions are cut by [release-please][rp] from Conventional Commit subjects, and 
 
 ## One package, two binaries
 
-`memhtml` is the whole system. Installing it gives `memhtml` and `memhtml-mcp`, and with them the CLI, code mode, the sleep cycle (the phases of `SLEEP_PHASES` — seventeen as of v0.6.0), the trace indexer, the discrimination gate, and the MCP server. There is no `@memhtml/*` package on npm: every workspace package is `private`, and `npm publish` refuses a private package, so the assembled artifact is the only thing that can ship.
+`memhtml` is the whole system. Installing it gives `memhtml` and `memhtml-mcp`, and with them the CLI, code mode, the trace indexer, the discrimination gate, and the MCP server. There is no `@memhtml/*` package on npm: every workspace package is `private`, and `npm publish` refuses a private package, so the assembled artifact is the only thing that can ship.
 
 The JS API is not part of the contract yet. The published surface is the two binaries and the JSON envelope they write. Adding an importable subpath later is a minor bump; removing one would be a major, so the cheap direction stays available.
 
@@ -32,11 +32,10 @@ Externals are derived from the workspace manifests, as patterns that also match 
 
 Five things resolve a path from their own module location at run time, and after bundling that location is `dist/`. So each is copied to the **package root**, one level above the bundle, which is exactly where `../migrations` and `../guest` land from a module in `dist/`:
 
-| Asset                              | Resolved by                                         | Copied from          |
-| ---------------------------------- | --------------------------------------------------- | -------------------- |
-| `migrations/`, `state-migrations/` | `new URL("../migrations", import.meta.url)`         | `packages/index/`    |
-| `guest/corpus.mjs`                 | `"..", "guest", "corpus.mjs"`                       | `apps/cli/`          |
-| `prompts/instructions.md`          | `join(packageRoot(), "prompts", "instructions.md")` | `apps/consolidator/` |
+| Asset                              | Resolved by                                 | Copied from       |
+| ---------------------------------- | ------------------------------------------- | ----------------- |
+| `migrations/`, `state-migrations/` | `new URL("../migrations", import.meta.url)` | `packages/index/` |
+| `guest/corpus.mjs`                 | `"..", "guest", "corpus.mjs"`               | `apps/cli/`       |
 
 The copies use a **directory** `from` with `to: OUT_DIR`, not a glob. A glob with `flatten: false` preserves each match's path relative to the glob's own base, so `packages/index/migrations/**` lands as `migrations/index/migrations/0001_files.sql` — a directory that exists, holds no `.sql` at its top level, and applies zero migrations. The symptom was `no such table: files` on the first write, three steps from the cause.
 
@@ -46,11 +45,11 @@ The copies use a **directory** `from` with `to: OUT_DIR`, not a glob. A glob wit
 
 ## The gate that matters
 
-`mise run package:smoke` assembles, lints with publint, packs, installs into a throwaway directory, and drives every command, every MCP tool, and every published MCP resource template through the installed binary — 66 checks as of v0.6.0. The count is not written down anywhere in the script, which reports its own `checks: results.length`, so this sentence is the only place it can drift. The surface is enumerated from the artifact itself — `memhtml manifest` for commands, `tools/list` for tools, `resources/templates/list` for resources — so a new command, tool, or template fails a census rather than going untested. Writes are asserted against `git log`, not against the report, and `sleep merge` is proven to move `main` on a corpus of its own.
+`mise run package:smoke` assembles, lints with publint, packs, installs into a throwaway directory, and drives every command, every MCP tool, and every published MCP resource template through the installed binary — 66 checks as of v0.6.0. The count is not written down anywhere in the script, which reports its own `checks: results.length`, so this sentence is the only place it can drift. The surface is enumerated from the artifact itself — `memhtml manifest` for commands, `tools/list` for tools, `resources/templates/list` for resources — so a new command, tool, or template fails a census rather than going untested. Writes are asserted against `git log`, not against the report.
 
 `resources/read` earns its own coverage because it is a second RPC family with a router of its own that no tool check reaches: a resource route can be wholly unreachable while every tool check is green. The specific hazard the census answers is depth — a named router parameter's value stops at the next `/`, every memory path has at least two segments, and an archived one has at least four.
 
-`mise run package:smoke:live` adds three checks for the edges nothing else can reach from an install: Bedrock embeddings, the sleep phases that call a model, and the consolidator distilling a transcript through the model. It spends real tokens and needs `AWS_BEARER_TOKEN_BEDROCK` (or SigV4 keys); the credential check FAILS rather than skips, because `--live` was asked for. lefthook's pre-push runs it when a credential is present and prints what goes unproven when it cannot. Roughly 60s credential-free, 105s live.
+`mise run package:smoke:live` adds the checks for the one edge nothing else can reach from an install: Bedrock embeddings through the installed binary. It spends real tokens and needs `AWS_BEARER_TOKEN_BEDROCK` (or SigV4 keys); the credential check FAILS rather than skips, because `--live` was asked for. lefthook's pre-push runs it when a credential is present and prints what goes unproven when it cannot.
 
 **`mise run check` cannot replace it.** Check resolves `@memhtml/*` through pnpm's links, where every asset is on disk whether or not a manifest names it. Three assets shipped broken under exactly that blindness. Smoke is a separate CI job because it needs the registry to resolve the external dependencies, while check is offline. Its default mode is credential-free too (`MEMHTML_EMBED=off`, `MEMHTML_LLM=off`), which is what CI gates on; `--live` is the mode that spends tokens, and it runs pre-push rather than in CI.
 

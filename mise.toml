@@ -12,9 +12,7 @@
 # only where the members are genuinely independent (security), never to re-express a
 # tier ordering turbo already owns.
 #
-# There is deliberately no value-bearing [env] var. A credential-presence test deletes
-# the AWS vars and then asserts the ambient environment is credential-free
-# (apps/cli/tests/consolidator-wiring.test.ts), effect/Config snapshots process.env at
+# There is deliberately no value-bearing [env] var. effect/Config snapshots process.env at
 # module load, and the sandbox backend switches on VERCEL. The integration tier sets
 # MEMHTML_EMBED=off / MEMHTML_LLM=off itself, which is what keeps the gate secret-free.
 min_version = "2026.4.16" # raw_args
@@ -194,12 +192,6 @@ description = "Write a browsable fixture corpus: mise run gen:fixture --out DIR 
 raw_args = true
 run = "pnpm gen:fixture"
 
-[tasks."eval:freeze-write-path"]
-description = "Re-run the write-path discrimination arm and rewrite its frozen manifest (review the diff)"
-# The manifest under packages/eval/fixtures is the per-decision record the eval tier replays against.
-# Refuses to freeze a failing report, so the floor and the replay cannot disagree about one run.
-run = "pnpm freeze:write-path"
-
 [tasks.agents-doc]
 description = "Regenerate AGENTS.md from the BUILT CLI's own command table"
 # The build must precede the invocation: agents-doc reads the compiled COMMANDS array,
@@ -226,7 +218,7 @@ depends = ["package:assemble"]
 run = "pnpm package:lint"
 
 [tasks."package:smoke:live"]
-description = "package:smoke plus the three edges that reach Bedrock: embeddings, sleep's model calls, the consolidator"
+description = "package:smoke plus the edge that reaches Bedrock: embeddings through the installed binary"
 # Spends real tokens, and needs AWS_BEARER_TOKEN_BEDROCK (or SigV4 keys). The credential check FAILS
 # rather than skips: `--live` was asked for, and quietly proving less is what this tier exists to
 # prevent. lefthook's pre-push picks this when a credential is present and says so when it cannot.

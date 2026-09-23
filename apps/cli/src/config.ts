@@ -83,7 +83,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   },
   {
     name: "MEMHTML_AWS_REGION",
-    description: "The Bedrock region for embeddings and the sleep cycle's model-calling phases.",
+    description: "The Bedrock region for embeddings and the entity extractor's model calls.",
     fallback: "us-east-1"
   },
   {
@@ -99,7 +99,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
      */
     name: PROXY_BASE_URL_VAR,
     description:
-      "An OpenAI- and Anthropic-compatible LLM proxy's origin, e.g. `http://127.0.0.1:4000` for an agentgateway listener. Set, every model call leaves through it instead of going to Bedrock directly: the Anthropic sleep models and the consolidator agent on `/v1/messages`, the OpenAI sleep model and the entity extractor on `/v1/chat/completions`, embeddings on `/v1/embeddings`. Absent means Bedrock directly, under `MEMHTML_AWS_REGION` and the Bedrock credential. A set-but-malformed value fails at startup naming this variable rather than falling back to the direct path.",
+      "An OpenAI- and Anthropic-compatible LLM proxy's origin, e.g. `http://127.0.0.1:4000` for an agentgateway listener. Set, every model call leaves through it instead of going to Bedrock directly: Anthropic models on `/v1/messages`, the OpenAI entity extractor on `/v1/chat/completions`, embeddings on `/v1/embeddings`. Absent means Bedrock directly, under `MEMHTML_AWS_REGION` and the Bedrock credential. A set-but-malformed value fails at startup naming this variable rather than falling back to the direct path.",
     fallback: null
   },
   {
@@ -123,7 +123,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   {
     name: OPENAI_PROMPT_CACHE_VAR,
     description:
-      "How the OpenAI sleep model's chat-completions requests ask Bedrock to treat prompt caching. `off` sends `prompt_cache_options: {mode: \"explicit\"}` with no breakpoints, which Bedrock documents as no prompt caching and no cache-write charge; `implicit` sends no caching field and leaves the endpoint's default in place. Off by default because Bedrock's implicit mode for GPT-5.6 writes the whole prompt to the cache at 1.25x the input rate on every call that clears the 1,024-token minimum, and the sleep prompts share no prefix long enough to ever be read back. Set `implicit` for an OpenAI-compatible endpoint that rejects the Bedrock-only field. Read on the direct path and the proxy path alike. Any other value fails at startup naming this variable.",
+      "How the OpenAI extractor model's chat-completions requests ask Bedrock to treat prompt caching. `off` sends `prompt_cache_options: {mode: \"explicit\"}` with no breakpoints, which Bedrock documents as no prompt caching and no cache-write charge; `implicit` sends no caching field and leaves the endpoint's default in place. Off by default because Bedrock's implicit mode for GPT-5.6 writes the whole prompt to the cache at 1.25x the input rate on every call that clears the 1,024-token minimum, and the extraction prompts share no prefix long enough to ever be read back. Set `implicit` for an OpenAI-compatible endpoint that rejects the Bedrock-only field. Read on the direct path and the proxy path alike. Any other value fails at startup naming this variable.",
     fallback: DEFAULT_OPENAI_PROMPT_CACHE
   },
   {
@@ -135,13 +135,13 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   {
     name: "MEMHTML_VECTOR_COVERAGE_FLOOR",
     description:
-      "The share of indexed chunks that must carry a vector in the configured space, `0` to `1`, before the vector arm is trusted. Below it `search` and `recall` drop the vector arm and report `degraded: true` with `vectorCoverage`, `doctor` reports `vectorCoverageLow` and `healthy: false`, and a sleep run warns. A sparse plane ranks the few embedded files above every exact match, so it is treated as absent rather than run. Sleep also refuses below a fixed hard floor of `0.5`, which this variable does not move: a value under `0.5` keeps search and doctor accepting a plane sleep still refuses. Remedy: `memhtml index embed`, or `memhtml index rebuild --embed`.",
+      "The share of indexed chunks that must carry a vector in the configured space, `0` to `1`, before the vector arm is trusted. Below it `search` and `recall` drop the vector arm and report `degraded: true` with `vectorCoverage`, and `doctor` reports `vectorCoverageLow` and `healthy: false`. A sparse plane ranks the few embedded files above every exact match, so it is treated as absent rather than run. Remedy: `memhtml index embed`, or `memhtml index rebuild --embed`.",
     fallback: "0.95"
   },
   {
     name: "MEMHTML_LLM",
     description:
-      "`off` makes every model-calling sleep phase report `no model bound` and stay `ok`, so a credential-free run is honest rather than red. `entity-resolution` still runs its deterministic normalization and character-overlap passes; the others do nothing.",
+      "`off` removes every model call: the write-time entity extractor is unbound and a batch writes exactly what it was given, so a credential-free run is honest rather than red.",
     fallback: "on"
   },
   {
@@ -158,7 +158,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   {
     name: "OTEL_EXPORTER_OTLP_ENDPOINT",
     description:
-      "An OTLP collector's base URL, e.g. `http://localhost:4318`. Set, the ~30 `Effect.withSpan` annotations already in the code (retrieval, embeddings, model calls, indexing, the sleep cycle, store writes, `db.*`, `git.*`) export as traces to `<endpoint>/v1/traces`, batched, flushed on exit. Unset, nothing is loaded and behavior is byte-identical. Export can never fail a command: a down collector is one stderr warning and a command that proceeds untraced.",
+      "An OTLP collector's base URL, e.g. `http://localhost:4318`. Set, the ~30 `Effect.withSpan` annotations already in the code (retrieval, embeddings, model calls, indexing, store writes, `db.*`, `git.*`) export as traces to `<endpoint>/v1/traces`, batched, flushed on exit. Unset, nothing is loaded and behavior is byte-identical. Export can never fail a command: a down collector is one stderr warning and a command that proceeds untraced.",
     fallback: null
   },
   {
@@ -207,8 +207,7 @@ export const TraceRoot = Config.String("MEMHTML_TRACE_ROOT").pipe(
  * Read as a NUMBER here, so a value that does not parse fails at startup naming the variable rather
  * than becoming a floor of `NaN` that no comparison ever crosses (`NaN < floor` is false, which would
  * silently switch the gate OFF). The range check, `(0, 1]`, lives in the composition root beside the
- * other set-but-unusable refusals (`layerRetrievalPolicy` in `api-layer.ts`). The hard floor sleep
- * refuses below is `VECTOR_COVERAGE_HARD_FLOOR` and is not configurable.
+ * other set-but-unusable refusals (`layerRetrievalPolicy` in `api-layer.ts`).
  */
 export const VectorCoverageFloor = Config.Number("MEMHTML_VECTOR_COVERAGE_FLOOR").pipe(
   Config.withDefault(VECTOR_COVERAGE_FLOOR)

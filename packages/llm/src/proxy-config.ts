@@ -7,16 +7,10 @@
  *
  * | Lane                       | Route                  | Wire format                      |
  * | -------------------------- | ---------------------- | -------------------------------- |
- * | the Anthropic sleep models | `/v1/messages`         | Anthropic Messages               |
- * | the OpenAI sleep model     | `/v1/chat/completions` | OpenAI chat completions          |
+ * | Anthropic structured calls | `/v1/messages`         | Anthropic Messages               |
+ * | OpenAI structured calls    | `/v1/chat/completions` | OpenAI chat completions          |
  * | Cohere embeddings          | `/v1/embeddings`       | OpenAI embeddings (+ `input_type`) |
  * | entity extraction          | `/v1/chat/completions` | OpenAI chat completions          |
- *
- * The consolidator agent (`apps/consolidator`) reads the SAME three variables through its own
- * dependency-free copy of this parser (`apps/consolidator/src/llm-proxy.ts`): its agent file may
- * not import a workspace package, because the published artifact bundles them rather than
- * installing them beside it. `apps/cli/tests/llm-proxy-parity.test.ts` pins the two copies to one
- * another.
  *
  * No `effect` import here either, so the parsers are the same plain functions in both copies.
  *
@@ -58,9 +52,8 @@ export const DEFAULT_PROXY_MODEL_PREFIX = "bedrock/"
  * The value of {@link PROXY_MODEL_PREFIX_VAR} that means "no prefix". A WORD rather than the empty
  * string, because `effect/Config` reads an empty environment value as absent (probed against the
  * pinned release: `Config.String` fails on `""` exactly as on a missing key, so `withDefault` fires
- * for both). The sleep lanes read this variable through `Config` and the consolidator reads it from
- * `process.env` directly, and "" would have meant the default on one path and no prefix on the
- * other. Compared case-insensitively.
+ * for both). Every lane reads this variable through `Config`, so "" cannot mean the default on one
+ * path and no prefix on another. Compared case-insensitively.
  */
 export const PROXY_MODEL_PREFIX_NONE = "none"
 

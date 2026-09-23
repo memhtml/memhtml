@@ -5,12 +5,12 @@ direction: down
 
 agent: the agent {class: door}
 main: main {class: record}
-sleep: sleep, on demand {class: step}
-branch: "sleep/<date>" {class: record}
+curator: the curator {class: step}
+branch: "curate/<date>" {class: record}
 review: the human {class: door}
 
 agent -> main: writes
-main -> sleep: reads
-sleep -> branch: 15 commits
+main -> curator: reads
+curator -> branch: commits
 branch -> review: review
 review -> main: merge

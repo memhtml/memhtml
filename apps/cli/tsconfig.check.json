@@ -36,16 +36,10 @@
       "path": "../../packages/integrations"
     },
     {
-      "path": "../../packages/sleep"
-    },
-    {
       "path": "../../packages/llm"
     },
     {
       "path": "../../packages/eval"
-    },
-    {
-      "path": "../consolidator"
     },
     {
       "path": "../../packages/head"

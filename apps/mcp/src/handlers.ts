@@ -281,9 +281,7 @@ const wireReport = (report: BatchOpReport) => ({
           batch_index: hit.batchIndex,
           similarity: hit.similarity,
           claim: hit.claim
-        })),
-  consolidated_into: report.consolidatedInto ?? null,
-  superseded_path: report.supersededPath ?? null
+        }))
 })
 
 /**
@@ -302,17 +300,13 @@ const summarize = (
   let deduped = 0
   let failed = 0
   let skipped = 0
-  let consolidated = 0
   for (const result of results) {
-    // The same partition `operations.ts` makes: a batch-internal loser's value survived at
-    // another slot and no file of its own was attempted, so it is neither written nor failed.
-    if (result.consolidatedInto !== undefined) consolidated += 1
-    else if (result.skipped === true) skipped += 1
+    if (result.skipped === true) skipped += 1
     else if (!result.ok) failed += 1
     else if (result.deduped === true) deduped += 1
     else written += 1
   }
-  return { total: results.length, written, deduped, failed, skipped, consolidated }
+  return { total: results.length, written, deduped, failed, skipped }
 }
 
 /**
@@ -441,12 +435,6 @@ export const ToolHandlers: Layer.Layer<
           // the same findings from the same code, and the survivors-only consequence above holds
           // here too — an XOR-refused op has no resolved text to embed.
           detectNearDuplicates: params.detect_near_duplicates === true,
-          // Threaded unchanged for the same reason the flag above is: `memhtml apply --consolidate`
-          // resolves the same slots from the same code, so the two doors cannot disagree about
-          // which value won.
-          ...(params.consolidate !== undefined && params.consolidate !== null
-            ? { consolidate: params.consolidate }
-            : {}),
           sessionId: opt(params.session_id),
           promptId: opt(params.prompt_id),
           turnUuid: opt(params.turn_uuid)
@@ -513,16 +501,7 @@ export const ToolHandlers: Layer.Layer<
                       : { ...hit, batchIndex: originOf[hit.batchIndex] ?? hit.batchIndex }
                   )
                 }
-          // `consolidatedInto` is a second index in `batchWrite`'s survivor space and takes the
-          // same translation the conflict's `batchIndex` does, for the same reason: an XOR-refused
-          // op before the consolidated pair would otherwise make the pointer name the wrong op.
-          reports[index] =
-            withNear.consolidatedInto === undefined
-              ? withNear
-              : {
-                  ...withNear,
-                  consolidatedInto: originOf[withNear.consolidatedInto] ?? withNear.consolidatedInto
-                }
+          reports[index] = withNear
         }
 
         /**
@@ -854,15 +833,7 @@ export const ToolHandlers: Layer.Layer<
           index_fresh: report.indexFresh,
           embedder_up: report.embedderUp,
           vector_coverage: report.vectorCoverage,
-          vector_coverage_floor: report.vectorCoverageFloor,
-          last_sleep:
-            report.lastSleep === null
-              ? null
-              : {
-                  run_id: report.lastSleep.runId,
-                  status: report.lastSleep.status,
-                  started_at: report.lastSleep.startedAt
-                }
+          vector_coverage_floor: report.vectorCoverageFloor
         }
       })
     )

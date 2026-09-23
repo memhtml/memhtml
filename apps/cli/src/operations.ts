@@ -39,12 +39,12 @@ import {
   type TailMerger
 } from "@memhtml/index"
 import { EMBED_WATERMARK } from "@memhtml/llm"
-import { DETECTION_DIGEST_CHARS, DETECTION_PREFIX } from "@memhtml/sleep"
 import { attemptIo, commitSubject, Store, type WriteInput } from "@memhtml/store"
 import { mergeTailExtract, type SessionExtract, scanTraceRoot } from "@memhtml/traces"
 import { Effect } from "effect"
 
 import { Embedder, type EmbedderShape, ExtractorPort, RetrievalPolicy, Roots } from "./api-layer.js"
+import { DETECTION_DIGEST_CHARS, DETECTION_PREFIX } from "./detected-tasks.js"
 import type { ErrorCode } from "./envelope.js"
 import { codeFor, messageFor } from "./errors.js"
 import type { ExtractionItem } from "./extraction.js"
@@ -73,9 +73,9 @@ const defined = <T extends Record<string, unknown>>(input: T): Partial<T> => {
 /**
  * Narrow an untrusted memory-type string to the AGENT vocabulary.
  *
- * `arc` is refused even though it is a valid storage type. An arc is synthesized by the sleep
- * cycle from many memories, so an agent naming one directly would be asserting a conclusion the
- * corpus has not earned. The vocabulary the MCP tools expose is therefore narrower than the CHECK
+ * `arc` is refused even though it is a valid storage type. An arc is synthesized by a curator from
+ * many memories, so an agent naming one directly would be asserting a conclusion the corpus has not
+ * earned. The vocabulary the MCP tools expose is therefore narrower than the CHECK
  * constraint by exactly that one value, and their schemas restate it (`WritableType` in
  * `apps/mcp/src/tools.ts`), so an agent's `arc` is refused at schema decode before it reaches any
  * function here.
@@ -96,8 +96,8 @@ export const decodeWritableType = (
  * set, `arc` included (issue #88).
  *
  * The agent refusal above guards against a model minting an unearned conclusion mid-conversation.
- * It does not cover curated import — an arc corpus earned under a prior system, whose evidence base
- * sleep can never consume — or an operator deliberately authoring a durable rule. Both previously
+ * It does not cover curated import — an arc corpus earned under a prior system — or an operator
+ * deliberately authoring a durable rule. Both previously
  * had to hand-write HTML into the tree, bypassing dedup, the index, format validation, and the
  * one-commit apply contract. So the split mirrors the one `decodeAuthorableRel` documents: one
  * narrow surface for agents and one wider one for the operator, with the store's guards governing
@@ -117,7 +117,7 @@ export const decodeOperatorType = (value: string): Effect.Effect<MemoryType, Inv
  * The rels a CALLER may author: the nine memory rels plus the two task rels.
  *
  * The two classes the vocabulary withholds are the ones the system mints itself. A `person` edge is
- * written by sleep's person-links phase against `resources/people/*`, and `from_session` is written
+ * written by a curator against `resources/people/*`, and `from_session` is written
  * by the write path from the provenance a caller already supplied. Authoring either by hand would put
  * a hand-guessed row where a derivation belongs.
  */
@@ -423,25 +423,10 @@ export interface BatchOpReport {
    * {@link BatchWriteResult.nearDuplicatesDegraded}).
    *
    * Propose-only, exactly as `conflict` is: the presence of this field never changed what was
-   * written. Sleep's `dedup-merge` — or an explicit `memory_correct` — is how a reported pair
-   * gets folded, with the divergence guards in front of it.
+   * written. A curator's merge — or an explicit `memory_correct` — is how a reported pair gets
+   * folded, with the divergence guards in front of it.
    */
   readonly nearDuplicates?: ReadonlyArray<NearDuplicate> | undefined
-  /**
-   * Set on a batch-internal loser under `consolidate: "last-wins"`: a later restatement of a slot
-   * an earlier op already occupied. Its value won the slot, since last wins, but the write landed at
-   * the earliest index with that frame key, so this op never got its own file and has no `path`.
-   * The number is that slot, the caller-space index whose report carries the surviving write with its
-   * path and any `supersededPath`.
-   */
-  readonly consolidatedInto?: number | undefined
-  /**
-   * Set on a winner whose write superseded a live stored memory under `consolidate: "last-wins"`:
-   * the loser's archive path, where its bytes now live. Absent when nothing stored occupied the
-   * slot, and also when the supersede itself degraded. The corpus is then merely unconsolidated,
-   * which is what every batch produced before this flag existed.
-   */
-  readonly supersededPath?: string | undefined
 }
 
 export interface BatchWriteResult {
@@ -452,8 +437,6 @@ export interface BatchWriteResult {
     readonly deduped: number
     readonly failed: number
     readonly skipped: number
-    /** Batch-internal losers under `consolidate: "last-wins"`: ops whose value a later op replaced. */
-    readonly consolidated: number
   }
   readonly commitSha: string | null
   /**
@@ -487,19 +470,6 @@ export interface BatchWriteParams extends Provenance {
    * paying Bedrock for an answer it does not read.
    */
   readonly detectNearDuplicates?: boolean | undefined
-  /**
-   * Opt-in write-time consolidation: deterministic frame-key (`frameKeyOf`) last-wins.
-   *
-   * `detectConflicts` reports and leaves the corpus alone. This one acts, on the caller's explicit ask.
-   * A later op whose claim occupies the same frame slot as an earlier one replaces it before
-   * anything is written, so a batch-internal loser never reaches disk. A surviving op whose slot a
-   * live stored memory occupies supersedes it after the commit, archiving the old file with a
-   * `supersedes` chain back from the winner. Fail-closed on the rule's own terms: a claim with no
-   * frame shape (null key) is never touched, and a failed store lookup degrades to
-   * batch-internal-only consolidation through the same `Effect.catch` → `logWarning` → neutral
-   * shape {@link detectFrameConflicts} takes, so the flag cannot become a new way to lose writes.
-   */
-  readonly consolidate?: "last-wins" | undefined
 }
 
 /**
@@ -752,121 +722,6 @@ const detectNearDuplicates = (
   })
 
 /**
- * The `consolidate: "last-wins"` plan: which slots survive, which ops lost to a later restatement,
- * and which stored memories a surviving slot supersedes. Everything is in the caller's index space.
- */
-interface LastWinsPlan {
-  /** The ops the pipeline runs, each at its original slot index. Losers are absent. */
-  readonly ops: ReadonlyArray<{ readonly index: number; readonly op: WriteParams }>
-  /** Batch-internal loser index → the slot whose position carries the surviving value. */
-  readonly losers: ReadonlyMap<number, number>
-  /** Surviving slot index → the live stored memory occupying that slot's frame key. */
-  readonly pendingSupersede: ReadonlyMap<number, string>
-}
-
-/**
- * Fold last-wins over the caller's op array, before the decode fold, so a batch-internal loser
- * never reaches disk. The surviving value simply occupies the earliest slot with that key.
- *
- * Not derived from {@link detectFrameConflicts}' output, although the walk mirrors it. A store
- * match wins there, masking the batch-internal pair the plan needs, and the plan needs both: the
- * batch collision decides which value writes, and the store match decides what that write supersedes.
- *
- * The slot rule: the first occupant of a key keeps its position and later ops with the same key
- * replace its content (`plannedOps[slot] = laterOp`, provenance and all, since the surviving value
- * is the later op's own statement). The occupant-tracking never moves, so a third restatement
- * replaces the slot again, last wins, at a stable position a caller can index by.
- *
- * Fail-closed on both of the rule's own guards: a null frame key is never consolidated, and a
- * failed store lookup degrades to batch-internal consolidation only, through the same
- * `Effect.catch` → `logWarning` → neutral-shape path the conflict assist takes, because an opt-in
- * consolidation must not become a new way to lose writes.
- */
-const planLastWins = (
-  ops: ReadonlyArray<WriteParams>
-): Effect.Effect<LastWinsPlan, never, IndexRecorderShape> =>
-  Effect.gen(function* () {
-    /** frame key → the slot (earliest occupant's index) that carries this key's surviving value. */
-    const slotOf = new Map<string, number>()
-    /** slot index → the op whose value currently occupies it. */
-    const content = new Map<number, WriteParams>()
-    const losers = new Map<number, number>()
-    /** Slot indices in caller order, keyed and keyless alike. */
-    const order: Array<number> = []
-
-    for (const [index, op] of ops.entries()) {
-      const key = frameKeyOf(op.claim)
-      if (key === null) {
-        // No frame shape, no slot. The rule's guards fail closed, so this op is never touched.
-        order.push(index)
-        content.set(index, op)
-        continue
-      }
-      const slot = slotOf.get(key)
-      if (slot === undefined) {
-        slotOf.set(key, index)
-        order.push(index)
-        content.set(index, op)
-        continue
-      }
-      content.set(slot, op)
-      losers.set(index, slot)
-    }
-
-    const pendingSupersede = new Map<number, string>()
-    if (slotOf.size > 0) {
-      const recorder = yield* IndexRecorder
-      // One query for every surviving key, for detectFrameConflicts' reason: a per-slot lookup is
-      // the quadratic-write-cost shape this codebase has already paid for once.
-      const live = yield* recorder
-        .activeFramesFor([...slotOf.keys()])
-        .pipe(
-          Effect.catch((error) =>
-            Effect.logWarning(`consolidation store lookup skipped: ${error.operation}`).pipe(
-              Effect.as(new Map<string, ReadonlyArray<FrameMatch>>())
-            )
-          )
-        )
-      for (const [key, slot] of slotOf) {
-        const [stored] = live.get(key) ?? []
-        if (stored !== undefined) pendingSupersede.set(slot, stored.path)
-      }
-    }
-
-    return {
-      ops: order.flatMap((index) => {
-        const op = content.get(index)
-        return op === undefined ? [] : [{ index, op }]
-      }),
-      losers,
-      pendingSupersede
-    }
-  })
-
-/**
- * Loser reports for a last-wins plan, derived from the winner slots' own final reports.
- *
- * A loser reports `ok` with `consolidatedInto` only when its slot's write landed, which means the
- * surviving value is on disk and the pointer names where. A slot that was skipped or refused took the
- * loser's value down with it, so the loser reports `skipped`, which is the retryable outcome and
- * the one an atomic abort already means: nothing of this op reached disk.
- */
-const withConsolidation = (
-  results: ReadonlyArray<BatchOpReport>,
-  plan: LastWinsPlan | null
-): ReadonlyArray<BatchOpReport> => {
-  if (plan === null || plan.losers.size === 0) return results
-  return results.map((report, index) => {
-    const slot = plan.losers.get(index)
-    if (slot === undefined) return report
-    const winner = results[slot]
-    return winner?.ok === true && winner.skipped !== true
-      ? ({ index, ok: true, consolidatedInto: slot } satisfies BatchOpReport)
-      : ({ index, ok: false, skipped: true } satisfies BatchOpReport)
-  })
-}
-
-/**
  * Write N memories: one commit, one reindex, per-op results in input order.
  *
  * **Two folds, not one.** Decode is the operations layer's job and the store never sees it, so a
@@ -921,15 +776,7 @@ export const batchWrite = (params: BatchWriteParams) =>
         ? yield* detectNearDuplicates(params.ops)
         : NO_NEAR_DUPLICATES
 
-    /**
-     * The consolidation plan, before the decode fold and in the caller's index space. A
-     * batch-internal loser is excluded from everything downstream, so its value never earns a file.
-     * The surviving value sits at the earliest slot with its key, so every later report and
-     * conflict finding stays at the index the caller sent.
-     */
-    const plan = params.consolidate === "last-wins" ? yield* planLastWins(params.ops) : null
-    const planned =
-      plan === null ? [...params.ops.entries()].map(([index, op]) => ({ index, op })) : plan.ops
+    const planned = [...params.ops.entries()].map(([index, op]) => ({ index, op }))
 
     /**
      * Fold 1, decode. `Effect.result` rather than letting the failure escape, because a decode
@@ -961,7 +808,7 @@ export const batchWrite = (params: BatchWriteParams) =>
      * exactly rather than inventing a second one.
      */
     if (decodeAborted) {
-      const results = withConsolidation(merged(reports, conflicts, proximity.findings), plan)
+      const results = merged(reports, conflicts, proximity.findings)
       return {
         results,
         summary: summarize(results),
@@ -1032,56 +879,10 @@ export const batchWrite = (params: BatchWriteParams) =>
     for (const path of batch.writtenPaths) yield* recordLink(path, "wrote", params, at)
 
     /**
-     * The store-supersede pass, after a successful batch commit: every surviving slot whose frame
-     * key a live memory occupied archives that memory, in one `supersedeMemories` call.
-     *
-     * A slot qualifies when its report is `ok` with a path, including a dedupe, where the path is
-     * the pre-existing file that already carries this slot's value. The stored occupant still
-     * states the losing value, so superseding it is still correct. A slot that failed or was
-     * skipped wrote nothing, so there is nothing for its occupant to lose to.
-     *
-     * `Effect.result` rather than a bare yield, because a failed supersede must not fail a batch whose
-     * memories already landed. The degradation is annotate-only: `supersededPath` is omitted, the
-     * warning says why, and the corpus is merely unconsolidated, which is what every batch produced
-     * before this flag existed. On success there is one extra reindex, because archive paths moved.
-     */
-    if (plan !== null && plan.pendingSupersede.size > 0) {
-      const pairs: Array<{ readonly winnerPath: string; readonly loserPath: string }> = []
-      const winnerOf = new Map<string, number>()
-      for (const [slot, storedPath] of plan.pendingSupersede) {
-        const report = reports[slot]
-        if (report === undefined || !report.ok || report.skipped === true) continue
-        if (report.path === undefined) continue
-        // A slot whose content deduped onto the occupant itself is a restatement rather than a
-        // supersession. Winner and loser are one file, and archiving it would lose the value.
-        if (report.path === storedPath) continue
-        pairs.push({ winnerPath: report.path, loserPath: storedPath })
-        winnerOf.set(storedPath, slot)
-      }
-      if (pairs.length > 0) {
-        const outcome = yield* Effect.result(store.supersedeMemories(pairs))
-        if (outcome._tag === "Failure") {
-          yield* Effect.logWarning(
-            `consolidation supersede skipped: ${messageFor(outcome.failure)}`
-          )
-        } else {
-          for (const entry of outcome.success.archived) {
-            const slot = winnerOf.get(entry.loserPath)
-            const report = slot === undefined ? undefined : reports[slot]
-            if (slot === undefined || report === undefined) continue
-            reports[slot] = { ...report, supersededPath: entry.archivePath }
-          }
-          if (outcome.success.archived.length > 0) yield* reindex()
-        }
-      }
-    }
-
-    /**
      * An op the store aborted before reaching has no result of its own, and neither does one whose
-     * decode succeeded in a batch the store then aborted. Both are `skipped`. Losers pick up their
-     * `consolidatedInto` pointer last, from their winner slot's own final report.
+     * decode succeeded in a batch the store then aborted. Both are `skipped`.
      */
-    const results = withConsolidation(merged(reports, conflicts, proximity.findings), plan)
+    const results = merged(reports, conflicts, proximity.findings)
 
     return {
       results,
@@ -1142,17 +943,13 @@ const summarize = (results: ReadonlyArray<BatchOpReport>): BatchWriteResult["sum
   let deduped = 0
   let failed = 0
   let skipped = 0
-  let consolidated = 0
   for (const result of results) {
-    // A batch-internal loser is neither written nor failed. Its value survived at another slot,
-    // and no file of its own was ever attempted, so it partitions into its own count.
-    if (result.consolidatedInto !== undefined) consolidated += 1
-    else if (result.skipped === true) skipped += 1
+    if (result.skipped === true) skipped += 1
     else if (!result.ok) failed += 1
     else if (result.deduped === true) deduped += 1
     else written += 1
   }
-  return { total: results.length, written, deduped, failed, skipped, consolidated }
+  return { total: results.length, written, deduped, failed, skipped }
 }
 
 /**
@@ -1355,7 +1152,7 @@ export interface NeighborNode {
   readonly hop: number
   /** The rel of an edge at this node's minimal hop, so the pair describes one real edge. */
   readonly rel: string
-  /** True when ANY edge reaching this node is sleep-mined rather than authored. */
+  /** True when ANY edge reaching this node is machine-mined rather than authored. */
   readonly derived: boolean
 }
 
@@ -1467,7 +1264,7 @@ export const neighborsQuery = (input: {
  * **Two fixed-depth joins in a `UNION ALL`, deliberately not a recursive CTE.** The depth is
  * bounded at 2 by the tool's contract, so recursion buys nothing and costs the one thing a graph
  * query must not have here: an unbounded worst case on a corpus whose `relates_to` edges are
- * mined by the sleep cycle and can be dense.
+ * machine-mined and can be dense.
  *
  * **Every arm is index-probed, in both directions, through `edges_src` and `edges_dst`.** Measured
  * 2026-08-26 on node 24.19.0 with no `ANALYZE`, and locked by the plan assertion in
@@ -1484,7 +1281,7 @@ export const neighborsQuery = (input: {
  * neighborhood that read only outbound edges would show a superseding memory its target and hide
  * from the target that it had been superseded. Derived edges are included because lateral retrieval
  * is what they are for. `derived` is still reported per node so a caller can tell a
- * sleep-mined suspicion from an authored assertion.
+ * machine-mined suspicion from an authored assertion.
  *
  * `edge_class = 'memory'` on every join. A person edge entering here would put
  * `resources/people/*` into a memory neighborhood, and the class column exists to make that
@@ -1526,7 +1323,7 @@ export const neighborsOf = (params: NeighborsParams) =>
      * 1-hop neighbor, and reporting it twice would let one memory occupy two slots in a bounded
      * answer. The rows arrive hop-first, so a path's first row IS an edge at its minimal hop and
      * its rel is kept verbatim. `derived` is the max over every edge reaching the node, so one
-     * sleep-mined route marks the node as carrying a mined suspicion even when an authored edge
+     * machine-mined route marks the node as carrying a mined suspicion even when an authored edge
      * also reaches it. `edges` counts distinct edges the walk enumerated, which is what the MCP
      * schema's `edges` field claims to be.
      *
@@ -1684,7 +1481,7 @@ export interface ResolveResult {
  * per hop — while naming the class binds two columns of `edges_dst` and the same statement probes.
  * The rel and `derived = 0` are still the CORRECTNESS half: `derived = 0` is the same authored-only
  * rule `SearchHit.supersededBy` reads, so `search` and this walk cannot disagree about who superseded
- * what, and a sleep-mined suspicion can never redirect a citation.
+ * what, and a machine-mined suspicion can never redirect a citation.
  *
  * `archived` is the archive mapping read backwards, served by `files_origin`
  * (`0012_origin_path.sql`). `ORDER BY archived_at DESC` decides the case a UNIQUE index would have
@@ -1828,7 +1625,7 @@ export interface ListParams {
  * Page the corpus by facet.
  *
  * Keyset pagination on `path` rather than `LIMIT/OFFSET`. `files.path` is the primary key and it also
- * moves, because eviction is a `git mv`, so an offset page taken while a sleep cycle archives a file
+ * moves, because eviction is a `git mv`, so an offset page taken while a curator archives a file
  * would skip a row or repeat one. A cursor on the path itself is stable against that.
  */
 export const listMemories = (params: ListParams) =>
@@ -2079,10 +1876,9 @@ export const entityActivityQuery = (
  * row. The salience arm already owns read-time signals and is the only statement that crosses that
  * boundary.
  *
- * Every memory type counts, tasks included, matching {@link listMemories} rather than
- * `activeEntities` in `@memhtml/sleep`. That function excludes tasks because it FEEDS a phase that
- * mints person files from what it finds, and a person mentioned only by a to-do item would get a
- * durable identity surface out of it. Nothing here mints anything, and a report that hid an entity's
+ * Every memory type counts, tasks included, matching {@link listMemories}. A curator minting person
+ * files would exclude tasks, because a person mentioned only by a to-do item would get a durable
+ * identity surface out of it. Nothing here mints anything, and a report that hid an entity's
  * task activity would be answering a narrower question than the one asked.
  *
  * `entityCount` is the total matching the scope, independent of `limit`, so a clamped answer is
@@ -2133,8 +1929,8 @@ export const entityActivity = (params: EntityActivityParams = {}) =>
 /**
  * The task surface: CRUDL without retrieval.
  *
- * A task is the 10th `memory_type` and it is default-excluded from search, dedup, and every sleep
- * phase, so the working set an agent needs is not reachable by ranking. These three
+ * A task is the 10th `memory_type` and it is default-excluded from search and dedup, so the working
+ * set an agent needs is not reachable by ranking. These three
  * functions are how it becomes reachable: `task add` wraps {@link writeMemory}, `task status` is one
  * head meta edited in place, and {@link listTasks} is a direct indexed scan. Reading a directory,
  * grepping a meta, and editing one line remain equally valid, and nothing here is the only path.
@@ -2264,7 +2060,7 @@ export interface ListTasksParams {
   readonly cursor?: string | undefined
   readonly includeArchived?: boolean | undefined
   /**
-   * Only tasks the sleep cycle DETECTED, never ones a human or an agent opened by hand.
+   * Only tasks a detector MINTED, never ones a human or an agent opened by hand.
    *
    * Issue #44's author separation, as the flag that makes it usable: "a human can review the machine's
    * queue separately". A detected task is a PROPOSAL with evidence and a human-opened task is a
@@ -2280,12 +2076,12 @@ export interface ListTasksParams {
 /**
  * The `GLOB` pattern that matches a detected task's path, and nothing else.
  *
- * **The PATH is the discriminator, and `author` is deliberately not it.** `packages/sleep/src/tasks.ts`
+ * **The PATH is the discriminator, and `author` is deliberately not it.** `./detected-tasks.ts`
  * records why the path carries the detection key: it survives `rm index.db && rebuild` with no
  * projection, it is collision-free by construction, and it costs no new meta in a CLOSED vocabulary.
- * `files.author` IS a real column and every detected task carries `agent:sleep` in it — but so does
- * every memory `trace-consolidation` and `arc-synthesis` write, and so would a task an operator opened
- * while impersonating the cycle. `author = 'agent:sleep'` is therefore necessary and not sufficient,
+ * `files.author` IS a real column and every detected task carries an `agent:` author in it — but so
+ * does every memory an agent writes, and so would a task an operator opened while impersonating a
+ * detector. An `author` predicate is therefore necessary and not sufficient,
  * while the path is both. Adding the author predicate beside this one would look like defense in depth
  * and would actually be a second, weaker copy of the same test — and it would break the moment a
  * detector minted under a different author, which is a change the path would survive.
@@ -2705,12 +2501,6 @@ export const statusReport = () =>
     const traces = yield* countOne(db, "SELECT count(*) AS n FROM traces")
     const coverage = yield* readVectorCoverage(db, EMBED_WATERMARK)
 
-    const lastSleep = yield* db
-      .get<{ run_id: string; status: string; started_at: string }>(
-        "SELECT run_id, status, started_at FROM sleep_runs ORDER BY started_at DESC LIMIT 1"
-      )
-      .pipe(Effect.orElseSucceed(() => undefined))
-
     const indexFresh = state?.head_sha !== null && state?.head_sha === headSha
     /**
      * A stale index is also said on stderr, once per call (issue #145). The payload already carries
@@ -2721,9 +2511,9 @@ export const statusReport = () =>
      * The predicate is `indexFresh` itself, so the WARN fires exactly where the flag is false. Two
      * cases that are correct rather than noise: an absent watermark row is stale by definition
      * (`memhtml init` commits the layout and indexes nothing, so the first `status` after it warns
-     * "index describes no commit" until the first `index update`), and between `sleep run` and
-     * `sleep merge` HEAD is the sleep branch tip while the index describes `main`, so every `status`
-     * in that window warns.
+     * "index describes no commit" until the first `index update`), and while a curation branch is
+     * checked out HEAD is that branch's tip while the index describes `main`, so every `status` in
+     * that window warns.
      */
     if (!indexFresh) {
       yield* Effect.logWarning(
@@ -2753,11 +2543,7 @@ export const statusReport = () =>
       embedderUp: state !== undefined && state.embed_model === EMBED_WATERMARK && embeddings > 0,
       vectorCoverage: coverage.coverage,
       vectorCoverageFloor: policy.vectorCoverageFloor,
-      hasState: db.hasState,
-      lastSleep:
-        lastSleep === undefined
-          ? null
-          : { runId: lastSleep.run_id, status: lastSleep.status, startedAt: lastSleep.started_at }
+      hasState: db.hasState
     }
   })
 

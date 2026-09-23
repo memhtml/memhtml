@@ -66,9 +66,9 @@ Indexing gets the longer bound because it walks a transcript file rather than an
 
 No hook writes a memory. Not the session-start pack, not the per-prompt search, not the indexing events. They read the corpus and they index transcripts, and that's the whole of what they do.
 
-Two reasons hold that line. memhtml is single-writer, so a hook that wrote a memory would put a commit on the critical path of a turn and would contend with the CLI and the MCP server for the index. And distillation is a judgment about what's durable, which belongs to `memhtml sleep run` reading whole transcripts on a reviewable branch, not to a hook with 1.5 s and one prompt. See [run and review a sleep cycle](/learn/operations/run-and-review-a-sleep-cycle/).
+Two reasons hold that line. memhtml is single-writer, so a hook that wrote a memory would put a commit on the critical path of a turn and would contend with the CLI and the MCP server for the index. And distillation is a judgment about what's durable, which belongs to a curator reading whole transcripts on a reviewable branch, not to a hook with 1.5 s and one prompt.
 
-So the loop is: hooks recall and index, sleep distills what the transcripts were worth, and a human merges. The indexing hooks are what feed the first half of that, which is why they're worth installing on the host whose transcripts memhtml can read.
+So the loop is: hooks recall and index, a curator distills what the transcripts were worth, and a human merges. The indexing hooks are what feed the first half of that, which is why they're worth installing on the host whose transcripts memhtml can read.
 
 ## Run one by hand
 

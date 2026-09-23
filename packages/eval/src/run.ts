@@ -176,9 +176,9 @@ export class DiscriminationFailed {
 }
 
 /**
- * The gate, for `MergeOptions.preMergeGate`.
+ * The gate, for a merge that must refuse on a regression.
  *
- * A failing gate FAILS this effect, which is what `@memhtml/sleep`'s `merge` reads to refuse. It wraps
+ * A failing gate FAILS this effect, which is what a merge reads to refuse. It wraps
  * the gate in `Effect.result` and turns a failure into `refusal: "gate-failed"` with `main` never
  * moving. The shape matters, because a version returning a boolean would let a caller forget to check
  * it, and a refusable gate must not be optional at its call site.

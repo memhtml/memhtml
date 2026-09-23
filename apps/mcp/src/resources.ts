@@ -1,17 +1,13 @@
-import { join } from "node:path"
-
-import { Roots, readMemory, Store } from "@memhtml/cli"
+import { readMemory, Store } from "@memhtml/cli"
 import { isValidMemoryPath, normalizePath } from "@memhtml/contracts/paths"
 import { parseMemory } from "@memhtml/html"
-import { reportFilename } from "@memhtml/sleep"
-import { readFileOrNull, SLEEP_REPORTS_DIR } from "@memhtml/store"
 import { Context, Effect, Layer } from "effect"
 import { McpSchema, McpServer } from "effect/unstable/ai"
 
 import { resourceFailure, type ToolFailure, toResourceFailure } from "./failure.js"
 
 /**
- * The three resources: design.md §8's two, plus one version-pinned citation grain.
+ * The two resources: the file behind an answer, and one version-pinned citation grain.
  *
  * A resource is for CITATION-grade drill-down: a client that got a path from `memory_search` can
  * fetch `memhtml://file/<path>` and show a human the file behind an answer, without spending a tool call
@@ -117,7 +113,7 @@ interface TemplateSpec<E, R> {
  * through `catchDefect` and a typed failure becomes one through `toResourceFailure`, both AFTER
  * `tapCause` has put the real cause on stderr, where an operator reads it. An `Effect.orDie` in its
  * place hands the client `Cause.prettyErrors(cause)[0].message`: an absolute filesystem path for a
- * missing sleep report, and a `PathNotFound` stripped of its `ERR_*` code and its suggestions.
+ * missing file, and a `PathNotFound` stripped of its `ERR_*` code and its suggestions.
  *
  * `Layer.provide(McpServer.layer)` mirrors what `McpServer.resource` does with the same static layer
  * reference, so the registry this writes into is the one `layerStdio` serves from: a layer is
@@ -207,48 +203,6 @@ export const FileResource = templateLayer({
         "",
         result.doc.article.bodyText
       ].join("\n")
-    })
-})
-
-/** `memhtml://sleep/{run-id}`: no committed report behind this URI. */
-const sleepRefusal = (uri: string): ToolFailure =>
-  resourceFailure("ERR_PATH_NOT_FOUND", `no sleep report at ${uri}`, [
-    "call memory_status to read the id and the status of the last sleep run",
-    "report this to the operator if memory_status names this run — its report never committed"
-  ])
-
-/**
- * A sleep run's report, by run id.
- *
- * The report is a COMMITTED file under `.memhtml/sleep/`, so this resource reads the tree rather than the
- * database: the report is the durable artifact of a run and the `sleep_runs` row is reporting
- * convenience.
- *
- * **The filename comes from `reportFilename`, the function the sleep phase writes it with.** A run id
- * is `sleep/<YYYY-MM-DD>` and a `/` is not legal in a filename, so the producer folds the separator to
- * a hyphen and the file is `sleep-2026-08-02.html`. Deriving that here a second time is the
- * consumer-side reimplementation of a producer's naming rule that this repo forbids; importing it
- * means the two cannot disagree. It also contains the read for free, since folding every `/` leaves a
- * caller no way to name a directory.
- *
- * The run id is taken VERBATIM, in the `sleep/<date>` spelling `memory_status.last_sleep.run_id`
- * publishes, so the value a client copies out of a status call is the value this resource takes.
- */
-export const SleepResource = templateLayer({
-  section: "sleep",
-  uriTemplate: "memhtml://sleep/{run-id}",
-  name: "Sleep run report",
-  description:
-    "One sleep run's committed HTML report: per-phase counts, commits, and what the run changed.",
-  mimeType: "text/html",
-  refuse: sleepRefusal,
-  read: (uri, runId) =>
-    Effect.gen(function* () {
-      const roots = yield* Roots
-      const html = yield* readFileOrNull(
-        join(roots.memhtmlRoot, SLEEP_REPORTS_DIR, reportFilename(runId))
-      )
-      return html === null ? yield* Effect.fail(sleepRefusal(uri)) : html
     })
 })
 
@@ -355,9 +309,8 @@ export const PinnedResource = templateLayer({
  *
  * Exported so `memory_resolve` can publish a citation the caller pastes rather than assembles. The
  * spelling of a URI belongs to the surface that routes it, and a handler composing `memhtml://at/…`
- * out of its own string literals would be a second declaration of this template — the same
- * consumer-side reimplementation of a producer's naming rule that `reportFilename` exists to prevent
- * one resource over.
+ * out of its own string literals would be a second declaration of this template, a consumer-side
+ * reimplementation of a producer's naming rule.
  *
  * The path is NOT percent-encoded. `capturedOf` decodes once, so a raw path and an escaped one name
  * the same resource, and the raw form is the one the published template shows.
@@ -366,11 +319,7 @@ export const pinnedUri = (commit: string, path: string): string =>
   `${prefixOf("at")}${commit}/${normalizePath(path)}`
 
 /** Every resource as one layer, for the server to provide. */
-export const Resources = Layer.mergeAll(FileResource, SleepResource, PinnedResource)
+export const Resources = Layer.mergeAll(FileResource, PinnedResource)
 
 /** The templates, for a test to assert the surface without a handshake. */
-export const RESOURCE_TEMPLATES = [
-  "memhtml://file/{path}",
-  "memhtml://sleep/{run-id}",
-  "memhtml://at/{commit}/{path}"
-] as const
+export const RESOURCE_TEMPLATES = ["memhtml://file/{path}", "memhtml://at/{commit}/{path}"] as const

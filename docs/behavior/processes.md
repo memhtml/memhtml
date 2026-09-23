@@ -4,7 +4,7 @@ This file lists what runs when in `memhtml-public`. Each process is a flow that 
 
 This repository is the software that manages a separate directory called the memhtml root, which `$MEMHTML_ROOT` locates (`apps/cli/src/config.ts:26-31`). It stores no memory of its own. The root's git tree is the system of record, and `.memhtml/index.db` inside the root is a projection that can be rebuilt from that tree (`packages/index/src/indexer.ts:17-24`). A process that writes acts on the root rather than on this repo, so one binary serves many roots.
 
-The primary consumer of every process is a coding agent. Processes start from one of three initiators. The CLI publishes its commands as one machine-readable table (`apps/cli/src/commands.ts`; `memhtml manifest` prints the current set), and each command returns exactly one JSON envelope on stdout and writes its logs to stderr (`apps/cli/src/run.ts:1029-1031`). The MCP server publishes its tools (`apps/mcp/src/tools.ts`) and resource templates (`apps/mcp/src/resources.ts:90`) over stdio. The sleep cycle runs the ordered phases in `SLEEP_PHASES` when a caller fires it, and reads no clock to decide whether to (`packages/sleep/src/contract.ts:17`).
+The primary consumer of every process is a coding agent. Processes start from one of three initiators. The CLI publishes its commands as one machine-readable table (`apps/cli/src/commands.ts`; `memhtml manifest` prints the current set), and each command returns exactly one JSON envelope on stdout and writes its logs to stderr (`apps/cli/src/run.ts:1029-1031`). The MCP server publishes its tools (`apps/mcp/src/tools.ts`) and resource templates (`apps/mcp/src/resources.ts:90`) over stdio.
 
 The CLI and the MCP server are both thin adapters over one shared use-case module (`apps/cli/src/operations.ts:42-48`, `apps/mcp/src/handlers.ts:33-43`), so a search issued by the CLI and a search issued through MCP run the same query.
 
@@ -20,7 +20,6 @@ Entry point: `apps/cli/src/run.ts:809`
 6. `memhtml apply` reads and shape-validates its whole JSONL op stream here, before any service exists, so a malformed line is exit 2 with nothing written. The stream arrives from `--file <path>`, or from stdin on `--file -`, a bare positional `-`, or no argument at all; stdin beside a real `--file` is refused `apps/cli/src/run.ts:821`.
 7. `dispatch` switches on the command name into one arm per remaining command. Each arm decodes flags, calls one shared use case, and names a response type `apps/cli/src/run.ts:299`.
 8. The single envelope is built once around the whole program: success becomes exit 0, a typed failure becomes exit 1 through `failureFor`, and an unexpected defect becomes `ERR_UNKNOWN` rather than a stack trace on stdout `apps/cli/src/run.ts:1094-1097`.
-9. Two commands carry an exit code their own payload implies, which is why a dispatch arm may return a third element. `sleep run` and `sleep resume` return the `sleep.report` SUCCESS envelope and exit **1** when any phase failed `apps/cli/src/run.ts:284`. `@memhtml/sleep` types both with error channel `never` — a failed phase is a normal terminal state with a report row — so a failure envelope would carry no `data` and delete the per-phase detail, while a cron reading only the exit code still has to be told the curation did not happen. `sleep status` and `sleep review` are excluded: they report a run they did not perform.
 
 ### Related
 
@@ -36,7 +35,7 @@ Entry point: `apps/cli/src/run.ts:809`
 Entry point: `apps/cli/src/operations.ts:288`
 
 1. The `write` dispatch arm reads the flags into `WriteParams`, and `task add` reaches the same function with `memoryType: "task"` and the title as the default claim `apps/cli/src/run.ts:201-221`, `apps/cli/src/run.ts:356-372`.
-2. `toWriteInput` decodes the untrusted memory type and rejects `arc`, because sleep synthesizes arcs. It also decodes the two task metas, all before any file is rendered `apps/cli/src/operations.ts:247-280`.
+2. `toWriteInput` decodes the untrusted memory type and rejects `arc`, because curation synthesizes arcs. It also decodes the two task metas, all before any file is rendered `apps/cli/src/operations.ts:247-280`.
 3. `store.writeMemory` takes one clock reading and renders the file through the template `packages/store/src/store.ts:530-534`.
 4. `renderChecked` runs the format check over the rendered bytes and fails with the list of violations before anything is written, staged, or committed `packages/store/src/store.ts:521-528`.
 5. The content hash is looked up against the dedupe oracle first, so a duplicate returns the existing path and leaves the tree byte-identical `packages/store/src/store.ts:537-551`.
@@ -59,12 +58,11 @@ Entry point: `apps/cli/src/operations.ts:641`
 
 1. `decodeApply` checks every JSONL line before any op runs. It fails on the first bad line and reports that line's number, and it skips blank lines while still counting them `apps/cli/src/apply.ts:274-303`.
 2. When `detectConflicts` is on, `detectFrameConflicts` computes each op's frame key and asks the index for live occupants in ONE query, folding earlier ops in as it walks. A lookup failure degrades to no conflicts `apps/cli/src/operations.ts:448-502`.
-3. When `consolidate: "last-wins"` is set, `planLastWins` folds the ops so a later restatement replaces the content of the earliest slot holding its frame key. It also records which stored memories the surviving slots will supersede `apps/cli/src/operations.ts:535-594`.
-4. Fold one decodes each planned op through the singular write's own `toWriteInput`. An atomic decode abort returns immediately, reports every op, and writes nothing `apps/cli/src/operations.ts:683-705`.
-5. The optional extraction assist makes one model call over the decoded ops and unions extracted entities into each op's own list. A failure produces a logged warning and an unextracted batch `apps/cli/src/operations.ts:718-741`.
-6. Fold two is `store.writeMemories`, which runs in two phases. Phase 1 validates every op against the batch's folded dedupe and path-claim state, writing nothing. Phase 2 writes every file, stages once, and makes ONE commit, rolling back on any failure `packages/store/src/store.ts:699-820`.
-7. One reindex runs after the commit, gated on a file having actually been written, so a dedupe-only batch does not move the watermark for a commit that never happened `apps/cli/src/operations.ts:764-766`.
-8. The store-supersede pass archives every live memory a surviving slot displaced, in one `supersedeMemories` call, then reindexes again because archive paths moved. A failure here only annotates the result `apps/cli/src/operations.ts:782-811`.
+3. Fold one decodes each planned op through the singular write's own `toWriteInput`. An atomic decode abort returns immediately, reports every op, and writes nothing `apps/cli/src/operations.ts:683-705`.
+4. The optional extraction assist makes one model call over the decoded ops and unions extracted entities into each op's own list. A failure produces a logged warning and an unextracted batch `apps/cli/src/operations.ts:718-741`.
+5. Fold two is `store.writeMemories`, which runs in two phases. Phase 1 validates every op against the batch's folded dedupe and path-claim state, writing nothing. Phase 2 writes every file, stages once, and makes ONE commit, rolling back on any failure `packages/store/src/store.ts:699-820`.
+6. One reindex runs after the commit, gated on a file having actually been written, so a dedupe-only batch does not move the watermark for a commit that never happened `apps/cli/src/operations.ts:764-766`.
+7. The store-supersede pass archives every live memory a surviving slot displaced, in one `supersedeMemories` call, then reindexes again because archive paths moved. A failure here only annotates the result `apps/cli/src/operations.ts:782-811`.
 
 ### Related
 
@@ -119,64 +117,12 @@ Entry point: `packages/index/src/indexer.ts:531`
 - `packages/index/src/git-adapter.ts:1`
 - `packages/index/src/index-state.ts:1`
 
-## The sleep run
-
-Entry point: `packages/sleep/src/run.ts:69`
-
-1. The `sleep run` dispatch arm resolves the date through the Effect clock, narrows any `--phases` subset, reads `--deep` and `--max-llm-calls`, and calls the service `apps/cli/src/run.ts:574-586`.
-2. `runIdFor` picks `sleep/<date>`, suffixing `-2` upward when that branch already exists, so a same-day rerun never collides `packages/sleep/src/run.ts:67`.
-3. The reaper closes every earlier `sleep_runs` row a killed process left `running`: a row whose branch is gone, or whose `started_at` is more than `SLEEP_RUN_STALE_AFTER_MS` (20 hours) before this run's start, is stamped `abandoned` with `ended_at` set, logged, and listed in the report's `reaped`. A young row whose branch exists is a live run and is left alone. A dry run reaps too; `resume` never does `packages/sleep/src/run.ts` (`reapStuckRuns`).
-4. The branch is created BEFORE any phase runs and every commit lands on it, so a run leaves `main` unchanged. A dry run creates no branch `packages/sleep/src/run.ts:376`.
-5. `recordRun` writes the run row as `running`, through a wrapper that keeps a reporting failure from failing the run `packages/sleep/src/run.ts:178`.
-6. `executePhases` walks the selected phases in canonical order — `SLEEP_PHASES`, seventeen as of v0.6.0 `packages/sleep/src/contract.ts:43` — running each body under `Effect.result` so a failure becomes a value the loop reads and the phases after it still run `packages/sleep/src/run.ts:460`.
-7. A failed phase is recorded, its declared dependents are blocked, and the git index is reset so the next phase's commit cannot carry half-finished work `packages/sleep/src/run.ts:478-530`. The dependency graph is `HARD_PREREQUISITES` `packages/sleep/src/contract.ts:107`, spelled one literal pair at a time so the generated phase table can parse it: `preflight` gates every one of the sixteen phases after it, and `dedup-merge` gates `compress` and `retention-triage`. Everything else is SOFT.
-8. `preflight` runs first, and it gates the WHOLE run. It fails on a dirty tree, on an `EmbedModelMismatch`, on an `IndexStale` index, or on a `VectorCoverageLow` vector plane (under half the chunks embedded while the plane is in use); it refreshes the index so every later phase reads current rows; and it commits nothing `packages/sleep/src/phases/preflight.ts`. Each of its failures makes every later commit wrong rather than merely unhelpful: a dirty tree means a later phase commits the operator's bytes under sleep's trailers, a half-migrated vector space returns plausible-and-wrong cosines from dedup and mining alike, a half-populated index makes every count describe a corpus fragment, and a sparse vector plane makes every cosine pass compare a sample of the corpus against itself. All four end in a corrupt night with a green report, which per-phase isolation is no defense against, so a failed preflight commits nothing at all.
-9. Three phases record their non-undoable state-plane writes into the run's own ledger instead of performing them — `trace-consolidation`'s consolidation watermarks, `edge-typing`'s edge promotions, and `entity-resolution`'s entity promotions — as JSONL lines in `.memhtml/sleep/<run-id>.pending.jsonl`, staged and committed on the branch `packages/sleep/src/contract.ts:306`, `packages/sleep/src/contract.ts:501`. `merge` applies them; a discarded branch takes them with it.
-10. The run row is rewritten as `review`, `failed`, or `abandoned` for a dry run, and the report carries every phase result plus the total model calls `packages/sleep/src/run.ts:195`.
-11. Any failed phase makes the process exit 1 while the envelope stays the `sleep.report` success payload `apps/cli/src/run.ts:284`.
-
-### Related
-
-- `packages/sleep/src/contract.ts:43`
-- `packages/sleep/src/contract.ts:107`
-- `packages/sleep/src/contract.ts:168`
-- `packages/sleep/src/contract.ts:197`
-- `packages/sleep/src/phases/index.ts:27`
-- `packages/sleep/src/commit.ts:1`
-- `packages/sleep/src/sql.ts:1`
-- `packages/sleep/src/env.ts:1`
-
-## Sleep merge
-
-Entry point: `packages/sleep/src/review.ts:238`
-
-1. The `sleep merge` dispatch arm composes the discrimination gate here, in the CLI, because `@memhtml/sleep` cannot import the eval, and composing it in the CLI keeps the gate from being defaulted silently `apps/cli/src/run.ts:494-524`.
-2. `--skip-gate` logs a warning and passes no gate. It is a visible override the caller asks for, and it is not the default `apps/cli/src/run.ts:498-502`.
-3. `resolveRun` reads the named run row, or the newest recorded one. A missing row fails with `no-run` `packages/sleep/src/review.ts:35`.
-4. The target branch is checked out and its head is read, before anything moves.
-5. The first refusal case is `main` having advanced past the run's `base_sha` on paths the branch also touched, which means the run curated a corpus that no longer exists. Both sides' full touched sets are diffed from the base — sidecars, regenerated artifacts, and both halves of every rename included — and the merge stops with `main-advanced`, naming the overlap in `MergeReport.overlap` so an operator can tell a real collision from two writers sharing a slot. An advance whose touched sets cannot be read also stops, because disjointness is a positive proof. A provably disjoint advance proceeds (issue #108) `packages/sleep/src/review.ts:271-310`.
-6. The second refusal case comes from the pre-merge gate, which runs under `Effect.result`. A gate failure becomes `gate-failed`, and `main` does not move `packages/sleep/src/review.ts:284`.
-7. `discriminationGate` runs the probes in `fake` mode and fails when the report does not pass. Because the gate runs before the merge, a retrieval regression blocks the merge `packages/eval/src/run.ts:186`.
-8. An unmoved `main` fast-forwards with no merge commit; a disjoint advance lands as a merge commit that preserves both sides, with a conflict — unreachable when disjointness held — aborted and refused rather than left in progress `packages/sleep/src/review.ts:326-338`.
-9. **Only after the fast-forward succeeds** does `applyMarks` read the branch's pending-mark ledger and perform the state-plane writes the phases deferred `packages/sleep/src/review.ts:305`, `packages/sleep/src/review.ts:343`. The ledger is read as a BLOB at the branch tip rather than off the working tree, so an uncommitted file a discarded run of the same date left behind cannot be honoured. The report carries `marksPending` and `marksApplied` as TWO numbers: they agree on an ordinary merge, and a disagreement is the operator-visible reading of a plane write that did not land — the sessions in the shortfall stay unconsolidated and are re-read next cycle, which costs a model call and loses nothing. A failed apply does not fail the merge, because `main` has already moved and every mark is bookkeeping whose absence costs a repeat rather than a loss.
-10. On success the run row is rewritten as `merged` `packages/sleep/src/review.ts:307`.
-11. Last, `reindex` runs `indexer.update({ embed: true })` so `index_state.head_sha` names the merged commit, and the report carries the update's counts as `indexUpdated`, `indexHeadSha`, `indexAdded`, `indexModified`, `indexRemoved`, `indexRenamed`, `embeddingsWritten`, `indexSkipped`. It runs after the run row on purpose: the embed pass can take minutes, and a process killed inside it must leave a row that says `merged`, or a rerun of `sleep merge` reads `main` as advanced past a run still in review and refuses forever. A failed update is reported as `indexUpdated: false` with `indexError` and a stderr WARN naming the recovery; the merge is never failed over it, because `main` has already moved `packages/sleep/src/review.ts`.
-
-### Related
-
-- `packages/sleep/src/review.ts:47`
-- `packages/sleep/src/review.ts:343`
-- `packages/eval/src/run.ts:77`
-- `packages/eval/src/discriminate.ts:224`
-- `packages/sleep/src/contract.ts:306`
-- `packages/sleep/src/contract.ts:351`
-
 ## MCP tool invocation
 
 Entry point: `apps/mcp/src/bin.ts:15`
 
 1. `Layer.launch` runs the server for the process's lifetime, because the stdio transport is the program and a built-then-released layer would close stdin under a live client `apps/mcp/src/bin.ts:9-15`.
-2. `layerServer` merges the toolkit and the three resources over the CLI's own app layer, so both entry points resolve to one database file, one git root, and one vector space `apps/mcp/src/server.ts:39-54`.
+2. `layerServer` merges the toolkit and the two resources over the CLI's own app layer, so both entry points resolve to one database file, one git root, and one vector space `apps/mcp/src/server.ts:39-54`.
 3. `Logger.LogToStderr` is set here because stdout on this transport carries the NDJSON-RPC stream, and one log line would corrupt the frame a client is mid-parse on `apps/mcp/src/server.ts:53`.
 4. The toolkit declares 15 tools with the batch second, directly after `memory_write`, because `tools/list` publishes this order and an agent reads it top-down `apps/mcp/src/tools.ts:774-789`.
 5. `MemhtmlToolkit.toLayer` binds each handler and typechecks it against the toolkit's own parameter and success schemas, so a wrong shape is a compile error rather than a live decode failure `apps/mcp/src/handlers.ts:305-309`.
@@ -208,16 +154,13 @@ Entry point: `apps/mcp/src/bin.ts:15`
 - Report corpus status: entry at `apps/cli/src/operations.ts:1737`. Compares the recorded watermark to `HEAD` for freshness and reads the embedder's usability off the stored watermark rather than probing Bedrock.
 - Run a code-mode script: entry at `apps/cli/src/exec.ts:382`. Pins a commit as a detached worktree, mounts it read-only in a QuickJS sandbox with no network and no index handle, runs the script under a capped wall-clock bound, and releases the worktree through `acquireRelease` `apps/cli/src/exec.ts:224`.
 - Check corpus health: entry at `apps/cli/src/doctor.ts:428`. Gathers dangling hrefs, orphan state rows, inbox depth, format warnings, overdue tasks, and stale blockers before any repair, so a `--fix` run reports what was wrong and what was done in one envelope. `repaired` carries `rewritten`, `dropped`, `failedWrites`, `prunedAccessRows`, and `commitSha` `apps/cli/src/doctor.ts:156`. A repair counts only when its bytes reached disk: a file whose write failed lands in `failedWrites`, is counted under neither `rewritten` nor `dropped`, and is never staged `apps/cli/src/doctor.ts:389-405`, because staging the unchanged file would put the pre-repair bytes into a commit whose subject claims they were repaired, and counting it would report a finding as settled while it is still open.
-- Publish generated listings: entry at `apps/cli/src/publish.ts:59`. Regenerates every per-directory `index.html` and the root `sitemap.xml` from the same generator the sleep integrity phase uses, writing only files whose bytes differ.
+- Publish generated listings: entry at `apps/cli/src/publish.ts:59`. Regenerates every per-directory `index.html` and the root `sitemap.xml` from one deterministic generator (`apps/cli/src/artifacts.ts`), writing only files whose bytes differ.
 - Export the state plane: entry at `apps/cli/src/state.ts:54`. Writes `.memhtml/state/access.jsonl`, the only durable copy of the plane git cannot rebuild, and commits nothing when the bytes already match.
 - Import the state plane: entry at `apps/cli/src/state.ts:103`. Replays the committed sidecar with a per-row upsert that takes the maximum of the two counters, so an import onto a live plane cannot lose a bump.
 - Regenerate AGENTS.md: entry at `apps/cli/src/agents-doc.ts:215`. Renders the doc from the command table and writes it. Under `--check` it writes nothing and fails when the rendered doc has drifted from the file on disk.
 - Supervise the MCP server: entry at `apps/cli/src/serve.ts:72`. Spawns `memhtml-mcp` with inherited descriptors so the client talks to the child directly, and kills it on interruption so no orphan holds the root's database open.
 - Run the discrimination eval: entry at `packages/eval/src/run.ts:77`. Generates a fixture corpus, runs the probes, and reports three distinct outcomes, so a live run skipped for missing credentials reads differently from a pass.
-- Resume a sleep run: entry at `packages/sleep/src/run.ts:146`. Reads the completed phases out of the branch's own `Memhtml-Phase` commit trailers, not from the journal table, and executes only the rest.
-- Review a sleep run: entry at `packages/sleep/src/review.ts:47`. Reports per-phase counts, the commit list with trailers, `git diff --stat`, and a per-file classification where `meta-only` is decided by comparing article content hashes.
-- Consolidate transcripts into memories: entry at `packages/sleep/src/phases/trace-consolidation.ts:1`. Hands a manifest of transcript metadata to the sandboxed consolidator agent, gates each returned candidate deterministically, and lands each cleared one as its own reviewable commit `apps/consolidator/src/client.ts:988`.
-- Read an MCP resource: entry at `apps/mcp/src/resources.ts:182` and `apps/mcp/src/resources.ts:228`, both registered through the one `templateLayer` at `apps/mcp/src/resources.ts:118`. `memhtml://file/{path}` returns one memory's title, claim, and body for citation-grade drill-down, and it bumps salience through the same `readMemory` the tool calls; the captured path is traversal-gated by `isValidMemoryPath` before the store sees it. `memhtml://sleep/{run-id}` reads the run's committed HTML report from the tree, under the filename `reportFilename` gives it. Each route matches on `memhtml:://<section>/*`, whose rest parameter is what lets a multi-segment PARA path resolve `apps/mcp/src/resources.ts:42`.
+- Read an MCP resource: entry at `apps/mcp/src/resources.ts`, registered through the one `templateLayer`. `memhtml://file/{path}` returns one memory's title, claim, and body for citation-grade drill-down, and it bumps salience through the same `readMemory` the tool calls; the captured path is traversal-gated by `isValidMemoryPath` before the store sees it. `memhtml://at/{commit}/{path}` reads the same path out of a named commit's tree. Each route matches on `memhtml:://<section>/*`, whose rest parameter is what lets a multi-segment PARA path resolve.
 
 ## See also
 

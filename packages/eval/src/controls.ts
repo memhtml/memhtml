@@ -10,7 +10,7 @@ import {
  *
  * A control is adversarial exactly when it is lexically and semantically near its target and
  * factually incompatible with it, which is what `@memhtml/domain`'s anti-merge guards already
- * formalize for the sleep cycle. The control generator is therefore the merge veto read backwards.
+ * formalize for a merge. The control generator is therefore the merge veto read backwards.
  * The three predicates that forbid folding two memories together are the three ways to build a
  * plausible impostor, and a control the veto cannot see does not test anything.
  *

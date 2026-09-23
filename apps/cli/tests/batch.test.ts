@@ -136,8 +136,7 @@ describe("batchWrite: one commit, one reindex", () => {
       written: 3,
       deduped: 0,
       failed: 0,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
     expect(result.commitSha).not.toBeNull()
     expect((await htmlOnDisk(cli.root)).length).toBe(3)
@@ -236,8 +235,7 @@ describe("batchWrite: one commit, one reindex", () => {
       written: 2,
       deduped: 1,
       failed: 0,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
     expect(result.results[2]).toMatchObject({ ok: true, deduped: true, path: earlierPath })
 
@@ -283,8 +281,7 @@ describe("decode failures are per-op, in the caller's index space", () => {
       written: 0,
       deduped: 0,
       failed: 1,
-      skipped: 2,
-      consolidated: 0
+      skipped: 2
     })
     expect(cli.calls.length).toBe(0)
     expect(await htmlOnDisk(cli.root)).toEqual([])
@@ -313,8 +310,7 @@ describe("decode failures are per-op, in the caller's index space", () => {
       written: 2,
       deduped: 0,
       failed: 1,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
     // Still ONE commit and ONE reindex for the survivors.
     expect(cli.calls.length).toBe(1)
@@ -448,8 +444,7 @@ describe("the render gate reaches the doors as a per-op code (AC-6-8)", () => {
       written: 1,
       deduped: 0,
       failed: 1,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
   })
 
@@ -527,8 +522,7 @@ describe("the fold's own properties reach the operations layer intact", () => {
       written: 2,
       deduped: 0,
       failed: 0,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
     expect(new Set(result.results.map((entry) => entry.path)).size).toBe(2)
 
@@ -542,7 +536,7 @@ describe("the fold's own properties reach the operations layer intact", () => {
     const result = await cli.run(batch({ ops: [] }))
     expect(result).toEqual({
       results: [],
-      summary: { total: 0, written: 0, deduped: 0, failed: 0, skipped: 0, consolidated: 0 },
+      summary: { total: 0, written: 0, deduped: 0, failed: 0, skipped: 0 },
       commitSha: null,
       nearDuplicatesDegraded: false
     })
@@ -595,8 +589,7 @@ describe("batchWrite: the detect_conflicts assist", () => {
       written: 2,
       deduped: 0,
       failed: 0,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
     expect((await htmlOnDisk(cli.root)).length).toBe(2)
   })
@@ -634,8 +627,7 @@ describe("batchWrite: the detect_conflicts assist", () => {
       written: 1,
       deduped: 0,
       failed: 0,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
     expect(second.commitSha).not.toBeNull()
     expect((await htmlOnDisk(cli.root)).length).toBe(2)
@@ -676,8 +668,7 @@ describe("batchWrite: the detect_conflicts assist", () => {
       written: 2,
       deduped: 0,
       failed: 0,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
     expect((await htmlOnDisk(cli.root)).length).toBe(2)
     expect(await cli.run(commitCount)).toBeGreaterThan(0)
@@ -972,8 +963,7 @@ describe("batchWrite: the detect_conflicts assist", () => {
       written: 2,
       deduped: 0,
       failed: 0,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
     expect(result.commitSha).not.toBeNull()
     expect((await htmlOnDisk(cli.root)).length).toBe(2)
@@ -1059,255 +1049,12 @@ describe("batchWrite: the detect_conflicts assist", () => {
     )
     expect(result.results[1]?.conflict).not.toBeUndefined()
     expect(Object.keys(result.summary).sort()).toEqual([
-      "consolidated",
       "deduped",
       "failed",
       "skipped",
       "total",
       "written"
     ])
-  })
-})
-
-/**
- * `consolidate: "last-wins"` (write-time consolidation): the acting counterpart of the assist above.
- *
- * Every test here asserts DISK and SQL alongside the reports, for the reason the conflict block
- * does: the failure mode being excluded is a report that claims a consolidation the tree does not
- * have — a loser file that still exists, an archive that never happened, a supersedes link pointing
- * at a path that dangles. Over the real layer graph so the frame keys come from the same
- * `frameKeyOf` and the store matches from the same `files_frame_key_active` index production uses.
- */
-describe("batchWrite: consolidate last-wins", () => {
-  const DELHI = "The capital of India is New Delhi."
-  const GROSSETO = "The capital of India is Grosseto."
-  const ROME = "The capital of India is Rome."
-
-  it("writes ONE file for a batch-internal pair, carrying the LATER value at the FIRST slot", async () => {
-    const cli = await withCounter()
-    const result = await cli.run(
-      batch({
-        ops: [
-          op({ title: "Capital first", claim: DELHI }),
-          op({ title: "Capital second", claim: GROSSETO })
-        ],
-        consolidate: "last-wins"
-      })
-    )
-
-    // Exactly ONE file, and its content is the LATER op's — last wins, at the first claimant's
-    // slot, so the surviving write sits at a position the caller can find deterministically.
-    const disk = await htmlOnDisk(cli.root)
-    expect(disk.length).toBe(1)
-    const winner = result.results[0]
-    expect(winner?.ok).toBe(true)
-    expect(winner?.path).toBe(disk[0])
-    const gist = await cli.run(
-      Effect.gen(function* () {
-        const store = yield* Store
-        return (yield* store.readMemory(winner?.path ?? "")).doc.article.gist
-      })
-    )
-    expect(gist).toBe(GROSSETO)
-
-    // The later op is the batch-internal loser: no file of its own, a pointer at the slot that
-    // carried its value, and a summary that counts it as neither written nor failed.
-    expect(result.results[1]).toMatchObject({ index: 1, ok: true, consolidatedInto: 0 })
-    expect(result.results[1]?.path).toBeUndefined()
-    expect(result.summary).toEqual({
-      total: 2,
-      written: 1,
-      deduped: 0,
-      failed: 0,
-      skipped: 0,
-      consolidated: 1
-    })
-  })
-
-  it("supersedes a LIVE stored memory: archive stamps, both link directions, and the old path inactive", async () => {
-    /**
-     * The fires-proof: the first batch's memory is committed and PROJECTED before the second runs,
-     * so a pass proves the plan's store lookup reads rows the real indexer wrote and the supersede
-     * moves a real file — every layer of the chain, not the plan's bookkeeping.
-     */
-    const cli = await withCounter()
-    const first = await cli.run(batch({ ops: [op({ title: "Capital then", claim: DELHI })] }))
-    const storedPath = first.results[0]?.path as string
-
-    const second = await cli.run(
-      batch({
-        ops: [op({ title: "Capital now", claim: GROSSETO })],
-        consolidate: "last-wins"
-      })
-    )
-
-    const winner = second.results[0]
-    expect(winner?.ok).toBe(true)
-    const winnerPath = winner?.path as string
-    const archivePath = winner?.supersededPath as string
-    expect(archivePath).toMatch(/^archive\/\d{4}\//)
-
-    // The archived file EXISTS at the reported path, stamped, pointing forward at the winner.
-    const { readFile } = await import("node:fs/promises")
-    const { readMeta } = await import("@memhtml/html")
-    const archivedHtml = await readFile(join(cli.root, archivePath), "utf8")
-    expect(readMeta(archivedHtml, "memhtml-status")).toBe("archived")
-    expect(readMeta(archivedHtml, "memhtml-superseded-by")).toBe(`/${winnerPath}`)
-
-    // The winner points BACK at the archive path — the pair a later reader follows in either
-    // direction, with no dangling href in any commit.
-    const links = await cli.run(
-      Effect.gen(function* () {
-        const store = yield* Store
-        return (yield* store.readMemory(winnerPath)).doc.links
-      })
-    )
-    expect(links).toEqual([{ rel: "supersedes", href: `/${archivePath}` }])
-
-    // The old path holds nothing, and the active corpus lists only the winner.
-    expect(await htmlOnDisk(cli.root)).not.toContain(storedPath)
-    const { listMemories } = await import("../src/operations.js")
-    const page = await cli.run(listMemories({ limit: 50 }))
-    expect(page.files.map((file) => file.path)).toEqual([winnerPath])
-  })
-
-  it("changes NOTHING without the flag: both memories stay active and the assist still reports", async () => {
-    /**
-     * The off-by-default pin, run over the exact op sequence the tests above consolidate — the
-     * same discipline the assist's own flag-off test follows, because a flag-off test over
-     * non-colliding ops would pass against an implementation whose default was ON.
-     */
-    const cli = await withCounter()
-    const first = await cli.run(batch({ ops: [op({ title: "Capital then", claim: DELHI })] }))
-    const storedPath = first.results[0]?.path
-
-    const second = await cli.run(
-      batch({
-        ops: [op({ title: "Capital now", claim: GROSSETO })],
-        detectConflicts: true
-      })
-    )
-
-    // The existing behavior, byte for byte: both active, a conflict REPORTED and nothing acted on.
-    expect(second.results[0]?.ok).toBe(true)
-    expect(second.results[0]?.supersededPath).toBeUndefined()
-    expect(second.results[0]?.conflict?.path).toBe(storedPath)
-    expect((await htmlOnDisk(cli.root)).length).toBe(2)
-    const { listMemories } = await import("../src/operations.js")
-    const page = await cli.run(listMemories({ limit: 50 }))
-    expect(page.files.length).toBe(2)
-  })
-
-  it("never consolidates a claim with no frame shape, even with the flag on", async () => {
-    /**
-     * The guards failing CLOSED through the acting path. "Water is wet." is a two-token frame and
-     * `frameKeyOf` refuses it; a long clause value trips MAX_VALUE_TOKENS the same way. A false
-     * consolidation here would ARCHIVE a fact over a grammatical coincidence, which is exactly the
-     * asymmetric cost the guards exist to refuse.
-     */
-    const cli = await withCounter()
-    const result = await cli.run(
-      batch({
-        ops: [
-          op({ title: "Wet one", claim: "Water is wet." }),
-          op({ title: "Wet two", claim: "Water is life." }),
-          op({
-            title: "Clause one",
-            claim: "The problem with the design is that it never handles the empty case."
-          }),
-          op({
-            title: "Clause two",
-            claim: "The problem with the design is that it fails closed on every null key."
-          })
-        ],
-        consolidate: "last-wins"
-      })
-    )
-
-    expect(result.summary).toEqual({
-      total: 4,
-      written: 4,
-      deduped: 0,
-      failed: 0,
-      skipped: 0,
-      consolidated: 0
-    })
-    expect(result.results.every((entry) => entry.consolidatedInto === undefined)).toBe(true)
-    expect((await htmlOnDisk(cli.root)).length).toBe(4)
-  })
-
-  it("resolves a three-op chain to ONE file with the LAST value, both losers marked", async () => {
-    const cli = await withCounter()
-    const result = await cli.run(
-      batch({
-        ops: [
-          op({ title: "Capital one", claim: DELHI }),
-          op({ title: "Capital two", claim: GROSSETO }),
-          op({ title: "Capital three", claim: ROME })
-        ],
-        consolidate: "last-wins"
-      })
-    )
-
-    // The slot's occupant-tracking never moves: op 2 replaces the slot AGAIN, so the file carries
-    // the third value and BOTH later ops point at slot 0 — not at each other, for the same reason
-    // the assist reports the first occupant rather than a chain of one-step-back pointers.
-    const disk = await htmlOnDisk(cli.root)
-    expect(disk.length).toBe(1)
-    const gist = await cli.run(
-      Effect.gen(function* () {
-        const store = yield* Store
-        return (yield* store.readMemory(result.results[0]?.path ?? "")).doc.article.gist
-      })
-    )
-    expect(gist).toBe(ROME)
-    expect(result.results[1]).toMatchObject({ ok: true, consolidatedInto: 0 })
-    expect(result.results[2]).toMatchObject({ ok: true, consolidatedInto: 0 })
-    expect(result.summary).toEqual({
-      total: 3,
-      written: 1,
-      deduped: 0,
-      failed: 0,
-      skipped: 0,
-      consolidated: 2
-    })
-  })
-
-  it("removes a superseded loser from the active corpus dedup-merge draws candidates from", async () => {
-    /**
-     * The interaction guard, at the narrowest seam: sleep's dedup-merge (and every other curation
-     * phase) selects candidates from `activeCorpus`, whose predicate is `archived = 0` — so the
-     * one fact that keeps a write-time supersede from fighting a sleep merge is the loser's
-     * row flipping archived. Asserted by TRANSITION over the same query the phases run, rather
-     * than by a full sleep run: found active before, absent after.
-     */
-    const { activeCorpus } = await import("@memhtml/sleep")
-    const cli = await withCounter()
-    const first = await cli.run(batch({ ops: [op({ title: "Capital then", claim: DELHI })] }))
-    const storedPath = first.results[0]?.path as string
-
-    const { DatabaseService } = await import("@memhtml/cli")
-    const corpusPaths = () =>
-      cli.run(
-        Effect.gen(function* () {
-          const db = yield* DatabaseService
-          return (yield* activeCorpus(db)).map((row) => row.path)
-        })
-      )
-    expect(await corpusPaths()).toContain(storedPath)
-
-    const second = await cli.run(
-      batch({
-        ops: [op({ title: "Capital now", claim: GROSSETO })],
-        consolidate: "last-wins"
-      })
-    )
-    const winnerPath = second.results[0]?.path as string
-
-    const after = await corpusPaths()
-    expect(after).toContain(winnerPath)
-    expect(after).not.toContain(storedPath)
-    expect(after).not.toContain(second.results[0]?.supersededPath)
   })
 })
 

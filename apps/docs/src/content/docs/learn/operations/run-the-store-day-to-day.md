@@ -46,9 +46,9 @@ Three things bump a memory's access count:
 Two things leave the count alone:
 
 - `memhtml search` and `memhtml recall`, however many paths they return.
-- Every sleep phase.
+- Every curation pass over the whole corpus.
 
-Those two are the ranker's guess and the schedule's sweep, and counting either would feed the ranker's own output back into its input. Today's top five would rank higher tomorrow purely for having been listed, while the memory that should displace them would never get a first bump.
+Those two are the ranker's guess and the curator's sweep, and counting either would feed the ranker's own output back into its input. Today's top five would rank higher tomorrow purely for having been listed, while the memory that should displace them would never get a first bump.
 
 So a corpus that has been searched all day and never read has an empty `state.access`. That is the expected state.
 
@@ -56,14 +56,13 @@ The salience arm also ignores `task` rows and everything under `resources/people
 
 ## Working-tree edits are legitimate
 
-`memhtml index update` projects uncommitted changes as well as committed ones, so a file you edited by hand is searchable before you commit it. You own the commit, though, and `memhtml sleep run` refuses to run on a dirty tree.
+`memhtml index update` projects uncommitted changes as well as committed ones, so a file you edited by hand is searchable before you commit it. You own the commit, though.
 
 ## The cron schedule
 
 ```cron
 */10 * * * *  cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml index update --embed >> /var/log/memhtml/index.log 2>&1
 17 * * * *    cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml trace index      >> /var/log/memhtml/trace.log 2>&1
-30 3 * * *    cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml sleep run        >> /var/log/memhtml/sleep.log 2>&1
 0 6 * * *     cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml publish         >> /var/log/memhtml/publish.log 2>&1
 0 7 * * *     cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml doctor          >> /var/log/memhtml/doctor.log 2>&1
 ```
@@ -90,8 +89,6 @@ Each line is safe to repeat. An unchanged HEAD and a clean tree touch nothing, a
 ```
 
 `memhtml publish` is deterministic to the byte, so two runs over an unchanged corpus write nothing and commit nothing.
-
-`memhtml sleep merge` stays off the cron. A curation run rewrites confidence across the corpus and archives memories, so the branch waits for a person to read `memhtml sleep review` first. A `sleep run` produces the branch, and landing it is a decision. See [run and review a sleep cycle](/learn/operations/run-and-review-a-sleep-cycle/).
 
 ## Reading the log files
 

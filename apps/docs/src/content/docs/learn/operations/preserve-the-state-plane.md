@@ -28,7 +28,7 @@ memhtml state import      # replay the sidecar into state.db
 
 The export is byte-stable: an unchanged plane produces an identical file. So `written: false` and `commitSha: null` on a re-run mean the sidecar already held exactly this state, and that is what makes the command safe to run on a schedule.
 
-The sleep cycle runs `state-export` as its second-to-last phase, so the sidecar refreshes once a night whatever the query volume. Run it by hand before a machine goes away, because anything since the last export is what you lose.
+Nothing runs `state export` for you, so put it on the cron beside `memhtml publish` and run it by hand before a machine goes away, because anything since the last export is what you lose.
 
 ## Import
 

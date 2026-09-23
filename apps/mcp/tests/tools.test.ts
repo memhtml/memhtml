@@ -74,25 +74,23 @@ describe("tool surface", () => {
     expect(batches).toEqual(["memory_write_batch"])
   })
 
-  it("exposes no sleep tool: sleep is an operator action, not an agent one", () => {
+  it("exposes no curation tool: curation is an operator action, not an agent one", () => {
     /**
-     * A sleep run rewrites confidence across the corpus, archives memories, and produces a branch a
-     * human is expected to read. `memhtml sleep run` is the entry point; a read-only `sleep_status` is
-     * the only shape this surface could ever take for it, and the write side stays behind an operator.
+     * A curator archives memories and produces a branch a human is expected to read. The write side
+     * stays behind an operator, so no tool here runs, resumes, reviews, or merges a curation branch.
      */
     for (const name of TOOL_NAMES) {
-      expect(name.startsWith("sleep_")).toBe(false)
       expect(name).not.toContain("sleep")
+      expect(name).not.toContain("curat")
     }
   })
 
   it("templates every resource under the server's own scheme", () => {
-    expect(RESOURCE_TEMPLATES).toHaveLength(3)
+    expect(RESOURCE_TEMPLATES).toHaveLength(2)
     for (const template of RESOURCE_TEMPLATES) {
       expect(template.startsWith(`${SERVER_NAME}://`)).toBe(true)
     }
     expect(RESOURCE_TEMPLATES).toContain("memhtml://file/{path}")
-    expect(RESOURCE_TEMPLATES).toContain("memhtml://sleep/{run-id}")
     expect(RESOURCE_TEMPLATES).toContain("memhtml://at/{commit}/{path}")
   })
 
@@ -101,8 +99,8 @@ describe("tool surface", () => {
      * The routing defect `memhtml://file/{path}` shipped with, as a surface property rather than as one
      * resource's test. A named router parameter stops at the next `/`, so a template whose only hole is
      * filled with a single segment can pass a read while being unreachable for every real value: every
-     * memory path has at least two segments and an archived one has at least four, and a run id is
-     * `sleep/<date>`. What has to be true of a template is that its LAST hole is the one that may
+     * memory path has at least two segments and an archived one has at least four. What has to be
+     * true of a template is that its LAST hole is the one that may
      * contain separators, which is where the rest parameter sits.
      */
     for (const template of RESOURCE_TEMPLATES) {
@@ -412,11 +410,7 @@ describe("the derived JSON Schema", () => {
       "conflict",
       // `near_duplicates` follows conflict's rule for conflict's reason: "nothing matched" and
       // "this build does not check" lead to opposite decisions about whether to go looking.
-      "near_duplicates",
-      // The two consolidation outcomes follow the same present-and-nullable rule: "not
-      // consolidated" and "this build does not consolidate" are different facts.
-      "consolidated_into",
-      "superseded_path"
+      "near_duplicates"
     ])
 
     /**
@@ -450,14 +444,7 @@ describe("the derived JSON Schema", () => {
     expect(nearArray?.items?.required).toEqual(["path", "batch_index", "similarity", "claim"])
 
     const summary = (success.properties ?? {}).summary as JsonSchemaObject
-    expect(summary.required).toEqual([
-      "total",
-      "written",
-      "deduped",
-      "failed",
-      "skipped",
-      "consolidated"
-    ])
+    expect(summary.required).toEqual(["total", "written", "deduped", "failed", "skipped"])
   })
 
   it("accepts an op that blanks or nulls the authoring field it did not use", () => {
@@ -740,7 +727,7 @@ describe("the derived JSON Schema", () => {
 
   it("publishes as_of as an optional null-union param and superseded_by on every hit", () => {
     /**
-     * The bi-temporal surface, pinned as the consolidation fields were: `as_of` follows `entity`'s
+     * The bi-temporal surface, pinned as the conflict fields are: `as_of` follows `entity`'s
      * `Optional` contract (flat null union, never required — adding a lens must not break a client
      * already calling this tool), and `superseded_by` is present-and-nullable on every hit so a
      * client can tell "not superseded" from "this build does not report supersession".

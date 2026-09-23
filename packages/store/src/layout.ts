@@ -30,7 +30,7 @@ export const STATE_DB_PATH = `${MEMHTML_DIR}/state.db`
 /** The committed append-only sidecar the state plane exports to. */
 export const STATE_SIDECAR_PATH = `${MEMHTML_DIR}/state/access.jsonl`
 
-/** Where a sleep run's committed report lands, one file per run id. */
+/** Where v1 sleep runs committed their reports. Kept so an existing store's layout and `init` stay stable. */
 export const SLEEP_REPORTS_DIR = `${MEMHTML_DIR}/sleep`
 
 /**

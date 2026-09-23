@@ -16,7 +16,7 @@ import { envelopeOf, runBuilt, treeDigest } from "./spawned.js"
  *
  * The other items have their own files, each for a reason: item 1 (`clone.test.ts`) needs a second
  * repo, item 5 (`traces.test.ts`) needs `MEMHTML_TRACE_ROOT` set at module scope before any
- * `effect/Config` resolves, item 6 (`sleep.test.ts`, `rebuild.test.ts`) needs a scripted model and a
+ * `effect/Config` resolves, item 6 (`rebuild.test.ts`) needs a scripted model and a
  * corpus built incrementally, and item 2 is `@memhtml/eval`'s own `test:eval` gate.
  */
 

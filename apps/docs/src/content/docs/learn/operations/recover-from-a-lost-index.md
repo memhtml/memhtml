@@ -31,14 +31,14 @@ None of the three destroys anything and all three are safe to repeat, so a recov
 
 ## What survives, and what it survives as
 
-The git tree is the system of record. It holds every memory, every authored `<link>`, every `<meta>`, and, through `git log --follow`, the history of every eviction. `.memhtml/state/access.jsonl` and `.memhtml/sleep/<run-id>.html` are committed too.
+The git tree is the system of record. It holds every memory, every authored `<link>`, every `<meta>`, and, through `git log --follow`, the history of every eviction. `.memhtml/state/access.jsonl` is committed too.
 
 | Artifact                                                                                                                  | Rebuilds from                 | Cost                                                                          |
 | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------- |
 | `index.db`: embeddings, mined edges, chunks, full-text search                                                             | The tree                      | `memhtml index rebuild --embed`. The Bedrock calls are the only real expense. |
 | `state.db`: access counts, reinforcement counts, and the outcome EWMA, a running average of positive and negative signals | The sidecar only              | `memhtml state import`. Anything since the last export is gone.               |
 | The trace tables                                                                                                          | `$MEMHTML_TRACE_ROOT`         | `memhtml trace index` from a zero watermark: slow, and it loses nothing.      |
-| An unmerged `sleep/<date>` branch                                                                                         | Nothing, unless it was pushed | Re-run the sleep cycle. Every phase is safe to repeat.                        |
+| An unmerged `curate/<date>` branch                                                                                        | Nothing, unless it was pushed | Run the curation session again. Every pass is safe to repeat.                 |
 
 :::agent
 
@@ -46,7 +46,7 @@ The git tree is the system of record. It holds every memory, every authored `<li
 
 :::
 
-The one lossy row in that table is `state.db`, and the size of the loss is bounded by how recently `state export` ran. The sleep cycle runs `state-export` as its second-to-last phase, which refreshes the sidecar every night whatever the query volume. Run it by hand as well before a machine goes away. See [preserve the state plane](/learn/operations/preserve-the-state-plane/).
+The one lossy row in that table is `state.db`, and the size of the loss is bounded by how recently `state export` ran. Nothing runs it for you, so put it on the cron and run it by hand as well before a machine goes away. See [preserve the state plane](/learn/operations/preserve-the-state-plane/).
 
 ## Confirming the recovery
 

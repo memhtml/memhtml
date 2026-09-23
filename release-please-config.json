@@ -10,7 +10,6 @@
       "extra-files": [
         { "type": "json", "path": "apps/cli/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "apps/mcp/package.json", "jsonpath": "$.version" },
-        { "type": "json", "path": "apps/consolidator/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/contracts/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/domain/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/eval/package.json", "jsonpath": "$.version" },
@@ -21,7 +20,6 @@
         { "type": "json", "path": "packages/llm/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/session/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/snapshot/package.json", "jsonpath": "$.version" },
-        { "type": "json", "path": "packages/sleep/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/store/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/telemetry/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/traces/package.json", "jsonpath": "$.version" },

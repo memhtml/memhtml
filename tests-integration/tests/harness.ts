@@ -5,7 +5,7 @@ import { join } from "node:path"
 
 import { type EmbedderShape, layerAppWith, type RunResult, run } from "@memhtml/cli"
 import { ModelUnavailable } from "@memhtml/contracts/errors"
-import { EMBED_DIM, EMBED_WATERMARK, type ModelClientShape } from "@memhtml/llm"
+import { EMBED_DIM, EMBED_WATERMARK } from "@memhtml/llm"
 import { makeGit } from "@memhtml/store"
 import { configureIdentity } from "@memhtml/store/testing"
 import { Effect, type Layer } from "effect"
@@ -31,7 +31,7 @@ export const FAKE_DIM = EMBED_DIM
  * The deterministic embedder: a hash-seeded bag of words, L2-normalized.
  *
  * The same construction every other package's harness uses, so a cosine relationship asserted here
- * holds in `@memhtml/index`'s and `@memhtml/sleep`'s suites too. Two texts sharing vocabulary have a genuinely
+ * holds in `@memhtml/index`'s and `@memhtml/eval`'s suites too. Two texts sharing vocabulary have a genuinely
  * high cosine and two disjoint texts a low one — the property a ranking assertion needs, which neither
  * a random nor a constant fake has.
  */
@@ -95,7 +95,6 @@ export interface Cli {
 /** What {@link makeCli} takes. Every field has a default. */
 export interface CliOptions {
   readonly embedder?: EmbedderShape | undefined
-  readonly model?: ModelClientShape | undefined
   /** An existing directory to use as the repo, for a clean-clone test that supplies its own. */
   readonly root?: string | undefined
   /** Skip `memhtml init`, for a test that wants an empty directory. */
@@ -129,11 +128,7 @@ export const makeCli = async (options: CliOptions = {}): Promise<Cli> => {
   }
 
   const embedder = options.embedder ?? fakeEmbedder()
-  const layer = layerAppWith({
-    repo: root,
-    embedder,
-    ...(options.model === undefined ? {} : { model: options.model })
-  })
+  const layer = layerAppWith({ repo: root, embedder })
 
   const invoke = (argv: ReadonlyArray<string>) => run([...argv, "--repo", root], layer)
 

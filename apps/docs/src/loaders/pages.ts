@@ -192,7 +192,6 @@ const overviewPage = (registry: Registry, base: string): ReferencePage => {
       registry.vocabularies.length,
       `${SOURCES.types}, ${SOURCES.edges}`
     ],
-    [`${TIER}/sleep-phases`, "Sleep phases", registry.sleepPhases.length, SOURCES.sleep],
     [`${TIER}/rrf-arms`, "RRF arms", registry.rankArms.length, SOURCES.retrieval],
     [`${TIER}/schema`, "Migrations", registry.migrations.length, SOURCES.migrations],
     [`${TIER}/requirements`, "Requirements", registry.requirements.length, SOURCES.symspec],
@@ -592,7 +591,7 @@ const mcpResourcesPage = (registry: Registry): ReferencePage => ({
   id: `${TIER}/mcp-resources`,
   title: "MCP resources",
   description:
-    "What a client can fetch by URI: the file behind an answer, a sleep run's report, and a memory pinned at a commit.",
+    "What a client can fetch by URI: the file behind an answer and a memory pinned at a commit.",
   source: SOURCES.mcpResources,
   filePath: `${DOCS_COLLECTION}/${TIER}/mcp-resources.md`,
   lastUpdated: registry.commitDates.mcpResources,
@@ -655,40 +654,6 @@ const vocabularyPage = (registry: Registry): ReferencePage => ({
     provenance(
       `${SOURCES.types} and ${SOURCES.edges}`,
       "each set is read as the array the schemas and the CHECK constraints are built from."
-    )
-  ])
-})
-
-const sleepPhasesPage = (registry: Registry, base: string): ReferencePage => ({
-  id: `${TIER}/sleep-phases`,
-  title: "Sleep phases",
-  description: "The curation cycle's phases, in execution order.",
-  source: SOURCES.sleep,
-  filePath: `${DOCS_COLLECTION}/${TIER}/sleep-phases.md`,
-  lastUpdated: registry.commitDates.sleep,
-  body: sections([
-    {
-      title: "The order",
-      body: [
-        `${pageLink(base, `${TIER}/commands/sleep-run`, code("memhtml sleep run"))} runs ${registry.sleepPhases.length} phases in the order below, on a review branch, and each committing phase makes its own commit there. ${code("--phases")} runs any subset of them.`,
-        "The last column names the phases that a failure here blocks. Those are the hard prerequisites the runner reads, so a phase with an empty cell can fail without stopping the rest.",
-        table(
-          ["#", "Phase", "Commits", "Calls a model", "Blocked if it fails"],
-          registry.sleepPhases.map((phase) => [
-            String(phase.index),
-            code(phase.name),
-            phase.commits ? "yes" : "no",
-            phase.callsModel ? "yes" : "no",
-            codeList(phase.blocks)
-          ])
-        ),
-        `${registry.sleepPhases.filter((phase) => phase.callsModel).length} of the phases call a model. The rest are deterministic, so a run with no credentials still gets through them.`
-      ].join("\n\n")
-    },
-    { title: "Why this order", body: paragraphs(registry.prose.sleepPhases ?? "") },
-    provenance(
-      SOURCES.sleep,
-      `the phase names, the committing set, the model-calling set, and the hard prerequisites are four constants there, and they are the same four the runner, ${code("memhtml sleep resume")}, and the run report read.`
     )
   ])
 })
@@ -1041,7 +1006,6 @@ export const referencePages = (
     mcpToolsPage(registry, base),
     mcpResourcesPage(registry),
     vocabularyPage(registry),
-    sleepPhasesPage(registry, base),
     rrfArmsPage(registry, base),
     schemaPage(registry, base),
     requirementsPage(registry),

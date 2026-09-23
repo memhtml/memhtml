@@ -124,7 +124,7 @@ export const mcpSuggestionsFor = (error: unknown): ReadonlyArray<string> => {
         "report this to the operator if it persists — an agent cannot repair the repo from a tool call"
       ]
     case "DiscriminationFailed":
-      return ["call memory_status to see when sleep last ran", "report this to the operator"]
+      return ["call memory_status to see repo health", "report this to the operator"]
     default:
       return []
   }

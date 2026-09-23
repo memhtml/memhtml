@@ -137,7 +137,7 @@ memhtml index status
 
 - `embedModel` is the model the stored vectors came from, and `configuredEmbedModel` is the model this process would write with. `embedModelMatches` compares the two, and both values are reported so you can see which side to change.
 - `embeddings` below `chunks` is an embedding gap: run `memhtml index embed`.
-- `derivedEdges` counts the links the sleep cycle's relationship-mining phase inferred and wrote into the index rather than into files. The system can derive them again, which is why they live only here.
+- `derivedEdges` counts the links an earlier curation pass inferred and wrote into the index rather than into files. Nothing in the current command surface writes new ones, and a rebuild drops them.
 - `hasState: false` means no state plane is attached, so the salience arm cannot fire. Retrieval ranks with four arms: full-text search, vector similarity, recency, and salience, which favors memories you have opened before. The first three keep working with no state plane; salience drops out.
 - `headSha` is the watermark. Compare it against `git rev-parse HEAD`, or let `memhtml status` do that for you and report `indexFresh`.
 

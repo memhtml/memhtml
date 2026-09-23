@@ -82,11 +82,10 @@ write tools on the MCP server, and your own file tools against the checkout. The
 staging, so one call becomes exactly one commit and a caller cannot bundle two unrelated writes into
 it.
 
-`memhtml sleep run` is the curation pass you schedule overnight. It walks seventeen ordered phases on
-a `sleep/<date>` branch and commits each phase's work on its own, so a reviewer reads the night one
-phase-shaped diff at a time. It detects contradictions and leaves the choice of a winner to a writer
-or a human, because that choice is a one-way door. `memhtml sleep merge` then refuses to move `main`
-when the night made retrieval worse.
+Curation runs as a session on a `curate/<date>` branch, never in the write path, and it lands
+through the same commit gate as any other session. The write path detects a contradiction and keeps
+both claims live with a `contradicts` edge; choosing a winner is a one-way door that stays with a
+writer or a human.
 
 Every command writes one JSON envelope to stdout and nothing else, sends its logs to stderr, and
 exits 0 for success, 2 for a usage error, and 1 for a runtime failure. `memhtml manifest` prints
@@ -113,7 +112,7 @@ correct first call.
   - 2.1. [Global flags](/reference/global-flags/) and [configuration](/reference/config/)
   - 2.2. [Response types](/reference/response-types/) and [error codes](/reference/error-codes/)
   - 2.3. [MCP tools](/reference/mcp-tools/) and [resources](/reference/mcp-resources/)
-  - 2.4. [Vocabularies](/reference/vocabulary/), [sleep phases](/reference/sleep-phases/), [RRF arms](/reference/rrf-arms/)
+  - 2.4. [Vocabularies](/reference/vocabulary/), [RRF arms](/reference/rrf-arms/)
   - 2.5. [Index schema](/reference/schema/) and the [requirements ledger](/reference/requirements/)
   - 2.6. [Contracts](/reference/contracts/): every exported symbol of `@memhtml/contracts`, with its doc comment
 - **3. [Internals](/internals/)**: why the system is shaped this way, and what each decision refuses
@@ -121,7 +120,6 @@ correct first call.
   - 3.2. [The memory file format](/internals/the-memory-file-format/)
   - 3.3. [The write path](/internals/the-write-path/)
   - 3.4. [Four-arm retrieval](/internals/four-arm-retrieval/)
-  - 3.5. [The sleep pipeline](/internals/the-sleep-pipeline/)
   - 3.6. [Testing posture](/internals/testing-posture/)
 - **Appendix A. [Glossary](/glossary/)**: the domain vocabulary, each term linked to the chapter that develops it
 

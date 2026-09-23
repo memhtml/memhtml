@@ -10,7 +10,7 @@ import ts from "typescript"
  * Two doors, and which one a registry comes through is decided by where it lives. Anything
  * `@memhtml/cli` exports arrives as a VALUE, imported directly — that is the whole point of
  * `apps/docs` depending on the CLI. Everything else is read out of its source file HERE, because
- * `apps/docs` declares no dependency on `@memhtml/contracts`, `@memhtml/sleep`, `@memhtml/index`, or
+ * `apps/docs` declares no dependency on `@memhtml/contracts`, `@memhtml/index`, or
  * `@memhtml/mcp`, and a cross-package `dist` import would race turbo: the docs `build` task inherits
  * `^build` from its declared dependencies only, so `@memhtml/mcp#build` may still be running when
  * this file executes. Source text is present whatever the build order is.

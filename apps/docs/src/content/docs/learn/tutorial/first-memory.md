@@ -175,7 +175,7 @@ Pass `--detect-conflicts` on any real batch. It reports what each op's claim con
 
 Editing a file under `$MEMHTML_ROOT` with your normal file tools is equally legitimate. The tree is the system of record, so a hand-written memory is as real as one the CLI wrote. `memhtml index update` projects uncommitted working-tree changes as well as committed ones, so a dirty edit is searchable before you commit it.
 
-What you take on is everything the write path would have done: format validity (`memhtml doctor` reports it, and `memhtml read <path>` reports per-file warnings), a path that does not collide, noticing that the content already exists, and the commit. `memhtml sleep run` refuses to start on a dirty tree, so an uncommitted edit blocks curation until you commit or stash it.
+What you take on is everything the write path would have done: format validity (`memhtml doctor` reports it, and `memhtml read <path>` reports per-file warnings), a path that does not collide, noticing that the content already exists, and the commit. A curation session refuses to start on a dirty tree, so an uncommitted edit blocks curation until you commit or stash it.
 
 For an AI agent, prefer `memhtml apply` over your file tools for writes, because the batch owns dedup, conflict detection, and the single commit. Reach for file tools when you are repairing a file the parser refuses, which is the one case the write path cannot express.
 

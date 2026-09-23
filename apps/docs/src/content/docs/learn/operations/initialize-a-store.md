@@ -70,11 +70,11 @@ A clone therefore hands you the tree and the committed sidecar `.memhtml/state/a
 ```
 projects/       areas/          resources/      archive/
 areas/arcs/     areas/inbox/    resources/people/
-.memhtml/state/   .memhtml/sleep/
+.memhtml/state/   .memhtml/sleep/   (the second is a v1 leftover nothing writes)
 .gitignore      .gitattributes  README.html
 ```
 
-Only the sleep cycle writes into `areas/arcs/`, which holds behavioral arcs: memories that summarize a pattern running across many other memories. `resources/people/` is the person plane. A memory the placement rules cannot place lands in `areas/inbox/`, and [`memhtml doctor`](/learn/operations/audit-and-publish-the-corpus/) warns you when that directory gets crowded, because a full inbox means the placement rules stopped matching what agents write.
+`areas/arcs/` holds behavioral arcs: memories that summarize a pattern running across many other memories, written by curation rather than by an agent's `memory_write`. `resources/people/` is the person plane. A memory the placement rules cannot place lands in `areas/inbox/`, and [`memhtml doctor`](/learn/operations/audit-and-publish-the-corpus/) warns you when that directory gets crowded, because a full inbox means the placement rules stopped matching what agents write.
 
 `memhtml init` also applies the database migrations, so `.memhtml/index.db` exists from the start and holds nothing until `memhtml index rebuild` projects the tree into it.
 

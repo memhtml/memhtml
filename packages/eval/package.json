@@ -2,7 +2,7 @@
   "name": "@memhtml/eval",
   "version": "0.15.1",
   "private": true,
-  "description": "Fixture corpus generator, the refusable retrieval discrimination gate, and the write-path discrimination arm.",
+  "description": "Fixture corpus generator and the refusable retrieval discrimination gate.",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
@@ -31,13 +31,11 @@
     "test:eval": "vitest run --config vitest.eval.config.ts"
   },
   "dependencies": {
-    "@memhtml/consolidator": "workspace:*",
     "@memhtml/contracts": "workspace:*",
     "@memhtml/domain": "workspace:*",
     "@memhtml/html": "workspace:*",
     "@memhtml/index": "workspace:*",
     "@memhtml/llm": "workspace:*",
-    "@memhtml/sleep": "workspace:*",
     "@memhtml/store": "workspace:*",
     "effect": "catalog:"
   },

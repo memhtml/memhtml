@@ -9,22 +9,21 @@ import { describe, expect, it } from "vitest"
 const REPO_ROOT = resolve(dirname(dirname(fileURLToPath(import.meta.url))), "..")
 
 /**
- * A repo-wide census over the word `nightly`, because sleep has no schedule and the prose said it did.
+ * A repo-wide census over the word `nightly`, because nothing in memhtml has a schedule and the prose
+ * once said it did.
  *
- * Sleep reads a clock ONLY to stamp — one `clock.currentTimeMillis` for the run's timestamps and date
- * arithmetic for a validity bound — and never to decide whether to work. There is no scheduler in the
- * package and no default cadence anywhere. `nightly` promised a cadence the code cannot honour, and it
- * carried THREE different referents at once, which is the semantic-contract hazard in miniature: a run
- * without `--deep`, an unattended caller, and any sleep run at all. Each now has its own words.
+ * No package reads a clock to decide whether to work, and there is no default cadence anywhere.
+ * `nightly` promised a cadence the code cannot honour, and it carried several referents at once, which
+ * is the semantic-contract hazard in miniature. Each now has its own words.
  *
  * The census is over the WORD rather than over a per-file review, because that is the difference
  * between a sweep and a gate: a spot check passes the day it is written and says nothing about the
  * next paragraph somebody adds.
  *
  * **This reads the bytes with `readFile` rather than shelling out to `grep`**, and that is not a style
- * choice. `grep` silently skips a file it reads as binary — no warning, no non-zero exit — and one raw
- * NUL byte in `packages/sleep/src/tasks.ts` made a 1,100-line source file invisible to exactly that
- * kind of sweep. Every gate here that greps a tree carries the same hole.
+ * choice. `grep` silently skips a file it reads as binary, with no warning and no non-zero exit, and one
+ * raw NUL byte in a since-deleted 1,100-line source file once made it invisible to exactly that kind of
+ * sweep. Every gate here that greps a tree carries the same hole.
  */
 
 /** A directory whose contents are not authored here, or are a build product. */
@@ -127,23 +126,6 @@ const ALLOWED: ReadonlyArray<{
     count: 5,
     reason:
       "memory content: two versions of a fact about a fictional batch window, plus the three queries that retrieve them"
-  },
-  {
-    path: "packages/sleep/tests/fixture.ts",
-    count: 3,
-    reason:
-      "memory content: a fixture pair about a fictional index-rebuild job, seeded to be deduped"
-  },
-  {
-    path: "packages/sleep/tests/dedup.test.ts",
-    count: 12,
-    reason:
-      "assertions keyed on the fixture's own claim text, quoted verbatim so a rename is caught"
-  },
-  {
-    path: "packages/sleep/tests/deep.test.ts",
-    count: 1,
-    reason: "memory content: a deep-band fixture claim about a fictional ledger copy"
   }
 ]
 
@@ -218,7 +200,7 @@ const census = async (): Promise<{
   return { scanned: paths.length, excluded: found.length - paths.length, byPath }
 }
 
-describe("sleep has no schedule, and no artifact says it does", () => {
+describe("nothing has a schedule, and no artifact says it does", () => {
   it("finds `nightly` only in fixture memory content, at exactly the declared counts", async () => {
     const { scanned, excluded, byPath } = await census()
 
@@ -247,47 +229,5 @@ describe("sleep has no schedule, and no artifact says it does", () => {
 
     const total = [...byPath.values()].reduce((sum, count) => sum + count, 0)
     expect(total).toBe(ALLOWED.reduce((sum, entry) => sum + entry.count, 0))
-  })
-
-  it("reads every authored file as bytes, including one no `grep` sweep can see", async () => {
-    /**
-     * The census's own coverage, asserted against the file that motivated the method. `tasks.ts` held a
-     * raw NUL, which makes `file(1)` report `data` and makes `grep` skip it in silence — so a sweep
-     * built on `grep` reported zero matches in a file that had three. The escape landed in its own
-     * commit, and this is what keeps the census honest about being able to read it either way.
-     */
-    const walked = (await Promise.all(WALKED.map(authoredUnder))).flat()
-    expect(walked).toContain("packages/sleep/src/tasks.ts")
-    const source = await readFile(join(REPO_ROOT, "packages/sleep/src/tasks.ts"), "utf8")
-    expect(source.length).toBeGreaterThan(1000)
-    expect(await occurrencesIn("packages/sleep/src/tasks.ts")).toBe(0)
-  })
-
-  it("keeps sleep's only clock reads on the STAMPING path", async () => {
-    /**
-     * The claim the prose now makes, checked against the source rather than trusted. `run.ts` takes one
-     * clock reading to timestamp the run and `edits.ts` does date arithmetic for a validity bound;
-     * nothing in the phase registry or the runner consults a clock to decide whether to do work, and no
-     * package in the tree schedules anything.
-     */
-    const sleepSources = (await authoredUnder("packages/sleep/src")).filter((path) =>
-      path.endsWith(".ts")
-    )
-    expect(sleepSources.length).toBeGreaterThan(20)
-
-    const clockReaders: string[] = []
-    for (const path of sleepSources) {
-      const text = await readFile(join(REPO_ROOT, path), "utf8")
-      if (/currentTimeMillis|Date\.now\(\)/.test(text)) clockReaders.push(path)
-    }
-    // ONE file reads the wall clock, and it reads it to stamp. A second reader is a scheduling decision
-    // arriving somewhere a reviewer would not look for one.
-    expect(clockReaders).toEqual(["packages/sleep/src/run.ts"])
-
-    // And nothing sets a timer or subscribes to a schedule anywhere in the package.
-    for (const path of sleepSources) {
-      const text = await readFile(join(REPO_ROOT, path), "utf8")
-      expect(text, `${path} schedules work`).not.toMatch(/setInterval|setTimeout|node-cron|cron\(/)
-    }
   })
 })

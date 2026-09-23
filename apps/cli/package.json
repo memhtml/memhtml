@@ -36,7 +36,6 @@
     "start": "node dist/bin.js"
   },
   "dependencies": {
-    "@memhtml/consolidator": "workspace:*",
     "@memhtml/contracts": "workspace:*",
     "@memhtml/domain": "workspace:*",
     "@memhtml/eval": "workspace:*",
@@ -46,7 +45,6 @@
     "@memhtml/integrations": "workspace:*",
     "@memhtml/llm": "workspace:*",
     "@memhtml/session": "workspace:*",
-    "@memhtml/sleep": "workspace:*",
     "@memhtml/snapshot": "workspace:*",
     "@memhtml/store": "workspace:*",
     "@memhtml/telemetry": "workspace:*",

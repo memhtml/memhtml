@@ -520,12 +520,12 @@ describe("the wire failure a resource read produces", () => {
      * raised, so there is no typed error for `toToolFailure` to translate. The shape has to match
      * anyway, because an agent reads one format across both surfaces.
      */
-    const failure = resourceFailure("ERR_PATH_NOT_FOUND", "no sleep report at memhtml://sleep/x", [
+    const failure = resourceFailure("ERR_PATH_NOT_FOUND", "no memory at memhtml://file/x", [
       "call memory_status"
     ])
     expect(failure).toBeInstanceOf(ToolFailure)
     expect(failure.message).toBe(
-      "ERR_PATH_NOT_FOUND: no sleep report at memhtml://sleep/x. Try: call memory_status"
+      "ERR_PATH_NOT_FOUND: no memory at memhtml://file/x. Try: call memory_status"
     )
     // Already composed, so it passes through the handler-wide translation unchanged.
     expect(toToolFailure(failure)).toBe(failure)

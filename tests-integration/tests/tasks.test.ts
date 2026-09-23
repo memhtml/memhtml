@@ -2,8 +2,6 @@ import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { originalPathFor } from "@memhtml/contracts/paths"
-import { SLEEP_PHASES } from "@memhtml/sleep"
-import { scriptedModel, value } from "@memhtml/sleep/testing"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { type Cli, makeCli, writeMemory } from "./harness.js"
@@ -13,29 +11,15 @@ import { type Cli, makeCli, writeMemory } from "./harness.js"
  * doctor fixture.
  *
  * Every package proves its own half — `@memhtml/contracts` the placement algebra, `@memhtml/index` the dedup
- * carve-out and the scope exclusion, `@memhtml/store` the endpoint guard, `@memhtml/sleep` the nine phase
- * skips. What only a test spanning all of them can prove is that the SURFACE composes them: that
- * `memhtml task add` reaches the placement rule AND the carve-out, that `task status … done` is a rename
- * the index follows, that a full sleep run over a task-seeded corpus leaves the tasks byte-identical,
- * and that `rm index.db && memhtml index rebuild` reproduces the two new columns.
+ * carve-out and the scope exclusion, `@memhtml/store` the endpoint guard. What only a test spanning
+ * all of them can prove is that the SURFACE composes them: that `memhtml task add` reaches the
+ * placement rule AND the carve-out, that `task status … done` is a rename the index follows, and that
+ * `rm index.db && memhtml index rebuild` reproduces the two new columns.
  *
  * **Renames are asserted as renames, never as `R100`** (finding #23): an archive commit stamps its
  * head in the SAME commit and rename similarity is computed tree-to-tree, so a head stamp lowers the
  * score. `originalPathFor` is the authoritative inverse and no correctness path reads the score.
  */
-
-const DATE = "2026-08-02"
-
-/** A model that answers every LLM phase with "nothing to do", so no LLM phase commits. */
-const inertModel = () =>
-  scriptedModel((request) =>
-    request.system.startsWith("You triage")
-      ? value({ entries: [] })
-      : request.system.startsWith("You partition")
-        ? // dedup-merge's partition call. A refusal keeps the phase on its deterministic arm.
-          value({ groups: [] })
-        : value({ verdict: "neutral", confidence: 0.9, rationale: "compatible claims" })
-  )
 
 interface TaskWritten {
   readonly path: string
@@ -101,7 +85,7 @@ describe("verification item 2 — the task lifecycle across every plane", () => 
   let migrationTask: TaskWritten
 
   beforeAll(async () => {
-    cli = await makeCli({ model: inertModel() })
+    cli = await makeCli()
 
     runbookTask = await addTask(cli, {
       title: "Wire the drain step into the rollback runbook",
@@ -401,8 +385,8 @@ describe("verification item 2 — the task lifecycle across every plane", () => 
      * `movePath` updates `files.path` and `edges.src_path` and deliberately NOT `edges.dst_path`: an
      * edge row is derived from the SOURCE file's `<link>` elements, so the row must keep saying what
      * the file says. Archiving the BLOCKED task therefore leaves the blocker's href pointing at the
-     * pre-archive path — a dangling href, which is `memhtml doctor`'s finding and the sleep integrity
-     * phase's repair, exactly as it is for a memory-class edge. Nothing about the task class is
+     * pre-archive path — a dangling href, which is `memhtml doctor`'s finding and `doctor --fix`'s
+     * repair, exactly as it is for a memory-class edge. Nothing about the task class is
      * special here, and that is the point: one repair path serves all four classes.
      */
     const archived = (await cli.json<TaskList>(["task", "list", "--include-archived"])).tasks.find(
@@ -441,64 +425,6 @@ describe("verification item 2 — the task lifecycle across every plane", () => 
     ).toEqual([])
   })
 
-  it("7. a full sleep run leaves every task byte-identical and mines no edge onto one", async () => {
-    /**
-     * The nine sleep skips, composed at the surface. Asserted on git BLOBS rather than on the report:
-     * a phase that reported zero while writing a `memhtml-confidence` stamp would pass a count assertion,
-     * and the whole claim of the skips is that live work is untouched.
-     *
-     * The comparison names each task FILE explicitly rather than globbing `/tasks/`, because the
-     * integrity phase legitimately generates a `tasks/index.html` listing per directory — a generated
-     * artifact is not a task, and a glob would report the design working as the invariant failing.
-     */
-    const taskFiles = (
-      await cli.json<TaskList>(["task", "list", "--include-archived", "--limit", "500"])
-    ).tasks.map((task) => task.path)
-    // Not vacuous: there are tasks in the tree for the run to have left alone.
-    expect(taskFiles.length).toBeGreaterThan(1)
-
-    const blobsAt = async (commitish: string): Promise<ReadonlyArray<string>> => {
-      const out: Array<string> = []
-      for (const path of taskFiles) {
-        out.push(`${path} ${(await cli.git("rev-parse", `${commitish}:${path}`)).trim()}`)
-      }
-      return out
-    }
-    const before = await blobsAt("HEAD")
-
-    const report = await cli.json<{
-      readonly phases: ReadonlyArray<{ readonly phase: string; readonly status: string }>
-      readonly failedPhases: ReadonlyArray<string>
-    }>(["sleep", "run", "--date", DATE])
-    expect(report.phases).toHaveLength(SLEEP_PHASES.length)
-    expect(report.failedPhases).toEqual([])
-
-    // Every task file's blob is unchanged: no stamp, no link, no confidence rewrite, no move.
-    expect(await blobsAt(`sleep/${DATE}`)).toEqual(before)
-
-    /**
-     * And no derived memory-class rel reached a task's head. `memhtml-part-of` is arc-synthesis' stamp,
-     * `memhtml-laterally-related` is relationship-mining's, `memhtml-about-person` is person-links' — each is a
-     * memory- or person-class edge into a graph a task must never enter.
-     */
-    for (const path of taskFiles) {
-      const html = await cli.git("show", `sleep/${DATE}:${path}`)
-      expect(html).not.toContain("memhtml-part-of")
-      expect(html).not.toContain("memhtml-laterally-related")
-      expect(html).not.toContain("memhtml-about-person")
-    }
-    /**
-     * person-links would mint a `resources/people/<name>.html` — the durable hand-edited identity
-     * surface — out of a to-do item. The assertion is on a person FILE and not on the directory:
-     * `memhtml init` scaffolds `resources/people/.gitkeep`, so a directory check would pass against a
-     * repo that had never run init and fail against every repo that had.
-     */
-    const branchTree = (await cli.git("ls-tree", "-r", "--name-only", `sleep/${DATE}`)).split("\n")
-    expect(
-      branchTree.filter((path) => path.startsWith("resources/people/") && path.endsWith(".html"))
-    ).toEqual([])
-  })
-
   it("8. `memory_search` excludes tasks by default and includes them when named", async () => {
     const query = "target-group migration before the runbook edit"
     const excluded = await cli.json<{
@@ -522,18 +448,6 @@ describe("verification item 2 — the task lifecycle across every plane", () => 
      * head, so a rebuild reading the tree alone must reach the same values — which is what makes the
      * columns a projection rather than state, and `index.db` disposable.
      */
-    const merged = await cli.json<{ readonly indexUpdated?: boolean | undefined }>([
-      "sleep",
-      "merge",
-      `sleep/${DATE}`
-    ])
-    /**
-     * The merge projects the merged commit into the index itself (issue #145), so the incremental
-     * row set compared below describes the merged tree with no second command. Asserted rather than
-     * assumed, because a watermark left at the pre-merge commit would make this test fail for the
-     * watermark rather than for the columns.
-     */
-    expect(merged.indexUpdated).toBe(true)
     const fresh = await cli.json<{ readonly indexFresh: boolean }>(["status"])
     expect(fresh.indexFresh).toBe(true)
     const before = await cli.json<TaskList>([

@@ -61,12 +61,6 @@ Because of the firewall those are a separate query surface rather than a fifth r
 
 ## 8. The consumer that motivates the plane
 
-Trace consolidation is phase 12 of [the sleep pipeline](/internals/the-sleep-pipeline/). Anything an agent learned mid-session and did not explicitly write down is otherwise lost, because the transcripts hold it and the corpus does not.
+A curator distilling sessions into memories is the consumer. Anything an agent learned mid-session and did not explicitly write down is otherwise lost, because the transcripts hold it and the corpus does not. The v1 pipeline ran that distillation as a phase with a sandboxed agent; on this branch it is a curator's job on a `curate/<date>` branch, and the plane below is what it reads.
 
-The phase selects sessions carrying no `trace_consolidations` watermark and hands the agent their `file_path` values. The agent reads the transcripts at their source and distills claims into ordinary memories through the store, copying no transcript text into the corpus. That is why `traces` stores a pointer rather than content.
-
-The distillation has to be checkable, so a candidate must cite at least two verbatim evidence quotes (`apps/consolidator/src/contract.ts:93`), with `MAX_QUOTE_CHARS = 600` so that a quote cannot smuggle in a transcript. Those quotes go into the commit message and nowhere else (`packages/sleep/src/phases/trace-consolidation.ts:158-165`), because a commit message sits outside the corpus, where nothing indexes, chunks, embeds, or retrieves it. The memory body carries the claim, and the commit carries the receipt a reviewer needs in order to judge whether the claim earned its place.
-
-Every cited `sessionId` is checked for membership in the batch that was actually seeded. An invented id fails the turn instead of landing a citation nobody can check (`apps/consolidator/src/contract.ts:133`).
-
-Joining `traces` to `memory_session_links` produces the manifest. With it the consolidator's first move is reading the sessions that touch the memories in question, rather than reading everything. The manifest carries paths, date ranges, and session ids, tied to the memory files they relate to. [The consolidator](/internals/the-consolidator/) is the prompt that reads it.
+Joining `traces` to `memory_session_links` produces the manifest. With it a curator's first move is reading the sessions that touch the memories in question, rather than reading everything. The manifest carries paths, date ranges, and session ids, tied to the memory files they relate to.

@@ -10,15 +10,12 @@
 export type { AgentsDocResult } from "./agents-doc.js"
 export { AGENTS_DOC_PATH, renderAgentsDoc, runAgentsDoc } from "./agents-doc.js"
 export type {
-  ConsolidatorPortShape,
   EmbedderShape,
   ExtractorPortShape,
-  ModelPortShape,
   RetrievalPolicyShape,
   RootsShape
 } from "./api-layer.js"
 export {
-  ConsolidatorPortService,
   DatabaseService,
   Embedder,
   Embeddings,
@@ -29,8 +26,6 @@ export {
   IndexRecorder,
   layerApp,
   layerAppWith,
-  layerConsolidatorFrom,
-  layerConsolidatorPort,
   layerCore,
   layerDatabase,
   layerEmbedder,
@@ -40,21 +35,16 @@ export {
   layerGit,
   layerIndexer,
   layerIndexGit,
-  layerModelFrom,
-  layerModelPort,
   layerRecorder,
   layerRetrieval,
   layerRetrievalPolicy,
   layerRetrievalPolicyFrom,
   layerRoots,
-  layerSleep,
   layerStore,
   ModelClient,
-  ModelPort,
   Retrieval,
   RetrievalPolicy,
   Roots,
-  Sleep,
   Store
 } from "./api-layer.js"
 export { applyPayload, applyText, decodeApply, readStdin } from "./apply.js"
@@ -137,4 +127,4 @@ export {
   sessionStatus,
   type V2Input
 } from "./v2.js"
-export { indexReport, sleepPhases, sleepRunReport } from "./views.js"
+export { indexReport } from "./views.js"

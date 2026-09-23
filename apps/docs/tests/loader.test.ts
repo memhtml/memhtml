@@ -148,14 +148,15 @@ describe("the mutation lock", () => {
   it("adds a row rather than a page when a member joins a tabulated registry", async () => {
     const grown: Registry = {
       ...registry,
-      sleepPhases: [
-        ...registry.sleepPhases,
+      rankArms: [
+        ...registry.rankArms,
         {
-          name: "synthetic-phase",
-          index: registry.sleepPhases.length + 1,
-          commits: true,
-          callsModel: false,
-          blocks: []
+          name: "synthetic-arm",
+          weight: "0.5",
+          needsEmbedding: false,
+          needsState: false,
+          needsQueryTerms: false,
+          doc: "A synthetic arm that exists only in this test."
         }
       ]
     }
@@ -166,10 +167,10 @@ describe("the mutation lock", () => {
 
     expect(after.stored.size).toBe(before.stored.size)
     const rows = (body: string) => body.split("\n").filter((line) => line.startsWith("| ")).length
-    expect(rows(after.stored.get(`${TIER}/sleep-phases`)?.body ?? "")).toBe(
-      rows(before.stored.get(`${TIER}/sleep-phases`)?.body ?? "") + 1
+    expect(rows(after.stored.get(`${TIER}/rrf-arms`)?.body ?? "")).toBe(
+      rows(before.stored.get(`${TIER}/rrf-arms`)?.body ?? "") + 1
     )
-    expect(after.stored.get(`${TIER}/sleep-phases`)?.body).toContain("synthetic-phase")
+    expect(after.stored.get(`${TIER}/rrf-arms`)?.body).toContain("synthetic-arm")
   })
 })
 

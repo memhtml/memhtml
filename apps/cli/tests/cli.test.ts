@@ -215,15 +215,10 @@ describe("manifest", () => {
       "trace index",
       "trace search",
       "trace links",
-      "sleep run",
-      "sleep resume",
-      "sleep review",
-      "sleep merge",
-      "sleep status",
       "serve mcp",
       /**
        * The task family, past design §8's tree: `task` is the 10th memory type and it is
-       * default-excluded from search, dedup, and every sleep phase, so these three commands are the
+       * default-excluded from search and dedup, so these three commands are the
        * only surface the working set has. Pinned as names for the same reason the rest are — a
        * dropped one becomes a surface an agent discovers is missing.
        */
@@ -430,9 +425,8 @@ describe("error envelopes", () => {
       ["task list", ["task", "list", "--detected", "false"], "detected"],
       ["doctor", ["doctor", "--fix", "no"], "fix"],
       ["agents-doc", ["agents-doc", "--check", "0"], "check"],
-      ["sleep run", ["sleep", "run", "--deep", "false"], "deep"],
-      ["sleep run", ["sleep", "run", "--dry-run", "true"], "dry-run"],
-      ["sleep review", ["sleep", "review", "sleep/2026-08-24", "--diff", "1"], "diff"]
+      ["apply", ["apply", "--detect-conflicts", "false"], "detect-conflicts"],
+      ["index rebuild", ["index", "rebuild", "--force", "true"], "force"]
     ] as const
 
     it.each(cases)("refuses it on %s", async (_name, argv, flag) => {

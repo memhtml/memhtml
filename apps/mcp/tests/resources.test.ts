@@ -1,10 +1,6 @@
 import { createHash } from "node:crypto"
-import { mkdir, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
 
 import { correctMemory, type EmbedderShape, layerAppWith, writeMemory } from "@memhtml/cli"
-import { reportFilename } from "@memhtml/sleep"
-import { SLEEP_REPORTS_DIR } from "@memhtml/store"
 import { makeFixtureRepo } from "@memhtml/store/testing"
 import { Effect, Layer } from "effect"
 import { McpSchema, McpServer } from "effect/unstable/ai"
@@ -120,7 +116,6 @@ describe("a resources/read through the real registry", () => {
   /** The correction's own commit, so a read of `correctedPath` at a REAL sha is available. */
   let correctedCommit: string
   /** The run id whose report the fixture staged. */
-  let runId: string
   /** The `uriTemplate` of every template the registry actually published. */
   let templates: ReadonlyArray<string>
 
@@ -180,17 +175,6 @@ describe("a resources/read through the real registry", () => {
     correctedPath = corrected.path
     if (corrected.commitSha === null) throw new Error("the correction committed nothing")
     correctedCommit = corrected.commitSha
-
-    /**
-     * The report file at exactly the path the sleep phase writes it to, named by the producer's own
-     * `reportFilename`. Placed on disk rather than committed, because the resource reads the tree and
-     * a commit would change nothing about the read — but the FILENAME is the point: derive it any
-     * other way here and the test stops being able to fail when the resource looks elsewhere.
-     */
-    runId = "sleep/2026-08-02"
-    const reportPath = join(fixture.root, SLEEP_REPORTS_DIR, reportFilename(runId))
-    await mkdir(dirname(reportPath), { recursive: true })
-    await writeFile(reportPath, "<!doctype html><title>Sleep run sleep/2026-08-02</title>", "utf8")
 
     templates = await run(
       McpServer.McpServer.useSync((server) =>
@@ -272,14 +256,6 @@ describe("a resources/read through the real registry", () => {
     expect([...templates].sort()).toEqual([...RESOURCE_TEMPLATES].sort())
   })
 
-  it("reads a sleep report under the filename the sleep phase writes", async () => {
-    const result = await read(`memhtml://sleep/${runId}`)
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(result.text).toContain("Sleep run sleep/2026-08-02")
-    expect(result.mimeType).toBe("text/html")
-  })
-
   /**
    * The failure discipline, and the three things a client-visible message must and must not carry.
    *
@@ -298,20 +274,6 @@ describe("a resources/read through the real registry", () => {
     expect(result.message).toContain("Try: ")
     expect(result.message).toContain("memory_search")
     // -32602, the code `McpServer` itself returns for a URI naming nothing.
-    expect(result.code).toBe(-32602)
-  })
-
-  it("refuses a missing sleep report without naming a filesystem path", async () => {
-    const result = await read("memhtml://sleep/sleep/1999-01-01")
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    // The report lives under `.memhtml/sleep/`, and the absolute join of it is what a died handler
-    // puts on the wire. Neither the directory nor the temp root may appear.
-    expect(result.message).not.toContain(SLEEP_REPORTS_DIR)
-    expect(result.message).not.toContain("/tmp/")
-    expect(result.message).not.toContain("ENOENT")
-    expect(result.message).toContain("ERR_PATH_NOT_FOUND")
-    expect(result.message).toContain("memory_status")
     expect(result.code).toBe(-32602)
   })
 

@@ -9,7 +9,7 @@ The system keeps two databases, and this page calls them planes. The index plane
 
 Those numbers change on every read. A commit per access bump would be a commit per memory an agent opens.
 
-So `state.db` is gitignored like the index, and unlike the index it cannot be rebuilt from the tree. Its durable copy is an append-only JSONL sidecar, `.memhtml/state/access.jsonl`, which the sleep cycle commits once per run (`packages/store/src/layout.ts:27-31`, `packages/sleep/src/phases/state-export.ts:9-25`).
+So `state.db` is gitignored like the index, and unlike the index it cannot be rebuilt from the tree. Its durable copy is an append-only JSONL sidecar, `.memhtml/state/access.jsonl`, which `memhtml state export` writes for a commit (`packages/store/src/layout.ts:27-31`, `packages/index/src/sidecar.ts`).
 
 | Plane | File                | In git | Rebuildable                     |
 | ----- | ------------------- | ------ | ------------------------------- |
@@ -25,11 +25,11 @@ Figure 1 redraws that table as a circuit, which puts the two recovery paths side
 
 ## 2. The sidecar is byte-stable or it commits nothing
 
-Rows arrive from SQL in path order, floats round to four decimals, keys are written in a fixed order, and an unchanged plane produces an identical file whose commit is empty (`packages/sleep/src/phases/state-export.ts:65`, `packages/sleep/src/phases/state-export.ts:75-78`).
+Rows arrive from SQL in path order, floats round to four decimals, keys are written in a fixed order, and an unchanged plane produces an identical file whose commit is empty (`packages/index/src/sidecar.ts`).
 
 Four decimals is the grid the outcome average already lives on (`packages/domain/src/decay.ts:13`), so a fifth digit would be float noise that changes the file's bytes without changing its meaning. `-0` is normalized to `0`, so two equal planes render identically.
 
-`parseSidecar` (`packages/sleep/src/phases/state-export.ts:97`) skips an unparseable line and counts it rather than failing the import. This is the only durable copy of the plane, and refusing a file that an interrupted write left truncated would turn a partial loss into a total one.
+`parseSidecar` (`packages/index/src/sidecar.ts`) skips an unparseable line and counts it rather than failing the import. This is the only durable copy of the plane, and refusing a file that an interrupted write left truncated would turn a partial loss into a total one.
 
 ## 3. Cross-database references are explicit
 

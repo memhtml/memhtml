@@ -149,13 +149,6 @@ describe("every registry member reaches a page", () => {
     }
   })
 
-  it("lists every sleep phase in execution order", () => {
-    const body = page(`${TIER}/sleep-phases`).body
-    expect(tableRows(body)).toHaveLength(registry.sleepPhases.length)
-    const order = tableRows(body).map((row) => row.split("|")[2]?.trim() ?? "")
-    expect(order).toEqual(registry.sleepPhases.map((phase) => `\`${phase.name}\``))
-  })
-
   it("lists every RRF arm with its weight", () => {
     const body = page(`${TIER}/rrf-arms`).body
     expect(tableRows(body)).toHaveLength(registry.rankArms.length)
@@ -230,7 +223,7 @@ describe("every registry member reaches a page", () => {
 
   it("counts every registry on the overview, and links each page that has one", () => {
     const body = page(TIER).body
-    expect(tableRows(body)).toHaveLength(registry.commands.length + 15)
+    expect(tableRows(body)).toHaveLength(registry.commands.length + 14)
     for (const command of registry.commands) {
       expect(body).toContain(`/memhtml/${TIER}/commands/${commandSlug(command.name)}/`)
     }
@@ -416,11 +409,6 @@ describe("the registries agree with each other", () => {
     const summary = registry.commands.find((command) => command.name === "serve mcp")?.summary ?? ""
     expect(summary).toContain(`${registry.mcpTools.length} tools`)
     expect(summary).toContain(`${registry.mcpResources.length} resources`)
-  })
-
-  it("keeps `sleep run`'s own summary honest about the phase count", () => {
-    const summary = registry.commands.find((command) => command.name === "sleep run")?.summary ?? ""
-    expect(summary).toContain(`${registry.sleepPhases.length} phases`)
   })
 
   it("derives each command's further reading from the guide's own prose", () => {

@@ -295,7 +295,7 @@ export interface StoreShape {
   ) => Effect.Effect<{ readonly commitSha: string | null }, StoreError>
   /** Paths with uncommitted changes. Empty means a clean tree. */
   readonly dirtyPaths: () => Effect.Effect<ReadonlyArray<string>, StoreError>
-  /** Fail with `DirtyTree` unless the working tree is clean. What sleep's preflight calls. */
+  /** Fail with `DirtyTree` unless the working tree is clean. What a curation pass calls before it starts. */
   readonly requireCleanTree: () => Effect.Effect<void, StoreError>
   /**
    * Merge `commitish` into the current branch, surfacing a content conflict as a typed

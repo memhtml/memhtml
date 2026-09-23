@@ -27,10 +27,9 @@ import { ToolFailure } from "./failure.js"
  * literal, and a class schema's decode expects an instance. The failure is a decode error on every
  * call, at runtime, for every tool. This is the one trap the whole surface is arranged around.
  *
- * **Sleep is deliberately absent.** It is a cron/operator action producing a reviewable branch, not
- * something an agent fires mid-conversation: a sleep run rewrites confidence across the corpus,
- * archives memories, and creates a branch a human is expected to read. `memhtml sleep run` is the
- * entry point. A read-only `sleep_status` is the only shape this surface could ever take for it; the
+ * **Curation is deliberately absent.** It is an operator action producing a reviewable branch, not
+ * something an agent fires mid-conversation: a curator archives memories and creates a branch a
+ * human is expected to read. A read-only status is the only shape this surface could ever take for it; the
  * write side stays behind an operator.
  *
  * Every `success` schema is also a `Schema.Struct`, so `tools/list` publishes a JSON Schema the
@@ -55,7 +54,7 @@ import { ToolFailure } from "./failure.js"
  * server would see a successful call carrying a failure payload no MCP client knows to read.
  */
 
-/** The eight types an agent may write. `arc` is system-written by the sleep cycle. */
+/** The eight types an agent may write. `arc` is system-written by a curator. */
 const WritableType = Schema.Literals(WRITABLE_MEMORY_TYPES)
 
 /** The nine MEMORY-class rels. A person or provenance rel cannot be named here. */
@@ -242,22 +241,9 @@ const CONFLICT_GUIDANCE =
   "Archived memories never match, so a superseded claim stops contradicting the claim that superseded it."
 
 /**
- * The `consolidate` opt-in, stated in `memory_write_batch`'s description.
- *
- * A third constant beside the two above and AFTER `CONFLICT_GUIDANCE` in the description, because it
- * is the acting counterpart of the assist: an agent has to know what a conflict IS before "resolve it
- * last-wins" means anything, and stating the flag first would make the propose-only contract above
- * read as contradicted two paragraphs later.
- */
-const CONSOLIDATE_GUIDANCE =
-  'Set consolidate to "last-wins" and the batch RESOLVES frame-key matches instead of only reporting them: for ops sharing a claim slot (the same deterministic frame key the conflict rule uses), the LATER value wins. Exactly one file is written, at the FIRST index that claimed the slot, and every later restatement reports consolidated_into naming that slot instead of a path of its own. ' +
-  "A stored ACTIVE memory occupying a surviving slot is archived with a supersedes link from the new file, its archive path reported on the winner as superseded_path. " +
-  "Off by default, and claims with no frame shape are never consolidated. The guards fail closed, so this only ever acts on claims the conflict rule would have matched."
-
-/**
  * The `detect_near_duplicates` assist, stated in `memory_write_batch`'s description.
  *
- * A fourth constant AFTER the conflict pair, because it is the vector-space sibling of the
+ * A third constant AFTER the conflict guidance, because it is the vector-space sibling of the
  * grammatical rule: an agent has to know what the frame assist catches before "and this one catches
  * the rewordings that rule refuses" means anything. Every clause is something a caller acts on: the
  * distinction from BOTH dedupe and the conflict rule, because the three catch three different
@@ -265,7 +251,7 @@ const CONSOLIDATE_GUIDANCE =
  * geometry and geometry misses polarity; the degraded flag, because an embedding assist has a
  * standing way to be off (MEMHTML_EMBED=off) that a SQL lookup does not, and a null finding under
  * it means "nobody looked"; and the propose-only contract with its reason, so an agent does not
- * hand-roll the merge sleep's dedup phase owns, guards and all.
+ * hand-roll a merge a curator owns, guards and all.
  */
 const NEAR_DUPLICATE_GUIDANCE =
   "Set detect_near_duplicates to true and each per-op result gains a `near_duplicates` list naming what that op's text nearly RESTATES, by embedding cosine at or above 0.92, best match first. " +
@@ -273,7 +259,7 @@ const NEAR_DUPLICATE_GUIDANCE =
   "Each entry carries the other claim's text, the measured similarity, and ONE of path (an ACTIVE stored memory) or batch_index (an EARLIER op in this same call). " +
   "The score is geometry, not judgment: negations and small numeric edits also sit above 0.92, so read the paired claim before folding anything. " +
   "near_duplicates is null when nothing matched, when the flag was absent, on an op that used article_html (the claim is inside your markup and not read until the store renders it), and whenever near_duplicates_degraded is true — that top-level flag means the assist could not run (no embedder bound, or the embed call failed), so null then means UNCHECKED, not unique. " +
-  "THE ASSIST NEVER CHANGES WHAT IS WRITTEN, for detect_conflicts' reason. YOU decide, per finding: keep both, call memory_correct on the named path, or drop the op; left alone, the next sleep run's dedup-merge folds true rewordings under its divergence guards."
+  "THE ASSIST NEVER CHANGES WHAT IS WRITTEN, for detect_conflicts' reason. YOU decide, per finding: keep both, call memory_correct on the named path, or drop the op; left alone, a curator folds true rewordings under the divergence guards."
 
 /**
  * The `facets` contract, stated in the description of every tool that scopes on one.
@@ -449,21 +435,7 @@ const BatchOpResult = Schema.Struct({
         claim: Schema.String
       })
     )
-  ),
-  /**
-   * Set on a batch-internal LOSER under `consolidate: "last-wins"`: a later op with the same frame
-   * key replaced this op's value before anything was written, and the number is the caller-space
-   * index of the op whose position carries the surviving value. Null everywhere else, present like
-   * every field above so a client can tell "not consolidated" from "not reported".
-   */
-  consolidated_into: Schema.NullOr(Count),
-  /**
-   * Set on a WINNER whose write superseded a live stored memory under `consolidate: "last-wins"`:
-   * the loser's ARCHIVE path, where its bytes now live. Null when nothing stored occupied the
-   * slot, and when the supersede degraded (the batch still wrote; the corpus is merely
-   * unconsolidated).
-   */
-  superseded_path: Schema.NullOr(Schema.String)
+  )
 })
 
 const MemoryWriteBatch = Tool.make("memory_write_batch", {
@@ -482,15 +454,12 @@ const MemoryWriteBatch = Tool.make("memory_write_batch", {
     " " +
     BATCH_GUIDANCE +
     /**
-     * LAST, after the workflow, and consolidation after the conflict rule it acts on. The guidance
-     * states what a batch IS and an agent needs that before an optional assist over it means anything;
-     * leading with the conflict rule would explain a field on a result shape the reader has not been
-     * told about yet.
+     * LAST, after the workflow. The guidance states what a batch IS and an agent needs that before an
+     * optional assist over it means anything; leading with the conflict rule would explain a field on
+     * a result shape the reader has not been told about yet.
      */
     " " +
     CONFLICT_GUIDANCE +
-    " " +
-    CONSOLIDATE_GUIDANCE +
     " " +
     NEAR_DUPLICATE_GUIDANCE,
   dependencies: WRITES(),
@@ -511,12 +480,6 @@ const MemoryWriteBatch = Tool.make("memory_write_batch", {
      */
     detect_near_duplicates: Optional(Schema.Boolean),
     /**
-     * Opt-in deterministic last-wins consolidation over the conflict rule's own frame keys. A
-     * `Literals` of one value rather than a boolean, so the vocabulary can widen (a `first-wins`, a
-     * semantic mode) without a shipped `true` changing meaning under a caller.
-     */
-    consolidate: Optional(Schema.Literals(["last-wins"])),
-    /**
      * Batch-level provenance: the session this call is being made in. An op that names its own wins,
      * because it is the more specific statement about where that one memory came from, which is what
      * lets a batch replay writes from an earlier session without relabelling them.
@@ -534,9 +497,7 @@ const MemoryWriteBatch = Tool.make("memory_write_batch", {
       written: Count,
       deduped: Count,
       failed: Count,
-      skipped: Count,
-      /** Batch-internal losers under `consolidate: "last-wins"`: neither written nor failed. */
-      consolidated: Count
+      skipped: Count
     }),
     commit_sha: Schema.NullOr(Schema.String),
     /**
@@ -634,8 +595,8 @@ const MemorySearch = Tool.make("memory_search", {
          * The path of the memory that superseded this one, or `null` when nothing has. Non-null
          * only for an archived hit, which reaches a result through `as_of` or
          * `include_archived`, so a point-in-time answer is legible as history. Present and
-         * nullable like `consolidated_into`: a client must be able to tell "not superseded" from
-         * "this build does not report supersession".
+         * nullable like `conflict`: a client must be able to tell "not superseded" from "this build
+         * does not report supersession".
          */
         superseded_by: Schema.NullOr(Schema.String)
       })
@@ -760,7 +721,7 @@ const MemoryLink = Tool.make("memory_link", {
 
 const MemoryNeighbors = Tool.make("memory_neighbors", {
   description:
-    "The memory graph around one path, to at most two hops, in both directions. Includes sleep-mined edges: lateral retrieval is what they are for, and each node's `derived` says which kind of edge reached it. " +
+    "The memory graph around one path, to at most two hops, in both directions. Includes machine-mined edges: lateral retrieval is what they are for, and each node's `derived` says which kind of edge reached it. " +
     "`nodes` holds at most 200 distinct paths, each at its minimal hop. `limit` chooses that ceiling and an ask outside 1..200 is clamped into it rather than refused, the same shape `memory_list` and `trace_search` have; `node_limit` echoes the bound the answer was built under. " +
     "`edges` counts something DIFFERENT and is not a node count: it is the distinct edges the walk enumerated, including edges to paths the node clamp dropped, so it can exceed what the returned nodes account for. " +
     "TWO markers report truncation, because they need different answers: `dropped_node_count` is the paths the walk reached and `limit` turned away, which a larger `limit` returns, while `scan_saturated` is the walk stopping at its own 10000-edge-row cap, which no `limit` recovers — narrow that one with `rels` or `depth: 1` instead.",
@@ -788,7 +749,7 @@ const MemoryNeighbors = Tool.make("memory_neighbors", {
         hop: Count,
         rel: Schema.String,
         /**
-         * True when a SLEEP-MINED edge reaches this node, false when only authored `<link>` edges do.
+         * True when a MACHINE-MINED edge reaches this node, false when only authored `<link>` edges do.
          *
          * The max over every edge that reached the node, not the `rel` field's companion: a node an
          * authored edge and a mined edge both reach is `derived: true`, because the question a caller
@@ -940,7 +901,7 @@ const MemoryReinforce = Tool.make("memory_reinforce", {
 
 const MemoryList = Tool.make("memory_list", {
   description:
-    "Page through the corpus by facet. `next_cursor` is a keyset on the path, so a page stays correct even while a sleep cycle archives files. " +
+    "Page through the corpus by facet. `next_cursor` is a keyset on the path, so a page stays correct even while a curator archives files. " +
     FACET_SCOPE_CONTRACT,
   dependencies: READS(),
   parameters: Schema.Struct({
@@ -1025,7 +986,7 @@ const TraceLinks = Tool.make("trace_links", {
 
 const MemoryStatus = Tool.make("memory_status", {
   description:
-    "Corpus health in one call: HEAD, dirty state, counts by type, edge totals, whether the index describes the current commit, how much of the index the vector arm can see, and when sleep last ran.",
+    "Corpus health in one call: HEAD, dirty state, counts by type, edge totals, whether the index describes the current commit, and how much of the index the vector arm can see.",
   // `RetrievalPolicy` because the status names the coverage floor a search degrades at.
   dependencies: [Store, DatabaseService, RetrievalPolicy],
   /**
@@ -1055,14 +1016,7 @@ const MemoryStatus = Tool.make("memory_status", {
      * number that says how much of the corpus the vector arm can see.
      */
     vector_coverage: Finite,
-    vector_coverage_floor: Finite,
-    last_sleep: Schema.NullOr(
-      Schema.Struct({
-        run_id: Schema.String,
-        status: Schema.String,
-        started_at: Schema.String
-      })
-    )
+    vector_coverage_floor: Finite
   })
 })
 

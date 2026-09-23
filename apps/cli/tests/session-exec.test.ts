@@ -2,14 +2,13 @@ import { createHash } from "node:crypto"
 import { readdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
 
-import { CORPUS_SNAPSHOT_TMPDIR_PREFIX } from "@memhtml/consolidator"
 import type { HeadView, MemoryRecord, OverlayOp } from "@memhtml/contracts"
 import { frameKeyOf } from "@memhtml/domain"
 import { contentHash, parseMemory, renderTemplate } from "@memhtml/html"
 import { Effect } from "effect"
 import { beforeAll, describe, expect, it } from "vitest"
-
 import { CORPUS_MOUNT } from "../src/exec.js"
+import { CORPUS_SNAPSHOT_TMPDIR_PREFIX } from "../src/mount.js"
 import { harvestOps, runSessionExec, type SessionExecReport } from "../src/session-exec.js"
 
 /**

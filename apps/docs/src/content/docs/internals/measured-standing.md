@@ -30,6 +30,6 @@ Both are properties of the shape described in [Packages and dependency direction
 
 ## 4. What gates a change
 
-They do not gate anything. The number that decides whether a change ships is the discrimination gate (`packages/eval/src/discriminate.ts:224`), which runs on every check and inside `memhtml sleep merge`, and which refuses on a single inversion regardless of any aggregate. See [Testing posture](/internals/testing-posture/).
+They do not gate anything. The number that decides whether a change ships is the discrimination gate (`packages/eval/src/discriminate.ts:224`), which runs on every check, and which refuses on a single inversion regardless of any aggregate. See [Testing posture](/internals/testing-posture/).
 
 A benchmark score measures one configuration against a corpus someone else designed. The gate measures whether this retrieval stack can still tell a fact from its own negation, and only the gate can fail a build.

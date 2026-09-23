@@ -97,7 +97,7 @@ describe("the write path, end to end", () => {
      * The operator surface admits `arc` — curated import and deliberately authored rules — while
      * `memory_write`'s schema keeps refusing it (pinned in apps/mcp/tests/tools.test.ts). The
      * placement half needs no new rule: `placementFor` already routes an arc to `areas/arcs/`, the
-     * same path the sleep phases use, so this asserts the whole door end to end: decode, placement,
+     * same path every writer uses, so this asserts the whole door end to end: decode, placement,
      * commit, index, and the `list --type arc` page that reads the projection back.
      */
     const written = await cli.json<Written>([
@@ -936,7 +936,7 @@ describe("the entity scope and the two-hop chain", () => {
  * `memhtml neighbors` reports real edges, not aggregates that no edge holds.
  *
  * Its own fixture repo, because the graph shape is the whole subject: one node reachable on TWO
- * paths at different hops under different rels, plus one sleep-mined edge. The suite above only
+ * paths at different hops under different rels, plus one machine-mined edge. The suite above only
  * ever grows single-path neighborhoods, which is exactly the shape under which the two bugs pinned
  * here are invisible.
  */
@@ -988,7 +988,7 @@ describe("neighbors reports the edge at the minimal hop, and marks mined edges",
       "One hop as supersedes, two hops as contradicts."
     )
     paths.middle = await write("The detour node", "The hop-2 path runs through this memory.")
-    paths.mined = await write("The sleep-mined neighbor", "Only a derived edge reaches this one.")
+    paths.mined = await write("The machine-mined neighbor", "Only a derived edge reaches this one.")
 
     /**
      * The authored triangle. `contradicts` sorts before `supersedes`, which is what makes the
@@ -1000,7 +1000,7 @@ describe("neighbors reports the edge at the minimal hop, and marks mined edges",
     await cli.json(["link", paths.middle, "contradicts", paths.twice])
 
     // The derived edge lives only in the index — that is what `derived` MEANS — so it is seeded
-    // where the sleep cycle writes it, not through a CLI door.
+    // where a miner writes it, not through a CLI door.
     await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
@@ -1289,75 +1289,4 @@ describe("one provenance triple, threaded through write, read, and correct", () 
       expect(link.turnUuid, link.linkKind).toBe(TURN)
     }
   })
-})
-
-/**
- * A sleep run that did not do its work exits non-zero.
- *
- * `@memhtml/sleep` types `run` and `resume` with error channel `never` on purpose — a failed phase is a
- * normal terminal state with a report row — so the report is a SUCCESS envelope. Nothing here changes
- * that; what changes is the process's own answer, because a cron that checks only the exit code saw
- * success for a run that entered no branch and committed nothing.
- */
-describe("sleep run exit codes", () => {
-  let cli: Cli
-
-  beforeAll(async () => {
-    cli = await makeCli()
-  })
-
-  afterAll(async () => {
-    await cli.cleanup()
-  })
-
-  interface SleepReport {
-    readonly runId: string
-    readonly baseSha: string
-    readonly headSha: string
-    readonly failedPhases: ReadonlyArray<string>
-    readonly phases: ReadonlyArray<{ readonly phase: string; readonly status: string }>
-    readonly commits: ReadonlyArray<string>
-  }
-
-  it("exits 1 on an aborted run, with the report intact", async () => {
-    /**
-     * `resume` of a run id nothing recorded is the reachable abort: no run row, so the whole phase list
-     * comes back `failed` with one shared reason, `headSha === baseSha`, and no commits. The abort
-     * exists so a run that cannot enter its own branch never commits to `main`, and reporting it at
-     * exit 0 gave that back to any caller that only checks the code.
-     *
-     * The envelope shape is unchanged — a success `sleep.report` carrying every failed phase — because
-     * the failures ARE the data and a failure envelope cannot carry them.
-     *
-     * (Mutation: making the arm return the report with no exit code, so `run` defaults it to EXIT_OK,
-     * turns this into `expected 0 to be 1`.)
-     */
-    const result = await cli.run(["sleep", "resume", "sleep/2020-01-01"])
-    expect(result.exitCode).toBe(EXIT_RUNTIME)
-    const body = JSON.parse(result.stdout) as { type: string; data: SleepReport }
-    expect(body.type).toBe("sleep.report")
-    expect(body.data.failedPhases.length).toBeGreaterThan(0)
-    expect(body.data.commits).toEqual([])
-    expect(body.data.phases.every((phase) => phase.status === "failed")).toBe(true)
-  }, 120_000)
-
-  it("exits 0 when every selected phase lands, so the code is conditional", async () => {
-    /**
-     * The other side of the boundary, and it is what makes the case above an assertion about
-     * `failedPhases` rather than about the command. Two deterministic phases under `--dry-run`: no
-     * model is bound in this harness, and neither of these needs one.
-     */
-    const result = await cli.run([
-      "sleep",
-      "run",
-      "--date",
-      "2026-08-20",
-      "--phases",
-      "confidence-decay,integrity",
-      "--dry-run"
-    ])
-    const body = JSON.parse(result.stdout) as { type: string; data: SleepReport }
-    expect(body.data.failedPhases).toEqual([])
-    expect(result.exitCode).toBe(EXIT_OK)
-  }, 120_000)
 })

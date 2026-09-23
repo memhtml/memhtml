@@ -2,18 +2,18 @@
 
 [![check](https://github.com/memhtml/memhtml/actions/workflows/check.yml/badge.svg)](https://github.com/memhtml/memhtml/actions/workflows/check.yml) [![security](https://github.com/memhtml/memhtml/actions/workflows/security.yml/badge.svg)](https://github.com/memhtml/memhtml/actions/workflows/security.yml) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/memhtml/memhtml/badge)](https://scorecard.dev/viewer/?uri=github.com/memhtml/memhtml) [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-memhtml stores an agent's long-term memory as a git repository of semantic HTML5 files, one fact per file. A rebuildable SQLite index sits over that tree, retrieval fuses four ranking arms, and a seventeen-phase curation pipeline commits its work to a branch a human reviews before it lands.
+memhtml stores an agent's long-term memory as a git repository of semantic HTML5 files, one fact per file. A rebuildable SQLite index sits over that tree, retrieval fuses four ranking arms, and curation runs as a session on a branch a human reviews before it lands.
 
 ## Install
 
-One package carries the whole system — the CLI, code mode, the sleep cycle, the trace indexer, and the MCP server — and installs two binaries, `memhtml` and `memhtml-mcp`. Node 24 or newer.
+One package carries the whole system — the CLI, code mode, the trace indexer, and the MCP server — and installs two binaries, `memhtml` and `memhtml-mcp`. Node 24 or newer.
 
 ```bash
 npm i -g memhtml       # or: pnpm add -g memhtml, bun add -g memhtml
 npx memhtml manifest   # every command, flag, and error code, without installing anything
 ```
 
-Point it at a corpus with `MEMHTML_ROOT` (default `~/memhtml`), and at your transcripts with `MEMHTML_TRACE_ROOT` (default `~/.claude`). Reading and writing memories needs no credentials; embeddings and the sleep cycle's model calls use Bedrock through the default AWS credential chain, and `MEMHTML_EMBED=off` / `MEMHTML_LLM=off` turn both off.
+Point it at a corpus with `MEMHTML_ROOT` (default `~/memhtml`), and at your transcripts with `MEMHTML_TRACE_ROOT` (default `~/.claude`). Reading and writing memories needs no credentials; embeddings and write-time entity extraction use Bedrock through the default AWS credential chain, and `MEMHTML_EMBED=off` / `MEMHTML_LLM=off` turn both off.
 
 To register the MCP server with a coding agent, use `memhtml integrations install` in the next section, which writes the entry for you.
 
@@ -22,7 +22,7 @@ memhtml init                                  # scaffold $MEMHTML_ROOT: git init
 memhtml write --title "WAL admits one writer and many readers" --type semantic \
   --claim "A CLI command and a running memhtml serve mcp share one index.db."
 memhtml search "one writer many readers"      # FTS + vector + recency + salience, fused with RRF
-memhtml serve mcp                             # the same store over stdio: 15 tools, 3 resources
+memhtml serve mcp                             # the same store over stdio: 15 tools, 2 resources
 ```
 
 `memhtml manifest` (or a bare `memhtml`) answers with every command, flag, response type, and error code the binary accepts, and it answers on a machine with no repo, no database, and no credentials. Every command writes exactly one JSON envelope to stdout (the one exception is `memhtml help` on a terminal, which writes Markdown), logs go to stderr, and the exit code is 0 for success, 2 for a usage error, 1 for a runtime failure. `AGENTS.md` is generated from the same table that drives parsing, so the doc cannot drift from the binary.
@@ -44,7 +44,7 @@ memhtml integrations install --dry-run        # what it would write, and the ren
 | Cursor      | `~/.cursor/mcp.json` entry, `sessionStart` in `~/.cursor/hooks.json`, a skill; with `--project`, `.cursor/rules/memhtml.mdc` | restart for the MCP entry                 |
 | OpenCode    | `mcp.memhtml` in `opencode.json`, a generated plugin, a block in `AGENTS.md`, a skill                                        | restart, plugins load at startup          |
 
-A hook reads the host's payload on stdin, runs recall or transcript indexing under a hard time bound, and prints the host's own protocol, so the agent starts a session and each prompt with the memories that matter. No hook writes a memory: memhtml is single-writer, and distilling a transcript into a durable fact belongs to `memhtml sleep run` on a reviewable branch. Any failure inside a hook prints nothing and exits 0, so a hook can never block a turn.
+A hook reads the host's payload on stdin, runs recall or transcript indexing under a hard time bound, and prints the host's own protocol, so the agent starts a session and each prompt with the memories that matter. No hook writes a memory: memhtml is single-writer, and distilling a transcript into a durable fact belongs to a curator on a reviewable branch. Any failure inside a hook prints nothing and exits 0, so a hook can never block a turn.
 
 ```bash
 memhtml integrations doctor     # binary path and version, store root, MCP entry, hooks, block, skill, live handshake
@@ -119,63 +119,63 @@ A memory an agent can be trusted with has to be reviewable, diffable, and recove
 
 - A correction is a commit. `memhtml correct` writes the new file and archives the old one in one commit, so an interrupted run cannot leave two live memories contradicting each other.
 - A batch is a commit. `memhtml apply` (JSONL ops) and `memory_write_batch` (MCP) stage N files, make one commit, and reindex once. The batch is atomic by default, per-op results come back in input order, and a duplicate succeeds with `deduped: true` and the existing path.
-- A curation run is a branch. `memhtml sleep run` walks the phases of `SLEEP_PHASES` — seventeen as of v0.6.0 — and commits each one's work on its own, so a human reads the curation one phase-shaped diff at a time, and `memhtml sleep merge` fast-forwards `main` only after a quality gate that can refuse.
+- Curation is a branch. A curator works as a session on a `curate/<date>` branch and lands through the same commit gate as any other session, so a human reads the curation as commits on a branch before `main` moves.
 
 ## Who does what
 
-Three actors share one tree. The agent writes facts, and it resolves only the conflicts it found itself. Sleep curates on a branch when a caller fires it, and it detects conflicts without resolving them. The human owns the gate and every one-way door.
+Three actors share one tree. The agent writes facts, and it resolves only the conflicts it found itself. The curator works on a branch when a caller starts one, and it detects conflicts without resolving them. The human owns the gate and every one-way door.
 
 Figure 2 draws the cycle they form. A screen reader reads its box characters as noise, so the paragraph beneath the figure carries the same content in words.
 
 <!-- dprint-ignore-start -->
 <!-- figure:three-actors -->
 ```text
-          +----------+
-          |the agent |
-          |          |
-          +----------+
-                |
-             writes
-                |
-                v
-            +-------+
-            | main  |
+         +----------+
+         |the agent |
+         |          |
+         +----------+
+              |
+           writes
+              |
+              v
+          +-------+
+          | main  |
+          |       |
+          +-------+
+             |  ^
+             |  +---+
+             |      |
+           reads    |
+             |      |
+             v      |
+  +------------+    |
+  |the curator |    |
+  |            |    |
+  +------------+    |
+         |          |
+         |        merge
+      commits       |
+         |          |
+         v          |
+ +--------------+   |
+ |curate/<date> |   |
+ |              |   |
+ +--------------+   |
             |       |
-            +-------+
-               |  ^
-               |  +----+
-               |       |
-             reads     |
-               |       |
-               v       |
- +-----------------+   |
- |sleep, on demand |   |
- |                 |   |
- +-----------------+   |
-          |            |
-          |          merge
-     15 commits        |
-          |            |
-          v            |
-   +-------------+     |
-   |sleep/<date> |     |
-   |             |     |
-   +-------------+     |
-              |        |
-           review      |
-              |        |
-              |   +----+
-              |   |
-              v   |
-          +------------+
-          | the human  |
-          |            |
-          +------------+
+         review     |
+            |       |
+            |    +--+
+            |    |
+            v    |
+        +------------+
+        | the human  |
+        |            |
+        +------------+
 ```
 <!-- /figure:three-actors -->
 <!-- dprint-ignore-end -->
 
-**Figure 2: the three actors form a cycle through `main`, and only one of them may settle a contradiction.** Reading top to bottom: the agent writes to `main` at any hour, one fact per file. Sleep reads `main` when it runs and puts its fifteen commits on a `sleep/<date>` branch, leaving `main` untouched. Those phases deduplicate, resolve entities, decay confidence, compress, and synthesize arcs, and they flag a contradiction without choosing a winner. The human reviews that branch and merges, which returns the cycle to `main` and to the agent. The two heavy-bordered boxes are the actors outside the system, and `main` and the branch are double-bordered because they are the system of record.
+**Figure 2: the three actors form a cycle through `main`, and only one of them may settle a contradiction.** Reading top to bottom: the agent writes to `main` at any hour, one fact per file. The curator reads `main` when it runs and puts its commits on a `curate/<date>` branch, leaving `main` untouched. Those commits deduplicate, resolve entities, decay confidence, compress, and synthesize arcs, and they flag a contradiction without choosing a winner. The human reviews that branch and merges, which returns the cycle to `main` and to the agent. The two heavy-bordered boxes are the actors outside the system, and `main` and the branch are double-bordered because they are the system of record.
 
 ## The file format
 
@@ -199,8 +199,8 @@ The single `<mark>` is the claim. It becomes the gist every listing shows, and i
 Three doors, all supported, all landing in the same tree:
 
 1. The CLI. `memhtml write` takes one memory. Give it `--claim` plus `--body` and the template owns the markup; give it `--article-html` and you own the markup, with the format check refusing violations before anything is written. `memhtml apply` takes many: one JSONL op per line, every op validated for shape before any of them executes, then one commit and one index pass.
-2. The MCP server. `memhtml serve mcp` speaks stdio and exposes 15 tools and 3 resources over the same repo: write, read, search, recall, correct, link, archive, batch writes, and trace search. A CLI command and a running server share one store, because WAL admits one writer and any number of readers, and a contended write retries on `SQLITE_BUSY` (see `RUNBOOK.md`, section 4).
-3. Your file tools. The tree is the system of record, so a hand-written file is as real as one the CLI wrote. You take on what the write path would have done: format validity (`memhtml doctor`), path choice, dedup, and the commit. Sleep refuses to start on a dirty tree.
+2. The MCP server. `memhtml serve mcp` speaks stdio and exposes 15 tools and 2 resources over the same repo: write, read, search, recall, correct, link, archive, batch writes, and trace search. A CLI command and a running server share one store, because WAL admits one writer and any number of readers, and a contended write retries on `SQLITE_BUSY` (see `RUNBOOK.md`, section 4).
+3. Your file tools. The tree is the system of record, so a hand-written file is as real as one the CLI wrote. You take on what the write path would have done: format validity (`memhtml doctor`), path choice, dedup, and the commit.
 
 Dedup is enforced by the schema: a partial unique index over active files makes a duplicate write impossible to index, so the write returns the existing path with `deduped: true` and creates nothing.
 
@@ -238,7 +238,7 @@ Figure 3 draws that life. A screen reader sounds out its box characters, so read
 <!-- /figure:memory-lifecycle -->
 <!-- dprint-ignore-end -->
 
-**Figure 3: a memory has one entry and three exits, and every one of them is a commit.** A write enters the corpus as a single dedup-checked commit, and the file is then active. It stays active while sleep reinforces or decays its confidence in place. Three things can end that state: `memhtml correct` writes a replacement and archives the original in one commit, which makes it superseded; retention triage scores it into the EVICT band and archives it, which makes it archived; or compress folds it into a synthesized canonical memory and archives it with a `supersedes` link, which makes it compressed. Each of the three exits is a `git mv` into `archive/YYYY/` mirroring the original path, so the file survives all of them and `git log --follow` reads straight through the whole life.
+**Figure 3: a memory has one entry and three exits, and every one of them is a commit.** A write enters the corpus as a single dedup-checked commit, and the file is then active. It stays active while curation reinforces or decays its confidence in place. Three things can end that state: `memhtml correct` writes a replacement and archives the original in one commit, which makes it superseded; a curator scores it into the EVICT band and archives it, which makes it archived; or compress folds it into a synthesized canonical memory and archives it with a `supersedes` link, which makes it compressed. Each of the three exits is a `git mv` into `archive/YYYY/` mirroring the original path, so the file survives all of them and `git log --follow` reads straight through the whole life.
 
 ## Retrieval
 
@@ -253,7 +253,7 @@ Four ranking arms are fused by reciprocal rank fusion (RRF, k=60) inside one SQL
 
 A Bedrock outage narrows retrieval instead of stopping it. Arms that need a query vector are dropped before the statement is assembled, the response carries `degraded: true`, and the remaining arms answer.
 
-Salience counts the opens a caller chose. `memhtml read` and `memory_read` of a named path bump the access plane; a path that `memhtml search` or `memhtml recall` merely returned does not, and neither does a sleep phase. Bumping on a hit would make today's top five rank higher tomorrow for having been listed, while the memory that should displace them never gets a first bump. `memhtml reinforce` is the explicit outcome channel, and it moves the same exponentially weighted moving average. The arm also stays out of the way of a `task` row and a `resources/people/` reference record: both are reached by predicate and by key, and salience there would reward a stale task and decay a person's identity.
+Salience counts the opens a caller chose. `memhtml read` and `memory_read` of a named path bump the access plane; a path that `memhtml search` or `memhtml recall` merely returned does not, and neither does a curation pass. Bumping on a hit would make today's top five rank higher tomorrow for having been listed, while the memory that should displace them never gets a first bump. `memhtml reinforce` is the explicit outcome channel, and it moves the same exponentially weighted moving average. The arm also stays out of the way of a `task` row and a `resources/people/` reference record: both are reached by predicate and by key, and salience there would reward a stale task and decay a person's identity.
 
 `memhtml recall` adds a disclosure fold on top. Arcs get their own character envelope, so a summary does not compete with the memories it summarizes. Each fold quotes at most 2 memories per entity name, and everything past the budget collapses to one index line plus a path to drill into.
 
@@ -261,66 +261,7 @@ Salience counts the opens a caller chose. `memhtml read` and `memory_read` of a 
 
 `memhtml eval discriminate` reports the number that says whether retrieval can tell two similar facts apart. Embeddings are weakest on the tokens that carry a fact's polarity: "drain the VIP before reverting" and "do not drain the VIP before reverting" sit above 0.99 cosine similarity while asserting opposite things. So the gate derives every control from the probe's own target by flipping a negation, a number, or a qualifier, which makes each control a high-cosine wrong answer by construction. Every target has to strictly outrank all of its own controls, mean reciprocal rank has to clear 0.85, and one inversion fails the run.
 
-Two places run it. `pnpm check` runs it, and CI runs `pnpm check`. `memhtml sleep merge` runs it a second time, so a sleep run that degrades retrieval cannot land. Fake-embedder mode is deterministic and needs no credentials. `live` mode is an operator diagnostic, and it reports `skipped: true` when it cannot reach the model, so a skipped gate reads as skipped rather than as green.
-
-## Sleep
-
-`memhtml sleep run` executes the curation phases of `SLEEP_PHASES` — seventeen as of v0.6.0 — on a `sleep/<date>` branch: dedup-merge, entity resolution, edge typing, confidence decay, arc synthesis, retention triage, compress, task detection, integrity, and the rest. Each committing phase makes its own isolated commit with a machine-readable trailer, so `memhtml sleep resume` re-runs only what is missing. Two phases commit nothing by design. `preflight` refreshes the index, and `relationship-mining` writes derived edges to the index alone, because thousands of re-derivable edges would bury every real diff. `trace-consolidation` hands unread session transcripts to an agent and lands each distilled memory as its own commit, one per memory, so a reviewer reads one claim at a time. A failed phase leaves the phases before it committed, and the run exits 1 while still writing its full per-phase report, so a cron line reading only the exit code sees that the curation did not happen.
-
-`preflight` is the one phase whose failure stops everything after it. Its three preconditions — a clean tree, a matching embed model, an index a rebuild did not leave half-populated — are what every later phase reads, so each of its failures makes a later commit wrong rather than merely unhelpful, and per-phase isolation is no defense against a corrupt night with a green report. `--deep` adds the deep-sleep cycle: a lower mining band, grouping by shared entity, re-filing inbox singletons, and `compress` iterated until a pass folds nothing, with `--max-llm-calls` capping the extra model spend.
-
-A run also opens TASKS, for work the corpus records and nobody opened. `task-detection` reads the recent memories in batches and asks which of them carry a commitment nobody closed, quoting the sentence it found; three other phases do the same for the decisions they decline to make — an alias pair too close to ignore and too far to merge, a near-duplicate pair the divergence veto refused, a contradiction seen only once. Every detected task is authored `agent:sleep`, cites its evidence verbatim, is capped at ten a night across all four detectors, and closes itself when its finding stops appearing. A detection is a proposal for a human, never a fact the corpus asserts.
-
-`memhtml sleep review` classifies every touched file. `memhtml sleep merge` re-runs the discrimination gate and refuses to move `main` on a regression. Detecting a conflict happens on every run and is automatic; resolving one stays with the writer or a human, because choosing a winner is a one-way door.
-
-Figure 4 draws the branch and the gate. A screen reader sounds out its box characters, so read the paragraph beneath the figure, which carries the same content in words.
-
-<!-- dprint-ignore-start -->
-<!-- figure:sleep-branch -->
-```text
-            +-------+
-            | main  |
-            |       |
-            +-------+
-                |
-             branch
-                |
-                v
-         +-------------+
-         |sleep/<date> |
-         |             |
-         +-------------+
-                |
-                v
-       +-----------------+
-       |seventeen phases |
-       |                 |
-       +-----------------+
-                |
-             review
-                |
-                v
-           +---------+
-           |the gate |
-           |         |
-           +---------+
-              |   |
-        +-----+   +-----+
-        |               |
-     passes          refuses
-        |               |
-        v               v
- +-----------+   +-------------+
- |main moves |   |main unmoved |
- |           |   |             |
- +-----------+   +-------------+
-```
-<!-- /figure:sleep-branch -->
-<!-- dprint-ignore-end -->
-
-**Figure 4: `main` moves only after a gate that can refuse says so.** A run branches `main` into `sleep/<date>` before any phase executes and walks all seventeen phases there, fifteen of them committing, each on its own, with `preflight` and `relationship-mining` committing nothing by design. Then it submits the branch for review. That review re-runs the discrimination gate and has two outcomes, both drawn: it passes and `main` moves, or it refuses and `main` stays exactly where it was. Those are the only two outcomes, and neither needs a rollback, because nothing on `main` ever moved. The abort is `git branch -D`.
-
-`git branch -D` discards everything the run decided, including its writes into `state.db`, which git cannot reproduce. A phase that needs one records it as a mark in a committed ledger, `.memhtml/sleep/<run-id>.pending.jsonl`, instead of performing it, and `memhtml sleep merge` applies the ledger after the fast-forward succeeds — so a discarded branch takes its pending consolidation watermarks, edge promotions, and entity promotions with it. That matters most for the consolidation watermark: it is an anti-join, so a session it covers is never selected again, and a row written during a night that was thrown away would assert a transcript was handled after the memory was dropped. The merge reports `marksPending` beside `marksApplied`, and a shortfall between them means those sessions are simply re-read next cycle.
+One place runs it: `pnpm check`, which CI runs. Fake-embedder mode is deterministic and needs no credentials. `live` mode is an operator diagnostic, and it reports `skipped: true` when it cannot reach the model, so a skipped gate reads as skipped rather than as green.
 
 ## Code-mode
 
@@ -341,7 +282,7 @@ Read the cross-judge numbers as reference points rather than as a ranking: the j
 
 ## v2 proof of concept
 
-The `v2-poc` branch holds a proof of concept that changes how the corpus is held and written without changing what a memory file is. The corpus becomes a value: one head process holds a parsed, immutable version in persistent maps, each session works over that version plus its own overlay of operations, and a mechanical commit path (validate, check disjointness, check frame keys, write objects, compare-and-swap the ref) lands the overlay as one commit. Conflicts sort into three tiers: git settles path collisions with a rebase, a frame-key match keeps both claims live with a `contradicts` edge, and judgment runs as a curator session on a branch behind the existing gate. Three new packages carry it (`@memhtml/head`, `@memhtml/session`, `@memhtml/snapshot`) plus `session` and `head` CLI commands. Nothing in the v1 write path, sleep pipeline, or MCP server changes on the branch, and the live store isn't migrated. The motivation, the contracts, the commit algorithm, and the explicit non-goals are in `docs/v2-poc.md`; `docs/design.md` section 15 records which v1 decisions it keeps.
+The `v2-poc` branch holds a proof of concept that changes how the corpus is held and written without changing what a memory file is. The corpus becomes a value: one head process holds a parsed, immutable version in persistent maps, each session works over that version plus its own overlay of operations, and a mechanical commit path (validate, check disjointness, check frame keys, write objects, compare-and-swap the ref) lands the overlay as one commit. Conflicts sort into three tiers: git settles path collisions with a rebase, a frame-key match keeps both claims live with a `contradicts` edge, and judgment runs as a curator session on a branch behind the existing gate. Three new packages carry it (`@memhtml/head`, `@memhtml/session`, `@memhtml/snapshot`) plus `session` and `head` CLI commands. Nothing in the v1 write path or MCP server changes on the branch, and the live store isn't migrated. The v1 sleep pipeline and its consolidator are removed from this branch, so curation is the curator session described above. The motivation, the contracts, the commit algorithm, and the explicit non-goals are in `docs/v2-poc.md`; `docs/design.md` section 15 records which v1 decisions it keeps.
 
 ## Layout
 
@@ -349,7 +290,7 @@ The `v2-poc` branch holds a proof of concept that changes how the corpus is held
 $MEMHTML_ROOT/                        # its own git repo, one global memory store
   projects/<workspace-slug>/      # a workspace IS a directory. There is no workspaces table.
   areas/<area-slug>/              # ongoing responsibilities
-  areas/arcs/                     # behavioral arcs (system-written by sleep only)
+  areas/arcs/                     # behavioral arcs (written by curation only)
   areas/inbox/                    # where an unplaceable memory lands
   resources/<topic>/
   resources/people/<person>.html  # the person plane
@@ -358,7 +299,6 @@ $MEMHTML_ROOT/                        # its own git repo, one global memory stor
     index.db                      # gitignored, rebuildable from the tree
     state.db                      # gitignored, NOT rebuildable from git
     state/access.jsonl            # committed sidecar: the state plane's only durable copy
-    sleep/<run-id>.html           # committed sleep reports
   sitemap.xml + per-dir index.html  # generated by `memhtml publish`, committed
 ```
 
@@ -368,21 +308,19 @@ The layering is strict and TypeScript project references enforce it. `@memhtml/c
 
 None of them is published. Every workspace package is `private`, and `mise run package:assemble` bundles the libraries and the binary-bearing apps into the single `memhtml` package that carries the two binaries — the docs site and the integration-test harness stay outside the bundle (`tsdown.config.ts` names the exact set). The table below is a map of the source, not a list of things to install. `RELEASING.md` covers how the artifact is built and what must stay outside the bundle.
 
-| Package                 | What it owns                                                                                                        |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `@memhtml/contracts`    | Schemas, the closed vocabularies, errors, path algebra. Zero I/O.                                                   |
-| `@memhtml/domain`       | Pure math: retention, decay, RRF, MMR, PageRank, the anti-merge guards.                                             |
-| `@memhtml/html`         | The memory file format: parse, serialize, hash, surgical head editors.                                              |
-| `@memhtml/store`        | The git-backed file store. One commit per operation, typed conflicts.                                               |
-| `@memhtml/index`        | SQLite schema, the git-driven indexer, four-arm RRF retrieval, the state plane.                                     |
-| `@memhtml/traces`       | Streaming JSONL parser over `~/.claude`, with a size+mtime+offset watermark.                                        |
-| `@memhtml/sleep`        | The curation phases of `SLEEP_PHASES`, each an isolated commit.                                                     |
-| `@memhtml/llm`          | Bedrock: Cohere embeddings and forced-tool structured output.                                                       |
-| `@memhtml/eval`         | The fixture corpus generator and the refusable discrimination gate.                                                 |
-| `@memhtml/cli`          | The `memhtml` binary, the envelope contract, and the one composition root.                                          |
-| `@memhtml/mcp`          | The `memhtml-mcp` stdio server: 15 tools, 3 resources.                                                              |
-| `@memhtml/consolidator` | The agent that distills candidate memories from raw transcripts: an AI SDK tool loop over bounded transcript tools. |
-| `@memhtml/docs`         | The documentation site.                                                                                             |
+| Package              | What it owns                                                                    |
+| -------------------- | ------------------------------------------------------------------------------- |
+| `@memhtml/contracts` | Schemas, the closed vocabularies, errors, path algebra. Zero I/O.               |
+| `@memhtml/domain`    | Pure math: retention, decay, RRF, MMR, PageRank, the anti-merge guards.         |
+| `@memhtml/html`      | The memory file format: parse, serialize, hash, surgical head editors.          |
+| `@memhtml/store`     | The git-backed file store. One commit per operation, typed conflicts.           |
+| `@memhtml/index`     | SQLite schema, the git-driven indexer, four-arm RRF retrieval, the state plane. |
+| `@memhtml/traces`    | Streaming JSONL parser over `~/.claude`, with a size+mtime+offset watermark.    |
+| `@memhtml/llm`       | Bedrock: Cohere embeddings and forced-tool structured output.                   |
+| `@memhtml/eval`      | The fixture corpus generator and the refusable discrimination gate.             |
+| `@memhtml/cli`       | The `memhtml` binary, the envelope contract, and the one composition root.      |
+| `@memhtml/mcp`       | The `memhtml-mcp` stdio server: 15 tools, 2 resources.                          |
+| `@memhtml/docs`      | The documentation site.                                                         |
 
 ## Development
 

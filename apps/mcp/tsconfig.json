@@ -30,9 +30,6 @@
       "path": "../../packages/traces"
     },
     {
-      "path": "../../packages/sleep"
-    },
-    {
       "path": "../../packages/llm"
     },
     {

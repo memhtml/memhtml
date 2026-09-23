@@ -3,7 +3,7 @@ title: Wire up the MCP server
 description: Run memhtml serve mcp over stdio, see the tools and resources a client gets, and call one by hand.
 ---
 
-`memhtml serve mcp` exposes the same store over the Model Context Protocol on stdio: fifteen tools and three resources (`apps/mcp/src/tools.ts`). This tutorial starts the server, lists what a client sees, calls a tool by hand so you can verify the wiring without a client, and then configures a client.
+`memhtml serve mcp` exposes the same store over the Model Context Protocol on stdio: fifteen tools and two resources (`apps/mcp/src/tools.ts`). This tutorial starts the server, lists what a client sees, calls a tool by hand so you can verify the wiring without a client, and then configures a client.
 
 You need a store with something in it, so [write a memory](/learn/tutorial/first-memory/) first.
 
@@ -76,17 +76,16 @@ Three resource templates come with them:
       "description": "One memory's title, claim, and body text, by repo-root-relative path. For showing a human the file behind an answer.",
       "mimeType": "text/plain"
     },
-    { "uriTemplate": "memhtml://sleep/{run-id}", "name": "Sleep run report" },
     { "uriTemplate": "memhtml://at/{commit}/{path}", "name": "Memory file at a commit" }
   ]
 }
 ```
 
-`memhtml://file/{path}` funnels through the same use case `memory_read` does, so fetching it bumps the access plane: it is a chosen open. `memhtml://sleep/{run-id}` serves one curation run's committed HTML report.
+`memhtml://file/{path}` funnels through the same use case `memory_read` does, so fetching it bumps the access plane: it is a chosen open.
 
 `memhtml://at/{commit}/{path}` is the same read as the first one at a finer grain: the bytes of that path as of that commit, so a citation written today still resolves to what it cited after the memory is corrected, archived, or evicted. It reads the git object rather than the working tree, it refuses a branch name or `HEAD` because a citation must name something that cannot move, and it does not bump the access plane — verifying a receipt is auditing, not choosing. `memory_resolve` is its companion: one answers what was true, the other where the fact went.
 
-Sleep is absent from the tool surface, because it is a cron and operator action that produces a reviewable branch and an agent should not start one mid-conversation. The other operator commands are absent with it: `doctor`, `publish`, `index rebuild`, `sleep merge`, and the discrimination gate all stay on the CLI, so reach for `memhtml` for anything on the operations pages.
+The operator commands are absent from the tool surface: `doctor`, `publish`, `index rebuild`, and the discrimination gate all stay on the CLI, so reach for `memhtml` for anything on the operations pages.
 
 ## Call a tool
 
@@ -175,6 +174,6 @@ When your `memhtml` is a symlink into `~/.local/bin` and the client does not inh
 
 A CLI command and a running server can share one store. The index is WAL SQLite: it admits one writer at a time and any number of concurrent readers, readers never block the writer, a second writer waits rather than failing, and a wait that outlives `busy_timeout` is retried with jittered exponential backoff for up to 20 seconds (`packages/index/src/database.ts`). So running `memhtml write` while a server serves the same store is supported, and so is the every-ten-minutes `index update` cron.
 
-The exception is `memhtml sleep run`, for a git reason rather than a database one. A run holds a checked-out `sleep/<date>` branch, so a concurrent write commits onto that branch and is then either merged as if it were curation or lost when the branch is dropped. Quiesce writes for the duration of a run.
+The exception is a curation session that holds a checked-out `curate/<date>` branch, for a git reason rather than a database one: a concurrent write commits onto that branch and is then either merged as if it were curation or lost when the branch is dropped. Quiesce writes for the duration of one.
 
 [Share one store between a CLI and a server](/learn/operations/share-one-store/) is the operational version of this, with the concurrency probe you can run yourself. [The envelope contract and the tool surface](/internals/the-envelope-contract/) explains why the two surfaces carry the same answers.

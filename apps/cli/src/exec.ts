@@ -297,9 +297,8 @@ export interface ExecInput {
  * network commands at all. Per `Bash.d.ts:80`: "Network commands (curl, wget) are registered when either
  * `fetch` or `network` is provided." `scripts/probe-sandbox-egress.mjs` demonstrates it: `curl` is
  * exit 127 "command not found", and the guest's `fetch` refuses on call with "Network access not
- * configured." `fetch` is a function there, so a `typeof` check on the global proves nothing. Eve
- * passes `dangerouslyAllowFullInternetAccess`, so the consolidator's sandbox does reach the network.
- * Whoever calls `new Bash()` decides egress, so it is decided here, for this runtime, by omission.
+ * configured." `fetch` is a function there, so a `typeof` check on the global proves nothing. Whoever
+ * calls `new Bash()` decides egress, so it is decided here, for this runtime, by omission.
  *
  * ## Two opt-ins, one taken
  *
@@ -317,20 +316,16 @@ export const runExec = (
     /**
      * `just-bash` and the mount helper arrive by dynamic import, and the reason is measured.
      *
-     * `just-bash`'s bundle is ~6 MB across 20 chunks and costs ~160ms to load. `@memhtml/consolidator`'s
-     * barrel re-exports `mount.js`, which imports it statically, and `apps/cli/src/api-layer.ts`
-     * imports that barrel, so today `just-bash` is already on the graph of every `memhtml read`
-     * (20 chunks loaded, traced with `module.registerHooks`). Importing it here as well would add a
-     * second static edge that survives any future fix to that one. This form keeps the exec path's own
-     * cost on the exec path, which is the standing rule for the eve closure (`api-layer.ts`, where
-     * `eve/client` is dynamic for the same reason).
+     * `just-bash`'s bundle is ~6 MB across 20 chunks and costs ~160ms to load. `./mount.js` imports it
+     * statically, so a static import here would put it on the graph of every `memhtml read`. This form
+     * keeps the exec path's own cost on the exec path.
      */
     const { Bash } = yield* Effect.tryPromise({
       try: () => import("just-bash"),
       catch: (cause) => StorageFailure.make({ operation: `exec.sandbox-load: ${String(cause)}` })
     })
     const { mountReadOnlyRoots } = yield* Effect.tryPromise({
-      try: () => import("@memhtml/consolidator"),
+      try: () => import("./mount.js"),
       catch: (cause) => StorageFailure.make({ operation: `exec.mount-load: ${String(cause)}` })
     })
 
@@ -354,7 +349,7 @@ export const runExec = (
     const attempt = (): Effect.Effect<ExecReport, InvalidMemory | StorageFailure> =>
       Effect.gen(function* () {
         /**
-         * The one composition, from `apps/consolidator/src/mount.ts`.
+         * The one composition, from `./mount.ts`.
          *
          * Not re-derived here. That module encodes the `mountPoint: "/"` requirement on the nested
          * `OverlayFs`, which a file count cannot catch, because all three spellings expose the same
@@ -513,7 +508,7 @@ export const execCommand = (input: {
      * would not cover.
      */
     const { pinCorpusSnapshot } = yield* Effect.tryPromise({
-      try: () => import("@memhtml/consolidator"),
+      try: () => import("./mount.js"),
       catch: (cause) => StorageFailure.make({ operation: `exec.mount-load: ${String(cause)}` })
     })
 

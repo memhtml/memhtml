@@ -19,7 +19,7 @@ memhtml doctor
 
 `degraded: true` on a search response means the vector arm did not fire. Search still works: it ranked with three of its four arms, using full-text search, recency, and salience while vector similarity sat out. The `vectorCoverage` field beside it says which of two things happened. A low value, under `MEMHTML_VECTOR_COVERAGE_FLOOR` (default `0.95`), means only that share of the index's chunks carry a vector and search dropped the arm on purpose: a sparse vector plane is worse than none, because the few embedded files collect a vector rank on top of their recency rank and outrank every exact match, and the arm did fire so nothing said `degraded`. That was the shape of a production incident where an `index rebuild --no-embed` followed by incremental updates left 2 percent of chunks embedded, all on the newest files, and every query returned the newest files. Run `memhtml index embed` to backfill the missing vectors, or `memhtml index rebuild --embed`. A high value with `degraded: true` means the query embedder returned nothing: check `MEMHTML_AWS_REGION` and the Bedrock credential. If `MEMHTML_EMBED=off` is set, that is your answer and someone chose it.
 
-`memhtml doctor` reports the same ratio as `vectorCoverage` and flips `healthy` to false under `vectorCoverageLow`, naming the remedy in `vectorCoverageRemedy`. The finding applies only when the vector plane is in use, meaning some vector exists or an embedder is configured. A store run with `MEMHTML_EMBED=off` and no vectors is the deliberate lexical-only configuration and stays healthy. A sleep run warns below the same floor and refuses to run below `0.5`, the way it refuses a mixed vector space.
+`memhtml doctor` reports the same ratio as `vectorCoverage` and flips `healthy` to false under `vectorCoverageLow`, naming the remedy in `vectorCoverageRemedy`. The finding applies only when the vector plane is in use, meaning some vector exists or an embedder is configured. A store run with `MEMHTML_EMBED=off` and no vectors is the deliberate lexical-only configuration and stays healthy.
 
 Quality feels wrong while nothing errors, so run `memhtml eval discriminate`. That command is the discrimination gate: it checks that each probe query ranks its target fact above deliberately wrong versions of the same fact. It tells you whether the ranking stack is broken or the corpus never held the answer, which reading search output cannot. See [check the discrimination gate](/learn/operations/check-the-discrimination-gate/).
 
@@ -37,17 +37,9 @@ A query that errors means something bypassed the sanitizer. Report that as a bug
 
 It should not. The lexical arm tries the query's words as all-required first and, when no memory in scope holds every word, as any-of ranked by bm25 (`packages/index/src/fts-query.ts:97`, `packages/index/src/retrieval.ts:328`). A sentence with one proper noun in it finds that noun's memory even when the rest of the sentence appears nowhere in the corpus. If a long query still misses, the words it shares with the memory are not in that memory's title, gist, or body, which is all the lexical index holds; confirm with `memhtml search "<the one word you are sure of>"`. To demand adjacency rather than any-of, quote the span: `"drain the vip"` matches those three words in that order and nothing else.
 
-## The tree is dirty and sleep refuses
+## The tree is dirty
 
-Preflight calls `requireCleanTree()` (`packages/sleep/src/phases/preflight.ts:22`) and fails with `ERR_DIRTY_TREE`, listing the paths. A phase that read the index while the tree held uncommitted edits would curate a corpus nobody else has. The refusal lands in phase one, so it costs nothing.
-
-```bash
-git -C "$MEMHTML_ROOT" status --porcelain
-memhtml index update --embed      # the indexer DOES read dirty paths
-# then commit or stash, and re-run
-```
-
-The indexer reads the dirty tree so your edit is searchable immediately, and sleep refuses the same tree so curation never runs against a state only you can see.
+The indexer reads the dirty tree so your edit is searchable immediately. A curation session refuses the same tree, so curation never runs against a state only you can see.
 
 ## Empty results with a cause outside the ranker
 

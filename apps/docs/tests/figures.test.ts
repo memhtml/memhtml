@@ -315,7 +315,7 @@ describe("the README's figures come from the same sources", () => {
     const blocks = [...readme.matchAll(/<!-- figure:([a-z-]+) -->\n```text\n/g)].map(
       (match) => match[1]
     )
-    expect(blocks).toEqual(["system-topology", "three-actors", "memory-lifecycle", "sleep-branch"])
+    expect(blocks).toEqual(["system-topology", "three-actors", "memory-lifecycle"])
     for (const name of blocks) {
       expect(sources, `README figure ${name}`).toContain(`${name}.d2`)
     }
@@ -324,7 +324,7 @@ describe("the README's figures come from the same sources", () => {
   it("gives every README figure a caption, since an ASCII figure is opaque to a screen reader", () => {
     const readme = readFileSync(join(repoRoot, "README.md"), "utf8")
     const captions = [...readme.matchAll(/^\*\*Figure (\d+): (.+)$/gm)]
-    expect(captions.map((match) => match[1])).toEqual(["1", "2", "3", "4"])
+    expect(captions.map((match) => match[1])).toEqual(["1", "2", "3"])
     for (const [, number, text] of captions) {
       expect((text ?? "").length, `Figure ${number} caption`).toBeGreaterThan(40)
     }
@@ -342,7 +342,7 @@ describe("the README's figures come from the same sources", () => {
     const markers = lines
       .map((line, at) => ({ line, at }))
       .filter(({ line }) => /^<!-- figure:[a-z-]+ -->$/.test(line))
-    expect(markers).toHaveLength(4)
+    expect(markers).toHaveLength(3)
     markers.forEach(({ at }, index) => {
       const before = lines.slice(Math.max(0, at - 4), at).join(" ")
       expect(before, `lead-in above figure ${index + 1}`).toContain(`Figure ${index + 1}`)
