@@ -46,6 +46,9 @@
     },
     {
       "path": "../../packages/snapshot"
+    },
+    {
+      "path": "../../packages/curator"
     }
   ]
 }

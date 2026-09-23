@@ -69,6 +69,13 @@ const ASSET_CLAIMS: ReadonlyArray<AssetClaim> = [
     from: "apps/cli/guest",
     resolvedIn: "apps/cli/src/exec.ts",
     needle: '"..", "guest", "corpus.mjs"'
+  },
+  /** The curator's system prompt, read at run time so a prompt edit is a prose diff. */
+  {
+    path: "prompts",
+    from: "packages/curator/prompts",
+    resolvedIn: "packages/curator/src/charter.ts",
+    needle: 'new URL("../prompts/charter.md", import.meta.url)'
   }
 ]
 
@@ -97,6 +104,7 @@ const BUNDLED_PACKAGES = [
   "apps/cli",
   "apps/mcp",
   "packages/contracts",
+  "packages/curator",
   "packages/domain",
   "packages/eval",
   "packages/head",

@@ -151,6 +151,7 @@ Write what is durable, one fact per memory. A decision and its reason, a correct
 | `memhtml head search` | <query> | `--limit` | `head.search` |
 | `memhtml head snapshot` | — | `--write` `--read` | `head.snapshot` |
 | `memhtml curate merge` | <ref> | `--into` `--skip-gate` | `curate.merged` |
+| `memhtml curate run` | — | `--ref` `--model` `--max-steps` `--wall-clock-ms` `--dry-run` `--resume` | `curate.run` |
 
 ### `memhtml manifest`
 
@@ -575,6 +576,17 @@ Land a curator branch on its target: refuse unless the ref descends from --into,
 - `--into` (string) — The branch to fast-forward, `refs/heads/` prepended when absent. When HEAD is this branch and the checkout is clean at every path the landing changes, the shared index and working tree move with it (`worktreeSynced: true`); an uncommitted edit at one of those paths is refused (ERR_DIRTY_TREE) and nothing moves. _(default `main`)_
 - `--skip-gate` (boolean) — Land without running the discrimination gate. A deliberate, logged override for a repository without the eval corpus, never a default. A failing gate is ERR_DISCRIMINATION_FAILED with its numbers in the message, and nothing moves. _(default `false`)_
 
+### `memhtml curate run`
+
+Run the curator: start (or resume) a session on curate/<date>, brief a model on the corpus, let it search, read, exec, and propose within a budget, then commit the session to the branch as `memhtml(curate): <report line>`.
+
+- `--ref` (string) — The curator branch, `refs/heads/` prepended when absent. Defaults to curate/<UTC date>. Must sit under curate/: `main`, `refs/heads/main`, any other branch, or a tag is ERR_INVALID_FLAG at exit 2, and the branch HEAD points at is ERR_INVALID_MEMORY at exit 1, so a run can never land on the system of record or move the checkout. The session id is the ref with slashes as dashes (curate-2026-09-23).
+- `--model` (string) — The model: `fake` (a scripted, credential-free curator that plays the dedup rule), `bedrock:<modelId>` (the default AWS credential chain, region from AWS_REGION), or `proxy:<model>` (an OpenAI-compatible proxy at MEMHTML_LLM_BASE_URL, named with the MEMHTML_LLM_MODEL_PREFIX convention). Defaults to MEMHTML_CURATOR_MODEL, else `proxy:<default model>` when MEMHTML_LLM_BASE_URL is set; otherwise the flag is required.
+- `--max-steps` (int) — Model calls the run may make before it is stopped (`stoppedBy: maxSteps`). _(default `40`)_
+- `--wall-clock-ms` (int) — Wall clock for the whole run, model calls and tool executions together (`stoppedBy: wallClock`). _(default `1200000`)_
+- `--dry-run` (boolean) — Run the loop over an in-memory overlay: no session is written, nothing is appended, nothing is committed, and the ref stays where it was. With --resume, the overlay starts from the session's logged ops and the log is left as it was. The payload reports what would have been proposed. _(default `false`)_
+- `--resume` (boolean) — Reuse the existing session on the ref instead of refusing with ERR_STORAGE (session.exists). The head is loaded at the session's own base. A missing session is ERR_STORAGE at exit 1. _(default `false`)_
+
 ## Error codes
 
 - `ERR_UNKNOWN_COMMAND`
@@ -612,6 +624,7 @@ Land a curator branch on its target: refuse unless the ref descends from --into,
 | `MEMHTML_LLM_API_KEY` | — | A bearer token for the LLM proxy, sent as `Authorization: Bearer <key>`. Read only when `MEMHTML_LLM_BASE_URL` is set; absent means the proxy takes no credential. |
 | `MEMHTML_LLM_MODEL_PREFIX` | `bedrock/` | The prefix in front of every Bedrock model id a proxied request carries, so `global.anthropic.claude-opus-5` is asked for as `bedrock/global.anthropic.claude-opus-5`: the LiteLLM convention, which a LiteLLM proxy routes with one `bedrock/*` entry and which keeps the id after the slash exactly what Bedrock wants. Set it to `none` for a proxy that takes bare Bedrock ids. Read only when `MEMHTML_LLM_BASE_URL` is set. |
 | `MEMHTML_LLM_MODEL_MAP` | — | `from=to` pairs, comma-separated, naming single models to the proxy by exact id when the prefix rule does not fit: `cohere.embed-v4:0=cohere-embed-v4`. A mapped id is sent verbatim, without the prefix; every other id follows `MEMHTML_LLM_MODEL_PREFIX`. Read only when `MEMHTML_LLM_BASE_URL` is set. |
+| `MEMHTML_CURATOR_MODEL` | — | The default `--model` for `memhtml curate run`: `fake`, `bedrock:<modelId>`, or `proxy:<model>`. When unset, the command uses `proxy:<default model>` if `MEMHTML_LLM_BASE_URL` is set and otherwise refuses without an explicit `--model`. |
 | `MEMHTML_OPENAI_PROMPT_CACHE` | `off` | How the OpenAI extractor model's chat-completions requests ask Bedrock to treat prompt caching. `off` sends `prompt_cache_options: {mode: "explicit"}` with no breakpoints, which Bedrock documents as no prompt caching and no cache-write charge; `implicit` sends no caching field and leaves the endpoint's default in place. Off by default because Bedrock's implicit mode for GPT-5.6 writes the whole prompt to the cache at 1.25x the input rate on every call that clears the 1,024-token minimum, and the extraction prompts share no prefix long enough to ever be read back. Set `implicit` for an OpenAI-compatible endpoint that rejects the Bedrock-only field. Read on the direct path and the proxy path alike. Any other value fails at startup naming this variable. |
 | `MEMHTML_EMBED` | `on` | `off` disables the embedder entirely. An explicit opt-out, distinct from a missing credential: a missing credential degrades one search at call time, `off` degrades every search, and an operator reading this manifest needs those to be different states. |
 | `MEMHTML_VECTOR_COVERAGE_FLOOR` | `0.95` | The share of indexed chunks that must carry a vector in the configured space, `0` to `1`, before the vector arm is trusted. Below it `search` and `recall` drop the vector arm and report `degraded: true` with `vectorCoverage`, and `doctor` reports `vectorCoverageLow` and `healthy: false`. A sparse plane ranks the few embedded files above every exact match, so it is treated as absent rather than run. Remedy: `memhtml index embed`, or `memhtml index rebuild --embed`. |

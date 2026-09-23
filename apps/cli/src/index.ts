@@ -63,6 +63,22 @@ export {
 } from "./commands.js"
 export { CONFIG_VARS, type ConfigVar, MemhtmlRoot, TraceRoot } from "./config.js"
 export {
+  bindTools,
+  COMMIT_ATTEMPTS,
+  CURATE_REF_PREFIX,
+  CURATE_REF_ROOT,
+  type CurateRunInput,
+  type CurateRunReport,
+  commitSummary,
+  curateRefProblem,
+  curateRun,
+  curateSessionId,
+  defaultCurateRef,
+  memoryOverlay,
+  type OpsByKind,
+  type Overlay
+} from "./curate-run.js"
+export {
   API_VERSION,
   ERROR_CODES,
   type ErrorCode,

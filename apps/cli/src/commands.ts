@@ -1411,6 +1411,65 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       "memhtml curate merge refs/heads/curate/2026-09-23 --into main",
       "memhtml curate merge curate/2026-09-23 --skip-gate"
     ]
+  },
+  /**
+   * The curator memhtml itself owns (`docs/v2-poc.md`, "Curator"): a bounded, model-driven tool
+   * loop over a curator session on `curate/<date>`, committed to that branch and never to `main`.
+   * `curate merge` is the door back, so a curation pass is these two commands in order.
+   */
+  {
+    name: "curate run",
+    summary:
+      "Run the curator: start (or resume) a session on curate/<date>, brief a model on the corpus, let it search, read, exec, and propose within a budget, then commit the session to the branch as `memhtml(curate): <report line>`.",
+    args: [],
+    flags: [
+      {
+        name: "ref",
+        type: "string",
+        description:
+          "The curator branch, `refs/heads/` prepended when absent. Defaults to curate/<UTC date>. Must sit under curate/: `main`, `refs/heads/main`, any other branch, or a tag is ERR_INVALID_FLAG at exit 2, and the branch HEAD points at is ERR_INVALID_MEMORY at exit 1, so a run can never land on the system of record or move the checkout. The session id is the ref with slashes as dashes (curate-2026-09-23)."
+      },
+      {
+        name: "model",
+        type: "string",
+        description:
+          "The model: `fake` (a scripted, credential-free curator that plays the dedup rule), `bedrock:<modelId>` (the default AWS credential chain, region from AWS_REGION), or `proxy:<model>` (an OpenAI-compatible proxy at MEMHTML_LLM_BASE_URL, named with the MEMHTML_LLM_MODEL_PREFIX convention). Defaults to MEMHTML_CURATOR_MODEL, else `proxy:<default model>` when MEMHTML_LLM_BASE_URL is set; otherwise the flag is required."
+      },
+      {
+        name: "max-steps",
+        type: "int",
+        description: "Model calls the run may make before it is stopped (`stoppedBy: maxSteps`).",
+        default: 40
+      },
+      {
+        name: "wall-clock-ms",
+        type: "int",
+        description:
+          "Wall clock for the whole run, model calls and tool executions together (`stoppedBy: wallClock`).",
+        default: 1200000
+      },
+      {
+        name: "dry-run",
+        type: "boolean",
+        description:
+          "Run the loop over an in-memory overlay: no session is written, nothing is appended, nothing is committed, and the ref stays where it was. With --resume, the overlay starts from the session's logged ops and the log is left as it was. The payload reports what would have been proposed.",
+        default: false
+      },
+      {
+        name: "resume",
+        type: "boolean",
+        description:
+          "Reuse the existing session on the ref instead of refusing with ERR_STORAGE (session.exists). The head is loaded at the session's own base. A missing session is ERR_STORAGE at exit 1.",
+        default: false
+      }
+    ],
+    responseTypes: ["curate.run"],
+    examples: [
+      "memhtml curate run --model fake",
+      "memhtml curate run --model bedrock:global.anthropic.claude-opus-5 --max-steps 60",
+      "memhtml curate run --ref curate/2026-09-23 --model proxy:global.anthropic.claude-opus-5 --resume",
+      "memhtml curate run --model fake --dry-run"
+    ]
   }
 ]
 

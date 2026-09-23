@@ -1,7 +1,9 @@
+import { CURATOR_MODEL_VAR, DEFAULT_CURATOR_MODEL_ID, modelSpecOf } from "@memhtml/curator"
 import { DiscriminationFailed, type EvalMode, runDiscrimination } from "@memhtml/eval"
 import { isValidDatetime } from "@memhtml/html"
 import { parseFacetFilters } from "@memhtml/index"
 import { HOOK_EVENTS, HOSTS, isHookEvent, isHostId, renderHookOutput } from "@memhtml/integrations"
+import { PROXY_BASE_URL_VAR } from "@memhtml/llm"
 import { isSessionId } from "@memhtml/session"
 import { initRepo } from "@memhtml/store"
 import { layerTelemetry } from "@memhtml/telemetry"
@@ -18,6 +20,7 @@ import {
   GLOBAL_FLAGS
 } from "./commands.js"
 import { MemhtmlRoot, REFUSE_ENV_ROOT_VAR, refusesEnvRoot } from "./config.js"
+import { curateRefProblem, curateRun } from "./curate-run.js"
 import { doctor } from "./doctor.js"
 import {
   API_VERSION,
@@ -801,6 +804,57 @@ const curateMergeFlags = (parsed: Parsed): Failure | undefined => {
 }
 
 /**
+ * `memhtml curate run`: a `--ref` on the line must name a branch under `refs/heads/curate/`, a
+ * `--model` must have one of the three shapes, and the two budget integers must be positive.
+ *
+ * Each is judged here because it is a property of the argv alone. The ref rule is the command's
+ * contract (a run lands on its own branch and never on `main`, `curate merge` is the only way back),
+ * and `commitSession` fast-forwards whatever ref it is given and syncs the checkout when `HEAD` names
+ * it, so `--ref main` would land model output on the system of record with no gate; `curateRun`
+ * refuses it a second time for a caller that skips the CLI, and also refuses the branch `HEAD` points
+ * at, which needs the repo. Whether a `proxy:` spec has a proxy to go to, and what the model flag
+ * defaults to when absent, both read the environment, so those two are judged in {@link run}'s v2
+ * branch, still at exit 2 and still before any repo opens. A non-positive `--max-steps` would mean
+ * "call the model never" and a non-positive `--wall-clock-ms` "stop before starting", each a run that
+ * reports a stop and did nothing, which reads as success.
+ */
+const curateRunFlags = (parsed: Parsed): Failure | undefined => {
+  if (parsed.command !== "curate run") return undefined
+  const ref = str(parsed, "ref")
+  if (ref !== undefined && ref.trim() !== "") {
+    const problem = curateRefProblem(ref)
+    if (problem !== undefined) {
+      return fail("ERR_INVALID_FLAG", `--ref ${JSON.stringify(ref)}: ${problem}`, [
+        "memhtml curate run --model fake --ref curate/2026-09-23",
+        "memhtml curate merge curate/2026-09-23"
+      ])
+    }
+  }
+  const model = str(parsed, "model")
+  if (model !== undefined) {
+    const spec = modelSpecOf(model)
+    if (!spec.ok) {
+      return fail("ERR_INVALID_FLAG", `--model ${JSON.stringify(model)}: ${spec.reason}`, [
+        "memhtml curate run --model fake",
+        `memhtml curate run --model bedrock:${DEFAULT_CURATOR_MODEL_ID}`
+      ])
+    }
+  }
+  for (const flag of ["max-steps", "wall-clock-ms"]) {
+    if (str(parsed, flag) === undefined) continue
+    const value = int(parsed, flag)
+    if (value === undefined || value <= 0) {
+      return fail(
+        "ERR_INVALID_FLAG",
+        `--${flag} must be a positive integer: a non-positive budget is a run that stops before it starts and reports the stop as an answer`,
+        [`memhtml curate run --model fake --${flag} ${flag === "max-steps" ? "40" : "1200000"}`]
+      )
+    }
+  }
+  return undefined
+}
+
+/**
  * `memhtml head snapshot` takes exactly one of `--write` / `--read`.
  *
  * Two boolean flags rather than one enum flag, so each direction is a word an agent already knows
@@ -1204,6 +1258,9 @@ const validateAgainst = (parsed: Parsed, spec: CommandSpec): Failure | undefined
 
   const curate = curateMergeFlags(parsed)
   if (curate !== undefined) return curate
+
+  const curateRunFailure = curateRunFlags(parsed)
+  if (curateRunFailure !== undefined) return curateRunFailure
 
   // After the unknown-flag loop above, so reaching this with `--as-of` present means this command
   // declares it. The value check therefore needs no command list of its own.
@@ -1776,11 +1833,77 @@ export const run = async (
       sessionOps = decoded.ops
     }
 
+    /**
+     * `curate run`'s model, resolved from the flag, then `MEMHTML_CURATOR_MODEL`, then `proxy:` with
+     * the default model when a proxy is configured. With none of the three the call is refused as a
+     * missing argument naming `--model`, and a `proxy:` spec with no proxy is refused naming the
+     * variable, both at exit 2 before any repo opens. `fake` is always accepted.
+     */
+    let curatorModelSpec = ""
+    if (parsed.command === "curate run") {
+      const proxyConfigured = (process.env[PROXY_BASE_URL_VAR] ?? "").trim() !== ""
+      const fromEnv = (process.env[CURATOR_MODEL_VAR] ?? "").trim()
+      const spec =
+        str(parsed, "model") ??
+        (fromEnv !== "" ? fromEnv : undefined) ??
+        (proxyConfigured ? `proxy:${DEFAULT_CURATOR_MODEL_ID}` : undefined)
+      if (spec === undefined) {
+        return emit(
+          fail(
+            "ERR_MISSING_ARGUMENT",
+            `curate run needs --model: none was given, ${CURATOR_MODEL_VAR} is unset, and ${PROXY_BASE_URL_VAR} is unset, so there is no default model to run`,
+            [
+              "memhtml curate run --model fake",
+              `memhtml curate run --model bedrock:${DEFAULT_CURATOR_MODEL_ID}`
+            ]
+          ),
+          EXIT_USAGE
+        )
+      }
+      const parsedSpec = modelSpecOf(spec)
+      if (!parsedSpec.ok) {
+        return emit(
+          fail(
+            "ERR_INVALID_FLAG",
+            `${CURATOR_MODEL_VAR}=${JSON.stringify(spec)}: ${parsedSpec.reason}`,
+            ["memhtml curate run --model fake"]
+          ),
+          EXIT_USAGE
+        )
+      }
+      if (parsedSpec.spec.kind === "proxy" && !proxyConfigured) {
+        return emit(
+          fail(
+            "ERR_INVALID_FLAG",
+            `--model ${spec} needs ${PROXY_BASE_URL_VAR}, the proxy's origin, in the environment`,
+            [
+              "memhtml curate run --model fake",
+              `memhtml curate run --model bedrock:${DEFAULT_CURATOR_MODEL_ID}`
+            ]
+          ),
+          EXIT_USAGE
+        )
+      }
+      curatorModelSpec = spec
+    }
+
     const override = str(parsed, "repo")
     return Effect.runPromise(
       Effect.gen(function* () {
         const configured = yield* MemhtmlRoot
         const root = override !== undefined && override.trim() !== "" ? override.trim() : configured
+        if (parsed.command === "curate run") {
+          const data = yield* curateRun({
+            root,
+            ref: str(parsed, "ref"),
+            model: curatorModelSpec,
+            maxSteps: int(parsed, "max-steps"),
+            wallClockMs: int(parsed, "wall-clock-ms"),
+            dryRun: bool(parsed, "dry-run", false),
+            resume: bool(parsed, "resume", false)
+          })
+          return ["curate.run", data] as const
+        }
         return yield* runV2(parsed.command, {
           root,
           id: str(parsed, "id") ?? "",

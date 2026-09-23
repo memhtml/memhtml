@@ -12,6 +12,7 @@
   "dependencies": {
     "@memhtml/cli": "workspace:*",
     "@memhtml/contracts": "workspace:*",
+    "@memhtml/curator": "workspace:*",
     "@memhtml/domain": "workspace:*",
     "@memhtml/eval": "workspace:*",
     "@memhtml/head": "workspace:*",

@@ -11,6 +11,7 @@
         { "type": "json", "path": "apps/cli/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "apps/mcp/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/contracts/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "packages/curator/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/domain/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/eval/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/head/package.json", "jsonpath": "$.version" },

@@ -14,7 +14,7 @@ import { defineConfig } from "tsdown"
  *
  * ## What is bundled, and what must not be
  *
- * The fifteen `@memhtml/*` packages are the bundle. Every real dependency stays external, and two of
+ * The sixteen `@memhtml/*` packages are the bundle. Every real dependency stays external, and two of
  * them MUST: `memhtml exec` reads `node-html-parser`'s published `dist/index.mjs` as BYTES to seed the
  * QuickJS guest, and `@memhtml/html` loads `highlight.js` through `createRequire` on the first
  * detection. Inlined, each becomes a module in this graph rather than a file on disk, and both break
@@ -29,12 +29,14 @@ import { defineConfig } from "tsdown"
  *
  * - `migrations/`, `state-migrations/` — `new URL("../migrations", import.meta.url)`
  * - `guest/corpus.mjs` — read as bytes by `memhtml exec`
+ * - `prompts/charter.md`: the curator's system prompt, read by `memhtml curate run`
  */
 
 const WORKSPACE_PACKAGES = [
   "apps/cli",
   "apps/mcp",
   "packages/contracts",
+  "packages/curator",
   "packages/domain",
   "packages/eval",
   "packages/head",
@@ -121,6 +123,8 @@ export default defineConfig({
     { from: "packages/index/migrations", to: OUT_DIR },
     { from: "packages/index/state-migrations", to: OUT_DIR },
     { from: "apps/cli/guest", to: OUT_DIR },
+    // `prompts/charter.md`: `new URL("../prompts/charter.md", import.meta.url)` in the curator
+    { from: "packages/curator/prompts", to: OUT_DIR },
     { from: "README.md", to: OUT_DIR },
     { from: "LICENSE", to: OUT_DIR }
   ]

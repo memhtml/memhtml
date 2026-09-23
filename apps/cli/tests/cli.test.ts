@@ -237,7 +237,14 @@ describe("manifest", () => {
       "session status",
       "head status",
       "head search",
-      "head snapshot"
+      "head snapshot",
+      /**
+       * The curation door and the curator itself (`docs/v2-poc.md`, "Curation door" and "Curator"):
+       * a curation pass is `curate run` then `curate merge`, so both are pinned as the surface a
+       * caller depends on.
+       */
+      "curate merge",
+      "curate run"
     ]
     const names = new Set(COMMANDS.map((command) => command.name))
     for (const name of required) expect(names.has(name)).toBe(true)

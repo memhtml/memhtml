@@ -630,6 +630,24 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
         detail: `${String(answer.data?.from).slice(0, 7)} -> ${String(answer.data?.to).slice(0, 7)}, worktreeSynced ${String(answer.data?.worktreeSynced)}`
       })
     ],
+    /*
+     * The curator itself, on a branch of its own so the merge row above stays about the door and this
+     * row about the loop. `--model fake` is the scripted, credential-free curator; over a corpus with
+     * no duplicate frame-key pair it finishes with zero ops, so the assertion is on the loop having
+     * run to `finish` rather than on a commit.
+     */
+    [
+      "curate run",
+      ["curate", "run", "--model", "fake", "--ref", "curate/smoke-run"],
+      env,
+      (answer) => ({
+        ok:
+          answer.data?.stoppedBy === "finish" &&
+          Array.isArray(answer.data?.toolCalls) &&
+          answer.data.toolCalls.includes("exec"),
+        detail: `${String(answer.data?.outcome)}, stoppedBy ${String(answer.data?.stoppedBy)} after ${String(answer.data?.steps)} step(s)`
+      })
+    ],
     ["head status", ["head", "status"]],
     ["head search", ["head", "search", "VIP revert"]],
     [

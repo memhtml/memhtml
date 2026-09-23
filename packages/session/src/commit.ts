@@ -62,17 +62,27 @@ export const SESSION_TRAILER = "Memhtml-Session"
 
 const oneLine = (value: string): string => value.replace(/\s+/g, " ").trim()
 
-/** `memhtml(session): <summary>`, one line, capped, never empty. */
-export const commitSubject = (summary: string): string => {
+/**
+ * The Conventional Commits scope a session commit carries: `session` for an ordinary session,
+ * `curate` for a run of the curator (`@memhtml/curator`), so `git log --grep` on either scope
+ * finds the commits it names.
+ */
+export type CommitScope = "session" | "curate"
+
+/** `memhtml(<scope>): <summary>`, one line, capped, never empty. */
+export const commitSubject = (summary: string, scope: CommitScope = "session"): string => {
   const flat = oneLine(summary)
   const capped =
     flat.length <= COMMIT_SUBJECT_MAX ? flat : `${flat.slice(0, COMMIT_SUBJECT_MAX - 1).trim()}…`
-  return `memhtml(session): ${capped === "" ? "(untitled)" : capped}`
+  return `memhtml(${scope}): ${capped === "" ? "(untitled)" : capped}`
 }
 
 /** Subject, blank line, one trailer. The id is flattened so it cannot open a second trailer line. */
-export const commitMessage = (summary: string, sessionId: string): string =>
-  `${commitSubject(summary)}\n\n${SESSION_TRAILER}: ${oneLine(sessionId)}\n`
+export const commitMessage = (
+  summary: string,
+  sessionId: string,
+  scope: CommitScope = "session"
+): string => `${commitSubject(summary, scope)}\n\n${SESSION_TRAILER}: ${oneLine(sessionId)}\n`
 
 /** The instant an archive op stamps, when the caller supplies none. */
 const nowIso = (): string => new Date().toISOString()
@@ -220,6 +230,8 @@ export const commitSession = (input: {
   readonly message: string
   /** The instant archive ops stamp; defaults to now. Explicit so a test can pin it. */
   readonly archivedAt?: string | undefined
+  /** The subject's scope; `session` unless a curator run says otherwise. */
+  readonly scope?: CommitScope | undefined
 }): Effect.Effect<CommitOutcome, GitFailure | StorageFailure> =>
   withSessionLock(
     input.session.root,
@@ -291,7 +303,11 @@ export const commitSession = (input: {
       yield* git.updateIndexRemove([...staged.removes])
       yield* git.updateIndexAdd(entries)
       const tree = yield* git.writeTree()
-      const commit = yield* git.commitTree(tree, [parent], commitMessage(input.message, session.id))
+      const commit = yield* git.commitTree(
+        tree,
+        [parent],
+        commitMessage(input.message, session.id, input.scope)
+      )
       const paths = [...new Set([...staged.writes.keys(), ...staged.removes])].sort()
 
       // 5. The checkout follows before the ref moves.

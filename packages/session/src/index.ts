@@ -3,7 +3,13 @@
  * ref through the session's own git index file. See `docs/v2-poc.md`.
  */
 
-export { type CommitOutcome, commitMessage, commitSession, commitSubject } from "./commit.js"
+export {
+  type CommitOutcome,
+  type CommitScope,
+  commitMessage,
+  commitSession,
+  commitSubject
+} from "./commit.js"
 export { GitFailure } from "./errors.js"
 export { GIT_REPO_SELECTION_ENV, makePlumbing, type Plumbing } from "./plumbing.js"
 export {

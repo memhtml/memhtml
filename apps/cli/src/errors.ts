@@ -57,6 +57,10 @@ export const codeFor = (error: unknown): ErrorCode => {
       return "ERR_DUPLICATE_CONTENT"
     case "ModelUnavailable":
       return "ERR_MODEL_UNAVAILABLE"
+    // A `--model` spec the curator's factory could not build at run time (a proxy spec with no
+    // proxy configured). The shape of the spec itself is judged at exit 2 in `run.ts`.
+    case "CuratorModelSpecInvalid":
+      return "ERR_MODEL_UNAVAILABLE"
     case "EmbedModelMismatch":
       return "ERR_EMBED_MODEL_MISMATCH"
     // The index describes a commit it is not on, or a rebuild that did not finish. The published
@@ -106,6 +110,8 @@ export const messageFor = (error: unknown): string => {
       return `this content already lives at ${text(error.existingPath) ?? "another path"}`
     case "ModelUnavailable":
       return `bedrock refused ${text(error.modelId) ?? "the model"}: ${text(error.reason) ?? "no reason given"}`
+    case "CuratorModelSpecInvalid":
+      return `--model ${text(error.spec) ?? ""} cannot be built: ${text(error.reason) ?? "no reason given"}`
     case "EmbedModelMismatch":
       return `the index was built in vector space ${text(error.stored) ?? "?"}, configured is ${text(error.configured) ?? "?"}`
     case "IndexStale":
@@ -187,6 +193,10 @@ export const SUGGESTIONS: Readonly<Record<string, SuggestionsFor>> = {
     "memhtml index embed"
   ],
   ModelUnavailable: () => ["retry: search still works on the lexical floor", "memhtml status"],
+  CuratorModelSpecInvalid: () => [
+    "memhtml curate run --model fake",
+    "memhtml curate run --model bedrock:global.anthropic.claude-opus-5"
+  ],
   InvalidMemory: () => ["memhtml manifest"],
   // No `--json`: there is no such flag — the JSON envelope is the binary's only output — so naming
   // it here would make the suggestion itself a usage error.

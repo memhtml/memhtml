@@ -1,5 +1,7 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
+
+import { CURATOR_MODEL_VAR } from "@memhtml/curator"
 import { VECTOR_COVERAGE_FLOOR } from "@memhtml/index"
 import {
   DEFAULT_OPENAI_PROMPT_CACHE,
@@ -118,6 +120,12 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
     name: PROXY_MODEL_MAP_VAR,
     description:
       "`from=to` pairs, comma-separated, naming single models to the proxy by exact id when the prefix rule does not fit: `cohere.embed-v4:0=cohere-embed-v4`. A mapped id is sent verbatim, without the prefix; every other id follows `MEMHTML_LLM_MODEL_PREFIX`. Read only when `MEMHTML_LLM_BASE_URL` is set.",
+    fallback: null
+  },
+  {
+    name: CURATOR_MODEL_VAR,
+    description:
+      "The default `--model` for `memhtml curate run`: `fake`, `bedrock:<modelId>`, or `proxy:<model>`. When unset, the command uses `proxy:<default model>` if `MEMHTML_LLM_BASE_URL` is set and otherwise refuses without an explicit `--model`.",
     fallback: null
   },
   {

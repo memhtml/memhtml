@@ -51,7 +51,8 @@ describe("the v2 command table", () => {
     "head status",
     "head search",
     "head snapshot",
-    "curate merge"
+    "curate merge",
+    "curate run"
   ]
 
   it("declares every v2 command with at least one example and a response type the envelope knows", () => {

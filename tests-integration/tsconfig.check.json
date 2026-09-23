@@ -45,6 +45,9 @@
       "path": "../packages/snapshot"
     },
     {
+      "path": "../packages/curator"
+    },
+    {
       "path": "../apps/cli"
     }
   ]

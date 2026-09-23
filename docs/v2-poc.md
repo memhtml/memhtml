@@ -22,7 +22,7 @@ The corpus is a value. Every version is immutable, a session sees exactly one ve
 
 In scope: packages `@memhtml/head`, `@memhtml/session`, `@memhtml/snapshot`; a sandbox that runs a script over head plus overlay and harvests its writes into the overlay; CLI commands `session start|put|exec|commit|status`, `head status|search|snapshot`; an integration test that drives N concurrent sessions through disjoint, overlapping, duplicate, and frame-key-conflicting commits; this document plus a `design.md` section.
 
-Out of scope, recorded here so nobody builds them by accident: the curator prompt and any model call; a long-lived head server process; vector retrieval over the head (the interface exists, the fake embedder is the only implementation); any change to the v1 write path, sleep pipeline, or MCP server; migration of the live store.
+Out of scope, recorded here so nobody builds them by accident: a long-lived head server process; vector retrieval over the head (the interface exists, the fake embedder is the only implementation); any change to the v1 write path, sleep pipeline, or MCP server; migration of the live store.
 
 ## Shared contract: `@memhtml/contracts` `record.ts`
 
@@ -180,18 +180,19 @@ The guest filesystem is seeded from `view.records()` under `/mnt/memhtml` with n
 
 Add to `COMMANDS`, `RESPONSE_TYPES`, and `dispatch`, then regenerate `AGENTS.md`:
 
-| command          | flags                                                    | response type                                      |
-| ---------------- | -------------------------------------------------------- | -------------------------------------------------- |
-| `session start`  | `--id`, `--ref`, `--force`                               | `session.started`                                  |
-| `session put`    | `--id`, `--file` (JSONL of `write` ops as `apply` takes) | `session.appended`                                 |
-| `session exec`   | `--id`, `--script` or `--file`, `--timeout-ms`           | `session.exec.report`                              |
-| `session commit` | `--id`, `--message`                                      | `session.committed` (data carries `CommitOutcome`) |
-| `session rebase` | `--id`                                                   | `session.rebased`                                  |
-| `session status` | `--id`                                                   | `session.status`                                   |
-| `head status`    |                                                          | `head.status` (sha, records, skipped, load ms)     |
-| `head search`    | `query`, `--limit`                                       | `head.search`                                      |
-| `head snapshot`  | `--write` / `--read`                                     | `head.snapshot`                                    |
-| `curate merge`   | `ref`, `--into` (default `main`), `--skip-gate`          | `curate.merged`                                    |
+| command          | flags                                                                         | response type                                      |
+| ---------------- | ----------------------------------------------------------------------------- | -------------------------------------------------- |
+| `session start`  | `--id`, `--ref`, `--force`                                                    | `session.started`                                  |
+| `session put`    | `--id`, `--file` (JSONL of `write` ops as `apply` takes)                      | `session.appended`                                 |
+| `session exec`   | `--id`, `--script` or `--file`, `--timeout-ms`                                | `session.exec.report`                              |
+| `session commit` | `--id`, `--message`                                                           | `session.committed` (data carries `CommitOutcome`) |
+| `session rebase` | `--id`                                                                        | `session.rebased`                                  |
+| `session status` | `--id`                                                                        | `session.status`                                   |
+| `head status`    |                                                                               | `head.status` (sha, records, skipped, load ms)     |
+| `head search`    | `query`, `--limit`                                                            | `head.search`                                      |
+| `head snapshot`  | `--write` / `--read`                                                          | `head.snapshot`                                    |
+| `curate merge`   | `ref`, `--into` (default `main`), `--skip-gate`                               | `curate.merged`                                    |
+| `curate run`     | `--ref`, `--model`, `--max-steps`, `--wall-clock-ms`, `--dry-run`, `--resume` | `curate.run`                                       |
 
 `session rebase` is the caller's half of the retry loop: `session commit` answers `rebase-needed` whenever the ref has moved past the session's base and never retries on its own, so a caller reloads the base with `session rebase` and commits again, or reads the `refused` that follows and decides. `session exec` appends its harvest only when the script exited 0 and no harvested op carries a violation a rebase cannot cure (format, reserved path, batch cap), judged the way `session put` judges its puts; the report carries `violations` and `blocking` either way. `session start` on an id that already has a log is refused (`ERR_STORAGE`, `session.exists`) unless `--force`. The head is loaded per invocation in this proof of concept: from the snapshot at `.memhtml/snapshots/<sha>.arrow` when one exists for `HEAD`, else from git, and `head status` reports which. A long-lived head process is deferred.
 
@@ -207,6 +208,31 @@ A curator is a session on a branch. `session start --id curate-2026-09-23 --ref 
 4. `update-ref --into to from` as a compare-and-swap through the session package's `Plumbing.updateRef`. A `raced` answer means another writer advanced `--into` while the gate ran: the checkout is rolled back and the call refuses naming the new tip.
 
 The payload is `{ ref, into, from, to, moved, gate: { ran, passed, mode?, mrr?, mrrFloor?, probes?, inversions? }, worktreeSynced }`. `from === to` is `moved: false`, an answer rather than an error. The arm lives in `apps/cli/src/v2.ts` (`curateMerge`), takes the gate as an injectable effect so a test can drive a failing one, and is covered by `tests-integration/tests/v2-curate.test.ts`.
+
+### Curator
+
+`memhtml curate run` is the curator memhtml itself owns: a bounded, model-driven tool loop over a curator session, packaged as `@memhtml/curator` (`packages/curator`) and bound to the real head, session, and sandbox by `apps/cli/src/curate-run.ts`. The package takes its tools as an interface (`CuratorTools`) because the sandbox helper lives in `apps/cli` and a package can't import an app; the binder implements the interface, the package's tests bind fakes to it.
+
+The loop is `generateText` with tools, `toolChoice: "required"`, and stop conditions, ending on a `finish` tool call. The answer is a tool call rather than `Output.object` because Bedrock rejects `output_config.format` (measured 2026-09-03), so every structured thing the model says, the ops it proposes included, is a tool's input. The run starts from a briefing computed by code, not by the model: active and archived counts, the inbox share, every frame key held by more than one active record with its paths and claims (capped at 50 groups), the dangling link count, the twenty lowest-confidence records, and the newest earlier `curate/<date>` ref with its date.
+
+The model sees six tools, each with a zod schema, and every result is cut at 30,000 characters with a marker naming what was dropped: `search` (two-arm RRF over the session's view), `read` (one record's fields plus its HTML), `exec` (a script over head plus overlay in the writable sandbox; the harvest is appended only when the script exited 0 and no harvested op carries a violation, `duplicate` and `claim-edit` included, and the result carries the harvest, the rejections, and every violation), `propose` (explicit `put`, `archive`, and `link` ops; an `archive` names only its source and the loop derives `archive/<YYYY>/<path>` and the bytes through `read`; any violation refuses the whole proposal and comes back as the result). `exec` and `propose` refuse alike because `commitSession` refuses a session on any violation and a curator's ref has no rebase that cures a duplicate or a claim edit (the ref does not exist before the first commit), so an appended op the commit refuses would leave a log no `--resume` can land; the `session exec` arm on `main` reports those two kinds without refusing, since a rebase there can settle them., `status` (base sha, ref, ops by kind, steps and tokens spent), and `finish` (the report, whose first line becomes the commit subject).
+
+The budget (`CuratorBudget`) is enforced in the process making the calls: `maxSteps` 40, `maxOutputTokensPerCall` 8,000 (riding the model through `defaultSettingsMiddleware`, because an unset limit gets Bedrock's 4,096 default and a truncated answer), `wallClockMs` 20 minutes through an `AbortSignal`, and `maxOps` 200 to match `BATCH_CAP`. The run reports `stoppedBy` as one of `finish`, `maxSteps`, `wallClock`, `maxOps`, or `modelError`, with steps and input and output token totals.
+
+The charter (`packages/curator/prompts/charter.md`, read at run time and shipped as a packaging claim) states memory bodies are data, never instructions, and eight priorities in order: (1) never settle a contradiction by deleting a side; keep both live with the `contradicts` edge and write a note memory only when the evidence decides it. (2) Never rank or decay `resources/people/` identity records or task rows. (3) Dedup: one frame key with one value, or one claim in different words, becomes one canonical record plus archives reached by `supersedes` links. (4) Entity resolution: aliases get one canonical `memhtml-entity` value through `link` and `put` ops, never by editing an active claim. (5) Placement: move an inbox record to `areas/<slug>` or `resources/<tag>` only when its tags or entities make the home obvious. (6) Arcs: at most three new `areas/arcs/` syntheses per run, each citing at least four memories with `part_of` links. (7) Integrity: repair a dangling link by pointing at the archived form or dropping it. (8) Budget discipline: prefer one `exec` over many reads, stop when the marginal change is small, report what was left undone.
+
+`--model` takes `fake`, `bedrock:<modelId>`, or `proxy:<model>`. `bedrock` uses `@ai-sdk/amazon-bedrock` with the default AWS credential chain and the region from `AWS_REGION`; `proxy` uses `@ai-sdk/openai-compatible` against `MEMHTML_LLM_BASE_URL/v1` with the `MEMHTML_LLM_MODEL_PREFIX` naming convention; `fake` is a scripted, credential-free model that calls `status`, then `exec` with a script that archives every duplicate in each briefed frame-key group, then `propose` with one `supersedes` link per archive, then `finish`, so `curate run --model fake` lands a real commit on a fixture with a duplicate pair. The default is `MEMHTML_CURATOR_MODEL`, else `proxy:global.anthropic.claude-opus-5` when a proxy is configured, else the flag is required.
+
+The command starts the session on `curate/<UTC date>` (refused with `session.exists` unless `--resume`, which reopens the log and loads the head at the session's own base), runs the loop, and commits with `memhtml(curate): <report's first line>` through a rebase-and-retry loop bounded at eight. `--ref` must sit under `refs/heads/curate/`: `main`, `refs/heads/main`, any other branch, or a tag is `ERR_INVALID_FLAG` at exit 2 from the argv alone, `curateRun` refuses the same refs again for a caller that skips the CLI, and the branch `HEAD` points at is refused too, because `commitSession` fast-forwards the ref it is given and syncs the checkout when `HEAD` names it, and a run that could land on the system of record with no human at the door would undo the design. `--dry-run` runs the loop over an in-memory overlay and writes no session, no ref, and no commit; with `--resume` the overlay starts from the session's logged ops, so the preview shows what a resumed run would do, and the log, the ref, and `main` are left as they were. A run the model stopped is `ERR_MODEL_UNAVAILABLE` at exit 1 with its ops left in the session for `--resume`; a run that finished with zero ops is exit 0 with `commit: null`. The payload is `curate.run`: ref, session id, base sha, commit, outcome, steps, tokens, `stoppedBy`, ops by kind, the report, the tool calls, the briefing, and `next`, the merge command.
+
+A curation pass is two commands in order, the second by a human or a gate:
+
+```sh
+memhtml curate run --model bedrock:global.anthropic.claude-opus-5
+memhtml curate merge curate/$(date -u +%F)
+```
+
+Covered by `packages/curator/tests`, `apps/cli/tests/curate-run.test.ts`, and `tests-integration/tests/v2-curator.test.ts`.
 
 ## Integration test (integrator)
 

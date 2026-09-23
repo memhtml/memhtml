@@ -149,7 +149,7 @@ export const loadHeadAt = (
   })
 
 /** The commit a ref resolves to, or `null` when it does not. A repo with no such ref is an answer. */
-const revParse = (root: string, ref: string): Effect.Effect<string | null, GitFailure> =>
+export const revParse = (root: string, ref: string): Effect.Effect<string | null, GitFailure> =>
   makeGit(root)
     .run(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`])
     .pipe(

@@ -1,26 +1,17 @@
 {
-  "name": "@memhtml/cli",
+  "name": "@memhtml/curator",
   "version": "0.15.1",
   "private": true,
-  "description": "The `memhtml` binary.",
+  "description": "The curator memhtml itself owns: a bounded model-driven tool loop over a curator session, its charter, its budget, and its model factory.",
   "type": "module",
-  "license": "Apache-2.0",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/memhtml/memhtml.git",
-    "directory": "apps/cli"
-  },
   "engines": {
     "node": ">=24"
   },
   "files": [
     "dist",
-    "guest",
+    "prompts",
     "!dist/.tsbuildinfo"
   ],
-  "bin": {
-    "memhtml": "./dist/bin.js"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -29,30 +20,23 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "dev": "tsc -b --watch",
     "typecheck": "tsc --noEmit -p tsconfig.check.json",
     "lint": "biome check src tests",
-    "test": "vitest run",
-    "start": "node dist/bin.js"
+    "test": "vitest run"
   },
   "dependencies": {
+    "@ai-sdk/amazon-bedrock": "5.0.88",
+    "@ai-sdk/openai-compatible": "3.0.53",
+    "@ai-sdk/provider": "4.0.17",
+    "@aws-sdk/credential-providers": "3.1101.0",
     "@memhtml/contracts": "workspace:*",
-    "@memhtml/curator": "workspace:*",
-    "@memhtml/domain": "workspace:*",
-    "@memhtml/eval": "workspace:*",
     "@memhtml/head": "workspace:*",
     "@memhtml/html": "workspace:*",
-    "@memhtml/index": "workspace:*",
-    "@memhtml/integrations": "workspace:*",
     "@memhtml/llm": "workspace:*",
     "@memhtml/session": "workspace:*",
-    "@memhtml/snapshot": "workspace:*",
-    "@memhtml/store": "workspace:*",
-    "@memhtml/telemetry": "workspace:*",
-    "@memhtml/traces": "workspace:*",
+    "ai": "7.0.107",
     "effect": "catalog:",
-    "just-bash": "3.4.2",
-    "node-html-parser": "9.0.4"
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
