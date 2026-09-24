@@ -1,4 +1,4 @@
-import { readFile, stat, writeFile } from "node:fs/promises"
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { parseMemory } from "@memhtml/html"
@@ -109,6 +109,20 @@ describe("initRepo on an empty directory", () => {
     await writeFile(join(repo.root, INDEX_DB_PATH), "bytes", "utf8")
     await writeFile(join(repo.root, STATE_DB_PATH), "bytes", "utf8")
     await writeFile(join(repo.root, `${INDEX_DB_PATH}-wal`), "bytes", "utf8")
+    const entries = await run(repo.git.statusPorcelainV2())
+    expect(entries.filter((entry) => entry.kind !== "ignored")).toEqual([])
+  })
+
+  it("gitignores the v2 session and snapshot directories, so per-process state never makes the tree dirty", async () => {
+    // Mutation: drop `V2_IGNORE_PATTERNS` from `GITIGNORE` -> the two state files are untracked.
+    const repo = await bareDirectory()
+    await run(initRepo(repo.git))
+    expect(GITIGNORE).toContain("\n.memhtml/sessions/\n")
+    expect(GITIGNORE).toContain("\n.memhtml/snapshots/\n")
+    await mkdir(join(repo.root, ".memhtml/sessions"), { recursive: true })
+    await mkdir(join(repo.root, ".memhtml/snapshots"), { recursive: true })
+    await writeFile(join(repo.root, ".memhtml/sessions/s1.json"), "{}", "utf8")
+    await writeFile(join(repo.root, ".memhtml/snapshots/abc.arrow"), "bytes", "utf8")
     const entries = await run(repo.git.statusPorcelainV2())
     expect(entries.filter((entry) => entry.kind !== "ignored")).toEqual([])
   })

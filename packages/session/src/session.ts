@@ -7,6 +7,7 @@ import { lock } from "proper-lockfile"
 import writeFileAtomic from "write-file-atomic"
 
 import type { GitFailure } from "./errors.js"
+import { ensureExcludedQuietly } from "./exclude.js"
 import { makePlumbing, type Plumbing } from "./plumbing.js"
 
 /**
@@ -206,6 +207,9 @@ export const startSession = (input: {
         )
         return yield* Effect.fail(StorageFailure.make({ operation: "session.exists" }))
       }
+      // The first write under `.memhtml/sessions/`: make sure the clone ignores it (an older store's
+      // committed `.gitignore` does not), before the log and the index file land there.
+      yield* ensureExcludedQuietly(input.root, [`${SESSIONS_DIR}/`])
       yield* plumbingFor(input.root, input.id).readTree(input.base.sha)
       yield* writeState(session)
       return session

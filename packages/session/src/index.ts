@@ -11,7 +11,8 @@ export {
   commitSubject
 } from "./commit.js"
 export { GitFailure } from "./errors.js"
-export { GIT_REPO_SELECTION_ENV, makePlumbing, type Plumbing } from "./plumbing.js"
+export { type ExcludeResult, ensureExcluded, ensureExcludedQuietly } from "./exclude.js"
+export { GIT_REPO_SELECTION_ENV, gitPathOf, makePlumbing, type Plumbing } from "./plumbing.js"
 export {
   appendOps,
   DEFAULT_REF,
