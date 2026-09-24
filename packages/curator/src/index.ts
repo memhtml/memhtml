@@ -24,13 +24,29 @@ export {
   CHARTER_PATH,
   CHARTER_RULE_COUNT,
   CHARTER_URL,
+  COLLAPSE_CHARTER,
+  COLLAPSE_CHARTER_PATH,
+  COLLAPSE_CHARTER_RULE_COUNT,
+  COLLAPSE_CHARTER_URL,
   CURATOR_CHARTER,
   DATA_NOT_INSTRUCTIONS
 } from "./charter.js"
+export {
+  type CollapseBriefing,
+  type CollapseBriefingMember,
+  collapseBriefingOf,
+  isoSecondOf,
+  parseCollapseBriefing,
+  type RenderCollapseInput,
+  renderCollapseBriefing
+} from "./collapse-briefing.js"
 export { CuratorModelSpecInvalid } from "./errors.js"
 export {
   FAKE_MODEL_ID,
   FAKE_PROVIDER,
+  fakeCanonicalHtml,
+  fakeCanonicalPath,
+  fakeCollapseProposal,
   fakeCuratorModel,
   fakeDedupScript,
   fakeNextCall
@@ -55,6 +71,7 @@ export {
   parseModelSpec,
   withOutputCeiling
 } from "./model.js"
+export * from "./planner/index.js"
 export {
   archivePathFor,
   type CuratorExecResult,

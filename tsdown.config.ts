@@ -29,7 +29,8 @@ import { defineConfig } from "tsdown"
  *
  * - `migrations/`, `state-migrations/` — `new URL("../migrations", import.meta.url)`
  * - `guest/corpus.mjs` — read as bytes by `memhtml exec`
- * - `prompts/charter.md`: the curator's system prompt, read by `memhtml curate run`
+ * - `prompts/charter.md`, `prompts/collapse.md`: the two curator prompts, read by `memhtml curate run`
+ *   and `memhtml curate collapse`
  */
 
 const WORKSPACE_PACKAGES = [
@@ -123,7 +124,7 @@ export default defineConfig({
     { from: "packages/index/migrations", to: OUT_DIR },
     { from: "packages/index/state-migrations", to: OUT_DIR },
     { from: "apps/cli/guest", to: OUT_DIR },
-    // `prompts/charter.md`: `new URL("../prompts/charter.md", import.meta.url)` in the curator
+    // `prompts/*.md`: `new URL("../prompts/<name>.md", import.meta.url)` in the curator's charter.ts
     { from: "packages/curator/prompts", to: OUT_DIR },
     { from: "README.md", to: OUT_DIR },
     { from: "LICENSE", to: OUT_DIR }

@@ -17,9 +17,10 @@ import { harvestOps } from "./session-exec.js"
  * between the two trees is decidable back into ops: an added `.html` is a `put`; a file gone from
  * its path beside a new `archive/<YYYY>/<that path>` holding the same article is one `archive`; a
  * file still at its path with the same article and new `<link rel="memhtml-...">` edges is one
- * `link` per edge. Anything else (a file deleted with no twin, an article changed in place, a link
- * removed, a meta changed, a file that is not a memory) is not an operation, and since the commit
- * path cannot write it, someone wrote it by hand; the merge refuses naming the path and the reason.
+ * `link` per edge, and one `unlink` per edge it lost. Anything else (a file deleted with no twin, an
+ * article changed in place, a meta changed, a file that is not a memory) is not an operation, and
+ * since the commit path cannot write it, someone wrote it by hand; the merge refuses naming the path
+ * and the reason.
  *
  * The comparison is the harvester's ({@link harvestOps}, `session-exec.ts`): the base tree is the
  * seeded set and the tip tree is what the script left. One thing differs from a sandbox run: an
@@ -82,7 +83,12 @@ export interface Reconstruction {
   /** `put`s, then `link`s, then `archive`s, each sorted by path: the harvester's order. */
   readonly ops: ReadonlyArray<OverlayOp>
   readonly rejected: ReadonlyArray<ReplayRejection>
-  readonly counts: { readonly put: number; readonly archive: number; readonly link: number }
+  readonly counts: {
+    readonly put: number
+    readonly archive: number
+    readonly link: number
+    readonly unlink: number
+  }
   /**
    * The instant every archive twin at the tip is stamped with, when there is exactly one; `null`
    * when there are no archives or the twins disagree (a ref of several commits). The landing passes
@@ -161,7 +167,12 @@ export const reconstructOps = (input: {
   return {
     ops,
     rejected: rejected.sort(byPath),
-    counts: { put: count("put"), archive: count("archive"), link: count("link") },
+    counts: {
+      put: count("put"),
+      archive: count("archive"),
+      link: count("link"),
+      unlink: count("unlink")
+    },
     archivedAt: stamps.size === 1 ? ([...stamps][0] ?? null) : null
   }
 }

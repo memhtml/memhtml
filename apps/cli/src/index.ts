@@ -63,6 +63,21 @@ export {
 } from "./commands.js"
 export { CONFIG_VARS, type ConfigVar, MemhtmlRoot, TraceRoot } from "./config.js"
 export {
+  type ClusterOutcome,
+  type ClusterOutcomeKind,
+  type CurateCollapseInput,
+  type CurateCollapseReport,
+  collapseSessionId,
+  curateCollapse,
+  DEFAULT_CONCURRENCY,
+  defaultCollapseRef,
+  FOLD_BUDGET,
+  type HeadCache,
+  makeHeadCache,
+  readPlanFile,
+  readRulingsFile
+} from "./curate-collapse.js"
+export {
   bindTools,
   COMMIT_ATTEMPTS,
   CURATE_REF_PREFIX,
@@ -74,9 +89,12 @@ export {
   curateRun,
   curateSessionId,
   defaultCurateRef,
+  headRefOf,
+  land,
   memoryOverlay,
   type OpsByKind,
-  type Overlay
+  type Overlay,
+  sessionOverlay
 } from "./curate-run.js"
 export {
   API_VERSION,

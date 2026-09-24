@@ -37,6 +37,10 @@
     "@memhtml/session": "workspace:*",
     "ai": "7.0.107",
     "effect": "catalog:",
+    "graphology": "0.26.0",
+    "graphology-communities-louvain": "2.0.2",
+    "graphology-metrics": "2.4.2",
+    "graphology-types": "0.24.8",
     "zod": "4.6.5"
   },
   "devDependencies": {

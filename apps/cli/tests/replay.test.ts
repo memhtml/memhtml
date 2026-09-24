@@ -17,7 +17,6 @@ import {
   readCurateDelta,
   reconstructOps
 } from "../src/replay.js"
-import { HEAD_EDIT_REASON } from "../src/session-exec.js"
 
 /**
  * The replay's reconstruction (`docs/v2-poc.md`, "Curation door"): two trees in, the curator's
@@ -79,7 +78,7 @@ describe("reconstructOps rebuilds the curator's log from two trees", () => {
       { kind: "link", path: archived.path, rel: "supports", href: `/${added.path}` },
       { kind: "archive", path: archived.path, to: twinPath, html: twin }
     ])
-    expect(result.counts).toEqual({ put: 1, archive: 1, link: 2 })
+    expect(result.counts).toEqual({ put: 1, archive: 1, link: 2, unlink: 0 })
     expect(result.archivedAt).toBe(ARCHIVED_AT)
   })
 
@@ -116,17 +115,16 @@ describe("reconstructOps rebuilds the curator's log from two trees", () => {
     ])
   })
 
-  it("a removed link and a changed meta are rejected as head edits", () => {
+  it("a removed link replays as one unlink; a changed meta is rejected as a head edit", () => {
     const withLink = addLink(kept.html, "supports", `/${archived.path}`)
     const removed = reconstructOps({
       before: new Map([[kept.path, withLink]]),
       after: new Map([[kept.path, kept.html]])
     })
-    expect(removed.ops).toEqual([])
-    expect(removed.rejected).toHaveLength(1)
-    expect(removed.rejected[0]?.path).toBe(kept.path)
-    expect(removed.rejected[0]?.reason).toContain(HEAD_EDIT_REASON)
-    expect(removed.rejected[0]?.reason).toContain("removed link")
+    expect(removed.ops).toEqual([
+      { kind: "unlink", path: kept.path, rel: "supports", href: `/${archived.path}` }
+    ])
+    expect(removed.rejected).toEqual([])
 
     const meta = reconstructOps({
       before: new Map([[kept.path, kept.html]]),
@@ -285,6 +283,6 @@ describe("readCurateDelta against a real repository", () => {
 
     const result = reconstructOps({ before: delta.before, after: delta.after })
     expect(result.rejected).toEqual([])
-    expect(result.counts).toEqual({ put: 1, archive: 1, link: 1 })
+    expect(result.counts).toEqual({ put: 1, archive: 1, link: 1, unlink: 0 })
   })
 })

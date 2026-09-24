@@ -531,7 +531,12 @@ export interface ReplayReport {
   /** The merge base of the curate ref and the target: the version the curator's ops were minted on. */
   readonly base: string
   /** The reconstructed log by kind. */
-  readonly ops: { readonly put: number; readonly archive: number; readonly link: number }
+  readonly ops: {
+    readonly put: number
+    readonly archive: number
+    readonly link: number
+    readonly unlink: number
+  }
   /** How many `commitSession` calls the landing took; more than one means the target moved meanwhile. */
   readonly attempts: number
   /** The curate ref's commit before the landing moved it to the landed one. */

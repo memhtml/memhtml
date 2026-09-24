@@ -152,6 +152,7 @@ Write what is durable, one fact per memory. A decision and its reason, a correct
 | `memhtml head snapshot` | — | `--write` `--read` | `head.snapshot` |
 | `memhtml curate merge` | <ref> | `--into` `--skip-gate` | `curate.merged` |
 | `memhtml curate run` | — | `--ref` `--model` `--max-steps` `--wall-clock-ms` `--dry-run` `--resume` | `curate.run` |
+| `memhtml curate collapse` | — | `--ref` `--model` `--plan` `--rulings` `--concurrency` `--only` `--limit` `--dry-run` `--max-steps` `--wall-clock-ms` | `curate.collapse` |
 
 ### `memhtml manifest`
 
@@ -586,6 +587,21 @@ Run the curator: start (or resume) a session on curate/<date>, brief a model on 
 - `--wall-clock-ms` (int) — Wall clock for the whole run, model calls and tool executions together (`stoppedBy: wallClock`). _(default `1200000`)_
 - `--dry-run` (boolean) — Run the loop over an in-memory overlay: no session is written, nothing is appended, nothing is committed, and the ref stays where it was. With --resume, the overlay starts from the session's logged ops and the log is left as it was. The payload reports what would have been proposed. _(default `false`)_
 - `--resume` (boolean) — Reuse the existing session on the ref instead of refusing with ERR_STORAGE (session.exists). The head is loaded at the session's own base. A missing session is ERR_STORAGE at exit 1. _(default `false`)_
+
+### `memhtml curate collapse`
+
+Plan and run a collapse of the corpus on a curate/ branch: cut the head into archive, fold, and keep clusters by source and type, frame key, and lexical similarity (rulings first when given), archive the archive clusters with no model, fold each fold cluster into one canonical through a curator session with the driver completing every archive and supersedes link, and leave keep clusters alone.
+
+- `--ref` (string) — The curator branch, `refs/heads/` prepended when absent. Defaults to curate/<UTC date>-collapse. Must sit under curate/ (ERR_INVALID_FLAG at exit 2 otherwise), and the branch HEAD points at is ERR_INVALID_MEMORY at exit 1. Every cluster lands on this one ref through the rebase-and-retry loop, so concurrent folds serialize at it. Sessions are named collapse-<cluster id>.
+- `--model` (string) — The model each fold runs under: `fake`, `bedrock:<modelId>`, or `proxy:<model>`, resolved as `curate run` resolves it (MEMHTML_CURATOR_MODEL, else `proxy:<default>` when MEMHTML_LLM_BASE_URL is set). Archive clusters use no model.
+- `--plan` (string) — A saved plan (the `plan` field of a --dry-run payload) to execute in place of computing one. Members are re-checked against the ref's tip per cluster, and `planShaMismatch` says when the plan named another sha.
+- `--rulings` (string) — A JSONL file of audit rulings, one `{path, verdict, theme?, reason?}` per line with verdict one of keep, fold, trace, archive. Archive and trace rulings become archive clusters, fold rulings group by theme, keep rulings take a record out of every cut, and each is quoted in its cluster's briefing.
+- `--concurrency` (int) — Fold sessions run at once; each lands on the one ref through the rebase-and-retry loop. _(default `4`)_
+- `--only` (string) — Comma-separated cluster ids to execute; every other cluster is reported under `untouched` and left alone. ERR_INVALID_MEMORY when none names an archive or fold cluster.
+- `--limit` (int) — Execute only the first N archive or fold clusters in plan order.
+- `--dry-run` (boolean) — Compute the plan and print it whole under `plan`, with every executable cluster previewed as `dry-run`; no session, no ref, and no commit is written. _(default `false`)_
+- `--max-steps` (int) — Model calls one fold may make before it is stopped. _(default `14`)_
+- `--wall-clock-ms` (int) — Wall clock for one fold, model calls and tool executions together. _(default `900000`)_
 
 ## Error codes
 
