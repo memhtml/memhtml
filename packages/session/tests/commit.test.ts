@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process"
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { checkMemory } from "@memhtml/html"
 import { Effect, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
@@ -395,6 +396,33 @@ describe("commitSession", () => {
     // The checkout followed: the source is gone from disk and the archived copy is on it.
     await expect(stat(join(root, "areas/inbox/alpha.html"))).rejects.toThrow()
     expect(await readFile(join(root, "archive/2026/areas/inbox/alpha.html"), "utf8")).toBe(archived)
+  })
+
+  it("the default archive stamp is whole seconds, so the archived file still parses", async () => {
+    // A millisecond stamp is refused by the format's ISO rule, and a refused archive is invisible to
+    // every reader: the 2026-09-24 collapse run archived 2,170 records that way. Mutation: nowIso
+    // back to `new Date().toISOString()` -> this case is red on the checkMemory violation.
+    const { root, head } = await seeded()
+    const session = await run(
+      startSession({ root, id: "stamp", base: head }).pipe(
+        Effect.flatMap((s) =>
+          appendOps(s, [
+            {
+              kind: "archive",
+              path: "areas/inbox/alpha.html",
+              to: "archive/2026/areas/inbox/alpha.html",
+              html: ALPHA
+            }
+          ])
+        )
+      )
+    )
+    const outcome = await run(commitSession({ session, head, message: "archive alpha" }))
+    if (outcome.kind !== "committed") throw new Error(outcome.kind)
+    const archived = await fileAt(root, outcome.sha, "archive/2026/areas/inbox/alpha.html")
+    const stamp = /name="memhtml-archived" content="([^"]+)"/.exec(archived)?.[1]
+    expect(stamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
+    expect(checkMemory(archived).violations).toEqual([])
   })
 
   it("an archive carries a link added by an earlier link op in the same batch", async () => {

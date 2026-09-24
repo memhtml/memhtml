@@ -23,7 +23,7 @@ export interface CuratorBudget {
 
 export const DEFAULT_BUDGET: CuratorBudget = {
   maxSteps: 40,
-  maxOutputTokensPerCall: 8_000,
+  maxOutputTokensPerCall: 32_000,
   wallClockMs: 20 * 60_000,
   maxOps: BATCH_CAP
 }

@@ -79,8 +79,13 @@ export const commitMessage = (
   scope: CommitScope = "session"
 ): string => `${commitSubject(summary, scope)}\n\n${SESSION_TRAILER}: ${oneLine(sessionId)}\n`
 
-/** The instant an archive op stamps, when the caller supplies none. */
-const nowIso = (): string => new Date().toISOString()
+/**
+ * The instant an archive op stamps, when the caller supplies none: whole seconds, because the
+ * format's ISO rule (`packages/html` ISO_DATETIME) takes `YYYY-MM-DDThh:mm:ssZ` and nothing finer.
+ * `Date.prototype.toISOString` carries milliseconds, and 2,170 records archived with that stamp on
+ * 2026-09-24 were rejected by every reader, so the archive looked empty to search.
+ */
+const nowIso = (): string => `${new Date().toISOString().slice(0, 19)}Z`
 
 /**
  * The archive body: `memhtml-status archived` and `memhtml-archived <instant>` stamped into the
