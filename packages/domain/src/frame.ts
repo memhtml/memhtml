@@ -89,7 +89,14 @@ export const frameKeyOf = (gist: string): string | null => {
  * semantic equality: `New Delhi` and `New Delhi city` are two values here, and telling them apart
  * is the model's job, with both records in front of it.
  */
-export const frameOf = (gist: string): { readonly key: string; readonly value: string } | null => {
+export interface Frame {
+  /** The lowercased frame: the claim up to and including its last linking token. */
+  readonly key: string
+  /** The normalized value the claim writes into that slot. */
+  readonly value: string
+}
+
+export const frameOf = (gist: string): Frame | null => {
   const match = FRAME.exec(gist.replace(/\s+/g, " ").trim())
   if (match === null) return null
   const frame = match[1]
