@@ -147,9 +147,12 @@ const FIELDS: ReadonlyArray<Field<SnapshotColumns[ColumnName]>> = COLUMN_ORDER.m
 /** The schema without metadata, for shape comparison on read. */
 const SHAPE: Schema<SnapshotColumns> = new Schema([...FIELDS])
 
+/** The directory every snapshot lives under, relative to the repo root. */
+export const SNAPSHOTS_DIR = ".memhtml/snapshots"
+
 /** `.memhtml/snapshots/<sha>.arrow` under `root`. */
 export const snapshotPathFor = (root: string, sha: string): string =>
-  join(root, ".memhtml", "snapshots", `${sha}.arrow`)
+  join(root, SNAPSHOTS_DIR, `${sha}.arrow`)
 
 type Columns = { [K in ColumnName]: Vector<SnapshotColumns[K]> }
 

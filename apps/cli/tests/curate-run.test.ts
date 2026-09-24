@@ -3,9 +3,10 @@ import { access, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import type { HeadView, MemoryRecord } from "@memhtml/contracts"
+import type { MemoryRecord } from "@memhtml/contracts"
 import { CURATOR_MODEL_VAR } from "@memhtml/curator"
 import { frameKeyOf } from "@memhtml/domain"
+import { versionFromRecords } from "@memhtml/head"
 import { contentHash, parseMemory, renderTemplate } from "@memhtml/html"
 import { PROXY_BASE_URL_VAR } from "@memhtml/llm"
 import { validateOps } from "@memhtml/session"
@@ -317,35 +318,21 @@ const recordFrom = (path: string, html: string): Effect.Effect<MemoryRecord> =>
 
 const VIEW_SHA = "0000000000000000000000000000000000000abc"
 
-/** A `LoadedHead` over a `Map`, the way `session-exec.test.ts` builds a view: no git anywhere. */
-const headOver = (records: ReadonlyArray<MemoryRecord>): LoadedHead => {
-  const byPath = new Map(records.map((record) => [record.path, record]))
-  const active = records.filter((record) => !record.archived)
-  const view: HeadView & { readonly sha: string } = {
-    sha: VIEW_SHA,
-    size: byPath.size,
-    get: (path) => byPath.get(path),
-    paths: () => byPath.keys(),
-    records: () => byPath.values(),
-    byContentHash: (hash) => active.find((record) => record.contentHash === hash)?.path,
-    byFrameKey: (key) => active.filter((record) => record.frameKey === key).map((r) => r.path),
-    inbound: (href) =>
-      records
-        .filter((record) => record.links.some((link) => link.href === href))
-        .map((r) => r.path),
-    byEntity: (entity) =>
-      records.filter((record) => record.entities.includes(entity)).map((r) => r.path)
-  }
-  return {
-    view,
-    sha: VIEW_SHA,
-    records: byPath.size,
-    skipped: 0,
-    loadMs: 0,
-    source: "git",
-    snapshotPath: null
-  }
-}
+/**
+ * A `LoadedHead` over records alone, no git anywhere: `versionFromRecords` is the fold a snapshot
+ * load uses, so the view is a real `HeadVersion` a commit could advance.
+ */
+const headOver = (records: ReadonlyArray<MemoryRecord>): LoadedHead => ({
+  view: versionFromRecords(records, VIEW_SHA),
+  sha: VIEW_SHA,
+  records: records.length,
+  skipped: 0,
+  loadMs: 0,
+  source: "git",
+  snapshotPath: null,
+  ancestorSha: null,
+  reparsed: null
+})
 
 describe("the exec tool refuses what the commit would refuse", () => {
   const EDITED = "areas/inbox/x.html"

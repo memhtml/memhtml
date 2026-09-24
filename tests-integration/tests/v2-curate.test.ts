@@ -27,9 +27,12 @@ import { type Cli, makeCli } from "./harness.js"
  *   of main is not refused: it is replayed" (the fast-forward path's compare-and-swap moves main to a
  *   commit that does not contain it, and `replayed` comes back `null`).
  * - `v2.ts` `curateMerge`: replace the gate call with `gate = { ran: false, passed: null }` -> "a
- *   merge without --skip-gate runs the fake-mode gate and reports it" (`gate.ran` is false) and "an
- *   injected failing gate fails the merge with its numbers and moves nothing" (the failure never
- *   fires).
+ *   merge without --skip-gate runs the head gate over both tips and reports it" (`gate.ran` is
+ *   false) and "an injected failing gate fails the merge with its numbers and moves nothing" (the
+ *   failure never fires).
+ * - `v2.ts` `curateMerge`: drop the `snapshotAfterCommit` call (`snapshot: null`) -> "curate merge
+ *   --skip-gate lands main at the curator's commit with the working tree following" (the payload's
+ *   `snapshot` is null and the next `head status` reads git).
  * - `v2.ts` `curateMerge`: drop `readTreeIntoWorktree(from, to)` -> "curate merge --skip-gate lands
  *   main at the curator's commit with the working tree following" (the put files are absent on
  *   disk and `status` reports staged deletions).
@@ -236,12 +239,19 @@ describe("a curator session on an unborn branch", () => {
       moved: true,
       gate: { ran: false, passed: null },
       worktreeSynced: true,
-      replayed: null
+      replayed: null,
+      snapshot: expect.objectContaining({ sha: target, rows: expect.any(Number) })
     })
 
     expect(await rev("refs/heads/main")).toBe(target)
     expect(await rev("HEAD")).toBe(target)
     expect(await status()).toBe("")
+    // The landing cached its version, and the snapshot directory is ignored, so a full status is
+    // as clean as the one that excludes `.memhtml/`.
+    expect(await onDisk(`.memhtml/snapshots/${target}.arrow`)).toBe(true)
+    expect((await cli.git("status", "--porcelain")).trim()).toBe("")
+    const head = await cli.json<{ sha: string; source: string }>(["head", "status"])
+    expect(head).toMatchObject({ sha: target, source: "snapshot" })
     expect(await onDisk("areas/inbox/curated-one.html")).toBe(true)
     expect(await onDisk("areas/inbox/curated-two.html")).toBe(true)
     expect(await onDisk(source.path)).toBe(false)
@@ -260,7 +270,13 @@ describe("a curator session on an unborn branch", () => {
   it("a second merge of the same branch moves nothing and says so", async () => {
     const main = await rev("refs/heads/main")
     const merged = await cli.json<CurateMerged>(["curate", "merge", "curate/x", "--skip-gate"])
-    expect(merged).toMatchObject({ from: main, to: main, moved: false, worktreeSynced: false })
+    expect(merged).toMatchObject({
+      from: main,
+      to: main,
+      moved: false,
+      worktreeSynced: false,
+      snapshot: null
+    })
     expect(await rev("refs/heads/main")).toBe(main)
   })
 })
@@ -336,7 +352,7 @@ describe("the refusals", () => {
 })
 
 describe("the gate", () => {
-  it("a merge without --skip-gate runs the fake-mode gate and reports it", async () => {
+  it("a merge without --skip-gate runs the head gate over both tips and reports it", async () => {
     const { sha } = await curate("z", [
       { op: "write", title: "Curated on z", type: "semantic", body: "Lands behind the gate." }
     ])
@@ -345,11 +361,18 @@ describe("the gate", () => {
     expect(merged).toMatchObject({ from: before, to: sha, moved: true, worktreeSynced: true })
     expect(merged.gate.ran).toBe(true)
     expect(merged.gate.passed).toBe(true)
-    expect(merged.gate.mode).toBe("fake")
+    // The gate is over the two versions the landing moves between, never over a fixture corpus.
+    expect(merged.gate.mode).toBe("head")
+    expect(merged.gate.base).toBe(before)
+    expect(merged.gate.landed).toBe(sha)
     expect(typeof merged.gate.mrr).toBe("number")
-    expect(merged.gate.mrr).toBeGreaterThanOrEqual(merged.gate.mrrFloor ?? Number.POSITIVE_INFINITY)
+    expect(typeof merged.gate.mrrBefore).toBe("number")
+    expect(merged.gate.mrr).toBeGreaterThanOrEqual(merged.gate.floor ?? Number.POSITIVE_INFINITY)
+    expect(merged.gate.mrrFloor).toBe(merged.gate.floor)
+    // Every record active at both tips is a probe: the fixtures and the earlier landings.
     expect(merged.gate.probes).toBeGreaterThan(0)
     expect(merged.gate.inversions).toBe(0)
+    expect(merged.gate.inversionsBefore).toBe(0)
     expect(await rev("refs/heads/main")).toBe(sha)
     expect(await onDisk("areas/inbox/curated-on-z.html")).toBe(true)
   }, 60_000)
@@ -506,6 +529,11 @@ describe("the replay, when main moved past the curator's base", () => {
       attempts: 1,
       originalTip: tip
     })
+    // A landed replay caches its version the way a fast-forward does.
+    expect(merged.snapshot).toEqual(
+      expect.objectContaining({ sha: merged.to, rows: expect.any(Number) })
+    )
+    expect(await onDisk(`.memhtml/snapshots/${merged.to}.arrow`)).toBe(true)
 
     // One commit on main, parented on the moved tip, with the replay subject.
     expect(await rev("refs/heads/main")).toBe(merged.to)
@@ -536,7 +564,13 @@ describe("the replay, when main moved past the curator's base", () => {
     // The curate ref now names the landed commit, so a re-run has nothing to do.
     expect(await rev("refs/heads/curate/r")).toBe(merged.to)
     const again = await cli.json<CurateMerged>(["curate", "merge", "curate/r", "--skip-gate"])
-    expect(again).toMatchObject({ from: merged.to, to: merged.to, moved: false, replayed: null })
+    expect(again).toMatchObject({
+      from: merged.to,
+      to: merged.to,
+      moved: false,
+      replayed: null,
+      snapshot: null
+    })
   })
 
   it("a record main gained with the same content hash refuses the replay as a duplicate before the gate runs", async () => {

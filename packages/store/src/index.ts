@@ -36,9 +36,12 @@ export {
   README,
   readFileOrNull,
   SCAFFOLD_DIRS,
+  SESSIONS_DIR_PATH,
   SLEEP_REPORTS_DIR,
+  SNAPSHOTS_DIR_PATH,
   STATE_DB_PATH,
-  STATE_SIDECAR_PATH
+  STATE_SIDECAR_PATH,
+  V2_IGNORE_PATTERNS
 } from "./layout.js"
 export type {
   ChangedPath,

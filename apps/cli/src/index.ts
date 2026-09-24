@@ -122,6 +122,24 @@ export {
   makeEntityExtractor,
   RESPONSE_SCHEMA as EXTRACTION_RESPONSE_SCHEMA
 } from "./extraction.js"
+export {
+  type AncestorSnapshot,
+  findAncestorSnapshot,
+  type HeadSource,
+  type LoadedVersion,
+  loadVersion,
+  type SnapshotWritten,
+  snapshotAfterCommit,
+  writeHeadSnapshot
+} from "./head-cache.js"
+export {
+  type GateFailure,
+  type GateOutcome,
+  gateReportOf,
+  type HeadLoader,
+  headGate,
+  isHeadGateReport
+} from "./head-gate.js"
 export * from "./operations.js"
 export { claimFromProse, proseTail } from "./prose.js"
 export {

@@ -1298,7 +1298,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "message",
         type: "string",
         description:
-          "The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer. When HEAD is the session's ref, the shared index and working tree move to the new commit with it (`worktreeSynced: true`); uncommitted state at a path the commit writes or removes is answered `worktree-dirty` and nothing moves. A ref that moved past the session's base is `rebase-needed`: run `session rebase` and commit again.",
+          "The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer. When HEAD is the session's ref, the shared index and working tree move to the new commit with it (`worktreeSynced: true`); uncommitted state at a path the commit writes or removes is answered `worktree-dirty` and nothing moves. A ref that moved past the session's base is `rebase-needed`: run `session rebase` and commit again. A `committed` outcome also writes the new commit's snapshot (`snapshot`: path, bytes, ms, pruned; null when that best-effort write failed), so the next load hits the cache.",
         required: true
       }
     ],
@@ -1331,7 +1331,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   {
     name: "head status",
     summary:
-      "Build the corpus version at HEAD and report its sha, record count, skipped files, load time, and whether it came from a snapshot or from git.",
+      "Build the corpus version at HEAD and report its sha, record count, skipped files, load time, and its source: `snapshot` (HEAD's own .arrow file), `snapshot+advance` (an ancestor's snapshot advanced over the changed paths, with `ancestorSha` and `reparsed`), or `git`.",
     args: [],
     flags: [],
     responseTypes: ["head.status"],
@@ -1349,7 +1349,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   {
     name: "head snapshot",
     summary:
-      "Write the version at HEAD as .memhtml/snapshots/<sha>.arrow, the cold-start cache, or read that file back and report it.",
+      "Write the version at HEAD as .memhtml/snapshots/<sha>.arrow, the cold-start cache, pruning to the newest four, or read that file back and report it. Every ref-moving commit writes this file itself; the command is for a store whose HEAD moved by other means.",
     args: [],
     flags: [
       {
@@ -1380,7 +1380,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   {
     name: "curate merge",
     summary:
-      "Land a curator branch on its target: fast-forward --into to the ref when the ref descends from it, else replay the ref's operations (its puts, archives, and links since the merge base) as one fresh commit on --into's tip; the discrimination gate runs first either way, the checkout comes along when --into is HEAD, and after a replay the curator ref is moved to the landed commit.",
+      "Land a curator branch on its target: fast-forward --into to the ref when the ref descends from it, else replay the ref's operations (its puts, archives, and links since the merge base) as one fresh commit on --into's tip; the head gate (the same probes ranked at both tips) runs first either way, the checkout comes along when --into is HEAD, the landed version's snapshot is written, and after a replay the curator ref is moved to the landed commit.",
     args: [
       {
         name: "ref",
@@ -1401,7 +1401,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "skip-gate",
         type: "boolean",
         description:
-          "Land without running the discrimination gate. A deliberate, logged override for a repository without the eval corpus, never a default. A failing gate is ERR_DISCRIMINATION_FAILED with its numbers in the message, and nothing moves.",
+          "Land without running the head gate. A deliberate, logged override, never a default. The gate loads the version at --into and the version at the ref, probes a seeded sample of the records active in both by their titles, and refuses (ERR_DISCRIMINATION_FAILED, nothing moves) when the landed version's MRR falls more than the tolerance below the base's or its inversions grow; the payload's `gate` carries mode `head`, probes, mrr, mrrBefore, floor, and inversions.",
         default: false
       }
     ],

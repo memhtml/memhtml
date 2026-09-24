@@ -38,6 +38,7 @@ import {
 import { type GitFailure, makeGit } from "@memhtml/store"
 import { Effect } from "effect"
 
+import { type SnapshotWritten, snapshotAfterCommit } from "./head-cache.js"
 import { runSessionExec } from "./session-exec.js"
 import {
   type HeadStats,
@@ -172,6 +173,8 @@ export interface CurateRunReport {
   readonly toolCalls: ReadonlyArray<string>
   /** Rebase rounds the landing needed. */
   readonly rebases: number
+  /** The snapshot written for the landed commit, `null` when nothing was committed or the write failed. */
+  readonly snapshot: SnapshotWritten | null
   readonly head: HeadStats
   readonly briefing: Briefing
   /** The command that lands the branch on `main`. */
@@ -401,7 +404,7 @@ const land = (input: {
   readonly head: LoadedHead
   readonly message: string
 }): Effect.Effect<
-  { readonly sha: string; readonly rebases: number },
+  { readonly sha: string; readonly rebases: number; readonly head: LoadedHead },
   GitFailure | StorageFailure | InvalidMemory | DirtyTree
 > =>
   Effect.gen(function* () {
@@ -416,7 +419,7 @@ const land = (input: {
       })
       switch (outcome.kind) {
         case "committed":
-          return { sha: outcome.sha, rebases: attempt - 1 }
+          return { sha: outcome.sha, rebases: attempt - 1, head }
         case "rebase-needed": {
           head = yield* loadHeadAt(input.root, outcome.mainSha)
           session = rebaseSession(session, head.view)
@@ -553,8 +556,12 @@ export const curateRun = (
     }
 
     const session = overlay.session()
-    if (session === null) return { ...base, commit: null, outcome: "dry-run", rebases: 0 }
-    if (session.ops.length === 0) return { ...base, commit: null, outcome: "no-ops", rebases: 0 }
+    if (session === null) {
+      return { ...base, commit: null, outcome: "dry-run", rebases: 0, snapshot: null }
+    }
+    if (session.ops.length === 0) {
+      return { ...base, commit: null, outcome: "no-ops", rebases: 0, snapshot: null }
+    }
 
     const landed = yield* land({
       root: input.root,
@@ -562,5 +569,13 @@ export const curateRun = (
       head,
       message: commitSummary(run.report)
     })
-    return { ...base, commit: landed.sha, outcome: "committed", rebases: landed.rebases }
+    // The curator's ref moved: cache its version so `curate merge` loads both tips from snapshots.
+    const snapshot = yield* snapshotAfterCommit(input.root, landed.sha, landed.head.view)
+    return {
+      ...base,
+      commit: landed.sha,
+      outcome: "committed",
+      rebases: landed.rebases,
+      snapshot
+    }
   })

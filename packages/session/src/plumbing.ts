@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import { resolve } from "node:path"
 import { Effect } from "effect"
 
 import { GitFailure } from "./errors.js"
@@ -151,6 +152,26 @@ export interface Plumbing {
   /** `merge-base --is-ancestor sha ref`: true when `sha` is reachable from `ref`. */
   isAncestor(sha: string, ref: string): Effect.Effect<boolean, GitFailure>
 }
+
+/**
+ * Where git keeps `relative` for this repository (`rev-parse --git-path`), absolute. `info/exclude`
+ * of a linked worktree lives in the common directory and `.git` may be a file, so the path is asked
+ * of git rather than spelled as `<root>/.git/<relative>`.
+ */
+export const gitPathOf = (root: string, relative: string): Effect.Effect<string, GitFailure> =>
+  Effect.gen(function* () {
+    const result = yield* spawnGit(root, ["rev-parse", "--git-path", relative], childEnv({}))
+    const out = result.stdout.toString("utf8").trim()
+    if (result.exitCode !== 0 || out === "") {
+      yield* Effect.logError(
+        `git rev-parse --git-path exited ${String(result.exitCode)}: ${result.stderr.trim()}`
+      )
+      return yield* Effect.fail(
+        GitFailure.make({ command: "rev-parse", exitCode: result.exitCode })
+      )
+    }
+    return resolve(root, out)
+  })
 
 /** How many times a shared-index write waits for another writer's `index.lock`, and how long. */
 const INDEX_LOCK_ATTEMPTS = 40

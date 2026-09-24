@@ -1,20 +1,10 @@
-import { access } from "node:fs/promises"
 import { join } from "node:path"
 
 import type { HeadView, OverlayOp } from "@memhtml/contracts"
 import { DirtyTree, InvalidMemory, StorageFailure } from "@memhtml/contracts/errors"
 import { isValidMemoryPath, memoryPathFor } from "@memhtml/contracts/paths"
 import { filenameFor, slugify, withCollisionOrdinal } from "@memhtml/contracts/slug"
-import { type DiscriminationFailed, discriminationGate, type EvalOutcome } from "@memhtml/eval"
-import {
-  emptyIndexes,
-  insertRecord,
-  loadHead,
-  type SearchHit,
-  searchHead,
-  viewOf,
-  withOverlay
-} from "@memhtml/head"
+import { type HeadVersion, type SearchHit, searchHead, withOverlay } from "@memhtml/head"
 import { renderTemplate } from "@memhtml/html"
 import {
   appendOps,
@@ -31,11 +21,25 @@ import {
   type Violation,
   validateOps
 } from "@memhtml/session"
-import { readSnapshot, snapshotPathFor, writeSnapshot } from "@memhtml/snapshot"
+import { readSnapshot, snapshotPathFor } from "@memhtml/snapshot"
 import { type GitFailure, isoSecond, makeGit, type WriteInput } from "@memhtml/store"
 import { Effect } from "effect"
 
 import type { ResponseType } from "./envelope.js"
+import {
+  type HeadSource,
+  loadVersion,
+  type SnapshotWritten,
+  snapshotAfterCommit,
+  writeHeadSnapshot
+} from "./head-cache.js"
+import {
+  type GateFailure,
+  type GateOutcome,
+  type GateReport,
+  gateReportOf,
+  headGate
+} from "./head-gate.js"
 import { toWriteInput, type WriteParams } from "./operations.js"
 import {
   commitSubjectOf,
@@ -45,6 +49,8 @@ import {
   reconstructOps
 } from "./replay.js"
 import { runSessionExec } from "./session-exec.js"
+
+export type { GateReport } from "./head-gate.js"
 
 /**
  * The v2 proof-of-concept commands (`docs/v2-poc.md`, "CLI commands"): `session start|put|exec|
@@ -61,8 +67,10 @@ import { runSessionExec } from "./session-exec.js"
  * ## The head loads per invocation
  *
  * A long-lived head process is out of the proof of concept's scope. Each call builds the version it
- * needs: from `.memhtml/snapshots/<sha>.arrow` when a snapshot exists for that commit, else from
- * git, and every payload that loaded one says which ({@link HeadStats}). A session command loads the
+ * needs: from `.memhtml/snapshots/<sha>.arrow` when a snapshot exists for that commit, else from the
+ * newest snapshot of an ancestor commit advanced over the changed paths, else from git, and every
+ * payload that loaded one says which ({@link HeadStats}). Every commit that moves a ref writes the
+ * snapshot for the new sha (`head-cache.ts`), so the next call hits the cache. A session command loads the
  * head at the SESSION's base sha, not at the ref's tip, because a session sees exactly one version
  * plus its own deltas: `session commit` validates against that base and reports `rebase-needed`
  * whenever the ref has moved past it, and `session rebase` is the one arm that reloads at the ref's
@@ -76,18 +84,24 @@ export interface HeadStats {
   readonly records: number
   /**
    * Files the git load skipped because they failed the parser. `null` when the head came from a
-   * snapshot, which holds records only and cannot say what the original load left out.
+   * snapshot (exact or advanced), which holds records only and cannot say what the original load
+   * left out.
    */
   readonly skipped: number | null
   readonly loadMs: number
-  readonly source: "snapshot" | "git"
-  /** The snapshot file the head was read from, or `null` when it came from git. */
+  /** `snapshot` (this sha's own file), `snapshot+advance` (an ancestor's, advanced), or `git`. */
+  readonly source: HeadSource
+  /** The snapshot file the head was read from (its own or the ancestor's), or `null` from git. */
   readonly snapshotPath: string | null
+  /** Under `snapshot+advance`, the commit whose snapshot was advanced; otherwise `null`. */
+  readonly ancestorSha: string | null
+  /** Under `snapshot+advance`, the memory paths re-parsed to reach `sha`; otherwise `null`. */
+  readonly reparsed: number | null
 }
 
 /** A loaded version plus what loading it cost. */
 export interface LoadedHead extends HeadStats {
-  readonly view: HeadView & { readonly sha: string }
+  readonly view: HeadVersion
 }
 
 /** The `HeadStats` half of a loaded head, for a payload. */
@@ -97,23 +111,15 @@ export const headStats = (loaded: LoadedHead): HeadStats => ({
   skipped: loaded.skipped,
   loadMs: loaded.loadMs,
   source: loaded.source,
-  snapshotPath: loaded.snapshotPath
+  snapshotPath: loaded.snapshotPath,
+  ancestorSha: loaded.ancestorSha,
+  reparsed: loaded.reparsed
 })
 
-const exists = (path: string): Effect.Effect<boolean> =>
-  Effect.promise(() =>
-    access(path).then(
-      () => true,
-      () => false
-    )
-  )
-
 /**
- * Load the version at `sha`: from its snapshot when one exists and `source` allows it, else from git.
- *
- * A snapshot whose metadata names a different sha than its filename is refused rather than served,
- * because the filename is what the caller asked for and the metadata is what the rows describe; a
- * disagreement means the file is not the cache it claims to be.
+ * Load the version at `sha` the cheapest way that exists (`head-cache.ts` `loadVersion`): its own
+ * snapshot, else an ancestor's snapshot advanced over the changed paths, else git. `source: "git"`
+ * forces the tree read.
  */
 export const loadHeadAt = (
   root: string,
@@ -122,37 +128,17 @@ export const loadHeadAt = (
 ): Effect.Effect<LoadedHead, GitFailure | InvalidMemory | StorageFailure> =>
   Effect.gen(function* () {
     const started = Date.now()
-    const snapshotPath = snapshotPathFor(root, sha)
-    if (source === "auto" && (yield* exists(snapshotPath))) {
-      const snapshot = yield* readSnapshot(snapshotPath)
-      if (snapshot.sha !== sha) {
-        yield* Effect.logError(
-          `snapshot ${snapshotPath} names ${snapshot.sha} in its metadata, so it is not the cache of ${sha}`
-        )
-        return yield* Effect.fail(StorageFailure.make({ operation: "snapshot.sha-mismatch" }))
-      }
-      let indexes = emptyIndexes
-      for (const record of snapshot.records) indexes = insertRecord(indexes, record)
-      const view = { ...viewOf(indexes, sha), sha }
-      return {
-        view,
-        sha,
-        records: view.size,
-        skipped: null,
-        loadMs: Date.now() - started,
-        source: "snapshot" as const,
-        snapshotPath
-      }
-    }
-    const version = yield* loadHead(makeGit(root), sha)
+    const loaded = yield* loadVersion(root, sha, source)
     return {
-      view: version,
+      view: loaded.version,
       sha,
-      records: version.size,
-      skipped: version.skipped,
+      records: loaded.version.size,
+      skipped: loaded.source === "git" ? loaded.version.skipped : null,
       loadMs: Date.now() - started,
-      source: "git" as const,
-      snapshotPath: null
+      source: loaded.source,
+      snapshotPath: loaded.snapshotPath,
+      ancestorSha: loaded.ancestorSha,
+      reparsed: loaded.reparsed
     }
   })
 
@@ -423,7 +409,8 @@ export const sessionExec = (input: {
  * not retried: the caller decides whether to `session rebase` and try again, because a rebase can
  * turn the outcome into `refused` and that is a decision, not a retry. When `HEAD` is the session's
  * ref, the shared index and working tree follow the commit (`worktreeSynced`), or the commit is
- * `worktree-dirty` and nothing moves.
+ * `worktree-dirty` and nothing moves. A `committed` outcome also writes the snapshot for the new
+ * commit (`snapshot`, `null` when that best-effort write failed), so the next load hits the cache.
  */
 export const sessionCommit = (input: {
   readonly root: string
@@ -438,7 +425,11 @@ export const sessionCommit = (input: {
       head: head.view,
       message: input.message
     })
-    return { id: session.id, ref: session.ref, baseSha: session.baseSha, ...outcome }
+    const snapshot: SnapshotWritten | null =
+      outcome.kind === "committed"
+        ? yield* snapshotAfterCommit(input.root, outcome.sha, head.view)
+        : null
+    return { id: session.id, ref: session.ref, baseSha: session.baseSha, ...outcome, snapshot }
   })
 
 /** `session rebase`: move the base to the ref's tip, keeping every op. Validation is the next commit's. */
@@ -519,25 +510,20 @@ export const headSnapshot = (input: { readonly root: string; readonly mode: "wri
     const path = snapshotPathFor(input.root, sha)
     if (input.mode === "write") {
       const head = yield* loadHeadAt(input.root, sha, "git")
-      const written = yield* writeSnapshot({ records: head.view.records(), sha, path })
-      return { mode: "write" as const, sha, path, bytes: written.bytes, rows: written.rows }
+      const written = yield* writeHeadSnapshot(input.root, head.view)
+      return {
+        mode: "write" as const,
+        sha,
+        path,
+        bytes: written.bytes,
+        rows: written.rows,
+        ms: written.ms,
+        pruned: written.pruned
+      }
     }
     const snapshot = yield* readSnapshot(path)
     return { mode: "read" as const, sha: snapshot.sha, path, rows: snapshot.records.length }
   })
-
-/** What `curate merge` reports about the gate it ran, or did not. */
-export interface GateReport {
-  /** False under `--skip-gate`; then `passed` is `null` and there is no `mrr`. */
-  readonly ran: boolean
-  /** True when it ran (a failing gate fails the command instead), `null` when it did not. */
-  readonly passed: boolean | null
-  readonly mode?: EvalOutcome["mode"]
-  readonly mrr?: number
-  readonly mrrFloor?: number
-  readonly probes?: number
-  readonly inversions?: number
-}
 
 /** What `curate merge` reports about a landing that was not a fast-forward. */
 export interface ReplayReport {
@@ -569,6 +555,8 @@ export interface CurateMerged {
   readonly worktreeSynced: boolean
   /** `null` on a fast-forward; the replay's account when the target had moved past the curator's base. */
   readonly replayed: ReplayReport | null
+  /** The snapshot written for `to` after the landing, or `null` when nothing moved or the write failed. */
+  readonly snapshot: SnapshotWritten | null
 }
 
 /**
@@ -639,11 +627,11 @@ const replayPlan = (input: {
  *    a link removed, a meta changed) refuses the merge naming the path, and so does any violation
  *    (a `duplicate` or `claim-edit` because `into` gained the same fact meanwhile, a link whose
  *    target is gone), with nothing moved.
- * 2. The discrimination gate (`@memhtml/eval`), in `fake` mode always: the gate measures the ranking
- *    stack against its own generated fixture corpus, so a live-Bedrock run would make a merge
- *    conditional on a network call and a credential. A failing gate fails this effect with the
- *    gate's numbers, and nothing has moved yet. `skipGate` is a logged override for a checkout
- *    without the eval corpus, and the report says the gate did not run.
+ * 2. The head gate (`head-gate.ts`): the version at `into`'s tip and the version at `ref`'s tip
+ *    are loaded and `gateHeads` scores the same probes at both, so the gate measures the corpus
+ *    being landed and nothing else, with no network call and no credential. A failing gate fails
+ *    this effect with the gate's numbers, and nothing has moved yet. `skipGate` is a logged
+ *    override, and the report says the gate did not run.
  * 3. Fast-forward: when HEAD is `into`, the checkout follows BEFORE the ref moves, the way
  *    `commitSession` does it: a dirty path among those the landing changes is `DirtyTree` and
  *    nothing moves; otherwise `read-tree -m -u from to` brings the shared index and working tree to
@@ -666,10 +654,10 @@ export const curateMerge = (input: {
   readonly ref: string
   readonly into?: string | undefined
   readonly skipGate?: boolean | undefined
-  readonly gate?: Effect.Effect<EvalOutcome, DiscriminationFailed> | undefined
+  readonly gate?: Effect.Effect<GateOutcome, GateFailure> | undefined
 }): Effect.Effect<
   CurateMerged,
-  GitFailure | InvalidMemory | StorageFailure | DirtyTree | DiscriminationFailed
+  GitFailure | InvalidMemory | StorageFailure | DirtyTree | GateFailure
 > =>
   Effect.gen(function* () {
     const ref = qualifyRef(input.ref)
@@ -729,16 +717,9 @@ export const curateMerge = (input: {
         `curate merge --skip-gate: landing ${ref} on ${into} without running discrimination`
       )
     } else {
-      const outcome = yield* input.gate ?? discriminationGate({ mode: "fake" })
-      gate = {
-        ran: true,
-        passed: outcome.passed,
-        mode: outcome.mode,
-        mrr: outcome.mrr,
-        mrrFloor: outcome.mrrFloor,
-        probes: outcome.probes,
-        inversions: outcome.inversions.length
-      }
+      const outcome = yield* input.gate ??
+        headGate({ root: input.root, from, to, load: loadHeadAt })
+      gate = gateReportOf(outcome)
     }
 
     if (replay !== null && session !== null && head !== null) {
@@ -756,7 +737,17 @@ export const curateMerge = (input: {
     }
 
     if (from === to) {
-      return { ref, into, from, to, moved: false, gate, worktreeSynced: false, replayed: null }
+      return {
+        ref,
+        into,
+        from,
+        to,
+        moved: false,
+        gate,
+        worktreeSynced: false,
+        replayed: null,
+        snapshot: null
+      }
     }
 
     const checkedOut = (yield* git.headRef()) === into
@@ -782,7 +773,19 @@ export const curateMerge = (input: {
       )
     }
 
-    return { ref, into, from, to, moved: true, gate, worktreeSynced: checkedOut, replayed: null }
+    // The landing moved `into` to `to`: cache that version so the next load of main hits it.
+    const snapshot = yield* snapshotAfterCommit(input.root, to)
+    return {
+      ref,
+      into,
+      from,
+      to,
+      moved: true,
+      gate,
+      worktreeSynced: checkedOut,
+      replayed: null,
+      snapshot
+    }
   })
 
 /**
@@ -828,6 +831,9 @@ const landReplay = (input: {
               `curate merge: ${input.ref} moved past ${input.to} while its replay landed as ${outcome.sha}; the ref was left where its writer put it`
             )
           }
+          // The landing moved `into` to the replayed commit: cache that version, best-effort, the
+          // way the fast-forward path does.
+          const snapshot = yield* snapshotAfterCommit(input.root, outcome.sha, head.view)
           return {
             ref: input.ref,
             into: input.into,
@@ -841,7 +847,8 @@ const landReplay = (input: {
               ops: input.reconstruction.counts,
               attempts: attempt,
               originalTip: input.to
-            }
+            },
+            snapshot
           }
         }
         case "rebase-needed": {
@@ -892,7 +899,7 @@ export const runV2 = (
   input: V2Input
 ): Effect.Effect<
   readonly [ResponseType, unknown],
-  GitFailure | InvalidMemory | StorageFailure | DirtyTree | DiscriminationFailed
+  GitFailure | InvalidMemory | StorageFailure | DirtyTree | GateFailure
 > => {
   switch (command) {
     case "session start":

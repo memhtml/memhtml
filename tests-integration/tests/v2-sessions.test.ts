@@ -631,6 +631,11 @@ describe("the head commands", () => {
       readonly source: string
       readonly loadMs: number
     }
+    // The session commits above wrote the snapshot for the tip they made, so a load hits it first.
+    const cached = await cli.json<Status>(["head", "status"])
+    expect(cached).toMatchObject({ sha, source: "snapshot", skipped: null })
+    // Drop the cache to measure the git path this case is about.
+    await rm(join(cli.root, ".memhtml", "snapshots"), { recursive: true, force: true })
     const fromGit = await cli.json<Status>(["head", "status"])
     expect(fromGit.sha).toBe(sha)
     expect(fromGit.source).toBe("git")
