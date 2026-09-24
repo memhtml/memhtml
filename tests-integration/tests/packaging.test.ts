@@ -76,6 +76,13 @@ const ASSET_CLAIMS: ReadonlyArray<AssetClaim> = [
     from: "packages/curator/prompts",
     resolvedIn: "packages/curator/src/charter.ts",
     needle: 'new URL("../prompts/charter.md", import.meta.url)'
+  },
+  /** The collapse charter beside it, read by `memhtml curate collapse` for every fold. */
+  {
+    path: "prompts",
+    from: "packages/curator/prompts",
+    resolvedIn: "packages/curator/src/charter.ts",
+    needle: 'new URL("../prompts/collapse.md", import.meta.url)'
   }
 ]
 

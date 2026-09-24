@@ -648,6 +648,23 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
         detail: `${String(answer.data?.outcome)}, stoppedBy ${String(answer.data?.stoppedBy)} after ${String(answer.data?.steps)} step(s)`
       })
     ],
+    /*
+     * The collapse, as a dry run: the planner cuts this small corpus (no cluster of two or more is
+     * expected), prints the plan, and writes nothing. The assertion is on the planner having run and
+     * the payload carrying the plan; the folds themselves are the integration tier's.
+     */
+    [
+      "curate collapse",
+      ["curate", "collapse", "--model", "fake", "--ref", "curate/smoke-collapse", "--dry-run"],
+      env,
+      (answer) => ({
+        ok:
+          answer.data?.dryRun === true &&
+          typeof answer.data?.totals?.active === "number" &&
+          Array.isArray(answer.data?.plan?.clusters),
+        detail: `active ${String(answer.data?.totals?.active)}, clusters ${String(answer.data?.plan?.clusters?.length)}, planMs ${String(answer.data?.planMs)}`
+      })
+    ],
     ["head status", ["head", "status"]],
     ["head search", ["head", "search", "VIP revert"]],
     [

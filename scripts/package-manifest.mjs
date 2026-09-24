@@ -79,7 +79,8 @@ for (const required of [
   "dist/memhtml-mcp.mjs",
   "migrations",
   "guest",
-  "prompts/charter.md"
+  "prompts/charter.md",
+  "prompts/collapse.md"
 ]) {
   if (!existsSync(join(STAGING, required))) {
     throw new Error(`dist-package/${required} is missing; run \`pnpm package:assemble\``)
