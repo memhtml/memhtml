@@ -4,6 +4,7 @@
  */
 
 export {
+  archiveBody,
   type CommitOutcome,
   type CommitScope,
   commitMessage,
