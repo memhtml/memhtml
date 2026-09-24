@@ -4,15 +4,21 @@ import type {
   LanguageModelV4GenerateResult,
   LanguageModelV4ToolResultPart
 } from "@ai-sdk/provider"
+import { MEMORY_TYPES, type MemoryType, slugify } from "@memhtml/contracts"
+import { renderTemplate } from "@memhtml/html"
 import { MockLanguageModelV4 } from "ai/test"
 
 import { type Briefing, parseBriefing } from "./briefing.js"
+import { type CollapseBriefing, parseCollapseBriefing } from "./collapse-briefing.js"
+import type { ProposedOp } from "./tools.js"
 
 /**
  * The scripted model behind `--model fake`: credential-free, deterministic, and useful.
  *
- * It plays the dedup rule of the charter and nothing else. Its script is fixed: `status` once, then
- * one `exec` whose script lists every frame-key group in the briefing that holds more than one
+ * Two scripts, chosen by the briefing it is handed:
+ *
+ * Under a curate-run briefing it plays the dedup rule of the charter and nothing else: `status` once,
+ * then one `exec` whose script lists every frame-key group in the briefing that holds more than one
  * active path, archives every path but the first of each, and splices a `supersedes` link into the
  * kept file's head for each archive, then `finish`. On a fixture that holds a duplicate pair the
  * harvester yields one `archive` and one `link` from that one `exec` (the head edit becomes a
@@ -20,8 +26,16 @@ import { type Briefing, parseBriefing } from "./briefing.js"
  * run and the integration tier with no model on the network, and proves the code-mode edge path
  * end to end.
  *
- * It reads the briefing back out of the user message (`parseBriefing`) and the archive list out of
- * the `exec` tool result, so the only coupling is to shapes this package owns.
+ * Under a collapse briefing (`collapse-briefing.ts`) it plays one fold the way the collapse charter
+ * asks: one `propose` carrying the canonical `put` under the home prefix (title, the members'
+ * claims as the body, every tag and entity, the collapse tag, and one `supersedes` link per member
+ * unless the briefing says the driver completes them) plus one `archive` per member (again unless
+ * the driver completes them), then `finish` naming the canonical. So `curate collapse --model fake`
+ * lands a real fold on a fixture, and the driver's completion of archives and links is exercised
+ * on the large-group path.
+ *
+ * It reads each briefing back out of the user message and the archive list out of the `exec` tool
+ * result, so the only coupling is to shapes this package owns.
  */
 
 export const FAKE_PROVIDER = "memhtml"
@@ -70,14 +84,26 @@ const callsSoFar = (options: LanguageModelV4CallOptions): ReadonlyArray<string> 
       : []
   )
 
+/** Every text part of every user message, in order. */
+const userTexts = (options: LanguageModelV4CallOptions): ReadonlyArray<string> =>
+  options.prompt.flatMap((message) =>
+    message.role === "user"
+      ? message.content.flatMap((part) => (part.type === "text" ? [part.text] : []))
+      : []
+  )
+
 const briefingOf = (options: LanguageModelV4CallOptions): Briefing | null => {
-  for (const message of options.prompt) {
-    if (message.role !== "user") continue
-    for (const part of message.content) {
-      if (part.type !== "text") continue
-      const parsed = parseBriefing(part.text)
-      if (parsed !== null) return parsed
-    }
+  for (const text of userTexts(options)) {
+    const parsed = parseBriefing(text)
+    if (parsed !== null) return parsed
+  }
+  return null
+}
+
+const collapseBriefingOf = (options: LanguageModelV4CallOptions): CollapseBriefing | null => {
+  for (const text of userTexts(options)) {
+    const parsed = parseCollapseBriefing(text)
+    if (parsed !== null) return parsed
   }
   return null
 }
@@ -127,11 +153,91 @@ const toolCall = (toolName: string, args: unknown): LanguageModelV4GenerateResul
   warnings: []
 })
 
+const isMemoryType = (value: string): value is MemoryType =>
+  (MEMORY_TYPES as ReadonlyArray<string>).includes(value)
+
+/** The canonical's path under the briefing's home, the slug from its title. */
+export const fakeCanonicalPath = (briefing: Pick<CollapseBriefing, "home" | "title">): string =>
+  `${briefing.home}/${slugify(briefing.title)}.html`
+
+/**
+ * The canonical the fake writes for a collapse briefing. The claim keeps the title first and ends in
+ * a long tail after its last linking word, so it states no frame the members' claims share (the
+ * frame rule reads the last `of|is|in|to|by|as` and wants a value of at most six tokens); a
+ * canonical that keyed on a member's frame would earn a `contradicts` edge at commit.
+ */
+export const fakeCanonicalHtml = (briefing: CollapseBriefing): string => {
+  const tags = new Set<string>()
+  const entities = new Set<string>()
+  for (const member of briefing.members) {
+    for (const tag of member.tags) tags.add(tag)
+    for (const entity of member.entities) entities.add(entity)
+  }
+  tags.add(briefing.tag)
+  const archivable = briefing.members.filter((member) => member.ruling?.verdict !== "keep")
+  return renderTemplate({
+    title: briefing.title,
+    claim: `${briefing.title}: folded by the fake curator from ${String(archivable.length)} member records into one canonical record.`,
+    body: [
+      "The members stated, in their own words:",
+      ...briefing.members.map((member) => `${member.path}: ${member.claim}`)
+    ],
+    memoryType: isMemoryType(briefing.memoryType) ? briefing.memoryType : "semantic",
+    at: briefing.today,
+    tags: [...tags].sort(),
+    entities: [...entities].sort(),
+    links: briefing.driverCompletes
+      ? []
+      : archivable.map((member) => ({
+          rel: "supersedes" as const,
+          href: `/archive/${briefing.archiveYear}/${member.path}`
+        }))
+  })
+}
+
+/** The one proposal the fake makes for a collapse briefing: the put, then the archives when it owns them. */
+export const fakeCollapseProposal = (briefing: CollapseBriefing): ReadonlyArray<ProposedOp> => {
+  const put: ProposedOp = {
+    kind: "put",
+    path: fakeCanonicalPath(briefing),
+    html: fakeCanonicalHtml(briefing)
+  }
+  if (briefing.driverCompletes) return [put]
+  return [
+    put,
+    ...briefing.members
+      .filter((member) => member.ruling?.verdict !== "keep")
+      .map((member): ProposedOp => ({ kind: "archive", path: member.path }))
+  ]
+}
+
+const nextCollapseCall = (
+  briefing: CollapseBriefing,
+  calls: ReadonlyArray<string>
+): LanguageModelV4GenerateResult => {
+  if (calls.length === 0) return toolCall("propose", { ops: fakeCollapseProposal(briefing) })
+  const archived = briefing.driverCompletes
+    ? 0
+    : briefing.members.filter((member) => member.ruling?.verdict !== "keep").length
+  return toolCall("finish", {
+    report: [
+      `Folded ${briefing.title} into ${fakeCanonicalPath(briefing)}`,
+      String(archived),
+      "",
+      briefing.driverCompletes
+        ? "The driver archives the members and links them to the canonical."
+        : "Every member is archived and reached from the canonical by a supersedes link."
+    ].join("\n")
+  })
+}
+
 /** The next call in the fake's script, decided from what the conversation shows it has done. */
 export const fakeNextCall = (
   options: LanguageModelV4CallOptions
 ): LanguageModelV4GenerateResult => {
   const calls = callsSoFar(options)
+  const collapse = collapseBriefingOf(options)
+  if (collapse !== null) return nextCollapseCall(collapse, calls)
   const step = calls.length
   if (step === 0) return toolCall("status", {})
   if (step === 1) {
