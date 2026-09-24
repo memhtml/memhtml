@@ -114,6 +114,44 @@ describe("the happy path", () => {
   })
 })
 
+describe("a proposed unlink", () => {
+  it("passes through the schema as the contract's own shape", async () => {
+    // (Mutation: the `unlink` branch removed from `ProposedOp` -> the SDK refuses the tool input
+    // and nothing reaches `propose`; observed `expected [] to deeply equal [ [ { kind: 'unlink',
+    // ...(3) } ] ]`.)
+    const tools = fakeTools()
+    const model = scriptedModel([
+      {
+        tool: "propose",
+        args: {
+          ops: [
+            {
+              kind: "unlink",
+              path: "areas/inbox/a.html",
+              rel: "relates_to",
+              href: "/areas/inbox/gone.html"
+            }
+          ]
+        }
+      },
+      { tool: "finish", args: { report: "dropped one" } }
+    ])
+    const result = await run({ tools, model, briefing: emptyBriefing, charter: CHARTER })
+    expect(result.stoppedBy).toBe("finish")
+    expect(tools.proposed).toEqual([
+      [
+        {
+          kind: "unlink",
+          path: "areas/inbox/a.html",
+          rel: "relates_to",
+          href: "/areas/inbox/gone.html"
+        }
+      ]
+    ])
+    expect(result.opsAppended).toBe(1)
+  })
+})
+
 describe("a text-only answer", () => {
   it("ends the run as finish with the text as the report, no tool call needed", async () => {
     // The first live run (Opus 5.5 through the proxy, 2026-09-23) closed with prose instead of a

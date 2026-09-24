@@ -9,11 +9,13 @@ import { type Cli, makeCli } from "./harness.js"
 
 /**
  * The curator end to end (`docs/v2-poc.md`, "Curator"): `curate run --model fake` over a 300-memory
- * fixture that holds one deliberate frame-key duplicate pair lands one archive plus one link on
- * `curate/<date>`, both from the one `exec` (the fake's script splices the `supersedes` link into the
- * kept file's head, and the harvester turns that head edit into a `link` op, so no `propose` runs),
- * a second run without `--resume` refuses `session.exists`, `curate merge` lands the branch on
- * `main`, and a dry run leaves no session, no ref, and no commit.
+ * fixture that holds one deliberate frame-key duplicate pair, one contradiction pair, one pair of
+ * verdicts on one objective, and one dangling link lands one archive, one link, and one unlink on
+ * `curate/<date>`, all from the one `exec` (the fake's script splices the `supersedes` link into the
+ * kept file's head and cuts the dangling `<link>` line, and the harvester turns those head edits
+ * into a `link` and an `unlink` op, so no `propose` runs) while the contradiction and the verdicts
+ * stay live; a second run without `--resume` refuses `session.exists`, `curate merge` lands the
+ * branch on `main`, and a dry run leaves no session, no ref, and no commit.
  *
  * Every ref position is read back with `rev-parse` and every file claim with `git show` or `access`,
  * independently of the payload under test. The fixture is committed with porcelain, not through the
@@ -54,9 +56,9 @@ const fixtureMemory = (index: number): { readonly path: string; readonly html: s
 })
 
 /**
- * The deliberate duplicate pair: one frame key (`the capital of india is`) with the same value said
- * two ways, so the head's `byFrameKey` holds both and the briefing lists one group of two. The fake
- * keeps the path that sorts first, so the names decide which one survives.
+ * The deliberate duplicate pair: one frame key (`the capital of india is`) with one value (`new
+ * delhi`) retyped, so the head's `byFrameKey` holds both and the briefing lists one `duplicates`
+ * group of two. The fake keeps the path that sorts first, so the names decide which one survives.
  */
 const KEPT = "areas/inbox/capital-a.html"
 const DUPLICATE = "areas/inbox/capital-b.html"
@@ -74,13 +76,58 @@ const PAIR = [
     path: DUPLICATE,
     html: renderTemplate({
       title: "Capital of India, restated",
-      claim: "The capital of India is New Delhi city.",
-      body: ["Stated a second time in other words."],
+      claim: "The capital of India is new delhi",
+      body: ["Stated a second time, retyped."],
       memoryType: "semantic",
       at: AT
     })
   }
 ]
+
+/** The contradiction: one key, two values. Listed under `contradictions`, never archived. */
+const PARIS = "areas/inbox/france-paris.html"
+const LYON = "areas/inbox/france-lyon.html"
+const CONTRADICTION = [
+  {
+    path: PARIS,
+    html: renderTemplate({
+      title: "Capital of France",
+      claim: "The capital of France is Paris.",
+      memoryType: "semantic",
+      at: AT
+    })
+  },
+  {
+    path: LYON,
+    html: renderTemplate({
+      title: "Capital of France, disputed",
+      claim: "The capital of France is Lyon.",
+      memoryType: "semantic",
+      at: AT
+    })
+  }
+]
+
+/**
+ * Two verdicts on one objective, the shape the 2026-09-23 live run refused eleven times: one
+ * headline claim, two rulings in the articles. In neither briefing list, and both stay live.
+ */
+const VERDICT_HEADLINE = "Review verdict for objective: clod wants to talk to you"
+const VERDICTS = ["suppressed-failure", "unsupported-claim"].map((category) => ({
+  path: `areas/inbox/verdict-${category}.html`,
+  html: renderTemplate({
+    title: `verdict: ${category}`,
+    claim: VERDICT_HEADLINE,
+    body: [`Category: ${category.replace("-", "_")}`, "Claim reviewed: the reply."],
+    memoryType: "verdict",
+    at: AT
+  })
+}))
+
+/** The record carrying the one dangling link the fake's sweep drops. */
+const DANGLING_SOURCE = "areas/inbox/fixture-000.html"
+const DANGLING_HREF = "/areas/inbox/nowhere.html"
+const DANGLING_LINK = `<link rel="memhtml-relates-to" href="${DANGLING_HREF}">`
 
 let cli: Cli
 
@@ -108,8 +155,15 @@ const loggedOps = async (id: string): Promise<number> => {
 beforeAll(async () => {
   cli = await makeCli()
   const files = [
-    ...Array.from({ length: FIXTURE_SIZE }, (_, index) => fixtureMemory(index)),
-    ...PAIR
+    ...Array.from({ length: FIXTURE_SIZE }, (_, index) => {
+      const file = fixtureMemory(index)
+      return file.path === DANGLING_SOURCE
+        ? { ...file, html: file.html.replace("</head>", `${DANGLING_LINK}\n</head>`) }
+        : file
+    }),
+    ...PAIR,
+    ...CONTRADICTION,
+    ...VERDICTS
   ]
   for (const file of files) {
     const target = join(cli.root, file.path)
@@ -140,9 +194,10 @@ describe("curate run --model fake", () => {
     expect(report.outcome).toBe("dry-run")
     expect(report.commit).toBeNull()
     expect(report.stoppedBy).toBe("finish")
-    // The would-be harvest is reported: the fake's one exec archives the duplicate and links the
-    // kept record, so the link op came from code mode and no propose call was made.
-    expect(report.ops).toEqual({ put: 0, archive: 1, link: 1 })
+    // The would-be harvest is reported: the fake's one exec archives the duplicate, links the kept
+    // record, and cuts the dangling link, so both edge ops came from code mode and no propose call
+    // was made.
+    expect(report.ops).toEqual({ put: 0, archive: 1, link: 1, unlink: 1 })
     expect(report.toolCalls).toEqual(["status", "exec", "finish"])
     expect(report.toolCalls).not.toContain("propose")
     expect(await rev(QUALIFIED)).toBeNull()
@@ -175,8 +230,8 @@ describe("curate run --model fake", () => {
     expect(report.outcome).toBe("dry-run")
     expect(report.commit).toBeNull()
     expect(report.stoppedBy).toBe("finish")
-    // The preview shows what the resumed run would append: the same pair the plain dry run finds.
-    expect(report.ops).toEqual({ put: 0, archive: 1, link: 1 })
+    // The preview shows what the resumed run would append: the same set the plain dry run finds.
+    expect(report.ops).toEqual({ put: 0, archive: 1, link: 1, unlink: 1 })
 
     expect(await rev(`refs/heads/${ref}`)).toBeNull()
     expect(await rev("refs/heads/main")).toBe(main)
@@ -184,7 +239,7 @@ describe("curate run --model fake", () => {
     expect(await onDisk(DUPLICATE)).toBe(true)
   })
 
-  it("lands one archive plus one link on the curator branch and reports the loop", async () => {
+  it("lands one archive, one link, and one unlink on the curator branch and reports the loop", async () => {
     const main = await rev("refs/heads/main")
     const report = await cli.json<CurateRunReport>([
       "curate",
@@ -199,22 +254,36 @@ describe("curate run --model fake", () => {
     expect(report.baseSha).toBe(main)
     expect(report.stoppedBy).toBe("finish")
     expect(report.outcome).toBe("committed")
-    // One archive and one link, both harvested from the exec: the fake never calls propose.
-    expect(report.ops).toEqual({ put: 0, archive: 1, link: 1 })
+    // One archive, one link, and one unlink, all harvested from the exec: the fake never calls
+    // propose.
+    expect(report.ops).toEqual({ put: 0, archive: 1, link: 1, unlink: 1 })
     expect(report.toolCalls).toEqual(["status", "exec", "finish"])
     expect(report.toolCalls).not.toContain("propose")
     expect(report.steps).toBe(3)
     expect(report.tokens.input).toBeGreaterThan(0)
-    expect(report.briefing.frameKeyGroups).toEqual([
+    // The briefing split the two keyed pairs by value and listed the verdicts in neither.
+    expect(report.briefing.duplicates).toEqual([
       {
         key: "the capital of india is",
+        value: "new delhi",
         records: [
           { path: KEPT, claim: "The capital of India is New Delhi." },
-          { path: DUPLICATE, claim: "The capital of India is New Delhi city." }
+          { path: DUPLICATE, claim: "The capital of India is new delhi" }
         ]
       }
     ])
-    expect(report.briefing.active).toBe(FIXTURE_SIZE + 2)
+    expect(report.briefing.contradictions).toEqual([
+      {
+        key: "the capital of france is",
+        records: [
+          { path: LYON, claim: "The capital of France is Lyon.", value: "lyon" },
+          { path: PARIS, claim: "The capital of France is Paris.", value: "paris" }
+        ]
+      }
+    ])
+    expect(JSON.stringify(report.briefing)).not.toContain("verdict-")
+    expect(report.briefing.danglingLinks).toBe(1)
+    expect(report.briefing.active).toBe(FIXTURE_SIZE + 6)
     expect(report.next).toBe(`memhtml curate merge ${QUALIFIED}`)
 
     // The branch exists at the commit, main did not move, and the checkout did not follow.
@@ -225,10 +294,13 @@ describe("curate run --model fake", () => {
 
     // The subject is the report's first line under the curate scope, with the session trailer.
     const message = await cli.git("log", "-1", "--format=%B", QUALIFIED)
-    expect(message.startsWith("memhtml(curate): Archived 1 duplicate record(s)")).toBe(true)
+    expect(message.split("\n")[0]).toBe(
+      "memhtml(curate): Archived 1 duplicate record(s) and dropped 1 dangling link(s)."
+    )
     expect(message).toContain("Memhtml-Session: curate-2026-09-23")
 
-    // The tree: the duplicate moved under archive/, the kept record gained the supersedes link.
+    // The tree: the duplicate moved under archive/, the kept record gained the supersedes link, the
+    // dangling link is gone from its source, and the contradiction and the verdicts are untouched.
     const paths = (await cli.git("ls-tree", "-r", "--name-only", QUALIFIED)).split("\n")
     expect(paths).not.toContain(DUPLICATE)
     expect(paths).toContain(`archive/${YEAR}/${DUPLICATE}`)
@@ -236,6 +308,15 @@ describe("curate run --model fake", () => {
     expect(kept).toContain(`<link rel="memhtml-supersedes" href="/archive/${YEAR}/${DUPLICATE}">`)
     const archived = await cli.git("show", `${QUALIFIED}:archive/${YEAR}/${DUPLICATE}`)
     expect(archived).toContain('<meta name="memhtml-status" content="archived">')
+    const swept = await cli.git("show", `${QUALIFIED}:${DANGLING_SOURCE}`)
+    expect(swept).not.toContain(DANGLING_HREF)
+    expect(swept).toBe(fixtureMemory(0).html)
+    for (const path of [PARIS, LYON, ...VERDICTS.map((one) => one.path)]) {
+      expect(paths).toContain(path)
+      expect(await cli.git("show", `${QUALIFIED}:${path}`)).toBe(
+        await cli.git("show", `refs/heads/main:${path}`)
+      )
+    }
   })
 
   it("a second run without --resume refuses session.exists at exit 1", async () => {
@@ -262,7 +343,10 @@ describe("curate run --model fake", () => {
     expect(report.resumed).toBe(true)
     // The session's base is the commit it landed, where the pair is already settled.
     expect(report.baseSha).toBe(tip)
-    expect(report.briefing.frameKeyGroupsTotal).toBe(0)
+    expect(report.briefing.duplicatesTotal).toBe(0)
+    expect(report.briefing.danglingLinks).toBe(0)
+    // The contradiction is still there to report; it is not the fake's to settle.
+    expect(report.briefing.contradictionsTotal).toBe(1)
     expect(report.outcome).toBe("no-ops")
     expect(report.commit).toBeNull()
     expect(await rev(QUALIFIED)).toBe(tip)

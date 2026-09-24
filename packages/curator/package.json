@@ -30,6 +30,7 @@
     "@ai-sdk/provider": "4.0.17",
     "@aws-sdk/credential-providers": "3.1101.0",
     "@memhtml/contracts": "workspace:*",
+    "@memhtml/domain": "workspace:*",
     "@memhtml/head": "workspace:*",
     "@memhtml/html": "workspace:*",
     "@memhtml/llm": "workspace:*",

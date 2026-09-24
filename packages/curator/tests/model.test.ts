@@ -122,19 +122,36 @@ describe("the fake model through the loop", () => {
   it("calls status, exec, finish; the exec script archives and splices the supersedes link itself", async () => {
     const briefing = {
       ...emptyBriefing,
-      frameKeyGroups: [
+      duplicates: [
         {
           key: "the capital of india is",
+          value: "new delhi",
           records: [
-            {
-              path: "areas/inbox/capital-b.html",
-              claim: "The capital of India is New Delhi, the seat."
-            },
+            { path: "areas/inbox/capital-b.html", claim: "The capital of India is NEW DELHI" },
             { path: "areas/inbox/capital-a.html", claim: "The capital of India is New Delhi." }
           ]
         }
       ],
-      frameKeyGroupsTotal: 1
+      duplicatesTotal: 1,
+      // A contradiction beside it, which the fake must leave alone.
+      contradictions: [
+        {
+          key: "the capital of france is",
+          records: [
+            {
+              path: "areas/inbox/paris.html",
+              claim: "The capital of France is Paris.",
+              value: "paris"
+            },
+            {
+              path: "areas/inbox/lyon.html",
+              claim: "The capital of France is Lyon.",
+              value: "lyon"
+            }
+          ]
+        }
+      ],
+      contradictionsTotal: 1
     }
     // The fake tool set's exec answers what the real sandbox would print for that script.
     const tools = fakeTools({
@@ -174,7 +191,37 @@ describe("the fake model through the loop", () => {
     const script = tools.calls.find((call) => call.name === "exec")?.input
     expect(script).toContain('"areas/inbox/capital-a.html","areas/inbox/capital-b.html"')
     expect(script).toContain("memhtml-supersedes")
+    // The contradiction's paths are nowhere in the script: the fake reads `duplicates` only.
+    // (Mutation: `briefing?.duplicates` -> `[...duplicates, ...contradictions]` fails here.)
+    expect(script).not.toContain("paris.html")
     expect(tools.proposed).toEqual([])
+  })
+
+  it("reports the dangling links the exec sweep dropped beside the archives", async () => {
+    const tools = fakeTools({
+      exec: {
+        stdout: `${JSON.stringify({
+          groups: 0,
+          archived: [],
+          unlinked: [
+            { path: "areas/inbox/a.html", rel: "relates_to", href: "/areas/inbox/gone.html" }
+          ]
+        })}\n`,
+        appended: 1,
+        ops: [{ kind: "unlink", path: "areas/inbox/a.html" }]
+      }
+    })
+    const model = await Effect.runPromise(curatorModel("fake"))
+    const result = await Effect.runPromise(
+      runCurator({ tools, model, briefing: emptyBriefing, charter: "c" })
+    )
+    expect(result.toolCalls).toEqual(["status", "exec", "finish"])
+    expect(result.report.split("\n")[0]).toBe(
+      "No duplicates to settle; dropped 1 dangling link(s)."
+    )
+    expect(result.report).toContain(
+      "areas/inbox/a.html: dropped relates_to -> /areas/inbox/gone.html"
+    )
   })
 
   it("finishes after exec when the briefing holds no duplicate group", async () => {
@@ -194,5 +241,9 @@ describe("the fake model through the loop", () => {
     expect(script).toContain("fs.unlinkSync")
     expect(script).toContain(`'<link rel="memhtml-supersedes" href="/' + to + '">'`)
     expect(script).toContain('keptHtml.replace("</head>", link + "\\n</head>")')
+    // The sweep runs after the dedup and over the active buckets only.
+    expect(script.indexOf("const unlinked")).toBeGreaterThan(script.indexOf("archived.push"))
+    expect(script).toContain('["areas", "projects", "resources"]')
+    expect(script).toContain("fs.existsSync(ROOT + href)")
   })
 })

@@ -12,6 +12,7 @@
   "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"],
   "references": [
     { "path": "../contracts" },
+    { "path": "../domain" },
     { "path": "../head" },
     { "path": "../html" },
     { "path": "../llm" },

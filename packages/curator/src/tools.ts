@@ -69,7 +69,12 @@ export interface CuratorProposeResult {
 export interface CuratorSessionStatus {
   readonly baseSha: string
   readonly ref: string
-  readonly ops: { readonly put: number; readonly archive: number; readonly link: number }
+  readonly ops: {
+    readonly put: number
+    readonly archive: number
+    readonly link: number
+    readonly unlink: number
+  }
 }
 
 export interface CuratorTools {
@@ -84,7 +89,8 @@ export interface CuratorTools {
  * The op shape the MODEL proposes. An `archive` names only its source: the loop reads the source's
  * bytes through `read` and derives `to` as `archive/<YYYY>/<path>`, because the contract's
  * `OverlayOp.archive` carries the article's bytes to name which article is meant, and a model
- * restating a whole file is how a byte drifts. `put` and `link` are the contract's own shape.
+ * restating a whole file is how a byte drifts. `put`, `link`, and `unlink` are the contract's own
+ * shape.
  */
 export const ProposedOp = z.discriminatedUnion("kind", [
   z.object({
@@ -109,6 +115,15 @@ export const ProposedOp = z.discriminatedUnion("kind", [
       .min(1)
       .describe("A rel from the closed vocabulary, e.g. supersedes, contradicts, part_of."),
     href: z.string().min(1).describe("Root-relative target, e.g. /archive/2026/areas/inbox/x.html.")
+  }),
+  z.object({
+    kind: z.literal("unlink"),
+    path: z.string().min(1).describe("The active record that loses the edge."),
+    rel: z.string().min(1).describe("The rel of the edge to drop, as the record's links list it."),
+    href: z
+      .string()
+      .min(1)
+      .describe("The href of the edge to drop, exactly as the record's links list it.")
   })
 ])
 export type ProposedOp = z.infer<typeof ProposedOp>

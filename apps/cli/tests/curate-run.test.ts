@@ -454,12 +454,80 @@ describe("the exec tool refuses what the commit would refuse", () => {
     expect(await tools.status()).toEqual({
       baseSha: VIEW_SHA,
       ref: "refs/heads/curate/2026-09-23",
-      ops: { put: 1, archive: 0, link: 1 }
+      ops: { put: 1, archive: 0, link: 1, unlink: 0 }
     })
     // The same overlay is what the landing validates, under the same scope.
     expect(validateOps(head.view, overlay.ops(), { scope: "curate" })).toEqual([])
     expect(validateOps(head.view, overlay.ops())).toEqual([
       { kind: "reserved-path", path: "areas/arcs/naming.html" }
+    ])
+  }, 120_000)
+})
+
+describe("the exec tool harvests a cut link as an unlink", () => {
+  const SOURCE = "areas/inbox/source.html"
+  const TARGET = "areas/inbox/target.html"
+  const dangling = '<link rel="memhtml-relates-to" href="/areas/inbox/gone.html">'
+  const kept = '<link rel="memhtml-supports" href="/areas/inbox/target.html">'
+
+  it("cutting a dangling <link> line is one unlink op, appended, and the overlay commits clean", async () => {
+    const records = await Effect.runPromise(
+      Effect.all([
+        recordFrom(
+          SOURCE,
+          renderTemplate({
+            title: "Source",
+            claim: "The capital of Sourceland is Sourcetown.",
+            memoryType: "semantic",
+            at: "2026-09-20T00:00:00Z"
+          }).replace("</head>", `${dangling}\n${kept}\n</head>`)
+        ),
+        recordFrom(
+          TARGET,
+          renderTemplate({
+            title: "Target",
+            claim: "The capital of Targetland is Targettown.",
+            memoryType: "semantic",
+            at: "2026-09-20T00:00:00Z"
+          })
+        )
+      ])
+    )
+    const head = headOver(records)
+    const overlay = memoryOverlay()
+    const tools = bindTools({ head, overlay, ref: "refs/heads/curate/2026-09-23" })
+    const result = await tools.exec(
+      [
+        'import * as fs from "node:fs"',
+        `const path = "/mnt/memhtml/${SOURCE}"`,
+        'const before = fs.readFileSync(path, "utf8")',
+        `fs.writeFileSync(path, before.replace(${JSON.stringify(`${dangling}\n`)}, ""))`
+      ].join("\n")
+    )
+    expect(result.exitCode, result.stderr).toBe(0)
+    expect(result.rejected).toEqual([])
+    expect(result.violations).toEqual([])
+    expect(result.ops).toEqual([{ kind: "unlink", path: SOURCE }])
+    expect(result.appended).toBe(1)
+    expect(overlay.ops()).toEqual([
+      { kind: "unlink", path: SOURCE, rel: "relates_to", href: "/areas/inbox/gone.html" }
+    ])
+    expect(await tools.status()).toMatchObject({ ops: { put: 0, archive: 0, link: 0, unlink: 1 } })
+    expect(validateOps(head.view, overlay.ops(), { scope: "curate" })).toEqual([])
+    // The view the next tool call sees has the edge gone and the other one kept.
+    const after = await tools.read(SOURCE)
+    expect(after?.links).toEqual([{ rel: "supports", href: "/areas/inbox/target.html" }])
+    // A second cut of the same edge is refused, not appended: the edge is no longer there.
+    const again = await tools.propose([
+      { kind: "unlink", path: SOURCE, rel: "relates_to", href: "/areas/inbox/gone.html" }
+    ])
+    expect(again.appended).toBe(0)
+    expect(again.violations).toEqual([
+      {
+        kind: "format",
+        path: SOURCE,
+        reasons: ["unlink names an edge the source does not carry"]
+      }
     ])
   }, 120_000)
 })
