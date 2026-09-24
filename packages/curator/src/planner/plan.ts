@@ -118,8 +118,22 @@ export const frameValueOf = (record: MemoryRecord): string => {
   return key !== null && claim.startsWith(key) ? claim.slice(key.length).trim() : claim
 }
 
-/** True when a frame-key group states one value or one claim, so folding it loses no side. */
+/**
+ * True when a frame-key group states one value or one claim, so folding it loses no side.
+ *
+ * A `verdict` record carries its judgment in the title (`verdict: suppressed_failure`) over a claim
+ * that is the objective judged, so two verdicts with one claim and two titles disagree the way two
+ * values do; measured on the 2026-09-22 store, one of the eleven shared frame keys was exactly that
+ * pair (`unsupported_claim` beside `unverifiable-citation`), and the other ten were byte-identical
+ * re-mints.
+ */
 export const frameGroupAgrees = (records: ReadonlyArray<MemoryRecord>): boolean => {
+  if (
+    records.every((record) => record.memoryType === "verdict") &&
+    new Set(records.map((record) => normalizeClaim(record.title))).size > 1
+  ) {
+    return false
+  }
   const values = new Set(records.map(frameValueOf))
   if (values.size === 1) return true
   return new Set(records.map((record) => normalizeClaim(record.claim))).size === 1
@@ -282,7 +296,10 @@ export const planCollapse = (view: HeadView, input: PlanInput = {}): CollapsePla
       if (group.length < 2) continue
       for (const record of group) framed.add(record.path)
       const agrees = frameGroupAgrees(group)
-      const values = new Set(group.map(frameValueOf)).size
+      const values = Math.max(
+        new Set(group.map(frameValueOf)).size,
+        agrees ? 1 : new Set(group.map((record) => normalizeClaim(record.title))).size
+      )
       drafts.push({
         id: `frame-${partitionSlug(key)}-${slugify(frameKey)}`,
         kind: agrees ? "fold" : "keep",
