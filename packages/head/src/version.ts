@@ -125,6 +125,21 @@ export const loadHead = (
   }).pipe(Effect.withSpan("head.load"))
 
 /**
+ * A version built from records already parsed, for a caller holding a snapshot rather than a tree.
+ *
+ * The fold is the same `insertRecord` the git load uses, so the version agrees node for node with
+ * one built from the commit, and `advanceHead` can carry it forward sharing every untouched node.
+ * A snapshot holds records only, so `skipped` is zero here: it says nothing about what the load
+ * that produced the snapshot left out, and a caller reporting the skip count of a snapshot-built
+ * version must say so.
+ */
+export const versionFromRecords = (records: Iterable<MemoryRecord>, sha: string): HeadVersion => {
+  let indexes = emptyIndexes
+  for (const record of records) indexes = insertRecord(indexes, record)
+  return makeVersion(indexes, sha, null, [])
+}
+
+/**
  * The paths whose blobs differ between two trees, in one subprocess. `diff-tree` on two tree-ish
  * arguments compares the trees directly, so a range of many commits costs the same as one. `-z`
  * framing and `--no-renames` for the reasons the store's `diffTreeNames` gives: a rename must
