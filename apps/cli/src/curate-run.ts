@@ -225,8 +225,8 @@ const lastCurateRef = (
       })
     )
 
-/** The branch `HEAD` points at as a full ref, or `null` when detached. */
-const headRefOf = (root: string): Effect.Effect<string | null, GitFailure> =>
+/** The branch `HEAD` points at as a full ref, or `null` when detached. Shared with `curate collapse`. */
+export const headRefOf = (root: string): Effect.Effect<string | null, GitFailure> =>
   makeGit(root)
     .run(["symbolic-ref", "-q", "HEAD"])
     .pipe(
@@ -282,7 +282,8 @@ export const memoryOverlay = (initial: ReadonlyArray<OverlayOp> = []): Overlay =
   }
 }
 
-const sessionOverlay = (initial: Session): Overlay => {
+/** An overlay over a real session on disk. Shared with `curate collapse`, which opens one per cluster. */
+export const sessionOverlay = (initial: Session): Overlay => {
   let session = initial
   return {
     ops: () => session.ops,
@@ -394,12 +395,22 @@ export const bindTools = (input: {
   }
 }
 
-/** Land the session: commit, rebase on `rebase-needed`, up to {@link COMMIT_ATTEMPTS} rounds. */
-const land = (input: {
+/**
+ * Land the session: commit, rebase on `rebase-needed`, up to {@link COMMIT_ATTEMPTS} rounds.
+ *
+ * `reload` is how the rebase reads the ref's new tip; it defaults to `loadHeadAt` from git, and
+ * `curate collapse` passes a cached loader that advances one held version by delta, because its
+ * clusters land concurrently on one ref and every rebase would otherwise re-read the whole store.
+ * Exported for that caller.
+ */
+export const land = (input: {
   readonly root: string
   readonly session: Session
   readonly head: LoadedHead
   readonly message: string
+  readonly reload?:
+    | ((sha: string) => Effect.Effect<LoadedHead, GitFailure | InvalidMemory | StorageFailure>)
+    | undefined
 }): Effect.Effect<
   { readonly sha: string; readonly rebases: number },
   GitFailure | StorageFailure | InvalidMemory | DirtyTree
@@ -407,6 +418,7 @@ const land = (input: {
   Effect.gen(function* () {
     let session = input.session
     let head = input.head
+    const reload = input.reload ?? ((sha: string) => loadHeadAt(input.root, sha))
     for (let attempt = 1; attempt <= COMMIT_ATTEMPTS; attempt += 1) {
       const outcome = yield* commitSession({
         session,
@@ -418,7 +430,7 @@ const land = (input: {
         case "committed":
           return { sha: outcome.sha, rebases: attempt - 1 }
         case "rebase-needed": {
-          head = yield* loadHeadAt(input.root, outcome.mainSha)
+          head = yield* reload(outcome.mainSha)
           session = rebaseSession(session, head.view)
           yield* saveSession(session)
           break

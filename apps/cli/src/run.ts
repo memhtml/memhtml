@@ -20,6 +20,7 @@ import {
   GLOBAL_FLAGS
 } from "./commands.js"
 import { MemhtmlRoot, REFUSE_ENV_ROOT_VAR, refusesEnvRoot } from "./config.js"
+import { curateCollapse, readPlanFile, readRulingsFile } from "./curate-collapse.js"
 import { curateRefProblem, curateRun } from "./curate-run.js"
 import { doctor } from "./doctor.js"
 import {
@@ -818,14 +819,17 @@ const curateMergeFlags = (parsed: Parsed): Failure | undefined => {
  * "call the model never" and a non-positive `--wall-clock-ms` "stop before starting", each a run that
  * reports a stop and did nothing, which reads as success.
  */
+const CURATOR_COMMANDS: ReadonlySet<string> = new Set(["curate run", "curate collapse"])
+
 const curateRunFlags = (parsed: Parsed): Failure | undefined => {
-  if (parsed.command !== "curate run") return undefined
+  if (!CURATOR_COMMANDS.has(parsed.command)) return undefined
+  const command = parsed.command
   const ref = str(parsed, "ref")
   if (ref !== undefined && ref.trim() !== "") {
     const problem = curateRefProblem(ref)
     if (problem !== undefined) {
       return fail("ERR_INVALID_FLAG", `--ref ${JSON.stringify(ref)}: ${problem}`, [
-        "memhtml curate run --model fake --ref curate/2026-09-23",
+        `memhtml ${command} --model fake --ref curate/2026-09-23`,
         "memhtml curate merge curate/2026-09-23"
       ])
     }
@@ -835,19 +839,25 @@ const curateRunFlags = (parsed: Parsed): Failure | undefined => {
     const spec = modelSpecOf(model)
     if (!spec.ok) {
       return fail("ERR_INVALID_FLAG", `--model ${JSON.stringify(model)}: ${spec.reason}`, [
-        "memhtml curate run --model fake",
-        `memhtml curate run --model bedrock:${DEFAULT_CURATOR_MODEL_ID}`
+        `memhtml ${command} --model fake`,
+        `memhtml ${command} --model bedrock:${DEFAULT_CURATOR_MODEL_ID}`
       ])
     }
   }
-  for (const flag of ["max-steps", "wall-clock-ms"]) {
+  // `curate collapse` adds two more positive integers: a pool of zero lanes runs no fold, and a limit
+  // of zero executes nothing, each a run that reports a stop as an answer.
+  const positive =
+    command === "curate collapse"
+      ? ["max-steps", "wall-clock-ms", "concurrency", "limit"]
+      : ["max-steps", "wall-clock-ms"]
+  for (const flag of positive) {
     if (str(parsed, flag) === undefined) continue
     const value = int(parsed, flag)
     if (value === undefined || value <= 0) {
       return fail(
         "ERR_INVALID_FLAG",
         `--${flag} must be a positive integer: a non-positive budget is a run that stops before it starts and reports the stop as an answer`,
-        [`memhtml curate run --model fake --${flag} ${flag === "max-steps" ? "40" : "1200000"}`]
+        [`memhtml ${command} --model fake --${flag} ${flag === "wall-clock-ms" ? "1200000" : "4"}`]
       )
     }
   }
@@ -1840,7 +1850,7 @@ export const run = async (
      * variable, both at exit 2 before any repo opens. `fake` is always accepted.
      */
     let curatorModelSpec = ""
-    if (parsed.command === "curate run") {
+    if (CURATOR_COMMANDS.has(parsed.command)) {
       const proxyConfigured = (process.env[PROXY_BASE_URL_VAR] ?? "").trim() !== ""
       const fromEnv = (process.env[CURATOR_MODEL_VAR] ?? "").trim()
       const spec =
@@ -1851,10 +1861,10 @@ export const run = async (
         return emit(
           fail(
             "ERR_MISSING_ARGUMENT",
-            `curate run needs --model: none was given, ${CURATOR_MODEL_VAR} is unset, and ${PROXY_BASE_URL_VAR} is unset, so there is no default model to run`,
+            `${parsed.command} needs --model: none was given, ${CURATOR_MODEL_VAR} is unset, and ${PROXY_BASE_URL_VAR} is unset, so there is no default model to run`,
             [
-              "memhtml curate run --model fake",
-              `memhtml curate run --model bedrock:${DEFAULT_CURATOR_MODEL_ID}`
+              `memhtml ${parsed.command} --model fake`,
+              `memhtml ${parsed.command} --model bedrock:${DEFAULT_CURATOR_MODEL_ID}`
             ]
           ),
           EXIT_USAGE
@@ -1903,6 +1913,31 @@ export const run = async (
             resume: bool(parsed, "resume", false)
           })
           return ["curate.run", data] as const
+        }
+        if (parsed.command === "curate collapse") {
+          const planFile = str(parsed, "plan")
+          const rulingsFile = str(parsed, "rulings")
+          const only = str(parsed, "only")
+          const data = yield* curateCollapse({
+            root,
+            ref: str(parsed, "ref"),
+            model: curatorModelSpec,
+            plan: planFile === undefined ? undefined : yield* readPlanFile(planFile),
+            rulings: rulingsFile === undefined ? undefined : yield* readRulingsFile(rulingsFile),
+            concurrency: int(parsed, "concurrency"),
+            only:
+              only === undefined
+                ? undefined
+                : only
+                    .split(",")
+                    .map((id) => id.trim())
+                    .filter((id) => id !== ""),
+            limit: int(parsed, "limit"),
+            dryRun: bool(parsed, "dry-run", false),
+            maxSteps: int(parsed, "max-steps"),
+            wallClockMs: int(parsed, "wall-clock-ms")
+          })
+          return ["curate.collapse", data] as const
         }
         return yield* runV2(parsed.command, {
           root,
