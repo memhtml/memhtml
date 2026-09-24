@@ -197,7 +197,7 @@ describe("curate run --model fake", () => {
     // The would-be harvest is reported: the fake's one exec archives the duplicate, links the kept
     // record, and cuts the dangling link, so both edge ops came from code mode and no propose call
     // was made.
-    expect(report.ops).toEqual({ put: 0, archive: 1, link: 1, unlink: 1 })
+    expect(report.ops, report.report).toEqual({ put: 0, archive: 1, link: 1, unlink: 1 })
     expect(report.toolCalls).toEqual(["status", "exec", "finish"])
     expect(report.toolCalls).not.toContain("propose")
     expect(await rev(QUALIFIED)).toBeNull()
@@ -231,7 +231,7 @@ describe("curate run --model fake", () => {
     expect(report.commit).toBeNull()
     expect(report.stoppedBy).toBe("finish")
     // The preview shows what the resumed run would append: the same set the plain dry run finds.
-    expect(report.ops).toEqual({ put: 0, archive: 1, link: 1, unlink: 1 })
+    expect(report.ops, report.report).toEqual({ put: 0, archive: 1, link: 1, unlink: 1 })
 
     expect(await rev(`refs/heads/${ref}`)).toBeNull()
     expect(await rev("refs/heads/main")).toBe(main)
@@ -256,7 +256,7 @@ describe("curate run --model fake", () => {
     expect(report.outcome).toBe("committed")
     // One archive, one link, and one unlink, all harvested from the exec: the fake never calls
     // propose.
-    expect(report.ops).toEqual({ put: 0, archive: 1, link: 1, unlink: 1 })
+    expect(report.ops, report.report).toEqual({ put: 0, archive: 1, link: 1, unlink: 1 })
     expect(report.toolCalls).toEqual(["status", "exec", "finish"])
     expect(report.toolCalls).not.toContain("propose")
     expect(report.steps).toBe(3)
