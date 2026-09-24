@@ -1380,12 +1380,12 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   {
     name: "curate merge",
     summary:
-      "Land a curator branch on its target: refuse unless the ref descends from --into, run the discrimination gate, then fast-forward --into to the ref with a compare-and-swap, bringing the checkout along when --into is HEAD.",
+      "Land a curator branch on its target: fast-forward --into to the ref when the ref descends from it, else replay the ref's operations (its puts, archives, and links since the merge base) as one fresh commit on --into's tip; the discrimination gate runs first either way, the checkout comes along when --into is HEAD, and after a replay the curator ref is moved to the landed commit.",
     args: [
       {
         name: "ref",
         description:
-          "The curator branch, as `curate/2026-09-23` or `refs/heads/curate/2026-09-23`; `refs/heads/` is prepended when absent. Refused (ERR_INVALID_MEMORY) when it does not exist or is not a descendant of --into.",
+          "The curator branch, as `curate/2026-09-23` or `refs/heads/curate/2026-09-23`; `refs/heads/` is prepended when absent. Refused (ERR_INVALID_MEMORY) when it does not exist. When --into has moved past the branch's base, the landing is a replay: the branch's changes since the merge base are read back as session operations and committed onto --into under the curate scope, `memhtml(curate): <subject> (replayed onto <sha>)`, and the payload's `replayed` names the base, the op counts, the attempts, and the branch's original tip (`null` on a fast-forward). Refused (ERR_INVALID_MEMORY, nothing moved) when the branch carries a change that is not an operation (an article edited in place, a file deleted with no archive twin, a link removed, a meta changed), named by path, or when the ops collide with what --into gained meanwhile (`duplicate`, `claim-edit`, a link whose target is gone).",
         required: true
       }
     ],
