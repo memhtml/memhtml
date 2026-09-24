@@ -24,6 +24,7 @@ import {
   makePlumbing,
   rebaseSession,
   resumeSession,
+  type Session,
   saveSession,
   startSession,
   touchedPaths,
@@ -36,6 +37,13 @@ import { Effect } from "effect"
 
 import type { ResponseType } from "./envelope.js"
 import { toWriteInput, type WriteParams } from "./operations.js"
+import {
+  commitSubjectOf,
+  mergeBase,
+  type Reconstruction,
+  readCurateDelta,
+  reconstructOps
+} from "./replay.js"
 import { runSessionExec } from "./session-exec.js"
 
 /**
@@ -531,27 +539,90 @@ export interface GateReport {
   readonly inversions?: number
 }
 
+/** What `curate merge` reports about a landing that was not a fast-forward. */
+export interface ReplayReport {
+  /** The merge base of the curate ref and the target: the version the curator's ops were minted on. */
+  readonly base: string
+  /** The reconstructed log by kind. */
+  readonly ops: { readonly put: number; readonly archive: number; readonly link: number }
+  /** How many `commitSession` calls the landing took; more than one means the target moved meanwhile. */
+  readonly attempts: number
+  /** The curate ref's commit before the landing moved it to the landed one. */
+  readonly originalTip: string
+}
+
 /** What `curate merge` answers when the target moved. */
 export interface CurateMerged {
   readonly ref: string
   readonly into: string
   /** The target's commit before the landing. */
   readonly from: string
-  /** The curator branch's commit, and the target's after the landing. */
+  /**
+   * The target's commit after the landing: the curator branch's tip on a fast-forward, the replayed
+   * commit otherwise (and the curate ref is moved to it).
+   */
   readonly to: string
   /** False when `from` already equaled `to`: nothing to land, nothing moved. */
   readonly moved: boolean
   readonly gate: GateReport
   /** True when HEAD is `into` and the shared index and working tree followed the ref. */
   readonly worktreeSynced: boolean
+  /** `null` on a fast-forward; the replay's account when the target had moved past the curator's base. */
+  readonly replayed: ReplayReport | null
 }
 
 /**
- * The index file the merge's plumbing is built with. `curate merge` never reads or writes a session
+ * The index file the merge's plumbing is built with. A fast-forward never reads or writes a session
  * index (it moves a ref between two commits that already exist), so the file is never created; the
- * plumbing wants a path because a session's commit path does.
+ * plumbing wants a path because a session's commit path does. A replay stages through its own
+ * session's index, not this one.
  */
 const MERGE_INDEX_FILE = "curate-merge.idx"
+
+/** How many `rebase-needed` answers a replay tolerates before it gives up; `curate-run.ts` uses the same bound. */
+export const MERGE_ATTEMPTS = 8
+
+/** The scope a replay validates and commits under: the curator's, so arcs and people paths land. */
+const MERGE_SCOPE = "curate" as const
+
+const shortSha = (sha: string): string => sha.slice(0, 7)
+
+/** The reconstructed log for a curate ref, or the refusal a hand-written change on it earns. */
+const replayPlan = (input: {
+  readonly root: string
+  readonly ref: string
+  readonly into: string
+  readonly from: string
+  readonly to: string
+}): Effect.Effect<
+  { readonly base: string; readonly reconstruction: Reconstruction },
+  GitFailure | InvalidMemory
+> =>
+  Effect.gen(function* () {
+    const base = yield* mergeBase(input.root, input.from, input.to)
+    if (base === null) {
+      return yield* Effect.fail(
+        InvalidMemory.make({
+          reason: `curate merge: ${input.ref} (${input.to}) and ${input.into} (${input.from}) share no history, so there is no base to replay from`
+        })
+      )
+    }
+    const delta = yield* readCurateDelta(input.root, base, input.to)
+    const reconstruction = reconstructOps({
+      before: delta.before,
+      after: delta.after,
+      scope: MERGE_SCOPE
+    })
+    const rejected = [...delta.unsupported, ...reconstruction.rejected]
+    if (rejected.length > 0) {
+      return yield* Effect.fail(
+        InvalidMemory.make({
+          reason: `curate merge: ${input.ref} carries a change since its base ${shortSha(base)} that is not a session operation, so it cannot be replayed onto ${input.into}; nothing moved: ${rejected.map((entry) => `${entry.path}: ${entry.reason}`).join(" | ")}`
+        })
+      )
+    }
+    return { base, reconstruction }
+  })
 
 /**
  * `curate merge`: land a curator branch on its target (`docs/v2-poc.md`, "Curation door").
@@ -559,19 +630,33 @@ const MERGE_INDEX_FILE = "curate-merge.idx"
  * The order is refusals first, gate second, movement last, so a call that fails leaves the
  * repository exactly as it found it:
  *
- * 1. Both refs must resolve, and `ref` must be a descendant of `into` (`merge-base --is-ancestor`),
- *    so the landing is a fast-forward and never a merge commit. A curator that started before `into`
- *    moved rebases its session and commits again; this command does not settle that for it.
+ * 1. Both refs must resolve. When `ref` is a descendant of `into` (`merge-base --is-ancestor`) the
+ *    landing is a fast-forward. When it is not, because `into` moved past the curator's base, the
+ *    landing is a REPLAY: the curator's log is rebuilt from the trees at the merge base and at the
+ *    ref's tip ({@link reconstructOps}), a fresh session is started on `into` at its tip with those
+ *    ops, and `validateOps` judges them under the `curate` scope against that tip. A change on the
+ *    ref that is not an operation (an article edited in place, a file deleted with no archive twin,
+ *    a link removed, a meta changed) refuses the merge naming the path, and so does any violation
+ *    (a `duplicate` or `claim-edit` because `into` gained the same fact meanwhile, a link whose
+ *    target is gone), with nothing moved.
  * 2. The discrimination gate (`@memhtml/eval`), in `fake` mode always: the gate measures the ranking
  *    stack against its own generated fixture corpus, so a live-Bedrock run would make a merge
  *    conditional on a network call and a credential. A failing gate fails this effect with the
  *    gate's numbers, and nothing has moved yet. `skipGate` is a logged override for a checkout
  *    without the eval corpus, and the report says the gate did not run.
- * 3. When HEAD is `into`, the checkout follows BEFORE the ref moves, the way `commitSession` does it:
- *    a dirty path among those the landing changes is `DirtyTree` and nothing moves; otherwise
- *    `read-tree -m -u from to` brings the shared index and working tree to the new tree.
- * 4. `update-ref into to from` as a compare-and-swap. A `raced` answer means another writer advanced
- *    `into` between step 1 and now; the checkout is rolled back and the call refuses.
+ * 3. Fast-forward: when HEAD is `into`, the checkout follows BEFORE the ref moves, the way
+ *    `commitSession` does it: a dirty path among those the landing changes is `DirtyTree` and
+ *    nothing moves; otherwise `read-tree -m -u from to` brings the shared index and working tree to
+ *    the new tree. Then `update-ref into to from` as a compare-and-swap; a `raced` answer means
+ *    another writer advanced `into` between step 1 and now, the checkout is rolled back, and the
+ *    call refuses.
+ * 4. Replay: `commitSession` under the `curate` scope, with the subject
+ *    `memhtml(curate): <the ref's tip subject> (replayed onto <short sha>)`, through a
+ *    rebase-and-retry loop bounded at {@link MERGE_ATTEMPTS}: `rebase-needed` reloads the head at
+ *    the new tip and tries again, `refused` after a rebase surfaces the violations, `worktree-dirty`
+ *    is `DirtyTree`. The commit path does the compare-and-swap and syncs the checkout when HEAD is
+ *    `into`. Once landed, the curate ref is moved to the landed commit (compare-and-swap against
+ *    its old tip), so the ref now descends from `into` and a re-run answers `moved: false`.
  *
  * `gate` is injectable so a test can drive a failing gate without an eval corpus that fails; the
  * default is the real one.
@@ -582,7 +667,10 @@ export const curateMerge = (input: {
   readonly into?: string | undefined
   readonly skipGate?: boolean | undefined
   readonly gate?: Effect.Effect<EvalOutcome, DiscriminationFailed> | undefined
-}): Effect.Effect<CurateMerged, GitFailure | InvalidMemory | DirtyTree | DiscriminationFailed> =>
+}): Effect.Effect<
+  CurateMerged,
+  GitFailure | InvalidMemory | StorageFailure | DirtyTree | DiscriminationFailed
+> =>
   Effect.gen(function* () {
     const ref = qualifyRef(input.ref)
     const into = qualifyRef(input.into ?? "main")
@@ -607,12 +695,32 @@ export const curateMerge = (input: {
         })
       )
     }
-    if (!(yield* git.isAncestor(from, to))) {
-      return yield* Effect.fail(
-        InvalidMemory.make({
-          reason: `curate merge: ${ref} (${to}) is not a descendant of ${into} (${from}), so landing it is not a fast-forward; rebase the curator session onto ${into} and commit again`
-        })
-      )
+    const fastForward = yield* git.isAncestor(from, to)
+
+    // A replay's refusals come before the gate: the log is rebuilt and judged against `into`'s tip
+    // here, so a hand-written change or a collision costs no gate run and moves nothing.
+    let replay: { readonly base: string; readonly reconstruction: Reconstruction } | null = null
+    let session: Session | null = null
+    let head: LoadedHead | null = null
+    if (!fastForward) {
+      replay = yield* replayPlan({ root: input.root, ref, into, from, to })
+      head = yield* loadHeadAt(input.root, from)
+      session = yield* startSession({
+        root: input.root,
+        id: `merge-${shortSha(to)}`,
+        base: head.view,
+        ref: into,
+        force: true
+      })
+      session = yield* appendOps(session, replay.reconstruction.ops)
+      const violations = validateOps(head.view, session.ops, { scope: MERGE_SCOPE })
+      if (violations.length > 0) {
+        return yield* Effect.fail(
+          InvalidMemory.make({
+            reason: `curate merge: replaying ${ref} onto ${into} (${shortSha(from)}) was refused, nothing moved: ${violations.map(describeViolation).join(" | ")}`
+          })
+        )
+      }
     }
 
     let gate: GateReport = { ran: false, passed: null }
@@ -633,8 +741,22 @@ export const curateMerge = (input: {
       }
     }
 
+    if (replay !== null && session !== null && head !== null) {
+      return yield* landReplay({
+        root: input.root,
+        ref,
+        into,
+        to,
+        gate,
+        session,
+        head,
+        base: replay.base,
+        reconstruction: replay.reconstruction
+      })
+    }
+
     if (from === to) {
-      return { ref, into, from, to, moved: false, gate, worktreeSynced: false }
+      return { ref, into, from, to, moved: false, gate, worktreeSynced: false, replayed: null }
     }
 
     const checkedOut = (yield* git.headRef()) === into
@@ -660,7 +782,89 @@ export const curateMerge = (input: {
       )
     }
 
-    return { ref, into, from, to, moved: true, gate, worktreeSynced: checkedOut }
+    return { ref, into, from, to, moved: true, gate, worktreeSynced: checkedOut, replayed: null }
+  })
+
+/**
+ * Step 4 of {@link curateMerge}: land the replay session through `commitSession`, rebasing on
+ * `rebase-needed` up to {@link MERGE_ATTEMPTS} times, then move the curate ref to the landed commit.
+ */
+const landReplay = (input: {
+  readonly root: string
+  readonly ref: string
+  readonly into: string
+  readonly to: string
+  readonly gate: GateReport
+  readonly session: Session
+  readonly head: LoadedHead
+  readonly base: string
+  readonly reconstruction: Reconstruction
+}): Effect.Effect<CurateMerged, GitFailure | InvalidMemory | StorageFailure | DirtyTree> =>
+  Effect.gen(function* () {
+    const subject = yield* commitSubjectOf(input.root, input.to)
+    const archivedAt = input.reconstruction.archivedAt ?? undefined
+    let session = input.session
+    let head = input.head
+    for (let attempt = 1; attempt <= MERGE_ATTEMPTS; attempt += 1) {
+      const outcome: CommitOutcome = yield* commitSession({
+        session,
+        head: head.view,
+        message: `${subject} (replayed onto ${shortSha(head.sha)})`,
+        archivedAt,
+        scope: MERGE_SCOPE
+      })
+      switch (outcome.kind) {
+        case "committed": {
+          const git = makePlumbing({
+            root: input.root,
+            indexFile: join(input.root, ".memhtml", "sessions", MERGE_INDEX_FILE)
+          })
+          // The curate ref follows the landing so it descends from `into` again. A `raced` answer
+          // means the curator committed again meanwhile; the landing stands, and the new tip is a
+          // fresh curation to judge on its own.
+          const followed = yield* git.updateRef(input.ref, outcome.sha, input.to)
+          if (followed === "raced") {
+            yield* Effect.logWarning(
+              `curate merge: ${input.ref} moved past ${input.to} while its replay landed as ${outcome.sha}; the ref was left where its writer put it`
+            )
+          }
+          return {
+            ref: input.ref,
+            into: input.into,
+            from: head.sha,
+            to: outcome.sha,
+            moved: true,
+            gate: input.gate,
+            worktreeSynced: outcome.worktreeSynced,
+            replayed: {
+              base: input.base,
+              ops: input.reconstruction.counts,
+              attempts: attempt,
+              originalTip: input.to
+            }
+          }
+        }
+        case "rebase-needed": {
+          head = yield* loadHeadAt(input.root, outcome.mainSha)
+          session = rebaseSession(session, head.view)
+          yield* saveSession(session)
+          break
+        }
+        case "refused":
+          return yield* Effect.fail(
+            InvalidMemory.make({
+              reason: `curate merge: replaying ${input.ref} onto ${input.into} (${shortSha(head.sha)}) was refused after ${input.into} moved, nothing moved: ${outcome.violations.map(describeViolation).join(" | ")}`
+            })
+          )
+        case "worktree-dirty":
+          return yield* Effect.fail(DirtyTree.make({ paths: outcome.paths }))
+      }
+    }
+    return yield* Effect.fail(
+      InvalidMemory.make({
+        reason: `curate merge: ${input.into} moved ${String(MERGE_ATTEMPTS)} times while ${input.ref} was replayed onto it; nothing landed, re-run to try again`
+      })
+    )
   })
 
 /** What `run.ts` hands each arm, already decoded from argv. */

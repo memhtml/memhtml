@@ -124,6 +124,18 @@ export {
 } from "./extraction.js"
 export * from "./operations.js"
 export { claimFromProse, proseTail } from "./prose.js"
+export {
+  ARTICLE_EDIT_REASON,
+  type CurateDelta,
+  commitSubjectOf,
+  type DiffEntry,
+  mergeBase,
+  parseDiffTreeRaw,
+  type Reconstruction,
+  type ReplayRejection,
+  readCurateDelta,
+  reconstructOps
+} from "./replay.js"
 export { type Parsed, parseArgv, type RunResult, run } from "./run.js"
 export { MCP_BIN_VAR, mcpEntryPoint, type ServeResult, serveMcp } from "./serve.js"
 export {
@@ -137,7 +149,9 @@ export {
   headStatus,
   type LoadedHead,
   loadHeadAt,
+  MERGE_ATTEMPTS,
   qualifyRef,
+  type ReplayReport,
   runV2,
   sessionCommit,
   sessionExec,
