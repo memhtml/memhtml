@@ -76,3 +76,29 @@ export const frameKeyOf = (gist: string): string | null => {
   if (value.split(" ").length > MAX_VALUE_TOKENS) return null
   return frame.toLowerCase()
 }
+
+/**
+ * The frame and its value together, or `null` under exactly the conditions {@link frameKeyOf}
+ * answers `null`: one regex match, the same two guards, so the two accessors can never disagree
+ * about whether a claim has a slot shape.
+ *
+ * The value is normalized the way the key is (lowercased, interior whitespace collapsed, the one
+ * sentence-final period already absorbed by the regex), so `"… is New Delhi."` and `"… is  new
+ * delhi"` carry one value. That is the comparison the curator's briefing makes when it asks whether
+ * two records under one key agree (a dedup candidate) or disagree (a contradiction). It is NOT a
+ * semantic equality: `New Delhi` and `New Delhi city` are two values here, and telling them apart
+ * is the model's job, with both records in front of it.
+ */
+export const frameOf = (gist: string): { readonly key: string; readonly value: string } | null => {
+  const match = FRAME.exec(gist.replace(/\s+/g, " ").trim())
+  if (match === null) return null
+  const frame = match[1]
+  const value = match[2]
+  if (frame === undefined || value === undefined) return null
+  if (frame.split(" ").length < MIN_FRAME_TOKENS) return null
+  if (value.split(" ").length > MAX_VALUE_TOKENS) return null
+  return { key: frame.toLowerCase(), value: value.toLowerCase() }
+}
+
+/** The normalized value a claim writes into its slot, or `null` when {@link frameKeyOf} is `null`. */
+export const frameValueOf = (gist: string): string | null => frameOf(gist)?.value ?? null
