@@ -470,6 +470,7 @@ export const sessionStatus = (input: { readonly root: string; readonly id: strin
       puts: count("put"),
       archives: count("archive"),
       links: count("link"),
+      unlinks: count("unlink"),
       paths: [...new Set(session.ops.flatMap(touchedPaths))].sort(),
       /** A commit built and possibly landed by a call that was killed; the next commit settles it. */
       pending: session.pending ?? null

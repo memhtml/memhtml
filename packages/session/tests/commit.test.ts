@@ -41,6 +41,8 @@ import {
  * - step 4: drop `updateIndexRemove` -> "archives through the index ..." (source still in tree).
  * - step 4: `archiveBody` returns `html` unchanged -> same test (stamps missing).
  * - stage: archive body from `op.html` instead of the head's copy -> "an archive carries a link ...".
+ * - stage unlink: the `unlink` case left out of `stage` (no write) -> "an unlink drops the edge from
+ *   the head's copy, and an archive after it carries the removal" (the edge is still on main).
  * - step 5: drop the `dirtyPaths` check -> "refuses to move a checked-out ref over ...".
  * - step 5: drop `readTreeIntoWorktree` -> "a checked-out ref follows ..." and "a v1-style commit
  *   from the shared index keeps ...".
@@ -521,6 +523,64 @@ describe("commitSession", () => {
     expect(await fileAt(root, outcome.sha, "areas/inbox/alpha.html")).toContain(
       '<link rel="memhtml-relates-to" href="/areas/inbox/capital.html">'
     )
+  })
+
+  it("an unlink drops the edge from the head's copy, and an archive after it carries the removal", async () => {
+    const repo = await makeRepo()
+    repos.push(repo)
+    const root = repo.root
+    const edge = '<link rel="memhtml-supports" href="/areas/inbox/capital.html">'
+    const stale = '<link rel="memhtml-relates-to" href="/areas/inbox/gone.html">'
+    const linked = ALPHA.replace("</head>", `${edge}\n${stale}\n</head>`)
+    await commitFiles(root, {
+      "areas/inbox/capital.html": CAPITAL,
+      "areas/inbox/alpha.html": linked,
+      "areas/inbox/beta.html": memory("Beta", "Beta is the second letter.").replace(
+        "</head>",
+        `${stale}\n</head>`
+      )
+    })
+    const head = await loadHead(root)
+    const session = await run(
+      startSession({ root, id: "unlink", base: head }).pipe(
+        Effect.flatMap((s) =>
+          appendOps(s, [
+            // The dangling edge dropped from a file that stays put ...
+            {
+              kind: "unlink",
+              path: "areas/inbox/alpha.html",
+              rel: "relates_to",
+              href: "/areas/inbox/gone.html"
+            },
+            // ... and from one archived later in the same batch.
+            {
+              kind: "unlink",
+              path: "areas/inbox/beta.html",
+              rel: "relates_to",
+              href: "/areas/inbox/gone.html"
+            },
+            {
+              kind: "archive",
+              path: "areas/inbox/beta.html",
+              to: "archive/2026/areas/inbox/beta.html",
+              html: head.get("areas/inbox/beta.html")?.html ?? ""
+            }
+          ])
+        )
+      )
+    )
+    const outcome = await run(commitSession({ session, head, message: "drop dangling" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    const alpha = await fileAt(root, outcome.sha, "areas/inbox/alpha.html")
+    expect(alpha).not.toContain(stale)
+    expect(alpha).toContain(edge)
+    expect(checkMemory(alpha).violations).toEqual([])
+    const archived = await fileAt(root, outcome.sha, "archive/2026/areas/inbox/beta.html")
+    expect(archived).not.toContain(stale)
+    expect(archived).toContain('<meta name="memhtml-status" content="archived">')
+    expect(await treePaths(root, outcome.sha)).not.toContain("areas/inbox/beta.html")
+    // The checkout followed, so the working tree agrees with the tree.
+    expect(await readFile(join(root, "areas/inbox/alpha.html"), "utf8")).toBe(alpha)
   })
 
   it("ref race between validation and update: rebase-needed with the ref's new value", async () => {

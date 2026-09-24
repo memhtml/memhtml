@@ -11,23 +11,33 @@ import { type Briefing, parseBriefing } from "./briefing.js"
 /**
  * The scripted model behind `--model fake`: credential-free, deterministic, and useful.
  *
- * It plays the dedup rule of the charter and nothing else. Its script is fixed: `status` once, then
- * one `exec` whose script lists every frame-key group in the briefing that holds more than one
- * active path, archives every path but the first of each, and splices a `supersedes` link into the
- * kept file's head for each archive, then `finish`. On a fixture that holds a duplicate pair the
- * harvester yields one `archive` and one `link` from that one `exec` (the head edit becomes a
- * `link` op; no `propose` is needed), so `curate run --model fake` lands a real commit in the smoke
- * run and the integration tier with no model on the network, and proves the code-mode edge path
- * end to end.
+ * It plays the dedup rule and the integrity rule of the charter and nothing else. Its script is
+ * fixed: `status` once, then one `exec` whose script (1) lists every `duplicates` group in the
+ * briefing, archives every path but the first of each, and splices a `supersedes` link into the
+ * kept file's head for each archive, and (2) walks every active memory file for a
+ * `<link rel="memhtml-...">` whose root-relative target is no file in the corpus and cuts that line,
+ * then `finish`. On a fixture that holds a duplicate pair and one dangling link the harvester yields
+ * one `archive`, one `link`, and one `unlink` from that one `exec` (both head edits become edge
+ * ops; no `propose` is needed), so `curate run --model fake` lands a real commit in the smoke run
+ * and the integration tier with no model on the network, and proves both code-mode edge paths end
+ * to end. The briefing's `contradictions` are left alone, as the charter's first priority says.
  *
- * It reads the briefing back out of the user message (`parseBriefing`) and the archive list out of
- * the `exec` tool result, so the only coupling is to shapes this package owns.
+ * It reads the briefing back out of the user message (`parseBriefing`) and the archive and unlink
+ * lists out of the `exec` tool result, so the only coupling is to shapes this package owns.
  */
 
 export const FAKE_PROVIDER = "memhtml"
 export const FAKE_MODEL_ID = "fake"
 
-/** The script the fake asks `exec` to run over the groups. Exported so a test can run it alone. */
+/**
+ * The script the fake asks `exec` to run: the dedup over `groups`, then the dangling-link sweep over
+ * the active buckets. Exported so a test can run it alone.
+ *
+ * The sweep runs after the dedup, so the `supersedes` edges the dedup placed point at archive files
+ * that exist by then and are never cut. It walks `areas/`, `projects/`, and `resources/` only: an
+ * archived file's edge is not a session's to drop (`validateOps` refuses an `unlink` whose source is
+ * not active), and one such op would keep the whole harvest out of the log.
+ */
 export const fakeDedupScript = (
   groups: ReadonlyArray<{ readonly paths: ReadonlyArray<string> }>,
   year: string
@@ -53,7 +63,36 @@ export const fakeDedupScript = (
     "    archived.push({ kept, from: path, to })",
     "  }",
     "}",
-    "console.log(JSON.stringify({ groups: GROUPS.length, archived }))"
+    // The sweep: every memhtml link line whose root-relative href names no file is cut, which the
+    // harvester turns into an unlink op because, again, the article is untouched.
+    "const unlinked = []",
+    "const LINK = /^[ \\t]*<link\\s[^>]*\\brel=[\"']memhtml-([^\"']+)[\"'][^>]*\\bhref=[\"']([^\"']+)[\"'][^>]*>[ \\t]*\\r?\\n?/gm",
+    // The guest's `statSync(...).isDirectory` is a boolean property, not a method (the shape
+    // `apps/cli/guest/corpus.mjs` records), so the check takes both shapes.
+    "const isDir = (path) => {",
+    "  const stats = fs.statSync(path)",
+    '  return typeof stats.isDirectory === "function" ? stats.isDirectory() : stats.isDirectory === true',
+    "}",
+    "const walk = (dir) => {",
+    "  for (const name of fs.readdirSync(dir)) {",
+    '    const full = dir + "/" + name',
+    "    if (isDir(full)) walk(full)",
+    '    else if (name.endsWith(".html") && name !== "index.html") sweep(full)',
+    "  }",
+    "}",
+    "const sweep = (file) => {",
+    '  const html = fs.readFileSync(file, "utf8")',
+    "  const next = html.replace(LINK, (line, token, href) => {",
+    '    if (!href.startsWith("/") || fs.existsSync(ROOT + href)) return line',
+    '    unlinked.push({ path: file.slice(ROOT.length + 1), rel: token.replaceAll("-", "_"), href })',
+    '    return ""',
+    "  })",
+    "  if (next !== html) fs.writeFileSync(file, next)",
+    "}",
+    'for (const bucket of ["areas", "projects", "resources"]) {',
+    '  if (fs.existsSync(ROOT + "/" + bucket)) walk(ROOT + "/" + bucket)',
+    "}",
+    "console.log(JSON.stringify({ groups: GROUPS.length, archived, unlinked }))"
   ].join("\n")
 
 interface Archived {
@@ -61,6 +100,19 @@ interface Archived {
   readonly from: string
   readonly to: string
 }
+
+interface Unlinked {
+  readonly path: string
+  readonly rel: string
+  readonly href: string
+}
+
+interface ExecPrinted {
+  readonly archived: ReadonlyArray<Archived>
+  readonly unlinked: ReadonlyArray<Unlinked>
+}
+
+const NOTHING_PRINTED: ExecPrinted = { archived: [], unlinked: [] }
 
 /** Tool names the conversation shows the assistant has called so far, in order. */
 const callsSoFar = (options: LanguageModelV4CallOptions): ReadonlyArray<string> =>
@@ -89,25 +141,25 @@ const textOf = (part: LanguageModelV4ToolResultPart): string | null =>
       ? JSON.stringify(part.output.value)
       : null
 
-/** The archive list the `exec` result printed, or `[]` when the script did not run cleanly. */
-const archivedFrom = (options: LanguageModelV4CallOptions): ReadonlyArray<Archived> => {
+/** What the `exec` result printed, or nothing when the script did not run cleanly. */
+const printedFrom = (options: LanguageModelV4CallOptions): ExecPrinted => {
   for (const message of options.prompt) {
     if (message.role !== "tool") continue
     for (const part of message.content) {
       if (part.type !== "tool-result" || part.toolName !== "exec") continue
       const text = textOf(part)
-      if (text === null) return []
+      if (text === null) return NOTHING_PRINTED
       try {
         const result = JSON.parse(text) as { exitCode?: number; stdout?: string }
-        if (result.exitCode !== 0 || typeof result.stdout !== "string") return []
-        const printed = JSON.parse(result.stdout.trim()) as { archived?: ReadonlyArray<Archived> }
-        return printed.archived ?? []
+        if (result.exitCode !== 0 || typeof result.stdout !== "string") return NOTHING_PRINTED
+        const printed = JSON.parse(result.stdout.trim()) as Partial<ExecPrinted>
+        return { archived: printed.archived ?? [], unlinked: printed.unlinked ?? [] }
       } catch {
-        return []
+        return NOTHING_PRINTED
       }
     }
   }
-  return []
+  return NOTHING_PRINTED
 }
 
 const toolCall = (toolName: string, args: unknown): LanguageModelV4GenerateResult => ({
@@ -136,27 +188,33 @@ export const fakeNextCall = (
   if (step === 0) return toolCall("status", {})
   if (step === 1) {
     const briefing = briefingOf(options)
-    const groups = (briefing?.frameKeyGroups ?? []).map((group) => ({
+    // Only the `duplicates` list: a contradiction's members disagree and both stay live.
+    const groups = (briefing?.duplicates ?? []).map((group) => ({
       paths: group.records.map((record) => record.path)
     }))
     const year = String(new Date().getUTCFullYear())
     return toolCall("exec", { script: fakeDedupScript(groups, year) })
   }
-  const archived = archivedFrom(options)
-  const report =
+  const { archived, unlinked } = printedFrom(options)
+  // The first line is the commit subject, which `commitSubject` caps at 72 characters, so every
+  // shape here stays under the cap and the subject lands untruncated.
+  const dropped = `dropped ${String(unlinked.length)} dangling link(s)`
+  const subject =
     archived.length === 0
-      ? [
-          "No duplicate frame-key groups to settle; nothing archived.",
-          "",
-          "The fake curator plays the dedup rule only. Left undone: every other priority."
-        ].join("\n")
-      : [
-          `Archived ${String(archived.length)} duplicate record(s) behind their canonical twins.`,
-          "",
-          ...archived.map((entry) => `- ${entry.from} -> ${entry.to}, superseded by ${entry.kept}`),
-          "",
-          "The fake curator plays the dedup rule only. Left undone: every other priority."
-        ].join("\n")
+      ? unlinked.length === 0
+        ? "No duplicate groups to settle; nothing archived."
+        : `No duplicates to settle; ${dropped}.`
+      : unlinked.length === 0
+        ? `Archived ${String(archived.length)} duplicate record(s) behind their canonical twins.`
+        : `Archived ${String(archived.length)} duplicate record(s) and ${dropped}.`
+  const report = [
+    subject,
+    "",
+    ...archived.map((entry) => `- ${entry.from} -> ${entry.to}, superseded by ${entry.kept}`),
+    ...unlinked.map((entry) => `- ${entry.path}: dropped ${entry.rel} -> ${entry.href}`),
+    ...(archived.length + unlinked.length === 0 ? [] : [""]),
+    "The fake curator plays the dedup and integrity rules only. Left undone: every other priority."
+  ].join("\n")
   return toolCall("finish", { report })
 }
 

@@ -278,7 +278,7 @@ fs.unlinkSync(root + "/" + ${JSON.stringify(source)})
   }, 120_000)
 })
 
-describe("a head edit is an op only when it adds links", () => {
+describe("a head edit is an op only when it adds or removes links", () => {
   const LINKED = "areas/inbox/linked.html"
   const PLAIN = "areas/inbox/plain.html"
   const TARGET = "areas/inbox/target.html"
@@ -365,19 +365,49 @@ describe("a head edit is an op only when it adds links", () => {
   }, 120_000)
 
   /**
-   * (Mutation: dropping the `removed.length > 0` clause in `headEdit` leaves the rejection but loses
-   * the name of the removed link; observed `expected '...: the bytes changed with no link added' to
-   * contain 'removed link(s) supports -> /areas/inbox/target.html'`.)
+   * (Mutation: `removed.map(...)` left out of the `links` result in `headEdit` drops the edit
+   * silently; observed `expected [] to deeply equal [ { kind: 'unlink', ...(3) } ]` here and the
+   * both-kinds case red.)
    */
-  it("removing a link is rejected with the stated reason, naming the link", async () => {
+  it("removing a <link> yields exactly one unlink op and no rejection", async () => {
     const report = await rewrite(LINKED, `before.replace(${JSON.stringify(supports)}, "")`)
     expect(report.exitCode, report.stderr).toBe(0)
+    expect(report.ops).toEqual([
+      { kind: "unlink", path: LINKED, rel: "supports", href: "/areas/inbox/target.html" }
+    ])
+    expect(report.rejected).toEqual([])
+  }, 120_000)
+
+  it("removing one <link> and adding another yields a link op then an unlink op", async () => {
+    const report = await rewrite(
+      LINKED,
+      `before.replace(${JSON.stringify(supports)}, ${JSON.stringify(relates)})`
+    )
+    expect(report.exitCode, report.stderr).toBe(0)
+    expect(report.ops).toEqual([
+      { kind: "link", path: LINKED, rel: "relates_to", href: "/areas/inbox/target.html" },
+      { kind: "unlink", path: LINKED, rel: "supports", href: "/areas/inbox/target.html" }
+    ])
+    expect(report.rejected).toEqual([])
+  }, 120_000)
+
+  /**
+   * (Mutation: the `removed link(s)` note left out of `notes` in `headEdit` keeps the rejection but
+   * loses the name of the removed link; observed `expected '...: the title changed' to contain
+   * 'removed link(s) supports -> /areas/inbox/target.html'`.)
+   */
+  it("removing a link and changing the title is rejected naming both", async () => {
+    const report = await rewrite(
+      LINKED,
+      `before.replace("<title>Linked</title>", "<title>Renamed</title>").replace(${JSON.stringify(supports)}, "")`
+    )
+    expect(report.exitCode, report.stderr).toBe(0)
     expect(report.ops).toEqual([])
-    expect(report.rejected).toHaveLength(1)
     const [rejection] = report.rejected
     expect(rejection?.path).toBe(LINKED)
     expect(rejection?.reason).toContain(HEAD_EDIT_REASON)
     expect(rejection?.reason).toContain("removed link(s) supports -> /areas/inbox/target.html")
+    expect(rejection?.reason).toContain("the title changed")
   }, 120_000)
 
   /**
@@ -420,7 +450,7 @@ describe("a head edit is an op only when it adds links", () => {
 
   /**
    * (Mutation: dropping the `metasOf(was) !== metasOf(now)` clause in `headEdit` loses the name of
-   * the change; observed `expected '...: the head changed beyond the added links' to contain 'a meta
+   * the change; observed `expected '...: the head changed beyond the edited links' to contain 'a meta
    * changed'`, the residual-head clause catching what the meta clause no longer named.)
    */
   it("adding a link and a meta is rejected naming both", async () => {
@@ -482,7 +512,7 @@ describe("a head edit is an op only when it adds links", () => {
     expect(rejection?.path).toBe(PLAIN)
     expect(rejection?.reason).toContain(HEAD_EDIT_REASON)
     expect(rejection?.reason).toContain("added link(s) supports -> /areas/inbox/target.html")
-    expect(rejection?.reason).toContain("the head changed beyond the added links")
+    expect(rejection?.reason).toContain("the head changed beyond the edited links")
   }, 120_000)
 
   /**
@@ -514,7 +544,7 @@ describe("a head edit is an op only when it adds links", () => {
     expect(report.exitCode, report.stderr).toBe(0)
     expect(report.ops).toEqual([])
     expect(report.rejected.map((entry) => entry.path)).toEqual([PLAIN])
-    expect(report.rejected[0]?.reason).toContain("no link added")
+    expect(report.rejected[0]?.reason).toContain("no link added or removed")
   }, 120_000)
 })
 
@@ -601,6 +631,41 @@ describe("an archive twin's head is held to the same rule as a file that stays p
     expect(rejection?.reason).toContain(HEAD_EDIT_REASON)
     expect(rejection?.reason).toContain("added link(s) supports -> /areas/inbox/target.html")
     expect(rejection?.reason).toContain("the title changed")
+  }, 120_000)
+
+  it("a link removed from the twin's head is an unlink op on the source, then the archive", async () => {
+    const dangling = '<link rel="memhtml-relates-to" href="/areas/inbox/gone.html">'
+    const carrying = viewOver(
+      await Effect.runPromise(
+        Effect.all([
+          recordFrom(
+            PLAIN,
+            (small.get(PLAIN)?.html ?? "").replace("</head>", `${dangling}\n</head>`)
+          ),
+          recordFrom("areas/inbox/target.html", small.get("areas/inbox/target.html")?.html ?? "")
+        ])
+      )
+    )
+    const report = await Effect.runPromise(
+      runSessionExec({
+        view: carrying,
+        script: [
+          'import * as fs from "node:fs"',
+          'const root = "/mnt/memhtml"',
+          `const before = fs.readFileSync(root + "/${PLAIN}", "utf8")`,
+          'fs.mkdirSync(root + "/archive/2026/areas/inbox", { recursive: true })',
+          `fs.writeFileSync(root + "/${TO}", before.replace(${JSON.stringify(dangling)}, ""))`,
+          `fs.unlinkSync(root + "/${PLAIN}")`
+        ].join("\n")
+      })
+    )
+    expect(report.exitCode, report.stderr).toBe(0)
+    expect(report.rejected).toEqual([])
+    const twinHtml = (carrying.get(PLAIN)?.html ?? "").replace(dangling, "")
+    expect(report.ops).toEqual([
+      { kind: "unlink", path: PLAIN, rel: "relates_to", href: "/areas/inbox/gone.html" },
+      { kind: "archive", path: PLAIN, to: TO, html: twinHtml }
+    ])
   }, 120_000)
 
   it("a verbatim copy is one archive op and nothing else", async () => {

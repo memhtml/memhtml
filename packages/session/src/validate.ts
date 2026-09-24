@@ -8,7 +8,7 @@ import {
   originalPathFor,
   PEOPLE_DIR
 } from "@memhtml/contracts"
-import { checkMemory, contentHash, isRootRelativeHref } from "@memhtml/html"
+import { checkMemory, contentHash, isRootRelativeHref, readLinks } from "@memhtml/html"
 
 /**
  * The mechanical checks a commit runs before it writes anything. No model call, no I/O: every
@@ -72,6 +72,7 @@ export const touchedPaths = (op: OverlayOp): ReadonlyArray<string> => {
     case "archive":
       return [op.path, op.to]
     case "link":
+    case "unlink":
       return [op.path]
   }
 }
@@ -101,6 +102,21 @@ export const validateOps = (
   const batchHashes = new Map<string, string>()
   /** Paths this batch puts with their content hash, so a later `link` or `archive` can name them. */
   const batchPuts = new Map<string, string>()
+  /**
+   * The edges each path carries as the batch has left it so far: the head's (or the put's) links,
+   * plus every `link` this batch added and minus every `unlink` it dropped. An `unlink` is judged
+   * against this, so a batch may drop an edge it added earlier and may not drop one twice.
+   */
+  const batchEdges = new Map<string, Set<string>>()
+  const edgeKey = (rel: string, href: string): string => `${rel} -> ${href}`
+  const edgesOf = (path: string): Set<string> => {
+    const known = batchEdges.get(path)
+    if (known !== undefined) return known
+    const record = view.get(path)
+    const fresh = new Set(record?.links.map((link) => edgeKey(link.rel, link.href)) ?? [])
+    batchEdges.set(path, fresh)
+    return fresh
+  }
   /**
    * Every path this batch creates, puts and archive destinations alike, gathered before the walk so
    * a link may name a target its batch creates later in the order. The harvester emits links before
@@ -140,6 +156,10 @@ export const validateOps = (
         }
         batchHashes.set(hash, op.path)
         batchPuts.set(op.path, hash)
+        batchEdges.set(
+          op.path,
+          new Set(readLinks(op.html).map((link) => edgeKey(link.rel, link.href)))
+        )
         break
       }
       case "archive": {
@@ -186,6 +206,22 @@ export const validateOps = (
           }
         }
         if (reasons.length > 0) violations.push({ kind: "format", path: op.path, reasons })
+        else edgesOf(op.path).add(edgeKey(op.rel, op.href))
+        break
+      }
+      case "unlink": {
+        const reasons: Array<string> = []
+        if (!isActiveIn(view, op.path) && !batchPuts.has(op.path)) {
+          reasons.push("unlink source is not an active record in the head")
+        }
+        if (!isEdgeRel(op.rel)) reasons.push(`rel \`${op.rel}\` is outside the edge vocabulary`)
+        // The edge must be on the file as the batch sees it: dropping an edge that is not there is
+        // a stale op, and letting it through would commit a no-op the log describes as a change.
+        if (reasons.length === 0 && !edgesOf(op.path).has(edgeKey(op.rel, op.href))) {
+          reasons.push("unlink names an edge the source does not carry")
+        }
+        if (reasons.length > 0) violations.push({ kind: "format", path: op.path, reasons })
+        else edgesOf(op.path).delete(edgeKey(op.rel, op.href))
         break
       }
     }

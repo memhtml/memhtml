@@ -317,6 +317,9 @@ importers:
       '@memhtml/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@memhtml/domain':
+        specifier: workspace:*
+        version: link:../domain
       '@memhtml/head':
         specifier: workspace:*
         version: link:../head

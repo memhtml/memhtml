@@ -133,7 +133,7 @@ export const fakeTools = (options: FakeToolOptions = {}): FakeTools => {
       return {
         baseSha: "0".repeat(40),
         ref: "refs/heads/curate/test",
-        ops: { put: 0, archive: 0, link: 0 }
+        ops: { put: 0, archive: 0, link: 0, unlink: 0 }
       }
     }
   }
@@ -149,8 +149,10 @@ export const emptyBriefing: Briefing = {
   active: 3,
   archived: 1,
   inboxShare: 1,
-  frameKeyGroups: [],
-  frameKeyGroupsTotal: 0,
+  duplicates: [],
+  duplicatesTotal: 0,
+  contradictions: [],
+  contradictionsTotal: 0,
   danglingLinks: 0,
   lowestConfidence: [],
   lastCurate: null

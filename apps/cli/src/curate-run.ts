@@ -71,7 +71,8 @@ import {
  * tool judges its writes the way a curator's commit would, under the `curate` scope: an op carrying
  * any violation is refused with the violations handed back to the model, and a clean one is
  * appended. A link a script splices into a file's head in the sandbox is harvested as a `link` op,
- * so an edge can be placed from code mode without a `propose`. `exec` and `propose`
+ * and one it cuts as an `unlink` op, so an edge can be placed or dropped from code mode without a
+ * `propose`. `exec` and `propose`
  * refuse alike, `duplicate` and `claim-edit` included, because a curator's own ref has no rebase
  * that cures them (the ref does not exist before the first commit), so an appended op the commit
  * refuses would poison the log for every `--resume` after it. A dry run keeps the same shape over an
@@ -148,6 +149,7 @@ export interface OpsByKind {
   readonly put: number
   readonly archive: number
   readonly link: number
+  readonly unlink: number
 }
 
 export interface CurateRunReport {
@@ -184,7 +186,8 @@ export interface CurateRunReport {
 const opsByKind = (ops: ReadonlyArray<OverlayOp>): OpsByKind => ({
   put: ops.filter((op) => op.kind === "put").length,
   archive: ops.filter((op) => op.kind === "archive").length,
-  link: ops.filter((op) => op.kind === "link").length
+  link: ops.filter((op) => op.kind === "link").length,
+  unlink: ops.filter((op) => op.kind === "unlink").length
 })
 
 const describeViolation = (violation: Violation): string => {

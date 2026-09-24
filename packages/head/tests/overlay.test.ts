@@ -13,6 +13,10 @@ import { BROKEN_HTML, mapView, memoryFor, recordOf, run, runErr } from "./helper
  * - `applyOp` link: drop the `isEdgeRel` check, and "refuses a link with a rel outside the
  *   vocabulary" fails (addLink would throw or emit an unknown token instead of a typed error).
  * - `applyOp` archive: drop `archived: true`, and "archive moves the record" fails on `archived`.
+ * - `applyOp` unlink: drop the `existing.links.some(...)` check, and "refuses an unlink of an edge
+ *   the file does not carry" fails (the op is applied as a no-op instead of a typed error).
+ * - `applyOp` unlink: call `addLink` instead of `removeLink`, and "unlink re-parses the file with
+ *   the edge removed" fails on `links`.
  */
 
 const base = async () => {
@@ -120,6 +124,68 @@ describe("withOverlay", () => {
     })
     expect([...overlay.inbound(`/${memoryFor(0).path}`)].sort()).toEqual(
       [fresh.path, memoryFor(1).path].sort()
+    )
+  })
+
+  it("unlink re-parses the file with the edge removed and leaves the content hash unchanged", async () => {
+    const { view } = await base()
+    // memoryFor(2) carries `relates_to -> /<memoryFor(1).path>` from the fixture.
+    const two = memoryFor(2)
+    const href = `/${memoryFor(1).path}`
+    expect(view.get(two.path)?.links).toContainEqual({ rel: "relates_to", href })
+    const overlay = await run(
+      withOverlay(view, [{ kind: "unlink", path: two.path, rel: "relates_to", href }])
+    )
+    const unlinked = overlay.get(two.path)
+    expect(unlinked?.links).toEqual([])
+    expect(unlinked?.contentHash).toBe(contentHash(two.html))
+    expect(unlinked?.blobSha).not.toBe(view.get(two.path)?.blobSha)
+    expect(unlinked?.html).not.toContain(`href="${href}"`)
+    expect(overlay.inbound(href)).toEqual([])
+    // The base is untouched.
+    expect(view.get(two.path)?.links).toHaveLength(1)
+  })
+
+  it("applies ops in order, so a link added earlier in the batch can be unlinked later", async () => {
+    const { view } = await base()
+    const three = memoryFor(3)
+    const href = "/areas/inbox/fact-1.html"
+    const overlay = await run(
+      withOverlay(view, [
+        { kind: "link", path: three.path, rel: "contradicts", href },
+        { kind: "unlink", path: three.path, rel: "contradicts", href }
+      ])
+    )
+    expect(overlay.get(three.path)?.html).toBe(three.html)
+  })
+
+  it("refuses an unlink whose path the view does not hold, or whose rel is unknown", async () => {
+    const { view } = await base()
+    const ghost = await runErr(
+      withOverlay(view, [
+        { kind: "unlink", path: "areas/inbox/ghost.html", rel: "relates_to", href: "/x.html" }
+      ])
+    )
+    expect(ghost._tag).toBe("InvalidMemory")
+    expect(ghost.reason).toContain("ghost")
+    const rel = await runErr(
+      withOverlay(view, [
+        { kind: "unlink", path: memoryFor(2).path, rel: "friends-with", href: "/x.html" }
+      ])
+    )
+    expect(rel.reason).toBe("unknown link rel: friends-with")
+  })
+
+  it("refuses an unlink of an edge the file does not carry", async () => {
+    const { view } = await base()
+    const error = await runErr(
+      withOverlay(view, [
+        { kind: "unlink", path: memoryFor(0).path, rel: "relates_to", href: "/areas/inbox/x.html" }
+      ])
+    )
+    expect(error._tag).toBe("InvalidMemory")
+    expect(error.reason).toBe(
+      `unlink op names an edge ${memoryFor(0).path} does not carry: relates_to -> /areas/inbox/x.html`
     )
   })
 

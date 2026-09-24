@@ -1,15 +1,49 @@
 import { type HeadView, hrefToPath } from "@memhtml/contracts"
+import { frameValueOf } from "@memhtml/domain"
 
 /**
  * The briefing: a code-computed summary of the version the curator sees, handed to the model as the
  * one user message. Everything in it is derived from the head view with no model call, so the run
  * starts from facts rather than from a search the model has to think to ask for.
+ *
+ * ## Frame-key groups are split by value
+ *
+ * A frame key is a claim's slot (`the capital of india is`); the value is what the claim writes into
+ * it (`new delhi`). Two active records under one key are two very different things depending on the
+ * value: the same value is one fact recorded twice, a dedup candidate; different values are two
+ * claims about one slot that disagree, a contradiction the charter says to keep live. The first cut
+ * of this briefing listed every multi-member key as a dedup candidate, and on the 2026-09-23 live
+ * run the model spent its steps refusing eleven of them. So the groups are computed by value here,
+ * with the two lists the charter's two priorities read from.
+ *
+ * ## Two types join no group
+ *
+ * A `verdict`'s claim is a headline naming the objective it reviewed ("Review verdict for objective:
+ * …"), and the ruling is in the article; two verdicts on one objective share the claim word for
+ * word, and the key and value the slot rule extracts from it, while being two rulings. Every one of
+ * the eleven refused groups was such a pair (measured over the store at the commit the run saw).
+ * `task` rows are outside the curator's mandate by the charter's second priority. Neither type
+ * enters a frame-key group.
  */
 
-/** One frame key held by more than one active record: the dedup and contradiction candidates. */
-export interface FrameKeyGroup {
+/** One active record in a group: its path, its claim, and the value the claim writes. */
+export interface FrameKeyMember {
+  readonly path: string
+  readonly claim: string
+  readonly value: string
+}
+
+/** One frame key whose active records agree on one value: a dedup candidate. */
+export interface DuplicateGroup {
   readonly key: string
+  readonly value: string
   readonly records: ReadonlyArray<{ readonly path: string; readonly claim: string }>
+}
+
+/** One frame key whose active records write at least two different values: a contradiction. */
+export interface ContradictionGroup {
+  readonly key: string
+  readonly records: ReadonlyArray<FrameKeyMember>
 }
 
 export interface LowConfidenceRecord {
@@ -24,10 +58,19 @@ export interface Briefing {
   readonly archived: number
   /** Active records under `areas/inbox/` as a fraction of all active records, `0` when none. */
   readonly inboxShare: number
-  /** Groups with more than one active path, sorted by key, capped at {@link BRIEFING_GROUP_CAP}. */
-  readonly frameKeyGroups: ReadonlyArray<FrameKeyGroup>
+  /**
+   * Frame keys under which two or more active records write one value, one entry per (key, value),
+   * sorted by key then value, capped at {@link BRIEFING_GROUP_CAP}.
+   */
+  readonly duplicates: ReadonlyArray<DuplicateGroup>
   /** How many such groups exist, so the model knows when the list above is a prefix. */
-  readonly frameKeyGroupsTotal: number
+  readonly duplicatesTotal: number
+  /**
+   * Frame keys under which active records write two or more different values, every member with
+   * its value, sorted by key, capped at {@link BRIEFING_GROUP_CAP}.
+   */
+  readonly contradictions: ReadonlyArray<ContradictionGroup>
+  readonly contradictionsTotal: number
   /** Links whose root-relative href names no path in the view, active or archived. */
   readonly danglingLinks: number
   /** Active records with a stated confidence, lowest first, capped at {@link BRIEFING_LOW_CAP}. */
@@ -40,8 +83,14 @@ export const BRIEFING_GROUP_CAP = 50
 export const BRIEFING_LOW_CAP = 20
 export const INBOX_PREFIX = "areas/inbox/"
 
-const byKey = <T extends { readonly key: string }>(a: T, b: T): number =>
-  a.key < b.key ? -1 : a.key > b.key ? 1 : 0
+/**
+ * Memory types whose claim names the record's subject rather than stating a fact about the world,
+ * so the slot rule keys them on prose that is not a slot. They join no frame-key group.
+ */
+export const HEADLINE_CLAIM_TYPES: ReadonlySet<string> = new Set(["verdict", "task"])
+
+const byPath = <T extends { readonly path: string }>(a: T, b: T): number =>
+  a.path < b.path ? -1 : a.path > b.path ? 1 : 0
 
 /**
  * Compute the briefing over a view. Pure over the view: the one field it cannot derive, the last
@@ -55,7 +104,7 @@ export const briefingFromView = (
   let archived = 0
   let inbox = 0
   let danglingLinks = 0
-  const groups = new Map<string, Array<{ path: string; claim: string }>>()
+  const groups = new Map<string, Array<FrameKeyMember>>()
   const low: Array<LowConfidenceRecord> = []
   for (const record of view.records()) {
     for (const link of record.links) {
@@ -68,29 +117,51 @@ export const briefingFromView = (
     }
     active += 1
     if (record.path.startsWith(INBOX_PREFIX)) inbox += 1
-    if (record.frameKey !== null) {
+    if (record.frameKey !== null && !HEADLINE_CLAIM_TYPES.has(record.memoryType)) {
+      // The record's key is the head's (`frameKeyOf`); the value is read from the same claim
+      // through the paired accessor, so a key without a value cannot happen. The fallback keeps
+      // the fold total for a record built by a test double.
+      const value = frameValueOf(record.claim) ?? ""
       const members = groups.get(record.frameKey) ?? []
-      members.push({ path: record.path, claim: record.claim })
+      members.push({ path: record.path, claim: record.claim, value })
       groups.set(record.frameKey, members)
     }
     if (record.confidence !== null) {
       low.push({ path: record.path, claim: record.claim, confidence: record.confidence })
     }
   }
-  const multi = [...groups]
-    .filter(([, members]) => members.length > 1)
-    .map(([key, members]) => ({
-      key,
-      records: [...members].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
-    }))
-    .sort(byKey)
+
+  const duplicates: Array<DuplicateGroup> = []
+  const contradictions: Array<ContradictionGroup> = []
+  for (const [key, members] of [...groups].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    if (members.length < 2) continue
+    const byValue = new Map<string, Array<FrameKeyMember>>()
+    for (const member of members) {
+      const same = byValue.get(member.value) ?? []
+      same.push(member)
+      byValue.set(member.value, same)
+    }
+    for (const [value, same] of [...byValue].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+      if (same.length < 2) continue
+      duplicates.push({
+        key,
+        value,
+        records: [...same].sort(byPath).map(({ path, claim }) => ({ path, claim }))
+      })
+    }
+    if (byValue.size > 1) {
+      contradictions.push({ key, records: [...members].sort(byPath) })
+    }
+  }
   low.sort((a, b) => a.confidence - b.confidence || (a.path < b.path ? -1 : 1))
   return {
     active,
     archived,
     inboxShare: active === 0 ? 0 : inbox / active,
-    frameKeyGroups: multi.slice(0, BRIEFING_GROUP_CAP),
-    frameKeyGroupsTotal: multi.length,
+    duplicates: duplicates.slice(0, BRIEFING_GROUP_CAP),
+    duplicatesTotal: duplicates.length,
+    contradictions: contradictions.slice(0, BRIEFING_GROUP_CAP),
+    contradictionsTotal: contradictions.length,
     danglingLinks,
     lowestConfidence: low.slice(0, BRIEFING_LOW_CAP),
     lastCurate
@@ -129,7 +200,8 @@ export const parseBriefing = (text: string): Briefing | null => {
   try {
     const parsed: unknown = JSON.parse(text.slice(from, end))
     if (typeof parsed !== "object" || parsed === null) return null
-    if (!Array.isArray((parsed as { frameKeyGroups?: unknown }).frameKeyGroups)) return null
+    const shape = parsed as { duplicates?: unknown; contradictions?: unknown }
+    if (!Array.isArray(shape.duplicates) || !Array.isArray(shape.contradictions)) return null
     return parsed as Briefing
   } catch {
     return null
