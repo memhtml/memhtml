@@ -138,7 +138,7 @@ Fourteen nodes were measured and left out of the 20-node budget. Edge counts are
 
 Counts are the distinct existing non-docs source paths cited in inline backticks on both pages, measured against the tree at d64e6a3.
 
-- [memhtml-public · Module map](../../architecture/module-map.md): 24 shared source citations
+- [memhtml-public · Module map](../../architecture/module-map.md): 32 shared source citations
 - [memhtml-public · Impact analysis](../../insights/impact-analysis.md): 20 shared source citations
 - [memhtml-public · Contract map](../../insights/contract-map.md): 18 shared source citations
 - [memhtml-public · Tech debt](../../insights/tech-debt.md): 14 shared source citations
