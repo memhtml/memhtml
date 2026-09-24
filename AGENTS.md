@@ -534,7 +534,7 @@ Run a script over the session's view (head plus overlay) in a writable sandbox a
 Land the session's overlay on its ref as one commit, or report why it cannot: `refused`, `rebase-needed`, or `worktree-dirty`.
 
 - `--id` (string) — The session to commit. _(**required**)_
-- `--message` (string) — The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer. When HEAD is the session's ref, the shared index and working tree move to the new commit with it (`worktreeSynced: true`); uncommitted state at a path the commit writes or removes is answered `worktree-dirty` and nothing moves. A ref that moved past the session's base is `rebase-needed`: run `session rebase` and commit again. _(**required**)_
+- `--message` (string) — The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer. When HEAD is the session's ref, the shared index and working tree move to the new commit with it (`worktreeSynced: true`); uncommitted state at a path the commit writes or removes is answered `worktree-dirty` and nothing moves. A ref that moved past the session's base is `rebase-needed`: run `session rebase` and commit again. A `committed` outcome also writes the new commit's snapshot (`snapshot`: path, bytes, ms, pruned; null when that best-effort write failed), so the next load hits the cache. _(**required**)_
 
 ### `memhtml session rebase`
 
@@ -550,7 +550,7 @@ The session's base, ref, and overlay log as persisted, and whether the ref has m
 
 ### `memhtml head status`
 
-Build the corpus version at HEAD and report its sha, record count, skipped files, load time, and whether it came from a snapshot or from git.
+Build the corpus version at HEAD and report its sha, record count, skipped files, load time, and its source: `snapshot` (HEAD's own .arrow file), `snapshot+advance` (an ancestor's snapshot advanced over the changed paths, with `ancestorSha` and `reparsed`), or `git`.
 
 ### `memhtml head search`
 
@@ -562,19 +562,19 @@ Two-arm retrieval (BM25 plus recency, RRF-fused) over the version at HEAD. No in
 
 ### `memhtml head snapshot`
 
-Write the version at HEAD as .memhtml/snapshots/<sha>.arrow, the cold-start cache, or read that file back and report it.
+Write the version at HEAD as .memhtml/snapshots/<sha>.arrow, the cold-start cache, pruning to the newest four, or read that file back and report it. Every ref-moving commit writes this file itself; the command is for a store whose HEAD moved by other means.
 
 - `--write` (boolean) — Build the head from git and write its snapshot. Exactly one of --write / --read. _(default `false`)_
 - `--read` (boolean) — Open HEAD's snapshot and report its row count and sha. Exactly one of --write / --read. _(default `false`)_
 
 ### `memhtml curate merge`
 
-Land a curator branch on its target: refuse unless the ref descends from --into, run the discrimination gate, then fast-forward --into to the ref with a compare-and-swap, bringing the checkout along when --into is HEAD.
+Land a curator branch on its target: refuse unless the ref descends from --into, run the head gate (the same probes ranked at both tips), then fast-forward --into to the ref with a compare-and-swap, bringing the checkout along when --into is HEAD, and write the landed version's snapshot.
 
 - `<ref>` — The curator branch, as `curate/2026-09-23` or `refs/heads/curate/2026-09-23`; `refs/heads/` is prepended when absent. Refused (ERR_INVALID_MEMORY) when it does not exist or is not a descendant of --into.
 
 - `--into` (string) — The branch to fast-forward, `refs/heads/` prepended when absent. When HEAD is this branch and the checkout is clean at every path the landing changes, the shared index and working tree move with it (`worktreeSynced: true`); an uncommitted edit at one of those paths is refused (ERR_DIRTY_TREE) and nothing moves. _(default `main`)_
-- `--skip-gate` (boolean) — Land without running the discrimination gate. A deliberate, logged override for a repository without the eval corpus, never a default. A failing gate is ERR_DISCRIMINATION_FAILED with its numbers in the message, and nothing moves. _(default `false`)_
+- `--skip-gate` (boolean) — Land without running the head gate. A deliberate, logged override, never a default. The gate loads the version at --into and the version at the ref, probes a seeded sample of the records active in both by their titles, and refuses (ERR_DISCRIMINATION_FAILED, nothing moves) when the landed version's MRR falls more than the tolerance below the base's or its inversions grow; the payload's `gate` carries mode `head`, probes, mrr, mrrBefore, floor, and inversions. _(default `false`)_
 
 ### `memhtml curate run`
 
