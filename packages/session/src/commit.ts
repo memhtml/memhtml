@@ -1,7 +1,7 @@
 import type { HeadView, OverlayOp } from "@memhtml/contracts"
 import { isEdgeRel, pathToHref, type StorageFailure } from "@memhtml/contracts"
 import { frameKeyOf } from "@memhtml/domain"
-import { addLink, parseMemory, setMeta } from "@memhtml/html"
+import { addLink, parseMemory, removeLink, setMeta } from "@memhtml/html"
 import { Effect } from "effect"
 
 import type { GitFailure } from "./errors.js"
@@ -101,8 +101,8 @@ interface StagedTree {
 }
 
 /**
- * Fold the ops into a set of writes and removes. A `link` reads the file from an earlier `put` in the
- * same batch when there is one, else from the head; an `archive` removes its source and writes its
+ * Fold the ops into a set of writes and removes. A `link` or `unlink` reads the file from an earlier
+ * op in the same batch when there is one, else from the head; an `archive` removes its source and writes its
  * destination with the archive stamps over the source AS THE COMMIT SEES IT (an earlier op in the
  * batch, else the head at the commit's parent), never over the bytes the op carries: those name
  * which article is meant (validateOps checks the hash), and a link the source gained since the op
@@ -132,6 +132,14 @@ const stage = (head: HeadView, ops: ReadonlyArray<OverlayOp>, archivedAt: string
         // so both branches below are unreachable after step 1; they keep the fold total.
         if (current === undefined || !isEdgeRel(op.rel)) break
         writes.set(op.path, addLink(current, op.rel, op.href))
+        break
+      }
+      case "unlink": {
+        // The mirror of `link`: the file as the batch left it, with the one edge cut. An archive
+        // built later in the batch reads `writes`, so it carries the removal.
+        const current = writes.get(op.path) ?? head.get(op.path)?.html
+        if (current === undefined || !isEdgeRel(op.rel)) break
+        writes.set(op.path, removeLink(current, op.rel, op.href))
         break
       }
     }

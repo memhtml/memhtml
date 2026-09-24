@@ -21,6 +21,11 @@ import { mapHead, memory, recordFrom } from "./helpers.js"
  *   whose article is not the source's".
  * - link target: drop the `view.get(target) === undefined` check -> "a link must point at a record
  *   in the head or in the batch" (the missing target passes).
+ * - unlink edge: drop the `!edgesOf(op.path).has(...)` reason -> "an unlink must name an edge the
+ *   source carries as the batch sees it" (the absent edge and the second drop both pass).
+ * - unlink source: drop the `isActiveIn` clause -> the same case (the archived source passes).
+ * - unlink batch view: `edgesOf(op.path).add(...)` after a link removed -> the same case (an unlink
+ *   of an edge this batch added is refused).
  */
 
 const CAPITAL = memory("Capital", "The capital of India is New Delhi.")
@@ -304,6 +309,85 @@ describe("validateOps", () => {
     ])
   })
 
+  it("an unlink must name an edge the source carries as the batch sees it", async () => {
+    const view = await head()
+    const unlink = (path: string, href: string, rel = "supports"): OverlayOp => ({
+      kind: "unlink",
+      path,
+      rel,
+      href
+    })
+    const carried = "/areas/inbox/capital.html"
+    // ALPHA carries no edge, so an unlink on it is refused as such, alone.
+    expect(validateOps(view, [unlink("areas/inbox/alpha.html", carried)])).toEqual([
+      {
+        kind: "format",
+        path: "areas/inbox/alpha.html",
+        reasons: ["unlink names an edge the source does not carry"]
+      }
+    ])
+    // An edge the head holds can be dropped once, not twice.
+    const linkedView = mapHead("0".repeat(40), [
+      await recordFrom(
+        "areas/inbox/alpha.html",
+        ALPHA.replace("</head>", `<link rel="memhtml-supports" href="${carried}"></head>`)
+      ),
+      await recordFrom("areas/inbox/capital.html", CAPITAL)
+    ])
+    expect(validateOps(linkedView, [unlink("areas/inbox/alpha.html", carried)])).toEqual([])
+    expect(
+      validateOps(linkedView, [
+        unlink("areas/inbox/alpha.html", carried),
+        unlink("areas/inbox/alpha.html", carried)
+      ])
+    ).toEqual([
+      {
+        kind: "format",
+        path: "areas/inbox/alpha.html",
+        reasons: ["unlink names an edge the source does not carry"]
+      }
+    ])
+    // An edge this batch adds can be dropped by the same batch; a put's own edges count too.
+    expect(
+      validateOps(view, [
+        { kind: "link", path: "areas/inbox/alpha.html", rel: "supports", href: carried },
+        unlink("areas/inbox/alpha.html", carried)
+      ])
+    ).toEqual([])
+    const linkedPut = memory("Beta", "Beta is the second letter.").replace(
+      "</head>",
+      `<link rel="memhtml-supports" href="${carried}"></head>`
+    )
+    expect(
+      validateOps(view, [
+        put("areas/inbox/beta.html", linkedPut),
+        unlink("areas/inbox/beta.html", carried)
+      ])
+    ).toEqual([])
+    // The source must be active, and the rel in the vocabulary.
+    expect(validateOps(linkedView, [unlink("archive/2025/areas/inbox/old.html", carried)])).toEqual(
+      [
+        {
+          kind: "format",
+          path: "archive/2025/areas/inbox/old.html",
+          reasons: ["unlink source is not an active record in the head"]
+        }
+      ]
+    )
+    expect(validateOps(linkedView, [unlink("areas/inbox/alpha.html", carried, "bogus")])).toEqual([
+      {
+        kind: "format",
+        path: "areas/inbox/alpha.html",
+        reasons: ["rel `bogus` is outside the edge vocabulary"]
+      }
+    ])
+    // Reserved paths are refused under the same rule as every other op.
+    expect(validateOps(linkedView, [unlink(".memhtml/x.html", carried)])).toContainEqual({
+      kind: "reserved-path",
+      path: ".memhtml/x.html"
+    })
+  })
+
   it("touchedPaths names every path an op reads or writes", () => {
     expect(touchedPaths(put("a.html", ""))).toEqual(["a.html"])
     expect(
@@ -311,6 +395,9 @@ describe("validateOps", () => {
     ).toEqual(["a.html", "archive/2026/a.html"])
     expect(
       touchedPaths({ kind: "link", path: "a.html", rel: "relates_to", href: "/b.html" })
+    ).toEqual(["a.html"])
+    expect(
+      touchedPaths({ kind: "unlink", path: "a.html", rel: "relates_to", href: "/b.html" })
     ).toEqual(["a.html"])
   })
 })
