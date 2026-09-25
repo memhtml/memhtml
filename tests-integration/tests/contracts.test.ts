@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
@@ -253,6 +254,97 @@ describe("memhtml publish", () => {
       expect(file.path.endsWith("/index.html")).toBe(false)
       expect(file.path).not.toBe("sitemap.xml")
     }
+  })
+})
+
+describe("memhtml publish over an empty index", () => {
+  let origin: Cli
+  let clone: Cli
+  let empty: Cli
+
+  /** The `<url>` entries a sitemap carries. */
+  const urlCount = (sitemap: string): number => [...sitemap.matchAll(/<url>/g)].length
+
+  beforeAll(async () => {
+    origin = await makeCli()
+    await writeMemory(origin, {
+      title: "Canary deploys hold at five percent for ten minutes",
+      claim: "A canary deploy holds at five percent of traffic for ten minutes.",
+      workspace: "checkout-api"
+    })
+    await writeMemory(origin, {
+      title: "The pager escalates after fifteen silent minutes",
+      claim: "The pager escalates to the secondary after fifteen silent minutes.",
+      type: "semantic"
+    })
+    await origin.json(["publish"])
+
+    /**
+     * A clone is the realistic empty index: `index.db` is gitignored, so the clone carries every
+     * memory file and every published listing while its index opens with zero rows.
+     */
+    const cloneRoot = await mkdtemp(join(tmpdir(), "memhtml-integration-publish-clone-"))
+    await rm(cloneRoot, { recursive: true, force: true })
+    await origin.git("clone", origin.root, cloneRoot)
+    clone = await makeCli({ root: cloneRoot, init: false })
+    await clone.json(["init"])
+
+    empty = await makeCli()
+  })
+
+  afterAll(async () => {
+    await origin.cleanup()
+    await clone.cleanup()
+    await empty.cleanup()
+  })
+
+  it("refuses with ERR_INDEX_STALE and writes or commits nothing", async () => {
+    const index = await clone.json<{ readonly files: number }>(["index", "status"])
+    expect(index.files).toBe(0)
+    const sitemapBefore = await readFile(join(clone.root, "sitemap.xml"), "utf8")
+    expect(urlCount(sitemapBefore)).toBe(2)
+    const digestBefore = await treeDigest(clone.root)
+    const logBefore = await clone.git("log", "--format=%H %s")
+
+    const refused = await clone.run(["publish"])
+    expect(refused.exitCode).toBe(1)
+    const envelope = JSON.parse(refused.stdout) as Record<string, unknown>
+    expect(envelope.code).toBe("ERR_INDEX_STALE")
+    expect(String(envelope.error)).toContain("memhtml index rebuild")
+    expect(envelope.suggestions).toEqual(["memhtml index rebuild"])
+
+    // Nothing moved: the listings still list, the tree is byte-identical, and no commit landed.
+    expect(await readFile(join(clone.root, "sitemap.xml"), "utf8")).toBe(sitemapBefore)
+    expect(await treeDigest(clone.root)).toBe(digestBefore)
+    expect(await clone.git("log", "--format=%H %s")).toBe(logBefore)
+    expect((await clone.git("status", "--porcelain")).trim()).toBe("")
+  })
+
+  it("publishes the origin's bytes once the index is rebuilt", async () => {
+    // The recovery the refusal names, and the proof the guard does not also refuse a built index.
+    await clone.json(["index", "rebuild", "--embed"])
+    const published = await clone.json<{
+      readonly written: number
+      readonly commitSha: string | null
+    }>(["publish"])
+    expect(published.written).toBe(0)
+    expect(published.commitSha).toBeNull()
+    expect(await readFile(join(clone.root, "sitemap.xml"), "utf8")).toBe(
+      await readFile(join(origin.root, "sitemap.xml"), "utf8")
+    )
+  })
+
+  it("still publishes a genuinely empty store, whose correct sitemap has no entries", async () => {
+    // No memory file in HEAD, so an empty index describes the tree exactly and is not a refusal.
+    const published = await empty.json<{
+      readonly artifacts: number
+      readonly commitSha: string | null
+    }>(["publish"])
+    expect(published.artifacts).toBe(1)
+    expect(published.commitSha).not.toBeNull()
+    const sitemap = await readFile(join(empty.root, "sitemap.xml"), "utf8")
+    expect(sitemap).toContain("<urlset")
+    expect(urlCount(sitemap)).toBe(0)
   })
 })
 
