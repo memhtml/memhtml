@@ -461,7 +461,7 @@ export type PendingMark =
    * A commitment the consolidator extracted that scored below `COMMITMENT_FLOOR`, kept whole.
    *
    * A RECORD rather than a deferred write: nothing in the state plane changes when `merge` applies it,
-   * and {@link isStateWriteMark} is what keeps it out of `applyPendingMarks`' statement list. It lives
+   * and `isStateWriteMark` is what keeps it out of `applyPendingMarks`' statement list. It lives
    * in the ledger anyway because the ledger is the run's committed, reviewable, branch-scoped record,
    * and "did not act" and "did not record" are different decisions. The floor exists so a
    * low-confidence commitment does not mint a task on its own; without the text, the confidence, and
