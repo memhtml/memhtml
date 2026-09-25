@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.2](https://github.com/memhtml/memhtml/compare/memhtml-v0.15.1...memhtml-v0.15.2) (2026-09-25)
+
+
+### Bug Fixes
+
+* remove the timing races behind three intermittently failing tests ([3b2a068](https://github.com/memhtml/memhtml/commit/3b2a068341425b289fb2ad17f183651865f17a76))
+* remove the timing races behind three intermittently failing tests ([#214](https://github.com/memhtml/memhtml/issues/214)) ([3b2a068](https://github.com/memhtml/memhtml/commit/3b2a068341425b289fb2ad17f183651865f17a76))
+
 ## [0.15.1](https://github.com/memhtml/memhtml/compare/memhtml-v0.15.0...memhtml-v0.15.1) (2026-09-13)
 
 
