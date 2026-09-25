@@ -30,7 +30,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "3.1136.0",
+    "@aws-sdk/client-bedrock-runtime": "3.1137.0",
     "@aws/bedrock-token-generator": "1.1.0",
     "@memhtml/contracts": "workspace:*",
     "effect": "catalog:"
