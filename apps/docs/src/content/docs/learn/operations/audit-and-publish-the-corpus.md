@@ -108,7 +108,7 @@ memhtml publish
 }
 ```
 
-`memhtml publish` regenerates the per-directory `index.html` listings and `sitemap.xml` and commits them. It is deterministic to the byte (`apps/cli/src/publish.ts:10`), so two runs over an unchanged corpus write nothing and commit nothing, reporting `written: 0` and `commitSha: null`. That is what makes it safe on the cron.
+`memhtml publish` regenerates the per-directory `index.html` listings and `sitemap.xml` and commits them. It is deterministic to the byte (`apps/cli/src/publish.ts:10`), so two runs over an unchanged corpus write nothing and commit nothing, reporting `written: 0` and `commitSha: null`. That is what makes it safe on the cron. The listings come from the index, so on a store whose index holds no rows while HEAD carries memory files, such as a fresh clone, publish writes and commits nothing and fails with `ERR_INDEX_STALE`, and `memhtml index rebuild` followed by another publish is the fix.
 
 Those artifacts are what make the store browsable: open `$MEMHTML_ROOT/index.html` in a browser and walk the corpus with no tooling at all.
 

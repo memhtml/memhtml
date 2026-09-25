@@ -1,11 +1,11 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
-import { DatabaseService } from "@memhtml/index"
-import { attemptIo, commitSubject, readFileOrNull } from "@memhtml/store"
+import { DatabaseService, IndexStale, isIndexablePath, TREE_PREFIXES } from "@memhtml/index"
+import { attemptIo, commitSubject, type GitShape, readFileOrNull } from "@memhtml/store"
 import { Effect } from "effect"
 
 import { Git } from "./api-layer.js"
-import { type GeneratedFile, generateArtifacts, publishRows } from "./artifacts.js"
+import { type GeneratedFile, generateArtifacts, type PublishRow, publishRows } from "./artifacts.js"
 
 /**
  * `memhtml publish`: regenerate the per-directory `index.html` listings and the root `sitemap.xml`, and
@@ -49,6 +49,33 @@ const writeIfChanged = (root: string, artifact: GeneratedFile) =>
   })
 
 /**
+ * Refuse to regenerate from an index that holds no file rows while HEAD carries memory files.
+ *
+ * The listings and the sitemap are projections of the `files` table, so an index with no rows
+ * regenerates every one of them empty, and the commit that follows reads as an ordinary
+ * regeneration. A fresh clone, where `index.db` is gitignored and absent, and a rebuild that
+ * emptied the table are both that state. The tree is the system of record, so the question is
+ * asked of HEAD with the indexer's own path rule: when HEAD holds no memory file either, the store
+ * is genuinely empty and an empty listing is the correct output. The check runs before any byte is
+ * written, so a refusal leaves the tree and the history untouched.
+ */
+const refuseEmptyIndex = (git: GitShape, rows: ReadonlyArray<PublishRow>) =>
+  Effect.gen(function* () {
+    if (rows.length > 0) return
+    const head = yield* git.revParseHead()
+    if (head === null) return
+    const memories = (yield* git.lsTreeR(head, TREE_PREFIXES)).filter((entry) =>
+      isIndexablePath(entry.path)
+    ).length
+    if (memories === 0) return
+    return yield* Effect.fail(
+      new IndexStale(
+        `the index holds no memory rows while HEAD carries ${memories} memory ${memories === 1 ? "file" : "files"}, so publish would regenerate every listing and sitemap.xml empty; build the index with \`memhtml index rebuild\` and publish again`
+      )
+    )
+  })
+
+/**
  * Regenerate and commit.
  *
  * The whole artifact set is staged rather than only the rewritten files, because a listing that was
@@ -60,6 +87,7 @@ export const publish = () =>
     const git = yield* Git
     const db = yield* DatabaseService
     const rows = yield* publishRows(db)
+    yield* refuseEmptyIndex(git, rows)
     const artifacts = generateArtifacts(rows)
 
     const written: Array<string> = []
