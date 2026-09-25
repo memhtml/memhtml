@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process"
+import { type ChildProcess, execFile } from "node:child_process"
 import { Context, Effect, Layer, Schema } from "effect"
 
 import {
@@ -212,6 +212,17 @@ const FULL_OBJECT_NAME = /^[0-9a-f]{40}$/
  * `stdout` stays a Buffer because `cat-file --batch` frames binary blob bodies with byte
  * lengths. Decoding to a string first would corrupt any non-UTF-8 content and would make
  * the frame lengths disagree with the string indices used to walk them.
+ *
+ * **An interrupt waits for the child to die.** The abort `signal` handed to `execFile` sends
+ * SIGTERM when the fiber is interrupted, but a signal is only a request: the child is still alive
+ * for a moment afterwards, and if that child is `git mv` or `git add` it is still holding
+ * `.git/index.lock`. Without the wait, interruption proceeded straight to the caller's finalizers,
+ * and `store.ts`'s compensation opened with `git reset -q -- <paths>` against a lock that had not
+ * been released yet: exit 128, the whole restore abandoned, and the half-done `mv` left on disk with
+ * nothing to put the memory back. The cleanup effect returned from the register function is run
+ * and awaited by `Effect.callback` before the interrupt propagates, so by the time a finalizer runs
+ * its own git call the lock is gone. The signal stays: a git that ignores SIGTERM is still killed
+ * rather than waited on forever.
  */
 const spawnGit = (
   root: string,
@@ -248,6 +259,30 @@ const spawnGit = (
       input.on("error", () => {})
       input.end(stdin ?? "")
     }
+    return awaitChildExit(child)
+  })
+
+/**
+ * Resolve once `child` has terminated. Used only as the interruption cleanup of {@link spawnGit},
+ * after the abort signal has sent SIGTERM, so that no finalizer runs git against a lock the dying
+ * child still holds.
+ *
+ * `exit` rather than only `close`. `close` additionally waits for the stdio pipes to drain, which a
+ * grandchild that inherited them — a hook, an editor, a credential helper — can hold open after git
+ * itself is dead and its locks are gone. `close` is listened to as well because a child that never
+ * spawned emits `error` then `close` and never `exit`. Either event means the pid is gone. The
+ * `exitCode`/`signalCode` check covers a child that had already terminated by the time the cleanup
+ * ran, whose events have been and gone.
+ */
+const awaitChildExit = (child: ChildProcess): Effect.Effect<void> =>
+  Effect.callback<void>((resume) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resume(Effect.void)
+      return
+    }
+    const done = () => resume(Effect.void)
+    child.once("exit", done)
+    child.once("close", done)
   })
 
 /**

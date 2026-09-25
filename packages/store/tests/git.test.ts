@@ -1,8 +1,9 @@
+import type { ChildProcess } from "node:child_process"
 import { subscribe, unsubscribe } from "node:diagnostics_channel"
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
-import { Effect, Result } from "effect"
+import { Effect, Fiber, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { GitFailure, makeGit } from "../src/git.js"
@@ -616,6 +617,99 @@ describe("the environment cannot re-aim a call at another repository", () => {
         if (value === undefined) delete process.env[name]
         else process.env[name] = value
       }
+    }
+  })
+})
+
+/** True when `path` exists on disk. */
+const exists = (path: string): Promise<boolean> =>
+  access(path).then(
+    () => true,
+    () => false
+  )
+
+/**
+ * Poll a condition until it holds, failing loudly after ten seconds rather than hanging the run. The
+ * wait is a synchronization point and never an assertion: what the test asserts is checked once
+ * the interrupt has returned, with no clock involved.
+ */
+const waitUntil = async (condition: () => Promise<boolean>, what: string): Promise<void> => {
+  const deadline = Date.now() + 10_000
+  while (!(await condition())) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+describe("interruption waits for the git child", () => {
+  /**
+   * The abort signal `spawnGit` hands `execFile` sends SIGTERM on interruption, but a signal is a
+   * request rather than a completed kill, and `Effect.callback` used to proceed to the fiber's
+   * finalizers the moment it was sent. `store.ts`'s compensation opens with `git reset -q -- <paths>`,
+   * so when the interrupted child was `git mv` or `git add` the reset ran against the child's own
+   * `.git/index.lock`, exited 128, and the whole restore was abandoned — the moved file stayed moved
+   * with nothing to put it back. Seen as a CI flake in `store.test.ts` ("compensates an INTERRUPTED
+   * archive") on 2026-09-23. The cleanup effect `spawnGit` now returns waits for the child to exit,
+   * and this case is that wait: the pid must be gone and the lock released by the time
+   * `Fiber.interrupt` returns.
+   *
+   * The child has to be blocked mid-flight with the index locked, for as long as the test likes,
+   * without a grandchild or an open stdin (which `spawnGit` closes unconditionally). A ref lock
+   * created by hand does that: `commit -a` takes `.git/index.lock` and holds it until the commit is
+   * complete, and with `core.filesRefLockTimeout=-1` it retries the ref lock indefinitely rather
+   * than failing fast the way an existing `index.lock` would make `git add` do. Probed against git
+   * 2.50.1: `index.lock` and `HEAD.lock` both present while it waits, both removed on SIGTERM.
+   *
+   * (Mutation: dropping the `return awaitChildExit(child)` from `spawnGit` makes `Fiber.interrupt`
+   * return while the pid is still alive and `index.lock` still on disk, and this case names it.)
+   */
+  it("has killed the child and released index.lock by the time Fiber.interrupt returns", async () => {
+    const repo = await fixture()
+    await put(repo.root, "areas/x/a.html", "<p>a</p>")
+    await run(repo.git.add(["areas/x/a.html"]))
+    await run(repo.git.commit("memhtml(write): base"))
+    await put(repo.root, "areas/x/a.html", "<p>changed</p>")
+
+    const branch = (await run(repo.git.run(["symbolic-ref", "--short", "HEAD"]))).trim()
+    const refLock = join(repo.root, ".git", "refs", "heads", `${branch}.lock`)
+    const indexLock = join(repo.root, ".git", "index.lock")
+    await writeFile(refLock, "", "utf8")
+
+    let child: ChildProcess | undefined
+    const onSpawn = (message: unknown) => {
+      child = (message as { readonly process: ChildProcess }).process
+    }
+    subscribe("child_process", onSpawn)
+    try {
+      const fiber = Effect.runFork(
+        repo.git.run([
+          "-c",
+          "core.filesRefLockTimeout=-1",
+          "commit",
+          "-a",
+          "-m",
+          "memhtml(write): never lands"
+        ])
+      )
+      await waitUntil(() => exists(indexLock), "the blocked commit to take index.lock")
+      if (child === undefined) throw new Error("no child process was observed")
+      const pid = child.pid
+      if (pid === undefined) throw new Error("the child has no pid")
+      // Alive at this point, so the assertion below is about the interrupt and not about a child
+      // that had already died.
+      expect(() => process.kill(pid, 0)).not.toThrow()
+
+      await run(Fiber.interrupt(fiber))
+
+      expect(child.exitCode !== null || child.signalCode !== null).toBe(true)
+      expect(() => process.kill(pid, 0)).toThrow(/ESRCH/)
+      expect(await exists(indexLock)).toBe(false)
+      // The compensation's opening move, which exited 128 against the still-held lock before.
+      await run(repo.git.run(["reset", "-q", "--", "areas/x/a.html"]))
+      expect(await run(repo.git.revParseHead())).not.toBeNull()
+    } finally {
+      unsubscribe("child_process", onSpawn)
+      await rm(refLock, { force: true })
     }
   })
 })
