@@ -192,6 +192,6 @@ Cost: L for the `article_html` half, because the assist has to move behind the s
 
 ## See also
 
-- [memhtml-public · System overview](../architecture/system-overview.md): 6 shared source citations
-- [memhtml-public · Processes](../behavior/processes.md): 7 shared source citations
+- [memhtml-public · System overview](../architecture/system-overview.md): 9 shared source citations
 - [memhtml-public · Dependency graph](../diagrams/structural/dependency-graph.md): 8 shared source citations as of this rewrite (that page's own See also line at `docs/diagrams/structural/dependency-graph.md:131` still says 2 and predates it); one of the eight, `apps/consolidator/agent/agent.ts`, is a file that document still cites at `docs/diagrams/structural/dependency-graph.md:95` and `docs/diagrams/structural/dependency-graph.md:122` after its deletion at 40511b7, and the same row pins eve at `0.38.3` against `apps/consolidator/package.json:42`, a manifest line that now closes the dependency block rather than declaring anything, with `just-bash` two lines above it
+- [memhtml-public · Processes](../behavior/processes.md): 7 shared source citations
