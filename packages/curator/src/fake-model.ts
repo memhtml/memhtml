@@ -9,7 +9,11 @@ import { renderTemplate } from "@memhtml/html"
 import { MockLanguageModelV4 } from "ai/test"
 
 import { type Briefing, parseBriefing } from "./briefing.js"
-import { type CollapseBriefing, parseCollapseBriefing } from "./collapse-briefing.js"
+import {
+  type CollapseBriefing,
+  memberEntities,
+  parseCollapseBriefing
+} from "./collapse-briefing.js"
 import type { ProposedOp } from "./tools.js"
 
 /**
@@ -31,7 +35,8 @@ import type { ProposedOp } from "./tools.js"
  *
  * Under a collapse briefing (`collapse-briefing.ts`) it plays one fold the way the collapse charter
  * asks: one `propose` carrying the canonical `put` under the home prefix (title, the members'
- * claims as the body, every tag and entity, the collapse tag, and one `supersedes` link per member
+ * claims as the body, every tag, the members' entities (or {@link FAKE_FALLBACK_ENTITY} when they
+ * carry none), the collapse tag, and one `supersedes` link per member
  * unless the briefing says the driver completes them) plus one `archive` per member (again unless
  * the driver completes them), then `finish` naming the canonical. So `curate collapse --model fake`
  * lands a real fold on a fixture, and the driver's completion of archives and links is exercised
@@ -215,6 +220,12 @@ export const fakeCanonicalPath = (briefing: Pick<CollapseBriefing, "home" | "tit
   `${briefing.home}/${slugify(briefing.title)}.html`
 
 /**
+ * The entity the fake's canonical carries when no member carries one, so the fold still clears the
+ * write bar's anchor rule, which holds under the curator's scope as under every other.
+ */
+export const FAKE_FALLBACK_ENTITY = "system:fixture"
+
+/**
  * The canonical the fake writes for a collapse briefing. The claim keeps the title first and ends in
  * a long tail after its last linking word, so it states no frame the members' claims share (the
  * frame rule reads the last `of|is|in|to|by|as` and wants a value of at most six tokens); a
@@ -222,12 +233,11 @@ export const fakeCanonicalPath = (briefing: Pick<CollapseBriefing, "home" | "tit
  */
 export const fakeCanonicalHtml = (briefing: CollapseBriefing): string => {
   const tags = new Set<string>()
-  const entities = new Set<string>()
-  for (const member of briefing.members) {
-    for (const tag of member.tags) tags.add(tag)
-    for (const entity of member.entities) entities.add(entity)
-  }
+  for (const member of briefing.members) for (const tag of member.tags) tags.add(tag)
   tags.add(briefing.tag)
+  // The union of the members' entities, as the collapse charter asks; a fixed one when they carry none.
+  const union = memberEntities(briefing.members)
+  const entities = union.length > 0 ? union : [FAKE_FALLBACK_ENTITY]
   const archivable = briefing.members.filter((member) => member.ruling?.verdict !== "keep")
   return renderTemplate({
     title: briefing.title,
@@ -239,7 +249,7 @@ export const fakeCanonicalHtml = (briefing: CollapseBriefing): string => {
     memoryType: isMemoryType(briefing.memoryType) ? briefing.memoryType : "semantic",
     at: briefing.today,
     tags: [...tags].sort(),
-    entities: [...entities].sort(),
+    entities: [...entities],
     links: briefing.driverCompletes
       ? []
       : archivable.map((member) => ({

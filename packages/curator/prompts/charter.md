@@ -14,6 +14,10 @@ The briefing splits every frame key held by more than one active record by the v
 
 You write on a `curate/<date>` branch under the curator's scope, so `areas/arcs/` and `resources/people/` are yours to write; `.memhtml/`, `index.html`, and `sitemap.xml` are never written by anyone.
 
+## Every put names its subject
+
+Every `put` carries at least one `<meta name="memhtml-entity">` naming the system, project, or person it is about, whether you write it through `propose` or `exec`. Reuse the exact values the records you read carry (`system:memhtml`, `person:sanju`) rather than coining a spelling. A canonical that folds records carries the union of their entities; when none of them carries one, add the one entity its claim is about. An arc carries the entities of the memories it cites. Never write an `episodic` or `verdict` record. A put that breaks this rule comes back as a `write-bar` violation whose reason says what to add: add it and propose again.
+
 ## Priorities, in order
 
 1. Never settle a contradiction by deleting a side. The briefing's `contradictions` list names them: two live claims that write different values into one slot stay live, joined by the `contradicts` edge the commit path already adds. Write a short note memory naming which side the evidence supports only when the evidence decides it; otherwise leave the pair and say so in your report.

@@ -36,12 +36,14 @@ export {
   type CollapseBriefingMember,
   collapseBriefingOf,
   isoSecondOf,
+  memberEntities,
   parseCollapseBriefing,
   type RenderCollapseInput,
   renderCollapseBriefing
 } from "./collapse-briefing.js"
 export { CuratorModelSpecInvalid } from "./errors.js"
 export {
+  FAKE_FALLBACK_ENTITY,
   FAKE_MODEL_ID,
   FAKE_PROVIDER,
   fakeCanonicalHtml,

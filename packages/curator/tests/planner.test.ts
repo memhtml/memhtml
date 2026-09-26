@@ -33,6 +33,9 @@ import {
  *   every cut" (the kept restatement appears in the similarity cluster, `ruledKeep` is 0).
  * - `plan.ts` cut 0: skip `isShielded` -> "people records and task rows are excluded without a
  *   ruling" (`excluded` is 0 and the people record can appear in a cluster).
+ * - `plan.ts` `NOT_CANONICAL_TYPES`: drop `"verdict"` (2026-09-26) -> "a fold of verdicts is
+ *   briefed as semantic, because the write bar refuses a verdict canonical" (the fold is briefed
+ *   as `verdict`).
  * - `graph.ts` `detectCommunities`: pass `Math.random` as `rng` -> "the plan is byte-identical across
  *   two runs" is no longer guaranteed; the case was run 20 times under the mutation and the
  *   community numbering moved on 3 of them.
@@ -366,6 +369,27 @@ describe("the pieces", () => {
     expect(frameGroupAgrees([a, c])).toBe(true)
     const plan = planCollapse(viewOver([a, b]))
     expect(clusterOf(plan, "areas/inbox/verdict-a.html")?.kind).toBe("keep")
+  })
+
+  it("a fold of verdicts is briefed as semantic, because the write bar refuses a verdict canonical", async () => {
+    const [a, c] = await Effect.runPromise(
+      Effect.all([
+        memory("areas/inbox/verdict-a.html", {
+          title: "verdict: suppressed_failure",
+          claim: "Review verdict for objective: the deep dive of the cluster is late.",
+          memoryType: "verdict"
+        }),
+        memory("areas/inbox/verdict-c.html", {
+          title: "verdict: suppressed_failure",
+          claim: "Review verdict for objective: the deep dive of the cluster is late.",
+          body: ["A second mint."],
+          memoryType: "verdict"
+        })
+      ])
+    )
+    const fold = clusterOf(planCollapse(viewOver([a, c])), "areas/inbox/verdict-a.html")
+    expect(fold?.kind).toBe("fold")
+    expect(fold?.memoryType).toBe("semantic")
   })
 
   it("places a canonical under a real prefix and moves it out of a bucket", async () => {

@@ -34,6 +34,7 @@ export {
   BATCH_CAP,
   isReservedPath,
   touchedPaths,
+  UNANCHORED_REASON,
   type ValidateOptions,
   type Violation,
   validateOps,

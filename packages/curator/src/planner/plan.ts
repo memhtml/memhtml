@@ -85,8 +85,13 @@ const majority = (values: ReadonlyArray<string>): string | undefined => {
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || byString(a[0], b[0]))[0]?.[0]
 }
 
-/** Types a canonical never takes: an arc is a synthesis and a task is a row, not a fact. */
-const NOT_CANONICAL_TYPES: ReadonlySet<string> = new Set(["arc", "task"])
+/**
+ * Types a canonical never takes: an arc is a synthesis and a task is a row, not a fact; an
+ * `episodic` or `verdict` canonical is below the write bar under every scope, the curator's
+ * included (`@memhtml/session` `writeBarReasons`), so a fold of them is briefed as `semantic`
+ * rather than as a type its put could never land under.
+ */
+const NOT_CANONICAL_TYPES: ReadonlySet<string> = new Set(["arc", "task", "episodic", "verdict"])
 
 const canonicalType = (records: ReadonlyArray<MemoryRecord>): string =>
   majority(

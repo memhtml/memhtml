@@ -6,6 +6,7 @@ import {
   BATCH_CAP,
   isReservedPath,
   touchedPaths,
+  UNANCHORED_REASON,
   validateOps,
   writeBarReasons
 } from "../src/validate.js"
@@ -36,8 +37,15 @@ import { mapHead, memory, recordFrom } from "./helpers.js"
  *   narrative and review output from a session" (both types pass).
  * - write bar, anchor: `anchored` forced to `true` -> "the write bar refuses a record that names
  *   nothing, and takes an entity or a workspace as its anchor" (the bare record passes).
- * - write bar, scope: the `scope === "session"` guard removed -> "the curate scope and tasks are
- *   exempt from the write bar" (the curator's unanchored canonical is refused).
+ * - write bar, every scope (2026-09-26): the `scope === "session"` guard put back around the
+ *   `writeBarReasons` call -> "the curate scope is held to the write bar: an unlabeled canonical
+ *   and an episodic put are refused" (the curator's puts pass with no violation).
+ * - write bar, tasks (2026-09-26): `if (doc.metas.memoryType === "task") return []` put back at
+ *   the top of `writeBarReasons` -> "a task must be anchored: its workspace path anchors it, an
+ *   inbox task needs an entity" (the unlabeled inbox task passes).
+ * - write bar, archive destinations: the `isArchivePath(path)` early return removed -> "an archive
+ *   destination is never judged by the write bar, under either scope" (the unlabeled record at its
+ *   archive path is refused).
  */
 
 const CAPITAL = memory("Capital", "The capital of India is New Delhi.")
@@ -435,11 +443,12 @@ describe("validateOps", () => {
       {
         kind: "write-bar",
         path: "areas/inbox/formatter.html",
-        reasons: [
-          "names no system, project, or person: add a memhtml-entity or write it in a workspace (projects/<slug>/)"
-        ]
+        reasons: [UNANCHORED_REASON]
       }
     ])
+    // The reason says what to add, so a model reading a refused proposal can fix it.
+    expect(UNANCHORED_REASON).toContain('<meta name="memhtml-entity"')
+    expect(UNANCHORED_REASON).toContain("projects/<slug>/")
     const named = memory("Run the formatter", "memhtml runs Biome before every commit.", {
       entities: ["system:memhtml"]
     })
@@ -447,20 +456,80 @@ describe("validateOps", () => {
     expect(validateOps(view, [put("projects/memhtml/formatter.html", bare)])).toEqual([])
   })
 
-  it("the curate scope and tasks are exempt from the write bar", async () => {
+  it("the curate scope is held to the write bar: an unlabeled canonical and an episodic put are refused", async () => {
     const view = await head()
     const canonical = memory("Canonical", "One canonical record the curator folded.", {
       entities: []
     })
+    const narrative = memory("Run 43", "Run 43 folded three records into one.", {
+      memoryType: "episodic"
+    })
     expect(
-      validateOps(view, [put("areas/inbox/canonical.html", canonical)], { scope: "curate" })
+      validateOps(
+        view,
+        [put("areas/inbox/canonical.html", canonical), put("areas/arcs/run-43.html", narrative)],
+        { scope: "curate" }
+      )
+    ).toEqual([
+      { kind: "write-bar", path: "areas/inbox/canonical.html", reasons: [UNANCHORED_REASON] },
+      {
+        kind: "write-bar",
+        path: "areas/arcs/run-43.html",
+        reasons: [
+          "an episodic record narrates one run; runs belong in the trace index, not the store"
+        ]
+      }
+    ])
+    // The same canonical with one entity clears the bar under the curator's scope.
+    const labeled = memory("Canonical", "One canonical record the curator folded.", {
+      entities: ["system:memhtml"]
+    })
+    expect(
+      validateOps(view, [put("areas/inbox/canonical.html", labeled)], { scope: "curate" })
     ).toEqual([])
+  })
+
+  it("a task must be anchored: its workspace path anchors it, an inbox task needs an entity", async () => {
+    const view = await head()
     const task = memory("Rotate the key", "Rotate the signing key.", {
       entities: [],
       memoryType: "task"
     })
-    expect(writeBarReasons("areas/inbox/tasks/rotate.html", task)).toEqual([])
-    expect(writeBarReasons("archive/2026/areas/inbox/formatter.html", canonical)).toEqual([])
+    expect(writeBarReasons("areas/inbox/tasks/rotate.html", task)).toEqual([UNANCHORED_REASON])
+    expect(writeBarReasons("projects/memhtml/tasks/rotate.html", task)).toEqual([])
+    const named = memory("Rotate the key", "Rotate the signing key.", {
+      entities: ["system:memhtml"],
+      memoryType: "task"
+    })
+    expect(writeBarReasons("areas/inbox/tasks/rotate.html", named)).toEqual([])
+    // Through `validateOps` too, under both scopes: the bar is the only thing that differs.
+    for (const scope of ["session", "curate"] as const) {
+      expect(
+        validateOps(view, [put("areas/inbox/tasks/rotate.html", task)], { scope }),
+        scope
+      ).toEqual([
+        { kind: "write-bar", path: "areas/inbox/tasks/rotate.html", reasons: [UNANCHORED_REASON] }
+      ])
+      expect(
+        validateOps(view, [put("projects/memhtml/tasks/rotate.html", task)], { scope }),
+        scope
+      ).toEqual([])
+    }
+  })
+
+  it("an archive destination is never judged by the write bar, under either scope", async () => {
+    const bare = memory("Old lesson", "An old lesson that names nothing.", { entities: [] })
+    const view = mapHead("0".repeat(40), [await recordFrom("areas/inbox/old-lesson.html", bare)])
+    const archive: OverlayOp = {
+      kind: "archive",
+      path: "areas/inbox/old-lesson.html",
+      to: "archive/2026/areas/inbox/old-lesson.html",
+      html: bare
+    }
+    expect(writeBarReasons("archive/2026/areas/inbox/old-lesson.html", bare)).toEqual([])
+    for (const scope of ["session", "curate"] as const) {
+      expect(validateOps(view, [archive], { scope }), scope).toEqual([])
+    }
   })
 
   it("touchedPaths names every path an op reads or writes", () => {
