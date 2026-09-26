@@ -9,7 +9,7 @@ import { frameKeyOf } from "@memhtml/domain"
 import { versionFromRecords } from "@memhtml/head"
 import { contentHash, parseMemory, renderTemplate } from "@memhtml/html"
 import { PROXY_BASE_URL_VAR } from "@memhtml/llm"
-import { validateOps } from "@memhtml/session"
+import { UNANCHORED_REASON, validateOps } from "@memhtml/session"
 import { makeGit } from "@memhtml/store"
 import { configureIdentity } from "@memhtml/store/testing"
 import { Effect } from "effect"
@@ -53,6 +53,9 @@ import { type LoadedHead, revParse } from "../src/v2.js"
  *   holds an op `validateOps` refuses).
  * - `curate-run.ts` `CURATE_SCOPE` set to `"session"` -> "exec harvests an arcs put and a head link
  *   splice under the curator's scope" (the arcs file is rejected as a reserved path, `appended` is 1).
+ * - `curate-run.ts` `bindTools` `judge` (2026-09-26): `write-bar` dropped from `blocking` -> "propose
+ *   refuses an unlabeled canonical and an episodic put with reasons that say what to add, then lands
+ *   the fixed put" and "exec refuses a harvested unlabeled put the same way" (both append).
  * - `curate-run.ts` `curateRun`: the `modelError` branch made unreachable -> "a model the run cannot
  *   reach is exit 1 with ERR_MODEL_UNAVAILABLE" (the run answers exit 0 with `no-ops`). The case
  *   takes about six seconds: the AI SDK retries a refused connection twice with backoff before the
@@ -338,6 +341,8 @@ describe("the exec tool refuses what the commit would refuse", () => {
   const EDITED = "areas/inbox/x.html"
   const ARCHIVED = "areas/inbox/y.html"
   const YEAR = String(new Date().getUTCFullYear())
+  // Every fixture names an entity, so it clears the write bar the curator's scope now holds too, and
+  // the cases that are not about the bar stay about what they test.
   const memory = (path: string, claim: string, body: string): Effect.Effect<MemoryRecord> =>
     recordFrom(
       path,
@@ -346,6 +351,7 @@ describe("the exec tool refuses what the commit would refuse", () => {
         claim,
         body: [body],
         memoryType: "semantic",
+        entities: ["system:fixture"],
         at: "2026-09-20T00:00:00Z"
       })
     )
@@ -412,6 +418,7 @@ describe("the exec tool refuses what the commit would refuse", () => {
       claim: "Newland and Otherland both name their capital after the land.",
       body: ["Two capitals, one naming rule."],
       memoryType: "semantic",
+      entities: ["system:fixture"],
       at: "2026-09-20T00:00:00Z"
     })
     const link = `<link rel="memhtml-part_of" href="/areas/arcs/naming.html">`
@@ -445,18 +452,88 @@ describe("the exec tool refuses what the commit would refuse", () => {
     })
     // The same overlay is what the landing validates, under the same scope.
     expect(validateOps(head.view, overlay.ops(), { scope: "curate" })).toEqual([])
-    // An ordinary session is refused the path, and the arc, which names no entity, is below its
-    // write bar too; the curator's scope is exempt from both.
+    // An ordinary session is refused the path; the curator's scope opens it.
     expect(validateOps(head.view, overlay.ops())).toEqual([
-      { kind: "reserved-path", path: "areas/arcs/naming.html" },
-      {
-        kind: "write-bar",
-        path: "areas/arcs/naming.html",
-        reasons: [
-          "names no system, project, or person: add a memhtml-entity or write it in a workspace (projects/<slug>/)"
-        ]
-      }
+      { kind: "reserved-path", path: "areas/arcs/naming.html" }
     ])
+  }, 120_000)
+})
+
+describe("a put below the write bar is handed back to the model, not stranded", () => {
+  const unlabeled = renderTemplate({
+    title: "Canonical",
+    claim: "Newland names its capital after the land.",
+    body: ["One naming rule."],
+    memoryType: "semantic",
+    at: "2026-09-20T00:00:00Z"
+  })
+  const labeled = renderTemplate({
+    title: "Canonical",
+    claim: "Newland names its capital after the land.",
+    body: ["One naming rule."],
+    memoryType: "semantic",
+    entities: ["place:newland"],
+    at: "2026-09-20T00:00:00Z"
+  })
+  const narrative = renderTemplate({
+    title: "Run 44",
+    claim: "Run 44 folded two capitals into one record.",
+    memoryType: "episodic",
+    entities: ["place:newland"],
+    at: "2026-09-20T00:00:00Z"
+  })
+
+  it("propose refuses an unlabeled canonical and an episodic put with reasons that say what to add, then lands the fixed put", async () => {
+    const head = headOver([])
+    const overlay = memoryOverlay()
+    const tools = bindTools({ head, overlay, ref: "refs/heads/curate/2026-09-26" })
+    const refused = await tools.propose([
+      { kind: "put", path: "areas/newland/canonical.html", html: unlabeled },
+      { kind: "put", path: "areas/newland/run-44.html", html: narrative }
+    ])
+    expect(refused).toEqual({
+      appended: 0,
+      violations: [
+        {
+          kind: "write-bar",
+          path: "areas/newland/canonical.html",
+          reasons: [UNANCHORED_REASON]
+        },
+        {
+          kind: "write-bar",
+          path: "areas/newland/run-44.html",
+          reasons: [
+            "an episodic record narrates one run; runs belong in the trace index, not the store"
+          ]
+        }
+      ]
+    })
+    // Nothing is appended, so the session stays landable and the model can propose again.
+    expect(overlay.ops()).toEqual([])
+    const landed = await tools.propose([
+      { kind: "put", path: "areas/newland/canonical.html", html: labeled }
+    ])
+    expect(landed).toEqual({ appended: 1, violations: [] })
+    expect(validateOps(head.view, overlay.ops(), { scope: "curate" })).toEqual([])
+  })
+
+  it("exec refuses a harvested unlabeled put the same way", async () => {
+    const head = headOver([])
+    const overlay = memoryOverlay()
+    const tools = bindTools({ head, overlay, ref: "refs/heads/curate/2026-09-26" })
+    const result = await tools.exec(
+      [
+        'import * as fs from "node:fs"',
+        'fs.mkdirSync("/mnt/memhtml/areas/newland", { recursive: true })',
+        `fs.writeFileSync("/mnt/memhtml/areas/newland/canonical.html", ${JSON.stringify(unlabeled)})`
+      ].join("\n")
+    )
+    expect(result.exitCode, result.stderr).toBe(0)
+    expect(result.violations).toEqual([
+      { kind: "write-bar", path: "areas/newland/canonical.html", reasons: [UNANCHORED_REASON] }
+    ])
+    expect(result.appended).toBe(0)
+    expect(overlay.ops()).toEqual([])
   }, 120_000)
 })
 

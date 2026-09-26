@@ -92,10 +92,24 @@ export const collapseBriefingOf = (input: RenderCollapseInput): CollapseBriefing
   })
 })
 
+/**
+ * Every entity the members carry, deduplicated and sorted: what a fold's canonical carries, since
+ * the write bar holds under the curator's scope too and a canonical must name what it is about.
+ */
+export const memberEntities = (
+  members: ReadonlyArray<{ readonly entities: ReadonlyArray<string> }>
+): ReadonlyArray<string> =>
+  [
+    ...new Set(
+      members.flatMap((member) => member.entities.filter((entity) => entity.trim() !== ""))
+    )
+  ].sort()
+
 /** The whole user message: heading, rules, the JSON block, the members' excerpts, one example file. */
 export const renderCollapseBriefing = (input: RenderCollapseInput): string => {
   const briefing = collapseBriefingOf(input)
   const example = input.view.get(input.members[0] ?? "")?.html ?? ""
+  const entities = memberEntities(briefing.members)
   const lines: Array<string> = [
     `# Collapse briefing: ${briefing.title}`,
     "",
@@ -107,6 +121,9 @@ export const renderCollapseBriefing = (input: RenderCollapseInput): string => {
     `- Home prefix: ${briefing.home}/ (write the canonical at ${briefing.home}/<slug of the title>.html)`,
     `- Memory type: ${briefing.memoryType}`,
     `- Tag every canonical carries: ${briefing.tag}`,
+    entities.length > 0
+      ? `- Entities the canonical carries (the members' union, exact values): ${entities.join(", ")}`
+      : "- Entities the canonical carries: no member carries one, so add at least one naming the system, project, or person the theme is about",
     `- Today (UTC): ${briefing.today}`,
     `- Members in this session: ${String(briefing.members.length)} of ${String(briefing.clusterSize)}`,
     `- Cluster rationale: ${input.cluster.rationale}`,

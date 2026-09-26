@@ -1,3 +1,5 @@
+import { renderTemplate } from "@memhtml/html"
+import { type Violation, writeBarReasons } from "@memhtml/session"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 
@@ -293,6 +295,42 @@ describe("tool results are bounded and informative", () => {
     const [text] = toolResultTexts(model, 1)
     expect(text).toContain('"kind":"duplicate"')
     expect(text).toContain("areas/inbox/existing.html")
+  })
+
+  it("a write-bar refusal reaches the model with what to add, and its fixed proposal lands", async () => {
+    // The binder's rule, applied the way `apps/cli/src/curate-run.ts` applies it: a put below the
+    // write bar is refused whole and nothing is appended.
+    const tools = fakeTools({
+      propose: (ops) => {
+        const violations = ops.flatMap((op): ReadonlyArray<Violation> => {
+          if (op.kind !== "put") return []
+          const reasons = writeBarReasons(op.path, op.html)
+          return reasons.length === 0 ? [] : [{ kind: "write-bar", path: op.path, reasons }]
+        })
+        return { appended: violations.length === 0 ? ops.length : 0, violations }
+      }
+    })
+    const html = (entities: ReadonlyArray<string>) =>
+      renderTemplate({
+        title: "Gates must be green",
+        claim: "Every gate must be green before a merge.",
+        memoryType: "semantic",
+        entities,
+        at: "2026-09-26T00:00:00Z"
+      })
+    const path = "areas/gates/gates-must-be-green.html"
+    const model = scriptedModel([
+      { tool: "propose", args: { ops: [{ kind: "put", path, html: html([]) }] } },
+      { tool: "propose", args: { ops: [{ kind: "put", path, html: html(["system:memhtml"]) }] } },
+      { tool: "finish", args: { report: `Folded into ${path}` } }
+    ])
+    const result = await run({ tools, model, briefing: emptyBriefing, charter: CHARTER })
+    expect(result.toolCalls).toEqual(["propose", "propose", "finish"])
+    expect(result.stoppedBy).toBe("finish")
+    expect(result.opsAppended).toBe(1)
+    const [refusal] = toolResultTexts(model, 1)
+    expect(refusal).toContain('"kind":"write-bar"')
+    expect(refusal).toContain("memhtml-entity")
   })
 
   it("a throwing tool answers the model with the error as a value and the run goes on", async () => {

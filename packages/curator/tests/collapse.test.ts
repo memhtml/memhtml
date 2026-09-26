@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises"
 import type { HeadView, MemoryRecord } from "@memhtml/contracts"
 import { recordFrom } from "@memhtml/head"
 import { parseMemory, renderTemplate } from "@memhtml/html"
+import { writeBarReasons } from "@memhtml/session"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 
@@ -12,6 +13,7 @@ import {
   COLLAPSE_CHARTER_RULE_COUNT,
   type CollapseCluster,
   DATA_NOT_INSTRUCTIONS,
+  FAKE_FALLBACK_ENTITY,
   fakeCanonicalPath,
   fakeCollapseProposal,
   fakeCuratorModel,
@@ -35,6 +37,15 @@ import { fakeTools } from "./fakes.js"
  *   fake proposes the put alone" (two archive ops follow the put).
  * - `fake-model.ts` `fakeCanonicalHtml`: link every member including a `keep` -> "a member ruled
  *   keep is neither archived nor superseded" (the kept path is linked).
+ * - `prompts/collapse.md` (2026-09-26): delete the "Every put carries at least one
+ *   `memhtml-entity`" rule -> "requires every put to carry an entity and a canonical to carry its
+ *   members' union".
+ * - `collapse-briefing.ts` `renderCollapseBriefing` (2026-09-26): the "Entities the canonical
+ *   carries" line removed -> "names the entities the canonical carries, or says the members carry
+ *   none".
+ * - `fake-model.ts` `fakeCanonicalHtml` (2026-09-26): the fallback forced to the bare union ->
+ *   "the fake's canonical carries the members' union, or a fixed entity when they carry none, and
+ *   clears the write bar" (the canonical names nothing and `writeBarReasons` refuses it).
  */
 
 const AT = "2026-09-20T12:00:00Z"
@@ -43,7 +54,8 @@ const NOW = new Date("2026-09-24T10:00:00Z")
 const memory = (
   path: string,
   claim: string,
-  tags: ReadonlyArray<string>
+  tags: ReadonlyArray<string>,
+  entities: ReadonlyArray<string> = ["service:memhtml"]
 ): Effect.Effect<MemoryRecord> =>
   Effect.orDie(
     recordFrom({
@@ -55,7 +67,7 @@ const memory = (
         memoryType: "user_preference",
         at: AT,
         tags,
-        entities: ["service:memhtml"]
+        entities
       })
     })
   )
@@ -77,11 +89,16 @@ const viewOver = (records: ReadonlyArray<MemoryRecord>): HeadView => {
 
 const PATHS = ["areas/inbox/a.html", "areas/inbox/b.html", "areas/inbox/c.html"]
 
-const fixture = () =>
+const fixture = (entities?: (index: number) => ReadonlyArray<string>) =>
   Effect.runPromise(
     Effect.all(
       PATHS.map((path, index) =>
-        memory(path, `Claim ${String(index)} says the gate must be green.`, [`t${String(index)}`])
+        memory(
+          path,
+          `Claim ${String(index)} says the gate must be green.`,
+          [`t${String(index)}`],
+          entities?.(index)
+        )
       )
     )
   )
@@ -139,6 +156,15 @@ describe("the collapse charter", () => {
     expect(text).toContain("Do not use `exec`")
     expect(text).toContain("never archive it")
   })
+
+  it("requires every put to carry an entity and a canonical to carry its members' union", async () => {
+    const text = await Effect.runPromise(COLLAPSE_CHARTER)
+    expect(text).toContain("Every put carries at least one `memhtml-entity`")
+    expect(text).toContain("the union of the members' entities")
+    expect(text).toContain("in their exact values")
+    expect(text).toContain("when no member carries an entity, add the one the theme is about")
+    expect(text).toContain("A `write-bar` violation")
+  })
 })
 
 describe("the collapse briefing", () => {
@@ -168,6 +194,31 @@ describe("the collapse briefing", () => {
     expect(parsed?.members[2]?.ruling?.verdict).toBe("keep")
     // The curate-run reader does not mistake it for its own briefing.
     expect(parseBriefing(rendered)).toBeNull()
+  })
+
+  it("names the entities the canonical carries, or says the members carry none", async () => {
+    const union = await fixture((index) => (index === 1 ? ["person:sanju"] : ["service:memhtml"]))
+    const named = renderCollapseBriefing({
+      plan: PLAN,
+      cluster: cluster(union),
+      members: PATHS,
+      view: viewOver(union),
+      now: NOW,
+      driverCompletes: false
+    })
+    expect(named).toContain(
+      "- Entities the canonical carries (the members' union, exact values): person:sanju, service:memhtml"
+    )
+    const bare = await fixture(() => [])
+    const none = renderCollapseBriefing({
+      plan: PLAN,
+      cluster: cluster(bare),
+      members: PATHS,
+      view: viewOver(bare),
+      now: NOW,
+      driverCompletes: false
+    })
+    expect(none).toContain("- Entities the canonical carries: no member carries one")
   })
 
   it("a curate-run briefing is not a collapse briefing", () => {
@@ -263,6 +314,35 @@ describe("the fake model's fold", () => {
     if (put?.kind !== "put") throw new Error("no put")
     const doc = await Effect.runPromise(parseMemory(put.html))
     expect(doc.links).toEqual([])
+  })
+
+  it("the fake's canonical carries the members' union, or a fixed entity when they carry none, and clears the write bar", async () => {
+    const canonicalOf = async (records: ReadonlyArray<MemoryRecord>) => {
+      const briefing = parseCollapseBriefing(
+        renderCollapseBriefing({
+          plan: PLAN,
+          cluster: cluster(records),
+          members: PATHS,
+          view: viewOver(records),
+          now: NOW,
+          driverCompletes: false
+        })
+      )
+      if (briefing === null) throw new Error("no briefing")
+      const put = fakeCollapseProposal(briefing)[0]
+      if (put?.kind !== "put") throw new Error("no put")
+      return { put, doc: await Effect.runPromise(parseMemory(put.html)) }
+    }
+    const mixed = await canonicalOf(
+      await fixture((index) =>
+        index === 0 ? ["system:gates"] : index === 1 ? ["person:sanju", "system:gates"] : []
+      )
+    )
+    expect(mixed.doc.entities).toEqual(["person:sanju", "system:gates"])
+    expect(writeBarReasons(mixed.put.path, mixed.put.html)).toEqual([])
+    const bare = await canonicalOf(await fixture(() => []))
+    expect(bare.doc.entities).toEqual([FAKE_FALLBACK_ENTITY])
+    expect(writeBarReasons(bare.put.path, bare.put.html)).toEqual([])
   })
 
   it("a member ruled keep is neither archived nor superseded", async () => {
