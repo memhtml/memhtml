@@ -445,8 +445,17 @@ describe("the exec tool refuses what the commit would refuse", () => {
     })
     // The same overlay is what the landing validates, under the same scope.
     expect(validateOps(head.view, overlay.ops(), { scope: "curate" })).toEqual([])
+    // An ordinary session is refused the path, and the arc, which names no entity, is below its
+    // write bar too; the curator's scope is exempt from both.
     expect(validateOps(head.view, overlay.ops())).toEqual([
-      { kind: "reserved-path", path: "areas/arcs/naming.html" }
+      { kind: "reserved-path", path: "areas/arcs/naming.html" },
+      {
+        kind: "write-bar",
+        path: "areas/arcs/naming.html",
+        reasons: [
+          "names no system, project, or person: add a memhtml-entity or write it in a workspace (projects/<slug>/)"
+        ]
+      }
     ])
   }, 120_000)
 })

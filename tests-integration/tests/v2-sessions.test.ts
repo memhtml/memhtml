@@ -122,7 +122,14 @@ const opsFile = async (
   ops: ReadonlyArray<Record<string, unknown>>
 ): Promise<string> => {
   const file = join(scratchDir, `${name}.jsonl`)
-  await writeFile(file, `${ops.map((op) => JSON.stringify(op)).join("\n")}\n`)
+  // Every write names an entity unless the case says otherwise, so fixtures clear the write bar's
+  // anchor rule and the cases that are not about the bar stay about what they test.
+  const anchored = ops.map((op) =>
+    op.op === "write" && op.entities === undefined && op.entity === undefined
+      ? { ...op, entities: ["system:fixture"] }
+      : op
+  )
+  await writeFile(file, `${anchored.map((op) => JSON.stringify(op)).join("\n")}\n`)
   return file
 }
 
@@ -519,6 +526,83 @@ describe("the put and exec doors", () => {
     expect(status.ops).toBe(0)
   })
 
+  it("session put refuses a record below the write bar and appends nothing", async () => {
+    await cli.json(["session", "start", "--id", "bar"])
+    const refused = await cli.envelope([
+      "session",
+      "put",
+      "--id",
+      "bar",
+      "--file",
+      await opsFile("bar", [
+        {
+          op: "write",
+          title: "Run the formatter",
+          type: "semantic",
+          entities: [],
+          body: "Run the formatter before committing."
+        },
+        {
+          op: "write",
+          title: "Run 42",
+          type: "episodic",
+          body: "Run 42 read three files and wrote a report."
+        }
+      ])
+    ])
+    expect(refused.code).toBe("ERR_INVALID_MEMORY")
+    expect(String(refused.error)).toContain("below the write bar: names no system")
+    expect(String(refused.error)).toContain("runs belong in the trace index")
+    const status = await cli.json<{ ops: number }>(["session", "status", "--id", "bar"])
+    expect(status.ops).toBe(0)
+  })
+
+  it("session put reports each put's nearest existing records", async () => {
+    await cli.json(["session", "start", "--id", "near"])
+    interface Put {
+      readonly paths: ReadonlyArray<string>
+      readonly neighbors: ReadonlyArray<{
+        readonly path: string
+        readonly hits: ReadonlyArray<{ readonly path: string }>
+      }>
+    }
+    const first = await cli.json<Put>([
+      "session",
+      "put",
+      "--id",
+      "near",
+      "--file",
+      await opsFile("near-1", [
+        {
+          op: "write",
+          title: "Canary deploys hold at five percent",
+          type: "semantic",
+          body: "A canary deploy of checkout-api holds at five percent of traffic for ten minutes."
+        }
+      ])
+    ])
+    const second = await cli.json<Put>([
+      "session",
+      "put",
+      "--id",
+      "near",
+      "--file",
+      await opsFile("near-2", [
+        {
+          op: "write",
+          title: "Canary deploy hold time",
+          type: "semantic",
+          body: "checkout-api canary deploys hold for ten minutes before promotion."
+        }
+      ])
+    ])
+    expect(second.neighbors).toHaveLength(1)
+    expect(second.neighbors[0]?.path).toBe(second.paths[0])
+    // The first put is in the session's view, so it is the nearest record the second one sees.
+    expect(second.neighbors[0]?.hits[0]?.path).toBe(first.paths[0])
+    expect(second.neighbors[0]?.hits.length).toBeLessThanOrEqual(3)
+  })
+
   it("session put lands at the store's path and suffixes a collision inside one batch", async () => {
     await cli.json(["session", "start", "--id", "paths"])
     const appended = await cli.json<{ paths: ReadonlyArray<string> }>([
@@ -552,6 +636,7 @@ describe("the put and exec doors", () => {
       title: "Written by a script",
       claim: "A script wrote this memory into the overlay.",
       memoryType: "semantic",
+      entities: ["system:fixture"],
       at: AT
     })
     const writes = `import { writeFileSync } from "node:fs"\nwriteFileSync("/mnt/memhtml/areas/inbox/from-script.html", ${JSON.stringify(template)})\n`

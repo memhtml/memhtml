@@ -111,6 +111,7 @@ export type Violation =
   | { kind: "claim-edit"; path: string }          // put over an active path with a different content hash
   | { kind: "reserved-path"; path: string }       // .memhtml/, index.html, sitemap.xml under every scope; areas/arcs/ and resources/people/ unless scope is "curate"
   | { kind: "batch-cap"; count: number; cap: number }   // cap 200 ops
+  | { kind: "write-bar"; path: string; reasons: ReadonlyArray<string> }   // session scope only; see "Write bar"
 export const commitSession: (input: { session: Session; head: HeadView & { sha: string }; message: string; archivedAt?: string; scope?: CommitScope }) => Effect<CommitOutcome, GitFailure | StorageFailure>   // scope names the subject (memhtml(<scope>): ...) and is passed to validateOps
 export type CommitOutcome =
   | { kind: "committed"; sha: string; paths: ReadonlyArray<string>; contradictions: ReadonlyArray<{ path: string; against: string }>; worktreeSynced: boolean; recovered: boolean }
@@ -157,6 +158,14 @@ Deltas landed, where the implementation departs from the contract above:
 - `commitSession` takes an optional `archivedAt`, the instant archive ops stamp, so a test can pin it. It defaults to now.
 - `saveSession` is exported, so a caller that rebased can persist the moved base without appending an op. It takes the session's lock; `saveSessionLocked` is the variant for a caller already holding it.
 - `Session.pending` and `startSession`'s `force` are as described above; `session status` reports `pending` (`null` when none).
+
+### Write bar
+
+The curator can only clean what got in. The 2026-09-24 audit of the live store found about three quarters of its active records were noise, written by three writers with no bar: trace consolidation filed a lesson from every run with no project, the run summarizer filed run narratives as episodic memories, and the review hook filed a verdict per turn. The write bar is the rule for what an ordinary session may commit as a memory. It has two halves, and the split follows who can judge each.
+
+The mechanical half is code. `validateOps` under the `session` scope runs `writeBarReasons` over every put and reports a `write-bar` violation when the new record is `episodic` (a run narrative, whose home is the trace index), is `verdict` (review output), or names nothing it is about: no `memhtml-entity` and no workspace path under `projects/<slug>/`. Tasks follow their own rules and are exempt, an archive destination is an existing record moving and is not judged, and the `curate` scope is exempt because the curator's canonicals face the head gate and a human at the merge. `session put` and `session exec` treat the violation as blocking, like a format violation, because no rebase cures it.
+
+The judgment half is the writing agent's, stated in the `session put` and `session exec` help that `AGENTS.md` carries: a memory carries a mechanism or a decision, and is something a future run would look up. To support the judgment, `session put` reports `neighbors`, the three records nearest each put in the session's view by the same two-arm search `head search` runs, so the writer can skip a near-duplicate and link the related records before it commits. Reading before writing is what Mem0 (arXiv 2504.19413) and A-MEM (NeurIPS 2025) do at write time, and Xiong et al. (ACL 2026, arXiv 2505.16067) measured selective addition beating add-everything; the same literature finds LLM rewriting of raw evidence harmful (arXiv 2605.12978), which is why the bar filters what enters and leaves run traces raw in the trace index.
 
 ## `@memhtml/snapshot`
 
@@ -225,7 +234,7 @@ Add to `COMMANDS`, `RESPONSE_TYPES`, and `dispatch`, then regenerate `AGENTS.md`
 | `curate run`      | `--ref`, `--model`, `--max-steps`, `--wall-clock-ms`, `--dry-run`, `--resume`                                                  | `curate.run`                                       |
 | `curate collapse` | `--ref`, `--model`, `--plan`, `--rulings`, `--concurrency`, `--only`, `--limit`, `--dry-run`, `--max-steps`, `--wall-clock-ms` | `curate.collapse`                                  |
 
-`session rebase` is the caller's half of the retry loop: `session commit` answers `rebase-needed` whenever the ref has moved past the session's base and never retries on its own, so a caller reloads the base with `session rebase` and commits again, or reads the `refused` that follows and decides. `session exec` appends its harvest only when the script exited 0 and no harvested op carries a violation a rebase cannot cure (format, reserved path, batch cap), judged the way `session put` judges its puts; the report carries `violations` and `blocking` either way. `session start` on an id that already has a log is refused (`ERR_STORAGE`, `session.exists`) unless `--force`. The head is loaded per invocation in this proof of concept: from the snapshot at `.memhtml/snapshots/<sha>.arrow` when one exists for the sha, else from an ancestor's snapshot advanced over the changed paths, else from git ("Loading from snapshots" above), and every payload that loaded one reports which in `head.source`. A long-lived head process is deferred.
+`session rebase` is the caller's half of the retry loop: `session commit` answers `rebase-needed` whenever the ref has moved past the session's base and never retries on its own, so a caller reloads the base with `session rebase` and commits again, or reads the `refused` that follows and decides. `session exec` appends its harvest only when the script exited 0 and no harvested op carries a violation a rebase cannot cure (format, reserved path, batch cap, write bar), judged the way `session put` judges its puts; the report carries `violations` and `blocking` either way. `session start` on an id that already has a log is refused (`ERR_STORAGE`, `session.exists`) unless `--force`. The head is loaded per invocation in this proof of concept: from the snapshot at `.memhtml/snapshots/<sha>.arrow` when one exists for the sha, else from an ancestor's snapshot advanced over the changed paths, else from git ("Loading from snapshots" above), and every payload that loaded one reports which in `head.source`. A long-lived head process is deferred.
 
 ### Curation door
 

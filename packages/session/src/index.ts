@@ -36,5 +36,6 @@ export {
   touchedPaths,
   type ValidateOptions,
   type Violation,
-  validateOps
+  validateOps,
+  writeBarReasons
 } from "./validate.js"
