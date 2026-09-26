@@ -66,17 +66,29 @@ export const commitFiles = async (
   return git(root, ["rev-parse", "HEAD"])
 }
 
+/**
+ * The entity every fixture names unless a test says otherwise, so fixtures clear the write bar's
+ * anchor rule (`writeBarReasons`) and the tests that are not about the bar stay about what they test.
+ */
+export const FIXTURE_ENTITY = "system:fixture"
+
 /** A valid memory file from a title and a claim. */
 export const memory = (
   title: string,
   claim: string,
-  extra: { readonly body?: ReadonlyArray<string>; readonly at?: string } = {}
+  extra: {
+    readonly body?: ReadonlyArray<string>
+    readonly at?: string
+    readonly entities?: ReadonlyArray<string>
+    readonly memoryType?: "semantic" | "episodic" | "verdict" | "task" | "procedural"
+  } = {}
 ): string =>
   renderTemplate({
     title,
     claim,
     body: extra.body,
-    memoryType: "semantic",
+    entities: extra.entities ?? [FIXTURE_ENTITY],
+    memoryType: extra.memoryType ?? "semantic",
     at: extra.at ?? "2026-09-23T12:00:00Z"
   })
 

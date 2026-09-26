@@ -207,6 +207,8 @@ const describeViolation = (violation: Violation): string => {
       return `${violation.path}: duplicate of ${violation.existing}`
     case "claim-edit":
       return `${violation.path}: claim edit`
+    case "write-bar":
+      return `${violation.path}: below the write bar: ${violation.reasons.join("; ")}`
   }
 }
 

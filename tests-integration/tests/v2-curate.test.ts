@@ -96,7 +96,14 @@ const opsFile = async (
   ops: ReadonlyArray<Record<string, unknown>>
 ): Promise<string> => {
   const file = join(scratchDir, `${name}.jsonl`)
-  await writeFile(file, `${ops.map((op) => JSON.stringify(op)).join("\n")}\n`)
+  // Every write names an entity unless the case says otherwise, so fixtures clear the write bar's
+  // anchor rule and the cases that are not about the bar stay about what they test.
+  const anchored = ops.map((op) =>
+    op.op === "write" && op.entities === undefined && op.entity === undefined
+      ? { ...op, entities: ["system:fixture"] }
+      : op
+  )
+  await writeFile(file, `${anchored.map((op) => JSON.stringify(op)).join("\n")}\n`)
   return file
 }
 

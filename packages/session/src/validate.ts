@@ -2,13 +2,15 @@ import type { HeadView, OverlayOp } from "@memhtml/contracts"
 import {
   ARCS_DIR,
   hrefToPath,
+  isArchivePath,
   isEdgeRel,
   memoryPathViolation,
   normalizePath,
   originalPathFor,
   PEOPLE_DIR
 } from "@memhtml/contracts"
-import { checkMemory, contentHash, isRootRelativeHref, readLinks } from "@memhtml/html"
+import { checkMemory, contentHash, isRootRelativeHref, parseMemory, readLinks } from "@memhtml/html"
+import { Effect, Exit } from "effect"
 
 /**
  * The mechanical checks a commit runs before it writes anything. No model call, no I/O: every
@@ -26,6 +28,11 @@ export type Violation =
    */
   | { readonly kind: "reserved-path"; readonly path: string }
   | { readonly kind: "batch-cap"; readonly count: number; readonly cap: number }
+  /**
+   * A new record from an ordinary session that fails the write bar ({@link writeBarReasons}): a run
+   * narrative, review output, or a claim that names nothing it is about. Curation is exempt.
+   */
+  | { readonly kind: "write-bar"; readonly path: string; readonly reasons: ReadonlyArray<string> }
 
 /** The most ops one commit carries. A larger batch is two sessions. */
 export const BATCH_CAP = 200
@@ -62,6 +69,55 @@ export const isReservedPath = (path: string, scope: CommitScope = "session"): bo
   const slash = normalized.lastIndexOf("/")
   const filename = slash === -1 ? normalized : normalized.slice(slash + 1)
   return RESERVED_FILENAMES.includes(filename)
+}
+
+/** The prefix a workspace's records sit under (`projects/<slug>/`), which anchors a record by itself. */
+const WORKSPACE_PREFIX = "projects/"
+
+/**
+ * Types an ordinary session may not write, each with the reason it gives. A run narrative belongs in
+ * the trace index, which already holds every run; review output was never memory. On 2026-09-24 the
+ * audit of the live store found these two classes, with unanchored lessons, made up most of the
+ * noise that three writers with no bar had left.
+ */
+const REFUSED_TYPES: ReadonlyMap<string, string> = new Map([
+  [
+    "episodic",
+    "an episodic record narrates one run; runs belong in the trace index, not the store"
+  ],
+  ["verdict", "a verdict is review output, not a memory"]
+])
+
+/**
+ * Why a new record from an ordinary session falls below the write bar, or nothing when it clears it.
+ *
+ * The bar has two halves. This is the mechanical one: the record is not a run narrative or review
+ * output, and it names what it is about, through at least one `memhtml-entity` or by sitting in a
+ * workspace under `projects/<slug>/`. The other half (a mechanism or a decision, something a future
+ * run would look up) needs a model's judgment and is the writing agent's, stated in the `session put`
+ * and `session exec` help. Tasks follow their own rules (`docs/tasks.md`) and are exempt; an archive
+ * destination is an existing record moving, never a new one, and is not judged. A file that does not
+ * parse answers nothing here, because the format check has already refused it.
+ */
+export const writeBarReasons = (path: string, html: string): ReadonlyArray<string> => {
+  if (isArchivePath(path)) return []
+  const parsed = Effect.runSyncExit(parseMemory(html))
+  if (!Exit.isSuccess(parsed)) return []
+  const doc = parsed.value
+  const type = doc.metas.memoryType
+  if (type === "task") return []
+  const reasons: Array<string> = []
+  const refused = REFUSED_TYPES.get(type)
+  if (refused !== undefined) reasons.push(refused)
+  const anchored =
+    doc.entities.some((entity) => entity.trim() !== "") ||
+    normalizePath(path).startsWith(WORKSPACE_PREFIX)
+  if (!anchored) {
+    reasons.push(
+      "names no system, project, or person: add a memhtml-entity or write it in a workspace (projects/<slug>/)"
+    )
+  }
+  return reasons
 }
 
 /** Every path an op reads or writes, for the disjointness check and the reserved-path check. */
@@ -153,6 +209,10 @@ export const validateOps = (
           violations.push({ kind: "duplicate", path: op.path, existing })
         } else if (isActiveIn(view, op.path)) {
           violations.push({ kind: "claim-edit", path: op.path })
+        }
+        if (scope === "session") {
+          const bar = writeBarReasons(op.path, op.html)
+          if (bar.length > 0) violations.push({ kind: "write-bar", path: op.path, reasons: bar })
         }
         batchHashes.set(hash, op.path)
         batchPuts.set(op.path, hash)

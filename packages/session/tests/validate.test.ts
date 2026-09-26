@@ -2,7 +2,13 @@ import type { OverlayOp } from "@memhtml/contracts"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 
-import { BATCH_CAP, isReservedPath, touchedPaths, validateOps } from "../src/validate.js"
+import {
+  BATCH_CAP,
+  isReservedPath,
+  touchedPaths,
+  validateOps,
+  writeBarReasons
+} from "../src/validate.js"
 import { mapHead, memory, recordFrom } from "./helpers.js"
 
 /**
@@ -26,6 +32,12 @@ import { mapHead, memory, recordFrom } from "./helpers.js"
  * - unlink source: drop the `isActiveIn` clause -> the same case (the archived source passes).
  * - unlink batch view: `edgesOf(op.path).add(...)` after a link removed -> the same case (an unlink
  *   of an edge this batch added is refused).
+ * - write bar, type: `REFUSED_TYPES.get(type)` -> `undefined` -> "the write bar refuses a run
+ *   narrative and review output from a session" (both types pass).
+ * - write bar, anchor: `anchored` forced to `true` -> "the write bar refuses a record that names
+ *   nothing, and takes an entity or a workspace as its anchor" (the bare record passes).
+ * - write bar, scope: the `scope === "session"` guard removed -> "the curate scope and tasks are
+ *   exempt from the write bar" (the curator's unanchored canonical is refused).
  */
 
 const CAPITAL = memory("Capital", "The capital of India is New Delhi.")
@@ -386,6 +398,69 @@ describe("validateOps", () => {
       kind: "reserved-path",
       path: ".memhtml/x.html"
     })
+  })
+
+  it("the write bar refuses a run narrative and review output from a session", async () => {
+    const view = await head()
+    const narrative = memory("Run 42", "Run 42 read three files and wrote a report.", {
+      memoryType: "episodic"
+    })
+    const verdict = memory("Review of run 42", "Run 42 was marked unsupported_claim.", {
+      memoryType: "verdict"
+    })
+    const found = validateOps(view, [
+      put("areas/inbox/run-42.html", narrative),
+      put("areas/inbox/review-42.html", verdict)
+    ])
+    expect(
+      found.map((violation) => [violation.kind, "path" in violation && violation.path])
+    ).toEqual([
+      ["write-bar", "areas/inbox/run-42.html"],
+      ["write-bar", "areas/inbox/review-42.html"]
+    ])
+    expect(writeBarReasons("areas/inbox/run-42.html", narrative)).toEqual([
+      "an episodic record narrates one run; runs belong in the trace index, not the store"
+    ])
+    expect(writeBarReasons("areas/inbox/review-42.html", verdict)).toEqual([
+      "a verdict is review output, not a memory"
+    ])
+  })
+
+  it("the write bar refuses a record that names nothing, and takes an entity or a workspace as its anchor", async () => {
+    const view = await head()
+    const bare = memory("Run the formatter", "Run the formatter before committing.", {
+      entities: []
+    })
+    expect(validateOps(view, [put("areas/inbox/formatter.html", bare)])).toEqual([
+      {
+        kind: "write-bar",
+        path: "areas/inbox/formatter.html",
+        reasons: [
+          "names no system, project, or person: add a memhtml-entity or write it in a workspace (projects/<slug>/)"
+        ]
+      }
+    ])
+    const named = memory("Run the formatter", "memhtml runs Biome before every commit.", {
+      entities: ["system:memhtml"]
+    })
+    expect(validateOps(view, [put("areas/inbox/formatter.html", named)])).toEqual([])
+    expect(validateOps(view, [put("projects/memhtml/formatter.html", bare)])).toEqual([])
+  })
+
+  it("the curate scope and tasks are exempt from the write bar", async () => {
+    const view = await head()
+    const canonical = memory("Canonical", "One canonical record the curator folded.", {
+      entities: []
+    })
+    expect(
+      validateOps(view, [put("areas/inbox/canonical.html", canonical)], { scope: "curate" })
+    ).toEqual([])
+    const task = memory("Rotate the key", "Rotate the signing key.", {
+      entities: [],
+      memoryType: "task"
+    })
+    expect(writeBarReasons("areas/inbox/tasks/rotate.html", task)).toEqual([])
+    expect(writeBarReasons("archive/2026/areas/inbox/formatter.html", canonical)).toEqual([])
   })
 
   it("touchedPaths names every path an op reads or writes", () => {

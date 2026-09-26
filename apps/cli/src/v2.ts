@@ -234,11 +234,15 @@ const putPathFor = (
   return Effect.fail(StorageFailure.make({ operation: "session.put.pathExhausted" }))
 }
 
+/** How many existing records `session put` reports beside each put, nearest first. */
+const PUT_NEIGHBORS = 3
+
 /** The violation kinds that make a put unlandable regardless of what the ref does next. */
 const BLOCKING_VIOLATIONS: ReadonlySet<Violation["kind"]> = new Set([
   "format",
   "reserved-path",
-  "batch-cap"
+  "batch-cap",
+  "write-bar"
 ])
 
 const describeViolation = (violation: Violation): string => {
@@ -253,6 +257,8 @@ const describeViolation = (violation: Violation): string => {
       return `${violation.path}: duplicate of ${violation.existing}`
     case "claim-edit":
       return `${violation.path}: claim edit`
+    case "write-bar":
+      return `${violation.path}: below the write bar: ${violation.reasons.join("; ")}`
   }
 }
 
@@ -314,11 +320,18 @@ export const sessionPut = (input: {
     const at = isoSecond(yield* Effect.clockWith((clock) => clock.currentTimeMillis))
     const claimed = new Set<string>()
     const puts: Array<OverlayOp> = []
+    const neighbors: Array<{ readonly path: string; readonly hits: ReadonlyArray<SearchHit> }> = []
     for (const params of input.ops) {
       const write = yield* toWriteInput(params, at)
       const path = yield* putPathFor(view, write, claimed)
       claimed.add(path)
       puts.push({ kind: "put", path, html: renderTemplate(write) })
+      // Read before write: the records the view already holds nearest this one, so the writer can
+      // see a near-duplicate it should skip or the records it should link to before it commits.
+      neighbors.push({
+        path,
+        hits: searchHead(view, { query: `${write.title} ${write.claim}`, limit: PUT_NEIGHBORS })
+      })
     }
     // Judged the way `commitSession` will judge them: every op of the session against the base.
     const violations = validateOps(head.view, [...session.ops, ...puts])
@@ -341,6 +354,7 @@ export const sessionPut = (input: {
       appended: puts.length,
       ops: next.ops.length,
       paths: puts.map((op) => op.path),
+      neighbors,
       violations
     }
   })

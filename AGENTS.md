@@ -519,14 +519,14 @@ Open a v2 session on the ref's tip: a pointer to that version plus an empty over
 Append write ops to a session's overlay from a JSONL file in the shape `memhtml apply` takes.
 
 - `--id` (string) — The session to append to. _(**required**)_
-- `--file` (string) — JSONL of `write` ops, one object per line, the same fields `memhtml apply` accepts. `-` reads stdin. Each op is rendered to the file the store would write and lands at the path the store would choose. A malformed op or a reserved path refuses the whole call and appends nothing. _(**required**)_
+- `--file` (string) — JSONL of `write` ops, one object per line, the same fields `memhtml apply` accepts. `-` reads stdin. Each op is rendered to the file the store would write and lands at the path the store would choose. A malformed op, a reserved path, or a record below the write bar refuses the whole call and appends nothing. The bar: a memory names the system, project, or person it is about (an `entities` value, or a `workspace`), carries a mechanism or a decision, and is something a future run would look up; a run narrative (`episodic`) or review output (`verdict`) is refused, because runs live in the trace index. The response lists each put's nearest existing records under `neighbors`, so a near-duplicate can be skipped and the related records linked before the commit. _(**required**)_
 
 ### `memhtml session exec`
 
 Run a script over the session's view (head plus overlay) in a writable sandbox and harvest its writes into the overlay.
 
 - `--id` (string) — The session whose view the script sees. _(**required**)_
-- `--file` (string) — The script, as a path on the HOST. Omit it, pass `--file -`, or a positional `-` to read stdin. Mutually exclusive with `--script`.
+- `--file` (string) — The script, as a path on the HOST. Omit it, pass `--file -`, or a positional `-` to read stdin. Mutually exclusive with `--script`. A new file the script writes is held to the write bar `session put` states; one below it blocks the whole harvest.
 - `--script` (string) — The script source, inline. Mutually exclusive with `--file` and with stdin.
 - `--timeout-ms` (int) — Wall-clock bound on the script. Exceeding it is `exitCode` 124 with `timedOut: true`. Capped at 600000. _(default `30000`)_
 
