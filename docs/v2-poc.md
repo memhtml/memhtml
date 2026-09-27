@@ -281,15 +281,75 @@ What got worse is in the seven-query table. "bar chart value axis should start a
 Owns that one new file plus `apps/cli/tests/session-exec.test.ts`. Reuses the sandbox construction in `apps/cli/src/exec.ts` and `apps/consolidator/src/mount.ts` by import, without editing either. Does not touch `commands.ts` or `run.ts`.
 
 ```ts
-export const runSessionExec: (input: { view: HeadView; script: string; timeoutMs?: number; scope?: CommitScope }) => Effect<SessionExecReport, StorageFailure>
-export interface SessionExecReport extends ExecReport { readonly ops: ReadonlyArray<OverlayOp>; readonly rejected: ReadonlyArray<{ path: string; reason: string }> }
+export const runSessionExec: (input: { view: HeadView; script: string; lang: ExecLang; timeoutMs?: number; scope?: CommitScope }) => Effect<SessionExecReport, StorageFailure>
+export type ExecLang = "bash" | "js"   // apps/cli/src/exec-lang.ts
+export interface SessionExecReport extends ExecReport { readonly lang: ExecLang; readonly ops: ReadonlyArray<OverlayOp>; readonly rejected: ReadonlyArray<{ path: string; reason: string }> }
 ```
 
-The guest filesystem is seeded from `view.records()` under `/mnt/memhtml` with no disk worktree and no `git worktree add`. The mount is writable. After the script exits, the harvester walks `/mnt/memhtml`, compares each file's bytes against the seeded set, and turns a new `.html` into a `put`, a seeded `.html` whose article changed (content hash differs) into a `put` of the same path (which `validateOps` refuses as `claim-edit`; that is the store's rule, and the harvester only reports it), and a missing file into a `rejected` entry (deletion is not an operation; archiving is a `put` at the archive path plus the source going missing, which the harvester pairs into one `archive` op when the article hash matches). Files outside `.html`, under `.git`, or named `index.html` are rejected with a reason. The `corpus.mjs` helper is preloaded exactly as `exec` does it. A test seeds 50 records, runs a script that writes two files and edits one head, and asserts the harvested ops.
+The guest filesystem is seeded from `view.records()` under `/mnt/memhtml` with no disk worktree and no `git worktree add`. The mount is writable. `lang` says what the script is: `bash` hands the text to the interpreter as the shell program (`bash.exec(script)`), and `js` writes it to `/workspace/script.mjs` and runs `js-exec` on it, as before the field existed. Both run in the same sandbox, over the same seeded mount, with the same bridge retry and harvest; `/workspace/lib/corpus.mjs` is seeded for both, so a bash script can `js-exec` a module that imports it. `lang` is required, so no in-process caller changes language silently: the CLI's `--lang` defaults to `bash`, and the curator binder passes `js` because its `exec` tool takes a module. The bounds differ by language. Under `js` the shell's bound is looser than the script's by a grace, as in `memhtml exec`. Under `bash` the shell's deadline is the bound, at `timeoutMs` exactly, and just-bash's command and loop-iteration counts (100,000 each by default) are raised out of the way: under the defaults `while true; do :; done` ended at about 1.6 s with exit 126 and `too many commands executed`, where `--timeout-ms` promises exit 124 and `timedOut: true` at the bound. With the counts raised it reports `bash: execution exceeded execution deadline (<n>ms)`, which `cutOffByTheRuntime` already matches on "deadline". After the script exits, the harvester walks `/mnt/memhtml`, compares each file's bytes against the seeded set, and turns a new `.html` into a `put`, a seeded `.html` whose article changed (content hash differs) into a `put` of the same path (which `validateOps` refuses as `claim-edit`; that is the store's rule, and the harvester only reports it), and a missing file into a `rejected` entry (deletion is not an operation; archiving is a `put` at the archive path plus the source going missing, which the harvester pairs into one `archive` op when the article hash matches). Files outside `.html`, under `.git`, or named `index.html` are rejected with a reason. The `corpus.mjs` helper is preloaded exactly as `exec` does it. A test seeds 50 records, runs a script that writes two files and edits one head, and asserts the harvested ops.
 
 The link and label rule: a seeded file still at its path whose bytes changed but whose article content hash did not is a head edit candidate. The hash digests the article's canonical text, not its bytes, so an equal hash proves the words are the same and nothing more; the harvester parses both versions with `@memhtml/html`'s `parseMemory` and compares their heads and their article markup. Every `<link rel="memhtml-...">` present after and absent before becomes one `{ kind: "link", path, rel, href }` op, and every one present before and absent after becomes one `{ kind: "unlink", path, rel, href }` op, so an edge can be placed from code mode by splicing a line before `</head>` and dropped by cutting it; a file that gained one edge and lost another yields both kinds (the `link`s first, then the `unlink`s). The same holds for entities: every `<meta name="memhtml-entity">` value present after and absent before becomes one `{ kind: "label", path, entity }` op and every one present before and absent after one `{ kind: "unlabel", path, entity }` op, after the file's edge ops (`label`s, then `unlabel`s), so a record is labeled from code mode by splicing one meta line into its head. A title or any other meta changed, article markup changed with the words kept (a `<dfn>` wrap, a new `<aside>`), or any other head content changed (a comment, a `<meta>` outside the vocabulary) is `rejected` with the reason `head edit other than adding or removing links or entity labels is not an operation`; when links or entities were added or removed beside such a change the reason names the edited links and entities and the other change, and a byte change that edited neither is rejected as such. The residual comparison strips every memhtml link and every `memhtml-entity` meta from both versions; the entity pattern is case-sensitive, so a spelling the parser would not read as an entity stays in the residual and is reported. Every changed seeded file is therefore in `ops` or in `rejected`, never silently dropped. The archive twin is held to the same rule: a link or an entity added to or removed from the twin's head becomes a `link`, `unlink`, `label`, or `unlabel` op on the source path, emitted before the archive op so the commit's staging (which builds the archived copy from the source as the batch left it, never from the op's bytes) carries the edit into the copy; any other head or markup difference between the source and its twin rejects the source and leaves the twin as a put.
 
-`runSessionExec` takes an optional `scope` (`CommitScope`, default `session`), which the harvester's reserved-path check uses the way `validateOps` does: under `curate` an `areas/arcs/` or `resources/people/` file is a `put`, while `.memhtml/`, `index.html`, and `sitemap.xml` stay rejected.
+`runSessionExec` takes an optional `scope` (`CommitScope`, default `session`), which the harvester's reserved-path check uses the way `validateOps` does: under `curate` an `areas/arcs/` or `resources/people/` file is a `put`, while `.memhtml/`, `index.html`, and `sitemap.xml` stay rejected. The check applies to what a script wrote: a seeded file whose bytes are unchanged is skipped before it, so a session-scope run over a store holding curated records reports none of them, and a changed or new file at a reserved path is still rejected.
+
+### Heredoc scripts
+
+The operator's expectation is that an agent does most script reads and writes as a heredoc, so `session exec` reads its script from stdin and runs it as bash unless `--lang js` is passed. The quoted opener (`<<'SH'`) keeps the agent's own shell from expanding anything, so the script reaches the sandbox byte for byte, nested heredocs included. Paths are absolute: the guest's working directory is `/home/user`, and the corpus is at `/mnt/memhtml`. What the script leaves in the tree is harvested exactly as a JS script's is, so a new file is a `put` held to the write bar, and a `sed -i` that splices a `<meta name="memhtml-entity">` or `<link rel="memhtml-...">` line into an existing head is a `label` or `link` op.
+
+A read, which harvests nothing:
+
+```sh
+memhtml session exec --id s1 <<'SH'
+grep -rl 'content="system:memhtml"' /mnt/memhtml/projects | wc -l
+SH
+```
+
+A write, one record at the bar (anchored by its entity and its workspace path), then `memhtml session commit --id s1 --message "..."` to land it:
+
+```sh
+memhtml session exec --id s1 <<'SH'
+mkdir -p /mnt/memhtml/projects/memhtml
+cat > /mnt/memhtml/projects/memhtml/session-exec-runs-bash.html <<'HTML'
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>session exec runs bash by default</title>
+<meta name="memhtml-type" content="semantic">
+<meta name="memhtml-status" content="active">
+<meta name="memhtml-created" content="2026-09-27T12:00:00Z">
+<meta name="memhtml-updated" content="2026-09-27T12:00:00Z">
+<meta name="memhtml-entity" content="system:memhtml">
+</head>
+<body>
+<article>
+<p><mark>memhtml session exec runs its script as bash unless --lang js is passed.</mark> A heredoc on stdin is the script, and js-exec runs a module from inside it.</p>
+</article>
+</body>
+</html>
+HTML
+SH
+```
+
+just-bash 3.4.2, probed on 2026-09-27: `sed -i`, `find -exec ... \;` and `-exec ... +`, `xargs`, `jq`, `awk`, `set -o pipefail`, and nested heredocs behave as in GNU bash. It differs in four ways: a redirect into a directory that does not exist creates it rather than failing; a producer piped into `head` is not stopped when `head` exits, so `while true; do echo x; done | head -1` runs to the deadline; `yes` and `curl` are not commands; and a runaway inside one `awk`, `sed`, or `jq` call, or a recursion deeper than 100 calls, ends in milliseconds with exit 126 and the bound named on stderr rather than at the deadline.
+
+Measured 2026-09-27 on the clone of the live store at `a650152e` (7,437 records, head from its own snapshot), a no-op `:` heredoc, five runs with the 1-minute load between 19 and 20 on 16 cores. The phases come from temporary `performance.now()` marks, since removed, taken from process start; the script's own time is the envelope's `durationMs`:
+
+| phase                                              | p50 ms | five runs                    |
+| -------------------------------------------------- | ------ | ---------------------------- |
+| CLI start: node boot and the module graph          | 692    | 692, 750, 689, 710, 659      |
+| CLI start: argv, stdin read, dispatch              | 9      | 12, 12, 9, 9, 9              |
+| session resume (the log read)                      | 3      | 3, 4, 3, 3, 3                |
+| head load (snapshot, 7,437 records)                | 1,615  | 1845, 1893, 1468, 1615, 1515 |
+| sandbox load (just-bash import, helper and parser) | 30     | 35, 33, 30, 30, 30           |
+| seeding 7,437 files into the guest, `new Bash`     | 152    | 152, 170, 183, 140, 145      |
+| script run (`durationMs`)                          | 10     | 10, 10, 10, 10, 10           |
+| harvest (walk every file, compare bytes)           | 200    | 200, 212, 199, 175, 205      |
+| `validateOps` and the envelope                     | 7      | 13, 7, 7, 6, 6               |
+| stdout write and exit                              | 58     | 58, 61, 50, 65, 50           |
+| wall                                               | 2,763  | 3020, 3153, 2649, 2763, 2632 |
+
+A long-lived head server that holds the version and the loaded modules removes the first four rows, about 2.3 s of the 2.8 s. The seeding and the harvest, about 350 ms together, stay per call as long as each call builds a fresh guest filesystem and reads every file back; a server could keep one seeded tree per version and harvest only the paths a script wrote. The same five runs taken earlier at a load near 48 measured 5.1 to 9.2 s wall with the head load at 3.1 to 5.6 s, so the head load is the phase that machine load stretches most. Every run reported `rejected: []`; before the harvester skipped unchanged seeded files ahead of its reserved-path check, the same no-op reported 101 rejections on this clone, one per curated record under `areas/arcs/` or `resources/people/`.
 
 ## CLI commands (integrator)
 
@@ -299,7 +359,7 @@ Add to `COMMANDS`, `RESPONSE_TYPES`, and `dispatch`, then regenerate `AGENTS.md`
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
 | `session start`   | `--id`, `--ref`, `--force`                                                                                                     | `session.started`                                      |
 | `session put`     | `--id`, `--file` (JSONL of `write` ops as `apply` takes, plus `label` and `unlabel` lines), `--no-server`                      | `session.appended` (neighbors, `vector`, `head`)       |
-| `session exec`    | `--id`, `--script` or `--file`, `--timeout-ms`                                                                                 | `session.exec.report`                                  |
+| `session exec`    | `--id`, `--script` or `--file` (stdin by default), `--lang` (`bash` or `js`, default `bash`), `--timeout-ms`                   | `session.exec.report` (`lang` echoed)                  |
 | `session commit`  | `--id`, `--message`                                                                                                            | `session.committed` (data carries `CommitOutcome`)     |
 | `session rebase`  | `--id`                                                                                                                         | `session.rebased`                                      |
 | `session status`  | `--id`                                                                                                                         | `session.status`                                       |

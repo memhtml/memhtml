@@ -738,7 +738,7 @@ describe("the put and exec doors", () => {
       readonly harvested: ReadonlyArray<{ readonly kind: string; readonly path: string }>
     }
     const exec = (script: string) =>
-      cli.json<Report>(["session", "exec", "--id", "ex", "--script", script])
+      cli.json<Report>(["session", "exec", "--id", "ex", "--lang", "js", "--script", script])
 
     const failed = await exec(`${writes}process.exit(3)\n`)
     expect(failed.exitCode).toBe(3)
@@ -785,7 +785,7 @@ describe("the put and exec doors", () => {
       readonly opsTotal: number
       readonly blocking: ReadonlyArray<string>
       readonly rejected: ReadonlyArray<{ path: string }>
-    }>(["session", "exec", "--id", "ex-bad", "--script", script])
+    }>(["session", "exec", "--id", "ex-bad", "--lang", "js", "--script", script])
     expect(report.exitCode).toBe(0)
     expect(report.ops).toBe(2)
     expect(report.appended).toBe(0)

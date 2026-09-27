@@ -39,6 +39,7 @@ import { Effect } from "effect"
 import type { EmbedderShape } from "./api-layer.js"
 import type { SessionPutOp } from "./apply.js"
 import type { ResponseType } from "./envelope.js"
+import type { ExecLang } from "./exec-lang.js"
 import {
   type HeadSource,
   loadVersion,
@@ -549,13 +550,19 @@ export const sessionExec = (input: {
   readonly root: string
   readonly id: string
   readonly script: string
+  readonly lang: ExecLang
   readonly timeoutMs?: number | undefined
 }) =>
   Effect.gen(function* () {
     const session = yield* resumeSession({ root: input.root, id: input.id })
     const head = yield* loadHeadAt(input.root, session.baseSha)
     const view = yield* withOverlay(head.view, session.ops)
-    const report = yield* runSessionExec({ view, script: input.script, timeoutMs: input.timeoutMs })
+    const report = yield* runSessionExec({
+      view,
+      script: input.script,
+      lang: input.lang,
+      timeoutMs: input.timeoutMs
+    })
     const harvested = new Set(report.ops.flatMap(touchedPaths))
     const violations = validateOps(head.view, [...session.ops, ...report.ops])
     const blocking = violations.filter(
@@ -568,6 +575,8 @@ export const sessionExec = (input: {
     return {
       id: session.id,
       baseSha: session.baseSha,
+      /** The language the script ran as: `bash` unless `--lang js`. */
+      lang: report.lang,
       corpusMount: report.corpusMount,
       sha: report.sha,
       exitCode: report.exitCode,
@@ -1166,6 +1175,8 @@ export interface V2Input {
   readonly force: boolean
   readonly message: string
   readonly script: string
+  /** `session exec`'s `--lang`, `bash` when the flag is absent. */
+  readonly lang: ExecLang
   readonly timeoutMs?: number | undefined
   readonly query: string
   readonly limit?: number | undefined

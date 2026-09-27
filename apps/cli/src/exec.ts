@@ -155,6 +155,19 @@ export const parserSourcePath = (): string =>
  * - `maxJsTimeoutMs` fires: `js-exec: Execution timeout: exceeded 400ms limit`
  * - `maxExecutionTimeMs` fires: `bash: js-exec exceeded its execution deadline`, with no "timeout" in it
  *
+ * `session exec --lang bash` runs the script as the shell program with the shell's bound equal to the
+ * script's, so the shell speaks for it. Measured on just-bash 3.4.2 at a 1,500 ms bound:
+ *
+ * - a busy loop (`while true; do :; done`, `for ((;;))`, `until false`):
+ *   `bash: execution exceeded execution deadline (1500ms)`
+ * - a command still running at the bound (`sleep 10`): `bash: sleep exceeded its execution deadline`
+ * - a `js-exec` inside the script, its bound equal to the shell's:
+ *   `bash: js-exec exceeded its execution deadline`
+ *
+ * All three say "deadline", so the one pattern serves both languages. The shell's `timeout` builtin
+ * exits 124 with an empty stderr (`timeout 1 sleep 5`), which this correctly reports as the script's
+ * own 124 rather than the runtime's cut-off.
+ *
  * A pattern matching only `/timeout/` therefore reports `timedOut: false` on a script that was cut off,
  * which is what the first version of this did. `aborted` covers `bash: execution aborted`, which is what
  * an `AbortSignal` produces. This module takes no such path today, and classifying it correctly

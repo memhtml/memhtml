@@ -139,6 +139,7 @@ export {
   readScript,
   runExec
 } from "./exec.js"
+export { DEFAULT_EXEC_LANG, EXEC_LANGS, type ExecLang } from "./exec-lang.js"
 export type { EntityExtractorShape, ExtractionAnswer, ExtractionItem } from "./extraction.js"
 export {
   EXTRACTION_MODEL,

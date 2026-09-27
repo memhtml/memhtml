@@ -7,7 +7,7 @@ import { frameKeyOf } from "@memhtml/domain"
 import { addLink, contentHash, parseMemory, renderTemplate } from "@memhtml/html"
 import { Effect } from "effect"
 import { beforeAll, describe, expect, it } from "vitest"
-import { CORPUS_MOUNT } from "../src/exec.js"
+import { CORPUS_MOUNT, cutOffByTheRuntime } from "../src/exec.js"
 import { CORPUS_SNAPSHOT_TMPDIR_PREFIX } from "../src/mount.js"
 import {
   HEAD_EDIT_REASON,
@@ -122,7 +122,7 @@ beforeAll(async () => {
 })
 
 const runScript = (script: string): Promise<SessionExecReport> =>
-  Effect.runPromise(runSessionExec({ view, script }))
+  Effect.runPromise(runSessionExec({ view, script, lang: "js" }))
 
 /** The snapshot-pin directories under the OS temp dir, which this runtime must never create. */
 const pinDirs = async (): Promise<ReadonlyArray<string>> =>
@@ -250,6 +250,144 @@ console.log(JSON.stringify({ seen: memories.size, claim: memories.get("/areas/in
   })
 })
 
+describe("an unchanged record at a curation-reserved path is not a write", () => {
+  const ARC = "areas/arcs/memory-is-a-value.html"
+  const PERSON = "resources/people/someone.html"
+  const INBOX = "areas/inbox/plain-fact.html"
+
+  const html = (title: string, claim: string): string =>
+    renderTemplate({
+      title,
+      claim,
+      body: ["Seeded."],
+      memoryType: "semantic",
+      at: SEEDED_AT,
+      entities: ["system:memhtml"]
+    })
+
+  let curated: HeadView
+  beforeAll(async () => {
+    curated = viewOver(
+      await Effect.runPromise(
+        Effect.all([
+          recordFrom(ARC, html("Arc", "The corpus is held as a value")),
+          recordFrom(PERSON, html("Someone", "Someone works on the store")),
+          recordFrom(INBOX, html("Plain", "The capital of Plainland is Plaintown"))
+        ])
+      )
+    )
+  })
+
+  /**
+   * A session-scope run over a store holding curated records reports none of them.
+   *
+   * (Mutation: moving the `before.html === file.html` skip in `harvestOps` back below the
+   * `presentFileProblem` check -> `rejected` carries the arc and the person record with "a reserved
+   * path only curation writes" and the case is red.)
+   */
+  it("a no-op script over seeded arcs and people records harvests nothing and rejects nothing", async () => {
+    const report = await Effect.runPromise(
+      runSessionExec({ view: curated, script: "console.log('no-op')", lang: "js" })
+    )
+    expect(report.exitCode, report.stderr).toBe(0)
+    expect(report.rejected).toEqual([])
+    expect(report.ops).toEqual([])
+  }, 120_000)
+
+  /**
+   * The fix skips only UNCHANGED seeded files; a write at a reserved path is still refused.
+   *
+   * (Mutation: exempting every seeded path from `presentFileProblem`, `before !== undefined ? null :
+   * presentFileProblem(...)` -> the edited arc comes back as a put and the case is red.)
+   */
+  it("a changed or a new file at a reserved path is still rejected under the session scope", () => {
+    const seededSet = new Map(
+      [...curated.records()].map((record) => [
+        record.path,
+        { html: record.html, contentHash: record.contentHash }
+      ])
+    )
+    const arc = seededSet.get(ARC)
+    if (arc === undefined) throw new Error("fixture")
+    const after = [
+      ...[...seededSet].map(([path, file]) => ({ path, html: file.html })),
+      { path: "areas/arcs/new-arc.html", html: html("New arc", "A new arc names its sources") }
+    ].map((file) =>
+      file.path === ARC ? { path: ARC, html: arc.html.replace("Seeded.", "Edited.") } : file
+    )
+    const report = harvestOps({ seeded: seededSet, after, skippedGitDir: false })
+    expect(report.ops).toEqual([])
+    expect(report.rejected).toEqual([
+      { path: ARC, reason: "a reserved path only curation writes" },
+      { path: "areas/arcs/new-arc.html", reason: "a reserved path only curation writes" }
+    ])
+  })
+})
+
+describe("--lang bash runs the script as the shell program", () => {
+  const runBash = (script: string, timeoutMs?: number): Promise<SessionExecReport> =>
+    Effect.runPromise(runSessionExec({ view, script, lang: "bash", timeoutMs }))
+
+  it("reads the corpus with shell tools and harvests nothing", async () => {
+    const report = await runBash("grep -rl 'Country-1[0-9] is' /mnt/memhtml/areas | wc -l")
+    expect(report.exitCode, report.stderr).toBe(0)
+    expect(report.lang).toBe("bash")
+    expect(report.stdout.trim()).toBe("10")
+    expect(report.ops).toEqual([])
+    expect(report.rejected).toEqual([])
+  }, 120_000)
+
+  it("is not JavaScript: a module's syntax is a bash parse error, and --lang js runs it", async () => {
+    const asBash = await runBash("console.log(1 + 1)")
+    expect(asBash.exitCode).not.toBe(0)
+    const asJs = await Effect.runPromise(
+      runSessionExec({ view, script: "console.log(1 + 1)", lang: "js" })
+    )
+    expect(asJs.exitCode, asJs.stderr).toBe(0)
+    expect(asJs.lang).toBe("js")
+    expect(asJs.stdout.trim()).toBe("2")
+  }, 120_000)
+
+  it("can still js-exec a module that imports the preloaded helper", async () => {
+    const report = await runBash(
+      [
+        "cat > /tmp/count.mjs <<'JS'",
+        'import { corpus } from "/workspace/lib/corpus.mjs"',
+        "console.log(corpus().size)",
+        "JS",
+        "js-exec /tmp/count.mjs"
+      ].join("\n")
+    )
+    expect(report.exitCode, report.stderr).toBe(0)
+    expect(report.stdout.trim()).toBe("50")
+  }, 120_000)
+
+  /**
+   * A busy loop is cut off by the wall clock, not by a command count.
+   *
+   * (Mutation: dropping `maxCommandCount` and `maxLoopIterations` from the bash limits in
+   * `runSessionExec` -> exit 126 "too many commands executed (>100000)" well before the bound, and
+   * the case is red on the exit code.)
+   */
+  it("a bash loop past --timeout-ms is exit 124 with timedOut", async () => {
+    const report = await runBash("while true; do :; done", 2_500)
+    expect(report.stderr).toContain("exceeded execution deadline (2500ms)")
+    expect(report.exitCode).toBe(124)
+    expect(report.timedOut).toBe(true)
+    expect(report.durationMs).toBeGreaterThanOrEqual(2_500)
+    expect(report.ops).toEqual([])
+  }, 120_000)
+
+  it("classifies the bash deadline wordings, verbatim from just-bash 3.4.2, as a cut-off", () => {
+    expect(cutOffByTheRuntime(124, "bash: execution exceeded execution deadline (1500ms)\n")).toBe(
+      true
+    )
+    expect(cutOffByTheRuntime(124, "bash: sleep exceeded its execution deadline\n")).toBe(true)
+    // The shell's own `timeout` builtin exits 124 with nothing on stderr: the script's 124.
+    expect(cutOffByTheRuntime(124, "")).toBe(false)
+  })
+})
+
 describe("the archive pairing requires the twin to hold the same article", () => {
   /**
    * (Mutation: disabling the `contentHashOrNull(twinHtml) !== before.contentHash` check in
@@ -326,6 +464,7 @@ describe("a head edit is an op only when it adds or removes links", () => {
     Effect.runPromise(
       runSessionExec({
         view: small,
+        lang: "js",
         script: [
           'import * as fs from "node:fs"',
           `const path = "/mnt/memhtml/${path}"`,
@@ -583,6 +722,7 @@ describe("a head edit adds or removes entity labels the way it adds or removes l
     Effect.runPromise(
       runSessionExec({
         view: small,
+        lang: "js",
         script: [
           'import * as fs from "node:fs"',
           'const root = "/mnt/memhtml"',
@@ -719,6 +859,7 @@ describe("an archive twin's head is held to the same rule as a file that stays p
     Effect.runPromise(
       runSessionExec({
         view: small,
+        lang: "js",
         script: [
           'import * as fs from "node:fs"',
           'const root = "/mnt/memhtml"',
@@ -788,6 +929,7 @@ describe("an archive twin's head is held to the same rule as a file that stays p
     const report = await Effect.runPromise(
       runSessionExec({
         view: carrying,
+        lang: "js",
         script: [
           'import * as fs from "node:fs"',
           'const root = "/mnt/memhtml"',
