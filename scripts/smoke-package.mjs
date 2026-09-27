@@ -683,11 +683,14 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
    * Not excuses. `serve mcp` is a long-running server, so its check is a handshake rather than an
    * envelope. `hook` is the one command whose stdout is NOT an envelope: it writes the host's own hook
    * protocol, so the table's shared "it answered with a `type`" assertion would fail on the command
-   * working correctly. Both are invoked, just elsewhere.
+   * working correctly. `head embed` has nothing to embed with under this run's `MEMHTML_EMBED=off`,
+   * so its answer here is a refusal at exit 1, which the table reads as a crash; its success path is
+   * the live tier's. All three are invoked, just elsewhere.
    */
   const COVERED_ELSEWHERE = {
     "serve mcp": "`memhtml serve mcp answers the MCP handshake`",
-    hook: "`hook writes the host's protocol on stdout and never an envelope`"
+    hook: "`hook writes the host's protocol on stdout and never an envelope`",
+    "head embed": "`head embed refuses with ERR_MODEL_UNAVAILABLE when the embedder is off`"
   }
 
   const invoked = new Set([...INVOCATIONS.map(([name]) => name), ...Object.keys(COVERED_ELSEWHERE)])
@@ -709,6 +712,18 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
       }
     })
   }
+
+  await check(
+    "head embed refuses with ERR_MODEL_UNAVAILABLE when the embedder is off",
+    async () => {
+      const ran = await runRaw(bin, ["head", "embed"], env)
+      const answer = looksLikeEnvelope(ran.stdout) ? JSON.parse(ran.stdout) : {}
+      return {
+        ok: ran.exitCode === 1 && answer.code === "ERR_MODEL_UNAVAILABLE",
+        detail: `exit ${String(ran.exitCode)}, ${String(answer.code ?? ran.stdout.slice(0, 200))}`
+      }
+    }
+  )
 
   /**
    * `memhtml hook`, driven the way an installed hook is: a host's payload on stdin, and stdout read as
@@ -1059,6 +1074,18 @@ const checkLiveBedrock = async ({ bin, work, env }) => {
     return {
       ok: status.embeddings >= 1 && status.embedModelMatches === true,
       detail: `${String(status.embeddings)} embedding(s) from ${String(status.embedModel)}`
+    }
+  })
+
+  await check("head embed fills the vector cache and head search runs the vector arm", async () => {
+    const embedded = (await envelope(bin, ["head", "embed"], live)).data
+    const searched = (await envelope(bin, ["head", "search", "VIP revert"], live)).data
+    return {
+      ok:
+        embedded.embedded >= 1 &&
+        searched.vector?.used === true &&
+        searched.hits.some((hit) => hit.arms.includes("vector")),
+      detail: `${String(embedded.embedded)} embedded, ${String(embedded.bytes)} bytes, vector ${JSON.stringify(searched.vector)}`
     }
   })
 }

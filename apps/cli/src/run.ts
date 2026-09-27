@@ -3,13 +3,13 @@ import { DiscriminationFailed, type EvalMode, runDiscrimination } from "@memhtml
 import { isValidDatetime } from "@memhtml/html"
 import { parseFacetFilters } from "@memhtml/index"
 import { HOOK_EVENTS, HOSTS, isHookEvent, isHostId, renderHookOutput } from "@memhtml/integrations"
-import { PROXY_BASE_URL_VAR } from "@memhtml/llm"
+import { EmbeddingsLive, PROXY_BASE_URL_VAR } from "@memhtml/llm"
 import { isSessionId } from "@memhtml/session"
 import { initRepo } from "@memhtml/store"
 import { layerTelemetry } from "@memhtml/telemetry"
-import { ConfigProvider, Effect, type Layer, Logger } from "effect"
+import { ConfigProvider, Effect, Layer, Logger } from "effect"
 import { renderAgentsDoc, runAgentsDoc } from "./agents-doc.js"
-import { Git, Indexer, layerApp } from "./api-layer.js"
+import { Embedder, type EmbedderShape, Git, Indexer, layerApp, layerEmbedder } from "./api-layer.js"
 import {
   applyPayload,
   applyText,
@@ -1071,6 +1071,13 @@ const ROOT_WITHOUT_LAYER: ReadonlySet<string> = new Set(["serve mcp", "exec"])
 const isV2Command = (command: string): boolean =>
   command.startsWith("session ") || command.startsWith("head ") || command.startsWith("curate ")
 
+/** The v2 arms that embed (`docs/v2-poc.md`, "Vector arm"): the only ones that bind an embedder. */
+const V2_EMBEDDING_COMMANDS: ReadonlySet<string> = new Set([
+  "head search",
+  "head embed",
+  "session put"
+])
+
 const resolvesRootItself = (command: string): boolean =>
   ROOT_WITHOUT_LAYER.has(command) || isV2Command(command)
 
@@ -1457,12 +1464,18 @@ const hookText = async (
  * from a pipe, and a test that had to spawn a process and write to its descriptor to exercise the
  * stdin path would be an integration test of the shell rather than of this function. The default
  * reads `process.stdin`, so `bin.ts` needs no knowledge of which commands want input.
+ *
+ * `embedder` is the v2 arms' embedder (`head search`, `head embed`, `session put`), injected by a test
+ * the way `layerAppWith` injects the v1 one. Those arms never build `layer`, so the embedder inside
+ * it cannot reach them; absent, they bind the one `layerApp` binds, `layerEmbedder` over
+ * `EmbeddingsLive`, from the environment (`MEMHTML_EMBED=off` leaves both ports absent).
  */
 export const run = async (
   argv: ReadonlyArray<string>,
   layer?: Layer.Layer<DispatchServices>,
   stdin: () => Promise<string> = readStdin,
-  stdoutIsTTY: boolean = process.stdout.isTTY === true
+  stdoutIsTTY: boolean = process.stdout.isTTY === true,
+  embedder?: EmbedderShape
 ): Promise<RunResult> => {
   const parsed = parseArgv(argv)
   const dense = bool(parsed, "dense", false)
@@ -1906,6 +1919,19 @@ export const run = async (
     }
 
     const override = str(parsed, "repo")
+    /**
+     * The three arms that embed resolve the embedder; the rest get both ports absent and never read
+     * Bedrock configuration. Built from the environment like `layerApp`'s, and a failed build (a
+     * malformed proxy URL) dies the same way.
+     */
+    const resolveEmbedder: Effect.Effect<EmbedderShape> =
+      embedder !== undefined
+        ? Effect.succeed(embedder)
+        : V2_EMBEDDING_COMMANDS.has(parsed.command)
+          ? Effect.gen(function* () {
+              return yield* Embedder
+            }).pipe(Effect.provide(layerEmbedder.pipe(Layer.provide(EmbeddingsLive), Layer.orDie)))
+          : Effect.succeed({ document: undefined, query: undefined })
     return Effect.runPromise(
       Effect.gen(function* () {
         const configured = yield* MemhtmlRoot
@@ -1961,7 +1987,8 @@ export const run = async (
           ops: sessionOps,
           target: parsed.positional[0] ?? "",
           into: str(parsed, "into"),
-          skipGate: bool(parsed, "skip-gate", false)
+          skipGate: bool(parsed, "skip-gate", false),
+          embedder: yield* resolveEmbedder
         })
       }).pipe(
         Effect.map(([type, data]) => emit(succeed(type, data), EXIT_OK)),

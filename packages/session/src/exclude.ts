@@ -11,11 +11,11 @@ import { gitPathOf } from "./plumbing.js"
 /**
  * Keep v2 state out of `git status` in a store scaffolded before that state existed.
  *
- * A new store's `.gitignore` names `.memhtml/sessions/` and `.memhtml/snapshots/` (the store
- * package's `GITIGNORE`). An existing store's `.gitignore` is committed content: rewriting it would
- * dirty the working tree and put a change in the next commit nobody asked for. `.git/info/exclude`
- * is the file git keeps for exactly this, local to the clone and never tracked, so the first writer
- * of either directory appends the patterns it needs there, once.
+ * A new store's `.gitignore` names `.memhtml/sessions/`, `.memhtml/snapshots/`, and
+ * `.memhtml/vectors/` (the store package's `GITIGNORE`). An existing store's `.gitignore` is
+ * committed content: rewriting it would dirty the working tree and put a change in the next commit
+ * nobody asked for. `.git/info/exclude` is the file git keeps for exactly this, local to the clone
+ * and never tracked, so the first writer of each directory appends the pattern it needs there, once.
  */
 
 /** What one call did. */

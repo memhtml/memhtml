@@ -41,7 +41,8 @@ export {
   SNAPSHOTS_DIR_PATH,
   STATE_DB_PATH,
   STATE_SIDECAR_PATH,
-  V2_IGNORE_PATTERNS
+  V2_IGNORE_PATTERNS,
+  VECTORS_DIR_PATH
 } from "./layout.js"
 export type {
   ChangedPath,

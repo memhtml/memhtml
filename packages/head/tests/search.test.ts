@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs"
+
 import type { MemoryRecord } from "@memhtml/contracts"
 import { RRF_K } from "@memhtml/domain"
 import { renderTemplate } from "@memhtml/html"
+import fc from "fast-check"
 import { describe, expect, it } from "vitest"
 
 import {
@@ -9,6 +12,9 @@ import {
   STOP_WORDS,
   searchHead,
   tokenize,
+  VECTOR_ARM_LIMIT,
+  VECTOR_WEIGHT,
+  versionFromRecords,
   withOverlay
 } from "../src/index.js"
 import { mapView, memoryFor, recordOf, run } from "./helpers.js"
@@ -22,6 +28,14 @@ import { mapView, memoryFor, recordOf, run } from "./helpers.js"
  *   active records only" fails because the archived record appears through the recency arm.
  * - `byScoreThenPath`: drop the path tiebreak, and "orders ties by path" becomes order-dependent
  *   on `HashMap` iteration and fails.
+ * - `searchHead`: run the vector arm when `vectors` alone is set (drop `|| input.queryVector ===
+ *   undefined`), and "vectors without a query vector" fails (the arm reads an absent query).
+ * - `vectorArm`: rank archived records too (`records` -> every record of the view), and "the vector
+ *   arm ranks active records only" fails because the archived twin of the query ranks first.
+ * - `vectorArm`: drop `.slice(0, VECTOR_ARM_LIMIT)`, and "the vector arm keeps its best 40" fails
+ *   because the 41st record carries `vector`.
+ * - `searchHead`: drop `if (vectorPaths.has(hit.path)) arms.push("vector")`, and "a record with no
+ *   word in common" fails on its `arms`.
  */
 
 const memory = (
@@ -241,3 +255,164 @@ const lexicalRankOf = (
     .sort((left, right) => right.lexical - left.lexical)
   return ranked.findIndex((hit) => hit.path === path) + 1
 }
+
+/** A unit vector along one axis of a four-dimensional toy space, so every cosine is 0 or 1. */
+const axis = (index: number, dimension = 4): Float32Array => {
+  const vector = new Float32Array(dimension)
+  vector[index] = 1
+  return vector
+}
+
+/**
+ * The two-arm answer, captured from `searchHead` at v2-poc 8192508 (2026-09-27) over 120 generated
+ * records: seven queries at limit 25 with `now` pinned, plus one
+ * at the default limit with no `now`. Compared as JSON text, so a score that moved by one ulp fails.
+ */
+const GOLDEN: ReadonlyArray<{ readonly query: string; readonly hits: unknown }> = JSON.parse(
+  readFileSync(new URL("./fixtures/search-two-arm.golden.json", import.meta.url), "utf8")
+)
+
+const goldenView = async () =>
+  mapView(
+    await Promise.all(Array.from({ length: 120 }, (_, index) => recordOf(memoryFor(index)))),
+    "golden"
+  )
+
+const goldenInputs = (entry: { readonly query: string }) =>
+  entry.query === "Country11 (default limit, no now)"
+    ? { query: "Country11" }
+    : { query: entry.query, limit: 25, now: "2026-09-01T00:00:00Z" }
+
+describe("searchHead without vectors", () => {
+  it("returns the two-arm answer byte for byte", async () => {
+    const view = await goldenView()
+    expect(GOLDEN).toHaveLength(8)
+    for (const entry of GOLDEN) {
+      expect(JSON.stringify(searchHead(view, goldenInputs(entry))), entry.query).toBe(
+        JSON.stringify(entry.hits)
+      )
+    }
+  })
+
+  it("vectors without a query vector, or a query vector without vectors, is the two-arm answer", async () => {
+    const view = await goldenView()
+    const vectors = new Map([...view.records()].map((record) => [record.contentHash, axis(0)]))
+    for (const entry of GOLDEN) {
+      const expected = JSON.stringify(entry.hits)
+      expect(JSON.stringify(searchHead(view, { ...goldenInputs(entry), vectors }))).toBe(expected)
+      expect(
+        JSON.stringify(searchHead(view, { ...goldenInputs(entry), queryVector: axis(0) }))
+      ).toBe(expected)
+    }
+  })
+
+  it("a vector arm that covers no record changes nothing, for any query", async () => {
+    // A built version, whose indexes are computed once, rather than the `Map` view that rebuilds
+    // them on every call.
+    const view = versionFromRecords([...(await goldenView()).records()], "golden")
+    const empty = new Map<string, Float32Array>()
+    fc.assert(
+      fc.property(fc.string({ maxLength: 40 }), fc.integer({ min: 0, max: 30 }), (query, limit) => {
+        expect(
+          JSON.stringify(searchHead(view, { query, limit, vectors: empty, queryVector: axis(1) }))
+        ).toBe(JSON.stringify(searchHead(view, { query, limit })))
+      }),
+      { numRuns: 100 }
+    )
+  })
+})
+
+describe("searchHead with vectors", () => {
+  it("a record with no word in common with the query is found through the vector arm alone", async () => {
+    const { view, records } = await fixture()
+    const [lag, retention, vacuum] = records
+    if (lag === undefined || retention === undefined || vacuum === undefined) throw new Error()
+    // The query shares no token with the vacuum record; its vector points the same way.
+    const vectors = new Map([
+      [lag.contentHash, axis(0)],
+      [retention.contentHash, axis(1)],
+      [vacuum.contentHash, axis(2)]
+    ])
+    const hits = searchHead(view, {
+      query: "kafka",
+      vectors,
+      queryVector: axis(2)
+    })
+    const byPath = new Map(hits.map((hit) => [hit.path, hit]))
+    const found = byPath.get("areas/inbox/postgres-vacuum.html")
+    expect(found?.arms).toEqual(["recency", "vector"])
+    // Vector ranks: vacuum 1 (cosine 1); lag and retention tie at 0 and break on path.
+    expect(found?.score).toBeCloseTo(rrf(RECENCY_WEIGHT, 1) + rrf(VECTOR_WEIGHT, 1), 12)
+    expect(byPath.get("areas/inbox/kafka-lag.html")?.arms).toEqual(["lexical", "recency", "vector"])
+    expect(byPath.get("areas/inbox/kafka-lag.html")?.score).toBeCloseTo(
+      rrf(LEXICAL_WEIGHT, lexicalRankOf(hits, "areas/inbox/kafka-lag.html")) +
+        rrf(RECENCY_WEIGHT, 2) +
+        rrf(VECTOR_WEIGHT, 2),
+      12
+    )
+    expect(VECTOR_WEIGHT).toBe(1.0)
+  })
+
+  it("a record whose content hash has no vector is not in the vector arm", async () => {
+    const { view, records } = await fixture()
+    const lag = records[0]
+    if (lag === undefined) throw new Error()
+    const hits = searchHead(view, {
+      query: "nothing",
+      vectors: new Map([[lag.contentHash, axis(0)]]),
+      queryVector: axis(0)
+    })
+    const withVector = hits.filter((hit) => hit.arms.includes("vector")).map((hit) => hit.path)
+    expect(withVector).toEqual(["areas/inbox/kafka-lag.html"])
+  })
+
+  it("the vector arm ranks active records only, even when an archived one matches the query exactly", async () => {
+    const { view, records } = await fixture()
+    const archived = records[3]
+    const lag = records[0]
+    if (archived === undefined || lag === undefined) throw new Error()
+    const hits = searchHead(view, {
+      query: "nothing",
+      vectors: new Map([
+        [archived.contentHash, axis(3)],
+        [lag.contentHash, axis(0)]
+      ]),
+      queryVector: axis(3)
+    })
+    expect(hits.map((hit) => hit.path)).not.toContain(archived.path)
+    expect(hits.find((hit) => hit.path === lag.path)?.arms).toEqual(["recency", "vector"])
+  })
+
+  it("the vector arm keeps its best 40", async () => {
+    // 45 records, each vector a step further from the query's direction, so the cosine order is
+    // the index order and records 41 to 45 fall past the cap.
+    const count = VECTOR_ARM_LIMIT + 5
+    const records = await Promise.all(
+      Array.from({ length: count }, (_, index) =>
+        memory(`areas/inbox/r-${String(index).padStart(2, "0")}.html`, {
+          title: `Record ${index}`,
+          claim: `Widget ${index} is blue.`,
+          at: "2026-01-01T00:00:00Z"
+        })
+      )
+    )
+    const vectors = new Map(
+      records.map((record, index) => {
+        const angle = (index / count) * (Math.PI / 2)
+        return [record.contentHash, Float32Array.from([Math.cos(angle), Math.sin(angle)])]
+      })
+    )
+    const hits = searchHead(mapView(records), {
+      query: "zzz",
+      limit: count,
+      vectors,
+      queryVector: Float32Array.from([1, 0])
+    })
+    const inArm = hits.filter((hit) => hit.arms.includes("vector")).map((hit) => hit.path)
+    expect(inArm).toHaveLength(VECTOR_ARM_LIMIT)
+    expect(new Set(inArm)).toEqual(
+      new Set(records.slice(0, VECTOR_ARM_LIMIT).map((record) => record.path))
+    )
+    expect(VECTOR_ARM_LIMIT).toBe(40)
+  })
+})

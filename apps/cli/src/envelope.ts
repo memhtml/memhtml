@@ -75,7 +75,9 @@ export const RESPONSE_TYPES = [
   "curate.run",
   // The collapse (`docs/v2-poc.md`, "Collapse"): a planned set of archive and fold clusters landed
   // on one curator branch.
-  "curate.collapse"
+  "curate.collapse",
+  // The head's vector cache (`docs/v2-poc.md`, "Vector arm"): `head embed` filling it.
+  "head.embedded"
 ] as const
 
 export type ResponseType = (typeof RESPONSE_TYPES)[number]

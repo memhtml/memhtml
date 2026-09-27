@@ -130,7 +130,9 @@ export const makeCli = async (options: CliOptions = {}): Promise<Cli> => {
   const embedder = options.embedder ?? fakeEmbedder()
   const layer = layerAppWith({ repo: root, embedder })
 
-  const invoke = (argv: ReadonlyArray<string>) => run([...argv, "--repo", root], layer)
+  // The embedder reaches the v2 arms too, which never build `layer` (`run`'s last parameter).
+  const invoke = (argv: ReadonlyArray<string>) =>
+    run([...argv, "--repo", root], layer, undefined, undefined, embedder)
 
   const cli: Cli = {
     root,

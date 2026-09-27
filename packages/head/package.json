@@ -32,6 +32,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
     "@effect/vitest": "catalog:",
+    "@memhtml/eval": "workspace:*",
     "@types/node": "26.6.2",
     "fast-check": "catalog:",
     "typescript": "7.0.2",
