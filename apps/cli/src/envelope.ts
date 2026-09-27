@@ -69,6 +69,7 @@ export const RESPONSE_TYPES = [
   "head.status",
   "head.search",
   "head.snapshot",
+  "head.served",
   // The curation door (`docs/v2-poc.md`, "Curation door"): a curator branch landed on its target.
   "curate.merged",
   // The curator itself (`docs/v2-poc.md`, "Curator"): one model-driven run over a curator session.
@@ -132,7 +133,10 @@ export const ERROR_CODES = [
   // than overwrite a change a human made.
   "ERR_UNKNOWN_HOST",
   "ERR_UNKNOWN_HOOK_EVENT",
-  "ERR_INTEGRATION_MODIFIED"
+  "ERR_INTEGRATION_MODIFIED",
+  // `head serve` found a live server on the store's socket. Exit 1: the call parsed, and the store
+  // already has its server; stop that one (the message names its pid) or use it.
+  "ERR_HEAD_SERVER_RUNNING"
 ] as const
 
 export type ErrorCode = (typeof ERROR_CODES)[number]

@@ -33,6 +33,7 @@ import {
   snapshotAfterCommit,
   writeHeadSnapshot
 } from "./head-cache.js"
+import { askHead } from "./head-client.js"
 import {
   type GateFailure,
   type GateOutcome,
@@ -40,6 +41,14 @@ import {
   gateReportOf,
   headGate
 } from "./head-gate.js"
+import {
+  type HeadServerStatus,
+  HeadServerStatus as HeadServerStatusSchema,
+  NeighborsAnswer,
+  SearchAnswer,
+  type SearchRequest,
+  type ServedHead
+} from "./head-protocol.js"
 import { toWriteInput, type WriteParams } from "./operations.js"
 import {
   commitSubjectOf,
@@ -64,12 +73,16 @@ export type { GateReport } from "./head-gate.js"
  * agent reaches for while `memhtml serve mcp` holds that database. `DispatchServices` is the app
  * layer's service set, so nothing here can be reached through `dispatch`.
  *
- * ## The head loads per invocation
+ * ## Where the head comes from
  *
- * A long-lived head process is out of the proof of concept's scope. Each call builds the version it
- * needs: from `.memhtml/snapshots/<sha>.arrow` when a snapshot exists for that commit, else from the
- * newest snapshot of an ancestor commit advanced over the changed paths, else from git, and every
- * payload that loaded one says which ({@link HeadStats}). Every commit that moves a ref writes the
+ * `head status`, `head search`, and `session put` ask the head server first (`head-server.ts`, over
+ * `.memhtml/head.sock`), which holds the version loaded and follows its ref, and load locally when no
+ * server answers or `--no-server` is set. Every other arm, and every local fallback, builds the
+ * version it needs: from `.memhtml/snapshots/<sha>.arrow` when a snapshot exists for that commit,
+ * else from the newest snapshot of an ancestor commit advanced over the changed paths, else from git,
+ * and every payload that reports a head says which ({@link HeadStats}, `source: "server"` for the
+ * first). `session commit` and the curate arms always load locally: they must judge the exact version
+ * they commit against, and a commit's cost is not a lookup's. Every commit that moves a ref writes the
  * snapshot for the new sha (`head-cache.ts`), so the next call hits the cache. A session command loads the
  * head at the SESSION's base sha, not at the ref's tip, because a session sees exactly one version
  * plus its own deltas: `session commit` validates against that base and reports `rebase-needed`
@@ -77,6 +90,9 @@ export type { GateReport } from "./head-gate.js"
  * tip and moves the base. Dedup and frame-key checks are judged at the base, so a commit lands only
  * when the ref still IS that base; the rebase-and-retry loop is what makes them fresh.
  */
+
+/** Where a payload's head came from: one of the local load paths, or the head server. */
+export type HeadStatsSource = HeadSource | "server"
 
 /** What every head-loading payload reports about the version it built. */
 export interface HeadStats {
@@ -88,9 +104,13 @@ export interface HeadStats {
    * left out.
    */
   readonly skipped: number | null
+  /** The load's wall time, or under `server` the round trip to the server. */
   readonly loadMs: number
-  /** `snapshot` (this sha's own file), `snapshot+advance` (an ancestor's, advanced), or `git`. */
-  readonly source: HeadSource
+  /**
+   * `snapshot` (this sha's own file), `snapshot+advance` (an ancestor's, advanced), `git`, or
+   * `server` (the head server answered; nothing was loaded in this process).
+   */
+  readonly source: HeadStatsSource
   /** The snapshot file the head was read from (its own or the ancestor's), or `null` from git. */
   readonly snapshotPath: string | null
   /** Under `snapshot+advance`, the commit whose snapshot was advanced; otherwise `null`. */
@@ -102,6 +122,8 @@ export interface HeadStats {
 /** A loaded version plus what loading it cost. */
 export interface LoadedHead extends HeadStats {
   readonly view: HeadVersion
+  /** Always one of the local paths: a loaded head was loaded here. */
+  readonly source: HeadSource
 }
 
 /** The `HeadStats` half of a loaded head, for a payload. */
@@ -114,6 +136,21 @@ export const headStats = (loaded: LoadedHead): HeadStats => ({
   snapshotPath: loaded.snapshotPath,
   ancestorSha: loaded.ancestorSha,
   reparsed: loaded.reparsed
+})
+
+/**
+ * The `HeadStats` of an answer the head server gave: the version it answered over, and the round
+ * trip as `loadMs`. The three snapshot fields are `null` because nothing was loaded here.
+ */
+export const servedStats = (head: ServedHead, ms: number): HeadStats => ({
+  sha: head.sha,
+  records: head.records,
+  skipped: head.skipped,
+  loadMs: ms,
+  source: "server",
+  snapshotPath: null,
+  ancestorSha: null,
+  reparsed: null
 })
 
 /**
@@ -299,30 +336,38 @@ export const sessionStart = (input: {
     }
   })
 
+/** What `session put` computes over a session's view before it appends. */
+export interface PreparedPuts {
+  /** The new ops, rendered the way the store would write them and placed at the paths it would choose. */
+  readonly puts: ReadonlyArray<Extract<OverlayOp, { readonly kind: "put" }>>
+  /** Per put, the records the view already holds nearest it. */
+  readonly neighbors: ReadonlyArray<{
+    readonly path: string
+    readonly hits: ReadonlyArray<SearchHit>
+  }>
+  /** Every violation over the session's ops plus the puts, judged against the base. */
+  readonly violations: ReadonlyArray<Violation>
+}
+
 /**
- * `session put`: render each `write` op the way the store would and append the puts to the log.
- *
- * Refused as a whole, appending nothing, when a new put carries a violation no rebase can cure
- * ({@link BLOCKING_VIOLATIONS}): a malformed file or a reserved path would make every later commit
- * of this session `refused`, and the log has no removal op. `duplicate` and `claim-edit` are
- * reported, not refused, because they are judged against the base the session currently sees and a
- * rebase can change the answer either way.
+ * The head-dependent half of `session put`: place and render each write over the session's view
+ * (`base` plus `sessionOps`), find each one's nearest records, and judge the whole log against
+ * `base` the way `commitSession` will. Pure over its inputs, so the head server computes the same
+ * answer from the version at the session's base as a local load does (`head-server.ts`).
  */
-export const sessionPut = (input: {
-  readonly root: string
-  readonly id: string
-  readonly ops: ReadonlyArray<WriteParams>
-}) =>
+export const preparePuts = (input: {
+  readonly base: HeadView
+  readonly sessionOps: ReadonlyArray<OverlayOp>
+  readonly writes: ReadonlyArray<WriteParams>
+  readonly at: string
+}): Effect.Effect<PreparedPuts, InvalidMemory | StorageFailure> =>
   Effect.gen(function* () {
-    const session = yield* resumeSession({ root: input.root, id: input.id })
-    const head = yield* loadHeadAt(input.root, session.baseSha)
-    const view = yield* withOverlay(head.view, session.ops)
-    const at = isoSecond(yield* Effect.clockWith((clock) => clock.currentTimeMillis))
+    const view = yield* withOverlay(input.base, input.sessionOps)
     const claimed = new Set<string>()
-    const puts: Array<OverlayOp> = []
+    const puts: Array<Extract<OverlayOp, { readonly kind: "put" }>> = []
     const neighbors: Array<{ readonly path: string; readonly hits: ReadonlyArray<SearchHit> }> = []
-    for (const params of input.ops) {
-      const write = yield* toWriteInput(params, at)
+    for (const params of input.writes) {
+      const write = yield* toWriteInput(params, input.at)
       const path = yield* putPathFor(view, write, claimed)
       claimed.add(path)
       puts.push({ kind: "put", path, html: renderTemplate(write) })
@@ -334,7 +379,58 @@ export const sessionPut = (input: {
       })
     }
     // Judged the way `commitSession` will judge them: every op of the session against the base.
-    const violations = validateOps(head.view, [...session.ops, ...puts])
+    const violations = validateOps(input.base, [...input.sessionOps, ...puts])
+    return { puts, neighbors, violations }
+  })
+
+/**
+ * `session put`: render each `write` op the way the store would and append the puts to the log.
+ *
+ * The head server computes the puts, their neighbors, and the violations over the version at the
+ * session's base when one answers ({@link preparePuts} on its side); otherwise the base is loaded
+ * here. Either way the append happens in this process, under the session's lock.
+ *
+ * Refused as a whole, appending nothing, when a new put carries a violation no rebase can cure
+ * ({@link BLOCKING_VIOLATIONS}): a malformed file or a reserved path would make every later commit
+ * of this session `refused`, and the log has no removal op. `duplicate` and `claim-edit` are
+ * reported, not refused, because they are judged against the base the session currently sees and a
+ * rebase can change the answer either way.
+ */
+export const sessionPut = (input: {
+  readonly root: string
+  readonly id: string
+  readonly ops: ReadonlyArray<WriteParams>
+  readonly server?: boolean | undefined
+}) =>
+  Effect.gen(function* () {
+    const session = yield* resumeSession({ root: input.root, id: input.id })
+    const at = isoSecond(yield* Effect.clockWith((clock) => clock.currentTimeMillis))
+    const answered =
+      input.server === false
+        ? null
+        : yield* askHead({
+            root: input.root,
+            route: "neighbors",
+            schema: NeighborsAnswer,
+            body: { sha: session.baseSha, ops: session.ops, writes: input.ops, at }
+          })
+    let prepared: PreparedPuts
+    let head: HeadStats
+    if (answered !== null) {
+      prepared = answered.data
+      head = servedStats(answered.data.head, answered.ms)
+    } else {
+      const loaded = yield* loadHeadAt(input.root, session.baseSha)
+      prepared = yield* preparePuts({
+        base: loaded.view,
+        sessionOps: session.ops,
+        writes: input.ops,
+        at
+      })
+      head = headStats(loaded)
+    }
+    const { puts, neighbors, violations } = prepared
+    const claimed = new Set(puts.map((op) => op.path))
     const blocking = violations.filter(
       (violation) =>
         BLOCKING_VIOLATIONS.has(violation.kind) &&
@@ -355,7 +451,8 @@ export const sessionPut = (input: {
       ops: next.ops.length,
       paths: puts.map((op) => op.path),
       neighbors,
-      violations
+      violations,
+      head
     }
   })
 
@@ -491,26 +588,71 @@ export const sessionStatus = (input: { readonly root: string; readonly id: strin
     }
   })
 
-/** `head status`: build the version at `HEAD` and report what that cost and where it came from. */
-export const headStatus = (input: { readonly root: string }) =>
+/**
+ * `head status`: the head server's status when one answers (its version, ref, load, and advances
+ * under `server`), else build the version at `HEAD` here and report what that cost and where it came
+ * from, with `server: null`.
+ */
+export const headStatus = (input: {
+  readonly root: string
+  readonly server?: boolean | undefined
+}): Effect.Effect<
+  HeadStats & { readonly server: HeadServerStatus | null },
+  GitFailure | InvalidMemory | StorageFailure
+> =>
   Effect.gen(function* () {
+    if (input.server !== false) {
+      const answered = yield* askHead({
+        root: input.root,
+        route: "status",
+        schema: HeadServerStatusSchema
+      })
+      if (answered !== null) {
+        const status = answered.data
+        return {
+          ...servedStats(
+            { sha: status.sha, ref: status.ref, records: status.records, skipped: status.skipped },
+            answered.ms
+          ),
+          server: status
+        }
+      }
+    }
     const sha = yield* headSha(input.root)
-    return headStats(yield* loadHeadAt(input.root, sha))
+    return { ...headStats(yield* loadHeadAt(input.root, sha)), server: null }
   })
 
-/** `head search`: two-arm RRF over the version at `HEAD`. */
+/**
+ * `head search`: two-arm RRF over the head server's version of its ref when one answers, else over
+ * the version at `HEAD` loaded here. The search input goes to the server as one object, the same
+ * object `searchHead` takes, so an option it gains later travels without a protocol change.
+ */
 export const headSearch = (input: {
   readonly root: string
   readonly query: string
   readonly limit?: number | undefined
+  readonly server?: boolean | undefined
 }) =>
   Effect.gen(function* () {
-    const sha = yield* headSha(input.root)
-    const head = yield* loadHeadAt(input.root, sha)
-    const hits: ReadonlyArray<SearchHit> = searchHead(head.view, {
+    const search: SearchRequest = {
       query: input.query,
       ...(input.limit === undefined ? {} : { limit: input.limit })
-    })
+    }
+    if (input.server !== false) {
+      const answered = yield* askHead({
+        root: input.root,
+        route: "search",
+        schema: SearchAnswer,
+        body: search
+      })
+      if (answered !== null) {
+        const hits: ReadonlyArray<SearchHit> = answered.data.hits
+        return { query: input.query, hits, head: servedStats(answered.data.head, answered.ms) }
+      }
+    }
+    const sha = yield* headSha(input.root)
+    const head = yield* loadHeadAt(input.root, sha)
+    const hits: ReadonlyArray<SearchHit> = searchHead(head.view, search)
     return { query: input.query, hits, head: headStats(head) }
   })
 
@@ -911,6 +1053,8 @@ export interface V2Input {
   readonly target: string
   readonly into?: string | undefined
   readonly skipGate: boolean
+  /** False under `--no-server`: `head status`, `head search`, and `session put` load locally. */
+  readonly server: boolean
 }
 
 /** One arm per command, each returning its response type beside its payload. */

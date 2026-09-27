@@ -37,6 +37,7 @@ import {
 } from "./envelope.js"
 import { failureFor } from "./errors.js"
 import { DEFAULT_TIMEOUT_MS, execCommand, MAX_TIMEOUT_MS, readScript } from "./exec.js"
+import { serveHead } from "./head-server.js"
 import { helpData, renderCommandHelp } from "./help.js"
 import {
   HOOK_BUDGET_DEFAULT,
@@ -912,6 +913,32 @@ const headSnapshotFlags = (parsed: Parsed): Failure | undefined => {
 }
 
 /**
+ * `memhtml head serve`: `--poll-ms` is a non-negative integer (0 turns the poll off, which is a
+ * choice, and a negative period is none), and a `--ref` on the line is not blank, which would follow
+ * `refs/heads/`, a ref no branch can be.
+ */
+const headServeFlags = (parsed: Parsed): Failure | undefined => {
+  if (parsed.command !== "head serve") return undefined
+  if (str(parsed, "poll-ms") !== undefined) {
+    const poll = int(parsed, "poll-ms")
+    if (poll === undefined || poll < 0) {
+      return fail(
+        "ERR_INVALID_FLAG",
+        "--poll-ms must be a non-negative integer of milliseconds; 0 leaves advancing to requests alone",
+        ["memhtml head serve --poll-ms 1000", "memhtml head serve --poll-ms 0"]
+      )
+    }
+  }
+  const ref = str(parsed, "ref")
+  if (ref !== undefined && ref.trim() === "") {
+    return fail("ERR_INVALID_FLAG", "--ref names the ref to follow and cannot be blank", [
+      "memhtml head serve --ref main"
+    ])
+  }
+  return undefined
+}
+
+/**
  * Exactly one of `--claim` / `--article-html`.
  *
  * Checked here rather than in the dispatch arm, because the exit code is the contract. `validate`'s
@@ -1262,6 +1289,9 @@ const validateAgainst = (parsed: Parsed, spec: CommandSpec): Failure | undefined
 
   const snapshot = headSnapshotFlags(parsed)
   if (snapshot !== undefined) return snapshot
+
+  const serve = headServeFlags(parsed)
+  if (serve !== undefined) return serve
 
   const sessionId = sessionIdFlag(parsed)
   if (sessionId !== undefined) return sessionId
@@ -1902,6 +1932,16 @@ export const run = async (
       Effect.gen(function* () {
         const configured = yield* MemhtmlRoot
         const root = override !== undefined && override.trim() !== "" ? override.trim() : configured
+        // Long-running: the envelope is written when a signal stops the server, and the listening
+        // line and every advance go to stderr while it serves.
+        if (parsed.command === "head serve") {
+          const data = yield* serveHead({
+            root,
+            ref: str(parsed, "ref"),
+            pollMs: int(parsed, "poll-ms")
+          })
+          return ["head.served", data] as const
+        }
         if (parsed.command === "curate run") {
           const data = yield* curateRun({
             root,
@@ -1953,7 +1993,8 @@ export const run = async (
           ops: sessionOps,
           target: parsed.positional[0] ?? "",
           into: str(parsed, "into"),
-          skipGate: bool(parsed, "skip-gate", false)
+          skipGate: bool(parsed, "skip-gate", false),
+          server: bool(parsed, "server", true)
         })
       }).pipe(
         Effect.map(([type, data]) => emit(succeed(type, data), EXIT_OK)),
