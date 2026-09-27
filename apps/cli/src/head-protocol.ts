@@ -151,6 +151,25 @@ export const VectorUseSchema = Schema.Struct({
   embedMs: Schema.NullOr(Schema.Finite)
 })
 
+/**
+ * The vector cache a server holds, for `status`: its entries, the share of the held version's
+ * active records they cover, what reading it took, and the file's mtime; or, with `held: false`,
+ * why there is none (`embedder-off`, `no-cache`, `cache-unreadable` with the reader's refusal in
+ * `detail`). `loads` counts reads of the file: one at start, one per change of its mtime.
+ */
+export const VectorCacheStatus = Schema.Struct({
+  held: Schema.Boolean,
+  reason: Schema.NullOr(VectorSkipReasonSchema),
+  detail: Schema.NullOr(Schema.String),
+  path: Schema.String,
+  entries: Schema.NullOr(Schema.Finite),
+  coverage: Schema.NullOr(Schema.Finite),
+  loadMs: Schema.NullOr(Schema.Finite),
+  mtime: Schema.NullOr(Schema.String),
+  loads: Schema.Finite
+})
+export type VectorCacheStatus = typeof VectorCacheStatus.Type
+
 /** `GET /v1/status`. */
 export const HeadServerStatus = Schema.Struct({
   protocol: Schema.Literal(HEAD_PROTOCOL),
@@ -175,7 +194,8 @@ export const HeadServerStatus = Schema.Struct({
   uptimeMs: Schema.Finite,
   /** The background poll's period; 0 when requests alone advance the version. */
   pollMs: Schema.Finite,
-  startedAt: Schema.String
+  startedAt: Schema.String,
+  vectors: VectorCacheStatus
 })
 export type HeadServerStatus = typeof HeadServerStatus.Type
 

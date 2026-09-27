@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { lstat, mkdir, stat, writeFile } from "node:fs/promises"
+import { lstat, mkdir, rm, stat, writeFile } from "node:fs/promises"
 import { request } from "node:http"
 import { dirname, join } from "node:path"
 
@@ -20,7 +20,7 @@ import {
   SearchAnswer
 } from "../src/head-protocol.js"
 import { type HeadServer, startHeadServer } from "../src/head-server.js"
-import { loadForSearch } from "../src/head-vectors.js"
+import { headVectorsPath, loadForSearch } from "../src/head-vectors.js"
 import { parseArgv, run, validate } from "../src/run.js"
 import { loadHeadAt, preparePuts } from "../src/v2.js"
 import { fakeEmbedder, noEmbedder } from "./harness.js"
@@ -51,9 +51,16 @@ import { fakeEmbedder, noEmbedder } from "./harness.js"
  *   it).
  * - `head-client.ts` `askHead`: `Effect.catchCause` rethrows instead of answering null -> "falls back
  *   to the local load when no server answers" (the command fails instead of loading).
+ * - `head-server.ts` `heldVectors`: return `vectors.read` without the `stat` -> "picks up a cache
+ *   written while it runs, with no restart" (the search still reports `no-cache`), and every case
+ *   that embeds before it serves.
  * - `head-protocol.ts` `OverlayOpSchema`: drop the `label`/`unlabel` member -> "computes session
  *   put's neighbors at the session's base" (the answer carrying the label fails to decode, so the
  *   client reads it as no server).
+ * - `head-server.ts` `heldVectors`: drop the stamp re-check inside `vectorLock` -> "reads a changed
+ *   cache once for every request that saw the change" (`loads` is 8).
+ * - `head-server.ts` `heldVectors`: drop the `!embedderOn` early return -> "with no embedder never
+ *   reads the cache, and says embedder-off" (the status holds the cache).
  */
 
 const run_ = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
@@ -429,6 +436,141 @@ describe("the head server", () => {
     })
     const status = await cli(repo.root, ["session", "status", "--id", "s1"])
     expect(dataOf(status.body)).toMatchObject({ puts: 1, labels: 1 })
+  })
+
+  it("searches with the vector arm over the cache it holds, the same hits as the local path", async () => {
+    const { repo, sha } = await corpus()
+    const embedder = fakeEmbedder()
+    expect((await cli(repo.root, ["head", "embed"], embedder)).exitCode).toBe(0)
+    await serve(repo.root, 0, embedder)
+    const served = await cli(repo.root, ["head", "search", "orchard facts"], embedder)
+    const local = await cli(repo.root, ["head", "search", "orchard facts", "--no-server"], embedder)
+    expect(headOf(served.body)).toMatchObject({ sha, source: "server" })
+    expect(headOf(local.body).source).toBe("git")
+    expect(dataOf(served.body).vector).toMatchObject({
+      used: true,
+      reason: null,
+      cached: WORDS.length,
+      coverage: 1,
+      loadMs: 0
+    })
+    expect(vectorFacts(dataOf(served.body).vector)).toEqual(vectorFacts(dataOf(local.body).vector))
+    expect(dataOf(served.body).hits).toEqual(dataOf(local.body).hits)
+    const hits = dataOf(served.body).hits as ReadonlyArray<{ readonly arms: ReadonlyArray<string> }>
+    expect(hits[0]?.arms).toContain("vector")
+    // Same fields on both paths; only `head` tells them apart.
+    expect(Object.keys(dataOf(served.body)).sort()).toEqual(Object.keys(dataOf(local.body)).sort())
+  })
+
+  it("picks up a cache written while it runs, with no restart", async () => {
+    const { repo } = await corpus()
+    const embedder = fakeEmbedder()
+    const server = await serve(repo.root, 0, embedder)
+    const search = () =>
+      run_(
+        askHead({
+          root: repo.root,
+          route: "search",
+          schema: SearchAnswer,
+          body: { query: "orchard facts" }
+        })
+      )
+    expect((await search())?.data.vector).toMatchObject({ used: false, reason: "no-cache" })
+    expect(server.stats().vectors).toMatchObject({ held: false, reason: "no-cache", loads: 0 })
+
+    expect((await cli(repo.root, ["head", "embed"], embedder)).exitCode).toBe(0)
+    const after = await search()
+    expect(after?.data.vector).toMatchObject({ used: true, cached: WORDS.length, coverage: 1 })
+    expect(after?.data.hits[0]?.arms).toContain("vector")
+    const status = await run_(
+      askHead({ root: repo.root, route: "status", schema: HeadServerStatus })
+    )
+    expect(status?.data.vectors).toMatchObject({
+      held: true,
+      reason: null,
+      path: headVectorsPath(repo.root),
+      entries: WORDS.length,
+      coverage: 1,
+      mtime: (await stat(headVectorsPath(repo.root))).mtime.toISOString(),
+      loads: 1
+    })
+
+    // A record lands and a second embed rewrites the file: the server follows both.
+    await commit(repo, [memory("quarry", "Quarry stone is cut in winter.")])
+    expect((await cli(repo.root, ["head", "embed"], embedder)).exitCode).toBe(0)
+    const status2 = await run_(
+      askHead({ root: repo.root, route: "status", schema: HeadServerStatus })
+    )
+    expect(status2?.data.vectors).toMatchObject({
+      entries: WORDS.length + 1,
+      coverage: 1,
+      loads: 2
+    })
+
+    // A file removed turns the arm off again, with the reason.
+    await rm(headVectorsPath(repo.root))
+    expect((await search())?.data.vector).toMatchObject({ used: false, reason: "no-cache" })
+  })
+
+  it("reads a changed cache once for every request that saw the change", async () => {
+    const { repo } = await corpus()
+    const embedder = fakeEmbedder()
+    const server = await serve(repo.root, 0, embedder)
+    expect((await cli(repo.root, ["head", "embed"], embedder)).exitCode).toBe(0)
+    const answers = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        run_(
+          askHead({
+            root: repo.root,
+            route: "search",
+            schema: SearchAnswer,
+            body: { query: "orchard facts" }
+          })
+        )
+      )
+    )
+    for (const answer of answers) expect(answer?.data.vector.used).toBe(true)
+    expect(server.stats().vectors.loads).toBe(1)
+  })
+
+  it("with no embedder never reads the cache, and says embedder-off", async () => {
+    const { repo } = await corpus()
+    expect((await cli(repo.root, ["head", "embed"], fakeEmbedder())).exitCode).toBe(0)
+    const server = await serve(repo.root, 0, noEmbedder())
+    const searched = await cli(repo.root, ["head", "search", "orchard facts"])
+    expect(dataOf(searched.body).vector).toMatchObject({ used: false, reason: "embedder-off" })
+    const status = await cli(repo.root, ["head", "status"])
+    expect((dataOf(status.body).server as { readonly vectors: unknown }).vectors).toMatchObject({
+      held: false,
+      reason: "embedder-off",
+      entries: null,
+      loads: 0
+    })
+    expect(server.stats().vectors.loads).toBe(0)
+  })
+
+  it("reports a cache it cannot read and keeps answering on two arms", async () => {
+    const { repo } = await corpus()
+    const path = headVectorsPath(repo.root)
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, "not an arrow file")
+    const server = await serve(repo.root, 0, fakeEmbedder())
+    expect(server.stats().vectors).toMatchObject({
+      held: false,
+      reason: "cache-unreadable",
+      detail: "vectors.read.decode",
+      loads: 1
+    })
+    const searched = await run_(
+      askHead({
+        root: repo.root,
+        route: "search",
+        schema: SearchAnswer,
+        body: { query: "orchard" }
+      })
+    )
+    expect(searched?.data.vector).toMatchObject({ used: false, reason: "cache-unreadable" })
+    expect(searched?.data.hits.length).toBeGreaterThan(0)
   })
 
   it("replaces a socket left by a killed server", async () => {

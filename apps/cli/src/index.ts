@@ -187,6 +187,7 @@ export {
   SearchRequest,
   ServedHead,
   SOCKET_PATH_MAX,
+  VectorCacheStatus,
   VectorUseSchema
 } from "./head-protocol.js"
 export {

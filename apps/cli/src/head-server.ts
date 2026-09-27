@@ -1,4 +1,4 @@
-import { access, chmod, lstat, mkdir, rm } from "node:fs/promises"
+import { access, chmod, lstat, mkdir, rm, stat } from "node:fs/promises"
 import { createServer } from "node:http"
 import { createConnection } from "node:net"
 import { dirname } from "node:path"
@@ -28,9 +28,17 @@ import {
   ReadRequest,
   SearchRequest,
   type ServedHead,
-  SOCKET_PATH_MAX
+  SOCKET_PATH_MAX,
+  type VectorCacheStatus
 } from "./head-protocol.js"
-import { loadForSearch, vectorsForQuery } from "./head-vectors.js"
+import {
+  type CacheRead,
+  coverageOf,
+  headVectorsPath,
+  loadForSearch,
+  skippedUse,
+  vectorsForQuery
+} from "./head-vectors.js"
 import { loadHeadAt, preparePuts, qualifyRef, revParse } from "./v2.js"
 
 /**
@@ -56,11 +64,16 @@ import { loadHeadAt, preparePuts, qualifyRef, revParse } from "./v2.js"
  * `snapshotAfterCommit` does it, and skipped when the file already exists (a `session commit` writes
  * its own). A failed write is a log line.
  *
- * ## The vector arm
+ * ## The vector cache it holds
  *
- * With an embedder bound (the one `run()` resolves; `MEMHTML_EMBED=off` binds none), `search` and
- * `neighbors` run the vector arm exactly as `head search` and `session put` do, over the cache file
- * `head embed` writes, so an answer's `vector` field reads the same on both paths.
+ * With an embedder bound (the one `run()` resolves; `MEMHTML_EMBED=off` binds none), the server
+ * reads the vector cache for the configured space once at start and holds it, and `search` and
+ * `neighbors` run the vector arm over it exactly as `head search` and `session put` do over the
+ * file, so an answer's `vector` field reads the same on both paths. Before every answer that uses
+ * it, and after every poll, the file is `stat`ed; a changed mtime, size, or inode (a `head embed`
+ * renames a new file into place) is read again under its own permit, so an embed run while the
+ * server is up takes effect on the next request with no restart. A file that vanished, or that the
+ * reader refuses, leaves the arm off with that reason until the file changes again.
  *
  * ## The socket
  *
@@ -104,6 +117,29 @@ interface State {
   advances: number
   requests: number
 }
+
+/**
+ * The vector cache as the server holds it: the read it last made, and the identity of the file that
+ * read saw (`null` for no file), which decides whether the next `stat` calls for another read.
+ */
+interface HeldVectors {
+  read: CacheRead
+  stamp: string | null
+  mtime: string | null
+  loads: number
+}
+
+/** What identifies one version of the cache file: a rename into place changes the inode, a rewrite the mtime. */
+const stampOf = (path: string): Effect.Effect<{ stamp: string; mtime: string } | null> =>
+  Effect.promise(() =>
+    stat(path).then(
+      (info) => ({
+        stamp: `${String(info.ino)}:${String(info.size)}:${String(info.mtimeMs)}`,
+        mtime: info.mtime.toISOString()
+      }),
+      () => null
+    )
+  )
 
 /** A version with its `parent` cut, so the server holds one version rather than a chain. */
 const detached = (version: HeadVersion): HeadVersion =>
@@ -232,6 +268,7 @@ export const startHeadServer = (
     const socket = headSocketPath(root)
     const pollMs = input.pollMs ?? DEFAULT_POLL_MS
     const embedder: EmbedderShape = input.embedder ?? { document: undefined, query: undefined }
+    const embedderOn = embedder.document !== undefined || embedder.query !== undefined
     const ref = yield* followedRef(root, input.ref)
     const git = makeGit(root)
 
@@ -258,6 +295,39 @@ export const startHeadServer = (
       records: version.size,
       skipped: skippedOf(version)
     })
+    const vectorsPath = headVectorsPath(root)
+    const vectors: HeldVectors = {
+      read: { ok: false, use: skippedUse(embedderOn ? "no-cache" : "embedder-off") },
+      stamp: null,
+      mtime: null,
+      loads: 0
+    }
+    const vectorStatus = (): VectorCacheStatus => {
+      const read = vectors.read
+      return read.ok
+        ? {
+            held: true,
+            reason: null,
+            detail: null,
+            path: vectorsPath,
+            entries: read.cache.vectors.size,
+            coverage: coverageOf(state.version, read.cache.vectors),
+            loadMs: read.loadMs,
+            mtime: vectors.mtime,
+            loads: vectors.loads
+          }
+        : {
+            held: false,
+            reason: read.use.reason,
+            detail: read.use.detail,
+            path: vectorsPath,
+            entries: null,
+            coverage: null,
+            loadMs: read.use.loadMs,
+            mtime: vectors.mtime,
+            loads: vectors.loads
+          }
+    }
     const stats = (): HeadServerStatus => ({
       protocol: HEAD_PROTOCOL,
       pid: process.pid,
@@ -274,12 +344,52 @@ export const startHeadServer = (
       requests: state.requests,
       uptimeMs: Date.now() - startedAt,
       pollMs,
-      startedAt: new Date(startedAt).toISOString()
+      startedAt: new Date(startedAt).toISOString(),
+      vectors: vectorStatus()
     })
 
     const scope = yield* Effect.scope
     const advanceLock = yield* Semaphore.make(1)
     const snapshotLock = yield* Semaphore.make(1)
+    const vectorLock = yield* Semaphore.make(1)
+
+    /**
+     * The held cache, read again first when the file changed since the last read. Holding the permit
+     * the file is `stat`ed again, so requests that saw one change read it once. With no embedder the
+     * file is never read: neither arm would use it. Never fails; a refusal is the arm's reason.
+     */
+    const heldVectors: Effect.Effect<CacheRead> = Effect.gen(function* () {
+      if (!embedderOn) return vectors.read
+      const seen = yield* stampOf(vectorsPath)
+      if ((seen?.stamp ?? null) === vectors.stamp) return vectors.read
+      return yield* vectorLock.withPermits(1)(
+        Effect.gen(function* () {
+          const now = yield* stampOf(vectorsPath)
+          if ((now?.stamp ?? null) === vectors.stamp) return vectors.read
+          const read = yield* loadForSearch(root)
+          vectors.read = read
+          vectors.stamp = now?.stamp ?? null
+          vectors.mtime = now?.mtime ?? null
+          vectors.loads += now === null ? 0 : 1
+          yield* Effect.logInfo(
+            read.ok
+              ? `head serve: vector cache loaded, ${String(read.cache.vectors.size)} vectors in ${String(read.loadMs)} ms`
+              : `head serve: vector arm off (${read.use.reason ?? "unknown"}${read.use.detail === null ? "" : `, ${read.use.detail}`})`
+          )
+          return read
+        })
+      )
+    })
+
+    /** The held cache as an answer hands it on: `loadMs` 0, because the answer read no file. */
+    const servedVectors: Effect.Effect<CacheRead> = heldVectors.pipe(
+      Effect.map(
+        (read): CacheRead =>
+          read.ok
+            ? { ...read, loadMs: 0 }
+            : { ok: false, use: { ...read.use, loadMs: read.use.loadMs === null ? null : 0 } }
+      )
+    )
 
     /** The advanced version's snapshot, in the background, unless one is already on disk. */
     const cache = (version: HeadVersion): Effect.Effect<void> =>
@@ -360,6 +470,7 @@ export const startHeadServer = (
       const route = `${request.method} ${path}`
       if (route === `GET ${HEAD_ROUTES.status}`) {
         yield* fresh
+        yield* heldVectors
         return json(stats())
       }
       if (route === `POST ${HEAD_ROUTES.search}`) {
@@ -368,7 +479,7 @@ export const startHeadServer = (
         })
         const version = yield* fresh
         const arm = yield* vectorsForQuery({
-          cache: loadForSearch(root),
+          cache: servedVectors,
           view: version,
           query: body.query,
           embedder
@@ -396,7 +507,7 @@ export const startHeadServer = (
           sessionOps: body.ops,
           lines: body.lines,
           at: body.at,
-          cache: loadForSearch(root),
+          cache: servedVectors,
           embedder
         })
         return json({ ...prepared, head: served(version) })
@@ -419,6 +530,8 @@ export const startHeadServer = (
     )
 
     yield* claimSocket(root, socket)
+    // Before the bind, so the first request finds the cache held rather than paying for its read.
+    yield* heldVectors
     yield* ensureExcludedQuietly(root, [HEAD_SOCKET])
     yield* attemptIo("head.serve.mkdir", () => mkdir(dirname(socket), { recursive: true }))
     // Registered before the listener, so it runs after the listener closes: the file goes last.
@@ -463,6 +576,7 @@ export const startHeadServer = (
 
     if (pollMs > 0) {
       yield* fresh.pipe(
+        Effect.andThen(heldVectors),
         Effect.catch((failure) =>
           Effect.logWarning(`head serve: poll of ${ref} failed (${failure._tag}); retrying`)
         ),
