@@ -10,7 +10,14 @@ import { layerTelemetry } from "@memhtml/telemetry"
 import { ConfigProvider, Effect, type Layer, Logger } from "effect"
 import { renderAgentsDoc, runAgentsDoc } from "./agents-doc.js"
 import { Git, Indexer, layerApp } from "./api-layer.js"
-import { applyPayload, applyText, decodeApply, readStdin } from "./apply.js"
+import {
+  applyPayload,
+  applyText,
+  decodeApply,
+  decodeSessionPut,
+  readStdin,
+  type SessionPutOp
+} from "./apply.js"
 import {
   buildManifest,
   COMMAND_NAMES,
@@ -1805,7 +1812,8 @@ export const run = async (
    *
    * The two inputs that are files are read HERE so their failures are exit 2: `session exec`'s script
    * takes the same three doors `exec` takes (`--script`, `--file`, stdin), and `session put`'s op
-   * stream is the same JSONL `apply` takes, decoded by the same `decodeApply` so a bad line 7 is
+   * stream is the JSONL `apply` takes plus `label` and `unlabel` lines, decoded by
+   * `decodeSessionPut` (whose write lines go through `apply`'s own decoder) so a bad line 7 is
    * refused naming line 7 with nothing appended.
    */
   if (isV2Command(parsed.command)) {
@@ -1832,13 +1840,13 @@ export const run = async (
       }
       script = read
     }
-    let sessionOps: ReadonlyArray<ops.WriteParams> = []
+    let sessionOps: ReadonlyArray<SessionPutOp> = []
     if (parsed.command === "session put") {
       const flagFile = str(parsed, "file")
       const file = parsed.positional[0] === "-" || flagFile === "-" ? undefined : flagFile
       const text = await applyText(file, stdin)
       if (typeof text !== "string") return emit(text, EXIT_USAGE)
-      const decoded = decodeApply(text)
+      const decoded = decodeSessionPut(text)
       if (!decoded.ok) return emit(decoded.failure, EXIT_USAGE)
       sessionOps = decoded.ops
     }

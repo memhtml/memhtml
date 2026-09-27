@@ -6,7 +6,7 @@ import { Git } from "@memhtml/cli"
 import { Effect } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { decodeApply } from "../src/apply.js"
+import { decodeApply, decodeSessionPut } from "../src/apply.js"
 import { GUIDE, GUIDE_OP_EXAMPLE, GUIDE_TOPICS } from "../src/commands.js"
 import { EXIT_OK, EXIT_USAGE } from "../src/envelope.js"
 import { claimFromProse, proseTail } from "../src/prose.js"
@@ -718,6 +718,89 @@ describe("the line decoder, as a pure function", () => {
     expect(both.ok).toBe(true)
     const neither = decodeApply(line({ title: "Neither" }))
     expect(neither.ok).toBe(true)
+  })
+})
+
+/**
+ * `memhtml session put` reads apply's write lines plus `label` and `unlabel` lines.
+ *
+ * Mutations, each run once with the change applied and the named case red:
+ * - `labelAt`: drop the unknown-field loop -> "refuses a label line with a missing, empty, or extra
+ *   field, naming the line and the door" (the extra field decodes).
+ * - `labelAt`: drop the `requiredString(record, "entity", at)` check -> the same case (a label with
+ *   no entity decodes).
+ * - `decodeSessionPut`: route every non-write op through `labelAt` with no vocabulary check -> "names
+ *   the three ops on an unknown one" (a `link` line decodes as an entity edit).
+ */
+describe("the session put decoder, as a pure function", () => {
+  const labelLine = (fields: Record<string, unknown>): string => `${JSON.stringify(fields)}\n`
+
+  it("decodes write, label, and unlabel lines in file order, writes exactly as apply does", () => {
+    const write = `${line({ title: "A fact", body: "The thing that happened.", entity: "system:x" })}\n`
+    const decoded = decodeSessionPut(
+      `${write}${labelLine({ op: "label", path: "areas/inbox/a.html", entity: "system:memhtml" })}\n${labelLine({ op: "unlabel", path: "areas/inbox/a.html", entity: "system:x" })}`
+    )
+    expect(decoded.ok).toBe(true)
+    if (!decoded.ok) return
+    const applied = decodeApply(write)
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) return
+    expect(decoded.ops).toEqual([
+      { op: "write", params: applied.ops[0] },
+      { op: "label", path: "areas/inbox/a.html", entity: "system:memhtml" },
+      { op: "unlabel", path: "areas/inbox/a.html", entity: "system:x" }
+    ])
+  })
+
+  it("leaves apply writes-only: a label line is refused there", () => {
+    const refused = decodeApply(
+      labelLine({ op: "label", path: "areas/inbox/a.html", entity: "system:memhtml" })
+    )
+    expect(refused.ok).toBe(false)
+    if (refused.ok) return
+    expect(refused.failure.code).toBe("ERR_INVALID_FLAG")
+    expect(refused.failure.error).toContain("memhtml apply: line 1")
+  })
+
+  it("refuses a label line with a missing, empty, or extra field, naming the line and the door", () => {
+    const cases: ReadonlyArray<readonly [Record<string, unknown>, string, string]> = [
+      [{ op: "label", path: "areas/inbox/a.html" }, "ERR_MISSING_ARGUMENT", "`entity`"],
+      [{ op: "unlabel", entity: "system:x" }, "ERR_MISSING_ARGUMENT", "`path`"],
+      [{ op: "label", path: "areas/inbox/a.html", entity: " " }, "ERR_INVALID_FLAG", "`entity`"],
+      [{ op: "label", path: 7, entity: "system:x" }, "ERR_INVALID_FLAG", "`path`"],
+      [
+        { op: "label", path: "areas/inbox/a.html", entity: "system:x", title: "t" },
+        "ERR_INVALID_FLAG",
+        "unknown field `title` on a label line"
+      ]
+    ]
+    for (const [fields, code, mention] of cases) {
+      const decoded = decodeSessionPut(
+        `${line({ title: "ok", body: "Fine." })}\n${labelLine(fields)}`
+      )
+      expect(decoded.ok, JSON.stringify(fields)).toBe(false)
+      if (decoded.ok) continue
+      expect(decoded.failure.code, JSON.stringify(fields)).toBe(code)
+      expect(decoded.failure.error).toContain("memhtml session put: line 2")
+      expect(decoded.failure.error).toContain(mention)
+    }
+  })
+
+  it("names the three ops on an unknown one, and refuses a stream with none", () => {
+    const unknown = decodeSessionPut(
+      labelLine({ op: "link", path: "areas/inbox/a.html", entity: "x:y" })
+    )
+    expect(unknown.ok).toBe(false)
+    if (unknown.ok) return
+    expect(unknown.failure.code).toBe("ERR_INVALID_FLAG")
+    expect(unknown.failure.error).toContain("write, label, unlabel")
+    const missing = decodeSessionPut(labelLine({ path: "areas/inbox/a.html", entity: "x:y" }))
+    expect(missing.ok || missing.failure.code).toBe("ERR_MISSING_ARGUMENT")
+    const empty = decodeSessionPut("\n\n")
+    expect(empty.ok || empty.failure.code).toBe("ERR_MISSING_ARGUMENT")
+    // A malformed write line is refused under this door's name, by apply's own decoder.
+    const badWrite = decodeSessionPut(`${labelLine({ op: "write", type: "semantic" })}`)
+    expect(badWrite.ok || badWrite.failure.error).toContain("memhtml session put: line 1")
   })
 })
 
