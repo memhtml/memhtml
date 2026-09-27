@@ -548,6 +548,145 @@ describe("a head edit is an op only when it adds or removes links", () => {
   }, 120_000)
 })
 
+describe("a head edit adds or removes entity labels the way it adds or removes links", () => {
+  const PLAIN = "areas/inbox/plain.html"
+  const TARGET = "areas/inbox/target.html"
+  const TO = `archive/2026/${PLAIN}`
+  const fixture = '<meta name="memhtml-entity" content="system:fixture">'
+  const memhtml = '<meta name="memhtml-entity" content="system:memhtml">'
+  const supports = '<link rel="memhtml-supports" href="/areas/inbox/target.html">'
+
+  let small: HeadView
+  beforeAll(async () => {
+    const plain = renderTemplate({
+      title: "Plain",
+      claim: "The capital of Plainland is Plaintown",
+      body: ["One label so far."],
+      memoryType: "semantic",
+      entities: ["system:fixture"],
+      at: SEEDED_AT
+    })
+    const target = renderTemplate({
+      title: "Target",
+      claim: "The capital of Targetland is Targettown",
+      memoryType: "semantic",
+      entities: ["system:fixture"],
+      at: SEEDED_AT
+    })
+    small = viewOver(
+      await Effect.runPromise(Effect.all([recordFrom(PLAIN, plain), recordFrom(TARGET, target)]))
+    )
+  })
+
+  /** A script that rewrites PLAIN through `edit(before)`, or moves it to TO when `archive` is set. */
+  const rewrite = (edit: string, archive = false): Promise<SessionExecReport> =>
+    Effect.runPromise(
+      runSessionExec({
+        view: small,
+        script: [
+          'import * as fs from "node:fs"',
+          'const root = "/mnt/memhtml"',
+          `const before = fs.readFileSync(root + "/${PLAIN}", "utf8")`,
+          ...(archive
+            ? [
+                'fs.mkdirSync(root + "/archive/2026/areas/inbox", { recursive: true })',
+                `fs.writeFileSync(root + "/${TO}", ${edit})`,
+                `fs.unlinkSync(root + "/${PLAIN}")`
+              ]
+            : [`fs.writeFileSync(root + "/${PLAIN}", ${edit})`])
+        ].join("\n")
+      })
+    )
+
+  /**
+   * (Mutations, each observed red here: `labeled.map(...)` left out of the `ops` result in
+   * `headEdit` drops the edit silently, `expected [] to deeply equal [ { kind: 'label', ...(2) } ]`;
+   * `doc.entities` put back into `metasOf` rejects it as "a meta changed"; the
+   * `MEMHTML_ENTITY_ELEMENT` strip left out of `withoutHeadOps` rejects it as "the head changed
+   * beyond the edited links and entities".)
+   */
+  it("appending one memhtml-entity meta yields exactly one label op and no put", async () => {
+    const report = await rewrite(
+      `before.replace(${JSON.stringify(fixture)}, ${JSON.stringify(`${fixture}\n${memhtml}`)})`
+    )
+    expect(report.exitCode, report.stderr).toBe(0)
+    expect(report.rejected).toEqual([])
+    expect(report.ops).toEqual([{ kind: "label", path: PLAIN, entity: "system:memhtml" }])
+  }, 120_000)
+
+  /**
+   * (Mutation: `unlabeled.map(...)` left out of the `ops` result in `headEdit`; observed
+   * `expected [] to deeply equal [ { kind: 'unlabel', ...(2) } ]`.)
+   */
+  it("removing a memhtml-entity meta yields exactly one unlabel op and no rejection", async () => {
+    const report = await rewrite(`before.replace(${JSON.stringify(`${fixture}\n`)}, "")`)
+    expect(report.exitCode, report.stderr).toBe(0)
+    expect(report.rejected).toEqual([])
+    expect(report.ops).toEqual([{ kind: "unlabel", path: PLAIN, entity: "system:fixture" }])
+  }, 120_000)
+
+  it("swapping one entity for another beside a new link yields the link, the label, then the unlabel", async () => {
+    const report = await rewrite(
+      `before.replace(${JSON.stringify(fixture)}, ${JSON.stringify(memhtml)}).replace("</head>", ${JSON.stringify(`${supports}\n</head>`)})`
+    )
+    expect(report.exitCode, report.stderr).toBe(0)
+    expect(report.rejected).toEqual([])
+    expect(report.ops).toEqual([
+      { kind: "link", path: PLAIN, rel: "supports", href: "/areas/inbox/target.html" },
+      { kind: "label", path: PLAIN, entity: "system:memhtml" },
+      { kind: "unlabel", path: PLAIN, entity: "system:fixture" }
+    ])
+  }, 120_000)
+
+  /**
+   * (Mutation: the `added entity label(s)` note left out of `notes` in `headEdit` keeps the
+   * rejection but loses the name of the label; observed `expected '...: the title changed' to
+   * contain 'added entity label(s) system:memhtml'`.)
+   */
+  it("adding an entity and changing the title is rejected naming both", async () => {
+    const report = await rewrite(
+      `before.replace("<title>Plain</title>", "<title>Renamed</title>").replace(${JSON.stringify(fixture)}, ${JSON.stringify(`${fixture}\n${memhtml}`)})`
+    )
+    expect(report.exitCode, report.stderr).toBe(0)
+    expect(report.ops).toEqual([])
+    const [rejection] = report.rejected
+    expect(rejection?.path).toBe(PLAIN)
+    expect(rejection?.reason).toContain(HEAD_EDIT_REASON)
+    expect(rejection?.reason).toContain("added entity label(s) system:memhtml")
+    expect(rejection?.reason).toContain("the title changed")
+  }, 120_000)
+
+  it("adding an entity and a head comment is rejected naming the residual head change", async () => {
+    const report = await rewrite(
+      `before.replace(${JSON.stringify(fixture)}, ${JSON.stringify(`${fixture}\n${memhtml}\n<!-- note -->`)})`
+    )
+    expect(report.exitCode, report.stderr).toBe(0)
+    expect(report.ops).toEqual([])
+    const [rejection] = report.rejected
+    expect(rejection?.reason).toContain("added entity label(s) system:memhtml")
+    expect(rejection?.reason).toContain("the head changed beyond the edited links and entities")
+  }, 120_000)
+
+  /**
+   * (Mutation: the twin branch's `headOps.push(...)` left out of `harvestOps` emits the archive
+   * alone and the label is lost; observed `expected [ { kind: 'archive', ...(3) } ] to deeply equal
+   * [ { kind: 'label', ...(2) }, ...(1) ]`.)
+   */
+  it("an entity added to the twin's head is a label op on the source, then the archive", async () => {
+    const report = await rewrite(
+      `before.replace(${JSON.stringify(fixture)}, ${JSON.stringify(`${fixture}\n${memhtml}`)})`,
+      true
+    )
+    expect(report.exitCode, report.stderr).toBe(0)
+    expect(report.rejected).toEqual([])
+    const twinHtml = (small.get(PLAIN)?.html ?? "").replace(fixture, `${fixture}\n${memhtml}`)
+    expect(report.ops).toEqual([
+      { kind: "label", path: PLAIN, entity: "system:memhtml" },
+      { kind: "archive", path: PLAIN, to: TO, html: twinHtml }
+    ])
+  }, 120_000)
+})
+
 describe("an archive twin's head is held to the same rule as a file that stays put", () => {
   const PLAIN = "areas/inbox/plain.html"
   const TO = `archive/2026/${PLAIN}`

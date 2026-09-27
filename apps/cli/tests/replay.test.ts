@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { promisify } from "node:util"
 
-import { addLink, renderTemplate, setMeta } from "@memhtml/html"
+import { addLink, addMeta, removeMeta, renderTemplate, setMeta } from "@memhtml/html"
 import { archiveBody } from "@memhtml/session"
 import { Effect } from "effect"
 import { afterAll, describe, expect, it } from "vitest"
@@ -78,7 +78,14 @@ describe("reconstructOps rebuilds the curator's log from two trees", () => {
       { kind: "link", path: archived.path, rel: "supports", href: `/${added.path}` },
       { kind: "archive", path: archived.path, to: twinPath, html: twin }
     ])
-    expect(result.counts).toEqual({ put: 1, archive: 1, link: 2, unlink: 0 })
+    expect(result.counts).toEqual({
+      put: 1,
+      archive: 1,
+      link: 2,
+      unlink: 0,
+      label: 0,
+      unlabel: 0
+    })
     expect(result.archivedAt).toBe(ARCHIVED_AT)
   })
 
@@ -132,6 +139,53 @@ describe("reconstructOps rebuilds the curator's log from two trees", () => {
     })
     expect(meta.ops).toEqual([])
     expect(meta.rejected[0]?.reason).toContain("a meta changed")
+  })
+
+  /**
+   * A curator branch that relabels records: the commit path wrote each label with `addMeta` and
+   * each unlabel with `removeMeta`, on a file that stays put and on the twin of one it archived, so
+   * the reconstruction is one op per value, grouped by path, the twin's on its source ahead of the
+   * archive.
+   */
+  it("an entity added or removed replays as one label or unlabel, on a kept file and on an archive twin", () => {
+    const labeledKept = addMeta(kept.html, "memhtml-entity", "system:memhtml")
+    const before = new Map([
+      [kept.path, labeledKept],
+      [archived.path, archived.html]
+    ])
+    const relabeled = addMeta(
+      removeMeta(labeledKept, "memhtml-entity", "system:memhtml"),
+      "memhtml-entity",
+      "project:harbor"
+    )
+    const twin = addMeta(
+      archiveBody(archived.html, ARCHIVED_AT),
+      "memhtml-entity",
+      "project:harbor"
+    )
+    const result = reconstructOps({
+      before,
+      after: new Map([
+        [kept.path, relabeled],
+        [twinPath, twin]
+      ]),
+      scope: "curate"
+    })
+    expect(result.rejected).toEqual([])
+    expect(result.ops).toEqual([
+      { kind: "label", path: kept.path, entity: "project:harbor" },
+      { kind: "unlabel", path: kept.path, entity: "system:memhtml" },
+      { kind: "label", path: archived.path, entity: "project:harbor" },
+      { kind: "archive", path: archived.path, to: twinPath, html: twin }
+    ])
+    expect(result.counts).toEqual({
+      put: 0,
+      archive: 1,
+      link: 0,
+      unlink: 0,
+      label: 2,
+      unlabel: 1
+    })
   })
 
   it("an unstamped twin holding the same bytes (a hand git mv) is still one archive op, with no instant to keep", () => {
@@ -283,6 +337,13 @@ describe("readCurateDelta against a real repository", () => {
 
     const result = reconstructOps({ before: delta.before, after: delta.after })
     expect(result.rejected).toEqual([])
-    expect(result.counts).toEqual({ put: 1, archive: 1, link: 1, unlink: 0 })
+    expect(result.counts).toEqual({
+      put: 1,
+      archive: 1,
+      link: 1,
+      unlink: 0,
+      label: 0,
+      unlabel: 0
+    })
   })
 })

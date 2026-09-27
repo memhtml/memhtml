@@ -532,7 +532,7 @@ describe("the replay, when main moved past the curator's base", () => {
     expect(merged.worktreeSynced).toBe(true)
     expect(merged.replayed).toEqual({
       base,
-      ops: { put: 1, archive: 1, link: 2, unlink: 0 },
+      ops: { put: 1, archive: 1, link: 2, unlink: 0, label: 0, unlabel: 0 },
       attempts: 1,
       originalTip: tip
     })

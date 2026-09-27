@@ -46,19 +46,21 @@ import {
  *   that keeps the words (a `<dfn>` wrap, a new `<aside>`) also keeps the hash; the harvester
  *   therefore parses both versions with `@memhtml/html`'s parser and compares the article markup
  *   as well as the heads. Every `<link rel="memhtml-...">` present after and absent before becomes
- *   one `link` op, and every one present before and absent after becomes one `unlink` op, because
- *   placing or dropping an edge are the two head edits the store's operations can express. A title
- *   or meta changed, article markup changed, or any other head content changed is `rejected`
- *   ("head edit other than adding or removing links is not an operation"), and when links were
- *   added or removed beside such a change the reason names both, so the script's author can split
- *   the edit into edge ops and a new file plus an archive. Nothing a script changed goes
- *   unreported: an edit is an op or it is a rejection.
+ *   one `link` op, and every one present before and absent after becomes one `unlink` op; every
+ *   `<meta name="memhtml-entity">` value present after and absent before becomes one `label` op,
+ *   and every one present before and absent after one `unlabel` op, because placing or dropping an
+ *   edge or an entity are the head edits the store's operations can express. A title or any other
+ *   meta changed, article markup changed, or any other head content changed is `rejected` ("head
+ *   edit other than adding or removing links or entity labels is not an operation"), and when links
+ *   or entities were added or removed beside such a change the reason names both, so the script's
+ *   author can split the edit into head ops and a new file plus an archive. Nothing a script
+ *   changed goes unreported: an edit is an op or it is a rejection.
  * - A seeded file that is gone, paired with a new `archive/<YYYY>/<its path>` file whose article
  *   content hash equals the seeded record's, is one `archive` op. Deletion is not an operation in
  *   this store (nothing is ever deleted; eviction is a move), so the pair is the only shape a
  *   vanished file can legitimately take. The twin's head is held to the same rule as a file that
- *   stays put: links added to or removed from the copy become `link` and `unlink` ops on the SOURCE
- *   path, emitted before the archive so the commit's staging carries the edit into the archived
+ *   stays put: links and entities added to or removed from the copy become `link`, `unlink`,
+ *   `label`, and `unlabel` ops on the SOURCE path, emitted before the archive so the commit's staging carries the edit into the archived
  *   copy (`commitSession` builds the destination from the source as the batch left it, never from
  *   the op's bytes); any other head or markup difference rejects the source and leaves the twin
  *   as a put.
@@ -85,8 +87,9 @@ import {
 /** What `session exec` reports: the script's run plus what the harvester made of the tree it left. */
 export interface SessionExecReport extends ExecReport {
   /**
-   * Overlay ops harvested from the guest tree: `put`s, then the edge ops (`link`s, then `unlink`s,
-   * per file), then `archive`s, each group sorted by path (a file's links in document order).
+   * Overlay ops harvested from the guest tree: `put`s, then the head ops (`link`s, `unlink`s,
+   * `label`s, then `unlabel`s, per file), then `archive`s, each group sorted by path (a file's
+   * links and entities in document order).
    */
   readonly ops: ReadonlyArray<OverlayOp>
   /** Files the harvester could not turn into an op, each with the reason, sorted by path. */
@@ -105,8 +108,9 @@ export interface SessionExecInput {
   readonly scope?: CommitScope | undefined
 }
 
-/** The stated reason a head edit that is not purely added or removed links is refused. */
-export const HEAD_EDIT_REASON = "head edit other than adding or removing links is not an operation"
+/** Why a head edit that is not purely added or removed links and entities is refused. */
+export const HEAD_EDIT_REASON =
+  "head edit other than adding or removing links or entity labels is not an operation"
 
 /** One file the walk found in the guest tree after the run. */
 interface GuestFile {
@@ -210,30 +214,42 @@ const MEMHTML_LINK_ELEMENT = new RegExp(
   "gi"
 )
 
-/** The document with its memhtml links taken out, so two heads compare on everything else. */
-const withoutMemhtmlLinks = (html: string): string => html.replace(MEMHTML_LINK_ELEMENT, "")
+/**
+ * Every `<meta name="memhtml-entity">` element, whatever its attribute order. Case-sensitive, unlike
+ * {@link MEMHTML_LINK_ELEMENT}: the parser reads an entity only from that exact name, so a spelling
+ * it would not read stays in the residual and is reported rather than stripped unseen.
+ */
+const MEMHTML_ENTITY_ELEMENT = /<meta\s[^>]*\bname\s*=\s*["']memhtml-entity["'][^>]*>/g
 
 /**
- * What a head edit amounts to: the `link` ops for every edge added and the `unlink` ops for every
- * edge removed, or the reason it cannot be an op. Called only for a seeded file whose bytes changed
+ * The document with its memhtml links and entity metas taken out, so two heads compare on
+ * everything else.
+ */
+const withoutHeadOps = (html: string): string =>
+  html.replace(MEMHTML_LINK_ELEMENT, "").replace(MEMHTML_ENTITY_ELEMENT, "")
+
+/**
+ * What a head edit amounts to: the `link` ops for every edge added, the `unlink` ops for every edge
+ * removed, the `label` ops for every entity added, and the `unlabel` ops for every entity removed,
+ * or the reason it cannot be an op. Called only for a seeded file whose bytes changed
  * and whose article content hash did not. That hash is a digest of the article's canonical TEXT
  * (`@memhtml/html` `canonicalText`), so an equal hash proves the words are the same and nothing
  * more: the article's markup, the head, or only whitespace may differ, and this function tells
  * those apart. `null` when either version does not parse, in which case the caller falls back to a
  * `put` and `validateOps` reports the format violation.
  *
- * Three named differences reject the edit (title, meta, article markup); a fourth, "the head
- * changed beyond the edited links", catches head content the parser accepts and `MemoryDoc` does
- * not surface (a comment, a `<meta>` outside the vocabulary): with every memhtml link taken out of
- * both versions, what remains must collapse to the same bytes. It runs only when links were added
- * or removed, so the fallthrough alone names a byte change that edited no link, and no edit leaves
- * here unnamed.
+ * Three named differences reject the edit (title, a meta other than an entity, article markup); a
+ * fourth, "the head changed beyond the edited links and entities", catches head content the parser
+ * accepts and `MemoryDoc` does not surface (a comment, a `<meta>` outside the vocabulary): with
+ * every memhtml link and entity meta taken out of both versions, what remains must collapse to the
+ * same bytes. It runs only when links or entities were added or removed, so the fallthrough alone
+ * names a byte change that edited neither, and no edit leaves here unnamed.
  */
 const headEdit = (
   path: string,
   before: string,
   after: string
-): { readonly links: ReadonlyArray<OverlayOp> } | { readonly reason: string } | null => {
+): { readonly ops: ReadonlyArray<OverlayOp> } | { readonly reason: string } | null => {
   const was = parsedOrNull(before)
   const now = parsedOrNull(after)
   if (was === null || now === null) return null
@@ -242,13 +258,18 @@ const headEdit = (
   const hasLinks = new Set(now.links.map(linkKey))
   const added = now.links.filter((link) => !hadLinks.has(linkKey(link)))
   const removed = was.links.filter((link) => !hasLinks.has(linkKey(link)))
+  const hadEntities = new Set(was.entities)
+  const hasEntities = new Set(now.entities)
+  const labeled = [...hasEntities].filter((entity) => !hadEntities.has(entity))
+  const unlabeled = [...hadEntities].filter((entity) => !hasEntities.has(entity))
 
-  const edited = added.length + removed.length > 0
+  const edited = added.length + removed.length + labeled.length + unlabeled.length > 0
 
   const otherChanges: Array<string> = []
   if (was.title !== now.title) otherChanges.push("the title changed")
-  const metasOf = (doc: MemoryDoc): string =>
-    JSON.stringify([doc.metas, doc.entities, doc.tags, doc.aliases])
+  // Entities are compared above as a set, so they are left out here: an entity added or removed is
+  // an op, and any other meta changed is not.
+  const metasOf = (doc: MemoryDoc): string => JSON.stringify([doc.metas, doc.tags, doc.aliases])
   if (metasOf(was) !== metasOf(now)) otherChanges.push("a meta changed")
   if (collapseMarkup(was.article.html) !== collapseMarkup(now.article.html)) {
     otherChanges.push("the article markup changed")
@@ -256,28 +277,34 @@ const headEdit = (
   if (
     edited &&
     otherChanges.length === 0 &&
-    collapseMarkup(withoutMemhtmlLinks(after)) !== collapseMarkup(withoutMemhtmlLinks(before))
+    collapseMarkup(withoutHeadOps(after)) !== collapseMarkup(withoutHeadOps(before))
   ) {
-    otherChanges.push("the head changed beyond the edited links")
+    otherChanges.push("the head changed beyond the edited links and entities")
   }
   if (!edited && otherChanges.length === 0) {
-    otherChanges.push("the bytes changed with no link added or removed")
+    otherChanges.push(
+      "the bytes changed with no link added or removed and no entity label added or removed"
+    )
   }
 
   if (otherChanges.length > 0) {
     const notes = [
       ...(added.length === 0 ? [] : [`added link(s) ${added.map(linkKey).join(", ")}`]),
-      ...(removed.length === 0 ? [] : [`removed link(s) ${removed.map(linkKey).join(", ")}`])
+      ...(removed.length === 0 ? [] : [`removed link(s) ${removed.map(linkKey).join(", ")}`]),
+      ...(labeled.length === 0 ? [] : [`added entity label(s) ${labeled.join(", ")}`]),
+      ...(unlabeled.length === 0 ? [] : [`removed entity label(s) ${unlabeled.join(", ")}`])
     ]
     const editNote = notes.length === 0 ? "" : `${notes.join(" and ")}, but also `
     return { reason: `${HEAD_EDIT_REASON}: ${editNote}${otherChanges.join("; ")}` }
   }
   return {
-    links: [
+    ops: [
       ...added.map((link): OverlayOp => ({ kind: "link", path, rel: link.rel, href: link.href })),
       ...removed.map(
         (link): OverlayOp => ({ kind: "unlink", path, rel: link.rel, href: link.href })
-      )
+      ),
+      ...labeled.map((entity): OverlayOp => ({ kind: "label", path, entity })),
+      ...unlabeled.map((entity): OverlayOp => ({ kind: "unlabel", path, entity }))
     ]
   }
 }
@@ -286,8 +313,8 @@ const headEdit = (
  * Turn the tree a script left behind into overlay ops and rejections.
  *
  * Exported and pure over plain values so the pairing rules are testable without a sandbox. The
- * order of the result is fixed: `put`s sorted by path, then the edge ops (`link`s then `unlink`s
- * per file) sorted by path, then `archive`s sorted by source path, then `rejected` sorted by path,
+ * order of the result is fixed: `put`s sorted by path, then the head ops (`link`s, `unlink`s,
+ * `label`s, then `unlabel`s per file) sorted by path, then `archive`s sorted by source path, then `rejected` sorted by path,
  * so two runs over the same tree produce equal reports.
  */
 export const harvestOps = (input: {
@@ -299,7 +326,7 @@ export const harvestOps = (input: {
   const scope = input.scope ?? "session"
   const rejected: { path: string; reason: string }[] = []
   const puts = new Map<string, string>()
-  const links: Array<{ readonly path: string; readonly ops: ReadonlyArray<OverlayOp> }> = []
+  const headOps: Array<{ readonly path: string; readonly ops: ReadonlyArray<OverlayOp> }> = []
   const present = new Set<string>()
 
   for (const file of input.after) {
@@ -311,12 +338,13 @@ export const harvestOps = (input: {
     }
     const before = input.seeded.get(file.path)
     if (before !== undefined && before.html === file.html) continue
-    // Same article, different bytes: a head edit. Only added or removed links can be an op.
+    // Same article, different bytes: a head edit. Only added or removed links and entities can be
+    // an op.
     if (before !== undefined && contentHashOrNull(file.html) === before.contentHash) {
       const edit = headEdit(file.path, before.html, file.html)
       if (edit !== null) {
         if ("reason" in edit) rejected.push({ path: file.path, reason: edit.reason })
-        else links.push({ path: file.path, ops: edit.links })
+        else headOps.push({ path: file.path, ops: edit.ops })
         continue
       }
     }
@@ -348,7 +376,7 @@ export const harvestOps = (input: {
       continue
     }
     // The same words, so this is the file archived. Its head is held to the stays-put rule: links
-    // the copy gained or lost are `link` and `unlink` ops on the source (staged before the archive,
+    // and entities the copy gained or lost are head ops on the source (staged before the archive,
     // so the commit carries them into the copy); anything else rejects the source and leaves the
     // twin a put.
     const edit = twinHtml === before.html ? null : headEdit(source, before.html, twinHtml)
@@ -360,7 +388,7 @@ export const harvestOps = (input: {
       continue
     }
     puts.delete(twin)
-    if (edit !== null && edit.links.length > 0) links.push({ path: source, ops: edit.links })
+    if (edit !== null && edit.ops.length > 0) headOps.push({ path: source, ops: edit.ops })
     archives.push({ kind: "archive", path: source, to: twin, html: twinHtml })
   }
 
@@ -369,9 +397,9 @@ export const harvestOps = (input: {
   const putOps: OverlayOp[] = [...puts]
     .map(([path, html]): OverlayOp => ({ kind: "put", path, html }))
     .sort(byPath)
-  const linkOps = links.sort(byPath).flatMap((entry) => entry.ops)
+  const headOpsInOrder = headOps.sort(byPath).flatMap((entry) => entry.ops)
   return {
-    ops: [...putOps, ...linkOps, ...archives.sort(byPath)],
+    ops: [...putOps, ...headOpsInOrder, ...archives.sort(byPath)],
     rejected: rejected.sort(byPath)
   }
 }

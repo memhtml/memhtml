@@ -485,6 +485,8 @@ export const sessionStatus = (input: { readonly root: string; readonly id: strin
       archives: count("archive"),
       links: count("link"),
       unlinks: count("unlink"),
+      labels: count("label"),
+      unlabels: count("unlabel"),
       paths: [...new Set(session.ops.flatMap(touchedPaths))].sort(),
       /** A commit built and possibly landed by a call that was killed; the next commit settles it. */
       pending: session.pending ?? null
@@ -550,6 +552,8 @@ export interface ReplayReport {
     readonly archive: number
     readonly link: number
     readonly unlink: number
+    readonly label: number
+    readonly unlabel: number
   }
   /** How many `commitSession` calls the landing took; more than one means the target moved meanwhile. */
   readonly attempts: number
@@ -644,9 +648,9 @@ const replayPlan = (input: {
  *    ref's tip ({@link reconstructOps}), a fresh session is started on `into` at its tip with those
  *    ops, and `validateOps` judges them under the `curate` scope against that tip. A change on the
  *    ref that is not an operation (an article edited in place, a file deleted with no archive twin,
- *    a link removed, a meta changed) refuses the merge naming the path, and so does any violation
- *    (a `duplicate` or `claim-edit` because `into` gained the same fact meanwhile, a link whose
- *    target is gone), with nothing moved.
+ *    a title or a meta other than an entity changed) refuses the merge naming the path, and so
+ *    does any violation (a `duplicate` or `claim-edit` because `into` gained the same fact
+ *    meanwhile, a link whose target is gone), with nothing moved.
  * 2. The head gate (`head-gate.ts`): the version at `into`'s tip and the version at `ref`'s tip
  *    are loaded and `gateHeads` scores the same probes at both, so the gate measures the corpus
  *    being landed and nothing else, with no network call and no credential. A failing gate fails
