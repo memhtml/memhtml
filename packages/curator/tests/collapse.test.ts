@@ -40,6 +40,8 @@ import { fakeTools } from "./fakes.js"
  * - `prompts/collapse.md` (2026-09-26): delete the "Every put carries at least one
  *   `memhtml-entity`" rule -> "requires every put to carry an entity and a canonical to carry its
  *   members' union".
+ * - `prompts/collapse.md` (2026-09-27): the sentence naming `unlink`, `label`, and `unlabel` deleted
+ *   -> "names the head operations a fold does not use".
  * - `collapse-briefing.ts` `renderCollapseBriefing` (2026-09-26): the "Entities the canonical
  *   carries" line removed -> "names the entities the canonical carries, or says the members carry
  *   none".
@@ -164,6 +166,12 @@ describe("the collapse charter", () => {
     expect(text).toContain("in their exact values")
     expect(text).toContain("when no member carries an entity, add the one the theme is about")
     expect(text).toContain("A `write-bar` violation")
+  })
+
+  it("names the head operations a fold does not use", async () => {
+    const text = await Effect.runPromise(COLLAPSE_CHARTER)
+    expect(text).toContain("The store also has `unlink`, `label`, and `unlabel`")
+    expect(text).toContain("as a lowercase `type:name`")
   })
 })
 

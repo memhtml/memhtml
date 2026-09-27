@@ -133,7 +133,7 @@ export const fakeTools = (options: FakeToolOptions = {}): FakeTools => {
       return {
         baseSha: "0".repeat(40),
         ref: "refs/heads/curate/test",
-        ops: { put: 0, archive: 0, link: 0, unlink: 0 }
+        ops: { put: 0, archive: 0, link: 0, unlink: 0, label: 0, unlabel: 0 }
       }
     }
   }

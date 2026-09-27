@@ -135,7 +135,10 @@ export interface ClusterOutcome {
   readonly commits: ReadonlyArray<string>
   /** The canonical the fold wrote, or `null` for an archive cluster or a fold that wrote none. */
   readonly canonical: string | null
-  /** Every op the cluster landed by kind; `unlink` counts what the model dropped, the driver never unlinks. */
+  /**
+   * Every op the cluster landed by kind; `unlink`, `label`, and `unlabel` count what the model did,
+   * because the driver only archives and links.
+   */
   readonly ops: OpsByKind
   /** Archives and links the driver added beside the model's own. */
   readonly driver: { readonly archive: number; readonly link: number }
@@ -190,10 +193,12 @@ const opsByKind = (ops: ReadonlyArray<OverlayOp>): OpsByKind => ({
   put: ops.filter((op) => op.kind === "put").length,
   archive: ops.filter((op) => op.kind === "archive").length,
   link: ops.filter((op) => op.kind === "link").length,
-  unlink: ops.filter((op) => op.kind === "unlink").length
+  unlink: ops.filter((op) => op.kind === "unlink").length,
+  label: ops.filter((op) => op.kind === "label").length,
+  unlabel: ops.filter((op) => op.kind === "unlabel").length
 })
 
-const NO_OPS: OpsByKind = { put: 0, archive: 0, link: 0, unlink: 0 }
+const NO_OPS: OpsByKind = { put: 0, archive: 0, link: 0, unlink: 0, label: 0, unlabel: 0 }
 
 const describeViolation = (violation: Violation): string => {
   switch (violation.kind) {
@@ -751,7 +756,9 @@ const foldCluster = (
           put: puts.length,
           archive: finalOps.filter((op) => op.kind === "archive").length + results.driver.archive,
           link: finalOps.filter((op) => op.kind === "link").length + results.driver.link,
-          unlink: finalOps.filter((op) => op.kind === "unlink").length
+          unlink: finalOps.filter((op) => op.kind === "unlink").length,
+          label: finalOps.filter((op) => op.kind === "label").length,
+          unlabel: finalOps.filter((op) => op.kind === "unlabel").length
         },
         driver: {
           archive: completed.archive + results.driver.archive,

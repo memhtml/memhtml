@@ -268,7 +268,7 @@ describe("curate collapse --model fake", () => {
     const archive = data.clusters.find((cluster) => cluster.kind === "archive")
     expect(archive?.outcome).toBe("committed")
     expect(archive?.steps).toBe(0)
-    expect(archive?.ops).toEqual({ put: 0, archive: 2, link: 0, unlink: 0 })
+    expect(archive?.ops).toEqual({ put: 0, archive: 2, link: 0, unlink: 0, label: 0, unlabel: 0 })
     expect(archive?.commits).toHaveLength(1)
     // Each fold: one put, one archive per member, one link per member, two model calls.
     for (const fold of data.clusters.filter((cluster) => cluster.kind === "fold")) {
@@ -374,7 +374,7 @@ describe("curate collapse --model fake", () => {
     const [fold] = data.clusters
     expect(fold?.outcome, fold?.error ?? "").toBe("committed")
     // The fake wrote the put alone; the driver added every archive and every link in the same session.
-    expect(fold?.ops).toEqual({ put: 1, archive: 3, link: 3, unlink: 0 })
+    expect(fold?.ops).toEqual({ put: 1, archive: 3, link: 3, unlink: 0, label: 0, unlabel: 0 })
     expect(fold?.driver).toEqual({ archive: 3, link: 3 })
     expect(fold?.commits).toHaveLength(1)
     const tree = await treeOf(QUALIFIED)

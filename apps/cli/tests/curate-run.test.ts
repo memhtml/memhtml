@@ -448,7 +448,7 @@ describe("the exec tool refuses what the commit would refuse", () => {
     expect(await tools.status()).toEqual({
       baseSha: VIEW_SHA,
       ref: "refs/heads/curate/2026-09-23",
-      ops: { put: 1, archive: 0, link: 1, unlink: 0 }
+      ops: { put: 1, archive: 0, link: 1, unlink: 0, label: 0, unlabel: 0 }
     })
     // The same overlay is what the landing validates, under the same scope.
     expect(validateOps(head.view, overlay.ops(), { scope: "curate" })).toEqual([])
@@ -602,6 +602,49 @@ describe("the exec tool harvests a cut link as an unlink", () => {
         reasons: ["unlink names an edge the source does not carry"]
       }
     ])
+  }, 120_000)
+})
+
+describe("the propose tool labels a record", () => {
+  const LEGACY = "areas/inbox/legacy.html"
+
+  /**
+   * The 2026-09-26 backfill in one op: a legacy record with no entity gains its first through
+   * `propose`, the view the next call reads carries it, and taking it back off is refused by the
+   * write bar, since the record would again name nothing.
+   */
+  it("a label on an unlabeled record is appended, and an unlabel that empties it is refused", async () => {
+    const records = await Effect.runPromise(
+      Effect.all([
+        recordFrom(
+          LEGACY,
+          renderTemplate({
+            title: "Legacy",
+            claim: "The capital of Legacyland is Legacytown.",
+            memoryType: "semantic",
+            at: "2026-09-20T00:00:00Z"
+          })
+        )
+      ])
+    )
+    const head = headOver(records)
+    const overlay = memoryOverlay()
+    const tools = bindTools({ head, overlay, ref: "refs/heads/curate/2026-09-23" })
+    const labeled = await tools.propose([
+      { kind: "label", path: LEGACY, entity: "project:legacyland" }
+    ])
+    expect(labeled).toEqual({ appended: 1, violations: [] })
+    expect((await tools.read(LEGACY))?.entities).toEqual(["project:legacyland"])
+    expect(await tools.status()).toMatchObject({ ops: { label: 1, unlabel: 0 } })
+    const emptied = await tools.propose([
+      { kind: "unlabel", path: LEGACY, entity: "project:legacyland" }
+    ])
+    expect(emptied.appended).toBe(0)
+    expect(emptied.violations).toEqual([
+      { kind: "write-bar", path: LEGACY, reasons: [UNANCHORED_REASON] }
+    ])
+    expect(overlay.ops()).toEqual([{ kind: "label", path: LEGACY, entity: "project:legacyland" }])
+    expect(validateOps(head.view, overlay.ops(), { scope: "curate" })).toEqual([])
   }, 120_000)
 })
 
