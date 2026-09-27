@@ -36,6 +36,8 @@
     "start": "node dist/bin.js"
   },
   "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/platform-node-shared": "catalog:",
     "@memhtml/contracts": "workspace:*",
     "@memhtml/curator": "workspace:*",
     "@memhtml/domain": "workspace:*",

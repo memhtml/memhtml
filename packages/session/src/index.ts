@@ -12,7 +12,12 @@ export {
   commitSubject
 } from "./commit.js"
 export { GitFailure } from "./errors.js"
-export { type ExcludeResult, ensureExcluded, ensureExcludedQuietly } from "./exclude.js"
+export {
+  type ExcludeResult,
+  ensureExcluded,
+  ensureExcludedQuietly,
+  HEAD_SOCKET
+} from "./exclude.js"
 export { GIT_REPO_SELECTION_ENV, gitPathOf, makePlumbing, type Plumbing } from "./plumbing.js"
 export {
   appendOps,

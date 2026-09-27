@@ -142,13 +142,14 @@ Write what is durable, one fact per memory. A decision and its reason, a correct
 | `memhtml integrations shell` | — | `--write` `--rc` | `integrations.shell` |
 | `memhtml hook` | <event> | `--host`* `--trace-root` `--limit` `--budget` | `hook.output` |
 | `memhtml session start` | — | `--id`* `--ref` `--force` | `session.started` |
-| `memhtml session put` | — | `--id`* `--file`* | `session.appended` |
+| `memhtml session put` | — | `--id`* `--file`* `--server` | `session.appended` |
 | `memhtml session exec` | — | `--id`* `--file` `--script` `--timeout-ms` | `session.exec.report` |
 | `memhtml session commit` | — | `--id`* `--message`* | `session.committed` |
 | `memhtml session rebase` | — | `--id`* | `session.rebased` |
 | `memhtml session status` | — | `--id`* | `session.status` |
-| `memhtml head status` | — | — | `head.status` |
-| `memhtml head search` | <query> | `--limit` | `head.search` |
+| `memhtml head status` | — | `--server` | `head.status` |
+| `memhtml head search` | <query> | `--limit` `--server` | `head.search` |
+| `memhtml head serve` | — | `--ref` `--poll-ms` | `head.served` |
 | `memhtml head embed` | — | — | `head.embedded` |
 | `memhtml head snapshot` | — | `--write` `--read` | `head.snapshot` |
 | `memhtml curate merge` | <ref> | `--into` `--skip-gate` | `curate.merged` |
@@ -521,6 +522,7 @@ Append write ops, and label or unlabel ops on existing records, to a session's o
 
 - `--id` (string) — The session to append to. _(**required**)_
 - `--file` (string) — JSONL, one object per line. A `write` line takes the same fields `memhtml apply` accepts; each is rendered to the file the store would write and lands at the path the store would choose. A `label` line, `{"op":"label","path":"areas/inbox/x.html","entity":"system:memhtml"}`, adds one `memhtml-entity` to an existing record's head, and an `unlabel` line with the same fields removes one; neither touches the article, so the record keeps its content hash. A label value is a lowercase `type:name` (`service:memhtml`, `project:hex-bonk`, `person:laith`) the record does not carry yet; an unlabel names a value the record carries, exactly as written. `-` reads stdin. A malformed op, a reserved path, a label that is malformed or already carried, an unlabel of a value the record lacks, an unlabel that leaves a record with no entity outside `projects/<slug>/`, or a record below the write bar refuses the whole call and appends nothing. The bar: a memory names the system, project, or person it is about (an `entities` value, or a `workspace`), carries a mechanism or a decision, and is something a future run would look up; a run narrative (`episodic`) or review output (`verdict`) is refused, because runs live in the trace index. The bar holds for every writer and every type, the curator and tasks included: a task names an entity unless its `workspace` anchors it. The response lists each put's nearest existing records under `neighbors`, so a near-duplicate can be skipped and the related records linked before the commit. `neighbors` is ranked the way `head search` ranks, the vector arm included when the store has a vector cache (`memhtml head embed`) and an embedder is configured: each put's own text is embedded as a document, one call per batch. When the arm cannot run the neighbors come from the other two arms and `vector` says why (`used: false` with a `reason`); the put itself never fails for it. _(**required**)_
+- `--server` (boolean) — Ask the head server on .memhtml/head.sock first (`memhtml head serve`), falling back to loading the head here when no server accepts within 100 ms or answers within 10 s; `--no-server` always loads here. The placements, violations, and neighbors (label lines included, the vector arm run with the server's cache and embedder) are then computed by the server over the version at the session's base; the append always happens here. The payload's `head.source` is `server` when the server answered. _(default `true`)_
 
 ### `memhtml session exec`
 
@@ -552,15 +554,25 @@ The session's base, ref, and overlay log as persisted, and whether the ref has m
 
 ### `memhtml head status`
 
-Build the corpus version at HEAD and report its sha, record count, skipped files, load time, and its source: `snapshot` (HEAD's own .arrow file), `snapshot+advance` (an ancestor's snapshot advanced over the changed paths, with `ancestorSha` and `reparsed`), or `git`.
+Report the corpus version and where it came from: the head server's (`source: server`, with the server's ref, load, advances, and uptime under `server`) when one answers on .memhtml/head.sock, else the version at HEAD built here, with its sha, record count, skipped files, load time, and source: `snapshot` (HEAD's own .arrow file), `snapshot+advance` (an ancestor's snapshot advanced over the changed paths, with `ancestorSha` and `reparsed`), or `git`.
+
+- `--server` (boolean) — Ask the head server on .memhtml/head.sock first (`memhtml head serve`), falling back to loading the head here when no server accepts within 100 ms or answers within 10 s; `--no-server` always loads here. The payload's `head.source` is `server` when the server answered. _(default `true`)_
 
 ### `memhtml head search`
 
-Retrieval over the version at HEAD, RRF-fused: BM25 plus recency, plus a vector arm (cosine over Cohere Embed v4 vectors, weight 1.0 as in v1's search) when `.memhtml/vectors/` holds a cache for the configured embedder and `MEMHTML_EMBED` is not `off`. The query is embedded once with the query input type. When the arm cannot run (embedder off, no cache yet, an unreadable cache, the query embed failed) the search answers from the other two arms and `vector` reports `used: false` with a `reason`; it never fails for it. Each hit's `arms` names the arms it scored on. No index database.
+Retrieval over the version at HEAD, or over the head server's version of its ref when one answers, RRF-fused: BM25 plus recency, plus a vector arm (cosine over Cohere Embed v4 vectors, weight 1.0 as in v1's search) when `.memhtml/vectors/` holds a cache for the configured embedder and `MEMHTML_EMBED` is not `off`. The query is embedded once with the query input type. When the arm cannot run (embedder off, no cache yet, an unreadable cache, the query embed failed) the search answers from the other two arms and `vector` reports `used: false` with a `reason`; it never fails for it. Each hit's `arms` names the arms it scored on. No index database.
 
 - `<query>` — Free text to rank against.
 
 - `--limit` (int) — Hits to return. _(default `10`)_
+- `--server` (boolean) — Ask the head server on .memhtml/head.sock first (`memhtml head serve`), falling back to loading the head here when no server accepts within 100 ms or answers within 10 s; `--no-server` always loads here. The payload's `head.source` is `server` when the server answered. _(default `true`)_
+
+### `memhtml head serve`
+
+Hold the head loaded and answer lookups over .memhtml/head.sock (mode 0600, JSON over HTTP, routes /v1/status, /v1/search, /v1/read, /v1/neighbors) until SIGTERM or SIGINT. The server loads its ref's tip once the cheapest way (snapshot, snapshot+advance, or git), reads the ref before every answer and advances over the changed paths when it moved, so an answer is never older than the ref at the moment of the request, and polls between requests. With an embedder bound (not `MEMHTML_EMBED=off`) it also holds the vector cache `head embed` writes, reads it again when the file's mtime changes, and runs the vector arm for `/v1/search` and `/v1/neighbors` the way `head search` and `session put` do locally, answering with the same `vector` field. `head status`, `head search`, and `session put` ask it first; `session commit` and the curate commands always load locally, because they judge the exact version they commit against. A live server on the socket refuses a second one (ERR_HEAD_SERVER_RUNNING); a socket left by a killed server is replaced. The socket is removed on exit, and the envelope reports the ref, final sha, advances, requests, and uptime.
+
+- `--ref` (string) — The ref to follow, as a branch name or a full ref; `refs/heads/` is prepended when absent. Default: the branch HEAD points at, else `main`.
+- `--poll-ms` (int) — How often the server reads the ref between requests, in milliseconds; 0 leaves advancing to requests alone. Every request reads the ref regardless. _(default `1000`)_
 
 ### `memhtml head embed`
 
@@ -631,6 +643,7 @@ Plan and run a collapse of the corpus on a curate/ branch: cut the head into arc
 - `ERR_UNKNOWN_HOST`
 - `ERR_UNKNOWN_HOOK_EVENT`
 - `ERR_INTEGRATION_MODIFIED`
+- `ERR_HEAD_SERVER_RUNNING`
 
 ## Configuration
 

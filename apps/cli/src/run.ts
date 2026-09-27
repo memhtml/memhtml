@@ -44,6 +44,7 @@ import {
 } from "./envelope.js"
 import { failureFor } from "./errors.js"
 import { DEFAULT_TIMEOUT_MS, execCommand, MAX_TIMEOUT_MS, readScript } from "./exec.js"
+import { serveHead } from "./head-server.js"
 import { helpData, renderCommandHelp } from "./help.js"
 import {
   HOOK_BUDGET_DEFAULT,
@@ -919,6 +920,32 @@ const headSnapshotFlags = (parsed: Parsed): Failure | undefined => {
 }
 
 /**
+ * `memhtml head serve`: `--poll-ms` is a non-negative integer (0 turns the poll off, which is a
+ * choice, and a negative period is none), and a `--ref` on the line is not blank, which would follow
+ * `refs/heads/`, a ref no branch can be.
+ */
+const headServeFlags = (parsed: Parsed): Failure | undefined => {
+  if (parsed.command !== "head serve") return undefined
+  if (str(parsed, "poll-ms") !== undefined) {
+    const poll = int(parsed, "poll-ms")
+    if (poll === undefined || poll < 0) {
+      return fail(
+        "ERR_INVALID_FLAG",
+        "--poll-ms must be a non-negative integer of milliseconds; 0 leaves advancing to requests alone",
+        ["memhtml head serve --poll-ms 1000", "memhtml head serve --poll-ms 0"]
+      )
+    }
+  }
+  const ref = str(parsed, "ref")
+  if (ref !== undefined && ref.trim() === "") {
+    return fail("ERR_INVALID_FLAG", "--ref names the ref to follow and cannot be blank", [
+      "memhtml head serve --ref main"
+    ])
+  }
+  return undefined
+}
+
+/**
  * Exactly one of `--claim` / `--article-html`.
  *
  * Checked here rather than in the dispatch arm, because the exit code is the contract. `validate`'s
@@ -1071,11 +1098,16 @@ const ROOT_WITHOUT_LAYER: ReadonlySet<string> = new Set(["serve mcp", "exec"])
 const isV2Command = (command: string): boolean =>
   command.startsWith("session ") || command.startsWith("head ") || command.startsWith("curate ")
 
-/** The v2 arms that embed (`docs/v2-poc.md`, "Vector arm"): the only ones that bind an embedder. */
+/**
+ * The v2 arms that embed (`docs/v2-poc.md`, "Vector arm"): the only ones that bind an embedder. The
+ * head server binds it for the `search` and `neighbors` routes it answers in place of the first and
+ * the third.
+ */
 const V2_EMBEDDING_COMMANDS: ReadonlySet<string> = new Set([
   "head search",
   "head embed",
-  "session put"
+  "session put",
+  "head serve"
 ])
 
 const resolvesRootItself = (command: string): boolean =>
@@ -1277,6 +1309,9 @@ const validateAgainst = (parsed: Parsed, spec: CommandSpec): Failure | undefined
   const snapshot = headSnapshotFlags(parsed)
   if (snapshot !== undefined) return snapshot
 
+  const serve = headServeFlags(parsed)
+  if (serve !== undefined) return serve
+
   const sessionId = sessionIdFlag(parsed)
   if (sessionId !== undefined) return sessionId
 
@@ -1465,10 +1500,11 @@ const hookText = async (
  * stdin path would be an integration test of the shell rather than of this function. The default
  * reads `process.stdin`, so `bin.ts` needs no knowledge of which commands want input.
  *
- * `embedder` is the v2 arms' embedder (`head search`, `head embed`, `session put`), injected by a test
- * the way `layerAppWith` injects the v1 one. Those arms never build `layer`, so the embedder inside
- * it cannot reach them; absent, they bind the one `layerApp` binds, `layerEmbedder` over
- * `EmbeddingsLive`, from the environment (`MEMHTML_EMBED=off` leaves both ports absent).
+ * `embedder` is the v2 arms' embedder (`head search`, `head embed`, `session put`, `head serve`),
+ * injected by a test the way `layerAppWith` injects the v1 one. Those arms never build `layer`, so
+ * the embedder inside it cannot reach them; absent, they bind the one `layerApp` binds,
+ * `layerEmbedder` over `EmbeddingsLive`, from the environment (`MEMHTML_EMBED=off` leaves both ports
+ * absent).
  */
 export const run = async (
   argv: ReadonlyArray<string>,
@@ -1920,7 +1956,7 @@ export const run = async (
 
     const override = str(parsed, "repo")
     /**
-     * The three arms that embed resolve the embedder; the rest get both ports absent and never read
+     * The four arms that embed resolve the embedder; the rest get both ports absent and never read
      * Bedrock configuration. Built from the environment like `layerApp`'s, and a failed build (a
      * malformed proxy URL) dies the same way.
      */
@@ -1936,6 +1972,17 @@ export const run = async (
       Effect.gen(function* () {
         const configured = yield* MemhtmlRoot
         const root = override !== undefined && override.trim() !== "" ? override.trim() : configured
+        // Long-running: the envelope is written when a signal stops the server, and the listening
+        // line and every advance go to stderr while it serves.
+        if (parsed.command === "head serve") {
+          const data = yield* serveHead({
+            root,
+            ref: str(parsed, "ref"),
+            pollMs: int(parsed, "poll-ms"),
+            embedder: yield* resolveEmbedder
+          })
+          return ["head.served", data] as const
+        }
         if (parsed.command === "curate run") {
           const data = yield* curateRun({
             root,
@@ -1988,7 +2035,8 @@ export const run = async (
           target: parsed.positional[0] ?? "",
           into: str(parsed, "into"),
           skipGate: bool(parsed, "skip-gate", false),
-          embedder: yield* resolveEmbedder
+          embedder: yield* resolveEmbedder,
+          server: bool(parsed, "server", true)
         })
       }).pipe(
         Effect.map(([type, data]) => emit(succeed(type, data), EXIT_OK)),

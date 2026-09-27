@@ -25,7 +25,7 @@
  * it spends real tokens.
  */
 import { execFile, spawn } from "node:child_process"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -681,14 +681,16 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
    * Commands covered by a check of their own rather than by the table, each naming which one.
    *
    * Not excuses. `serve mcp` is a long-running server, so its check is a handshake rather than an
-   * envelope. `hook` is the one command whose stdout is NOT an envelope: it writes the host's own hook
-   * protocol, so the table's shared "it answered with a `type`" assertion would fail on the command
-   * working correctly. `head embed` has nothing to embed with under this run's `MEMHTML_EMBED=off`,
-   * so its answer here is a refusal at exit 1, which the table reads as a crash; its success path is
-   * the live tier's. All three are invoked, just elsewhere.
+   * envelope, and `head serve` is one too: its envelope arrives only when a signal stops it. `hook`
+   * is the one command whose stdout is NOT an envelope: it writes the host's own hook protocol, so
+   * the table's shared "it answered with a `type`" assertion would fail on the command working
+   * correctly. `head embed` has nothing to embed with under this run's `MEMHTML_EMBED=off`, so its
+   * answer here is a refusal at exit 1, which the table reads as a crash; its success path is the
+   * live tier's. All four are invoked, just elsewhere.
    */
   const COVERED_ELSEWHERE = {
     "serve mcp": "`memhtml serve mcp answers the MCP handshake`",
+    "head serve": "`head serve answers head search over its socket and removes it on SIGTERM`",
     hook: "`hook writes the host's protocol on stdout and never an envelope`",
     "head embed": "`head embed refuses with ERR_MODEL_UNAVAILABLE when the embedder is off`"
   }
@@ -736,6 +738,65 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
    * stdout that is NOT an envelope: `{"apiVersion":"1",…}` in a model's context window would satisfy
    * every other check here and be wrong in the only way that matters.
    */
+  /**
+   * `memhtml head serve`, the other long-running server: started from the installed binary, asked
+   * through a second invocation of it (`head search` must answer with `head.source: "server"`, which
+   * only the socket can produce), then stopped with SIGTERM, whose envelope is `head.served` and
+   * after which the socket file is gone.
+   */
+  await check(
+    "head serve answers head search over its socket and removes it on SIGTERM",
+    async () => {
+      const socket = join(corpus, ".memhtml", "head.sock")
+      const server = spawn(bin, ["head", "serve"], { env, stdio: ["ignore", "pipe", "pipe"] })
+      let out = ""
+      let err = ""
+      server.stdout.setEncoding("utf8")
+      server.stderr.setEncoding("utf8")
+      server.stdout.on("data", (chunk) => {
+        out += chunk
+      })
+      const closed = new Promise((done) => server.once("close", (code) => done(code)))
+      const listening = await new Promise((done) => {
+        const timer = setTimeout(() => done(false), 60_000)
+        server.stderr.on("data", (chunk) => {
+          err += chunk
+          if (err.includes("head serve: listening on")) {
+            clearTimeout(timer)
+            done(true)
+          }
+        })
+        void closed.then(() => {
+          clearTimeout(timer)
+          done(false)
+        })
+      })
+      if (!listening) {
+        server.kill("SIGKILL")
+        return { ok: false, detail: `never listened: ${tail(err)}` }
+      }
+      const answer = await envelope(bin, ["head", "search", "VIP revert"], env).catch(() => null)
+      server.kill("SIGTERM")
+      const code = await closed
+      const served = (() => {
+        try {
+          return JSON.parse(out)
+        } catch {
+          return null
+        }
+      })()
+      const gone = await access(socket).then(
+        () => false,
+        () => true
+      )
+      const source = answer?.data?.head?.source
+      return {
+        ok: source === "server" && code === 0 && served?.type === "head.served" && gone,
+        detail: `search source ${String(source)}, exit ${String(code)}, ${String(served?.type)}, socket ${gone ? "removed" : "LEFT BEHIND"}`
+      }
+    }
+  )
+
   await check("hook writes the host's protocol on stdout and never an envelope", async () => {
     const ran = await runRaw(
       bin,

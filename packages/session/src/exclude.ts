@@ -18,6 +18,15 @@ import { gitPathOf } from "./plumbing.js"
  * and never tracked, so the first writer of each directory appends the pattern it needs there, once.
  */
 
+/**
+ * The head server's Unix domain socket (`memhtml head serve`), as an ignore pattern. The server
+ * passes it to {@link ensureExcludedQuietly} before it binds, the way a session start passes
+ * `.memhtml/sessions/` and a snapshot write `.memhtml/snapshots/`, so a store whose `.gitignore`
+ * predates the server keeps the socket out of `git status` too. The store package's
+ * `V2_IGNORE_PATTERNS` names the same path for a new store's `.gitignore`.
+ */
+export const HEAD_SOCKET = ".memhtml/head.sock"
+
 /** What one call did. */
 export interface ExcludeResult {
   /** The exclude file, absolute. */
