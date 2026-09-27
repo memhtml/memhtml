@@ -193,13 +193,22 @@ export const addMeta = (html: string, name: string, value: string): string => {
   return offset === undefined ? html : insertAt(html, offset, `${metaLine(name, value)}\n`)
 }
 
-/** Drop every `<meta>` of a name, one whole line each. A name that is absent is a no-op. */
-export const removeMeta = (html: string, name: string): string => {
+/**
+ * Drop a `<meta>` of a name, one whole line each. Omitting `value` drops every meta of that name;
+ * naming one drops just the metas carrying it, which is how a session's `unlabel` op takes one
+ * `memhtml-entity` off a file and leaves its other entities alone. A name or value that is absent
+ * is a no-op. Like {@link removeLink}, the cut is outside the article, so the content hash is
+ * unchanged.
+ */
+export const removeMeta = (html: string, name: string, value?: string): string => {
   const document = parseDocument(html)
   const head = headOf(document)
   if (head === undefined) return html
   const spans = memhtmlMetas(head)
-    .filter((meta) => meta.name === name)
+    .filter(
+      (meta) =>
+        meta.name === name && (value === undefined || attr(meta.element, "content") === value)
+    )
     .flatMap((meta) => {
       const span = spanOf(meta.element)
       return span === undefined

@@ -47,7 +47,15 @@ export {
   Roots,
   Store
 } from "./api-layer.js"
-export { applyPayload, applyText, decodeApply, readStdin } from "./apply.js"
+export type { SessionPutDecode, SessionPutOp } from "./apply.js"
+export {
+  applyPayload,
+  applyText,
+  decodeApply,
+  decodeSessionPut,
+  readStdin,
+  SESSION_PUT_OPS
+} from "./apply.js"
 export {
   type ArgSpec,
   buildManifest,

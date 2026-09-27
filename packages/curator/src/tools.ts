@@ -74,6 +74,8 @@ export interface CuratorSessionStatus {
     readonly archive: number
     readonly link: number
     readonly unlink: number
+    readonly label: number
+    readonly unlabel: number
   }
 }
 
@@ -89,8 +91,8 @@ export interface CuratorTools {
  * The op shape the MODEL proposes. An `archive` names only its source: the loop reads the source's
  * bytes through `read` and derives `to` as `archive/<YYYY>/<path>`, because the contract's
  * `OverlayOp.archive` carries the article's bytes to name which article is meant, and a model
- * restating a whole file is how a byte drifts. `put`, `link`, and `unlink` are the contract's own
- * shape.
+ * restating a whole file is how a byte drifts. `put`, `link`, `unlink`, `label`, and `unlabel` are
+ * the contract's own shape.
  */
 export const ProposedOp = z.discriminatedUnion("kind", [
   z.object({
@@ -124,6 +126,24 @@ export const ProposedOp = z.discriminatedUnion("kind", [
       .string()
       .min(1)
       .describe("The href of the edge to drop, exactly as the record's links list it.")
+  }),
+  z.object({
+    kind: z.literal("label"),
+    path: z.string().min(1).describe("The active record that gets the memhtml-entity."),
+    entity: z
+      .string()
+      .min(1)
+      .describe(
+        "A lowercase type:name value the record does not carry yet, e.g. system:memhtml, project:hex-bonk, person:laith."
+      )
+  }),
+  z.object({
+    kind: z.literal("unlabel"),
+    path: z.string().min(1).describe("The active record that loses the memhtml-entity."),
+    entity: z
+      .string()
+      .min(1)
+      .describe("The value to drop, exactly as the record's entities list it.")
   })
 ])
 export type ProposedOp = z.infer<typeof ProposedOp>

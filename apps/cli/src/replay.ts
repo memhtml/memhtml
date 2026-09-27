@@ -13,11 +13,12 @@ import { harvestOps } from "./session-exec.js"
  * base `main` has moved past can be landed as a fresh session on `main` instead of a fast-forward.
  *
  * A commit on a curate ref is a pure function of overlay ops (`commitSession` stages puts, archive
- * copies with head-only stamps, and head-only link splices, and nothing else), so the difference
- * between the two trees is decidable back into ops: an added `.html` is a `put`; a file gone from
- * its path beside a new `archive/<YYYY>/<that path>` holding the same article is one `archive`; a
- * file still at its path with the same article and new `<link rel="memhtml-...">` edges is one
- * `link` per edge, and one `unlink` per edge it lost. Anything else (a file deleted with no twin, an
+ * copies with head-only stamps, and head-only link and entity splices, and nothing else), so the
+ * difference between the two trees is decidable back into ops: an added `.html` is a `put`; a file
+ * gone from its path beside a new `archive/<YYYY>/<that path>` holding the same article is one
+ * `archive`; a file still at its path with the same article and new `<link rel="memhtml-...">`
+ * edges is one `link` per edge, and one `unlink` per edge it lost; one whose head gained or lost
+ * `<meta name="memhtml-entity">` values is one `label` or `unlabel` per value. Anything else (a file deleted with no twin, an
  * article changed in place, a meta changed, a file that is not a memory) is not an operation, and
  * since the commit path cannot write it, someone wrote it by hand; the merge refuses naming the path
  * and the reason.
@@ -80,7 +81,7 @@ export interface ReplayRejection {
 
 /** The reconstructed log, or what stopped it. `rejected` non-empty means the merge refuses. */
 export interface Reconstruction {
-  /** `put`s, then `link`s, then `archive`s, each sorted by path: the harvester's order. */
+  /** `put`s, then the head ops, then `archive`s, each sorted by path: the harvester's order. */
   readonly ops: ReadonlyArray<OverlayOp>
   readonly rejected: ReadonlyArray<ReplayRejection>
   readonly counts: {
@@ -88,6 +89,8 @@ export interface Reconstruction {
     readonly archive: number
     readonly link: number
     readonly unlink: number
+    readonly label: number
+    readonly unlabel: number
   }
   /**
    * The instant every archive twin at the tip is stamped with, when there is exactly one; `null`
@@ -120,8 +123,8 @@ export const ARTICLE_EDIT_REASON =
  * body at the merge base (absent for an added path), `after` every changed path's body at the tip
  * (absent for a deleted path). Untouched paths need not appear in either.
  *
- * The harvester decides puts, links, and archives, and rejects deletions with no twin, twins whose
- * article differs, and head edits other than added links. One rule is added on top: a `put` at a
+ * The harvester decides puts, head ops (links and entity labels added or removed), and archives,
+ * and rejects deletions with no twin, twins whose article differs, and any other head edit. One rule is added on top: a `put` at a
  * path that existed at the base is an article changed in place, which the harvester reports as a
  * put (for `validateOps` to refuse as `claim-edit`) and which a replay refuses here by name, because
  * the commit path never writes one and the sandbox is not where it came from.
@@ -171,7 +174,9 @@ export const reconstructOps = (input: {
       put: count("put"),
       archive: count("archive"),
       link: count("link"),
-      unlink: count("unlink")
+      unlink: count("unlink"),
+      label: count("label"),
+      unlabel: count("unlabel")
     },
     archivedAt: stamps.size === 1 ? ([...stamps][0] ?? null) : null
   }

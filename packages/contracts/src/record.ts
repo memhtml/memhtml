@@ -68,14 +68,17 @@ export interface HeadView {
 /**
  * One entry in a session's overlay log. A session never edits an active claim in place: a changed
  * claim is a `put` of a new file plus an `archive` of the old one, linked by a supersedes edge.
- * `link` and `unlink` are the two head-only edits: each names one `(rel, href)` edge on one file,
- * and neither touches the article, so the record's content hash survives both.
+ * `link` and `unlink` are the edge edits: each names one `(rel, href)` edge on one file. `label` and
+ * `unlabel` are the entity edits: each names one `memhtml-entity` value on one file. All four are
+ * head-only and none touches the article, so the record's content hash survives every one of them.
  */
 export type OverlayOp =
   | { readonly kind: "put"; readonly path: string; readonly html: string }
   | { readonly kind: "archive"; readonly path: string; readonly to: string; readonly html: string }
   | { readonly kind: "link"; readonly path: string; readonly rel: string; readonly href: string }
   | { readonly kind: "unlink"; readonly path: string; readonly rel: string; readonly href: string }
+  | { readonly kind: "label"; readonly path: string; readonly entity: string }
+  | { readonly kind: "unlabel"; readonly path: string; readonly entity: string }
 
 export const hrefToPath = (href: string): string => (href.startsWith("/") ? href.slice(1) : href)
 

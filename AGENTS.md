@@ -516,17 +516,17 @@ Open a v2 session on the ref's tip: a pointer to that version plus an empty over
 
 ### `memhtml session put`
 
-Append write ops to a session's overlay from a JSONL file in the shape `memhtml apply` takes.
+Append write ops, and label or unlabel ops on existing records, to a session's overlay from a JSONL file.
 
 - `--id` (string) — The session to append to. _(**required**)_
-- `--file` (string) — JSONL of `write` ops, one object per line, the same fields `memhtml apply` accepts. `-` reads stdin. Each op is rendered to the file the store would write and lands at the path the store would choose. A malformed op, a reserved path, or a record below the write bar refuses the whole call and appends nothing. The bar: a memory names the system, project, or person it is about (an `entities` value, or a `workspace`), carries a mechanism or a decision, and is something a future run would look up; a run narrative (`episodic`) or review output (`verdict`) is refused, because runs live in the trace index. The bar holds for every writer and every type, the curator and tasks included: a task names an entity unless its `workspace` anchors it. The response lists each put's nearest existing records under `neighbors`, so a near-duplicate can be skipped and the related records linked before the commit. _(**required**)_
+- `--file` (string) — JSONL, one object per line. A `write` line takes the same fields `memhtml apply` accepts; each is rendered to the file the store would write and lands at the path the store would choose. A `label` line, `{"op":"label","path":"areas/inbox/x.html","entity":"system:memhtml"}`, adds one `memhtml-entity` to an existing record's head, and an `unlabel` line with the same fields removes one; neither touches the article, so the record keeps its content hash. A label value is a lowercase `type:name` (`service:memhtml`, `project:hex-bonk`, `person:laith`) the record does not carry yet; an unlabel names a value the record carries, exactly as written. `-` reads stdin. A malformed op, a reserved path, a label that is malformed or already carried, an unlabel of a value the record lacks, an unlabel that leaves a record with no entity outside `projects/<slug>/`, or a record below the write bar refuses the whole call and appends nothing. The bar: a memory names the system, project, or person it is about (an `entities` value, or a `workspace`), carries a mechanism or a decision, and is something a future run would look up; a run narrative (`episodic`) or review output (`verdict`) is refused, because runs live in the trace index. The bar holds for every writer and every type, the curator and tasks included: a task names an entity unless its `workspace` anchors it. The response lists each put's nearest existing records under `neighbors`, so a near-duplicate can be skipped and the related records linked before the commit. _(**required**)_
 
 ### `memhtml session exec`
 
 Run a script over the session's view (head plus overlay) in a writable sandbox and harvest its writes into the overlay.
 
 - `--id` (string) — The session whose view the script sees. _(**required**)_
-- `--file` (string) — The script, as a path on the HOST. Omit it, pass `--file -`, or a positional `-` to read stdin. Mutually exclusive with `--script`. A new file the script writes is held to the write bar `session put` states; one below it blocks the whole harvest.
+- `--file` (string) — The script, as a path on the HOST. Omit it, pass `--file -`, or a positional `-` to read stdin. Mutually exclusive with `--script`. A new file the script writes is held to the write bar `session put` states; one below it blocks the whole harvest. An existing file whose article is unchanged may gain or lose `<link rel="memhtml-...">` lines and `<meta name="memhtml-entity">` lines in its head: each becomes a `link`, `unlink`, `label`, or `unlabel` op, and any other head edit is rejected with a reason.
 - `--script` (string) — The script source, inline. Mutually exclusive with `--file` and with stdin.
 - `--timeout-ms` (int) — Wall-clock bound on the script. Exceeding it is `exitCode` 124 with `timedOut: true`. Capped at 600000. _(default `30000`)_
 

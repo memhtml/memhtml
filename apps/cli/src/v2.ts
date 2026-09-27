@@ -24,7 +24,7 @@ import {
 import { readSnapshot, snapshotPathFor } from "@memhtml/snapshot"
 import { type GitFailure, isoSecond, makeGit, type WriteInput } from "@memhtml/store"
 import { Effect } from "effect"
-
+import type { SessionPutOp } from "./apply.js"
 import type { ResponseType } from "./envelope.js"
 import {
   type HeadSource,
@@ -40,7 +40,7 @@ import {
   gateReportOf,
   headGate
 } from "./head-gate.js"
-import { toWriteInput, type WriteParams } from "./operations.js"
+import { toWriteInput } from "./operations.js"
 import {
   commitSubjectOf,
   mergeBase,
@@ -300,18 +300,20 @@ export const sessionStart = (input: {
   })
 
 /**
- * `session put`: render each `write` op the way the store would and append the puts to the log.
+ * `session put`: render each `write` op the way the store would, and append the puts, with every
+ * `label` and `unlabel` line in the order the file gave them, to the log.
  *
- * Refused as a whole, appending nothing, when a new put carries a violation no rebase can cure
- * ({@link BLOCKING_VIOLATIONS}): a malformed file or a reserved path would make every later commit
- * of this session `refused`, and the log has no removal op. `duplicate` and `claim-edit` are
- * reported, not refused, because they are judged against the base the session currently sees and a
- * rebase can change the answer either way.
+ * Refused as a whole, appending nothing, when a new op carries a violation no rebase can cure
+ * ({@link BLOCKING_VIOLATIONS}): a malformed file, a reserved path, a label that is not a
+ * well-formed entity or is already carried, an unlabel of one the record lacks, or an unlabel that
+ * leaves a record unanchored would make every later commit of this session `refused`, and the log
+ * has no removal op. `duplicate` and `claim-edit` are reported, not refused, because they are
+ * judged against the base the session currently sees and a rebase can change the answer either way.
  */
 export const sessionPut = (input: {
   readonly root: string
   readonly id: string
-  readonly ops: ReadonlyArray<WriteParams>
+  readonly ops: ReadonlyArray<SessionPutOp>
 }) =>
   Effect.gen(function* () {
     const session = yield* resumeSession({ root: input.root, id: input.id })
@@ -319,13 +321,23 @@ export const sessionPut = (input: {
     const view = yield* withOverlay(head.view, session.ops)
     const at = isoSecond(yield* Effect.clockWith((clock) => clock.currentTimeMillis))
     const claimed = new Set<string>()
-    const puts: Array<OverlayOp> = []
+    /** Every path this call's ops touch, so only their violations can block the call. */
+    const touched = new Set<string>()
+    const appended: Array<OverlayOp> = []
+    const puts: Array<string> = []
     const neighbors: Array<{ readonly path: string; readonly hits: ReadonlyArray<SearchHit> }> = []
-    for (const params of input.ops) {
-      const write = yield* toWriteInput(params, at)
+    for (const line of input.ops) {
+      if (line.op !== "write") {
+        appended.push({ kind: line.op, path: line.path, entity: line.entity })
+        touched.add(line.path)
+        continue
+      }
+      const write = yield* toWriteInput(line.params, at)
       const path = yield* putPathFor(view, write, claimed)
       claimed.add(path)
-      puts.push({ kind: "put", path, html: renderTemplate(write) })
+      touched.add(path)
+      puts.push(path)
+      appended.push({ kind: "put", path, html: renderTemplate(write) })
       // Read before write: the records the view already holds nearest this one, so the writer can
       // see a near-duplicate it should skip or the records it should link to before it commits.
       neighbors.push({
@@ -334,11 +346,11 @@ export const sessionPut = (input: {
       })
     }
     // Judged the way `commitSession` will judge them: every op of the session against the base.
-    const violations = validateOps(head.view, [...session.ops, ...puts])
+    const violations = validateOps(head.view, [...session.ops, ...appended])
     const blocking = violations.filter(
       (violation) =>
         BLOCKING_VIOLATIONS.has(violation.kind) &&
-        (violation.kind === "batch-cap" || claimed.has(violation.path))
+        (violation.kind === "batch-cap" || touched.has(violation.path))
     )
     if (blocking.length > 0) {
       return yield* Effect.fail(
@@ -347,13 +359,21 @@ export const sessionPut = (input: {
         })
       )
     }
-    const next = yield* appendOps(session, puts)
+    const next = yield* appendOps(session, appended)
     return {
       id: session.id,
       baseSha: session.baseSha,
-      appended: puts.length,
+      /** Every op this call appended: the puts and the entity edits. */
+      appended: appended.length,
       ops: next.ops.length,
-      paths: puts.map((op) => op.path),
+      /** The paths the puts landed at, in input order. */
+      paths: puts,
+      /** The `label` and `unlabel` ops this call appended, in input order. */
+      labels: appended.flatMap((op) =>
+        op.kind === "label" || op.kind === "unlabel"
+          ? [{ kind: op.kind, path: op.path, entity: op.entity }]
+          : []
+      ),
       neighbors,
       violations
     }
@@ -485,6 +505,8 @@ export const sessionStatus = (input: { readonly root: string; readonly id: strin
       archives: count("archive"),
       links: count("link"),
       unlinks: count("unlink"),
+      labels: count("label"),
+      unlabels: count("unlabel"),
       paths: [...new Set(session.ops.flatMap(touchedPaths))].sort(),
       /** A commit built and possibly landed by a call that was killed; the next commit settles it. */
       pending: session.pending ?? null
@@ -550,6 +572,8 @@ export interface ReplayReport {
     readonly archive: number
     readonly link: number
     readonly unlink: number
+    readonly label: number
+    readonly unlabel: number
   }
   /** How many `commitSession` calls the landing took; more than one means the target moved meanwhile. */
   readonly attempts: number
@@ -644,9 +668,9 @@ const replayPlan = (input: {
  *    ref's tip ({@link reconstructOps}), a fresh session is started on `into` at its tip with those
  *    ops, and `validateOps` judges them under the `curate` scope against that tip. A change on the
  *    ref that is not an operation (an article edited in place, a file deleted with no archive twin,
- *    a link removed, a meta changed) refuses the merge naming the path, and so does any violation
- *    (a `duplicate` or `claim-edit` because `into` gained the same fact meanwhile, a link whose
- *    target is gone), with nothing moved.
+ *    a title or a meta other than an entity changed) refuses the merge naming the path, and so
+ *    does any violation (a `duplicate` or `claim-edit` because `into` gained the same fact
+ *    meanwhile, a link whose target is gone), with nothing moved.
  * 2. The head gate (`head-gate.ts`): the version at `into`'s tip and the version at `ref`'s tip
  *    are loaded and `gateHeads` scores the same probes at both, so the gate measures the corpus
  *    being landed and nothing else, with no network call and no credential. A failing gate fails
@@ -906,7 +930,7 @@ export interface V2Input {
   readonly query: string
   readonly limit?: number | undefined
   readonly snapshotMode: "write" | "read"
-  readonly ops: ReadonlyArray<WriteParams>
+  readonly ops: ReadonlyArray<SessionPutOp>
   /** `curate merge`'s positional: the curator branch. */
   readonly target: string
   readonly into?: string | undefined

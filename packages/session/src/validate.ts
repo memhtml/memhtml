@@ -4,6 +4,7 @@ import {
   hrefToPath,
   isArchivePath,
   isEdgeRel,
+  isWellFormedEntity,
   memoryPathViolation,
   normalizePath,
   originalPathFor,
@@ -31,7 +32,8 @@ export type Violation =
   /**
    * A new record that fails the write bar ({@link writeBarReasons}): a run narrative, review output,
    * or a record that names nothing it is about. Every scope and every type is judged; only an
-   * archive destination is not, because it is an existing record moving.
+   * archive destination is not, because it is an existing record moving. An `unlabel` that leaves
+   * its record with no entity and no workspace path fails the same anchor rule.
    */
   | { readonly kind: "write-bar"; readonly path: string; readonly reasons: ReadonlyArray<string> }
 
@@ -94,7 +96,12 @@ const REFUSED_TYPES: ReadonlyMap<string, string> = new Map([
  * curator's model reading a refused proposal) knows exactly what to add.
  */
 export const UNANCHORED_REASON =
-  'names no system, project, or person: add at least one memhtml-entity (<meta name="memhtml-entity" content="system:<name>"> in the head, or an entities value in a write op) or write it in a workspace (projects/<slug>/)'
+  'names no system, project, or person: add at least one memhtml-entity (<meta name="memhtml-entity" content="system:<name>"> in the head, an entities value in a write op, or a label op) or write it in a workspace (projects/<slug>/)'
+
+/** True when a record's entities or its path say what it is about: the write bar's anchor rule. */
+const isAnchored = (path: string, entities: Iterable<string>): boolean =>
+  [...entities].some((entity) => entity.trim() !== "") ||
+  normalizePath(path).startsWith(WORKSPACE_PREFIX)
 
 /**
  * Why a new record falls below the write bar, or nothing when it clears it.
@@ -121,10 +128,7 @@ export const writeBarReasons = (path: string, html: string): ReadonlyArray<strin
   const reasons: Array<string> = []
   const refused = REFUSED_TYPES.get(doc.metas.memoryType)
   if (refused !== undefined) reasons.push(refused)
-  const anchored =
-    doc.entities.some((entity) => entity.trim() !== "") ||
-    normalizePath(path).startsWith(WORKSPACE_PREFIX)
-  if (!anchored) reasons.push(UNANCHORED_REASON)
+  if (!isAnchored(path, doc.entities)) reasons.push(UNANCHORED_REASON)
   return reasons
 }
 
@@ -137,8 +141,16 @@ export const touchedPaths = (op: OverlayOp): ReadonlyArray<string> => {
       return [op.path, op.to]
     case "link":
     case "unlink":
+    case "label":
+    case "unlabel":
       return [op.path]
   }
+}
+
+/** The `memhtml-entity` values of a file that parses, as authored; none for one that does not. */
+const entitiesIn = (html: string): ReadonlyArray<string> => {
+  const parsed = Effect.runSyncExit(parseMemory(html))
+  return Exit.isSuccess(parsed) ? parsed.value.entities : []
 }
 
 /** True when the view holds the path as a live (non-archived) record. */
@@ -181,6 +193,23 @@ export const validateOps = (
     batchEdges.set(path, fresh)
     return fresh
   }
+  /**
+   * The entities each path carries as the batch has left it so far, kept the way `batchEdges` keeps
+   * edges: the head's (or the put's) values, plus every `label` and minus every `unlabel`. A `label`
+   * of a value already there and an `unlabel` of one that is not are judged against this.
+   */
+  const batchEntities = new Map<string, Set<string>>()
+  const entitiesOf = (path: string): Set<string> => {
+    const known = batchEntities.get(path)
+    if (known !== undefined) return known
+    const fresh = new Set(view.get(path)?.entities ?? [])
+    batchEntities.set(path, fresh)
+    return fresh
+  }
+  /** Paths an `unlabel` touched, judged against the anchor rule once the whole batch is walked. */
+  const unlabeled = new Set<string>()
+  /** Sources this batch archives: the record moves, and an archive destination is not judged. */
+  const archived = new Set<string>()
   /**
    * Every path this batch creates, puts and archive destinations alike, gathered before the walk so
    * a link may name a target its batch creates later in the order. The harvester emits links before
@@ -226,6 +255,7 @@ export const validateOps = (
           op.path,
           new Set(readLinks(op.html).map((link) => edgeKey(link.rel, link.href)))
         )
+        batchEntities.set(op.path, new Set(entitiesIn(op.html)))
         break
       }
       case "archive": {
@@ -251,6 +281,7 @@ export const validateOps = (
           reasons.push("archive op's article differs from the source record's")
         }
         if (reasons.length > 0) violations.push({ kind: "format", path: op.path, reasons })
+        archived.add(normalizePath(op.path))
         break
       }
       case "link": {
@@ -290,6 +321,53 @@ export const validateOps = (
         else edgesOf(op.path).delete(edgeKey(op.rel, op.href))
         break
       }
+      case "label": {
+        const reasons: Array<string> = []
+        if (!isActiveIn(view, op.path) && !batchPuts.has(op.path)) {
+          reasons.push("label source is not an active record in the head")
+        }
+        // A new label is written in the one spelling every entity index can meet: `type:name`,
+        // already normalized, so `Service:MemHTML` cannot open a second key beside `service:memhtml`.
+        if (!isWellFormedEntity(op.entity)) {
+          reasons.push(
+            `entity \`${op.entity}\` is not a normalized type:name value (lowercase, e.g. system:memhtml)`
+          )
+        }
+        // The value must not be there already: `addMeta` would write nothing, and the log would
+        // describe a change the commit never makes.
+        if (reasons.length === 0 && entitiesOf(op.path).has(op.entity)) {
+          reasons.push("label names an entity the source already carries")
+        }
+        if (reasons.length > 0) violations.push({ kind: "format", path: op.path, reasons })
+        else entitiesOf(op.path).add(op.entity)
+        break
+      }
+      case "unlabel": {
+        const reasons: Array<string> = []
+        if (!isActiveIn(view, op.path) && !batchPuts.has(op.path)) {
+          reasons.push("unlabel source is not an active record in the head")
+        }
+        // Matched as authored, not normalized: an unlabel takes off a value the file carries, a
+        // legacy spelling included, which is how a malformed label is repaired.
+        if (reasons.length === 0 && !entitiesOf(op.path).has(op.entity)) {
+          reasons.push("unlabel names an entity the source does not carry")
+        }
+        if (reasons.length > 0) violations.push({ kind: "format", path: op.path, reasons })
+        else {
+          entitiesOf(op.path).delete(op.entity)
+          unlabeled.add(op.path)
+        }
+        break
+      }
+    }
+  }
+  // The anchor rule over every record an `unlabel` edited, as the whole batch left it, so a batch
+  // that swaps one label for another passes in either order and one that drops the last fails. A
+  // record the batch archives is exempt: the archived copy is a destination, never judged.
+  for (const path of unlabeled) {
+    if (archived.has(normalizePath(path))) continue
+    if (!isAnchored(path, entitiesOf(path))) {
+      violations.push({ kind: "write-bar", path, reasons: [UNANCHORED_REASON] })
     }
   }
   return violations

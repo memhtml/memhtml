@@ -3,7 +3,7 @@ import { dirname, join } from "node:path"
 
 import type { MemoryRecord } from "@memhtml/contracts"
 import { advanceHead, type HeadVersion, loadHead } from "@memhtml/head"
-import { renderTemplate } from "@memhtml/html"
+import { contentHash, renderTemplate } from "@memhtml/html"
 import {
   appendOps,
   type CommitOutcome,
@@ -38,6 +38,9 @@ import { type Cli, makeCli } from "./harness.js"
  * Mutations, each run once with the change applied and the named case red:
  * - `v2.ts` `sessionPut`: `if (blocking.length > 0)` -> `if (false)` -> "session put refuses a
  *   reserved path and appends nothing".
+ * - `v2.ts` `sessionPut`: `touched.add(line.path)` dropped for a label or unlabel line -> "session put
+ *   refuses a malformed label and an unlabel that leaves a record unanchored, appending nothing"
+ *   (their violations no longer block, so both ops are appended).
  * - `v2.ts` `sessionExec`: `const clean = report.exitCode === 0 && blocking.length === 0` -> `const
  *   clean = true` -> "session exec appends the harvest only when the script exited 0" and "session
  *   exec with one malformed file appends nothing".
@@ -555,6 +558,93 @@ describe("the put and exec doors", () => {
     expect(String(refused.error)).toContain("runs belong in the trace index")
     const status = await cli.json<{ ops: number }>(["session", "status", "--id", "bar"])
     expect(status.ops).toBe(0)
+  })
+
+  it("session put appends label and unlabel lines beside a write, and the commit lands them", async () => {
+    const relabeled = fixtureMemory(10)
+    await cli.json(["session", "start", "--id", "labels"])
+    const appended = await cli.json<{
+      appended: number
+      paths: ReadonlyArray<string>
+      labels: ReadonlyArray<{ kind: string; path: string; entity: string }>
+    }>([
+      "session",
+      "put",
+      "--id",
+      "labels",
+      "--file",
+      await opsFile("labels", [
+        { op: "label", path: relabeled.path, entity: "system:memhtml" },
+        { op: "unlabel", path: relabeled.path, entity: "place:region3" },
+        // The legacy record with no entity at all gains its first one.
+        { op: "label", path: CAPITAL_PATH, entity: "place:india" },
+        { op: "write", title: "Labels land", type: "semantic", body: "Session put labels." }
+      ])
+    ])
+    expect(appended.appended).toBe(4)
+    expect(appended.paths).toEqual(["areas/inbox/labels-land.html"])
+    expect(appended.labels).toEqual([
+      { kind: "label", path: relabeled.path, entity: "system:memhtml" },
+      { kind: "unlabel", path: relabeled.path, entity: "place:region3" },
+      { kind: "label", path: CAPITAL_PATH, entity: "place:india" }
+    ])
+    // The log holds the entity edits across invocations.
+    const status = await cli.json<{ puts: number; labels: number; unlabels: number }>([
+      "session",
+      "status",
+      "--id",
+      "labels"
+    ])
+    expect([status.puts, status.labels, status.unlabels]).toEqual([1, 2, 1])
+    const committed = await cli.json<CommitOutcome>([
+      "session",
+      "commit",
+      "--id",
+      "labels",
+      "--message",
+      "relabel"
+    ])
+    expect(committed.kind).toBe("committed")
+    const onMain = await cli.git("show", `refs/heads/main:${relabeled.path}`)
+    expect(onMain).toContain('<meta name="memhtml-entity" content="system:memhtml">')
+    expect(onMain).not.toContain('content="place:region3"')
+    expect(contentHash(onMain)).toBe(contentHash(relabeled.html))
+    expect(await cli.git("show", `refs/heads/main:${CAPITAL_PATH}`)).toContain(
+      '<meta name="memhtml-entity" content="place:india">'
+    )
+  })
+
+  it("session put refuses a malformed label and an unlabel that leaves a record unanchored, appending nothing", async () => {
+    await cli.json(["session", "start", "--id", "bad-labels"])
+    const refused = await cli.envelope([
+      "session",
+      "put",
+      "--id",
+      "bad-labels",
+      "--file",
+      await opsFile("bad-labels", [
+        { op: "label", path: fixtureMemory(12).path, entity: "Place:Region5" },
+        { op: "unlabel", path: fixtureMemory(11).path, entity: "place:region4" }
+      ])
+    ])
+    expect(refused.code).toBe("ERR_INVALID_MEMORY")
+    expect(String(refused.error)).toContain("is not a normalized type:name value")
+    expect(String(refused.error)).toContain(
+      `${fixtureMemory(11).path}: below the write bar: names no system`
+    )
+    const status = await cli.json<{ ops: number }>(["session", "status", "--id", "bad-labels"])
+    expect(status.ops).toBe(0)
+    // A label line with no entity is a usage error at exit 2, before any repo state is read.
+    const usage = await cli.run([
+      "session",
+      "put",
+      "--id",
+      "bad-labels",
+      "--file",
+      await opsFile("usage-labels", [{ op: "label", path: fixtureMemory(12).path }])
+    ])
+    expect(usage.exitCode).toBe(2)
+    expect(String(JSON.parse(usage.stdout).error)).toContain("memhtml session put: line 1")
   })
 
   it("session put reports each put's nearest existing records", async () => {

@@ -70,36 +70,45 @@ const KNOWN_FIELDS: ReadonlySet<string> = new Set([
   ...Object.keys(BOOLEAN_FIELDS)
 ])
 
-/** A usage failure naming the offending line, 1-based as a text editor counts. */
+/**
+ * Where a line sits: its number, 1-based as a text editor counts, and the door reading it
+ * (`memhtml apply`, or `memhtml session put`, which reads the same write lines plus its own).
+ */
+interface Line {
+  readonly doc: string
+  readonly line: number
+}
+
+/** A usage failure naming the offending line and the door that read it. */
 const lineError = (
   code: ErrorCode,
-  line: number,
+  at: Line,
   reason: string,
   suggestions: ReadonlyArray<string> = []
-): Failure => fail(code, `${APPLY_DOC}: line ${line}: ${reason}`, suggestions)
+): Failure => fail(code, `${at.doc}: line ${at.line}: ${reason}`, suggestions)
 
 /** The prefix every apply refusal carries, so a caller can tell a file error from a corpus error. */
 const APPLY_DOC = "memhtml apply"
 
 /** One line's parsed JSON as a record, or the refusal. */
-const objectAt = (text: string, line: number): Record<string, unknown> | Failure => {
+const objectAt = (text: string, at: Line): Record<string, unknown> | Failure => {
   let value: unknown
   try {
     value = JSON.parse(text)
   } catch (error) {
     return lineError(
       "ERR_INVALID_FLAG",
-      line,
+      at,
       `not valid JSON (${error instanceof Error ? error.message : String(error)}). Every line is one complete JSON object; a pretty-printed object spanning several lines is not JSONL`,
       [
-        'memhtml apply --file ops.jsonl, one object per line: {"op":"write","title":"…","type":"semantic","body":"…"}'
+        `${at.doc} --file ops.jsonl, one object per line: {"op":"write","title":"…","type":"semantic","body":"…"}`
       ]
     )
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return lineError(
       "ERR_INVALID_FLAG",
-      line,
+      at,
       `parsed as ${Array.isArray(value) ? "an array" : typeof value}, not a JSON object`
     )
   }
@@ -113,16 +122,16 @@ const isFailure = (value: unknown): value is Failure =>
 const requiredString = (
   record: Record<string, unknown>,
   field: string,
-  line: number
+  at: Line
 ): string | Failure => {
   const value = record[field]
   if (value === undefined) {
-    return lineError("ERR_MISSING_ARGUMENT", line, `missing required field \`${field}\``)
+    return lineError("ERR_MISSING_ARGUMENT", at, `missing required field \`${field}\``)
   }
   if (typeof value !== "string" || value.trim() === "") {
     return lineError(
       "ERR_INVALID_FLAG",
-      line,
+      at,
       `\`${field}\` must be a non-empty string, got ${value === null ? "null" : typeof value}`
     )
   }
@@ -130,12 +139,12 @@ const requiredString = (
 }
 
 /** A list field as an array of strings: a bare string is a one-element list, as `--tag` is. */
-const strings = (value: unknown, field: string, line: number): Array<string> | Failure => {
+const strings = (value: unknown, field: string, at: Line): Array<string> | Failure => {
   if (typeof value === "string") return value === "" ? [] : [value]
   if (!Array.isArray(value)) {
     return lineError(
       "ERR_INVALID_FLAG",
-      line,
+      at,
       `\`${field}\` must be a string or an array of strings, got ${typeof value}`
     )
   }
@@ -144,7 +153,7 @@ const strings = (value: unknown, field: string, line: number): Array<string> | F
     if (typeof entry !== "string") {
       return lineError(
         "ERR_INVALID_FLAG",
-        line,
+        at,
         `\`${field}\` holds a ${typeof entry} where every element must be a string`
       )
     }
@@ -154,15 +163,15 @@ const strings = (value: unknown, field: string, line: number): Array<string> | F
 }
 
 /** A numeric field, accepting the JSON number or a numeric string. */
-const numeric = (value: unknown, field: string, line: number): number | Failure => {
+const numeric = (value: unknown, field: string, at: Line): number | Failure => {
   const parsed = typeof value === "number" ? value : Number(value)
   if (typeof value !== "number" && typeof value !== "string") {
-    return lineError("ERR_INVALID_FLAG", line, `\`${field}\` must be a number, got ${typeof value}`)
+    return lineError("ERR_INVALID_FLAG", at, `\`${field}\` must be a number, got ${typeof value}`)
   }
   if (!Number.isFinite(parsed)) {
     return lineError(
       "ERR_INVALID_FLAG",
-      line,
+      at,
       `\`${field}\` is not a finite number: ${String(value)}`
     )
   }
@@ -178,12 +187,12 @@ const numeric = (value: unknown, field: string, line: number): number | Failure 
  * markup valid). Those are checked per op and reported per op, and they are not duplicated here,
  * because a second copy of the type vocabulary is a second thing to update when it moves.
  */
-const opAt = (record: Record<string, unknown>, line: number): WriteParams | Failure => {
+const opAt = (record: Record<string, unknown>, at: Line): WriteParams | Failure => {
   for (const field of Object.keys(record)) {
     if (!KNOWN_FIELDS.has(field)) {
       return lineError(
         "ERR_INVALID_FLAG",
-        line,
+        at,
         `unknown field \`${field}\`. Fields: ${[...KNOWN_FIELDS].sort().join(", ")}`
       )
     }
@@ -193,21 +202,21 @@ const opAt = (record: Record<string, unknown>, line: number): WriteParams | Fail
   if (op === undefined) {
     return lineError(
       "ERR_MISSING_ARGUMENT",
-      line,
+      at,
       `missing required field \`op\`. One of: ${APPLY_OPS.join(", ")}`
     )
   }
   if (typeof op !== "string" || !APPLY_OPS.includes(op)) {
     return lineError(
       "ERR_INVALID_FLAG",
-      line,
+      at,
       `\`op\` must be one of: ${APPLY_OPS.join(", ")}, got ${JSON.stringify(op)}`
     )
   }
 
-  const title = requiredString(record, "title", line)
+  const title = requiredString(record, "title", at)
   if (isFailure(title)) return title
-  const memoryType = requiredString(record, "type", line)
+  const memoryType = requiredString(record, "type", at)
   if (isFailure(memoryType)) return memoryType
 
   const params: Record<string, unknown> = { title, memoryType, claim: "" }
@@ -217,17 +226,13 @@ const opAt = (record: Record<string, unknown>, line: number): WriteParams | Fail
     if (value === undefined || value === null) continue
     if (field === "title" || field === "type") continue
     if (target === "importance" || target === "confidence") {
-      const parsed = numeric(value, field, line)
+      const parsed = numeric(value, field, at)
       if (isFailure(parsed)) return parsed
       params[target] = parsed
       continue
     }
     if (typeof value !== "string") {
-      return lineError(
-        "ERR_INVALID_FLAG",
-        line,
-        `\`${field}\` must be a string, got ${typeof value}`
-      )
+      return lineError("ERR_INVALID_FLAG", at, `\`${field}\` must be a string, got ${typeof value}`)
     }
     params[target] = value
   }
@@ -235,7 +240,7 @@ const opAt = (record: Record<string, unknown>, line: number): WriteParams | Fail
   for (const [field, target] of Object.entries(LIST_FIELDS)) {
     const value = record[field]
     if (value === undefined || value === null) continue
-    const parsed = strings(value, field, line)
+    const parsed = strings(value, field, at)
     if (isFailure(parsed)) return parsed
     params[target] = [...((params[target] as Array<string> | undefined) ?? []), ...parsed]
   }
@@ -246,7 +251,7 @@ const opAt = (record: Record<string, unknown>, line: number): WriteParams | Fail
     if (typeof value !== "boolean") {
       return lineError(
         "ERR_INVALID_FLAG",
-        line,
+        at,
         `\`${field}\` must be a boolean, got ${typeof value}. JSON \`true\`, not the string "true"`
       )
     }
@@ -298,12 +303,12 @@ export const decodeApply = (text: string): ApplyDecode => {
   const ops: Array<WriteParams> = []
   const lines = text.split("\n")
 
-  for (const [at, raw] of lines.entries()) {
-    const line = at + 1
+  for (const [index, raw] of lines.entries()) {
+    const at: Line = { doc: APPLY_DOC, line: index + 1 }
     if (raw.trim() === "") continue
-    const record = objectAt(raw, line)
+    const record = objectAt(raw, at)
     if (isFailure(record)) return { ok: false, failure: record }
-    const op = opAt(record, line)
+    const op = opAt(record, at)
     if (isFailure(op)) return { ok: false, failure: op }
     ops.push(op)
   }
@@ -322,6 +327,114 @@ export const decodeApply = (text: string): ApplyDecode => {
     }
   }
 
+  return { ok: true, ops }
+}
+
+/**
+ * The op vocabulary `memhtml session put` reads: every `write` line exactly as `memhtml apply` takes
+ * it, plus the two head-only entity edits a session can append, `label` and `unlabel`, so an agent
+ * can label existing records from the same JSONL file it writes new ones with. `apply` stays
+ * writes-only: it is the v1 path, and a label there would have no session to judge it.
+ */
+export const SESSION_PUT_OPS: ReadonlyArray<string> = ["write", "label", "unlabel"]
+
+/** The prefix every `session put` refusal carries. */
+const SESSION_PUT_DOC = "memhtml session put"
+
+/** The fields a `label` or `unlabel` line carries; each is required and no other is legal. */
+const LABEL_FIELDS: ReadonlyArray<string> = ["entity", "op", "path"]
+
+/** One decoded `session put` line: a write to render, or an entity edit on an existing record. */
+export type SessionPutOp =
+  | { readonly op: "write"; readonly params: WriteParams }
+  | { readonly op: "label" | "unlabel"; readonly path: string; readonly entity: string }
+
+/** What a whole-file `session put` decode produced: the ops, or the first line that refused. */
+export type SessionPutDecode =
+  | { readonly ok: true; readonly ops: ReadonlyArray<SessionPutOp> }
+  | { readonly ok: false; readonly failure: Failure }
+
+/**
+ * One `label` or `unlabel` line, or the refusal naming it. Only the shape is judged here (a
+ * repo-relative `path` and an `entity`, both non-empty strings, nothing else); whether the path is
+ * an active record, whether the value is a well-formed `type:name`, and whether the record carries
+ * it are `validateOps`'s, which reads the head, so the rules have one copy.
+ */
+const labelAt = (
+  record: Record<string, unknown>,
+  op: "label" | "unlabel",
+  at: Line
+): SessionPutOp | Failure => {
+  for (const field of Object.keys(record)) {
+    if (!LABEL_FIELDS.includes(field)) {
+      return lineError(
+        "ERR_INVALID_FLAG",
+        at,
+        `unknown field \`${field}\` on a${op === "label" ? "" : "n"} ${op} line. Fields: ${LABEL_FIELDS.join(", ")}`,
+        [`{"op":"${op}","path":"areas/inbox/x.html","entity":"system:memhtml"}`]
+      )
+    }
+  }
+  const path = requiredString(record, "path", at)
+  if (isFailure(path)) return path
+  const entity = requiredString(record, "entity", at)
+  if (isFailure(entity)) return entity
+  return { op, path, entity }
+}
+
+/**
+ * Decode a whole `session put` JSONL document, refusing on the first bad line, with the ordering
+ * and blank-line rules {@link decodeApply} states. A `write` line is decoded by the same `opAt`
+ * `apply` uses, so the two doors cannot disagree about one; a `label` or `unlabel` line is
+ * `{"op":"label","path":"<repo-relative path>","entity":"<type:name>"}`.
+ */
+export const decodeSessionPut = (text: string): SessionPutDecode => {
+  const ops: Array<SessionPutOp> = []
+  for (const [index, raw] of text.split("\n").entries()) {
+    const at: Line = { doc: SESSION_PUT_DOC, line: index + 1 }
+    if (raw.trim() === "") continue
+    const record = objectAt(raw, at)
+    if (isFailure(record)) return { ok: false, failure: record }
+    const op = record.op
+    if (op === undefined) {
+      const failure = lineError(
+        "ERR_MISSING_ARGUMENT",
+        at,
+        `missing required field \`op\`. One of: ${SESSION_PUT_OPS.join(", ")}`
+      )
+      return { ok: false, failure }
+    }
+    if (op !== "write" && op !== "label" && op !== "unlabel") {
+      const failure = lineError(
+        "ERR_INVALID_FLAG",
+        at,
+        `\`op\` must be one of: ${SESSION_PUT_OPS.join(", ")}, got ${JSON.stringify(op)}`
+      )
+      return { ok: false, failure }
+    }
+    if (op === "write") {
+      const params = opAt(record, at)
+      if (isFailure(params)) return { ok: false, failure: params }
+      ops.push({ op, params })
+      continue
+    }
+    const edit = labelAt(record, op, at)
+    if (isFailure(edit)) return { ok: false, failure: edit }
+    ops.push(edit)
+  }
+  if (ops.length === 0) {
+    return {
+      ok: false,
+      failure: fail(
+        "ERR_MISSING_ARGUMENT",
+        `${SESSION_PUT_DOC}: no ops. The input held no non-blank lines, so there is nothing to append`,
+        [
+          "memhtml session put --id s1 --file ops.jsonl",
+          'printf \'%s\\n\' \'{"op":"label","path":"areas/inbox/x.html","entity":"system:memhtml"}\' | memhtml session put --id s1 -'
+        ]
+      )
+    }
+  }
   return { ok: true, ops }
 }
 

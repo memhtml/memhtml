@@ -532,7 +532,7 @@ describe("the replay, when main moved past the curator's base", () => {
     expect(merged.worktreeSynced).toBe(true)
     expect(merged.replayed).toEqual({
       base,
-      ops: { put: 1, archive: 1, link: 2, unlink: 0 },
+      ops: { put: 1, archive: 1, link: 2, unlink: 0, label: 0, unlabel: 0 },
       attempts: 1,
       originalTip: tip
     })
@@ -687,6 +687,49 @@ describe("the replay, when main moved past the curator's base", () => {
     const tree = await lsTree("refs/heads/main")
     expect(tree).toContain("areas/inbox/curated-on-m.html")
     expect(tree).toContain("areas/inbox/written-during-the-gate.html")
+    expect(await status()).toBe("")
+  })
+
+  /**
+   * The curator labels records through `session put` label lines on its branch; `main` moves; the
+   * replay reconstructs one `label` or `unlabel` per value from the two trees and lands them.
+   */
+  it("a curator branch that labels and unlabels records replays the entity edits onto main", async () => {
+    const labeled = FIXTURES[2]
+    if (labeled === undefined) throw new Error("no fixture")
+    const { sha } = await curate("l", [
+      { op: "write", title: "Curated on l", type: "semantic", body: "Lands beside two labels." },
+      { op: "label", path: labeled.path, entity: "project:harbor" },
+      { op: "label", path: labeled.path, entity: "system:memhtml" }
+    ])
+    // A second commit on the branch takes one of the two back off, so the replay sees the net edit.
+    const id = "curator-l"
+    await cli.json([
+      "session",
+      "put",
+      "--id",
+      id,
+      "--file",
+      await opsFile(`${id}-2`, [{ op: "unlabel", path: labeled.path, entity: "system:memhtml" }])
+    ])
+    const second = await cli.json<Committed>(["session", "commit", "--id", id, "--message", "l2"])
+    expect(second.kind).toBe("committed")
+    if (second.kind !== "committed") return
+    expect(second.sha).not.toBe(sha)
+    const moved = await advanceMain("l", "Written on main as l", "Main moved past l.")
+
+    const merged = await cli.json<CurateMerged>(["curate", "merge", "curate/l", "--skip-gate"])
+    expect(merged.moved).toBe(true)
+    expect(merged.from).toBe(moved)
+    expect(merged.replayed).toMatchObject({
+      ops: { put: 1, archive: 0, link: 0, unlink: 0, label: 1, unlabel: 0 },
+      attempts: 1,
+      originalTip: second.sha
+    })
+    const onMain = await cli.git("show", `refs/heads/main:${labeled.path}`)
+    expect(onMain).toContain('<meta name="memhtml-entity" content="project:harbor">')
+    expect(onMain).not.toContain('content="system:memhtml"')
+    expect(await rev("refs/heads/curate/l")).toBe(merged.to)
     expect(await status()).toBe("")
   })
 })

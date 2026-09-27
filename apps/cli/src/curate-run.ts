@@ -150,6 +150,8 @@ export interface OpsByKind {
   readonly archive: number
   readonly link: number
   readonly unlink: number
+  readonly label: number
+  readonly unlabel: number
 }
 
 export interface CurateRunReport {
@@ -187,7 +189,9 @@ const opsByKind = (ops: ReadonlyArray<OverlayOp>): OpsByKind => ({
   put: ops.filter((op) => op.kind === "put").length,
   archive: ops.filter((op) => op.kind === "archive").length,
   link: ops.filter((op) => op.kind === "link").length,
-  unlink: ops.filter((op) => op.kind === "unlink").length
+  unlink: ops.filter((op) => op.kind === "unlink").length,
+  label: ops.filter((op) => op.kind === "label").length,
+  unlabel: ops.filter((op) => op.kind === "unlabel").length
 })
 
 const describeViolation = (violation: Violation): string => {
