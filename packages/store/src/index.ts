@@ -29,6 +29,7 @@ export {
   attemptIo,
   GITATTRIBUTES,
   GITIGNORE,
+  HEAD_SOCKET_PATH,
   INDEX_DB_PATH,
   initRepo,
   MEMHTML_DIR,

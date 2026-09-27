@@ -119,6 +119,7 @@ describe("initRepo on an empty directory", () => {
     await run(initRepo(repo.git))
     expect(GITIGNORE).toContain("\n.memhtml/sessions/\n")
     expect(GITIGNORE).toContain("\n.memhtml/snapshots/\n")
+    expect(GITIGNORE).toContain("\n.memhtml/head.sock\n")
     await mkdir(join(repo.root, ".memhtml/sessions"), { recursive: true })
     await mkdir(join(repo.root, ".memhtml/snapshots"), { recursive: true })
     await writeFile(join(repo.root, ".memhtml/sessions/s1.json"), "{}", "utf8")
