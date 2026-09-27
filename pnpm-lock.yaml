@@ -462,6 +462,9 @@ importers:
       '@effect/vitest':
         specifier: 'catalog:'
         version: 4.0.0-rc.115(effect@4.0.0-rc.115)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
+      '@memhtml/eval':
+        specifier: workspace:*
+        version: link:../eval
       '@types/node':
         specifier: 26.6.2
         version: 26.6.2

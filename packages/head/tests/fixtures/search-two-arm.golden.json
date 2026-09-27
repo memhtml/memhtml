@@ -1,0 +1,1152 @@
+[
+  {
+    "query": "Country7 capital",
+    "hits": [
+      {
+        "path": "areas/inbox/fact-10.html",
+        "score": 0.024069737184491284,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country10 is City10."
+      },
+      {
+        "path": "areas/inbox/fact-106.html",
+        "score": 0.02321603128054741,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country106 is City106."
+      },
+      {
+        "path": "areas/inbox/fact-107.html",
+        "score": 0.022861881070836296,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country107 is City107."
+      },
+      {
+        "path": "areas/inbox/fact-11.html",
+        "score": 0.022518382352941176,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country11 is City11."
+      },
+      {
+        "path": "areas/inbox/fact-7.html",
+        "score": 0.021828225231646473,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country7 is City7."
+      },
+      {
+        "path": "areas/inbox/fact-118.html",
+        "score": 0.02158119658119658,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country118 is City118."
+      },
+      {
+        "path": "areas/inbox/fact-103.html",
+        "score": 0.021131741821396995,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country103 is City103."
+      },
+      {
+        "path": "areas/inbox/fact-22.html",
+        "score": 0.020562770562770564,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country22 is City22."
+      },
+      {
+        "path": "areas/inbox/fact-101.html",
+        "score": 0.020297897196261683,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country101 is City101."
+      },
+      {
+        "path": "areas/inbox/fact-23.html",
+        "score": 0.020283199387677,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country23 is City23."
+      },
+      {
+        "path": "areas/inbox/fact-1.html",
+        "score": 0.019752220663861616,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country1 is City1."
+      },
+      {
+        "path": "areas/inbox/fact-115.html",
+        "score": 0.019579012536759016,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country115 is City115."
+      },
+      {
+        "path": "areas/inbox/fact-34.html",
+        "score": 0.0195480631276901,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country34 is City34."
+      },
+      {
+        "path": "areas/inbox/fact-35.html",
+        "score": 0.019294569582678542,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country35 is City35."
+      },
+      {
+        "path": "areas/inbox/fact-113.html",
+        "score": 0.01879021879021879,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country113 is City113."
+      },
+      {
+        "path": "areas/inbox/fact-46.html",
+        "score": 0.018506493506493506,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country46 is City46."
+      },
+      {
+        "path": "areas/inbox/fact-110.html",
+        "score": 0.01836872261543647,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country110 is City110."
+      },
+      {
+        "path": "areas/inbox/fact-47.html",
+        "score": 0.018278208577306537,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country47 is City47."
+      },
+      {
+        "path": "areas/inbox/fact-17.html",
+        "score": 0.017962962962962965,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country17 is City17."
+      },
+      {
+        "path": "areas/inbox/fact-31.html",
+        "score": 0.017722023098367186,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country31 is City31."
+      },
+      {
+        "path": "areas/inbox/fact-58.html",
+        "score": 0.017582742316784868,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country58 is City58."
+      },
+      {
+        "path": "areas/inbox/fact-14.html",
+        "score": 0.017513513513513514,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country14 is City14."
+      },
+      {
+        "path": "areas/inbox/fact-13.html",
+        "score": 0.01742997342056839,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country13 is City13."
+      },
+      {
+        "path": "areas/inbox/fact-43.html",
+        "score": 0.017176071055381402,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country43 is City43."
+      },
+      {
+        "path": "areas/inbox/fact-2.html",
+        "score": 0.01700404858299595,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country2 is City2."
+      }
+    ]
+  },
+  {
+    "query": "crop3 port5",
+    "hits": [
+      {
+        "path": "areas/inbox/fact-71.html",
+        "score": 0.022381756756756757,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country71 is City71."
+      },
+      {
+        "path": "areas/inbox/fact-10.html",
+        "score": 0.02228122835372893,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country10 is City10."
+      },
+      {
+        "path": "areas/inbox/fact-82.html",
+        "score": 0.022051282051282053,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country82 is City82."
+      },
+      {
+        "path": "areas/inbox/fact-115.html",
+        "score": 0.021887948117456316,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country115 is City115."
+      },
+      {
+        "path": "projects/alpha/fact-93.html",
+        "score": 0.02073932662270045,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country93 is City93."
+      },
+      {
+        "path": "areas/inbox/fact-5.html",
+        "score": 0.020337301587301584,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country5 is City5."
+      },
+      {
+        "path": "areas/inbox/fact-38.html",
+        "score": 0.020097286226318484,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country38 is City38."
+      },
+      {
+        "path": "areas/inbox/fact-94.html",
+        "score": 0.0196514012303486,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country94 is City94."
+      },
+      {
+        "path": "projects/alpha/fact-27.html",
+        "score": 0.019318181818181818,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country27 is City27."
+      },
+      {
+        "path": "areas/inbox/fact-31.html",
+        "score": 0.018889857599535022,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country31 is City31."
+      },
+      {
+        "path": "projects/alpha/fact-45.html",
+        "score": 0.01884460920605499,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country45 is City45."
+      },
+      {
+        "path": "areas/inbox/fact-101.html",
+        "score": 0.01856178608515057,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country101 is City101."
+      },
+      {
+        "path": "areas/inbox/fact-17.html",
+        "score": 0.01832825976661593,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country17 is City17."
+      },
+      {
+        "path": "areas/inbox/fact-104.html",
+        "score": 0.01827731092436975,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country104 is City104."
+      },
+      {
+        "path": "areas/inbox/fact-16.html",
+        "score": 0.01778222730739893,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country16 is City16."
+      },
+      {
+        "path": "projects/alpha/fact-66.html",
+        "score": 0.017708732898606316,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country66 is City66."
+      },
+      {
+        "path": "projects/alpha/fact-60.html",
+        "score": 0.017316017316017316,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country60 is City60."
+      },
+      {
+        "path": "projects/alpha/fact-3.html",
+        "score": 0.017188693659281894,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country3 is City3."
+      },
+      {
+        "path": "areas/inbox/fact-73.html",
+        "score": 0.01712121212121212,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country73 is City73."
+      },
+      {
+        "path": "projects/alpha/fact-87.html",
+        "score": 0.016773504273504276,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country87 is City87."
+      },
+      {
+        "path": "areas/inbox/fact-80.html",
+        "score": 0.015792244253377788,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country80 is City80."
+      },
+      {
+        "path": "areas/inbox/fact-52.html",
+        "score": 0.015701383710332254,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country52 is City52."
+      },
+      {
+        "path": "projects/alpha/fact-24.html",
+        "score": 0.015049415992812218,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country24 is City24."
+      },
+      {
+        "path": "projects/alpha/fact-108.html",
+        "score": 0.015024383247274814,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country108 is City108."
+      },
+      {
+        "path": "areas/inbox/fact-106.html",
+        "score": 0.008064516129032258,
+        "arms": ["recency"],
+        "claim": "The capital of Country106 is City106."
+      }
+    ]
+  },
+  {
+    "query": "region",
+    "hits": [
+      {
+        "path": "areas/inbox/fact-10.html",
+        "score": 0.024325753569539928,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country10 is City10."
+      },
+      {
+        "path": "areas/inbox/fact-106.html",
+        "score": 0.023449131513647643,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country106 is City106."
+      },
+      {
+        "path": "areas/inbox/fact-107.html",
+        "score": 0.023088023088023088,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country107 is City107."
+      },
+      {
+        "path": "areas/inbox/fact-11.html",
+        "score": 0.02273787313432836,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country11 is City11."
+      },
+      {
+        "path": "areas/inbox/fact-118.html",
+        "score": 0.021776814734561216,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country118 is City118."
+      },
+      {
+        "path": "areas/inbox/fact-103.html",
+        "score": 0.02137212643678161,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country103 is City103."
+      },
+      {
+        "path": "areas/inbox/fact-22.html",
+        "score": 0.02073365231259968,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country22 is City22."
+      },
+      {
+        "path": "areas/inbox/fact-101.html",
+        "score": 0.020545913069277555,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country101 is City101."
+      },
+      {
+        "path": "areas/inbox/fact-23.html",
+        "score": 0.020449699554177168,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country23 is City23."
+      },
+      {
+        "path": "areas/inbox/fact-1.html",
+        "score": 0.02001663102874792,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country1 is City1."
+      },
+      {
+        "path": "areas/inbox/fact-115.html",
+        "score": 0.01978021978021978,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country115 is City115."
+      },
+      {
+        "path": "areas/inbox/fact-34.html",
+        "score": 0.019698620188816268,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country34 is City34."
+      },
+      {
+        "path": "areas/inbox/fact-35.html",
+        "score": 0.019441498762813716,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country35 is City35."
+      },
+      {
+        "path": "areas/inbox/fact-113.html",
+        "score": 0.01899725812769291,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country113 is City113."
+      },
+      {
+        "path": "areas/inbox/fact-46.html",
+        "score": 0.01863711001642036,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country46 is City46."
+      },
+      {
+        "path": "areas/inbox/fact-110.html",
+        "score": 0.018581851345189238,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country110 is City110."
+      },
+      {
+        "path": "areas/inbox/fact-47.html",
+        "score": 0.018405889884763126,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country47 is City47."
+      },
+      {
+        "path": "areas/inbox/fact-17.html",
+        "score": 0.018143143143143144,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country17 is City17."
+      },
+      {
+        "path": "areas/inbox/fact-31.html",
+        "score": 0.017876344086021505,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country31 is City31."
+      },
+      {
+        "path": "areas/inbox/fact-14.html",
+        "score": 0.0176986301369863,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country14 is City14."
+      },
+      {
+        "path": "areas/inbox/fact-58.html",
+        "score": 0.017697132616487456,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country58 is City58."
+      },
+      {
+        "path": "areas/inbox/fact-13.html",
+        "score": 0.017620232172470978,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country13 is City13."
+      },
+      {
+        "path": "areas/inbox/fact-43.html",
+        "score": 0.01730972515856237,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country43 is City43."
+      },
+      {
+        "path": "areas/inbox/fact-2.html",
+        "score": 0.017179487179487182,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country2 is City2."
+      },
+      {
+        "path": "areas/inbox/fact-70.html",
+        "score": 0.016950325169503254,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country70 is City70."
+      }
+    ]
+  },
+  {
+    "query": "fact about city42",
+    "hits": [
+      {
+        "path": "areas/inbox/fact-10.html",
+        "score": 0.024069737184491284,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country10 is City10."
+      },
+      {
+        "path": "areas/inbox/fact-106.html",
+        "score": 0.02321603128054741,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country106 is City106."
+      },
+      {
+        "path": "areas/inbox/fact-107.html",
+        "score": 0.022861881070836296,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country107 is City107."
+      },
+      {
+        "path": "areas/inbox/fact-11.html",
+        "score": 0.022518382352941176,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country11 is City11."
+      },
+      {
+        "path": "areas/inbox/fact-118.html",
+        "score": 0.02158119658119658,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country118 is City118."
+      },
+      {
+        "path": "projects/alpha/fact-42.html",
+        "score": 0.02149548343927735,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country42 is City42."
+      },
+      {
+        "path": "areas/inbox/fact-103.html",
+        "score": 0.021131741821396995,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country103 is City103."
+      },
+      {
+        "path": "areas/inbox/fact-22.html",
+        "score": 0.020562770562770564,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country22 is City22."
+      },
+      {
+        "path": "areas/inbox/fact-101.html",
+        "score": 0.020297897196261683,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country101 is City101."
+      },
+      {
+        "path": "areas/inbox/fact-23.html",
+        "score": 0.020283199387677,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country23 is City23."
+      },
+      {
+        "path": "areas/inbox/fact-1.html",
+        "score": 0.019752220663861616,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country1 is City1."
+      },
+      {
+        "path": "areas/inbox/fact-115.html",
+        "score": 0.019579012536759016,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country115 is City115."
+      },
+      {
+        "path": "areas/inbox/fact-34.html",
+        "score": 0.0195480631276901,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country34 is City34."
+      },
+      {
+        "path": "areas/inbox/fact-35.html",
+        "score": 0.019294569582678542,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country35 is City35."
+      },
+      {
+        "path": "areas/inbox/fact-113.html",
+        "score": 0.01879021879021879,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country113 is City113."
+      },
+      {
+        "path": "areas/inbox/fact-46.html",
+        "score": 0.018506493506493506,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country46 is City46."
+      },
+      {
+        "path": "areas/inbox/fact-110.html",
+        "score": 0.01836872261543647,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country110 is City110."
+      },
+      {
+        "path": "areas/inbox/fact-47.html",
+        "score": 0.018278208577306537,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country47 is City47."
+      },
+      {
+        "path": "areas/inbox/fact-17.html",
+        "score": 0.017962962962962965,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country17 is City17."
+      },
+      {
+        "path": "areas/inbox/fact-31.html",
+        "score": 0.017722023098367186,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country31 is City31."
+      },
+      {
+        "path": "areas/inbox/fact-58.html",
+        "score": 0.017582742316784868,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country58 is City58."
+      },
+      {
+        "path": "areas/inbox/fact-14.html",
+        "score": 0.017513513513513514,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country14 is City14."
+      },
+      {
+        "path": "areas/inbox/fact-13.html",
+        "score": 0.01742997342056839,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country13 is City13."
+      },
+      {
+        "path": "areas/inbox/fact-43.html",
+        "score": 0.017176071055381402,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country43 is City43."
+      },
+      {
+        "path": "areas/inbox/fact-2.html",
+        "score": 0.01700404858299595,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country2 is City2."
+      }
+    ]
+  },
+  {
+    "query": "nothing matches",
+    "hits": [
+      {
+        "path": "areas/inbox/fact-10.html",
+        "score": 0.00819672131147541,
+        "arms": ["recency"],
+        "claim": "The capital of Country10 is City10."
+      },
+      {
+        "path": "areas/inbox/fact-106.html",
+        "score": 0.008064516129032258,
+        "arms": ["recency"],
+        "claim": "The capital of Country106 is City106."
+      },
+      {
+        "path": "areas/inbox/fact-107.html",
+        "score": 0.007936507936507936,
+        "arms": ["recency"],
+        "claim": "The capital of Country107 is City107."
+      },
+      {
+        "path": "areas/inbox/fact-11.html",
+        "score": 0.0078125,
+        "arms": ["recency"],
+        "claim": "The capital of Country11 is City11."
+      },
+      {
+        "path": "areas/inbox/fact-118.html",
+        "score": 0.007692307692307693,
+        "arms": ["recency"],
+        "claim": "The capital of Country118 is City118."
+      },
+      {
+        "path": "areas/inbox/fact-22.html",
+        "score": 0.007575757575757576,
+        "arms": ["recency"],
+        "claim": "The capital of Country22 is City22."
+      },
+      {
+        "path": "areas/inbox/fact-23.html",
+        "score": 0.007462686567164179,
+        "arms": ["recency"],
+        "claim": "The capital of Country23 is City23."
+      },
+      {
+        "path": "areas/inbox/fact-34.html",
+        "score": 0.007352941176470588,
+        "arms": ["recency"],
+        "claim": "The capital of Country34 is City34."
+      },
+      {
+        "path": "areas/inbox/fact-35.html",
+        "score": 0.007246376811594203,
+        "arms": ["recency"],
+        "claim": "The capital of Country35 is City35."
+      },
+      {
+        "path": "areas/inbox/fact-46.html",
+        "score": 0.007142857142857143,
+        "arms": ["recency"],
+        "claim": "The capital of Country46 is City46."
+      },
+      {
+        "path": "areas/inbox/fact-47.html",
+        "score": 0.007042253521126761,
+        "arms": ["recency"],
+        "claim": "The capital of Country47 is City47."
+      },
+      {
+        "path": "areas/inbox/fact-58.html",
+        "score": 0.006944444444444444,
+        "arms": ["recency"],
+        "claim": "The capital of Country58 is City58."
+      },
+      {
+        "path": "areas/inbox/fact-70.html",
+        "score": 0.00684931506849315,
+        "arms": ["recency"],
+        "claim": "The capital of Country70 is City70."
+      },
+      {
+        "path": "areas/inbox/fact-71.html",
+        "score": 0.006756756756756757,
+        "arms": ["recency"],
+        "claim": "The capital of Country71 is City71."
+      },
+      {
+        "path": "areas/inbox/fact-82.html",
+        "score": 0.006666666666666667,
+        "arms": ["recency"],
+        "claim": "The capital of Country82 is City82."
+      },
+      {
+        "path": "areas/inbox/fact-83.html",
+        "score": 0.006578947368421052,
+        "arms": ["recency"],
+        "claim": "The capital of Country83 is City83."
+      },
+      {
+        "path": "areas/inbox/fact-94.html",
+        "score": 0.006493506493506494,
+        "arms": ["recency"],
+        "claim": "The capital of Country94 is City94."
+      },
+      {
+        "path": "areas/inbox/fact-95.html",
+        "score": 0.00641025641025641,
+        "arms": ["recency"],
+        "claim": "The capital of Country95 is City95."
+      },
+      {
+        "path": "projects/alpha/fact-105.html",
+        "score": 0.006329113924050633,
+        "arms": ["recency"],
+        "claim": "The capital of Country105 is City105."
+      },
+      {
+        "path": "projects/alpha/fact-117.html",
+        "score": 0.00625,
+        "arms": ["recency"],
+        "claim": "The capital of Country117 is City117."
+      },
+      {
+        "path": "projects/alpha/fact-21.html",
+        "score": 0.006172839506172839,
+        "arms": ["recency"],
+        "claim": "The capital of Country21 is City21."
+      },
+      {
+        "path": "projects/alpha/fact-33.html",
+        "score": 0.006097560975609756,
+        "arms": ["recency"],
+        "claim": "The capital of Country33 is City33."
+      },
+      {
+        "path": "projects/alpha/fact-45.html",
+        "score": 0.006024096385542169,
+        "arms": ["recency"],
+        "claim": "The capital of Country45 is City45."
+      },
+      {
+        "path": "projects/alpha/fact-57.html",
+        "score": 0.005952380952380952,
+        "arms": ["recency"],
+        "claim": "The capital of Country57 is City57."
+      },
+      {
+        "path": "projects/alpha/fact-81.html",
+        "score": 0.0058823529411764705,
+        "arms": ["recency"],
+        "claim": "The capital of Country81 is City81."
+      }
+    ]
+  },
+  {
+    "query": "the",
+    "hits": [
+      {
+        "path": "areas/inbox/fact-10.html",
+        "score": 0.00819672131147541,
+        "arms": ["recency"],
+        "claim": "The capital of Country10 is City10."
+      },
+      {
+        "path": "areas/inbox/fact-106.html",
+        "score": 0.008064516129032258,
+        "arms": ["recency"],
+        "claim": "The capital of Country106 is City106."
+      },
+      {
+        "path": "areas/inbox/fact-107.html",
+        "score": 0.007936507936507936,
+        "arms": ["recency"],
+        "claim": "The capital of Country107 is City107."
+      },
+      {
+        "path": "areas/inbox/fact-11.html",
+        "score": 0.0078125,
+        "arms": ["recency"],
+        "claim": "The capital of Country11 is City11."
+      },
+      {
+        "path": "areas/inbox/fact-118.html",
+        "score": 0.007692307692307693,
+        "arms": ["recency"],
+        "claim": "The capital of Country118 is City118."
+      },
+      {
+        "path": "areas/inbox/fact-22.html",
+        "score": 0.007575757575757576,
+        "arms": ["recency"],
+        "claim": "The capital of Country22 is City22."
+      },
+      {
+        "path": "areas/inbox/fact-23.html",
+        "score": 0.007462686567164179,
+        "arms": ["recency"],
+        "claim": "The capital of Country23 is City23."
+      },
+      {
+        "path": "areas/inbox/fact-34.html",
+        "score": 0.007352941176470588,
+        "arms": ["recency"],
+        "claim": "The capital of Country34 is City34."
+      },
+      {
+        "path": "areas/inbox/fact-35.html",
+        "score": 0.007246376811594203,
+        "arms": ["recency"],
+        "claim": "The capital of Country35 is City35."
+      },
+      {
+        "path": "areas/inbox/fact-46.html",
+        "score": 0.007142857142857143,
+        "arms": ["recency"],
+        "claim": "The capital of Country46 is City46."
+      },
+      {
+        "path": "areas/inbox/fact-47.html",
+        "score": 0.007042253521126761,
+        "arms": ["recency"],
+        "claim": "The capital of Country47 is City47."
+      },
+      {
+        "path": "areas/inbox/fact-58.html",
+        "score": 0.006944444444444444,
+        "arms": ["recency"],
+        "claim": "The capital of Country58 is City58."
+      },
+      {
+        "path": "areas/inbox/fact-70.html",
+        "score": 0.00684931506849315,
+        "arms": ["recency"],
+        "claim": "The capital of Country70 is City70."
+      },
+      {
+        "path": "areas/inbox/fact-71.html",
+        "score": 0.006756756756756757,
+        "arms": ["recency"],
+        "claim": "The capital of Country71 is City71."
+      },
+      {
+        "path": "areas/inbox/fact-82.html",
+        "score": 0.006666666666666667,
+        "arms": ["recency"],
+        "claim": "The capital of Country82 is City82."
+      },
+      {
+        "path": "areas/inbox/fact-83.html",
+        "score": 0.006578947368421052,
+        "arms": ["recency"],
+        "claim": "The capital of Country83 is City83."
+      },
+      {
+        "path": "areas/inbox/fact-94.html",
+        "score": 0.006493506493506494,
+        "arms": ["recency"],
+        "claim": "The capital of Country94 is City94."
+      },
+      {
+        "path": "areas/inbox/fact-95.html",
+        "score": 0.00641025641025641,
+        "arms": ["recency"],
+        "claim": "The capital of Country95 is City95."
+      },
+      {
+        "path": "projects/alpha/fact-105.html",
+        "score": 0.006329113924050633,
+        "arms": ["recency"],
+        "claim": "The capital of Country105 is City105."
+      },
+      {
+        "path": "projects/alpha/fact-117.html",
+        "score": 0.00625,
+        "arms": ["recency"],
+        "claim": "The capital of Country117 is City117."
+      },
+      {
+        "path": "projects/alpha/fact-21.html",
+        "score": 0.006172839506172839,
+        "arms": ["recency"],
+        "claim": "The capital of Country21 is City21."
+      },
+      {
+        "path": "projects/alpha/fact-33.html",
+        "score": 0.006097560975609756,
+        "arms": ["recency"],
+        "claim": "The capital of Country33 is City33."
+      },
+      {
+        "path": "projects/alpha/fact-45.html",
+        "score": 0.006024096385542169,
+        "arms": ["recency"],
+        "claim": "The capital of Country45 is City45."
+      },
+      {
+        "path": "projects/alpha/fact-57.html",
+        "score": 0.005952380952380952,
+        "arms": ["recency"],
+        "claim": "The capital of Country57 is City57."
+      },
+      {
+        "path": "projects/alpha/fact-81.html",
+        "score": 0.0058823529411764705,
+        "arms": ["recency"],
+        "claim": "The capital of Country81 is City81."
+      }
+    ]
+  },
+  {
+    "query": "",
+    "hits": [
+      {
+        "path": "areas/inbox/fact-10.html",
+        "score": 0.00819672131147541,
+        "arms": ["recency"],
+        "claim": "The capital of Country10 is City10."
+      },
+      {
+        "path": "areas/inbox/fact-106.html",
+        "score": 0.008064516129032258,
+        "arms": ["recency"],
+        "claim": "The capital of Country106 is City106."
+      },
+      {
+        "path": "areas/inbox/fact-107.html",
+        "score": 0.007936507936507936,
+        "arms": ["recency"],
+        "claim": "The capital of Country107 is City107."
+      },
+      {
+        "path": "areas/inbox/fact-11.html",
+        "score": 0.0078125,
+        "arms": ["recency"],
+        "claim": "The capital of Country11 is City11."
+      },
+      {
+        "path": "areas/inbox/fact-118.html",
+        "score": 0.007692307692307693,
+        "arms": ["recency"],
+        "claim": "The capital of Country118 is City118."
+      },
+      {
+        "path": "areas/inbox/fact-22.html",
+        "score": 0.007575757575757576,
+        "arms": ["recency"],
+        "claim": "The capital of Country22 is City22."
+      },
+      {
+        "path": "areas/inbox/fact-23.html",
+        "score": 0.007462686567164179,
+        "arms": ["recency"],
+        "claim": "The capital of Country23 is City23."
+      },
+      {
+        "path": "areas/inbox/fact-34.html",
+        "score": 0.007352941176470588,
+        "arms": ["recency"],
+        "claim": "The capital of Country34 is City34."
+      },
+      {
+        "path": "areas/inbox/fact-35.html",
+        "score": 0.007246376811594203,
+        "arms": ["recency"],
+        "claim": "The capital of Country35 is City35."
+      },
+      {
+        "path": "areas/inbox/fact-46.html",
+        "score": 0.007142857142857143,
+        "arms": ["recency"],
+        "claim": "The capital of Country46 is City46."
+      },
+      {
+        "path": "areas/inbox/fact-47.html",
+        "score": 0.007042253521126761,
+        "arms": ["recency"],
+        "claim": "The capital of Country47 is City47."
+      },
+      {
+        "path": "areas/inbox/fact-58.html",
+        "score": 0.006944444444444444,
+        "arms": ["recency"],
+        "claim": "The capital of Country58 is City58."
+      },
+      {
+        "path": "areas/inbox/fact-70.html",
+        "score": 0.00684931506849315,
+        "arms": ["recency"],
+        "claim": "The capital of Country70 is City70."
+      },
+      {
+        "path": "areas/inbox/fact-71.html",
+        "score": 0.006756756756756757,
+        "arms": ["recency"],
+        "claim": "The capital of Country71 is City71."
+      },
+      {
+        "path": "areas/inbox/fact-82.html",
+        "score": 0.006666666666666667,
+        "arms": ["recency"],
+        "claim": "The capital of Country82 is City82."
+      },
+      {
+        "path": "areas/inbox/fact-83.html",
+        "score": 0.006578947368421052,
+        "arms": ["recency"],
+        "claim": "The capital of Country83 is City83."
+      },
+      {
+        "path": "areas/inbox/fact-94.html",
+        "score": 0.006493506493506494,
+        "arms": ["recency"],
+        "claim": "The capital of Country94 is City94."
+      },
+      {
+        "path": "areas/inbox/fact-95.html",
+        "score": 0.00641025641025641,
+        "arms": ["recency"],
+        "claim": "The capital of Country95 is City95."
+      },
+      {
+        "path": "projects/alpha/fact-105.html",
+        "score": 0.006329113924050633,
+        "arms": ["recency"],
+        "claim": "The capital of Country105 is City105."
+      },
+      {
+        "path": "projects/alpha/fact-117.html",
+        "score": 0.00625,
+        "arms": ["recency"],
+        "claim": "The capital of Country117 is City117."
+      },
+      {
+        "path": "projects/alpha/fact-21.html",
+        "score": 0.006172839506172839,
+        "arms": ["recency"],
+        "claim": "The capital of Country21 is City21."
+      },
+      {
+        "path": "projects/alpha/fact-33.html",
+        "score": 0.006097560975609756,
+        "arms": ["recency"],
+        "claim": "The capital of Country33 is City33."
+      },
+      {
+        "path": "projects/alpha/fact-45.html",
+        "score": 0.006024096385542169,
+        "arms": ["recency"],
+        "claim": "The capital of Country45 is City45."
+      },
+      {
+        "path": "projects/alpha/fact-57.html",
+        "score": 0.005952380952380952,
+        "arms": ["recency"],
+        "claim": "The capital of Country57 is City57."
+      },
+      {
+        "path": "projects/alpha/fact-81.html",
+        "score": 0.0058823529411764705,
+        "arms": ["recency"],
+        "claim": "The capital of Country81 is City81."
+      }
+    ]
+  },
+  {
+    "query": "Country11 (default limit, no now)",
+    "hits": [
+      {
+        "path": "areas/inbox/fact-11.html",
+        "score": 0.023969200198708396,
+        "arms": ["lexical", "recency"],
+        "claim": "The capital of Country11 is City11."
+      },
+      {
+        "path": "areas/inbox/fact-107.html",
+        "score": 0.00819672131147541,
+        "arms": ["recency"],
+        "claim": "The capital of Country107 is City107."
+      },
+      {
+        "path": "areas/inbox/fact-23.html",
+        "score": 0.008064516129032258,
+        "arms": ["recency"],
+        "claim": "The capital of Country23 is City23."
+      },
+      {
+        "path": "areas/inbox/fact-47.html",
+        "score": 0.007936507936507936,
+        "arms": ["recency"],
+        "claim": "The capital of Country47 is City47."
+      },
+      {
+        "path": "areas/inbox/fact-71.html",
+        "score": 0.0078125,
+        "arms": ["recency"],
+        "claim": "The capital of Country71 is City71."
+      },
+      {
+        "path": "areas/inbox/fact-95.html",
+        "score": 0.007692307692307693,
+        "arms": ["recency"],
+        "claim": "The capital of Country95 is City95."
+      },
+      {
+        "path": "areas/inbox/fact-35.html",
+        "score": 0.007462686567164179,
+        "arms": ["recency"],
+        "claim": "The capital of Country35 is City35."
+      },
+      {
+        "path": "areas/inbox/fact-83.html",
+        "score": 0.007352941176470588,
+        "arms": ["recency"],
+        "claim": "The capital of Country83 is City83."
+      },
+      {
+        "path": "areas/inbox/fact-106.html",
+        "score": 0.007246376811594203,
+        "arms": ["recency"],
+        "claim": "The capital of Country106 is City106."
+      },
+      {
+        "path": "areas/inbox/fact-22.html",
+        "score": 0.007142857142857143,
+        "arms": ["recency"],
+        "claim": "The capital of Country22 is City22."
+      }
+    ]
+  }
+]
