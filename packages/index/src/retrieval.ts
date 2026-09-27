@@ -1,5 +1,5 @@
 import type { ModelUnavailable, StorageFailure } from "@memhtml/contracts/errors"
-import { applyMmr, MMR_LAMBDA, type MmrCandidate } from "@memhtml/domain"
+import { applyMmr, DEFAULT_ARM_LIMIT, MMR_LAMBDA, type MmrCandidate } from "@memhtml/domain"
 import { Context, Effect } from "effect"
 
 import type { DatabaseShape, SqlValue } from "./database.js"
@@ -36,8 +36,12 @@ import {
  * database.
  */
 
-/** How many candidates each arm contributes before fusion. */
-export const DEFAULT_ARM_LIMIT = 40
+/**
+ * How many candidates each arm contributes before fusion. Defined in `@memhtml/domain` beside
+ * `RRF_K`, so the head's search caps its arms at the same count; re-exported here, where it has
+ * always been imported from.
+ */
+export { DEFAULT_ARM_LIMIT }
 
 /** How many hits `search` returns when the caller names no limit. */
 export const DEFAULT_SEARCH_LIMIT = 10

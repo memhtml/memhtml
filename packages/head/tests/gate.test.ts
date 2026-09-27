@@ -146,11 +146,11 @@ describe("gateHeads", () => {
     const records = await distinct()
     const target = records[0]
     if (target === undefined) throw new Error("fixture")
-    // Same title tokens, newer date: it wins the lexical tie on recency and takes rank 1 at k = 1.
-    // Its path sorts after the target's, so the lexical tie itself does not favor it.
+    // Same title, and "harbor" once more in its claim: it takes the lexical lead and rank 1 at
+    // k = 1. Recency ranks only what the query matched, so it breaks ties and cannot win one.
     const twin = await record("areas/inbox/harbor2.html", {
       title: target.title,
-      claim: "Harbor cranes unload at dusk.",
+      claim: "Harbor cranes unload in the harbor at dusk.",
       at: "2026-06-01T12:00:00Z"
     })
     const base = mapView(records, "base")
@@ -175,14 +175,16 @@ describe("gateHeads", () => {
     const records = await distinct()
     const target = records[0]
     if (target === undefined) throw new Error("fixture")
+    // The older one says "harbor" in its title alone and ranks below the target on the lexical
+    // arm; the newer one says it once more than the target and ranks above.
     const older = await record("areas/inbox/harbor2-old.html", {
       title: target.title,
-      claim: "Harbor cranes unload at noon.",
+      claim: "Cranes unload at noon.",
       at: "2025-01-01T12:00:00Z"
     })
     const newer = await record("areas/inbox/harbor2-new.html", {
       title: target.title,
-      claim: "Harbor cranes unload at midnight.",
+      claim: "Harbor cranes unload in the harbor at midnight.",
       at: "2026-09-01T12:00:00Z"
     })
     const supersedingOlder = await record(target.path, {
@@ -197,11 +199,11 @@ describe("gateHeads", () => {
     })
     const base = mapView(records, "base")
     const rest = records.slice(1)
-    // The superseded record is older, so the target outranks it: no inversion, and the gate passes.
+    // The superseded record ranks below the target: no inversion, and the gate passes.
     const below = gateHeads(base, mapView([...rest, supersedingOlder, older], "below"))
     expect(below.inversions).toEqual([])
     expect(below.passed).toBe(true)
-    // The superseded record is newer, so it outranks the target: an inversion, and the gate fails.
+    // The superseded record outranks the target: an inversion, and the gate fails.
     const above = gateHeads(base, mapView([...rest, supersedingNewer, newer], "above"))
     expect(above.inversions).toEqual([
       {
@@ -225,7 +227,7 @@ describe("gateHeads", () => {
     if (target === undefined) throw new Error("fixture")
     const twin = await record("areas/inbox/harbor2.html", {
       title: target.title,
-      claim: "Harbor cranes unload at dusk.",
+      claim: "Harbor cranes unload in the harbor at dusk.",
       at: "2026-06-01T12:00:00Z"
     })
     const base = mapView(records, "base")
