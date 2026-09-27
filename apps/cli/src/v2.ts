@@ -1,10 +1,22 @@
 import { join } from "node:path"
 
 import type { HeadView, OverlayOp } from "@memhtml/contracts"
-import { DirtyTree, InvalidMemory, StorageFailure } from "@memhtml/contracts/errors"
+import {
+  DirtyTree,
+  InvalidMemory,
+  type ModelUnavailable,
+  StorageFailure
+} from "@memhtml/contracts/errors"
 import { isValidMemoryPath, memoryPathFor } from "@memhtml/contracts/paths"
 import { filenameFor, slugify, withCollisionOrdinal } from "@memhtml/contracts/slug"
-import { type HeadVersion, type SearchHit, searchHead, withOverlay } from "@memhtml/head"
+import {
+  type HeadVersion,
+  recordFrom,
+  type SearchHit,
+  searchHead,
+  vectorTextOf,
+  withOverlay
+} from "@memhtml/head"
 import { renderTemplate } from "@memhtml/html"
 import {
   appendOps,
@@ -25,6 +37,7 @@ import { readSnapshot, snapshotPathFor } from "@memhtml/snapshot"
 import { type GitFailure, isoSecond, makeGit, type WriteInput } from "@memhtml/store"
 import { Effect } from "effect"
 
+import type { EmbedderShape } from "./api-layer.js"
 import type { ResponseType } from "./envelope.js"
 import {
   type HeadSource,
@@ -40,6 +53,7 @@ import {
   gateReportOf,
   headGate
 } from "./head-gate.js"
+import { embedHead, vectorsForPuts, vectorsForQuery } from "./head-vectors.js"
 import { toWriteInput, type WriteParams } from "./operations.js"
 import {
   commitSubjectOf,
@@ -54,7 +68,7 @@ export type { GateReport } from "./head-gate.js"
 
 /**
  * The v2 proof-of-concept commands (`docs/v2-poc.md`, "CLI commands"): `session start|put|exec|
- * commit|rebase|status`, `head status|search|snapshot`, and the curation door `curate merge`.
+ * commit|rebase|status`, `head status|search|snapshot|embed`, and the curation door `curate merge`.
  *
  * ## No app layer
  *
@@ -312,6 +326,7 @@ export const sessionPut = (input: {
   readonly root: string
   readonly id: string
   readonly ops: ReadonlyArray<WriteParams>
+  readonly embedder: EmbedderShape
 }) =>
   Effect.gen(function* () {
     const session = yield* resumeSession({ root: input.root, id: input.id })
@@ -319,19 +334,14 @@ export const sessionPut = (input: {
     const view = yield* withOverlay(head.view, session.ops)
     const at = isoSecond(yield* Effect.clockWith((clock) => clock.currentTimeMillis))
     const claimed = new Set<string>()
-    const puts: Array<OverlayOp> = []
-    const neighbors: Array<{ readonly path: string; readonly hits: ReadonlyArray<SearchHit> }> = []
+    const puts: Array<OverlayOp & { readonly kind: "put" }> = []
+    const queries: Array<string> = []
     for (const params of input.ops) {
       const write = yield* toWriteInput(params, at)
       const path = yield* putPathFor(view, write, claimed)
       claimed.add(path)
       puts.push({ kind: "put", path, html: renderTemplate(write) })
-      // Read before write: the records the view already holds nearest this one, so the writer can
-      // see a near-duplicate it should skip or the records it should link to before it commits.
-      neighbors.push({
-        path,
-        hits: searchHead(view, { query: `${write.title} ${write.claim}`, limit: PUT_NEIGHBORS })
-      })
+      queries.push(`${write.title} ${write.claim}`)
     }
     // Judged the way `commitSession` will judge them: every op of the session against the base.
     const violations = validateOps(head.view, [...session.ops, ...puts])
@@ -347,6 +357,29 @@ export const sessionPut = (input: {
         })
       )
     }
+    // Read before write: the records the view already holds nearest each put, so the writer can see
+    // a near-duplicate it should skip or the records it should link to before it commits. The vector
+    // arm joins when a cache and an embedder exist, with each put's own text embedded as a document.
+    const records = yield* Effect.forEach(puts, (put) => recordFrom(put))
+    const arm = yield* vectorsForPuts({
+      root: input.root,
+      view,
+      texts: records.map(vectorTextOf),
+      embedder: input.embedder
+    })
+    const neighbors = puts.map((put, index) => {
+      const queryVector = arm.perPut?.[index]
+      return {
+        path: put.path,
+        hits: searchHead(view, {
+          query: queries[index] ?? "",
+          limit: PUT_NEIGHBORS,
+          ...(arm.vectors === null || queryVector === undefined
+            ? {}
+            : { vectors: arm.vectors, queryVector })
+        })
+      }
+    })
     const next = yield* appendOps(session, puts)
     return {
       id: session.id,
@@ -355,6 +388,7 @@ export const sessionPut = (input: {
       ops: next.ops.length,
       paths: puts.map((op) => op.path),
       neighbors,
+      vector: arm.use,
       violations
     }
   })
@@ -498,20 +532,52 @@ export const headStatus = (input: { readonly root: string }) =>
     return headStats(yield* loadHeadAt(input.root, sha))
   })
 
-/** `head search`: two-arm RRF over the version at `HEAD`. */
+/**
+ * `head search`: RRF over the version at `HEAD`, lexical plus recency, plus the vector arm when the
+ * store has a vector cache and an embedder is configured. The query is embedded with `embedQuery`;
+ * when the arm cannot run (`MEMHTML_EMBED=off`, no cache, an unreadable cache, a failed query embed)
+ * the search runs on the other two and `vector` says why, never failing the call.
+ */
 export const headSearch = (input: {
   readonly root: string
   readonly query: string
   readonly limit?: number | undefined
+  readonly embedder: EmbedderShape
 }) =>
   Effect.gen(function* () {
     const sha = yield* headSha(input.root)
     const head = yield* loadHeadAt(input.root, sha)
+    const arm = yield* vectorsForQuery({
+      root: input.root,
+      view: head.view,
+      query: input.query,
+      embedder: input.embedder
+    })
+    const started = performance.now()
     const hits: ReadonlyArray<SearchHit> = searchHead(head.view, {
       query: input.query,
-      ...(input.limit === undefined ? {} : { limit: input.limit })
+      ...(input.limit === undefined ? {} : { limit: input.limit }),
+      ...arm.search
     })
-    return { query: input.query, hits, head: headStats(head) }
+    // Hundredths: the fold takes a few milliseconds, so whole milliseconds would read as 0 to 12.
+    const searchMs = Math.round((performance.now() - started) * 100) / 100
+    return { query: input.query, hits, vector: arm.use, searchMs, head: headStats(head) }
+  })
+
+/**
+ * `head embed`: fill `.memhtml/vectors/<model>@<dim>.arrow` for the version at `HEAD`, embedding
+ * only the active records whose content hash the cache lacks.
+ */
+export const headEmbed = (input: { readonly root: string; readonly embedder: EmbedderShape }) =>
+  Effect.gen(function* () {
+    const sha = yield* headSha(input.root)
+    const head = yield* loadHeadAt(input.root, sha)
+    const embedded = yield* embedHead({
+      root: input.root,
+      view: head.view,
+      embedder: input.embedder
+    })
+    return { sha, ...embedded, head: headStats(head) }
   })
 
 /**
@@ -911,6 +977,8 @@ export interface V2Input {
   readonly target: string
   readonly into?: string | undefined
   readonly skipGate: boolean
+  /** The embedder `head search`, `head embed`, and `session put` use; both ports absent when off. */
+  readonly embedder: EmbedderShape
 }
 
 /** One arm per command, each returning its response type beside its payload. */
@@ -919,7 +987,7 @@ export const runV2 = (
   input: V2Input
 ): Effect.Effect<
   readonly [ResponseType, unknown],
-  GitFailure | InvalidMemory | StorageFailure | DirtyTree | GateFailure
+  GitFailure | InvalidMemory | StorageFailure | DirtyTree | GateFailure | ModelUnavailable
 > => {
   switch (command) {
     case "session start":
@@ -938,6 +1006,8 @@ export const runV2 = (
       return headStatus(input).pipe(Effect.map((data) => ["head.status", data] as const))
     case "head search":
       return headSearch(input).pipe(Effect.map((data) => ["head.search", data] as const))
+    case "head embed":
+      return headEmbed(input).pipe(Effect.map((data) => ["head.embedded", data] as const))
     case "head snapshot":
       return headSnapshot({ root: input.root, mode: input.snapshotMode }).pipe(
         Effect.map((data) => ["head.snapshot", data] as const)

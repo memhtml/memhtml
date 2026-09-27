@@ -135,7 +135,9 @@ export const makeCli = async (
     vectorCoverageFloor: options.vectorCoverageFloor
   })
 
-  const invoke = (argv: ReadonlyArray<string>) => run([...argv, "--repo", fixture.root], layer)
+  // The embedder reaches the v2 arms too, which never build `layer` (`run`'s last parameter).
+  const invoke = (argv: ReadonlyArray<string>) =>
+    run([...argv, "--repo", fixture.root], layer, undefined, undefined, embedder)
 
   return {
     root: fixture.root,

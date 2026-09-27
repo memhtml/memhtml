@@ -1243,7 +1243,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "file",
         type: "string",
         description:
-          "JSONL of `write` ops, one object per line, the same fields `memhtml apply` accepts. `-` reads stdin. Each op is rendered to the file the store would write and lands at the path the store would choose. A malformed op, a reserved path, or a record below the write bar refuses the whole call and appends nothing. The bar: a memory names the system, project, or person it is about (an `entities` value, or a `workspace`), carries a mechanism or a decision, and is something a future run would look up; a run narrative (`episodic`) or review output (`verdict`) is refused, because runs live in the trace index. The bar holds for every writer and every type, the curator and tasks included: a task names an entity unless its `workspace` anchors it. The response lists each put's nearest existing records under `neighbors`, so a near-duplicate can be skipped and the related records linked before the commit.",
+          "JSONL of `write` ops, one object per line, the same fields `memhtml apply` accepts. `-` reads stdin. Each op is rendered to the file the store would write and lands at the path the store would choose. A malformed op, a reserved path, or a record below the write bar refuses the whole call and appends nothing. The bar: a memory names the system, project, or person it is about (an `entities` value, or a `workspace`), carries a mechanism or a decision, and is something a future run would look up; a run narrative (`episodic`) or review output (`verdict`) is refused, because runs live in the trace index. The bar holds for every writer and every type, the curator and tasks included: a task names an entity unless its `workspace` anchors it. The response lists each put's nearest existing records under `neighbors`, so a near-duplicate can be skipped and the related records linked before the commit. `neighbors` is ranked the way `head search` ranks, the vector arm included when the store has a vector cache (`memhtml head embed`) and an embedder is configured: each put's own text is embedded as a document, one call per batch. When the arm cannot run the neighbors come from the other two arms and `vector` says why (`used: false` with a `reason`); the put itself never fails for it.",
         required: true
       }
     ],
@@ -1340,11 +1340,20 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   {
     name: "head search",
     summary:
-      "Two-arm retrieval (BM25 plus recency, RRF-fused) over the version at HEAD. No index database.",
+      "Retrieval over the version at HEAD, RRF-fused: BM25 plus recency, plus a vector arm (cosine over Cohere Embed v4 vectors, weight 1.0 as in v1's search) when `.memhtml/vectors/` holds a cache for the configured embedder and `MEMHTML_EMBED` is not `off`. The query is embedded once with the query input type. When the arm cannot run (embedder off, no cache yet, an unreadable cache, the query embed failed) the search answers from the other two arms and `vector` reports `used: false` with a `reason`; it never fails for it. Each hit's `arms` names the arms it scored on. No index database.",
     args: [{ name: "query", description: "Free text to rank against.", required: true }],
     flags: [{ name: "limit", type: "int", description: "Hits to return.", default: 10 }],
     responseTypes: ["head.search"],
     examples: ["memhtml head search 'vip drain' --limit 5"]
+  },
+  {
+    name: "head embed",
+    summary:
+      "Fill the vector cache for the version at HEAD: embed every active record whose article text has no vector yet (keyed by content hash, so an unchanged record is never embedded twice, across every version) and write `.memhtml/vectors/<model>@<dimension>.arrow`, a rebuildable cache git ignores. Reports records, reused, embedded, the cache file's bytes, and the time spent. Needs an embedder: with `MEMHTML_EMBED=off` it fails with ERR_MODEL_UNAVAILABLE. Run it after commits land to keep `head search`'s vector arm covering new records; `vector.coverage` on a search says how much of the head it covers.",
+    args: [],
+    flags: [],
+    responseTypes: ["head.embedded"],
+    examples: ["memhtml head embed"]
   },
   {
     name: "head snapshot",

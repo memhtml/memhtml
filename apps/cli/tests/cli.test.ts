@@ -238,6 +238,7 @@ describe("manifest", () => {
       "head status",
       "head search",
       "head snapshot",
+      "head embed",
       /**
        * The curation door and the curator itself (`docs/v2-poc.md`, "Curation door" and "Curator"):
        * a curation pass is `curate run` then `curate merge`, so both are pinned as the surface a

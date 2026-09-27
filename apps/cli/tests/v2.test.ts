@@ -51,6 +51,7 @@ describe("the v2 command table", () => {
     "head status",
     "head search",
     "head snapshot",
+    "head embed",
     "curate merge",
     "curate run"
   ]
