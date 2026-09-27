@@ -53,22 +53,27 @@ export const SESSIONS_DIR_PATH = `${MEMHTML_DIR}/sessions`
 /** The v2 Arrow snapshots (`@memhtml/snapshot`), a rebuildable cache of one commit each. */
 export const SNAPSHOTS_DIR_PATH = `${MEMHTML_DIR}/snapshots`
 
+/** The v2 vector caches (`@memhtml/snapshot`), rebuildable by embedding the tree's articles again. */
+export const VECTORS_DIR_PATH = `${MEMHTML_DIR}/vectors`
+
 /**
- * The two v2 state directories as ignore patterns. Also what `ensureExcluded` in `@memhtml/session`
+ * The three v2 state directories as ignore patterns. Also what `ensureExcluded` in `@memhtml/session`
  * appends to an existing store's `.git/info/exclude`, since a store scaffolded before v2 carries a
  * `.gitignore` without them and the ignore file is committed content this package must not rewrite.
  */
 export const V2_IGNORE_PATTERNS: ReadonlyArray<string> = [
   `${SESSIONS_DIR_PATH}/`,
-  `${SNAPSHOTS_DIR_PATH}/`
+  `${SNAPSHOTS_DIR_PATH}/`,
+  `${VECTORS_DIR_PATH}/`
 ]
 
 /**
- * `.gitignore`. The two databases and the two v2 state directories are excluded and nothing else
+ * `.gitignore`. The two databases and the three v2 state directories are excluded and nothing else
  * is. `index.db` is rebuildable from the tree, and `state.db` is reproduced from its committed JSONL
  * sidecar, so a fresh clone plus `memhtml state import` plus `memhtml index rebuild` yields the
  * whole system. `.memhtml/sessions/` holds a session's log and git index file, which belong to one
- * process on one machine; `.memhtml/snapshots/` is a cache of the tree itself.
+ * process on one machine; `.memhtml/snapshots/` is a cache of the tree itself, and
+ * `.memhtml/vectors/` a cache of its articles' embeddings.
  */
 export const GITIGNORE = `${INDEX_DB_PATH}
 ${STATE_DB_PATH}

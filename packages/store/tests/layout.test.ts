@@ -113,16 +113,20 @@ describe("initRepo on an empty directory", () => {
     expect(entries.filter((entry) => entry.kind !== "ignored")).toEqual([])
   })
 
-  it("gitignores the v2 session and snapshot directories, so per-process state never makes the tree dirty", async () => {
-    // Mutation: drop `V2_IGNORE_PATTERNS` from `GITIGNORE` -> the two state files are untracked.
+  it("gitignores the v2 session, snapshot, and vector directories, so per-process state never makes the tree dirty", async () => {
+    // Mutation: drop `V2_IGNORE_PATTERNS` from `GITIGNORE` -> the three state files are untracked.
+    // Mutation: drop `${VECTORS_DIR_PATH}/` from `V2_IGNORE_PATTERNS` -> the vector cache is untracked.
     const repo = await bareDirectory()
     await run(initRepo(repo.git))
     expect(GITIGNORE).toContain("\n.memhtml/sessions/\n")
     expect(GITIGNORE).toContain("\n.memhtml/snapshots/\n")
+    expect(GITIGNORE).toContain("\n.memhtml/vectors/\n")
     await mkdir(join(repo.root, ".memhtml/sessions"), { recursive: true })
     await mkdir(join(repo.root, ".memhtml/snapshots"), { recursive: true })
+    await mkdir(join(repo.root, ".memhtml/vectors"), { recursive: true })
     await writeFile(join(repo.root, ".memhtml/sessions/s1.json"), "{}", "utf8")
     await writeFile(join(repo.root, ".memhtml/snapshots/abc.arrow"), "bytes", "utf8")
+    await writeFile(join(repo.root, ".memhtml/vectors/model@4.arrow"), "bytes", "utf8")
     const entries = await run(repo.git.statusPorcelainV2())
     expect(entries.filter((entry) => entry.kind !== "ignored")).toEqual([])
   })
