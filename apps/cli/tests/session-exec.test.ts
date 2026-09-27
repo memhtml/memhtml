@@ -250,6 +250,80 @@ console.log(JSON.stringify({ seen: memories.size, claim: memories.get("/areas/in
   })
 })
 
+describe("an unchanged record at a curation-reserved path is not a write", () => {
+  const ARC = "areas/arcs/memory-is-a-value.html"
+  const PERSON = "resources/people/someone.html"
+  const INBOX = "areas/inbox/plain-fact.html"
+
+  const html = (title: string, claim: string): string =>
+    renderTemplate({
+      title,
+      claim,
+      body: ["Seeded."],
+      memoryType: "semantic",
+      at: SEEDED_AT,
+      entities: ["system:memhtml"]
+    })
+
+  let curated: HeadView
+  beforeAll(async () => {
+    curated = viewOver(
+      await Effect.runPromise(
+        Effect.all([
+          recordFrom(ARC, html("Arc", "The corpus is held as a value")),
+          recordFrom(PERSON, html("Someone", "Someone works on the store")),
+          recordFrom(INBOX, html("Plain", "The capital of Plainland is Plaintown"))
+        ])
+      )
+    )
+  })
+
+  /**
+   * A session-scope run over a store holding curated records reports none of them.
+   *
+   * (Mutation: moving the `before.html === file.html` skip in `harvestOps` back below the
+   * `presentFileProblem` check -> `rejected` carries the arc and the person record with "a reserved
+   * path only curation writes" and the case is red.)
+   */
+  it("a no-op script over seeded arcs and people records harvests nothing and rejects nothing", async () => {
+    const report = await Effect.runPromise(
+      runSessionExec({ view: curated, script: "console.log('no-op')" })
+    )
+    expect(report.exitCode, report.stderr).toBe(0)
+    expect(report.rejected).toEqual([])
+    expect(report.ops).toEqual([])
+  }, 120_000)
+
+  /**
+   * The fix skips only UNCHANGED seeded files; a write at a reserved path is still refused.
+   *
+   * (Mutation: exempting every seeded path from `presentFileProblem`, `before !== undefined ? null :
+   * presentFileProblem(...)` -> the edited arc comes back as a put and the case is red.)
+   */
+  it("a changed or a new file at a reserved path is still rejected under the session scope", () => {
+    const seededSet = new Map(
+      [...curated.records()].map((record) => [
+        record.path,
+        { html: record.html, contentHash: record.contentHash }
+      ])
+    )
+    const arc = seededSet.get(ARC)
+    if (arc === undefined) throw new Error("fixture")
+    const after = [
+      ...[...seededSet].map(([path, file]) => ({ path, html: file.html })),
+      { path: "areas/arcs/new-arc.html", html: html("New arc", "A new arc names its sources") }
+    ].map((file) =>
+      file.path === ARC ? { path: ARC, html: arc.html.replace("Seeded.", "Edited.") } : file
+    )
+    const report = harvestOps({ seeded: seededSet, after, skippedGitDir: false })
+    expect(report.ops).toEqual([])
+    expect(report.rejected).toEqual([
+      { path: ARC, reason: "a reserved path only curation writes" },
+      { path: "areas/arcs/new-arc.html", reason: "a reserved path only curation writes" }
+    ])
+  })
+})
+
 describe("the archive pairing requires the twin to hold the same article", () => {
   /**
    * (Mutation: disabling the `contentHashOrNull(twinHtml) !== before.contentHash` check in

@@ -331,13 +331,17 @@ export const harvestOps = (input: {
 
   for (const file of input.after) {
     present.add(file.path)
+    const before = input.seeded.get(file.path)
+    // An unchanged seeded file is not a write, so it is skipped before any rule about what may be
+    // written. The order matters: the guest is seeded with the whole view, and a session-scope run
+    // over a store holding curated records (`areas/arcs/`, `resources/people/`) would otherwise
+    // reject every one of them on every run, a no-op included (101 on the 2026-09-27 clone).
+    if (before !== undefined && before.html === file.html) continue
     const problem = presentFileProblem(file.path, scope)
     if (problem !== null) {
       rejected.push({ path: file.path, reason: problem })
       continue
     }
-    const before = input.seeded.get(file.path)
-    if (before !== undefined && before.html === file.html) continue
     // Same article, different bytes: a head edit. Only added or removed links and entities can be
     // an op.
     if (before !== undefined && contentHashOrNull(file.html) === before.contentHash) {
