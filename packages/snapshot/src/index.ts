@@ -13,3 +13,14 @@ export {
   snapshotPathFor,
   writeSnapshot
 } from "./snapshot.js"
+export {
+  DIMENSION_METADATA_KEY,
+  MODEL_ID_METADATA_KEY,
+  type ReadVectors,
+  readVectorCache,
+  type StoredVectorSpace,
+  type StoredVectors,
+  VECTORS_DIR,
+  vectorCachePathFor,
+  writeVectorCache
+} from "./vectors.js"
