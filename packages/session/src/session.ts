@@ -79,8 +79,26 @@ const OverlayOpSchema = Schema.Union([
     path: Schema.String,
     rel: Schema.String,
     href: Schema.String
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("unlink"),
+    path: Schema.String,
+    rel: Schema.String,
+    href: Schema.String
   })
 ])
+
+/**
+ * Every `OverlayOp` kind has a branch above. A kind the contract gains and this union lacks is
+ * written to the log by `appendOps` and refused by `resumeSession` with `session.decode`, so every
+ * later call on the session fails; this makes the gap a type error at the line that should change.
+ */
+const everyKindDecodes: [
+  Exclude<OverlayOp["kind"], (typeof OverlayOpSchema.Type)["kind"]>
+] extends [never]
+  ? true
+  : never = true
+void everyKindDecodes
 
 const SessionState = Schema.Struct({
   id: Schema.String,

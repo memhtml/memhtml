@@ -1,5 +1,6 @@
 import { readFile, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import type { OverlayOp } from "@memhtml/contracts"
 import { Effect, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
@@ -100,6 +101,37 @@ describe("appendOps and resumeSession", () => {
     expect(appended.ops).toHaveLength(2)
     expect(started.ops).toHaveLength(0)
     const resumed = await run(resumeSession({ root, id: "s2" }))
+    expect(resumed).toEqual(appended)
+  })
+
+  /**
+   * Every `OverlayOp` kind survives the log. (Mutation: a kind left out of `OverlayOpSchema` fails
+   * this case with `session.decode` on resume, which is what an `unlink` in a log did before the
+   * schema named it: the op was written and the session could not be read back.)
+   */
+  it("round-trips an op of every kind", async () => {
+    const { root, head } = await seeded()
+    const started = await run(startSession({ root, id: "kinds", base: head }))
+    const html = memory("B", "Beta is the second letter.")
+    const ops: ReadonlyArray<OverlayOp> = [
+      { kind: "put", path: "areas/inbox/b.html", html },
+      { kind: "link", path: "areas/inbox/b.html", rel: "relates_to", href: "/areas/inbox/a.html" },
+      {
+        kind: "unlink",
+        path: "areas/inbox/b.html",
+        rel: "relates_to",
+        href: "/areas/inbox/a.html"
+      },
+      {
+        kind: "archive",
+        path: "areas/inbox/a.html",
+        to: "archive/2026/areas/inbox/a.html",
+        html: head.get("areas/inbox/a.html")?.html ?? ""
+      }
+    ]
+    const appended = await run(appendOps(started, ops))
+    const resumed = await run(resumeSession({ root, id: "kinds" }))
+    expect(resumed.ops).toEqual(ops)
     expect(resumed).toEqual(appended)
   })
 
