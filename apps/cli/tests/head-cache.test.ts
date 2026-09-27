@@ -295,13 +295,13 @@ describe("headGate", () => {
 
   it("fails with HeadGateFailed, mapped to ERR_DISCRIMINATION_FAILED, when the landed version finds a probe worse", async () => {
     const { repo, sha } = await corpus(6)
-    // A newer twin of `harbor` with the same title, at a path that sorts after it: the recency arm
-    // puts the twin first, and at k = 1 the original falls out.
+    // A twin of `harbor` with the same title that says "harbor" once more in its claim: the lexical
+    // arm puts the twin first, and at k = 1 the original falls out.
     const twin = {
       path: "areas/inbox/harbor2.html",
       html: renderTemplate({
         title: "harbor",
-        claim: "Harbor facts are recorded twice.",
+        claim: "Harbor facts are recorded in the harbor log.",
         memoryType: "semantic",
         at: "2026-06-01T12:00:00Z"
       })

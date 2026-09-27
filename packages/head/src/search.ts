@@ -1,5 +1,5 @@
 import type { HeadView, MemoryRecord } from "@memhtml/contracts"
-import { type ArmHit, cosine, fuseArms, RRF_K } from "@memhtml/domain"
+import { type ArmHit, cosine, DEFAULT_ARM_LIMIT, fuseArms, RRF_K } from "@memhtml/domain"
 import { HashMap, Option } from "effect"
 
 import { indexesOf } from "./indexes.js"
@@ -12,11 +12,12 @@ import { tokenize } from "./lexical.js"
  * 1.0, over active records only.
  *
  * The lexical arm is BM25 (Robertson/Sparck Jones idf, `k1 = 1.2`, `b = 0.75`) over the title, the
- * claim, and the body, read from the version's persistent lexical index. The recency arm orders by
- * `eventAt ?? updatedAt`, the same key the v1 SQL arm uses. The vector arm orders the active records
- * that have a vector by cosine against the query vector, brute force, and keeps the best
- * {@link VECTOR_ARM_LIMIT}. Every arm and the fused list break ties on path ascending, so two runs
- * over one view return the same list.
+ * claim, and the body, read from the version's persistent lexical index, and keeps the best
+ * {@link LEXICAL_ARM_LIMIT}. The vector arm orders the active records that have a vector by cosine
+ * against the query vector, brute force, and keeps the best {@link VECTOR_ARM_LIMIT}. The recency
+ * arm orders the records those two arms kept by `eventAt ?? updatedAt`, the same key the v1 SQL arm
+ * uses (see {@link recencyArm} for why it ranks only those). Every arm and the fused list break ties
+ * on path ascending, so two runs over one view return the same list.
  *
  * The function stays pure: it never embeds. The caller owns the vectors (keyed by content hash, see
  * `vectors.ts`) and the query vector, so a search with neither is the two-arm search exactly.
@@ -46,7 +47,15 @@ export const VECTOR_WEIGHT = 1.0
  * noise far down a similarity list, and `arms` would name `vector` on every hit. The cap keeps the
  * arm's vote to the records it is confident about, as v1's `LIMIT` does.
  */
-export const VECTOR_ARM_LIMIT = 40
+export const VECTOR_ARM_LIMIT = DEFAULT_ARM_LIMIT
+/**
+ * How many records the lexical arm ranks: v1's `DEFAULT_ARM_LIMIT`, for the vector arm's reason.
+ * BM25 scores every record that shares one token with the query, so uncapped the arm voted for
+ * hundreds of records on the live clone, and each weak match collected RRF mass that a record
+ * found by meaning alone could not: a paraphrase whose target was second in the vector arm ranked
+ * it 31st overall (docs/v2-poc.md, "Vector arm").
+ */
+export const LEXICAL_ARM_LIMIT = DEFAULT_ARM_LIMIT
 export const DEFAULT_LIMIT = 10
 
 const BM25_K1 = 1.2
@@ -58,7 +67,10 @@ const byScoreThenPath = (
 ): number =>
   right.score - left.score || (left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
 
-/** BM25 over the query's tokens. Every document with at least one matching token is a hit. */
+/**
+ * BM25 over the query's tokens, capped at {@link LEXICAL_ARM_LIMIT}. Every document with at least
+ * one matching token is scored; the best are kept.
+ */
 const lexicalArm = (lexical: LexicalIndex, query: string): ReadonlyArray<ArmHit> => {
   const documentCount = HashMap.size(lexical.lengths)
   if (documentCount === 0) return []
@@ -80,6 +92,7 @@ const lexicalArm = (lexical: LexicalIndex, query: string): ReadonlyArray<ArmHit>
   return [...scores.entries()]
     .map(([path, score]) => ({ path, score }))
     .sort(byScoreThenPath)
+    .slice(0, LEXICAL_ARM_LIMIT)
     .map((hit, index) => ({ path: hit.path, rank: index + 1 }))
 }
 
@@ -89,6 +102,15 @@ const recencyKey = (record: MemoryRecord, now: string | undefined): string => {
   return now !== undefined && at > now ? now : at
 }
 
+/**
+ * The records another arm kept, newest first. v1 ranks the newest 40 of the whole scope, which lifts
+ * the same 40 records into every answer whatever the query asks; here recency orders only the
+ * lexical and vector arms' candidates, so it breaks near-ties toward the newer record and never adds
+ * one. The other two caps bound it, so it has none of its own: on the live clone's gate probes this
+ * beat a global newest 40 on both paths, and a cap of 40 on the candidates cut their older half and
+ * scored lower with the vector arm (docs/v2-poc.md, "Vector arm"). A query no arm matches returns
+ * nothing.
+ */
 const recencyArm = (
   records: ReadonlyArray<MemoryRecord>,
   now: string | undefined
@@ -143,11 +165,15 @@ export const searchHead = (view: HeadView, input: SearchHeadInput): ReadonlyArra
   const indexes = indexesOf(view)
   const active = [...HashMap.values(indexes.records)].filter((record) => !record.archived)
   const lexical = lexicalArm(indexes.lexical, input.query)
-  const recency = recencyArm(active, input.now)
   const vector =
     input.vectors === undefined || input.queryVector === undefined
       ? null
       : vectorArm(active, input.vectors, input.queryVector)
+  const matched = new Set([...lexical, ...(vector ?? [])].map((hit) => hit.path))
+  const recency = recencyArm(
+    active.filter((record) => matched.has(record.path)),
+    input.now
+  )
   // With no vector arm the fold is the two-arm fold exactly, so a search without vectors is the
   // two-arm search, byte for byte.
   const fused =

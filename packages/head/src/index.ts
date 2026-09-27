@@ -33,6 +33,7 @@ export { blobShaOf, isArchivedPath, recordFrom } from "./record.js"
 export type { HeadVectors, SearchArm, SearchHeadInput, SearchHit } from "./search.js"
 export {
   DEFAULT_LIMIT,
+  LEXICAL_ARM_LIMIT,
   LEXICAL_WEIGHT,
   RECENCY_WEIGHT,
   searchHead,
