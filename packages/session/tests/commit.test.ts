@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process"
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { checkMemory } from "@memhtml/html"
+import { checkMemory, contentHash, parseMemory } from "@memhtml/html"
 import { Effect, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
@@ -43,6 +43,9 @@ import {
  * - stage: archive body from `op.html` instead of the head's copy -> "an archive carries a link ...".
  * - stage unlink: the `unlink` case left out of `stage` (no write) -> "an unlink drops the edge from
  *   the head's copy, and an archive after it carries the removal" (the edge is still on main).
+ * - stage label: the `label` case left out of `stage` -> "a label and an unlabel edit the head's
+ *   copy, and an archive after them carries both" (alpha on main lacks the new entity); the
+ *   `unlabel` case left out -> the same test (the dropped entity is still on the archived copy).
  * - step 5: drop the `dirtyPaths` check -> "refuses to move a checked-out ref over ...".
  * - step 5: drop `readTreeIntoWorktree` -> "a checked-out ref follows ..." and "a v1-style commit
  *   from the shared index keeps ...".
@@ -577,6 +580,49 @@ describe("commitSession", () => {
     expect(checkMemory(alpha).violations).toEqual([])
     const archived = await fileAt(root, outcome.sha, "archive/2026/areas/inbox/beta.html")
     expect(archived).not.toContain(stale)
+    expect(archived).toContain('<meta name="memhtml-status" content="archived">')
+    expect(await treePaths(root, outcome.sha)).not.toContain("areas/inbox/beta.html")
+    // The checkout followed, so the working tree agrees with the tree.
+    expect(await readFile(join(root, "areas/inbox/alpha.html"), "utf8")).toBe(alpha)
+  })
+
+  it("a label and an unlabel edit the head's copy, and an archive after them carries both", async () => {
+    const repo = await makeRepo()
+    repos.push(repo)
+    const root = repo.root
+    await commitFiles(root, {
+      "areas/inbox/alpha.html": ALPHA,
+      "areas/inbox/beta.html": memory("Beta", "Beta is the second letter.")
+    })
+    const head = await loadHead(root)
+    const session = await run(
+      startSession({ root, id: "label", base: head }).pipe(
+        Effect.flatMap((s) =>
+          appendOps(s, [
+            // A file that stays put swaps its fixture label for a real one ...
+            { kind: "label", path: "areas/inbox/alpha.html", entity: "system:memhtml" },
+            { kind: "unlabel", path: "areas/inbox/alpha.html", entity: "system:fixture" },
+            // ... and one archived later in the batch gains one and loses one first.
+            { kind: "label", path: "areas/inbox/beta.html", entity: "topic:greek" },
+            { kind: "unlabel", path: "areas/inbox/beta.html", entity: "system:fixture" },
+            {
+              kind: "archive",
+              path: "areas/inbox/beta.html",
+              to: "archive/2026/areas/inbox/beta.html",
+              html: head.get("areas/inbox/beta.html")?.html ?? ""
+            }
+          ])
+        )
+      )
+    )
+    const outcome = await run(commitSession({ session, head, message: "relabel" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    const alpha = await fileAt(root, outcome.sha, "areas/inbox/alpha.html")
+    expect((await Effect.runPromise(parseMemory(alpha))).entities).toEqual(["system:memhtml"])
+    expect(contentHash(alpha)).toBe(contentHash(ALPHA))
+    expect(checkMemory(alpha).violations).toEqual([])
+    const archived = await fileAt(root, outcome.sha, "archive/2026/areas/inbox/beta.html")
+    expect((await Effect.runPromise(parseMemory(archived))).entities).toEqual(["topic:greek"])
     expect(archived).toContain('<meta name="memhtml-status" content="archived">')
     expect(await treePaths(root, outcome.sha)).not.toContain("areas/inbox/beta.html")
     // The checkout followed, so the working tree agrees with the tree.

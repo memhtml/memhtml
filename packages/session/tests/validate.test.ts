@@ -46,6 +46,25 @@ import { mapHead, memory, recordFrom } from "./helpers.js"
  * - write bar, archive destinations: the `isArchivePath(path)` early return removed -> "an archive
  *   destination is never judged by the write bar, under either scope" (the unlabeled record at its
  *   archive path is refused).
+ * - label value: the `isWellFormedEntity` reason dropped -> "a label must name a well-formed entity
+ *   the source does not carry yet, as the batch sees it" (the malformed value passes).
+ * - label carried: the `entitiesOf(op.path).has(op.entity)` reason dropped -> the same case (the
+ *   carried value passes).
+ * - label source: the `isActiveIn` clause dropped -> the same case (the archived source passes).
+ * - label batch view: `entitiesOf(op.path).add(...)` removed -> the same case (the second label of
+ *   one value passes).
+ * - label over a put: `batchEntities.set(...)` removed from the put case -> the same case (a label
+ *   of a value the batch's own put carries passes).
+ * - unlabel carried: the `!entitiesOf(op.path).has(op.entity)` reason dropped -> "an unlabel must
+ *   name an entity the source carries as the batch sees it" (the absent value passes).
+ * - unlabel source: the `isActiveIn` clause dropped -> the same case (the archived source passes).
+ * - unlabel batch view: `entitiesOf(op.path).delete(...)` removed -> the same case (the second drop
+ *   of one value passes).
+ * - unlabel anchor: `isAnchored(...)` in the closing loop forced to `true` -> "an unlabel that
+ *   leaves a record with no entity and no workspace path fails the write bar" (the last label
+ *   comes off with no violation).
+ * - unlabel anchor, archives: the `archived.has(...)` exemption removed -> the same case (an
+ *   unlabel followed by an archive of its record is refused).
  */
 
 const CAPITAL = memory("Capital", "The capital of India is New Delhi.")
@@ -532,6 +551,161 @@ describe("validateOps", () => {
     }
   })
 
+  it("a label must name a well-formed entity the source does not carry yet, as the batch sees it", async () => {
+    const view = await head()
+    const label = (path: string, entity: string): OverlayOp => ({ kind: "label", path, entity })
+    const refused = (path: string, reason: string) => [{ kind: "format", path, reasons: [reason] }]
+    // ALPHA carries `system:fixture` from the helper.
+    expect(validateOps(view, [label("areas/inbox/alpha.html", "system:memhtml")])).toEqual([])
+    expect(validateOps(view, [label("areas/inbox/alpha.html", "system:fixture")])).toEqual(
+      refused("areas/inbox/alpha.html", "label names an entity the source already carries")
+    )
+    // One value, once: the second label of it in one batch is refused.
+    expect(
+      validateOps(view, [
+        label("areas/inbox/alpha.html", "system:memhtml"),
+        label("areas/inbox/alpha.html", "system:memhtml")
+      ])
+    ).toEqual(refused("areas/inbox/alpha.html", "label names an entity the source already carries"))
+    // A value the batch took off can go back on.
+    expect(
+      validateOps(view, [
+        { kind: "unlabel", path: "areas/inbox/alpha.html", entity: "system:fixture" },
+        label("areas/inbox/alpha.html", "system:fixture")
+      ])
+    ).toEqual([])
+    // The value must be a normalized `type:name`.
+    for (const entity of ["memhtml", "System:Memhtml", "system: memhtml", ""]) {
+      expect(validateOps(view, [label("areas/inbox/alpha.html", entity)]), entity).toEqual(
+        refused(
+          "areas/inbox/alpha.html",
+          `entity \`${entity}\` is not a normalized type:name value (lowercase, e.g. system:memhtml)`
+        )
+      )
+    }
+    // The source must be active in the head or put by this batch, whose own entities count.
+    expect(
+      validateOps(view, [label("archive/2025/areas/inbox/old.html", "system:memhtml")])
+    ).toEqual(
+      refused(
+        "archive/2025/areas/inbox/old.html",
+        "label source is not an active record in the head"
+      )
+    )
+    const beta = memory("Beta", "Beta is the second letter.")
+    expect(
+      validateOps(view, [
+        put("areas/inbox/beta.html", beta),
+        label("areas/inbox/beta.html", "system:memhtml")
+      ])
+    ).toEqual([])
+    expect(
+      validateOps(view, [
+        put("areas/inbox/beta.html", beta),
+        label("areas/inbox/beta.html", "system:fixture")
+      ])
+    ).toEqual(refused("areas/inbox/beta.html", "label names an entity the source already carries"))
+    // Reserved paths and the batch cap count a label like any other op.
+    expect(validateOps(view, [label(".memhtml/x.html", "system:memhtml")])).toContainEqual({
+      kind: "reserved-path",
+      path: ".memhtml/x.html"
+    })
+    const many = Array.from({ length: BATCH_CAP + 1 }, (_, index) =>
+      label("areas/inbox/alpha.html", `topic:t${String(index)}`)
+    )
+    expect(validateOps(view, many)).toEqual([
+      { kind: "batch-cap", count: BATCH_CAP + 1, cap: BATCH_CAP }
+    ])
+  })
+
+  it("an unlabel must name an entity the source carries as the batch sees it", async () => {
+    const two = memory("Two", "Two labels sit on this record.", {
+      entities: ["system:fixture", "Service:Legacy"]
+    })
+    const view = mapHead("0".repeat(40), [
+      await recordFrom("areas/inbox/two.html", two),
+      await recordFrom("archive/2025/areas/inbox/old.html", two)
+    ])
+    const unlabel = (path: string, entity: string): OverlayOp => ({
+      kind: "unlabel",
+      path,
+      entity
+    })
+    const refused = (path: string, reason: string) => [{ kind: "format", path, reasons: [reason] }]
+    const missing = "unlabel names an entity the source does not carry"
+    expect(validateOps(view, [unlabel("areas/inbox/two.html", "system:memhtml")])).toEqual(
+      refused("areas/inbox/two.html", missing)
+    )
+    // A legacy spelling the record carries comes off as authored; that is how one is repaired.
+    expect(validateOps(view, [unlabel("areas/inbox/two.html", "Service:Legacy")])).toEqual([])
+    // Once, not twice.
+    expect(
+      validateOps(view, [
+        unlabel("areas/inbox/two.html", "Service:Legacy"),
+        unlabel("areas/inbox/two.html", "Service:Legacy")
+      ])
+    ).toEqual(refused("areas/inbox/two.html", missing))
+    // A value this batch labeled can be taken off by the same batch.
+    expect(
+      validateOps(view, [
+        { kind: "label", path: "areas/inbox/two.html", entity: "system:memhtml" },
+        unlabel("areas/inbox/two.html", "system:memhtml")
+      ])
+    ).toEqual([])
+    expect(
+      validateOps(view, [unlabel("archive/2025/areas/inbox/old.html", "system:fixture")])
+    ).toEqual(
+      refused(
+        "archive/2025/areas/inbox/old.html",
+        "unlabel source is not an active record in the head"
+      )
+    )
+  })
+
+  it("an unlabel that leaves a record with no entity and no workspace path fails the write bar", async () => {
+    const view = mapHead("0".repeat(40), [
+      await recordFrom("areas/inbox/alpha.html", ALPHA),
+      await recordFrom("projects/memhtml/alpha.html", ALPHA)
+    ])
+    const last: OverlayOp = {
+      kind: "unlabel",
+      path: "areas/inbox/alpha.html",
+      entity: "system:fixture"
+    }
+    const relabel: OverlayOp = {
+      kind: "label",
+      path: "areas/inbox/alpha.html",
+      entity: "system:memhtml"
+    }
+    const bar = [
+      { kind: "write-bar", path: "areas/inbox/alpha.html", reasons: [UNANCHORED_REASON] }
+    ]
+    for (const scope of ["session", "curate"] as const) {
+      expect(validateOps(view, [last], { scope }), scope).toEqual(bar)
+    }
+    // Judged once the batch is walked, so swapping one label for another passes in either order.
+    expect(validateOps(view, [last, relabel])).toEqual([])
+    expect(validateOps(view, [relabel, last])).toEqual([])
+    // A workspace path anchors the record without an entity.
+    expect(
+      validateOps(view, [
+        { kind: "unlabel", path: "projects/memhtml/alpha.html", entity: "system:fixture" }
+      ])
+    ).toEqual([])
+    // An archive after the unlabel moves the record, and an archive destination is not judged.
+    expect(
+      validateOps(view, [
+        last,
+        {
+          kind: "archive",
+          path: "areas/inbox/alpha.html",
+          to: "archive/2026/areas/inbox/alpha.html",
+          html: ALPHA
+        }
+      ])
+    ).toEqual([])
+  })
+
   it("touchedPaths names every path an op reads or writes", () => {
     expect(touchedPaths(put("a.html", ""))).toEqual(["a.html"])
     expect(
@@ -543,5 +717,11 @@ describe("validateOps", () => {
     expect(
       touchedPaths({ kind: "unlink", path: "a.html", rel: "relates_to", href: "/b.html" })
     ).toEqual(["a.html"])
+    expect(touchedPaths({ kind: "label", path: "a.html", entity: "system:memhtml" })).toEqual([
+      "a.html"
+    ])
+    expect(touchedPaths({ kind: "unlabel", path: "a.html", entity: "system:memhtml" })).toEqual([
+      "a.html"
+    ])
   })
 })

@@ -122,6 +122,8 @@ describe("appendOps and resumeSession", () => {
         rel: "relates_to",
         href: "/areas/inbox/a.html"
       },
+      { kind: "label", path: "areas/inbox/b.html", entity: "system:memhtml" },
+      { kind: "unlabel", path: "areas/inbox/b.html", entity: "system:memhtml" },
       {
         kind: "archive",
         path: "areas/inbox/a.html",

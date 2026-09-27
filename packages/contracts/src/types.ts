@@ -167,6 +167,20 @@ export const normalizeEntityRef = (entity: string): string => {
     : `${normalizeEntityName(parsed.entityType)}${ENTITY_SEPARATOR}${normalizeEntityName(parsed.entityName)}`
 }
 
+/**
+ * True when an entity reference is well formed for a new label: it parses as `type:name`
+ * ({@link parseEntity}) and is already in the normalized spelling ({@link normalizeEntityRef}), so
+ * `service:memhtml`, `project:hex-bonk`, and `person:laith` pass while `memhtml`, `Service:MemHTML`,
+ * and `person: laith` do not.
+ *
+ * The session's `label` op holds its value to this, because a label writes a `memhtml-entity` meta
+ * that every entity index keys on as authored: a second spelling of one entity splits its records
+ * across two keys until the entity-resolution phase rewrites them, so the cheap place to refuse it is
+ * before the file is written.
+ */
+export const isWellFormedEntity = (entity: string): boolean =>
+  parseEntity(entity) !== undefined && normalizeEntityRef(entity) === entity
+
 /** The `person:` entity prefix, which routes a semantic memory to `resources/people/`. */
 export const PERSON_ENTITY_PREFIX = `person${ENTITY_SEPARATOR}`
 

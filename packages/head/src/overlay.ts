@@ -1,7 +1,8 @@
 import type { HeadView, OverlayOp } from "@memhtml/contracts"
 import { isEdgeRel } from "@memhtml/contracts/edges"
 import { InvalidMemory } from "@memhtml/contracts/errors"
-import { addLink, removeLink } from "@memhtml/html"
+import { isWellFormedEntity } from "@memhtml/contracts/types"
+import { addLink, addMeta, removeLink, removeMeta } from "@memhtml/html"
 import { Effect } from "effect"
 
 import { type Indexes, indexesOf, insertRecord, removeRecord, viewOf } from "./indexes.js"
@@ -18,6 +19,11 @@ import { recordFrom } from "./record.js"
  * `link` and `unlink` are mirror images: both re-parse the file with one head line spliced in or
  * cut out, both leave the article and its content hash alone, and both fail on a path the view
  * lacks or a rel outside the vocabulary. `unlink` also fails on an edge the file does not carry.
+ *
+ * `label` and `unlabel` are the same pair for one `memhtml-entity` meta: the file is re-parsed, so
+ * `byEntity` gains or loses the path through the same `insertRecord` every other index follows.
+ * `label` fails on a path the view lacks or a value that is not a well-formed entity; `unlabel` on
+ * a path the view lacks or an entity the file does not carry.
  */
 
 const applyOp = (indexes: Indexes, op: OverlayOp): Effect.Effect<Indexes, InvalidMemory> => {
@@ -74,6 +80,45 @@ const applyOp = (indexes: Indexes, op: OverlayOp): Effect.Effect<Indexes, Invali
       return recordFrom({
         path: op.path,
         html: removeLink(existing.html, op.rel, op.href)
+      }).pipe(Effect.map((record) => insertRecord(indexes, record)))
+    }
+    case "label": {
+      const existing = viewOf(indexes, null).get(op.path)
+      if (existing === undefined) {
+        return Effect.fail(
+          InvalidMemory.make({ reason: `label op names a path the view does not hold: ${op.path}` })
+        )
+      }
+      if (!isWellFormedEntity(op.entity)) {
+        return Effect.fail(InvalidMemory.make({ reason: `malformed entity: ${op.entity}` }))
+      }
+      // `addMeta` splices one head line in after the last entity, so the content hash is unchanged.
+      return recordFrom({
+        path: op.path,
+        html: addMeta(existing.html, "memhtml-entity", op.entity)
+      }).pipe(Effect.map((record) => insertRecord(indexes, record)))
+    }
+    case "unlabel": {
+      const existing = viewOf(indexes, null).get(op.path)
+      if (existing === undefined) {
+        return Effect.fail(
+          InvalidMemory.make({
+            reason: `unlabel op names a path the view does not hold: ${op.path}`
+          })
+        )
+      }
+      // The same rule as `unlink`: dropping a label the file does not carry is a stale op, and a
+      // silent no-op would let the log describe a change the commit never makes.
+      if (!existing.entities.includes(op.entity)) {
+        return Effect.fail(
+          InvalidMemory.make({
+            reason: `unlabel op names an entity ${op.path} does not carry: ${op.entity}`
+          })
+        )
+      }
+      return recordFrom({
+        path: op.path,
+        html: removeMeta(existing.html, "memhtml-entity", op.entity)
       }).pipe(Effect.map((record) => insertRecord(indexes, record)))
     }
   }

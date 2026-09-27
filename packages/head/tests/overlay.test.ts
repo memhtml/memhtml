@@ -17,6 +17,12 @@ import { BROKEN_HTML, mapView, memoryFor, recordOf, run, runErr } from "./helper
  *   the file does not carry" fails (the op is applied as a no-op instead of a typed error).
  * - `applyOp` unlink: call `addLink` instead of `removeLink`, and "unlink re-parses the file with
  *   the edge removed" fails on `links`.
+ * - `applyOp` label: drop the `isWellFormedEntity` check, and "refuses a label whose path the view
+ *   does not hold, or whose value is not type:name" fails (the malformed value is written).
+ * - `applyOp` unlabel: drop the `existing.entities.includes(...)` check, and "refuses an unlabel of
+ *   an entity the file does not carry" fails (the op is applied as a no-op instead of a typed error).
+ * - `applyOp` unlabel: call `addMeta` instead of `removeMeta`, and "unlabel re-parses the file with
+ *   the entity removed" fails on `entities`.
  */
 
 const base = async () => {
@@ -186,6 +192,86 @@ describe("withOverlay", () => {
     expect(error._tag).toBe("InvalidMemory")
     expect(error.reason).toBe(
       `unlink op names an edge ${memoryFor(0).path} does not carry: relates_to -> /areas/inbox/x.html`
+    )
+  })
+
+  it("label re-parses the file with the entity added, re-points byEntity, and keeps the hash", async () => {
+    const { view } = await base()
+    const one = memoryFor(1)
+    const overlay = await run(
+      withOverlay(view, [{ kind: "label", path: one.path, entity: "system:memhtml" }])
+    )
+    const labeled = overlay.get(one.path)
+    expect(labeled?.entities).toEqual(["place:country1", "topic:crop1", "system:memhtml"])
+    expect(labeled?.contentHash).toBe(contentHash(one.html))
+    expect(labeled?.blobSha).not.toBe(view.get(one.path)?.blobSha)
+    expect(overlay.byEntity("system:memhtml")).toEqual([one.path])
+    expect(overlay.byEntity("place:country1")).toEqual([one.path])
+    // Every other index still answers for the record.
+    expect(overlay.byContentHash(contentHash(one.html))).toBe(one.path)
+    expect(overlay.byFrameKey("the capital of country1 is")).toEqual([one.path])
+    // The base is untouched.
+    expect(view.byEntity("system:memhtml")).toEqual([])
+    expect(view.get(one.path)?.entities).toHaveLength(2)
+  })
+
+  it("unlabel re-parses the file with the entity removed and leaves the content hash unchanged", async () => {
+    const { view } = await base()
+    const two = memoryFor(2)
+    const overlay = await run(
+      withOverlay(view, [{ kind: "unlabel", path: two.path, entity: "place:country2" }])
+    )
+    const unlabeled = overlay.get(two.path)
+    expect(unlabeled?.entities).toEqual(["topic:crop2"])
+    expect(unlabeled?.contentHash).toBe(contentHash(two.html))
+    expect(unlabeled?.html).not.toContain('content="place:country2"')
+    expect(overlay.byEntity("place:country2")).toEqual([])
+    expect(overlay.byEntity("topic:crop2")).toContain(two.path)
+    expect(view.byEntity("place:country2")).toEqual([two.path])
+  })
+
+  it("applies ops in order, so a label added earlier in the batch can be removed later", async () => {
+    const { view } = await base()
+    const three = memoryFor(3)
+    const overlay = await run(
+      withOverlay(view, [
+        { kind: "label", path: three.path, entity: "system:memhtml" },
+        { kind: "unlabel", path: three.path, entity: "system:memhtml" }
+      ])
+    )
+    expect(overlay.get(three.path)?.html).toBe(three.html)
+    expect(overlay.byEntity("system:memhtml")).toEqual([])
+  })
+
+  it("refuses a label whose path the view does not hold, or whose value is not type:name", async () => {
+    const { view } = await base()
+    const ghost = await runErr(
+      withOverlay(view, [
+        { kind: "label", path: "areas/inbox/ghost.html", entity: "system:memhtml" }
+      ])
+    )
+    expect(ghost._tag).toBe("InvalidMemory")
+    expect(ghost.reason).toContain("ghost")
+    const malformed = await runErr(
+      withOverlay(view, [{ kind: "label", path: memoryFor(1).path, entity: "Memhtml" }])
+    )
+    expect(malformed.reason).toBe("malformed entity: Memhtml")
+  })
+
+  it("refuses an unlabel of an entity the file does not carry", async () => {
+    const { view } = await base()
+    const ghost = await runErr(
+      withOverlay(view, [
+        { kind: "unlabel", path: "areas/inbox/ghost.html", entity: "system:memhtml" }
+      ])
+    )
+    expect(ghost.reason).toContain("ghost")
+    const error = await runErr(
+      withOverlay(view, [{ kind: "unlabel", path: memoryFor(1).path, entity: "system:memhtml" }])
+    )
+    expect(error._tag).toBe("InvalidMemory")
+    expect(error.reason).toBe(
+      `unlabel op names an entity ${memoryFor(1).path} does not carry: system:memhtml`
     )
   })
 
