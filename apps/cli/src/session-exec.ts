@@ -22,6 +22,7 @@ import {
   SHELL_TIMEOUT_GRACE_MS,
   withBridgeRetry
 } from "./exec.js"
+import type { ExecLang } from "./exec-lang.js"
 
 /**
  * `session exec`: the v2 sandbox over head plus overlay (`docs/v2-poc.md`, "Sandbox over head plus
@@ -84,8 +85,29 @@ import {
  * read-only mount.
  */
 
+/**
+ * The command and loop-iteration counts a `bash` script runs under: effectively unbounded, so the
+ * wall clock is the bound.
+ *
+ * just-bash counts shell commands (`maxCommandCount`) and `while`/`for`/`until` iterations
+ * (`maxLoopIterations`), 100,000 each by default, and a count that runs out ends the script with exit
+ * 126 rather than 124. Measured on just-bash 3.4.2: `while true; do :; done` under the defaults stops
+ * at 1,565 ms with `bash: too many commands executed (>100000), increase
+ * executionLimits.maxCommandCount`, and with only the command count raised at 1,715 ms with `bash:
+ * while loop: too many iterations (100000), increase executionLimits.maxLoopIterations`, both far
+ * inside a 30 s bound. With both raised the same loop runs to the deadline and reports exit 124,
+ * `bash: execution exceeded execution deadline (1500ms)` at a 1,500 ms bound, which is what
+ * `--timeout-ms` promises. A `js` script is one shell command, so the counts never mattered there and
+ * its limits are left exactly as they were. The other just-bash bounds stay at their defaults (call
+ * depth 100, awk, sed, and jq iterations 100,000 each): each ends a runaway in milliseconds with its
+ * own message and exit 126, and that is the script's failure, not a timeout.
+ */
+const BASH_COUNT_LIMIT = Number.MAX_SAFE_INTEGER
+
 /** What `session exec` reports: the script's run plus what the harvester made of the tree it left. */
 export interface SessionExecReport extends ExecReport {
+  /** The language the script ran as. */
+  readonly lang: ExecLang
   /**
    * Overlay ops harvested from the guest tree: `put`s, then the head ops (`link`s, `unlink`s,
    * `label`s, then `unlabel`s, per file), then `archive`s, each group sorted by path (a file's
@@ -97,13 +119,15 @@ export interface SessionExecReport extends ExecReport {
 }
 
 /**
- * Everything `session exec` needs: a version to see, a script to run, an optional bound, and the
- * writer's scope (`session` unless a curator run says `curate`, which opens the arcs and people
- * prefixes the way `validateOps` does under the same scope).
+ * Everything `session exec` needs: a version to see, a script to run and the language it is written
+ * in, an optional bound, and the writer's scope (`session` unless a curator run says `curate`, which
+ * opens the arcs and people prefixes the way `validateOps` does under the same scope). `lang` is
+ * required: the CLI's default is `bash` and the curator sends `js`, so each caller states its own.
  */
 export interface SessionExecInput {
   readonly view: HeadView
   readonly script: string
+  readonly lang: ExecLang
   readonly timeoutMs?: number | undefined
   readonly scope?: CommitScope | undefined
 }
@@ -466,21 +490,39 @@ export const runSessionExec = (
         const filesystem = new MountableFs({ base: new InMemoryFs() })
         filesystem.mount(CORPUS_MOUNT, corpus)
 
+        // `js`: exec.ts's two bounds, the shell's looser by the grace so the JS bound reports (see
+        // `runExec`). `bash`: the script IS the shell program, so the shell's deadline is the bound
+        // and it is `timeoutMs` exactly, with no grace: a bash loop told 5 s is cut off at 5 s. The
+        // JS bound is the same number, so a `js-exec` inside a bash script is bounded as well; which
+        // of the two fires reads `bash: js-exec exceeded its execution deadline`, and both wordings
+        // are ones `cutOffByTheRuntime` knows. The counts are raised for `bash` alone
+        // ({@link BASH_COUNT_LIMIT}).
+        const executionLimits =
+          input.lang === "js"
+            ? {
+                maxJsTimeoutMs: timeoutMs,
+                maxExecutionTimeMs: timeoutMs + SHELL_TIMEOUT_GRACE_MS
+              }
+            : {
+                maxJsTimeoutMs: timeoutMs,
+                maxExecutionTimeMs: timeoutMs,
+                maxCommandCount: BASH_COUNT_LIMIT,
+                maxLoopIterations: BASH_COUNT_LIMIT
+              }
         const bash = new Bash({
           fs: filesystem,
           javascript: { bootstrap: ATOB_BOOTSTRAP },
-          executionLimits: {
-            maxJsTimeoutMs: timeoutMs,
-            maxExecutionTimeMs: timeoutMs + SHELL_TIMEOUT_GRACE_MS
-          }
+          executionLimits
         })
 
         yield* Effect.tryPromise({
           try: async () => {
+            // The helper and the parser are seeded for both languages, so a bash script can still
+            // `js-exec` a module that imports `/workspace/lib/corpus.mjs`.
             await filesystem.mkdir(GUEST_LIB, { recursive: true })
             await filesystem.writeFile(`${GUEST_LIB}/nhp.mjs`, parserSource)
             await filesystem.writeFile(`${GUEST_LIB}/corpus.mjs`, helperSource)
-            await filesystem.writeFile(GUEST_SCRIPT, input.script)
+            if (input.lang === "js") await filesystem.writeFile(GUEST_SCRIPT, input.script)
           },
           catch: (cause) =>
             StorageFailure.make({ operation: `session-exec.seed: ${String(cause)}` })
@@ -488,7 +530,9 @@ export const runSessionExec = (
 
         const started = Date.now()
         const result = yield* Effect.tryPromise({
-          try: () => bash.exec(`js-exec ${GUEST_SCRIPT}`),
+          // A bash script is handed to the interpreter as its source text, not through `bash -c`, so
+          // no outer shell quotes it: the bytes the agent's heredoc delivered are the program.
+          try: () => bash.exec(input.lang === "js" ? `js-exec ${GUEST_SCRIPT}` : input.script),
           catch: (cause) => StorageFailure.make({ operation: `session-exec.run: ${String(cause)}` })
         })
         const durationMs = Date.now() - started
@@ -521,5 +565,5 @@ export const runSessionExec = (
       catch: (cause) => StorageFailure.make({ operation: `session-exec.harvest: ${String(cause)}` })
     })
     const harvested = harvestOps({ seeded, after: files, skippedGitDir, scope: input.scope })
-    return { ...report, ops: harvested.ops, rejected: harvested.rejected }
+    return { ...report, lang: input.lang, ops: harvested.ops, rejected: harvested.rejected }
   })

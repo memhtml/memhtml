@@ -366,7 +366,9 @@ export const bindTools = (input: {
       promise(
         Effect.gen(function* () {
           const view = yield* current()
-          const report = yield* runSessionExec({ view, script, scope: CURATE_SCOPE })
+          // The curator's `exec` tool takes a JavaScript module (the charter and the fake model both
+          // write one), so the language is stated rather than left to the CLI's `bash` default.
+          const report = yield* runSessionExec({ view, script, lang: "js", scope: CURATE_SCOPE })
           const { violations, blocking } = judge(report.ops)
           const clean = report.exitCode === 0 && blocking.length === 0
           if (clean && report.ops.length > 0) yield* input.overlay.append(report.ops)

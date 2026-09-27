@@ -44,6 +44,7 @@ import {
 } from "./envelope.js"
 import { failureFor } from "./errors.js"
 import { DEFAULT_TIMEOUT_MS, execCommand, MAX_TIMEOUT_MS, readScript } from "./exec.js"
+import { DEFAULT_EXEC_LANG, EXEC_LANGS, type ExecLang } from "./exec-lang.js"
 import { helpData, renderCommandHelp } from "./help.js"
 import {
   HOOK_BUDGET_DEFAULT,
@@ -720,6 +721,9 @@ const SCRIPT_COMMANDS: ReadonlySet<string> = new Set(["exec", "session exec"])
 const execFlags = (parsed: Parsed): Failure | undefined => {
   if (!SCRIPT_COMMANDS.has(parsed.command)) return undefined
   const name = parsed.command
+  // `session exec` reads bash unless `--lang js`, so its suggestions are shell, not a JS one-liner.
+  const inline = name === "session exec" ? "--script 'echo 1'" : "--script 'console.log(1)'"
+  const piped = name === "session exec" ? `memhtml ${name} <<'SH'` : `cat s.mjs | memhtml ${name}`
 
   const file = str(parsed, "file")
   const doors = [
@@ -731,11 +735,7 @@ const execFlags = (parsed: Parsed): Failure | undefined => {
     return fail(
       "ERR_INVALID_FLAG",
       `${name} takes at most one of --file or --script, not both: two scripts cannot both be the one that runs`,
-      [
-        `memhtml ${name} --file traverse.mjs`,
-        `memhtml ${name} --script 'console.log(1)'`,
-        `cat s.mjs | memhtml ${name}`
-      ]
+      [`memhtml ${name} --file traverse.mjs`, `memhtml ${name} ${inline}`, piped]
     )
   }
   // `-`, positional or as `--file -`, is the explicit stdin spelling, so it cannot sit beside a door.
@@ -743,7 +743,7 @@ const execFlags = (parsed: Parsed): Failure | undefined => {
     return fail(
       "ERR_INVALID_FLAG",
       `${name} cannot read stdin and ${doors[0]} in the same call: \`-\` names stdin as the script source`,
-      [`cat s.mjs | memhtml ${name}`, `memhtml ${name} ${doors[0]} …`]
+      [piped, `memhtml ${name} ${doors[0]} …`]
     )
   }
 
@@ -1844,8 +1844,8 @@ export const run = async (
             "ERR_MISSING_ARGUMENT",
             "session exec needs a script: a blank one would harvest nothing and report an empty answer rather than an error",
             [
-              "memhtml session exec --id s1 --script 'console.log(1)'",
-              "memhtml session exec --id s1 --file curate.mjs"
+              "memhtml session exec --id s1 --script 'echo 1'",
+              "memhtml session exec --id s1 --lang js --file curate.mjs"
             ]
           ),
           EXIT_USAGE
@@ -1980,6 +1980,11 @@ export const run = async (
           message: str(parsed, "message") ?? "",
           force: bool(parsed, "force", false),
           script,
+          // `--lang`'s value was checked against the table's `values` before dispatch, so the lookup
+          // only narrows the type; an absent flag is the CLI's `bash` default.
+          lang:
+            EXEC_LANGS.find((lang): lang is ExecLang => lang === str(parsed, "lang")) ??
+            DEFAULT_EXEC_LANG,
           timeoutMs: int(parsed, "timeout-ms"),
           query: parsed.positional[0] ?? "",
           limit: int(parsed, "limit"),

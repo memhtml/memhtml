@@ -143,7 +143,7 @@ Write what is durable, one fact per memory. A decision and its reason, a correct
 | `memhtml hook` | <event> | `--host`* `--trace-root` `--limit` `--budget` | `hook.output` |
 | `memhtml session start` | — | `--id`* `--ref` `--force` | `session.started` |
 | `memhtml session put` | — | `--id`* `--file`* | `session.appended` |
-| `memhtml session exec` | — | `--id`* `--file` `--script` `--timeout-ms` | `session.exec.report` |
+| `memhtml session exec` | — | `--id`* `--file` `--script` `--lang` `--timeout-ms` | `session.exec.report` |
 | `memhtml session commit` | — | `--id`* `--message`* | `session.committed` |
 | `memhtml session rebase` | — | `--id`* | `session.rebased` |
 | `memhtml session status` | — | `--id`* | `session.status` |
@@ -527,9 +527,10 @@ Append write ops, and label or unlabel ops on existing records, to a session's o
 Run a script over the session's view (head plus overlay) in a writable sandbox and harvest its writes into the overlay.
 
 - `--id` (string) — The session whose view the script sees. _(**required**)_
-- `--file` (string) — The script, as a path on the HOST. Omit it, pass `--file -`, or a positional `-` to read stdin. Mutually exclusive with `--script`. A new file the script writes is held to the write bar `session put` states; one below it blocks the whole harvest. An existing file whose article is unchanged may gain or lose `<link rel="memhtml-...">` lines and `<meta name="memhtml-entity">` lines in its head: each becomes a `link`, `unlink`, `label`, or `unlabel` op, and any other head edit is rejected with a reason.
+- `--file` (string) — The script, as a path on the HOST. Omit it, pass `--file -`, or a positional `-` to read stdin, which is the usual door: a heredoc (`memhtml session exec --id s1 <<'SH'` ... `SH`) delivers the script with no quoting to get wrong. Mutually exclusive with `--script`. A new file the script writes is held to the write bar `session put` states; one below it blocks the whole harvest. An existing file whose article is unchanged may gain or lose `<link rel="memhtml-...">` lines and `<meta name="memhtml-entity">` lines in its head: each becomes a `link`, `unlink`, `label`, or `unlabel` op, and any other head edit is rejected with a reason.
 - `--script` (string) — The script source, inline. Mutually exclusive with `--file` and with stdin.
-- `--timeout-ms` (int) — Wall-clock bound on the script. Exceeding it is `exitCode` 124 with `timedOut: true`. Capped at 600000. _(default `30000`)_
+- `--lang` (string) — The script's language, echoed as `lang` in the report. `bash` runs it as a shell program: `cat`, `grep -r`, `sed -i`, `find` (with `-exec`), `xargs`, `jq`, `awk`, pipes, redirection, and nested heredocs all work on the corpus at `/mnt/memhtml`, so `cat > /mnt/memhtml/projects/<slug>/<name>.html <<'HTML'` ... `HTML` writes a record and a `sed -i` that splices a `<meta name="memhtml-entity">` line into a head labels one. Use absolute paths. `js-exec <file>` runs a JavaScript module from inside a bash script. `js` runs the whole script as a JavaScript module through `js-exec` with `/workspace/lib/corpus.mjs` preloaded, as `memhtml exec` does. The mount, the timeout, and the harvest are the same for both. There is no network in either: `curl` is not a command. _(default `bash`; one of: `bash`, `js`)_
+- `--timeout-ms` (int) — Wall-clock bound on the script. Exceeding it is `exitCode` 124 with `timedOut: true`, for a bash loop and a `js-exec` module alike. Other sandbox bounds end a runaway sooner with exit 126 and the bound named on stderr: call depth 100, and 100,000 iterations inside one `awk`, `sed`, or `jq`. Capped at 600000. _(default `30000`)_
 
 ### `memhtml session commit`
 
