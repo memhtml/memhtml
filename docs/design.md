@@ -407,4 +407,4 @@ The curator that does that judgment is `memhtml curate run` (`packages/curator`,
 
 ### Non-goals of the proof of concept
 
-The following are out of scope on purpose, so nobody builds them by accident: a long-lived head server process, so the CLI loads the head per invocation from the snapshot when one matches `HEAD` and from git otherwise; vector retrieval over the head, where the interface exists and the fake embedder is the only implementation; any change to the v1 write path, sleep pipeline, or MCP server; and migration of the live store.
+The following are out of scope on purpose, so nobody builds them by accident: any change to the v1 write path, sleep pipeline, or MCP server; and migration of the live store. The head's vector arm and the long-lived head server that serves it (`memhtml head serve`) were both on this list and are built; `docs/v2-poc.md` ("Vector arm" and "Head server") describes them.

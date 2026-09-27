@@ -249,8 +249,11 @@ export const headRefOf = (root: string): Effect.Effect<string | null, GitFailure
       )
     )
 
-/** A record as `read` shows it: every parsed field plus the bytes, minus the index-only ones. */
-const recordView = (view: HeadView, path: string): CuratorRecordView | null => {
+/**
+ * A record as `read` shows it: every parsed field plus the bytes, minus the index-only ones. Shared
+ * with the head server's `read` route, so the two answer one path the same way.
+ */
+export const recordView = (view: HeadView, path: string): CuratorRecordView | null => {
   const record = view.get(path)
   if (record === undefined) return null
   return {

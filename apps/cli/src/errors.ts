@@ -81,6 +81,8 @@ export const codeFor = (error: unknown): ErrorCode => {
     // parsed, and the work was declined so the change survives. `--force` on install is the override.
     case "IntegrationModified":
       return "ERR_INTEGRATION_MODIFIED"
+    case "HeadServerRunning":
+      return "ERR_HEAD_SERVER_RUNNING"
     default:
       return "ERR_UNKNOWN"
   }
@@ -128,6 +130,8 @@ export const messageFor = (error: unknown): string => {
       return text(error.reason) ?? "the discrimination gate refused"
     case "HeadGateFailed":
       return text(error.reason) ?? "the head gate refused the landing"
+    case "HeadServerRunning":
+      return `a head server is already serving this store on ${text(error.socket) ?? "its socket"}${typeof error.pid === "number" ? ` (pid ${String(error.pid)}${text(error.ref) === undefined ? "" : `, following ${text(error.ref)}`}${text(error.sha) === undefined ? "" : ` at ${text(error.sha)}`})` : ""}: stop it with SIGTERM before starting another, or use it, since head status, head search, and session put already ask it first`
     case "IntegrationModified":
       return `${text(error.host) ?? "the host"} integration was modified since install at ${text(error.path) ?? "a managed path"}: ${text(error.detail) ?? "the receipt no longer matches"}`
     default:
@@ -212,6 +216,8 @@ export const SUGGESTIONS: Readonly<Record<string, SuggestionsFor>> = {
     "memhtml head search '<a probe that fell out>'",
     "memhtml curate merge <ref> --skip-gate"
   ],
+  // The running server answers the lookups already; `head status` names it and shows its version.
+  HeadServerRunning: () => ["memhtml head status"],
   // `doctor` first, because it names every managed path and which one moved; `--force` second, for
   // the operator who meant to overwrite and wants the prior bytes kept as a timestamped backup.
   IntegrationModified: (error) => [

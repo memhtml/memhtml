@@ -102,6 +102,7 @@ export {
   memoryOverlay,
   type OpsByKind,
   type Overlay,
+  recordView,
   sessionOverlay
 } from "./curate-run.js"
 export {
@@ -159,6 +160,12 @@ export {
   writeHeadSnapshot
 } from "./head-cache.js"
 export {
+  ANSWER_TIMEOUT_MS,
+  type Answered,
+  askHead,
+  CONNECT_TIMEOUT_MS
+} from "./head-client.js"
+export {
   type GateFailure,
   type GateOutcome,
   gateReportOf,
@@ -166,6 +173,32 @@ export {
   headGate,
   isHeadGateReport
 } from "./head-gate.js"
+export {
+  HEAD_PROTOCOL,
+  HEAD_ROUTES,
+  type HeadRoute,
+  HeadServerRunning,
+  HeadServerStatus,
+  headSocketPath,
+  NeighborsAnswer,
+  NeighborsRequest,
+  ReadRequest,
+  SearchAnswer,
+  SearchRequest,
+  ServedHead,
+  SOCKET_PATH_MAX,
+  VectorCacheStatus,
+  VectorUseSchema
+} from "./head-protocol.js"
+export {
+  DEFAULT_POLL_MS,
+  type HeadServed,
+  type HeadServer,
+  type HeadServerInput,
+  serveHead,
+  startHeadServer,
+  untilSignal
+} from "./head-server.js"
 export * from "./operations.js"
 export { claimFromProse, proseTail } from "./prose.js"
 export {
@@ -187,6 +220,7 @@ export {
   curateMerge,
   type GateReport,
   type HeadStats,
+  type HeadStatsSource,
   headSearch,
   headSnapshot,
   headStats,
@@ -194,9 +228,12 @@ export {
   type LoadedHead,
   loadHeadAt,
   MERGE_ATTEMPTS,
+  type PreparedPuts,
+  preparePuts,
   qualifyRef,
   type ReplayReport,
   runV2,
+  servedStats,
   sessionCommit,
   sessionExec,
   sessionPut,

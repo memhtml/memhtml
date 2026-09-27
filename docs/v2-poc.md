@@ -20,9 +20,9 @@ The corpus is a value. Every version is immutable, a session sees exactly one ve
 
 ## Scope of the proof of concept
 
-In scope: packages `@memhtml/head`, `@memhtml/session`, `@memhtml/snapshot`; a sandbox that runs a script over head plus overlay and harvests its writes into the overlay; CLI commands `session start|put|exec|commit|status`, `head status|search|snapshot|embed`; a vector arm in head search over a rebuildable cache of Cohere Embed v4 vectors; an integration test that drives N concurrent sessions through disjoint, overlapping, duplicate, and frame-key-conflicting commits; this document plus a `design.md` section.
+In scope: packages `@memhtml/head`, `@memhtml/session`, `@memhtml/snapshot`; a sandbox that runs a script over head plus overlay and harvests its writes into the overlay; CLI commands `session start|put|exec|commit|status`, `head status|search|snapshot|embed|serve`; a vector arm in head search over a rebuildable cache of Cohere Embed v4 vectors; a head server that holds the head and the vector cache loaded and answers lookups over a socket in the store ("Head server" below); an integration test that drives N concurrent sessions through disjoint, overlapping, duplicate, and frame-key-conflicting commits; this document plus a `design.md` section.
 
-Out of scope, recorded here so nobody builds them by accident: a long-lived head server process; any change to the v1 write path, sleep pipeline, or MCP server; migration of the live store.
+Out of scope, recorded here so nobody builds them by accident: any change to the v1 write path, sleep pipeline, or MCP server; migration of the live store.
 
 ## Shared contract: `@memhtml/contracts` `record.ts`
 
@@ -193,7 +193,7 @@ The package also owns the directory as a set: `SNAPSHOTS_DIR` (`.memhtml/snapsho
 
 ### Loading from snapshots
 
-The head loads per invocation, and a full git read of the live store costs seconds, so every commit that moves a ref writes the snapshot for the new sha and every load takes the cheapest path that exists. Both sides live in `apps/cli/src/head-cache.ts`.
+Outside the head server ("Head server" below), the head loads per invocation, and a full git read of the live store costs seconds, so every commit that moves a ref writes the snapshot for the new sha and every load takes the cheapest path that exists. Both sides live in `apps/cli/src/head-cache.ts`.
 
 Write side. `session commit` (a `committed` outcome), `curate merge` (a landing that moved), and `curate run` (the curator's commit) each call `snapshotAfterCommit(root, sha, from?)`: the new version is built from the version the commit was judged against by `advanceHead` (or loaded, for the merge, which holds no version), written with `writeHeadSnapshot`, and the directory is pruned to the newest four. The payload carries `snapshot: { sha, path, bytes, rows, ms, pruned }`. It is best-effort: a failed write is logged and the payload carries `snapshot: null`, never a failed commit, because the ref has already moved and a full disk must not read as a lost commit. `head snapshot --write` takes the same path from a forced git read, for a store whose `HEAD` moved by other means.
 
@@ -224,7 +224,7 @@ The arm. `searchHead` takes `vectors` (anything with `get(contentHash)`, a `Read
 
 The weight is 1.0, v1's (`vectorArm` in `@memhtml/index` `retrieval-sql.ts`). v1 fuses lexical 1.0, vector 1.0, recency 0.5, and salience 0.4; the head has no salience arm, and the other three keep v1's proportions. The measurement below found no reason to move it: raising it does not rescue the case the arm misses, and at 1.0 it put six of seven paraphrased targets in the top three with the other arms uncapped, and five of seven, the sixth at 4th, once they were capped.
 
-Where it runs. `memhtml head embed` fills the cache for the version at `HEAD`. `head search` reads the cache and embeds the query with `embedQuery` (Cohere's query input type); `session put` embeds each put's own text with `embed` (the document type, one call for the batch), because a put is compared with stored documents rather than asked as a question. The embedder is bound the way v1 binds it: `layerEmbedder` over `EmbeddingsLive`, so `MEMHTML_EMBED=off` switches it off and `MEMHTML_LLM_BASE_URL` routes it through the LLM proxy; a test passes the deterministic fake as `run`'s last argument, which both harnesses do, and the test environment sets `MEMHTML_EMBED=off` for everything else. Only `head search`, `head embed`, and `session put` build it.
+Where it runs. `memhtml head embed` fills the cache for the version at `HEAD`. `head search` reads the cache and embeds the query with `embedQuery` (Cohere's query input type); `session put` embeds each put's own text with `embed` (the document type, one call for the batch), because a put is compared with stored documents rather than asked as a question. The embedder is bound the way v1 binds it: `layerEmbedder` over `EmbeddingsLive`, so `MEMHTML_EMBED=off` switches it off and `MEMHTML_LLM_BASE_URL` routes it through the LLM proxy; a test passes the deterministic fake as `run`'s last argument, which both harnesses do, and the test environment sets `MEMHTML_EMBED=off` for everything else. Only `head search`, `head embed`, `session put`, and `head serve` build it; the server runs the arm for the first and the third when they ask it ("Head server" below).
 
 Degraded behavior. The arm never fails a search. When it cannot run, `head search` and `session put` answer from the other two arms and the payload's `vector` says why: `{ used: false, reason }` with `reason` one of `embedder-off` (`MEMHTML_EMBED=off`), `no-cache` (nobody has run `head embed`), `cache-unreadable` (the reader's refusal in `detail`), or `embed-failed` (the model's reason in `detail`). A run that used it reports `{ used: true, cached, coverage, loadMs, embedMs }`, where `coverage` is the share of the head's active records whose hash has a vector: records committed since the last `head embed` are found by the other two arms only, and `coverage` says how many that is. `head embed` itself needs the embedder, so under `MEMHTML_EMBED=off` it fails with `ERR_MODEL_UNAVAILABLE`, and a failed embed call fails it the same way with the cache it found left as it was.
 
@@ -298,22 +298,23 @@ Add to `COMMANDS`, `RESPONSE_TYPES`, and `dispatch`, then regenerate `AGENTS.md`
 | command           | flags                                                                                                                          | response type                                          |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
 | `session start`   | `--id`, `--ref`, `--force`                                                                                                     | `session.started`                                      |
-| `session put`     | `--id`, `--file` (JSONL of `write` ops as `apply` takes, plus `label` and `unlabel` lines)                                     | `session.appended` (neighbors, `vector`)               |
+| `session put`     | `--id`, `--file` (JSONL of `write` ops as `apply` takes, plus `label` and `unlabel` lines), `--no-server`                      | `session.appended` (neighbors, `vector`, `head`)       |
 | `session exec`    | `--id`, `--script` or `--file`, `--timeout-ms`                                                                                 | `session.exec.report`                                  |
 | `session commit`  | `--id`, `--message`                                                                                                            | `session.committed` (data carries `CommitOutcome`)     |
 | `session rebase`  | `--id`                                                                                                                         | `session.rebased`                                      |
 | `session status`  | `--id`                                                                                                                         | `session.status`                                       |
-| `head status`     |                                                                                                                                | `head.status` (sha, records, skipped, load ms)         |
-| `head search`     | `query`, `--limit`                                                                                                             | `head.search` (hits, `vector: { used, reason }`)       |
+| `head status`     | `--no-server`                                                                                                                  | `head.status` (sha, records, skipped, load ms, server) |
+| `head search`     | `query`, `--limit`, `--no-server`                                                                                              | `head.search` (hits, `vector: { used, reason }`)       |
 | `head snapshot`   | `--write` / `--read`                                                                                                           | `head.snapshot`                                        |
 | `head embed`      |                                                                                                                                | `head.embedded` (records, reused, embedded, bytes, ms) |
+| `head serve`      | `--ref` (default: the branch `HEAD` points at, else `main`), `--poll-ms` (default 1000)                                        | `head.served` (written when a signal stops it)         |
 | `curate merge`    | `ref`, `--into` (default `main`), `--skip-gate`                                                                                | `curate.merged`                                        |
 | `curate run`      | `--ref`, `--model`, `--max-steps`, `--wall-clock-ms`, `--dry-run`, `--resume`                                                  | `curate.run`                                           |
 | `curate collapse` | `--ref`, `--model`, `--plan`, `--rulings`, `--concurrency`, `--only`, `--limit`, `--dry-run`, `--max-steps`, `--wall-clock-ms` | `curate.collapse`                                      |
 
 `session put` reads each line with `decodeSessionPut` (`apps/cli/src/apply.ts`): a `write` line goes through the same decoder `apply` uses, and `{"op":"label","path":"<repo-relative path>","entity":"<type:name>"}` or the same with `"op":"unlabel"` becomes that overlay op, in file order; `apply` stays writes-only. A malformed line is a usage error at exit 2 naming the line; a label or unlabel that `validateOps` refuses (an inactive source, a malformed or already carried value, a value the record lacks, an unlabel that leaves the record unanchored) blocks the whole call at exit 1 with nothing appended, like a format violation. The payload's `appended` counts every op and `labels` lists the entity edits; `session status` counts `labels` and `unlabels` beside `puts`, `archives`, `links`, and `unlinks`.
 
-`session rebase` is the caller's half of the retry loop: `session commit` answers `rebase-needed` whenever the ref has moved past the session's base and never retries on its own, so a caller reloads the base with `session rebase` and commits again, or reads the `refused` that follows and decides. `session exec` appends its harvest only when the script exited 0 and no harvested op carries a violation a rebase cannot cure (format, reserved path, batch cap, write bar), judged the way `session put` judges its puts; the report carries `violations` and `blocking` either way. `session start` on an id that already has a log is refused (`ERR_STORAGE`, `session.exists`) unless `--force`. The head is loaded per invocation in this proof of concept: from the snapshot at `.memhtml/snapshots/<sha>.arrow` when one exists for the sha, else from an ancestor's snapshot advanced over the changed paths, else from git ("Loading from snapshots" above), and every payload that loaded one reports which in `head.source`. A long-lived head process is deferred.
+`session rebase` is the caller's half of the retry loop: `session commit` answers `rebase-needed` whenever the ref has moved past the session's base and never retries on its own, so a caller reloads the base with `session rebase` and commits again, or reads the `refused` that follows and decides. `session exec` appends its harvest only when the script exited 0 and no harvested op carries a violation a rebase cannot cure (format, reserved path, batch cap, write bar), judged the way `session put` judges its puts; the report carries `violations` and `blocking` either way. `session start` on an id that already has a log is refused (`ERR_STORAGE`, `session.exists`) unless `--force`. `head status`, `head search`, and `session put` ask the head server first and load locally when none answers ("Head server" below); every other arm, and every fallback, loads the head per invocation: from the snapshot at `.memhtml/snapshots/<sha>.arrow` when one exists for the sha, else from an ancestor's snapshot advanced over the changed paths, else from git ("Loading from snapshots" above). Every payload that reports a head says which path it took in `head.source`: `server`, `snapshot`, `snapshot+advance`, or `git`. `--no-server` forces the local load.
 
 ### Curation door
 
@@ -395,6 +396,115 @@ Deltas from the 2026-09-24 scripts, where the command departs from what they did
 - The home rule treats any `*-import` prefix as a bucket, where the script named `resources/wiki-kernel-import` alone.
 - The archive stamp is whole seconds through `commitSession`'s own default (the millisecond stamp that made 2,170 archives invisible to every reader is fixed at the source), so the command passes no `archivedAt`.
 - The default ref is `curate/<date>-collapse`; the script took `--ref` only.
+
+## Head server
+
+Every v2 command that loads the head pays for it: about 2.4 s from an Arrow snapshot on a store of 8,200 records ("Loading from snapshots"), more on a loaded host. The fleet's pre-turn memory lookup has a 1.5 s budget, so reads can only serve it from a head that stays loaded. `memhtml head serve` is that process, and it serves the vector arm too: `apps/cli/src/head-server.ts` (server), `head-client.ts` (client), `head-protocol.ts` (routes and schemas).
+
+### Lifecycle
+
+`memhtml head serve [--ref <ref>] [--poll-ms <ms>]` resolves the ref it follows (the flag's, else the branch `HEAD` points at, else `refs/heads/main`), loads the version at its tip the cheapest way `loadHeadAt` takes (snapshot, snapshot+advance, or git), reads the vector cache when an embedder is bound ("The vector arm in the server" below), binds the socket, logs one `head serve: listening on …` line to stderr, and serves until SIGTERM or SIGINT. On either signal it closes the listener, waits up to 2 s for requests in flight, removes the socket file, and writes one `head.served` envelope to stdout: the socket, the ref, the sha it ended at, the record count, the signal, the load source and its ms, the advance and request counts, and the uptime. Every advance is a stderr line with its sha and ms.
+
+### The socket
+
+`.memhtml/head.sock` inside the store, a Unix domain socket and never a TCP port. It is bound with mode 0600: the umask is narrowed to 0177 around the bind, so the file is never reachable by another user even for the instant before a `chmod`, and the `chmod` after it holds the mode where a umask cannot be set. The path is in the store's `GITIGNORE` (`HEAD_SOCKET_PATH` in `@memhtml/store`), and the server passes it to `ensureExcludedQuietly` (`HEAD_SOCKET` in `@memhtml/session` `exclude.ts`) before it binds, so a store whose `.gitignore` predates the server keeps it out of `git status` too. A path past the 107 bytes `sun_path` allows is refused before the bind (`head.serve.socketPath`).
+
+Before binding, a socket file already at the path is probed with one connect. A connect that completes is a live server, and the new one refuses with `ERR_HEAD_SERVER_RUNNING` (exit 1), naming the live server's pid, ref, and sha from its own status. `ECONNREFUSED` is a file with no listener, which is what a server killed with SIGKILL leaves, and it is removed and replaced with a warning. A file that is not a socket is refused (`head.serve.notSocket`), because nothing here removes a file it did not make. Two servers started in the same instant can both probe a stale file before either binds; the window is the few milliseconds between the probe and the bind, and the second bind then replaces the first's socket, so a supervisor starts one server per store.
+
+### Protocol
+
+JSON over HTTP/1.1 on the socket, served by `@effect/platform-node`'s `NodeHttpServer` (its listen options are `net.ListenOptions`, so `path` binds the socket with no adapter) and asked by its `node:http` client with an `http.Agent` whose `createConnection` dials the socket, the extension point Node documents for this. Both are imported by subpath and only when used: the package's barrel costs about half a second of imports every other command would pay. Every route is under `/v1/`; a new version is a new prefix. Request bodies are decoded with Effect Schema with excess properties refused, the way the CLI refuses an unknown flag, and a body that does not decode is `400` with the CLI's failure envelope (`ERR_INVALID_FLAG`); an unknown route is `404` (`ERR_UNKNOWN_COMMAND`); a failure while answering is `500` with the envelope `failureFor` builds.
+
+| route                | body                                            | answer                                                                                                                                                                                 |
+| -------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/status`     | none                                            | `protocol`, `pid`, `root`, `socket`, `ref`, `sha`, `records`, `skipped`, `loadSource`, `loadMs`, `lastAdvanceMs`, `advances`, `requests`, `uptimeMs`, `pollMs`, `startedAt`, `vectors` |
+| `POST /v1/search`    | `searchHead`'s input: `{ query, limit?, now? }` | `{ query, hits, vector, searchMs, head }`, the fields `head search` returns                                                                                                            |
+| `POST /v1/read`      | `{ path }`                                      | `{ record, head }`, the record the curator's `read` tool returns (`recordView`), `null` for a path the version lacks                                                                   |
+| `POST /v1/neighbors` | `{ sha, ops, lines, at }`                       | `{ appended, puts, neighbors, violations, blocking, vector, head }`: what `session put` computes before it appends (`preparePuts`), at the version `sha` names                         |
+
+`head` in an answer is `{ sha, ref, records, skipped }`, the version the answer was computed over. The search body is `searchHead`'s input object passed through whole, so an option `searchHead` gains later is one more optional field in `SearchRequest` and the route and every older field stay as they are.
+
+`neighbors` is judged at the session's base, not the ref's tip, because `session put` judges its puts against the version the session sees. The client sends the base sha, the session's log as it read it, the call's lines as `decodeSessionPut` decoded them (`write`, `label`, and `unlabel`, in file order), and the instant the writes are stamped with; the server builds the version at `sha` from the one it holds by the same tree diff an advance uses (the diff has no direction), keeps the last one for the session's next put, and runs `preparePuts`, the function `session put` runs locally. `preparePuts` places and renders each write over the session's view, keeps the label lines beside the puts as `appended`, judges the whole log against the base the way `commitSession` will, and names as `blocking` the violations of a blocking kind at a path this call's lines touch (so a violation already in the log never blocks a later put); when nothing blocks it ranks each put's neighbors, with the vector arm when a cache and an embedder allow it, and reports that arm under `vector` (`null` for a blocked call, which embeds nothing). The two paths answer identically, a batch with a label line and the vector arm included (`apps/cli/tests/head-server.test.ts`, "computes session put's neighbors at the session's base"). The append always happens in the client, under the session's lock, and a blocked answer is refused there with nothing appended.
+
+### Consistency
+
+An answer is never older than the ref at the moment of the request. Every `status`, `search`, and `read` reads the ref first (one `rev-parse`, a few milliseconds) and, when it moved, advances the held version with `advanceHead` over the paths `diff-tree` names before it answers. A background poll (`--poll-ms`, default 1000; `0` turns it off) does the same between requests, so a request usually finds the version already advanced and pays only the `rev-parse`. Advances hold one permit: two never run at once, and a request that arrives during one waits for it and then answers from its result, because inside the permit the ref is read again and a version already at the tip is returned without a second advance. That re-read is also what keeps a waiter from moving the version back to the tip it saw before it waited. Each advance cuts the new version's `parent` pointer, so the server holds one version rather than a chain of every delta it has seen. After an advance the new version's snapshot is written in the background, best-effort, the way `snapshotAfterCommit` does it, and skipped when the file exists (a `session commit` writes its own); a failed write is a log line. A ref that stops resolving leaves the server answering at the last version it held, with a warning per request.
+
+### The vector arm in the server
+
+The server binds the embedder `run()` resolves for `head search` and `session put` (`layerEmbedder` over `EmbeddingsLive`, so `MEMHTML_EMBED=off` binds none and `MEMHTML_LLM_BASE_URL` routes it through the proxy), and runs the vector arm the way the local path does ("Vector arm" above): `search` embeds the query with `embedQuery` and passes `vectors` and `queryVector` to `searchHead`, and `neighbors` embeds each put's text as a document inside `preparePuts`. The degraded answers are the same, so an answer's `vector: { used, reason, … }` reads the same on both paths and a client can tell them apart only by `head.source` (and by `vector.loadMs`, which is 0 from the server because the answer read no file). The embedder is the server's, not the client's: a client under `MEMHTML_EMBED=off` asking a server with an embedder gets the arm.
+
+The cache is held, not read per request. The server reads `.memhtml/vectors/<model>@<dimension>.arrow` for the configured space once before it binds, holds the vectors in memory, and before every `status`, `search`, and `neighbors` answer, and after every poll's advance check, `stat`s the file: a changed inode, size, or mtime (a `head embed` writes a temp file and renames it into place) is read again, under a permit of its own and with the `stat` repeated inside it, so the requests that saw one change pay for one read. A `head embed` run while the server is up takes effect on the next request with no restart. A file removed, or one the reader refuses, turns the arm off with `no-cache` or `cache-unreadable` until the file changes again, and a server with no embedder never reads the file. Coverage is computed per answer over the version it answers at, so records committed since the last `head embed` lower it the moment the server advances past them. `status` reports the cache under `vectors`: `held`, the `reason` and `detail` when there is none (`embedder-off`, `no-cache`, `cache-unreadable`), the file's `path`, `entries`, `coverage` of the held version's active records, the read's `loadMs`, the file's `mtime`, and `loads`, the number of reads since start. A cache read is a log line on stderr.
+
+`session commit` and the curate commands (`curate merge`, `curate run`, `curate collapse`) never ask the server. They must judge the exact version they commit against, and the commit path's compare-and-swap covers only the version the committing process validated, so they keep loading locally.
+
+### Fallback
+
+`head status`, `head search`, and `session put` try the socket first with a 100 ms connect timeout (`CONNECT_TIMEOUT_MS`) and a 10 s answer timeout (`ANSWER_TIMEOUT_MS`), and take the local path whenever no server answers: no socket file, a socket nobody listens on, a timeout, a non-200 status, or an answer the schema refuses. `askHead` never fails, so a server can make a call faster and never make it fail. `--no-server` skips the socket. `head status` carries the server's status under `server` (`null` on the local path), and `session put` reports `head` like the other two.
+
+### Measurements
+
+Measured 2026-09-27 on a private clone of the store clone of 2026-09-23 (7,437 records at the start, git 2.50.1, Node 24), with the server's snapshot present and `--poll-ms 1000`. The host was shared: its load average stayed between 16 and 22 on 16 cores for the whole run, so every figure that includes a process start is inflated by that contention, and the bare CLI's own start is listed beside them for scale. `head search` ran 50 different queries, one CLI process each, server and local interleaved query by query so both saw the same load.
+
+| what                                                                   | p50 ms | p95 ms |
+| ---------------------------------------------------------------------- | ------ | ------ |
+| server start: spawn to the listening line (snapshot load), three runs  | 3121   | 4188   |
+| `head search` through the server, end to end including the CLI's start | 840    | 1422   |
+| of which the socket round trip (`head.loadMs`)                         | 52     | 123    |
+| `head search --no-server` (snapshot load), end to end                  | 2637   | 4145   |
+| `memhtml manifest`, the CLI's start with no work, 20 runs              | 785    | 1060   |
+| `curl --unix-socket` to `/v1/search`, including curl's start           | 36     | 92     |
+
+A commit picked up by the poll: five porcelain commits of one file each, timed from the commit's return to the server's advance line, took 119, 198, 270, 296, and 971 ms (the last waited out most of a poll period), and each advance itself took 51 to 102 ms. Through the CLI: a `session commit` returned in 5,968 ms (its own local load and its snapshot write) and the `head search` after it answered through the server at the new sha, with the new record first, in 1,237 ms, with no restart.
+
+The server path fits the 1.5 s pre-turn budget at p50 and, on this contended host, at p95 by 78 ms, and the local path does not fit at all. Nearly all of what remains is the CLI's own start (its import graph: the AI SDK, SQLite, the curator), not the server: the socket answers a search in 52 ms at p50. A pre-turn hook that speaks to the socket directly (`curl --unix-socket`, or any HTTP client that dials a Unix socket) answers in 36 ms at p50 and 92 ms at p95, which is the margin a budget that tight wants.
+
+Those figures are for the two-arm server, before it served the vector arm. The vector arm was measured the same day on a fresh private clone of the same store clone at `a650152e` (7,437 records, 728 active, all 728 in the copied cache), with the snapshot and the vector cache copied in: the server with an embedder (query embeds through the LLM proxy at `MEMHTML_LLM_BASE_URL` to Bedrock) against the server under `MEMHTML_EMBED=off`, 30 different queries per run, one CLI process each, in the client's default environment. Only one server can hold a store's socket, so the two could not be interleaved query by query; they ran in three alternating rounds, with the load average between 15 and 29 on 16 cores throughout, and each cell below is one round's p50 / p95 in ms. The server read the 3.0 MB cache in 29 ms before it bound, and every answer with the embedder reported `vector.used: true` with coverage 1.
+
+| what                                                         | arm on, round 1 | arm on, round 2 | arm on, round 3 | arm off, round 1 | arm off, round 2 | arm off, round 3 |
+| ------------------------------------------------------------ | --------------- | --------------- | --------------- | ---------------- | ---------------- | ---------------- |
+| `head search` through the server, end to end                 | 1322 / 2257     | 1181 / 2993     | 1110 / 1389     | 878 / 1148       | 810 / 902        | 852 / 1110       |
+| of which the socket round trip (`head.loadMs`)               | 273 / 497       | 288 / 1350      | 257 / 468       | 59 / 94          | 52 / 62          | 52 / 86          |
+| of which the query embed (`vector.embedMs`)                  | 172 / 324       | 187 / 1212      | 191 / 373       |                  |                  |                  |
+| of which the fold (`searchMs`)                               | 6 / 12          | 5 / 19          | 5 / 10          | 3 / 5            | 3 / 4            | 3 / 5            |
+| `curl --unix-socket` to `/v1/search`, including curl's start |                 | 206 / 356       | 236 / 439       | 96 / 133         | 30 / 33          | 29 / 31          |
+
+Against the 1.5 s pre-turn budget: through the CLI the arm fits at p50 in every round (1.1 to 1.3 s) and misses at p95 in two of three (2.3 and 3.0 s; 1.4 s in the quietest round), while the two-arm server fits at both (at most 1.15 s). The difference is the query embed, one round trip to Bedrock through the proxy at about 170 to 190 ms at p50 and 0.3 to 1.2 s at its tail, not the server: the fold with the arm costs 5 or 6 ms, the cache is read once, and the round trip without the embed is the two-arm server's 52 to 59 ms. A pre-turn hook that speaks to the socket directly takes the CLI's start off the path and answers with the arm in 206 to 236 ms at p50 and 356 to 439 ms at p95, inside the budget with more than a second to spare; that is the path the fleet's hook should take when it wants the arm, and the CLI path is the one to use under `MEMHTML_EMBED=off` or when a slow tail is acceptable.
+
+### Running it
+
+`head serve` is a foreground process that logs to stderr and exits 0 on SIGTERM, so a user unit runs it with no wrapper. This example is not installed anywhere; running a server for a store is the operator's decision.
+
+```ini
+# ~/.config/systemd/user/memhtml-head@.service
+# One server per store; the instance name is the store path, escaped with `systemd-escape --path`.
+[Unit]
+Description=memhtml head server for %f
+
+[Service]
+Type=exec
+# Absolute paths: a user unit's PATH holds neither a version-managed node nor the memhtml bin.
+ExecStart=/path/to/node /path/to/memhtml/dist/memhtml.mjs head serve --repo %f
+Restart=on-failure
+RestartSec=2
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target
+```
+
+```sh
+unit="memhtml-head@$(systemd-escape --path /path/to/store).service"
+systemctl --user daemon-reload
+systemctl --user enable --now "$unit"
+journalctl --user -u "$unit" -f
+systemctl --user stop "$unit"   # SIGTERM: the socket is removed and the envelope lands in the journal
+```
+
+`ExecStart` names an absolute Node 24 and the installed entry point (`dist/memhtml.mjs` in the published package, `apps/cli/dist/bin.js` in a checkout) because a user unit starts with a PATH of `/usr/local/bin:/usr/bin` and the like, which is where `git` must be and where a version-managed Node is not. `Restart=on-failure` does not fight a refusal loop: a second server exits 1 with `ERR_HEAD_SERVER_RUNNING` only while another is live, and a unit killed with SIGKILL leaves a socket the restart replaces.
+
+Covered by `apps/cli/tests/head-server.test.ts` (in process: the socket's mode and ignore rule, every route against a local load, the advance-before-answer rule, the single-advance permit, the poll, neighbors at the base with a label line and the vector arm, search with the vector arm against the local path, a cache written while it runs, one read per change, the embedder switched off, an unreadable cache, the stale and second-server cases, the fallback, `--no-server`) and `tests-integration/tests/head-server.test.ts` (the built binary as a child process: searches, a `session commit` seen by the next search with no restart, a second server refused, SIGTERM and SIGINT with the envelope written and the socket gone).
 
 ## Integration test (integrator)
 

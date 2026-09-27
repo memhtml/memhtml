@@ -46,6 +46,7 @@ import {
   snapshotAfterCommit,
   writeHeadSnapshot
 } from "./head-cache.js"
+import { askHead } from "./head-client.js"
 import {
   type GateFailure,
   type GateOutcome,
@@ -53,7 +54,22 @@ import {
   gateReportOf,
   headGate
 } from "./head-gate.js"
-import { embedHead, vectorsForPuts, vectorsForQuery } from "./head-vectors.js"
+import {
+  type HeadServerStatus,
+  HeadServerStatus as HeadServerStatusSchema,
+  NeighborsAnswer,
+  SearchAnswer,
+  type SearchRequest,
+  type ServedHead
+} from "./head-protocol.js"
+import {
+  type CacheRead,
+  embedHead,
+  loadForSearch,
+  type VectorUse,
+  vectorsForPuts,
+  vectorsForQuery
+} from "./head-vectors.js"
 import { toWriteInput } from "./operations.js"
 import {
   commitSubjectOf,
@@ -78,12 +94,16 @@ export type { GateReport } from "./head-gate.js"
  * agent reaches for while `memhtml serve mcp` holds that database. `DispatchServices` is the app
  * layer's service set, so nothing here can be reached through `dispatch`.
  *
- * ## The head loads per invocation
+ * ## Where the head comes from
  *
- * A long-lived head process is out of the proof of concept's scope. Each call builds the version it
- * needs: from `.memhtml/snapshots/<sha>.arrow` when a snapshot exists for that commit, else from the
- * newest snapshot of an ancestor commit advanced over the changed paths, else from git, and every
- * payload that loaded one says which ({@link HeadStats}). Every commit that moves a ref writes the
+ * `head status`, `head search`, and `session put` ask the head server first (`head-server.ts`, over
+ * `.memhtml/head.sock`), which holds the version loaded and follows its ref, and load locally when no
+ * server answers or `--no-server` is set. Every other arm, and every local fallback, builds the
+ * version it needs: from `.memhtml/snapshots/<sha>.arrow` when a snapshot exists for that commit,
+ * else from the newest snapshot of an ancestor commit advanced over the changed paths, else from git,
+ * and every payload that reports a head says which ({@link HeadStats}, `source: "server"` for the
+ * first). `session commit` and the curate arms always load locally: they must judge the exact version
+ * they commit against, and a commit's cost is not a lookup's. Every commit that moves a ref writes the
  * snapshot for the new sha (`head-cache.ts`), so the next call hits the cache. A session command loads the
  * head at the SESSION's base sha, not at the ref's tip, because a session sees exactly one version
  * plus its own deltas: `session commit` validates against that base and reports `rebase-needed`
@@ -91,6 +111,9 @@ export type { GateReport } from "./head-gate.js"
  * tip and moves the base. Dedup and frame-key checks are judged at the base, so a commit lands only
  * when the ref still IS that base; the rebase-and-retry loop is what makes them fresh.
  */
+
+/** Where a payload's head came from: one of the local load paths, or the head server. */
+export type HeadStatsSource = HeadSource | "server"
 
 /** What every head-loading payload reports about the version it built. */
 export interface HeadStats {
@@ -102,9 +125,13 @@ export interface HeadStats {
    * left out.
    */
   readonly skipped: number | null
+  /** The load's wall time, or under `server` the round trip to the server. */
   readonly loadMs: number
-  /** `snapshot` (this sha's own file), `snapshot+advance` (an ancestor's, advanced), or `git`. */
-  readonly source: HeadSource
+  /**
+   * `snapshot` (this sha's own file), `snapshot+advance` (an ancestor's, advanced), `git`, or
+   * `server` (the head server answered; nothing was loaded in this process).
+   */
+  readonly source: HeadStatsSource
   /** The snapshot file the head was read from (its own or the ancestor's), or `null` from git. */
   readonly snapshotPath: string | null
   /** Under `snapshot+advance`, the commit whose snapshot was advanced; otherwise `null`. */
@@ -116,6 +143,8 @@ export interface HeadStats {
 /** A loaded version plus what loading it cost. */
 export interface LoadedHead extends HeadStats {
   readonly view: HeadVersion
+  /** Always one of the local paths: a loaded head was loaded here. */
+  readonly source: HeadSource
 }
 
 /** The `HeadStats` half of a loaded head, for a payload. */
@@ -128,6 +157,21 @@ export const headStats = (loaded: LoadedHead): HeadStats => ({
   snapshotPath: loaded.snapshotPath,
   ancestorSha: loaded.ancestorSha,
   reparsed: loaded.reparsed
+})
+
+/**
+ * The `HeadStats` of an answer the head server gave: the version it answered over, and the round
+ * trip as `loadMs`. The three snapshot fields are `null` because nothing was loaded here.
+ */
+export const servedStats = (head: ServedHead, ms: number): HeadStats => ({
+  sha: head.sha,
+  records: head.records,
+  skipped: head.skipped,
+  loadMs: ms,
+  source: "server",
+  snapshotPath: null,
+  ancestorSha: null,
+  reparsed: null
 })
 
 /**
@@ -313,41 +357,57 @@ export const sessionStart = (input: {
     }
   })
 
+/** What `session put` computes over a session's view before it appends. */
+export interface PreparedPuts {
+  /** Every op the call would append, in file order: the puts and the `label` and `unlabel` edits. */
+  readonly appended: ReadonlyArray<OverlayOp>
+  /** The puts alone, rendered the way the store would write them and placed at the paths it would choose. */
+  readonly puts: ReadonlyArray<Extract<OverlayOp, { readonly kind: "put" }>>
+  /** Per put, the records the view already holds nearest it; empty when the call is blocked. */
+  readonly neighbors: ReadonlyArray<{
+    readonly path: string
+    readonly hits: ReadonlyArray<SearchHit>
+  }>
+  /** Every violation over the session's ops plus the new ones, judged against the base. */
+  readonly violations: ReadonlyArray<Violation>
+  /** The violations that refuse the call: a blocking kind at a path this call's ops touch. */
+  readonly blocking: ReadonlyArray<Violation>
+  /** The vector arm's report for the neighbors, or `null` when the call is blocked and ranked nothing. */
+  readonly vector: VectorUse | null
+}
+
 /**
- * `session put`: render each `write` op the way the store would, and append the puts, with every
- * `label` and `unlabel` line in the order the file gave them, to the log.
- *
- * Refused as a whole, appending nothing, when a new op carries a violation no rebase can cure
- * ({@link BLOCKING_VIOLATIONS}): a malformed file, a reserved path, a label that is not a
- * well-formed entity or is already carried, an unlabel of one the record lacks, or an unlabel that
- * leaves a record unanchored would make every later commit of this session `refused`, and the log
- * has no removal op. `duplicate` and `claim-edit` are reported, not refused, because they are
- * judged against the base the session currently sees and a rebase can change the answer either way.
+ * The head-dependent half of `session put`: place and render each write over the session's view
+ * (`base` plus `sessionOps`), keep each `label` and `unlabel` line in file order beside the puts,
+ * judge the whole log against `base` the way `commitSession` will, and, when nothing blocks, find
+ * each put's nearest records with the vector arm when `cache` and `embedder` allow it. Pure over its
+ * inputs, so the head server computes the same answer from the version at the session's base and
+ * the cache it holds as a local load does from the cache file (`head-server.ts`).
  */
-export const sessionPut = (input: {
-  readonly root: string
-  readonly id: string
-  readonly ops: ReadonlyArray<SessionPutOp>
+export const preparePuts = (input: {
+  readonly base: HeadView
+  readonly sessionOps: ReadonlyArray<OverlayOp>
+  readonly lines: ReadonlyArray<SessionPutOp>
+  readonly at: string
+  /** The vector cache as this caller finds it: the file's for a CLI call, the held one for the server. */
+  readonly cache: Effect.Effect<CacheRead>
   readonly embedder: EmbedderShape
-}) =>
+}): Effect.Effect<PreparedPuts, InvalidMemory | StorageFailure> =>
   Effect.gen(function* () {
-    const session = yield* resumeSession({ root: input.root, id: input.id })
-    const head = yield* loadHeadAt(input.root, session.baseSha)
-    const view = yield* withOverlay(head.view, session.ops)
-    const at = isoSecond(yield* Effect.clockWith((clock) => clock.currentTimeMillis))
+    const view = yield* withOverlay(input.base, input.sessionOps)
     const claimed = new Set<string>()
     /** Every path this call's ops touch, so only their violations can block the call. */
     const touched = new Set<string>()
     const appended: Array<OverlayOp> = []
-    const puts: Array<OverlayOp & { readonly kind: "put" }> = []
+    const puts: Array<Extract<OverlayOp, { readonly kind: "put" }>> = []
     const queries: Array<string> = []
-    for (const line of input.ops) {
+    for (const line of input.lines) {
       if (line.op !== "write") {
         appended.push({ kind: line.op, path: line.path, entity: line.entity })
         touched.add(line.path)
         continue
       }
-      const write = yield* toWriteInput(line.params, at)
+      const write = yield* toWriteInput(line.params, input.at)
       const path = yield* putPathFor(view, write, claimed)
       claimed.add(path)
       touched.add(path)
@@ -357,25 +417,22 @@ export const sessionPut = (input: {
       queries.push(`${write.title} ${write.claim}`)
     }
     // Judged the way `commitSession` will judge them: every op of the session against the base.
-    const violations = validateOps(head.view, [...session.ops, ...appended])
+    const violations = validateOps(input.base, [...input.sessionOps, ...appended])
     const blocking = violations.filter(
       (violation) =>
         BLOCKING_VIOLATIONS.has(violation.kind) &&
         (violation.kind === "batch-cap" || touched.has(violation.path))
     )
+    // A blocked call appends nothing, so it pays for no embed.
     if (blocking.length > 0) {
-      return yield* Effect.fail(
-        InvalidMemory.make({
-          reason: `session put refused, nothing appended: ${blocking.map(describeViolation).join(" | ")}`
-        })
-      )
+      return { appended, puts, neighbors: [], violations, blocking, vector: null }
     }
     // Read before write: the records the view already holds nearest each put, so the writer can see
     // a near-duplicate it should skip or the records it should link to before it commits. The vector
     // arm joins when a cache and an embedder exist, with each put's own text embedded as a document.
     const records = yield* Effect.forEach(puts, (put) => recordFrom(put))
     const arm = yield* vectorsForPuts({
-      root: input.root,
+      cache: input.cache,
       view,
       texts: records.map(vectorTextOf),
       embedder: input.embedder
@@ -393,6 +450,69 @@ export const sessionPut = (input: {
         })
       }
     })
+    return { appended, puts, neighbors, violations, blocking, vector: arm.use }
+  })
+
+/**
+ * `session put`: render each `write` op the way the store would, and append the puts, with every
+ * `label` and `unlabel` line in the order the file gave them, to the log.
+ *
+ * The head server computes the ops, their neighbors, and the violations over the version at the
+ * session's base when one answers ({@link preparePuts} on its side, with the vector cache it holds
+ * and the embedder it bound); otherwise the base is loaded here and the cache read from its file.
+ * Either way the append happens in this process, under the session's lock.
+ *
+ * Refused as a whole, appending nothing, when a new op carries a violation no rebase can cure
+ * ({@link BLOCKING_VIOLATIONS}): a malformed file, a reserved path, a label that is not a
+ * well-formed entity or is already carried, an unlabel of one the record lacks, or an unlabel that
+ * leaves a record unanchored would make every later commit of this session `refused`, and the log
+ * has no removal op. `duplicate` and `claim-edit` are reported, not refused, because they are
+ * judged against the base the session currently sees and a rebase can change the answer either way.
+ */
+export const sessionPut = (input: {
+  readonly root: string
+  readonly id: string
+  readonly ops: ReadonlyArray<SessionPutOp>
+  readonly embedder: EmbedderShape
+  readonly server?: boolean | undefined
+}) =>
+  Effect.gen(function* () {
+    const session = yield* resumeSession({ root: input.root, id: input.id })
+    const at = isoSecond(yield* Effect.clockWith((clock) => clock.currentTimeMillis))
+    const answered =
+      input.server === false
+        ? null
+        : yield* askHead({
+            root: input.root,
+            route: "neighbors",
+            schema: NeighborsAnswer,
+            body: { sha: session.baseSha, ops: session.ops, lines: input.ops, at }
+          })
+    let prepared: PreparedPuts
+    let head: HeadStats
+    if (answered !== null) {
+      prepared = answered.data
+      head = servedStats(answered.data.head, answered.ms)
+    } else {
+      const loaded = yield* loadHeadAt(input.root, session.baseSha)
+      prepared = yield* preparePuts({
+        base: loaded.view,
+        sessionOps: session.ops,
+        lines: input.ops,
+        at,
+        cache: loadForSearch(input.root),
+        embedder: input.embedder
+      })
+      head = headStats(loaded)
+    }
+    const { appended, puts, neighbors, violations, blocking } = prepared
+    if (blocking.length > 0) {
+      return yield* Effect.fail(
+        InvalidMemory.make({
+          reason: `session put refused, nothing appended: ${blocking.map(describeViolation).join(" | ")}`
+        })
+      )
+    }
     const next = yield* appendOps(session, appended)
     return {
       id: session.id,
@@ -409,8 +529,9 @@ export const sessionPut = (input: {
           : []
       ),
       neighbors,
-      vector: arm.use,
-      violations
+      vector: prepared.vector,
+      violations,
+      head
     }
   })
 
@@ -548,11 +669,38 @@ export const sessionStatus = (input: { readonly root: string; readonly id: strin
     }
   })
 
-/** `head status`: build the version at `HEAD` and report what that cost and where it came from. */
-export const headStatus = (input: { readonly root: string }) =>
+/**
+ * `head status`: the head server's status when one answers (its version, ref, load, advances, and
+ * vector cache under `server`), else build the version at `HEAD` here and report what that cost and
+ * where it came from, with `server: null`.
+ */
+export const headStatus = (input: {
+  readonly root: string
+  readonly server?: boolean | undefined
+}): Effect.Effect<
+  HeadStats & { readonly server: HeadServerStatus | null },
+  GitFailure | InvalidMemory | StorageFailure
+> =>
   Effect.gen(function* () {
+    if (input.server !== false) {
+      const answered = yield* askHead({
+        root: input.root,
+        route: "status",
+        schema: HeadServerStatusSchema
+      })
+      if (answered !== null) {
+        const status = answered.data
+        return {
+          ...servedStats(
+            { sha: status.sha, ref: status.ref, records: status.records, skipped: status.skipped },
+            answered.ms
+          ),
+          server: status
+        }
+      }
+    }
     const sha = yield* headSha(input.root)
-    return headStats(yield* loadHeadAt(input.root, sha))
+    return { ...headStats(yield* loadHeadAt(input.root, sha)), server: null }
   })
 
 /**
@@ -560,28 +708,53 @@ export const headStatus = (input: { readonly root: string }) =>
  * store has a vector cache and an embedder is configured. The query is embedded with `embedQuery`;
  * when the arm cannot run (`MEMHTML_EMBED=off`, no cache, an unreadable cache, a failed query embed)
  * the search runs on the other two and `vector` says why, never failing the call.
+ *
+ * The head server answers when one runs, over its version of its ref, with the cache it holds and
+ * the embedder it bound, and the payload has the same fields either way; only `head.source` says
+ * which path answered. The search input goes to the server as one object, the same object
+ * `searchHead` takes, so an option it gains later travels without a protocol change.
  */
 export const headSearch = (input: {
   readonly root: string
   readonly query: string
   readonly limit?: number | undefined
   readonly embedder: EmbedderShape
+  readonly server?: boolean | undefined
 }) =>
   Effect.gen(function* () {
+    const search: SearchRequest = {
+      query: input.query,
+      ...(input.limit === undefined ? {} : { limit: input.limit })
+    }
+    if (input.server !== false) {
+      const answered = yield* askHead({
+        root: input.root,
+        route: "search",
+        schema: SearchAnswer,
+        body: search
+      })
+      if (answered !== null) {
+        const { vector, searchMs } = answered.data
+        const hits: ReadonlyArray<SearchHit> = answered.data.hits
+        return {
+          query: input.query,
+          hits,
+          vector,
+          searchMs,
+          head: servedStats(answered.data.head, answered.ms)
+        }
+      }
+    }
     const sha = yield* headSha(input.root)
     const head = yield* loadHeadAt(input.root, sha)
     const arm = yield* vectorsForQuery({
-      root: input.root,
+      cache: loadForSearch(input.root),
       view: head.view,
       query: input.query,
       embedder: input.embedder
     })
     const started = performance.now()
-    const hits: ReadonlyArray<SearchHit> = searchHead(head.view, {
-      query: input.query,
-      ...(input.limit === undefined ? {} : { limit: input.limit }),
-      ...arm.search
-    })
+    const hits: ReadonlyArray<SearchHit> = searchHead(head.view, { ...search, ...arm.search })
     // Hundredths: the fold takes a few milliseconds, so whole milliseconds would read as 0 to 12.
     const searchMs = Math.round((performance.now() - started) * 100) / 100
     return { query: input.query, hits, vector: arm.use, searchMs, head: headStats(head) }
@@ -1004,6 +1177,8 @@ export interface V2Input {
   readonly skipGate: boolean
   /** The embedder `head search`, `head embed`, and `session put` use; both ports absent when off. */
   readonly embedder: EmbedderShape
+  /** False under `--no-server`: `head status`, `head search`, and `session put` load locally. */
+  readonly server: boolean
 }
 
 /** One arm per command, each returning its response type beside its payload. */

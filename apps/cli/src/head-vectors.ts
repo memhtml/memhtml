@@ -57,13 +57,17 @@ export interface VectorUse {
   readonly cached: number | null
   /** Share of the view's active records whose content hash has a vector, or `null` with no cache. */
   readonly coverage: number | null
-  /** Milliseconds reading the cache file, or `null` when it was not read. */
+  /**
+   * Milliseconds reading the cache file, or `null` when it was not read. 0 from the head server,
+   * which holds the cache and read no file for the answer.
+   */
   readonly loadMs: number | null
   /** Milliseconds in the embed call for the query (or the puts), or `null` when none was made. */
   readonly embedMs: number | null
 }
 
-const skipped = (
+/** A `VectorUse` for an arm that did not run, with whatever was measured before it stopped. */
+export const skippedUse = (
   reason: VectorSkipReason,
   rest: Partial<Omit<VectorUse, "used" | "reason">> = {}
 ): VectorUse => ({
@@ -88,13 +92,17 @@ export const coverageOf = (view: HeadView, vectors: HeadVectors): number => {
   return active === 0 ? 0 : covered / active
 }
 
-/** The cache read for a search, or the reason it could not be. Never fails. */
-const loadForSearch = (
-  root: string
-): Effect.Effect<
+/**
+ * The cache as a search finds it: read, with what reading it cost, or the reason it could not be.
+ * A CLI call reads the file for itself ({@link loadForSearch}); the head server holds one of these
+ * and hands it over with `loadMs` 0, since the answer read nothing (`head-server.ts`).
+ */
+export type CacheRead =
   | { readonly ok: true; readonly cache: VectorCache; readonly loadMs: number }
   | { readonly ok: false; readonly use: VectorUse }
-> =>
+
+/** The cache under `root` read for a search, or the reason it could not be. Never fails. */
+export const loadForSearch = (root: string): Effect.Effect<CacheRead> =>
   Effect.gen(function* () {
     const started = Date.now()
     const read = yield* Effect.result(readVectorCache(headVectorsPath(root), HEAD_VECTOR_SPACE))
@@ -102,10 +110,11 @@ const loadForSearch = (
     if (read._tag === "Failure") {
       return {
         ok: false as const,
-        use: skipped("cache-unreadable", { detail: read.failure.operation, loadMs })
+        use: skippedUse("cache-unreadable", { detail: read.failure.operation, loadMs })
       }
     }
-    if (read.success === null) return { ok: false as const, use: skipped("no-cache", { loadMs }) }
+    if (read.success === null)
+      return { ok: false as const, use: skippedUse("no-cache", { loadMs }) }
     return { ok: true as const, cache: read.success, loadMs }
   })
 
@@ -118,18 +127,19 @@ export interface QueryVectors {
 /**
  * The vector arm's inputs for one `head search` query, or the reason there are none. The order of
  * the checks is the order of their cost: the embedder switch reads nothing, the cache read touches
- * the disk, and only a store with both pays for the `embedQuery` call.
+ * the disk, and only a store with both pays for the `embedQuery` call. `cache` is run only past the
+ * switch: {@link loadForSearch} for a CLI call, the held cache for the head server.
  */
 export const vectorsForQuery = (input: {
-  readonly root: string
+  readonly cache: Effect.Effect<CacheRead>
   readonly view: HeadView
   readonly query: string
   readonly embedder: EmbedderShape
 }): Effect.Effect<QueryVectors> =>
   Effect.gen(function* () {
     const port = input.embedder.query
-    if (port === undefined) return { search: {}, use: skipped("embedder-off") }
-    const loaded = yield* loadForSearch(input.root)
+    if (port === undefined) return { search: {}, use: skippedUse("embedder-off") }
+    const loaded = yield* input.cache
     if (!loaded.ok) return { search: {}, use: loaded.use }
     const { cache, loadMs } = loaded
     const coverage = coverageOf(input.view, cache.vectors)
@@ -139,7 +149,7 @@ export const vectorsForQuery = (input: {
     if (embedded._tag === "Failure") {
       return {
         search: {},
-        use: skipped("embed-failed", {
+        use: skippedUse("embed-failed", {
           detail: embedded.failure.reason,
           cached: cache.vectors.size,
           coverage,
@@ -175,7 +185,7 @@ export interface PutVectors {
  * documents, not asked as a question. Degrades the way {@link vectorsForQuery} does.
  */
 export const vectorsForPuts = (input: {
-  readonly root: string
+  readonly cache: Effect.Effect<CacheRead>
   readonly view: HeadView
   readonly texts: ReadonlyArray<string>
   readonly embedder: EmbedderShape
@@ -183,8 +193,8 @@ export const vectorsForPuts = (input: {
   Effect.gen(function* () {
     const none = (use: VectorUse): PutVectors => ({ vectors: null, perPut: null, use })
     const port = input.embedder.document
-    if (port === undefined) return none(skipped("embedder-off"))
-    const loaded = yield* loadForSearch(input.root)
+    if (port === undefined) return none(skippedUse("embedder-off"))
+    const loaded = yield* input.cache
     if (!loaded.ok) return none(loaded.use)
     const { cache, loadMs } = loaded
     const coverage = coverageOf(input.view, cache.vectors)
@@ -193,7 +203,7 @@ export const vectorsForPuts = (input: {
     const embedMs = Date.now() - started
     if (embedded._tag === "Failure") {
       return none(
-        skipped("embed-failed", {
+        skippedUse("embed-failed", {
           detail: embedded.failure.reason,
           cached: cache.vectors.size,
           coverage,
