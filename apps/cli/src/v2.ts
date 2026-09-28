@@ -1,3 +1,4 @@
+import { access } from "node:fs/promises"
 import { join } from "node:path"
 
 import type { HeadView, OverlayOp } from "@memhtml/contracts"
@@ -30,6 +31,7 @@ import {
   resumeSession,
   type Session,
   saveSession,
+  sessionStateFile,
   startSession,
   touchedPaths,
   type Violation,
@@ -370,6 +372,64 @@ export const sessionStart = (input: {
     }
   })
 
+/** How long a first use waits for a concurrent first use of the same id to finish starting it. */
+const IMPLICIT_START_WAIT_MS = 5_000
+const IMPLICIT_START_POLL_MS = 25
+
+const logExists = (root: string, id: string): Effect.Effect<boolean> =>
+  Effect.promise(() =>
+    access(sessionStateFile(root, id)).then(
+      () => true,
+      () => false
+    )
+  )
+
+/**
+ * The implicit start behind `MEMHTML_SESSION`: when `session put` or `session exec` takes its id
+ * from the variable and the session has no log yet, start it on `refs/heads/main`'s tip (or `HEAD`
+ * when there is no main), exactly as `session start --id <id>` would, and answer whether this call
+ * started it. A log that exists is left alone, so every later use in the run resumes it.
+ *
+ * Cheap on purpose: `startSession` reads only the base's sha, so this is one `rev-parse` and one
+ * `read-tree` into the session's index file, with no head load. An agent runtime can hand every
+ * subprocess of a run the variable and open nothing up front, and a run that never writes leaves
+ * no session behind.
+ *
+ * Two first uses at once (two subagents of one run) both find no log. One takes the session's lock
+ * and writes it; the other fails with `session.locked` or, a moment later, `session.exists`, and both
+ * mean the session is being started or is started. That caller waits for the log to appear (up to
+ * {@link IMPLICIT_START_WAIT_MS}) and goes on with it, so neither call fails and neither log is
+ * replaced.
+ */
+export const ensureSession = (input: { readonly root: string; readonly id: string }) =>
+  Effect.gen(function* () {
+    if (yield* logExists(input.root, input.id)) return false
+    const sha = yield* baseShaFor(input.root, DEFAULT_REF)
+    const started = yield* startSession({
+      root: input.root,
+      id: input.id,
+      base: { sha },
+      ref: DEFAULT_REF
+    }).pipe(
+      Effect.as(true),
+      Effect.catchIf(
+        (error): error is StorageFailure =>
+          error._tag === "StorageFailure" &&
+          (error.operation === "session.exists" || error.operation === "session.locked"),
+        () => Effect.succeed(false)
+      )
+    )
+    if (started) return true
+    const deadline = Date.now() + IMPLICIT_START_WAIT_MS
+    while (!(yield* logExists(input.root, input.id))) {
+      if (Date.now() > deadline) {
+        return yield* Effect.fail(StorageFailure.make({ operation: "session.locked" }))
+      }
+      yield* Effect.sleep(IMPLICIT_START_POLL_MS)
+    }
+    return false
+  })
+
 /** What `session put` computes over a session's view before it appends. */
 export interface PreparedPuts {
   /** Every op the call would append, in file order: the puts and the `label` and `unlabel` edits. */
@@ -508,8 +568,14 @@ export const sessionPut = (input: {
   readonly ops: ReadonlyArray<SessionPutOp>
   readonly embedder: EmbedderShape
   readonly server?: boolean | undefined
+  /** The id came from `MEMHTML_SESSION`: start the session first when it has no log ({@link ensureSession}). */
+  readonly implicitStart?: boolean | undefined
 }) =>
   Effect.gen(function* () {
+    const started =
+      input.implicitStart === true
+        ? yield* ensureSession({ root: input.root, id: input.id })
+        : false
     const session = yield* resumeSession({ root: input.root, id: input.id })
     const scope = sessionScopeOf(session.ref)
     const at = isoSecond(yield* Effect.clockWith((clock) => clock.currentTimeMillis))
@@ -553,6 +619,8 @@ export const sessionPut = (input: {
     const next = yield* appendOps(session, appended)
     return {
       id: session.id,
+      /** True when this call started the session (the id came from `MEMHTML_SESSION` and had no log). */
+      started,
       baseSha: session.baseSha,
       /** Every op this call appended: the puts and the entity edits. */
       appended: appended.length,
@@ -723,8 +791,18 @@ export const sessionExec = (input: {
   readonly lang: ExecLang
   readonly timeoutMs?: number | undefined
   readonly server?: boolean | undefined
+  /**
+   * The id came from `MEMHTML_SESSION`: start the session first when it has no log
+   * ({@link ensureSession}). Done here, before the server is asked, because the server reads the
+   * session's log itself and starts nothing.
+   */
+  readonly implicitStart?: boolean | undefined
 }) =>
   Effect.gen(function* () {
+    const started =
+      input.implicitStart === true
+        ? yield* ensureSession({ root: input.root, id: input.id })
+        : false
     let server: ExecServerUse = { used: false, base: null, reason: "disabled", detail: null }
     if (input.server !== false) {
       const asked = yield* askHeadFor({
@@ -740,6 +818,7 @@ export const sessionExec = (input: {
           if (answer.served) {
             return {
               ...answer.outcome,
+              started,
               head: servedStats(answer.head, asked.ms),
               server: { used: true, base: answer.base, reason: null, detail: null }
             }
@@ -775,7 +854,7 @@ export const sessionExec = (input: {
       lang: input.lang,
       timeoutMs: input.timeoutMs
     })
-    return { ...outcome, head: headStats(head), server }
+    return { ...outcome, started, head: headStats(head), server }
   })
 
 /**
@@ -1379,6 +1458,12 @@ export interface V2Input {
   readonly embedder: EmbedderShape
   /** False under `--no-server`: `head status`, `head search`, and `session put` load locally. */
   readonly server: boolean
+  /**
+   * The session id came from `MEMHTML_SESSION` rather than `--id`, so `session put` and `session
+   * exec` start the session on first use. An id on the line keeps the explicit contract: it must name
+   * a started session.
+   */
+  readonly implicitStart: boolean
 }
 
 /** One arm per command, each returning its response type beside its payload. */

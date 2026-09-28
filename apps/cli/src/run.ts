@@ -26,7 +26,13 @@ import {
   type FlagSpec,
   GLOBAL_FLAGS
 } from "./commands.js"
-import { MemhtmlRoot, REFUSE_ENV_ROOT_VAR, refusesEnvRoot } from "./config.js"
+import {
+  MemhtmlRoot,
+  REFUSE_ENV_ROOT_VAR,
+  refusesEnvRoot,
+  SESSION_VAR,
+  sessionFromEnv
+} from "./config.js"
 import { curateCollapse, readPlanFile, readRulingsFile } from "./curate-collapse.js"
 import { curateRefProblem, curateRun } from "./curate-run.js"
 import { doctor } from "./doctor.js"
@@ -894,7 +900,30 @@ const curateRunFlags = (parsed: Parsed): Failure | undefined => {
  */
 const sessionIdFlag = (parsed: Parsed): Failure | undefined => {
   if (!parsed.command.startsWith("session ")) return undefined
-  for (const id of parsed.flags.get("id") ?? []) {
+  const given = parsed.flags.get("id")
+  if (given === undefined) {
+    /**
+     * `--id` is optional in the table because `MEMHTML_SESSION` can supply it, so its absence is
+     * judged here: with neither, the call names no session, which is the missing argument it always
+     * was. A value the variable holds is held to the same shape as one on the line, and the refusal
+     * names the variable so the caller fixes the right place.
+     */
+    const fromEnv = sessionFromEnv()
+    if (fromEnv === undefined) {
+      return fail(
+        "ERR_MISSING_ARGUMENT",
+        `${parsed.command} requires: --id (or ${SESSION_VAR} in the environment)`,
+        [`memhtml ${parsed.command} --id <value>`]
+      )
+    }
+    if (isSessionId(fromEnv)) return undefined
+    return fail(
+      "ERR_INVALID_FLAG",
+      `${SESSION_VAR}=${JSON.stringify(fromEnv)} is not a session id: one segment of letters, digits, ".", "_" or "-", starting with a letter or digit, at most 128 characters`,
+      [`memhtml ${parsed.command} --id s1`]
+    )
+  }
+  for (const id of given) {
     if (typeof id !== "string" || isSessionId(id)) continue
     return fail(
       "ERR_INVALID_FLAG",
@@ -903,6 +932,55 @@ const sessionIdFlag = (parsed: Parsed): Failure | undefined => {
     )
   }
   return undefined
+}
+
+/**
+ * The session a `session` command names: `--id`, else `MEMHTML_SESSION`. `implicit` is true when the
+ * variable supplied it, which is what lets `session put` and `session exec` start it on first use.
+ */
+const sessionIdOf = (parsed: Parsed): { readonly id: string; readonly implicit: boolean } => {
+  const flag = str(parsed, "id")
+  if (flag !== undefined) return { id: flag, implicit: false }
+  const fromEnv = sessionFromEnv()
+  return fromEnv === undefined ? { id: "", implicit: false } : { id: fromEnv, implicit: true }
+}
+
+/**
+ * The v1 doors that create a record. Each commits straight to the store through `@memhtml/store`,
+ * and none runs the write bar `validateOps` holds every session to (`writeBarReasons` in
+ * `@memhtml/session`), so a run narrative or a record naming nothing lands through any of them.
+ * Edits of existing records (`link`, `archive`, `task status`, `reinforce`) create nothing the bar
+ * judges and stay open.
+ */
+const RECORD_CREATING_V1_COMMANDS: ReadonlyMap<string, string> = new Map([
+  [
+    "write",
+    "memhtml session exec <<'SH' (write the file under /mnt/memhtml), or memhtml session put --file ops.jsonl"
+  ],
+  ["apply", "memhtml session put --file ops.jsonl (the same write lines apply reads)"],
+  [
+    "correct",
+    "memhtml session exec <<'SH' (write the new record with a memhtml-supersedes link, move the old one under archive/)"
+  ],
+  ["task add", 'memhtml session put --file ops.jsonl (a write line with "memoryType": "task")']
+])
+
+/**
+ * `MEMHTML_SESSION` closes the v1 doors that create a record. A process that carries a session (an
+ * agent runtime exports one to every subprocess of a run) has a door held to the write bar, and a
+ * v1 write beside it would land unjudged and outside the run's one commit. Refused as a usage error
+ * before anything opens, with the session command that does the same job as the suggestion.
+ */
+const sessionBoundRefusal = (parsed: Parsed): Failure | undefined => {
+  const instead = RECORD_CREATING_V1_COMMANDS.get(parsed.command)
+  if (instead === undefined) return undefined
+  const session = sessionFromEnv()
+  if (session === undefined) return undefined
+  return fail(
+    "ERR_SESSION_BOUND",
+    `${parsed.command} creates a record with no write bar, and ${SESSION_VAR} is set (${JSON.stringify(session)}), so this process writes through that session: the write bar judges each record as it is written and the session lands as one commit`,
+    [instead, "memhtml help session exec"]
+  )
 }
 
 const headSnapshotFlags = (parsed: Parsed): Failure | undefined => {
@@ -1279,6 +1357,14 @@ const validateAgainst = (parsed: Parsed, spec: CommandSpec): Failure | undefined
   const surplus = surplusArgs(parsed, spec)
   if (surplus !== undefined) return surplus
 
+  // Before the presence rules: a closed door is the answer whatever else the call is missing, and a
+  // session command that names no session (no `--id`, no `MEMHTML_SESSION`) says so before it
+  // names any other flag it lacks, as it did when `--id` was a required flag in the table.
+  const bound = sessionBoundRefusal(parsed)
+  if (bound !== undefined) return bound
+  const sessionId = sessionIdFlag(parsed)
+  if (sessionId !== undefined) return sessionId
+
   const missingArgs = spec.args.filter(
     (arg, position) => arg.required && parsed.positional[position] === undefined
   )
@@ -1317,9 +1403,6 @@ const validateAgainst = (parsed: Parsed, spec: CommandSpec): Failure | undefined
 
   const serve = headServeFlags(parsed)
   if (serve !== undefined) return serve
-
-  const sessionId = sessionIdFlag(parsed)
-  if (sessionId !== undefined) return sessionId
 
   const curate = curateMergeFlags(parsed)
   if (curate !== undefined) return curate
@@ -1897,7 +1980,7 @@ export const run = async (
       // send, and held here for both paths so a script's fate never depends on a server running.
       const bytes = execBodyBytes(
         execRequestOf({
-          id: str(parsed, "id") ?? "",
+          id: sessionIdOf(parsed).id,
           script: read,
           lang:
             EXEC_LANGS.find((lang): lang is ExecLang => lang === str(parsed, "lang")) ??
@@ -2047,9 +2130,11 @@ export const run = async (
           })
           return ["curate.collapse", data] as const
         }
+        const session = sessionIdOf(parsed)
         return yield* runV2(parsed.command, {
           root,
-          id: str(parsed, "id") ?? "",
+          id: session.id,
+          implicitStart: session.implicit,
           ref: str(parsed, "ref"),
           message: str(parsed, "message") ?? "",
           force: bool(parsed, "force", false),

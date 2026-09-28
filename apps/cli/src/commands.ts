@@ -1194,8 +1194,12 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
    * compare-and-swap the ref). None of these commands opens `index.db`: the head is built from git or
    * from a columnar snapshot on every call, and `head status` says which.
    *
-   * `--id` is required everywhere because the session's state lives under `.memhtml/sessions/<id>`
-   * and there is no ambient current session. A commit that finds the ref moved over a path it touched
+   * `--id` names the session everywhere because its state lives under `.memhtml/sessions/<id>`. The one
+   * ambient session is `MEMHTML_SESSION`, which an agent runtime exports to every subprocess of a run:
+   * with it set, `--id` defaults to its value, `session put` and `session exec` start that session on
+   * first use, and the v1 doors that create a record refuse (`ERR_SESSION_BOUND`), so the run's writes
+   * all meet the write bar and land in one commit. With neither, `--id` is a missing argument. A
+   * commit that finds the ref moved over a path it touched
    * answers `rebase-needed` rather than retrying, so `session rebase` is its own command and the
    * caller owns the loop.
    */
@@ -1209,8 +1213,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "id",
         type: "string",
         description:
-          "The session id: one path segment, letters, digits, `.`, `_`, `-`. State lives at .memhtml/sessions/<id>.idx (the session's git index) and <id>.json (its overlay log).",
-        required: true
+          "The session id: one path segment, letters, digits, `.`, `_`, `-`. State lives at .memhtml/sessions/<id>.idx (the session's git index) and <id>.json (its overlay log). Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT."
       },
       {
         name: "ref",
@@ -1239,7 +1242,12 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       "Append write ops, and label or unlabel ops on existing records, to a session's overlay from a JSONL file.",
     args: [],
     flags: [
-      { name: "id", type: "string", description: "The session to append to.", required: true },
+      {
+        name: "id",
+        type: "string",
+        description:
+          "The session to append to. Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT. With the id taken from $MEMHTML_SESSION and no log yet, the session is started on refs/heads/main's tip first (a `rev-parse` and a `read-tree`, no head load), so a run's first write needs no `session start`; a `--id` given on the line must name a started session."
+      },
       {
         name: "file",
         type: "string",
@@ -1270,8 +1278,8 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       {
         name: "id",
         type: "string",
-        description: "The session whose view the script sees.",
-        required: true
+        description:
+          "The session whose view the script sees. Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT. With the id taken from $MEMHTML_SESSION and no log yet, the session is started on refs/heads/main's tip first, as `session put` does."
       },
       {
         name: "file",
@@ -1321,7 +1329,12 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       "Land the session's overlay on its ref as one commit, or report why it cannot: `refused`, `rebase-needed`, or `worktree-dirty`.",
     args: [],
     flags: [
-      { name: "id", type: "string", description: "The session to commit.", required: true },
+      {
+        name: "id",
+        type: "string",
+        description:
+          "The session to commit. Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT."
+      },
       {
         name: "message",
         type: "string",
@@ -1341,7 +1354,14 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     summary:
       "Move a session's base to its ref's tip, keeping every op. Run it after a `rebase-needed` commit outcome, then commit again.",
     args: [],
-    flags: [{ name: "id", type: "string", description: "The session to rebase.", required: true }],
+    flags: [
+      {
+        name: "id",
+        type: "string",
+        description:
+          "The session to rebase. Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT."
+      }
+    ],
     responseTypes: ["session.rebased"],
     examples: ["memhtml session rebase --id s1"]
   },
@@ -1351,7 +1371,12 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       "The session's base, ref, and overlay log as persisted, and whether the ref has moved past the base.",
     args: [],
     flags: [
-      { name: "id", type: "string", description: "The session to describe.", required: true }
+      {
+        name: "id",
+        type: "string",
+        description:
+          "The session to describe. Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT."
+      }
     ],
     responseTypes: ["session.status"],
     examples: ["memhtml session status --id s1"]
@@ -1711,7 +1736,12 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "which admits one writer at a time and any number of concurrent readers, so a second writer " +
       "waits its turn rather than failing. The one thing to keep clear of is a checked-out " +
       "`curate/<date>` branch: a write landing while one is checked out commits onto that branch and " +
-      "is merged as if it were curation or lost when the branch is dropped."
+      "is merged as if it were curation or lost when the branch is dropped. " +
+      "Under `MEMHTML_SESSION` (an agent runtime exports it to every subprocess of a run) the first door " +
+      "is the session one instead: `write`, `apply`, `correct`, and `task add` answer ERR_SESSION_BOUND, " +
+      "and a record goes in through `memhtml session exec` (a heredoc that writes the file under " +
+      "`/mnt/memhtml`) or `memhtml session put`, both held to the write bar, and the runtime commits the " +
+      "run's session when the run ends."
   },
   {
     topic: "when-to-batch",
