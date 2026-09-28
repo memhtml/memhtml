@@ -5,7 +5,7 @@ import { Schema } from "effect"
 
 /**
  * The head server's wire contract (`docs/v2-poc.md`, "Head server"): JSON over HTTP on a Unix domain
- * socket inside the store, four routes under one version prefix.
+ * socket inside the store, five routes under one version prefix.
  *
  * The server (`head-server.ts`) decodes every request body with the schemas here, excess properties
  * refused, the way the CLI refuses an unknown flag; the client (`head-client.ts`) decodes every
@@ -20,7 +20,8 @@ export const HEAD_ROUTES = {
   status: `/v${HEAD_PROTOCOL}/status`,
   search: `/v${HEAD_PROTOCOL}/search`,
   read: `/v${HEAD_PROTOCOL}/read`,
-  neighbors: `/v${HEAD_PROTOCOL}/neighbors`
+  neighbors: `/v${HEAD_PROTOCOL}/neighbors`,
+  exec: `/v${HEAD_PROTOCOL}/exec`
 } as const
 
 export type HeadRoute = keyof typeof HEAD_ROUTES
@@ -127,6 +128,58 @@ export const NeighborsRequest = Schema.Struct({
 })
 export type NeighborsRequest = typeof NeighborsRequest.Type
 
+/**
+ * The largest `POST /v1/exec` body the server reads, in bytes: 1 MiB. The body is the script as JSON
+ * text, so this bounds a script at a little under it. Sized from the 2026-09-23 store clone, whose
+ * memory records are 1.3 KB at the median, 23 KB at the 99th percentile, and 62 KB at most: a
+ * heredoc under the cap writes about 800 median records or 16 of the largest, and a batch past that
+ * is several execs. Above it the server answers 413 with `ERR_INVALID_FLAG` without reading the rest,
+ * and the CLI refuses the same script at exit 2 before it asks, with the server or without it, so a
+ * script's fate never depends on whether a server is running.
+ */
+export const EXEC_BODY_MAX_BYTES = 1_048_576
+
+/**
+ * `POST /v1/exec`: run a script over a session's view and append its harvest, as `session exec`
+ * does. The server reads the session's log itself, so a request names the session and nothing
+ * about its state. `timeoutMs` absent is the CLI's default, the cap applied either way.
+ */
+export const ExecRequest = Schema.Struct({
+  id: Schema.String,
+  script: Schema.String,
+  lang: Schema.Literals(["bash", "js"]),
+  timeoutMs: Schema.optionalKey(Schema.Int)
+})
+export type ExecRequest = typeof ExecRequest.Type
+
+/**
+ * The longest a `/v1/exec` waits before its script starts, twice over: once for the same session's
+ * earlier exec (a session runs one exec at a time, so the second sees the first's harvest), and once
+ * for a free worker. Past either the server declines with `busy` and has run nothing, so the client
+ * runs the script itself; the client's answer timeout is built from this (`execAnswerTimeoutMs`).
+ */
+export const EXEC_QUEUE_WAIT_MS = 30_000
+
+/** The request `session exec` sends, and its size on the wire, which the cap is measured against. */
+export const execRequestOf = (input: {
+  readonly id: string
+  readonly script: string
+  readonly lang: "bash" | "js"
+  readonly timeoutMs?: number | undefined
+}): ExecRequest => ({
+  id: input.id,
+  script: input.script,
+  lang: input.lang,
+  ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs })
+})
+
+export const execBodyBytes = (request: ExecRequest): number =>
+  Buffer.byteLength(JSON.stringify(request), "utf8")
+
+/** The usage error a body over {@link EXEC_BODY_MAX_BYTES} earns, on the socket and in the CLI alike. */
+export const execBodyTooLarge = (bytes: number | null): string =>
+  `session exec takes a script whose request body is at most ${String(EXEC_BODY_MAX_BYTES)} bytes (1 MiB)${bytes === null ? "" : `; this one is ${String(bytes)}`}. Split it into several execs, or write records with \`session put\``
+
 // ---------------------------------------------------------------------------------------------
 // Answers
 // ---------------------------------------------------------------------------------------------
@@ -170,6 +223,16 @@ export const VectorCacheStatus = Schema.Struct({
 })
 export type VectorCacheStatus = typeof VectorCacheStatus.Type
 
+/** The exec pool as `status` reports it. */
+export const ExecPoolStatus = Schema.Struct({
+  size: Schema.Finite,
+  idle: Schema.Finite,
+  busy: Schema.Finite,
+  started: Schema.Finite,
+  killed: Schema.Finite,
+  jobs: Schema.Finite
+})
+
 /** `GET /v1/status`. */
 export const HeadServerStatus = Schema.Struct({
   protocol: Schema.Literal(HEAD_PROTOCOL),
@@ -195,7 +258,9 @@ export const HeadServerStatus = Schema.Struct({
   /** The background poll's period; 0 when requests alone advance the version. */
   pollMs: Schema.Finite,
   startedAt: Schema.String,
-  vectors: VectorCacheStatus
+  vectors: VectorCacheStatus,
+  /** The workers `/v1/exec` runs scripts in: how many run at once, and what they have done. */
+  exec: ExecPoolStatus
 })
 export type HeadServerStatus = typeof HeadServerStatus.Type
 
@@ -263,6 +328,66 @@ export const NeighborsAnswer = Schema.Struct({
   vector: Schema.NullOr(VectorUseSchema),
   head: ServedHead
 })
+
+/**
+ * What `session exec` reports, whichever process ran it (`execOverHead` in `v2.ts` returns exactly
+ * this type): the script's result, the harvest, what was appended, and why anything was not. The
+ * CLI adds `head` (where the version came from) and `server` (whether the server ran it) around it.
+ */
+export const ExecOutcome = Schema.Struct({
+  id: Schema.String,
+  baseSha: Schema.String,
+  lang: Schema.Literals(["bash", "js"]),
+  corpusMount: Schema.String,
+  sha: Schema.NullOr(Schema.String),
+  exitCode: Schema.Finite,
+  stdout: Schema.String,
+  stderr: Schema.String,
+  durationMs: Schema.Finite,
+  timeoutMs: Schema.Finite,
+  timedOut: Schema.Boolean,
+  ops: Schema.Finite,
+  appended: Schema.Finite,
+  opsTotal: Schema.Finite,
+  harvested: Schema.Array(
+    Schema.Struct({
+      kind: Schema.String,
+      path: Schema.String,
+      to: Schema.optionalKey(Schema.String)
+    })
+  ),
+  rejected: Schema.Array(Schema.Struct({ path: Schema.String, reason: Schema.String })),
+  violations: Schema.Array(ViolationSchema),
+  blocking: Schema.Array(Schema.String)
+})
+export type ExecOutcome = typeof ExecOutcome.Type
+
+/**
+ * How the server came by the version at the session's base: the tip it holds, or an ancestor of it
+ * built from the tip by the tree diff an advance uses.
+ */
+export const ExecBase = Schema.Literals(["tip", "ancestor"])
+export type ExecBase = typeof ExecBase.Type
+
+/**
+ * Why a server that was asked did not run the exec, so the client runs it locally: the session's
+ * base is neither the tip nor an ancestor the server can build (`base-unservable`), or the
+ * session's earlier exec or every worker stayed busy past the wait (`busy`). Nothing was run and
+ * nothing appended in either case.
+ */
+export const ExecDeclined = Schema.Literals(["base-unservable", "busy"])
+
+/** `POST /v1/exec`: the outcome with the version it ran over, or why the server declined. */
+export const ExecAnswer = Schema.Union([
+  Schema.Struct({
+    served: Schema.Literal(true),
+    base: ExecBase,
+    outcome: ExecOutcome,
+    head: ServedHead
+  }),
+  Schema.Struct({ served: Schema.Literal(false), reason: ExecDeclined, detail: Schema.String })
+])
+export type ExecAnswer = typeof ExecAnswer.Type
 
 // ---------------------------------------------------------------------------------------------
 // Refusal

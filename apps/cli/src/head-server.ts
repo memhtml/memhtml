@@ -1,24 +1,31 @@
 import { access, chmod, lstat, mkdir, rm, stat } from "node:fs/promises"
-import { createServer } from "node:http"
+import { createServer, type IncomingMessage } from "node:http"
 import { createConnection } from "node:net"
 import { dirname } from "node:path"
 
 import type { InvalidMemory } from "@memhtml/contracts/errors"
 import { StorageFailure } from "@memhtml/contracts/errors"
 import { advanceHead, type HeadVersion, searchHead } from "@memhtml/head"
-import { DEFAULT_REF, ensureExcludedQuietly, HEAD_SOCKET } from "@memhtml/session"
+import { DEFAULT_REF, ensureExcludedQuietly, HEAD_SOCKET, resumeSession } from "@memhtml/session"
 import { snapshotPathFor } from "@memhtml/snapshot"
 import { type GitFailure, makeGit } from "@memhtml/store"
-import { Duration, Effect, Layer, Schedule, type Scope, Semaphore } from "effect"
+import { Duration, Effect, Layer, Option, Schedule, Schema, type Scope, Semaphore } from "effect"
 import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 
 import type { EmbedderShape } from "./api-layer.js"
 import { headRefOf, recordView } from "./curate-run.js"
 import { fail } from "./envelope.js"
 import { failureFor } from "./errors.js"
+import { EXEC_BUSY, makeExecPool } from "./exec-pool.js"
 import { type HeadSource, writeHeadSnapshot } from "./head-cache.js"
 import { askHead, CONNECT_TIMEOUT_MS } from "./head-client.js"
 import {
+  EXEC_BODY_MAX_BYTES,
+  EXEC_QUEUE_WAIT_MS,
+  type ExecAnswer,
+  type ExecBase,
+  ExecRequest,
+  execBodyTooLarge,
   HEAD_PROTOCOL,
   HEAD_ROUTES,
   HeadServerRunning,
@@ -39,7 +46,8 @@ import {
   skippedUse,
   vectorsForQuery
 } from "./head-vectors.js"
-import { loadHeadAt, preparePuts, qualifyRef, revParse } from "./v2.js"
+import { type CachedImage, cacheImage } from "./session-exec.js"
+import { execOverHead, loadHeadAt, preparePuts, qualifyRef, revParse } from "./v2.js"
 
 /**
  * `memhtml head serve`: one process that holds the head loaded and answers lookups over the store's
@@ -75,6 +83,19 @@ import { loadHeadAt, preparePuts, qualifyRef, revParse } from "./v2.js"
  * server is up takes effect on the next request with no restart. A file that vanished, or that the
  * reader refuses, leaves the arm off with that reason until the file changes again.
  *
+ * ## Exec
+ *
+ * `/v1/exec` runs `session exec` here: the session's log is read, the version at its base is the
+ * held tip or an ancestor of it built by the tree diff (anything else is declined with
+ * `base-unservable`, and the client runs the script itself), and `execOverHead` (the function the
+ * CLI's local path runs) overlays, runs, harvests, validates, and appends. The script runs in a
+ * worker (`exec-pool.ts`), because just-bash holds the thread it runs on and this thread answers
+ * every search; the exec holds no advance permit and keeps the version it started with, so searches
+ * and advances go on while it runs. Execs of one session id run one at a time, the second seeing
+ * the first's harvest; execs of different sessions run at once, up to the pool's size. The UTF-8
+ * image of each base version the guest is seeded from is kept for the last {@link IMAGES_KEPT}
+ * versions, so a call encodes only the paths its session's overlay rewrote.
+ *
  * ## The socket
  *
  * `.memhtml/head.sock`, bound with mode 0600 (the umask is narrowed around the bind, so the file is
@@ -87,6 +108,60 @@ import { loadHeadAt, preparePuts, qualifyRef, revParse } from "./v2.js"
 /** The background poll's default period. */
 export const DEFAULT_POLL_MS = 1000
 
+/** Versions other than the tip kept for sessions whose base is older than the tip. */
+const VERSIONS_KEPT = 4
+
+/** Base versions whose seed image `/v1/exec` keeps (about 17 MB each on the 7,437-record clone). */
+export const IMAGES_KEPT = 2
+
+/** How much of an oversized exec body is read and dropped before the connection is cut. */
+const EXEC_DRAIN_MAX_BYTES = 64 * EXEC_BODY_MAX_BYTES
+
+/**
+ * A request body as text, or `tooLarge` at the first chunk that takes it past `cap` bytes. After
+ * that the rest is read and dropped, so the refusal can be answered on a connection that is still
+ * open, until {@link EXEC_DRAIN_MAX_BYTES} have come in, where the request is destroyed.
+ */
+const readCapped = (
+  incoming: IncomingMessage,
+  cap: number
+): Promise<{ readonly text: string } | { readonly tooLarge: true } | { readonly bad: string }> =>
+  new Promise((resolve) => {
+    const chunks: Array<Buffer> = []
+    let bytes = 0
+    const stop = () => {
+      incoming.off("data", onData)
+      incoming.off("end", onEnd)
+      incoming.off("error", onError)
+    }
+    const onData = (chunk: Buffer) => {
+      bytes += chunk.length
+      if (bytes <= cap) {
+        chunks.push(chunk)
+        return
+      }
+      stop()
+      chunks.length = 0
+      incoming.on("error", () => undefined)
+      incoming.on("data", (more: Buffer) => {
+        bytes += more.length
+        if (bytes > EXEC_DRAIN_MAX_BYTES) incoming.destroy()
+      })
+      resolve({ tooLarge: true })
+    }
+    const onEnd = () => {
+      stop()
+      resolve({ text: Buffer.concat(chunks).toString("utf8") })
+    }
+    const onError = (error: Error) => {
+      stop()
+      resolve({ bad: `the body could not be read: ${error.message}` })
+    }
+    incoming.on("data", onData)
+    incoming.once("end", onEnd)
+    incoming.once("error", onError)
+  })
+
 /** How long a closing server waits for requests in flight. */
 const SHUTDOWN_GRACE = Duration.seconds(2)
 
@@ -98,6 +173,8 @@ export interface HeadServerInput {
   readonly pollMs?: number | undefined
   /** The embedder `search` and `neighbors` use; absent or with both ports absent, the arm is off. */
   readonly embedder?: EmbedderShape | undefined
+  /** The exec pool's worker entry; the sandbox runner unless a test hands in a stand-in. */
+  readonly execWorkerPath?: string | undefined
 }
 
 /** A running server, for the command arm and for tests. */
@@ -345,10 +422,12 @@ export const startHeadServer = (
       uptimeMs: Date.now() - startedAt,
       pollMs,
       startedAt: new Date(startedAt).toISOString(),
-      vectors: vectorStatus()
+      vectors: vectorStatus(),
+      exec: pool.stats()
     })
 
     const scope = yield* Effect.scope
+    const pool = yield* makeExecPool({ workerPath: input.execWorkerPath })
     const advanceLock = yield* Semaphore.make(1)
     const snapshotLock = yield* Semaphore.make(1)
     const vectorLock = yield* Semaphore.make(1)
@@ -447,18 +526,194 @@ export const startHeadServer = (
     })
 
     /**
-     * The version at an explicit commit, for `neighbors`: a session is judged at its own base, not
-     * at the ref's tip. Built from the held version by the same tree diff an advance uses (the diff
-     * has no direction), and the last one kept, since a session's puts share one base.
+     * The version at an explicit commit, for `neighbors` and `exec`: a session is judged at its own
+     * base, not at the ref's tip. Built from the held version by the same tree diff an advance uses
+     * (the diff has no direction), and the last {@link VERSIONS_KEPT} kept, since a session's calls
+     * share one base.
      */
-    let other: HeadVersion | null = null
+    const others = new Map<string, HeadVersion>()
     const versionAt = (sha: string): Effect.Effect<HeadVersion, GitFailure | InvalidMemory> =>
       Effect.gen(function* () {
         if (sha === state.version.sha) return state.version
-        if (other !== null && other.sha === sha) return other
+        const kept = others.get(sha)
+        if (kept !== undefined) {
+          others.delete(sha)
+          others.set(sha, kept)
+          return kept
+        }
         const built = detached(yield* advanceHead(git, state.version, sha))
-        other = built
+        others.set(sha, built)
+        for (const old of others.keys()) {
+          if (others.size <= VERSIONS_KEPT) break
+          others.delete(old)
+        }
         return built
+      })
+
+    /**
+     * The version `/v1/exec` runs a session over: the tip, when the base is the ref's tip as this
+     * request reads it; an ancestor of the tip, built from it; or why it is neither, so the client
+     * loads it instead. A base off the ref's history (a session on another branch) could be built
+     * too, but the diff would be as large as the two histories are apart, and that is a load the
+     * client's snapshot path does better.
+     */
+    const execBase = (
+      sha: string
+    ): Effect.Effect<
+      { readonly version: HeadVersion; readonly base: ExecBase } | { readonly unservable: string },
+      GitFailure | InvalidMemory
+    > =>
+      Effect.gen(function* () {
+        const tip = yield* fresh
+        if (sha === tip.sha) return { version: tip, base: "tip" as const }
+        const ancestor = yield* git.run(["merge-base", "--is-ancestor", sha, tip.sha]).pipe(
+          Effect.as(true),
+          Effect.catchTag("GitFailure", () => Effect.succeed(false))
+        )
+        if (!ancestor) {
+          return {
+            unservable: `the session's base ${sha} is neither ${ref}'s tip ${tip.sha} nor an ancestor of it`
+          }
+        }
+        return yield* versionAt(sha).pipe(
+          Effect.map((version) => ({ version, base: "ancestor" as const })),
+          Effect.catch((failure) =>
+            Effect.succeed({
+              unservable: `building the version at ${sha} from ${ref}'s tip ${tip.sha} failed (${failure._tag})`
+            })
+          )
+        )
+      })
+
+    /** The seed image of a base version, kept for the last {@link IMAGES_KEPT} bases. */
+    const images = new Map<string, CachedImage>()
+    const imageFor = (version: HeadVersion): CachedImage => {
+      const kept = images.get(version.sha)
+      if (kept !== undefined) {
+        images.delete(version.sha)
+        images.set(version.sha, kept)
+        return kept
+      }
+      const built = cacheImage(version)
+      images.set(version.sha, built)
+      for (const old of images.keys()) {
+        if (images.size <= IMAGES_KEPT) break
+        images.delete(old)
+      }
+      return built
+    }
+
+    /**
+     * One exec at a time per session id, so the second of two sees the first's harvest in the log it
+     * reads rather than racing it to the append. A wait past {@link EXEC_QUEUE_WAIT_MS} is `busy`.
+     */
+    const gates = new Map<string, { readonly gate: Semaphore.Semaphore; users: number }>()
+    const oneAtATime = <A, E>(
+      id: string,
+      effect: Effect.Effect<A, E>
+    ): Effect.Effect<Option.Option<A>, E> =>
+      Effect.gen(function* () {
+        const entry = gates.get(id) ?? { gate: Semaphore.makeUnsafe(1), users: 0 }
+        gates.set(id, entry)
+        entry.users += 1
+        return yield* Effect.acquireUseRelease(
+          entry.gate.take(1).pipe(Effect.timeoutOption(EXEC_QUEUE_WAIT_MS)),
+          (taken) => (Option.isSome(taken) ? Effect.map(effect, Option.some) : Effect.succeedNone),
+          (taken) => (Option.isSome(taken) ? entry.gate.release(1) : Effect.void)
+        ).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              entry.users -= 1
+              if (entry.users === 0) gates.delete(id)
+            })
+          )
+        )
+      })
+
+    const busy = (detail: string): ExecAnswer => ({ served: false, reason: "busy", detail })
+
+    /** `/v1/exec`: the session's exec, run here over the version at its base, or declined. */
+    const serveExec = (
+      body: ExecRequest
+    ): Effect.Effect<ExecAnswer, GitFailure | InvalidMemory | StorageFailure> =>
+      oneAtATime(
+        body.id,
+        Effect.gen(function* () {
+          const session = yield* resumeSession({ root, id: body.id })
+          const base = yield* execBase(session.baseSha)
+          if ("unservable" in base) {
+            return { served: false, reason: "base-unservable", detail: base.unservable } as const
+          }
+          const outcome = yield* execOverHead({
+            session,
+            base: base.version,
+            script: body.script,
+            lang: body.lang,
+            timeoutMs: body.timeoutMs,
+            runtime: { runner: pool.runner(EXEC_QUEUE_WAIT_MS), baseImage: imageFor(base.version) }
+          })
+          return {
+            served: true,
+            base: base.base,
+            outcome,
+            head: served(base.version)
+          } as const
+        })
+      ).pipe(
+        Effect.map((answer) =>
+          Option.getOrElse(answer, () =>
+            busy(
+              `session ${body.id} was still running an earlier exec after ${String(EXEC_QUEUE_WAIT_MS)} ms`
+            )
+          )
+        ),
+        Effect.catch((failure) =>
+          failure._tag === "StorageFailure" && failure.operation === EXEC_BUSY
+            ? Effect.succeed(
+                busy(`no sandbox worker came free within ${String(EXEC_QUEUE_WAIT_MS)} ms`)
+              )
+            : Effect.fail(failure)
+        )
+      )
+
+    /**
+     * The exec body, read no further than {@link EXEC_BODY_MAX_BYTES}: a declared length past it is
+     * refused before a byte is read, and a body that runs past it without one (chunked) is refused
+     * at the byte that crosses it. Read from the Node request directly rather than through
+     * `MaxBodySize`, whose reader destroys the socket at the cap, so the client got a reset where it
+     * should get the 413. The rest of an oversized body is read and dropped, up to
+     * {@link EXEC_DRAIN_MAX_BYTES}, so the answer reaches a client still sending; past that the
+     * connection is cut.
+     */
+    const execBody = (
+      request: HttpServerRequest.HttpServerRequest
+    ): Effect.Effect<
+      ExecRequest | { readonly tooLarge: number | null } | { readonly bad: string }
+    > =>
+      Effect.gen(function* () {
+        const declared = Number(request.headers["content-length"])
+        if (Number.isFinite(declared) && declared > EXEC_BODY_MAX_BYTES) {
+          return { tooLarge: declared }
+        }
+        const { toIncomingMessage } = yield* Effect.promise(
+          () => import("@effect/platform-node/NodeHttpServerRequest")
+        )
+        const read = yield* Effect.promise(() =>
+          readCapped(toIncomingMessage(request), EXEC_BODY_MAX_BYTES)
+        )
+        if ("tooLarge" in read) return { tooLarge: null }
+        if ("bad" in read) return { bad: read.bad }
+        const parsed = (() => {
+          try {
+            return { ok: true as const, value: JSON.parse(read.text) as unknown }
+          } catch (error) {
+            return { ok: false as const, reason: String(error) }
+          }
+        })()
+        if (!parsed.ok) return { bad: `the body is not JSON: ${parsed.reason}` }
+        return yield* Schema.decodeUnknownEffect(ExecRequest, { onExcessProperty: "error" })(
+          parsed.value
+        ).pipe(Effect.catch((error) => Effect.succeed({ bad: String(error) })))
       })
 
     const json = (body: unknown, status = 200) => HttpServerResponse.jsonUnsafe(body, { status })
@@ -511,6 +766,15 @@ export const startHeadServer = (
           embedder
         })
         return json({ ...prepared, head: served(version) })
+      }
+      if (route === `POST ${HEAD_ROUTES.exec}`) {
+        const body = yield* execBody(request)
+        if ("tooLarge" in body) {
+          return json(fail("ERR_INVALID_FLAG", execBodyTooLarge(body.tooLarge)), 413)
+        }
+        if ("bad" in body)
+          return json(fail("ERR_INVALID_FLAG", `request refused: ${body.bad}`), 400)
+        return json(yield* serveExec(body))
       }
       return json(
         fail(

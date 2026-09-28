@@ -1296,15 +1296,23 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "timeout-ms",
         type: "int",
         description:
-          "Wall-clock bound on the script. Exceeding it is `exitCode` 124 with `timedOut: true`, for a bash loop and a `js-exec` module alike. Other sandbox bounds end a runaway sooner with exit 126 and the bound named on stderr: call depth 100, and 100,000 iterations inside one `awk`, `sed`, or `jq`. Capped at 600000.",
+          "Wall-clock bound on the script. Exceeding it is `exitCode` 124 with `timedOut: true`, for a bash loop and a `js-exec` module alike. Other sandbox bounds end a runaway sooner with exit 126 and the bound named on stderr: call depth 100, and 100,000 iterations inside one `awk`, `sed`, or `jq`. Capped at 600000. Under the head server a run still going 5 s past the bound (a single command the shell cannot interrupt) has its worker stopped, and it reports exit 124 with nothing harvested.",
         default: 30000
+      },
+      {
+        name: "server",
+        type: "boolean",
+        description:
+          "Ask the head server on .memhtml/head.sock to run the script (`memhtml head serve`); `--no-server` always runs it here. The server reads the session's log, takes the version at the session's base when that is its ref's tip or an ancestor of it, runs the script in a worker, harvests, validates, and appends exactly as a local run does, one exec per session at a time; the payload's `head.source` is `server` and `server.base` says `tip` or `ancestor`. The script runs here instead when no server accepts within 100 ms, when the server answers anything but 200, or when it declines (`server.reason` `base-unservable` or `busy`); `server.reason` names why (`disabled` under `--no-server`, `no-server`, `refused`). When the server took the script and its answer was lost, the call fails with ERR_STORAGE rather than run it twice. Either way the request body (the script as JSON) is capped at 1,048,576 bytes: a larger script is ERR_INVALID_FLAG at exit 2 before anything runs.",
+        default: true
       }
     ],
     responseTypes: ["session.exec.report"],
     examples: [
       "memhtml session exec --id s1 <<'SH'\ngrep -rl 'memhtml-entity\" content=\"system:memhtml' /mnt/memhtml/projects | wc -l\nSH",
       "memhtml session exec --id s1 --lang js --file curate.mjs",
-      "memhtml session exec --id s1 --script 'grep -c memhtml /mnt/memhtml/projects/memhtml/*.html' --timeout-ms 5000"
+      "memhtml session exec --id s1 --script 'grep -c memhtml /mnt/memhtml/projects/memhtml/*.html' --timeout-ms 5000",
+      "memhtml session exec --id s1 --no-server <<'SH'\ngrep -c memhtml /mnt/memhtml/areas/inbox/*.html\nSH"
     ]
   },
   {
@@ -1393,7 +1401,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   {
     name: "head serve",
     summary:
-      "Hold the head loaded and answer lookups over .memhtml/head.sock (mode 0600, JSON over HTTP, routes /v1/status, /v1/search, /v1/read, /v1/neighbors) until SIGTERM or SIGINT. The server loads its ref's tip once the cheapest way (snapshot, snapshot+advance, or git), reads the ref before every answer and advances over the changed paths when it moved, so an answer is never older than the ref at the moment of the request, and polls between requests. With an embedder bound (not `MEMHTML_EMBED=off`) it also holds the vector cache `head embed` writes, reads it again when the file's mtime changes, and runs the vector arm for `/v1/search` and `/v1/neighbors` the way `head search` and `session put` do locally, answering with the same `vector` field. `head status`, `head search`, and `session put` ask it first; `session commit` and the curate commands always load locally, because they judge the exact version they commit against. A live server on the socket refuses a second one (ERR_HEAD_SERVER_RUNNING); a socket left by a killed server is replaced. The socket is removed on exit, and the envelope reports the ref, final sha, advances, requests, and uptime.",
+      "Hold the head loaded and answer lookups over .memhtml/head.sock (mode 0600, JSON over HTTP, routes /v1/status, /v1/search, /v1/read, /v1/neighbors, /v1/exec) until SIGTERM or SIGINT. The server loads its ref's tip once the cheapest way (snapshot, snapshot+advance, or git), reads the ref before every answer and advances over the changed paths when it moved, so an answer is never older than the ref at the moment of the request, and polls between requests. With an embedder bound (not `MEMHTML_EMBED=off`) it also holds the vector cache `head embed` writes, reads it again when the file's mtime changes, and runs the vector arm for `/v1/search` and `/v1/neighbors` the way `head search` and `session put` do locally, answering with the same `vector` field. `head status`, `head search`, `session put`, and `session exec` ask it first, and `/v1/exec` runs the script in a pool of worker threads (four at once, one per session id at a time) so a runaway script never stalls a lookup; `session commit` and the curate commands always load locally, because they judge the exact version they commit against. A live server on the socket refuses a second one (ERR_HEAD_SERVER_RUNNING); a socket left by a killed server is replaced. The socket is removed on exit, and the envelope reports the ref, final sha, advances, requests, and uptime.",
     args: [],
     flags: [
       {

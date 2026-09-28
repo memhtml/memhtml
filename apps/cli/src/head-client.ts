@@ -2,7 +2,7 @@ import * as Http from "node:http"
 import * as Https from "node:https"
 import { createConnection } from "node:net"
 
-import { Effect, Schema } from "effect"
+import { Cause, Effect, Option, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 
 import { HEAD_ROUTES, type HeadRoute, headSocketPath } from "./head-protocol.js"
@@ -46,13 +46,19 @@ export interface Answered<A> {
   readonly ms: number
 }
 
+/** The `code` a connect abandoned after {@link CONNECT_TIMEOUT_MS} carries: the server never took the request. */
+const CONNECT_TIMED_OUT = "ECONNECTTIMEDOUT"
+
 /** An agent that dials `socket` and abandons a connect that has not completed in time. */
 const socketAgent = (socket: string): Http.Agent => {
   const agent = new Http.Agent({ keepAlive: false })
   agent.createConnection = () => {
     const connection = createConnection({ path: socket })
     const timer = setTimeout(
-      () => connection.destroy(new Error(`connect to ${socket} timed out`)),
+      () =>
+        connection.destroy(
+          Object.assign(new Error(`connect to ${socket} timed out`), { code: CONNECT_TIMED_OUT })
+        ),
       CONNECT_TIMEOUT_MS
     )
     const clear = () => clearTimeout(timer)
@@ -89,18 +95,34 @@ class ServerRefused {
 }
 
 /**
- * Ask the server on `root`'s socket. `body` is sent as JSON with a `POST`; without one the request
- * is a `GET`. The answer is decoded with `schema` and `null` stands for every way of not getting one.
+ * Every way one ask can end, for a caller that must tell them apart. `no-server` means the request
+ * never reached a server (no socket file, nobody listening, a connect that did not complete), so
+ * nothing ran. `refused` means a server read the request and answered with another status. `lost`
+ * means the request was sent and no usable answer came back (the answer timeout, a reset, a 200 the
+ * schema refuses): the server may have acted on it, so a caller whose request has an effect cannot
+ * assume it did not.
  */
-export const askHead = <A>(input: {
+export type Asked<A> =
+  | { readonly kind: "answered"; readonly data: A; readonly ms: number }
+  | { readonly kind: "no-server"; readonly detail: string }
+  | { readonly kind: "refused"; readonly status: number; readonly body: string }
+  | { readonly kind: "lost"; readonly detail: string }
+
+export interface AskInput<A> {
   readonly root: string
   readonly route: HeadRoute
   readonly schema: Schema.Decoder<A>
   readonly body?: unknown
-}): Effect.Effect<Answered<A> | null> => {
+  /** How long to wait for the answer once connected; {@link ANSWER_TIMEOUT_MS} when absent. */
+  readonly answerTimeoutMs?: number | undefined
+}
+
+/** Ask the server on `root`'s socket and say how the ask ended ({@link Asked}). Never fails. */
+export const askHeadFor = <A>(input: AskInput<A>): Effect.Effect<Asked<A>> => {
   const socket = headSocketPath(input.root)
   const started = performance.now()
   const url = `http://memhtml-head${HEAD_ROUTES[input.route]}`
+  const timeoutMs = input.answerTimeoutMs ?? ANSWER_TIMEOUT_MS
   return Effect.gen(function* () {
     const NodeHttpClient = yield* Effect.promise(
       () => import("@effect/platform-node/NodeHttpClient")
@@ -117,7 +139,7 @@ export const askHead = <A>(input: {
       }
       const json = yield* response.json
       const data = yield* Schema.decodeUnknownEffect(input.schema)(json)
-      return { data, ms: Math.round(performance.now() - started) }
+      return { kind: "answered", data, ms: Math.round(performance.now() - started) } as const
     }).pipe(
       Effect.provide(NodeHttpClient.layerNodeHttpNoAgent),
       Effect.provideService(NodeHttpClient.HttpAgent, {
@@ -126,15 +148,41 @@ export const askHead = <A>(input: {
       })
     )
   }).pipe(
-    Effect.timeout(ANSWER_TIMEOUT_MS),
-    Effect.catchCause((cause) => {
-      const errno = errnoOf(cause)
+    Effect.timeout(timeoutMs),
+    Effect.catchCause((cause): Effect.Effect<Asked<A>> => {
+      const route = HEAD_ROUTES[input.route]
+      const errno = errnoOf(Cause.squash(cause))
       if (errno !== undefined && NO_SERVER.has(errno)) {
-        return Effect.logDebug(`no head server on ${socket} (${errno})`).pipe(Effect.as(null))
+        return Effect.logDebug(`no head server on ${socket} (${errno})`).pipe(
+          Effect.as({ kind: "no-server", detail: errno } as const)
+        )
       }
+      if (errno === CONNECT_TIMED_OUT) {
+        return Effect.logWarning(
+          `head server on ${socket} did not accept within ${String(CONNECT_TIMEOUT_MS)} ms (${route})`
+        ).pipe(Effect.as({ kind: "no-server", detail: errno } as const))
+      }
+      const refused = Cause.findErrorOption(cause)
+      if (Option.isSome(refused) && refused.value instanceof ServerRefused) {
+        const { status, body } = refused.value
+        return Effect.logWarning(
+          `head server on ${socket} answered ${route} with ${String(status)}: ${body.slice(0, 500)}`
+        ).pipe(Effect.as({ kind: "refused", status, body } as const))
+      }
+      const detail = String(cause).slice(0, 500)
       return Effect.logWarning(
-        `head server on ${socket} did not answer ${HEAD_ROUTES[input.route]}; loading locally: ${String(cause).slice(0, 500)}`
-      ).pipe(Effect.as(null))
+        `head server on ${socket} took ${route} and gave no usable answer: ${detail}`
+      ).pipe(Effect.as({ kind: "lost", detail } as const))
     })
   )
 }
+
+/**
+ * Ask the server on `root`'s socket. `body` is sent as JSON with a `POST`; without one the request
+ * is a `GET`. The answer is decoded with `schema` and `null` stands for every way of not getting one,
+ * so the lookups that ask (`status`, `search`, `neighbors`) load locally whenever it is `null`.
+ */
+export const askHead = <A>(input: AskInput<A>): Effect.Effect<Answered<A> | null> =>
+  askHeadFor(input).pipe(
+    Effect.map((asked) => (asked.kind === "answered" ? { data: asked.data, ms: asked.ms } : null))
+  )

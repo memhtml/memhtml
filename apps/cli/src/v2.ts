@@ -23,6 +23,7 @@ import {
   type CommitOutcome,
   commitSession,
   DEFAULT_REF,
+  LOG_MOVED,
   makePlumbing,
   rebaseSession,
   resumeSession,
@@ -47,7 +48,7 @@ import {
   snapshotAfterCommit,
   writeHeadSnapshot
 } from "./head-cache.js"
-import { askHead } from "./head-client.js"
+import { ANSWER_TIMEOUT_MS, askHead, askHeadFor } from "./head-client.js"
 import {
   type GateFailure,
   type GateOutcome,
@@ -56,6 +57,11 @@ import {
   headGate
 } from "./head-gate.js"
 import {
+  EXEC_QUEUE_WAIT_MS,
+  ExecAnswer,
+  type ExecBase,
+  type ExecOutcome,
+  execRequestOf,
   type HeadServerStatus,
   HeadServerStatus as HeadServerStatusSchema,
   NeighborsAnswer,
@@ -79,7 +85,12 @@ import {
   readCurateDelta,
   reconstructOps
 } from "./replay.js"
-import { runSessionExec } from "./session-exec.js"
+import {
+  effectiveTimeoutMs,
+  runDeadlineMs,
+  runSessionExec,
+  type SessionExecRuntime
+} from "./session-exec.js"
 
 export type { GateReport } from "./head-gate.js"
 
@@ -536,8 +547,21 @@ export const sessionPut = (input: {
     }
   })
 
+/** Why a clean harvest was not appended: another writer holds the session, or changed its log. */
+const appendRefusal = (operation: string): string | null =>
+  operation === LOG_MOVED
+    ? "session log: another put, exec, commit, or rebase changed this session's log while the script ran, so the harvest (computed over the log as it was) was not appended; run the script again"
+    : operation === "session.locked"
+      ? "session log: another writer held this session's lock when the harvest was to be appended, so it was not; run the script again"
+      : null
+
 /**
- * `session exec`: run a script over head plus overlay and append what it wrote.
+ * The half of `session exec` that follows the head: overlay the session's ops on `base`, run the
+ * script over that view, harvest, judge the log plus the harvest against `base`, and append the
+ * harvest when it is clean. The CLI calls it with the version it loaded and the head server with the
+ * version it holds (`head-server.ts`, `/v1/exec`), so the two answer with one function and cannot
+ * drift; `runtime` is the only difference, and it changes where the script runs, never what the run
+ * means.
  *
  * The harvest is appended only when the script exited 0 AND no harvested op carries a violation no
  * rebase can cure ({@link BLOCKING_VIOLATIONS}), judged the way `session put` judges its puts. A
@@ -545,33 +569,57 @@ export const sessionPut = (input: {
  * file beside forty good ones has too; the log has no removal op, so appending either would poison
  * every later commit of the session. The harvest and its violations are still reported, so the
  * caller can see what a clean run would have taken.
+ *
+ * The append takes the session's lock and writes only over the log `session` was read from
+ * (`appendOps`), so a put, exec, or commit that wrote the log while the script ran is never
+ * overwritten: the harvest is left out instead and `blocking` says why.
  */
-export const sessionExec = (input: {
-  readonly root: string
-  readonly id: string
+export const execOverHead = (input: {
+  readonly session: Session
+  readonly base: HeadView & { readonly sha: string }
   readonly script: string
   readonly lang: ExecLang
   readonly timeoutMs?: number | undefined
-}) =>
+  readonly runtime?: SessionExecRuntime | undefined
+}): Effect.Effect<ExecOutcome, InvalidMemory | StorageFailure> =>
   Effect.gen(function* () {
-    const session = yield* resumeSession({ root: input.root, id: input.id })
-    const head = yield* loadHeadAt(input.root, session.baseSha)
-    const view = yield* withOverlay(head.view, session.ops)
+    const { session } = input
+    const view = yield* withOverlay(input.base, session.ops)
     const report = yield* runSessionExec({
       view,
       script: input.script,
       lang: input.lang,
-      timeoutMs: input.timeoutMs
+      timeoutMs: input.timeoutMs,
+      ...input.runtime
     })
     const harvested = new Set(report.ops.flatMap(touchedPaths))
-    const violations = validateOps(head.view, [...session.ops, ...report.ops])
+    const violations = validateOps(input.base, [...session.ops, ...report.ops])
     const blocking = violations.filter(
       (violation) =>
         BLOCKING_VIOLATIONS.has(violation.kind) &&
         (violation.kind === "batch-cap" || harvested.has(violation.path))
     )
     const clean = report.exitCode === 0 && blocking.length === 0
-    const next = clean ? yield* appendOps(session, report.ops) : session
+    const blocked = blocking.map(describeViolation)
+    let next: Session = session
+    let appended = 0
+    if (clean && report.ops.length > 0) {
+      const outcome = yield* appendOps(session, report.ops).pipe(
+        Effect.map((written) => ({ written, refusal: null })),
+        Effect.catchTag("StorageFailure", (failure) => {
+          const refusal = appendRefusal(failure.operation)
+          return refusal === null
+            ? Effect.fail(failure)
+            : Effect.succeed({ written: null, refusal })
+        })
+      )
+      if (outcome.written !== null) {
+        next = outcome.written
+        appended = report.ops.length
+      } else {
+        blocked.push(outcome.refusal)
+      }
+    }
     return {
       id: session.id,
       baseSha: session.baseSha,
@@ -589,18 +637,118 @@ export const sessionExec = (input: {
       ops: report.ops.length,
       /**
        * How many of those were appended to the log: all of them on exit 0 with no blocking
-       * violation, none otherwise.
+       * violation and a log nobody else changed meanwhile, none otherwise.
        */
-      appended: clean ? report.ops.length : 0,
+      appended,
       /** The log's length after this call. */
       opsTotal: next.ops.length,
       harvested: report.ops.map(opSummary),
       rejected: report.rejected,
       /** Every violation over the session's ops plus the harvest, judged against the base. */
       violations,
-      /** The violations that kept the harvest out of the log, described. */
-      blocking: blocking.map(describeViolation)
+      /** Why the harvest stayed out of the log: its blocking violations, described, or the log's refusal. */
+      blocking: blocked
     }
+  })
+
+/**
+ * Whether the head server ran a `session exec`: `used` with the version it ran over (`tip`, or an
+ * `ancestor` it built from the tip), else why the exec ran here: `disabled` (`--no-server`),
+ * `no-server` (no socket, nobody listening, no accept in time), `refused` (the server answered
+ * another status, an older server without the route included), or the server's own `base-unservable`
+ * or `busy`, with the detail.
+ */
+export interface ExecServerUse {
+  readonly used: boolean
+  readonly base: ExecBase | null
+  readonly reason: "disabled" | "no-server" | "refused" | "base-unservable" | "busy" | null
+  readonly detail: string | null
+}
+
+/**
+ * How long `session exec` waits for the server's answer: the waits the server allows itself for the
+ * session's earlier exec and for a worker ({@link EXEC_QUEUE_WAIT_MS} each), the run's own deadline,
+ * and the lookup margin for loading the base and harvesting. The server answers within it or has
+ * stopped answering at all, and only then does the client call the answer lost.
+ */
+export const execAnswerTimeoutMs = (lang: ExecLang, timeoutMs: number | undefined): number =>
+  2 * EXEC_QUEUE_WAIT_MS + runDeadlineMs(lang, effectiveTimeoutMs(timeoutMs)) + ANSWER_TIMEOUT_MS
+
+/**
+ * `session exec`: run a script over head plus overlay and append what it wrote.
+ *
+ * The head server runs it when one answers (`/v1/exec`: the server reads the log, builds the version
+ * at the session's base, runs the script in a worker, and appends), and the CLI runs it here when the
+ * server did not take it: `--no-server`, no server, a refusal, or the server declining because the
+ * base is neither its tip nor an ancestor of it, or because it stayed busy. Either way the payload is
+ * {@link execOverHead}'s, with `head` saying where the version came from (`source: "server"` when the
+ * server ran it) and `server` saying whether and why ({@link ExecServerUse}).
+ *
+ * One case is not a fallback. When the server took the request and no usable answer came back (the
+ * answer timeout, a reset connection, a 200 this client cannot read), the server may have appended
+ * the harvest, and running the script again here could append it twice, so the call fails naming
+ * `session status` instead.
+ */
+export const sessionExec = (input: {
+  readonly root: string
+  readonly id: string
+  readonly script: string
+  readonly lang: ExecLang
+  readonly timeoutMs?: number | undefined
+  readonly server?: boolean | undefined
+}) =>
+  Effect.gen(function* () {
+    let server: ExecServerUse = { used: false, base: null, reason: "disabled", detail: null }
+    if (input.server !== false) {
+      const asked = yield* askHeadFor({
+        root: input.root,
+        route: "exec",
+        schema: ExecAnswer,
+        body: execRequestOf(input),
+        answerTimeoutMs: execAnswerTimeoutMs(input.lang, input.timeoutMs)
+      })
+      switch (asked.kind) {
+        case "answered": {
+          const answer = asked.data
+          if (answer.served) {
+            return {
+              ...answer.outcome,
+              head: servedStats(answer.head, asked.ms),
+              server: { used: true, base: answer.base, reason: null, detail: null }
+            }
+          }
+          server = { used: false, base: null, reason: answer.reason, detail: answer.detail }
+          break
+        }
+        case "no-server":
+          server = { used: false, base: null, reason: "no-server", detail: asked.detail }
+          break
+        case "refused":
+          server = {
+            used: false,
+            base: null,
+            reason: "refused",
+            detail: `${String(asked.status)}: ${asked.body.slice(0, 300)}`
+          }
+          break
+        case "lost":
+          return yield* Effect.fail(
+            StorageFailure.make({
+              operation: `session exec: the head server took the script and gave no usable answer (${asked.detail.slice(0, 200)}); it may have appended the harvest, so the script was not run again here; read \`memhtml session status --id ${input.id}\` before running it again`
+            })
+          )
+      }
+    }
+    const session = yield* resumeSession({ root: input.root, id: input.id })
+    const head = yield* loadHeadAt(input.root, session.baseSha)
+    const outcome = yield* execOverHead({
+      session,
+      base: head.view,
+      script: input.script,
+      lang: input.lang,
+      timeoutMs: input.timeoutMs
+    })
+    return { ...outcome, head: headStats(head), server }
   })
 
 /**
