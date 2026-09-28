@@ -7,6 +7,7 @@ import { Effect } from "effect"
 import type { GitFailure } from "./errors.js"
 import {
   plumbingFor,
+  requireLogUnmoved,
   type Session,
   saveSessionLocked,
   sessionRef,
@@ -263,6 +264,9 @@ export const commitSession = (input: {
     input.session.id,
     Effect.gen(function* () {
       const { head } = input
+      // The caller read the log before it took the lock (and usually loaded a head in between), so
+      // an op appended meanwhile would be dropped by the empty log step 7 writes. Refused instead.
+      yield* requireLogUnmoved(input.session)
       let session = input.session
       const git = plumbingFor(session.root, session.id)
       const checkedOut = (yield* git.headRef()) === session.ref

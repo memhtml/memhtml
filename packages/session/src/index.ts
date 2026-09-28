@@ -23,6 +23,7 @@ export {
   appendOps,
   DEFAULT_REF,
   isSessionId,
+  LOG_MOVED,
   rebaseSession,
   resumeSession,
   SESSION_ID,

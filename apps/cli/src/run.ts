@@ -45,6 +45,12 @@ import {
 import { failureFor } from "./errors.js"
 import { DEFAULT_TIMEOUT_MS, execCommand, MAX_TIMEOUT_MS, readScript } from "./exec.js"
 import { DEFAULT_EXEC_LANG, EXEC_LANGS, type ExecLang } from "./exec-lang.js"
+import {
+  EXEC_BODY_MAX_BYTES,
+  execBodyBytes,
+  execBodyTooLarge,
+  execRequestOf
+} from "./head-protocol.js"
 import { serveHead } from "./head-server.js"
 import { helpData, renderCommandHelp } from "./help.js"
 import {
@@ -1884,6 +1890,27 @@ export const run = async (
               "memhtml session exec --id s1 --lang js --file curate.mjs"
             ]
           ),
+          EXIT_USAGE
+        )
+      }
+      // The cap is the server's (`EXEC_BODY_MAX_BYTES`), measured on the body the client would
+      // send, and held here for both paths so a script's fate never depends on a server running.
+      const bytes = execBodyBytes(
+        execRequestOf({
+          id: str(parsed, "id") ?? "",
+          script: read,
+          lang:
+            EXEC_LANGS.find((lang): lang is ExecLang => lang === str(parsed, "lang")) ??
+            DEFAULT_EXEC_LANG,
+          timeoutMs: int(parsed, "timeout-ms")
+        })
+      )
+      if (bytes > EXEC_BODY_MAX_BYTES) {
+        return emit(
+          fail("ERR_INVALID_FLAG", execBodyTooLarge(bytes), [
+            "memhtml session exec --id s1 --file part-1.sh",
+            "memhtml session put --id s1 --file ops.jsonl"
+          ]),
           EXIT_USAGE
         )
       }

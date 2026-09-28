@@ -4,9 +4,11 @@ import type { OverlayOp } from "@memhtml/contracts"
 import { Effect, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
+import { commitSession } from "../src/commit.js"
 import {
   appendOps,
   DEFAULT_REF,
+  LOG_MOVED,
   rebaseSession,
   resumeSession,
   saveSession,
@@ -21,7 +23,10 @@ import { commitFiles, loadHead, makeRepo, mapHead, memory, type Repo } from "./h
  *
  * Mutation notes: `checkId` always succeeds -> "refuses an id that is not one path segment";
  * `resumeSession` skips the `state.id !== input.id` check -> "refuses a log whose id disagrees";
- * `startSession` skips the `exists` check -> "refuses to start over an id that already has a log".
+ * `startSession` skips the `exists` check -> "refuses to start over an id that already has a log";
+ * `requireLogUnmoved` always succeeds -> "refuses an append, a save, and a commit over a log that
+ * moved since it was read" (the stale append drops the first writer's op, the stale save drops it
+ * too, and the stale commit lands without it and empties the log).
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
@@ -135,6 +140,39 @@ describe("appendOps and resumeSession", () => {
     const resumed = await run(resumeSession({ root, id: "kinds" }))
     expect(resumed.ops).toEqual(ops)
     expect(resumed).toEqual(appended)
+  })
+
+  it("refuses an append, a save, and a commit over a log that moved since it was read", async () => {
+    const { root, head } = await seeded()
+    await run(startSession({ root, id: "race", base: head }))
+    // Two writers read the same empty log, the way two `session exec` calls do before their scripts run.
+    const first = await run(resumeSession({ root, id: "race" }))
+    const second = await run(resumeSession({ root, id: "race" }))
+    const b: OverlayOp = {
+      kind: "put",
+      path: "areas/inbox/b.html",
+      html: memory("B", "Beta is the second letter.")
+    }
+    const c: OverlayOp = {
+      kind: "put",
+      path: "areas/inbox/c.html",
+      html: memory("C", "Gamma is the third letter.")
+    }
+    await run(appendOps(first, [b]))
+    const failureOf = async (effect: Effect.Effect<unknown, { readonly _tag: string }>) => {
+      const result = await run(Effect.result(effect))
+      return Result.isFailure(result) ? (result.failure as { operation?: string }).operation : "ok"
+    }
+    expect(await failureOf(appendOps(second, [c]))).toBe(LOG_MOVED)
+    expect(await failureOf(saveSession(rebaseSession(second, head)))).toBe(LOG_MOVED)
+    expect(await failureOf(commitSession({ session: second, head, message: "stale" }))).toBe(
+      LOG_MOVED
+    )
+    // The first writer's op is still the whole log, and nothing was committed.
+    expect((await run(resumeSession({ root, id: "race" }))).ops).toEqual([b])
+    // A writer that read the log as it now stands appends normally.
+    const fresh = await run(resumeSession({ root, id: "race" }))
+    expect((await run(appendOps(fresh, [c]))).ops).toEqual([b, c])
   })
 
   it("fails typed on a missing, malformed, or id-disagreeing log", async () => {

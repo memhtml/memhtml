@@ -21,8 +21,8 @@ import { cliEntryPoint } from "./spawned.js"
  * set, so `--repo` is the only door to a store and a call that dropped it would be refused.
  *
  * Mutations, each run once with the change applied and the named cases red:
- * - `session-exec.ts` `runSessionExec`: `bash.exec(input.lang === "js" ? ... : input.script)` ->
- *   always `js-exec ${GUEST_SCRIPT}` -> (a), (b), (c), and (e) (every bash script is a JS parse
+ * - `session-exec.ts` `runSessionExec`: the job's `command: input.lang === "js" ? ... : input.script`
+ *   -> always `js-exec ${GUEST_SCRIPT}` -> (a), (b), (c), and (e) (every bash script is a JS parse
  *   error).
  * - the same line -> always `input.script` -> (d) (the JS module is a bash parse error).
  * - `exec-lang.ts` `DEFAULT_EXEC_LANG` -> `"js"` -> (a), (b), (c), and (e), which pass no `--lang`.
