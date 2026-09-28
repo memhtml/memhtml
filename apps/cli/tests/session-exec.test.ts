@@ -1005,6 +1005,53 @@ describe("harvestOps over plain values", () => {
     })
   })
 
+  it("a move over an earlier archived copy of the same path pairs as an archive", () => {
+    // A record archived once, recreated at its path, and moved onto its old archive slot (the 64
+    // people stubs on the live store, 2026-09-28). Mutation: the `reclaimsSlot` guard forced to
+    // `false` -> the slot whose older copy shares the source's article is read as a head edit of
+    // that copy, and its source is rejected as vanished.
+    const record = (claim: string): string =>
+      renderTemplate({ title: "Stub", claim, memoryType: "semantic", at: "2026-09-26T00:00:00Z" })
+    const archivedCopy = (html: string): string =>
+      html.replace('content="active"', 'content="archived"')
+    const words = record("Alain Krok appears in this agent's memory.")
+    const other = record("Clare Liguori appears in this agent's memory.")
+    const files: ReadonlyArray<readonly [string, string]> = [
+      ["resources/people/alain-krok.html", words],
+      ["resources/people/clare-liguori.html", other],
+      // Older words at the first slot, the same article under an archived head at the second.
+      [
+        "archive/2026/resources/people/alain-krok.html",
+        archivedCopy(record("alain krok appears in this agent's memory."))
+      ],
+      ["archive/2026/resources/people/clare-liguori.html", archivedCopy(other)]
+    ]
+    const seeded = new Map(
+      files.map(([path, html]) => [path, { html, contentHash: contentHash(html) }] as const)
+    )
+    const after = [
+      { path: "archive/2026/resources/people/alain-krok.html", html: words },
+      { path: "archive/2026/resources/people/clare-liguori.html", html: other }
+    ]
+    expect(harvestOps({ seeded, after, skippedGitDir: false, scope: "curate" })).toEqual({
+      ops: [
+        {
+          kind: "archive",
+          path: "resources/people/alain-krok.html",
+          to: "archive/2026/resources/people/alain-krok.html",
+          html: words
+        },
+        {
+          kind: "archive",
+          path: "resources/people/clare-liguori.html",
+          to: "archive/2026/resources/people/clare-liguori.html",
+          html: other
+        }
+      ],
+      rejected: []
+    })
+  })
+
   it("rejects a reserved path and a non-PARA root with a reason, so neither reaches the log", () => {
     // Mutation: `presentFileProblem` drops the `isReservedPath` and `memoryPathViolation` clauses ->
     // these four come back as puts and the case is red.

@@ -217,6 +217,8 @@ export const validateOps = (
   const unlabeled = new Set<string>()
   /** Sources this batch archives: the record moves, and an archive destination is not judged. */
   const archived = new Set<string>()
+  /** Archive destinations written so far in this batch, so one slot is never written twice. */
+  const archiveDestinations = new Set<string>()
   /**
    * Every path this batch creates, puts and archive destinations alike, gathered before the walk so
    * a link may name a target its batch creates later in the order. The harvester emits links before
@@ -274,7 +276,14 @@ export const validateOps = (
         if (originalPathFor(op.to) !== normalizePath(op.path)) {
           reasons.push("archive destination is not archive/<YYYY>/<original path>")
         }
-        if (view.get(op.to) !== undefined) reasons.push("archive destination already exists")
+        // A destination the head already holds is an earlier archive of this same path (the
+        // destination maps back to the source, checked above): a record archived once, recreated
+        // at its path, and archived again. The new copy replaces the old one, whose bytes stay in
+        // git history. Two archives of one source in a single batch are still refused.
+        if (archiveDestinations.has(normalizePath(op.to))) {
+          reasons.push("archive destination is written twice in this batch")
+        }
+        archiveDestinations.add(normalizePath(op.to))
         const format = checkMemory(op.html).violations
         reasons.push(...format)
         // `op.html` names which article is meant; the bytes written come from the head (or an
