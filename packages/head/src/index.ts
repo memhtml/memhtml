@@ -1,7 +1,7 @@
 /**
  * `@memhtml/head`: the corpus as a value. One immutable version per commit, held as persistent
- * `effect` structures, advanced by delta, read through `HeadView`, searched by RRF over a lexical,
- * a recency, and (given vectors) a vector arm.
+ * `effect` structures, advanced by delta, read through `HeadView`, searched by RRF over a lexical
+ * and (given vectors) a vector arm, with recency breaking exact ties.
  * See `docs/v2-poc.md`.
  */
 
@@ -35,7 +35,6 @@ export {
   DEFAULT_LIMIT,
   LEXICAL_ARM_LIMIT,
   LEXICAL_WEIGHT,
-  RECENCY_WEIGHT,
   searchHead,
   VECTOR_ARM_LIMIT,
   VECTOR_WEIGHT

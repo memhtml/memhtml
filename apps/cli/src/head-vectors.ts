@@ -46,7 +46,7 @@ export type VectorSkipReason = "embedder-off" | "no-cache" | "cache-unreadable" 
 
 /**
  * What a searching payload reports about the vector arm. `used: false` names the reason and never
- * fails the search: the lexical and recency arms answer either way.
+ * fails the search: the lexical arm answers either way.
  */
 export interface VectorUse {
   readonly used: boolean

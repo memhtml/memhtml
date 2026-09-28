@@ -132,7 +132,7 @@ export const runCurator = (input: CuratorRunInput): Effect.Effect<CuratorRun, St
 
     const tools = {
       search: tool({
-        description: `Two-arm search (lexical plus recency) over the active records of the version this session sees. Returns paths, scores, and claims. ${capNote}`,
+        description: `Lexical search (BM25, newest first among exact ties) over the active records of the version this session sees. Returns paths, scores, and claims. ${capNote}`,
         inputSchema: z.object({
           query: z.string().min(1),
           limit: z.number().int().min(1).max(50).optional().describe("Default 10, max 50.")

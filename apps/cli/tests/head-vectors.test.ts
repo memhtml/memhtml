@@ -254,7 +254,8 @@ describe("head search with the vector arm", () => {
       coverage: 1
     })
     expect(searched.hits[0]?.path).toBe("areas/inbox/orchard.html")
-    expect(searched.hits[0]?.arms).toEqual(["lexical", "recency", "vector"])
+    // Its fused score is no other hit's, so recency decided nothing about it.
+    expect(searched.hits[0]?.arms).toEqual(["lexical", "vector"])
   })
 
   it("head search with the embedder off reports embedder-off, even with a cache", async () => {
@@ -303,7 +304,8 @@ describe("head search with the vector arm", () => {
     await commit(repo, [memory("velvet"), memory("anvil")], "two more")
     const searched = await data<Searched>(repo, ["head", "search", "velvet"], embedder)
     expect(searched.vector.coverage).toBeCloseTo(WORDS.length / (WORDS.length + 2), 12)
-    // The new record has no vector yet, so only the other two arms find it.
+    // The new record has no vector yet, so only the lexical arm finds it. Its lexical rank 1 scores
+    // exactly what the vector arm's first record scores, so the two tie and recency names both.
     const velvet = searched.hits.find((hit) => hit.path === "areas/inbox/velvet.html")
     expect(velvet?.arms).toEqual(["lexical", "recency"])
   })

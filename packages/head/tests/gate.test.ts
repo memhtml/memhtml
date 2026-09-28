@@ -147,7 +147,7 @@ describe("gateHeads", () => {
     const target = records[0]
     if (target === undefined) throw new Error("fixture")
     // Same title, and "harbor" once more in its claim: it takes the lexical lead and rank 1 at
-    // k = 1. Recency ranks only what the query matched, so it breaks ties and cannot win one.
+    // k = 1. Recency decides only exact ties, and this one is not a tie.
     const twin = await record("areas/inbox/harbor2.html", {
       title: target.title,
       claim: "Harbor cranes unload in the harbor at dusk.",

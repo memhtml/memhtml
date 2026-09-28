@@ -7,20 +7,38 @@ import type { LexicalIndex } from "./lexical.js"
 import { tokenize } from "./lexical.js"
 
 /**
- * Retrieval over one view: a lexical arm, a recency arm, and, when the caller passes vectors and a
- * query vector, a vector arm, fused with reciprocal rank fusion at `k = 60`, weights 1.0, 0.5, and
- * 1.0, over active records only.
+ * Retrieval over one view: a lexical arm and, when the caller passes vectors and a query vector, a
+ * vector arm, fused with reciprocal rank fusion at `k = 60`, weights 1.0 and 1.0, over active records
+ * only, with recency as the tie-break.
  *
  * The lexical arm is BM25 (Robertson/Sparck Jones idf, `k1 = 1.2`, `b = 0.75`) over the title, the
  * claim, and the body, read from the version's persistent lexical index, and keeps the best
  * {@link LEXICAL_ARM_LIMIT}. The vector arm orders the active records that have a vector by cosine
- * against the query vector, brute force, and keeps the best {@link VECTOR_ARM_LIMIT}. The recency
- * arm orders the records those two arms kept by `eventAt ?? updatedAt`, the same key the v1 SQL arm
- * uses (see {@link recencyArm} for why it ranks only those). Every arm and the fused list break ties
- * on path ascending, so two runs over one view return the same list.
+ * against the query vector, brute force, and keeps the best {@link VECTOR_ARM_LIMIT}. In both arms
+ * records with equal scores share one rank (see {@link armRanks}), so two records an arm cannot tell
+ * apart get the same fused share.
+ *
+ * The rule: recency decides only between hits whose fused score is exactly equal, newest first by
+ * `eventAt ?? updatedAt` (clamped to `now`), and path ascending decides after that. It never
+ * overturns a score difference and never adds a record, so a query no arm matches returns nothing.
+ * A byte-identical newer twin therefore outranks the older copy, and a clearly better older match
+ * stays above a newer, weaker one.
+ *
+ * Why not a weighted recency arm. Until 2026-09-28 recency was an RRF arm at weight 0.5 that ranked
+ * every lexical and vector candidate newest first. That made it a second full ranking rather than a
+ * tie-break, and a curation landing that made the surviving records newer made older targets lose to
+ * newer, weaker matches. On the 2026-09-28 collapse rehearsal (base `33f182de7`, landed
+ * `85eeb5ed`, the head gate's 200 title probes, seed 1, top 10) the weighted arm scored MRR 0.5572
+ * at the base and 0.4384 landed, so the gate refused the landing; this rule scores 0.9449 and 0.9485
+ * without the vector arm and 0.9492 and 0.9522 with it, and on the 2026-09-23 clone at `a650152e` it
+ * raised the gate probes from 0.4557 to 0.9975 without the vector arm and from 0.8321 to 0.9905 with
+ * it. Smaller weights land near the same numbers (0.05 scored 0.9374 and 0.9410 without the vector
+ * arm), but without shared ranks no weight small enough to be a tie-break lets a newer twin win,
+ * and letting recency reorder hits within 0.0003 of each other dropped two-arm MRR at the base to
+ * 0.6769 (docs/v2-poc.md, "Recency as the tie-break").
  *
  * The function stays pure: it never embeds. The caller owns the vectors (keyed by content hash, see
- * `vectors.ts`) and the query vector, so a search with neither is the two-arm search exactly.
+ * `vectors.ts`) and the query vector, so a search with neither is the lexical search exactly.
  */
 
 export type SearchArm = "lexical" | "recency" | "vector"
@@ -28,17 +46,20 @@ export type SearchArm = "lexical" | "recency" | "vector"
 export interface SearchHit {
   readonly path: string
   readonly score: number
+  /**
+   * The arms that ranked the hit, and `recency` when its fused score equals another candidate's,
+   * which is when recency (or path after it) decided its place.
+   */
   readonly arms: ReadonlyArray<SearchArm>
   readonly claim: string
 }
 
 export const LEXICAL_WEIGHT = 1.0
-export const RECENCY_WEIGHT = 0.5
 /**
  * The vector arm's weight: v1's (`vectorArm` in `@memhtml/index` `retrieval-sql.ts`), so a read that
  * moves from v1 to v2 weighs a semantic match the way it did. v1 fuses four arms at 1.0 (lexical),
- * 1.0 (vector), 0.5 (recency), and 0.4 (salience); v2 has no salience arm, and dropping it leaves
- * the other three in the same proportion.
+ * 1.0 (vector), 0.5 (recency), and 0.4 (salience); v2 keeps lexical and vector at v1's weights and
+ * has no salience arm, and its recency is a tie-break rather than an arm.
  */
 export const VECTOR_WEIGHT = 1.0
 /**
@@ -68,6 +89,27 @@ const byScoreThenPath = (
   right.score - left.score || (left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
 
 /**
+ * An arm's scored records as ranks, best first, cut at `limit`, with equal scores sharing the best
+ * rank of their run (competition ranking: 1, 1, 3). Two records an arm scores identically, such as
+ * byte-identical articles under BM25 or one content hash under cosine, then contribute the same RRF
+ * share, so they tie in the fused score and recency, not path, decides between them. The cut at
+ * `limit` still follows path order inside a run that crosses it.
+ */
+const armRanks = (
+  scored: ReadonlyArray<{ readonly path: string; readonly score: number }>,
+  limit: number
+): ReadonlyArray<ArmHit> => {
+  const kept = [...scored].sort(byScoreThenPath).slice(0, limit)
+  const hits: Array<ArmHit> = []
+  for (const [index, hit] of kept.entries()) {
+    const previous = hits[index - 1]
+    const shared = previous !== undefined && kept[index - 1]?.score === hit.score
+    hits.push({ path: hit.path, rank: shared ? previous.rank : index + 1 })
+  }
+  return hits
+}
+
+/**
  * BM25 over the query's tokens, capped at {@link LEXICAL_ARM_LIMIT}. Every document with at least
  * one matching token is scored; the best are kept.
  */
@@ -89,11 +131,10 @@ const lexicalArm = (lexical: LexicalIndex, query: string): ReadonlyArray<ArmHit>
       scores.set(path, (scores.get(path) ?? 0) + idf * normalized)
     }
   }
-  return [...scores.entries()]
-    .map(([path, score]) => ({ path, score }))
-    .sort(byScoreThenPath)
-    .slice(0, LEXICAL_ARM_LIMIT)
-    .map((hit, index) => ({ path: hit.path, rank: index + 1 }))
+  return armRanks(
+    [...scores.entries()].map(([path, score]) => ({ path, score })),
+    LEXICAL_ARM_LIMIT
+  )
 }
 
 /** The instant a record is ranked by for recency, clamped to `now` so a future date cannot lead. */
@@ -103,30 +144,25 @@ const recencyKey = (record: MemoryRecord, now: string | undefined): string => {
 }
 
 /**
- * The records another arm kept, newest first. v1 ranks the newest 40 of the whole scope, which lifts
- * the same 40 records into every answer whatever the query asks; here recency orders only the
- * lexical and vector arms' candidates, so it breaks near-ties toward the newer record and never adds
- * one. The other two caps bound it, so it has none of its own: on the live clone's gate probes this
- * beat a global newest 40 on both paths, and a cap of 40 on the candidates cut their older half and
- * scored lower with the vector arm (docs/v2-poc.md, "Vector arm"). A query no arm matches returns
- * nothing.
+ * The fused order: score descending, then the newer record, then path ascending. Recency is read
+ * only when two scores are exactly equal, which is the whole of its say in the ranking.
  */
-const recencyArm = (
-  records: ReadonlyArray<MemoryRecord>,
-  now: string | undefined
-): ReadonlyArray<ArmHit> =>
-  records
-    .map((record) => ({ path: record.path, key: recencyKey(record, now) }))
-    .sort(
-      (left, right) =>
-        (left.key < right.key ? 1 : left.key > right.key ? -1 : 0) ||
-        (left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
-    )
-    .map((entry, index) => ({ path: entry.path, rank: index + 1 }))
+const byScoreThenNewerThenPath =
+  (keys: ReadonlyMap<string, string>) =>
+  (
+    left: { readonly path: string; readonly score: number },
+    right: { readonly path: string; readonly score: number }
+  ): number => {
+    if (left.score !== right.score) return right.score - left.score
+    const leftKey = keys.get(left.path) ?? ""
+    const rightKey = keys.get(right.path) ?? ""
+    if (leftKey !== rightKey) return leftKey < rightKey ? 1 : -1
+    return left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+  }
 
 /**
  * The active records that have a vector, by cosine against the query vector, best first, capped at
- * {@link VECTOR_ARM_LIMIT}. A record whose content hash has no vector is not in the arm; it can still
+ * {@link VECTOR_ARM_LIMIT}, equal cosines sharing a rank. A record whose content hash has no vector is not in the arm; it can still
  * be found by the other two.
  */
 const vectorArm = (
@@ -134,14 +170,13 @@ const vectorArm = (
   vectors: HeadVectors,
   queryVector: ArrayLike<number>
 ): ReadonlyArray<ArmHit> =>
-  records
-    .flatMap((record) => {
+  armRanks(
+    records.flatMap((record) => {
       const vector = vectors.get(record.contentHash)
       return vector === undefined ? [] : [{ path: record.path, score: cosine(vector, queryVector) }]
-    })
-    .sort(byScoreThenPath)
-    .slice(0, VECTOR_ARM_LIMIT)
-    .map((hit, index) => ({ path: hit.path, rank: index + 1 }))
+    }),
+    VECTOR_ARM_LIMIT
+  )
 
 /**
  * Vectors by content hash, the key `vectors.ts` gives each one. A `ReadonlyMap` fits; so does any
@@ -169,32 +204,40 @@ export const searchHead = (view: HeadView, input: SearchHeadInput): ReadonlyArra
     input.vectors === undefined || input.queryVector === undefined
       ? null
       : vectorArm(active, input.vectors, input.queryVector)
-  const matched = new Set([...lexical, ...(vector ?? [])].map((hit) => hit.path))
-  const recency = recencyArm(
-    active.filter((record) => matched.has(record.path)),
-    input.now
-  )
-  // With no vector arm the fold is the two-arm fold exactly, so a search without vectors is the
-  // two-arm search, byte for byte.
+  // With no vector arm the fold is the lexical fold exactly, so a search without vectors is the
+  // lexical search, byte for byte.
   const fused =
     vector === null
-      ? fuseArms([lexical, recency], [LEXICAL_WEIGHT, RECENCY_WEIGHT], RRF_K)
-      : fuseArms([lexical, recency, vector], [LEXICAL_WEIGHT, RECENCY_WEIGHT, VECTOR_WEIGHT], RRF_K)
+      ? fuseArms([lexical], [LEXICAL_WEIGHT], RRF_K)
+      : fuseArms([lexical, vector], [LEXICAL_WEIGHT, VECTOR_WEIGHT], RRF_K)
+  const keys = new Map<string, string>()
+  for (const path of fused.keys()) {
+    const record = Option.getOrUndefined(HashMap.get(indexes.records, path))
+    if (record !== undefined) keys.set(path, recencyKey(record, input.now))
+  }
+  const ordered = [...fused.entries()]
+    .map(([path, score]) => ({ path, score }))
+    .sort(byScoreThenNewerThenPath(keys))
+  // A hit names `recency` when it shares its fused score with another candidate, which is exactly
+  // when recency (or, on equal instants, path after it) placed it.
+  const tied = new Set<string>()
+  for (const [index, hit] of ordered.entries()) {
+    const next = ordered[index + 1]
+    if (next !== undefined && next.score === hit.score) {
+      tied.add(hit.path)
+      tied.add(next.path)
+    }
+  }
   const lexicalPaths = new Set(lexical.map((hit) => hit.path))
-  const recencyPaths = new Set(recency.map((hit) => hit.path))
   const vectorPaths = new Set((vector ?? []).map((hit) => hit.path))
   const limit = input.limit ?? DEFAULT_LIMIT
-  return [...fused.entries()]
-    .map(([path, score]) => ({ path, score }))
-    .sort(byScoreThenPath)
-    .slice(0, Math.max(0, limit))
-    .flatMap((hit) => {
-      const record = Option.getOrUndefined(HashMap.get(indexes.records, hit.path))
-      if (record === undefined) return []
-      const arms: Array<SearchArm> = []
-      if (lexicalPaths.has(hit.path)) arms.push("lexical")
-      if (recencyPaths.has(hit.path)) arms.push("recency")
-      if (vectorPaths.has(hit.path)) arms.push("vector")
-      return [{ path: hit.path, score: hit.score, arms, claim: record.claim }]
-    })
+  return ordered.slice(0, Math.max(0, limit)).flatMap((hit) => {
+    const record = Option.getOrUndefined(HashMap.get(indexes.records, hit.path))
+    if (record === undefined) return []
+    const arms: Array<SearchArm> = []
+    if (lexicalPaths.has(hit.path)) arms.push("lexical")
+    if (tied.has(hit.path)) arms.push("recency")
+    if (vectorPaths.has(hit.path)) arms.push("vector")
+    return [{ path: hit.path, score: hit.score, arms, claim: record.claim }]
+  })
 }

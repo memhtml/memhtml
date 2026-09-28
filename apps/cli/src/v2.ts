@@ -889,10 +889,11 @@ export const headStatus = (input: {
   })
 
 /**
- * `head search`: RRF over the version at `HEAD`, lexical plus recency, plus the vector arm when the
- * store has a vector cache and an embedder is configured. The query is embedded with `embedQuery`;
- * when the arm cannot run (`MEMHTML_EMBED=off`, no cache, an unreadable cache, a failed query embed)
- * the search runs on the other two and `vector` says why, never failing the call.
+ * `head search`: RRF over the version at `HEAD`, lexical plus the vector arm when the store has a
+ * vector cache and an embedder is configured, with recency breaking exact ties. The query is
+ * embedded with `embedQuery`; when the arm cannot run (`MEMHTML_EMBED=off`, no cache, an unreadable
+ * cache, a failed query embed) the search runs on the lexical arm alone and `vector` says why, never
+ * failing the call.
  *
  * The head server answers when one runs, over its version of its ref, with the cache it holds and
  * the embedder it bound, and the payload has the same fields either way; only `head.source` says
