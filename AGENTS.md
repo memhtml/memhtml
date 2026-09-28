@@ -144,7 +144,7 @@ Write what is durable, one fact per memory. A decision and its reason, a correct
 | `memhtml session start` | — | `--id` `--ref` `--force` | `session.started` |
 | `memhtml session put` | — | `--id` `--file`* `--server` | `session.appended` |
 | `memhtml session exec` | — | `--id` `--file` `--script` `--lang` `--timeout-ms` `--server` | `session.exec.report` |
-| `memhtml session commit` | — | `--id` `--message`* | `session.committed` |
+| `memhtml session commit` | — | `--id` `--message`* `--drop-refused` | `session.committed` |
 | `memhtml session rebase` | — | `--id` | `session.rebased` |
 | `memhtml session status` | — | `--id` | `session.status` |
 | `memhtml head status` | — | `--server` | `head.status` |
@@ -541,6 +541,7 @@ Land the session's overlay on its ref as one commit, or report why it cannot: `r
 
 - `--id` (string) — The session to commit. Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT.
 - `--message` (string) — The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer. When HEAD is the session's ref, the shared index and working tree move to the new commit with it (`worktreeSynced: true`); uncommitted state at a path the commit writes or removes is answered `worktree-dirty` and nothing moves. A ref that moved past the session's base is `rebase-needed`: run `session rebase` and commit again. A `committed` outcome also writes the new commit's snapshot (`snapshot`: path, bytes, ms, pruned; null when that best-effort write failed), so the next load hits the cache. _(**required**)_
+- `--drop-refused` (boolean) — On a `refused` outcome, drop every op that touches a path a violation names, record each in `.memhtml/sessions/<id>.dropped.jsonl`, and commit the rest; repeat until the commit is clean or nothing is left. `dropped` lists each removed op with its reasons. A batch-cap refusal names no path, so it is never dropped. Meant for a runtime's end-of-run commit, where there is no agent turn left to fix a line: an agent in a turn should read the refusal and rewrite the line instead.
 
 ### `memhtml session rebase`
 

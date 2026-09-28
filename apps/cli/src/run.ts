@@ -937,12 +937,18 @@ const sessionIdFlag = (parsed: Parsed): Failure | undefined => {
 /**
  * The session a `session` command names: `--id`, else `MEMHTML_SESSION`. `implicit` is true when the
  * variable supplied it, which is what lets `session put` and `session exec` start it on first use.
+ * `runBound` is true whenever the id is the variable's, spelled on the line or not: the runtime owns
+ * that session and commits it once the run ends, so its puts and harvests are held to the run's bar.
  */
-const sessionIdOf = (parsed: Parsed): { readonly id: string; readonly implicit: boolean } => {
+const sessionIdOf = (
+  parsed: Parsed
+): { readonly id: string; readonly implicit: boolean; readonly runBound: boolean } => {
   const flag = str(parsed, "id")
-  if (flag !== undefined) return { id: flag, implicit: false }
   const fromEnv = sessionFromEnv()
-  return fromEnv === undefined ? { id: "", implicit: false } : { id: fromEnv, implicit: true }
+  if (flag !== undefined) return { id: flag, implicit: false, runBound: flag === fromEnv }
+  return fromEnv === undefined
+    ? { id: "", implicit: false, runBound: false }
+    : { id: fromEnv, implicit: true, runBound: true }
 }
 
 /**
@@ -952,17 +958,67 @@ const sessionIdOf = (parsed: Parsed): { readonly id: string; readonly implicit: 
  * Edits of existing records (`link`, `archive`, `task status`, `reinforce`) create nothing the bar
  * judges and stay open.
  */
-const RECORD_CREATING_V1_COMMANDS: ReadonlyMap<string, string> = new Map([
+/**
+ * A `session put` suggestion that runs as written: `line` is one JSONL write line, piped on stdin.
+ * Exported so a test decodes every suggested line with the decoder `session put` uses.
+ */
+const putLine = (line: Record<string, string>): string =>
+  `printf '%s\\n' '${JSON.stringify({ op: "write", ...line })}' | memhtml session put --file -`
+
+export const RECORD_CREATING_V1_COMMANDS: ReadonlyMap<
+  string,
+  { readonly how: string; readonly suggestions: ReadonlyArray<string> }
+> = new Map([
   [
     "write",
-    "memhtml session exec <<'SH' (write the file under /mnt/memhtml), or memhtml session put --file ops.jsonl"
+    {
+      how: "write the record as a session put line, or as a file under /mnt/memhtml from `memhtml session exec <<'SH'`",
+      suggestions: [
+        putLine({
+          title: "<title>",
+          type: "semantic",
+          body: "<the fact>",
+          entity: "project:<slug>"
+        }),
+        "memhtml help session exec"
+      ]
+    }
   ],
-  ["apply", "memhtml session put --file ops.jsonl (the same write lines apply reads)"],
+  [
+    "apply",
+    {
+      how: "`memhtml session put` reads the same write lines `apply` reads",
+      suggestions: [
+        "memhtml session put --file ops.jsonl",
+        putLine({ title: "<title>", type: "semantic", body: "<the fact>", entity: "system:<name>" })
+      ]
+    }
+  ],
   [
     "correct",
-    "memhtml session exec <<'SH' (write the new record with a memhtml-supersedes link, move the old one under archive/)"
+    {
+      how: "write the corrected record under its own title with a `memhtml-supersedes` link to the old one, and move the old one under archive/<year>/, in one `memhtml session exec <<'SH'`",
+      suggestions: [
+        "memhtml help session exec",
+        putLine({
+          title: "<corrected title>",
+          type: "semantic",
+          body: "<the corrected fact>",
+          entity: "project:<slug>"
+        })
+      ]
+    }
   ],
-  ["task add", 'memhtml session put --file ops.jsonl (a write line with "memoryType": "task")']
+  [
+    "task add",
+    {
+      how: 'a task is a session put write line with `"type":"task"`, anchored by a workspace or an entity',
+      suggestions: [
+        putLine({ title: "<task>", type: "task", body: "<what to do>", workspace: "<slug>" }),
+        "memhtml help session put"
+      ]
+    }
+  ]
 ])
 
 /**
@@ -978,8 +1034,8 @@ const sessionBoundRefusal = (parsed: Parsed): Failure | undefined => {
   if (session === undefined) return undefined
   return fail(
     "ERR_SESSION_BOUND",
-    `${parsed.command} creates a record with no write bar, and ${SESSION_VAR} is set (${JSON.stringify(session)}), so this process writes through that session: the write bar judges each record as it is written and the session lands as one commit`,
-    [instead, "memhtml help session exec"]
+    `${parsed.command} creates a record with no write bar, and ${SESSION_VAR} is set (${JSON.stringify(session)}), so this process writes through that session: ${instead.how}. The write bar judges each record as it is written and the session lands as one commit`,
+    instead.suggestions
   )
 }
 
@@ -2135,6 +2191,8 @@ export const run = async (
           root,
           id: session.id,
           implicitStart: session.implicit,
+          runBound: session.runBound,
+          dropRefused: bool(parsed, "drop-refused", false),
           ref: str(parsed, "ref"),
           message: str(parsed, "message") ?? "",
           force: bool(parsed, "force", false),

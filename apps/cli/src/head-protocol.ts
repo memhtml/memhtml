@@ -124,7 +124,9 @@ export const NeighborsRequest = Schema.Struct({
   sha: Schema.String,
   ops: Schema.Array(OverlayOpSchema),
   lines: Schema.Array(SessionPutOpSchema),
-  at: Schema.String
+  at: Schema.String,
+  /** The session is run-bound (`MEMHTML_SESSION`): `duplicate` and `claim-edit` block too. Absent is false. */
+  runBound: Schema.optionalKey(Schema.Boolean)
 })
 export type NeighborsRequest = typeof NeighborsRequest.Type
 
@@ -148,7 +150,9 @@ export const ExecRequest = Schema.Struct({
   id: Schema.String,
   script: Schema.String,
   lang: Schema.Literals(["bash", "js"]),
-  timeoutMs: Schema.optionalKey(Schema.Int)
+  timeoutMs: Schema.optionalKey(Schema.Int),
+  /** As on `/v1/neighbors`. Sent only when true, so a call outside a run reads on an older server. */
+  runBound: Schema.optionalKey(Schema.Boolean)
 })
 export type ExecRequest = typeof ExecRequest.Type
 
@@ -166,11 +170,13 @@ export const execRequestOf = (input: {
   readonly script: string
   readonly lang: "bash" | "js"
   readonly timeoutMs?: number | undefined
+  readonly runBound?: boolean | undefined
 }): ExecRequest => ({
   id: input.id,
   script: input.script,
   lang: input.lang,
-  ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs })
+  ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+  ...(input.runBound === true ? { runBound: true } : {})
 })
 
 export const execBodyBytes = (request: ExecRequest): number =>

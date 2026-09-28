@@ -165,7 +165,7 @@ describe("with MEMHTML_SESSION set", () => {
       expect(failure?.code, argv.join(" ")).toBe(CODE)
       expect(failure?.error, argv.join(" ")).toContain(VAR)
       expect(
-        failure?.suggestions.some((line) => line.startsWith("memhtml session")),
+        failure?.suggestions.some((line) => /(^|\| )memhtml session /.test(line)),
         argv.join(" ")
       ).toBe(true)
     }
