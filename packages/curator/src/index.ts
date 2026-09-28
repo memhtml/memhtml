@@ -6,18 +6,30 @@
  */
 
 export {
+  ANCHORED_PREFIX,
   BRIEFING_GROUP_CAP,
   BRIEFING_LOW_CAP,
+  BRIEFING_NEIGHBOR_CAP,
+  BRIEFING_RECENT_CAP,
+  type BriefedRecord,
   type Briefing,
+  type BriefingOptions,
   briefingFromView,
   type ContradictionGroup,
+  type DanglingEdge,
   type DuplicateGroup,
   type FrameKeyMember,
   HEADLINE_CLAIM_TYPES,
   INBOX_PREFIX,
   type LowConfidenceRecord,
+  NEIGHBOR_CLAIM_CHARS,
+  type NeighborsOf,
+  PEOPLE_PREFIX,
   parseBriefing,
-  renderBriefing
+  type RecentRecord,
+  renderBriefing,
+  type SupersededRecord,
+  type UnlabeledRecord
 } from "./briefing.js"
 export { budgetWith, type CuratorBudget, DEFAULT_BUDGET } from "./budget.js"
 export {

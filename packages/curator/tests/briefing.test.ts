@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest"
 import {
   BRIEFING_GROUP_CAP,
   BRIEFING_LOW_CAP,
+  BRIEFING_NEIGHBOR_CAP,
+  BRIEFING_RECENT_CAP,
   briefingFromView,
+  NEIGHBOR_CLAIM_CHARS,
   parseBriefing,
   renderBriefing
 } from "../src/index.js"
@@ -21,6 +24,15 @@ import {
  *   (the Paris/Lyon pair lands in `duplicates`, and `contradictions` is empty).
  * - `briefingFromView`: drop the `HEADLINE_CLAIM_TYPES` clause -> "two verdicts on one objective
  *   join no group" (the pair lands in `duplicates`).
+ * - `briefingFromView`: drop the `ANCHORED_PREFIX` clause from the unlabeled test -> "names the
+ *   records with no entity outside projects/" (`projects/p/anchored.html` is listed).
+ * - `briefingFromView`: drop the `!record.archived` guard on the dangling push -> "lists the
+ *   repairable dangling edges" (the archived source's edge is listed and the total is 4).
+ * - `briefingFromView`: `instant(record.createdAt) > cutoff` replaced by `true` -> "lists the records
+ *   created since the last curate ref" (the old record is listed).
+ * - `briefingFromView`: drop `record.archived` from the superseded filter -> "names active records
+ *   an active record supersedes" (the archived fold target is listed).
+ * All four run 2026-09-28, each red on exactly its named case.
  */
 
 /** A record whose frame key is computed from its claim, the way the head computes it. */
@@ -238,6 +250,176 @@ describe("briefingFromView", () => {
   it("an empty view is all zeros rather than a division by zero", () => {
     const briefing = briefingFromView(viewOver([]))
     expect(briefing).toMatchObject({ active: 0, archived: 0, inboxShare: 0, danglingLinks: 0 })
+  })
+})
+
+describe("the work lists", () => {
+  // Rels are the head's normalized form (`supersedes`, `part_of`), the one a real record carries:
+  // `<link rel="memhtml-supersedes">` in the file is `supersedes` in the view.
+  const since = { ref: "refs/heads/curate/2026-09-27", date: "2026-09-27T06:45:00Z" }
+
+  it("lists the records created since the last curate ref, newest first, with their neighbors", () => {
+    const view = viewOver([
+      record("areas/inbox/old.html", { createdAt: "2026-09-26T10:00:00Z" }),
+      record("areas/inbox/new-1.html", { createdAt: "2026-09-27T08:00:00Z" }),
+      record("areas/inbox/new-2.html", { createdAt: "2026-09-28T01:00:00Z" }),
+      // Out of the curator's dedup mandate: a task row, a verdict, and a people record.
+      record("areas/inbox/tasks/t.html", { createdAt: "2026-09-28T02:00:00Z", memoryType: "task" }),
+      record("areas/inbox/v.html", { createdAt: "2026-09-28T02:00:00Z", memoryType: "verdict" }),
+      record("resources/people/p.html", { createdAt: "2026-09-28T02:00:00Z" }),
+      record("archive/2026/areas/inbox/gone.html", { createdAt: "2026-09-28T03:00:00Z" })
+    ])
+    const long = "x".repeat(NEIGHBOR_CLAIM_CHARS + 50)
+    const briefing = briefingFromView(view, since, {
+      // The search answers the record itself first, the way a title query does; it is dropped.
+      neighborsOf: (one) => [
+        { path: one.path, claim: one.claim },
+        { path: "areas/inbox/old.html", claim: long },
+        { path: "a.html", claim: "a" },
+        { path: "b.html", claim: "b" },
+        { path: "c.html", claim: "c" }
+      ]
+    })
+    expect(briefing.recent.map((one) => one.path)).toEqual([
+      "areas/inbox/new-2.html",
+      "areas/inbox/new-1.html"
+    ])
+    expect(briefing.recentTotal).toBe(2)
+    const first = briefing.recent[0]
+    expect(first?.createdAt).toBe("2026-09-28T01:00:00Z")
+    expect(first?.neighbors.map((one) => one.path)).toEqual([
+      "areas/inbox/old.html",
+      "a.html",
+      "b.html"
+    ])
+    expect(first?.neighbors).toHaveLength(BRIEFING_NEIGHBOR_CAP)
+    expect(first?.neighbors[0]?.claim).toHaveLength(NEIGHBOR_CLAIM_CHARS)
+    // No search, no neighbors; a first run (no curate ref) lists every eligible record.
+    const first_run = briefingFromView(view)
+    expect(first_run.recentTotal).toBe(3)
+    expect(first_run.recent.every((one) => one.neighbors.length === 0)).toBe(true)
+  })
+
+  it("caps the recent list and keeps the newest", () => {
+    const records = Array.from({ length: BRIEFING_RECENT_CAP + 7 }, (_, at) =>
+      record(`areas/inbox/${String(at).padStart(3, "0")}.html`, {
+        createdAt: new Date(Date.UTC(2026, 8, 28, 0, at)).toISOString()
+      })
+    )
+    const briefing = briefingFromView(viewOver(records), since)
+    expect(briefing.recent).toHaveLength(BRIEFING_RECENT_CAP)
+    expect(briefing.recentTotal).toBe(BRIEFING_RECENT_CAP + 7)
+    expect(briefing.recent[0]?.path).toBe(
+      `areas/inbox/${String(BRIEFING_RECENT_CAP + 6).padStart(3, "0")}.html`
+    )
+  })
+
+  it("names the records with no entity outside projects/", () => {
+    const view = viewOver([
+      record("areas/inbox/bare.html", { memoryType: "error_pattern" }),
+      record("areas/inbox/tasks/bare-task.html", { memoryType: "task" }),
+      record("areas/inbox/named.html", { entities: ["system:memhtml"] }),
+      record("projects/p/anchored.html"),
+      record("archive/2026/areas/inbox/old.html")
+    ])
+    const briefing = briefingFromView(view)
+    expect(briefing.unlabeled).toEqual([
+      {
+        path: "areas/inbox/bare.html",
+        claim: "Claim of areas/inbox/bare.html.",
+        memoryType: "error_pattern"
+      },
+      {
+        path: "areas/inbox/tasks/bare-task.html",
+        claim: "Claim of areas/inbox/tasks/bare-task.html.",
+        memoryType: "task"
+      }
+    ])
+    expect(briefing.unlabeledTotal).toBe(2)
+  })
+
+  it("names active records an active record supersedes, never an archived target", () => {
+    const view = viewOver([
+      record("areas/x/canonical.html", {
+        links: [
+          { rel: "supersedes", href: "/areas/x/stale.html" },
+          { rel: "supersedes", href: "/archive/2026/areas/x/folded.html" }
+        ]
+      }),
+      record("areas/x/second.html", {
+        links: [{ rel: "supersedes", href: "/areas/x/stale.html" }]
+      }),
+      record("areas/x/stale.html"),
+      // A part_of edge is not a supersede.
+      record("areas/x/member.html", {
+        links: [{ rel: "part_of", href: "/areas/x/canonical.html" }]
+      }),
+      record("archive/2026/areas/x/folded.html"),
+      // An archived record's supersedes edge supersedes nothing live.
+      record("archive/2026/areas/x/older.html", {
+        links: [{ rel: "supersedes", href: "/areas/x/member.html" }]
+      })
+    ])
+    const briefing = briefingFromView(view)
+    expect(briefing.supersededActive).toEqual([
+      {
+        path: "areas/x/stale.html",
+        claim: "Claim of areas/x/stale.html.",
+        by: ["areas/x/canonical.html", "areas/x/second.html"]
+      }
+    ])
+    expect(briefing.supersededActiveTotal).toBe(1)
+  })
+
+  it("lists the repairable dangling edges with the archived form and its successor", () => {
+    const view = viewOver([
+      record("areas/inbox/a.html", {
+        links: [
+          { rel: "part_of", href: "/areas/arcs/folded-arc.html" },
+          { rel: "part_of", href: "/areas/arcs/lone-arc.html" },
+          { rel: "about_person", href: "/resources/people/nobody.html" },
+          { rel: "part_of", href: "/areas/inbox/b.html" }
+        ]
+      }),
+      record("areas/inbox/b.html"),
+      // The folded arc was archived twice; the newest form is the one the canonical supersedes.
+      record("archive/2025/areas/arcs/folded-arc.html"),
+      record("archive/2026/areas/arcs/folded-arc.html"),
+      record("areas/arcs/canonical-arc.html", {
+        links: [{ rel: "supersedes", href: "/archive/2026/areas/arcs/folded-arc.html" }]
+      }),
+      record("archive/2026/areas/arcs/lone-arc.html"),
+      // An archived source's dangling edge counts in danglingLinks but cannot be repaired.
+      record("archive/2026/areas/inbox/c.html", {
+        links: [{ rel: "part_of", href: "/areas/arcs/lone-arc.html" }]
+      })
+    ])
+    const briefing = briefingFromView(view)
+    expect(briefing.danglingLinks).toBe(4)
+    expect(briefing.danglingEdges).toEqual([
+      {
+        path: "areas/inbox/a.html",
+        rel: "part_of",
+        href: "/areas/arcs/folded-arc.html",
+        archived: "archive/2026/areas/arcs/folded-arc.html",
+        successor: "areas/arcs/canonical-arc.html"
+      },
+      {
+        path: "areas/inbox/a.html",
+        rel: "part_of",
+        href: "/areas/arcs/lone-arc.html",
+        archived: "archive/2026/areas/arcs/lone-arc.html",
+        successor: null
+      },
+      {
+        path: "areas/inbox/a.html",
+        rel: "about_person",
+        href: "/resources/people/nobody.html",
+        archived: null,
+        successor: null
+      }
+    ])
+    expect(briefing.danglingEdgesTotal).toBe(3)
   })
 })
 

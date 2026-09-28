@@ -7,6 +7,7 @@ import {
   type StorageFailure
 } from "@memhtml/contracts/errors"
 import {
+  BRIEFING_NEIGHBOR_CAP,
   type Briefing,
   briefingFromView,
   type CuratorExecResult,
@@ -540,7 +541,15 @@ export const curateRun = (
     }
 
     const startView = yield* withOverlay(head.view, overlay.ops())
-    const briefing = briefingFromView(startView, yield* lastCurateRef(input.root, ref))
+    // The recent records' neighbors come from the same lexical search the `search` tool runs, over
+    // the view the session starts from, so a pair the briefing names is a pair the model can find.
+    const briefing = briefingFromView(startView, yield* lastCurateRef(input.root, ref), {
+      neighborsOf: (record) =>
+        searchHead(startView, {
+          query: record.claim.trim() === "" ? record.title : record.claim,
+          limit: BRIEFING_NEIGHBOR_CAP + 1
+        }).map((hit) => ({ path: hit.path, claim: hit.claim }))
+    })
     const tools = bindTools({ head, overlay, ref })
 
     const run: CuratorRun = yield* runCurator({

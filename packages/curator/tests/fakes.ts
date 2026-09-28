@@ -155,7 +155,15 @@ export const emptyBriefing: Briefing = {
   contradictionsTotal: 0,
   danglingLinks: 0,
   lowestConfidence: [],
-  lastCurate: null
+  lastCurate: null,
+  recent: [],
+  recentTotal: 0,
+  unlabeled: [],
+  unlabeledTotal: 0,
+  supersededActive: [],
+  supersededActiveTotal: 0,
+  danglingEdges: [],
+  danglingEdgesTotal: 0
 }
 
 /** Every text a tool answered with in the prompt the model saw on call `index`. */
