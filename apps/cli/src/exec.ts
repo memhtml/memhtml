@@ -111,6 +111,16 @@ export const guestHelperPath = (): string =>
   resolve(dirname(fileURLToPath(import.meta.url)), "..", "guest", "corpus.mjs")
 
 /**
+ * Where `session exec`'s sandbox runner lives on the host: `apps/cli/guest/sandbox-runner.mjs`,
+ * beside the helper and resolved the same way, so `src/`, `dist/`, and the published bundle all
+ * find it one level up. Unlike the helper it runs on the host: `session-exec.ts` imports it in
+ * process, and the head server starts it as a worker (`exec-pool.ts`), which needs a JavaScript
+ * file on disk rather than a module in the bundle.
+ */
+export const sandboxRunnerPath = (): string =>
+  resolve(dirname(fileURLToPath(import.meta.url)), "..", "guest", "sandbox-runner.mjs")
+
+/**
  * The HTML parser's bytes, as published.
  *
  * ## No bundling step, because the published artifact already is one

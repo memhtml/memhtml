@@ -70,6 +70,13 @@ const ASSET_CLAIMS: ReadonlyArray<AssetClaim> = [
     resolvedIn: "apps/cli/src/exec.ts",
     needle: '"..", "guest", "corpus.mjs"'
   },
+  /** `session exec`'s sandbox runner: imported in process, and started as the head server's worker. */
+  {
+    path: "guest",
+    from: "apps/cli/guest",
+    resolvedIn: "apps/cli/src/exec.ts",
+    needle: '"..", "guest", "sandbox-runner.mjs"'
+  },
   /** The curator's system prompt, read at run time so a prompt edit is a prose diff. */
   {
     path: "prompts",
