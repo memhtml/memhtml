@@ -61,6 +61,29 @@ const REFUSE_ENV_ROOT_OFF: ReadonlySet<string> = new Set(["", "0", "false", "no"
 export const refusesEnvRoot = (env: NodeJS.ProcessEnv = process.env): boolean =>
   !REFUSE_ENV_ROOT_OFF.has((env[REFUSE_ENV_ROOT_VAR] ?? "").trim().toLowerCase())
 
+/**
+ * `MEMHTML_SESSION`: the v2 session this process writes through.
+ *
+ * An agent runtime exports it to every subprocess of one run (hex-bonk sets `run-<run id>`), so an
+ * agent writes with `memhtml session exec <<'SH'` and never repeats an id, and the runtime commits
+ * that one session when the run ends. Set, it does three things (`run.ts`): every `session` command
+ * takes it as the default `--id`; `session put` and `session exec` start the session on first use
+ * when the id came from here; and the v1 doors that create a record (`write`, `apply`, `correct`,
+ * `task add`) refuse with `ERR_SESSION_BOUND`, because they commit straight to the store with no write
+ * bar, and a process that has a session has a barred door to use instead.
+ *
+ * Read from `process.env` directly, like {@link REFUSE_ENV_ROOT_VAR}: both refusal and default are
+ * decided in `validate`, before any Effect runs. Blank is unset. `env` is a parameter so a test can
+ * hand in a map.
+ */
+export const SESSION_VAR = "MEMHTML_SESSION"
+
+/** The session `MEMHTML_SESSION` names, trimmed, or `undefined` when it is absent or blank. */
+export const sessionFromEnv = (env: NodeJS.ProcessEnv = process.env): string | undefined => {
+  const value = (env[SESSION_VAR] ?? "").trim()
+  return value === "" ? undefined : value
+}
+
 export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   {
     name: "MEMHTML_ROOT",
@@ -75,6 +98,13 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
     name: REFUSE_ENV_ROOT_VAR,
     description:
       "Set to any value but `0`, `false`, `no`, or `off` (absent or blank is off; case-insensitive) makes `memhtml` take its repo from `--repo` alone: `MEMHTML_ROOT` and the `~/memhtml` default stop being doors, and a call that opens a repo without `--repo` is refused with ERR_REPO_REQUIRED at exit 2 before `memhtml` opens anything. For CI, for a test suite calling the CLI in-process, and for an agent runtime that exports `MEMHTML_ROOT` to every subprocess it starts. Commands that never open a repo (`manifest`, `help`, `agents-doc`, `eval discriminate`) are unaffected. It governs the roots `memhtml` resolves from its own environment: a caller that hands the in-process `run()` a layer it built states that layer's root itself. Read by `memhtml` only: `memhtml-mcp` takes its root from `MEMHTML_ROOT`, which `memhtml serve mcp --repo` sets for the child explicitly.",
+    fallback: null
+  },
+  {
+    /** Imported rather than retyped: this row and the read in {@link sessionFromEnv} name one string. */
+    name: SESSION_VAR,
+    description:
+      "The v2 session this process writes through, for an agent runtime that exports it to every subprocess of a run. Set, every `session` command takes it as the default `--id`; `session put` and `session exec` start that session on refs/heads/main's tip on first use when the id came from here, so a run's first write needs no `session start`; and the v1 doors that create a record (`write`, `apply`, `correct`, `task add`) are refused with ERR_SESSION_BOUND at exit 2, because they commit with no write bar. Write through `memhtml session exec` (a heredoc on stdin) or `memhtml session put` instead, and let the runtime commit the session when the run ends. The other v1 commands, reads and edits of existing records alike, are unaffected. Blank is unset.",
     fallback: null
   },
   {

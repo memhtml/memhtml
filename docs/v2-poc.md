@@ -160,6 +160,7 @@ Deltas landed, where the implementation departs from the contract above:
 - `commitSession` takes an optional `archivedAt`, the instant archive ops stamp, so a test can pin it. It defaults to now.
 - `saveSession` is exported, so a caller that rebased can persist the moved base without appending an op. It takes the session's lock; `saveSessionLocked` is the variant for a caller already holding it.
 - `Session.pending` and `startSession`'s `force` are as described above; `session status` reports `pending` (`null` when none).
+- `startSession` reads only its base's `sha`, so its `base` is typed `{ sha }`; a `HeadView` with its sha still fits. The implicit start under `MEMHTML_SESSION` ("Run sessions" below) passes the sha alone and loads no head.
 
 ### Write bar
 
@@ -401,6 +402,18 @@ End to end, a no-op heredoc through the server against the same no-op with `--no
 | `curl --unix-socket` to `/v1/exec`, including curl's start | 135    | 147    |
 
 The server path takes the call from 2.3 s to 0.9 s, and what is left is the CLI's own start (about 0.7 s, "Heredoc scripts" above), not the server: the socket answers the exec in 135 ms at p50, of which seeding the worker's guest and listing it after the script are about 85 ms. An agent harness that speaks to the socket directly takes the CLI's start off the path.
+
+## Run sessions: `MEMHTML_SESSION`
+
+An agent runtime runs many short CLI processes per run, and the operator's expectation (2026-09-28) is that every memory a fleet run writes meets the write bar and that an agent writes with a heredoc and nothing else. `MEMHTML_SESSION` is the one piece of state the runtime hands every subprocess of a run (hex-bonk exports `run-<run id>`), and the CLI reads it in `run.ts` before anything opens:
+
+- Every `session` command takes it as the default `--id`, so an agent writes with `memhtml session exec <<'SH'` and never repeats an id. With neither `--id` nor the variable, the call is `ERR_MISSING_ARGUMENT` naming both; a value that is not a session id is `ERR_INVALID_FLAG` naming the variable. Blank is unset.
+- `session put` and `session exec` start the session on first use when the id came from the variable (`ensureSession` in `apps/cli/src/v2.ts`): a log that exists is resumed, and a missing one is started on `refs/heads/main`'s tip with one `rev-parse` and one `read-tree`, since `startSession` reads only the base's sha. The start is implicit rather than an explicit, idempotent `session start`, because the explicit start would be one more CLI process (about 0.7 s of start) per run, paid by every run including the ones that never write, and `session start` loads the head. Two first uses at once (two subagents) both find no log; the one that loses the lock, or finds the log already written, waits up to 5 s for it and goes on, so neither fails and neither log is replaced. `exec` starts the session before it asks the head server, because the server reads the log itself and starts nothing. An id given on the line keeps the explicit contract: it must name a started session, so a typo is an error rather than a new session. Both payloads carry `started`.
+- The v1 doors that create a record, `write`, `apply`, `correct`, and `task add`, are refused with `ERR_SESSION_BOUND` at exit 2 before anything opens, naming the session command that does the same job. They commit through `@memhtml/store` with no write bar, so with them open a run's residual `memhtml write` would land unjudged and outside the run's one commit. Reads, and the edits of existing records the bar does not judge (`link`, `archive`, `task status`, `reinforce`), stay open.
+
+The runtime commits the session when the run ends (`session commit`, one `session rebase` and a retry on `rebase-needed`), after the answer is posted and fail-open. A write below the bar never reaches that commit: `session put` refuses it at exit 1 with the reason, and `session exec` reports it under `violations` and `blocking` and appends nothing, so the agent fixes it inside the turn. What the commit can still refuse is what only a rebase decides, a `duplicate` or a `claim-edit` against a record that landed on `main` during the run, and the log stays on disk for inspection.
+
+The test environment (`throwawayTestEnv` in `@memhtml/store/testing`) blanks the variable, so a suite started from inside a fleet run sees no default session. Covered by `apps/cli/tests/session-env.test.ts`.
 
 ## CLI commands (integrator)
 

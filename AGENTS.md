@@ -38,7 +38,7 @@ You are reading this CLI's manifest: every command, argument, flag, response typ
 
 ### `write-surfaces`
 
-There are three ways to put a memory into the corpus, and they are all legitimate. First, this CLI: `memhtml write` for one memory, `memhtml apply` for many. Second, the MCP server: `memhtml serve mcp` speaks stdio with the same tools and resources over this same repo, and it is the door to use when you are already an MCP client. Third, editing files under $MEMHTML_ROOT directly with your normal file tools: the git tree IS the system of record and `.memhtml/index.db` is only a projection of it, so a hand-written or hand-edited memory file is as real as one this CLI wrote. `memhtml index update` projects uncommitted working-tree changes as well as committed ones, so a dirty edit is searchable before you commit it. What you take on by editing directly is everything the write path would have done for you: the file must satisfy the format (run `memhtml doctor`, and `memhtml read <path>` reports per-file format warnings), you own choosing a path that does not collide, you own noticing that the content already exists somewhere else, and you own the commit. A CLI command and a running `memhtml serve mcp` may share one store: the index is WAL SQLite, which admits one writer at a time and any number of concurrent readers, so a second writer waits its turn rather than failing. The one thing to keep clear of is a checked-out `curate/<date>` branch: a write landing while one is checked out commits onto that branch and is merged as if it were curation or lost when the branch is dropped.
+There are three ways to put a memory into the corpus, and they are all legitimate. First, this CLI: `memhtml write` for one memory, `memhtml apply` for many. Second, the MCP server: `memhtml serve mcp` speaks stdio with the same tools and resources over this same repo, and it is the door to use when you are already an MCP client. Third, editing files under $MEMHTML_ROOT directly with your normal file tools: the git tree IS the system of record and `.memhtml/index.db` is only a projection of it, so a hand-written or hand-edited memory file is as real as one this CLI wrote. `memhtml index update` projects uncommitted working-tree changes as well as committed ones, so a dirty edit is searchable before you commit it. What you take on by editing directly is everything the write path would have done for you: the file must satisfy the format (run `memhtml doctor`, and `memhtml read <path>` reports per-file format warnings), you own choosing a path that does not collide, you own noticing that the content already exists somewhere else, and you own the commit. A CLI command and a running `memhtml serve mcp` may share one store: the index is WAL SQLite, which admits one writer at a time and any number of concurrent readers, so a second writer waits its turn rather than failing. The one thing to keep clear of is a checked-out `curate/<date>` branch: a write landing while one is checked out commits onto that branch and is merged as if it were curation or lost when the branch is dropped. Under `MEMHTML_SESSION` (an agent runtime exports it to every subprocess of a run) the first door is the session one instead: `write`, `apply`, `correct`, and `task add` answer ERR_SESSION_BOUND, and a record goes in through `memhtml session exec` (a heredoc that writes the file under `/mnt/memhtml`) or `memhtml session put`, both held to the write bar, and the runtime commits the run's session when the run ends.
 
 ### `when-to-batch`
 
@@ -141,12 +141,12 @@ Write what is durable, one fact per memory. A decision and its reason, a correct
 | `memhtml integrations doctor` | [host] | `--project` | `integrations.doctor` |
 | `memhtml integrations shell` | — | `--write` `--rc` | `integrations.shell` |
 | `memhtml hook` | <event> | `--host`* `--trace-root` `--limit` `--budget` | `hook.output` |
-| `memhtml session start` | — | `--id`* `--ref` `--force` | `session.started` |
-| `memhtml session put` | — | `--id`* `--file`* `--server` | `session.appended` |
-| `memhtml session exec` | — | `--id`* `--file` `--script` `--lang` `--timeout-ms` `--server` | `session.exec.report` |
-| `memhtml session commit` | — | `--id`* `--message`* | `session.committed` |
-| `memhtml session rebase` | — | `--id`* | `session.rebased` |
-| `memhtml session status` | — | `--id`* | `session.status` |
+| `memhtml session start` | — | `--id` `--ref` `--force` | `session.started` |
+| `memhtml session put` | — | `--id` `--file`* `--server` | `session.appended` |
+| `memhtml session exec` | — | `--id` `--file` `--script` `--lang` `--timeout-ms` `--server` | `session.exec.report` |
+| `memhtml session commit` | — | `--id` `--message`* | `session.committed` |
+| `memhtml session rebase` | — | `--id` | `session.rebased` |
+| `memhtml session status` | — | `--id` | `session.status` |
 | `memhtml head status` | — | `--server` | `head.status` |
 | `memhtml head search` | <query> | `--limit` `--server` | `head.search` |
 | `memhtml head serve` | — | `--ref` `--poll-ms` | `head.served` |
@@ -512,7 +512,7 @@ The engine every installed hook calls. Reads the host's hook payload on stdin, r
 
 Open a v2 session on the ref's tip: a pointer to that version plus an empty overlay log.
 
-- `--id` (string) — The session id: one path segment, letters, digits, `.`, `_`, `-`. State lives at .memhtml/sessions/<id>.idx (the session's git index) and <id>.json (its overlay log). _(**required**)_
+- `--id` (string) — The session id: one path segment, letters, digits, `.`, `_`, `-`. State lives at .memhtml/sessions/<id>.idx (the session's git index) and <id>.json (its overlay log). Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT.
 - `--ref` (string) — The ref commits land on. Defaults to refs/heads/main. A ref that does not exist yet (a curator's refs/heads/curate/<date>) starts from HEAD and is created by the first commit.
 - `--force` (boolean) — Discard an existing log under this id and start over. Without it, an id that already has a log is refused with ERR_STORAGE (session.exists) so a retried start cannot lose an overlay in progress; `session status --id <id>` reads the existing one. _(default `false`)_
 
@@ -520,7 +520,7 @@ Open a v2 session on the ref's tip: a pointer to that version plus an empty over
 
 Append write ops, and label or unlabel ops on existing records, to a session's overlay from a JSONL file.
 
-- `--id` (string) — The session to append to. _(**required**)_
+- `--id` (string) — The session to append to. Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT. With the id taken from $MEMHTML_SESSION and no log yet, the session is started on refs/heads/main's tip first (a `rev-parse` and a `read-tree`, no head load), so a run's first write needs no `session start`; a `--id` given on the line must name a started session.
 - `--file` (string) — JSONL, one object per line. A `write` line takes the same fields `memhtml apply` accepts; each is rendered to the file the store would write and lands at the path the store would choose. A `label` line, `{"op":"label","path":"areas/inbox/x.html","entity":"system:memhtml"}`, adds one `memhtml-entity` to an existing record's head, and an `unlabel` line with the same fields removes one; neither touches the article, so the record keeps its content hash. A label value is a lowercase `type:name` (`service:memhtml`, `project:hex-bonk`, `person:laith`) the record does not carry yet; an unlabel names a value the record carries, exactly as written. `-` reads stdin. A malformed op, a reserved path, a label that is malformed or already carried, an unlabel of a value the record lacks, an unlabel that leaves a record with no entity outside `projects/<slug>/`, or a record below the write bar refuses the whole call and appends nothing. The bar: a memory names the system, project, or person it is about (an `entities` value, or a `workspace`), carries a mechanism or a decision, and is something a future run would look up; a run narrative (`episodic`) or review output (`verdict`) is refused, because runs live in the trace index. The bar holds for every writer and every type, the curator and tasks included: a task names an entity unless its `workspace` anchors it. The response lists each put's nearest existing records under `neighbors`, so a near-duplicate can be skipped and the related records linked before the commit. `neighbors` is ranked the way `head search` ranks, the vector arm included when the store has a vector cache (`memhtml head embed`) and an embedder is configured: each put's own text is embedded as a document, one call per batch. When the arm cannot run the neighbors come from the lexical arm alone and `vector` says why (`used: false` with a `reason`); the put itself never fails for it. _(**required**)_
 - `--server` (boolean) — Ask the head server on .memhtml/head.sock first (`memhtml head serve`), falling back to loading the head here when no server accepts within 100 ms or answers within 10 s; `--no-server` always loads here. The placements, violations, and neighbors (label lines included, the vector arm run with the server's cache and embedder) are then computed by the server over the version at the session's base; the append always happens here. The payload's `head.source` is `server` when the server answered. _(default `true`)_
 
@@ -528,7 +528,7 @@ Append write ops, and label or unlabel ops on existing records, to a session's o
 
 Run a script over the session's view (head plus overlay) in a writable sandbox and harvest its writes into the overlay.
 
-- `--id` (string) — The session whose view the script sees. _(**required**)_
+- `--id` (string) — The session whose view the script sees. Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT. With the id taken from $MEMHTML_SESSION and no log yet, the session is started on refs/heads/main's tip first, as `session put` does.
 - `--file` (string) — The script, as a path on the HOST. Omit it, pass `--file -`, or a positional `-` to read stdin, which is the usual door: a heredoc (`memhtml session exec --id s1 <<'SH'` ... `SH`) delivers the script with no quoting to get wrong. Mutually exclusive with `--script`. A new file the script writes is held to the write bar `session put` states; one below it blocks the whole harvest. An existing file whose article is unchanged may gain or lose `<link rel="memhtml-...">` lines and `<meta name="memhtml-entity">` lines in its head: each becomes a `link`, `unlink`, `label`, or `unlabel` op, and any other head edit is rejected with a reason.
 - `--script` (string) — The script source, inline. Mutually exclusive with `--file` and with stdin.
 - `--lang` (string) — The script's language, echoed as `lang` in the report. `bash` runs it as a shell program: `cat`, `grep -r`, `sed -i`, `find` (with `-exec`), `xargs`, `jq`, `awk`, pipes, redirection, and nested heredocs all work on the corpus at `/mnt/memhtml`, so `cat > /mnt/memhtml/projects/<slug>/<name>.html <<'HTML'` ... `HTML` writes a record and a `sed -i` that splices a `<meta name="memhtml-entity">` line into a head labels one. Use absolute paths. `js-exec <file>` runs a JavaScript module from inside a bash script. `js` runs the whole script as a JavaScript module through `js-exec` with `/workspace/lib/corpus.mjs` preloaded, as `memhtml exec` does. The mount, the timeout, and the harvest are the same for both. There is no network in either: `curl` is not a command. _(default `bash`; one of: `bash`, `js`)_
@@ -539,20 +539,20 @@ Run a script over the session's view (head plus overlay) in a writable sandbox a
 
 Land the session's overlay on its ref as one commit, or report why it cannot: `refused`, `rebase-needed`, or `worktree-dirty`.
 
-- `--id` (string) — The session to commit. _(**required**)_
+- `--id` (string) — The session to commit. Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT.
 - `--message` (string) — The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer. When HEAD is the session's ref, the shared index and working tree move to the new commit with it (`worktreeSynced: true`); uncommitted state at a path the commit writes or removes is answered `worktree-dirty` and nothing moves. A ref that moved past the session's base is `rebase-needed`: run `session rebase` and commit again. A `committed` outcome also writes the new commit's snapshot (`snapshot`: path, bytes, ms, pruned; null when that best-effort write failed), so the next load hits the cache. _(**required**)_
 
 ### `memhtml session rebase`
 
 Move a session's base to its ref's tip, keeping every op. Run it after a `rebase-needed` commit outcome, then commit again.
 
-- `--id` (string) — The session to rebase. _(**required**)_
+- `--id` (string) — The session to rebase. Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT.
 
 ### `memhtml session status`
 
 The session's base, ref, and overlay log as persisted, and whether the ref has moved past the base.
 
-- `--id` (string) — The session to describe. _(**required**)_
+- `--id` (string) — The session to describe. Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT.
 
 ### `memhtml head status`
 
@@ -646,6 +646,7 @@ Plan and run a collapse of the corpus on a curate/ branch: cut the head into arc
 - `ERR_UNKNOWN_HOOK_EVENT`
 - `ERR_INTEGRATION_MODIFIED`
 - `ERR_HEAD_SERVER_RUNNING`
+- `ERR_SESSION_BOUND`
 
 ## Configuration
 
@@ -653,6 +654,7 @@ Plan and run a collapse of the corpus on a curate/ branch: cut the head into arc
 |---|---|---|
 | `MEMHTML_ROOT` | `~/memhtml` | The memory repo's root: a git repository holding the corpus and `.memhtml/`. |
 | `MEMHTML_REFUSE_ENV_ROOT` | — | Set to any value but `0`, `false`, `no`, or `off` (absent or blank is off; case-insensitive) makes `memhtml` take its repo from `--repo` alone: `MEMHTML_ROOT` and the `~/memhtml` default stop being doors, and a call that opens a repo without `--repo` is refused with ERR_REPO_REQUIRED at exit 2 before `memhtml` opens anything. For CI, for a test suite calling the CLI in-process, and for an agent runtime that exports `MEMHTML_ROOT` to every subprocess it starts. Commands that never open a repo (`manifest`, `help`, `agents-doc`, `eval discriminate`) are unaffected. It governs the roots `memhtml` resolves from its own environment: a caller that hands the in-process `run()` a layer it built states that layer's root itself. Read by `memhtml` only: `memhtml-mcp` takes its root from `MEMHTML_ROOT`, which `memhtml serve mcp --repo` sets for the child explicitly. |
+| `MEMHTML_SESSION` | — | The v2 session this process writes through, for an agent runtime that exports it to every subprocess of a run. Set, every `session` command takes it as the default `--id`; `session put` and `session exec` start that session on refs/heads/main's tip on first use when the id came from here, so a run's first write needs no `session start`; and the v1 doors that create a record (`write`, `apply`, `correct`, `task add`) are refused with ERR_SESSION_BOUND at exit 2, because they commit with no write bar. Write through `memhtml session exec` (a heredoc on stdin) or `memhtml session put` instead, and let the runtime commit the session when the run ends. The other v1 commands, reads and edits of existing records alike, are unaffected. Blank is unset. |
 | `MEMHTML_TRACE_ROOT` | `~/.claude` | Where `memhtml trace index` reads Claude Code transcripts from. Read-only; never written. |
 | `MEMHTML_AWS_REGION` | `us-east-1` | The Bedrock region for embeddings and the entity extractor's model calls. |
 | `AWS_BEARER_TOKEN_BEDROCK` | — | Bedrock bearer token, read by the AWS SDK itself. Absent means the default credential chain; retrieval then degrades to the lexical floor rather than failing. |

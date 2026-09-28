@@ -154,12 +154,17 @@ export const throwawayRoot = (): string => join(tmpdir(), `${THROWAWAY_ROOT_PREF
  * built from it neither embeds nor resolves a Bedrock credential, and `MEMHTML_REFUSE_ENV_ROOT` on so
  * an in-process `run()` that names no repo is refused at exit 2 instead of reaching the throwaway at
  * all. The root pin and the teardown stay as the backstop for a layer built outside `run()`.
+ *
+ * `MEMHTML_SESSION` is blanked (blank reads as unset): an agent runtime exports it to every
+ * subprocess of a run, so a suite started from inside one would otherwise see a default session id
+ * and find the v1 write doors closed. A test that wants it sets its own value per case.
  */
 export const throwawayTestEnv = (): Record<string, string> => ({
   MEMHTML_ROOT: throwawayRoot(),
   MEMHTML_EMBED: "off",
   MEMHTML_LLM: "off",
-  MEMHTML_REFUSE_ENV_ROOT: "1"
+  MEMHTML_REFUSE_ENV_ROOT: "1",
+  MEMHTML_SESSION: ""
 })
 
 /**

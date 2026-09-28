@@ -212,11 +212,15 @@ const exists = (path: string): Effect.Effect<boolean> =>
  * `session start` or two agents choosing one id would otherwise replace an in-progress overlay with
  * an empty one and report success. `resumeSession` is the way to reopen a log; `force` is the way to
  * discard one on purpose.
+ *
+ * Only the base's `sha` is read (for `read-tree` and the log), so a caller that has no head loaded
+ * passes `{ sha }`: the implicit start of `session put` and `session exec` under `MEMHTML_SESSION`
+ * costs a `rev-parse` and a `read-tree` rather than a head load. A `HeadView` with its sha still fits.
  */
 export const startSession = (input: {
   readonly root: string
   readonly id: string
-  readonly base: HeadView & { readonly sha: string }
+  readonly base: { readonly sha: string }
   readonly ref?: string | undefined
   readonly force?: boolean | undefined
 }): Effect.Effect<Session, GitFailure | StorageFailure> =>
