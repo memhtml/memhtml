@@ -1,6 +1,6 @@
 # memhtml-public · System overview
 
-Describes the source at 0.15.1 (main 5c0f610, 2026-09-25). Citations are `path:line` into that tree. A package's file count is its `.ts` files under `src/`, and its LOC is the `wc -l` line count of those files summed, measured at that commit.
+Describes the source at 0.15.1 (main 1173e77, 2026-09-28). Citations are `path:line` into that tree. A package's file count is its `.ts` files under `src/`, and its LOC is the `wc -l` line count of those files summed, measured at that commit.
 
 ## What this repository is
 
@@ -96,23 +96,24 @@ flowchart LR
 | Storage            | `node:sqlite` `DatabaseSync` over 12 SQL migrations plus 2 state-plane migrations  | `packages/index/src/database.ts:4`                                  |
 | Storage            | git as the system of record for the root                                           | `packages/index/src/indexer.ts:19`                                  |
 | HTML parsing       | parse5 8.0.1                                                                       | `packages/html/package.json:36`                                     |
-| Embeddings         | AWS Bedrock SDK 3.1137.0, `cohere.embed-v4:0` at 1024 dims                         | `packages/llm/package.json:33`, `packages/llm/src/constants.ts:7-8` |
-| Consolidator agent | ai 7.0.109, `@ai-sdk/amazon-bedrock` 5.0.90, `@ai-sdk/anthropic` 4.0.59, zod 4.6.5 | `apps/consolidator/package.json:35-41`                              |
+| Embeddings         | AWS Bedrock SDK 3.1140.0, `cohere.embed-v4:0` at 1024 dims                         | `packages/llm/package.json:33`, `packages/llm/src/constants.ts:7-8` |
+| Consolidator agent | ai 7.0.114, `@ai-sdk/amazon-bedrock` 5.0.94, `@ai-sdk/anthropic` 4.0.63, zod 4.6.5 | `apps/consolidator/package.json:35-41`                              |
 | Script sandbox     | just-bash 3.4.2, for `memhtml exec`                                                | `apps/consolidator/package.json:40`, `apps/cli/package.json:52`     |
 | Tracing            | Effect's own `OtlpTracer`, opt-in                                                  | `packages/telemetry/src/index.ts:14-18`                             |
-| Build tooling      | turbo 2.11.2, pnpm 11.21.0, biome 2.5.14, tsdown 0.23.0                            | `package.json:6`, `package.json:34-38`                              |
+| Build tooling      | turbo 2.11.4, pnpm 11.21.0, biome 2.5.14, tsdown 0.23.0                            | `package.json:6`, `package.json:34-38`                              |
 | Test tooling       | vitest 5.0.1, `@effect/vitest`, fast-check 4.10.2                                  | `apps/cli/package.json:57-60`, `pnpm-workspace.yaml:96-97`          |
-| Docs site          | astro ^7.3.3, `@astrojs/starlight` ^0.42.2                                         | `apps/docs/package.json:20`, `apps/docs/package.json:25`            |
+| Docs site          | astro ^7.3.5, `@astrojs/starlight` ^0.42.4                                         | `apps/docs/package.json:20`, `apps/docs/package.json:25`            |
 
 ## See also
 
-Counts are the distinct existing non-docs source paths cited in inline backticks on both pages, measured against the tree at 5c0f610.
+Counts are the distinct existing non-docs source paths cited in inline backticks on both pages, measured against the tree at 1173e77.
 
 - [memhtml-public · Dependency graph](../diagrams/structural/dependency-graph.md): 27 shared source citations
 - [memhtml-public · Module map](../architecture/module-map.md): 22 shared source citations
+- [memhtml-public · Processes](../behavior/processes.md): 16 shared source citations
 - [memhtml-public · Impact analysis](../insights/impact-analysis.md): 14 shared source citations
 - [memhtml-public · Contract map](../insights/contract-map.md): 14 shared source citations
 - [memhtml-public · Debugging guide](../insights/debugging-guide.md): 13 shared source citations
 - [memhtml-public · Business logic](../insights/business-logic.md): 10 shared source citations
 - [memhtml-public · Tech debt](../insights/tech-debt.md): 9 shared source citations
-- [memhtml-public · CLI](../reference/cli.md): 8 shared source citations
+- [memhtml-public · Data flow](../architecture/data-flow.md): 9 shared source citations
