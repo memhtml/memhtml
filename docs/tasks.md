@@ -16,7 +16,7 @@ Everything in `docs/format.md` holds: one `<mark>` claim leading the article, th
 
 Both metas serialize after `memhtml-needs-revision` and before the repeatable keys (`packages/html/src/vocabulary.ts:65`), and project to `files.task_status` and `files.due_at` (`packages/index/src/project.ts:123`). The status meta's agreement with the type is a **parse violation in both directions**, not a dropped optional (`packages/html/src/parse.ts:166`): a task with no `memhtml-task-status` is refused (`:185`), and a non-task carrying one is refused (`:176`). A refused file never reaches the index — it sits in the tree, absent from every listing. So the template defaults the status rather than requiring it (`DEFAULT_TASK_STATUS`, `packages/html/src/template.ts:73`) and stamps it only for a task (`:173`).
 
-Placement routes by workspace **alone**, ahead of the person and topic rules: a `person:` entity does not send a task to `resources/people/`, the durable identity surface, and a task carries no topic for the tag rule to read (`packages/contracts/src/paths.ts:112`).
+Placement routes by workspace **alone**, ahead of the topic rule, because a task carries no topic for the tag rule to read (`packages/contracts/src/paths.ts`). No rule sends any record to `resources/people/`, a task included.
 
 ## Two status axes, and why finishing archives
 
