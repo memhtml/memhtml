@@ -334,6 +334,7 @@ export const harvestOps = (input: {
   const puts = new Map<string, string>()
   const headOps: Array<{ readonly path: string; readonly ops: ReadonlyArray<OverlayOp> }> = []
   const present = new Set<string>()
+  const presentPaths = new Set(input.after.map((file) => file.path))
 
   for (const file of input.after) {
     present.add(file.path)
@@ -348,9 +349,23 @@ export const harvestOps = (input: {
       rejected.push({ path: file.path, reason: problem })
       continue
     }
+    // An archive slot the view already held, rewritten while the active file it maps back to
+    // vanished: the record is being archived again over its earlier archived copy. It is a twin
+    // candidate for the pairing below, never a head edit of the old copy, even when the two copies
+    // share an article.
+    const source = originalPathFor(file.path)
+    const reclaimsSlot =
+      before !== undefined &&
+      source !== undefined &&
+      input.seeded.has(source) &&
+      !presentPaths.has(source)
     // Same article, different bytes: a head edit. Only added or removed links and entities can be
     // an op.
-    if (before !== undefined && contentHashOrNull(file.html) === before.contentHash) {
+    if (
+      !reclaimsSlot &&
+      before !== undefined &&
+      contentHashOrNull(file.html) === before.contentHash
+    ) {
       const edit = headEdit(file.path, before.html, file.html)
       if (edit !== null) {
         if ("reason" in edit) rejected.push({ path: file.path, reason: edit.reason })

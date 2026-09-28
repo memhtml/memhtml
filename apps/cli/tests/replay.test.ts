@@ -89,6 +89,37 @@ describe("reconstructOps rebuilds the curator's log from two trees", () => {
     expect(result.archivedAt).toBe(ARCHIVED_AT)
   })
 
+  it("an archive over an earlier archived copy of the same path replays as one archive op", () => {
+    // The slot is a MODIFIED path in the diff (the old copy at the base, the new one at the tip),
+    // beside the source's deletion. Both an older copy with other words and one with the same
+    // article under older stamps must pair.
+    const twin = archiveBody(archived.html, ARCHIVED_AT)
+    const olderWords = archiveBody(
+      renderTemplate({
+        title: "Replay fixture 1",
+        claim: "Replay fixture fact 1, as it was first written.",
+        memoryType: "semantic",
+        at: AT
+      }),
+      "2026-08-24T00:00:00Z"
+    )
+    const olderStamps = archiveBody(archived.html, "2026-08-24T00:00:00Z")
+    for (const older of [olderWords, olderStamps]) {
+      const result = reconstructOps({
+        before: new Map([
+          [archived.path, archived.html],
+          [twinPath, older]
+        ]),
+        after: new Map([[twinPath, twin]])
+      })
+      expect(result.rejected).toEqual([])
+      expect(result.ops).toEqual([
+        { kind: "archive", path: archived.path, to: twinPath, html: twin }
+      ])
+      expect(result.archivedAt).toBe(ARCHIVED_AT)
+    }
+  })
+
   it("puts come before links and links before archives, whatever order the maps hold", () => {
     const result = reconstructOps({
       before: new Map([[archived.path, archived.html]]),

@@ -27,6 +27,8 @@ import { mapHead, memory, recordFrom } from "./helpers.js"
  * - format: skip `checkMemory` -> "collects format violations".
  * - archive hash: drop the `contentHash(op.html) !== sourceHash` reason -> "refuses an archive op
  *   whose article is not the source's".
+ * - archive slot twice: drop the `archiveDestinations.has(...)` reason -> "archives over an earlier
+ *   archived copy of its own path, and writes one slot once per batch" (the doubled archive passes).
  * - link target: drop the `view.get(target) === undefined` check -> "a link must point at a record
  *   in the head or in the batch" (the missing target passes).
  * - unlink edge: drop the `!edgesOf(op.path).has(...)` reason -> "an unlink must name an edge the
@@ -259,6 +261,32 @@ describe("validateOps", () => {
         kind: "format",
         path: "areas/inbox/alpha.html",
         reasons: ["rel `bogus` is outside the edge vocabulary", "href is not root-relative"]
+      }
+    ])
+  })
+
+  it("archives over an earlier archived copy of its own path, and writes one slot once per batch", async () => {
+    // A record archived once, recreated at its path, and archived again (the 64 people stubs on
+    // the live store, 2026-09-28): the destination holds the earlier copy, which the new one replaces.
+    const view = await mapHead("0".repeat(40), [
+      await recordFrom("areas/inbox/capital.html", CAPITAL),
+      await recordFrom(
+        "archive/2026/areas/inbox/capital.html",
+        memory("Capital", "The capital of india is new delhi.")
+      )
+    ])
+    const archive: OverlayOp = {
+      kind: "archive",
+      path: "areas/inbox/capital.html",
+      to: "archive/2026/areas/inbox/capital.html",
+      html: CAPITAL
+    }
+    expect(validateOps(view, [archive])).toEqual([])
+    expect(validateOps(view, [archive, archive])).toEqual([
+      {
+        kind: "format",
+        path: "areas/inbox/capital.html",
+        reasons: ["archive destination is written twice in this batch"]
       }
     ])
   })
