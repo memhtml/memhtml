@@ -3,13 +3,25 @@ import { createServer, type IncomingMessage } from "node:http"
 import { createConnection } from "node:net"
 import { dirname } from "node:path"
 
-import type { InvalidMemory } from "@memhtml/contracts/errors"
+import type { InvalidMemory, ModelUnavailable } from "@memhtml/contracts/errors"
 import { StorageFailure } from "@memhtml/contracts/errors"
-import { advanceHead, type HeadVersion, searchHead } from "@memhtml/head"
+import { advanceHead, fillVectors, type HeadVersion, searchHead, vectorTextOf } from "@memhtml/head"
+import type { EmbedPort, QueryEmbedPort } from "@memhtml/index"
 import { DEFAULT_REF, ensureExcludedQuietly, HEAD_SOCKET, resumeSession } from "@memhtml/session"
-import { snapshotPathFor } from "@memhtml/snapshot"
+import { snapshotPathFor, VECTORS_DIR, writeVectorCache } from "@memhtml/snapshot"
 import { type GitFailure, makeGit } from "@memhtml/store"
-import { Duration, Effect, Layer, Option, Schedule, Schema, type Scope, Semaphore } from "effect"
+import {
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Schedule,
+  Schema,
+  type Scope,
+  Semaphore
+} from "effect"
 import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 
 import type { EmbedderShape } from "./api-layer.js"
@@ -20,6 +32,10 @@ import { EXEC_BUSY, makeExecPool } from "./exec-pool.js"
 import { type HeadSource, writeHeadSnapshot } from "./head-cache.js"
 import { askHead, CONNECT_TIMEOUT_MS } from "./head-client.js"
 import {
+  BACKFILL_BATCH_MAX,
+  EMBED_DEADLINE_DEFAULT_MS,
+  EMBED_WARM_IDLE_DEFAULT_MS,
+  type EmbedActivityStatus,
   EXEC_BODY_MAX_BYTES,
   EXEC_QUEUE_WAIT_MS,
   type ExecAnswer,
@@ -31,6 +47,7 @@ import {
   HeadServerRunning,
   HeadServerStatus,
   headSocketPath,
+  LATE_EMBEDS_MAX,
   NeighborsRequest,
   ReadRequest,
   SearchRequest,
@@ -42,6 +59,7 @@ import {
   type CacheRead,
   coverageOf,
   headVectorsPath,
+  type LateEmbed,
   loadForSearch,
   skippedUse,
   vectorsForQuery
@@ -82,6 +100,28 @@ import { execOverHead, loadHeadAt, preparePuts, qualifyRef, revParse } from "./v
  * renames a new file into place) is read again under its own permit, so an embed run while the
  * server is up takes effect on the next request with no restart. A file that vanished, or that the
  * reader refuses, leaves the arm off with that reason until the file changes again.
+ *
+ * ## The embed path it keeps short
+ *
+ * A search waits for its query embed at most {@link EMBED_DEADLINE_DEFAULT_MS} (the request's
+ * `embedDeadlineMs`, else the server's `embedDeadlineMs`); past it the search answers on the
+ * lexical arm with `embed-timeout`, and the embed still running is either left to finish, when
+ * fewer than {@link LATE_EMBEDS_MAX} are already finishing, or interrupted. The one left to finish
+ * is what warms the connection the miss was waiting on.
+ *
+ * With an embedder and a cache, a timer issues one one-token query embed whenever no embed has
+ * ended for `warmIdleMs` ({@link EMBED_WARM_IDLE_DEFAULT_MS}) and none is in flight, so the first
+ * search after a quiet stretch finds the path through the LLM proxy to Bedrock warm. Every embed the
+ * server makes (search, neighbors, late, warmup, and fill) moves the idle clock, so a busy server
+ * never warms. The timer is a fiber in the server's scope, stopped with it.
+ *
+ * ## The vectors it fills
+ *
+ * An advance that brings records the held cache has no vector for starts a background fill: the
+ * missing records are embedded {@link BACKFILL_BATCH_MAX} at a time, off every request's path, and
+ * written to the cache file the way `head embed` writes it, so the file and the held cache agree
+ * and a restart keeps them. One fill runs at a time; a failed batch is retried on the next advance
+ * or warmup tick.
  *
  * ## Exec
  *
@@ -162,6 +202,12 @@ const readCapped = (
     incoming.once("error", onError)
   })
 
+/** What the warmup embeds: one token, as a query, the call a search makes. */
+export const WARMUP_TEXT = "warm"
+
+/** How often a warmup that found an embed in flight (or no cache) looks again, at most. */
+const WARM_RECHECK_MS = 1000
+
 /** How long a closing server waits for requests in flight. */
 const SHUTDOWN_GRACE = Duration.seconds(2)
 
@@ -173,6 +219,16 @@ export interface HeadServerInput {
   readonly pollMs?: number | undefined
   /** The embedder `search` and `neighbors` use; absent or with both ports absent, the arm is off. */
   readonly embedder?: EmbedderShape | undefined
+  /**
+   * How long a search waits for its query embed when the request names no `embedDeadlineMs`, in
+   * milliseconds; `0` for no bound. Default {@link EMBED_DEADLINE_DEFAULT_MS}.
+   */
+  readonly embedDeadlineMs?: number | undefined
+  /**
+   * Idle milliseconds after which the server warms the embed path with a one-token embed; `0`
+   * turns the warmup off. Default {@link EMBED_WARM_IDLE_DEFAULT_MS}.
+   */
+  readonly warmIdleMs?: number | undefined
   /** The exec pool's worker entry; the sandbox runner unless a test hands in a stand-in. */
   readonly execWorkerPath?: string | undefined
 }
@@ -204,6 +260,42 @@ interface HeldVectors {
   stamp: string | null
   mtime: string | null
   loads: number
+}
+
+/** The background fill's state: one runs at a time, and a trigger during one asks for another pass. */
+interface Backfill {
+  running: boolean
+  again: boolean
+  embedded: number
+  batches: number
+  failures: number
+  lastError: string | null
+  lastMs: number | null
+  lastAt: number | null
+}
+
+/** Distinct article texts of `view`'s active records whose content hash `vectors` lacks. */
+const pendingOf = (view: HeadVersion, vectors: ReadonlyMap<string, Float32Array>): number => {
+  const missing = new Set<string>()
+  for (const record of view.records()) {
+    if (record.archived || vectors.has(record.contentHash)) continue
+    if (vectorTextOf(record) !== "") missing.add(record.contentHash)
+  }
+  return missing.size
+}
+
+/** The embedder's traffic, which the deadline, the late embeds, and the warmup read and move. */
+interface EmbedActivity {
+  inFlight: number
+  /** When the last embed ended, success or failure; `null` before the first. */
+  lastEndedAt: number | null
+  timeouts: number
+  lateKept: number
+  lateStopped: number
+  lateInFlight: number
+  warmups: number
+  warmupFailures: number
+  lastWarmupMs: number | null
 }
 
 /** What identifies one version of the cache file: a rename into place changes the inode, a rewrite the mtime. */
@@ -344,8 +436,45 @@ export const startHeadServer = (
     const root = input.root
     const socket = headSocketPath(root)
     const pollMs = input.pollMs ?? DEFAULT_POLL_MS
-    const embedder: EmbedderShape = input.embedder ?? { document: undefined, query: undefined }
-    const embedderOn = embedder.document !== undefined || embedder.query !== undefined
+    const bound: EmbedderShape = input.embedder ?? { document: undefined, query: undefined }
+    const embedderOn = bound.document !== undefined || bound.query !== undefined
+    const deadlineMs = input.embedDeadlineMs ?? EMBED_DEADLINE_DEFAULT_MS
+    const warmIdleMs = input.warmIdleMs ?? EMBED_WARM_IDLE_DEFAULT_MS
+    const activity: EmbedActivity = {
+      inFlight: 0,
+      lastEndedAt: null,
+      timeouts: 0,
+      lateKept: 0,
+      lateStopped: 0,
+      lateInFlight: 0,
+      warmups: 0,
+      warmupFailures: 0,
+      lastWarmupMs: null
+    }
+    /** One embed call, counted in flight while it runs and moving the idle clock when it ends. */
+    const tracked = <A>(
+      call: Effect.Effect<A, ModelUnavailable>
+    ): Effect.Effect<A, ModelUnavailable> =>
+      Effect.suspend(() => {
+        activity.inFlight += 1
+        return call.pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              activity.inFlight -= 1
+              activity.lastEndedAt = Date.now()
+            })
+          )
+        )
+      })
+    const trackedDocument = (port: EmbedPort | undefined): EmbedPort | undefined =>
+      port === undefined ? undefined : { embed: (texts) => tracked(port.embed(texts)) }
+    const trackedQuery = (port: QueryEmbedPort | undefined): QueryEmbedPort | undefined =>
+      port === undefined ? undefined : { embedQuery: (text) => tracked(port.embedQuery(text)) }
+    // Every embed the routes make goes through these, so the idle clock sees all of them.
+    const embedder: EmbedderShape = {
+      document: trackedDocument(bound.document),
+      query: trackedQuery(bound.query)
+    }
     const ref = yield* followedRef(root, input.ref)
     const git = makeGit(root)
 
@@ -379,6 +508,25 @@ export const startHeadServer = (
       mtime: null,
       loads: 0
     }
+    const backfill: Backfill = {
+      running: false,
+      again: false,
+      embedded: 0,
+      batches: 0,
+      failures: 0,
+      lastError: null,
+      lastMs: null,
+      lastAt: null
+    }
+    const backfillStatus = () => ({
+      running: backfill.running,
+      embedded: backfill.embedded,
+      batches: backfill.batches,
+      failures: backfill.failures,
+      lastError: backfill.lastError,
+      lastMs: backfill.lastMs,
+      lastAt: backfill.lastAt === null ? null : new Date(backfill.lastAt).toISOString()
+    })
     const vectorStatus = (): VectorCacheStatus => {
       const read = vectors.read
       return read.ok
@@ -391,7 +539,9 @@ export const startHeadServer = (
             coverage: coverageOf(state.version, read.cache.vectors),
             loadMs: read.loadMs,
             mtime: vectors.mtime,
-            loads: vectors.loads
+            loads: vectors.loads,
+            pending: pendingOf(state.version, read.cache.vectors),
+            backfill: backfillStatus()
           }
         : {
             held: false,
@@ -402,9 +552,25 @@ export const startHeadServer = (
             coverage: null,
             loadMs: read.use.loadMs,
             mtime: vectors.mtime,
-            loads: vectors.loads
+            loads: vectors.loads,
+            pending: null,
+            backfill: backfillStatus()
           }
     }
+    const embedStatus = (): EmbedActivityStatus => ({
+      deadlineMs: deadlineMs > 0 ? deadlineMs : null,
+      warmIdleMs: warmIdleMs > 0 && embedder.query !== undefined ? warmIdleMs : null,
+      inFlight: activity.inFlight,
+      lastEmbedAt:
+        activity.lastEndedAt === null ? null : new Date(activity.lastEndedAt).toISOString(),
+      timeouts: activity.timeouts,
+      lateKept: activity.lateKept,
+      lateStopped: activity.lateStopped,
+      lateInFlight: activity.lateInFlight,
+      warmups: activity.warmups,
+      warmupFailures: activity.warmupFailures,
+      lastWarmupMs: activity.lastWarmupMs
+    })
     const stats = (): HeadServerStatus => ({
       protocol: HEAD_PROTOCOL,
       pid: process.pid,
@@ -423,6 +589,7 @@ export const startHeadServer = (
       pollMs,
       startedAt: new Date(startedAt).toISOString(),
       vectors: vectorStatus(),
+      embed: embedStatus(),
       exec: pool.stats()
     })
 
@@ -460,6 +627,44 @@ export const startHeadServer = (
       )
     })
 
+    /**
+     * A query embed still running at its deadline: left to finish in a fiber of the server's scope
+     * while fewer than {@link LATE_EMBEDS_MAX} are, else interrupted. Either way this returns without
+     * waiting on the embed; closing the scope interrupts one that is finishing.
+     */
+    const late: LateEmbed = (embed) =>
+      Effect.gen(function* () {
+        if (activity.lateInFlight >= LATE_EMBEDS_MAX) {
+          activity.lateStopped += 1
+          yield* Effect.forkDetach(Fiber.interrupt(embed), { startImmediately: true })
+          yield* Effect.logDebug(
+            `head serve: a late query embed was stopped; ${String(activity.lateInFlight)} already finishing`
+          )
+          return "stopped" as const
+        }
+        activity.lateInFlight += 1
+        activity.lateKept += 1
+        const kept = Date.now()
+        yield* Fiber.await(embed).pipe(
+          Effect.tap((exit) =>
+            Effect.logDebug(
+              `head serve: a late query embed ${Exit.isSuccess(exit) ? "finished" : "failed"} ${String(Date.now() - kept)} ms after its deadline`
+            )
+          ),
+          Effect.ensuring(
+            Fiber.interrupt(embed).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  activity.lateInFlight -= 1
+                })
+              )
+            )
+          ),
+          Effect.forkIn(scope, { startImmediately: true })
+        )
+        return "kept" as const
+      })
+
     /** The held cache as an answer hands it on: `loadMs` 0, because the answer read no file. */
     const servedVectors: Effect.Effect<CacheRead> = heldVectors.pipe(
       Effect.map(
@@ -469,6 +674,118 @@ export const startHeadServer = (
             : { ok: false, use: { ...read.use, loadMs: read.use.loadMs === null ? null : 0 } }
       )
     )
+
+    /**
+     * The background fill: embed the held version's active records whose content hash the held
+     * cache lacks, {@link BACKFILL_BATCH_MAX} at a time, and write them to the cache file the way
+     * `head embed` does, so the file and the held cache agree and a restart keeps them. It runs only
+     * with a document embedder and a held cache (a store nobody embedded is `head embed`'s to fill,
+     * not a background job's), one pass at a time; a trigger during a pass asks for one more, so
+     * concurrent advances never embed a hash twice. Nothing waits on it: a search uses whatever the
+     * held cache has when it asks. A failed batch is logged and counted, and the next trigger (the
+     * next advance, or the warmup timer's next tick) tries again.
+     *
+     * The batch is embedded with no lock held. Landing it takes the cache permit: the file is
+     * `stat`ed and read again when it changed meanwhile (a `head embed` beside the server), the new
+     * vectors are added to what is held, and the file is written and its identity recorded, so the
+     * server does not read back the file it just wrote.
+     */
+    const fillPass: Effect.Effect<"done" | "more"> = Effect.gen(function* () {
+      const port = embedder.document
+      if (port === undefined) return "done"
+      const held = yield* heldVectors
+      if (!held.ok) return "done"
+      const version = state.version
+      const started = Date.now()
+      const filled = yield* Effect.result(
+        fillVectors({ view: version, cache: held.cache, embedder: port, limit: BACKFILL_BATCH_MAX })
+      )
+      if (filled._tag === "Failure") {
+        backfill.failures += 1
+        backfill.lastError = filled.failure.reason
+        yield* Effect.logWarning(
+          `head serve: filling vectors for ${version.sha} failed (${filled.failure.reason}); trying again on the next advance or warmup`
+        )
+        return "done"
+      }
+      const { counts, remaining } = filled.success
+      if (counts.embedded === 0) return "done"
+      const landed = yield* vectorLock
+        .withPermits(1)(
+          Effect.gen(function* () {
+            const seen = yield* stampOf(vectorsPath)
+            let base = vectors.read
+            if ((seen?.stamp ?? null) !== vectors.stamp) {
+              base = yield* loadForSearch(root)
+              vectors.loads += seen === null ? 0 : 1
+            }
+            // A file removed or refused meanwhile was the operator's doing; the fill does not recreate it.
+            if (!base.ok) {
+              vectors.read = base
+              vectors.stamp = seen?.stamp ?? null
+              vectors.mtime = seen?.mtime ?? null
+              return false
+            }
+            const merged = new Map(base.cache.vectors)
+            for (const [hash, vector] of filled.success.cache.vectors) {
+              if (!merged.has(hash)) merged.set(hash, vector)
+            }
+            const next = { space: base.cache.space, vectors: merged }
+            yield* ensureExcludedQuietly(root, [`${VECTORS_DIR}/`])
+            yield* writeVectorCache({ stored: next, path: vectorsPath })
+            const written = yield* stampOf(vectorsPath)
+            vectors.read = { ok: true, cache: next, loadMs: base.loadMs }
+            vectors.stamp = written?.stamp ?? null
+            vectors.mtime = written?.mtime ?? null
+            return true
+          })
+        )
+        .pipe(
+          Effect.catch((failure) =>
+            Effect.sync(() => {
+              backfill.failures += 1
+              backfill.lastError = `writing the cache failed (${failure.operation})`
+              return false
+            })
+          )
+        )
+      if (!landed) return "done"
+      backfill.embedded += counts.embedded
+      backfill.batches += 1
+      backfill.lastMs = Date.now() - started
+      backfill.lastAt = Date.now()
+      backfill.lastError = null
+      yield* Effect.logInfo(
+        `head serve: filled ${String(counts.embedded)} vectors for ${version.sha} in ${String(backfill.lastMs)} ms${remaining > 0 ? `, ${String(remaining)} to go` : ""}`
+      )
+      return remaining > 0 ? "more" : "done"
+    })
+
+    /** Start a fill in the server's scope, or ask the running one for another pass. Never waits. */
+    const startBackfill: Effect.Effect<void> = Effect.suspend(() => {
+      if (embedder.document === undefined) return Effect.void
+      if (backfill.running) {
+        backfill.again = true
+        return Effect.void
+      }
+      backfill.running = true
+      const passes: Effect.Effect<void> = Effect.gen(function* () {
+        while (true) {
+          backfill.again = false
+          const outcome = yield* fillPass
+          if (outcome === "done" && !backfill.again) return
+        }
+      })
+      return passes.pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            backfill.running = false
+          })
+        ),
+        Effect.forkIn(scope),
+        Effect.asVoid
+      )
+    })
 
     /** The advanced version's snapshot, in the background, unless one is already on disk. */
     const cache = (version: HeadVersion): Effect.Effect<void> =>
@@ -508,6 +825,7 @@ export const startHeadServer = (
           `head serve: ${ref} advanced to ${now} in ${String(state.lastAdvanceMs)} ms (${String(next.size)} records)`
         )
         yield* cache(next)
+        yield* startBackfill
         return next
       })
     )
@@ -729,18 +1047,22 @@ export const startHeadServer = (
         return json(stats())
       }
       if (route === `POST ${HEAD_ROUTES.search}`) {
-        const body = yield* HttpServerRequest.schemaBodyJson(SearchRequest, {
-          onExcessProperty: "error"
-        })
+        const { embedDeadlineMs, ...body } = yield* HttpServerRequest.schemaBodyJson(
+          SearchRequest,
+          { onExcessProperty: "error" }
+        )
         const version = yield* fresh
         const arm = yield* vectorsForQuery({
           cache: servedVectors,
           view: version,
           query: body.query,
-          embedder
+          embedder,
+          deadlineMs: embedDeadlineMs ?? deadlineMs,
+          late
         })
+        if (arm.use.reason === "embed-timeout") activity.timeouts += 1
         const started = performance.now()
-        // The decoded body IS `searchHead`'s input, passed whole, plus the arm's two inputs.
+        // The rest of the decoded body IS `searchHead`'s input, passed whole, plus the arm's inputs.
         const hits = searchHead(version, { ...body, ...arm.search })
         const searchMs = Math.round((performance.now() - started) * 100) / 100
         return json({ query: body.query, hits, vector: arm.use, searchMs, head: served(version) })
@@ -837,6 +1159,9 @@ export const startHeadServer = (
     )
     yield* attemptIo("head.serve.chmod", () => chmod(socket, 0o600))
     yield* HttpServer.serveEffect(app).pipe(Effect.provideContext(context))
+    // The version it loaded may already hold records the cache lacks (commits since the last
+    // `head embed`); the first pass fills them in the background.
+    yield* startBackfill
 
     if (pollMs > 0) {
       yield* fresh.pipe(
@@ -847,6 +1172,44 @@ export const startHeadServer = (
         Effect.repeat(Schedule.spaced(Duration.millis(pollMs))),
         Effect.forkIn(scope)
       )
+    }
+
+    /**
+     * The warmup: one one-token query embed whenever none has ended for `warmIdleMs` and none is in
+     * flight, and only while the arm could run (an embedder and a held cache), so a store nobody
+     * embedded pays nothing. The first runs as soon as the server listens, since no embed has
+     * happened yet. It sleeps until the idle clock would pass `warmIdleMs`, and looks again when an
+     * embed that was in flight moved the clock while it slept.
+     */
+    const query = embedder.query
+    if (warmIdleMs > 0 && query !== undefined) {
+      const warm = Effect.gen(function* () {
+        // A fill whose last batch failed is tried again on each tick, which is at most one a second.
+        if (backfill.lastError !== null) yield* startBackfill
+        const idleFor =
+          activity.lastEndedAt === null
+            ? Number.POSITIVE_INFINITY
+            : Date.now() - activity.lastEndedAt
+        if (idleFor < warmIdleMs) {
+          yield* Effect.sleep(Duration.millis(warmIdleMs - idleFor))
+          return
+        }
+        if (activity.inFlight > 0 || !vectors.read.ok) {
+          yield* Effect.sleep(Duration.millis(Math.min(warmIdleMs, WARM_RECHECK_MS)))
+          return
+        }
+        const started = Date.now()
+        const warmed = yield* Effect.result(query.embedQuery(WARMUP_TEXT))
+        activity.lastWarmupMs = Date.now() - started
+        if (warmed._tag === "Success") activity.warmups += 1
+        else activity.warmupFailures += 1
+        yield* Effect.logDebug(
+          warmed._tag === "Success"
+            ? `head serve: warmed the embed path in ${String(activity.lastWarmupMs)} ms after ${idleFor === Number.POSITIVE_INFINITY ? "start" : `${String(idleFor)} ms idle`}`
+            : `head serve: warming the embed path failed in ${String(activity.lastWarmupMs)} ms (${warmed.failure.reason})`
+        )
+      })
+      yield* warm.pipe(Effect.forever, Effect.forkIn(scope))
     }
 
     return { socket, ref, held: () => state.version, stats }

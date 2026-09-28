@@ -37,18 +37,55 @@ export const headSocketPath = (root: string): string => join(root, HEAD_SOCKET)
 export const SOCKET_PATH_MAX = 107
 
 // ---------------------------------------------------------------------------------------------
+// The embed path
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * How long a search waits for its query embed by default, in milliseconds. Sized for the fleet's
+ * pre-turn lookup, which gives the socket 0.8 s of a 1.5 s budget: embeds through the proxy measured
+ * 171 ms at p50 and 458 ms at p95 on 2026-09-28, and the one in the incident this bound answers took
+ * 741 ms, so 450 ms keeps about 19 embeds in 20 and leaves the rest of the 0.8 s for the round trip
+ * and the fold.
+ */
+export const EMBED_DEADLINE_DEFAULT_MS = 450
+
+/**
+ * The variable that overrides {@link EMBED_DEADLINE_DEFAULT_MS}: a whole number of milliseconds, `0`
+ * for no deadline. Read by `head search` and by `head serve`, where a request's `embedDeadlineMs`
+ * wins over it.
+ */
+export const EMBED_DEADLINE_VAR = "MEMHTML_EMBED_DEADLINE_MS"
+
+/**
+ * How long without an embed before the server warms the embed path, in milliseconds. A judgment,
+ * not a measured cliff: probed 2026-09-28 through the bedrock-lanes agentgateway, no idle gap up to
+ * 900 s made the next embed slower (`docs/v2-poc.md`, "Keeping the embed path warm"), so 45 s is
+ * short enough that a pool with an idle timeout of a minute or more never idles out between warmups.
+ */
+export const EMBED_WARM_IDLE_DEFAULT_MS = 45_000
+
+/** The variable that overrides {@link EMBED_WARM_IDLE_DEFAULT_MS}; `0` turns the warmup off. */
+export const EMBED_WARM_IDLE_VAR = "MEMHTML_EMBED_WARM_IDLE_MS"
+
+// ---------------------------------------------------------------------------------------------
 // Requests
 // ---------------------------------------------------------------------------------------------
 
 /**
- * `POST /v1/search`: exactly the input object `searchHead` takes, passed through whole. An option
- * `searchHead` gains later is one more optional field here and on the client, and the route, the
- * body's shape, and every older field stay as they are.
+ * `POST /v1/search`: the input object `searchHead` takes, passed through whole, plus
+ * `embedDeadlineMs`, the one field the server reads itself: how long this answer may wait for its
+ * query embed, in milliseconds, `0` for no bound. Absent, the server's own deadline applies
+ * (`MEMHTML_EMBED_DEADLINE_MS` in the server's environment, else {@link EMBED_DEADLINE_DEFAULT_MS}). An option `searchHead` gains later is one more optional
+ * field here and on the client, and the route, the body's shape, and every older field stay as
+ * they are.
  */
 export const SearchRequest = Schema.Struct({
   query: Schema.String,
   limit: Schema.optionalKey(Schema.Int),
-  now: Schema.optionalKey(Schema.String)
+  now: Schema.optionalKey(Schema.String),
+  embedDeadlineMs: Schema.optionalKey(
+    Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 600_000 }))
+  )
 })
 export type SearchRequest = typeof SearchRequest.Type
 
@@ -190,7 +227,8 @@ const VectorSkipReasonSchema = Schema.Literals([
   "embedder-off",
   "no-cache",
   "cache-unreadable",
-  "embed-failed"
+  "embed-failed",
+  "embed-timeout"
 ])
 
 /** The vector arm's report on one answer, the `vector` field local `head search` returns (`VectorUse`). */
@@ -205,10 +243,33 @@ export const VectorUseSchema = Schema.Struct({
 })
 
 /**
+ * What the server's background fill of the vector cache has done: whether one is running, the
+ * records it embedded and the batches it sent, its failures with the latest one's reason, and the
+ * latest batch's time and instant. A failed batch is tried again on the next advance or warmup tick.
+ */
+export const VectorBackfillStatus = Schema.Struct({
+  running: Schema.Boolean,
+  embedded: Schema.Finite,
+  batches: Schema.Finite,
+  failures: Schema.Finite,
+  lastError: Schema.NullOr(Schema.String),
+  lastMs: Schema.NullOr(Schema.Finite),
+  lastAt: Schema.NullOr(Schema.String)
+})
+
+/**
+ * The most records one background fill batch embeds: Cohere's per-request ceiling, so a batch is
+ * one request. A landing that brings more is filled a batch at a time, one after another.
+ */
+export const BACKFILL_BATCH_MAX = 96
+
+/**
  * The vector cache a server holds, for `status`: its entries, the share of the held version's
  * active records they cover, what reading it took, and the file's mtime; or, with `held: false`,
  * why there is none (`embedder-off`, `no-cache`, `cache-unreadable` with the reader's refusal in
- * `detail`). `loads` counts reads of the file: one at start, one per change of its mtime.
+ * `detail`). `loads` counts reads of the file: one at start, one per change of its mtime. `pending`
+ * is the distinct article texts of the held version's active records that have no vector yet
+ * (`null` with no cache held), which the background fill (`backfill`) works down.
  */
 export const VectorCacheStatus = Schema.Struct({
   held: Schema.Boolean,
@@ -219,7 +280,9 @@ export const VectorCacheStatus = Schema.Struct({
   coverage: Schema.NullOr(Schema.Finite),
   loadMs: Schema.NullOr(Schema.Finite),
   mtime: Schema.NullOr(Schema.String),
-  loads: Schema.Finite
+  loads: Schema.Finite,
+  pending: Schema.NullOr(Schema.Finite),
+  backfill: VectorBackfillStatus
 })
 export type VectorCacheStatus = typeof VectorCacheStatus.Type
 
@@ -232,6 +295,37 @@ export const ExecPoolStatus = Schema.Struct({
   killed: Schema.Finite,
   jobs: Schema.Finite
 })
+
+/**
+ * The embedder's traffic as `status` reports it: the query-embed deadline the server applies to a
+ * request that names none (`null`: no bound), the idle time after which it warms the embed path
+ * (`null`: never), embeds in flight now, when the last one ended, and the counters. `timeouts` is
+ * searches that answered without the arm because the deadline passed; each such embed was either
+ * `lateKept` (left to finish in the background, at most {@link LATE_EMBEDS_MAX} at once, `lateInFlight`
+ * now) or `lateStopped` (interrupted, its request aborted). `warmups` is the one-token embeds the
+ * idle timer issued, `warmupFailures` those that failed, and `lastWarmupMs` the latest one's time.
+ */
+export const EmbedActivityStatus = Schema.Struct({
+  deadlineMs: Schema.NullOr(Schema.Finite),
+  warmIdleMs: Schema.NullOr(Schema.Finite),
+  inFlight: Schema.Finite,
+  lastEmbedAt: Schema.NullOr(Schema.String),
+  timeouts: Schema.Finite,
+  lateKept: Schema.Finite,
+  lateStopped: Schema.Finite,
+  lateInFlight: Schema.Finite,
+  warmups: Schema.Finite,
+  warmupFailures: Schema.Finite,
+  lastWarmupMs: Schema.NullOr(Schema.Finite)
+})
+export type EmbedActivityStatus = typeof EmbedActivityStatus.Type
+
+/**
+ * Query embeds a server lets run past their deadline at once. One is enough to finish the cold
+ * connection the miss was waiting on, which is what makes the next query warm; a second miss while
+ * it runs is interrupted instead, so a slow proxy can never collect a pile of background calls.
+ */
+export const LATE_EMBEDS_MAX = 1
 
 /** `GET /v1/status`. */
 export const HeadServerStatus = Schema.Struct({
@@ -259,6 +353,8 @@ export const HeadServerStatus = Schema.Struct({
   pollMs: Schema.Finite,
   startedAt: Schema.String,
   vectors: VectorCacheStatus,
+  /** The embedder's deadline, warmups, and traffic; with no embedder, zeros and nulls. */
+  embed: EmbedActivityStatus,
   /** The workers `/v1/exec` runs scripts in: how many run at once, and what they have done. */
   exec: ExecPoolStatus
 })

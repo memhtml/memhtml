@@ -16,6 +16,12 @@ import { expandRoot } from "@memhtml/store"
 import { Config } from "effect"
 
 import { EXTRACTION_MODEL_ID } from "./extraction.js"
+import {
+  EMBED_DEADLINE_DEFAULT_MS,
+  EMBED_DEADLINE_VAR,
+  EMBED_WARM_IDLE_DEFAULT_MS,
+  EMBED_WARM_IDLE_VAR
+} from "./head-protocol.js"
 import { MCP_BIN_VAR } from "./serve.js"
 
 /**
@@ -139,6 +145,16 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
     description:
       "`off` disables the embedder entirely. An explicit opt-out, distinct from a missing credential: a missing credential degrades one search at call time, `off` degrades every search, and an operator reading this manifest needs those to be different states.",
     fallback: "on"
+  },
+  {
+    name: EMBED_DEADLINE_VAR,
+    description: `How long \`head search\` waits for its query embed, in whole milliseconds; \`0\` waits as long as the embed takes. Past it the search answers from BM25 with the recency tie-break and \`vector\` reports \`used: false, reason: "embed-timeout"\`, so a slow or cold embed costs the vector arm for one answer and never the answer's time. Read by \`head search\` (locally, and sent to the server as the request's \`embedDeadlineMs\` when set) and by \`head serve\`, whose value is the deadline for a request that names none. A malformed value is refused at exit 2 naming this variable.`,
+    fallback: String(EMBED_DEADLINE_DEFAULT_MS)
+  },
+  {
+    name: EMBED_WARM_IDLE_VAR,
+    description: `Read by \`head serve\` only: after this many milliseconds with no embed ended and none in flight, the server issues one one-token query embed, so the first search after a quiet stretch finds the path through the LLM proxy to Bedrock warm. Every embed moves the clock, so a busy server never warms; \`0\` turns the warmup off. It runs only with an embedder bound and a vector cache held, and \`status\` counts it under \`embed.warmups\`. A malformed value is refused at exit 2 naming this variable.`,
+    fallback: String(EMBED_WARM_IDLE_DEFAULT_MS)
   },
   {
     name: "MEMHTML_VECTOR_COVERAGE_FLOOR",

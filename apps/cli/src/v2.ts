@@ -58,6 +58,7 @@ import {
   headGate
 } from "./head-gate.js"
 import {
+  EMBED_DEADLINE_DEFAULT_MS,
   EXEC_QUEUE_WAIT_MS,
   ExecAnswer,
   type ExecBase,
@@ -895,10 +896,15 @@ export const headStatus = (input: {
  * cache, a failed query embed) the search runs on the lexical arm alone and `vector` says why, never
  * failing the call.
  *
+ * The query embed has a deadline, `embedDeadlineMs` (`MEMHTML_EMBED_DEADLINE_MS`), else
+ * {@link EMBED_DEADLINE_DEFAULT_MS}; past it the search answers on the lexical arm and `vector`
+ * says `embed-timeout`. Locally the late embed is stopped, since the process exits after the answer.
+ *
  * The head server answers when one runs, over its version of its ref, with the cache it holds and
  * the embedder it bound, and the payload has the same fields either way; only `head.source` says
  * which path answered. The search input goes to the server as one object, the same object
- * `searchHead` takes, so an option it gains later travels without a protocol change.
+ * `searchHead` takes, so an option it gains later travels without a protocol change; a deadline set
+ * here travels as its `embedDeadlineMs`, and without one the server applies its own.
  */
 export const headSearch = (input: {
   readonly root: string
@@ -906,9 +912,10 @@ export const headSearch = (input: {
   readonly limit?: number | undefined
   readonly embedder: EmbedderShape
   readonly server?: boolean | undefined
+  readonly embedDeadlineMs?: number | undefined
 }) =>
   Effect.gen(function* () {
-    const search: SearchRequest = {
+    const search: Omit<SearchRequest, "embedDeadlineMs"> = {
       query: input.query,
       ...(input.limit === undefined ? {} : { limit: input.limit })
     }
@@ -917,7 +924,10 @@ export const headSearch = (input: {
         root: input.root,
         route: "search",
         schema: SearchAnswer,
-        body: search
+        body: {
+          ...search,
+          ...(input.embedDeadlineMs === undefined ? {} : { embedDeadlineMs: input.embedDeadlineMs })
+        }
       })
       if (answered !== null) {
         const { vector, searchMs } = answered.data
@@ -937,7 +947,8 @@ export const headSearch = (input: {
       cache: loadForSearch(input.root),
       view: head.view,
       query: input.query,
-      embedder: input.embedder
+      embedder: input.embedder,
+      deadlineMs: input.embedDeadlineMs ?? EMBED_DEADLINE_DEFAULT_MS
     })
     const started = performance.now()
     const hits: ReadonlyArray<SearchHit> = searchHead(head.view, { ...search, ...arm.search })
@@ -1379,6 +1390,11 @@ export interface V2Input {
   readonly embedder: EmbedderShape
   /** False under `--no-server`: `head status`, `head search`, and `session put` load locally. */
   readonly server: boolean
+  /**
+   * `head search`'s query-embed deadline from `MEMHTML_EMBED_DEADLINE_MS`, `0` for none; absent when
+   * the variable is unset, which is the local default and the server's own deadline.
+   */
+  readonly embedDeadlineMs?: number | undefined
 }
 
 /** One arm per command, each returning its response type beside its payload. */
