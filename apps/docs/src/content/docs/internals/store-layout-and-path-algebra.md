@@ -25,18 +25,17 @@ A workspace is a directory and nothing else. There is no workspaces table, so cr
 
 ## 2. Placement is a pure total function
 
-`placementFor` (`packages/contracts/src/paths.ts:145`) applies six rules in order:
+`placementFor` (`packages/contracts/src/paths.ts`) applies five rules in order:
 
 1. an explicit valid path;
 2. an `arc` goes to `areas/arcs`;
-3. a `task` is placed by workspace alone, before the person and topic rules run, so a task about a person does not land in the durable identity surface (`packages/contracts/src/paths.ts:158-162`);
-4. a `person:` entity on a `semantic` memory goes to `resources/people`;
-5. a named workspace goes to `projects/<slug>`;
-6. a `semantic`, `procedural`, or `precedent` memory with a primary tag goes to `resources/<tag>`.
+3. a `task` is placed by workspace alone, before the topic rule runs;
+4. a named workspace goes to `projects/<slug>`;
+5. a `semantic`, `procedural`, or `precedent` memory with a primary tag goes to `resources/<tag>`, unless that tag slugs to `people`.
 
-Anything remaining goes to `areas/inbox`. The function always returns a directory rooted in a bucket, so the write path never guesses twice and never fails to place a memory.
+Anything remaining goes to `areas/inbox`. No rule routes into `resources/people`. A `person:` entity says who a record is about, and the record still files by its workspace or topic. A person record is at `resources/people/<person>.html` only because curation wrote it at that explicit path; in a session outside the `curate` scope that path is reserved. Until 2026-09-28 a `person:` entity on a `semantic` memory routed it there, so a fleet agent's fact that mentioned a colleague was refused as a reserved path. The function always returns a directory rooted in a bucket, so the write path never guesses twice and never fails to place a memory.
 
-Rule 1 reads "an explicit **valid** path", and the validity clause is where a caller gets a choice. An explicit path that is not a usable memory path — not rooted in a bucket, not ending in `.html`, or carrying a `.` or `..` segment — is re-derived through the five rules below it, so the write succeeds at a path the caller did not name and the response reports that other path as the outcome. `memoryPathViolation` (`packages/contracts/src/paths.ts`) is the rule and its explanation in one function, and `isValidMemoryPath` is the same question asked as a boolean, so a refusal's reason cannot name a clause the predicate does not check.
+Rule 1 reads "an explicit **valid** path", and the validity clause is where a caller gets a choice. An explicit path that is not a usable memory path — not rooted in a bucket, not ending in `.html`, or carrying a `.` or `..` segment — is re-derived through the rules below it, so the write succeeds at a path the caller did not name and the response reports that other path as the outcome. `memoryPathViolation` (`packages/contracts/src/paths.ts`) is the rule and its explanation in one function, and `isValidMemoryPath` is the same question asked as a boolean, so a refusal's reason cannot name a clause the predicate does not check.
 
 `--strict-path` on `memhtml write`, `strict_path` on `memory_write` and on each `memory_write_batch` op, and `strict_path` on a `memhtml apply` line make that re-derivation a refusal instead: `ERR_INVALID_MEMORY`, naming the clause the path broke, with nothing written, staged, or committed. It is opt-in because the lenient branch is shipped behavior, and it matters to a caller that computes its paths — which is how a consumer models its own document types on top of the open axes. The refusal is `strictPathRefusal` in `@memhtml/store`, and it runs ahead of both the render gate and the dedupe question in `writeMemory`, in each batch op's validation, and in `correctMemory`. That ordering is the contract: a strict check placed after the dedupe question would answer "deduped, at some other path" for content the store already holds and "refused" for content it does not, so identical malformed input would report two different outcomes and only one of them would mention the path.
 

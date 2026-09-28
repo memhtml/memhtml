@@ -1342,12 +1342,19 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         description:
           "The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer. When HEAD is the session's ref, the shared index and working tree move to the new commit with it (`worktreeSynced: true`); uncommitted state at a path the commit writes or removes is answered `worktree-dirty` and nothing moves. A ref that moved past the session's base is `rebase-needed`: run `session rebase` and commit again. A `committed` outcome also writes the new commit's snapshot (`snapshot`: path, bytes, ms, pruned; null when that best-effort write failed), so the next load hits the cache.",
         required: true
+      },
+      {
+        name: "drop-refused",
+        type: "boolean",
+        description:
+          "On a `refused` outcome, drop every op that touches a path a violation names, record each in `.memhtml/sessions/<id>.dropped.jsonl`, and commit the rest; repeat until the commit is clean or nothing is left. `dropped` lists each removed op with its reasons. A batch-cap refusal names no path, so it is never dropped. Meant for a runtime's end-of-run commit, where there is no agent turn left to fix a line: an agent in a turn should read the refusal and rewrite the line instead."
       }
     ],
     responseTypes: ["session.committed"],
     examples: [
       "memhtml session commit --id s1 --message 'three facts about the checkout api'",
-      "memhtml session commit --id curate-2026-09-23 --message 'curated'"
+      "memhtml session commit --id curate-2026-09-23 --message 'curated'",
+      "memhtml session commit --id run-42 --message 'run 42' --drop-refused"
     ]
   },
   {

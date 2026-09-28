@@ -1,5 +1,5 @@
 import { filenameFor, slugify } from "./slug.js"
-import { isPersonEntity, PARA_BUCKETS, type ParaBucket } from "./types.js"
+import { PARA_BUCKETS, type ParaBucket } from "./types.js"
 
 /**
  * Path algebra. Every function here is pure and total, and a path is always the
@@ -9,7 +9,10 @@ import { isPersonEntity, PARA_BUCKETS, type ParaBucket } from "./types.js"
 /** Behavioral arcs. Under `areas/` because PARA is fixed at four buckets. */
 export const ARCS_DIR = "areas/arcs"
 
-/** The person plane, folded into `resources/` rather than given its own bucket. */
+/**
+ * The person plane, folded into `resources/` rather than given its own bucket. Placement never
+ * routes here: a person record is written at an explicit path by curation ({@link placementFor}).
+ */
 export const PEOPLE_DIR = "resources/people"
 
 /**
@@ -127,8 +130,8 @@ export interface PlacementInput {
 const RESOURCE_TYPES: ReadonlyArray<string> = ["semantic", "procedural", "precedent"]
 
 /**
- * The directory a memory belongs in, following design §2.1's six rules in order, with the
- * `task` rule sitting between the arc rule and the person rule. Total: it always returns a
+ * The directory a memory belongs in, following design §2.1's five rules in order (explicit path,
+ * arc, task, workspace, primary tag), else the inbox. Total: it always returns a
  * directory rooted in a PARA bucket, so the write path never guesses twice and never fails.
  *
  * Returns the *directory*, not the full path, because the filename needs a title this input
@@ -151,9 +154,8 @@ export const placementFor = (input: PlacementInput): string => {
   if (input.memoryType === "arc") return ARCS_DIR
 
   /**
-   * A task routes by workspace alone, before the person and topic rules. A task about a person
-   * is still a task, and routing it to `resources/people/` would put working state in the
-   * durable identity surface. A task carries no topic, so the tag rule has nothing to read.
+   * A task routes by workspace alone, before the topic rule. A task carries no topic, so the tag
+   * rule has nothing to read, and a task about a person is still a task, never an identity record.
    */
   if (input.memoryType === "task") {
     return input.workspace !== undefined && input.workspace !== ""
@@ -162,21 +164,23 @@ export const placementFor = (input: PlacementInput): string => {
   }
 
   /**
-   * `isPersonEntity` is the one predicate that decides personhood, so a `person:` prefix whose
-   * name is empty or only whitespace is not a person here either and cannot route a memory into
-   * `resources/people/`. That is the same filter the tag rule below applies, and the same one the
-   * sleep phase that mints the person file applies, so the three cannot disagree on a boundary.
+   * No rule here routes into `resources/people/`. A `person:` entity says who a record is about,
+   * and a fact about a person is still a fact about its project or topic, so it files by the rules
+   * below. A person record (the one identity file per person) is a place, not a type: it exists at
+   * `resources/people/<person>.html` because a curator wrote it there with an explicit path under
+   * the `curate` scope, the only scope that may. Until 2026-09-28 a `semantic` record naming any
+   * person was routed there, and inside a run that path is reserved, so a fleet agent's fact that
+   * mentioned a colleague was refused with nothing it could fix.
    */
-  const namesPerson = (input.entities ?? []).some(isPersonEntity)
-  if (namesPerson && input.memoryType === "semantic") return PEOPLE_DIR
-
   if (input.workspace !== undefined && input.workspace !== "") {
     return `projects/${slugify(input.workspace)}`
   }
 
   const primaryTag = (input.tags ?? []).find((tag) => tag.trim() !== "")
   if (RESOURCE_TYPES.includes(input.memoryType) && primaryTag !== undefined) {
-    return `resources/${slugify(primaryTag)}`
+    const topic = `resources/${slugify(primaryTag)}`
+    // A tag that slugs to `people` names the person plane, which no rule routes into.
+    if (topic !== PEOPLE_DIR) return topic
   }
 
   return INBOX_DIR

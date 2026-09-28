@@ -188,11 +188,9 @@ export const PERSON_ENTITY_PREFIX = `person${ENTITY_SEPARATOR}`
  * True when an entity reference names a person: the `person:` prefix plus a name that survives
  * `trim()`.
  *
- * The trim is what makes this predicate agree with the rest of the person plane. `placementFor`
- * routes on it, and the sleep phase that mints the person file and its `memhtml-about-person`
- * links keys on `entity_name.trim() !== ""`. A whitespace-only name accepted here would land a
- * memory in `resources/people/` that no phase will ever give a person file to link at — and
- * `slugify` maps that name to `untitled`, which names nobody.
+ * The trim keeps a whitespace-only name from counting as a person anywhere the predicate is asked:
+ * `slugify` maps such a name to `untitled`, which names nobody. Placement does not ask it; a person
+ * entity no longer moves a record into `resources/people/` (see `placementFor`).
  */
 export const isPersonEntity = (entity: string): boolean =>
   entity.startsWith(PERSON_ENTITY_PREFIX) && entity.slice(PERSON_ENTITY_PREFIX.length).trim() !== ""

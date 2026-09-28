@@ -33,7 +33,7 @@ Nothing closes the type half. The write-time extraction assist offers seven type
 
 **Three type names are reserved, because the projection MINTS rows under them from the article rather than from a meta** (`entityRowsFor`, `packages/index/src/project.ts:321-338`). `concept:<term>` comes from every `<dfn>`, so a defined term is findable by the term. `lang:<value>` comes from every `<code data-lang>`, so a memory holding a SQL fence carries `lang:sql` whether or not it is about SQL — model your own language topic under a type of your own, or `--entity lang:sql` returns a superset the rows cannot report. And `unknown:` is the fallback for a reference with no type half at all, which also makes it what `memhtml doctor` samples as `untypedEntities` (`apps/cli/src/doctor.ts:347`): a reference you deliberately type `unknown` is reported as a reference missing its type, because the two are byte-identical in `file_entities`.
 
-**`person:` is read by placement.** Placement routes a `semantic` memory naming a person to `resources/people` (`packages/contracts/src/paths.ts:164-171`, through `isPersonEntity` at `packages/contracts/src/types.ts:173`, which compares the prefix exactly and so is case-sensitive). Every other type is stored, indexed, and filterable, and read by nothing.
+**No type is read by placement.** Until 2026-09-28 placement routed a `semantic` memory naming a `person:` to `resources/people`; it no longer does, because a person record is written at an explicit path by curation. Every type is stored, indexed, and filterable. `isPersonEntity` (`packages/contracts/src/types.ts`) still compares the `person:` prefix exactly, so it's case-sensitive.
 
 ### Workspace: an open string
 

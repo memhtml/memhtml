@@ -968,7 +968,8 @@ export const startHeadServer = (
             script: body.script,
             lang: body.lang,
             timeoutMs: body.timeoutMs,
-            runtime: { runner: pool.runner(EXEC_QUEUE_WAIT_MS), baseImage: imageFor(base.version) }
+            runtime: { runner: pool.runner(EXEC_QUEUE_WAIT_MS), baseImage: imageFor(base.version) },
+            runBound: body.runBound === true
           })
           return {
             served: true,
@@ -1085,7 +1086,8 @@ export const startHeadServer = (
           lines: body.lines,
           at: body.at,
           cache: servedVectors,
-          embedder
+          embedder,
+          runBound: body.runBound === true
         })
         return json({ ...prepared, head: served(version) })
       }

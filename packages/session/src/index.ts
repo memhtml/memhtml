@@ -25,6 +25,7 @@ export {
   isSessionId,
   LOG_MOVED,
   rebaseSession,
+  replaceOps,
   resumeSession,
   SESSION_ID,
   SESSIONS_DIR,

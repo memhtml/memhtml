@@ -329,6 +329,25 @@ export const saveSession = (session: Session): Effect.Effect<void, StorageFailur
     requireLogUnmoved(session).pipe(Effect.andThen(writeState(session)))
   )
 
+/**
+ * Replace the overlay log's ops with `ops`, keeping the base and the ref. The one way ops leave a log
+ * short of a commit: `session commit --drop-refused` takes out the ops a rebase revealed as
+ * unlandable (a `duplicate` or a `claim-edit` against what `main` gained meanwhile) so the rest can
+ * land. Refused with {@link LOG_MOVED}, like every other log write, when the log is no longer the
+ * one `session` was read from, so a put or exec that landed meanwhile is never lost.
+ */
+export const replaceOps = (
+  session: Session,
+  ops: ReadonlyArray<OverlayOp>
+): Effect.Effect<Session, StorageFailure> => {
+  const next: Session = { ...session, ops: [...ops] }
+  return withSessionLock(
+    session.root,
+    session.id,
+    requireLogUnmoved(session).pipe(Effect.andThen(writeState(next)))
+  ).pipe(Effect.as(next))
+}
+
 /** Persist under a lock the caller already holds. For `commitSession`, which holds it throughout. */
 export const saveSessionLocked = (session: Session): Effect.Effect<void, StorageFailure> =>
   writeState(session)

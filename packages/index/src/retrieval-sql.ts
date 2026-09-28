@@ -213,8 +213,8 @@ export const SALIENCE_EXCLUDED_TYPE = "task"
 /**
  * The one path prefix salience does not rank.
  *
- * There is no `person` memory type. A person file is a `semantic` record that `placementFor` routes to
- * `resources/people/` (`packages/contracts/src/paths.ts:122`), so the prefix IS the discriminator. A
+ * There is no `person` memory type. A person file is a `semantic` record curation writes at an explicit
+ * path under `resources/people/` (placement never routes there), so the prefix IS the discriminator. A
  * reference record is reached by entity key, and decay is wrong for identity. A colleague unmentioned
  * for six months is not less themselves. Memories ABOUT a person live elsewhere and keep their
  * salience, which is the signal that answers "which five of fifty sanju-memories do we consult".

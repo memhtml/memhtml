@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises"
+import { access, appendFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import type { HeadView, OverlayOp } from "@memhtml/contracts"
@@ -28,7 +28,9 @@ import {
   LOG_MOVED,
   makePlumbing,
   rebaseSession,
+  replaceOps,
   resumeSession,
+  SESSIONS_DIR,
   type Session,
   saveSession,
   sessionStateFile,
@@ -319,6 +321,24 @@ const BLOCKING_VIOLATIONS: ReadonlySet<Violation["kind"]> = new Set([
   "write-bar"
 ])
 
+/**
+ * What blocks a put or an exec in a run-bound session (its id from `MEMHTML_SESSION`): the kinds
+ * above plus `duplicate` and `claim-edit`. Outside a run those two are reported and left to the
+ * caller, because a rebase can change the answer either way. Inside a run the caller is an agent
+ * whose session is committed for it once the run ends, and one such op in the log refused the whole
+ * commit (2026-09-28): every record the run wrote was lost for one repeated fact. So the op is
+ * refused while the agent can still read why, judged against the session's base like every other
+ * kind, and the run's log only ever holds ops that landed clean when they were written.
+ */
+const RUN_BOUND_BLOCKING_VIOLATIONS: ReadonlySet<Violation["kind"]> = new Set([
+  ...BLOCKING_VIOLATIONS,
+  "duplicate",
+  "claim-edit"
+])
+
+const blockingKinds = (runBound: boolean | undefined): ReadonlySet<Violation["kind"]> =>
+  runBound === true ? RUN_BOUND_BLOCKING_VIOLATIONS : BLOCKING_VIOLATIONS
+
 const describeViolation = (violation: Violation): string => {
   switch (violation.kind) {
     case "format":
@@ -328,9 +348,9 @@ const describeViolation = (violation: Violation): string => {
     case "batch-cap":
       return `${violation.count} ops exceeds the cap of ${violation.cap}`
     case "duplicate":
-      return `${violation.path}: duplicate of ${violation.existing}`
+      return `${violation.path}: duplicate of ${violation.existing}, which already holds this article; search before writing and skip it, or link to ${violation.existing}`
     case "claim-edit":
-      return `${violation.path}: claim edit`
+      return `${violation.path}: an active record already holds this path with a different article; a record's claim is never edited in place, so write the new fact under its own title (and link it with memhtml-supersedes when it replaces the old one)`
     case "write-bar":
       return `${violation.path}: below the write bar: ${violation.reasons.join("; ")}`
   }
@@ -484,6 +504,8 @@ export const preparePuts = (input: {
   readonly embedder: EmbedderShape
   /** The scope the session is judged under ({@link sessionScopeOf}); `session` when omitted. */
   readonly scope?: CommitScope | undefined
+  /** A run-bound session: `duplicate` and `claim-edit` block too ({@link RUN_BOUND_BLOCKING_VIOLATIONS}). */
+  readonly runBound?: boolean | undefined
 }): Effect.Effect<PreparedPuts, InvalidMemory | StorageFailure> =>
   Effect.gen(function* () {
     const view = yield* withOverlay(input.base, input.sessionOps)
@@ -512,10 +534,10 @@ export const preparePuts = (input: {
     const violations = validateOps(input.base, [...input.sessionOps, ...appended], {
       scope: input.scope ?? "session"
     })
+    const kinds = blockingKinds(input.runBound)
     const blocking = violations.filter(
       (violation) =>
-        BLOCKING_VIOLATIONS.has(violation.kind) &&
-        (violation.kind === "batch-cap" || touched.has(violation.path))
+        kinds.has(violation.kind) && (violation.kind === "batch-cap" || touched.has(violation.path))
     )
     // A blocked call appends nothing, so it pays for no embed.
     if (blocking.length > 0) {
@@ -571,6 +593,8 @@ export const sessionPut = (input: {
   readonly server?: boolean | undefined
   /** The id came from `MEMHTML_SESSION`: start the session first when it has no log ({@link ensureSession}). */
   readonly implicitStart?: boolean | undefined
+  /** The id is `MEMHTML_SESSION`'s: `duplicate` and `claim-edit` block too. */
+  readonly runBound?: boolean | undefined
 }) =>
   Effect.gen(function* () {
     const started =
@@ -589,7 +613,14 @@ export const sessionPut = (input: {
             root: input.root,
             route: "neighbors",
             schema: NeighborsAnswer,
-            body: { sha: session.baseSha, ops: session.ops, lines: input.ops, at }
+            body: {
+              sha: session.baseSha,
+              ops: session.ops,
+              lines: input.ops,
+              at,
+              // Sent only when true, so a call outside a run stays readable by an older server.
+              ...(input.runBound === true ? { runBound: true } : {})
+            }
           })
     let prepared: PreparedPuts
     let head: HeadStats
@@ -605,7 +636,8 @@ export const sessionPut = (input: {
         at,
         cache: loadForSearch(input.root),
         embedder: input.embedder,
-        scope
+        scope,
+        runBound: input.runBound
       })
       head = headStats(loaded)
     }
@@ -675,6 +707,8 @@ export const execOverHead = (input: {
   readonly lang: ExecLang
   readonly timeoutMs?: number | undefined
   readonly runtime?: SessionExecRuntime | undefined
+  /** A run-bound session: `duplicate` and `claim-edit` block the harvest too. */
+  readonly runBound?: boolean | undefined
 }): Effect.Effect<ExecOutcome, InvalidMemory | StorageFailure> =>
   Effect.gen(function* () {
     const { session } = input
@@ -690,9 +724,10 @@ export const execOverHead = (input: {
     })
     const harvested = new Set(report.ops.flatMap(touchedPaths))
     const violations = validateOps(input.base, [...session.ops, ...report.ops], { scope })
+    const kinds = blockingKinds(input.runBound)
     const blocking = violations.filter(
       (violation) =>
-        BLOCKING_VIOLATIONS.has(violation.kind) &&
+        kinds.has(violation.kind) &&
         (violation.kind === "batch-cap" || harvested.has(violation.path))
     )
     const clean = report.exitCode === 0 && blocking.length === 0
@@ -798,6 +833,8 @@ export const sessionExec = (input: {
    * session's log itself and starts nothing.
    */
   readonly implicitStart?: boolean | undefined
+  /** The id is `MEMHTML_SESSION`'s: `duplicate` and `claim-edit` block too. */
+  readonly runBound?: boolean | undefined
 }) =>
   Effect.gen(function* () {
     const started =
@@ -853,7 +890,8 @@ export const sessionExec = (input: {
       base: head.view,
       script: input.script,
       lang: input.lang,
-      timeoutMs: input.timeoutMs
+      timeoutMs: input.timeoutMs,
+      runBound: input.runBound
     })
     return { ...outcome, started, head: headStats(head), server }
   })
@@ -870,21 +908,92 @@ export const sessionCommit = (input: {
   readonly root: string
   readonly id: string
   readonly message: string
+  /** `--drop-refused`: take the ops a refusal names out of the log and commit the rest. */
+  readonly dropRefused?: boolean | undefined
 }) =>
   Effect.gen(function* () {
-    const session = yield* resumeSession({ root: input.root, id: input.id })
+    let session = yield* resumeSession({ root: input.root, id: input.id })
     const head = yield* loadHeadAt(input.root, session.baseSha)
-    const outcome: CommitOutcome = yield* commitSession({
+    const scope = sessionScopeOf(session.ref)
+    const dropped: Array<DroppedOp> = []
+    let outcome: CommitOutcome = yield* commitSession({
       session,
       head: head.view,
       message: input.message,
-      scope: sessionScopeOf(session.ref)
+      scope
     })
+    // Each round drops what the refusal names and commits again. An op that only failed because
+    // an op it depended on was dropped (a link from a dropped put) is named by the next round, so
+    // the loop ends at a clean log, an empty one, or a refusal no op carries (the batch cap).
+    while (input.dropRefused === true && outcome.kind === "refused") {
+      const round = opsToDrop(session.ops, outcome.violations)
+      if (round.drop.length === 0) break
+      dropped.push(...round.drop)
+      session = yield* replaceOps(session, round.keep)
+      yield* recordDropped(input.root, session.id, round.drop)
+      if (session.ops.length === 0) break
+      outcome = yield* commitSession({ session, head: head.view, message: input.message, scope })
+    }
     const snapshot: SnapshotWritten | null =
       outcome.kind === "committed"
         ? yield* snapshotAfterCommit(input.root, outcome.sha, head.view)
         : null
-    return { id: session.id, ref: session.ref, baseSha: session.baseSha, ...outcome, snapshot }
+    return {
+      id: session.id,
+      ref: session.ref,
+      baseSha: session.baseSha,
+      ...outcome,
+      snapshot,
+      /** The ops `--drop-refused` took out of the log, each with the reasons its violations gave. */
+      dropped
+    }
+  })
+
+/** One op `session commit --drop-refused` took out of the log, and why. */
+export interface DroppedOp {
+  readonly kind: OverlayOp["kind"]
+  readonly path: string
+  readonly reasons: ReadonlyArray<string>
+}
+
+/**
+ * The ops a refusal names, and the ops it leaves: every op that touches a path a violation names
+ * (a put, and the head ops and archives on that path), described with the violations' reasons. A
+ * violation that names no path (the batch cap) drops nothing, so the refusal stands.
+ */
+const opsToDrop = (
+  ops: ReadonlyArray<OverlayOp>,
+  violations: ReadonlyArray<Violation>
+): { readonly drop: ReadonlyArray<DroppedOp>; readonly keep: ReadonlyArray<OverlayOp> } => {
+  const reasons = new Map<string, Array<string>>()
+  for (const violation of violations) {
+    if (violation.kind === "batch-cap") continue
+    const list = reasons.get(violation.path) ?? []
+    list.push(describeViolation(violation))
+    reasons.set(violation.path, list)
+  }
+  const drop: Array<DroppedOp> = []
+  const keep: Array<OverlayOp> = []
+  for (const op of ops) {
+    const hit = touchedPaths(op).find((path) => reasons.has(path))
+    if (hit === undefined) keep.push(op)
+    else drop.push({ kind: op.kind, path: op.path, reasons: reasons.get(hit) ?? [] })
+  }
+  return { drop, keep }
+}
+
+/**
+ * Keep what `--drop-refused` took out beside the log, one JSON line per op with the instant, in
+ * `.memhtml/sessions/<id>.dropped.jsonl`, so a refused record stays inspectable after the rest of
+ * the session lands. Best-effort: the payload's `dropped` is the answer, this file is the trail.
+ */
+const recordDropped = (root: string, id: string, drop: ReadonlyArray<DroppedOp>) =>
+  Effect.promise(() => {
+    const at = new Date().toISOString()
+    const lines = drop.map((op) => `${JSON.stringify({ at, ...op })}\n`).join("")
+    return appendFile(join(root, SESSIONS_DIR, `${id}.dropped.jsonl`), lines, "utf8").catch(
+      () => undefined
+    )
   })
 
 /** `session rebase`: move the base to the ref's tip, keeping every op. Validation is the next commit's. */
@@ -1480,6 +1589,13 @@ export interface V2Input {
    * the variable is unset, which is the local default and the server's own deadline.
    */
   readonly embedDeadlineMs?: number | undefined
+  /**
+   * The id is `MEMHTML_SESSION`'s, from the line or the variable: `session put` and `session exec`
+   * block `duplicate` and `claim-edit` too ({@link RUN_BOUND_BLOCKING_VIOLATIONS}).
+   */
+  readonly runBound: boolean
+  /** `session commit --drop-refused`. */
+  readonly dropRefused: boolean
 }
 
 /** One arm per command, each returning its response type beside its payload. */
