@@ -21,6 +21,7 @@ import { renderTemplate } from "@memhtml/html"
 import {
   appendOps,
   type CommitOutcome,
+  type CommitScope,
   commitSession,
   DEFAULT_REF,
   LOG_MOVED,
@@ -389,6 +390,22 @@ export interface PreparedPuts {
 }
 
 /**
+ * The scope a session's ops are judged and committed under, from the ref it lands on.
+ *
+ * A session on `refs/heads/curate/<...>` is the curation door ("Curation door" in
+ * `docs/v2-poc.md`: a curator is a session on a curate branch working through `session put` and
+ * `session exec`), so it is judged under the `curate` scope, the scope `curate run`, `curate
+ * collapse`, and a `curate merge` replay use: `areas/arcs/` and `resources/people/` are writable and
+ * head-only edits (`label`, `link`) on the records there are admitted. Every other ref, `main`
+ * included, stays at `session`. Nothing reaches `main` from a curate ref but `curate merge`, which
+ * runs the head gate and re-judges a replay under the same scope, so the reserved paths keep their
+ * one door. Before this, a curate-branch session could not label an arc or a people record, or
+ * archive one, because the three session arms always judged under `session`.
+ */
+export const sessionScopeOf = (ref: string): CommitScope =>
+  ref.startsWith("refs/heads/curate/") ? "curate" : "session"
+
+/**
  * The head-dependent half of `session put`: place and render each write over the session's view
  * (`base` plus `sessionOps`), keep each `label` and `unlabel` line in file order beside the puts,
  * judge the whole log against `base` the way `commitSession` will, and, when nothing blocks, find
@@ -404,6 +421,8 @@ export const preparePuts = (input: {
   /** The vector cache as this caller finds it: the file's for a CLI call, the held one for the server. */
   readonly cache: Effect.Effect<CacheRead>
   readonly embedder: EmbedderShape
+  /** The scope the session is judged under ({@link sessionScopeOf}); `session` when omitted. */
+  readonly scope?: CommitScope | undefined
 }): Effect.Effect<PreparedPuts, InvalidMemory | StorageFailure> =>
   Effect.gen(function* () {
     const view = yield* withOverlay(input.base, input.sessionOps)
@@ -429,7 +448,9 @@ export const preparePuts = (input: {
       queries.push(`${write.title} ${write.claim}`)
     }
     // Judged the way `commitSession` will judge them: every op of the session against the base.
-    const violations = validateOps(input.base, [...input.sessionOps, ...appended])
+    const violations = validateOps(input.base, [...input.sessionOps, ...appended], {
+      scope: input.scope ?? "session"
+    })
     const blocking = violations.filter(
       (violation) =>
         BLOCKING_VIOLATIONS.has(violation.kind) &&
@@ -490,9 +511,12 @@ export const sessionPut = (input: {
 }) =>
   Effect.gen(function* () {
     const session = yield* resumeSession({ root: input.root, id: input.id })
+    const scope = sessionScopeOf(session.ref)
     const at = isoSecond(yield* Effect.clockWith((clock) => clock.currentTimeMillis))
+    // A curate-scope session judges locally, as the curate commands do: the head server's
+    // neighbors route judges under `session`.
     const answered =
-      input.server === false
+      input.server === false || scope === "curate"
         ? null
         : yield* askHead({
             root: input.root,
@@ -513,7 +537,8 @@ export const sessionPut = (input: {
         lines: input.ops,
         at,
         cache: loadForSearch(input.root),
-        embedder: input.embedder
+        embedder: input.embedder,
+        scope
       })
       head = headStats(loaded)
     }
@@ -584,16 +609,18 @@ export const execOverHead = (input: {
 }): Effect.Effect<ExecOutcome, InvalidMemory | StorageFailure> =>
   Effect.gen(function* () {
     const { session } = input
+    const scope = sessionScopeOf(session.ref)
     const view = yield* withOverlay(input.base, session.ops)
     const report = yield* runSessionExec({
       view,
       script: input.script,
       lang: input.lang,
       timeoutMs: input.timeoutMs,
+      scope,
       ...input.runtime
     })
     const harvested = new Set(report.ops.flatMap(touchedPaths))
-    const violations = validateOps(input.base, [...session.ops, ...report.ops])
+    const violations = validateOps(input.base, [...session.ops, ...report.ops], { scope })
     const blocking = violations.filter(
       (violation) =>
         BLOCKING_VIOLATIONS.has(violation.kind) &&
@@ -770,7 +797,8 @@ export const sessionCommit = (input: {
     const outcome: CommitOutcome = yield* commitSession({
       session,
       head: head.view,
-      message: input.message
+      message: input.message,
+      scope: sessionScopeOf(session.ref)
     })
     const snapshot: SnapshotWritten | null =
       outcome.kind === "committed"

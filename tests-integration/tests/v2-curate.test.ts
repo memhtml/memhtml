@@ -733,3 +733,101 @@ describe("the replay, when main moved past the curator's base", () => {
     expect(await status()).toBe("")
   })
 })
+
+/**
+ * A session on a curate branch is the curation door, so its three arms judge under the `curate`
+ * scope (`sessionScopeOf` in `v2.ts`): a label on an `areas/arcs/` record and an archive of a
+ * `resources/people/` record land on the branch, where the same label from a session on `main` is
+ * refused as a reserved path. Found on 2026-09-28 rehearsing the live collapse: 59 labels on 30
+ * arcs and people records and the archive of one vague arc could not be written from the documented
+ * door, only from `curate run`'s model loop.
+ *
+ * Mutation, run once with the change applied and this case red: `sessionScopeOf` returning
+ * `"session"` for every ref -> the curate-branch `session put` is refused with `reserved path`.
+ */
+describe("a session on a curate branch is judged under the curate scope", () => {
+  const ARC = {
+    path: "areas/arcs/curate-scope-arc.html",
+    html: renderTemplate({
+      title: "Curate scope arc",
+      claim: "An arc the curator labels names harbor 7.",
+      memoryType: "semantic",
+      at: AT
+    })
+  }
+  const PERSON = {
+    path: "resources/people/curate-scope-person.html",
+    html: renderTemplate({
+      title: "Curate scope person",
+      claim: "A people stub the curator archives names harbor 8.",
+      memoryType: "semantic",
+      at: AT
+    })
+  }
+
+  it("labels an arc and archives a people record from session put and session exec, and refuses the label on main", async () => {
+    for (const file of [ARC, PERSON]) {
+      const target = join(cli.root, file.path)
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, file.html, "utf8")
+    }
+    await cli.git("add", "-A", "--", ARC.path, PERSON.path)
+    await cli.git("commit", "-q", "-m", "arc and person fixtures")
+
+    const label = [{ op: "label", path: ARC.path, entity: "project:harbor" }]
+    await cli.json(["session", "start", "--id", "scope-main"])
+    const onMain = await cli.run([
+      "session",
+      "put",
+      "--id",
+      "scope-main",
+      "--file",
+      await opsFile("scope-main", label)
+    ])
+    expect(onMain.exitCode).toBe(1)
+    expect(onMain.stdout).toContain("reserved path")
+
+    const id = "curator-scope"
+    await cli.json(["session", "start", "--id", id, "--ref", "curate/scope"])
+    const appended = await cli.json<{ readonly appended: number }>([
+      "session",
+      "put",
+      "--id",
+      id,
+      "--file",
+      await opsFile(id, label)
+    ])
+    expect(appended.appended).toBe(1)
+    const script = join(scratchDir, "scope-archive.sh")
+    await writeFile(
+      script,
+      `set -e\nmkdir -p /mnt/memhtml/archive/2026/resources/people\nmv /mnt/memhtml/${PERSON.path} /mnt/memhtml/archive/2026/${PERSON.path}\n`
+    )
+    const exec = await cli.json<{
+      readonly appended: number
+      readonly blocking: ReadonlyArray<string>
+      readonly harvested: ReadonlyArray<{ readonly kind: string; readonly path: string }>
+    }>(["session", "exec", "--id", id, "--file", script])
+    expect(exec.blocking).toEqual([])
+    expect(exec.appended).toBe(1)
+    expect(exec.harvested).toEqual([
+      expect.objectContaining({ kind: "archive", path: PERSON.path })
+    ])
+
+    const committed = await cli.json<Committed>([
+      "session",
+      "commit",
+      "--id",
+      id,
+      "--message",
+      "scope"
+    ])
+    expect(committed.kind).toBe("committed")
+    const subject = (await cli.git("log", "-1", "--format=%s", "refs/heads/curate/scope")).trim()
+    expect(subject).toBe("memhtml(curate): scope")
+    const onBranch = await cli.git("show", `refs/heads/curate/scope:${ARC.path}`)
+    expect(onBranch).toContain('<meta name="memhtml-entity" content="project:harbor">')
+    expect(await lsTree("refs/heads/curate/scope")).toContain(`archive/2026/${PERSON.path}`)
+    expect(await lsTree("refs/heads/curate/scope")).not.toContain(PERSON.path)
+  })
+})

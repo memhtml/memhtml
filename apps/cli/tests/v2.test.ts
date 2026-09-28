@@ -253,3 +253,13 @@ describe("curate merge takes one ref and lands it somewhere else", () => {
     expect(body.error).toContain("refs/heads/curate/absent")
   })
 })
+
+describe("sessionScopeOf names the scope a session is judged under from its ref", () => {
+  it("is curate for a ref under refs/heads/curate/ and session for every other ref", async () => {
+    const { sessionScopeOf } = await import("../src/v2.js")
+    expect(sessionScopeOf("refs/heads/curate/2026-09-28-collapse")).toBe("curate")
+    expect(sessionScopeOf("refs/heads/main")).toBe("session")
+    expect(sessionScopeOf("refs/heads/curated")).toBe("session")
+    expect(sessionScopeOf("refs/tags/curate/x")).toBe("session")
+  })
+})
