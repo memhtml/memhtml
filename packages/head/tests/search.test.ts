@@ -9,7 +9,6 @@ import { describe, expect, it } from "vitest"
 import {
   LEXICAL_ARM_LIMIT,
   LEXICAL_WEIGHT,
-  RECENCY_WEIGHT,
   STOP_WORDS,
   searchHead,
   tokenize,
@@ -21,22 +20,25 @@ import {
 import { mapView, memoryFor, recordOf, run } from "./helpers.js"
 
 /**
- * Two-arm RRF over a small hand-built view, where every expected score is computable by hand from
- * `weight / (rank + k)`.
+ * RRF over a small hand-built view, where every expected score is computable by hand from
+ * `weight / (rank + k)`, and recency as the tie-break between equal fused scores.
  *
  * Guard mutations (each run once, see the report):
  * - `searchHead` active-only: drop the `!record.archived` filter on `active`, and "the vector arm
  *   ranks active records only" fails because the archived twin of the query ranks first. (The
- *   lexical index holds active records only, so the two-arm search cannot reach an archived one.)
- * - `byScoreThenPath`: drop the path tiebreak, and "breaks a lexical-arm tie on path" follows the
- *   `HashMap` iteration order and fails.
+ *   lexical index holds active records only, so the lexical search cannot reach an archived one.)
+ * - `byScoreThenNewerThenPath`: drop the path comparison, and "a lexical hit and a vector-only hit
+ *   that tie at one instant rank in path order" follows the fold's insertion order and fails.
+ * - `byScoreThenPath`: drop the path tiebreak, and "a tie run crossing the lexical cap keeps the
+ *   first 40 by path" keeps records past the cap.
+ * - `byScoreThenNewerThenPath`: drop the recency comparison, and "a newer twin wins an exact tie"
+ *   fails because path puts the older copy first.
+ * - `armRanks`: rank every hit `index + 1` (no shared ranks), and "a newer twin wins an exact tie"
+ *   fails because the older copy's path gives it the better lexical rank.
+ * - `searchHead`: fuse recency as an RRF arm at weight 0.5 over the candidates again, and "a clearly
+ *   better older match is not overtaken by newer, weaker ones" fails.
  * - `lexicalArm`: drop `.slice(0, LEXICAL_ARM_LIMIT)`, and "the lexical arm keeps its best 40"
  *   fails because the 41st record carries `lexical`.
- * - `searchHead`: rank every active record in the recency arm (drop the `matched.has` filter), and
- *   "the recency arm ranks only what another arm matched" fails on the newest record, which matches
- *   nothing and appears through recency alone.
- * - `searchHead`: build `matched` from the lexical arm alone (drop `...(vector ?? [])`), and "a
- *   record with no word in common" fails because the vector-only record loses its recency share.
  * - `searchHead`: run the vector arm when `vectors` alone is set (drop `|| input.queryVector ===
  *   undefined`), and "vectors without a query vector" fails (the arm reads an absent query).
  * - `vectorArm`: rank archived records too (`records` -> every record of the view), and "the vector
@@ -107,33 +109,23 @@ describe("tokenize", () => {
 })
 
 describe("searchHead", () => {
-  it("fuses the lexical and recency arms with weights 1.0 and 0.5 at k = 60", async () => {
+  it("scores a hit by the lexical arm alone at weight 1.0 and k = 60; recency adds nothing", async () => {
     const { view } = await fixture()
     const hits = searchHead(view, { query: "kafka" })
-    // Lexical arm: the two active kafka files (the archived one is not indexed).
-    // Recency arm over what the lexical arm matched: lag (March), retention (January).
-    const byPath = new Map(hits.map((hit) => [hit.path, hit]))
-    const lag = byPath.get("areas/inbox/kafka-lag.html")
-    const retention = byPath.get("areas/inbox/kafka-retention.html")
-    expect(lag?.arms).toEqual(["lexical", "recency"])
-    expect(retention?.arms).toEqual(["lexical", "recency"])
-    expect(lag?.score).toBeCloseTo(
-      rrf(LEXICAL_WEIGHT, lexicalRankOf(hits, "areas/inbox/kafka-lag.html", TWO_ARM_RECENCY)) +
-        rrf(RECENCY_WEIGHT, 1),
-      12
-    )
-    expect(retention?.score).toBeCloseTo(
-      rrf(
-        LEXICAL_WEIGHT,
-        lexicalRankOf(hits, "areas/inbox/kafka-retention.html", TWO_ARM_RECENCY)
-      ) + rrf(RECENCY_WEIGHT, 2),
-      12
-    )
-    expect(hits).toHaveLength(2)
+    // The two active kafka files (the archived one is not indexed). Lag says kafka twice (title,
+    // body) and ranks 1st; retention says it once and ranks 2nd. Their scores differ, so recency
+    // decides nothing and neither hit names it.
+    expect(hits.map((hit) => hit.path)).toEqual([
+      "areas/inbox/kafka-lag.html",
+      "areas/inbox/kafka-retention.html"
+    ])
+    expect(hits.map((hit) => hit.arms)).toEqual([["lexical"], ["lexical"]])
+    expect(hits[0]?.score).toBe(rrf(LEXICAL_WEIGHT, 1))
+    expect(hits[1]?.score).toBe(rrf(LEXICAL_WEIGHT, 2))
     expect(hits[0]?.claim.length).toBeGreaterThan(0)
   })
 
-  it("the recency arm ranks only what another arm matched", async () => {
+  it("recency never adds a record another arm did not match", async () => {
     const { view } = await fixture()
     // The vacuum record is the newest active one and shares no word with the query, so recency
     // alone would have put it in the answer.
@@ -156,14 +148,9 @@ describe("searchHead", () => {
 
   it("BM25 ranks the document that repeats the term above one that mentions it once", async () => {
     const { view } = await fixture()
+    // kafka-lag says kafka twice (title, body) and is older; retention once (title) and is newer.
     const hits = searchHead(view, { query: "kafka" })
-    // kafka-lag says kafka twice (title, body); retention once (title).
-    const rank = (path: string) => lexicalRankOf(hits, path, TWO_ARM_RECENCY)
-    const lexicalOrder = hits
-      .filter((hit) => hit.arms.includes("lexical"))
-      .sort((left, right) => rank(left.path) - rank(right.path))
-      .map((hit) => hit.path)
-    expect(lexicalOrder[0]).toBe("areas/inbox/kafka-lag.html")
+    expect(hits[0]?.path).toBe("areas/inbox/kafka-lag.html")
   })
 
   it("orders ties by path so the list is deterministic", async () => {
@@ -177,17 +164,24 @@ describe("searchHead", () => {
       )
     )
     const view = mapView(records)
-    // Identical articles at one instant: BM25 and the recency key both tie, so path orders each
-    // arm and the fused list.
-    const paths = searchHead(view, { query: "widgets" }).map((hit) => hit.path)
-    expect(paths).toEqual(["areas/inbox/a.html", "areas/inbox/b.html", "areas/inbox/c.html"])
+    // Identical articles at one instant: BM25 and the recency key both tie, so path orders the
+    // fused list.
+    const hits = searchHead(view, { query: "widgets" })
+    expect(hits.map((hit) => hit.path)).toEqual([
+      "areas/inbox/a.html",
+      "areas/inbox/b.html",
+      "areas/inbox/c.html"
+    ])
+    expect(new Set(hits.map((hit) => hit.score)).size).toBe(1)
+    expect(hits.every((hit) => hit.arms.includes("recency"))).toBe(true)
   })
 
   it("breaks a lexical-arm tie on path, so identical documents rank in path order", async () => {
     // Two byte-identical bodies at different paths tie on BM25 and on recency, so only the path
-    // orders them inside each arm. The `fact-10`/`fact-9` pair is the one that proves the guard:
-    // its HashMap iteration order is the reverse of its path order (probed against effect
-    // 4.0.0-rc.115), so without the tiebreak the arm follows the hash and the assertion fails.
+    // orders them in the fused list. The `fact-10`/`fact-9` pair is the one that matters: its
+    // HashMap iteration order is the reverse of its path order (probed against effect
+    // 4.0.0-rc.115), so without both path comparisons (the arm's and the fused list's) the list
+    // follows the hash and the assertion fails.
     for (const [first, second] of [
       ["fact-10", "fact-9"],
       ["a", "z"],
@@ -217,9 +211,8 @@ describe("searchHead", () => {
     expect(searchHead(mapView([]), { query: "kafka" })).toEqual([])
   })
 
-  it("clamps a future eventAt to now so it cannot lead the recency arm", async () => {
-    // One article at two paths, so BM25 ties and path orders the lexical arm: recent 1, z-future 2.
-    // The recency rank is then read off each fused score.
+  it("clamps a future eventAt to now so it cannot lead the tie-break", async () => {
+    // One article at two paths, so BM25 ties and recency decides; path decides only on equal keys.
     const future = await memory("areas/inbox/z-future.html", {
       title: "Deploy window",
       claim: "The deploy window is fixed.",
@@ -231,29 +224,95 @@ describe("searchHead", () => {
       at: "2026-09-22T00:00:00Z"
     })
     const view = mapView([future, recent])
-    const recencyRanks = (now?: string) =>
-      Object.fromEntries(
-        searchHead(view, { query: "deploy", ...(now === undefined ? {} : { now }) }).map(
-          (hit, _, hits) => {
-            const lexicalRank = hit.path === "areas/inbox/recent.html" ? 1 : 2
-            const share = hit.score - rrf(LEXICAL_WEIGHT, lexicalRank)
-            expect(hits).toHaveLength(2)
-            return [hit.path, Math.round(RECENCY_WEIGHT / share - RRF_K)]
-          }
-        )
+    const order = (now?: string) =>
+      searchHead(view, { query: "deploy", ...(now === undefined ? {} : { now }) }).map(
+        (hit) => hit.path
       )
-    // Unclamped, the future record leads recency.
-    expect(recencyRanks()).toEqual({ "areas/inbox/z-future.html": 1, "areas/inbox/recent.html": 2 })
-    // Clamped to a now after the recent one, the future one sits AT now and still leads.
-    expect(recencyRanks("2026-09-23T00:00:00Z")).toEqual({
-      "areas/inbox/z-future.html": 1,
-      "areas/inbox/recent.html": 2
-    })
+    // Unclamped, the future record is the newer one.
+    expect(order()).toEqual(["areas/inbox/z-future.html", "areas/inbox/recent.html"])
+    // Clamped to a now after the recent one, the future one sits AT now and is still newer.
+    expect(order("2026-09-23T00:00:00Z")).toEqual([
+      "areas/inbox/z-future.html",
+      "areas/inbox/recent.html"
+    ])
     // With now before both, both clamp to now, the keys tie, and path decides.
-    expect(recencyRanks("2026-09-21T00:00:00Z")).toEqual({
-      "areas/inbox/recent.html": 1,
-      "areas/inbox/z-future.html": 2
+    expect(order("2026-09-21T00:00:00Z")).toEqual([
+      "areas/inbox/recent.html",
+      "areas/inbox/z-future.html"
+    ])
+  })
+
+  it("a newer twin wins an exact tie", async () => {
+    // Byte-identical articles: BM25 scores them equally, so they share lexical rank 1 and tie in the
+    // fused score. The older copy's path sorts first, so only recency can put the newer one on top.
+    // Filler records that match weakly sit between them in date order and change nothing.
+    const older = await memory("areas/inbox/a-older.html", {
+      title: "Quorum loss",
+      claim: "Quorum was lost twice.",
+      at: "2026-01-01T00:00:00Z"
     })
+    const newer = await memory("areas/inbox/b-newer.html", {
+      title: "Quorum loss",
+      claim: "Quorum was lost twice.",
+      at: "2026-09-01T00:00:00Z"
+    })
+    const fillers = await Promise.all(
+      Array.from({ length: 6 }, (_, index) =>
+        memory(`areas/inbox/filler-${String(index)}.html`, {
+          title: `Filler ${String(index)}`,
+          claim: `Quorum filler number ${String(index)} carries more words than the twins do.`,
+          at: `2026-0${String(index + 2)}-01T00:00:00Z`
+        })
+      )
+    )
+    for (const records of [
+      [older, newer],
+      [older, newer, ...fillers]
+    ]) {
+      const hits = searchHead(mapView(records), { query: "quorum loss" })
+      expect(hits.slice(0, 2).map((hit) => hit.path)).toEqual([newer.path, older.path])
+      expect(hits[0]?.score).toBe(hits[1]?.score)
+      expect(hits[0]?.arms).toEqual(["lexical", "recency"])
+    }
+    // With the vector arm too: one content hash is one vector, so the cosines tie as well.
+    const vectors = new Map([[older.contentHash, axis(0)]])
+    const hits = searchHead(mapView([older, newer, ...fillers]), {
+      query: "quorum loss",
+      vectors,
+      queryVector: axis(0)
+    })
+    expect(hits.slice(0, 2).map((hit) => hit.path)).toEqual([newer.path, older.path])
+    expect(hits[0]?.arms).toEqual(["lexical", "recency", "vector"])
+  })
+
+  it("a clearly better older match is not overtaken by newer, weaker ones", async () => {
+    // The older record says both query words and "quorum" twice more; each newer record says
+    // "quorum" once. BM25 puts the older one first by a clear margin, and a newest-first vote over
+    // the candidates would have lifted the newest weak match above it.
+    const better = await memory("areas/inbox/a-better.html", {
+      title: "Quorum loss",
+      claim: "Quorum was lost twice; quorum returned after the quorum vote.",
+      at: "2025-01-01T00:00:00Z"
+    })
+    const weaker = await Promise.all(
+      Array.from({ length: 6 }, (_, index) =>
+        memory(`areas/inbox/b-weaker-${String(index)}.html`, {
+          title: `Quorum note ${String(index)}`,
+          claim: `Quorum was mentioned once in note ${String(index)}.`,
+          at: `2026-0${String(index + 3)}-01T00:00:00Z`
+        })
+      )
+    )
+    const newest = weaker.at(-1)
+    if (newest === undefined) throw new Error("fixture")
+    for (const records of [
+      [better, newest],
+      [better, ...weaker]
+    ]) {
+      const hits = searchHead(mapView(records), { query: "quorum loss" })
+      expect(hits[0]?.path).toBe(better.path)
+      expect(hits[0]?.arms).toEqual(["lexical"])
+    }
   })
 
   it("the lexical arm keeps its best 40", async () => {
@@ -278,6 +337,25 @@ describe("searchHead", () => {
     expect(LEXICAL_ARM_LIMIT).toBe(40)
   })
 
+  it("a tie run crossing the lexical cap keeps the first 40 by path", async () => {
+    // 45 byte-identical records at one instant: one BM25 score, so the cap cuts inside the run and
+    // path decides which 40 are kept, whatever order the index iterates them in.
+    const count = LEXICAL_ARM_LIMIT + 5
+    const records = await Promise.all(
+      Array.from({ length: count }, (_, index) =>
+        memory(`areas/inbox/t-${String(index).padStart(2, "0")}.html`, {
+          title: "Basalt note",
+          claim: "Basalt is volcanic.",
+          at: "2026-01-01T00:00:00Z"
+        })
+      )
+    )
+    const hits = searchHead(mapView(records), { query: "basalt", limit: count })
+    expect(hits.map((hit) => hit.path)).toEqual(
+      records.slice(0, LEXICAL_ARM_LIMIT).map((record) => record.path)
+    )
+  })
+
   it("reads the version's own lexical index when the view was built here", async () => {
     const records = await Promise.all([0, 1, 2].map((index) => recordOf(memoryFor(index))))
     const overlay = await run(
@@ -291,36 +369,6 @@ describe("searchHead", () => {
   })
 })
 
-/**
- * The fixture's recency ranks for a "kafka" query. Recency ranks only what another arm matched: on
- * two arms that is the two kafka files, and with the vector arm it is every vectored record too.
- */
-const TWO_ARM_RECENCY: Record<string, number> = {
-  "areas/inbox/kafka-lag.html": 1,
-  "areas/inbox/kafka-retention.html": 2
-}
-const WITH_VECTOR_RECENCY: Record<string, number> = {
-  "areas/inbox/postgres-vacuum.html": 1,
-  "areas/inbox/kafka-lag.html": 2,
-  "areas/inbox/kafka-retention.html": 3
-}
-
-/** The lexical rank of a path, recovered from the fused score by subtracting its recency share. */
-const lexicalRankOf = (
-  hits: ReadonlyArray<{ path: string; score: number; arms: ReadonlyArray<string> }>,
-  path: string,
-  recencyRank: Record<string, number>
-): number => {
-  const lexicalHits = hits.filter((hit) => hit.arms.includes("lexical"))
-  const ranked = lexicalHits
-    .map((hit) => ({
-      path: hit.path,
-      lexical: hit.score - rrf(RECENCY_WEIGHT, recencyRank[hit.path] ?? 0)
-    }))
-    .sort((left, right) => right.lexical - left.lexical)
-  return ranked.findIndex((hit) => hit.path === path) + 1
-}
-
 /** A unit vector along one axis of a four-dimensional toy space, so every cosine is 0 or 1. */
 const axis = (index: number, dimension = 4): Float32Array => {
   const vector = new Float32Array(dimension)
@@ -329,11 +377,13 @@ const axis = (index: number, dimension = 4): Float32Array => {
 }
 
 /**
- * The two-arm answer over 120 generated records: seven queries at limit 25 with `now` pinned, plus
- * one at the default limit with no `now`. Compared as JSON text, so a score that moved by one ulp
- * fails. First captured at v2-poc 8192508 (2026-09-27); recaptured when the lexical arm was capped
- * at 40 and recency narrowed to the records another arm matched, which emptied the three queries no
- * record matches and cut "Country11" to its one match.
+ * The answer without vectors over 120 generated records: seven queries at limit 25 with `now`
+ * pinned, plus one at the default limit with no `now`. Compared as JSON text, so a score that moved
+ * by one ulp fails. First captured at v2-poc 8192508 (2026-09-27); recaptured when the lexical arm
+ * was capped at 40 and recency narrowed to the records another arm matched, which emptied the three
+ * queries no record matches and cut "Country11" to its one match; recaptured on 2026-09-28 when
+ * recency became the tie-break between equal fused scores, which put the record each query names
+ * first ("Country7 capital" leads with fact-7, "fact about city42" with fact-42).
  */
 const GOLDEN: ReadonlyArray<{ readonly query: string; readonly hits: unknown }> = JSON.parse(
   readFileSync(new URL("./fixtures/search-two-arm.golden.json", import.meta.url), "utf8")
@@ -351,7 +401,7 @@ const goldenInputs = (entry: { readonly query: string }) =>
     : { query: entry.query, limit: 25, now: "2026-09-01T00:00:00Z" }
 
 describe("searchHead without vectors", () => {
-  it("returns the two-arm answer byte for byte", async () => {
+  it("returns the lexical answer byte for byte", async () => {
     const view = await goldenView()
     expect(GOLDEN).toHaveLength(8)
     for (const entry of GOLDEN) {
@@ -361,7 +411,7 @@ describe("searchHead without vectors", () => {
     }
   })
 
-  it("vectors without a query vector, or a query vector without vectors, is the two-arm answer", async () => {
+  it("vectors without a query vector, or a query vector without vectors, is the lexical answer", async () => {
     const view = await goldenView()
     const vectors = new Map([...view.records()].map((record) => [record.contentHash, axis(0)]))
     for (const entry of GOLDEN) {
@@ -407,17 +457,44 @@ describe("searchHead with vectors", () => {
     })
     const byPath = new Map(hits.map((hit) => [hit.path, hit]))
     const found = byPath.get("areas/inbox/postgres-vacuum.html")
-    expect(found?.arms).toEqual(["recency", "vector"])
-    // Vector ranks: vacuum 1 (cosine 1); lag and retention tie at 0 and break on path.
-    expect(found?.score).toBeCloseTo(rrf(RECENCY_WEIGHT, 1) + rrf(VECTOR_WEIGHT, 1), 12)
-    expect(byPath.get("areas/inbox/kafka-lag.html")?.arms).toEqual(["lexical", "recency", "vector"])
-    expect(byPath.get("areas/inbox/kafka-lag.html")?.score).toBeCloseTo(
-      rrf(LEXICAL_WEIGHT, lexicalRankOf(hits, "areas/inbox/kafka-lag.html", WITH_VECTOR_RECENCY)) +
-        rrf(RECENCY_WEIGHT, 2) +
-        rrf(VECTOR_WEIGHT, 2),
-      12
+    expect(found?.arms).toEqual(["vector"])
+    // Vector ranks: vacuum 1 (cosine 1); lag and retention tie at cosine 0 and share rank 2.
+    expect(found?.score).toBe(rrf(VECTOR_WEIGHT, 1))
+    expect(byPath.get("areas/inbox/kafka-lag.html")?.arms).toEqual(["lexical", "vector"])
+    expect(byPath.get("areas/inbox/kafka-lag.html")?.score).toBe(
+      rrf(LEXICAL_WEIGHT, 1) + rrf(VECTOR_WEIGHT, 2)
+    )
+    expect(byPath.get("areas/inbox/kafka-retention.html")?.score).toBe(
+      rrf(LEXICAL_WEIGHT, 2) + rrf(VECTOR_WEIGHT, 2)
     )
     expect(VECTOR_WEIGHT).toBe(1.0)
+  })
+
+  it("a lexical hit and a vector-only hit that tie at one instant rank in path order", async () => {
+    // One record is first in the lexical arm and has no vector; the other shares no word with the
+    // query and is first in the vector arm. Both score 1 / 61 at one instant, so path decides, and
+    // the vector-only record's path sorts first although the fold meets the lexical record first.
+    const lexicalOnly = await memory("areas/inbox/z-lexical.html", {
+      title: "Granite",
+      claim: "Granite is igneous.",
+      at: "2026-05-01T00:00:00Z"
+    })
+    const vectorOnly = await memory("areas/inbox/a-vector.html", {
+      title: "Pumice",
+      claim: "Pumice floats on water.",
+      at: "2026-05-01T00:00:00Z"
+    })
+    const hits = searchHead(mapView([lexicalOnly, vectorOnly]), {
+      query: "granite",
+      vectors: new Map([[vectorOnly.contentHash, axis(0)]]),
+      queryVector: axis(0)
+    })
+    expect(hits.map((hit) => hit.path)).toEqual([vectorOnly.path, lexicalOnly.path])
+    expect(hits[0]?.score).toBe(hits[1]?.score)
+    expect(hits.map((hit) => hit.arms)).toEqual([
+      ["recency", "vector"],
+      ["lexical", "recency"]
+    ])
   })
 
   it("a record whose content hash has no vector is not in the vector arm", async () => {
@@ -447,7 +524,7 @@ describe("searchHead with vectors", () => {
       queryVector: axis(3)
     })
     expect(hits.map((hit) => hit.path)).not.toContain(archived.path)
-    expect(hits.find((hit) => hit.path === lag.path)?.arms).toEqual(["recency", "vector"])
+    expect(hits.find((hit) => hit.path === lag.path)?.arms).toEqual(["vector"])
   })
 
   it("the vector arm keeps its best 40", async () => {
