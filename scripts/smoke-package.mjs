@@ -398,13 +398,13 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
   const sessionOpsFile = join(work, "session-ops.jsonl")
   await writeFile(
     sessionOpsFile,
-    `${JSON.stringify({ op: "write", title: "Landed through a v2 session", body: "A session's overlay lands as one commit through its own index file.", type: "semantic" })}\n`
+    `${JSON.stringify({ op: "write", title: "Landed through a v2 session", body: "A session's overlay lands as one commit through its own index file.", type: "semantic", workspace: "checkout-api" })}\n`
   )
 
   const curatorOpsFile = join(work, "curator-ops.jsonl")
   await writeFile(
     curatorOpsFile,
-    `${JSON.stringify({ op: "write", title: "Landed through the curation door", body: "A curator session commits to its own branch and curate merge fast-forwards main to it.", type: "semantic" })}\n`
+    `${JSON.stringify({ op: "write", title: "Landed through the curation door", body: "A curator session commits to its own branch and curate merge fast-forwards main to it.", type: "semantic", workspace: "checkout-api" })}\n`
   )
 
   const execFile_ = join(work, "census.mjs")
@@ -587,7 +587,16 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
      */
     ["session start", ["session", "start", "--id", "smoke"]],
     ["session put", ["session", "put", "--id", "smoke", "--file", sessionOpsFile]],
-    ["session exec", ["session", "exec", "--id", "smoke", "--file", execFile_]],
+    [
+      "session exec",
+      ["session", "exec", "--id", "smoke", "--lang", "js", "--file", execFile_],
+      env,
+      // `session exec` answers a report whatever the script did, so the row asserts the script ran.
+      (answer) => ({
+        ok: answer.data?.exitCode === 0 && answer.data?.lang === "js",
+        detail: `exit ${String(answer.data?.exitCode)}, lang ${String(answer.data?.lang)}, stdout ${String(answer.data?.stdout).trim()}`
+      })
+    ],
     ["session status", ["session", "status", "--id", "smoke"]],
     [
       "session commit",
