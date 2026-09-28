@@ -733,3 +733,54 @@ describe("the replay, when main moved past the curator's base", () => {
     expect(await status()).toBe("")
   })
 })
+
+/**
+ * A replay is one commit of the whole branch, so it is not held to the 200-op batch cap each of
+ * the branch's own commits was: found on 2026-09-28 rehearsing the live collapse, whose 70-commit
+ * branch reconstructs to 2,747 ops and was refused with "2747 ops exceeds the cap of 200" the first
+ * time `main` moved under it.
+ *
+ * Mutation, run once with the change applied and this case red: `MERGE_BATCH_CAP` set to
+ * `BATCH_CAP` in `v2.ts` -> the merge is refused naming the cap.
+ */
+describe("a replay past the batch cap", () => {
+  it("lands a curate branch whose commits add up to more than 200 ops as one replayed commit", async () => {
+    const id = "curator-big"
+    await cli.json(["session", "start", "--id", id, "--ref", "curate/big"])
+    for (const part of [0, 1]) {
+      const writes = Array.from({ length: 105 }, (_, index) => ({
+        op: "write",
+        title: `Big replay record ${part}-${index}`,
+        type: "semantic",
+        body: `Big replay fact ${part}-${index} names harbor ${index} of part ${part}.`
+      }))
+      await cli.json([
+        "session",
+        "put",
+        "--id",
+        id,
+        "--file",
+        await opsFile(`${id}-${part}`, writes)
+      ])
+      const committed = await cli.json<Committed>([
+        "session",
+        "commit",
+        "--id",
+        id,
+        "--message",
+        `big part ${part}`
+      ])
+      expect(committed.kind).toBe("committed")
+    }
+    const moved = await advanceMain("big", "Written on main as big", "Main moved past big.")
+
+    const merged = await cli.json<CurateMerged>(["curate", "merge", "curate/big", "--skip-gate"])
+    expect(merged.moved).toBe(true)
+    expect(merged.from).toBe(moved)
+    expect(merged.replayed).toMatchObject({ ops: { put: 210, archive: 0, label: 0 }, attempts: 1 })
+    expect((await cli.git("rev-parse", "refs/heads/main")).trim()).toBe(merged.to)
+    const landed = await lsTree("refs/heads/main")
+    expect(landed.filter((path) => path.includes("big-replay-record-")).length).toBe(210)
+    expect(await status()).toBe("")
+  }, 180_000)
+})
