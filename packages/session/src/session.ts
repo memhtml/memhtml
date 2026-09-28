@@ -21,6 +21,16 @@ import { makePlumbing, type Plumbing } from "./plumbing.js"
  * its mtime refreshed while held so a lock left by a killed process goes stale and is reclaimed). A
  * second writer does not wait: it fails with `session.locked`, because a second commit of the same
  * id would stage into the same `.idx` mid-flight and could win the ref with a tree missing its puts.
+ *
+ * Every write replaces the whole file, and a caller computes what it writes from the log it read
+ * earlier, outside the lock (a `session exec` reads the log, runs a script for seconds, then
+ * appends its harvest). So the lock alone would still lose an update: two execs that read the same
+ * log each append to it, and the second write drops the first's ops. Every writer therefore re-reads
+ * the log under the lock and writes only when the file still holds the ops the caller read
+ * ({@link requireLogUnmoved}); a log whose ops changed is refused with {@link LOG_MOVED} and
+ * nothing is written, so the caller reads it again and decides. The ops are what is compared, not
+ * the base: {@link rebaseSession} is pure and a caller may commit or append over a rebased session
+ * it has not saved, which moves the base on purpose.
  */
 
 export interface Session {
@@ -260,13 +270,38 @@ export const resumeSession = (input: {
     return { root: input.root, ...rest, ...(pending === undefined ? {} : { pending }) }
   })
 
-/** Append to the overlay log and persist it. The returned session is the one to keep using. */
+/** The failure a writer gets when the log changed between its read and its write. */
+export const LOG_MOVED = "session.moved"
+
+/**
+ * Holding the session's lock: fail with {@link LOG_MOVED} unless the log on disk still holds the
+ * ops `expected` holds. The caller read `expected` before it took the lock, so ops another writer
+ * appended or committed meanwhile are refused here rather than overwritten.
+ */
+export const requireLogUnmoved = (expected: Session): Effect.Effect<void, StorageFailure> =>
+  Effect.gen(function* () {
+    const stored = yield* resumeSession({ root: expected.root, id: expected.id })
+    if (JSON.stringify(stored.ops) === JSON.stringify(expected.ops)) return
+    yield* Effect.logError(
+      `session ${expected.id}: the log changed since this call read it (${String(expected.ops.length)} ops then, ${String(stored.ops.length)} now, base ${stored.baseSha}); another put, exec, commit, or rebase wrote it, so nothing was written`
+    )
+    return yield* Effect.fail(StorageFailure.make({ operation: LOG_MOVED }))
+  })
+
+/**
+ * Append to the overlay log and persist it. The returned session is the one to keep using. Refused
+ * with {@link LOG_MOVED} when the log is no longer the one `session` was read from.
+ */
 export const appendOps = (
   session: Session,
   ops: ReadonlyArray<OverlayOp>
 ): Effect.Effect<Session, StorageFailure> => {
   const next: Session = { ...session, ops: [...session.ops, ...ops] }
-  return withSessionLock(session.root, session.id, writeState(next)).pipe(Effect.as(next))
+  return withSessionLock(
+    session.root,
+    session.id,
+    requireLogUnmoved(session).pipe(Effect.andThen(writeState(next)))
+  ).pipe(Effect.as(next))
 }
 
 /**
@@ -278,9 +313,17 @@ export const rebaseSession = (
   onto: HeadView & { readonly sha: string }
 ): Session => ({ ...session, baseSha: onto.sha })
 
-/** Persist a rebased or otherwise changed session without appending. Takes the session's lock. */
+/**
+ * Persist a rebased or otherwise changed session without appending. Takes the session's lock, and is
+ * refused with {@link LOG_MOVED} when the log's ops are no longer `session`'s: a rebase keeps every
+ * op it read, so an op appended since would otherwise be dropped.
+ */
 export const saveSession = (session: Session): Effect.Effect<void, StorageFailure> =>
-  withSessionLock(session.root, session.id, writeState(session))
+  withSessionLock(
+    session.root,
+    session.id,
+    requireLogUnmoved(session).pipe(Effect.andThen(writeState(session)))
+  )
 
 /** Persist under a lock the caller already holds. For `commitSession`, which holds it throughout. */
 export const saveSessionLocked = (session: Session): Effect.Effect<void, StorageFailure> =>
