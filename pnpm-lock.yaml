@@ -204,9 +204,6 @@ importers:
       starlight-md-txt:
         specifier: ^0.1.0
         version: 0.1.0(@astrojs/starlight@0.42.4(astro@7.3.5(@types/node@26.6.2)(aws4fetch@1.0.20)(db0@0.3.4)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.0))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.3.5(@types/node@26.6.2)(aws4fetch@1.0.20)(db0@0.3.4)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.0))(supports-color@10.2.2)
-      starlight-package-managers:
-        specifier: ^0.13.0
-        version: 0.13.0(@astrojs/starlight@0.42.4(astro@7.3.5(@types/node@26.6.2)(aws4fetch@1.0.20)(db0@0.3.4)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.0))(supports-color@10.2.2)(typescript@6.0.3))
       starlight-scroll-to-top:
         specifier: ^2.0.0
         version: 2.0.0(@astrojs/starlight@0.42.4(astro@7.3.5(@types/node@26.6.2)(aws4fetch@1.0.20)(db0@0.3.4)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.0))(supports-color@10.2.2)(typescript@6.0.3))
@@ -5153,11 +5150,6 @@ packages:
     peerDependencies:
       '@astrojs/starlight': '>=0.30.0'
       astro: '>=4.0.0 || >=5.0.0 || >=6.0.0'
-
-  starlight-package-managers@0.13.0:
-    resolution: {integrity: sha512-Jcvx7oLA2hWlNMsYI42Ny5vZ0lZov18M/0+aiXmY59Wo+GmhTjJPRpGEbIN0yJsGLoJPFTegcMArjNVU0SvROQ==}
-    peerDependencies:
-      '@astrojs/starlight': '>=0.32.0'
 
   starlight-scroll-to-top@2.0.0:
     resolution: {integrity: sha512-KXvghfBr7nGLDhmWCP5/BXQOgZ60J4NSXsqbvWryZ5hUXeonSXR0Zl45j/+bZh1L9eWf3AYTV6YZT1HXXNdSlA==}
@@ -11176,10 +11168,6 @@ snapshots:
       unist-util-visit: 5.1.0
     transitivePeerDependencies:
       - supports-color
-
-  starlight-package-managers@0.13.0(@astrojs/starlight@0.42.4(astro@7.3.5(@types/node@26.6.2)(aws4fetch@1.0.20)(db0@0.3.4)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.0))(supports-color@10.2.2)(typescript@6.0.3)):
-    dependencies:
-      '@astrojs/starlight': 0.42.4(astro@7.3.5(@types/node@26.6.2)(aws4fetch@1.0.20)(db0@0.3.4)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.0))(supports-color@10.2.2)(typescript@6.0.3)
 
   starlight-scroll-to-top@2.0.0(@astrojs/starlight@0.42.4(astro@7.3.5(@types/node@26.6.2)(aws4fetch@1.0.20)(db0@0.3.4)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.0))(supports-color@10.2.2)(typescript@6.0.3)):
     dependencies:
