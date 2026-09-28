@@ -258,6 +258,8 @@ export const commitSession = (input: {
    * `curate` the arcs and people prefixes are writable.
    */
   readonly scope?: CommitScope | undefined
+  /** The validator's batch cap ({@link ValidateOptions}); `BATCH_CAP` unless a replay lifts it. */
+  readonly batchCap?: number | undefined
 }): Effect.Effect<CommitOutcome, GitFailure | StorageFailure> =>
   withSessionLock(
     input.session.root,
@@ -306,7 +308,10 @@ export const commitSession = (input: {
 
       // 1. Validate under the caller's scope. Any violation refuses the whole batch and writes
       //    nothing; a curator's scope is what lets an arcs or people path through here.
-      const violations = validateOps(head, session.ops, { scope: input.scope ?? "session" })
+      const violations = validateOps(head, session.ops, {
+        scope: input.scope ?? "session",
+        ...(input.batchCap === undefined ? {} : { batchCap: input.batchCap })
+      })
       if (violations.length > 0) return { kind: "refused", violations } as const
 
       // 2. The ref must be at the validated version.

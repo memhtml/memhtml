@@ -1042,6 +1042,14 @@ export const MERGE_ATTEMPTS = 8
 /** The scope a replay validates and commits under: the curator's, so arcs and people paths land. */
 const MERGE_SCOPE = "curate" as const
 
+/**
+ * A replay's batch cap: none. Its ops are the union of the curate branch's commits, each of which
+ * `commitSession` already held to `BATCH_CAP`, and a replay is one commit by design (a landing that
+ * failed halfway would leave `main` holding half a curation). Capped, a branch past 200 ops could
+ * only ever fast-forward, and `main` moves every few minutes on the live store.
+ */
+const MERGE_BATCH_CAP = Number.POSITIVE_INFINITY
+
 const shortSha = (sha: string): string => sha.slice(0, 7)
 
 /** The reconstructed log for a curate ref, or the refusal a hand-written change on it earns. */
@@ -1170,7 +1178,10 @@ export const curateMerge = (input: {
         force: true
       })
       session = yield* appendOps(session, replay.reconstruction.ops)
-      const violations = validateOps(head.view, session.ops, { scope: MERGE_SCOPE })
+      const violations = validateOps(head.view, session.ops, {
+        scope: MERGE_SCOPE,
+        batchCap: MERGE_BATCH_CAP
+      })
       if (violations.length > 0) {
         return yield* Effect.fail(
           InvalidMemory.make({
@@ -1283,7 +1294,8 @@ const landReplay = (input: {
         head: head.view,
         message: `${subject} (replayed onto ${shortSha(head.sha)})`,
         archivedAt,
-        scope: MERGE_SCOPE
+        scope: MERGE_SCOPE,
+        batchCap: MERGE_BATCH_CAP
       })
       switch (outcome.kind) {
         case "committed": {

@@ -17,6 +17,7 @@ import { mapHead, memory, recordFrom } from "./helpers.js"
  *
  * Mutation notes, one per guard, each run once with the change applied and the named test red:
  * - batch-cap: `ops.length > BATCH_CAP` -> `ops.length > Infinity` -> "refuses more than 200 ops".
+ * - batch-cap option: `options.batchCap ?? BATCH_CAP` -> `BATCH_CAP` -> "takes its cap from batchCap".
  * - reserved-path: `isReservedPath` returns false -> "refuses every reserved surface".
  * - scope: the `scope !== "curate"` guard on the curation prefixes removed -> "the curate scope
  *   opens areas/arcs/ and resources/people/ and nothing else" (the curator is refused its own paths);
@@ -105,6 +106,18 @@ describe("validateOps", () => {
       { numRuns: 5 }
     )
     expect(validateOps(view, [put("areas/inbox/one.html", memory("One", "One fact."))])).toEqual([])
+  })
+
+  it("takes its cap from batchCap when one is given, so a replay can lift it", async () => {
+    const view = await head()
+    const ops = Array.from({ length: BATCH_CAP + 1 }, (_, index) =>
+      put(`areas/inbox/m${index}.html`, memory(`M${index}`, `Fact number ${index}.`))
+    )
+    const lifted = validateOps(view, ops, { batchCap: Number.POSITIVE_INFINITY })
+    expect(lifted.filter((violation) => violation.kind === "batch-cap")).toEqual([])
+    expect(validateOps(view, ops.slice(0, 4), { batchCap: 3 })).toEqual([
+      { kind: "batch-cap", count: 4, cap: 3 }
+    ])
   })
 
   it("refuses every reserved surface", async () => {

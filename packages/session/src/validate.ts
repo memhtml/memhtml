@@ -51,6 +51,12 @@ export type CommitScope = "session" | "curate"
 /** The options `validateOps` and `isReservedPath` take. `scope` defaults to `session`. */
 export interface ValidateOptions {
   readonly scope?: CommitScope | undefined
+  /**
+   * The most ops the batch may carry; {@link BATCH_CAP} when omitted. `curate merge` passes
+   * `Infinity` for a replay, whose ops are the union of commits that each passed the cap on the
+   * curate branch: the 2026-09-24 collapse shape lands 2,747 ops, which one capped batch cannot.
+   */
+  readonly batchCap?: number | undefined
 }
 
 /** Directory prefixes only curation writes: refused under `session`, writable under `curate`. */
@@ -171,7 +177,8 @@ export const validateOps = (
   options: ValidateOptions = {}
 ): ReadonlyArray<Violation> => {
   const scope = options.scope ?? "session"
-  if (ops.length > BATCH_CAP) return [{ kind: "batch-cap", count: ops.length, cap: BATCH_CAP }]
+  const cap = options.batchCap ?? BATCH_CAP
+  if (ops.length > cap) return [{ kind: "batch-cap", count: ops.length, cap }]
 
   const violations: Array<Violation> = []
   /** Content hashes this batch introduces, so two puts of one claim in one session collide too. */
