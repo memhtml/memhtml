@@ -12,13 +12,15 @@ import {
 
 /**
  * The charter file is a run-time asset, so this reads it the way the loop does and checks the
- * things the spec pins: eight numbered priorities in the stated order, and the sentence that makes
- * memory bodies data. Mutation: renumber rule 5 as a second 4 -> "states eight numbered rules in
+ * things the spec pins: nine numbered priorities in the stated order, and the sentence that makes
+ * memory bodies data. Mutation: renumber rule 5 as a second 4 -> "states nine numbered rules in
  * order" (the sequence check fails). Mutation (2026-09-26): delete the "Every `put` carries at least
  * one" sentence -> "requires every put to name its subject and a fold to carry its members' union".
  * Mutation (2026-09-27): rule 4 put back to "through `link` and `put` operations" -> "names six
  * operations and resolves an alias with label and unlabel" (the entity-resolution rule no longer
- * names the pair).
+ * names the pair). Mutation (2026-09-28): delete "never write a memory about this run" -> "reads the
+ * work lists and writes no record of the run"; point rule 8 back at "the archived form of its
+ * target" with no `successor` -> the same case.
  */
 describe("the charter", () => {
   it("loads through the effect and matches the file on disk", async () => {
@@ -27,7 +29,7 @@ describe("the charter", () => {
     expect(CHARTER_PATH.endsWith("packages/curator/prompts/charter.md")).toBe(true)
   })
 
-  it("states eight numbered rules in order", async () => {
+  it("states nine numbered rules in order", async () => {
     const text = await Effect.runPromise(CURATOR_CHARTER)
     const numbers = [...text.matchAll(/^(\d+)\. /gm)].map((match) => Number(match[1]))
     expect(numbers).toEqual(Array.from({ length: CHARTER_RULE_COUNT }, (_, at) => at + 1))
@@ -37,6 +39,7 @@ describe("the charter", () => {
       "contradiction",
       "resources/people/",
       "Dedup",
+      "Labels",
       "Entity resolution",
       "Placement",
       "Arcs",
@@ -71,5 +74,22 @@ describe("the charter", () => {
     expect(text).toContain("when none of them carries one, add the one entity its claim is about")
     expect(text).toContain("Never write an `episodic` or `verdict` record.")
     expect(text).toContain("`write-bar` violation")
+  })
+
+  it("reads the work lists and writes no record of the run", async () => {
+    const text = await Effect.runPromise(CURATOR_CHARTER)
+    expect(text).toContain("You are not the last run")
+    for (const list of ["`recent`", "`unlabeled`", "`supersededActive`", "`danglingEdges`"]) {
+      expect(text).toContain(list)
+    }
+    const rules = text.split(/^\d+\. /m).slice(1)
+    expect(rules.find((rule) => rule.startsWith("Dedup"))).toContain("`recent` list")
+    expect(rules.find((rule) => rule.startsWith("Dedup"))).toContain("`supersededActive`")
+    expect(rules.find((rule) => rule.startsWith("Labels"))).toContain("`unlabeled` list")
+    const integrity = rules.find((rule) => rule.startsWith("Integrity"))
+    expect(integrity).toContain("`danglingEdges` list")
+    expect(integrity).toContain("`successor`")
+    expect(text).toContain("Never write a review, calibration, or run-summary record")
+    expect(text).toContain("never write a memory about this run")
   })
 })

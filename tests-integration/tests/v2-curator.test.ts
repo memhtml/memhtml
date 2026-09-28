@@ -305,6 +305,26 @@ describe("curate run --model fake", () => {
     expect(JSON.stringify(report.briefing)).not.toContain("verdict-")
     expect(report.briefing.danglingLinks).toBe(1)
     expect(report.briefing.active).toBe(FIXTURE_SIZE + 6)
+    // The work lists. A first run (no earlier curate ref) lists every eligible record as recent,
+    // verdicts excluded; every fixture record shares one instant, so the path decides the order,
+    // and the binder's lexical search names the restated capital as the kept one's neighbor.
+    expect(report.briefing.lastCurate).toBeNull()
+    expect(report.briefing.recentTotal).toBe(FIXTURE_SIZE + 4)
+    expect(report.briefing.recent[0]?.path).toBe(KEPT)
+    expect(report.briefing.recent[0]?.neighbors.map((one) => one.path)).toContain(DUPLICATE)
+    for (const entry of report.briefing.recent) {
+      expect(entry.neighbors.map((one) => one.path)).not.toContain(entry.path)
+    }
+    expect(report.briefing.danglingEdges).toEqual([
+      {
+        path: DANGLING_SOURCE,
+        rel: "relates_to",
+        href: DANGLING_HREF,
+        archived: null,
+        successor: null
+      }
+    ])
+    expect(report.briefing.unlabeledTotal).toBe(FIXTURE_SIZE + 6)
     expect(report.next).toBe(`memhtml curate merge ${QUALIFIED}`)
 
     // The branch exists at the commit, main did not move, and the checkout did not follow.

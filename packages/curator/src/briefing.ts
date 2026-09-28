@@ -1,4 +1,10 @@
-import { type HeadView, hrefToPath } from "@memhtml/contracts"
+import {
+  type HeadView,
+  hrefToPath,
+  type MemoryRecord,
+  type MemoryRel,
+  originalPathFor
+} from "@memhtml/contracts"
 import { frameValueOf } from "@memhtml/domain"
 
 /**
@@ -24,6 +30,27 @@ import { frameValueOf } from "@memhtml/domain"
  * the eleven refused groups was such a pair (measured over the store at the commit the run saw).
  * `task` rows are outside the curator's mandate by the charter's second priority. Neither type
  * enters a frame-key group.
+ *
+ * ## The work lists
+ *
+ * The curator runs over a store of a few hundred active records (736 on 2026-09-28, after the
+ * collapse), and runs again, so the briefing names the run's work by path rather than leaving the model
+ * to find it with steps. Four lists, each sorted, capped, and carrying its uncapped total:
+ *
+ * - `recent`: the records created since the last curate ref's commit, newest first, each with its
+ *   nearest records by the caller's search (`neighborsOf`), so a restated fact is a pair the model
+ *   judges rather than a search it has to think to run. The fleet wrote 18 to 75 records a day in
+ *   the week before (measured on the live store, 2026-09-20 to 2026-09-27).
+ * - `unlabeled`: active records outside `projects/<slug>/` that carry no `memhtml-entity`, the
+ *   records the write bar would refuse today. A writer without the bar (the v1 write path wrote 92
+ *   of its 97 records that week with no entity) keeps adding them.
+ * - `supersededActive`: active records an active record supersedes, archive candidates the
+ *   supersede never finished.
+ * - `danglingEdges`: edges from active records whose target is no record, with the target's
+ *   archived form and the active record that supersedes that form when either exists. Only an
+ *   active source can be repaired (`validateOps` refuses a head op on an archived one), so
+ *   `danglingLinks` counts every record's edges and this list names the repairable ones: 264 and
+ *   110 on the 2026-09-28 store, every one of the 110 with an archived twin.
  */
 
 /** One active record in a group: its path, its claim, and the value the claim writes. */
@@ -52,6 +79,57 @@ export interface LowConfidenceRecord {
   readonly confidence: number
 }
 
+/** A record named by its path and claim, the shape the work lists quote. */
+export interface BriefedRecord {
+  readonly path: string
+  readonly claim: string
+}
+
+/** One record created since the last curate ref, with its nearest records by search. */
+export interface RecentRecord {
+  readonly path: string
+  readonly claim: string
+  readonly createdAt: string
+  readonly neighbors: ReadonlyArray<BriefedRecord>
+}
+
+/** One active record that names nothing: no entity and no `projects/<slug>/` path. */
+export interface UnlabeledRecord {
+  readonly path: string
+  readonly claim: string
+  readonly memoryType: string
+}
+
+/** One active record that active records supersede, with the paths that supersede it. */
+export interface SupersededRecord {
+  readonly path: string
+  readonly claim: string
+  readonly by: ReadonlyArray<string>
+}
+
+/**
+ * One edge from an active record whose target is no record. `archived` is the target's newest
+ * `archive/<YYYY>/` form when one exists, and `successor` the active record that supersedes that
+ * form, the better home for the edge; both `null` when absent.
+ */
+export interface DanglingEdge {
+  readonly path: string
+  readonly rel: string
+  readonly href: string
+  readonly archived: string | null
+  readonly successor: string | null
+}
+
+/**
+ * The records a caller's search ranks nearest `record`. The briefing drops `record` itself and
+ * keeps the first {@link BRIEFING_NEIGHBOR_CAP}; the binder passes the head's lexical search.
+ */
+export type NeighborsOf = (record: MemoryRecord) => ReadonlyArray<BriefedRecord>
+
+export interface BriefingOptions {
+  readonly neighborsOf?: NeighborsOf | undefined
+}
+
 export interface Briefing {
   /** Active (non-archived) records in the view. */
   readonly active: number
@@ -77,11 +155,36 @@ export interface Briefing {
   readonly lowestConfidence: ReadonlyArray<LowConfidenceRecord>
   /** The newest other `curate/<date>` ref and its commit date, or `null` on a first run. */
   readonly lastCurate: { readonly ref: string; readonly date: string } | null
+  /**
+   * Active records created after `lastCurate`'s date (every active record on a first run), newest
+   * first, `task` and `verdict` rows and `resources/people/` excluded, capped at
+   * {@link BRIEFING_RECENT_CAP}.
+   */
+  readonly recent: ReadonlyArray<RecentRecord>
+  readonly recentTotal: number
+  /** Active records with no entity outside `projects/`, by path, capped at {@link BRIEFING_GROUP_CAP}. */
+  readonly unlabeled: ReadonlyArray<UnlabeledRecord>
+  readonly unlabeledTotal: number
+  /** Active records an active record supersedes, by path, capped at {@link BRIEFING_GROUP_CAP}. */
+  readonly supersededActive: ReadonlyArray<SupersededRecord>
+  readonly supersededActiveTotal: number
+  /** Dangling edges from active records, by path then href, capped at {@link BRIEFING_GROUP_CAP}. */
+  readonly danglingEdges: ReadonlyArray<DanglingEdge>
+  readonly danglingEdgesTotal: number
 }
 
 export const BRIEFING_GROUP_CAP = 50
 export const BRIEFING_LOW_CAP = 20
 export const INBOX_PREFIX = "areas/inbox/"
+export const BRIEFING_RECENT_CAP = 50
+export const BRIEFING_NEIGHBOR_CAP = 3
+/** A neighbor's claim is cut to this many characters: it is a pointer, and `read` has the rest. */
+export const NEIGHBOR_CLAIM_CHARS = 200
+/** A path under this prefix is anchored by the path itself, so the write bar asks it for no entity. */
+export const ANCHORED_PREFIX = "projects/"
+export const PEOPLE_PREFIX = "resources/people/"
+/** The head's rel for a supersede, normalized from `<link rel="memhtml-supersedes">`. */
+const SUPERSEDES_REL: MemoryRel = "supersedes"
 
 /**
  * Memory types whose claim names the record's subject rather than stating a fact about the world,
@@ -92,13 +195,21 @@ export const HEADLINE_CLAIM_TYPES: ReadonlySet<string> = new Set(["verdict", "ta
 const byPath = <T extends { readonly path: string }>(a: T, b: T): number =>
   a.path < b.path ? -1 : a.path > b.path ? 1 : 0
 
+const cut = (text: string, chars: number): string =>
+  text.length <= chars ? text : `${text.slice(0, chars - 1)}…`
+
+/** An instant as epoch milliseconds, `NaN` for a value that is not one (never after any cutoff). */
+const instant = (value: string): number => Date.parse(value)
+
 /**
  * Compute the briefing over a view. Pure over the view: the one field it cannot derive, the last
- * curate ref, is passed in by the caller that read git for it.
+ * curate ref, is passed in by the caller that read git for it, and the neighbors of the recent
+ * records come from the caller's search (`options.neighborsOf`, none when absent).
  */
 export const briefingFromView = (
   view: HeadView,
-  lastCurate: Briefing["lastCurate"] = null
+  lastCurate: Briefing["lastCurate"] = null,
+  options: BriefingOptions = {}
 ): Briefing => {
   let active = 0
   let archived = 0
@@ -106,16 +217,49 @@ export const briefingFromView = (
   let danglingLinks = 0
   const groups = new Map<string, Array<FrameKeyMember>>()
   const low: Array<LowConfidenceRecord> = []
+  const cutoff = lastCurate === null ? Number.NEGATIVE_INFINITY : instant(lastCurate.date)
+  const recentRecords: Array<MemoryRecord> = []
+  const unlabeled: Array<UnlabeledRecord> = []
+  const dangling: Array<{ path: string; rel: string; href: string; target: string }> = []
+  // target path -> the active records whose `supersedes` edge names it.
+  const supersededBy = new Map<string, Array<string>>()
+  // original path -> its newest archived form.
+  const archivedForm = new Map<string, string>()
   for (const record of view.records()) {
     for (const link of record.links) {
       if (!link.href.startsWith("/")) continue
-      if (view.get(hrefToPath(link.href)) === undefined) danglingLinks += 1
+      const target = hrefToPath(link.href)
+      if (view.get(target) === undefined) {
+        danglingLinks += 1
+        if (!record.archived)
+          dangling.push({ path: record.path, rel: link.rel, href: link.href, target })
+      }
+      if (!record.archived && link.rel === SUPERSEDES_REL) {
+        const by = supersededBy.get(target) ?? []
+        by.push(record.path)
+        supersededBy.set(target, by)
+      }
     }
     if (record.archived) {
       archived += 1
+      const original = originalPathFor(record.path)
+      if (original !== undefined) {
+        const known = archivedForm.get(original)
+        if (known === undefined || known < record.path) archivedForm.set(original, record.path)
+      }
       continue
     }
     active += 1
+    if (record.entities.length === 0 && !record.path.startsWith(ANCHORED_PREFIX)) {
+      unlabeled.push({ path: record.path, claim: record.claim, memoryType: record.memoryType })
+    }
+    if (
+      !HEADLINE_CLAIM_TYPES.has(record.memoryType) &&
+      !record.path.startsWith(PEOPLE_PREFIX) &&
+      instant(record.createdAt) > cutoff
+    ) {
+      recentRecords.push(record)
+    }
     if (record.path.startsWith(INBOX_PREFIX)) inbox += 1
     if (record.frameKey !== null && !HEADLINE_CLAIM_TYPES.has(record.memoryType)) {
       // The record's key is the head's (`frameKeyOf`); the value is read from the same claim
@@ -154,6 +298,45 @@ export const briefingFromView = (
     }
   }
   low.sort((a, b) => a.confidence - b.confidence || (a.path < b.path ? -1 : 1))
+
+  // Newest first, path breaking ties, so a capped list keeps the newest writes.
+  recentRecords.sort(
+    (a, b) => instant(b.createdAt) - instant(a.createdAt) || (a.path < b.path ? -1 : 1)
+  )
+  const neighborsOf = options.neighborsOf
+  const recent: Array<RecentRecord> = recentRecords.slice(0, BRIEFING_RECENT_CAP).map((record) => ({
+    path: record.path,
+    claim: record.claim,
+    createdAt: record.createdAt,
+    neighbors:
+      neighborsOf === undefined
+        ? []
+        : neighborsOf(record)
+            .filter((near) => near.path !== record.path)
+            .slice(0, BRIEFING_NEIGHBOR_CAP)
+            .map((near) => ({ path: near.path, claim: cut(near.claim, NEIGHBOR_CLAIM_CHARS) }))
+  }))
+
+  const supersededActive: Array<SupersededRecord> = []
+  for (const [target, by] of supersededBy) {
+    const record = view.get(target)
+    if (record === undefined || record.archived) continue
+    supersededActive.push({ path: target, claim: record.claim, by: [...by].sort() })
+  }
+  supersededActive.sort(byPath)
+
+  const danglingEdges: Array<DanglingEdge> = dangling
+    .map(({ path, rel, href, target }) => {
+      const archivedPath = archivedForm.get(target) ?? null
+      const successor =
+        archivedPath === null
+          ? null
+          : ([...(supersededBy.get(archivedPath) ?? [])].sort()[0] ?? null)
+      return { path, rel, href, archived: archivedPath, successor }
+    })
+    .sort((a, b) => byPath(a, b) || (a.href < b.href ? -1 : a.href > b.href ? 1 : 0))
+  unlabeled.sort(byPath)
+
   return {
     active,
     archived,
@@ -164,7 +347,15 @@ export const briefingFromView = (
     contradictionsTotal: contradictions.length,
     danglingLinks,
     lowestConfidence: low.slice(0, BRIEFING_LOW_CAP),
-    lastCurate
+    lastCurate,
+    recent,
+    recentTotal: recentRecords.length,
+    unlabeled: unlabeled.slice(0, BRIEFING_GROUP_CAP),
+    unlabeledTotal: unlabeled.length,
+    supersededActive: supersededActive.slice(0, BRIEFING_GROUP_CAP),
+    supersededActiveTotal: supersededActive.length,
+    danglingEdges: danglingEdges.slice(0, BRIEFING_GROUP_CAP),
+    danglingEdgesTotal: danglingEdges.length
   }
 }
 
