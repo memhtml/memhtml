@@ -16,7 +16,7 @@ import {
   vectorCachePathFor,
   writeVectorCache
 } from "@memhtml/snapshot"
-import { Effect } from "effect"
+import { Duration, Effect, Fiber, Option, type Result } from "effect"
 
 import type { EmbedderShape } from "./api-layer.js"
 
@@ -40,9 +40,51 @@ export const headVectorsPath = (root: string): string => vectorCachePathFor(root
 /**
  * Why a search ran without the vector arm. `embedder-off` is `MEMHTML_EMBED=off`; `no-cache` is a
  * store nobody has run `head embed` on; `cache-unreadable` is a file the reader refused (corrupt,
- * truncated, or another space's); `embed-failed` is the query's (or the put's) embed call failing.
+ * truncated, or another space's); `embed-failed` is the query's (or the put's) embed call failing;
+ * `embed-timeout` is the query's embed still running when its deadline passed.
  */
-export type VectorSkipReason = "embedder-off" | "no-cache" | "cache-unreadable" | "embed-failed"
+export type VectorSkipReason =
+  | "embedder-off"
+  | "no-cache"
+  | "cache-unreadable"
+  | "embed-failed"
+  | "embed-timeout"
+
+/**
+ * A deadline value as the variable or a request states it: a whole number of milliseconds, `0` for
+ * none, or the reason it is neither.
+ */
+export const parseDeadlineMs = (
+  raw: string
+): { readonly ok: true; readonly ms: number } | { readonly ok: false; readonly reason: string } => {
+  const text = raw.trim()
+  if (!/^\d+$/.test(text)) {
+    return { ok: false, reason: "expected a whole number of milliseconds, 0 for none" }
+  }
+  const ms = Number(text)
+  return Number.isSafeInteger(ms)
+    ? { ok: true, ms }
+    : { ok: false, reason: "the number is too large" }
+}
+
+/**
+ * What becomes of a query embed still running when its deadline passes: `kept` to finish in the
+ * background, or `stopped`. The search has already answered by the time this runs, so it must not
+ * wait for the embed; it decides and returns.
+ */
+export type LateEmbed = (
+  embed: Fiber.Fiber<Float32Array, ModelUnavailable>
+) => Effect.Effect<"kept" | "stopped">
+
+/**
+ * The default {@link LateEmbed}: interrupt the embed (which aborts its request) in a fiber of its
+ * own, so the caller never waits for the interruption to land.
+ */
+export const stopLateEmbed: LateEmbed = (embed) =>
+  Fiber.interrupt(embed).pipe(
+    Effect.forkDetach({ startImmediately: true }),
+    Effect.as("stopped" as const)
+  )
 
 /**
  * What a searching payload reports about the vector arm. `used: false` names the reason and never
@@ -125,16 +167,49 @@ export interface QueryVectors {
 }
 
 /**
+ * The query's embed, bounded by `deadlineMs` when it is a positive number. The embed runs in a fiber
+ * of its own and the wait is on joining it, so a deadline that passes interrupts only the join and
+ * returns at once: the answer never waits for the embed, not even for its interruption to land.
+ * What happens to the embed then is `late`'s decision, and its answer is the `late` field.
+ */
+const embedWithin = (
+  embed: Effect.Effect<Float32Array, ModelUnavailable>,
+  deadlineMs: number | null,
+  late: LateEmbed
+): Effect.Effect<
+  | { readonly done: true; readonly result: Result.Result<Float32Array, ModelUnavailable> }
+  | { readonly done: false; readonly late: "kept" | "stopped" }
+> =>
+  Effect.gen(function* () {
+    if (deadlineMs === null || deadlineMs <= 0) {
+      return { done: true as const, result: yield* Effect.result(embed) }
+    }
+    const fiber = yield* Effect.forkDetach(embed, { startImmediately: true })
+    const joined = yield* Effect.result(Fiber.join(fiber)).pipe(
+      Effect.timeoutOption(Duration.millis(deadlineMs))
+    )
+    if (Option.isSome(joined)) return { done: true as const, result: joined.value }
+    return { done: false as const, late: yield* late(fiber) }
+  })
+
+/**
  * The vector arm's inputs for one `head search` query, or the reason there are none. The order of
  * the checks is the order of their cost: the embedder switch reads nothing, the cache read touches
  * the disk, and only a store with both pays for the `embedQuery` call. `cache` is run only past the
  * switch: {@link loadForSearch} for a CLI call, the held cache for the head server.
+ *
+ * `deadlineMs` bounds the query embed (`null` or `0`: no bound). Past it the arm is skipped with
+ * `embed-timeout` and the search answers on the lexical arm; `late` decides what becomes of the
+ * embed still running ({@link stopLateEmbed} when absent, which the CLI uses because its process
+ * exits after the answer; the head server keeps one to finish, `head-server.ts`).
  */
 export const vectorsForQuery = (input: {
   readonly cache: Effect.Effect<CacheRead>
   readonly view: HeadView
   readonly query: string
   readonly embedder: EmbedderShape
+  readonly deadlineMs?: number | null | undefined
+  readonly late?: LateEmbed | undefined
 }): Effect.Effect<QueryVectors> =>
   Effect.gen(function* () {
     const port = input.embedder.query
@@ -144,8 +219,26 @@ export const vectorsForQuery = (input: {
     const { cache, loadMs } = loaded
     const coverage = coverageOf(input.view, cache.vectors)
     const started = Date.now()
-    const embedded = yield* Effect.result(port.embedQuery(input.query))
+    const deadlineMs = input.deadlineMs ?? null
+    const within = yield* embedWithin(
+      port.embedQuery(input.query),
+      deadlineMs,
+      input.late ?? stopLateEmbed
+    )
     const embedMs = Date.now() - started
+    if (!within.done) {
+      return {
+        search: {},
+        use: skippedUse("embed-timeout", {
+          detail: `the query embed was still running at its ${String(deadlineMs)} ms deadline; ${within.late === "kept" ? "left to finish in the background" : "stopped"}`,
+          cached: cache.vectors.size,
+          coverage,
+          loadMs,
+          embedMs
+        })
+      }
+    }
+    const embedded = within.result
     if (embedded._tag === "Failure") {
       return {
         search: {},

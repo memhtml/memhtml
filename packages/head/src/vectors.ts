@@ -71,12 +71,19 @@ export interface FillCounts {
 export interface FillResult {
   readonly cache: VectorCache
   readonly counts: FillCounts
+  /**
+   * Distinct texts still missing after this fill: 0 unless `limit` held some back, which the next
+   * fill picks up.
+   */
+  readonly remaining: number
 }
 
 /**
  * Embed every active record of `view` whose content hash `cache` lacks, in one `embed` call (which
  * chunks at the model's request ceiling and bounds its own concurrency), and return the cache with
- * the new vectors added beside every vector it already held.
+ * the new vectors added beside every vector it already held. `limit` bounds the texts one call
+ * sends, taking them in the view's record order, and `remaining` counts the ones it held back, so a
+ * caller filling in the background pays for one bounded batch at a time.
  *
  * Archived records are not embedded, because the arm ranks active records only. Entries for hashes
  * the view no longer holds are kept: the cache serves every version of the store, and a record the
@@ -91,6 +98,7 @@ export const fillVectors = <E>(input: {
   readonly view: HeadView
   readonly cache: VectorCache
   readonly embedder: DocumentEmbedder<E>
+  readonly limit?: number | undefined
 }): Effect.Effect<FillResult, E> =>
   Effect.gen(function* () {
     const { cache } = input
@@ -115,10 +123,11 @@ export const fillVectors = <E>(input: {
       missing.set(record.contentHash, text)
     }
     if (missing.size === 0) {
-      return { cache, counts: { records, reused, embedded: 0, empty } }
+      return { cache, counts: { records, reused, embedded: 0, empty }, remaining: 0 }
     }
-    const hashes = [...missing.keys()]
-    const vectors = yield* input.embedder.embed([...missing.values()])
+    const batch = [...missing].slice(0, input.limit ?? missing.size)
+    const hashes = batch.map(([hash]) => hash)
+    const vectors = yield* input.embedder.embed(batch.map(([, text]) => text))
     if (vectors.length !== hashes.length) {
       return yield* Effect.die(
         new Error(`embed returned ${vectors.length} vectors for ${hashes.length} texts`)
@@ -138,6 +147,7 @@ export const fillVectors = <E>(input: {
     }
     return {
       cache: { space: cache.space, vectors: next },
-      counts: { records, reused, embedded: hashes.length, empty }
+      counts: { records, reused, embedded: hashes.length, empty },
+      remaining: missing.size - hashes.length
     }
   })

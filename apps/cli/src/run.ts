@@ -52,12 +52,15 @@ import { failureFor } from "./errors.js"
 import { DEFAULT_TIMEOUT_MS, execCommand, MAX_TIMEOUT_MS, readScript } from "./exec.js"
 import { DEFAULT_EXEC_LANG, EXEC_LANGS, type ExecLang } from "./exec-lang.js"
 import {
+  EMBED_DEADLINE_VAR,
+  EMBED_WARM_IDLE_VAR,
   EXEC_BODY_MAX_BYTES,
   execBodyBytes,
   execBodyTooLarge,
   execRequestOf
 } from "./head-protocol.js"
 import { serveHead } from "./head-server.js"
+import { parseDeadlineMs } from "./head-vectors.js"
 import { helpData, renderCommandHelp } from "./help.js"
 import {
   HOOK_BUDGET_DEFAULT,
@@ -2011,6 +2014,41 @@ export const run = async (
     }
 
     /**
+     * `MEMHTML_EMBED_DEADLINE_MS` for `head search` and `head serve`, and `MEMHTML_EMBED_WARM_IDLE_MS`
+     * for `head serve`: whole milliseconds, `0` for none. Unset is `undefined`, which leaves the
+     * default to the code that applies it (and, for `head search` through a server, leaves the
+     * server's own deadline in charge). A malformed value is refused at exit 2 naming the variable.
+     */
+    const msFromEnv = (
+      name: string
+    ): { readonly ms: number | undefined } | { readonly refused: RunResult } => {
+      const raw = process.env[name]
+      if (raw === undefined || raw.trim() === "") return { ms: undefined }
+      const parsedMs = parseDeadlineMs(raw)
+      if (parsedMs.ok) return { ms: parsedMs.ms }
+      return {
+        refused: emit(
+          fail("ERR_INVALID_FLAG", `${name}=${JSON.stringify(raw)}: ${parsedMs.reason}`, [
+            `${name}=450 memhtml ${parsed.command}`
+          ]),
+          EXIT_USAGE
+        )
+      }
+    }
+    let embedDeadlineMs: number | undefined
+    let warmIdleMs: number | undefined
+    if (parsed.command === "head search" || parsed.command === "head serve") {
+      const deadline = msFromEnv(EMBED_DEADLINE_VAR)
+      if ("refused" in deadline) return deadline.refused
+      embedDeadlineMs = deadline.ms
+    }
+    if (parsed.command === "head serve") {
+      const idle = msFromEnv(EMBED_WARM_IDLE_VAR)
+      if ("refused" in idle) return idle.refused
+      warmIdleMs = idle.ms
+    }
+
+    /**
      * `curate run`'s model, resolved from the flag, then `MEMHTML_CURATOR_MODEL`, then `proxy:` with
      * the default model when a proxy is configured. With none of the three the call is refused as a
      * missing argument naming `--model`, and a `proxy:` spec with no proxy is refused naming the
@@ -2089,7 +2127,9 @@ export const run = async (
             root,
             ref: str(parsed, "ref"),
             pollMs: int(parsed, "poll-ms"),
-            embedder: yield* resolveEmbedder
+            embedder: yield* resolveEmbedder,
+            embedDeadlineMs,
+            warmIdleMs
           })
           return ["head.served", data] as const
         }
@@ -2153,7 +2193,8 @@ export const run = async (
           into: str(parsed, "into"),
           skipGate: bool(parsed, "skip-gate", false),
           embedder: yield* resolveEmbedder,
-          server: bool(parsed, "server", true)
+          server: bool(parsed, "server", true),
+          embedDeadlineMs
         })
       }).pipe(
         Effect.map(([type, data]) => emit(succeed(type, data), EXIT_OK)),

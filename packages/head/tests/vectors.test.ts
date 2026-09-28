@@ -28,6 +28,8 @@ import { mapView, recordOf, run } from "./helpers.js"
  *   empty" fails because an empty string is sent to `embed`.
  * - `fillVectors`: drop the width check, and "a vector of the wrong width is a defect" fails
  *   because the short vector is stored.
+ * - `fillVectors`: ignore `limit` (send every missing text), and "embeds at most `limit` texts a
+ *   call" fails because the first call sends three.
  * - `vectorTextOf`: drop `.slice(0, VECTOR_TEXT_MAX_CHARS)`, and "cuts a long article" fails.
  */
 
@@ -178,6 +180,27 @@ describe("fillVectors", () => {
     )
     expect(embedder.batches).toEqual([[vectorTextOf(real)]])
     expect(filled.counts).toEqual({ records: 2, reused: 0, embedded: 1, empty: 1 })
+  })
+
+  it("embeds at most `limit` texts a call and counts the rest as remaining", async () => {
+    const records = await Promise.all([
+      memory("areas/inbox/a.html", "Alpha is first."),
+      memory("areas/inbox/b.html", "Beta is second."),
+      memory("areas/inbox/c.html", "Gamma is third.")
+    ])
+    const embedder = recording()
+    const first = await run(
+      fillVectors({ view: mapView(records), cache: emptyVectorCache(SPACE), embedder, limit: 2 })
+    )
+    expect(embedder.batches.map((batch) => batch.length)).toEqual([2])
+    expect(first.counts.embedded).toBe(2)
+    expect(first.remaining).toBe(1)
+    const second = await run(
+      fillVectors({ view: mapView(records), cache: first.cache, embedder, limit: 2 })
+    )
+    expect(embedder.batches.map((batch) => batch.length)).toEqual([2, 1])
+    expect(second.remaining).toBe(0)
+    for (const record of records) expect(second.cache.vectors.has(record.contentHash)).toBe(true)
   })
 
   it("an empty view or a covered one makes no call", async () => {
