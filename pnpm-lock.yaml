@@ -103,7 +103,7 @@ importers:
         version: 2.5.14
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.6.2
         version: 26.6.2
@@ -111,8 +111,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
   apps/consolidator:
     dependencies:
@@ -143,7 +143,7 @@ importers:
         version: 2.5.14
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.6.2
         version: 26.6.2
@@ -151,8 +151,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
   apps/docs:
     dependencies:
@@ -248,8 +248,8 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
       vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
   apps/mcp:
     dependencies:
@@ -298,7 +298,7 @@ importers:
         version: 2.5.14
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.6.2
         version: 26.6.2
@@ -306,8 +306,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
   packages/contracts:
     dependencies:
@@ -320,7 +320,7 @@ importers:
         version: 2.5.14
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.6.2
         version: 26.6.2
@@ -331,8 +331,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
   packages/domain:
     dependencies:
@@ -348,7 +348,7 @@ importers:
         version: 2.5.14
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.6.2
         version: 26.6.2
@@ -359,8 +359,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
   packages/eval:
     dependencies:
@@ -397,7 +397,7 @@ importers:
         version: 2.5.14
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.6.2
         version: 26.6.2
@@ -405,8 +405,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
   packages/html:
     dependencies:
@@ -428,7 +428,7 @@ importers:
         version: 2.5.14
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.6.2
         version: 26.6.2
@@ -439,8 +439,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
   packages/index:
     dependencies:
@@ -465,7 +465,7 @@ importers:
         version: 2.5.14
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
       '@memhtml/store':
         specifier: workspace:*
         version: link:../store
@@ -479,8 +479,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
   packages/integrations:
     dependencies:
@@ -499,7 +499,7 @@ importers:
         version: 2.5.14
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.6.2
         version: 26.6.2
@@ -507,8 +507,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
   packages/llm:
     dependencies:
@@ -530,7 +530,7 @@ importers:
         version: 2.5.14
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.6.2
         version: 26.6.2
@@ -538,8 +538,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
   packages/sleep:
     dependencies:
@@ -570,7 +570,7 @@ importers:
         version: 2.5.14
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.6.2
         version: 26.6.2
@@ -578,8 +578,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
   packages/store:
     dependencies:
@@ -598,7 +598,7 @@ importers:
         version: 2.5.14
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.6.2
         version: 26.6.2
@@ -606,8 +606,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
   packages/telemetry:
     dependencies:
@@ -620,7 +620,7 @@ importers:
         version: 2.5.14
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.6.2
         version: 26.6.2
@@ -628,8 +628,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
   packages/traces:
     dependencies:
@@ -648,7 +648,7 @@ importers:
         version: 2.5.14
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.6.2
         version: 26.6.2
@@ -656,8 +656,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
   tests-integration:
     dependencies:
@@ -703,7 +703,7 @@ importers:
         version: 2.5.14
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))
       '@types/node':
         specifier: 26.6.2
         version: 26.6.2
@@ -714,8 +714,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
 packages:
 
@@ -2584,8 +2584,8 @@ packages:
     resolution: {integrity: sha512-UycprH3T6n3jH0k44NHMa7pnFHGu/N05MjojYr+Mc6I7obkoLIJujSWwin1pCvdy/eOxrI/l3uDLQsmcrOb4ug==}
     engines: {node: '>= 20'}
 
-  '@vitest/mocker@5.0.1':
-    resolution: {integrity: sha512-6K1DoBNAPGvuOcSsGA4D6x+5zEEff/KmOOP3uetT2TrGpVfI+HRHRnJJfKi5ib/g1vx8IYHQD8s0pbJz8WQI7Q==}
+  '@vitest/mocker@5.0.2':
+    resolution: {integrity: sha512-Z5FS00Q1SJHkB35xATsmWGdQ5WA1/0MV3CDjqyv7GavHv1OfOj145MNfHOlHk7QLes21dKFDHr8EO2zvL+9WGA==}
     peerDependencies:
       msw: ^2.4.9
       vite: ^6.0.0 || ^7.0.0 || ^8.0.0
@@ -2595,8 +2595,8 @@ packages:
       vite:
         optional: true
 
-  '@vitest/spy@5.0.1':
-    resolution: {integrity: sha512-rbto/mF/SGERxEgYOek7Xm6B9b+y+mVoo+f4b2LymYO8zM1b7uB5nHuhVMTP2hxdzgxvGiZYGxGIaMvL5y180Q==}
+  '@vitest/spy@5.0.2':
+    resolution: {integrity: sha512-Ijc7T1nT9efNb5LxvjaBrEqw3f/QwUv5EE0nKqZxgqsaV/FxAAZ8baGylA8X/Z2oS4Lp+K74Jr6dTJsDKxJDeg==}
 
   '@volar/kit@2.4.28':
     resolution: {integrity: sha512-cKX4vK9dtZvDRaAzeoUdaAJEew6IdxHNCRrdp5Kvcl6zZOqb6jTOfk3kXkIkG3T7oTFXguEMt5+9ptyqYR84Pg==}
@@ -5050,9 +5050,6 @@ packages:
     resolution: {integrity: sha512-6x6dK6zJdpTzF4sQeNYxwtvBzf6Eg4GtlesS94HOvTudUeyK2WXAaIfmDgsyslYrRBeFIlsi54AYsFGUuhmvrQ==}
     engines: {node: '>= 0.4'}
 
-  siginfo@2.0.0:
-    resolution: {integrity: sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==}
-
   signal-exit@3.0.7:
     resolution: {integrity: sha512-wnD2ZE+l+SPC/uoS0vXeE9L1+0wuaMqKlfz9AMUo38JsyLSBWSFcHR1Rri62LZc12vLr1gb3jl7iwQhgwpAbGQ==}
 
@@ -5109,9 +5106,6 @@ packages:
 
   sql.js@1.14.1:
     resolution: {integrity: sha512-gcj8zBWU5cFsi9WUP+4bFNXAyF1iRpA3LLyS/DP5xlrNzGmPIizUeBggKa8DbDwdqaKwUcTEnChtd2grWo/x/A==}
-
-  stackback@0.0.2:
-    resolution: {integrity: sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==}
 
   standard-as-callback@2.1.0:
     resolution: {integrity: sha512-qoRRSyROncaz1z0mvYqIE4lCd9p2R90i6GxW3uZv5ucSu8tU7B5HXUP1gG8pVZsYNVaXjk8ClXHPttLyxAL48A==}
@@ -5284,10 +5278,6 @@ packages:
   tinyclip@1.0.3:
     resolution: {integrity: sha512-nTv2raKFMzGG6JJp0lpNDsRPdfFE6UHlu2rVEjXo8vkx1ZS3LW2CVXqIaLu8xZlu+6tbFs9V58Qc/Jmk/Ii7wA==}
     engines: {node: ^16.14.0 || >= 17.3.0}
-
-  tinyexec@1.3.0:
-    resolution: {integrity: sha512-QKAl9m8gWWGHV8jZcPeym6j+XULi6tOf1mT83WYJ4Lk2ytW/uwAWkrP0uFsdoYMdueVJ0qs26wZ+23xeB4ibNQ==}
-    engines: {node: '>=18'}
 
   tinyexec@1.3.1:
     resolution: {integrity: sha512-GCvB3aoys96IuDFBMcTB46JOR6mdMtAToqwiW8JlWhsoh1mhHi/xn9ss/Dg7N555GiJyEt2qzoG/NHCwM6h1EA==}
@@ -5650,20 +5640,20 @@ packages:
       vite:
         optional: true
 
-  vitest@5.0.1:
-    resolution: {integrity: sha512-iA95lQbKEkvrtTkdAgnWbXfbipWiiWe/hDl2P5tMi6WFwD76G0NxXAGp/M9EOcYupeGJRr6wppMc7CoA41TQjg==}
+  vitest@5.0.2:
+    resolution: {integrity: sha512-7MQrx9pDv5aHiUcovIb/70Ys3tgtkUVgCtledvKdCmEO+/1Dicq5ZqoSxOW034m03oqC+oHOKui2dM6qtMLoJg==}
     engines: {node: ^22.12.0 || ^24.0.0 || >=26.0.0}
     hasBin: true
     peerDependencies:
       '@edge-runtime/vm': '*'
       '@opentelemetry/api': ^1.9.0
       '@types/node': ^22.0.0 || >=24.0.0
-      '@vitest/browser-playwright': 5.0.1
-      '@vitest/browser-preview': 5.0.1
+      '@vitest/browser-playwright': 5.0.2
+      '@vitest/browser-preview': 5.0.2
       '@vitest/browser-webdriverio': ^5.0.0-beta.5 || >=5.0.0
-      '@vitest/coverage-istanbul': 5.0.1
-      '@vitest/coverage-v8': 5.0.1
-      '@vitest/ui': 5.0.1
+      '@vitest/coverage-istanbul': 5.0.2
+      '@vitest/coverage-v8': 5.0.2
+      '@vitest/ui': 5.0.2
       happy-dom: '*'
       jsdom: '*'
       vite: ^6.4.0 || ^7.0.0 || ^8.0.0
@@ -5820,9 +5810,9 @@ packages:
   which-module@2.0.1:
     resolution: {integrity: sha512-iBdZ57RDvnOR9AGBhML2vFZf7h8vmBjhoaZqODJBFWHVtKkDmKuHai3cx5PgVMrX5YDNp27AofYbAwctSS+vhQ==}
 
-  why-is-node-running@2.3.0:
-    resolution: {integrity: sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==}
-    engines: {node: '>=8'}
+  why-is-node-running@3.2.2:
+    resolution: {integrity: sha512-NKUzAelcoCXhXL4dJzKIwXeR8iEVqsA0Lq6Vnd0UXvgaKbzVo4ZTHROF2Jidrv+SgxOQ03fMinnNhzZATxOD3A==}
+    engines: {node: '>=20.11'}
     hasBin: true
 
   wrap-ansi@6.2.0:
@@ -7067,10 +7057,10 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@effect/vitest@4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))':
+  '@effect/vitest@4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)))':
     dependencies:
       effect: 4.0.0-rc.117
-      vitest: 5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+      vitest: 5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
 
   '@emmetio/abbreviation@2.3.3':
     dependencies:
@@ -7969,16 +7959,16 @@ snapshots:
 
   '@vercel/oidc@3.2.0': {}
 
-  '@vitest/mocker@5.0.1(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))':
+  '@vitest/mocker@5.0.2(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))':
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
-      '@vitest/spy': 5.0.1
+      '@vitest/spy': 5.0.2
       estree-walker: 3.0.3
       magic-string: 1.2.3
     optionalDependencies:
       vite: 8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)
 
-  '@vitest/spy@5.0.1': {}
+  '@vitest/spy@5.0.2': {}
 
   '@volar/kit@2.4.28(typescript@6.0.3)':
     dependencies:
@@ -11035,8 +11025,6 @@ snapshots:
       side-channel-map: 1.0.1
       side-channel-weakmap: 1.0.2
 
-  siginfo@2.0.0: {}
-
   signal-exit@3.0.7: {}
 
   simple-concat@1.0.1:
@@ -11093,8 +11081,6 @@ snapshots:
   sprintf-js@1.1.3: {}
 
   sql.js@1.14.1: {}
-
-  stackback@0.0.2: {}
 
   standard-as-callback@2.1.0:
     optional: true
@@ -11343,8 +11329,6 @@ snapshots:
   tinybench@6.1.4: {}
 
   tinyclip@1.0.3: {}
-
-  tinyexec@1.3.0: {}
 
   tinyexec@1.3.1: {}
 
@@ -11641,10 +11625,10 @@ snapshots:
     optionalDependencies:
       vite: 8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)
 
-  vitest@5.0.1(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)):
+  vitest@5.0.2(@types/node@26.6.2)(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)):
     dependencies:
       '@types/chai': 5.2.3
-      '@vitest/mocker': 5.0.1(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
+      '@vitest/mocker': 5.0.2(vite@8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0))
       chai: 6.2.2
       es-module-lexer: 2.3.2
       expect-type: 1.4.0
@@ -11653,10 +11637,10 @@ snapshots:
       picomatch: 4.0.7
       std-env: 4.2.0
       tinybench: 6.1.4
-      tinyexec: 1.3.0
+      tinyexec: 1.3.1
       tinyglobby: 0.2.17
       vite: 8.2.2(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.0)
-      why-is-node-running: 2.3.0
+      why-is-node-running: 3.2.2
     optionalDependencies:
       '@types/node': 26.6.2
     transitivePeerDependencies:
@@ -11787,10 +11771,7 @@ snapshots:
 
   which-module@2.0.1: {}
 
-  why-is-node-running@2.3.0:
-    dependencies:
-      siginfo: 2.0.0
-      stackback: 0.0.2
+  why-is-node-running@3.2.2: {}
 
   wrap-ansi@6.2.0:
     dependencies:
