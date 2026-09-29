@@ -31,7 +31,7 @@ These pages trace what runs when a given event arrives.
 
 ## Diagrams
 
-- [Components](diagrams/architecture/components.md): the MCP toolkit and the seven Effect services it reaches, with their edges, as a class diagram. `MemhtmlToolkit` is a `Toolkit.make`; the seven services are the `Context.Service` tags.
+- [Components](diagrams/architecture/components.md): the MCP toolkit and the ten Effect services at the center of the app layer, with the edge each takes on another, as a class diagram. `MemhtmlToolkit` is a `Toolkit.make`; each service is a `Context.Service` tag.
 - [Dependency graph](diagrams/structural/dependency-graph.md): internal packages and external dependencies on one page.
 - [Sequences](diagrams/behavioral/sequences.md): call order for write, search, and a sleep run.
 
