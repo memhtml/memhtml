@@ -133,7 +133,7 @@ export const fakeTools = (options: FakeToolOptions = {}): FakeTools => {
       return {
         baseSha: "0".repeat(40),
         ref: "refs/heads/curate/test",
-        ops: { put: 0, archive: 0, link: 0, unlink: 0, label: 0, unlabel: 0 }
+        ops: { put: 0, archive: 0, link: 0, unlink: 0, label: 0, unlabel: 0, move: 0 }
       }
     }
   }
@@ -163,7 +163,11 @@ export const emptyBriefing: Briefing = {
   supersededActive: [],
   supersededActiveTotal: 0,
   danglingEdges: [],
-  danglingEdgesTotal: 0
+  danglingEdgesTotal: 0,
+  inbox: [],
+  inboxTotal: 0,
+  inboxWithHome: 0,
+  inboxHomes: []
 }
 
 /** Every text a tool answered with in the prompt the model saw on call `index`. */

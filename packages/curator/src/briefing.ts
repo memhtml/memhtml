@@ -7,6 +7,8 @@ import {
 } from "@memhtml/contracts"
 import { frameValueOf } from "@memhtml/domain"
 
+import { type InboxHome, type InboxRecord, inboxWorkList } from "./inbox.js"
+
 /**
  * The briefing: a code-computed summary of the version the curator sees, handed to the model as the
  * one user message. Everything in it is derived from the head view with no model call, so the run
@@ -35,7 +37,7 @@ import { frameValueOf } from "@memhtml/domain"
  *
  * The curator runs over a store of a few hundred active records (736 on 2026-09-28, after the
  * collapse), and runs again, so the briefing names the run's work by path rather than leaving the model
- * to find it with steps. Four lists, each sorted, capped, and carrying its uncapped total:
+ * to find it with steps. Five lists, each sorted, capped, and carrying its uncapped total:
  *
  * - `recent`: the records created since the last curate ref's commit, newest first, each with its
  *   nearest records by the caller's search (`neighborsOf`), so a restated fact is a pair the model
@@ -51,6 +53,9 @@ import { frameValueOf } from "@memhtml/domain"
  *   active source can be repaired (`validateOps` refuses a head op on an archived one), so
  *   `danglingLinks` counts every record's edges and this list names the repairable ones: 264 and
  *   110 on the 2026-09-28 store, every one of the 110 with an archived twin.
+ * - `inbox`: the active records under `areas/inbox/`, each with the home code would move it to and
+ *   the evidence (`inbox.ts`), homes first. 535 of 923 active records sat there on 2026-09-30 and
+ *   the two curator runs before this list existed moved none.
  */
 
 /** One active record in a group: its path, its claim, and the value the claim writes. */
@@ -171,6 +176,16 @@ export interface Briefing {
   /** Dangling edges from active records, by path then href, capped at {@link BRIEFING_GROUP_CAP}. */
   readonly danglingEdges: ReadonlyArray<DanglingEdge>
   readonly danglingEdgesTotal: number
+  /**
+   * Active inbox records outside `areas/inbox/tasks/`, `task` and `verdict` rows excluded, each with
+   * its code-computed home or `null`, homes first, capped at `BRIEFING_INBOX_CAP`.
+   */
+  readonly inbox: ReadonlyArray<InboxRecord>
+  readonly inboxTotal: number
+  /** How many of `inboxTotal` carry a home, uncapped. */
+  readonly inboxWithHome: number
+  /** The homes the list files into, most inbox records first. */
+  readonly inboxHomes: ReadonlyArray<InboxHome>
 }
 
 export const BRIEFING_GROUP_CAP = 50
@@ -336,6 +351,7 @@ export const briefingFromView = (
     })
     .sort((a, b) => byPath(a, b) || (a.href < b.href ? -1 : a.href > b.href ? 1 : 0))
   unlabeled.sort(byPath)
+  const inboxList = inboxWorkList(view, HEADLINE_CLAIM_TYPES)
 
   return {
     active,
@@ -355,7 +371,11 @@ export const briefingFromView = (
     supersededActive: supersededActive.slice(0, BRIEFING_GROUP_CAP),
     supersededActiveTotal: supersededActive.length,
     danglingEdges: danglingEdges.slice(0, BRIEFING_GROUP_CAP),
-    danglingEdgesTotal: danglingEdges.length
+    danglingEdgesTotal: danglingEdges.length,
+    inbox: inboxList.inbox,
+    inboxTotal: inboxList.inboxTotal,
+    inboxWithHome: inboxList.inboxWithHome,
+    inboxHomes: inboxList.inboxHomes
   }
 }
 

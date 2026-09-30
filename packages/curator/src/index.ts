@@ -63,8 +63,28 @@ export {
   fakeCollapseProposal,
   fakeCuratorModel,
   fakeDedupScript,
-  fakeNextCall
+  fakeNextCall,
+  fakePlacements
 } from "./fake-model.js"
+export {
+  BRIEFING_INBOX_CAP,
+  type CandidateHome,
+  GENERIC_ENTITY_FLOOR,
+  GENERIC_ENTITY_SHARE,
+  INBOX_CLAIM_CHARS,
+  INBOX_HOMES_CAP,
+  type InboxHome,
+  type InboxRecord,
+  type InboxWorkList,
+  inboxWorkList,
+  isBucketHome,
+  isPlaceable,
+  NAMED_WEIGHT,
+  NEW_HOME_MIN,
+  NEW_HOME_TYPES,
+  PLACEMENT_QUOTA,
+  SHARED_MIN
+} from "./inbox.js"
 export {
   type CuratorRun,
   type CuratorRunInput,

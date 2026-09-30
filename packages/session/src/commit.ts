@@ -103,7 +103,8 @@ interface StagedTree {
 
 /**
  * Fold the ops into a set of writes and removes. A `link`, `unlink`, `label`, or `unlabel` reads the
- * file from an earlier op in the same batch when there is one, else from the head; an `archive` removes its source and writes its
+ * file from an earlier op in the same batch when there is one, else from the head; a `move` removes
+ * its source and writes the same bytes at its destination; an `archive` removes its source and writes its
  * destination with the archive stamps over the source AS THE COMMIT SEES IT (an earlier op in the
  * batch, else the head at the commit's parent), never over the bytes the op carries: those name
  * which article is meant (validateOps checks the hash), and a link the source gained since the op
@@ -157,6 +158,17 @@ const stage = (head: HeadView, ops: ReadonlyArray<OverlayOp>, archivedAt: string
         writes.set(op.path, removeMeta(current, "memhtml-entity", op.entity))
         break
       }
+      case "move": {
+        // The source as the batch left it, written unchanged at its destination: no stamp, so the
+        // blob, the content hash, and every meta travel with the record. The same unreachable
+        // fallback to `op.html` as an archive's keeps the fold total.
+        const source = writes.get(op.path) ?? head.get(op.path)?.html ?? op.html
+        writes.delete(op.path)
+        removes.add(op.path)
+        writes.set(op.to, source)
+        removes.delete(op.to)
+        break
+      }
     }
   }
   return { writes, removes }
@@ -173,6 +185,10 @@ const markContradictions = (
 ): Effect.Effect<ReadonlyArray<{ path: string; against: string }>> =>
   Effect.gen(function* () {
     const contradictions: Array<{ path: string; against: string }> = []
+    // A rival this batch moves is linked at its destination, so the edge never names a path the
+    // commit empties.
+    const movedTo = new Map<string, string>()
+    for (const op of ops) if (op.kind === "move") movedTo.set(op.path, op.to)
     for (const op of ops) {
       if (op.kind !== "put") continue
       const html = writes.get(op.path)
@@ -186,8 +202,9 @@ const markContradictions = (
         if (other === op.path) continue
         const record = head.get(other)
         if (record === undefined || record.archived) continue
-        linked = addLink(linked, "contradicts", pathToHref(other))
-        contradictions.push({ path: op.path, against: other })
+        const against = movedTo.get(other) ?? other
+        linked = addLink(linked, "contradicts", pathToHref(against))
+        contradictions.push({ path: op.path, against })
       }
       writes.set(op.path, linked)
     }

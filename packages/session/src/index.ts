@@ -18,6 +18,7 @@ export {
   ensureExcludedQuietly,
   HEAD_SOCKET
 } from "./exclude.js"
+export { withRepoints } from "./moves.js"
 export { GIT_REPO_SELECTION_ENV, gitPathOf, makePlumbing, type Plumbing } from "./plumbing.js"
 export {
   appendOps,

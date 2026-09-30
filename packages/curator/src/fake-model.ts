@@ -14,6 +14,7 @@ import {
   memberEntities,
   parseCollapseBriefing
 } from "./collapse-briefing.js"
+import { PLACEMENT_QUOTA } from "./inbox.js"
 import type { ProposedOp } from "./tools.js"
 
 /**
@@ -21,8 +22,8 @@ import type { ProposedOp } from "./tools.js"
  *
  * Two scripts, chosen by the briefing it is handed:
  *
- * Under a curate-run briefing it plays the dedup rule and the integrity rule of the charter and
- * nothing else. Its script is fixed: `status` once, then one `exec` whose script (1) lists every
+ * Under a curate-run briefing it plays the dedup rule, the placement rule, and the integrity rule of
+ * the charter and nothing else. Its script is fixed: `status` once, then one `exec` whose script (1) lists every
  * `duplicates` group in the briefing, archives every path but the first of each, and splices a
  * `supersedes` link into the kept file's head for each archive, and (2) walks every active memory
  * file for a `<link rel="memhtml-...">` whose root-relative target is no file in the corpus and cuts
@@ -30,8 +31,11 @@ import type { ProposedOp } from "./tools.js"
  * harvester yields one `archive`, one `link`, and one `unlink` from that one `exec` (both head edits
  * become edge ops; no `propose` is needed), so `curate run --model fake` lands a real commit in the
  * smoke run and the integration tier with no model on the network, and proves both code-mode edge
- * paths end to end. The briefing's `contradictions` are left alone, as the charter's first priority
- * says.
+ * paths end to end. Then, when the briefing's `inbox` list names records with an existing home, one
+ * `propose` of a `move` per such record (up to the placement quota) to the home's `to`, which the
+ * binder completes with the edge repoints, so the placement path lands end to end too; with none it
+ * skips the call. Then `finish`. The briefing's `contradictions` are left alone, as the charter's
+ * first priority says.
  *
  * Under a collapse briefing (`collapse-briefing.ts`) it plays one fold the way the collapse charter
  * asks: one `propose` carrying the canonical `put` under the home prefix (title, the members'
@@ -295,6 +299,38 @@ const nextCollapseCall = (
   })
 }
 
+/**
+ * The moves the fake proposes: every inbox record with an existing home, in the list's order, up to
+ * the quota. A new home is left for a model to judge.
+ */
+export const fakePlacements = (briefing: Briefing | null): ReadonlyArray<ProposedOp> =>
+  (briefing?.inbox ?? [])
+    .flatMap((entry) =>
+      entry.home?.kind === "existing"
+        ? [{ kind: "move" as const, path: entry.path, to: entry.home.to }]
+        : []
+    )
+    .slice(0, PLACEMENT_QUOTA)
+
+/** How many ops the `propose` result says landed, `0` when there was no clean one. */
+const proposedFrom = (options: LanguageModelV4CallOptions): number => {
+  for (const message of options.prompt) {
+    if (message.role !== "tool") continue
+    for (const part of message.content) {
+      if (part.type !== "tool-result" || part.toolName !== "propose") continue
+      const text = textOf(part)
+      if (text === null) return 0
+      try {
+        const result = JSON.parse(text) as { appended?: number }
+        return typeof result.appended === "number" ? result.appended : 0
+      } catch {
+        return 0
+      }
+    }
+  }
+  return 0
+}
+
 /** The next call in the fake's script, decided from what the conversation shows it has done. */
 export const fakeNextCall = (
   options: LanguageModelV4CallOptions
@@ -313,25 +349,33 @@ export const fakeNextCall = (
     const year = String(new Date().getUTCFullYear())
     return toolCall("exec", { script: fakeDedupScript(groups, year) })
   }
+  const placements = fakePlacements(briefingOf(options))
+  if (placements.length > 0 && !calls.includes("propose")) {
+    return toolCall("propose", { ops: placements })
+  }
+  const filed = proposedFrom(options) > 0 ? placements : []
   const { archived, unlinked } = printedFrom(options)
   // The first line is the commit subject, which `commitSubject` caps at 72 characters, so every
   // shape here stays under the cap and the subject lands untruncated.
   const dropped = `dropped ${String(unlinked.length)} dangling link(s)`
   const subject =
-    archived.length === 0
-      ? unlinked.length === 0
-        ? "No duplicate groups to settle; nothing archived."
-        : `No duplicates to settle; ${dropped}.`
-      : unlinked.length === 0
-        ? `Archived ${String(archived.length)} duplicate record(s) behind their canonical twins.`
-        : `Archived ${String(archived.length)} duplicate record(s) and ${dropped}.`
+    filed.length > 0
+      ? `Filed ${String(filed.length)} inbox record(s) into their homes.`
+      : archived.length === 0
+        ? unlinked.length === 0
+          ? "No duplicate groups to settle; nothing archived."
+          : `No duplicates to settle; ${dropped}.`
+        : unlinked.length === 0
+          ? `Archived ${String(archived.length)} duplicate record(s) behind their canonical twins.`
+          : `Archived ${String(archived.length)} duplicate record(s) and ${dropped}.`
   const report = [
     subject,
     "",
     ...archived.map((entry) => `- ${entry.from} -> ${entry.to}, superseded by ${entry.kept}`),
     ...unlinked.map((entry) => `- ${entry.path}: dropped ${entry.rel} -> ${entry.href}`),
-    ...(archived.length + unlinked.length === 0 ? [] : [""]),
-    "The fake curator plays the dedup and integrity rules only. Left undone: every other priority."
+    ...filed.map((op) => `- ${op.path} -> ${op.kind === "move" ? op.to : ""}`),
+    ...(archived.length + unlinked.length + filed.length === 0 ? [] : [""]),
+    "The fake curator plays the dedup, placement, and integrity rules only. Left undone: every other priority."
   ].join("\n")
   return toolCall("finish", { report })
 }

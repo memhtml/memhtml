@@ -71,6 +71,12 @@ export interface HeadView {
  * `link` and `unlink` are the edge edits: each names one `(rel, href)` edge on one file. `label` and
  * `unlabel` are the entity edits: each names one `memhtml-entity` value on one file. All four are
  * head-only and none touches the article, so the record's content hash survives every one of them.
+ * `move` relocates one active record to a new live path with its bytes unchanged (plus any head edit
+ * the batch made to it first), so its content hash, blob, and creation time travel with it; `html`
+ * names which article is meant, as an `archive`'s does. It is the placement op: an inbox record
+ * filed under `areas/<slug>/` or `resources/<tag>/`. A move repoints nothing by itself: every live
+ * edge to the old path is moved by an `unlink` and a `link` in the same batch, and `validateOps`
+ * refuses a batch that leaves one behind.
  */
 export type OverlayOp =
   | { readonly kind: "put"; readonly path: string; readonly html: string }
@@ -79,6 +85,7 @@ export type OverlayOp =
   | { readonly kind: "unlink"; readonly path: string; readonly rel: string; readonly href: string }
   | { readonly kind: "label"; readonly path: string; readonly entity: string }
   | { readonly kind: "unlabel"; readonly path: string; readonly entity: string }
+  | { readonly kind: "move"; readonly path: string; readonly to: string; readonly html: string }
 
 export const hrefToPath = (href: string): string => (href.startsWith("/") ? href.slice(1) : href)
 

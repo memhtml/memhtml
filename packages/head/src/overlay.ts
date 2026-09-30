@@ -24,6 +24,10 @@ import { recordFrom } from "./record.js"
  * `byEntity` gains or loses the path through the same `insertRecord` every other index follows.
  * `label` fails on a path the view lacks or a value that is not a well-formed entity; `unlabel` on
  * a path the view lacks or an entity the file does not carry.
+ *
+ * `move` takes the record at its path as the view holds it and inserts it at `to` with the same
+ * bytes, so `inbound` still names the holders of edges to the old path until the batch repoints
+ * them. It fails on a path the view does not hold live.
  */
 
 const applyOp = (indexes: Indexes, op: OverlayOp): Effect.Effect<Indexes, InvalidMemory> => {
@@ -120,6 +124,21 @@ const applyOp = (indexes: Indexes, op: OverlayOp): Effect.Effect<Indexes, Invali
         path: op.path,
         html: removeMeta(existing.html, "memhtml-entity", op.entity)
       }).pipe(Effect.map((record) => insertRecord(indexes, record)))
+    }
+    case "move": {
+      const existing = viewOf(indexes, null).get(op.path)
+      if (existing === undefined || existing.archived) {
+        return Effect.fail(
+          InvalidMemory.make({
+            reason: `move op names a path the view does not hold live: ${op.path}`
+          })
+        )
+      }
+      // The record as the view holds it (head edits an earlier op made included), re-parsed at its
+      // destination, so every index follows the path and the content hash stays the record's.
+      return recordFrom({ path: op.to, html: existing.html }).pipe(
+        Effect.map((record) => insertRecord(removeRecord(indexes, op.path), record))
+      )
     }
   }
 }

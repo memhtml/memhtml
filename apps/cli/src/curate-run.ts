@@ -34,7 +34,8 @@ import {
   startSession,
   touchedPaths,
   type Violation,
-  validateOps
+  validateOps,
+  withRepoints
 } from "@memhtml/session"
 import { type GitFailure, makeGit } from "@memhtml/store"
 import { Effect } from "effect"
@@ -153,6 +154,7 @@ export interface OpsByKind {
   readonly unlink: number
   readonly label: number
   readonly unlabel: number
+  readonly move: number
 }
 
 export interface CurateRunReport {
@@ -192,7 +194,8 @@ const opsByKind = (ops: ReadonlyArray<OverlayOp>): OpsByKind => ({
   link: ops.filter((op) => op.kind === "link").length,
   unlink: ops.filter((op) => op.kind === "unlink").length,
   label: ops.filter((op) => op.kind === "label").length,
-  unlabel: ops.filter((op) => op.kind === "unlabel").length
+  unlabel: ops.filter((op) => op.kind === "unlabel").length,
+  move: ops.filter((op) => op.kind === "move").length
 })
 
 const describeViolation = (violation: Violation): string => {
@@ -373,21 +376,24 @@ export const bindTools = (input: {
           // The curator's `exec` tool takes a JavaScript module (the charter and the fake model both
           // write one), so the language is stated rather than left to the CLI's `bash` default.
           const report = yield* runSessionExec({ view, script, lang: "js", scope: CURATE_SCOPE })
-          const { violations, blocking } = judge(report.ops)
+          // A file the script moved is a `move`; the edges to its old path it did not repoint
+          // itself are completed here, exactly as a proposed move's are.
+          const ops = withRepoints(view, report.ops)
+          const { violations, blocking } = judge(ops)
           const clean = report.exitCode === 0 && blocking.length === 0
-          if (clean && report.ops.length > 0) yield* input.overlay.append(report.ops)
+          if (clean && ops.length > 0) yield* input.overlay.append(ops)
           return {
             exitCode: report.exitCode,
             stdout: report.stdout,
             stderr: report.stderr,
             durationMs: report.durationMs,
             timedOut: report.timedOut,
-            ops: report.ops.map((op) =>
-              op.kind === "archive"
+            ops: ops.map((op) =>
+              op.kind === "archive" || op.kind === "move"
                 ? { kind: op.kind, path: op.path, to: op.to }
                 : { kind: op.kind, path: op.path }
             ),
-            appended: clean ? report.ops.length : 0,
+            appended: clean ? ops.length : 0,
             rejected: report.rejected,
             violations
           }
@@ -396,12 +402,16 @@ export const bindTools = (input: {
     propose: (ops): Promise<CuratorProposeResult> =>
       promise(
         Effect.gen(function* () {
+          // A proposed `move` names its source and destination only; the `unlink` and `link` pairs
+          // that repoint every edge to the old path are the view's to compute (`withRepoints`), so
+          // a placement never strands an edge and the model never lists them.
+          const completed = withRepoints(yield* current(), ops)
           // The same refusal `exec` applies: any violation the new ops are answerable for refuses
           // the proposal, and the model is the party that can change it.
-          const violations = judge(ops).blocking
+          const violations = judge(completed).blocking
           if (violations.length > 0) return { appended: 0, violations }
-          yield* input.overlay.append(ops)
-          return { appended: ops.length, violations: [] }
+          yield* input.overlay.append(completed)
+          return { appended: completed.length, violations: [] }
         })
       ),
     status: (): Promise<CuratorSessionStatus> =>

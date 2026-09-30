@@ -1107,3 +1107,76 @@ describe("harvestOps over plain values", () => {
     ])
   })
 })
+
+/**
+ * A file gone from its path whose article now sits at exactly one new live path is a `move`, the
+ * placement op; a deletion is still no op at all.
+ *
+ * (Mutation 2026-09-30: `landed?.length === 1` -> `landed !== undefined` in `harvestOps` -> "two new
+ * copies of one article pair with nothing" is red: the first copy is taken as the move.)
+ * (Mutation 2026-09-30: the move branch's `headEdit` result ignored, `edit = null` -> "a moved copy
+ * that gained a link carries it as a link op on the source, staged before the move" is red.)
+ */
+describe("harvestOps pairs a moved file", () => {
+  const FROM = "areas/inbox/moved-fact.html"
+  const TO = "resources/moves/moved-fact.html"
+  const html = renderTemplate({
+    title: "Moved fact",
+    claim: "A moved record keeps its article and its bytes.",
+    memoryType: "semantic",
+    at: SEEDED_AT,
+    entities: ["system:fixture"]
+  })
+  const seeded = new Map([[FROM, { html, contentHash: contentHash(html) }]])
+
+  it("a file copied unchanged to one new live path and removed is one move op", () => {
+    expect(harvestOps({ seeded, after: [{ path: TO, html }], skippedGitDir: false })).toEqual({
+      ops: [{ kind: "move", path: FROM, to: TO, html }],
+      rejected: []
+    })
+  })
+
+  it("a moved copy that gained a link carries it as a link op on the source, staged before the move", () => {
+    const linked = addLink(html, "relates_to", "/areas/inbox/other.html")
+    expect(
+      harvestOps({ seeded, after: [{ path: TO, html: linked }], skippedGitDir: false }).ops
+    ).toEqual([
+      { kind: "link", path: FROM, rel: "relates_to", href: "/areas/inbox/other.html" },
+      { kind: "move", path: FROM, to: TO, html: linked }
+    ])
+  })
+
+  it("two new copies of one article pair with nothing, and a removal with no copy is refused", () => {
+    const twice = harvestOps({
+      seeded,
+      after: [
+        { path: TO, html },
+        { path: "resources/elsewhere/moved-fact.html", html }
+      ],
+      skippedGitDir: false
+    })
+    expect(twice.ops.map((op) => op.kind)).toEqual(["put", "put"])
+    expect(twice.rejected).toEqual([
+      { path: FROM, reason: "vanished with no archive twin; deletion is not an operation" }
+    ])
+    expect(harvestOps({ seeded, after: [], skippedGitDir: false }).rejected).toEqual([
+      { path: FROM, reason: "vanished with no archive twin; deletion is not an operation" }
+    ])
+  })
+
+  it("an archive twin wins over a live copy, so archiving never reads as a move", () => {
+    const twin = `archive/2026/${FROM}`
+    const report = harvestOps({
+      seeded,
+      after: [
+        { path: twin, html },
+        { path: TO, html }
+      ],
+      skippedGitDir: false
+    })
+    expect(report.ops).toEqual([
+      { kind: "put", path: TO, html },
+      { kind: "archive", path: FROM, to: twin, html }
+    ])
+  })
+})

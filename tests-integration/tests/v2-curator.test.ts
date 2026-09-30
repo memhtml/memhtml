@@ -203,7 +203,8 @@ describe("curate run --model fake", () => {
       link: 1,
       unlink: 1,
       label: 0,
-      unlabel: 0
+      unlabel: 0,
+      move: 0
     })
     expect(report.toolCalls).toEqual(["status", "exec", "finish"])
     expect(report.toolCalls).not.toContain("propose")
@@ -244,7 +245,8 @@ describe("curate run --model fake", () => {
       link: 1,
       unlink: 1,
       label: 0,
-      unlabel: 0
+      unlabel: 0,
+      move: 0
     })
 
     expect(await rev(`refs/heads/${ref}`)).toBeNull()
@@ -276,7 +278,8 @@ describe("curate run --model fake", () => {
       link: 1,
       unlink: 1,
       label: 0,
-      unlabel: 0
+      unlabel: 0,
+      move: 0
     })
     expect(report.toolCalls).toEqual(["status", "exec", "finish"])
     expect(report.toolCalls).not.toContain("propose")
