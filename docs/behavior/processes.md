@@ -221,8 +221,8 @@ Entry point: `apps/mcp/src/bin.ts:15`
 
 ## See also
 
+- [memhtml-public · Sequences](../diagrams/behavioral/sequences.md): 21 shared source citations
 - [memhtml-public · Data flow](../architecture/data-flow.md): 19 shared source citations
 - [memhtml-public · CLI](../reference/cli.md): 13 shared source citations
-- [memhtml-public · Sequences](../diagrams/behavioral/sequences.md): 11 shared source citations
 - [memhtml-public · Debugging guide](../insights/debugging-guide.md): 9 shared source citations
 - [memhtml-public · State machines](../behavior/state-machines.md): 7 shared source citations

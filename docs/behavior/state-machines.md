@@ -95,5 +95,5 @@ Defined at: `packages/contracts/src/types.ts:84`
 ## See also
 
 - [memhtml-public · Processes](../behavior/processes.md): 7 shared source citations
-- [memhtml-public · Sequences](../diagrams/behavioral/sequences.md): 4 shared source citations
+- [memhtml-public · Sequences](../diagrams/behavioral/sequences.md): 7 shared source citations
 - [memhtml-public · Business logic](../insights/business-logic.md): 2 shared source citations
