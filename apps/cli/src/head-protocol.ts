@@ -67,6 +67,13 @@ export const EMBED_WARM_IDLE_DEFAULT_MS = 45_000
 /** The variable that overrides {@link EMBED_WARM_IDLE_DEFAULT_MS}; `0` turns the warmup off. */
 export const EMBED_WARM_IDLE_VAR = "MEMHTML_EMBED_WARM_IDLE_MS"
 
+/**
+ * Set to `off` to send every `memory_search` and `memory_recall` to the index (`head-retrieval.ts`),
+ * as a build without the head route did. Read per call by the MCP server, so it is an operator's
+ * switch that needs no rebuild.
+ */
+export const MCP_HEAD_VAR = "MEMHTML_MCP_HEAD"
+
 // ---------------------------------------------------------------------------------------------
 // Requests
 // ---------------------------------------------------------------------------------------------
@@ -79,13 +86,44 @@ export const EMBED_WARM_IDLE_VAR = "MEMHTML_EMBED_WARM_IDLE_MS"
  * field here and on the client, and the route, the body's shape, and every older field stay as
  * they are.
  */
+/**
+ * A search's scope, the v1 `SearchScope` axes the head can answer from what a record carries
+ * (`head-scope.ts`): memory types (every type but `task` when none is named), the workspace a
+ * `projects/<name>/` path implies, tags (any of), one `type:name` entity (ASCII case folded, the
+ * `<dfn>` and `<code data-lang>` entities v1 derives included), and `<dl>` facets (AND across names,
+ * OR within one). `includeArchived` and `asOf` are not here: the head's arms rank active records
+ * only, and a record carries no validity window, so a caller that needs either asks the index.
+ */
+export const HeadScope = Schema.Struct({
+  memoryTypes: Schema.optionalKey(Schema.Array(Schema.String)),
+  workspace: Schema.optionalKey(Schema.String),
+  tags: Schema.optionalKey(Schema.Array(Schema.String)),
+  entity: Schema.optionalKey(Schema.String),
+  facets: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ name: Schema.String, value: Schema.String }))
+  )
+})
+export type HeadScope = typeof HeadScope.Type
+
 export const SearchRequest = Schema.Struct({
   query: Schema.String,
   limit: Schema.optionalKey(Schema.Int),
   now: Schema.optionalKey(Schema.String),
   embedDeadlineMs: Schema.optionalKey(
     Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 600_000 }))
-  )
+  ),
+  /**
+   * Narrow every arm to the records this scope admits. Absent, the search is over every active
+   * record, tasks included, which is what `head search` and the pre-turn lookup have always asked;
+   * present (even `{}`), v1's default applies and tasks drop out unless named. The server reads it
+   * itself, like `embedDeadlineMs`, and the answer then carries `scope`.
+   */
+  scope: Schema.optionalKey(HeadScope),
+  /**
+   * Carry each hit's `detail`: the fields `memory_search` and `memory_recall` report, computed from
+   * the record the answer ranked. Absent or false, the hits are the four fields they always were.
+   */
+  detail: Schema.optionalKey(Schema.Boolean)
 })
 export type SearchRequest = typeof SearchRequest.Type
 
@@ -382,14 +420,62 @@ const SearchHitSchema = Schema.Struct({
   claim: Schema.String
 })
 
-/** `POST /v1/search`: the fields local `head search` returns, with the version it answered over. */
+/**
+ * What a hit carries under `detail: true`, each field the value v1's index would hold for the same
+ * file (`projectFile` in `@memhtml/index`): `confidence` 1 when the file states none, `snippet` the
+ * article's opening chunk cut to the snippet size, `entities` the sorted `type:name` references with
+ * the derived `concept:` and `lang:` ones, `entityNames` the names alone (the recall fold's cap key),
+ * `supersededBy` the record whose authored `supersedes` link names this path, and `disclosureText`
+ * what `memory_recall` may quote.
+ */
+export const HitDetail = Schema.Struct({
+  title: Schema.String,
+  memoryType: Schema.String,
+  confidence: Schema.Finite,
+  updatedAt: Schema.String,
+  snippet: Schema.String,
+  entities: Schema.Array(Schema.String),
+  entityNames: Schema.Array(Schema.String),
+  supersededBy: Schema.NullOr(Schema.String),
+  disclosureText: Schema.String
+})
+export type HitDetail = typeof HitDetail.Type
+
+const DetailedHitSchema = Schema.Struct({
+  path: Schema.String,
+  score: Schema.Finite,
+  arms: Schema.Array(Schema.Literals(["lexical", "recency", "vector"])),
+  claim: Schema.String,
+  detail: Schema.optionalKey(HitDetail)
+})
+
+/**
+ * The scope's report on an answer to a scoped search: whether a scope that narrowed anything left
+ * no hit (`empty`), and then how many archived records the same scope matches and up to `limit` of
+ * them by path, with what superseded each, the pointer v1's `archivedInScope` gives.
+ */
+export const ScopeReport = Schema.Struct({
+  empty: Schema.Boolean,
+  archivedMatches: Schema.Finite,
+  archived: Schema.Array(
+    Schema.Struct({ path: Schema.String, supersededBy: Schema.NullOr(Schema.String) })
+  )
+})
+export type ScopeReport = typeof ScopeReport.Type
+
+/**
+ * `POST /v1/search`: the fields local `head search` returns, with the version it answered over, and
+ * `scope` when the request named one.
+ */
 export const SearchAnswer = Schema.Struct({
   query: Schema.String,
-  hits: Schema.Array(SearchHitSchema),
+  hits: Schema.Array(DetailedHitSchema),
   vector: VectorUseSchema,
   searchMs: Schema.Finite,
-  head: ServedHead
+  head: ServedHead,
+  scope: Schema.optionalKey(ScopeReport)
 })
+export type SearchAnswer = typeof SearchAnswer.Type
 
 const ViolationSchema = Schema.Union([
   Schema.Struct({

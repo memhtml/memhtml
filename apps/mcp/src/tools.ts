@@ -9,6 +9,7 @@ import {
   RESOLVE_STOP_REASONS,
   Retrieval,
   RetrievalPolicy,
+  Roots,
   Store
 } from "@memhtml/cli"
 import { MEMORY_RELS } from "@memhtml/contracts/edges"
@@ -126,7 +127,9 @@ const READS = () => [DatabaseService]
 // there for the near-duplicate assist, and it resolves to `{ document: undefined }` under
 // MEMHTML_EMBED=off, which the assist reports as `near_duplicates_degraded` rather than failing.
 const WRITES = () => [Store, Indexer, IndexRecorder, ExtractorPort, Embedder]
-const RETRIEVES = () => [Retrieval, DatabaseService]
+// Roots is there for the head server's socket (`<root>/.memhtml/head.sock`), which `memory_search`
+// and `memory_recall` ask before the index; a path, so the read-only claim above still holds.
+const RETRIEVES = () => [Retrieval, DatabaseService, Roots]
 
 /**
  * The `article_html` contract, stated in the description of every tool that takes it.

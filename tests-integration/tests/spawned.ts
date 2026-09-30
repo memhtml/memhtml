@@ -189,9 +189,13 @@ const parseFrame = (line: string): Record<string, unknown> | undefined => {
   }
 }
 
-export const connect = (root: string): Client => {
+export const connect = (
+  root: string,
+  /** Reaches the child on top of {@link childEnv}, as {@link runBuilt}'s does. */
+  extraEnv: Readonly<Record<string, string>> = {}
+): Client => {
   const child = spawn(process.execPath, [cliEntryPoint, "serve", "mcp", "--repo", root], {
-    env: childEnv(root),
+    env: { ...childEnv(root), ...extraEnv },
     stdio: ["pipe", "pipe", "pipe"]
   })
 

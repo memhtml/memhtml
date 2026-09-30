@@ -20,7 +20,8 @@ import {
   EMBED_DEADLINE_DEFAULT_MS,
   EMBED_DEADLINE_VAR,
   EMBED_WARM_IDLE_DEFAULT_MS,
-  EMBED_WARM_IDLE_VAR
+  EMBED_WARM_IDLE_VAR,
+  MCP_HEAD_VAR
 } from "./head-protocol.js"
 import { MCP_BIN_VAR } from "./serve.js"
 
@@ -185,6 +186,12 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
     name: EMBED_WARM_IDLE_VAR,
     description: `Read by \`head serve\` only: after this many milliseconds with no embed ended and none in flight, the server issues one one-token query embed, so the first search after a quiet stretch finds the path through the LLM proxy to Bedrock warm. Every embed moves the clock, so a busy server never warms; \`0\` turns the warmup off. It runs only with an embedder bound and a vector cache held, and \`status\` counts it under \`embed.warmups\`. A malformed value is refused at exit 2 naming this variable.`,
     fallback: String(EMBED_WARM_IDLE_DEFAULT_MS)
+  },
+  {
+    name: MCP_HEAD_VAR,
+    description:
+      "Read by the MCP server (`memhtml serve mcp`) on every `memory_search` and `memory_recall`. By default both ask the head server on `.memhtml/head.sock` first, so a record committed a moment ago is searchable before the index is updated, and answer from the index when no server answers within 2 s or the call names `include_archived`, `as_of`, a double-quoted phrase, or a query with no term the head indexes. `off` sends every call to the index.",
+    fallback: "on"
   },
   {
     name: "MEMHTML_VECTOR_COVERAGE_FLOOR",

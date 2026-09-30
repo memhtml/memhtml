@@ -5,7 +5,14 @@ import { dirname } from "node:path"
 
 import type { InvalidMemory, ModelUnavailable } from "@memhtml/contracts/errors"
 import { StorageFailure } from "@memhtml/contracts/errors"
-import { advanceHead, fillVectors, type HeadVersion, searchHead, vectorTextOf } from "@memhtml/head"
+import {
+  advanceHead,
+  DEFAULT_LIMIT as DEFAULT_SEARCH_LIMIT,
+  fillVectors,
+  type HeadVersion,
+  searchHead,
+  vectorTextOf
+} from "@memhtml/head"
 import type { EmbedPort, QueryEmbedPort } from "@memhtml/index"
 import { DEFAULT_REF, ensureExcludedQuietly, HEAD_SOCKET, resumeSession } from "@memhtml/session"
 import { snapshotPathFor, VECTORS_DIR, writeVectorCache } from "@memhtml/snapshot"
@@ -55,6 +62,7 @@ import {
   SOCKET_PATH_MAX,
   type VectorCacheStatus
 } from "./head-protocol.js"
+import { admitFor, hitDetailOf, scopeReportOf } from "./head-scope.js"
 import {
   type CacheRead,
   coverageOf,
@@ -1048,7 +1056,7 @@ export const startHeadServer = (
         return json(stats())
       }
       if (route === `POST ${HEAD_ROUTES.search}`) {
-        const { embedDeadlineMs, ...body } = yield* HttpServerRequest.schemaBodyJson(
+        const { embedDeadlineMs, scope, detail, ...body } = yield* HttpServerRequest.schemaBodyJson(
           SearchRequest,
           { onExcessProperty: "error" }
         )
@@ -1063,10 +1071,42 @@ export const startHeadServer = (
         })
         if (arm.use.reason === "embed-timeout") activity.timeouts += 1
         const started = performance.now()
-        // The rest of the decoded body IS `searchHead`'s input, passed whole, plus the arm's inputs.
-        const hits = searchHead(version, { ...body, ...arm.search })
+        // The rest of the decoded body IS `searchHead`'s input, passed whole, plus the arm's inputs
+        // and, for a scoped search, the scope as a predicate (`head-scope.ts`).
+        const ranked = searchHead(version, {
+          ...body,
+          ...arm.search,
+          ...(scope === undefined ? {} : { admit: admitFor(scope) })
+        })
+        const hits =
+          detail === true
+            ? ranked.flatMap((hit) => {
+                const record = version.get(hit.path)
+                return record === undefined
+                  ? []
+                  : [{ ...hit, detail: hitDetailOf(version, record) }]
+              })
+            : ranked
+        const report =
+          scope === undefined
+            ? {}
+            : {
+                scope: scopeReportOf(
+                  version,
+                  scope,
+                  hits.length,
+                  body.limit ?? DEFAULT_SEARCH_LIMIT
+                )
+              }
         const searchMs = Math.round((performance.now() - started) * 100) / 100
-        return json({ query: body.query, hits, vector: arm.use, searchMs, head: served(version) })
+        return json({
+          query: body.query,
+          hits,
+          vector: arm.use,
+          searchMs,
+          head: served(version),
+          ...report
+        })
       }
       if (route === `POST ${HEAD_ROUTES.read}`) {
         const body = yield* HttpServerRequest.schemaBodyJson(ReadRequest, {
