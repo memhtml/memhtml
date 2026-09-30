@@ -57,6 +57,30 @@ const added = memory(2)
 const twinPath = `archive/2026/${archived.path}`
 
 describe("reconstructOps rebuilds the curator's log from two trees", () => {
+  it("a record moved to its home with its holder repointed replays as one move and the edge pair", () => {
+    const to = "resources/harbor/replay-fixture-1.html"
+    const holderBefore = addLink(kept.html, "part_of", `/${archived.path}`)
+    const holderAfter = addLink(kept.html, "part_of", `/${to}`)
+    const result = reconstructOps({
+      before: new Map([
+        [archived.path, archived.html],
+        [kept.path, holderBefore]
+      ]),
+      after: new Map([
+        [to, archived.html],
+        [kept.path, holderAfter]
+      ])
+    })
+    expect(result.rejected).toEqual([])
+    expect(result.ops).toEqual([
+      { kind: "link", path: kept.path, rel: "part_of", href: `/${to}` },
+      { kind: "unlink", path: kept.path, rel: "part_of", href: `/${archived.path}` },
+      { kind: "move", path: archived.path, to, html: archived.html }
+    ])
+    expect(result.counts).toMatchObject({ link: 1, unlink: 1, move: 1, put: 0, archive: 0 })
+    expect(result.archivedAt).toBeNull()
+  })
+
   it("an added record is a put, an archive twin stamped by the commit path is one archive op, and an added edge is one link op", () => {
     const linked = addLink(kept.html, "supersedes", `/${twinPath}`)
     const twin = addLink(archiveBody(archived.html, ARCHIVED_AT), "supports", `/${added.path}`)
@@ -84,7 +108,8 @@ describe("reconstructOps rebuilds the curator's log from two trees", () => {
       link: 2,
       unlink: 0,
       label: 0,
-      unlabel: 0
+      unlabel: 0,
+      move: 0
     })
     expect(result.archivedAt).toBe(ARCHIVED_AT)
   })
@@ -215,7 +240,8 @@ describe("reconstructOps rebuilds the curator's log from two trees", () => {
       link: 0,
       unlink: 0,
       label: 2,
-      unlabel: 1
+      unlabel: 1,
+      move: 0
     })
   })
 
@@ -374,7 +400,8 @@ describe("readCurateDelta against a real repository", () => {
       link: 1,
       unlink: 0,
       label: 0,
-      unlabel: 0
+      unlabel: 0,
+      move: 0
     })
   })
 })

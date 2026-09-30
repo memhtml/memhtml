@@ -448,7 +448,7 @@ describe("the exec tool refuses what the commit would refuse", () => {
     expect(await tools.status()).toEqual({
       baseSha: VIEW_SHA,
       ref: "refs/heads/curate/2026-09-23",
-      ops: { put: 1, archive: 0, link: 1, unlink: 0, label: 0, unlabel: 0 }
+      ops: { put: 1, archive: 0, link: 1, unlink: 0, label: 0, unlabel: 0, move: 0 }
     })
     // The same overlay is what the landing validates, under the same scope.
     expect(validateOps(head.view, overlay.ops(), { scope: "curate" })).toEqual([])
@@ -635,7 +635,7 @@ describe("the propose tool labels a record", () => {
     ])
     expect(labeled).toEqual({ appended: 1, violations: [] })
     expect((await tools.read(LEGACY))?.entities).toEqual(["project:legacyland"])
-    expect(await tools.status()).toMatchObject({ ops: { label: 1, unlabel: 0 } })
+    expect(await tools.status()).toMatchObject({ ops: { label: 1, unlabel: 0, move: 0 } })
     const emptied = await tools.propose([
       { kind: "unlabel", path: LEGACY, entity: "project:legacyland" }
     ])
@@ -644,6 +644,79 @@ describe("the propose tool labels a record", () => {
       { kind: "write-bar", path: LEGACY, reasons: [UNANCHORED_REASON] }
     ])
     expect(overlay.ops()).toEqual([{ kind: "label", path: LEGACY, entity: "project:legacyland" }])
+    expect(validateOps(head.view, overlay.ops(), { scope: "curate" })).toEqual([])
+  }, 120_000)
+})
+
+/**
+ * Placement through the binder: a proposed `move` names its source and destination, and the binder
+ * completes the edge repoints before it judges, so the overlay it appends is one the commit lands
+ * with no dangling edge. (Mutation 2026-09-30: `withRepoints(yield* current(), ops)` -> `ops` in
+ * `propose` -> "a proposed move is completed with the repoint of every edge to the old path" is red:
+ * the bare move is refused naming the arc's stale edge.)
+ */
+describe("the propose and exec tools move a record", () => {
+  const FROM = "areas/inbox/agentd-timeout.html"
+  const TO = "resources/microvms-agentd/agentd-timeout.html"
+  const ARC = "areas/arcs/agentd.html"
+  const placed = renderTemplate({
+    title: "agentd timeout",
+    claim: "agentd kills an exec after its stated timeout.",
+    memoryType: "semantic",
+    entities: ["project:microvms-agentd"],
+    at: "2026-09-20T00:00:00Z"
+  })
+  const arc = renderTemplate({
+    title: "agentd arc",
+    claim: "Four agentd memories together show the runtime bounds every exec.",
+    memoryType: "semantic",
+    entities: ["project:microvms-agentd"],
+    links: [{ rel: "part_of", href: `/${FROM}` }],
+    at: "2026-09-20T00:00:00Z"
+  })
+  const headWith = async () =>
+    headOver(await Effect.runPromise(Effect.all([recordFrom(FROM, placed), recordFrom(ARC, arc)])))
+
+  it("a proposed move is completed with the repoint of every edge to the old path", async () => {
+    const head = await headWith()
+    const overlay = memoryOverlay()
+    const tools = bindTools({ head, overlay, ref: "refs/heads/curate/2026-09-30" })
+    const result = await tools.propose([{ kind: "move", path: FROM, to: TO, html: placed }])
+    expect(result).toEqual({ appended: 3, violations: [] })
+    expect(overlay.ops()).toEqual([
+      { kind: "unlink", path: ARC, rel: "part_of", href: `/${FROM}` },
+      { kind: "link", path: ARC, rel: "part_of", href: `/${TO}` },
+      { kind: "move", path: FROM, to: TO, html: placed }
+    ])
+    expect(await tools.read(FROM)).toBeNull()
+    expect((await tools.read(TO))?.html).toBe(placed)
+    expect((await tools.read(ARC))?.links).toEqual([{ rel: "part_of", href: `/${TO}` }])
+    expect(await tools.status()).toMatchObject({ ops: { move: 1, link: 1, unlink: 1 } })
+    expect(validateOps(head.view, overlay.ops(), { scope: "curate" })).toEqual([])
+  }, 120_000)
+
+  it("a file the exec script moves is harvested as a move and completed the same way", async () => {
+    const head = await headWith()
+    const overlay = memoryOverlay()
+    const tools = bindTools({ head, overlay, ref: "refs/heads/curate/2026-09-30" })
+    const result = await tools.exec(
+      [
+        'import * as fs from "node:fs"',
+        'const root = "/mnt/memhtml"',
+        'fs.mkdirSync(root + "/resources/microvms-agentd", { recursive: true })',
+        `fs.writeFileSync(root + "/${TO}", fs.readFileSync(root + "/${FROM}", "utf8"))`,
+        `fs.unlinkSync(root + "/${FROM}")`
+      ].join("\n")
+    )
+    expect(result.exitCode, result.stderr).toBe(0)
+    expect(result.rejected).toEqual([])
+    expect(result.violations).toEqual([])
+    expect(result.ops).toEqual([
+      { kind: "unlink", path: ARC },
+      { kind: "link", path: ARC },
+      { kind: "move", path: FROM, to: TO }
+    ])
+    expect(result.appended).toBe(3)
     expect(validateOps(head.view, overlay.ops(), { scope: "curate" })).toEqual([])
   }, 120_000)
 })

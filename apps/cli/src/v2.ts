@@ -37,7 +37,8 @@ import {
   startSession,
   touchedPaths,
   type Violation,
-  validateOps
+  validateOps,
+  withRepoints
 } from "@memhtml/session"
 import { readSnapshot, snapshotPathFor } from "@memhtml/snapshot"
 import { type GitFailure, isoSecond, makeGit, type WriteInput } from "@memhtml/store"
@@ -1037,6 +1038,7 @@ export const sessionStatus = (input: { readonly root: string; readonly id: strin
       unlinks: count("unlink"),
       labels: count("label"),
       unlabels: count("unlabel"),
+      moves: count("move"),
       paths: [...new Set(session.ops.flatMap(touchedPaths))].sort(),
       /** A commit built and possibly landed by a call that was killed; the next commit settles it. */
       pending: session.pending ?? null
@@ -1199,6 +1201,7 @@ export interface ReplayReport {
     readonly unlink: number
     readonly label: number
     readonly unlabel: number
+    readonly move: number
   }
   /** How many `commitSession` calls the landing took; more than one means the target moved meanwhile. */
   readonly attempts: number
@@ -1377,7 +1380,9 @@ export const curateMerge = (input: {
         ref: into,
         force: true
       })
-      session = yield* appendOps(session, replay.reconstruction.ops)
+      // A move on the branch repointed the edges its base held; `into` may have gained one to the
+      // old path since, so the replay completes the repoints against the tip it lands on.
+      session = yield* appendOps(session, withRepoints(head.view, replay.reconstruction.ops))
       const violations = validateOps(head.view, session.ops, {
         scope: MERGE_SCOPE,
         batchCap: MERGE_BATCH_CAP

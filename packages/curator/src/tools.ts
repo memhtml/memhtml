@@ -76,6 +76,7 @@ export interface CuratorSessionStatus {
     readonly unlink: number
     readonly label: number
     readonly unlabel: number
+    readonly move: number
   }
 }
 
@@ -91,7 +92,9 @@ export interface CuratorTools {
  * The op shape the MODEL proposes. An `archive` names only its source: the loop reads the source's
  * bytes through `read` and derives `to` as `archive/<YYYY>/<path>`, because the contract's
  * `OverlayOp.archive` carries the article's bytes to name which article is meant, and a model
- * restating a whole file is how a byte drifts. `put`, `link`, `unlink`, `label`, and `unlabel` are
+ * restating a whole file is how a byte drifts. A `move` names its source and its destination and
+ * the loop reads the bytes the same way; the binder adds the `unlink` and `link` pairs that repoint
+ * the edges to the old path (`withRepoints`). `put`, `link`, `unlink`, `label`, and `unlabel` are
  * the contract's own shape.
  */
 export const ProposedOp = z.discriminatedUnion("kind", [
@@ -144,6 +147,16 @@ export const ProposedOp = z.discriminatedUnion("kind", [
       .string()
       .min(1)
       .describe("The value to drop, exactly as the record's entities list it.")
+  }),
+  z.object({
+    kind: z.literal("move"),
+    path: z.string().min(1).describe("The active record to relocate, e.g. areas/inbox/x.html."),
+    to: z
+      .string()
+      .min(1)
+      .describe(
+        "Its new live path, e.g. resources/hex-bonk/x.html (the briefing's inbox entry names one). Edges to the old path are repointed for you."
+      )
   })
 ])
 export type ProposedOp = z.infer<typeof ProposedOp>
@@ -164,18 +177,22 @@ export const toOverlayOps = async (
   const ops: Array<OverlayOp> = []
   const missing: Array<string> = []
   for (const op of proposed) {
-    if (op.kind === "archive") {
+    if (op.kind === "archive" || op.kind === "move") {
       const record = await tools.read(op.path)
       if (record === null) {
         missing.push(op.path)
         continue
       }
-      ops.push({
-        kind: "archive",
-        path: op.path,
-        to: op.to ?? archivePathFor(op.path, now),
-        html: record.html
-      })
+      ops.push(
+        op.kind === "archive"
+          ? {
+              kind: "archive",
+              path: op.path,
+              to: op.to ?? archivePathFor(op.path, now),
+              html: record.html
+            }
+          : { kind: "move", path: op.path, to: op.to, html: record.html }
+      )
       continue
     }
     ops.push(op)

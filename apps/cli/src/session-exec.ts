@@ -320,8 +320,11 @@ const headEdit = (
  *
  * Exported and pure over plain values so the pairing rules are testable without a sandbox. The
  * order of the result is fixed: `put`s sorted by path, then the head ops (`link`s, `unlink`s,
- * `label`s, then `unlabel`s per file) sorted by path, then `archive`s sorted by source path, then `rejected` sorted by path,
- * so two runs over the same tree produce equal reports.
+ * `label`s, then `unlabel`s per file) sorted by path, then `archive`s sorted by source path, then
+ * `move`s sorted by source path, then `rejected` sorted by path, so two runs over the same tree
+ * produce equal reports. A seeded file gone from its path is an `archive` when its article sits at
+ * its `archive/<YYYY>/` twin, else a `move` when its article sits at exactly one new live path, else
+ * rejected: deletion is not an operation.
  */
 export const harvestOps = (input: {
   readonly seeded: ReadonlyMap<string, Seeded>
@@ -380,16 +383,51 @@ export const harvestOps = (input: {
   }
 
   const archives: Extract<OverlayOp, { kind: "archive" }>[] = []
+  const moves: Extract<OverlayOp, { kind: "move" }>[] = []
+  /**
+   * The new files at live paths, grouped by article content hash, for the move pairing: a vanished
+   * source whose article appears again at exactly one new live path was moved there. Two new files
+   * holding one article pair with nothing, so the puts stay and `validateOps` names the duplicate.
+   */
+  const liveByHash = new Map<string, Array<string>>()
+  for (const [path, html] of puts) {
+    if (input.seeded.has(path) || originalPathFor(path) !== undefined) continue
+    const hash = contentHashOrNull(html)
+    if (hash === null) continue
+    liveByHash.set(hash, [...(liveByHash.get(hash) ?? []), path])
+  }
   for (const [source, before] of input.seeded) {
     if (present.has(source)) continue
     // The twin is a NEW file at `archive/<YYYY>/<source>` for some year. `originalPathFor` strips
     // exactly one `archive/<YYYY>/` prefix, so a candidate names this source iff it maps back to it.
     const twin = [...puts.keys()].find((candidate) => originalPathFor(candidate) === source)
     if (twin === undefined) {
-      rejected.push({
-        path: source,
-        reason: "vanished with no archive twin; deletion is not an operation"
-      })
+      // No archive twin: the file moved when its article is at exactly one new live path. Its head
+      // is held to the stays-put rule an archive twin's is: links and entities the moved copy
+      // gained or lost are head ops on the source, staged before the move so the commit carries
+      // them; any other head edit rejects the source and leaves the new file a put.
+      const landed =
+        originalPathFor(source) === undefined ? liveByHash.get(before.contentHash) : undefined
+      const destination = landed?.length === 1 ? landed[0] : undefined
+      if (destination === undefined) {
+        rejected.push({
+          path: source,
+          reason: "vanished with no archive twin; deletion is not an operation"
+        })
+        continue
+      }
+      const movedHtml = puts.get(destination) ?? ""
+      const edit = movedHtml === before.html ? null : headEdit(source, before.html, movedHtml)
+      if (edit !== null && "reason" in edit) {
+        rejected.push({
+          path: source,
+          reason: `vanished, and ${destination} holds this article under an edited head; ${edit.reason}`
+        })
+        continue
+      }
+      puts.delete(destination)
+      if (edit !== null && edit.ops.length > 0) headOps.push({ path: source, ops: edit.ops })
+      moves.push({ kind: "move", path: source, to: destination, html: movedHtml })
       continue
     }
     const twinHtml = puts.get(twin) ?? ""
@@ -424,7 +462,7 @@ export const harvestOps = (input: {
     .sort(byPath)
   const headOpsInOrder = headOps.sort(byPath).flatMap((entry) => entry.ops)
   return {
-    ops: [...putOps, ...headOpsInOrder, ...archives.sort(byPath)],
+    ops: [...putOps, ...headOpsInOrder, ...archives.sort(byPath), ...moves.sort(byPath)],
     rejected: rejected.sort(byPath)
   }
 }

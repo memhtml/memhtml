@@ -18,7 +18,8 @@ import { harvestOps } from "./session-exec.js"
  * gone from its path beside a new `archive/<YYYY>/<that path>` holding the same article is one
  * `archive`; a file still at its path with the same article and new `<link rel="memhtml-...">`
  * edges is one `link` per edge, and one `unlink` per edge it lost; one whose head gained or lost
- * `<meta name="memhtml-entity">` values is one `label` or `unlabel` per value. Anything else (a file deleted with no twin, an
+ * `<meta name="memhtml-entity">` values is one `label` or `unlabel` per value; a file gone from its
+ * path whose article sits at exactly one new live path is one `move`. Anything else (a file deleted with no twin, an
  * article changed in place, a meta changed, a file that is not a memory) is not an operation, and
  * since the commit path cannot write it, someone wrote it by hand; the merge refuses naming the path
  * and the reason.
@@ -81,7 +82,7 @@ export interface ReplayRejection {
 
 /** The reconstructed log, or what stopped it. `rejected` non-empty means the merge refuses. */
 export interface Reconstruction {
-  /** `put`s, then the head ops, then `archive`s, each sorted by path: the harvester's order. */
+  /** `put`s, then the head ops, then `archive`s, then `move`s, each sorted by path: the harvester's order. */
   readonly ops: ReadonlyArray<OverlayOp>
   readonly rejected: ReadonlyArray<ReplayRejection>
   readonly counts: {
@@ -91,6 +92,7 @@ export interface Reconstruction {
     readonly unlink: number
     readonly label: number
     readonly unlabel: number
+    readonly move: number
   }
   /**
    * The instant every archive twin at the tip is stamped with, when there is exactly one; `null`
@@ -176,7 +178,8 @@ export const reconstructOps = (input: {
       link: count("link"),
       unlink: count("unlink"),
       label: count("label"),
-      unlabel: count("unlabel")
+      unlabel: count("unlabel"),
+      move: count("move")
     },
     archivedAt: stamps.size === 1 ? ([...stamps][0] ?? null) : null
   }

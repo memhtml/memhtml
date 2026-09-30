@@ -23,6 +23,8 @@ import { BROKEN_HTML, mapView, memoryFor, recordOf, run, runErr } from "./helper
  *   an entity the file does not carry" fails (the op is applied as a no-op instead of a typed error).
  * - `applyOp` unlabel: call `addMeta` instead of `removeMeta`, and "unlabel re-parses the file with
  *   the entity removed" fails on `entities`.
+ * - `applyOp` move: drop `removeRecord(indexes, op.path)`, and "move re-indexes the record at its
+ *   destination with the same bytes and content hash" fails (the source is still in the view).
  */
 
 const base = async () => {
@@ -273,6 +275,50 @@ describe("withOverlay", () => {
     expect(error.reason).toBe(
       `unlabel op names an entity ${memoryFor(1).path} does not carry: system:memhtml`
     )
+  })
+
+  it("move re-indexes the record at its destination with the same bytes and content hash", async () => {
+    const { view } = await base()
+    const one = memoryFor(1)
+    const two = memoryFor(2)
+    const to = "resources/country1/fact-1.html"
+    const overlay = await run(
+      withOverlay(view, [{ kind: "move", path: one.path, to, html: one.html }])
+    )
+    expect(overlay.size).toBe(4)
+    expect(overlay.get(one.path)).toBeUndefined()
+    expect(overlay.get(to)?.html).toBe(one.html)
+    expect(overlay.get(to)?.archived).toBe(false)
+    expect(overlay.byContentHash(contentHash(one.html))).toBe(to)
+    expect(overlay.byEntity("place:country1")).toEqual([to])
+    expect(overlay.byFrameKey("the capital of country1 is")).toEqual([to])
+    // The holder of an edge to the old path still names it until the batch repoints the edge.
+    expect(overlay.inbound(`/${one.path}`)).toEqual([two.path])
+    const repointed = await run(
+      withOverlay(overlay, [
+        { kind: "unlink", path: two.path, rel: "relates_to", href: `/${one.path}` },
+        { kind: "link", path: two.path, rel: "relates_to", href: `/${to}` }
+      ])
+    )
+    expect(repointed.inbound(`/${one.path}`)).toEqual([])
+    expect(repointed.inbound(`/${to}`)).toEqual([two.path])
+  })
+
+  it("refuses a move whose source the view does not hold live", async () => {
+    const { view } = await base()
+    const ghost = await runErr(
+      withOverlay(view, [
+        { kind: "move", path: "areas/inbox/ghost.html", to: "resources/x/ghost.html", html: "" }
+      ])
+    )
+    expect(ghost.reason).toContain("move op names a path the view does not hold live")
+    const archived = memoryFor(9)
+    const error = await runErr(
+      withOverlay(view, [
+        { kind: "move", path: archived.path, to: "resources/x/fact-9.html", html: archived.html }
+      ])
+    )
+    expect(error.reason).toContain(archived.path)
   })
 
   it("refuses a put that does not parse, with the parser's reason", async () => {

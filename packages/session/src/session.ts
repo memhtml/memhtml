@@ -97,7 +97,13 @@ const OverlayOpSchema = Schema.Union([
     href: Schema.String
   }),
   Schema.Struct({ kind: Schema.Literal("label"), path: Schema.String, entity: Schema.String }),
-  Schema.Struct({ kind: Schema.Literal("unlabel"), path: Schema.String, entity: Schema.String })
+  Schema.Struct({ kind: Schema.Literal("unlabel"), path: Schema.String, entity: Schema.String }),
+  Schema.Struct({
+    kind: Schema.Literal("move"),
+    path: Schema.String,
+    to: Schema.String,
+    html: Schema.String
+  })
 ])
 
 /**

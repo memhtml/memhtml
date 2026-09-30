@@ -8,7 +8,8 @@ import {
   memoryPathViolation,
   normalizePath,
   originalPathFor,
-  PEOPLE_DIR
+  PEOPLE_DIR,
+  pathToHref
 } from "@memhtml/contracts"
 import { checkMemory, contentHash, isRootRelativeHref, parseMemory, readLinks } from "@memhtml/html"
 import { Effect, Exit } from "effect"
@@ -144,6 +145,7 @@ export const touchedPaths = (op: OverlayOp): ReadonlyArray<string> => {
     case "put":
       return [op.path]
     case "archive":
+    case "move":
       return [op.path, op.to]
     case "link":
     case "unlink":
@@ -220,6 +222,19 @@ export const validateOps = (
   /** Archive destinations written so far in this batch, so one slot is never written twice. */
   const archiveDestinations = new Set<string>()
   /**
+   * Sources this batch moves, and each move's destination mapped back to its source. A moved source
+   * has left its path: no later op may edit, archive, or move it there, and its edges and entities
+   * continue at the destination, which later head ops may edit like any live record.
+   */
+  const movedAway = new Set<string>()
+  const movedInto = new Map<string, string>()
+  const moves: Array<{ readonly path: string; readonly to: string }> = []
+  /** A path a head op may edit: live in the head and still there, put by this batch, or moved in. */
+  const isLiveSource = (path: string): boolean =>
+    (isActiveIn(view, path) && !movedAway.has(normalizePath(path))) ||
+    batchPuts.has(path) ||
+    movedInto.has(normalizePath(path))
+  /**
    * Every path this batch creates, puts and archive destinations alike, gathered before the walk so
    * a link may name a target its batch creates later in the order. The harvester emits links before
    * archives, so the archive a `supersedes` edge points at comes after the edge.
@@ -228,7 +243,7 @@ export const validateOps = (
     ops.flatMap((op) =>
       op.kind === "put"
         ? [normalizePath(op.path)]
-        : op.kind === "archive"
+        : op.kind === "archive" || op.kind === "move"
           ? [normalizePath(op.to)]
           : []
     )
@@ -253,7 +268,7 @@ export const validateOps = (
         const existing = view.byContentHash(hash) ?? batchHashes.get(hash)
         if (existing !== undefined) {
           violations.push({ kind: "duplicate", path: op.path, existing })
-        } else if (isActiveIn(view, op.path)) {
+        } else if (isActiveIn(view, op.path) || movedInto.has(normalizePath(op.path))) {
           violations.push({ kind: "claim-edit", path: op.path })
         }
         const bar = writeBarReasons(op.path, op.html)
@@ -272,6 +287,8 @@ export const validateOps = (
         const sourceHash = batchPuts.get(op.path) ?? activeHashIn(view, op.path)
         if (sourceHash === undefined) {
           reasons.push("archive source is not an active record in the head")
+        } else if (movedAway.has(normalizePath(op.path))) {
+          reasons.push("archive source was moved away earlier in this batch")
         }
         if (originalPathFor(op.to) !== normalizePath(op.path)) {
           reasons.push("archive destination is not archive/<YYYY>/<original path>")
@@ -302,7 +319,7 @@ export const validateOps = (
       }
       case "link": {
         const reasons: Array<string> = []
-        if (!isActiveIn(view, op.path) && !batchPuts.has(op.path)) {
+        if (!isLiveSource(op.path)) {
           reasons.push("link source is not an active record in the head")
         }
         if (!isEdgeRel(op.rel)) reasons.push(`rel \`${op.rel}\` is outside the edge vocabulary`)
@@ -324,7 +341,7 @@ export const validateOps = (
       }
       case "unlink": {
         const reasons: Array<string> = []
-        if (!isActiveIn(view, op.path) && !batchPuts.has(op.path)) {
+        if (!isLiveSource(op.path)) {
           reasons.push("unlink source is not an active record in the head")
         }
         if (!isEdgeRel(op.rel)) reasons.push(`rel \`${op.rel}\` is outside the edge vocabulary`)
@@ -339,7 +356,7 @@ export const validateOps = (
       }
       case "label": {
         const reasons: Array<string> = []
-        if (!isActiveIn(view, op.path) && !batchPuts.has(op.path)) {
+        if (!isLiveSource(op.path)) {
           reasons.push("label source is not an active record in the head")
         }
         // A new label is written in the one spelling every entity index can meet: `type:name`,
@@ -360,7 +377,7 @@ export const validateOps = (
       }
       case "unlabel": {
         const reasons: Array<string> = []
-        if (!isActiveIn(view, op.path) && !batchPuts.has(op.path)) {
+        if (!isLiveSource(op.path)) {
           reasons.push("unlabel source is not an active record in the head")
         }
         // Matched as authored, not normalized: an unlabel takes off a value the file carries, a
@@ -374,6 +391,91 @@ export const validateOps = (
           unlabeled.add(op.path)
         }
         break
+      }
+      case "move": {
+        const reasons: Array<string> = []
+        const from = normalizePath(op.path)
+        const to = normalizePath(op.to)
+        // Only a record the head holds live can move: a put is written where it belongs, and a
+        // record that already left its path (archived or moved earlier in the batch) is not there.
+        const sourceHash =
+          movedAway.has(from) || archived.has(from) ? undefined : activeHashIn(view, from)
+        if (sourceHash === undefined) {
+          reasons.push(
+            "move source is not an active record in the head, or it left its path earlier in this batch"
+          )
+        }
+        const pathReason = memoryPathViolation(to)
+        if (pathReason !== undefined) reasons.push(`move destination: ${pathReason}`)
+        else if (isArchivePath(to)) {
+          reasons.push("move destination is under archive/; retiring a record is the archive op")
+        } else if (to === from) {
+          reasons.push("move destination is the source path")
+        } else if (view.get(to) !== undefined) {
+          // Active or archived: a move never writes over a record, and a slot an archived record
+          // holds is that record's history.
+          reasons.push("move destination already holds a record")
+        } else if (batchPuts.has(to) || movedInto.has(to) || archiveDestinations.has(to)) {
+          reasons.push("move destination is written earlier in this batch")
+        }
+        // `op.html` names which article is meant, exactly as an archive's does; the bytes written
+        // are the source as the commit sees it, so a head edit made earlier in the batch travels.
+        const format = checkMemory(op.html).violations
+        reasons.push(...format)
+        if (
+          format.length === 0 &&
+          sourceHash !== undefined &&
+          contentHash(op.html) !== sourceHash
+        ) {
+          reasons.push("move op's article differs from the source record's")
+        }
+        if (reasons.length > 0) {
+          violations.push({ kind: "format", path: op.path, reasons })
+          break
+        }
+        // The record continues at its destination: its edges and entities as the batch left them.
+        batchEdges.set(to, new Set(edgesOf(from)))
+        batchEntities.set(to, new Set(entitiesOf(from)))
+        movedAway.add(from)
+        movedInto.set(to, from)
+        moves.push({ path: from, to })
+        break
+      }
+    }
+  }
+  // Every move, judged once the whole batch is walked, so the repointing edges may come before or
+  // after the move in the order. The destination is held to the anchor rule (a record moved out of
+  // `projects/<slug>/` with no entity would name nothing), and no live record may still carry an edge
+  // to the path the record left, unless the batch puts a new record there: that edge would dangle.
+  for (const move of moves) {
+    if (!isAnchored(move.to, entitiesOf(move.to))) {
+      violations.push({ kind: "write-bar", path: move.to, reasons: [UNANCHORED_REASON] })
+    }
+    if (batchPuts.has(move.path) || movedInto.has(move.path)) continue
+    const href = pathToHref(move.path)
+    const holders = new Set<string>([...view.inbound(href), ...batchEdges.keys()])
+    for (const holder of [...holders].sort()) {
+      const path = normalizePath(holder)
+      // A record the batch archived keeps the edge in its history, and one it moved carries its
+      // edges under its destination, which is a holder of its own here.
+      if (archived.has(path) || movedAway.has(path)) continue
+      const edges = batchEdges.get(path)
+      const stale =
+        edges === undefined
+          ? isActiveIn(view, path)
+            ? (view.get(path)?.links ?? []).filter((link) => link.href === href)
+            : []
+          : [...edges]
+              .filter((key) => key.endsWith(` -> ${href}`))
+              .map((key) => ({ rel: key.slice(0, key.indexOf(" -> ")), href }))
+      for (const link of stale) {
+        violations.push({
+          kind: "format",
+          path: move.path,
+          reasons: [
+            `moved to ${move.to}, but ${path} still carries ${link.rel} -> ${href}: repoint it with an unlink of that edge and a link of the same rel to ${pathToHref(move.to)} in the same batch`
+          ]
+        })
       }
     }
   }

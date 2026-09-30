@@ -116,6 +116,55 @@ describe("the happy path", () => {
   })
 })
 
+describe("a proposed move", () => {
+  it("passes through read for its bytes and keeps the destination the model named", async () => {
+    const tools = fakeTools({
+      record: {
+        path: "areas/inbox/agentd.html",
+        title: "agentd",
+        claim: "agentd kills an exec after its timeout.",
+        memoryType: "semantic",
+        status: "active",
+        frameKey: null,
+        confidence: null,
+        importance: null,
+        tags: [],
+        entities: ["project:microvms-agentd"],
+        links: [],
+        archived: false,
+        html: "<!doctype html><html>agentd</html>"
+      }
+    })
+    const model = scriptedModel([
+      {
+        tool: "propose",
+        args: {
+          ops: [
+            {
+              kind: "move",
+              path: "areas/inbox/agentd.html",
+              to: "resources/microvms-agentd/agentd.html"
+            }
+          ]
+        }
+      },
+      { tool: "finish", args: { report: "Filed one inbox record." } }
+    ])
+    const result = await run({ tools, model, briefing: emptyBriefing, charter: CHARTER })
+    expect(result.stoppedBy).toBe("finish")
+    expect(tools.proposed).toEqual([
+      [
+        {
+          kind: "move",
+          path: "areas/inbox/agentd.html",
+          to: "resources/microvms-agentd/agentd.html",
+          html: "<!doctype html><html>agentd</html>"
+        }
+      ]
+    ])
+  })
+})
+
 describe("a proposed unlink", () => {
   it("passes through the schema as the contract's own shape", async () => {
     // (Mutation: the `unlink` branch removed from `ProposedOp` -> the SDK refuses the tool input

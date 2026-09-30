@@ -195,10 +195,11 @@ const opsByKind = (ops: ReadonlyArray<OverlayOp>): OpsByKind => ({
   link: ops.filter((op) => op.kind === "link").length,
   unlink: ops.filter((op) => op.kind === "unlink").length,
   label: ops.filter((op) => op.kind === "label").length,
-  unlabel: ops.filter((op) => op.kind === "unlabel").length
+  unlabel: ops.filter((op) => op.kind === "unlabel").length,
+  move: ops.filter((op) => op.kind === "move").length
 })
 
-const NO_OPS: OpsByKind = { put: 0, archive: 0, link: 0, unlink: 0, label: 0, unlabel: 0 }
+const NO_OPS: OpsByKind = { put: 0, archive: 0, link: 0, unlink: 0, label: 0, unlabel: 0, move: 0 }
 
 const describeViolation = (violation: Violation): string => {
   switch (violation.kind) {
@@ -758,7 +759,8 @@ const foldCluster = (
           link: finalOps.filter((op) => op.kind === "link").length + results.driver.link,
           unlink: finalOps.filter((op) => op.kind === "unlink").length,
           label: finalOps.filter((op) => op.kind === "label").length,
-          unlabel: finalOps.filter((op) => op.kind === "unlabel").length
+          unlabel: finalOps.filter((op) => op.kind === "unlabel").length,
+          move: finalOps.filter((op) => op.kind === "move").length
         },
         driver: {
           archive: completed.archive + results.driver.archive,
