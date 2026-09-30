@@ -178,12 +178,15 @@ export {
   HEAD_PROTOCOL,
   HEAD_ROUTES,
   type HeadRoute,
+  HeadScope,
   HeadServerRunning,
   HeadServerStatus,
+  HitDetail,
   headSocketPath,
   NeighborsAnswer,
   NeighborsRequest,
   ReadRequest,
+  ScopeReport,
   SearchAnswer,
   SearchRequest,
   ServedHead,
@@ -191,6 +194,16 @@ export {
   VectorCacheStatus,
   VectorUseSchema
 } from "./head-protocol.js"
+export {
+  HEAD_RETRIEVAL_TIMEOUT_MS,
+  type IndexReason,
+  MCP_HEAD_VAR,
+  type Routing,
+  recallOnHead,
+  routeFor,
+  searchOnHead
+} from "./head-retrieval.js"
+export { admitFor, hitDetailOf, scopeNarrows, scopeReportOf, supersededByOf } from "./head-scope.js"
 export {
   DEFAULT_POLL_MS,
   type HeadServed,

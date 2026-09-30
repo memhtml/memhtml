@@ -113,7 +113,11 @@ const armRanks = (
  * BM25 over the query's tokens, capped at {@link LEXICAL_ARM_LIMIT}. Every document with at least
  * one matching token is scored; the best are kept.
  */
-const lexicalArm = (lexical: LexicalIndex, query: string): ReadonlyArray<ArmHit> => {
+const lexicalArm = (
+  lexical: LexicalIndex,
+  query: string,
+  admitPath: ((path: string) => boolean) | undefined
+): ReadonlyArray<ArmHit> => {
   const documentCount = HashMap.size(lexical.lengths)
   if (documentCount === 0) return []
   const averageLength = lexical.totalLength / documentCount
@@ -131,8 +135,9 @@ const lexicalArm = (lexical: LexicalIndex, query: string): ReadonlyArray<ArmHit>
       scores.set(path, (scores.get(path) ?? 0) + idf * normalized)
     }
   }
+  const scored = [...scores.entries()].map(([path, score]) => ({ path, score }))
   return armRanks(
-    [...scores.entries()].map(([path, score]) => ({ path, score })),
+    admitPath === undefined ? scored : scored.filter((hit) => admitPath(hit.path)),
     LEXICAL_ARM_LIMIT
   )
 }
@@ -194,12 +199,29 @@ export interface SearchHeadInput {
   readonly vectors?: HeadVectors
   /** The query in the same vector space as `vectors`. */
   readonly queryVector?: ArrayLike<number>
+  /**
+   * Which active records the search is over. Applied inside each arm, before the arm's cap, so a
+   * scope narrows the candidates every arm ranks rather than the fused list after it (v1's
+   * `assembleScope` reaches every arm the same way). BM25's statistics stay those of every active
+   * record, as FTS5's do under a v1 scope. Absent admits every active record.
+   */
+  readonly admit?: (record: MemoryRecord) => boolean
 }
 
 export const searchHead = (view: HeadView, input: SearchHeadInput): ReadonlyArray<SearchHit> => {
   const indexes = indexesOf(view)
-  const active = [...HashMap.values(indexes.records)].filter((record) => !record.archived)
-  const lexical = lexicalArm(indexes.lexical, input.query)
+  const admit = input.admit
+  const active = [...HashMap.values(indexes.records)].filter(
+    (record) => !record.archived && (admit === undefined || admit(record))
+  )
+  const admitPath =
+    admit === undefined
+      ? undefined
+      : (path: string): boolean => {
+          const record = Option.getOrUndefined(HashMap.get(indexes.records, path))
+          return record !== undefined && admit(record)
+        }
+  const lexical = lexicalArm(indexes.lexical, input.query, admitPath)
   const vector =
     input.vectors === undefined || input.queryVector === undefined
       ? null

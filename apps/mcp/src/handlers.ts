@@ -13,11 +13,14 @@ import {
   messageFor,
   neighborsOf,
   proseTail,
+  Roots,
   readMemory,
   recallMemories,
+  recallOnHead,
   reinforceMemories,
   resolveMemory,
   searchMemories,
+  searchOnHead,
   searchTraces,
   statusReport,
   traceLinks,
@@ -542,7 +545,7 @@ export const ToolHandlers: Layer.Layer<
   memory_search: (params) =>
     handled(
       Effect.gen(function* () {
-        const result = yield* searchMemories({
+        const search = {
           query: params.query,
           limit: opt(params.limit),
           memoryTypes: opt(params.memory_types),
@@ -554,7 +557,16 @@ export const ToolHandlers: Layer.Layer<
           facets: parseFacetFilters(arr(params.facets)),
           includeArchived: opt(params.include_archived),
           asOf: opt(params.as_of)
-        })
+        }
+        /**
+         * The head server first, then the index. The head follows the ref, so a record a run
+         * session committed a moment ago is in its answer, while the index has it only after the
+         * next `memhtml index update`. `searchOnHead` answers `null` for a call the head cannot
+         * answer the way the index would (`include_archived`, `as_of`, a quoted phrase, a query
+         * with no term) and whenever the socket gives no answer, and both answers are one type.
+         */
+        const { memhtmlRoot } = yield* Roots
+        const result = (yield* searchOnHead(memhtmlRoot, search)) ?? (yield* searchMemories(search))
         return {
           hits: result.hits.map((hit) => ({
             path: hit.path,
@@ -585,11 +597,14 @@ export const ToolHandlers: Layer.Layer<
   memory_recall: (params) =>
     handled(
       Effect.gen(function* () {
-        const pack = yield* recallMemories({
+        const recall = {
           query: params.query,
           budgetChars: opt(params.budget_chars),
           workspace: opt(params.workspace)
-        })
+        }
+        // The head first, then the index, for `memory_search`'s reason.
+        const { memhtmlRoot } = yield* Roots
+        const pack = (yield* recallOnHead(memhtmlRoot, recall)) ?? (yield* recallMemories(recall))
         /**
          * `lateral` is the union of both folds' index lines.
          *

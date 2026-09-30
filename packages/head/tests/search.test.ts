@@ -47,6 +47,10 @@ import { mapView, memoryFor, recordOf, run } from "./helpers.js"
  *   because the 41st record carries `vector`.
  * - `searchHead`: drop `if (vectorPaths.has(hit.path)) arms.push("vector")`, and "a record with no
  *   word in common" fails on its `arms`.
+ * - `lexicalArm`: filter by `admitPath` after `armRanks` instead of before it, and "admit narrows
+ *   the lexical arm before its cap" fails because records past the unscoped cap never enter.
+ * - `searchHead`: drop the `admit` test from `active`, and "admit narrows the vector arm before its
+ *   cap" fails because refused records take the arm's places.
  */
 
 const memory = (
@@ -558,5 +562,61 @@ describe("searchHead with vectors", () => {
       new Set(records.slice(0, VECTOR_ARM_LIMIT).map((record) => record.path))
     )
     expect(VECTOR_ARM_LIMIT).toBe(40)
+  })
+
+  it("admit narrows the lexical arm before its cap", async () => {
+    // The 45 records of "the lexical arm keeps its best 40", admitting only the odd ones: the
+    // scope is applied before the cap, so the five odd records past the unscoped cap still rank.
+    const count = LEXICAL_ARM_LIMIT + 5
+    const records = await Promise.all(
+      Array.from({ length: count }, (_, index) =>
+        memory(`areas/inbox/z-${String(index).padStart(2, "0")}.html`, {
+          title: "Mineral note",
+          claim: "Zircon is a mineral.",
+          ...(index === 0 ? {} : { body: Array.from({ length: index }, () => "filler").join(" ") }),
+          at: "2026-01-01T00:00:00Z"
+        })
+      )
+    )
+    const odd = new Set(records.filter((_, index) => index % 2 === 1).map((record) => record.path))
+    const hits = searchHead(mapView(records), {
+      query: "zircon",
+      limit: count,
+      admit: (record) => odd.has(record.path)
+    })
+    expect(hits.map((hit) => hit.path)).toEqual([...odd])
+    expect(hits.every((hit) => hit.arms.includes("lexical"))).toBe(true)
+  })
+
+  it("admit narrows the vector arm before its cap", async () => {
+    const count = VECTOR_ARM_LIMIT + 5
+    const records = await Promise.all(
+      Array.from({ length: count }, (_, index) =>
+        memory(`areas/inbox/r-${String(index).padStart(2, "0")}.html`, {
+          title: `Record ${index}`,
+          claim: `Widget ${index} is blue.`,
+          at: "2026-01-01T00:00:00Z"
+        })
+      )
+    )
+    const vectors = new Map(
+      records.map((record, index) => {
+        const angle = (index / count) * (Math.PI / 2)
+        return [record.contentHash, Float32Array.from([Math.cos(angle), Math.sin(angle)])]
+      })
+    )
+    // Refuse the first ten: the arm's 40 places go to records 10 to 44, all five past the
+    // unscoped cap included.
+    const refused = new Set(records.slice(0, 10).map((record) => record.path))
+    const hits = searchHead(mapView(records), {
+      query: "zzz",
+      limit: count,
+      vectors,
+      queryVector: Float32Array.from([1, 0]),
+      admit: (record) => !refused.has(record.path)
+    })
+    const inArm = hits.filter((hit) => hit.arms.includes("vector")).map((hit) => hit.path)
+    expect(new Set(inArm)).toEqual(new Set(records.slice(10).map((record) => record.path)))
+    expect(hits.some((hit) => refused.has(hit.path))).toBe(false)
   })
 })
