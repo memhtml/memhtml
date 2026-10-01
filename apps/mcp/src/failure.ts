@@ -1,6 +1,6 @@
 import { codeFor, messageFor } from "@memhtml/cli"
 import { Schema } from "effect"
-import { McpSchema } from "effect/unstable/ai"
+import { McpSchema } from "effect/ai"
 
 /**
  * The MCP wire failure: one error class, declared on every tool, whose `.message` IS the response an

@@ -28,7 +28,7 @@ The fourteen `@memhtml/*` packages are the bundle. **Every real dependency stays
 | `node-html-parser` | `createRequire().resolve()`, then read as BYTES into QuickJS | inlined, code mode has no file to read  |
 | `highlight.js`     | `createRequire()` on the first detection                     | inlined, language detection cannot load |
 
-Externals are derived from the workspace manifests, as patterns that also match **subpaths**. A bare name is not enough: this repo imports `effect/unstable/cli` and `@effect/platform-node`'s subpaths, and externalizing only `"effect"` inlined the rest and took `memhtml-mcp.mjs` from 192 kB to 1.45 MB with no warning — tsdown's bundled-dependency hint reports top-level names, so it stayed silent.
+Externals are derived from the workspace manifests, as patterns that also match **subpaths**. A bare name is not enough: this repo imports `effect/ai`, `effect/http`, `effect/observability` and `@effect/platform-node`'s subpaths, and externalizing only `"effect"` inlined the rest and took `memhtml-mcp.mjs` from 192 kB to 1.45 MB with no warning — tsdown's bundled-dependency hint reports top-level names, so it stayed silent.
 
 Five things resolve a path from their own module location at run time, and after bundling that location is `dist/`. So each is copied to the **package root**, one level above the bundle, which is exactly where `../migrations` and `../guest` land from a module in `dist/`:
 
