@@ -150,7 +150,7 @@ sequenceDiagram
 
 Counts are the distinct existing non-docs source paths cited in inline backticks on both pages, measured against the tree at 4d03a6c.
 
-- [memhtml-public · Processes](../behavior/processes.md): 19 shared source citations
+- [memhtml-public · Processes](../behavior/processes.md): 22 shared source citations
 - [memhtml-public · Sequences](../diagrams/behavioral/sequences.md): 18 shared source citations
 - [memhtml-public · Module map](../architecture/module-map.md): 16 shared source citations
 - [memhtml-public · Impact analysis](../insights/impact-analysis.md): 14 shared source citations

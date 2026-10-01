@@ -110,7 +110,7 @@ Counts are the distinct existing non-docs source paths cited in inline backticks
 
 - [memhtml-public · Dependency graph](../diagrams/structural/dependency-graph.md): 27 shared source citations
 - [memhtml-public · Module map](../architecture/module-map.md): 22 shared source citations
-- [memhtml-public · Processes](../behavior/processes.md): 16 shared source citations
+- [memhtml-public · Processes](../behavior/processes.md): 18 shared source citations
 - [memhtml-public · Impact analysis](../insights/impact-analysis.md): 14 shared source citations
 - [memhtml-public · Contract map](../insights/contract-map.md): 14 shared source citations
 - [memhtml-public · Debugging guide](../insights/debugging-guide.md): 13 shared source citations
