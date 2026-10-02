@@ -46,7 +46,9 @@ export const IndexStateRow = Schema.Struct({
   updated_at: Schema.String
 })
 
-export type IndexStateRow = typeof IndexStateRow.Type
+type IndexStateRowShape = typeof IndexStateRow.Type
+/** The parsed shape `IndexStateRow` decodes to, named so a signature can refer to it. */
+export interface IndexStateRow extends IndexStateRowShape {}
 
 /** The column list, derived from the schema so the SELECT cannot drift from what decodes it. */
 const COLUMNS = Object.keys(IndexStateRow.fields).join(", ")

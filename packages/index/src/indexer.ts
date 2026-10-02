@@ -41,7 +41,7 @@ export interface RebuildReport {
   /**
    * Vectors carried across the rebuild rather than re-embedded. Chunk ids are content-addressed, so
    * a vector in the configured space is still the right vector for a chunk that came back with the
-   * same id; see {@link truncateForRebuild}. Zero on a model change, where nothing is carried.
+   * same id; see `truncateForRebuild`. Zero on a model change, where nothing is carried.
    */
   readonly embeddingsPreserved: number
   /** Files git offered that failed to parse. Counted, never fatal. One bad file is not a bad tree. */
@@ -101,7 +101,7 @@ export interface EmbedMissingOptions {
 export interface IndexerShape {
   /**
    * Reproject the whole tree at HEAD. Vectors in the configured space survive it (see
-   * {@link truncateForRebuild}). `embed: false` over a store that carries vectors is refused with
+   * `truncateForRebuild`). `embed: false` over a store that carries vectors is refused with
    * {@link RebuildNoEmbedRefused} unless `force` is set.
    */
   readonly rebuild: (opts: {
@@ -152,7 +152,7 @@ export const Indexer = Context.Service<IndexerShape>("memhtml/Indexer")
  * A hard failure rather than a silent reindex. A half-migrated vector space degrades every
  * cosine while every test still passes, because each vector is well-formed. `memhtml index rebuild
  * --embed` is the one path allowed past this guard: on a model change its truncate carries no vector
- * across (the stash in {@link truncateForRebuild} keeps only rows in the CONFIGURED space, and none
+ * across (the stash in `truncateForRebuild` keeps only rows in the CONFIGURED space, and none
  * are), and it records the configured model before any vector is written, so it migrates the whole
  * space rather than mixing two.
  */
@@ -192,7 +192,7 @@ export class IndexStale {
  * incremental updates later that store held 183 embeddings under 9,332 chunks, because an update
  * embeds only its own batch's chunks and nothing revisits the rest. A store that carries vectors is
  * a store somebody embedded on purpose, so the bare call refuses and names the count. The vectors
- * are preserved by the rebuild either way (see {@link truncateForRebuild}); what `--no-embed` costs
+ * are preserved by the rebuild either way (see `truncateForRebuild`); what `--no-embed` costs
  * on a live store is that every new or changed chunk stays unembedded, and `--force` is the operator
  * saying that is understood. The CLI maps this tag to `ERR_REBUILD_NO_EMBED_REFUSED`.
  */
@@ -222,7 +222,7 @@ export interface IndexerDeps {
   readonly embeddings?: EmbedPort | undefined
   /**
    * How many pending chunks are embedded and PERSISTED per `embedMissing` slice. Defaults to
-   * {@link EMBED_PERSIST_SLICE}. Injectable so a test can force several slices over a small
+   * `EMBED_PERSIST_SLICE`. Injectable so a test can force several slices over a small
    * corpus; production callers leave it alone.
    */
   readonly embedPersistEvery?: number | undefined
