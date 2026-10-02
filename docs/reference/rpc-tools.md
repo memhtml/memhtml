@@ -716,7 +716,7 @@ Finds past Claude Code sessions by what was asked in them. It reads a read-only 
 
 ## See also
 
-- [memhtml-public · Processes](../behavior/processes.md): 6 shared source citations
+- [memhtml-public · Processes](../behavior/processes.md): 9 shared source citations
 - [memhtml-public · Business logic](../insights/business-logic.md): 4 shared source citations
 - [memhtml-public · Contract map](../insights/contract-map.md): 4 shared source citations
 - [memhtml-public · Module map](../architecture/module-map.md): 2 shared source citations

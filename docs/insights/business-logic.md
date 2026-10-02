@@ -416,8 +416,8 @@ With a model bound, `dedup-merge` mines candidate pairs at a lower floor, builds
 
 ## See also
 
-- [memhtml-public · Contract map](../insights/contract-map.md): 28 shared source files
 - [memhtml-public · Impact analysis](../insights/impact-analysis.md): 29 shared source files
+- [memhtml-public · Contract map](../insights/contract-map.md): 28 shared source files
+- [memhtml-public · Processes](../behavior/processes.md): 28 shared source files
 - [memhtml-public · CLI](../reference/cli.md): 15 shared source files
-- [memhtml-public · Processes](../behavior/processes.md): 17 shared source files
 - [memhtml-public · Debugging guide](../insights/debugging-guide.md): 13 shared source files

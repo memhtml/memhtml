@@ -26,7 +26,7 @@ These pages list the calls an agent can make and the shape each one returns.
 
 These pages trace what runs when a given event arrives.
 
-- [Processes](behavior/processes.md): the eight main flows plus a minor-flow index.
+- [Processes](behavior/processes.md): the nine main flows plus a minor-flow index.
 - [State machines](behavior/state-machines.md): memory status, sleep-run status, and task status.
 
 ## Diagrams
