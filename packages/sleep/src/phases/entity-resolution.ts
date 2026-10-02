@@ -31,7 +31,7 @@ import { budgetFor, closeVanishedDetections, detectionKey, mintDetectedTask } fr
  *
  * 1. **Pre (deterministic, cheap).** Normalize every name, exact-merge the ones that normalize
  *    together, auto-merge pairs at or above {@link AUTO_MERGE_THRESHOLD} character overlap, and merge
- *    every pair a person file DECLARES ({@link aliasPairs}). This pass alone is the whole phase when no
+ *    every pair a person file DECLARES (`aliasPairs`). This pass alone is the whole phase when no
  *    model is bound, so a credential-free run still collapses `Checkout API` onto `checkout api` and
  *    still applies a seeded declaration. The same pass computes one MEMORY CENTROID per name, in
  *    O(files) and never per pair.
@@ -92,7 +92,7 @@ export const REVIEW_THRESHOLD = 0.75
 /**
  * Confidence a model-proposed cluster must clear before it is even counted toward a merge.
  *
- * The same floor {@link STANCE_CONFIDENCE_FLOOR} sets for a contradiction, for the same reason: a false
+ * The same floor `EDGE_CONFIDENCE_FLOOR` sets for a contradiction, for the same reason: a false
  * merge is worse than a missed one, and this floor and the corroboration gate are two independent
  * guards on one door. A cluster below it is reported as a review candidate and nothing else.
  */
@@ -118,7 +118,7 @@ export const ENTITY_BATCH_SIZE = 500
  *
  * The cap keeps the HIGHEST-SIGNAL names — most active claiming files first, ties lexicographic —
  * because a name's file count is how much corpus a merge of it would touch. A dropped name still
- * gets pass-one normalization and still applies a declared alias ({@link aliasPairs} reads the full
+ * gets pass-one normalization and still applies a declared alias (`aliasPairs` reads the full
  * count map); what it forgoes is fuzzy matching and a seat in the model call. Drops are counted in
  * `namesCapped`, so a night that capped says so instead of reading as a night with nothing to merge.
  * At or below the cap the behavior is byte-identical to an uncapped pass.

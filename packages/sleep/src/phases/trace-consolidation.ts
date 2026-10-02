@@ -748,7 +748,7 @@ const corpusEntitySpellings = (env: PhaseEnv): Effect.Effect<ReadonlyMap<string,
  * - **A claim that slugs to nothing.** `slugify` folds to `[a-z0-9-]`, so a claim written entirely
  *   in CJK, Cyrillic, or punctuation reduces to `SLUG_FALLBACK`, and every such candidate files under
  *   one stem even across unrelated subjects and sessions. Under the disk-authoritative
- *   {@link freePath} that is no longer an overwrite, but it is `untitled.html`, `untitled-2.html`,
+ *   `freePath` that is no longer an overwrite, but it is `untitled.html`, `untitled-2.html`,
  *   `untitled-3.html`: a path is the id in this corpus, and an id carrying no subject is not one a
  *   reviewer or a later correction can address. The consolidator writes English prose, so this gates
  *   a value it should not send instead of filtering ordinary output.
