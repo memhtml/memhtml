@@ -276,7 +276,7 @@ The loop draws one representative phase, and no single phase makes every arrow i
 
 Counts are the distinct existing non-docs source paths cited in inline backticks on both pages, measured against the tree at bdd9be4.
 
-- [memhtml-public · Processes](../../behavior/processes.md): 21 shared source citations
+- [memhtml-public · Processes](../../behavior/processes.md): 25 shared source citations
 - [memhtml-public · Module map](../../architecture/module-map.md): 20 shared source citations
 - [memhtml-public · Data flow](../../architecture/data-flow.md): 18 shared source citations
 - [memhtml-public · Contract map](../../insights/contract-map.md): 17 shared source citations
