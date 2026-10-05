@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@astrojs/markdown-satteri": "^0.4.2",
-    "@astrojs/starlight": "^0.42.4",
+    "@astrojs/starlight": "^0.42.5",
     "@expressive-code/plugin-collapsible-sections": "^0.44.2",
     "@expressive-code/plugin-line-numbers": "^0.44.2",
     "@memhtml/cli": "workspace:*",
@@ -37,17 +37,17 @@
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
     "@axe-core/playwright": "^4.13.0",
-    "@biomejs/biome": "2.5.14",
+    "@biomejs/biome": "2.5.15",
     "@expo-google-fonts/tinos": "^0.4.2",
     "@lhci/cli": "^0.15.1",
     "@types/hast": "^3.0.5",
-    "@types/node": "26.6.3",
-    "cspell": "^10.3.5",
+    "@types/node": "26.6.4",
+    "cspell": "^10.3.6",
     "playwright": "^1.63.0",
     "starlight-typedoc": "^0.23.1",
     "typedoc": "^0.28.20",
     "typedoc-plugin-markdown": "^4.13.1",
     "typescript": "6.0.3",
-    "vitest": "5.0.2"
+    "vitest": "5.0.3"
   }
 }
