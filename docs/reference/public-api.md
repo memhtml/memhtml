@@ -386,6 +386,7 @@ This array holds the nine memory relationship names. Two of them, `supersedes` a
 
 - [memhtml-public · System overview](../architecture/system-overview.md): 8 shared source citations
 - [memhtml-public · Contract map](../insights/contract-map.md): 5 shared source citations
+- [memhtml-public · State machines](../behavior/state-machines.md): 5 shared source citations
 - [memhtml-public · Module map](../architecture/module-map.md): 3 shared source citations
 - [memhtml-public · Impact analysis](../insights/impact-analysis.md): 3 shared source citations
 - [memhtml-public · CLI](../reference/cli.md): 2 shared source citations
