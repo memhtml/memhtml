@@ -100,7 +100,7 @@ flowchart LR
 | Consolidator agent | ai 7.0.122, `@ai-sdk/amazon-bedrock` 5.0.100, `@ai-sdk/anthropic` 4.0.68, zod 4.6.5 | `apps/consolidator/package.json:35-41`                              |
 | Script sandbox     | just-bash 3.4.2, for `memhtml exec`                                                 | `apps/consolidator/package.json:40`, `apps/cli/package.json:52`     |
 | Tracing            | Effect's own `OtlpTracer`, opt-in                                                   | `packages/telemetry/src/index.ts:14-18`                             |
-| Build tooling      | turbo 2.11.5, pnpm 11.21.0, biome 2.5.14, tsdown 0.23.0                             | `package.json:6`, `package.json:34-38`                              |
+| Build tooling      | turbo 2.11.6, pnpm 11.21.0, biome 2.5.14, tsdown 0.23.0                             | `package.json:6`, `package.json:34-38`                              |
 | Test tooling       | vitest 5.0.2, `@effect/vitest`, fast-check 4.10.2                                   | `apps/cli/package.json:57-60`, `pnpm-workspace.yaml:96-97`          |
 | Docs site          | astro ^7.3.5, `@astrojs/starlight` ^0.42.4                                          | `apps/docs/package.json:20`, `apps/docs/package.json:25`            |
 
