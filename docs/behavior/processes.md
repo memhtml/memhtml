@@ -329,5 +329,5 @@ Counts are the distinct existing non-docs source paths cited in inline backticks
 - [memhtml-public · System overview](../architecture/system-overview.md): 18 shared source citations
 - [memhtml-public · CLI](../reference/cli.md): 17 shared source citations
 - [memhtml-public · Components](../diagrams/architecture/components.md): 12 shared source citations
+- [memhtml-public · Public API](../reference/public-api.md): 12 shared source citations
 - [memhtml-public · RPC tools](../reference/rpc-tools.md): 9 shared source citations
-- [memhtml-public · Public API](../reference/public-api.md): 5 shared source citations

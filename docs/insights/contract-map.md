@@ -1279,4 +1279,5 @@ Counts are the distinct existing non-docs source paths cited in inline backticks
 - [memhtml-public · Module map](../architecture/module-map.md): 46 shared source citations
 - [memhtml-public · Processes](../behavior/processes.md): 39 shared source citations
 - [memhtml-public · State machines](../behavior/state-machines.md): 27 shared source citations
+- [memhtml-public · Public API](../reference/public-api.md): 27 shared source citations
 - [memhtml-public · System overview](../architecture/system-overview.md): 14 shared source citations
