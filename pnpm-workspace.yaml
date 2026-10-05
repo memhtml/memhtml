@@ -93,7 +93,7 @@ catalog:
   effect: 4.0.0-rc.117
   "@effect/platform-node": 4.0.0-rc.117
   "@effect/platform-node-shared": 4.0.0-rc.117
-  "@effect/vitest": 4.0.0-rc.117
+  "@effect/vitest": 4.0.0
   fast-check: 4.10.2
 
 allowBuilds:
