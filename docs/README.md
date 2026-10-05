@@ -20,7 +20,7 @@ These pages list the calls an agent can make and the shape each one returns.
 
 - [CLI](reference/cli.md): every subcommand of the `memhtml` binary, with flags, error codes, and environment variables. The set is the `COMMANDS` array, which also generates `AGENTS.md`, so read it from `apps/cli/src/commands.ts` rather than counting it here.
 - [RPC tools](reference/rpc-tools.md): the 15 MCP tools and 3 resources of `memhtml-mcp`.
-- [Public API](reference/public-api.md): the 30 most-imported library symbols with verbatim signatures.
+- [Public API](reference/public-api.md): the 34 most-imported library symbols, the top 30 plus every symbol tied at the cutoff, with verbatim declarations.
 
 ## Behavior
 

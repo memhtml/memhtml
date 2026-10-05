@@ -209,9 +209,9 @@ Counts are the distinct existing non-docs source paths cited in inline backticks
 - [memhtml-public · Sequences](../diagrams/behavioral/sequences.md): 12 shared source citations
 - [memhtml-public · Tech debt](../insights/tech-debt.md): 10 shared source citations
 - [memhtml-public · Debugging guide](../insights/debugging-guide.md): 10 shared source citations
+- [memhtml-public · Public API](../reference/public-api.md): 10 shared source citations
 - [memhtml-public · CLI](../reference/cli.md): 9 shared source citations
 - [memhtml-public · Components](../diagrams/architecture/components.md): 7 shared source citations
-- [memhtml-public · Public API](../reference/public-api.md): 5 shared source citations
 - [memhtml-public · Dependency graph](../diagrams/structural/dependency-graph.md): 5 shared source citations
 - [memhtml-public · System overview](../architecture/system-overview.md): 5 shared source citations
 - [memhtml-public · Data flow](../architecture/data-flow.md): 5 shared source citations
