@@ -92,4 +92,5 @@ Each count below is the number of distinct, existing, non-docs source file paths
 - [memhtml-public · Impact analysis](../insights/impact-analysis.md): 24 source files cited by both pages
 - [memhtml-public · Contract map](../insights/contract-map.md): 21 source files cited by both pages
 - [memhtml-public · Business logic](../insights/business-logic.md): 19 source files cited by both pages
+- [memhtml-public · Public API](../reference/public-api.md): 13 source files cited by both pages
 - [memhtml-public · CLI](../reference/cli.md): 10 source files cited by both pages
