@@ -88,8 +88,10 @@ This codebase carries no `INCIDENT:` or `POSTMORTEM:` comment tags and holds exa
 
 Each count below is the number of distinct, existing, non-docs source file paths (paths under `apps/`, `packages/`, `scripts/` or `tests-integration/` written in backticks, with or without a `:line` suffix) that appear on both this page and the linked page, computed against the tree at a219190.
 
-- [memhtml-public · Processes](../behavior/processes.md): 24 source files cited by both pages
 - [memhtml-public · Impact analysis](../insights/impact-analysis.md): 24 source files cited by both pages
+- [memhtml-public · Processes](../behavior/processes.md): 24 source files cited by both pages
 - [memhtml-public · Contract map](../insights/contract-map.md): 21 source files cited by both pages
 - [memhtml-public · Business logic](../insights/business-logic.md): 19 source files cited by both pages
+- [memhtml-public · Public API](../reference/public-api.md): 13 source files cited by both pages
+- [memhtml-public · RPC tools](../reference/rpc-tools.md): 13 source files cited by both pages
 - [memhtml-public · CLI](../reference/cli.md): 10 source files cited by both pages

@@ -75,7 +75,7 @@ jobs:
       # BEFORE setup-node, and the order is load-bearing. Both prepend to PATH, so whichever
       # runs last wins, and setup-node's node is the one that must: it writes the OIDC .npmrc
       # and its npm is the one that has to run the publish.
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
 
       # No `version:` — action-setup ERRORS when the workflow pins a version while
       # package.json's `packageManager` also pins one. That field is the single source of
