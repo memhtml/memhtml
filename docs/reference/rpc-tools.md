@@ -73,7 +73,7 @@ A blind retry after a phase-3 failure can store the memory twice. Dedupe reads t
 
 The commit is a plain `git commit -m`, so it also commits any path that was already staged in the root (`packages/store/src/git.ts:397-413`).
 
-Writes in one process take turns behind one permit, `oneWriterAtATime`, and reads do not wait for it (`packages/store/src/store.ts:1382-1416`). A second process on the same root, such as a CLI command beside the server, contends on git's own index lock, and the loser fails with `ERR_GIT`.
+Writes in one process take turns behind one permit, `oneWriterAtATime`, and reads do not wait for it (`packages/store/src/store.ts:1382-1416`). `makeStore` creates that permit, so a second process on the same root, such as a CLI command beside the server, does not share it. Git's index lock serializes single git commands, not whole writes, so two processes can interleave in two ways. A git command that finds the lock held fails, and its write fails with `ERR_GIT`. A `git commit` that runs after the other process's `git add` takes both staged paths into one commit, as the paragraph above describes. Two processes writing one root are not isolated from each other.
 
 ### Environment
 
@@ -493,7 +493,7 @@ Returns the memory graph around one path, to at most two hops, in both direction
 
 `node_limit` echoes the server's clamp, not the raw ask, so a client that sent 10000 reads back 200. It is named `node_limit` rather than `limit` because the answer carries two bounds: this one governs `nodes`, and the scan cap governs everything. `dropped_node_count` carries `_count` because it is a quantity, and this repo's numeric suffixes are not interchangeable. `edges` keeps its bare name because clients already branch on it (`apps/mcp/src/tools.ts:826-838`).
 
-An unknown path returns an empty neighborhood, not an error. Archived files appear as nodes, because the walk joins every row of `files`. An edge to a path the tree does not hold contributes nothing (`apps/cli/src/operations.ts:1441-1447`).
+A center the tree does not hold is not an error, and the walk never checks it against `files`: it matches the center against `edges` only (`apps/cli/src/operations.ts:1413-1422`). With no edge naming it, the neighborhood is empty. Edges carry no foreign key on either endpoint (`packages/index/migrations/0004_edges.sql:6-7`), so an authored edge that still names a deleted center returns its other endpoint when that file exists. Only the returned node is joined to `files`. So archived files appear as nodes, and an edge whose far endpoint the tree does not hold contributes nothing (`apps/cli/src/operations.ts:1441-1447`).
 
 **Failure:** `ERR_STORAGE` from the query. Nothing is written.
 
@@ -1056,8 +1056,8 @@ Source: `TraceSearch` at `apps/mcp/src/tools.ts:977-1001`, its handler at `apps/
 
 Counts are the distinct existing non-docs source paths cited in inline backticks on both pages, measured against the tree at 73871c2.
 
+- [memhtml-public · Impact analysis](../insights/impact-analysis.md): 24 shared source citations
 - [memhtml-public · Contract map](../insights/contract-map.md): 23 shared source citations
-- [memhtml-public · Impact analysis](../insights/impact-analysis.md): 23 shared source citations
 - [memhtml-public · Module map](../architecture/module-map.md): 23 shared source citations
 - [memhtml-public · Processes](../behavior/processes.md): 19 shared source citations
 - [memhtml-public · Business logic](../insights/business-logic.md): 14 shared source citations
