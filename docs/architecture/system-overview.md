@@ -96,7 +96,7 @@ flowchart LR
 | Storage            | `node:sqlite` `DatabaseSync` over 12 SQL migrations plus 2 state-plane migrations   | `packages/index/src/database.ts:4`                                  |
 | Storage            | git as the system of record for the root                                            | `packages/index/src/indexer.ts:19`                                  |
 | HTML parsing       | parse5 8.0.1                                                                        | `packages/html/package.json:36`                                     |
-| Embeddings         | AWS Bedrock SDK 3.1145.0, `cohere.embed-v4:0` at 1024 dims                          | `packages/llm/package.json:33`, `packages/llm/src/constants.ts:7-8` |
+| Embeddings         | AWS Bedrock SDK 3.1146.0, `cohere.embed-v4:0` at 1024 dims                          | `packages/llm/package.json:33`, `packages/llm/src/constants.ts:7-8` |
 | Consolidator agent | ai 7.0.127, `@ai-sdk/amazon-bedrock` 5.0.105, `@ai-sdk/anthropic` 4.0.71, zod 4.6.5 | `apps/consolidator/package.json:35-41`                              |
 | Script sandbox     | just-bash 3.4.2, for `memhtml exec`                                                 | `apps/consolidator/package.json:40`, `apps/cli/package.json:52`     |
 | Tracing            | Effect's own `OtlpTracer`, opt-in                                                   | `packages/telemetry/src/index.ts:14-18`                             |
