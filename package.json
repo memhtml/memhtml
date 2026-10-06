@@ -35,7 +35,7 @@
     "effect": "catalog:",
     "publint": "0.3.25",
     "tsdown": "0.23.0",
-    "turbo": "2.11.6",
+    "turbo": "2.11.7",
     "typescript": "7.0.2"
   }
 }
