@@ -422,4 +422,5 @@ With a model bound, `dedup-merge` mines candidate pairs at a lower floor, builds
 - [memhtml-public · State machines](../behavior/state-machines.md): 27 shared source files
 - [memhtml-public · Public API](../reference/public-api.md): 22 shared source files
 - [memhtml-public · CLI](../reference/cli.md): 15 shared source files
+- [memhtml-public · RPC tools](../reference/rpc-tools.md): 14 shared source files
 - [memhtml-public · Debugging guide](../insights/debugging-guide.md): 13 shared source files
