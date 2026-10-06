@@ -860,8 +860,9 @@ Every environment variable is declared in one array, which is what `memhtml mani
 ## See also
 
 - [memhtml-public · Processes](../behavior/processes.md): 17 shared source citations
-- [memhtml-public · State machines](../behavior/state-machines.md): 9 shared source citations
+- [memhtml-public · RPC tools](../reference/rpc-tools.md): 10 shared source citations
 - [memhtml-public · Public API](../reference/public-api.md): 9 shared source citations
+- [memhtml-public · State machines](../behavior/state-machines.md): 9 shared source citations
 - [memhtml-public · System overview](../architecture/system-overview.md): 8 shared source citations
 - [memhtml-public · Business logic](../insights/business-logic.md): 6 shared source citations
 - [memhtml-public · Module map](../architecture/module-map.md): 4 shared source citations
