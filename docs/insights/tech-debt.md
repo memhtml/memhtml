@@ -193,6 +193,7 @@ Cost: L for the `article_html` half, because the assist has to move behind the s
 ## See also
 
 - [memhtml-public · Processes](../behavior/processes.md): 18 shared source citations
+- [memhtml-public · CLI](../reference/cli.md): 11 shared source citations
 - [memhtml-public · State machines](../behavior/state-machines.md): 10 shared source citations
 - [memhtml-public · RPC tools](../reference/rpc-tools.md): 9 shared source citations
 - [memhtml-public · System overview](../architecture/system-overview.md): 9 shared source citations
