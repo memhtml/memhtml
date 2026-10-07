@@ -319,6 +319,7 @@ This file defines the machine contract every agent parses: `API_VERSION`, `RESPO
 
 - [memhtml-public · Contract map](../insights/contract-map.md): 48 shared source citations
 - [memhtml-public · Processes](../behavior/processes.md): 39 shared source citations
+- [memhtml-public · CLI](../reference/cli.md): 35 shared source citations
 - [memhtml-public · Public API](../reference/public-api.md): 30 shared source citations
 - [memhtml-public · State machines](../behavior/state-machines.md): 29 shared source citations
 - [memhtml-public · RPC tools](../reference/rpc-tools.md): 24 shared source citations
