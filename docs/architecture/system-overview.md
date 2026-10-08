@@ -92,7 +92,7 @@ flowchart LR
 | ------------------ | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | Language           | TypeScript 7.0.2 (`apps/docs` pins 6.0.3)                                           | `package.json:39`, `apps/docs/package.json:51`                      |
 | Runtime            | Node.js >= 24, pinned to 24                                                         | `package.json:7-9`, `mise.toml:39`                                  |
-| Framework          | Effect 4.0.0, one catalog set of four packages                                      | `pnpm-workspace.yaml:92-96`                                         |
+| Framework          | Effect 4.0.1, one catalog set of four packages                                      | `pnpm-workspace.yaml:92-96`                                         |
 | Storage            | `node:sqlite` `DatabaseSync` over 12 SQL migrations plus 2 state-plane migrations   | `packages/index/src/database.ts:4`                                  |
 | Storage            | git as the system of record for the root                                            | `packages/index/src/indexer.ts:19`                                  |
 | HTML parsing       | parse5 8.0.1                                                                        | `packages/html/package.json:36`                                     |
