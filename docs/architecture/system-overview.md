@@ -96,8 +96,8 @@ flowchart LR
 | Storage            | `node:sqlite` `DatabaseSync` over 12 SQL migrations plus 2 state-plane migrations   | `packages/index/src/database.ts:4`                                  |
 | Storage            | git as the system of record for the root                                            | `packages/index/src/indexer.ts:19`                                  |
 | HTML parsing       | parse5 8.0.1                                                                        | `packages/html/package.json:36`                                     |
-| Embeddings         | AWS Bedrock SDK 3.1145.0, `cohere.embed-v4:0` at 1024 dims                          | `packages/llm/package.json:33`, `packages/llm/src/constants.ts:7-8` |
-| Consolidator agent | ai 7.0.127, `@ai-sdk/amazon-bedrock` 5.0.105, `@ai-sdk/anthropic` 4.0.71, zod 4.6.5 | `apps/consolidator/package.json:35-41`                              |
+| Embeddings         | AWS Bedrock SDK 3.1146.0, `cohere.embed-v4:0` at 1024 dims                          | `packages/llm/package.json:33`, `packages/llm/src/constants.ts:7-8` |
+| Consolidator agent | ai 7.0.128, `@ai-sdk/amazon-bedrock` 5.0.106, `@ai-sdk/anthropic` 4.0.72, zod 4.6.5 | `apps/consolidator/package.json:35-41`                              |
 | Script sandbox     | just-bash 3.6.0, for `memhtml exec`                                                 | `apps/consolidator/package.json:40`, `apps/cli/package.json:52`     |
 | Tracing            | Effect's own `OtlpTracer`, opt-in                                                   | `packages/telemetry/src/index.ts:14-18`                             |
 | Build tooling      | turbo 2.11.4, pnpm 11.21.0, biome 2.5.15, tsdown 0.23.0                             | `package.json:6`, `package.json:34-38`                              |
@@ -111,9 +111,11 @@ Counts are the distinct existing non-docs source paths cited in inline backticks
 - [memhtml-public · Dependency graph](../diagrams/structural/dependency-graph.md): 27 shared source citations
 - [memhtml-public · Module map](../architecture/module-map.md): 22 shared source citations
 - [memhtml-public · Processes](../behavior/processes.md): 18 shared source citations
-- [memhtml-public · Impact analysis](../insights/impact-analysis.md): 14 shared source citations
 - [memhtml-public · Contract map](../insights/contract-map.md): 14 shared source citations
+- [memhtml-public · Impact analysis](../insights/impact-analysis.md): 14 shared source citations
 - [memhtml-public · Debugging guide](../insights/debugging-guide.md): 13 shared source citations
+- [memhtml-public · CLI](../reference/cli.md): 12 shared source citations
+- [memhtml-public · Public API](../reference/public-api.md): 11 shared source citations
 - [memhtml-public · Business logic](../insights/business-logic.md): 10 shared source citations
-- [memhtml-public · Tech debt](../insights/tech-debt.md): 9 shared source citations
 - [memhtml-public · Data flow](../architecture/data-flow.md): 9 shared source citations
+- [memhtml-public · Tech debt](../insights/tech-debt.md): 9 shared source citations
