@@ -32,10 +32,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ai-sdk/amazon-bedrock": "5.0.105",
-    "@ai-sdk/anthropic": "4.0.71",
+    "@ai-sdk/amazon-bedrock": "5.0.106",
+    "@ai-sdk/anthropic": "4.0.72",
     "@memhtml/contracts": "workspace:*",
-    "ai": "7.0.127",
+    "ai": "7.0.128",
     "effect": "catalog:",
     "just-bash": "3.4.2",
     "zod": "4.6.5"
