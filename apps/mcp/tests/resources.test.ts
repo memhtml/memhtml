@@ -7,7 +7,7 @@ import { reportFilename } from "@memhtml/sleep"
 import { SLEEP_REPORTS_DIR } from "@memhtml/store"
 import { makeFixtureRepo } from "@memhtml/store/testing"
 import { Effect, Layer } from "effect"
-import { McpSchema, McpServer } from "effect/unstable/ai"
+import { McpSchema, McpServer } from "effect/ai"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { RESOURCE_TEMPLATES, Resources } from "../src/resources.js"

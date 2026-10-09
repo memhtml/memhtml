@@ -105,7 +105,7 @@ Two variables in the CLI's manifest are not read by the server. `MEMHTML_REFUSE_
 
 All three templates are registered by one helper, `templateLayer` (`apps/mcp/src/resources.ts:126-159`). It calls `McpServer.addResourceTemplate` directly rather than using the `McpServer.resource` tagged template. The reason is the router.
 
-`McpServer` matches a `resources/read` URI with find-my-way (`effect/unstable/http/FindMyWay`, effect `4.0.0-rc.117`). Two of that router's rules decide the pattern each resource registers, `memhtml:://<section>/*`, which `routerPathFor` builds (`apps/mcp/src/resources.ts:50`):
+`McpServer` matches a `resources/read` URI with find-my-way (`effect/http/FindMyWay`, read at effect `4.0.0-rc.117` when the module sat under `effect/unstable/http`). Two of that router's rules decide the pattern each resource registers, `memhtml:://<section>/*`, which `routerPathFor` builds (`apps/mcp/src/resources.ts:50`):
 
 - A `:` that is not followed by another `:` opens a named parameter, and `::` is the escape for a literal colon. So the scheme's colon is doubled. Left single, `memhtml:` would register a parameter named `""`.
 - A named parameter's value ends at the next `/`, so it matches one segment. Every memory path has at least two segments, and an archived one has at least four. `*` is the only construct that matches across `/`, and the router requires it to be the pattern's last character. The tagged template compiles its holes to named parameters, which is why it is not used.

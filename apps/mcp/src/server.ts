@@ -1,7 +1,7 @@
 import { layerApp } from "@memhtml/cli"
 import { layerTelemetry } from "@memhtml/telemetry"
 import { Layer, Logger } from "effect"
-import { McpProtocol, McpServer } from "effect/unstable/ai"
+import { McpProtocol, McpServer } from "effect/ai"
 
 import { ToolHandlers } from "./handlers.js"
 import { Resources } from "./resources.js"

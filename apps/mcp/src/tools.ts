@@ -15,7 +15,7 @@ import { MEMORY_RELS } from "@memhtml/contracts/edges"
 import { PARA_BUCKETS, WRITABLE_MEMORY_TYPES } from "@memhtml/contracts/types"
 import { REINFORCE_SIGNALS } from "@memhtml/domain"
 import { Schema } from "effect"
-import { Tool, Toolkit } from "effect/unstable/ai"
+import { Tool, Toolkit } from "effect/ai"
 
 import { ToolFailure } from "./failure.js"
 

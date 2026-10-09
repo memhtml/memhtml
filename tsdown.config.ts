@@ -54,8 +54,8 @@ const WORKSPACE_PACKAGES = [
  * Every non-`@memhtml` dependency any shipped package declares, as patterns that also match SUBPATHS.
  *
  * A bare package name is not enough, and the gap is expensive rather than theoretical: this repo
- * imports `effect/unstable/cli`, `effect/unstable/ai`, and `@effect/platform-node`'s subpaths, none of
- * which a `"effect"` string matches. Externalizing only the bare specifier inlined the rest and took
+ * imports `effect/ai`, `effect/http`, `effect/observability`, and `@effect/platform-node`'s subpaths,
+ * none of which a `"effect"` string matches. Externalizing only the bare specifier inlined the rest and took
  * `memhtml-mcp.mjs` from 192 kB to 1.45 MB (measured 2026-08-17), with no warning — tsdown's
  * bundled-dependency hint reports top-level names, so it stayed silent.
  *
