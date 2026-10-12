@@ -12,7 +12,7 @@ sidecar: "state/access.jsonl" {class: sidecar}
 clone: a fresh clone {class: step}
 rebuild: index rebuild {class: step}
 import: state import {class: step}
-export: "state-export, 14" {class: step}
+export: "state-export" {class: step}
 
 index: "index.db" {class: derived}
 state: "state.db" {class: plane}
@@ -23,7 +23,7 @@ clone -> rebuild
 clone -> import
 
 rebuild -> index: from ls-tree {class: derives}
-import -> state: sidecar only {class: derives}
+import -> state: access table only {class: derives}
 
-state -> export: each run
-export -> sidecar: byte-stable
+state -> export: a sleep run
+export -> sidecar: if bytes changed
