@@ -35,7 +35,7 @@ jobs:
           path: ${{ env.PNPM_STORE }}
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: pnpm-store-${{ runner.os }}-
-      # The Chromium the accessibility and performance gates drive. It lives in a per-user cache rather
+      # The Chromium the accessibility gate drives. It lives in a per-user cache rather
       # than in node_modules, so the pnpm store cache above cannot hold it, and Playwright 1.62 ships
       # no install script, so nothing fetches it implicitly. Restored before `mise run browsers` so
       # that step is a no-op on a hit rather than a ~130 MB download per run.
@@ -51,12 +51,6 @@ jobs:
       # Only this workflow needs it, which is why it is a step here rather than part of `install:ci` —
       # the pages and links jobs install the same dependencies and drive no browser.
       - run: mise run browsers
-      # Ubuntu 24.04 runners restrict unprivileged user namespaces through AppArmor, and
-      # Chrome's sandbox needs them: the budget gate's headless Chrome aborts at launch with
-      # "No usable sandbox!" (zygote_host_impl_linux.cc:128). Lifting the restriction for this
-      # job lets the gates drive the same sandboxed Chrome a laptop does; the alternative,
-      # --no-sandbox in lighthouserc.json, would also change what developers run locally.
-      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: mise run check
 
   # The artifact, not the workspace. `check` above resolves `@memhtml/*` through pnpm's links,

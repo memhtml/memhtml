@@ -2,8 +2,7 @@
  * What the built site is allowed to contain, and which pages the browser gates audit.
  *
  * Both lists are declared here and nowhere else. `tests/built-site.test.ts` reads them against
- * `dist/`, `tests/a11y.test.ts` drives a browser over them, and a case in the first asserts that
- * `lighthouserc.json` — which is JSON and cannot import this file — names the same pages.
+ * `dist/`, and `tests/a11y.test.ts` and `tests/layout-stability.test.ts` drive a browser over them.
  */
 
 /**
@@ -119,10 +118,9 @@ export const DIST_DIR = "dist"
  *
  * 0.1 is the Core Web Vitals "good" boundary rather than a number chosen to fit this site: every
  * audited page measures 0 today (`tests/layout-stability.test.ts`), so the headroom is not budget
- * anyone is spending. It lives here, beside the page list, because the probe that enforces it and
- * the case in `tests/built-site.test.ts` that keeps `lighthouserc.json` honest both need the same
- * number, and Lighthouse's own CLS reading is the one this repo does NOT gate on — see that probe's
- * header for the measurement that decided it.
+ * anyone is spending. It lives here, beside the page list the probe walks, so the pages and the
+ * ceiling they are held to are declared in one place; see that probe's header for the measurement
+ * that decided to gate layout stability with a fixed viewport rather than a Lighthouse reading.
  */
 export const LAYOUT_SHIFT_CEILING = 0.1
 
