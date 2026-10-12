@@ -183,7 +183,7 @@ What each phase gets is failure isolation, not one commit. A phase that fails is
 
 `.memhtml/state.db`, gitignored like the index but not computed from the tree, so no rebuild can reproduce it. It is attached to the index's SQLite connection as the `state` schema.
 
-It holds three tables. `state.access` has, per path, the access count, the reinforcement count, the outcome score, and when the memory was last read and last reinforced; Learn pages call it the access plane. `state.edge_corroboration` counts the separate run dates on which each machine-proposed contradiction was detected. `state.entity_corroboration` does the same for model-proposed entity merges.
+Its migrations create three tables. `state.access` has, per path, the access count, the reinforcement count, the outcome score, and when the memory was last read and last reinforced; Learn pages call it the access plane. `state.edge_corroboration` counts the separate run dates on which each machine-proposed contradiction was detected. `state.entity_corroboration` does the same for model-proposed entity merges.
 
 Only `state.access` has a durable copy, the committed sidecar. The corroboration counts have none, so losing `state.db` starts them over. Reprieve counts are not here: each is the `memhtml-reprieves` meta in its memory file. See [The index plane and the state plane](/internals/index-plane-and-state-plane/).
 

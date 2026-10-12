@@ -40,7 +40,7 @@ The chapters run in dependency order: the layers first, then the paths through t
 | [The write path](/internals/the-write-path/)                                       | Ordering as the dedup mechanism, batch atomicity, the propose-only conflict assist             |
 | [The index](/internals/the-index/)                                                 | Two databases on one connection, the schema, projection, rebuild and incremental update        |
 | [Four-arm retrieval](/internals/four-arm-retrieval/)                               | The arm registry, rank fusion, degraded mode, diversification, the disclosure fold             |
-| [The index plane and the state plane](/internals/index-plane-and-state-plane/)     | What git cannot reproduce, and the byte-stable committed sidecar that saves it                 |
+| [The index plane and the state plane](/internals/index-plane-and-state-plane/)     | What git cannot reproduce, and the byte-stable sidecar that saves its access table             |
 | [The trace indexer](/internals/the-trace-indexer/)                                 | A read-only index over session transcripts, and the table-name firewall around it              |
 | [The sleep pipeline](/internals/the-sleep-pipeline/)                               | Seventeen phases, per-phase isolation, commit trailers as the resume mechanism                 |
 | [Concurrency and conflicts](/internals/concurrency-and-conflicts/)                 | Git as the concurrency mechanism, and typed conflict surfacing                                 |
