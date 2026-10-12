@@ -102,7 +102,7 @@ flowchart LR
 | Tracing            | Effect's own `OtlpTracer`, opt-in                                                   | `packages/telemetry/src/index.ts:14-18`                             |
 | Build tooling      | turbo 2.11.4, pnpm 11.21.0, biome 2.5.15, tsdown 0.23.0                             | `package.json:6`, `package.json:34-38`                              |
 | Test tooling       | vitest 5.0.3, `@effect/vitest`, fast-check 4.10.2                                   | `apps/cli/package.json:57-60`, `pnpm-workspace.yaml:96-97`          |
-| Docs site          | astro ^7.3.5, `@astrojs/starlight` ^0.42.5                                          | `apps/docs/package.json:20`, `apps/docs/package.json:25`            |
+| Docs site          | astro ^7.3.8, `@astrojs/starlight` ^0.42.6                                          | `apps/docs/package.json:20`, `apps/docs/package.json:25`            |
 
 ## See also
 
