@@ -22,6 +22,7 @@ export {
 export { commitPhase, phaseTrailers } from "./commit.js"
 export type {
   CandidateCommitmentLike,
+  CandidateEntityLike,
   CandidateEvidenceLike,
   CandidateMemoryLike,
   ConsolidationOutcome,
@@ -179,6 +180,7 @@ export type {
   CorroborationRow,
   DanglingEdge,
   EdgeRow,
+  EntityClaim,
   EntityCorroborationRow,
   EntityCount,
   PairRow,

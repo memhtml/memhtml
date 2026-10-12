@@ -641,7 +641,7 @@ export const edgeTyping: PhaseBody = (env) =>
  * the write that UPDATE would make". A sorted key would collapse two rows the table keeps apart, so a
  * pair whose orientation a later night flips would read as already promoted with its own row untouched.
  * (The review TASK's key is sorted, and for the opposite reason: it asks a human one unordered
- * question. See {@link contradictionFinding}.)
+ * question. See `contradictionFinding`.)
  *
  * A SPACE separates the three parts, which is unambiguous here for the reason {@link unionPairs}' key
  * relies on: a corpus path is a slug plus `/` and `.html`, and a rel comes from a closed vocabulary, so

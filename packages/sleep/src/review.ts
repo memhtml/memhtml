@@ -222,7 +222,7 @@ export interface MergeOptions {
  * **Two refusals, both before anything moves.** `main` having advanced past `base_sha` means the run
  * curated a corpus that MAY no longer exist: a decay computed against a confidence an agent has since
  * corrected, an eviction of a memory that was just reinforced. Whether it does is a path question,
- * and {@link advanceOverlap} asks it: when the paths main gained and the paths the branch wrote —
+ * and `advanceOverlap` asks it: when the paths main gained and the paths the branch wrote —
  * FULL diffs on both sides, committed sidecars, regenerated artifacts, and both halves of every
  * rename included — intersect at even one path, or when either diff cannot be read, the merge
  * refuses and the operator reruns the sleep. The rerun is cheap because every phase is idempotent:
@@ -244,9 +244,9 @@ export interface MergeOptions {
  * survives the discard of the branch that earned it — for the consolidation watermark that is content
  * loss, because the watermark is an anti-join and the session it covers is never selected again. So a
  * phase records each such write in `pendingMarksPath(runId)`, a committed artifact on the branch, and
- * {@link applyMarks} performs them here, once the memories they describe are on `main`.
+ * `applyMarks` performs them here, once the memories they describe are on `main`.
  *
- * **The merge ends by projecting the merged commit into the index** ({@link reindex}, issue #145).
+ * **The merge ends by projecting the merged commit into the index** (`reindex`, issue #145).
  * The index describes one commit and this merge produced a new one, so until `index_state.head_sha`
  * names it, every memory the run distilled, rewrote, or archived is invisible to `search` and a
  * long-lived `serve mcp` over the same `index.db` serves the pre-merge projection. The report
@@ -388,7 +388,7 @@ export const merge = (
     }
   }).pipe(Effect.withSpan("sleep.merge"))
 
-/** What {@link reindex} adds to a merge that happened: the projection landed, or why it did not. */
+/** What `reindex` adds to a merge that happened: the projection landed, or why it did not. */
 type IndexOutcome =
   | {
       readonly indexUpdated: true
@@ -409,7 +409,7 @@ type IndexOutcome =
  * is exactly the run's own writes, renames tracked and new canonicals embedded, and its cost is the
  * size of the night rather than the size of the store.
  *
- * **A failed update does NOT fail the merge**, on the reasoning {@link applyMarks} follows: `main`
+ * **A failed update does NOT fail the merge**, on the reasoning `applyMarks` follows: `main`
  * has already moved and the memories are landed, so the outcome is reported (`indexUpdated: false`
  * with `indexError`) and logged with its recovery, instead of a merge that reports failure over a
  * `main` that moved. Each failure has one recovery and the warning names it. `IndexStale` is a
@@ -514,7 +514,7 @@ const touchedBetween = (
 /**
  * Land a disjoint advance as a merge commit, with a conflict aborted rather than left in progress.
  *
- * A conflict is unreachable when {@link advanceOverlap} returned empty — git conflicts on a path
+ * A conflict is unreachable when `advanceOverlap` returned empty — git conflicts on a path
  * both sides changed — so this arm exists for the same reason `merge --abort` does: the working
  * tree must never be left mid-merge on a path this code did not predict.
  */

@@ -69,6 +69,14 @@ export const DEEP_MINING_SAMPLE_LIMIT = 10000
 /** The rel the deep grouping band is written under. The band separator; see the module header. */
 export const DEEP_GROUPING_REL = "laterally_related"
 
+/** What {@link mineAllBands} wrote: one count per band. */
+export interface MinedBandCounts {
+  /** Pairs written under the default band's rel. */
+  readonly mined: number
+  /** Pairs written under {@link DEEP_GROUPING_REL}; `0` when the run had no deep band. */
+  readonly deepMined: number
+}
+
 /**
  * Mine every band the run is entitled to and replace the index's mined sets: the whole phase minus
  * its counts. Exported because deep compress re-runs it BETWEEN passes (issue #63's
@@ -76,9 +84,7 @@ export const DEEP_GROUPING_REL = "laterally_related"
  * and a second implementation of the scan here would be free to disagree with the default one about
  * floors, caps, and exclusions.
  */
-export const mineAllBands = (
-  env: PhaseEnv
-): Effect.Effect<{ readonly mined: number; readonly deepMined: number }, SleepError> =>
+export const mineAllBands = (env: PhaseEnv): Effect.Effect<MinedBandCounts, SleepError> =>
   Effect.gen(function* () {
     /**
      * Tasks are excluded, and here the exclusion is the graph firewall, not a cost guard.

@@ -63,7 +63,7 @@ const indentBody = (body: string): string =>
  * an already-archived file is not a candidate, so a second pass stages nothing and costs no commit.
  *
  * `body` is optional context between the subject and the trailers, the reviewer-facing receipt for a
- * commit whose subject cannot carry its own justification. It is passed through {@link indentBody},
+ * commit whose subject cannot carry its own justification. It is passed through `indentBody`,
  * which prevents trailer injection; see that function.
  */
 export const commitPhase = (

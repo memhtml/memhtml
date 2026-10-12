@@ -263,7 +263,7 @@ export const neighborPairs = (
  * edge set the component builder wants.
  *
  * **`memory_type <> 'task'` is written as the LITERAL the index uses, not as this module's
- * {@link SLEEP_EXCLUDED_TYPES} binding.** It is the same exclusion for the same reason — two open
+ * `SLEEP_EXCLUDED_TYPES` binding.** It is the same exclusion for the same reason — two open
  * tasks phrased alike are two things to do — but `NOT IN (?)` and `<> 'task'` are different
  * expressions to the planner, and only the second one matches `files_frame_key_active`'s predicate.
  * A bound form here would read as more general while quietly turning the seek into a scan.
@@ -945,7 +945,7 @@ export interface UnconsolidatedSession {
  * A session with three linked memories comes back as three rows and a session with none as one row
  * carrying `memory_path: null`. Neither `group_concat` nor one query per session: a delimiter-joined
  * column would put a path inside a string that a `,` in a path would then split, and the loop is the
- * per-row round trip this module's other statements exist to avoid. {@link manifestRowsFor} is the
+ * per-row round trip this module's other statements exist to avoid. `traceConsolidation` is the
  * grouper, in TypeScript, where the grouping is a `Map` and not a SQL feature.
  */
 export interface SessionManifestRow {

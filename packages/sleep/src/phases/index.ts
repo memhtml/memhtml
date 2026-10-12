@@ -136,6 +136,7 @@ export {
   placementTriage
 } from "./placement-triage.js"
 export { preflight } from "./preflight.js"
+export type { MinedBandCounts } from "./relationship-mining.js"
 export {
   DEEP_GROUPING_REL,
   DEEP_MINING_COSINE_FLOOR,
