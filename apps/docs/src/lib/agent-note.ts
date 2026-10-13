@@ -1,3 +1,6 @@
+// `mdast-util-to-hast` declares the `hName` and `hProperties` fields of mdast's `Data`, which the
+// replacement node below carries. This import loads only that declaration and is erased in the build.
+import type {} from "mdast-util-to-hast"
 import type { MdastPluginDefinition } from "satteri"
 
 /**

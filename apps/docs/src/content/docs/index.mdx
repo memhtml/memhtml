@@ -64,8 +64,9 @@ memories behind.
 Two SQLite databases sit under `.memhtml/`, opened through Node's built-in `node:sqlite` driver, and
 they differ in what a rebuild can recover. `index.db` holds the projected rows, the full-text index,
 the embedding vectors, and the mined edges, all of which the indexer regenerates from the tree.
-`state.db` holds the facts the tree cannot reproduce: access counts, reinforcement counts, and
-outcome scores. Its durable copy is a committed file, `.memhtml/state/access.jsonl`.
+`state.db` holds facts the tree cannot reproduce: access counts, reinforcement counts, and
+outcome scores. A committed file, `.memhtml/state/access.jsonl`, keeps a copy of those; the
+corroboration counts `state.db` also holds have none.
 
 Retrieval runs four independent ranking arms over one query and then combines their orderings.
 Full-text search ranks on title, claim, and body text. Vector similarity ranks on the embeddings.

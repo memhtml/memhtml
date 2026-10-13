@@ -245,9 +245,9 @@ export default defineConfig({
          */
         starlightBasePath(),
         /*
-         * Fails the build on a broken internal link. Pinned ^0.25.2 deliberately: 0.25.3 shipped
-         * 2026-08-12, and under `minimumReleaseAge` + `minimumReleaseAgeStrict` a ^0.25.3 range has
-         * no satisfying version and the install fails outright rather than falling back.
+         * Fails the build on a broken internal link. Keep the caret on a release that has already
+         * cleared `minimumReleaseAge`: a range with no version past the soak has no satisfying version,
+         * and the install fails outright rather than falling back.
          *
          * The Reference tier is excluded, and only it. Measured in the plugin's `validation.ts`: a
          * link is valid when the target is in Astro's built page list AND the validator recorded that
