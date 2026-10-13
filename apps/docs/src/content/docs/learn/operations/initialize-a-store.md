@@ -61,7 +61,7 @@ sitemap.xml merge=ours
 .memhtml/state.db-*
 ```
 
-A clone therefore hands you the tree and the committed sidecar `.memhtml/state/access.jsonl`, and no databases at all. That sidecar is why `memhtml state import` is a step in [recovery](/learn/operations/recover-from-a-lost-index/). Retrieval ranks a query with four arms: full-text search, vector similarity, recency, and salience. Salience favors the memories you have opened and reinforced before, so skipping the import leaves that arm with no signal and ranking gets quietly worse instead of failing.
+A clone therefore hands you the tree and the committed sidecar `.memhtml/state/access.jsonl`, and no databases at all. That sidecar is why `memhtml state import` is a step in [recovery](/learn/operations/recover-from-a-lost-index/). Retrieval ranks a query with four arms: full-text search, vector similarity, recency, and salience. Salience favors the memories you have opened and reinforced before, so skipping the import leaves that arm without the sidecar's history, and ranking gets quietly worse instead of failing. The clone's first `memhtml state export` or sleep run can then replace the committed sidecar with this clone's own rows, or with an empty file.
 
 ## What the scaffold contains
 
