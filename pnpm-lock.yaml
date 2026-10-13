@@ -196,8 +196,8 @@ importers:
         specifier: ^0.8.0
         version: 0.8.0(@astrojs/starlight@0.42.6(astro@7.3.8(@types/node@26.6.5)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(supports-color@10.2.2)
       starlight-links-validator:
-        specifier: ^0.26.0
-        version: 0.26.0(@astrojs/starlight@0.42.6(astro@7.3.8(@types/node@26.6.5)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.3.8(@types/node@26.6.5)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)
+        specifier: ^0.27.0
+        version: 0.27.0(@astrojs/starlight@0.42.6(astro@7.3.8(@types/node@26.6.5)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.3.8(@types/node@26.6.5)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)
       starlight-llms-txt:
         specifier: ^0.12.0
         version: 0.12.0(@astrojs/markdown-satteri@0.4.3)(@astrojs/starlight@0.42.6(astro@7.3.8(@types/node@26.6.5)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.3.8(@types/node@26.6.5)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)
@@ -232,6 +232,9 @@ importers:
       cspell:
         specifier: ^10.3.6
         version: 10.3.6
+      mdast-util-to-hast:
+        specifier: ^13.2.1
+        version: 13.2.1
       playwright:
         specifier: ^1.64.0
         version: 1.64.0
@@ -2520,9 +2523,6 @@ packages:
 
   '@types/node@26.6.5':
     resolution: {integrity: sha512-uMzsv9stDdofIZBx4UGh4Z9ZgXnGC9seRDscilBcTHAeOFk67MZg/k9bWVfO+bk4qZmG+l52hRnLwUiH2LnJTg==}
-
-  '@types/picomatch@4.0.3':
-    resolution: {integrity: sha512-iG0T6+nYJ9FAPmx9SsUlnwcq1ZVRuCXcVEvWnntoPlrOpwtSTKNDC9uVAxTsC3PUvJ+99n4RpAcNgBbHX3JSnQ==}
 
   '@types/sax@1.2.7':
     resolution: {integrity: sha512-rO73L89PJxeYM3s3pPPjiPgVVcymqU490g0YO5n5By0k2Erzj6tay/4lr1CHAAU4JyOWd1rpQ8bCf6cZfHU96A==}
@@ -5224,9 +5224,8 @@ packages:
     peerDependencies:
       '@astrojs/starlight': '>=0.41.0'
 
-  starlight-links-validator@0.26.0:
-    resolution: {integrity: sha512-b3JlzP5bczSDMQp10ST/Gldd6RNzcwpWfTrszzGPcqnuav2W31+MjyX92IXH+VCcG2pG9G1qyDcEcNuMRYi2ig==}
-    engines: {node: '>=22.12.0'}
+  starlight-links-validator@0.27.0:
+    resolution: {integrity: sha512-UvPl8L9hfWR+yWbLOEtljLmpJCGcM6AVseVy5IO9dmqdOjW4R+Y8FaYyVA5axCC8RvxM5xU7M1WTerpwU8rYbw==}
     peerDependencies:
       '@astrojs/starlight': '>=0.42.0'
       astro: '>=7.2.10'
@@ -6340,7 +6339,7 @@ snapshots:
 
   '@astrojs/yaml2ts@0.2.4':
     dependencies:
-      yaml: 2.9.0
+      yaml: 2.9.1
 
   '@aws-sdk/client-bedrock-runtime@3.1149.0':
     dependencies:
@@ -8012,8 +8011,6 @@ snapshots:
     dependencies:
       undici-types: 8.9.0
 
-  '@types/picomatch@4.0.3': {}
-
   '@types/sax@1.2.7':
     dependencies:
       '@types/node': 26.6.5
@@ -8761,7 +8758,7 @@ snapshots:
       '@cspell/cspell-types': 10.3.6
       comment-json: 5.0.0
       smol-toml: 1.9.0
-      yaml: 2.9.0
+      yaml: 2.9.1
 
   cspell-dictionary@10.3.6:
     dependencies:
@@ -11272,11 +11269,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  starlight-links-validator@0.26.0(@astrojs/starlight@0.42.6(astro@7.3.8(@types/node@26.6.5)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.3.8(@types/node@26.6.5)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2):
+  starlight-links-validator@0.27.0(@astrojs/starlight@0.42.6(astro@7.3.8(@types/node@26.6.5)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.3.8(@types/node@26.6.5)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2):
     dependencies:
       '@astrojs/markdown-satteri': 0.4.3
       '@astrojs/starlight': 0.42.6(astro@7.3.8(@types/node@26.6.5)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
-      '@types/picomatch': 4.0.3
       astro: 7.3.8(@types/node@26.6.5)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1)
       github-slugger: 2.0.0
       hast-util-from-html: 2.0.3
@@ -11287,7 +11283,7 @@ snapshots:
       satteri: 0.10.5
       terminal-link: 5.0.0
       unist-util-visit: 5.1.0
-      yaml: 2.9.0
+      yaml: 2.9.1
     transitivePeerDependencies:
       - supports-color
 
