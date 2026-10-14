@@ -62,6 +62,6 @@ See [check the discrimination gate](/learn/operations/check-the-discrimination-g
 
 ## Two machines is a different question
 
-Sharing one store between processes on one machine is solved. Sharing it between machines is solved for the git tree and open for the state plane: `.memhtml/state/access.jsonl` merges as a whole file, which makes it last-writer-wins. [Preserve the state plane](/learn/operations/preserve-the-state-plane/) covers the mitigation and how to detect a loss.
+Sharing one store between processes on one machine is solved. Sharing it between machines is solved for the git tree and open for the state plane. Git merges `.memhtml/state/access.jsonl` line by line, with no merge driver. Two machines' counts for one memory therefore never add up: changes to lines that are not adjacent merge cleanly, and changes to the same or adjacent lines conflict. A clone that exports before it imports also overwrites the committed rows. [Preserve the state plane](/learn/operations/preserve-the-state-plane/) covers the mitigation and how to detect a loss.
 
 [Concurrency and conflict surfacing](/internals/concurrency-and-conflicts/) covers the mechanism.
