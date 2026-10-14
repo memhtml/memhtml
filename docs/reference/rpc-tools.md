@@ -10,11 +10,11 @@ The server is one Effect layer, `layerServer` (`apps/mcp/src/server.ts:40-63`). 
 
 The server shares the CLI's app layer, so an agent's `memory_write` and an operator's `memhtml search` resolve to one database, one git root, and one vector space (`apps/mcp/src/server.ts:13-19`).
 
-The transport is `McpServer.layerStdio` at protocol revision `v2025_06_18` (`apps/mcp/src/server.ts:44-51`). Effect `4.0.0-rc.117` ships five protocol adapters: `v2026_07_28`, `v2025_11_25`, `v2025_06_18`, `v2025_03_26`, and `v2024_11_05`. The server names one, so a new revision is an explicit, reviewable choice rather than a default that moves the wire format. The initialize result reports `serverInfo` as `memhtml` `0.15.1` (`apps/mcp/src/server.ts:10-11`).
+The transport is `McpServer.layerStdio` at protocol revision `v2025_06_18` (`apps/mcp/src/server.ts:44-51`). Effect `4.0.3` ships five protocol adapters: `v2026_07_28`, `v2025_11_25`, `v2025_06_18`, `v2025_03_26`, and `v2024_11_05`. The server names one, so a new revision is an explicit, reviewable choice rather than a default that moves the wire format. The initialize result reports `serverInfo` as `memhtml` `0.15.1` (`apps/mcp/src/server.ts:10-11`).
 
 Logs go to stderr through `Logger.LogToStderr`. Stdout carries the NDJSON-RPC frames, and Effect's default logger writes to stdout (`apps/mcp/src/server.ts:21-23`, `apps/mcp/src/server.ts:62`). `bin.ts` runs the layer with `Layer.launch` for the life of the process, because a built-then-released layer would close stdin under the client (`apps/mcp/src/bin.ts:7-15`).
 
-The server passes no `instructions` to `layerStdio`, so the initialize result carries none. Tool descriptions are the only guidance channel. That is why shared contracts such as `BATCH_GUIDANCE` and `ARTICLE_HTML_CONTRACT` are appended to every description they apply to (`apps/mcp/src/server.ts:25-38`). The source gives the reason as effect offering no way to set the field, which held at rc.109. At rc.117, `layerStdio` accepts an `instructions` option.
+The server passes no `instructions` to `layerStdio`, so the initialize result carries none. Tool descriptions are the only guidance channel. That is why shared contracts such as `BATCH_GUIDANCE` and `ARTICLE_HTML_CONTRACT` are appended to every description they apply to (`apps/mcp/src/server.ts:25-38`). The source gives the reason as effect offering no way to set the field, which held at rc.109. At 4.0.3, `layerStdio` accepts an `instructions` option.
 
 Every tool binds its handler by name in `MemhtmlToolkit.toLayer({...})` (`apps/mcp/src/handlers.ts:324-328`). A handler decodes the snake_case wire parameters, calls the same operation function the matching CLI command calls, and renames the result back to snake_case (`apps/mcp/src/handlers.ts:36-46`).
 
@@ -28,7 +28,7 @@ Every tool declares `failure: ToolFailure` (`apps/mcp/src/failure.ts:34-41`). Th
 
 `MemoryPath` is `Schema.String` holding a path relative to the root's git tree with no leading slash, such as `areas/oncall/rollback-order.html` (`apps/mcp/src/tools.ts:64-71`). The schema checks nothing else. Most operations drop a leading slash; `memory_reinforce` uses its paths as given.
 
-`Finite` is `Schema.Finite` and publishes `{"type":"number"}`. `Count` is `Schema.Int` and publishes `{"type":"integer"}` (`apps/mcp/src/tools.ts:73-85`). `Finite` stands in for `Schema.Number`, which publishes an `anyOf` with a string branch for `Infinity`, `-Infinity`, and `NaN`. `Count` accepts negative integers.
+`Finite` is `Schema.Finite` and publishes `{"type":"number"}`. `Count` is `Schema.Int` and publishes `{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991}`, the safe-integer bounds (`apps/mcp/src/tools.ts:73-85`). `Finite` stands in for `Schema.Number`, which publishes an `anyOf` with a string branch for `Infinity`, `-Infinity`, and `NaN`. `Count` accepts negative integers.
 
 No tool sets strict mode. Every published `inputSchema` except `memory_status`'s allows additional properties, and a key a tool does not declare is ignored rather than refused. A `path` or `memory_type` sent to `memory_correct`, for example, has no effect.
 
@@ -36,7 +36,7 @@ Each entry quotes its registration block verbatim, with two mechanical elisions.
 
 ### How a call fails
 
-A tool call fails in one of three wire shapes at effect `4.0.0-rc.117` (`pnpm-workspace.yaml:93`).
+A tool call fails in one of three wire shapes at effect `4.0.3` (`pnpm-workspace.yaml:93`).
 
 - A parameter that does not decode is a JSON-RPC error with code `-32602` and the message `Invalid parameters for tool '<name>': ...`. It carries no `ERR_*` code, and the handler never ran. A `memory_type` outside the writable types, a missing required key, and a `rel` outside the nine memory rels all fail this way.
 - A typed failure is a tool result with `isError: true` and one text block: `ERR_<CODE>: <reason>. Try: <suggestion>; <suggestion>`. The `Try:` clause is left out when there are no suggestions (`apps/mcp/src/failure.ts:149-157`).
@@ -824,7 +824,7 @@ const MemoryStatus = Tool.make("memory_status", {
 
 Reports corpus health in one call: HEAD, dirty state, counts by type, edge totals, whether the index describes the current commit, vector coverage, and the last sleep run.
 
-**Input:** none. `parameters` is `Tool.EmptyParams`, which publishes `{"type":"object","additionalProperties":false}` and refuses any key with `-32602`. An empty `Schema.Struct({})` would not publish "an object with no fields": at rc.117 it derives `{"not":{"type":"null"}}`. The source comment records rc.109's derivation, an `anyOf` with an array branch (`apps/mcp/src/tools.ts:1031-1041`).
+**Input:** none. `parameters` is `Tool.EmptyParams`, which publishes `{"type":"object","additionalProperties":false}` and refuses any key with `-32602`. An empty `Schema.Struct({})` would not publish "an object with no fields": at 4.0.3 it derives `{"not":{"type":"null"}}`. The source comment records rc.109's derivation, an `anyOf` with an array branch (`apps/mcp/src/tools.ts:1031-1041`).
 
 **Output:** ten fields.
 

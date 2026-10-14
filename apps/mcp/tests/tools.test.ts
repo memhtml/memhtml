@@ -772,7 +772,10 @@ describe("the derived JSON Schema", () => {
      * my own" and must be served rather than refused at decode.
      */
     const limit = schemaFor("memory_neighbors").properties?.limit as JsonSchemaObject
-    expect(limit.anyOf).toEqual([{ type: "integer" }, { type: "null" }])
+    expect(limit.anyOf).toEqual([
+      { type: "integer", minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
+      { type: "null" }
+    ])
     expect(schemaFor("memory_neighbors").required ?? []).not.toContain("limit")
 
     const parameters = MemhtmlToolkit.tools.memory_neighbors.parametersSchema
