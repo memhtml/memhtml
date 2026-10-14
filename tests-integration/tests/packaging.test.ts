@@ -170,7 +170,7 @@ describe("a dependency read as a file stays external and declared", () => {
 
   /**
    * The externalization is derived from the manifests rather than listed, and as SUBPATH patterns.
-   * A bare name is not enough — this repo imports `effect/unstable/cli`, and externalizing only
+   * A bare name is not enough — this repo imports `effect/ai`, and externalizing only
    * `"effect"` inlined the rest and quadrupled the MCP bundle with no warning.
    */
   it("externalizes declared dependencies and their subpaths", async () => {
