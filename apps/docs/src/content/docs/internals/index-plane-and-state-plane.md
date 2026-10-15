@@ -7,7 +7,7 @@ description: What git cannot reproduce, why it is gitignored anyway, and the byt
 
 The system keeps two SQLite databases, and this page calls them planes. The index plane, `.memhtml/index.db`, is mostly computed from the git tree. The state plane, `.memhtml/state.db`, holds usage facts that no file in the tree records (`packages/store/src/layout.ts:24-28`).
 
-The state plane's migrations create three tables (`packages/index/state-migrations/S0001_access.sql:13-48`, `packages/index/state-migrations/S0002_entity_corroboration.sql:34-53`). `state.access` holds, per path, the access count, the reinforcement count, the outcome score, and when the memory was last read and last reinforced. `state.edge_corroboration` and `state.entity_corroboration` count the separate run dates on which each machine-proposed contradiction or entity merge was detected.
+The state plane's migrations create three tables (`packages/index/state-migrations/S0001_access.sql:13-48`, `packages/index/state-migrations/S0002_entity_corroboration.sql:34-53`). `state.access` holds, per path, the access count, the reinforcement count, the outcome score, and when the memory was last read and last reinforced. `state.edge_corroboration` and `state.entity_corroboration` count detections of each machine-proposed contradiction or entity merge, adding one only when a run's date differs from the date of the previous detection.
 
 Reprieve counts are not in it. A reprieve extends a memory's validity window instead of archiving the memory, and the count is the `memhtml-reprieves` meta in the memory file (`packages/sleep/src/phases/reprieve.ts:72-76`).
 
