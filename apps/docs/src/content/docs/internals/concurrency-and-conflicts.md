@@ -28,7 +28,7 @@ The same code answers a second, plainer collision: an explicit `--path` that a f
 
 ## 3. A sleep run refuses a dirty tree
 
-`preflight` refuses to start on a dirty tree (`packages/store/src/store.ts:1073`, `packages/contracts/src/errors.ts:50`), and `merge` refuses if `main` has moved.
+`preflight` refuses to start on a dirty tree (`packages/store/src/store.ts:1073`, `packages/contracts/src/errors.ts:50`), and `merge` refuses if `main` has since changed a path the run also changed (`packages/sleep/src/review.ts:280-312`).
 
 An agent write is one commit against one file and can be reconciled after the fact. A curation run rewrites metadata across the whole corpus, so starting it against uncommitted work would mix a human's in-progress edit into a machine's fifteen commits, with no way to tell them apart in the diff.
 
@@ -40,4 +40,4 @@ An already-merged duplicate no longer surfaces as a candidate, an already-decaye
 
 That is what lets the abort path be `git branch -D` with no compensating writes. A re-run converges to the same tree instead of compounding the previous attempt.
 
-The abort reaches the state plane too, and it takes a committed ledger to get there. `.memhtml/state.db` is not rebuildable from the tree, so a state-plane row written during a phase would outlive the branch that earned it — and for a `trace-consolidation` watermark that is data loss rather than bookkeeping, because the watermark is an anti-join and a session it covers is never selected again. So the three non-undoable writes are recorded as marks in `.memhtml/sleep/<run-id>.pending.jsonl`, a committed artifact on the run's own branch, and `merge` applies them after the fast-forward succeeds, reporting `marksPending` beside `marksApplied` (`packages/sleep/src/contract.ts:306`, `packages/sleep/src/review.ts`). `git branch -D` therefore discards the marks with the branch, and every session in them is simply re-read on the next cycle. [The sleep pipeline](/internals/the-sleep-pipeline/) develops the ledger.
+The abort reaches three database writes too, and it takes a committed ledger to get there. A database row written during a phase would outlive the branch that earned it. For a `trace-consolidation` watermark that is data loss rather than bookkeeping, because the watermark is an anti-join and a session it covers is never selected again. So the three non-undoable writes are recorded as marks in `.memhtml/sleep/sleep-<date>.pending.jsonl` (the run id with `/` replaced by `-`), a committed artifact on the run's own branch, and `merge` applies them only after the branch lands, reporting `marksPending` beside `marksApplied` (`packages/sleep/src/contract.ts:496-497`, `packages/sleep/src/review.ts:351`). `git branch -D` therefore discards the marks with the branch, and every session in them stays eligible for a later cycle. [The sleep pipeline](/internals/the-sleep-pipeline/) develops the ledger.
