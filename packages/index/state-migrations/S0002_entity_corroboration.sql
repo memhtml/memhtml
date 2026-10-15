@@ -20,13 +20,13 @@
 -- merge is applied the rewrite is file-borne and this row is decoration.
 --
 -- A merge backed by a DECLARED alias never reaches this table. A person file stating
--- `<meta name="memhtml-alias" content="laith">` is a human's (or an authoritative directory's)
+-- `<meta name="memhtml-alias" content="laura">` is a human's (or an authoritative directory's)
 -- assertion of identity, not a machine's suspicion, so it applies on the first run.
 --
 -- Known and accepted: the ORIENTATION is part of the key, so a merge whose direction flips restarts the
 -- counter. The phase's weight-then-lexicographic rule reads the corpus's own file counts, and those churn
--- as memories are written and evicted — so a run that counted `laith -> laith al-saadoon` and a later
--- run that reaches `laith al-saadoon -> laith` are two rows at one detection each, and neither
+-- as memories are written and evicted — so a run that counted `laura -> laura de-sabelin` and a later
+-- run that reaches `laura de-sabelin -> laura` are two rows at one detection each, and neither
 -- promotes. That is the safe direction to be wrong in: a corpus whose weights are still moving has not
 -- settled which name is canonical, and a merge recorded under one orientation and applied under the other
 -- would rewrite every meta toward a name a later run disagrees with.

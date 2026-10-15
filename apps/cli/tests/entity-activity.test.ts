@@ -117,13 +117,13 @@ describe("memhtml entity activity", () => {
   let checkoutOnly = ""
   /** Carries BOTH entities and states no world time, so its write time is its activity. */
   let shared = ""
-  /** Carries `person:sanju` only, with a world time NEWER than anything else. */
+  /** Carries `person:sasha` only, with a world time NEWER than anything else. */
   let sanjuOnly = ""
   /**
-   * Carries `concept:sanju`: the SAME name under a DIFFERENT type.
+   * Carries `concept:sasha`: the SAME name under a DIFFERENT type.
    *
    * The neighbour that makes the grouping's column list observable. `file_entities` is keyed on the
-   * pair, so a `GROUP BY entity_name` alone merges this entity with `person:sanju` and reports one row
+   * pair, so a `GROUP BY entity_name` alone merges this entity with `person:sasha` and reports one row
    * where the corpus holds two — and on a fixture whose names are all distinct, that merge is
    * invisible. It is the same ambiguity `SearchScope.entity` refuses a bare name for.
    */
@@ -135,7 +135,7 @@ describe("memhtml entity activity", () => {
   const NEW_EVENT = "2026-08-15T00:00:00Z"
   const SHARED_WRITE = "2026-08-01T00:00:00Z"
   const OLD_WRITE = "2026-07-01T00:00:00Z"
-  const SANJU_WRITE = "2026-05-01T00:00:00Z"
+  const SASHA_WRITE = "2026-05-01T00:00:00Z"
   const CONCEPT_WRITE = "2026-04-01T00:00:00Z"
   /** The archived memory's own write time, read off the index after the eviction stamped it. */
   let archivedWrittenAt = ""
@@ -150,20 +150,20 @@ describe("memhtml entity activity", () => {
       eventAt: OLD_EVENT
     })
     shared = await seed(cli, {
-      title: "Sanju owns the checkout API rollback runbook",
-      claim: "Sanju owns the checkout API rollback runbook.",
-      entities: ["service:checkout-api", "person:sanju"]
+      title: "Sasha owns the checkout API rollback runbook",
+      claim: "Sasha owns the checkout API rollback runbook.",
+      entities: ["service:checkout-api", "person:sasha"]
     })
     sanjuOnly = await seed(cli, {
-      title: "Sanju moved to the platform team",
-      claim: "Sanju moved to the platform team.",
-      entities: ["person:sanju"],
+      title: "Sasha moved to the platform team",
+      claim: "Sasha moved to the platform team.",
+      entities: ["person:sasha"],
       eventAt: NEW_EVENT
     })
     conceptSanju = await seed(cli, {
-      title: "Sanju is the name of the deploy-gate concept",
-      claim: "The deploy-gate concept is called sanju after its first reviewer.",
-      entities: ["concept:sanju"]
+      title: "Sasha is the name of the deploy-gate concept",
+      claim: "The deploy-gate concept is called sasha after its first reviewer.",
+      entities: ["concept:sasha"]
     })
     const evictable = await seed(cli, {
       title: "The checkout API used a single target group",
@@ -173,7 +173,7 @@ describe("memhtml entity activity", () => {
 
     await setWrittenAt(cli, checkoutOnly, OLD_WRITE)
     await setWrittenAt(cli, shared, SHARED_WRITE)
-    await setWrittenAt(cli, sanjuOnly, SANJU_WRITE)
+    await setWrittenAt(cli, sanjuOnly, SASHA_WRITE)
     await setWrittenAt(cli, conceptSanju, CONCEPT_WRITE)
     await commitAll(cli, "pin every fixture's write time")
     await cli.json(["index", "update"])
@@ -209,14 +209,14 @@ describe("memhtml entity activity", () => {
     /**
      * The census. Six `file_entities` rows are seeded across five memories, and the answer is THREE
      * entities — so a count over the join rather than over the groups reads as 6, and a `GROUP BY`
-     * that dropped `entity_type` merges `person:sanju` with `concept:sanju` and reads as 2. The total
+     * that dropped `entity_type` merges `person:sasha` with `concept:sasha` and reads as 2. The total
      * is derived from the fixture here rather than copied from the output.
      */
     const activity = await report()
     expect(activity.entities.map((row) => row.entity)).toEqual([
-      "person:sanju",
+      "person:sasha",
       "service:checkout-api",
-      "concept:sanju"
+      "concept:sasha"
     ])
     expect(activity.entityCount).toBe(3)
     expect(activity.limit).toBe(50)
@@ -228,9 +228,9 @@ describe("memhtml entity activity", () => {
     const activity = await report()
     const byEntity = new Map(activity.entities.map((row) => [row.entity, row]))
     expect(byEntity.get("service:checkout-api")?.fileCount).toBe(2)
-    expect(byEntity.get("person:sanju")?.fileCount).toBe(2)
+    expect(byEntity.get("person:sasha")?.fileCount).toBe(2)
     // One memory, under a name another entity shares: a grouping on the name alone reports 3 here.
-    expect(byEntity.get("concept:sanju")?.fileCount).toBe(1)
+    expect(byEntity.get("concept:sasha")?.fileCount).toBe(1)
   })
 
   it("takes the maximum of the PER-ROW coalesce, which the two maxima disagree with", async () => {
@@ -253,13 +253,13 @@ describe("memhtml entity activity", () => {
   })
 
   it("lets WORLD time win when a memory states one newer than any write", async () => {
-    // `person:sanju`'s newest world time (2026-09-01) is on the memory with the OLDEST write time
+    // `person:sasha`'s newest world time (2026-09-01) is on the memory with the OLDEST write time
     // (2026-05-01), so an aggregate that ranked by write time alone would report 2026-08-01.
     const activity = await report()
-    const sanju = activity.entities.find((row) => row.entity === "person:sanju")
-    expect(sanju?.lastActivityAt).toBe(NEW_EVENT)
-    expect(sanju?.lastEventAt).toBe(NEW_EVENT)
-    expect(sanju?.lastWrittenAt).toBe(SHARED_WRITE)
+    const sasha = activity.entities.find((row) => row.entity === "person:sasha")
+    expect(sasha?.lastActivityAt).toBe(NEW_EVENT)
+    expect(sasha?.lastEventAt).toBe(NEW_EVENT)
+    expect(sasha?.lastWrittenAt).toBe(SHARED_WRITE)
   })
 
   it("orders by activity, newest first", async () => {
@@ -454,9 +454,9 @@ describe("memhtml entity activity --type over mixed-case stored types", () => {
     })
     // The neighbour that makes the filter a filter: a type the scope must still exclude.
     await seed(cli, {
-      title: "Sanju owns the payments runbook",
-      claim: "Sanju owns the payments rollback runbook.",
-      entities: ["person:sanju"]
+      title: "Sasha owns the payments runbook",
+      claim: "Sasha owns the payments rollback runbook.",
+      entities: ["person:sasha"]
     })
 
     lowerCased = await cli.json<ActivityReport>(["entity", "activity", "--type", "service"])

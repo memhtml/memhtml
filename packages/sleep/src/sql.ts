@@ -245,8 +245,8 @@ export const neighborPairs = (
  *
  * A frame key is a claim's slot as surface grammar states it, so two active memories sharing one are
  * making a claim about the same thing by the corpus's own indexed evidence — no cosine, no model.
- * That is signal the vector floor can miss: "the owner of the deploy runbook is Priya" and "the owner
- * of the deploy runbook is Priya Raman" share a slot while their bodies share almost no vocabulary,
+ * That is signal the vector floor can miss: "the owner of the deploy runbook is Paula" and "the owner
+ * of the deploy runbook is Paula Reyes" share a slot while their bodies share almost no vocabulary,
  * and their measured cosine under the fixture embedder is 0.59, far under any floor a night could
  * afford to mine at. Seeding components with these pairs puts them in front of the model, which is
  * the only reader that can say whether one is a rewording of the other.
@@ -422,7 +422,7 @@ export interface EntityCount {
  * from one statement, and this module is where the index's reading semantics belong.
  *
  * The exclusion does more than leave a task's bytes alone. A person mentioned ONLY by a task
- * ("ask Imani about the migration ledger") would otherwise mint `resources/people/imani.html`, a
+ * ("ask Irene about the migration ledger") would otherwise mint `resources/people/irene.html`, a
  * durable hand-editable identity surface created from a to-do item. A task's entity references
  * are also the agent's own handles on its own work: renaming one to a corpus-wide canonical is a
  * an unattended run editing live working state.

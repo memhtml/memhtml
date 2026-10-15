@@ -10,9 +10,9 @@ Constraint 1 now includes "the one `<mark>`'s text must be non-empty", using the
 
 One home: `apps/cli/src/prose.ts`, exporting `claimFromProse`/`proseTail` through `@memhtml/cli`. Both doors import it; `apps/mcp`'s `claimOf`/`restOf` are deleted. The two copies were byte-equivalent modulo names, so no semantics were reconciled — all ten pre-existing assertions kept their inputs and expectations verbatim. A grep lock over `apps/mcp/dist` (`tests/tools.test.ts`) fails on a re-added copy under any name, matching the derivation's regexes rather than its identifiers.
 
-## ~~3. Switch the eval harness to the batch door~~ — DONE (T-AC-7-2, memhtml-evals cd7810a)
+## ~~3. Switch the eval harness to the batch door~~ — DONE (T-AC-7-2, external-evals cd7810a)
 
-The eval harness adapter (memhtml-evals `src/adapter/memhtml.ts`) still ingests via singular `memory_write` with the `<time>` markup in `body` — so `event_at` stays NULL and ingestion pays N round-trips. One change: ingest through `memory_write_batch` with `article_html` ops. This is the change that turns the whole passthrough+batch arc into benchmark numbers (LongMemEval temporal-reasoning). The adapter's own header comment anticipates it.
+The eval harness adapter (external-evals `src/adapter/memhtml.ts`) still ingests via singular `memory_write` with the `<time>` markup in `body` — so `event_at` stays NULL and ingestion pays N round-trips. One change: ingest through `memory_write_batch` with `article_html` ops. This is the change that turns the whole passthrough+batch arc into benchmark numbers (LongMemEval temporal-reasoning). The adapter's own header comment anticipates it.
 
 Resolution: the adapter buffers ingest() and flushes ONE memory_write_batch per reset() window (at first answer(), close(), or flush()), each fact as article_html with the dataset timestamp as a <time datetime> element. Live smoke: event_at carries the dataset timestamps. Hardening: escapeHtmlText proven load-bearing via <script>; unsortable timestamps degrade to escaped text per-op rather than aborting the window's atomic batch.
 
@@ -71,7 +71,7 @@ REMAINING, in rough order of pull:
 ## Upstream watch
 
 - effect `McpServer` never emits the MCP `instructions` initialize field (`McpSchema` declares it; `layerStdio`'s options are `{name, version, protocols, extensions}`, so there is no argument to supply one — re-verified on 4.0.0-beta.107; the catalog now pins 4.0.0-rc.109, and the comment at `apps/mcp/src/server.ts:27` still names beta.107 as its verification version). When effect wires it, move the guide's `write-surfaces`/`when-to-batch` prose into it — comment at `apps/mcp/src/server.ts` marks the spot.
-- effect masks handler errors unless a `failure:` schema is declared — any NEW tool must declare `failure: ToolFailure` or its errors read "internal server error". Locked by wire tests; the lesson is `.erpaval/solutions/api-patterns/xor-params-and-mcp-error-masking.md`.
+- effect masks handler errors unless a `failure:` schema is declared — any NEW tool must declare `failure: ToolFailure` or its errors read "internal server error". Locked by wire tests; the lesson is `.lessons/solutions/api-patterns/xor-params-and-mcp-error-masking.md`.
 
 ## Code-mode (recorded 2026-08-06)
 

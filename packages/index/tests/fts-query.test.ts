@@ -24,7 +24,7 @@ describe("sanitizeFtsQuery", () => {
   })
 
   it("reads a sentence as any-of, so one proper noun is enough to match", () => {
-    expect(sanitizeFtsQuery("orion wants talk")).toBe("orion OR wants OR talk")
+    expect(sanitizeFtsQuery("oscar wants talk")).toBe("oscar OR wants OR talk")
   })
 
   it("splits an apostrophe rather than passing it to the parser", () => {
@@ -76,15 +76,15 @@ describe("sanitizeFtsQuery", () => {
     expect(sanitizeFtsQuery('"don\'t drain"')).toBe('"don t drain"')
     // A quoted operator is a literal: `"or"` is a phrase of one ordinary word.
     expect(sanitizeFtsQuery('"OR"')).toBe('"or"')
-    expect(sanitizeFtsQuery('"orion" "standup slot"')).toBe('"orion" OR "standup slot"')
+    expect(sanitizeFtsQuery('"oscar" "standup slot"')).toBe('"oscar" OR "standup slot"')
   })
 
   it("treats an unbalanced quote as no quote, and an empty pair as no term", () => {
     expect(sanitizeFtsQuery('find "drain the vip')).toBe("find OR drain OR the OR vip")
-    expect(sanitizeFtsQuery('orion "')).toBe("orion")
+    expect(sanitizeFtsQuery('oscar "')).toBe("oscar")
     expect(sanitizeFtsQuery('""')).toBe("")
     expect(hasFtsTerms('""')).toBe(false)
-    expect(sanitizeFtsQuery('"" orion')).toBe("orion")
+    expect(sanitizeFtsQuery('"" oscar')).toBe("oscar")
     // Only a quoted operator inside: still a literal phrase, never the keyword.
     expect(sanitizeFtsQuery('"AND"')).toBe('"and"')
   })
@@ -254,7 +254,7 @@ describe("the driver hazards the sanitizer exists for", () => {
 })
 
 /**
- * A few files where exactly one carries the proper noun `orion`, in its title and its body, and the
+ * A few files where exactly one carries the proper noun `oscar`, in its title and its body, and the
  * others share none of a natural-language sentence's words with it.
  */
 const seedNouns = (db: Parameters<Parameters<typeof withDb>[0]>[0]) =>
@@ -281,9 +281,9 @@ const seedNouns = (db: Parameters<Parameters<typeof withDb>[0]>[0]) =>
     })
     yield* db.writeAll([
       row(
-        "areas/team/orion.html",
-        "Orion keeps the standup slot",
-        "orion runs the standup and keeps its notes"
+        "areas/team/oscar.html",
+        "Oscar keeps the standup slot",
+        "oscar runs the standup and keeps its notes"
       ),
       row(
         "areas/oncall/pager.html",
@@ -314,7 +314,7 @@ describe("a natural-language sentence over the lexical arm", () => {
     const paths = await withDb((db) =>
       Effect.gen(function* () {
         yield* seedNouns(db)
-        const rows = yield* matchRanked(db, "orion wants talk")
+        const rows = yield* matchRanked(db, "oscar wants talk")
         return rows.map((row) => row.path)
       })
     )
@@ -323,7 +323,7 @@ describe("a natural-language sentence over the lexical arm", () => {
      * this sentence NOTHING: no file holds `wants` or `talk`. The arm has to read the sentence as
      * any-of and let bm25 rank, or every query longer than a verbatim quote gets zero lexical hits.
      */
-    expect(paths).toEqual(["areas/team/orion.html"])
+    expect(paths).toEqual(["areas/team/oscar.html"])
   })
 
   it("keeps a quoted phrase adjacent, so a caller can still demand word order", async () => {
@@ -354,14 +354,14 @@ describe("a natural-language sentence over the lexical arm", () => {
     "OR OR",
     "AND OR NOT",
     '"unbalanced',
-    'orion "unbalanced',
+    'oscar "unbalanced',
     '""',
     '"OR"',
     '"AND NOT"',
     '"don\'t drain"',
     "the and of to",
-    '"" orion',
-    '"orion" "standup"',
+    '"" oscar',
+    '"oscar" "standup"',
     'a "b'
   ]
 

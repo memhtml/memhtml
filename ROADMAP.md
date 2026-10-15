@@ -1,6 +1,6 @@
 # ROADMAP — memhtml
 
-Written 2026-08-06, at the close of the first benchmark campaign (memhtml-evals: MemoryAgentBench FactConsolidation, BEAM Contradiction Resolution, and LongMemEval-S all complete as of 2026-08-07). Every item below names its evidence — a measured number, a probe, or a commit — and nothing here is speculative. Ranked within each horizon. `docs/backlog.md` remains the fine-grained ledger; this file is the system-level view the benchmarks bought.
+Written 2026-08-06, at the close of the first benchmark campaign (external-evals: MemoryAgentBench FactConsolidation, BEAM Contradiction Resolution, and LongMemEval-S all complete as of 2026-08-07). Every item below names its evidence — a measured number, a probe, or a commit — and nothing here is speculative. Ranked within each horizon. `docs/backlog.md` remains the fine-grained ledger; this file is the system-level view the benchmarks bought.
 
 **Status 2026-08-07: Horizon 1 COMPLETE** — items 1–3 and the tech-debt block shipped via spec 005, merged to main at `5decd60` and pushed. Struck items below keep their original text as the record of what was asked; each carries a `SHIPPED` line saying what landed.
 
@@ -23,7 +23,7 @@ What the campaign proved about the ARCHITECTURE, as opposed to any one fix: git-
 
 One published package, `memhtml`, carrying two binaries — `memhtml` and `memhtml-mcp`. Every workspace package is `private`; the libraries had no consumer outside this repository, and none of them was ever published, which is what made collapsing them free. `RELEASING.md` carries the flow, `docs/design.md` §14 the decisions.
 
-The artifact has a gate of its own because no other tier can see it: `mise run package:smoke` installs the tarball and drives every command, every MCP tool, and every published MCP resource template through the installed binary — 66 checks as of v0.6.0, enumerated from `memhtml manifest`, `tools/list`, and `resources/templates/list` rather than from a list, so a new one fails a census. `--live` adds the three edges the credential-free run cannot reach (Bedrock embeddings, the sleep phases that call a model, the consolidator distilling through eve). It found four packaging defects that a green `pnpm check` could not, cataloged in `.erpaval/solutions/build-errors/the-published-artifact-is-not-the-workspace.md`.
+The artifact has a gate of its own because no other tier can see it: `mise run package:smoke` installs the tarball and drives every command, every MCP tool, and every published MCP resource template through the installed binary — 66 checks as of v0.6.0, enumerated from `memhtml manifest`, `tools/list`, and `resources/templates/list` rather than from a list, so a new one fails a census. `--live` adds the three edges the credential-free run cannot reach (Bedrock embeddings, the sleep phases that call a model, the consolidator distilling through eve). It found four packaging defects that a green `pnpm check` could not, cataloged in `.lessons/solutions/build-errors/the-published-artifact-is-not-the-workspace.md`.
 
 **Published.** The package is on npm as `memhtml` (0.2.2 at time of writing), released by release-please on merge to main and authenticated with OIDC trusted publishing — no long-lived token anywhere. The two external blockers resolved as designed: the org-level "Allow GitHub Actions to create and approve pull requests" setting was granted, and the first publish used a one-time token to bootstrap the package trusted publishing could not create.
 
@@ -34,14 +34,14 @@ The artifact has a gate of its own because no other tier can see it: `mise run p
 **SHIPPED** (6d8b7bb + 07f4c6e): `detect_conflicts` on `memory_write_batch` and `memhtml apply --detect-conflicts` — propose-only per-op `conflict
 {path, batch_index, claim}`; frame-key port byte-equivalent to the eval's (differential-tested over 20,060 inputs, 0 mismatches); `files.frame_key` derived column + partial index (migration 0009, additive; pre-0009 rows carry NULL until the next rebuild — run `memhtml index rebuild` before measuring conflict recall on an existing store). Flag renamed from the candidate `supersede_on_conflict` because the decided behavior never supersedes. Singular door deferred until pulled.
 
-The single largest score movement of the campaign (multi-hop 1% → 48%, single-hop collapse erased) came from consolidating conflicting facts at write time — implemented in the EVAL ADAPTER (memhtml-evals src/adapter/consolidate.ts, frame-key last-wins), not in memhtml. The system's own story is currently split:
+The single largest score movement of the campaign (multi-hop 1% → 48%, single-hop collapse erased) came from consolidating conflicting facts at write time — implemented in the EVAL ADAPTER (external-evals src/adapter/consolidate.ts, frame-key last-wins), not in memhtml. The system's own story is currently split:
 
 - `memory_correct` exists but requires the writer to already know the target path — it resolves a conflict the agent has ALREADY found.
 - Sleep's `edge-typing` phase finds conflicts on every run but deliberately never resolves them (detection-only by design — choosing a winner is a one-way door that belongs to the writer or a human).
 
 The gap: nothing helps at the moment of writing, which is when the writer still has the context to judge. Candidate shape, smallest first: `memory_write_batch` (and/or the singular door) gains an optional `supersede_on_conflict` assist — before committing, run the batch's claims through dedupe-style frame matching against ACTIVE memories (the structural-dedup lookup already exists on the write path); on a hit, return the match as a per-op `conflict` field so the CALLER decides write-new / correct / skip. Propose-only, like every other assist in the system: the store never auto-archives on a heuristic. BEAM is the cautionary evidence for keeping it caller-decided — its gold IS the contradiction, and last-wins applied blindly destroys the answer (measured: ~4% of BEAM chat lines collide on a frame key; the eval ran it OFF for that benchmark).
 
-Evidence: memhtml-evals NEXT-SESSION.md rounds 2–3; MAB board 2026-08-06; BEAM consolidation-off decision 2026-08-06.
+Evidence: external-evals NEXT-SESSION.md rounds 2–3; MAB board 2026-08-06; BEAM consolidation-off decision 2026-08-06.
 
 ### ~~2. Fence auto-detect write-path stamping (backlog 7, decision 3)~~ — DONE (2026-08-07)
 
@@ -73,7 +73,7 @@ The full-docs rewrite re-proved every documented contract against the binary by 
 
 The CODE IS CURRENTLY BACKWARDS from this rule, which is stronger evidence than the doc contradiction that flagged it: `searchMemories` and `recallMemories` bump every hit (operations.ts:495,507 — the 900s cooldown limits replay, not the rich-get-richer loop, since ranking drift operates across days) while `readMemory` — the explicit open, the one read that SHOULD count — only records a provenance link and never bumps (operations.ts:469-475). The fix is a swap, not a new mechanism: move the `bumpAccess` call from the search/recall paths to the read path. `recordLink` already fires there; bump beside it.
 
-Second half, type scoping (same decision): salience belongs to ranked fusion over interchangeable candidates and has no business in exact-keyed or state-predicate access. Task-typed memories are reached by status/due_at (nominal predicates — and salience would actively reward STALENESS there: the stuck task re-read during triage outranks the fresh urgent one). Person/reference records are reached by entity key, and decay is wrong for identity (a colleague unmentioned for six months is not less themselves). Episodic/semantic memories about a person keep salience — "which five of fifty sanju-memories do we actually consult" is exactly the signal. Implementation: exclude task/person-reference types from the salience arm's contribution (one memory-type list in retrieval-sql.ts), leaving their FTS/vector/entity arms untouched.
+Second half, type scoping (same decision): salience belongs to ranked fusion over interchangeable candidates and has no business in exact-keyed or state-predicate access. Task-typed memories are reached by status/due_at (nominal predicates — and salience would actively reward STALENESS there: the stuck task re-read during triage outranks the fresh urgent one). Person/reference records are reached by entity key, and decay is wrong for identity (a colleague unmentioned for six months is not less themselves). Episodic/semantic memories about a person keep salience — "which five of fifty sasha-memories do we actually consult" is exactly the signal. Implementation: exclude task/person-reference types from the salience arm's contribution (one memory-type list in retrieval-sql.ts), leaving their FTS/vector/entity arms untouched.
 
 After the swap, code-mode.md rule 2 ("reads off disk don't bump") stays true and stops being an exception — it becomes the same rule: no chosen open, no bump. Doc updates: format.md salience section + code-mode rule wording. Verification per the guards-must-fire lesson: a test proving a memory_read bumps, a search hit does not, and a task-typed row's rank is salience-invariant — each shown to fail with the rule reversed.
 
@@ -113,8 +113,8 @@ The projection lane is flat: six consecutive 256-op batches against a constant 1
 
 `memory_search` takes an `entity` scope on both doors, every hit publishes its entities in the same `type:name` form the scope accepts — so a second hop is a COPY, not a spelling guess — and an unmatched scope returns visibly empty via `scopeEmpty` rather than widening. HOP-1 and HOP-3 are `implemented`, with 15 mutation checks and 14 guards fired.
 
-Verified end to end on a real chain (`Our Mutual Friend → Charles Darwin → Amala
-Paul → Belgium`): two `memory_search` calls, hop 2's scope copied verbatim from hop 1's `entities`, non-matching memories excluded, and `--entity person:Nobody` returning `hits: []` with `scopeEmpty: true` rather than silently widening.
+Verified end to end on a real chain (`Our Mutual Friend → Clarice Dawson → Adele
+Penn → Belgium`): two `memory_search` calls, hop 2's scope copied verbatim from hop 1's `entities`, non-matching memories excluded, and `--entity person:Nobody` returning `hits: []` with `scopeEmpty: true` rather than silently widening.
 
 **HOP-2 stays `draft` deliberately, and the reason is a substrate fact rather than a shortfall.** It is a measurement requirement ("at most two tool calls"), and the after-measurement ran: all four MAB multi-hop rows, 400 questions, mean 5.61 tool calls against a 5.65 baseline — and **zero entity-scoped calls**. That zero is not low adoption. Entities are SUPPLIED, never extracted (`packages/html/src/parse.ts:337` reads them from `memhtml-entity` meta elements; there is no NER anywhere in `packages`/`apps`), and the eval adapter declares none, so every hit in the MAB store publishes `entities: []`. There is nothing for hop 2 to copy, and an agent that reached for the scope anyway would be inventing the string the tool description tells it not to guess. So the assist cannot be measured on this corpus as it stands: HOP-2 needs a corpus decision before it needs another run. Recorded for the benchmark session in the internal benchmark handoff notes.
 
@@ -222,7 +222,7 @@ Decisions recorded 2026-08-07 (agent stack revised same day from Strands to eve)
 - **Batch op vocabulary v2** (backlog 5): defer until a consumer pulls it.
 - **Upstream watch** (backlog): effect McpServer still drops the MCP `instructions` initialize field; new tools must declare `failure: ToolFailure` or errors mask.
 
-## Standing lessons the campaign wrote into `.erpaval/solutions/`
+## Standing lessons the campaign wrote into `.lessons/solutions/`
 
 These are constraints on HOW future work here is done, not features:
 

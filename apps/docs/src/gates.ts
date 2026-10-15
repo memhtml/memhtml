@@ -17,11 +17,11 @@
  */
 export const DENYLIST: ReadonlyArray<{ readonly pattern: RegExp; readonly why: string }> = [
   {
-    pattern: /memhtml-evals/i,
+    pattern: /external-evals/i,
     why: "a private sibling repository — naming it publishes its existence and its URL"
   },
   {
-    pattern: /\.erpaval/i,
+    pattern: /\.lessons/i,
     why: "the prior-session lessons directory: internal methodology, not documentation"
   },
   {

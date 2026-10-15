@@ -650,7 +650,7 @@ const entityRefsFor = (
  * ## What this is, and what it deliberately is not
  *
  * A candidate can coin a variant of a name the corpus already holds — `Checkout-API` beside
- * `checkout-api`, `sanju kumar` beside `Sanju  Kumar` — and the `entity` scope compares the whole
+ * `checkout-api`, `sasha kelly` beside `Sasha  Kelly` — and the `entity` scope compares the whole
  * reference, so the two are different handles until `entity-resolution` merges them. That phase needs
  * TWO independent nights to agree before a merge applies, so the variant is live in the corpus and
  * addressable only by its own spelling until then. Rewriting at the mint site closes the window for
@@ -702,8 +702,8 @@ const corpusEntitySpellings = (env: PhaseEnv): Effect.Effect<ReadonlyMap<string,
       /*
        * TRIMMED at the edges, because a stored half can be padded and this value is written verbatim
        * into a new file's meta. `entityRowsFor` trims the whole `content` string and then splits on the
-       * FIRST colon, so an authored `person : Priya Raman` files as `type=[person ]
-       * name=[ Priya Raman]` — and carrying that name forward would mint a memory the read doors, which
+       * FIRST colon, so an authored `person : Paula Reyes` files as `type=[person ]
+       * name=[ Paula Reyes]` — and carrying that name forward would mint a memory the read doors, which
        * fold case only, cannot reach, propagating the unreachability this rewrite exists to remove.
        * Interior whitespace is left alone: it is part of the authored name, and collapsing it would
        * store a spelling neither the corpus nor the candidate holds. Same rule as the trim

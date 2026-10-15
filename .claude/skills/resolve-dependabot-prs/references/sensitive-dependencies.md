@@ -56,6 +56,6 @@ Minors and majors are ignored by standing rule. A grammar change moves relevance
 
 ## `effect` and the `@effect/*` set — see the catalog rule
 
-Covered in `repo-invariants.md`. The behavioural claims live in `apps/mcp/src/*.ts` comments as "probed on effect <version>" and in `.erpaval/solutions/effect-v4/`. A bump does not require rewriting those citations — they record when a fact was measured — but a claim the new version CONTRADICTS is a defect.
+Covered in `repo-invariants.md`. The behavioural claims live in `apps/mcp/src/*.ts` comments as "probed on effect <version>" and in `.lessons/solutions/effect-v4/`. A bump does not require rewriting those citations — they record when a fact was measured — but a claim the new version CONTRADICTS is a defect.
 
 Observed 2026-08-25 moving rc.109 → rc.111: `Schema.toJsonSchemaDocument` stopped hoisting a struct merely reused twice and now inlines it, while still hoisting a recursive schema, which cannot be inlined. That failed a test whose fixture was the reused-struct case. The fold logic was still required for recursion, so the fixture was what had gone stale — check which before deleting anything.

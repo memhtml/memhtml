@@ -118,10 +118,10 @@ describe("writeMemory", () => {
     const repo = await fixture()
     const result = await run(
       repo.store.writeMemory(
-        writeInput({ title: "Sanju reviews infra", entities: ["person:sanju"] })
+        writeInput({ title: "Sasha reviews infra", entities: ["person:sasha"] })
       )
     )
-    expect(result.path).toBe("resources/people/sanju-reviews-infra.html")
+    expect(result.path).toBe("resources/people/sasha-reviews-infra.html")
   })
 
   it("honors an explicit valid path verbatim", async () => {

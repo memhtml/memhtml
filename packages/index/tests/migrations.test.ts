@@ -1114,7 +1114,7 @@ describe("S0002 over a populated S0001 state plane", () => {
           db.run(
             `INSERT INTO state.entity_corroboration
                (entity_type, alias_name, canonical_name, detections, updated_at)
-             VALUES ('person', 'laith', 'laith al-saadoon', 0, ?)`,
+             VALUES ('person', 'laura', 'laura de-sabelin', 0, ?)`,
             [AT]
           )
         )
@@ -1122,7 +1122,7 @@ describe("S0002 over a populated S0001 state plane", () => {
           db.run(
             `INSERT INTO state.entity_corroboration
                (entity_type, alias_name, canonical_name, promoted, updated_at)
-             VALUES ('person', 'sanju', 'sanju kumar', 2, ?)`,
+             VALUES ('person', 'sasha', 'sasha kelly', 2, ?)`,
             [AT]
           )
         )

@@ -192,7 +192,7 @@ const placement = fc.record<PlacementInput>({
   memoryType: fc.constantFrom(...MEMORY_TYPES),
   entities: fc.array(
     fc.oneof(
-      fc.constant("person:sanju"),
+      fc.constant("person:sasha"),
       fc.constant("service:checkout-api"),
       segment.map((s) => `tool:${s}`)
     ),
@@ -236,17 +236,17 @@ describe("placementFor", () => {
   })
 
   it("routes a person's semantic memory to the people directory", () => {
-    expect(placementFor({ memoryType: "semantic", entities: ["person:sanju"] })).toBe(PEOPLE_DIR)
+    expect(placementFor({ memoryType: "semantic", entities: ["person:sasha"] })).toBe(PEOPLE_DIR)
   })
 
   it("keeps a person's episodic memory out of the people directory: rule 3 is semantic-only", () => {
-    expect(placementFor({ memoryType: "episodic", entities: ["person:sanju"] })).toBe(INBOX_DIR)
+    expect(placementFor({ memoryType: "episodic", entities: ["person:sasha"] })).toBe(INBOX_DIR)
   })
 
   it("refuses a bare person: entity, agreeing with isPersonEntity at the empty-name boundary", () => {
     // A nameless prefix names nobody, so it cannot route a memory into the identity surface.
     expect(placementFor({ memoryType: "semantic", entities: ["person:"] })).toBe(INBOX_DIR)
-    expect(placementFor({ memoryType: "semantic", entities: ["person:", "person:sanju"] })).toBe(
+    expect(placementFor({ memoryType: "semantic", entities: ["person:", "person:sasha"] })).toBe(
       PEOPLE_DIR
     )
   })
@@ -256,7 +256,7 @@ describe("placementFor", () => {
     // `person-links`' `entity_name.trim() !== ""`: a name of only whitespace routes nobody.
     expect(placementFor({ memoryType: "semantic", entities: ["person:   "] })).toBe(INBOX_DIR)
     expect(placementFor({ memoryType: "semantic", entities: ["person:\t"] })).toBe(INBOX_DIR)
-    expect(placementFor({ memoryType: "semantic", entities: ["person: ", "person:sanju"] })).toBe(
+    expect(placementFor({ memoryType: "semantic", entities: ["person: ", "person:sasha"] })).toBe(
       PEOPLE_DIR
     )
   })

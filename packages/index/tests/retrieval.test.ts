@@ -739,7 +739,7 @@ describe("search", () => {
           path: MIXED_CASE,
           html: memoryHtml({
             title: "The VIP drain runbook has one named owner",
-            claim: "If the VIP drain runbook needs a change, Priya owns the deploy path.",
+            claim: "If the VIP drain runbook needs a change, Paula owns the deploy path.",
             body: "Written up after the third rollback that skipped the drain step.",
             memoryType: "semantic",
             tags: ["deploy", "oncall"],
@@ -1346,7 +1346,7 @@ describe("search", () => {
   })
 
   it("emits no salience row for a resources/people reference record", async () => {
-    const person = "resources/people/sanju.html"
+    const person = "resources/people/sasha.html"
     const paths = await withDb((db) =>
       Effect.gen(function* () {
         /**
@@ -1361,20 +1361,20 @@ describe("search", () => {
               {
                 path: person,
                 html: memoryHtml({
-                  title: "Sanju",
-                  claim: "Sanju owns the checkout-api deploy rotation.",
+                  title: "Sasha",
+                  claim: "Sasha owns the checkout-api deploy rotation.",
                   memoryType: "semantic",
-                  entities: ["person:sanju"],
+                  entities: ["person:sasha"],
                   updatedAt: "2026-07-22T00:00:00Z"
                 })
               },
               {
-                path: "areas/oncall/sanju-called-the-rollback.html",
+                path: "areas/oncall/sasha-called-the-rollback.html",
                 html: memoryHtml({
-                  title: "Sanju called the rollback on the second",
-                  claim: "Sanju called the checkout-api rollback during the deploy incident.",
+                  title: "Sasha called the rollback on the second",
+                  claim: "Sasha called the checkout-api rollback during the deploy incident.",
                   memoryType: "episodic",
-                  entities: ["person:sanju"],
+                  entities: ["person:sasha"],
                   updatedAt: "2026-07-23T00:00:00Z"
                 })
               }
@@ -1384,12 +1384,12 @@ describe("search", () => {
         )
         yield* indexInto(db, repo, makeFakeEmbedder())
         yield* seedAccess(db, person, 10_000)
-        yield* seedAccess(db, "areas/oncall/sanju-called-the-rollback.html", 10_000)
+        yield* seedAccess(db, "areas/oncall/sasha-called-the-rollback.html", 10_000)
         return yield* salienceRows(db, {})
       })
     )
     expect(paths).not.toContain(person)
-    expect(paths).toContain("areas/oncall/sanju-called-the-rollback.html")
+    expect(paths).toContain("areas/oncall/sasha-called-the-rollback.html")
   })
 
   it("keeps an opted-in task's FUSED RRF score identical whatever its access count", async () => {
@@ -1437,15 +1437,15 @@ describe("search", () => {
      * sentence zero bm25 rows and the file stays at the bottom. `arms` still names `fts` either way,
      * because the arm RAN; the rank is what says whether it contributed.
      */
-    const orion = "areas/team/orion-standup-slot.html"
+    const oscar = "areas/team/oscar-standup-slot.html"
     await repo.commit(
       [
         {
-          path: orion,
+          path: oscar,
           html: memoryHtml({
-            title: "Orion keeps the Tuesday standup slot",
-            claim: "Orion runs the Tuesday standup and owns its agenda.",
-            body: "Orion also keeps the notes for it.",
+            title: "Oscar keeps the Tuesday standup slot",
+            claim: "Oscar runs the Tuesday standup and owns its agenda.",
+            body: "Oscar also keeps the notes for it.",
             memoryType: "semantic",
             updatedAt: "2026-05-01T00:00:00Z"
           })
@@ -1455,12 +1455,12 @@ describe("search", () => {
     )
     const result = await withIndexed(
       repo,
-      ({ retrieval }) => retrieval.search({ query: "what does orion own" }),
+      ({ retrieval }) => retrieval.search({ query: "what does oscar own" }),
       { queryEmbedder: null }
     )
     expect(result.degraded).toBe(true)
     expect(result.arms).toContain("fts")
-    expect(result.hits.map((hit) => hit.path)[0]).toBe(orion)
+    expect(result.hits.map((hit) => hit.path)[0]).toBe(oscar)
   })
 
   /**

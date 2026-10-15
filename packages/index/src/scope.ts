@@ -138,7 +138,7 @@ export interface SearchScope {
   /** ANY-of overlap. Each tag BROADENS the result set. */
   readonly tags?: ReadonlyArray<string> | undefined
   /**
-   * STRICT equality on ONE entity reference, in `type:name` form, so `person:sanju` and not `sanju`.
+   * STRICT equality on ONE entity reference, in `type:name` form, so `person:sasha` and not `sasha`.
    *
    * Strict about the TYPE half being required, and case-INSENSITIVE about spelling: a caller should not
    * have to reproduce an author's capitalization to find a memory. The fold is `lower()` applied to
@@ -152,9 +152,9 @@ export interface SearchScope {
    * phase has run.
    *
    * The same spelling `memory_list` takes, and the same predicate, because the two are one vocabulary.
-   * A caller that learned `person:sanju` from a listing must be able to hand that exact string to a
-   * search. `file_entities` is keyed on `(type, name)`, so the bare name is ambiguous. `person:sanju`
-   * and `concept:sanju` are two entities, and accepting the bare name here would make a scope that
+   * A caller that learned `person:sasha` from a listing must be able to hand that exact string to a
+   * search. `file_entities` is keyed on `(type, name)`, so the bare name is ambiguous. `person:sasha`
+   * and `concept:sasha` are two entities, and accepting the bare name here would make a scope that
    * narrows to whichever of them the corpus happens to hold.
    *
    * Singular, unlike `tags`, and that asymmetry is deliberate. This scope exists so a caller can chain

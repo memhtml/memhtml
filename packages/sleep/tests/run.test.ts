@@ -628,7 +628,7 @@ describe("a full run leaves every open task untouched", () => {
           expect(ontoTask).toEqual([])
 
           /**
-           * person-links minted no person file out of a task's `person:imani`. A person file is a
+           * person-links minted no person file out of a task's `person:irene`. A person file is a
            * durable identity surface a human hand-edits; creating one from a to-do item would put
            * working state into the corpus's most permanent plane. (`.gitkeep` is the scaffold's,
            * from `memhtml init`.)

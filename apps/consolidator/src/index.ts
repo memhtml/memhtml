@@ -2,7 +2,7 @@
  * The consolidator app's public surface: the contract, and the client that satisfies it.
  *
  * A standalone app, NOT a `@memhtml/*` library. Nothing here may be reached from a `@memhtml/*` read
- * path, per `.erpaval` lesson `performance/synchronous-detector-on-untrusted-write-path.md` and §8 of
+ * path, per `.lessons` lesson `performance/synchronous-detector-on-untrusted-write-path.md` and §8 of
  * the task packet. So no barrel in `packages/*` re-exports this, and only the sleep phase that
  * owns trace consolidation depends on it.
  */

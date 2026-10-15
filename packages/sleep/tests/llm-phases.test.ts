@@ -2010,7 +2010,7 @@ describe("compress", () => {
 describe("entity-resolution", () => {
   const SHORT_FORM = "areas/team/monday-signoff.html"
   const MIXED_CASE = "areas/team/release-train-owner.html"
-  const SANJU = "areas/team/search-relevance-owner.html"
+  const SASHA = "areas/team/search-relevance-owner.html"
   const CHECKOUT = "areas/services/checkout-token-rejection.html"
   const PAYMENTS = "areas/services/payments-token-rejection.html"
 
@@ -2188,7 +2188,7 @@ describe("entity-resolution", () => {
 
   it("applies an ALIAS-BACKED merge on night one, with no corroboration at all", async () => {
     /**
-     * The oracle: a person file declaring `laith` an alias is a human's (or an authoritative
+     * The oracle: a person file declaring `laura` an alias is a human's (or an authoritative
      * directory's) assertion of identity, not a machine's suspicion, so it needs no second night. The
      * character distance is unchanged at 0.476 — the declaration is what moved, and nothing else.
      *
@@ -2531,7 +2531,7 @@ describe("entity-resolution", () => {
             '<meta name="memhtml-entity" content="service:payments-api">'
           )
           // And the third person is untouched: a phase that fused every person into one would show here.
-          expect(yield* atHead(fixture, SANJU)).toContain(personMeta("sanju kumar"))
+          expect(yield* atHead(fixture, SASHA)).toContain(personMeta("sasha kelly"))
         }),
       { seed: ENTITY_CORPUS, model: clusterModel() }
     )
@@ -2567,7 +2567,7 @@ describe("entity-resolution", () => {
           expect(prompt).toMatch(
             new RegExp(`nearest by memory centroid:\\n- ${PERSON_CANONICAL} \\(0\\.\\d\\d\\)`)
           )
-          expect(prompt).toContain("declared aliases: laith al-saadoon")
+          expect(prompt).toContain("declared aliases: laura de-sabelin")
           // Member text is wrapped as data, because this corpus stores instructions.
           expect(prompt).toContain("<entity_m1>")
           // No path anywhere: not a write target, and not a hint at one.
@@ -2601,7 +2601,7 @@ describe("entity-resolution", () => {
       (fixture) =>
         Effect.gen(function* () {
           const shortBefore = yield* atHead(fixture, SHORT_FORM)
-          expect(yield* atHead(fixture, MIXED_CASE)).toContain("person:Laith Al-Saadoon")
+          expect(yield* atHead(fixture, MIXED_CASE)).toContain("person:Laura De-Sabelin")
 
           const outcome = yield* entityResolution(envFor(fixture))
 
@@ -2614,7 +2614,7 @@ describe("entity-resolution", () => {
 
           // Pass one did its work.
           const mixed = yield* atHead(fixture, MIXED_CASE)
-          expect(mixed).not.toContain("person:Laith Al-Saadoon")
+          expect(mixed).not.toContain("person:Laura De-Sabelin")
           expect(mixed).toContain(personMeta(PERSON_CANONICAL))
           // And the model-only merge did not happen, because there was no model.
           expect(yield* atHead(fixture, SHORT_FORM)).toBe(shortBefore)
@@ -2629,7 +2629,7 @@ describe("entity-resolution", () => {
      * The oracle's headline property, and the one the phase used not to have: issue #43 says entity
      * resolution consults declared aliases FIRST and that an alias-backed merge auto-commits regardless
      * of string distance. Reading the declarations only inside the model core delivered neither half —
-     * a credential-free night left `laith` and `laith al-saadoon` split with a person file sitting in
+     * a credential-free night left `laura` and `laura de-sabelin` split with a person file sitting in
      * the corpus saying they are one person, and a night WITH credentials applied the declaration only
      * if the model happened to propose that exact pair.
      *
@@ -2642,7 +2642,7 @@ describe("entity-resolution", () => {
      * - The corroboration table stays EMPTY, so this is night one and not a counter that was already
      *   part-way there.
      *
-     * `sanju kumar` is the negative control the corpus already carries: a declaration naming two names
+     * `sasha kelly` is the negative control the corpus already carries: a declaration naming two names
      * must not collapse a third person, so a phase that merged every person on any declaration is a
      * visible failure rather than a pass.
      */
@@ -2665,7 +2665,7 @@ describe("entity-resolution", () => {
           expect(after).not.toContain(personMeta(PERSON_ALIAS))
           expect(yield* personNames(fixture)).not.toContain(PERSON_ALIAS)
           // And a third person the declaration says nothing about is untouched.
-          expect(yield* atHead(fixture, SANJU)).toContain(personMeta("sanju kumar"))
+          expect(yield* atHead(fixture, SASHA)).toContain(personMeta("sasha kelly"))
 
           // No counter row: a declaration is evidence enough, so nothing is left waiting on a night two.
           expect(yield* entityCorroborations(fixture)).toEqual([])

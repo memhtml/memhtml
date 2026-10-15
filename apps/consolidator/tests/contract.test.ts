@@ -386,7 +386,7 @@ describe("CandidateCommitment decode", () => {
   })
 
   it("REJECTS an undeclared extra key on a commitment instead of stripping it", () => {
-    const result = decode({ candidates: [], commitments: [commitment({ owner: "laith" })] })
+    const result = decode({ candidates: [], commitments: [commitment({ owner: "laura" })] })
     expect(Result.isFailure(result)).toBe(true)
   })
 

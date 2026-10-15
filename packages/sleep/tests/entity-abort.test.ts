@@ -50,8 +50,8 @@ import {
 
 const DATE = "2026-08-08"
 /** A merge that landed BEFORE the one under test, whose row must be untouched by any of this. */
-const NEIGHBOUR_ALIAS = "sanju"
-const NEIGHBOUR_CANONICAL = "sanju kumar"
+const NEIGHBOUR_ALIAS = "sasha"
+const NEIGHBOUR_CANONICAL = "sasha kelly"
 
 const SHORT_FORM = "areas/team/monday-signoff.html"
 const MIXED_CASE = "areas/team/release-train-owner.html"
@@ -377,13 +377,13 @@ describe("`merge` applies an entity merge's promotion", () => {
      * promotes the reverse orientation instead. The mark is applied through the production statement, not
      * a hand-written `UPDATE`.
      *
-     * The promoted mark names the merge BACK (`laith al-saadoon -> laith`) on purpose: the forward
+     * The promoted mark names the merge BACK (`laura de-sabelin -> laura`) on purpose: the forward
      * orientation sorts to itself, so a sorted key would be invisible against it.
      *
      * (Mutation: sorting the two names in `statementFor`'s `entity-promoted` arm promotes the forward row
      * and leaves the reverse one; dropping `entity_type = ?` also promotes the `service` row; dropping
-     * `alias_name = ?` also promotes `sanju -> laith`; dropping `canonical_name = ?` also promotes
-     * `laith al-saadoon -> sanju kumar`. All four verified.)
+     * `alias_name = ?` also promotes `sasha -> laura`; dropping `canonical_name = ?` also promotes
+     * `laura de-sabelin -> sasha kelly`. All four verified.)
      */
     await withFixture((fixture) =>
       Effect.gen(function* () {

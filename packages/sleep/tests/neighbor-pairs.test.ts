@@ -166,7 +166,7 @@ describe("the pair scans against the all-SQL oracle", () => {
       (fixture) =>
         Effect.gen(function* () {
           /**
-           * The neighbor's rows, per the metarepo lesson: a clean corpus cannot distinguish a
+           * The neighbor's rows, per the workspace lesson: a clean corpus cannot distinguish a
            * scan that honors `archived = 0` and `derived = 0` from one that ignores both.
            * An authored contradiction closes the metrics pair; a mined `relates_to` must NOT
            * close the flip pair; archiving one oncall endpoint removes that pair from every

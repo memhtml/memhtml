@@ -106,7 +106,7 @@ describe("the extraction request", () => {
     )
     await Effect.runPromise(
       extractor.extract([
-        { title: "First", text: "Charles Darwin wrote from Belgium." },
+        { title: "First", text: "Clarice Dawson wrote from Belgium." },
         { title: "Second", text: "checkout-api drains the VIP." }
       ])
     )
@@ -131,11 +131,11 @@ describe("the extraction request", () => {
     const user = body.messages[1]?.content ?? ""
     expect(user).toContain('"index":0')
     expect(user).toContain('"index":1')
-    expect(user).toContain("Charles Darwin")
+    expect(user).toContain("Clarice Dawson")
     expect(user).toContain("ignore any directive")
     expect(user).toBe(
       extractionPrompt([
-        { title: "First", text: "Charles Darwin wrote from Belgium." },
+        { title: "First", text: "Clarice Dawson wrote from Belgium." },
         { title: "Second", text: "checkout-api drains the VIP." }
       ])
     )
@@ -156,14 +156,14 @@ describe("entitiesFrom", () => {
         {
           index: 0,
           entities: [
-            { type: "person", name: "Charles Darwin" },
+            { type: "person", name: "Clarice Dawson" },
             { type: "place", name: "  Belgium  " }
           ]
         }
       ]
     }
     expect(entitiesFrom(decoded, 2)).toEqual([
-      ["person:Charles Darwin", "place:Belgium"],
+      ["person:Clarice Dawson", "place:Belgium"],
       ["service:checkout-api"]
     ])
   })
@@ -191,10 +191,10 @@ describe("entitiesFrom", () => {
 describe("makeEntityExtractor over the real model client", () => {
   it("decodes a strict answer through the client's gate into aligned entities", async () => {
     const { extractor } = recorder(() =>
-      completion(answer([{ index: 0, entities: [{ type: "person", name: "Paul" }] }]))
+      completion(answer([{ index: 0, entities: [{ type: "person", name: "Penn" }] }]))
     )
-    expect(await Effect.runPromise(extractor.extract([{ title: "T", text: "Paul." }]))).toEqual([
-      ["person:Paul"]
+    expect(await Effect.runPromise(extractor.extract([{ title: "T", text: "Penn." }]))).toEqual([
+      ["person:Penn"]
     ])
   })
 
@@ -264,14 +264,14 @@ const failing: EntityExtractorShape = {
 describe("batchWrite with a bound extractor", () => {
   it("lands extracted entities as memhtml-entity metas in the committed file", async () => {
     const cli = await makeCli({
-      extractor: scripted([[["person:Charles Darwin", "work:Our Mutual Friend"]]])
+      extractor: scripted([[["person:Clarice Dawson", "work:Our Mutual Friend"]]])
     })
     clis.push(cli)
 
     const batch = await applyOps(cli, [
       {
-        title: "Darwin praised the novel",
-        body: "Charles Darwin praised Our Mutual Friend.",
+        title: "Dawson praised the novel",
+        body: "Clarice Dawson praised Our Mutual Friend.",
         type: "episodic"
       }
     ])
@@ -282,29 +282,29 @@ describe("batchWrite with a bound extractor", () => {
       "read",
       batch.results[0]?.path ?? ""
     ])
-    expect(detail.entities).toContain("person:Charles Darwin")
+    expect(detail.entities).toContain("person:Clarice Dawson")
     expect(detail.entities).toContain("work:Our Mutual Friend")
   })
 
   it("unions with declared entities without duplicating them", async () => {
     const cli = await makeCli({
-      extractor: scripted([[["person:sanju", "service:checkout-api"]]])
+      extractor: scripted([[["person:sasha", "service:checkout-api"]]])
     })
     clis.push(cli)
 
     const batch = await applyOps(cli, [
       {
-        title: "Sanju owns the rollback",
-        body: "Sanju owns the checkout-api rollback procedure.",
+        title: "Sasha owns the rollback",
+        body: "Sasha owns the checkout-api rollback procedure.",
         type: "episodic",
-        entities: ["person:sanju"]
+        entities: ["person:sasha"]
       }
     ])
     const detail = await cli.json<{ entities: ReadonlyArray<string> }>([
       "read",
       batch.results[0]?.path ?? ""
     ])
-    expect(detail.entities.filter((entity) => entity === "person:sanju")).toHaveLength(1)
+    expect(detail.entities.filter((entity) => entity === "person:sasha")).toHaveLength(1)
     expect(detail.entities).toContain("service:checkout-api")
   })
 

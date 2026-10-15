@@ -43,7 +43,7 @@ Three kinds of hit matter:
 
 - **A dated probe comment** ("Probed live 2026-08-25 against eve 0.38.3: …") is a measured claim about a system this repo does not control. A bump is exactly the event that falsifies one, and no test can see a comment.
 - **A version citation** outside `package.json` — a `$schema` URL, a comment naming the pinned binary — must move with the bump or the bump re-stales prose that was correct a moment ago.
-- **A `.erpaval/solutions/**` lesson** records what was true when written. Read it; do not rewrite it.
+- **A `.lessons/solutions/**` lesson** records what was true when written. Read it; do not rewrite it.
 
 Consult `references/sensitive-dependencies.md` for the packages already known to carry claims, what to verify for each, and how. Verify a claim in **both** directions: a guard being removed upstream can make local code obsolete rather than broken, which is equally worth knowing.
 

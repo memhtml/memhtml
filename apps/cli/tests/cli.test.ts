@@ -34,10 +34,10 @@ describe("argv parsing", () => {
   })
 
   it("keeps every occurrence of a repeatable flag", () => {
-    // The load-bearing case: a scalar map would silently keep only `person:sanju`, and a write with
+    // The load-bearing case: a scalar map would silently keep only `person:sasha`, and a write with
     // two entities would store one.
-    const parsed = parseArgv(["write", "--entity", "service:checkout", "--entity", "person:sanju"])
-    expect(parsed.flags.get("entity")).toEqual(["service:checkout", "person:sanju"])
+    const parsed = parseArgv(["write", "--entity", "service:checkout", "--entity", "person:sasha"])
+    expect(parsed.flags.get("entity")).toEqual(["service:checkout", "person:sasha"])
   })
 
   it("reads --no-embed as an explicit false, the only way to turn off a true default", () => {

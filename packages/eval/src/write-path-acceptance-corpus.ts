@@ -414,7 +414,7 @@ export const ACCEPTANCE_CORPUS: ReadonlyArray<LabeledGroup> = [
     members: [
       member(
         "areas/inbox/verdict-suppressed-failure-a.html",
-        "Review verdict for objective: end-of-day triage tick for the collaboration channel C0A9Z2Q4XYZ, on behalf of the operator.",
+        "Review verdict for objective: end-of-day triage tick for the collaboration channel C1234567890, on behalf of the operator.",
         "Category: suppressed_failure. Claim reviewed: the completion message asserts the tick is done and verified, but a recorded Bash exit code 1 is never acknowledged. Durable lesson: disclose the failure before claiming done."
       ),
       member(

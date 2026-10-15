@@ -441,11 +441,11 @@ describe("entity resolution", () => {
      * short name shares few of them, so this is the correct answer to the wrong question. The right
      * question is what is written under each name, which is what the memory centroid carries.
      */
-    expect(nameSimilarity("laith", "laith al-saadoon")).toBeCloseTo(0.476, 3)
-    expect(nameSimilarity("sanju", "sanju kumar")).toBeCloseTo(0.625, 3)
+    expect(nameSimilarity("laura", "laura de-sabelin")).toBeCloseTo(0.476, 3)
+    expect(nameSimilarity("sasha", "sasha kelly")).toBeCloseTo(0.625, 3)
     for (const [short, full] of [
-      ["laith", "laith al-saadoon"],
-      ["sanju", "sanju kumar"]
+      ["laura", "laura de-sabelin"],
+      ["sasha", "sasha kelly"]
     ] as ReadonlyArray<readonly [string, string]>) {
       expect(nameSimilarity(short, full)).toBeLessThan(REVIEW_THRESHOLD)
       // Below the band, so the pre-pass reports it as neither a merge nor a review candidate.
@@ -598,14 +598,14 @@ describe("the entity memory centroid", () => {
     ])
     const centroids = entityCentroids(
       [
-        claim("laith", "areas/c.html"),
-        claim("laith", "areas/b.html"),
-        claim("laith", "areas/a.html")
+        claim("laura", "areas/c.html"),
+        claim("laura", "areas/b.html"),
+        claim("laura", "areas/a.html")
       ],
       vectors
     )
     const centroid = (centroids.get("person") ?? [])[0]
-    expect(centroid?.name).toBe("laith")
+    expect(centroid?.name).toBe("laura")
     expect(centroid?.memories).toBe(3)
 
     /** The normalized forward sum, computed here independently of the code under test. */
@@ -641,9 +641,9 @@ describe("the entity memory centroid", () => {
      */
     const centroids = entityCentroids(
       [
-        claim("laith", "areas/a.html"),
-        claim("Laith", "areas/a.html"),
-        claim("laith", "areas/b.html")
+        claim("laura", "areas/a.html"),
+        claim("Laura", "areas/a.html"),
+        claim("laura", "areas/b.html")
       ],
       new Map([
         ["areas/a.html", spike([1, 0])],
@@ -682,10 +682,10 @@ describe("the entity memory centroid", () => {
   it("samples titles in path order, capped, dropping a blank one", () => {
     const centroids = entityCentroids(
       [
-        claim("laith", "areas/c.html", "Third"),
-        claim("laith", "areas/a.html", "First"),
-        claim("laith", "areas/b.html", "   "),
-        claim("laith", "areas/d.html", "Fourth")
+        claim("laura", "areas/c.html", "Third"),
+        claim("laura", "areas/a.html", "First"),
+        claim("laura", "areas/b.html", "   "),
+        claim("laura", "areas/d.html", "Fourth")
       ],
       new Map(),
       { sampleTitles: 3 }
@@ -765,7 +765,7 @@ describe("cluster decomposition", () => {
      * `memhtml-entity` meta in the corpus is rewritten TO, and person-links then makes it a file path,
      * so letting the model choose it would make an unattended run's write target a model's answer.
      *
-     * The fixture is the adversarial case: `laith` is the SHORTER, lexicographically smaller name a
+     * The fixture is the adversarial case: `laura` is the SHORTER, lexicographically smaller name a
      * model would plausibly nominate, and it is claimed by one memory against the full form's nine. The
      * code must pick the nine.
      *
@@ -773,15 +773,15 @@ describe("cluster decomposition", () => {
      * member — inverts the merge and fails this case.)
      */
     const counts = new Map([
-      ["laith", 1],
-      ["laith al-saadoon", 9]
+      ["laura", 1],
+      ["laura de-sabelin", 9]
     ])
-    expect(decomposeCluster(["laith", "laith al-saadoon"], counts)).toEqual([
-      { alias: "laith", canonical: "laith al-saadoon" }
+    expect(decomposeCluster(["laura", "laura de-sabelin"], counts)).toEqual([
+      { alias: "laura", canonical: "laura de-sabelin" }
     ])
     // And the member ORDER the model listed them in does not move the answer.
-    expect(decomposeCluster(["laith al-saadoon", "laith"], counts)).toEqual([
-      { alias: "laith", canonical: "laith al-saadoon" }
+    expect(decomposeCluster(["laura de-sabelin", "laura"], counts)).toEqual([
+      { alias: "laura", canonical: "laura de-sabelin" }
     ])
   })
 
@@ -798,29 +798,29 @@ describe("cluster decomposition", () => {
   it("fans a cluster of three onto ONE canonical", () => {
     const counts = new Map([
       ["l", 1],
-      ["laith", 2],
-      ["laith al-saadoon", 9]
+      ["laura", 2],
+      ["laura de-sabelin", 9]
     ])
-    expect(decomposeCluster(["l", "laith", "laith al-saadoon"], counts)).toEqual([
-      { alias: "l", canonical: "laith al-saadoon" },
-      { alias: "laith", canonical: "laith al-saadoon" }
+    expect(decomposeCluster(["l", "laura", "laura de-sabelin"], counts)).toEqual([
+      { alias: "l", canonical: "laura de-sabelin" },
+      { alias: "laura", canonical: "laura de-sabelin" }
     ])
   })
 
   it("produces no merge from a cluster of one, which is how a model declines", () => {
-    const counts = new Map([["laith", 1]])
-    expect(decomposeCluster(["laith"], counts)).toEqual([])
+    const counts = new Map([["laura", 1]])
+    expect(decomposeCluster(["laura"], counts)).toEqual([])
     expect(decomposeCluster([], counts)).toEqual([])
     // A cluster naming one member twice is still one member.
-    expect(decomposeCluster(["laith", "laith"], counts)).toEqual([])
+    expect(decomposeCluster(["laura", "laura"], counts)).toEqual([])
   })
 
   it("treats an unknown name as zero-weight rather than throwing, so it loses the canonical", () => {
     // Reachable only if a caller passes a name the counts do not hold. Losing is the safe outcome: the
     // rewrite then targets a name the corpus actually claims.
-    const counts = new Map([["laith al-saadoon", 1]])
-    expect(decomposeCluster(["ghost", "laith al-saadoon"], counts)).toEqual([
-      { alias: "ghost", canonical: "laith al-saadoon" }
+    const counts = new Map([["laura de-sabelin", 1]])
+    expect(decomposeCluster(["ghost", "laura de-sabelin"], counts)).toEqual([
+      { alias: "ghost", canonical: "laura de-sabelin" }
     ])
   })
 })
@@ -828,25 +828,25 @@ describe("cluster decomposition", () => {
 describe("the alias oracle and the member block", () => {
   it("answers symmetrically, because a declaration names a GROUP and not a direction", () => {
     /**
-     * A person file declaring `laith` as an alias asserts that the two names are one subject. Which of
+     * A person file declaring `laura` as an alias asserts that the two names are one subject. Which of
      * them survives the merge is the file-count rule's call, so the oracle has to answer the same for
      * both orientations — a directed map would make an alias-backed merge apply in one direction and
      * corroborate across two nights in the other.
      */
-    const groups = [new Set(["laith al-saadoon", "laith", "l.alsaadoon"])]
-    expect(aliasBacked(groups, "laith", "laith al-saadoon")).toBe(true)
-    expect(aliasBacked(groups, "laith al-saadoon", "laith")).toBe(true)
+    const groups = [new Set(["laura de-sabelin", "laura", "l.desabelin"])]
+    expect(aliasBacked(groups, "laura", "laura de-sabelin")).toBe(true)
+    expect(aliasBacked(groups, "laura de-sabelin", "laura")).toBe(true)
     // Transitive within one declaration: both are aliases of the same subject.
-    expect(aliasBacked(groups, "laith", "l.alsaadoon")).toBe(true)
-    expect(aliasBacked(groups, "laith", "sanju")).toBe(false)
-    expect(aliasBacked([], "laith", "laith al-saadoon")).toBe(false)
+    expect(aliasBacked(groups, "laura", "l.desabelin")).toBe(true)
+    expect(aliasBacked(groups, "laura", "sasha")).toBe(false)
+    expect(aliasBacked([], "laura", "laura de-sabelin")).toBe(false)
   })
 
   it("does not bridge two separate declarations", () => {
     // Two person files each declaring one alias assert nothing about each other's subjects, and a
     // union across files would merge two people who happen to share an alias spelling.
-    const groups = [new Set(["laith al-saadoon", "l"]), new Set(["lena ortiz", "l"])]
-    expect(aliasBacked(groups, "laith al-saadoon", "lena ortiz")).toBe(false)
+    const groups = [new Set(["laura de-sabelin", "l"]), new Set(["lena ortiz", "l"])]
+    expect(aliasBacked(groups, "laura de-sabelin", "lena ortiz")).toBe(false)
   })
 
   it("renders a member block naming the evidence and no path", () => {
@@ -858,24 +858,24 @@ describe("the alias oracle and the member block", () => {
      */
     const block = entityMemberText({
       centroid: {
-        name: "laith",
+        name: "laura",
         memories: 4,
         titles: ["The rollout review cadence", "Who owns the search surface"],
         vec: undefined
       },
       neighbors: [
-        { name: "laith al-saadoon", sim: 0.9712 },
-        { name: "sanju kumar", sim: 0.41 }
+        { name: "laura de-sabelin", sim: 0.9712 },
+        { name: "sasha kelly", sim: 0.41 }
       ],
-      aliases: ["laith al-saadoon"]
+      aliases: ["laura de-sabelin"]
     })
-    expect(block).toContain("name: laith")
+    expect(block).toContain("name: laura")
     expect(block).toContain("memories: 4")
     expect(block).toContain("- The rollout review cadence")
     // Two decimals: a corpus whose vectors moved in the sixteenth place must not change the bytes,
     // because a changed prompt is a cache miss and a possibly different answer.
-    expect(block).toContain("- laith al-saadoon (0.97)")
-    expect(block).toContain("declared aliases: laith al-saadoon")
+    expect(block).toContain("- laura de-sabelin (0.97)")
+    expect(block).toContain("declared aliases: laura de-sabelin")
     expect(block).not.toContain(".html")
     expect(block).not.toMatch(/0\.9712/)
   })
