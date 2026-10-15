@@ -18,9 +18,9 @@ export const LINK_REL_PREFIX = "memhtml-"
  * rather than a comma-joined string, so correcting one tag is a one-line diff.
  *
  * `memhtml-alias` is the third: a person file declares the other names the same person is recorded
- * under, so `laith al-saadoon` can state that `laith` is them. Sleep's entity resolution reads it as
+ * under, so `laura de-sabelin` can state that `laura` is them. Sleep's entity resolution reads it as
  * EVIDENCE and auto-merges an alias-backed pair whatever the character distance says, which no
- * string similarity can supply — `laith` against `laith al-saadoon` scores 0.476, below even the
+ * string similarity can supply — `laura` against `laura de-sabelin` scores 0.476, below even the
  * review band. One meta per alias, for the same one-line-diff reason.
  */
 export const REPEATABLE_META = ["memhtml-entity", "memhtml-tag", "memhtml-alias"] as const

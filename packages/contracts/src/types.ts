@@ -107,7 +107,7 @@ export const Confidence = Schema.Number.check(Schema.isBetween({ minimum: 0, max
 export const MemoryPath = Schema.String.check(Schema.isMinLength(1))
 
 /**
- * A `type:name` entity reference, e.g. `service:checkout-api`, `person:sanju`. The
+ * A `type:name` entity reference, e.g. `service:checkout-api`, `person:sasha`. The
  * prefix before the first colon is the entity type; everything after is the name, which
  * may itself contain colons.
  */

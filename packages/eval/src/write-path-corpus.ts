@@ -6,7 +6,7 @@
  * label: the contract clause, design rule, or plan definition that decides it. A label with no source
  * is an opinion, and an eval scored against opinions measures the labeler.
  *
- * The 2026-08-27 plan (Agentic-Eng brief, "memhtml write-path eval ships first") named the arms and
+ * The 2026-08-27 plan (planning brief, "memhtml write-path eval ships first") named the arms and
  * one floor (trap-question abstention at or above 60 percent) and left the definition of a good or bad
  * CANDIDATE to the write path's own contract. So the definitions here are the write path's: the
  * consolidator door's schema and grounding checks (`apps/consolidator/src/contract.ts`,
@@ -102,7 +102,7 @@ export const B_LONG =
   "Checked the gateway fork against upstream main this morning: upstream moved 41 commits since our " +
   "dev branch was cut, 3 of them touch the listener config we patched, and none of them conflict textually, " +
   "so a rebase applies clean but the runtime behaviour of the listener reload path changed in commit " +
-  "9f3e2c1a and our patch assumes the old ordering. The honest answer for Priya is that the rebase is " +
+  "9f3e2c1a and our patch assumes the old ordering. The honest answer for Paula is that the rebase is " +
   "mechanically trivial and semantically not, and it needs one live run against the staging tunnel before " +
   "Friday rather than a merge on green. I have written the three commits down in the fork's dev branch " +
   "notes with the line each one moves, so whoever picks it up does not have to re-derive the diff, and " +
@@ -119,7 +119,7 @@ export const B = {
   q8: "That turn hit the output token ceiling mid-answer.",
   q9: "The loop now names the bound it hit instead of reporting a contract violation, which is what issue 113 misdiagnosed.",
   /** Non-ASCII punctuation, verbatim. */
-  q10: "Priya asked whether the gateway fork needs a rebase before Friday — I told him we'd check.",
+  q10: "Paula asked whether the gateway fork needs a rebase before Friday — I told him we'd check.",
   q11: B_LONG,
   q12: "Précis for the runbook: throttling at a fixed window is a scheduling collision, retries only widen the window.",
   q13: "pin the teardown port in the integration harness, two tests raced on 4000 yesterday.",
@@ -425,8 +425,8 @@ const GOOD: ReadonlyArray<LabeledCandidate> = [
     {
       ...base,
       kind: "episodic",
-      claim: "Priya asked for a rebase check on the gateway fork before Friday.",
-      entities: [{ type: "person", name: "Priya Raman" }],
+      claim: "Paula asked for a rebase check on the gateway fork before Friday.",
+      entities: [{ type: "person", name: "Paula Reyes" }],
       evidence: [b(B.q10), b(B_LONG.slice(0, 96))]
     }
   ),

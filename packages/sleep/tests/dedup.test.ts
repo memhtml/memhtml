@@ -416,7 +416,7 @@ describe("dedup-merge with a model", () => {
      * floor. (Mutation: setting the filter's threshold to `DEDUP_COMPONENT_FLOOR` fails here, and
      * reports the pair as a VETO rather than as a skip.)
      */
-    const model = partitionsBy((prompt) => [keysMatching(prompt, ["Priya"])])
+    const model = partitionsBy((prompt) => [keysMatching(prompt, ["Paula"])])
 
     await withFixture(
       (fixture) =>
@@ -558,7 +558,7 @@ describe("dedup-merge with a model", () => {
      * pairs. It folds neither.
      */
     const model = partitionsBy((prompt) => [
-      [...keysMatching(prompt, ["nightly index rebuild"]), ...keysMatching(prompt, ["Priya"])]
+      [...keysMatching(prompt, ["nightly index rebuild"]), ...keysMatching(prompt, ["Paula"])]
     ])
 
     await withFixture(

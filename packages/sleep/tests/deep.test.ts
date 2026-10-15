@@ -714,7 +714,7 @@ describe("placement triage (guard g: the this-run touched set)", () => {
           expect(tree).toContain("areas/ledgers/bravo.html")
           expect(tree).toContain("areas/ledgers/cielo.html")
         }),
-      { seed: corpusFor(["person:sanju"]), model }
+      { seed: corpusFor(["person:sasha"]), model }
     )
   })
 

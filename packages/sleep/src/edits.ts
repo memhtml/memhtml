@@ -157,7 +157,7 @@ export const stampFile = (
  *
  * (Found by an integration test on a real repo, 2026-08-02: retention triage evicted a TTL-passed
  * memory and the reprieve phase then failed on the same path. A stateless fake would have passed.
- * The metarepo's recurring lesson, sixth variant: the contaminating state was another PHASE's write.)
+ * The workspace's recurring lesson, sixth variant: the contaminating state was another PHASE's write.)
  *
  * `mkdir -p` first, because `git mv` rejects a destination whose parent does not exist (probed live
  * 2026-08-02, `fatal: renaming … failed: No such file or directory`). The year partition is new

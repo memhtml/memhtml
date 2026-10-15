@@ -14,7 +14,7 @@ import { activeEntities, pathsForEntity } from "../sql.js"
  * memory claiming that person gains a `memhtml-about-person` link. ONE commit.
  *
  * Runs immediately after entity resolution, so it keys on names that have already normalized and
- * fuzzy-merged: `Sanju`, `sanju`, and `sanju ` are one person by the time this phase sees them, and
+ * fuzzy-merged: `Sasha`, `sasha`, and `sasha ` are one person by the time this phase sees them, and
  * running it first would mint three person files and split one person's memories across them.
  *
  * The person file is created only when it is absent, and its content stays as written. It is a

@@ -51,7 +51,7 @@ import {
  * repo driven by the store's own subprocess wrapper, the database carries the shipped migrations, and
  * the transcripts are real files outside that repo. Every assertion about a commit reads GIT.
  *
- * Two things this suite is built to avoid, both from `.erpaval`:
+ * Two things this suite is built to avoid, both from `.lessons`:
  *
  * The cross-phase-contamination lesson says a phase fixture must carry the writes of the phases that
  * run before it. trace-consolidation is phase twelve, so the corpus here is `DEDUP_CORPUS` — the same
@@ -364,7 +364,7 @@ describe("trace-consolidation happy path", () => {
           kind: "error_pattern",
           entities: [
             { type: "service", name: "sqlite" },
-            { type: "person", name: "sanju" }
+            { type: "person", name: "sasha" }
           ],
           evidence: [
             { sessionId: "session-a", quote: QUOTE_A },
@@ -410,9 +410,9 @@ describe("trace-consolidation happy path", () => {
            *
            * `toEqual` over both, in the candidate's own order, so a join that dropped a half or
            * reordered the pair is visible. (Mutation: joining `name` alone yields `["sqlite",
-           * "sanju"]`; joining `name:type` yields `["sqlite:service", ...]`. Both fail here.)
+           * "sasha"]`; joining `name:type` yields `["sqlite:service", ...]`. Both fail here.)
            */
-          expect(doc.entities).toEqual(["service:sqlite", "person:sanju"])
+          expect(doc.entities).toEqual(["service:sqlite", "person:sasha"])
 
           /**
            * The evidence IS in the commit message, which is where a reviewer needs it — a commit
@@ -476,12 +476,12 @@ describe("trace-consolidation happy path", () => {
      * The mint-site canonicalization, against a real indexed corpus and real `file_entities` rows.
      *
      * The corpus already names `service:checkout-api` (two files, from `DEDUP_CORPUS`) and
-     * `person:Priya Raman` (the file seeded below, whose authored spelling is NOT the normalized one).
+     * `person:Paula Reyes` (the file seeded below, whose authored spelling is NOT the normalized one).
      * The candidate coins a variant of each, and each must land on its OWN corpus spelling — which is
      * what makes the case non-vacuous three ways over:
      *
      * - `Service:Checkout-API` proves the rewrite happens at all.
-     * - `person:priya  raman` proves the target is the CORPUS's spelling and not the normalized form. An
+     * - `person:paula  reyes` proves the target is the CORPUS's spelling and not the normalized form. An
      *   implementation that simply lowercased and collapsed every reference passes the first arm and
      *   fails this one, and it would leave a reference addressing nothing.
      * - `Service:Brand-New-Thing` proves it is a LOOKUP. A name the corpus does not hold keeps the
@@ -499,12 +499,12 @@ describe("trace-consolidation happy path", () => {
      * rather than its name half fails the first arm's type.)
      */
     const PERSON_FILE: SeedFile = {
-      path: "resources/people/priya-raman.html",
+      path: "resources/people/paula-reyes.html",
       html: memoryHtml({
-        title: "Priya Raman",
-        claim: "Priya Raman owns the payments ledger reconciliation.",
+        title: "Paula Reyes",
+        claim: "Paula Reyes owns the payments ledger reconciliation.",
         createdAt: "2026-05-02T00:00:00Z",
-        entities: ["person:Priya Raman"]
+        entities: ["person:Paula Reyes"]
       })
     }
 
@@ -516,7 +516,7 @@ describe("trace-consolidation happy path", () => {
           kind: "agent_insight",
           entities: [
             { type: "Service", name: "Checkout-API" },
-            { type: "person", name: "priya  raman" },
+            { type: "person", name: "paula  reyes" },
             { type: "Service", name: "Brand-New-Thing" }
           ]
         })
@@ -539,7 +539,7 @@ describe("trace-consolidation happy path", () => {
            */
           expect(doc.entities).toEqual([
             "Service:checkout-api",
-            "person:Priya Raman",
+            "person:Paula Reyes",
             "Service:Brand-New-Thing"
           ])
         }),
@@ -564,43 +564,43 @@ describe("trace-consolidation happy path", () => {
      * `entity_type` and rewrites only names.
      *
      * The padded arm is the same rule at the other end. `entityRowsFor` trims the whole meta and splits
-     * on the FIRST colon, so an authored `person : Devon Oyelowo` files as `type=[person ]
-     * name=[ Devon Oyelowo]` — a reference the read doors, which fold case only, cannot reach. The
+     * on the FIRST colon, so an authored `person : Derek Hawkins` files as `type=[person ]
+     * name=[ Derek Hawkins]` — a reference the read doors, which fold case only, cannot reach. The
      * lookup hands back the corpus's spelling minus that edge padding, so the new memory is addressable
      * even though the seed file is not.
      *
-     * (Mutations: substituting `held.ref` for `held.name` lands the person arm on `Person:Priya Raman`
+     * (Mutations: substituting `held.ref` for `held.name` lands the person arm on `Person:Paula Reyes`
      * and its file outside `resources/people/`; dropping the `.trim()` on the corpus name lands the
-     * second arm on `person: Devon Oyelowo`.)
+     * second arm on `person: Derek Hawkins`.)
      */
     const CAPITALIZED_TYPE: SeedFile = {
-      path: "resources/people/priya-raman.html",
+      path: "resources/people/paula-reyes.html",
       html: memoryHtml({
-        title: "Priya Raman",
-        claim: "Priya Raman owns the payments ledger reconciliation.",
+        title: "Paula Reyes",
+        claim: "Paula Reyes owns the payments ledger reconciliation.",
         createdAt: "2026-05-02T00:00:00Z",
-        entities: ["Person:Priya Raman"]
+        entities: ["Person:Paula Reyes"]
       })
     }
     const PADDED_REFERENCE: SeedFile = {
-      path: "resources/people/devon-oyelowo.html",
+      path: "resources/people/derek-hawkins.html",
       html: memoryHtml({
-        title: "Devon Oyelowo",
-        claim: "Devon Oyelowo owns the ingest replay window.",
+        title: "Derek Hawkins",
+        claim: "Derek Hawkins owns the ingest replay window.",
         createdAt: "2026-05-03T00:00:00Z",
-        entities: ["person : Devon Oyelowo"]
+        entities: ["person : Derek Hawkins"]
       })
     }
 
     const consolidator = scriptedConsolidator(() =>
       candidates([
         candidate({
-          claim: "Priya Raman and Devon Oyelowo both sign off a replay of the payments ledger.",
+          claim: "Paula Reyes and Derek Hawkins both sign off a replay of the payments ledger.",
           gist: "Two owners sign off one replay, and each is addressed by the spelling the corpus already holds.",
           kind: "semantic",
           entities: [
-            { type: "person", name: "priya  raman" },
-            { type: "person", name: "Devon Oyelowo" }
+            { type: "person", name: "paula  reyes" },
+            { type: "person", name: "Derek Hawkins" }
           ]
         })
       ])
@@ -615,7 +615,7 @@ describe("trace-consolidation happy path", () => {
           yield* traceConsolidation(envFor(fixture))
           const [path] = yield* addedMemories(fixture, base)
           const doc = yield* parseMemory((yield* atHead(fixture, path ?? "")) ?? "")
-          expect(doc.entities).toEqual(["person:Priya Raman", "person:Devon Oyelowo"])
+          expect(doc.entities).toEqual(["person:Paula Reyes", "person:Derek Hawkins"])
           /*
            * The routing consequence, which is the whole reason the type is left alone. A `Person:`-typed
            * reference sends the same memory to `resources/trace-consolidation/`.
@@ -1098,8 +1098,8 @@ describe("trace-consolidation conflict assist", () => {
    * different value. Both go through `frameKeyOf`, so the pair is a real collision under the shipped
    * rule rather than one this test asserts by fiat.
    */
-  const FRAMED_CLAIM = "The owner of the deploy runbook is Priya."
-  const CANDIDATE_CLAIM = "The owner of the deploy runbook is Marcus."
+  const FRAMED_CLAIM = "The owner of the deploy runbook is Paula."
+  const CANDIDATE_CLAIM = "The owner of the deploy runbook is Marcia."
 
   const FRAMED_CORPUS = [
     ...DEDUP_CORPUS,
@@ -1160,7 +1160,7 @@ describe("trace-consolidation conflict assist", () => {
           const message = yield* messageOf(fixture, outcome.commitSha ?? "")
           expect(message).toContain("frame conflict")
           expect(message).toContain("areas/deploy/runbook-owner.html")
-          expect(message).toContain("Priya")
+          expect(message).toContain("Paula")
 
           /**
            * NO AUTHORED EDGE, and no archive of either side. This is the mechanical half of the
@@ -1190,7 +1190,7 @@ describe("trace-consolidation conflict assist", () => {
      */
     const consolidator = scriptedConsolidator(() =>
       candidates([
-        candidate({ claim: "The owner of the incident channel is Marcus." }),
+        candidate({ claim: "The owner of the incident channel is Marcia." }),
         // No frame shape at all: `frameKeyOf` returns null, so this one is not even looked up.
         candidate({ claim: "Retries help." })
       ])
@@ -2010,7 +2010,7 @@ describe("trace-consolidation mints tasks from commitments", () => {
         commitment({
           statement: "a colleague said they would ship the migration",
           actor: "other",
-          evidence: { sessionId: "session-a", quote: "sanju said he'd ship the migration" }
+          evidence: { sessionId: "session-a", quote: "sasha said he'd ship the migration" }
         }),
         commitment({
           statement: "pin the flaky teardown port",
@@ -2034,7 +2034,7 @@ describe("trace-consolidation mints tasks from commitments", () => {
           expect(open).toHaveLength(1)
           expect(open[0]?.claim).toContain("pin the flaky teardown port")
           // The dropped one is nowhere in the tree, and its quote is not in the commit either.
-          expect(yield* messageOf(fixture, "HEAD")).not.toContain("sanju")
+          expect(yield* messageOf(fixture, "HEAD")).not.toContain("sasha")
         }),
       { seed: DEDUP_CORPUS, consolidator }
     )
@@ -2848,7 +2848,7 @@ describe("trace-consolidation closes a detected task when a session shows it don
           statement: "a colleague shipped the migration",
           actor: "other",
           resolved: true,
-          evidence: { sessionId: "session-a", quote: "sanju shipped the migration" }
+          evidence: { sessionId: "session-a", quote: "sasha shipped the migration" }
         })
       ])
     )

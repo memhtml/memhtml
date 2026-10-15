@@ -46,8 +46,8 @@ import { budgetFor, closeVanishedDetections, detectionKey, mintDetectedTask } fr
  *    only once {@link ENTITY_PROMOTION_DETECTIONS} different nights have reached it.
  *
  * **Why the model, and why centroids as its evidence.** Character overlap is measurably wrong on the
- * case this phase exists for. Measured on the live corpus: `laith` against `laith al-saadoon` scores
- * 0.476 and `sanju` against `sanju kumar` 0.625 — below even the 0.75 review band — so a short name and
+ * case this phase exists for. Measured on the live corpus: `laura` against `laura de-sabelin` scores
+ * 0.476 and `sasha` against `sasha kelly` 0.625 — below even the 0.75 review band — so a short name and
  * its full form are structurally invisible to a character ratio, and the phase minted two person files
  * for one person. The signal that does separate them is not the name string but WHAT IS WRITTEN under
  * each name: the centroid of the vectors of every memory claiming a name. Two spellings of one person
@@ -527,8 +527,8 @@ export const decomposeCluster = (
  * `memhtml-alias` values, all normalized.
  *
  * One GROUP per file rather than a directed alias map, and symmetric by construction, because that is
- * what the declaration means. `resources/people/laith-al-saadoon.html` carrying
- * `<meta name="memhtml-alias" content="laith">` asserts that the two names are one subject, and the
+ * what the declaration means. `resources/people/laura-de-sabelin.html` carrying
+ * `<meta name="memhtml-alias" content="laura">` asserts that the two names are one subject, and the
  * assertion holds whichever of them the corpus's file counts make the canonical.
  */
 export type AliasGroup = ReadonlySet<string>
@@ -547,7 +547,7 @@ export const aliasBacked = (
  * **This is what makes the oracle an oracle.** Issue #43 states that entity resolution consults
  * declared aliases FIRST and that an alias-backed merge auto-commits regardless of string distance. A
  * declaration read only where the model core reads it would deliver neither half: a credential-free
- * night would leave `laith` and `laith al-saadoon` split with a person file sitting in the corpus
+ * night would leave `laura` and `laura de-sabelin` split with a person file sitting in the corpus
  * saying they are one person, and even a night WITH credentials would apply the declaration only if
  * the model happened to propose that pair — so the operator surface the format invites someone to
  * hand-edit would work or not work depending on a model's attention.
@@ -1145,7 +1145,7 @@ export interface ReviewCandidate {
  * **The key is the entity TYPE plus the two names sorted**, and not the reason. A pair the character
  * band deferred last night and the model deferred below the floor tonight is ONE question a human has
  * to answer once — are these the same subject — so it must key the same however the night arrived at
- * it. Sorting is what makes `(laith, laith al-saadoon)` and the reverse one key; the pair is
+ * it. Sorting is what makes `(laura, laura de-sabelin)` and the reverse one key; the pair is
  * unordered, because neither name is the subject of the question.
  *
  * **The evidence is a MEASUREMENT and says so.** There is no sentence anywhere in the corpus stating

@@ -38,7 +38,7 @@ const SKIPPED_DIRS: ReadonlySet<string> = new Set([
   ".sarif",
   ".codegraph",
   // Prior-session lessons and specs: a historical record of what was decided, not a live artifact.
-  ".erpaval",
+  ".lessons",
   // Packed snapshots of the tree, regenerated wholesale by their tools.
   ".repomix",
   ".packets"

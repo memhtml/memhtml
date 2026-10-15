@@ -199,7 +199,7 @@ export const MemoryDoc = Schema.Struct({
   tags: Schema.Array(Schema.String),
   /**
    * `memhtml-alias` values as authored, in document order. The other names this file's subject is
-   * recorded under — a person file's declaration that `laith` and `l.alsaadoon` are the same person
+   * recorded under — a person file's declaration that `laura` and `l.desabelin` are the same person
    * as its own `person:` entity.
    *
    * Read as EVIDENCE by sleep's entity resolution, which auto-merges an alias-backed pair whatever

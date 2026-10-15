@@ -281,7 +281,7 @@ ${metas.join("\n")}
  * The dedup fixture: a TRUE duplicate that must MERGE, and a NEGATION-FLIPPED near-twin that must be
  * VETOED. Both pairs clear the 0.92 cosine floor under the deterministic embedder.
  *
- * The flipped pair is the whole point, and the metarepo's narrator lesson is why: a corpus holding
+ * The flipped pair is the whole point, and the workspace's narrator lesson is why: a corpus holding
  * only the true duplicate passes against a dedup phase whose veto does nothing, because there is
  * nothing for the veto to block. The flip is the NEIGHBOR that makes the assertion non-vacuous — it
  * shares every token with its twin but one, so it scores higher than the true duplicate does, and the
@@ -431,22 +431,22 @@ export const LAST_DROP_PATH = "areas/oncall/vip-drain-precedes-revert.html"
  * Every property below exists so one branch of the phase can be reached and can be seen to be WRONG if
  * the branch is removed:
  *
- * - **`laith` and `laith al-saadoon` are one person written two ways.** Character overlap scores them
+ * - **`laura` and `laura de-sabelin` are one person written two ways.** Character overlap scores them
  *   0.476, BELOW the 0.75 review band, so the deterministic pre-pass neither merges them nor counts
- *   them — which is the live defect this corpus reproduces. `laith al-saadoon` carries three memories
- *   against `laith`'s one, so the file-count rule makes the FULL form the canonical, and a phase that
+ *   them — which is the live defect this corpus reproduces. `laura de-sabelin` carries three memories
+ *   against `laura`'s one, so the file-count rule makes the FULL form the canonical, and a phase that
  *   let the model choose would be visible as the merge going the other way.
- * - **`sanju kumar` is a third person on an unrelated subject.** A corpus holding only the one person
+ * - **`sasha kelly` is a third person on an unrelated subject.** A corpus holding only the one person
  *   would pass against a phase that merged every person into one, exactly the vacuous-lock the
- *   metarepo's narrator lesson names. Measured centroid cosines under the deterministic embedder
- *   (2026-08-19, over the article text the chunker embeds): `laith al-saadoon` against `laith` 0.7788,
- *   against `sanju kumar` 0.3982, and `laith` against `sanju kumar` 0.3514. So the neighbor list the
+ *   workspace's narrator lesson names. Measured centroid cosines under the deterministic embedder
+ *   (2026-08-19, over the article text the chunker embeds): `laura de-sabelin` against `laura` 0.7788,
+ *   against `sasha kelly` 0.3982, and `laura` against `sasha kelly` 0.3514. So the neighbor list the
  *   prompt shows really does put the two spellings of one person next to each other.
  * - **`checkout-api` and `payments-api` are two services whose centroids sit at 0.9333** — HIGHER than
  *   the two spellings of one person. That is the negative control the whole design rests on: it is why
  *   a centroid cosine cannot be a merge threshold, and why the phase hands the number to a model and
  *   keeps the floors deterministic. A test corpus without it would let a naive cosine floor pass.
- * - **A mixed-case entity NAME** (`person:Laith Al-Saadoon`) reaches pass one, so the normalization arm
+ * - **A mixed-case entity NAME** (`person:Laura De-Sabelin`) reaches pass one, so the normalization arm
  *   is exercised against a real head rather than only in a unit. The TYPE is lowercase deliberately:
  *   normalization applies to the name alone, so `Person:…` would land in a separate `Person` type
  *   bucket and would never fold onto the canonical — a fixture that got this wrong would report the
@@ -456,13 +456,13 @@ export const ENTITY_CORPUS: ReadonlyArray<SeedFile> = [
   {
     path: "areas/team/rollout-cadence-signoff.html",
     html: memoryHtml({
-      title: "Laith Al-Saadoon signs off on the rollout cadence",
+      title: "Laura De-Sabelin signs off on the rollout cadence",
       claim:
-        "Laith Al-Saadoon reviews the rollout cadence each Monday and signs off on the release train.",
-      body: "Laith Al-Saadoon owns the review and the sign off happens before the release train departs.",
+        "Laura De-Sabelin reviews the rollout cadence each Monday and signs off on the release train.",
+      body: "Laura De-Sabelin owns the review and the sign off happens before the release train departs.",
       memoryType: "semantic",
       createdAt: "2026-04-01T00:00:00Z",
-      entities: ["person:laith al-saadoon"],
+      entities: ["person:laura de-sabelin"],
       tags: ["team"]
     })
   },
@@ -471,25 +471,25 @@ export const ENTITY_CORPUS: ReadonlyArray<SeedFile> = [
     html: memoryHtml({
       title: "The rollout cadence is written down before the release train",
       claim:
-        "Laith Al-Saadoon prefers the rollout cadence written down before the release train departs.",
-      body: "Laith Al-Saadoon reviews the sign off and the release train waits on the written cadence.",
+        "Laura De-Sabelin prefers the rollout cadence written down before the release train departs.",
+      body: "Laura De-Sabelin reviews the sign off and the release train waits on the written cadence.",
       memoryType: "semantic",
       createdAt: "2026-04-02T00:00:00Z",
-      entities: ["person:laith al-saadoon"],
+      entities: ["person:laura de-sabelin"],
       tags: ["team"]
     })
   },
   {
-    // The mixed-case variant, which pass one folds onto `person:laith al-saadoon` with no model call.
+    // The mixed-case variant, which pass one folds onto `person:laura de-sabelin` with no model call.
     // It is what makes the full form outweigh the short one three to one.
     path: "areas/team/release-train-owner.html",
     html: memoryHtml({
       title: "The release train has one named owner",
       claim: "The release train sign off belongs to one named owner on the rollout cadence.",
-      body: "Laith Al-Saadoon reviews the cadence each Monday before the release train departs.",
+      body: "Laura De-Sabelin reviews the cadence each Monday before the release train departs.",
       memoryType: "semantic",
       createdAt: "2026-04-03T00:00:00Z",
-      entities: ["person:Laith Al-Saadoon"],
+      entities: ["person:Laura De-Sabelin"],
       tags: ["team"]
     })
   },
@@ -498,11 +498,11 @@ export const ENTITY_CORPUS: ReadonlyArray<SeedFile> = [
     path: "areas/team/monday-signoff.html",
     html: memoryHtml({
       title: "Monday is the sign-off day",
-      claim: "Laith reviews the rollout cadence on Monday and signs off on the release train.",
+      claim: "Laura reviews the rollout cadence on Monday and signs off on the release train.",
       body: "The sign off happens before the release train departs.",
       memoryType: "semantic",
       createdAt: "2026-04-04T00:00:00Z",
-      entities: ["person:laith"],
+      entities: ["person:laura"],
       tags: ["team"]
     })
   },
@@ -510,12 +510,12 @@ export const ENTITY_CORPUS: ReadonlyArray<SeedFile> = [
     // A third person, so "merged everything into one" is a visible failure rather than a pass.
     path: "areas/team/search-relevance-owner.html",
     html: memoryHtml({
-      title: "Sanju Kumar owns the search relevance surface",
-      claim: "Sanju Kumar owns the search relevance surface and tunes the ranking weights.",
+      title: "Sasha Kelly owns the search relevance surface",
+      claim: "Sasha Kelly owns the search relevance surface and tunes the ranking weights.",
       body: "The ranking weights are retuned each quarter on the relevance surface.",
       memoryType: "semantic",
       createdAt: "2026-04-05T00:00:00Z",
-      entities: ["person:sanju kumar"],
+      entities: ["person:sasha kelly"],
       tags: ["search"]
     })
   },
@@ -632,13 +632,13 @@ export const DEDUP_FRAME_CORPUS: ReadonlyArray<SeedFile> = [
     path: "areas/deploy/runbook-owner.html",
     html: memoryHtml({
       title: "Who owns the deploy runbook",
-      claim: "The owner of the deploy runbook is Priya.",
+      claim: "The owner of the deploy runbook is Paula.",
       body: "She keeps the rollback steps current and reviews every change to the target-group configuration.",
       memoryType: "semantic",
       createdAt: "2026-03-01T00:00:00Z",
       confidence: "0.80",
       importance: "5",
-      entities: ["person:priya"],
+      entities: ["person:paula"],
       tags: ["deploy"]
     })
   },
@@ -646,23 +646,23 @@ export const DEDUP_FRAME_CORPUS: ReadonlyArray<SeedFile> = [
     path: "areas/deploy/runbook-owner-full-name.html",
     html: memoryHtml({
       title: "The deploy runbook owner, by full name",
-      claim: "The owner of the deploy runbook is Priya Raman.",
+      claim: "The owner of the deploy runbook is Paula Reyes.",
       body: "Ask her before editing any step; she signs off on the release checklist each Thursday.",
       memoryType: "semantic",
       createdAt: "2026-03-02T00:00:00Z",
       confidence: "0.80",
       importance: "5",
-      entities: ["person:priya"],
+      entities: ["person:paula"],
       tags: ["deploy"]
     })
   }
 ]
 
 /** The full form, which the file-count rule makes the canonical of the person cluster. */
-export const PERSON_CANONICAL = "laith al-saadoon"
+export const PERSON_CANONICAL = "laura de-sabelin"
 
 /** The short form, which the merge rewrites away. */
-export const PERSON_ALIAS = "laith"
+export const PERSON_ALIAS = "laura"
 
 /**
  * A person file declaring {@link PERSON_ALIAS} an alias of {@link PERSON_CANONICAL}.
@@ -972,8 +972,8 @@ export const dedupComponentCorpus = (count: number): ReadonlyArray<SeedFile> => 
  *   `memhtml-confidence` (0.90 is well above the floor, so the delta gate does not save it).
  * - **A passed `memhtml-valid-until`** on `t-forgotten` reaches the reprieve phase, which archives a
  *   TTL-passed file.
- * - **A `person:` entity** on `t-ask-imani` reaches person-links, which would mint
- *   `resources/people/imani.html` from a to-do item and stamp `memhtml-about-person` into the task.
+ * - **A `person:` entity** on `t-ask-irene` reaches person-links, which would mint
+ *   `resources/people/irene.html` from a to-do item and stamp `memhtml-about-person` into the task.
  * - **A mixed-case entity** (`Service:Checkout-API`) reaches entity-resolution, which would
  *   normalize the meta and rewrite the task file.
  */
@@ -1042,16 +1042,16 @@ export const TASK_CORPUS: ReadonlyArray<SeedFile> = [
   },
   {
     // A person entity and a mixed-case one: reaches person-links and entity-resolution.
-    path: "areas/inbox/tasks/t-ask-imani.html",
+    path: "areas/inbox/tasks/t-ask-irene.html",
     html: memoryHtml({
-      title: "Ask Imani about the search relevance surface",
-      claim: "Imani owns the search relevance surface and has not been asked yet.",
+      title: "Ask Irene about the search relevance surface",
+      claim: "Irene owns the search relevance surface and has not been asked yet.",
       memoryType: "task",
       taskStatus: "todo",
       createdAt: "2026-05-13T00:00:00Z",
       confidence: "0.90",
       importance: "6",
-      entities: ["person:imani", "Service:Checkout-API"],
+      entities: ["person:irene", "Service:Checkout-API"],
       tags: ["search"]
     })
   }

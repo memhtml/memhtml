@@ -217,7 +217,7 @@ export const SALIENCE_EXCLUDED_TYPE = "task"
  * `resources/people/` (`packages/contracts/src/paths.ts:122`), so the prefix IS the discriminator. A
  * reference record is reached by entity key, and decay is wrong for identity. A colleague unmentioned
  * for six months is not less themselves. Memories ABOUT a person live elsewhere and keep their
- * salience, which is the signal that answers "which five of fifty sanju-memories do we consult".
+ * salience, which is the signal that answers "which five of fifty sasha-memories do we consult".
  */
 export const SALIENCE_EXCLUDED_PREFIX = "resources/people/"
 

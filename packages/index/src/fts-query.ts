@@ -31,7 +31,7 @@
  * **The terms are joined with `OR`, and bm25 ranks.** FTS5 reads space-separated terms as an implicit
  * AND, which returns a file only when it holds EVERY token. For a sentence of more than a few words
  * that is not a verbatim quote of stored text, that is zero rows: measured on a 9k-chunk store,
- * `orion` alone matches 77 files and `orion wants talk` matches none, so the lexical arm runs and
+ * `oscar` alone matches 77 files and `oscar wants talk` matches none, so the lexical arm runs and
  * contributes nothing while the fold proceeds on the other arms (issue #143). Joined with `OR`, a file
  * holding any of the words is a candidate and `bm25()` puts the files holding more of them, and the
  * rarer ones, first. The all-terms documents stay at the top and the partial matches follow.
@@ -62,8 +62,8 @@ const QUOTE = '"'
  * The MATCH-safe form of a query, or `""` when the query holds no indexable term.
  *
  * Terms joined with ` OR `, each term either a bare lowercased token or a `"..."` phrase of tokens
- * from one balanced pair of quotes in the caller's text. `orion wants talk` is
- * `orion OR wants OR talk`; `find "drain the vip" fast` is `find OR "drain the vip" OR fast`.
+ * from one balanced pair of quotes in the caller's text. `oscar wants talk` is
+ * `oscar OR wants OR talk`; `find "drain the vip" fast` is `find OR "drain the vip" OR fast`.
  *
  * `""` is a value, not a failure. A caller MUST read it as "the lexical arm contributes nothing" and
  * drop that arm, and MUST NOT bind it. An empty MATCH is itself a syntax error
@@ -90,9 +90,9 @@ export const sanitizeFtsQuery = (query: string): string => ftsQueryForms(query).
  * all-terms value and still answers the sentence that matches on one word.
  */
 export interface FtsQueryForms {
-  /** Every term required. `orion AND wants AND talk`. */
+  /** Every term required. `oscar AND wants AND talk`. */
   readonly all: string
-  /** Any term suffices, bm25 ranks. `orion OR wants OR talk`. */
+  /** Any term suffices, bm25 ranks. `oscar OR wants OR talk`. */
   readonly any: string
 }
 

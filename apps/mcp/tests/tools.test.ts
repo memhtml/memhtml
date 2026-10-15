@@ -693,7 +693,7 @@ describe("the derived JSON Schema", () => {
 
   it("spells the entity parameter the same way memory_list does, so the two are one vocabulary", () => {
     /**
-     * Not a style assertion. A caller reads `person:sanju` off a listing or off a hit and hands it to
+     * Not a style assertion. A caller reads `person:sasha` off a listing or off a hit and hands it to
      * the other door; two names for one facet (`entity` here, `entity_ref` there) would make that a
      * lookup rather than a copy, and two SHAPES would make it a conversion.
      */

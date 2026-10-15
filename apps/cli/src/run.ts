@@ -833,7 +833,7 @@ const EITHER_CLAIM_OR_ARTICLE: ReadonlySet<string> = new Set(["write", "correct"
  * `dispatch` becomes exit 1, so "you passed the wrong flags" must be decided before any service is
  * built. Mutually exclusive parameters are refused at this edge, before dispatch, because a refusal
  * raised any later is masked as a runtime error
- * (`.erpaval/solutions/api-patterns/xor-params-and-mcp-error-masking.md`).
+ * (`.lessons/solutions/api-patterns/xor-params-and-mcp-error-masking.md`).
  *
  * At most one rather than exactly one, because zero doors is legal and means stdin, the same shape
  * `memhtml apply` has, where a bare invocation drains the pipe. `--file -` is the flag spelling of

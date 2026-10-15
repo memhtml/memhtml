@@ -5,7 +5,7 @@
  * `lang:` entity. A detector can propose one, and wrong metadata costs more than none, so what
  * ships here is exactly the implementation an eval measured, at a threshold that eval chose.
  *
- * PROVENANCE. `memhtml-evals` (`results/detector-eval-2026-08-04.json`) swept two candidates,
+ * PROVENANCE. `external-evals` (`results/detector-eval-2026-08-04.json`) swept two candidates,
  * `flourite` and highlight.js `highlightAuto`, over a 332-snippet corpus of real fences and file
  * slices, and picked the operating point where MEASURED precision first reaches the 95% floor:
  *
@@ -27,7 +27,7 @@
  * 2026-08-18, which is the size of "silently": `slice:example-service/mise.toml@42+9` fell 0.5406
  * to 0.1993 and stopped stamping `toml`, and one python row stopped stamping — coverage lost with
  * no evidence about precision, because the 332-snippet corpus that measured it lives in
- * `memhtml-evals`, not here. `.github/dependabot.yml` holds minor and major back for that reason.
+ * `external-evals`, not here. `.github/dependabot.yml` holds minor and major back for that reason.
  *
  * WRITE TIME ONLY. Detection runs on the write path and the result is stamped into the file, which
  * is the system of record. Index rebuild reads `data-lang` back (`parse.ts`) and never re-detects,

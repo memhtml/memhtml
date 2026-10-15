@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "memhtmlVersion": "0.14.0",
   "frozenAt": "2026-09-09T14:09:12.911Z",
-  "corpusSha256": "d567daa5ee2562443fc64e666b3eef22d5fee93aba31e28b79dd75af9aa503d5",
-  "transcriptsSha256": "5f505b05274c4f213cad1eaf87b117c53f32aa0bfbcb42f21b0d2f7c7100ce53",
+  "corpusSha256": "5d684e246e089bd96cceeab0f994f1d2e1f700b5f97691f9bd091af24b976501",
+  "transcriptsSha256": "9840b98aeb40dcec58b0aceeb8d5024497ef1e108e14639a37934f31be525cfd",
   "gate": [
     {
       "stage": "door:schema",

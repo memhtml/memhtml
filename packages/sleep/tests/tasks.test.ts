@@ -49,7 +49,7 @@ const envFor = (fixture: Fixture, dryRun = false): PhaseEnv => {
 const SEED = [...DEDUP_CORPUS, ...TASK_CORPUS]
 
 const FORGOTTEN = "areas/inbox/tasks/t-forgotten.html"
-const ASK_IMANI = "areas/inbox/tasks/t-ask-imani.html"
+const ASK_IRENE = "areas/inbox/tasks/t-ask-irene.html"
 
 /** A file's bytes at HEAD, or `undefined` when HEAD holds no such path. */
 const atHead = (fixture: Fixture, path: string): Effect.Effect<string | undefined> =>
@@ -122,18 +122,18 @@ describe("retention-triage", () => {
 describe("person-links", () => {
   it("mints no person file from a task's person: entity, and links no task", async () => {
     /**
-     * `t-ask-imani` carries `person:imani` and no memory does — so without the exclusion this phase
-     * would create `resources/people/imani.html`, the durable hand-edited identity surface, out of a
+     * `t-ask-irene` carries `person:irene` and no memory does — so without the exclusion this phase
+     * would create `resources/people/irene.html`, the durable hand-edited identity surface, out of a
      * to-do item, and stamp `memhtml-about-person` into the task file.
      */
     await withFixture(
       (fixture) =>
         Effect.gen(function* () {
-          const before = yield* atHead(fixture, ASK_IMANI)
+          const before = yield* atHead(fixture, ASK_IRENE)
           const outcome = yield* personLinks(envFor(fixture))
 
-          expect(yield* atHead(fixture, ASK_IMANI)).toBe(before)
-          expect(yield* atHead(fixture, "resources/people/imani.html")).toBeUndefined()
+          expect(yield* atHead(fixture, ASK_IRENE)).toBe(before)
+          expect(yield* atHead(fixture, "resources/people/irene.html")).toBeUndefined()
           // No person reached the phase at all: the memory corpus names none.
           expect(outcome.counts.people).toBe(0)
           expect(outcome.counts.filesCreated).toBe(0)
@@ -146,17 +146,17 @@ describe("person-links", () => {
 
 describe("entity-resolution", () => {
   it("does not normalize a task's mixed-case entity meta", async () => {
-    // `t-ask-imani` carries `Service:Checkout-API`, which pass one of this phase would lowercase —
+    // `t-ask-irene` carries `Service:Checkout-API`, which pass one of this phase would lowercase —
     // an unattended run editing live working state, and a rewrite of the task's own bytes.
     await withFixture(
       (fixture) =>
         Effect.gen(function* () {
-          const before = yield* atHead(fixture, ASK_IMANI)
+          const before = yield* atHead(fixture, ASK_IRENE)
           expect(before).toContain("Service:Checkout-API")
 
           yield* entityResolution(envFor(fixture))
 
-          const after = yield* atHead(fixture, ASK_IMANI)
+          const after = yield* atHead(fixture, ASK_IRENE)
           expect(after).toBe(before)
           expect(after).toContain("Service:Checkout-API")
         }),
@@ -194,8 +194,8 @@ describe("compress", () => {
            * tasks WOULD be a community if task edges reached the graph math.
            */
           const chain: ReadonlyArray<readonly [string, string, string]> = [
-            [FORGOTTEN, "blocks", ASK_IMANI],
-            [ASK_IMANI, "blocks", "areas/inbox/tasks/t-drain-runbook.html"],
+            [FORGOTTEN, "blocks", ASK_IRENE],
+            [ASK_IRENE, "blocks", "areas/inbox/tasks/t-drain-runbook.html"],
             ["areas/inbox/tasks/t-drain-runbook.html", "subtask_of", FORGOTTEN]
           ]
           for (const [src, rel, dst] of chain) {
@@ -218,7 +218,7 @@ describe("compress", () => {
           yield* compress(envFor(fixture))
           for (const call of model.calls) {
             expect(call.prompt).not.toContain("staging bastion port")
-            expect(call.prompt).not.toContain("Ask Imani")
+            expect(call.prompt).not.toContain("Ask Irene")
           }
         }),
       { seed: SEED, model }
@@ -241,7 +241,7 @@ describe("arc-synthesis", () => {
           expect(model.calls.length).toBeGreaterThan(0)
           for (const call of model.calls) {
             expect(call.prompt).not.toContain("staging bastion port")
-            expect(call.prompt).not.toContain("Imani owns the search relevance surface")
+            expect(call.prompt).not.toContain("Irene owns the search relevance surface")
             expect(call.prompt).not.toContain("deploy runbook needs a review")
           }
         }),

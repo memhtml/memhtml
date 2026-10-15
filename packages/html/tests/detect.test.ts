@@ -17,7 +17,7 @@ import { parseOk } from "./fixtures.js"
 /**
  * The fence language detector, and the write path that stamps its output.
  *
- * This module is a PORT: the eval (`memhtml-evals`, `results/detector-eval-2026-08-04.json`)
+ * This module is a PORT: the eval (`external-evals`, `results/detector-eval-2026-08-04.json`)
  * measured highlight.js `highlightAuto` under a specific confidence formula over a 332-snippet
  * corpus, and picked the threshold where precision first reached the 95% floor. So the property
  * these tests defend is AGREEMENT WITH THAT MEASUREMENT, not "detection seems reasonable" — a
@@ -185,7 +185,7 @@ const CORPUS: readonly Fixture[] = [
     stamp: undefined
   },
   {
-    id: "slice:example-service/.erpaval/sessions/session-3b90f3/intake.yaml@4+8",
+    id: "slice:example-service/.lessons/sessions/session-3b90f3/intake.yaml@4+8",
     gold: "yaml",
     code: "inferred:\n  scope: null\n  complexity: null\n  dir_state: null\n  rigor_needed: null\ngit:\n  is_repo: True\n  branch: main",
     hljs: "yaml",

@@ -22,7 +22,7 @@ One fact per file. Standard HTML5, view-source readable, no `class`, no `<div>`/
 <meta name="memhtml-prompt" content="pr_01JQ8ZK3">
 <meta name="memhtml-turn" content="t_7c1a">
 <meta name="memhtml-entity" content="service:checkout-api">
-<meta name="memhtml-entity" content="person:sanju">
+<meta name="memhtml-entity" content="person:sasha">
 <meta name="memhtml-tag" content="deploy">
 <meta name="memhtml-tag" content="oncall">
 <link rel="memhtml-supersedes" href="/archive/2026/areas/oncall/rollback-order.html">
@@ -65,7 +65,7 @@ Exactly three names are REPEATABLE, `memhtml-entity`, `memhtml-tag`, and `memhtm
 </html>
 ```
 
-That file parses with zero violations and zero warnings, and yields the `content_hash` its own head states, `gist` = the `<mark>` text, `event_at = 2026-07-28`, two facets (the second carrying `numeric_value 120`), one citation, and four `file_entities` rows: `service:checkout-api`, `person:sanju`, `concept:connection draining`, `lang:bash`.
+That file parses with zero violations and zero warnings, and yields the `content_hash` its own head states, `gist` = the `<mark>` text, `event_at = 2026-07-28`, two facets (the second carrying `numeric_value 120`), one citation, and four `file_entities` rows: `service:checkout-api`, `person:sasha`, `concept:connection draining`, `lang:bash`.
 
 ## The vocabulary and what the indexer does with each element
 
@@ -95,7 +95,7 @@ rel="memhtml-*">` elements become `edges` rows with the leading slash stripped a
 
 An UNLABELED fence is auto-detected, propose-only, at write time (`packages/html/src/detect.ts`). The detector is highlight.js `highlightAuto` over its FULL grammar set, scored as the per-line evidence margin between the winning grammar and its closest real competitor — `1 - exp(-(top - runnerUp) / lines)`, with `runnerUp` zeroed when it normalizes to the same language as the winner, because `pgsql` beating `n1ql` is a dialect duel and not disagreement. `data-lang` is stamped only when confidence reaches **0.30** AND the detection lands in a closed 12-name vocabulary (`typescript`, `javascript`, `python`, `bash`, `json`, `sql`, `yaml`, `html`, `toml`, `css`, `go`, `rust`); otherwise the attribute is simply absent, because wrong metadata reaches `lang:` entities and search while a missing attribute costs nothing. Both gates are independent: hljs will name `smali` at confidence 0.86 for a bash snippet, and confidence says only "this grammar won by a wide margin", never "this grammar is one we stamp".
 
-Neither the threshold nor the formula is a guess. `memhtml-evals` (`results/detector-eval-2026-08-04.json`) swept highlight.js against `flourite` over a 332-snippet corpus of real fences and file slices and took the point where measured precision first reached a 95% floor: threshold `0.28685957116771854`, precision 95.18%, coverage 25.0%. The deployed 0.30 is that point rounded in the safe direction — confidence is monotone in evidence, so a higher threshold can only drop marginal stamps.
+Neither the threshold nor the formula is a guess. `external-evals` (`results/detector-eval-2026-08-04.json`) swept highlight.js against `flourite` over a 332-snippet corpus of real fences and file slices and took the point where measured precision first reached a 95% floor: threshold `0.28685957116771854`, precision 95.18%, coverage 25.0%. The deployed 0.30 is that point rounded in the safe direction — confidence is monotone in evidence, so a higher threshold can only drop marginal stamps.
 
 Fences longer than 4096 characters (`DETECT_MAX_CHARS`) abstain without running the detector at all: `highlightAuto` runs 192 grammars synchronously with super-linear cost (measured ~20s of blocking CPU at 40KB on the pinned build), and the write path shares one single-threaded process with every other request. Abstention above the cap is the same fail-closed "no stamp" as an out-of-vocabulary detection.
 

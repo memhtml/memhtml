@@ -34,7 +34,7 @@ echo "Each is a measured claim a bump can falsify. Re-verify or re-date before t
 echo
 if ! git grep -n -i -E "(probed|measured|verified)[^.]{0,80}\\b${BARE}\\b|\\b${BARE}\\b[^.]{0,80}(probed|measured|verified)" \
   -- '*.ts' '*.mjs' '*.md' '*.json' '*.toml' '*.yml' '*.yaml' \
-  ':!pnpm-lock.yaml' ':!**/dist/**' ':!.erpaval/**'; then
+  ':!pnpm-lock.yaml' ':!**/dist/**' ':!.lessons/**'; then
   echo "(none — no dated probe names this package)"
 fi
 
@@ -58,7 +58,7 @@ fi
 
 echo
 echo "=== reminders ==="
-echo "- .erpaval/** is excluded from the probe sweep on purpose: a lesson records what was"
+echo "- .lessons/** is excluded from the probe sweep on purpose: a lesson records what was"
 echo "  true when written and is not a citation to update. Read it, do not rewrite it."
 echo "- A dated probe may stay at its measured version. What is NOT acceptable is a probe whose claim"
 echo "  the new version contradicts. Check the claim, then either re-date it or fix the code."

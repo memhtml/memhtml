@@ -59,7 +59,7 @@ A secondary effect, visible in the repro: because the escaped markup contains no
 ## Impact
 
 - **Backdating is impossible for agents.** Any memory written through MCP or the CLI sorts by when it was written down, never by when the fact happened — exactly the failure mode the `coalesce` was designed against (`packages/index/src/retrieval-sql.ts:114-116`).
-- **Temporal reasoning degrades in the public benchmark.** The Track B eval harness (`memhtml-evals`, external) ingests LongMemEval sessions whose dataset timestamps are load-bearing for temporal-reasoning questions; its adapter carries a header-comment workaround (`src/adapter/memhtml.ts`) noting the timestamp survives only as body text.
+- **Temporal reasoning degrades in the public benchmark.** The Track B eval harness (`external-evals`, external) ingests LongMemEval sessions whose dataset timestamps are load-bearing for temporal-reasoning questions; its adapter carries a header-comment workaround (`src/adapter/memhtml.ts`) noting the timestamp survives only as body text.
 - **The docs promise what the tools cannot do.** `docs/format.md`'s `<time datetime>` row documents behavior no supported write path can trigger.
 
 ## Fix options

@@ -12,7 +12,7 @@ coverage/
 *.tsbuildinfo
 .env
 .env.local
-.erpaval/sessions/
+.lessons/sessions/
 .codegraph/
 docs/.repomix/
 # Agent scratch from a codebase-understanding pass: derived analysis of the tree, not an artifact of

@@ -333,7 +333,7 @@ them, and each member you list in absorbedKeys is archived once the canonical is
  *
  * Names the three evidence kinds a member block carries, because each one supports a different
  * inference and a model told only "decide if these are the same" would weigh the name string — the
- * signal that is measurably wrong here. `laith` against `laith al-saadoon` is 0.476 by character
+ * signal that is measurably wrong here. `laura` against `laura de-sabelin` is 0.476 by character
  * overlap, below even the review band, while their memory centroids are near-identical.
  *
  * The refusal instruction is load-bearing rather than polite. A cluster this phase acts on rewrites
@@ -360,7 +360,7 @@ Rules:
 - A name that stands alone is its own cluster of one, or you may leave it out. Both mean "no merge".
 - Return an empty clusters list when nothing here is the same subject. Refusing to group is a valid
   and often correct answer.
-- Short name against long name is the case to look for: 'laith' and 'laith al-saadoon' are one person
+- Short name against long name is the case to look for: 'laura' and 'laura de-sabelin' are one person
   when the evidence supports it. Shared prefix is NOT: 'checkout-api' and 'payments-api' are two
   services, and 'metrics-api' and 'metrics-cli' are a service and a tool.
 - Never group two names because their strings are similar. Group them because the evidence says one
