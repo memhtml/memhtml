@@ -72,7 +72,9 @@ describe("the OpenVEX ledger", () => {
     expect(vex.timestamp).toMatch(
       /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/
     )
-    expect(statements.length).toBeGreaterThan(0)
+    // `statements` is required even when nothing is suppressed: an empty list is a ledger that
+    // says so, where a missing field is a document the spec rejects.
+    expect(Array.isArray(vex.statements)).toBe(true)
   })
 
   it("uses only statuses and justifications the spec defines", () => {
