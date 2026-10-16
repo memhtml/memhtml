@@ -38,7 +38,7 @@ The git tree is the system of record. It holds every memory, every authored `<li
 | `index.db`: embeddings, mined edges, chunks, full-text search                                                             | The tree                      | `memhtml index rebuild --embed`. The Bedrock calls are the only real expense. |
 | `state.db`: access counts, reinforcement counts, and the outcome EWMA, a running average of positive and negative signals | The sidecar only              | `memhtml state import`. Anything since the last export is gone.               |
 | The trace tables                                                                                                          | `$MEMHTML_TRACE_ROOT`         | `memhtml trace index` from a zero watermark: slow, and it loses nothing.      |
-| An unmerged `sleep/<date>` branch                                                                                         | Nothing, unless it was pushed | Re-run the sleep cycle. Every phase is safe to repeat.                        |
+| An unmerged `sleep/<date>` branch                                                                                         | Nothing, unless it was pushed | Re-run the sleep cycle from `main`, which the lost run never moved.           |
 
 :::agent
 
