@@ -37,7 +37,7 @@
     "@memhtml/contracts": "workspace:*",
     "ai": "7.0.138",
     "effect": "catalog:",
-    "just-bash": "3.4.2",
+    "just-bash": "3.6.0",
     "zod": "4.6.7"
   },
   "devDependencies": {
