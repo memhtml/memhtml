@@ -81,7 +81,7 @@ import { budgetFor, closeVanishedDetections, detectionKey, mintDetectedTask } fr
  * the rest were reported as vetoes (`roleGuarded` now counts them apart from `vetoed`).
  *
  * **With no model bound the phase is the deterministic floor, unchanged.** It mines at
- * {@link NEAR_DUPLICATE_THRESHOLD}, orients, and hands the pairs to `mergeOutcomes`. That is not a
+ * `NEAR_DUPLICATE_THRESHOLD`, orients, and hands the pairs to `mergeOutcomes`. That is not a
  * degraded mode to be repaired later: a night with no credentials still folds every duplicate a cosine
  * can prove, and every count it reports is what this phase reported before it could call a model.
  *
@@ -117,7 +117,7 @@ import { budgetFor, closeVanishedDetections, detectionKey, mintDetectedTask } fr
 /**
  * The mining floor when a model is bound. RECALL-oriented, and deliberately below the merge floor.
  *
- * A pair between this and {@link NEAR_DUPLICATE_THRESHOLD} is one no cosine can settle: high enough
+ * A pair between this and `NEAR_DUPLICATE_THRESHOLD` is one no cosine can settle: high enough
  * that the two memories are about one thing, not high enough that they are provably one claim. That
  * band is what a semantic reader is for, and the deterministic path cannot see into it at all. Issue
  * #43 measured ~800 pairs at 0.86 on the 2,907-memory production corpus against 77 at 0.92, and those
@@ -193,7 +193,7 @@ export const DEDUP_BATCH_CHARS = DEDUP_MEMBER_CHARS * DEDUP_BATCH_MEMBERS
  * The threshold the batched arm hands `mergeOutcomes`, which must NOT re-gate on similarity.
  *
  * Admission on that arm is already decided when the filter runs. A group pair got there because the
- * model grouped it, and a mined pair got there because it cleared {@link NEAR_DUPLICATE_THRESHOLD} in
+ * model grouped it, and a mined pair got there because it cleared `NEAR_DUPLICATE_THRESHOLD` in
  * the phase's own filter. What is left for `mergeOutcomes` to apply is the veto, the self check, the
  * role guard, and the cap — the four that are about safety rather than about a number.
  *
