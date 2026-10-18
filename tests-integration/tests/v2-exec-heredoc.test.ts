@@ -10,7 +10,8 @@ import { cliEntryPoint } from "./spawned.js"
 
 /**
  * `session exec` driven the way an agent drives it: the BUILT binary, a real temp store, and the
- * script delivered as a heredoc on stdin by a real `/bin/bash` (`docs/v2-poc.md`, "Heredoc scripts").
+ * script delivered as a heredoc on stdin by a real `/bin/bash` (`docs/design.md` §21, "Heredoc
+ * scripts").
  *
  * The heredoc is the point, so it is not simulated by writing a string to the child's stdin: each
  * case hands bash one command line ending in `<<'SH'`, the script, and `SH`, which is the text an

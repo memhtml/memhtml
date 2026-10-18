@@ -10,10 +10,10 @@ import { type Client, cliEntryPoint, connect, handshake, structured } from "./sp
 
 /**
  * `memory_search` and `memory_recall` answered from the head server, over real MCP stdio
- * (`docs/v2-poc.md`, "Search and recall on the head"): the built `memhtml serve mcp` and the built
- * `memhtml head serve` as two processes over one temp store, a record committed after the index's
- * last update, and the same two calls made with the head in reach, with it switched off, and with it
- * stopped.
+ * (`docs/design.md` §22, "Search and recall on the head"): the built `memhtml serve mcp` and the
+ * built `memhtml head serve` as two processes over one temp store, a record committed after the
+ * index's last update, and the same two calls made with the head in reach, with it switched off,
+ * and with it stopped.
  *
  * This is the fleet's failure as a test. Run sessions commit to the store without touching
  * `.memhtml/index.db`, and the gateway's MCP server answered search from that index, so a record a

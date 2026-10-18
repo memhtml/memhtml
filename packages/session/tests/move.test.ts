@@ -23,7 +23,7 @@ import {
 } from "./helpers.js"
 
 /**
- * The `move` op (`docs/v2-poc.md`, "Curator", placement): the one way a record changes path while
+ * The `move` op (`docs/design.md` §17, "Move"): the one way a record changes path while
  * staying the same record.
  *
  * Before it, placement had no correct shape. A `put` of an inbox record's bytes at its new home is a

@@ -226,8 +226,8 @@ describe("manifest", () => {
       "task status",
       "task list",
       /**
-       * The v2 proof of concept (`docs/v2-poc.md`, "CLI commands"): the session family and the head
-       * family, plus `session rebase`, the step the commit path hands back to the caller.
+       * The v2 commands (`docs/design.md` §15, "The command families"): the session family and the
+       * head family, plus `session rebase`, the step the commit path hands back to the caller.
        */
       "session start",
       "session put",
@@ -239,12 +239,12 @@ describe("manifest", () => {
       "head search",
       "head snapshot",
       "head embed",
-      // The head server (`docs/v2-poc.md`, "Head server"): the process the three lookups ask first.
+      // The head server (`docs/design.md` §22): the process the three lookups ask first.
       "head serve",
       /**
-       * The curation door and the curator itself (`docs/v2-poc.md`, "Curation door" and "Curator"):
-       * a curation pass is `curate run` then `curate merge`, so both are pinned as the surface a
-       * caller depends on.
+       * The curation door and the curator itself (`docs/design.md` §23, "The curation door" and
+       * "The curator"): a curation pass is `curate run` then `curate merge`, so both are pinned as
+       * the surface a caller depends on.
        */
       "curate merge",
       "curate run"

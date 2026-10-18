@@ -2,7 +2,7 @@
  * `@memhtml/curator`: the curator memhtml itself owns. A bounded `generateText` tool loop over an
  * injected tool set (`CuratorTools`), the charter it runs under, the budget it runs inside, and the
  * model factory behind `--model`. The binder that gives it a real head, session, and sandbox is
- * `apps/cli/src/curate-run.ts`. See `docs/v2-poc.md`, "Curator".
+ * `apps/cli/src/curate-run.ts`. See `docs/design.md` §23, "The curator".
  */
 
 export {

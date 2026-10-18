@@ -116,7 +116,7 @@ import { loadStorePolicy } from "./store-config.js"
 export type { GateReport } from "./head-gate.js"
 
 /**
- * The v2 proof-of-concept commands (`docs/v2-poc.md`, "CLI commands"): `session start|put|exec|
+ * The v2 commands (`docs/design.md` §15, "The command families"): `session start|put|exec|
  * commit|rebase|status`, `head status|search|snapshot|embed`, and the curation door `curate merge`.
  *
  * ## No app layer
@@ -490,8 +490,8 @@ export interface PreparedPuts {
 /**
  * The scope a session's ops are judged and committed under, from the ref it lands on.
  *
- * A session on `refs/heads/curate/<...>` is the curation door ("Curation door" in
- * `docs/v2-poc.md`: a curator is a session on a curate branch working through `session put` and
+ * A session on `refs/heads/curate/<...>` is the curation door (`docs/design.md` §23,
+ * "The curation door": a curator is a session on a curate branch working through `session put` and
  * `session exec`), so it is judged under the `curate` scope, the scope `curate run`, `curate
  * collapse`, and a `curate merge` replay use: `areas/arcs/` and `resources/people/` are writable and
  * head-only edits (`label`, `link`) on the records there are admitted. Every other ref, `main`
@@ -1585,7 +1585,7 @@ const replayPlan = (input: {
   })
 
 /**
- * `curate merge`: land a curator branch on its target (`docs/v2-poc.md`, "Curation door").
+ * `curate merge`: land a curator branch on its target (`docs/design.md` §23, "The curation door").
  *
  * The order is refusals first, gate second, movement last, so a call that fails leaves the
  * repository exactly as it found it:

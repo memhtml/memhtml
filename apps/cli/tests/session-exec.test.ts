@@ -17,7 +17,7 @@ import {
 } from "../src/session-exec.js"
 
 /**
- * `session exec` (docs/v2-poc.md, "Sandbox over head plus overlay").
+ * `session exec` (`docs/design.md` §21, "The sandbox").
  *
  * The corpus under test is a `HeadView` over a plain `Map`, seeded with 50 records built the way the
  * head package builds them: `renderTemplate` for bytes, `parseMemory` for fields, `contentHash` for

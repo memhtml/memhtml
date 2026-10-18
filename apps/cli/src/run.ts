@@ -1215,9 +1215,9 @@ const isV2Command = (command: string): boolean =>
   command.startsWith("session ") || command.startsWith("head ") || command.startsWith("curate ")
 
 /**
- * The v2 arms that embed (`docs/v2-poc.md`, "Vector arm"): the only ones that bind an embedder. The
- * head server binds it for the `search` and `neighbors` routes it answers in place of the first and
- * the third.
+ * The v2 arms that embed (`docs/design.md` §16, "The vector arm"): the only ones that bind an
+ * embedder. The head server binds it for the `search` and `neighbors` routes it answers in place of
+ * the first and the third.
  */
 const V2_EMBEDDING_COMMANDS: ReadonlySet<string> = new Set([
   "head search",

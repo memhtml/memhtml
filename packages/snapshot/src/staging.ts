@@ -19,7 +19,8 @@ export const bufferOf = (bytes: Uint8Array): Buffer =>
 
 /**
  * How old a staging file is before a sweep removes it. A snapshot of 8,245 records (43 MB) is
- * written in 338 ms (`docs/v2-poc.md`, "Loading from snapshots"), so an hour is no write in flight.
+ * written in 338 ms (`docs/design.md` §20, "Loading from snapshots"), so an hour is no write in
+ * flight.
  */
 export const STAGING_ABANDONED_MS = 60 * 60 * 1000
 

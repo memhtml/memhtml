@@ -1208,11 +1208,11 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     ]
   },
   /**
-   * The v2 proof of concept (`docs/v2-poc.md`): a session is a pointer to one corpus version plus an
-   * overlay log of its own operations, and a commit is mechanical (validate, check disjointness
-   * against the ref, mark frame-key contradictions, write a tree through the session's own git index,
-   * compare-and-swap the ref). None of these commands opens `index.db`: the head is built from git or
-   * from a columnar snapshot on every call, and `head status` says which.
+   * The session family (`docs/design.md` §17): a session is a pointer to one corpus version plus an
+   * overlay log of its own operations, and a commit is mechanical (validate, check that the ref
+   * still names the base, mark frame-key contradictions, write a tree through a temporary git
+   * index, compare-and-swap the ref). None of these commands opens `index.db`: the head comes from
+   * the head server, a columnar snapshot, or git, and every payload that reports a head says which.
    *
    * `--id` names the session everywhere because its state lives under `.memhtml/sessions/<id>`. The one
    * ambient session is `MEMHTML_SESSION`, which an agent runtime exports to every subprocess of a run:
@@ -1488,7 +1488,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     ]
   },
   /**
-   * The head server (`docs/v2-poc.md`, "Head server"). Long-running: it writes its one envelope
+   * The head server (`docs/design.md` §22). Long-running: it writes its one envelope
    * when SIGTERM or SIGINT stops it, and logs to stderr while it serves.
    */
   {
@@ -1547,7 +1547,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     examples: ["memhtml head snapshot --write", "memhtml head snapshot --read"]
   },
   /**
-   * The curation door (`docs/v2-poc.md`, "Curation door"). A curator is a session on a
+   * The curation door (`docs/design.md` §23, "The curation door"). A curator is a session on a
    * `curate/<date>` branch, and this is the one command that moves `main` to what it committed. It
    * never merges: the branch must already be a descendant of the target, so the landing is a
    * fast-forward, and the compare-and-swap on the target ref means a writer that advanced it in
@@ -1589,9 +1589,9 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     ]
   },
   /**
-   * The curator memhtml itself owns (`docs/v2-poc.md`, "Curator"): a bounded, model-driven tool
-   * loop over a curator session on `curate/<date>`, committed to that branch and never to `main`.
-   * `curate merge` is the door back, so a curation pass is these two commands in order.
+   * The curator memhtml itself owns (`docs/design.md` §23, "The curator"): a bounded, model-driven
+   * tool loop over a curator session on `curate/<date>`, committed to that branch and never to
+   * `main`. `curate merge` is the door back, so a curation pass is these two commands in order.
    */
   {
     name: "curate run",
@@ -1655,10 +1655,10 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     ]
   },
   /**
-   * The collapse (`docs/v2-poc.md`, "Collapse"): a planner cuts the corpus into archive, fold, and
-   * keep clusters with no model call, then archive clusters land through validated sessions and each
-   * fold runs one bounded curator session, all on one `curate/` branch. `curate merge` is the door
-   * back, as for `curate run`.
+   * The collapse (`docs/design.md` §23, "The collapse"): a planner cuts the corpus into archive,
+   * fold, and keep clusters with no model call, then archive clusters land through validated
+   * sessions and each fold runs one bounded curator session, all on one `curate/` branch. `curate
+   * merge` is the door back, as for `curate run`.
    */
   {
     name: "curate collapse",

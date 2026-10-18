@@ -5,7 +5,7 @@ import { HEAD_SOCKET } from "@memhtml/session"
 import { Schema } from "effect"
 
 /**
- * The head server's wire contract (`docs/v2-poc.md`, "Head server"): JSON over HTTP on a Unix domain
+ * The head server's wire contract (`docs/design.md` §22): JSON over HTTP on a Unix domain
  * socket inside the store (a named pipe derived from the store path under win32,
  * {@link headEndpoint}), seven routes under one version prefix.
  *
@@ -132,7 +132,7 @@ export const EMBED_DEADLINE_VAR = "MEMHTML_EMBED_DEADLINE_MS"
 /**
  * How long without an embed before the server warms the embed path, in milliseconds: `0`, off, by
  * default. Probed 2026-09-28 through an LLM proxy, no idle gap up to 900 s made the next embed
- * slower (`docs/v2-poc.md`, "Keeping the embed path warm"), and a warmup every 45 s costs about
+ * slower (`docs/design.md` §22, "Keeping the embed path warm"), and a warmup every 45 s costs about
  * 1,900 billed one-token embeds a day per server, so the warmup is for a deployment whose proxy
  * drops idle connections: set {@link EMBED_WARM_IDLE_VAR} to an idle bound shorter than the proxy's
  * idle timeout (45,000 keeps a pool with a timeout of a minute or more warm).

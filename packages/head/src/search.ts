@@ -35,7 +35,7 @@ import { tokenize } from "./lexical.js"
  * it. Smaller weights land near the same numbers (0.05 scored 0.9374 and 0.9410 without the vector
  * arm), but without shared ranks no weight small enough to be a tie-break lets a newer twin win,
  * and letting recency reorder hits within 0.0003 of each other dropped two-arm MRR at the base to
- * 0.6769 (docs/v2-poc.md, "Recency as the tie-break").
+ * 0.6769 (`docs/design.md` §16, "Recency as the tie-break").
  *
  * The function stays pure: it never embeds. The caller owns the vectors (keyed by content hash, see
  * `vectors.ts`) and the query vector, so a search with neither is the lexical search exactly.
@@ -74,7 +74,7 @@ export const VECTOR_ARM_LIMIT = DEFAULT_ARM_LIMIT
  * BM25 scores every record that shares one token with the query, so uncapped the arm voted for
  * hundreds of records on the live clone, and each weak match collected RRF mass that a record
  * found by meaning alone could not: a paraphrase whose target was second in the vector arm ranked
- * it 31st overall (docs/v2-poc.md, "Vector arm").
+ * it 31st overall (`docs/design.md` §16, "The vector arm").
  */
 export const LEXICAL_ARM_LIMIT = DEFAULT_ARM_LIMIT
 export const DEFAULT_LIMIT = 10

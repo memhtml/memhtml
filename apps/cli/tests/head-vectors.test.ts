@@ -16,10 +16,10 @@ import { run } from "../src/run.js"
 import { failingEmbedder, fakeEmbedder, fakeVector, noEmbedder } from "./harness.js"
 
 /**
- * The vector arm through the CLI (`docs/v2-poc.md`, "Vector arm"): `head embed` filling the cache,
- * `head search` and `session put` using it, and the degraded answer each gives when it cannot. The
- * embedder is the deterministic fake `run` takes as its last argument, the same one the harness binds
- * for v1; nothing here reaches the network.
+ * The vector arm through the CLI (`docs/design.md` §20, "The vector cache"): `head embed` filling
+ * the cache, `head search` and `session put` using it, and the degraded answer each gives when it
+ * cannot. The embedder is the deterministic fake `run` takes as its last argument, the same one the
+ * harness binds for v1; nothing here reaches the network.
  *
  * Mutations, each run once with the change applied and the named case red:
  * - `embedHead`: drop the `ensureExcludedQuietly` call -> "head embed leaves git status clean in a

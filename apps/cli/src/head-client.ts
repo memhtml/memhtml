@@ -8,7 +8,7 @@ import { HttpClient, HttpClientRequest } from "effect/http"
 import { HEAD_ROUTES, type HeadRoute, headEndpoint, socketPathTooLong } from "./head-protocol.js"
 
 /**
- * The client half of the head server (`docs/v2-poc.md`, "Head server"): one request over the
+ * The client half of the head server (`docs/design.md` §22): one request over the
  * store's socket, answered or not.
  *
  * {@link askHead} never fails. `null` means no server answered, for any reason: no socket file, a

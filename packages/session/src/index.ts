@@ -1,6 +1,6 @@
 /**
  * `@memhtml/session`: a session's overlay log and the mechanical commit path that lands it on a
- * ref through the session's own git index file. See `docs/v2-poc.md`.
+ * ref through a temporary git index. See `docs/design.md` §17.
  */
 
 export { checkoutLockTarget, withCheckoutLock } from "./checkout-lock.js"

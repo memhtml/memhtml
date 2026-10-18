@@ -26,8 +26,7 @@ import {
 import type { ExecLang } from "./exec-lang.js"
 
 /**
- * `session exec`: the v2 sandbox over head plus overlay (`docs/v2-poc.md`, "Sandbox over head plus
- * overlay").
+ * `session exec`: the v2 sandbox over head plus overlay (`docs/design.md` §21).
  *
  * `memhtml exec` mounts a pinned git worktree read-only and offers no write path. This runtime differs
  * on both counts and keeps everything else: the guest filesystem is seeded from `view.records()`

@@ -30,10 +30,10 @@ import { type LoadedHead, revParse } from "../src/v2.js"
 import { STRICT_POLICY } from "./strict-store.js"
 
 /**
- * The usage guards `memhtml curate run` adds (`docs/v2-poc.md`, "Curator"). Every exit-2 case here
- * is decided before a repo opens; the one exit-1 case (`--resume` over a missing session) reaches the
- * session package and is a storage refusal, not a usage error, because the call was well-formed and
- * the thing it named is absent.
+ * The usage guards `memhtml curate run` adds (`docs/design.md` §23, "The curator"). Every exit-2
+ * case here is decided before a repo opens; the one exit-1 case (`--resume` over a missing session)
+ * reaches the session package and is a storage refusal, not a usage error, because the call was
+ * well-formed and the thing it named is absent.
  *
  * Mutations, each run once with the change applied and the named case red (2026-09-23):
  * - `run.ts` `validateAgainst`: `curateRunFlags` result replaced with `undefined` -> "a --model

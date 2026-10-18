@@ -57,8 +57,8 @@ import {
 } from "./v2.js"
 
 /**
- * `memhtml curate run`: the binder between `@memhtml/curator` and this app (`docs/v2-poc.md`,
- * "Curator").
+ * `memhtml curate run`: the binder between `@memhtml/curator` and this app (`docs/design.md`
+ * §23, "The curator").
  *
  * The package owns the loop, the charter, the budget, and the model factory, and takes its tools as
  * an interface because the sandbox helper (`runSessionExec`) lives here and a package cannot import

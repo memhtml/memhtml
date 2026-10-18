@@ -10,9 +10,10 @@ import { EXIT_RUNTIME, EXIT_USAGE, RESPONSE_TYPES } from "../src/envelope.js"
 import { parseArgv, run, validate } from "../src/run.js"
 
 /**
- * The usage guards `run.ts` adds for the v2 commands (`docs/v2-poc.md`, "CLI commands"). Every case
- * here is exit 2 and never touches a repo: the point of a guard in `validate` is that a wrong call is
- * refused before any service is built, and a refusal raised any later would be masked as exit 1.
+ * The usage guards `run.ts` adds for the v2 commands (`docs/design.md` §15, "The command
+ * families"). Every case here is exit 2 and never touches a repo: the point of a guard in
+ * `validate` is that a wrong call is refused before any service is built, and a refusal raised any
+ * later would be masked as exit 1.
  *
  * Mutations, each run once with the change applied and the named case red:
  * - drop the `headSnapshotFlags(parsed)` call from `validateAgainst` -> "head snapshot takes exactly

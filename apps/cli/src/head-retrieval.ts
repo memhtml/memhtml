@@ -17,8 +17,8 @@ import { type HeadScope, MCP_HEAD_VAR, SearchAnswer } from "./head-protocol.js"
 import type { RecallParams, SearchParams } from "./operations.js"
 
 /**
- * `memory_search` and `memory_recall` answered from the head server (`docs/v2-poc.md`, "Search and
- * recall on the head"), for the MCP server the gateway runs.
+ * `memory_search` and `memory_recall` answered from the head server (`docs/design.md` §22, "Search
+ * and recall on the head"), for the MCP server the gateway runs.
  *
  * The index (`.memhtml/index.db`) is a projection someone has to update; the head server follows the
  * ref and never lags it. A record a run session commits is in the head's next answer and in the

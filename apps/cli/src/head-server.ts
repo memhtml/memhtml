@@ -95,7 +95,7 @@ import {
 
 /**
  * `memhtml head serve`: one process that holds the head loaded and answers lookups over the store's
- * socket (`docs/v2-poc.md`, "Head server").
+ * socket (`docs/design.md` §22).
  *
  * ## The version it holds
  *

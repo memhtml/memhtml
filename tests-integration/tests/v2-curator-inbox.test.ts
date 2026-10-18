@@ -8,11 +8,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { type Cli, makeCli } from "./harness.js"
 
 /**
- * Placement end to end (`docs/v2-poc.md`, "Curator"): `curate run --model fake` over a fixture whose
- * inbox holds one record with an obvious home files it there with one `move`, the arc that cited it
- * follows it through an `unlink` and a `link` the binder added, and nothing dangles; then `main`
- * gains a fleet record citing the old path, and `curate merge` replays the branch onto that tip,
- * completes the repoint for the new edge too, and lands through the head gate.
+ * Placement end to end (`docs/design.md` §23, "The curator"): `curate run --model fake` over a
+ * fixture whose inbox holds one record with an obvious home files it there with one `move`, the arc
+ * that cited it follows it through an `unlink` and a `link` the binder added, and nothing dangles;
+ * then `main` gains a fleet record citing the old path, and `curate merge` replays the branch onto
+ * that tip, completes the repoint for the new edge too, and lands through the head gate.
  *
  * Every claim about the tree is read back with `git`, independently of the payloads.
  *

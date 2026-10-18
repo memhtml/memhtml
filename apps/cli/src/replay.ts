@@ -8,9 +8,10 @@ import { Effect, Result } from "effect"
 import { harvestOps } from "./session-exec.js"
 
 /**
- * Replay for `curate merge` (`docs/v2-poc.md`, "Curation door"): the curator's operation log,
- * reconstructed from the trees at the merge base and at the curate ref's tip, so a branch whose
- * base `main` has moved past can be landed as a fresh session on `main` instead of a fast-forward.
+ * Replay for `curate merge` (`docs/design.md` §23, "The curation door"): the curator's operation
+ * log, reconstructed from the trees at the merge base and at the curate ref's tip, so a branch
+ * whose base `main` has moved past can be landed as a fresh session on `main` instead of a
+ * fast-forward.
  *
  * A commit on a curate ref is a pure function of overlay ops (`commitSession` stages puts, archive
  * copies with head-only stamps, and head-only link and entity splices, and nothing else), so the

@@ -13,9 +13,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { type Cli, makeCli } from "./harness.js"
 
 /**
- * The curation door end to end (`docs/v2-poc.md`, "Curation door"): a curator is a session on a
- * `curate/<name>` branch, its first commit creates the branch, and `curate merge` lands the branch
- * on `main` behind the gate with the checkout following.
+ * The curation door end to end (`docs/design.md` §23, "The curation door"): a curator is a session
+ * on a `curate/<name>` branch, its first commit creates the branch, and `curate merge` lands the
+ * branch on `main` behind the gate with the checkout following.
  *
  * Every ref position below is read back with `rev-parse` and every working-tree claim with
  * `access` and `status --porcelain`, independently of the payload under test. A payload that said
