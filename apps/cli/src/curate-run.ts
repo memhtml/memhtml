@@ -42,7 +42,7 @@ import {
   withRepoints
 } from "@memhtml/session"
 import { type GitFailure, makeGit } from "@memhtml/store"
-import { Effect } from "effect"
+import { type Context, Effect } from "effect"
 
 import { type SnapshotWritten, snapshotAfterCommit } from "./head-cache.js"
 import { runSessionExec } from "./session-exec.js"
@@ -360,11 +360,18 @@ export const bindTools = (input: {
   readonly ref: string
   /** The store's write bar (`memhtml.config.json`), every proposal and harvest judged against it. */
   readonly writeBar: WriteBarPolicy
+  /**
+   * The calling fiber's context (`Effect.context()`), which every tool call runs with, so what a
+   * call logs goes through the command's logger to stderr. Absent, a call runs with the default
+   * context, whose logger writes to stdout, where it would land ahead of the command's envelope.
+   */
+  readonly context?: Context.Context<never> | undefined
 }): CuratorTools => {
   const base = input.head.view
   const current = (): Effect.Effect<HeadView, InvalidMemoryType> =>
     withOverlay(base, input.overlay.ops())
-  const promise = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
+  const promise: <A, E>(effect: Effect.Effect<A, E>) => Promise<A> =
+    input.context === undefined ? Effect.runPromise : Effect.runPromiseWith(input.context)
 
   /**
    * Judge `ops` on top of what the overlay already holds. `violations` is everything `validateOps`
@@ -610,7 +617,13 @@ export const curateRun = (
       writerBuckets: policy.curator.writerBuckets,
       placementQuota: policy.curator.placementQuota
     })
-    const tools = bindTools({ head, overlay, ref, writeBar: policy.writeBar })
+    const tools = bindTools({
+      head,
+      overlay,
+      ref,
+      writeBar: policy.writeBar,
+      context: yield* Effect.context<never>()
+    })
 
     const run: CuratorRun = yield* runCurator({
       tools,

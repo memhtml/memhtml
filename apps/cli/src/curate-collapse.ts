@@ -34,7 +34,7 @@ import {
   validateOps
 } from "@memhtml/session"
 import { type GitFailure, makeGit } from "@memhtml/store"
-import { Effect } from "effect"
+import { Effect, Semaphore } from "effect"
 
 import {
   bindTools,
@@ -272,6 +272,10 @@ export interface HeadCache {
  * the first load came from a snapshot, and as `git` otherwise. `skipped` is known only for a git
  * load, as in `loadHeadAt`. The shape is the one `loadHeadAt` returns, so a payload built from
  * either reads the same.
+ *
+ * One load runs at a time (a one-permit semaphore), and a call that finds the held version at its
+ * sha answers at once. Every load runs in the calling fiber, so it logs through the command's
+ * logger to stderr: a load run on its own runtime logged to stdout, ahead of the envelope.
  */
 export const makeHeadCache = (root: string): HeadCache => {
   interface Held {
@@ -282,7 +286,7 @@ export const makeHeadCache = (root: string): HeadCache => {
     readonly reparsed: number | null
   }
   let held: Held | null = null
-  let inflight: Promise<Held> | null = null
+  const loading = Semaphore.makeUnsafe(1)
   const git = makeGit(root)
   const asLoaded = (current: Held, loadMs: number): LoadedHead => ({
     view: current.version,
@@ -295,53 +299,56 @@ export const makeHeadCache = (root: string): HeadCache => {
     ancestorSha: current.ancestorSha,
     reparsed: current.reparsed
   })
-  const load = (sha: string): Promise<Held> => {
+  const load = (sha: string): Effect.Effect<Held, GitFailure | InvalidMemory | StorageFailure> => {
     const previous = held
-    const next: Effect.Effect<Held, GitFailure | InvalidMemory | StorageFailure> =
-      previous === null
-        ? loadVersion(root, sha).pipe(
-            Effect.map((loaded) => ({
-              version: loaded.version,
-              source: loaded.source,
-              snapshotPath: loaded.snapshotPath,
-              ancestorSha: loaded.ancestorSha,
-              reparsed: loaded.reparsed
-            }))
-          )
-        : advanceHead(git, previous.version, sha).pipe(
-            Effect.map((version) => ({
-              version,
-              source: previous.source === "git" ? "git" : "snapshot+advance",
-              snapshotPath: previous.snapshotPath,
-              ancestorSha: previous.source === "git" ? null : previous.version.sha,
-              reparsed: null
-            }))
-          )
-    return Effect.runPromise(next).then((current) => {
-      held = current
-      return current
-    })
+    return previous === null
+      ? loadVersion(root, sha).pipe(
+          Effect.map((loaded) => ({
+            version: loaded.version,
+            source: loaded.source,
+            snapshotPath: loaded.snapshotPath,
+            ancestorSha: loaded.ancestorSha,
+            reparsed: loaded.reparsed
+          }))
+        )
+      : advanceHead(git, previous.version, sha).pipe(
+          Effect.map((version) => ({
+            version,
+            source: previous.source === "git" ? "git" : "snapshot+advance",
+            snapshotPath: previous.snapshotPath,
+            ancestorSha: previous.source === "git" ? null : previous.version.sha,
+            reparsed: null
+          }))
+        )
   }
+  const heldAt = (sha: string): Held | null =>
+    held !== null && held.version.sha === sha ? held : null
   return {
     at: (sha) =>
-      Effect.tryPromise({
-        try: async () => {
-          const started = Date.now()
-          for (;;) {
-            if (held !== null && held.version.sha === sha) return asLoaded(held, 0)
-            if (inflight === null) break
-            await inflight.catch(() => undefined)
-          }
-          inflight = load(sha)
-          try {
-            return asLoaded(await inflight, Date.now() - started)
-          } finally {
-            inflight = null
-          }
-        },
-        catch: (cause) =>
+      Effect.suspend(() => {
+        const hit = heldAt(sha)
+        if (hit !== null) return Effect.succeed(asLoaded(hit, 0))
+        const started = Date.now()
+        return loading.withPermits(1)(
+          Effect.suspend(() => {
+            // Another call may have loaded this sha while this one waited for the permit.
+            const waited = heldAt(sha)
+            if (waited !== null) return Effect.succeed(asLoaded(waited, 0))
+            return load(sha).pipe(
+              Effect.map((current) => {
+                held = current
+                return asLoaded(current, Date.now() - started)
+              })
+            )
+          })
+        )
+      }).pipe(
+        // A load's failure, typed or thrown, is the cluster's to report, as it always was.
+        Effect.catchDefect((defect) => Effect.fail(defect)),
+        Effect.mapError((cause: unknown) =>
           InvalidMemory.make({ reason: `curate collapse: loading ${sha}: ${describeError(cause)}` })
-      })
+        )
+      )
   }
 }
 
@@ -652,7 +659,8 @@ const foldCluster = (
         head: loaded,
         overlay,
         ref: driver.ref,
-        writeBar: driver.writeBar
+        writeBar: driver.writeBar,
+        context: yield* Effect.context<never>()
       })
       const run = yield* runCurator({ tools, model, briefing, charter, budget, now: driver.now })
       const spent = {

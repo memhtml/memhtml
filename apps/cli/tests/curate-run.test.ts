@@ -12,7 +12,7 @@ import { PROXY_BASE_URL_VAR } from "@memhtml/llm"
 import { UNANCHORED_REASON, validateOps } from "@memhtml/session"
 import { makeGit } from "@memhtml/store"
 import { configureIdentity } from "@memhtml/store/testing"
-import { Effect } from "effect"
+import { Effect, Logger } from "effect"
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import {
@@ -22,7 +22,8 @@ import {
   curateRun,
   curateSessionId,
   defaultCurateRef,
-  memoryOverlay
+  memoryOverlay,
+  type Overlay
 } from "../src/curate-run.js"
 import { EXIT_RUNTIME, EXIT_USAGE } from "../src/envelope.js"
 import { parseArgv, run, validate } from "../src/run.js"
@@ -61,6 +62,9 @@ import { STRICT_POLICY } from "./strict-store.js"
  *   reach is exit 1 with ERR_MODEL_UNAVAILABLE" (the run answers exit 0 with `no-ops`). The case
  *   takes about six seconds: the AI SDK retries a refused connection twice with backoff before the
  *   loop sees the failure.
+ * - `curate-run.ts` `bindTools` (2026-10-18): `promise` runs every call through `Effect.runPromise`,
+ *   ignoring `context` -> "a tool call logs through the logger of the fiber that bound it" (the line
+ *   goes to the default logger, on stdout, and the captured list is empty).
  */
 
 const parse = (stdout: string): Record<string, unknown> =>
@@ -776,6 +780,36 @@ describe("the propose and exec tools move a record", () => {
     expect(result.appended).toBe(3)
     expect(validateOps(head.view, overlay.ops(), { scope: "curate" })).toEqual([])
   }, 120_000)
+})
+
+describe("the tools run with the context of the fiber that bound them", () => {
+  it("a tool call logs through the logger of the fiber that bound it", async () => {
+    const lines: Array<string> = []
+    const capture = Logger.layer([Logger.make((options) => lines.push(String(options.message)))])
+    const kept = memoryOverlay()
+    const overlay: Overlay = {
+      ...kept,
+      append: (ops) =>
+        Effect.logWarning(`append ${String(ops.length)}`).pipe(Effect.andThen(kept.append(ops)))
+    }
+    const tools = await Effect.runPromise(
+      Effect.context<never>().pipe(
+        Effect.map((context) =>
+          bindTools({
+            head: headOver([]),
+            overlay,
+            ref: "refs/heads/curate/2026-10-18",
+            writeBar: DEFAULT_WRITE_BAR,
+            context
+          })
+        ),
+        Effect.provide(capture)
+      )
+    )
+    // The model calls a tool from outside any fiber; the call still logs where the binder logs.
+    expect(await tools.propose([])).toEqual({ appended: 0, violations: [] })
+    expect(lines).toEqual(["append 0"])
+  })
 })
 
 describe("the ref and the subject", () => {
