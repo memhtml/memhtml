@@ -46,6 +46,7 @@ import {
   type OpsByKind,
   sessionOverlay
 } from "./curate-run.js"
+import { messageFor } from "./errors.js"
 import {
   type HeadSource,
   loadVersion,
@@ -229,15 +230,13 @@ const describeViolation = (violation: Violation): string => {
   }
 }
 
+/**
+ * A failure as text for a cluster's `error` or a wrapping reason. A tagged error's `message` is
+ * empty, so it goes through `messageFor`, which reads its payload the way the envelope does.
+ */
 const describeError = (cause: unknown): string => {
+  if (typeof cause === "object" && cause !== null && "_tag" in cause) return messageFor(cause)
   if (cause instanceof Error) return cause.message
-  if (typeof cause === "object" && cause !== null) {
-    const record = cause as Record<string, unknown>
-    const parts = [record._tag, record.reason, record.operation, record.message]
-      .filter((part): part is string => typeof part === "string" && part !== "")
-      .map(String)
-    if (parts.length > 0) return parts.join(": ")
-  }
   return String(cause)
 }
 

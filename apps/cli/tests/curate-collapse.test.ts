@@ -453,4 +453,20 @@ describe("curate collapse's refusals", () => {
     expect(body.code).toBe("ERR_INVALID_MEMORY")
     expect(body.error).toContain("checked out")
   }, 120_000)
+
+  it("names a failed cluster's cause in its error, for a typed failure as for any other", async () => {
+    // A plain file where the session directory goes makes every cluster's session write fail with
+    // a typed StorageFailure, whose `message` is empty: the report must carry its payload instead.
+    root = await freshRepo()
+    await mkdir(join(root, ".memhtml"), { recursive: true })
+    await writeFile(join(root, ".memhtml", "sessions"), "not a directory\n", "utf8")
+    const result = await collapse("--ref", REF, "--rulings", join(work, "rulings.jsonl"))
+    expect(result.exitCode, result.stdout).toBe(EXIT_OK)
+    const data = parse<Envelope>(result.stdout).data as CurateCollapseReport
+    const failed = data.clusters.filter((cluster) => cluster.outcome === "failed")
+    expect(failed.length, JSON.stringify(data.clusters)).toBeGreaterThan(0)
+    for (const cluster of failed) {
+      expect(cluster.error, cluster.id).toMatch(/^storage operation failed: \S/)
+    }
+  }, 120_000)
 })
