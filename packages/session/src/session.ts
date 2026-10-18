@@ -159,25 +159,48 @@ const checkId = (id: string): Effect.Effect<void, StorageFailure> =>
 const ensureDir = (root: string): Effect.Effect<void, StorageFailure> =>
   attemptIo("session.mkdir", () => mkdir(join(root, SESSIONS_DIR), { recursive: true }))
 
+/** Test seams for {@link withSessionLock}. */
+export interface SessionLockOptions {
+  /**
+   * How often the holder refreshes the lock's mtime, in milliseconds; proper-lockfile's default (half
+   * of {@link SESSION_LOCK_STALE_MS}) unless a test shortens it to see a refresh happen.
+   */
+  readonly updateMs?: number | undefined
+}
+
 /**
  * Run `effect` holding the session's exclusive lock. A lock already held fails with
  * `session.locked` at once rather than waiting: the holder is another writer of the same id, and
  * the right answer for a double-submitted command is a refusal, not a second commit.
+ *
+ * A lock that is compromised while held (its directory removed, or its mtime moved by another
+ * writer that judged it stale, because this holder missed its refreshes for
+ * {@link SESSION_LOCK_STALE_MS}) is logged as a warning when the holder finishes, rather than
+ * proper-lockfile's default of throwing from its refresh timer, which would kill the process
+ * mid-commit: in `head serve` that is every request in flight. The effect runs to its end either
+ * way, as it would have without the lock's loss being noticed; the release that follows touches
+ * nothing another writer took.
  */
 export const withSessionLock = <A, E, R>(
   root: string,
   id: string,
-  effect: Effect.Effect<A, E, R>
+  effect: Effect.Effect<A, E, R>,
+  options: SessionLockOptions = {}
 ): Effect.Effect<A, E | StorageFailure, R> =>
   Effect.gen(function* () {
     yield* checkId(id)
     yield* ensureDir(root)
-    const release = yield* Effect.tryPromise({
+    let compromised: string | null = null
+    const acquire = Effect.tryPromise({
       try: () =>
         lock(sessionLockTarget(root, id), {
           realpath: false,
           retries: 0,
-          stale: SESSION_LOCK_STALE_MS
+          stale: SESSION_LOCK_STALE_MS,
+          ...(options.updateMs === undefined ? {} : { update: options.updateMs }),
+          onCompromised: (error) => {
+            compromised = error.message
+          }
         }),
       catch: (cause) => cause
     }).pipe(
@@ -188,8 +211,21 @@ export const withSessionLock = <A, E, R>(
       ),
       Effect.mapError(() => StorageFailure.make({ operation: "session.locked" }))
     )
-    return yield* effect.pipe(
-      Effect.ensuring(Effect.promise(() => release().catch(() => undefined)))
+    return yield* Effect.acquireUseRelease(
+      acquire,
+      () => effect,
+      (release) =>
+        Effect.promise(() => release().catch(() => undefined)).pipe(
+          Effect.andThen(
+            Effect.suspend(() =>
+              compromised === null
+                ? Effect.void
+                : Effect.logWarning(
+                    `session ${id}: its lock ${sessionLockTarget(root, id)}.lock was compromised while held (${compromised}); another writer may have written the log meanwhile`
+                  )
+            )
+          )
+        )
     )
   })
 

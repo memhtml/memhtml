@@ -1,7 +1,7 @@
-import { mkdir, readdir, readFile, stat, utimes, writeFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import type { OverlayOp } from "@memhtml/contracts"
-import { Effect, Result } from "effect"
+import { Effect, Logger, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { commitSession } from "../src/commit.js"
@@ -15,7 +15,8 @@ import {
   SESSIONS_DIR,
   saveSession,
   sessionStateFile,
-  startSession
+  startSession,
+  withSessionLock
 } from "../src/session.js"
 import { commitFiles, loadHead, makeRepo, mapHead, memory, type Repo } from "./helpers.js"
 
@@ -257,6 +258,50 @@ describe("withSessionLock", () => {
     expect((await run(appendOps(started, [op]))).ops).toHaveLength(1)
     // The reclaiming writer released its own lock, so the directory is gone.
     await expect(stat(lockDir)).rejects.toThrow()
+  })
+
+  /**
+   * A held lock whose directory is removed under it (a prune, or a writer that judged it stale):
+   * proper-lockfile's refresh finds it gone and calls `onCompromised`, whose default throws from the
+   * timer, an uncaught exception that would end `head serve` mid-commit.
+   * Mutation: drop the `onCompromised` option -> the exception reaches the process (`uncaught` holds
+   * it, and vitest reports it as unhandled) and no warning is logged.
+   */
+  it("survives a held lock that is compromised: nothing is thrown, the holder finishes, and a warning names the lock", async () => {
+    const { root, head } = await seeded()
+    await run(startSession({ root, id: "lost", base: head }))
+    const lockDir = join(root, SESSIONS_DIR, "lost.lock")
+    const uncaught: Array<unknown> = []
+    const onUncaught = (error: unknown) => {
+      uncaught.push(error)
+    }
+    process.on("uncaughtException", onUncaught)
+    const logs: Array<string> = []
+    const capture = Logger.layer([Logger.make((options) => logs.push(String(options.message)))])
+    try {
+      const held = withSessionLock(
+        root,
+        "lost",
+        Effect.gen(function* () {
+          yield* Effect.promise(() => rm(lockDir, { recursive: true, force: true }))
+          // Past one refresh, which finds the directory gone.
+          yield* Effect.sleep("1500 millis")
+          return "finished"
+        }),
+        { updateMs: 1_000 }
+      )
+      expect(await run(held.pipe(Effect.provide(capture)))).toBe("finished")
+    } finally {
+      process.off("uncaughtException", onUncaught)
+    }
+    expect(uncaught).toEqual([])
+    expect(
+      logs.filter(
+        (line) => line.startsWith("session lost: its lock") && line.includes("compromised")
+      )
+    ).toHaveLength(1)
+    // The next writer of the id takes the lock as usual.
+    expect(await run(withSessionLock(root, "lost", Effect.succeed("again")))).toBe("again")
   })
 })
 

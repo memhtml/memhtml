@@ -51,6 +51,7 @@ export {
   SESSION_REFS_PREFIX,
   SESSIONS_DIR,
   type Session,
+  type SessionLockOptions,
   saveSession,
   sessionStateFile,
   startSession,
