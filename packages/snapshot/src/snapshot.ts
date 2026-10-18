@@ -9,8 +9,10 @@
  *
  * The schema is declared once in `FIELDS`; the writer and the reader both walk that list, and the
  * reader refuses a file whose format version or schema differs from it, so a stale or foreign
- * `.arrow` file becomes a `StorageFailure` rather than a table of undefined cells. A caller loading
- * the head treats every such refusal as a cache miss (`apps/cli/src/head-cache.ts`).
+ * `.arrow` file becomes a `StorageFailure` rather than a table of undefined cells. A file with no
+ * format key was written before the key existed, in the layout format "1" names, and reads as
+ * format "1". A caller loading the head treats every refusal as a cache miss
+ * (`apps/cli/src/head-cache.ts`).
  */
 import { mkdir, readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
@@ -52,10 +54,18 @@ export const FORMAT_METADATA_KEY = "format"
 /**
  * The version of the layout `FIELDS` declares, as the schema metadata stores it. It moves with any
  * change a reader of the previous layout would misread (a column added, removed, retyped, or
- * reordered, or a cell's meaning changed). A file with no format, or another one, is refused
- * (`snapshot.read.format`), and the head load reads it as a cache miss.
+ * reordered, or a cell's meaning changed). A file naming another format is refused
+ * (`snapshot.read.format`), and the head load reads it as a cache miss; a file naming none reads as
+ * {@link UNVERSIONED_FORMAT}.
  */
 export const SNAPSHOT_FORMAT = "1"
+
+/**
+ * The format of a snapshot with no format key: the layout written before the key existed, which is
+ * the layout format "1" describes. Fixed at "1" rather than tied to {@link SNAPSHOT_FORMAT}, so a
+ * later format still refuses those files. The next write of that sha carries the key.
+ */
+const UNVERSIONED_FORMAT = "1"
 
 type LinkColumns = { rel: Utf8; href: Utf8 }
 type FacetColumns = { name: Utf8; value: Utf8 }
@@ -461,13 +471,9 @@ const decodeSnapshot = (
       tableFromIPC<SnapshotColumns>(buffer)
     )
     // The version first: a file of another layout may hold anything under the other keys.
-    const format = table.schema.metadata.get(FORMAT_METADATA_KEY)
+    const format = table.schema.metadata.get(FORMAT_METADATA_KEY) ?? UNVERSIONED_FORMAT
     if (format !== SNAPSHOT_FORMAT) {
-      return yield* refused(
-        path,
-        "read.format",
-        `is ${format === undefined ? "of no format version" : `format ${format}`}, not ${SNAPSHOT_FORMAT}`
-      )
+      return yield* refused(path, "read.format", `is format ${format}, not ${SNAPSHOT_FORMAT}`)
     }
     const sha = table.schema.metadata.get(SHA_METADATA_KEY)
     if (sha === undefined) {
@@ -489,8 +495,9 @@ const decodeSnapshot = (
 /**
  * Open the snapshot at `path` and materialize every row. Each refusal is a `StorageFailure` whose
  * `operation` names the step: `snapshot.read.file` (unreadable path), `snapshot.read.decode` (not an
- * Arrow IPC file, or truncated), `snapshot.read.format` (no format version in the schema metadata,
- * or another than {@link SNAPSHOT_FORMAT}), `snapshot.read.sha` (no sha in the schema metadata),
+ * Arrow IPC file, or truncated), `snapshot.read.format` (the schema metadata names a format other
+ * than {@link SNAPSHOT_FORMAT}; one that names none is format "1"), `snapshot.read.sha` (no sha in
+ * the schema metadata),
  * `snapshot.read.schema` (columns differ from `FIELDS` by name, type, nullability, or order), and
  * `snapshot.read.rows` (a cell the schema says cannot be null is).
  */

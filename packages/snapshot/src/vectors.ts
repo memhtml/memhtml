@@ -13,9 +13,10 @@
  * float. The writer builds that one array and the column over it with `makeData` rather than a
  * builder, which would box eight million numbers on the way in.
  *
- * The layout's version is in the metadata too ({@link VECTOR_CACHE_FORMAT}). A file with none, or
- * another, is a cache miss: the reader answers `null`, as for no file, and the next `head embed`
- * writes the file whole in this layout.
+ * The layout's version is in the metadata too ({@link VECTOR_CACHE_FORMAT}). A file naming another
+ * is a cache miss: the reader answers `null`, as for no file, and the next `head embed` writes the
+ * file whole in this layout. A file naming none was written before the key existed, in the layout
+ * format "1" describes, and reads as format "1"; the next write of it carries the key.
  */
 import { mkdir, readFile } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
@@ -49,6 +50,13 @@ export const VECTOR_FORMAT_METADATA_KEY = "format"
  * stores it. It moves with any change a reader of the previous layout would misread.
  */
 export const VECTOR_CACHE_FORMAT = "1"
+
+/**
+ * The format of a cache with no format key: the layout written before the key existed, which is the
+ * layout format "1" describes. Fixed at "1" rather than tied to {@link VECTOR_CACHE_FORMAT}, so a
+ * later format still reads those files as absent.
+ */
+const UNVERSIONED_FORMAT = "1"
 
 /** Schema metadata key holding the embedder's model id. */
 export const MODEL_ID_METADATA_KEY = "modelId"
@@ -184,8 +192,9 @@ export interface ReadVectors extends StoredVectors {
 
 /**
  * Open the cache at `path` for `space`. A missing file is `null`, the answer for a store nobody has
- * embedded yet, and so is a file whose metadata names no format version or another than
+ * embedded yet, and so is a file whose metadata names a format other than
  * {@link VECTOR_CACHE_FORMAT}: a cache of another layout is a miss, with a warning, not a failure.
+ * A file whose metadata names no format is format "1" ({@link UNVERSIONED_FORMAT}).
  * Every other refusal is a `StorageFailure` whose `operation` names the step: `vectors.read.file`
  * (unreadable), `vectors.read.decode` (not an Arrow IPC file, or truncated), `vectors.read.space`
  * (the metadata names another model id or dimension, or none), and `vectors.read.schema` (columns
@@ -206,10 +215,10 @@ export const readVectorCache = (
     const table = yield* attempt("read.decode", () => tableFromIPC<VectorColumns>(buffer))
     const metadata = table.schema.metadata
     // The version first: a file of another layout may hold anything under the other keys.
-    const format = metadata.get(VECTOR_FORMAT_METADATA_KEY)
+    const format = metadata.get(VECTOR_FORMAT_METADATA_KEY) ?? UNVERSIONED_FORMAT
     if (format !== VECTOR_CACHE_FORMAT) {
       yield* Effect.logWarning(
-        `vector cache ${path} is ${format === undefined ? "of no format version" : `format ${format}`}, not ${VECTOR_CACHE_FORMAT}; reading it as absent until head embed rewrites it`
+        `vector cache ${path} is format ${format}, not ${VECTOR_CACHE_FORMAT}; reading it as absent until head embed rewrites it`
       )
       return null
     }

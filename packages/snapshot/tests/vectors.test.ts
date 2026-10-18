@@ -46,9 +46,11 @@ import {
  *   `vectors.read.file`.
  * - `tableOf`: drop the width check, and "refuses to write a vector of the wrong width" fails
  *   because the file is written.
- * - `readVectorCache`: drop the format check, and "reads a cache of no format version, or another,
- *   as absent" fails because the files read (and the one of another model id fails with
+ * - `readVectorCache`: drop the format check, and "reads a cache of another format version as
+ *   absent" fails because the files read (and the one of another model id fails with
  *   `vectors.read.space`).
+ * - `readVectorCache`: drop the `?? UNVERSIONED_FORMAT` default, and "reads a legacy cache with no
+ *   format key as format 1" fails because the read answers `null`.
  * - `writeVectorCache`: drop the `sweepStaging` call, and "sweeps this cache's staging files a
  *   killed writer left" fails because the abandoned files stay.
  * - `sweepStaging`: remove every match whatever its age, and "sweeps this cache's staging files a
@@ -259,9 +261,9 @@ describe("the vector cache format", () => {
     expect(table.schema.metadata.get(VECTOR_FORMAT_METADATA_KEY)).toBe(VECTOR_CACHE_FORMAT)
   })
 
-  it("reads a cache of no format version, or another, as absent, and leaves the file", async () => {
+  /** A one-vector cache of `space` at `path`, and a rewrite of it with its metadata edited. */
+  const relabelable = async (space: StoredVectorSpace) => {
     const root = await scratch()
-    const space = { modelId: "m", dimension: 4 }
     const path = vectorCachePathFor(root, space)
     await run(
       writeVectorCache({ stored: { space, vectors: new Map([["h", vectorFor(0, 4)]]) }, path })
@@ -275,13 +277,41 @@ describe("the vector cache format", () => {
         tableToIPC(new Table(new Schema(table.schema.fields, metadata), table.batches), "file")
       )
     }
+    return { path, relabel }
+  }
+
+  it("reads a legacy cache with no format key as format 1, and the next write carries the key", async () => {
+    const space = { modelId: "m", dimension: 4 }
+    const { path, relabel } = await relabelable(space)
+    // What every cache written before the key existed looks like: the same layout, no key.
     await relabel((metadata) => metadata.delete(VECTOR_FORMAT_METADATA_KEY))
-    expect(await run(readVectorCache(path, space))).toBeNull()
+    expect(tableFromIPC(await readFile(path)).schema.metadata.has(VECTOR_FORMAT_METADATA_KEY)).toBe(
+      false
+    )
+    const read = await run(readVectorCache(path, space))
+    expect([...(read?.vectors.keys() ?? [])]).toEqual(["h"])
+    expect(read?.vectors.get("h")).toEqual(vectorFor(0, 4))
+    // A legacy file is still judged on its space like any other.
+    await relabel((metadata) => {
+      metadata.delete(VECTOR_FORMAT_METADATA_KEY)
+      metadata.set(MODEL_ID_METADATA_KEY, "another")
+    })
+    expect((await runErr(readVectorCache(path, space))).operation).toBe("vectors.read.space")
+    await run(writeVectorCache({ stored: { space, vectors: read?.vectors ?? new Map() }, path }))
+    const rewritten = tableFromIPC(await readFile(path)).schema.metadata
+    expect(rewritten.get(VECTOR_FORMAT_METADATA_KEY)).toBe(VECTOR_CACHE_FORMAT)
+  })
+
+  it("reads a cache of another format version as absent, and leaves the file", async () => {
+    const space = { modelId: "m", dimension: 4 }
+    const { path, relabel } = await relabelable(space)
     await relabel((metadata) => metadata.set(VECTOR_FORMAT_METADATA_KEY, "2"))
+    expect(await run(readVectorCache(path, space))).toBeNull()
+    await relabel((metadata) => metadata.set(VECTOR_FORMAT_METADATA_KEY, "0"))
     expect(await run(readVectorCache(path, space))).toBeNull()
     // The version is judged before the space: a file of another layout says nothing reliable.
     await relabel((metadata) => {
-      metadata.delete(VECTOR_FORMAT_METADATA_KEY)
+      metadata.set(VECTOR_FORMAT_METADATA_KEY, "2")
       metadata.set(MODEL_ID_METADATA_KEY, "another")
     })
     expect(await run(readVectorCache(path, space))).toBeNull()

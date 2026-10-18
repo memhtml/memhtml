@@ -42,8 +42,10 @@ import {
  *   because the read succeeds with `sha: undefined`.
  * - `readSnapshot`: delete the `compareSchemas` branch; "refuses a foreign schema" fails because
  *   the failure arrives as `snapshot.read.rows` instead of `snapshot.read.schema`.
- * - `readSnapshot`: delete the format check; "refuses a file of no format version, or another" fails
- *   because both files read.
+ * - `readSnapshot`: delete the format check; "refuses a file of another format version" fails
+ *   because the files read.
+ * - `readSnapshot`: drop the `?? UNVERSIONED_FORMAT` default; "reads a legacy file with no format
+ *   key as format 1" fails with `snapshot.read.format`.
  * - `readSnapshotIfPresent`: drop the `ENOENT` branch; "answers null for a file that is not there"
  *   fails with `snapshot.read.file`.
  * - `writeSnapshot`: delete the `mkdir` step; the collection-time write of 1,000 records fails with
@@ -271,11 +273,22 @@ describe("readSnapshot refusals", () => {
     return path
   }
 
-  it("refuses a file of no format version, or another (snapshot.read.format)", async () => {
-    const none = await relabeled("no-format.arrow", (metadata) => {
+  it("reads a legacy file with no format key as format 1, and the next write carries the key", async () => {
+    // What every snapshot written before the key existed looks like: the same layout, no key.
+    const legacy = await relabeled("legacy.arrow", (metadata) => {
       metadata.delete(FORMAT_METADATA_KEY)
     })
-    expect(await failure(none)).toBe("snapshot.read.format")
+    expect(tableFromIPC(await readFile(legacy)).schema.metadata.has(FORMAT_METADATA_KEY)).toBe(
+      false
+    )
+    const read = await run(readSnapshot(legacy))
+    expect(read).toEqual(readBack)
+    await run(writeSnapshot({ records: read.records, sha: read.sha, path: legacy }))
+    const rewritten = tableFromIPC(await readFile(legacy)).schema.metadata
+    expect(rewritten.get(FORMAT_METADATA_KEY)).toBe(SNAPSHOT_FORMAT)
+  })
+
+  it("refuses a file of another format version (snapshot.read.format)", async () => {
     for (const other of ["0", "2", ""]) {
       const path = await relabeled(`format-${other}.arrow`, (metadata) => {
         metadata.set(FORMAT_METADATA_KEY, other)
