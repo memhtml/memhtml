@@ -502,7 +502,7 @@ describe("the head server", () => {
     expect(dataOf(moved.body).server).toMatchObject({ used: true })
     expect(dataOf(moved.body)).toMatchObject({
       appended: 1,
-      harvested: [{ kind: "move", path: from }]
+      harvested: [{ kind: "move", path: from, to }]
     })
     const logged = await cli(repo.root, ["session", "status", "--id", "s1"])
     expect(dataOf(logged.body)).toMatchObject({ ops: 1, moves: 1, paths: [from, to] })

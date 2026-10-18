@@ -374,7 +374,7 @@ const describeViolation = (violation: Violation): string => {
 }
 
 const opSummary = (op: OverlayOp) =>
-  op.kind === "archive"
+  op.kind === "archive" || op.kind === "move"
     ? { kind: op.kind, path: op.path, to: op.to }
     : { kind: op.kind, path: op.path }
 
