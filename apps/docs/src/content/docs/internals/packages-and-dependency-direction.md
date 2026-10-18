@@ -1,30 +1,41 @@
 ---
 title: Packages and dependency direction
-description: The layering, the test that enforces the pure packages' purity, the single place every service is wired together, and why fourteen packages ship as one.
+description: The layering, the test that enforces the pure packages' purity, the single place every service is wired together, and why sixteen packages ship as one.
 ---
 
 ## 1. The packages
 
-| Package                | Role                                                                                     |
-| ---------------------- | ---------------------------------------------------------------------------------------- |
-| `contracts`            | Schemas, enums, errors, path algebra. Zero I/O.                                          |
-| `domain`               | Pure math: retention, decay, rank fusion, diversification, graph analysis, merge guards. |
-| `html`                 | Parse, serialize, hash, and byte-splice the memory file format.                          |
-| `store`                | Git-backed file store: write, read, correct, archive, link, commit.                      |
-| `index`                | SQLite service, migrations, indexer, projection, retrieval.                              |
-| `traces`               | Streaming session-JSONL parser and scanner.                                              |
-| `llm`                  | Bedrock embeddings and forced-tool structured output.                                    |
-| `eval`                 | The retrieval quality gate and its generated fixture corpus.                             |
-| `integrations`         | Render and transact a coding agent's wiring: MCP entry, hooks, block, skill, receipt.    |
-| `apps/cli`, `apps/mcp` | The `memhtml` binary and the `memhtml-mcp` stdio server.                                 |
+| Package                | Role                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------------------ |
+| `contracts`            | Schemas, enums, errors, path algebra. Zero I/O.                                            |
+| `domain`               | Pure math: retention, decay, rank fusion, diversification, graph analysis, merge guards.   |
+| `html`                 | Parse, serialize, hash, and byte-splice the memory file format.                            |
+| `store`                | Git-backed file store: write, read, correct, archive, link, commit.                        |
+| `head`                 | The corpus at one commit as an immutable in-memory version, its search, and the head gate. |
+| `session`              | Session logs, validation and the write bar, the commit path, the checkout lock, prune.     |
+| `snapshot`             | Apache Arrow snapshots of a head and the vector cache, and their pruning.                  |
+| `curator`              | The curator's model loop, its charters, its budget, and the collapse planner.              |
+| `index`                | SQLite service, migrations, indexer, projection, retrieval.                                |
+| `traces`               | Streaming session-JSONL parser and scanner.                                                |
+| `llm`                  | Bedrock embeddings and forced-tool structured output.                                      |
+| `eval`                 | The retrieval quality gate and its generated fixture corpus.                               |
+| `integrations`         | Render and transact a coding agent's wiring: MCP entry, hooks, block, skill, receipt.      |
+| `telemetry`            | The opt-in OTLP trace exporter, loaded only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.     |
+| `apps/cli`, `apps/mcp` | The `memhtml` binary and the `memhtml-mcp` stdio server.                                   |
 
 ## 2. Direction
 
 Dependencies point inward. `contracts` imports only `effect`. `domain` and `html` import `contracts`. `store` adds `html`. `index` adds `domain` and `llm`. `traces` and `eval` sit above `index`. `integrations` sits directly on `contracts` and nothing else, because rendering a host's config and editing a file need neither the store nor the index.
 
+The packages the session commands use form a second column beside the index. `head` adds `domain` and `store`, which it reads git through. `session` sits on `contracts`, `domain`, and `html` and never imports `store`. It runs git itself with a temporary index of its own, because the store's git service strips `GIT_INDEX_FILE` from every child process. `snapshot` sits on `contracts` alone and adds `apache-arrow`. `curator` sits on `head`, `session`, and `llm`. `telemetry` imports only `effect`.
+
 ```
 contracts ← domain, html ← store ← index (+domain, +llm) ← traces, eval ← apps/cli ← apps/mcp
 contracts ← integrations ← apps/cli
+contracts ← domain, html ← session ← curator (+head, +llm) ← apps/cli
+contracts ← domain, html ← store ← head ← curator
+contracts ← snapshot ← apps/cli
+telemetry ← apps/cli, apps/mcp
 ```
 
 TypeScript project references enforce the direction, and a second, test-inclusive typecheck configuration applies the same check to the test files.
@@ -45,7 +56,7 @@ Two other functions arrive the same way and for the same reason. One is the `onM
 
 ## 5. Many packages, one published package
 
-Every package above is `private`. `npm publish` refuses a private package, so none of them can reach a registry, and one assembled `memhtml` is published instead — carrying two binaries, `memhtml` and `memhtml-mcp`. The layering on this page is the shape of the SOURCE. It is not a distribution surface, and the nine libraries had no consumer outside this repository to be a surface for.
+Every package above is `private`. `npm publish` refuses a private package, so none of them can reach a registry, and one assembled `memhtml` is published instead — carrying two binaries, `memhtml` and `memhtml-mcp`. The layering on this page is the shape of the SOURCE. It is not a distribution surface, and the fourteen libraries had no consumer outside this repository to be a surface for.
 
 The published contract is the two binaries and the JSON envelope they write. The package declares no `exports` map, deliberately: an entry point is a promise, adding one later is a minor version bump, and removing one is a major, so the reversible direction is the one left open.
 

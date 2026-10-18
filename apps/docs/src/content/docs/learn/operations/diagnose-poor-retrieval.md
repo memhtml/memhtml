@@ -13,7 +13,7 @@ memhtml doctor
 
 ## The four symptoms, and what each one means
 
-`indexFresh: false` calls for `memhtml index update --embed`. The index describes one commit, and "fresh" means that commit is HEAD (`apps/cli/src/operations.ts:1524`). A stale index returns old answers rather than wrong ones, and the memory you wrote an hour ago is absent from them.
+`indexFresh: false` calls for `memhtml index update --embed`. The index describes one commit, and "fresh" means that commit is HEAD (`apps/cli/src/operations.ts:1524`). A stale index returns old answers rather than wrong ones, and the memory you wrote an hour ago is absent from them. A session commit never updates the index, so after one the index is stale until `index update` runs. `memhtml head search` reads the committed tree directly and finds the new record at once, which is a quick way to tell a stale index from a missing record.
 
 `embedderUp: false` means one of two things: the stored vectors came from a different embedding model than the configured one, or the index holds no vectors at all (`apps/cli/src/operations.ts:1530`). The field is read off the stored watermark rather than by calling Bedrock, so it never fails for a reason unrelated to the corpus. Compare `embedModel` against `configuredEmbedModel` on `memhtml index status`. If they differ, the fix is in [rebuild the index](/learn/operations/rebuild-the-index/). If they agree and `embeddings` is 0, run `memhtml index rebuild --embed`.
 
@@ -39,7 +39,7 @@ It should not. The lexical arm tries the query's words as all-required first and
 
 ## The tree is dirty
 
-The indexer reads the dirty tree so your edit is searchable immediately. A curation session refuses the same tree, so curation never runs against a state only you can see.
+The indexer reads the dirty tree so your edit is searchable immediately. `memhtml curate run` and every session read the committed tree at their base and never see an uncommitted edit, so curation never runs against a state only you can see.
 
 ## Empty results with a cause outside the ranker
 

@@ -15,6 +15,8 @@ memhtml list --type semantic --limit 50
 
 Reach for `memhtml apply` once a task writes more than about three memories. A batch stages every file, makes one commit, and reindexes once, where the same memories written one at a time make one commit and one index pass each. `apply` is atomic by default, and `--continue-on-error` makes it best-effort. Both `apply` and `exec` read stdin when you omit `--file` or pass `-`.
 
+Inside an agent run that exports `MEMHTML_SESSION`, the same writes go through a session instead: `memhtml session put` takes the same lines `apply` does, `memhtml session exec` takes a heredoc script, and the runtime commits the session once when the run ends. [Write through a session](/learn/operations/write-through-a-session/) covers it.
+
 ## Every removal is a move into the archive
 
 - `memhtml correct <target>` writes the superseding file and archives the target in one commit, so an interrupted run can never leave two live memories contradicting each other.
@@ -63,9 +65,14 @@ The salience arm also ignores `task` rows and everything under `resources/people
 ```cron
 */10 * * * *  cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml index update --embed >> /var/log/memhtml/index.log 2>&1
 17 * * * *    cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml trace index      >> /var/log/memhtml/trace.log 2>&1
+30 3 * * *    cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml curate run       >> /var/log/memhtml/curate.log 2>&1
 0 6 * * *     cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml publish         >> /var/log/memhtml/publish.log 2>&1
+30 6 * * *    cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml state export    >> /var/log/memhtml/state.log 2>&1
 0 7 * * *     cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml doctor          >> /var/log/memhtml/doctor.log 2>&1
+0 5 * * 0     cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml session prune --older-than 7d >> /var/log/memhtml/prune.log 2>&1
 ```
+
+`index update` also keeps the index current after session commits, which never touch it. `curate run` needs a model, from `--model` or `MEMHTML_CURATOR_MODEL`, and it only commits to a `curate/<date>` branch. Landing that branch with `memhtml curate merge` stays a step a person takes after reading it, as [curate the corpus](/learn/operations/curate-the-corpus/) describes. `state export` writes the access sidecar, which nothing else writes for you.
 
 Each line is safe to repeat. An unchanged HEAD and a clean tree touch nothing, and `index update` on a converged store answers `unchanged: true` and writes nothing:
 

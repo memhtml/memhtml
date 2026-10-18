@@ -15,9 +15,9 @@ Which file receives the link follows from the rel. A directional rel is written 
 
 ## 2. The `derived` column is the firewall
 
-The retention scorer's `contestedStatus` signal counts authored contradictions only, meaning rows with `derived = 0` (`packages/contracts/src/edges.ts:122-128`, `packages/domain/src/retention.ts:164-166`). An uncorroborated machine suspicion therefore cannot evict a memory.
+The retention scorer's `contestedStatus` signal in `@memhtml/domain` counts authored contradictions only, meaning rows with `derived = 0` (`packages/contracts/src/edges.ts:122-128`, `packages/domain/src/retention.ts:164-166`). An uncorroborated machine suspicion therefore can't lower a memory's retention score. No 0.16 command evicts by that score, and the rule stays in the scorer for any caller that does.
 
-One fact in this area does not survive a rebuild: the counter recording how many times a contradiction has been detected. It lives in the state plane. A SQL CHECK refuses `derived = 1` outside `provenance = 'sleep'` (`packages/index/migrations/0008_tasks.sql:147`), the provenance value v1 curation stamped and the closed vocabulary keeps, and `isWellFormedEdge` states the same condition once in TypeScript (`packages/contracts/src/edges.ts:146-149`) so a caller can refuse a bad edge before the driver does.
+One fact in this area does not survive a rebuild: the counter recording how many times a contradiction has been detected. It lives in the state plane. A SQL CHECK refuses `derived = 1` outside `provenance = 'sleep'` (`packages/index/migrations/0008_tasks.sql:200`), the provenance value the sleep pipeline stamped before 0.16 removed it and the closed vocabulary keeps, and `isWellFormedEdge` states the same condition once in TypeScript (`packages/contracts/src/edges.ts:146-149`) so a caller can refuse a bad edge before the driver does.
 
 ## 3. Four classes that never mix
 
