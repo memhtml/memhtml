@@ -24,9 +24,11 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
  * doesn't match. Words are runs of letters and digits, split at a camelCase boundary, and a
  * hyphenated word also matches each run of its parts, so `person:x`, `x-runtime`, `xOnly`, and
  * `X_WRITE` all match a term `x`, and a hyphenated term matches inside a longer hyphenated word.
+ * Two runs joined by one `-`, `_`, or space also match as their concatenation, the rule the docs
+ * site's own gate uses, so a term listed as `xy` matches `x-y`, `x_y`, `x y`, and `xY`.
  *
- * `apps/docs/` is excluded: the docs site gates its own built pages with `DENYLIST` in
- * `apps/docs/src/gates.ts`.
+ * `apps/docs/` is excluded: the docs site gates its own built pages with `DENIED_TERMS` and
+ * `DENYLIST` in `apps/docs/src/gates.ts`.
  */
 const PRIVATE_TERMS: ReadonlyArray<{ readonly sha256: string; readonly kind: string }> = [
   {
@@ -75,7 +77,23 @@ const PRIVATE_TERMS: ReadonlyArray<{ readonly sha256: string; readonly kind: str
     kind: "a repository"
   },
   { sha256: "1c1e89d4424683f5fd00dcaa2850ef86dbdc13000afffaf76e96c0d6d50a7cd3", kind: "a project" },
-  { sha256: "c429d18b25401f1f8a831607f208834fa5403e577ff0ac57039789f9386d80d9", kind: "a project" }
+  { sha256: "c429d18b25401f1f8a831607f208834fa5403e577ff0ac57039789f9386d80d9", kind: "a project" },
+  {
+    sha256: "9ac4bde162a7672fd4ab2d0065287baa69607c782892a53d8e6bd2328da3e5da",
+    kind: "an agent runtime, joined"
+  },
+  {
+    sha256: "155fc49c04765c9f2b82f27d20c343d2e1bc615b04df50bc17e5d2e64176b57b",
+    kind: "a model gateway, joined"
+  },
+  {
+    sha256: "9344cf2501b9a9bc0bb18ad4d09afd7873b2eea038f691e9a4669c54f2f37325",
+    kind: "a private repository, joined"
+  },
+  {
+    sha256: "ea7f0f5d622fee8408f61974dc51225c40ab9830eafff1e2acf86d48b519b2a3",
+    kind: "a private lessons directory"
+  }
 ]
 
 /** Path prefixes this scan skips, each with the gate that covers it instead. */
@@ -85,12 +103,18 @@ const sha256 = (text: string): string => createHash("sha256").update(text).diges
 
 const WORD = /[a-z0-9]+(?:-[a-z0-9]+)*/g
 
+/** A line lowercased, with a space at each camelCase boundary first. */
+const lowered = (line: string): string => line.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase()
+
 /** Each word of a line, lowercased, split at camelCase boundaries first. */
-const wordsOf = (line: string): ReadonlyArray<string> =>
-  line
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .toLowerCase()
-    .match(WORD) ?? []
+const wordsOf = (line: string): ReadonlyArray<string> => lowered(line).match(WORD) ?? []
+
+/** Each pair of adjacent runs joined by exactly one `-`, `_`, or space, concatenated. */
+const joinedPairsOf = (line: string): ReadonlyArray<string> =>
+  Array.from(lowered(line).matchAll(/(?=(?<![a-z0-9])([a-z0-9]+)[-_ ]([a-z0-9]+))/g), (pair) => {
+    const [, first, second] = pair
+    return `${first}${second}`
+  })
 
 /**
  * The term a word holds, or `undefined`. A hyphenated word is tried as every run of its parts, so a
@@ -133,6 +157,9 @@ const findTerms = (
     for (const word of wordsOf(line)) {
       if (match(word) !== undefined) findings.push({ path, line: index + 1, word })
     }
+    for (const word of joinedPairsOf(line)) {
+      if (match(word) !== undefined) findings.push({ path, line: index + 1, word })
+    }
   })
   return findings
 }
@@ -159,7 +186,7 @@ describe("private terms", () => {
 
   it("matches a term in every spelling a fixture or a comment uses, and nowhere else", () => {
     // Placeholders stand in for the real terms, so this case proves the matcher without naming one.
-    const match = matcher(new Set([sha256("sasha"), sha256("agent-runtime")]))
+    const match = matcher(new Set([sha256("sasha"), sha256("agent-runtime"), sha256("quuxfrob")]))
     const hits = (line: string): ReadonlyArray<string> =>
       findTerms("sample", line, match).map((finding) => finding.word)
     expect(hits("person:sasha owns it")).toEqual(["sasha"])
@@ -169,6 +196,14 @@ describe("private terms", () => {
     expect(hits("resources/agent-runtime/x.html")).toEqual(["agent-runtime"])
     expect(hits("the-agent-runtime-retries")).toEqual(["the-agent-runtime-retries"])
     expect(hits("sashaa, sash, agent, runtime, agent-runtimes")).toEqual([])
+    expect(hits("quux-frob, quux_frob, quux frob, quuxFrob, quuxfrob")).toEqual([
+      "quuxfrob",
+      "quuxfrob",
+      "quuxfrob",
+      "quuxfrob",
+      "quuxfrob"
+    ])
+    expect(hits("quux, frob, xquux frob, quux frobs, quux  frob")).toEqual([])
   })
 
   it("names none of them in a tracked text file outside the docs site", () => {
