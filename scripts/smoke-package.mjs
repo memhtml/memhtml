@@ -609,6 +609,24 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
     ],
     ["session rebase", ["session", "rebase", "--id", "smoke"]],
     /*
+     * `session prune` as a dry run, so no later row loses state: with a zero cutoff the committed
+     * `smoke` session's log (zero ops now) is what a real run would remove, and nothing is unlanded.
+     */
+    [
+      "session prune",
+      ["session", "prune", "--older-than", "0s", "--dry-run"],
+      env,
+      (answer) => ({
+        ok:
+          answer.type === "session.pruned" &&
+          answer.data?.dryRun === true &&
+          answer.data?.logs?.count >= 1 &&
+          Array.isArray(answer.data?.unlanded) &&
+          answer.data.unlanded.length === 0,
+        detail: `${String(answer.data?.logs?.count)} log(s), ${String(answer.data?.indexes?.count)} index file(s) would go`
+      })
+    ],
+    /*
      * The curation door: a second session on the unborn `curate/smoke`, created by its commit (HEAD
      * is main, so nothing follows: `worktreeSynced` is asserted false), then `curate merge` lands it
      * on main with the checkout following. `--skip-gate` because the gate's own row above already

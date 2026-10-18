@@ -31,6 +31,12 @@ export {
   type RefEntry
 } from "./plumbing.js"
 export {
+  type PruneCount,
+  type PruneReport,
+  pruneSessions,
+  type UnlandedSession
+} from "./prune.js"
+export {
   appendOps,
   DEFAULT_REF,
   decodeLog,

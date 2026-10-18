@@ -28,6 +28,7 @@ import {
   LOG_MOVED,
   landOnRef,
   makePlumbing,
+  pruneSessions,
   rebaseSession,
   replaceOps,
   resumeSession,
@@ -44,6 +45,7 @@ import {
 import { readSnapshot, snapshotPathFor } from "@memhtml/snapshot"
 import { type GitFailure, isoSecond, makeGit, type WriteInput } from "@memhtml/store"
 import { Effect } from "effect"
+import ms from "ms"
 import type { EmbedderShape } from "./api-layer.js"
 import type { SessionPutOp } from "./apply.js"
 import type { ResponseType } from "./envelope.js"
@@ -1043,6 +1045,54 @@ export const sessionStatus = (input: { readonly root: string; readonly id: strin
       paths: [...new Set(session.ops.flatMap(touchedPaths))].sort(),
       /** A commit built and possibly landed by a call that was killed; the next commit settles it. */
       pending: session.pending ?? null
+    }
+  })
+
+/**
+ * `session prune --older-than`'s value as milliseconds, through `ms`: a number with a unit (`7d`,
+ * `48h`, `90m`, `1.5h`, `2 weeks`). A bare number is refused rather than read as milliseconds, and so
+ * is a negative one, because `--older-than 7` meaning seven milliseconds would prune every idle log.
+ */
+export const parseOlderThan = (
+  value: string
+): { readonly ok: true; readonly ms: number } | { readonly ok: false; readonly reason: string } => {
+  const trimmed = value.trim()
+  // `ms` throws on an empty string and reads a bare number as milliseconds; both are refused first.
+  const parsed =
+    trimmed === "" || /^[0-9.]+$/.test(trimmed) ? undefined : ms(trimmed as ms.StringValue)
+  if (typeof parsed !== "number" || !Number.isFinite(parsed)) {
+    return {
+      ok: false,
+      reason: `--older-than ${JSON.stringify(value)} is not a duration with a unit, such as 7d, 48h, or 90m`
+    }
+  }
+  if (parsed < 0) {
+    return { ok: false, reason: `--older-than ${JSON.stringify(value)} is negative` }
+  }
+  return { ok: true, ms: parsed }
+}
+
+/**
+ * `session prune`: {@link pruneSessions} with the cutoff as given and each unlanded log's age in the
+ * same units (`ms`'s short form). The ids, counts, and lists are the package's report unchanged.
+ */
+export const sessionPrune = (input: {
+  readonly root: string
+  readonly olderThan: string
+  readonly dryRun: boolean
+}) =>
+  Effect.gen(function* () {
+    const cutoff = parseOlderThan(input.olderThan)
+    if (!cutoff.ok) return yield* Effect.fail(InvalidMemory.make({ reason: cutoff.reason }))
+    const report = yield* pruneSessions({
+      root: input.root,
+      olderThanMs: cutoff.ms,
+      dryRun: input.dryRun
+    })
+    return {
+      ...report,
+      olderThan: input.olderThan,
+      unlanded: report.unlanded.map((entry) => ({ ...entry, age: ms(entry.ageMs) }))
     }
   })
 

@@ -78,7 +78,10 @@ export const RESPONSE_TYPES = [
   // on one curator branch.
   "curate.collapse",
   // The head's vector cache (`docs/v2-poc.md`, "Vector arm"): `head embed` filling it.
-  "head.embedded"
+  "head.embedded",
+  // `session prune`: the session state removed (or, under `--dry-run`, that would be) and the logs
+  // kept because they still hold ops.
+  "session.pruned"
 ] as const
 
 export type ResponseType = (typeof RESPONSE_TYPES)[number]

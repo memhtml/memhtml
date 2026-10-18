@@ -1390,6 +1390,33 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     examples: ["memhtml session status --id s1"]
   },
   {
+    name: "session prune",
+    summary:
+      "Remove session state nothing reads again, older than a cutoff: index files, `refs/memhtml/sessions/` refs, stale lock directories, and logs with zero ops. A log that still holds ops is never removed; it is listed under `unlanded`.",
+    args: [],
+    flags: [
+      {
+        name: "older-than",
+        type: "string",
+        description:
+          "The cutoff, as a duration with a unit: `7d`, `48h`, `90m`, `1.5h`, or `2 weeks`. A file counts by its last write, a ref by its commit's committer time; a lock directory also has to be stale (no refresh for 30 s), so a live writer's is never touched. Session state under `.memhtml/sessions/`: `<id>.idx` index files (a whole git index each, which no commit of this build reads or writes), `<id>.lock` directories a killed writer left (reclaimed otherwise only by the next writer of the same id, and a run's id is never written again), and `<id>.json` logs with zero ops (a session whose commit landed, or that never wrote). Every id is handled under its session lock, so a writer of it is never pruned from under; an id whose lock is held is listed under `busy`. A log that still holds ops is a run whose writes have not landed: it is kept and listed under `unlanded` with its `id`, `ops`, `pending`, `modifiedAt`, and `age`, so it can be landed with `session commit --id <id> --message <summary> --drop-refused`. A log that does not decode is kept and listed under `unreadable`. `<id>.dropped.jsonl` trails are kept.",
+        required: true
+      },
+      {
+        name: "dry-run",
+        type: "boolean",
+        description:
+          "Report what a run would remove, with the same counts and lists, and remove nothing. Takes no lock.",
+        default: false
+      }
+    ],
+    responseTypes: ["session.pruned"],
+    examples: [
+      "memhtml session prune --older-than 7d --dry-run",
+      "memhtml session prune --older-than 48h"
+    ]
+  },
+  {
     name: "head status",
     summary:
       "Report the corpus version and where it came from: the head server's (`source: server`, with the server's ref, load, advances, and uptime under `server`) when one answers on .memhtml/head.sock, else the version at HEAD built here, with its sha, record count, skipped files, load time, and source: `snapshot` (HEAD's own .arrow file), `snapshot+advance` (an ancestor's snapshot advanced over the changed paths, with `ancestorSha` and `reparsed`), or `git`.",

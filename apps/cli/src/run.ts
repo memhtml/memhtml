@@ -85,7 +85,7 @@ import * as ops from "./operations.js"
 import { publish } from "./publish.js"
 import { serveMcp } from "./serve.js"
 import { stateExport, stateImport } from "./state.js"
-import { qualifyRef, runV2 } from "./v2.js"
+import { parseOlderThan, qualifyRef, runV2, sessionPrune } from "./v2.js"
 import { indexReport } from "./views.js"
 
 export interface Parsed {
@@ -902,7 +902,8 @@ const curateRunFlags = (parsed: Parsed): Failure | undefined => {
  * something the caller fixes by changing the call, so it is judged here as exit 2 before any repo opens.
  */
 const sessionIdFlag = (parsed: Parsed): Failure | undefined => {
-  if (!parsed.command.startsWith("session ")) return undefined
+  // `session prune` names no session: it sweeps every one under the store.
+  if (!parsed.command.startsWith("session ") || parsed.command === "session prune") return undefined
   const given = parsed.flags.get("id")
   if (given === undefined) {
     /**
@@ -1040,6 +1041,20 @@ const sessionBoundRefusal = (parsed: Parsed): Failure | undefined => {
     `${parsed.command} creates a record with no write bar, and ${SESSION_VAR} is set (${JSON.stringify(session)}), so this process writes through that session: ${instead.how}. The write bar judges each record as it is written and the session lands as one commit`,
     instead.suggestions
   )
+}
+
+/** `memhtml session prune`: `--older-than` is a duration with a unit (`parseOlderThan`). */
+const sessionPruneFlags = (parsed: Parsed): Failure | undefined => {
+  if (parsed.command !== "session prune") return undefined
+  const value = str(parsed, "older-than")
+  if (value === undefined) return undefined
+  const cutoff = parseOlderThan(value)
+  return cutoff.ok
+    ? undefined
+    : fail("ERR_INVALID_FLAG", cutoff.reason, [
+        "memhtml session prune --older-than 7d --dry-run",
+        "memhtml session prune --older-than 48h"
+      ])
 }
 
 const headSnapshotFlags = (parsed: Parsed): Failure | undefined => {
@@ -1459,6 +1474,9 @@ const validateAgainst = (parsed: Parsed, spec: CommandSpec): Failure | undefined
 
   const snapshot = headSnapshotFlags(parsed)
   if (snapshot !== undefined) return snapshot
+
+  const prune = sessionPruneFlags(parsed)
+  if (prune !== undefined) return prune
 
   const serve = headServeFlags(parsed)
   if (serve !== undefined) return serve
@@ -2225,6 +2243,14 @@ export const run = async (
             wallClockMs: int(parsed, "wall-clock-ms")
           })
           return ["curate.collapse", data] as const
+        }
+        if (parsed.command === "session prune") {
+          const data = yield* sessionPrune({
+            root,
+            olderThan: str(parsed, "older-than") ?? "",
+            dryRun: bool(parsed, "dry-run", false)
+          })
+          return ["session.pruned", data] as const
         }
         const session = sessionIdOf(parsed)
         return yield* runV2(parsed.command, {
