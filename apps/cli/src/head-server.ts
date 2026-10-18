@@ -51,15 +51,17 @@ import {
   execBodyTooLarge,
   HEAD_PROTOCOL,
   HEAD_ROUTES,
+  type HeadEndpoint,
   HeadServerRunning,
   HeadServerStatus,
-  headSocketPath,
+  HeadSocketPathTooLong,
+  headEndpoint,
   LATE_EMBEDS_MAX,
   NeighborsRequest,
   ReadRequest,
   SearchRequest,
   type ServedHead,
-  SOCKET_PATH_MAX,
+  socketPathTooLong,
   type VectorCacheStatus
 } from "./head-protocol.js"
 import { admitFor, hitDetailOf, scopeReportOf } from "./head-scope.js"
@@ -150,7 +152,13 @@ import { execOverHead, loadHeadAt, preparePuts, qualifyRef, revParse } from "./v
  * never reachable by anyone else, even for the instant before a `chmod`), and never a TCP port. A
  * socket file already there is probed first: one that accepts a connection is a live server and this
  * one refuses ({@link HeadServerRunning}); one that refuses (`ECONNREFUSED`) was left by a killed
- * server and is replaced. Closing the scope closes the listener and removes the file.
+ * server and is replaced. Closing the scope closes the listener and removes the file. A store whose
+ * socket path is past the platform's byte limit (`socketPathMax`: 107 on Linux, 103 on macOS) is
+ * refused before anything binds ({@link HeadSocketPathTooLong}).
+ *
+ * Under win32 the server listens on the named pipe `headEndpoint` derives from the store path
+ * (`\\.\pipe\memhtml-<16 hex>`), which is no file: the probe is the connect alone, and there is
+ * no mode, ignore entry, or file to remove.
  */
 
 /** The background poll's default period. */
@@ -350,15 +358,19 @@ type SocketProbe = "absent" | "stale" | "live"
  * neither completes nor refuses inside {@link CONNECT_TIMEOUT_MS} is treated as live: a wedged
  * server still owns its socket, and replacing it would leave two processes believing they serve.
  */
-const probeSocket = (socket: string): Effect.Effect<SocketProbe, StorageFailure> =>
+const probeSocket = (endpoint: HeadEndpoint): Effect.Effect<SocketProbe, StorageFailure> =>
   Effect.gen(function* () {
-    const stat = yield* Effect.promise(() => lstat(socket).catch(() => null))
-    if (stat === null) return "absent"
-    if (!stat.isSocket()) {
-      yield* Effect.logError(
-        `${socket} exists and is not a socket; move it aside before starting a head server`
-      )
-      return yield* Effect.fail(StorageFailure.make({ operation: "head.serve.notSocket" }))
+    const socket = endpoint.path
+    // A named pipe is no file: the connect alone says whether one is there (ENOENT when not).
+    if (endpoint.kind === "socket") {
+      const stat = yield* Effect.promise(() => lstat(socket).catch(() => null))
+      if (stat === null) return "absent"
+      if (!stat.isSocket()) {
+        yield* Effect.logError(
+          `${socket} exists and is not a socket; move it aside before starting a head server`
+        )
+        return yield* Effect.fail(StorageFailure.make({ operation: "head.serve.notSocket" }))
+      }
     }
     return yield* Effect.callback<SocketProbe, StorageFailure>((resume) => {
       const connection = createConnection({ path: socket })
@@ -387,21 +399,39 @@ const probeSocket = (socket: string): Effect.Effect<SocketProbe, StorageFailure>
   })
 
 /**
+ * Refuse a store whose socket path is past the platform's byte limit, before anything loads: the
+ * listen would fail with a bare `EINVAL` after the whole head was read.
+ */
+const refuseLongSocket = (endpoint: HeadEndpoint): Effect.Effect<void, HeadSocketPathTooLong> => {
+  const tooLong = socketPathTooLong(endpoint)
+  if (tooLong === null) return Effect.void
+  return Effect.logError(
+    `head serve: ${endpoint.path} is ${String(tooLong.bytes)} bytes, past the ${String(tooLong.max)} a Unix socket path takes on ${process.platform}; serve a store at a shorter path`
+  ).pipe(
+    Effect.andThen(
+      Effect.fail(
+        HeadSocketPathTooLong.make({
+          socket: endpoint.path,
+          bytes: tooLong.bytes,
+          max: tooLong.max,
+          platform: process.platform
+        })
+      )
+    )
+  )
+}
+
+/**
  * Make the socket path free to bind, or refuse. A live server is named from its own status when it
  * answers one; a stale file is removed with a log line.
  */
 const claimSocket = (
   root: string,
-  socket: string
+  endpoint: HeadEndpoint
 ): Effect.Effect<void, StorageFailure | HeadServerRunning> =>
   Effect.gen(function* () {
-    if (socket.length > SOCKET_PATH_MAX) {
-      yield* Effect.logError(
-        `${socket} is ${String(socket.length)} bytes, past the ${String(SOCKET_PATH_MAX)} a Unix socket path allows; serve a store at a shorter path`
-      )
-      return yield* Effect.fail(StorageFailure.make({ operation: "head.serve.socketPath" }))
-    }
-    const probe = yield* probeSocket(socket)
+    const socket = endpoint.path
+    const probe = yield* probeSocket(endpoint)
     if (probe === "live") {
       const answered = yield* askHead({ root, route: "status", schema: HeadServerStatus })
       return yield* Effect.fail(
@@ -413,7 +443,7 @@ const claimSocket = (
         })
       )
     }
-    if (probe === "stale") {
+    if (probe === "stale" && endpoint.kind === "socket") {
       yield* Effect.logWarning(`${socket} was left by a server that is gone; replacing it`)
       yield* attemptIo("head.serve.unlinkStale", () => rm(socket, { force: true }))
     }
@@ -437,12 +467,14 @@ export const startHeadServer = (
   input: HeadServerInput
 ): Effect.Effect<
   HeadServer,
-  GitFailure | InvalidMemory | StorageFailure | HeadServerRunning,
+  GitFailure | InvalidMemory | StorageFailure | HeadServerRunning | HeadSocketPathTooLong,
   Scope.Scope
 > =>
   Effect.gen(function* () {
     const root = input.root
-    const socket = headSocketPath(root)
+    const endpoint = headEndpoint(root)
+    const socket = endpoint.path
+    yield* refuseLongSocket(endpoint)
     const pollMs = input.pollMs ?? DEFAULT_POLL_MS
     const bound: EmbedderShape = input.embedder ?? { document: undefined, query: undefined }
     const embedderOn = bound.document !== undefined || bound.query !== undefined
@@ -1157,13 +1189,17 @@ export const startHeadServer = (
       )
     )
 
-    yield* claimSocket(root, socket)
+    yield* claimSocket(root, endpoint)
     // Before the bind, so the first request finds the cache held rather than paying for its read.
     yield* heldVectors
-    yield* ensureExcludedQuietly(root, [HEAD_SOCKET])
-    yield* attemptIo("head.serve.mkdir", () => mkdir(dirname(socket), { recursive: true }))
-    // Registered before the listener, so it runs after the listener closes: the file goes last.
-    yield* Effect.addFinalizer(() => Effect.promise(() => rm(socket, { force: true })))
+    // A named pipe (win32) is no file in the store: nothing to ignore, make room for, or remove.
+    const socketFile = endpoint.kind === "socket"
+    if (socketFile) {
+      yield* ensureExcludedQuietly(root, [HEAD_SOCKET])
+      yield* attemptIo("head.serve.mkdir", () => mkdir(dirname(socket), { recursive: true }))
+      // Registered before the listener, so it runs after the listener closes: the file goes last.
+      yield* Effect.addFinalizer(() => Effect.promise(() => rm(socket, { force: true })))
+    }
 
     // By its subpath and only here, for the reason `head-client.ts` gives: the package's barrel is
     // half a second of imports every other command would pay.
@@ -1175,6 +1211,7 @@ export const startHeadServer = (
     // the mode where a umask cannot be set (a worker thread).
     const context = yield* Effect.acquireUseRelease(
       Effect.sync(() => {
+        if (!socketFile) return null
         try {
           return process.umask(0o177)
         } catch {
@@ -1199,7 +1236,7 @@ export const startHeadServer = (
           if (previous !== null) process.umask(previous)
         })
     )
-    yield* attemptIo("head.serve.chmod", () => chmod(socket, 0o600))
+    if (socketFile) yield* attemptIo("head.serve.chmod", () => chmod(socket, 0o600))
     yield* HttpServer.serveEffect(app).pipe(Effect.provideContext(context))
     // The version it loaded may already hold records the cache lacks (commits since the last
     // `head embed`); the first pass fills them in the background.
@@ -1294,7 +1331,10 @@ export const untilSignal: Effect.Effect<NodeJS.Signals> = Effect.callback<NodeJS
  */
 export const serveHead = (
   input: HeadServerInput & { readonly stop?: Effect.Effect<string> | undefined }
-): Effect.Effect<HeadServed, GitFailure | InvalidMemory | StorageFailure | HeadServerRunning> =>
+): Effect.Effect<
+  HeadServed,
+  GitFailure | InvalidMemory | StorageFailure | HeadServerRunning | HeadSocketPathTooLong
+> =>
   Effect.scoped(
     Effect.gen(function* () {
       const server = yield* startHeadServer(input)

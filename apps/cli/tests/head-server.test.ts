@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process"
-import { lstat, mkdir, rm, stat, writeFile } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises"
 import { request } from "node:http"
+import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 
 import { renderTemplate } from "@memhtml/html"
@@ -15,9 +16,11 @@ import { askHead } from "../src/head-client.js"
 import {
   HeadServerRunning,
   HeadServerStatus,
+  HeadSocketPathTooLong,
   headSocketPath,
   NeighborsAnswer,
-  SearchAnswer
+  SearchAnswer,
+  socketPathMax
 } from "../src/head-protocol.js"
 import { type HeadServer, startHeadServer } from "../src/head-server.js"
 import { headVectorsPath, loadForSearch } from "../src/head-vectors.js"
@@ -61,16 +64,41 @@ import { fakeEmbedder, noEmbedder } from "./harness.js"
  *   cache once for every request that saw the change" (`loads` is 8).
  * - `head-server.ts` `heldVectors`: drop the `!embedderOn` early return -> "with no embedder never
  *   reads the cache, and says embedder-off" (the status holds the cache).
+ * - `head-server.ts` `startHeadServer`: drop the `refuseLongSocket` call -> "refuses a store whose
+ *   socket path is past the platform's limit, before it loads anything" (the start fails reading a
+ *   ref in a directory that is no repo, and `head serve` answers ERR_GIT at the listen's EINVAL).
+ * - `head-client.ts` `askHeadFor`: read the connect phase by errno again -> "fall back to the local
+ *   load on a store whose socket path is past the limit" (`session exec` fails with ERR_STORAGE,
+ *   "it may have appended the harvest", once the length check is also dropped).
  */
 
 const run_ = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
 
 const repos: Array<FixtureRepo> = []
 const scopes: Array<Scope.Closeable> = []
+const dirs: Array<string> = []
 afterEach(async () => {
   await Promise.all(scopes.splice(0).map((scope) => run_(Scope.close(scope, Exit.void))))
   await Promise.all(repos.splice(0).map((repo) => repo.cleanup()))
+  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
+
+/**
+ * A directory under a fresh temp dir whose `.memhtml/head.sock` is `bytes` UTF-8 bytes long, padded
+ * with `unit` (one character, any width). The directory is made, empty.
+ */
+const deepRoot = async (bytes: number, unit = "d"): Promise<string> => {
+  const base = await mkdtemp(join(tmpdir(), "memhtml-deep-"))
+  dirs.push(base)
+  // Everything but the padded segment: `<base>/` and `/.memhtml/head.sock`.
+  const fixed = Buffer.byteLength(headSocketPath(join(base, "x"))) - 1
+  const unitBytes = Buffer.byteLength(unit)
+  const units = Math.floor((bytes - fixed) / unitBytes)
+  const root = join(base, unit.repeat(units) + "d".repeat(bytes - fixed - units * unitBytes))
+  await mkdir(root, { recursive: true })
+  expect(Buffer.byteLength(headSocketPath(root))).toBe(bytes)
+  return root
+}
 
 const WORDS = ["harbor", "glacier", "orchard", "furnace", "lantern", "compass"]
 
@@ -609,6 +637,30 @@ describe("the head server", () => {
     expect(status?.data.sha).toBe(sha)
   })
 
+  it("refuses a store whose socket path is past the platform's limit, before it loads anything", async () => {
+    const max = socketPathMax()
+    if (max === null) return
+    // 100 characters, 110 bytes: a character count would let it through to a listen that fails.
+    const root = await deepRoot(110, "é")
+    expect(headSocketPath(root).length).toBeLessThanOrEqual(max)
+    // No repo here at all, so anything that read a ref first would fail on that instead.
+    const scope = Scope.makeUnsafe()
+    scopes.push(scope)
+    const started = await Effect.runPromiseExit(
+      startHeadServer({ root, pollMs: 0 }).pipe(Scope.provide(scope))
+    )
+    expect(Exit.isFailure(started)).toBe(true)
+    const reason = Exit.isFailure(started) ? started.cause.reasons[0] : undefined
+    const error = reason !== undefined && "error" in reason ? reason.error : undefined
+    expect(error).toBeInstanceOf(HeadSocketPathTooLong)
+    expect(error).toMatchObject({ socket: headSocketPath(root), bytes: 110, max })
+
+    const refused = await cli(root, ["head", "serve"])
+    expect(refused.exitCode).toBe(1)
+    expect(refused.body.code).toBe("ERR_STORAGE")
+    expect(String(refused.body.error)).toContain(`110 bytes, past the ${String(max)}`)
+  })
+
   it("removes its socket when its scope closes", async () => {
     const { repo } = await corpus()
     const scope = Scope.makeUnsafe()
@@ -644,6 +696,37 @@ describe("the clients", () => {
     const put = await cli(repo.root, ["session", "put", "--id", "s2", "--file", ops])
     expect(put.exitCode).toBe(0)
     expect(headOf(put.body).source).not.toBe("server")
+  })
+
+  it("fall back to the local load on a store whose socket path is past the limit", async () => {
+    const max = socketPathMax()
+    if (max === null) return
+    const { repo, sha } = await corpus()
+    // The store moved under a path that puts its socket at 127 bytes, with no server running.
+    const root = await deepRoot(127)
+    await rm(root, { recursive: true })
+    await rename(repo.root, root)
+    const status = await cli(root, ["head", "status"])
+    expect(status.exitCode).toBe(0)
+    expect(dataOf(status.body)).toMatchObject({ sha, source: "git", server: null })
+
+    expect((await cli(root, ["session", "start", "--id", "deep"])).exitCode).toBe(0)
+    const exec = await cli(root, [
+      "session",
+      "exec",
+      "--id",
+      "deep",
+      "--script",
+      "ls /mnt/memhtml/areas/inbox"
+    ])
+    expect(exec.exitCode).toBe(0)
+    expect(dataOf(exec.body).server).toEqual({
+      used: false,
+      base: null,
+      reason: "no-server",
+      detail: `socket path is 127 bytes, past the ${String(max)} this platform allows`
+    })
+    expect(String(dataOf(exec.body).stdout)).toContain("harbor.html")
   })
 
   it("load locally under --no-server even with a server running", async () => {

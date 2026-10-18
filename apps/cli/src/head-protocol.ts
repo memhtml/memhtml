@@ -1,11 +1,13 @@
-import { join } from "node:path"
+import { createHash } from "node:crypto"
+import { join, win32 } from "node:path"
 
 import { HEAD_SOCKET } from "@memhtml/session"
 import { Schema } from "effect"
 
 /**
  * The head server's wire contract (`docs/v2-poc.md`, "Head server"): JSON over HTTP on a Unix domain
- * socket inside the store, five routes under one version prefix.
+ * socket inside the store (a named pipe derived from the store path under win32,
+ * {@link headEndpoint}), five routes under one version prefix.
  *
  * The server (`head-server.ts`) decodes every request body with the schemas here, excess properties
  * refused, the way the CLI refuses an unknown flag; the client (`head-client.ts`) decodes every
@@ -26,15 +28,84 @@ export const HEAD_ROUTES = {
 
 export type HeadRoute = keyof typeof HEAD_ROUTES
 
-/** The socket's absolute path in a store: `.memhtml/head.sock`. */
-export const headSocketPath = (root: string): string => join(root, HEAD_SOCKET)
+/**
+ * Where a store's head server listens, the same answer on the client and the server because both
+ * derive it from the store path alone. `path` is what `net.Server.listen({ path })` and
+ * `net.connect({ path })` take on the platform.
+ *
+ * - `socket`: a Unix domain socket file, `.memhtml/head.sock` inside the store. It has a mode, a
+ *   gitignore entry, and a byte limit ({@link socketPathMax}).
+ * - `pipe`: a Windows named pipe ({@link headPipeName}). It is no file in the store, so there is
+ *   nothing to stat, chmod, ignore, or remove, and its name is short whatever the store path is.
+ */
+export interface HeadEndpoint {
+  readonly path: string
+  readonly kind: "socket" | "pipe"
+}
 
 /**
- * The longest socket path `bind(2)` takes on Linux: `sun_path` is 108 bytes with the terminating
- * NUL. A store nested deeper than that cannot host a server, and says so rather than failing inside
- * the listen call.
+ * The named pipe a store's server listens on under win32:
+ * `\\.\pipe\memhtml-<the first 16 hex digits of the SHA-256 of the resolved store path>`. The
+ * path is resolved with win32 semantics and hashed as UTF-8 exactly as it resolves, so a store
+ * named with another letter case derives another pipe and its calls load locally.
  */
-export const SOCKET_PATH_MAX = 107
+export const headPipeName = (root: string): string => {
+  const digest = createHash("sha256").update(win32.resolve(root), "utf8").digest("hex")
+  return `\\\\.\\pipe\\memhtml-${digest.slice(0, 16)}`
+}
+
+/** The store's {@link HeadEndpoint} on `platform` (the running one by default). */
+export const headEndpoint = (
+  root: string,
+  platform: NodeJS.Platform = process.platform
+): HeadEndpoint =>
+  platform === "win32"
+    ? { path: headPipeName(root), kind: "pipe" }
+    : { path: join(root, HEAD_SOCKET), kind: "socket" }
+
+/**
+ * The path the store's server listens on: `.memhtml/head.sock` inside the store, or the named pipe
+ * {@link headPipeName} derives under win32.
+ */
+export const headSocketPath = (
+  root: string,
+  platform: NodeJS.Platform = process.platform
+): string => headEndpoint(root, platform).path
+
+/**
+ * The longest socket path, in UTF-8 bytes, a server binds and a client dials on `platform`, or
+ * `null` under win32, whose named pipe has no such limit. It is the size of `sun_path` less the
+ * terminating NUL: 108 bytes on Linux (107), 104 on macOS and the BSDs (103), and 103 on any other
+ * platform as the smallest common size. Node 24 on Linux also binds a full 108-byte path with no
+ * NUL (probed 2026-10-18), which C clients and other tools cannot dial, so the bound leaves the NUL.
+ */
+export const socketPathMax = (platform: NodeJS.Platform = process.platform): number | null => {
+  if (platform === "win32") return null
+  return platform === "linux" || platform === "android" ? 107 : 103
+}
+
+/** How far a socket path is past the platform's limit. */
+export interface SocketPathTooLong {
+  /** The path's length in UTF-8 bytes, which is what `sun_path` holds. */
+  readonly bytes: number
+  readonly max: number
+}
+
+/**
+ * `null` when `endpoint` can be bound and dialed on `platform`; else its byte length and the limit.
+ * A store nested too deep for its socket cannot host a server: `head serve` refuses at start
+ * ({@link HeadSocketPathTooLong}) and every client loads locally without dialing.
+ */
+export const socketPathTooLong = (
+  endpoint: HeadEndpoint,
+  platform: NodeJS.Platform = process.platform
+): SocketPathTooLong | null => {
+  if (endpoint.kind === "pipe") return null
+  const max = socketPathMax(platform)
+  if (max === null) return null
+  const bytes = Buffer.byteLength(endpoint.path, "utf8")
+  return bytes > max ? { bytes, max } : null
+}
 
 // ---------------------------------------------------------------------------------------------
 // The embed path
@@ -592,5 +663,20 @@ export class HeadServerRunning extends Schema.TaggedError<HeadServerRunning>()(
     pid: Schema.NullOr(Schema.Finite),
     ref: Schema.NullOr(Schema.String),
     sha: Schema.NullOr(Schema.String)
+  }
+) {}
+
+/**
+ * `head serve` on a store whose socket path is past the platform's limit ({@link socketPathMax}).
+ * Refused before the bind, naming the path, its byte length, and the limit, because a listen past
+ * it fails with a bare `EINVAL`. Clients on such a store never dial and load locally.
+ */
+export class HeadSocketPathTooLong extends Schema.TaggedError<HeadSocketPathTooLong>()(
+  "HeadSocketPathTooLong",
+  {
+    socket: Schema.String,
+    bytes: Schema.Finite,
+    max: Schema.Finite,
+    platform: Schema.String
   }
 ) {}

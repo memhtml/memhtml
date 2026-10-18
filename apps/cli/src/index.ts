@@ -164,7 +164,9 @@ export {
 export {
   ANSWER_TIMEOUT_MS,
   type Answered,
+  type Asked,
   askHead,
+  askHeadFor,
   CONNECT_TIMEOUT_MS
 } from "./head-client.js"
 export {
@@ -178,11 +180,15 @@ export {
 export {
   HEAD_PROTOCOL,
   HEAD_ROUTES,
+  type HeadEndpoint,
   type HeadRoute,
   HeadScope,
   HeadServerRunning,
   HeadServerStatus,
+  HeadSocketPathTooLong,
   HitDetail,
+  headEndpoint,
+  headPipeName,
   headSocketPath,
   NeighborsAnswer,
   NeighborsRequest,
@@ -191,7 +197,9 @@ export {
   SearchAnswer,
   SearchRequest,
   ServedHead,
-  SOCKET_PATH_MAX,
+  type SocketPathTooLong,
+  socketPathMax,
+  socketPathTooLong,
   VectorCacheStatus,
   VectorUseSchema
 } from "./head-protocol.js"
