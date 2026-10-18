@@ -504,6 +504,20 @@ export type EmbedActivityStatus = typeof EmbedActivityStatus.Type
  */
 export const LATE_EMBEDS_MAX = 1
 
+/**
+ * Where the store's policy comes from as of one read of `memhtml.config.json` (`policySourceOf` in
+ * `store-config.ts`): `file` when it is present and decodes, `defaults` when it is absent and the
+ * library defaults apply, `invalid` when it is present and does not read or decode, so every write
+ * that needs the policy refuses with `ERR_STORE_CONFIG` until it is fixed (`reason` says why).
+ */
+export const PolicySourceStatus = Schema.Struct({
+  source: Schema.Literals(["file", "defaults", "invalid"]),
+  /** The file's absolute path, whether or not it exists. */
+  path: Schema.String,
+  reason: Schema.NullOr(Schema.String)
+})
+export type PolicySourceStatus = typeof PolicySourceStatus.Type
+
 /** `GET /v1/status`. */
 export const HeadServerStatus = Schema.Struct({
   protocol: Schema.Literal(HEAD_PROTOCOL),
@@ -533,7 +547,12 @@ export const HeadServerStatus = Schema.Struct({
   /** The embedder's deadline, warmups, and traffic; with no embedder, zeros and nulls. */
   embed: EmbedActivityStatus,
   /** The workers `/v1/exec` runs scripts in: how many run at once, and what they have done. */
-  exec: ExecPoolStatus
+  exec: ExecPoolStatus,
+  /**
+   * The store's policy source, read from the working tree when the status is asked, the way every
+   * decision reads it. Absent from an older server.
+   */
+  policy: Schema.optionalKey(PolicySourceStatus)
 })
 export type HeadServerStatus = typeof HeadServerStatus.Type
 

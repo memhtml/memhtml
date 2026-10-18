@@ -111,7 +111,7 @@ import {
   runSessionExec,
   type SessionExecRuntime
 } from "./session-exec.js"
-import { loadStorePolicy } from "./store-config.js"
+import { loadStorePolicy, type PolicySource, policySourceOf } from "./store-config.js"
 
 export type { GateReport } from "./head-gate.js"
 
@@ -1363,13 +1363,15 @@ export const sessionPrune = (input: {
 /**
  * `head status`: the head server's status when one answers (its version, ref, load, advances, and
  * vector cache under `server`), else build the version at `HEAD` here and report what that cost and
- * where it came from, with `server: null`.
+ * where it came from, with `server: null`. Either way `policy` says where the store's policy comes
+ * from ({@link PolicySource}: `file`, `defaults` when `memhtml.config.json` is absent, or
+ * `invalid`), as the server read it when it answered with one, else as this process reads it.
  */
 export const headStatus = (input: {
   readonly root: string
   readonly server?: boolean | undefined
 }): Effect.Effect<
-  HeadStats & { readonly server: HeadServerStatus | null },
+  HeadStats & { readonly server: HeadServerStatus | null; readonly policy: PolicySource },
   GitFailure | InvalidMemory | StorageFailure
 > =>
   Effect.gen(function* () {
@@ -1386,12 +1388,17 @@ export const headStatus = (input: {
             { sha: status.sha, ref: status.ref, records: status.records, skipped: status.skipped },
             answered.ms
           ),
-          server: status
+          server: status,
+          policy: status.policy ?? (yield* policySourceOf(input.root))
         }
       }
     }
     const sha = yield* headSha(input.root)
-    return { ...headStats(yield* loadHeadAt(input.root, sha)), server: null }
+    return {
+      ...headStats(yield* loadHeadAt(input.root, sha)),
+      server: null,
+      policy: yield* policySourceOf(input.root)
+    }
   })
 
 /**

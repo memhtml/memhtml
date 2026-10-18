@@ -90,7 +90,7 @@ import {
   vectorsForQuery
 } from "./head-vectors.js"
 import { type CachedImage, cacheImage } from "./session-exec.js"
-import { loadStorePolicy } from "./store-config.js"
+import { describePolicySource, loadStorePolicy, policySourceOf } from "./store-config.js"
 import {
   commitOverHead,
   execOverHead,
@@ -602,6 +602,13 @@ export const startHeadServer = (
     }
     const loaded = yield* loadHeadAt(root, tip)
     const loadSource: HeadSource = loaded.source
+    // Every decision reads the policy file again, so this line says what the server starts under,
+    // and `/v1/status` says what it is now. A store with no file runs under the library defaults,
+    // which refuse no type and anchor nothing; this is where an operator sees that.
+    const policy = yield* policySourceOf(root)
+    yield* (policy.source === "invalid" ? Effect.logWarning : Effect.logInfo)(
+      `head serve: ${describePolicySource(policy)}`
+    )
     const startedAt = Date.now()
     const state: State = {
       version: detached(loaded.view),
@@ -1411,7 +1418,7 @@ export const startHeadServer = (
       if (route === `GET ${HEAD_ROUTES.status}`) {
         yield* fresh
         yield* heldVectors
-        return json(stats())
+        return json({ ...stats(), policy: yield* policySourceOf(root) })
       }
       if (route === `POST ${HEAD_ROUTES.search}`) {
         const { embedDeadlineMs, scope, detail, ...body } = yield* HttpServerRequest.schemaBodyJson(
