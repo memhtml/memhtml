@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest"
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
 
 /**
- * No tracked file outside the docs site names a person or an internal system.
+ * No tracked file names a person or an internal system.
  *
  * This repository is public, and its fixtures, prompts, and comments were first written against a
  * private deployment. A name that survives an edit reads like any other word, so a review doesn't
@@ -27,8 +27,13 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
  * Two runs joined by one `-`, `_`, or space also match as their concatenation, the rule the docs
  * site's own gate uses, so a term listed as `xy` matches `x-y`, `x_y`, `x y`, and `xY`.
  *
- * `apps/docs/` is excluded: the docs site gates its own built pages with `DENIED_TERMS` and
- * `DENYLIST` in `apps/docs/src/gates.ts`.
+ * The docs site's sources under `apps/docs/` are scanned like every other file. The site also
+ * gates its own built pages with `DENIED_TERMS` and `DENYLIST` in `apps/docs/src/gates.ts`, which
+ * reads what the build emits; this scan reads what is tracked.
+ *
+ * (Mutation 2026-10-18: `apps/docs/` filtered out of the scan again -> "names none of them in any
+ * tracked text file" is red on the docs-site census, 0 files against 104. A digest planted for a
+ * word the site's sources use found 73 lines under `apps/docs/` with the filter gone, none with it.)
  */
 const PRIVATE_TERMS: ReadonlyArray<{ readonly sha256: string; readonly kind: string }> = [
   {
@@ -95,9 +100,6 @@ const PRIVATE_TERMS: ReadonlyArray<{ readonly sha256: string; readonly kind: str
     kind: "a private lessons directory"
   }
 ]
-
-/** Path prefixes this scan skips, each with the gate that covers it instead. */
-const EXCLUDED_PREFIXES: ReadonlyArray<string> = ["apps/docs/"]
 
 const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex")
 
@@ -206,13 +208,13 @@ describe("private terms", () => {
     expect(hits("quux, frob, xquux frob, quux frobs, quux  frob")).toEqual([])
   })
 
-  it("names none of them in a tracked text file outside the docs site", () => {
-    const tracked = gitFiles()
-    const scanned = tracked.filter(
-      (path) => !EXCLUDED_PREFIXES.some((prefix) => path.startsWith(prefix))
+  it("names none of them in any tracked text file", () => {
+    const scanned = gitFiles()
+    // The census: the docs site's sources are part of the scan, as git lists them.
+    expect(scanned.filter((path) => path.startsWith("apps/docs/")).length).toBe(
+      gitFiles("apps/docs").length
     )
-    // The census: git's own pathspec exclusion counts the same set the prefix filter kept.
-    expect(scanned.length).toBe(gitFiles(".", ":(exclude)apps/docs").length)
+    expect(gitFiles("apps/docs").length).toBeGreaterThan(0)
 
     const match = matcher(new Set(PRIVATE_TERMS.map((term) => term.sha256)))
     const findings: Array<Finding> = []

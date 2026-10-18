@@ -42,6 +42,7 @@ export {
   decodeLog,
   isSessionId,
   LOG_MOVED,
+  OverlayOpSchema,
   rebaseSession,
   replaceOps,
   resumeSession,

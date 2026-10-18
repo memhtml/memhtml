@@ -1460,7 +1460,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "server",
         type: "boolean",
         description:
-          "Ask the head server on .memhtml/head.sock first (`memhtml head serve`), falling back to loading the head here when no server accepts within 100 ms or answers within 10 s; `--no-server` always loads here. The payload's `head.source` is `server` when the server answered.",
+          "Ask the head server on .memhtml/head.sock first (`memhtml head serve`), falling back to loading the head here when no server accepts within 100 ms or answers within 10 s; `--no-server` always loads here. The payload's `source` is `server` when the server answered, and `server` is then the server's own status (null when this process loaded the head).",
         default: true
       }
     ],
