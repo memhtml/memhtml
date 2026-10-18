@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process"
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { checkMemory, contentHash, parseMemory } from "@memhtml/html"
@@ -155,18 +155,32 @@ describe("commitSession", () => {
 
   it("keeps no state but the log: no index file, no ref, and the trailer names the session", async () => {
     const { root, head } = await seeded()
-    const s1 = await start(root, "prov", head, [putOp("areas/inbox/b.html", memory("B", "B one."))])
-    const first = await run(commitSession({ session: s1, head, message: "one" }))
-    if (first.kind !== "committed") throw new Error(first.kind)
-    const again = await run(
-      appendOps(await run(resumeSession({ root, id: "prov" })), [
-        putOp("areas/inbox/c.html", memory("C", "C one."))
-      ])
-    )
-    const second = await run(
-      commitSession({ session: again, head: await loadHead(root), message: "two" })
-    )
-    if (second.kind !== "committed") throw new Error(second.kind)
+    // The OS temp dir is shared with the other test files, whose commits run in parallel and stage
+    // through it too, so these two commits stage through a temp dir of their own.
+    const ownTmp = await mkdtemp(join(tmpdir(), "memhtml-commit-tmp-"))
+    const sharedTmp = process.env.TMPDIR
+    process.env.TMPDIR = ownTmp
+    const committed = await (async () => {
+      try {
+        const s1 = await start(root, "prov", head, [
+          putOp("areas/inbox/b.html", memory("B", "B one."))
+        ])
+        const first = await run(commitSession({ session: s1, head, message: "one" }))
+        if (first.kind !== "committed") throw new Error(first.kind)
+        const again = await run(
+          appendOps(await run(resumeSession({ root, id: "prov" })), [
+            putOp("areas/inbox/c.html", memory("C", "C one."))
+          ])
+        )
+        return await run(
+          commitSession({ session: again, head: await loadHead(root), message: "two" })
+        )
+      } finally {
+        if (sharedTmp === undefined) delete process.env.TMPDIR
+        else process.env.TMPDIR = sharedTmp
+      }
+    })()
+    if (committed.kind !== "committed") throw new Error(committed.kind)
     // Two commits leave the log and nothing else under the sessions directory: the temporary index
     // each staged through is gone, and no provenance ref was written.
     expect((await readdir(join(root, SESSIONS_DIR))).sort()).toEqual(["prov.json"])
@@ -175,9 +189,8 @@ describe("commitSession", () => {
       await git(root, ["log", "--format=%(trailers:key=Memhtml-Session,valueonly)", "-2"])
     ).toBe("prov\n\nprov")
     // And none was left in the temp dir either.
-    expect(
-      (await readdir(tmpdir())).filter((name) => name.startsWith("memhtml-commit-index-"))
-    ).toEqual([])
+    expect(await readdir(ownTmp)).toEqual([])
+    await rm(ownTmp, { recursive: true, force: true })
   })
 
   it("refuses a batch with a violation and writes nothing", async () => {
