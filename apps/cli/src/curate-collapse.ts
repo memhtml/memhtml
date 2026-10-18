@@ -717,7 +717,7 @@ const foldCluster = (
         if (ops.length + completion.length + links.length >= BATCH_CAP) break
         links.push({ kind: "link", path: canonical, rel: "supersedes", href })
       }
-      let extra = [...completion, ...links]
+      const extra = [...completion, ...links]
       if (extra.length > 0) {
         const violations = validateOps(view, [...ops, ...extra], {
           scope: CURATE_SCOPE,
@@ -727,7 +727,6 @@ const foldCluster = (
           results.warnings.push(
             `driver completion refused, landing the model's ops alone: ${violations.slice(0, 5).map(describeViolation).join(" | ")}`
           )
-          extra = []
         } else {
           yield* overlay.append(extra)
           completed = { archive: completion.length, link: links.length }
