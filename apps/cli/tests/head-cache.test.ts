@@ -1,4 +1,4 @@
-import { chmod, mkdir, readdir, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 
 import { renderTemplate } from "@memhtml/html"
@@ -15,6 +15,7 @@ import {
   writeHeadSnapshot
 } from "../src/head-cache.js"
 import { headGate } from "../src/head-gate.js"
+import { run as runCli } from "../src/run.js"
 import { loadHeadAt } from "../src/v2.js"
 
 /**
@@ -35,6 +36,20 @@ import { loadHeadAt } from "../src/v2.js"
  * - `writeHeadSnapshot`: drop the `pruneSnapshots` call -> "prunes to the newest four after a write".
  * - `headGate`: `if (report.passed)` -> "fails with HeadGateFailed, mapped to
  *   ERR_DISCRIMINATION_FAILED, when the landed version finds a probe worse".
+ * - `loadVersion`: let a failed read of the sha's own snapshot fail the load
+ *   (`readSnapshotIfPresent` in place of `cachedRecords`) -> "reads git when the sha's own snapshot
+ *   is garbage, and removes it" and "answers head status --no-server from git over a garbage
+ *   snapshot, exit 0" (`snapshot.read.decode`, exit 1), with the mislabeled and unlistable cases.
+ * - `cachedRecords`: drop the `unlink` -> "reads git when the sha's own snapshot is garbage, and
+ *   removes it" (the file is still there).
+ * - `cachedRecords`: return the records whatever sha the metadata names -> "reads git when the
+ *   sha's own snapshot names another sha" (the version claims the other sha's rows).
+ * - `loadVersion`: stop at the first ancestor (`return` git when its read misses) -> "passes over
+ *   an unreadable ancestor to the next one" (`source` is `git`).
+ * - `ancestorSnapshots`: fail on a probe git refuses -> "passes over a snapshot of a commit git does
+ *   not have" (`GitFailure` from `merge-base`).
+ * - `loadVersion`: drop the `Effect.catch` around `ancestorSnapshots` -> "reads git when the
+ *   snapshot directory cannot be listed" (`snapshot.list` fails the load).
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
@@ -99,6 +114,15 @@ const corpus = async (count: number): Promise<{ repo: FixtureRepo; sha: string }
     "corpus"
   )
   return { repo, sha }
+}
+
+/** `memhtml <argv> --repo <root>` in process, parsed. */
+const cli = async (
+  root: string,
+  argv: ReadonlyArray<string>
+): Promise<{ exitCode: number; body: Record<string, unknown> }> => {
+  const result = await runCli([...argv, "--repo", root], undefined, undefined, false)
+  return { exitCode: result.exitCode, body: JSON.parse(result.stdout) as Record<string, unknown> }
 }
 
 const status = (repo: FixtureRepo): Promise<string> =>
@@ -198,27 +222,91 @@ describe("loadVersion", () => {
     expect((await run(loadVersion(repo.root, third))).source).toBe("git")
   })
 
-  it("refuses an exact snapshot whose metadata names another sha, and skips such an ancestor", async () => {
+  it("reads git when the sha's own snapshot names another sha, removes it, and skips such an ancestor", async () => {
     const { repo, sha } = await corpus(3)
     const version = (await run(loadVersion(repo.root, sha))).version
     const other = "0".repeat(40)
+    const own = snapshotPathFor(repo.root, sha)
+    await run(writeSnapshot({ records: version.records(), sha: other, path: own }))
+    const loaded = await run(loadVersion(repo.root, sha))
+    expect(loaded).toMatchObject({ source: "git", snapshotPath: null })
+    expect(loaded.version.sha).toBe(sha)
+    await expect(stat(own)).rejects.toMatchObject({ code: "ENOENT" })
+
+    // The same mislabeled file as the only ancestor of a later commit: passed over, git answers.
+    await run(writeSnapshot({ records: version.records(), sha: other, path: own }))
+    const next = await commit(repo, [memory("anvil")], "next")
+    expect((await run(loadVersion(repo.root, next))).source).toBe("git")
+  })
+
+  it("reads git when the sha's own snapshot is garbage, and removes it", async () => {
+    const { repo, sha } = await corpus(3)
+    const own = snapshotPathFor(repo.root, sha)
+    await mkdir(dirname(own), { recursive: true })
+    await writeFile(own, "definitely not an arrow file, but long enough to have a footer")
+    const loaded = await run(loadVersion(repo.root, sha))
+    expect(loaded).toMatchObject({ source: "git", snapshotPath: null })
+    expect(loaded.version.size).toBe(3)
+    await expect(stat(own)).rejects.toMatchObject({ code: "ENOENT" })
+    // The next write of that sha lands in its place, and the next load hits it.
+    await run(writeHeadSnapshot(repo.root, loaded.version))
+    expect((await run(loadVersion(repo.root, sha))).source).toBe("snapshot")
+  })
+
+  it("passes over an unreadable ancestor to the next one, and to git after the last", async () => {
+    const { repo, sha: first } = await corpus(4)
+    await run(writeHeadSnapshot(repo.root, (await run(loadVersion(repo.root, first))).version))
+    const second = await commit(repo, [memory("lantern")], "second")
+    await run(writeHeadSnapshot(repo.root, (await run(loadVersion(repo.root, second))).version))
+    const third = await commit(repo, [memory("saddle")], "third")
+
+    // The best ancestor (one changed path) is garbage; the next (two) still serves.
+    await writeFile(snapshotPathFor(repo.root, second), "garbage where the best ancestor was")
+    const loaded = await run(loadVersion(repo.root, third))
+    expect(loaded).toMatchObject({ source: "snapshot+advance", ancestorSha: first, reparsed: 2 })
+    expect(loaded.version.size).toBe(6)
+    await expect(stat(snapshotPathFor(repo.root, second))).rejects.toMatchObject({ code: "ENOENT" })
+
+    await writeFile(snapshotPathFor(repo.root, first), "garbage where the last ancestor was")
+    expect((await run(loadVersion(repo.root, third))).source).toBe("git")
+  })
+
+  it("passes over a snapshot of a commit git does not have", async () => {
+    const { repo, sha } = await corpus(3)
+    const version = (await run(loadVersion(repo.root, sha))).version
+    // A snapshot of a commit gc'd with its branch: `merge-base` cannot judge it.
+    const gone = "f".repeat(40)
     await run(
       writeSnapshot({
         records: version.records(),
-        sha: other,
-        path: snapshotPathFor(repo.root, sha)
+        sha: gone,
+        path: snapshotPathFor(repo.root, gone)
       })
     )
-    const refused = await run(Effect.result(loadVersion(repo.root, sha)))
-    expect(Result.isFailure(refused)).toBe(true)
-    if (Result.isFailure(refused)) {
-      expect(refused.failure).toMatchObject({
-        _tag: "StorageFailure",
-        operation: "snapshot.sha-mismatch"
-      })
-    }
     const next = await commit(repo, [memory("anvil")], "next")
     expect((await run(loadVersion(repo.root, next))).source).toBe("git")
+    await run(writeHeadSnapshot(repo.root, version))
+    expect(await run(loadVersion(repo.root, next))).toMatchObject({
+      source: "snapshot+advance",
+      ancestorSha: sha
+    })
+  })
+
+  it("reads git when the snapshot directory cannot be listed", async () => {
+    const { repo, sha } = await corpus(2)
+    await mkdir(join(repo.root, ".memhtml"), { recursive: true })
+    await writeFile(join(repo.root, SNAPSHOTS_DIR), "not a directory", "utf8")
+    expect((await run(loadVersion(repo.root, sha))).source).toBe("git")
+  })
+
+  it("answers head status --no-server from git over a garbage snapshot, exit 0", async () => {
+    const { repo, sha } = await corpus(3)
+    const own = snapshotPathFor(repo.root, sha)
+    await mkdir(dirname(own), { recursive: true })
+    await writeFile(own, "definitely not an arrow file, but long enough to have a footer")
+    const result = await cli(repo.root, ["head", "status", "--no-server"])
+    expect(result.exitCode).toBe(0)
+    expect(result.body.data).toMatchObject({ sha, source: "git", records: 3 })
   })
 })
 

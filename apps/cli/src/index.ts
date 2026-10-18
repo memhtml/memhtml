@@ -152,6 +152,7 @@ export {
 } from "./extraction.js"
 export {
   type AncestorSnapshot,
+  ancestorSnapshots,
   findAncestorSnapshot,
   type HeadSource,
   type LoadedVersion,
