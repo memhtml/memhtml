@@ -46,7 +46,7 @@ export const STRUCTURED_TOOL_NAME = "emit"
  * tight budget is consumed sooner than the answer's length alone suggests, and every structured
  * call here runs with reasoning on.
  *
- * 64,000 rather than the 16,384 that stood here: the same number the v1 consolidator settled on
+ * 64,000 rather than the 16,384 that stood here: the number an earlier agent caller settled on
  * for its own per-call ceiling (issue #113), half of the 128,000 ceiling below, and generous
  * against the largest structured answer any caller asks for. A
  * budget is a ceiling and not a spend — the model stops when the answer is done — so the cost of a

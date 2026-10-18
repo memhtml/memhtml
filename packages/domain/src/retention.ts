@@ -114,8 +114,8 @@ export const HALF_LIVES_DAYS: Readonly<Record<string, number | null>> = {
   arc: 30,
   error_pattern: 14,
   /**
-   * A task does not decay. This entry documents that and nothing reads it today, because sleep's
-   * phases exclude tasks by type before any of them is scored, so nothing reaches the scorer to
+   * A task does not decay. This entry documents that and nothing reads it today, because curation
+   * shields tasks by type and nothing scores one, so nothing reaches the scorer to
    * decay. It is stated anyway, because the fallback for an unlisted type is
    * {@link DEFAULT_HALF_LIFE_DAYS}. If a future caller DOES score a task, the answer is then
    * "age says nothing about it" rather than a silent 30-day half-life. Age is actively
@@ -162,7 +162,7 @@ export const SCORE_PRECISION = 4
  * - `reinforcementCount`: a quantity of inbound `supports`/`reinforces` edges.
  * - `wordCount`: a quantity of words in the memory's body.
  * - `contradictionCount`: a quantity of **authored** (`derived: false`) contradictions;
- *   a sleep-mined suspicion is excluded upstream, so a machine guess cannot evict.
+ *   a machine-mined suspicion is excluded upstream, so a machine guess cannot evict.
  */
 export interface RetentionInput {
   readonly memoryType: string

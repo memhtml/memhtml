@@ -5,15 +5,15 @@ import { Schema } from "effect"
  * CHECK constraint in SQL.
  *
  * `arc` is in the vocabulary but absent from {@link WRITABLE_MEMORY_TYPES}: an arc is
- * synthesized by the sleep cycle from many memories, so an agent naming one directly
+ * synthesized by curation from many memories, so an agent naming one directly
  * would be asserting a conclusion the corpus has not yet earned.
  *
  * `task` is ONE axis with the other nine rather than a parallel `kind` column, because
  * three overlapping type vocabularies is what made
  * the predecessor memory system's classification unanswerable. A task is a memory type whose
  * retrieval, dedup, and curation treatment a filter states, not a second axis. Tasks are
- * default-excluded from search and skipped by sleep. See `@memhtml/index`'s `assembleScope`
- * and the sleep phases' `excludeTypes`.
+ * default-excluded from search and shielded from curation. See `@memhtml/index`'s
+ * `assembleScope` and `@memhtml/curator`'s `isShielded`.
  */
 export const MEMORY_TYPES = [
   "episodic",

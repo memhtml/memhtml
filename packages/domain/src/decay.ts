@@ -1,8 +1,8 @@
 /**
  * Confidence decay and the outcome EWMA, both on a fixed-point grid.
  *
- * The confidence-decay half IS the production path: sleep's confidence-decay phase calls
- * `decayConfidence` directly. The outcome-EWMA half is the REFERENCE implementation the
+ * The confidence-decay half has no production caller since 0.16 removed the pipeline that ran
+ * `decayConfidence`, and it stays as tested math. The outcome-EWMA half is the REFERENCE one the
  * production SQL is checked against: `packages/index/src/reinforce.ts` computes the outcome
  * EWMA in float SQL with its own `OUTCOME_EWMA_ALPHA = 0.3` twin of
  * {@link DEFAULT_EWMA_ALPHA}, and the two constants are pinned to agree by each package's
@@ -38,7 +38,7 @@ export const DEFAULT_EWMA_ALPHA = 0.3
 export const DEFAULT_CONFIDENCE_FLOOR = 0.2
 
 /**
- * The per-sleep-cycle confidence decay weight. Gentler than {@link DEFAULT_EWMA_ALPHA} on
+ * The per-cycle confidence decay weight. Gentler than {@link DEFAULT_EWMA_ALPHA} on
  * purpose: confidence should erode over many unreinforced nights rather than collapse in
  * one, so a single missed reinforcement is forgiving. At 0.1 a claim closes a tenth of its
  * distance to the floor per cycle.
@@ -67,7 +67,7 @@ export const ewmaStepFp = (alphaFp: number, prevFp: number, signalFp: number): n
 /**
  * Fold signals through {@link ewmaStepFp}, one rounding per step. Rounding inside the fold
  * rather than once at the end is what makes an N-signal batch agree with N single-signal
- * calls. Sleep may process a memory's corrections in one batch or across several nights,
+ * calls. A caller may process a memory's corrections in one batch or across several runs,
  * and both paths must reach the same score.
  */
 export const applyOutcomesFp = (
@@ -130,7 +130,7 @@ export const decayConfidence = (
   floor: number = DEFAULT_CONFIDENCE_FLOOR
 ): number => fromFp(decayConfidenceFp(toFp(alpha), toFp(confidence), toFp(floor)))
 
-/** {@link decayConfidence} folded over `cycles` unreinforced sleep cycles. */
+/** {@link decayConfidence} folded over `cycles` unreinforced cycles. */
 export const decayConfidenceN = (
   confidence: number,
   cycles: number,
@@ -139,9 +139,9 @@ export const decayConfidenceN = (
 ): number => fromFp(decayConfidenceNFp(toFp(alpha), toFp(confidence), toFp(floor), cycles))
 
 /**
- * The smallest confidence change worth committing. Confidence decay is the widest commit in
- * a sleep run, one meta line across many files, so a sub-threshold delta is dropped rather
- * than committed, keeping the night's diff reviewable.
+ * The smallest confidence change worth committing. Confidence decay is the widest commit a
+ * curation pass could make, one meta line across many files, so a sub-threshold delta is
+ * dropped rather than committed, keeping the pass's diff reviewable.
  */
 export const CONFIDENCE_COMMIT_DELTA = 0.005
 

@@ -75,7 +75,7 @@ export interface ProxyConfig {
  * scheme is required because a bare `host:4000` is what a shell profile most easily gets wrong and
  * `fetch` would reject it with a message that does not name the variable. Throwing rather than
  * returning `null` is deliberate: a set-but-unusable value dying at construction, with the variable
- * named, is the outcome `MEMHTML_CONSOLIDATOR_TURN_TIMEOUT_MS` chose for the same reason — a typo
+ * named, is the outcome the other `MEMHTML_*` duration variables chose for the same reason: a typo
  * that silently fell back to Bedrock direct would route production traffic somewhere the operator
  * did not point it.
  */
