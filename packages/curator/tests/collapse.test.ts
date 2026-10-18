@@ -22,7 +22,7 @@ import {
   renderCollapseBriefing,
   runCurator
 } from "../src/index.js"
-import { fakeTools } from "./fakes.js"
+import { fakeTools, STRICT_POLICY } from "./fakes.js"
 
 /**
  * The collapse charter, the collapse briefing, and the fake model's fold, without a head or a
@@ -347,10 +347,10 @@ describe("the fake model's fold", () => {
       )
     )
     expect(mixed.doc.entities).toEqual(["person:sanju", "system:gates"])
-    expect(writeBarReasons(mixed.put.path, mixed.put.html)).toEqual([])
+    expect(writeBarReasons(mixed.put.path, mixed.put.html, STRICT_POLICY.writeBar)).toEqual([])
     const bare = await canonicalOf(await fixture(() => []))
     expect(bare.doc.entities).toEqual([FAKE_FALLBACK_ENTITY])
-    expect(writeBarReasons(bare.put.path, bare.put.html)).toEqual([])
+    expect(writeBarReasons(bare.put.path, bare.put.html, STRICT_POLICY.writeBar)).toEqual([])
   })
 
   it("a member ruled keep is neither archived nor superseded", async () => {

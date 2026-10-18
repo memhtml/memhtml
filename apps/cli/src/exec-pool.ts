@@ -1,3 +1,4 @@
+import { availableParallelism } from "node:os"
 import { Worker } from "node:worker_threads"
 
 import { StorageFailure } from "@memhtml/contracts/errors"
@@ -27,23 +28,71 @@ import type { GuestJob, GuestRun, SandboxRunner } from "./session-exec.js"
  * {@link RUN_DEADLINE_GRACE_MS} for seeding and the walk); a job that has not answered by then has
  * its worker terminated, and the run is answered as cut off by the runtime with nothing changed, so
  * nothing is harvested. The pool starts a new worker for the next job. A worker that dies (a crash,
- * or the heap limit {@link WORKER_HEAP_MB}) fails its job and is replaced the same way, so neither a
- * runaway nor an allocation bomb reaches the server's own thread or heap.
+ * or its heap limit, {@link WORKER_HEAP_MB} unless configured) fails its job and is replaced the same
+ * way, so neither a runaway nor an allocation bomb reaches the server's own thread or heap.
  *
  * ## Warmth
  *
  * A worker costs 107 to 130 ms to start, 81 to 98 of them importing just-bash (measured on the
  * 7,437-record clone), which is most of what a warm run costs, so workers are kept between jobs and
- * one is started with the pool. A worker runs one job at a time; {@link EXEC_POOL_SIZE} bounds how
- * many run at once, and a job that cannot get a worker within the wait it is given fails with
- * {@link EXEC_BUSY} so its caller can answer rather than queue without bound.
+ * one is started with the pool. A worker runs one job at a time; the pool's size bounds how many run
+ * at once ({@link defaultExecPoolSize}, or `MEMHTML_EXEC_POOL_SIZE`), and a job that cannot get a
+ * worker within the wait it is given fails with {@link EXEC_BUSY} so its caller can answer rather
+ * than queue without bound.
  */
 
-/** Workers that run at once. Each holds one seeded corpus while it runs (about 17 MB on the clone). */
-export const EXEC_POOL_SIZE = 4
+/**
+ * The most workers the default runs at once, whatever the host's parallelism: each holds one seeded
+ * corpus while it runs (about 17 MB on a 7,437-record clone) and may grow to its heap limit, so the
+ * default stays bounded on a large host. `MEMHTML_EXEC_POOL_SIZE` sets any size up to
+ * {@link EXEC_POOL_SIZE_MAX}.
+ */
+export const EXEC_POOL_SIZE_DEFAULT_CAP = 4
 
-/** The old-generation heap a worker may grow to before it is stopped, in MB. */
+/** The largest `MEMHTML_EXEC_POOL_SIZE` accepted. */
+export const EXEC_POOL_SIZE_MAX = 64
+
+/**
+ * The pool size when none is configured: one worker per core the process may use, less one for the
+ * server's own thread, at least 1 and at most {@link EXEC_POOL_SIZE_DEFAULT_CAP}. `parallelism` is
+ * a parameter so a test can name a host.
+ */
+export const defaultExecPoolSize = (parallelism: number = availableParallelism()): number =>
+  Math.max(1, Math.min(EXEC_POOL_SIZE_DEFAULT_CAP, parallelism - 1))
+
+/**
+ * The old-generation heap a worker may grow to before it is stopped, in MB, when
+ * `MEMHTML_EXEC_WORKER_HEAP_MB` sets none.
+ */
 export const WORKER_HEAP_MB = 2048
+
+/** The bounds `MEMHTML_EXEC_WORKER_HEAP_MB` is held to: below 64 MB just-bash cannot start. */
+export const WORKER_HEAP_MB_MIN = 64
+export const WORKER_HEAP_MB_MAX = 65_536
+
+/** The variable that sets the pool's size, read by `head serve`. */
+export const EXEC_POOL_SIZE_VAR = "MEMHTML_EXEC_POOL_SIZE"
+
+/** The variable that sets each worker's heap limit in MB, read by `head serve`. */
+export const EXEC_WORKER_HEAP_VAR = "MEMHTML_EXEC_WORKER_HEAP_MB"
+
+/**
+ * A pool setting's value, as one of the two variables above spells it: a whole number in
+ * `[min, max]`, or the reason it is not one.
+ */
+export const parsePoolSetting = (
+  raw: string,
+  min: number,
+  max: number
+):
+  | { readonly ok: true; readonly value: number }
+  | { readonly ok: false; readonly reason: string } => {
+  const text = raw.trim()
+  const value = /^\d+$/.test(text) ? Number(text) : Number.NaN
+  return Number.isSafeInteger(value) && value >= min && value <= max
+    ? { ok: true, value }
+    : { ok: false, reason: `expected a whole number from ${String(min)} to ${String(max)}` }
+}
 
 /** The `StorageFailure.operation` a job gets when no worker came free within its wait. */
 export const EXEC_BUSY = "session-exec.busy"
@@ -74,7 +123,10 @@ interface Slot {
 }
 
 export interface ExecPoolInput {
+  /** Workers that run at once; {@link defaultExecPoolSize} when omitted. */
   readonly size?: number | undefined
+  /** Each worker's old-generation heap limit in MB; {@link WORKER_HEAP_MB} when omitted. */
+  readonly heapMb?: number | undefined
   /** The worker entry; the sandbox runner unless a test hands in a stand-in. */
   readonly workerPath?: string | undefined
 }
@@ -86,7 +138,8 @@ export const makeExecPool = (
   input: ExecPoolInput = {}
 ): Effect.Effect<ExecPool, never, Scope.Scope> =>
   Effect.gen(function* () {
-    const size = input.size ?? EXEC_POOL_SIZE
+    const size = input.size ?? defaultExecPoolSize()
+    const heapMb = input.heapMb ?? WORKER_HEAP_MB
     const workerPath = input.workerPath ?? sandboxRunnerPath()
     const permits = yield* Semaphore.make(size)
     const idle: Array<Slot> = []
@@ -97,7 +150,7 @@ export const makeExecPool = (
     const spawn = (): Slot => {
       const worker = new Worker(workerPath, {
         workerData: { role: "memhtml-session-exec" },
-        resourceLimits: { maxOldGenerationSizeMb: WORKER_HEAP_MB },
+        resourceLimits: { maxOldGenerationSizeMb: heapMb },
         // Not forwarded to this process's stdout, which carries exactly one envelope; the runner
         // writes nothing there, and anything a dependency did would be dropped here, not emitted.
         stdout: true

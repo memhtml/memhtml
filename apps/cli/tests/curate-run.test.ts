@@ -3,7 +3,7 @@ import { access, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import type { MemoryRecord } from "@memhtml/contracts"
+import { DEFAULT_WRITE_BAR, type MemoryRecord } from "@memhtml/contracts"
 import { CURATOR_MODEL_VAR } from "@memhtml/curator"
 import { frameKeyOf } from "@memhtml/domain"
 import { versionFromRecords } from "@memhtml/head"
@@ -27,6 +27,7 @@ import {
 import { EXIT_RUNTIME, EXIT_USAGE } from "../src/envelope.js"
 import { parseArgv, run, validate } from "../src/run.js"
 import { type LoadedHead, revParse } from "../src/v2.js"
+import { STRICT_POLICY } from "./strict-store.js"
 
 /**
  * The usage guards `memhtml curate run` adds (`docs/v2-poc.md`, "Curator"). Every exit-2 case here
@@ -365,7 +366,12 @@ describe("the exec tool refuses what the commit would refuse", () => {
     )
     const head = headOver(records)
     const overlay = memoryOverlay()
-    const tools = bindTools({ head, overlay, ref: "refs/heads/curate/2026-09-23" })
+    const tools = bindTools({
+      head,
+      overlay,
+      ref: "refs/heads/curate/2026-09-23",
+      writeBar: STRICT_POLICY.writeBar
+    })
 
     // The natural move for the charter's placement and entity-resolution priorities: rewrite an
     // active record in place. The harvester reports it as a `put` of the same path.
@@ -412,7 +418,12 @@ describe("the exec tool refuses what the commit would refuse", () => {
     )
     const head = headOver(records)
     const overlay = memoryOverlay()
-    const tools = bindTools({ head, overlay, ref: "refs/heads/curate/2026-09-23" })
+    const tools = bindTools({
+      head,
+      overlay,
+      ref: "refs/heads/curate/2026-09-23",
+      writeBar: STRICT_POLICY.writeBar
+    })
     const arc = renderTemplate({
       title: "Arc",
       claim: "Newland and Otherland both name their capital after the land.",
@@ -486,7 +497,12 @@ describe("a put below the write bar is handed back to the model, not stranded", 
   it("propose refuses an unlabeled canonical and an episodic put with reasons that say what to add, then lands the fixed put", async () => {
     const head = headOver([])
     const overlay = memoryOverlay()
-    const tools = bindTools({ head, overlay, ref: "refs/heads/curate/2026-09-26" })
+    const tools = bindTools({
+      head,
+      overlay,
+      ref: "refs/heads/curate/2026-09-26",
+      writeBar: STRICT_POLICY.writeBar
+    })
     const refused = await tools.propose([
       { kind: "put", path: "areas/newland/canonical.html", html: unlabeled },
       { kind: "put", path: "areas/newland/run-44.html", html: narrative }
@@ -517,10 +533,31 @@ describe("a put below the write bar is handed back to the model, not stranded", 
     expect(validateOps(head.view, overlay.ops(), { scope: "curate" })).toEqual([])
   })
 
+  it("under the library's default bar, propose lands the unlabeled canonical and the episodic put", async () => {
+    const head = headOver([])
+    const overlay = memoryOverlay()
+    const tools = bindTools({
+      head,
+      overlay,
+      ref: "refs/heads/curate/2026-09-26",
+      writeBar: DEFAULT_WRITE_BAR
+    })
+    const landed = await tools.propose([
+      { kind: "put", path: "areas/newland/canonical.html", html: unlabeled },
+      { kind: "put", path: "areas/newland/run-44.html", html: narrative }
+    ])
+    expect(landed).toEqual({ appended: 2, violations: [] })
+  })
+
   it("exec refuses a harvested unlabeled put the same way", async () => {
     const head = headOver([])
     const overlay = memoryOverlay()
-    const tools = bindTools({ head, overlay, ref: "refs/heads/curate/2026-09-26" })
+    const tools = bindTools({
+      head,
+      overlay,
+      ref: "refs/heads/curate/2026-09-26",
+      writeBar: STRICT_POLICY.writeBar
+    })
     const result = await tools.exec(
       [
         'import * as fs from "node:fs"',
@@ -568,7 +605,12 @@ describe("the exec tool harvests a cut link as an unlink", () => {
     )
     const head = headOver(records)
     const overlay = memoryOverlay()
-    const tools = bindTools({ head, overlay, ref: "refs/heads/curate/2026-09-23" })
+    const tools = bindTools({
+      head,
+      overlay,
+      ref: "refs/heads/curate/2026-09-23",
+      writeBar: STRICT_POLICY.writeBar
+    })
     const result = await tools.exec(
       [
         'import * as fs from "node:fs"',
@@ -629,7 +671,12 @@ describe("the propose tool labels a record", () => {
     )
     const head = headOver(records)
     const overlay = memoryOverlay()
-    const tools = bindTools({ head, overlay, ref: "refs/heads/curate/2026-09-23" })
+    const tools = bindTools({
+      head,
+      overlay,
+      ref: "refs/heads/curate/2026-09-23",
+      writeBar: STRICT_POLICY.writeBar
+    })
     const labeled = await tools.propose([
       { kind: "label", path: LEGACY, entity: "project:legacyland" }
     ])
@@ -680,7 +727,12 @@ describe("the propose and exec tools move a record", () => {
   it("a proposed move is completed with the repoint of every edge to the old path", async () => {
     const head = await headWith()
     const overlay = memoryOverlay()
-    const tools = bindTools({ head, overlay, ref: "refs/heads/curate/2026-09-30" })
+    const tools = bindTools({
+      head,
+      overlay,
+      ref: "refs/heads/curate/2026-09-30",
+      writeBar: STRICT_POLICY.writeBar
+    })
     const result = await tools.propose([{ kind: "move", path: FROM, to: TO, html: placed }])
     expect(result).toEqual({ appended: 3, violations: [] })
     expect(overlay.ops()).toEqual([
@@ -698,7 +750,12 @@ describe("the propose and exec tools move a record", () => {
   it("a file the exec script moves is harvested as a move and completed the same way", async () => {
     const head = await headWith()
     const overlay = memoryOverlay()
-    const tools = bindTools({ head, overlay, ref: "refs/heads/curate/2026-09-30" })
+    const tools = bindTools({
+      head,
+      overlay,
+      ref: "refs/heads/curate/2026-09-30",
+      writeBar: STRICT_POLICY.writeBar
+    })
     const result = await tools.exec(
       [
         'import * as fs from "node:fs"',

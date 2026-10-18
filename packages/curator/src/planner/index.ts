@@ -14,6 +14,7 @@ export {
   isShielded,
   NO_SOURCE,
   type PlanInput,
+  type PlanPolicy,
   planCollapse,
   prefixOf,
   sourceOf

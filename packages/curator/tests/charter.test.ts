@@ -1,15 +1,29 @@
-import { readFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 
 import {
   CHARTER_PATH,
+  CHARTER_PLACEHOLDERS,
   CHARTER_RULE_COUNT,
+  COLLAPSE_CHARTER,
   CURATOR_CHARTER,
   DATA_NOT_INSTRUCTIONS,
-  PLACEMENT_QUOTA
+  PLACEMENT_QUOTA,
+  readCharterFile,
+  renderCharter
 } from "../src/index.js"
+import { STRICT_POLICY, STRICT_REFUSED_TYPES } from "./fakes.js"
+
+/** The shipped charter filled the way a strict store's `curate run` fills it. */
+const strictCharter = async (): Promise<string> =>
+  renderCharter(await Effect.runPromise(CURATOR_CHARTER), {
+    placementQuota: STRICT_POLICY.curator.placementQuota,
+    refusedTypes: STRICT_REFUSED_TYPES
+  })
 
 /**
  * The charter file is a run-time asset, so this reads it the way the loop does and checks the
@@ -24,6 +38,10 @@ import {
  * target" with no `successor` -> the same case. Mutation (2026-09-30): rule 6 put back to "when its
  * tags or entities make the home obvious" with no quota -> "gives placement a quota over the inbox
  * list and keeps it behind the protections" (neither the `inbox` list nor the 60 is named).
+ * Mutation (2026-10-18): `{{refusedTypesRule}}` deleted from `charter.md` -> "requires every put to
+ * name its subject ..." (the strict store's charter no longer names the two types); the
+ * `{{placementQuota}}` replace dropped from `renderCharter` -> "fills every placeholder from the
+ * store's policy" (the placeholder reaches the model).
  */
 describe("the charter", () => {
   it("loads through the effect and matches the file on disk", async () => {
@@ -72,7 +90,7 @@ describe("the charter", () => {
   })
 
   it("requires every put to name its subject and a fold to carry its members' union", async () => {
-    const text = await Effect.runPromise(CURATOR_CHARTER)
+    const text = await strictCharter()
     expect(text).toContain('Every `put` carries at least one `<meta name="memhtml-entity">`')
     expect(text).toContain("carries the union of their entities")
     expect(text).toContain("when none of them carries one, add the one entity its claim is about")
@@ -98,7 +116,7 @@ describe("the charter", () => {
   })
 
   it("gives placement a quota over the inbox list and keeps it behind the protections", async () => {
-    const text = await Effect.runPromise(CURATOR_CHARTER)
+    const text = await strictCharter()
     expect(text).toContain("`inbox` holds the active records under `areas/inbox/`")
     const rules = text.split(/^\d+\. /m).slice(1)
     const placement = rules.find((rule) => rule.startsWith("Placement"))
@@ -117,6 +135,72 @@ describe("the charter", () => {
       "Entity resolution"
     ]) {
       expect(rules.findIndex((rule) => rule.includes(earlier))).toBeLessThan(at)
+    }
+  })
+})
+
+describe("renderCharter", () => {
+  it("fills every placeholder from the store's policy, in both shipped charters", async () => {
+    for (const template of [
+      await Effect.runPromise(CURATOR_CHARTER),
+      await Effect.runPromise(COLLAPSE_CHARTER)
+    ]) {
+      expect(CHARTER_PLACEHOLDERS.some((placeholder) => template.includes(placeholder))).toBe(true)
+      for (const refusedTypes of [[], STRICT_REFUSED_TYPES]) {
+        const text = renderCharter(template, { placementQuota: 25, refusedTypes })
+        expect(text).not.toContain("{{")
+      }
+    }
+  })
+
+  it("states no refused type for the library's default policy, and the store's quota", async () => {
+    const text = renderCharter(await Effect.runPromise(CURATOR_CHARTER), {
+      placementQuota: 25,
+      refusedTypes: []
+    })
+    expect(text).not.toContain("`episodic`")
+    expect(text).toContain("25 records per run")
+    expect(text).toContain('Every `put` carries at least one `<meta name="memhtml-entity">`')
+    const collapse = renderCharter(await Effect.runPromise(COLLAPSE_CHARTER), {
+      placementQuota: PLACEMENT_QUOTA,
+      refusedTypes: []
+    })
+    expect(collapse).toContain("- Every put carries at least one `memhtml-entity`.\n")
+    expect(
+      renderCharter(await Effect.runPromise(COLLAPSE_CHARTER), {
+        placementQuota: PLACEMENT_QUOTA,
+        refusedTypes: STRICT_REFUSED_TYPES
+      })
+    ).toContain(
+      "- Every put carries at least one `memhtml-entity`, and no put is `episodic` or `verdict`."
+    )
+  })
+
+  it("names one, two, or three refused types in plain English", () => {
+    const rule = (refusedTypes: ReadonlyArray<string>) =>
+      renderCharter("[{{refusedTypesRule}}]", { placementQuota: 1, refusedTypes })
+    expect(rule([])).toBe("[]")
+    expect(rule(["verdict"])).toBe("[ Never write a `verdict` record.]")
+    expect(rule(["episodic"])).toBe("[ Never write an `episodic` record.]")
+    expect(rule(["task", "episodic", "verdict"])).toBe(
+      "[ Never write a `task`, `episodic`, or `verdict` record.]"
+    )
+  })
+
+  it("reads an operator's own charter file, and leaves a placeholder-free one as written", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "memhtml-charter-"))
+    try {
+      const path = join(dir, "charter.md")
+      await writeFile(path, "File {{placementQuota}} records. Keep {{unknown}} as is.\n", "utf8")
+      const text = await Effect.runPromise(readCharterFile(path))
+      expect(renderCharter(text, { placementQuota: 7, refusedTypes: [] })).toBe(
+        "File 7 records. Keep {{unknown}} as is.\n"
+      )
+      const missing = await Effect.runPromise(Effect.flip(readCharterFile(join(dir, "nope.md"))))
+      expect(missing._tag).toBe("StorageFailure")
+      expect(missing.operation).toContain("charter-file")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
     }
   })
 })

@@ -7,6 +7,8 @@ import {
   ModelUnavailable,
   PathNotFound,
   StorageFailure,
+  StoreConfigInvalid,
+  V1DoorClosed,
   WriteConflict
 } from "@memhtml/contracts/errors"
 import { EmbedModelMismatch } from "@memhtml/index"
@@ -55,7 +57,13 @@ const EVERY_FAILURE = [
   new DuplicateContent({ contentHash: "f00d", existingPath: "areas/oncall/already-here.html" }),
   new ModelUnavailable({ modelId: "amazon.titan-embed-text-v2:0", reason: "throttled" }),
   new EmbedModelMismatch("titan-v1", "titan-v2"),
-  new LlmContractViolation({ reason: "the tool payload did not decode" })
+  new LlmContractViolation({ reason: "the tool payload did not decode" }),
+  V1DoorClosed.make({ door: "memory_write", mode: "closed", session: null }),
+  V1DoorClosed.make({ door: "memory_correct", mode: "closed-in-session", session: "run-7" }),
+  StoreConfigInvalid.make({
+    path: "/srv/store/memhtml.config.json",
+    reason: "Unexpected key at writeBar.requireAnchors"
+  })
 ] as const
 
 /** The tool names an agent can actually call, which is the vocabulary a suggestion may use. */

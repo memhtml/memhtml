@@ -7,6 +7,7 @@ import { HOOK_EVENTS, HOSTS } from "@memhtml/integrations"
 import { CONFIG_VARS } from "./config.js"
 import { ERROR_CODES, type ResponseType } from "./envelope.js"
 import { DEFAULT_EXEC_LANG, EXEC_LANGS } from "./exec-lang.js"
+import { EXEC_POOL_SIZE_DEFAULT_CAP } from "./exec-pool.js"
 import {
   COMMIT_DEADLINE_DEFAULT_MS,
   COMMIT_QUEUE_WAIT_MS,
@@ -866,6 +867,20 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     ],
     responseTypes: ["doctor.report"]
   },
+  /**
+   * The store's policy file (`memhtml.config.json`, `@memhtml/contracts` `StoreConfig`) and the
+   * process tuning variables, shown with where each value came from. Read-only, and it builds no
+   * app layer, so it answers on a store whose index has never been built.
+   */
+  {
+    name: "config",
+    summary:
+      "Show the policy this store runs under and the process tuning this environment sets, each value with its source. `store` holds the keys of `memhtml.config.json` at the store root (writeBar.refusedTypes, writeBar.requireAnchor, v1Doors, curator.writerBuckets, curator.placementQuota), each `file` or `default`; `file` says where the file is, whether it exists, and whether git holds it as `committed`, `modified`, `untracked`, or `absent`; `process` holds the variables `head serve` reads (MEMHTML_EMBED_WARM_IDLE_MS, MEMHTML_EXEC_POOL_SIZE, MEMHTML_EXEC_WORKER_HEAP_MB), each `env` or `default`, with a `problem` when a value is one `head serve` would refuse. The file is read from the working tree at every decision, never cached, so what this shows is what the next write is judged by. Read-only. A file that does not decode is ERR_STORE_CONFIG at exit 1, naming what is wrong.",
+    args: [],
+    flags: [],
+    responseTypes: ["config.report"],
+    examples: ["memhtml config", "memhtml config --repo ~/memhtml"]
+  },
   {
     name: "eval discriminate",
     summary: "The refusable retrieval gate: every probe must outrank its own wrong-fact twins.",
@@ -1202,8 +1217,9 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
    * `--id` names the session everywhere because its state lives under `.memhtml/sessions/<id>`. The one
    * ambient session is `MEMHTML_SESSION`, which an agent runtime exports to every subprocess of a run:
    * with it set, `--id` defaults to its value, `session put` and `session exec` start that session on
-   * first use, and the v1 doors that create a record refuse (`ERR_SESSION_BOUND`), so the run's writes
-   * all meet the write bar and land in one commit. With neither, `--id` is a missing argument. A
+   * first use, and under the store's default `v1Doors` mode (`memhtml.config.json`) the v1 doors that
+   * create a record refuse (`ERR_SESSION_BOUND`), so the run's writes all meet the write bar and land
+   * in one commit. With neither, `--id` is a missing argument. A
    * commit that finds the ref moved over a path it touched
    * answers `rebase-needed` rather than retrying, so `session rebase` is its own command and the
    * caller owns the loop.
@@ -1257,7 +1273,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "file",
         type: "string",
         description:
-          'JSONL, one object per line. A `write` line takes the same fields `memhtml apply` accepts; each is rendered to the file the store would write and lands at the path the store would choose. A `label` line, `{"op":"label","path":"areas/inbox/x.html","entity":"system:memhtml"}`, adds one `memhtml-entity` to an existing record\'s head, and an `unlabel` line with the same fields removes one; neither touches the article, so the record keeps its content hash. A label value is a lowercase `type:name` (`service:memhtml`, `project:hex-bonk`, `person:laith`) the record does not carry yet; an unlabel names a value the record carries, exactly as written. `-` reads stdin. A malformed op, a reserved path, a label that is malformed or already carried, an unlabel of a value the record lacks, an unlabel that leaves a record with no entity outside `projects/<slug>/`, or a record below the write bar refuses the whole call and appends nothing. The bar: a memory names the system, project, or person it is about (an `entities` value, or a `workspace`), carries a mechanism or a decision, and is something a future run would look up; a run narrative (`episodic`) or review output (`verdict`) is refused, because runs live in the trace index. The bar holds for every writer and every type, the curator and tasks included: a task names an entity unless its `workspace` anchors it. The response lists each put\'s nearest existing records under `neighbors`, so a near-duplicate can be skipped and the related records linked before the commit. `neighbors` is ranked the way `head search` ranks, the vector arm included when the store has a vector cache (`memhtml head embed`) and an embedder is configured: each put\'s own text is embedded as a document, one call per batch. When the arm cannot run the neighbors come from the lexical arm alone and `vector` says why (`used: false` with a `reason`); the put itself never fails for it.',
+          'JSONL, one object per line. A `write` line takes the same fields `memhtml apply` accepts; each is rendered to the file the store would write and lands at the path the store would choose. A `label` line, `{"op":"label","path":"areas/inbox/x.html","entity":"system:memhtml"}`, adds one `memhtml-entity` to an existing record\'s head, and an `unlabel` line with the same fields removes one; neither touches the article, so the record keeps its content hash. A label value is a lowercase `type:name` (`service:memhtml`, `project:hex-bonk`, `person:laith`) the record does not carry yet; an unlabel names a value the record carries, exactly as written. `-` reads stdin. A malformed op, a reserved path, a label that is malformed or already carried, an unlabel of a value the record lacks, an unlabel that leaves a record with no entity outside `projects/<slug>/` while the store requires an anchor, or a record below the write bar refuses the whole call and appends nothing. The bar is the store\'s policy, `writeBar` in `memhtml.config.json` at the store root (`memhtml config` shows the effective values): `refusedTypes` names the types no writer may put, each refused with the reason the file gives, and `requireAnchor` makes every record name the system, project, or person it is about (an `entities` value, or a `workspace`; a task is anchored by either). With no file the bar refuses no type and requires no anchor; the format and integrity refusals hold either way, and a file that does not decode refuses the call with ERR_STORE_CONFIG. The bar holds for every writer and every type, the curator and tasks included. The response lists each put\'s nearest existing records under `neighbors`, so a near-duplicate can be skipped and the related records linked before the commit. `neighbors` is ranked the way `head search` ranks, the vector arm included when the store has a vector cache (`memhtml head embed`) and an embedder is configured: each put\'s own text is embedded as a document, one call per batch. When the arm cannot run the neighbors come from the lexical arm alone and `vector` says why (`used: false` with a `reason`); the put itself never fails for it.',
         required: true
       },
       {
@@ -1450,7 +1466,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
    */
   {
     name: "head serve",
-    summary: `Hold the head loaded and answer lookups over .memhtml/head.sock (mode 0600, JSON over HTTP, routes /v1/status, /v1/search, /v1/read, /v1/neighbors, /v1/exec, /v1/commit, /v1/rebase) until SIGTERM or SIGINT. The server loads its ref's tip once the cheapest way (snapshot, snapshot+advance, or git), reads the ref before every answer and advances over the changed paths when it moved, so an answer is never older than the ref at the moment of the request, and polls between requests. With an embedder bound (not \`MEMHTML_EMBED=off\`) it also holds the vector cache \`head embed\` writes, reads it again when the file's mtime changes, and runs the vector arm for \`/v1/search\` and \`/v1/neighbors\` the way \`head search\` and \`session put\` do locally, answering with the same \`vector\` field. A \`/v1/search\` waits for its query embed at most the body's \`embedDeadlineMs\`, else \`MEMHTML_EMBED_DEADLINE_MS\`, else ${String(EMBED_DEADLINE_DEFAULT_MS)} ms, and answers \`embed-timeout\` without the arm past it, leaving at most one late embed to finish in the background; and when no embed has ended for \`MEMHTML_EMBED_WARM_IDLE_MS\` and none is in flight it issues one one-token embed, so the first search after a quiet stretch is warm (\`status\` reports both under \`embed\`). An advance that brings records the cache has no vector for embeds them in the background, a bounded batch at a time, and writes them to the cache file as \`head embed\` would (\`status\` reports \`vectors.pending\` and \`vectors.backfill\`). \`head status\`, \`head search\`, \`session put\`, \`session exec\`, \`session commit\`, and \`session rebase\` ask it first, and \`/v1/exec\` runs the script in a pool of worker threads (four at once, one per session id at a time) so a runaway script never stalls a lookup. \`/v1/commit\` commits one session at a time over the version at its base, the same commit the CLI runs locally, then holds the new commit and writes its snapshot, so a run-end commit costs no head load; the curate commands always load locally. A live server on the socket refuses a second one (ERR_HEAD_SERVER_RUNNING); a socket left by a killed server is replaced; a store whose socket path is past the platform's limit (107 bytes on Linux, 103 on macOS) is refused before the load with ERR_STORAGE naming the limit, and every client there loads locally. Under win32 the server listens on the named pipe \`\\\\.\\pipe\\memhtml-<the first 16 hex digits of the SHA-256 of the store path>\` instead of a socket file. The socket is removed on exit, and the envelope reports the ref, final sha, advances, requests, and uptime.`,
+    summary: `Hold the head loaded and answer lookups over .memhtml/head.sock (mode 0600, JSON over HTTP, routes /v1/status, /v1/search, /v1/read, /v1/neighbors, /v1/exec, /v1/commit, /v1/rebase) until SIGTERM or SIGINT. The server loads its ref's tip once the cheapest way (snapshot, snapshot+advance, or git), reads the ref before every answer and advances over the changed paths when it moved, so an answer is never older than the ref at the moment of the request, and polls between requests. With an embedder bound (not \`MEMHTML_EMBED=off\`) it also holds the vector cache \`head embed\` writes, reads it again when the file's mtime changes, and runs the vector arm for \`/v1/search\` and \`/v1/neighbors\` the way \`head search\` and \`session put\` do locally, answering with the same \`vector\` field. A \`/v1/search\` waits for its query embed at most the body's \`embedDeadlineMs\`, else \`MEMHTML_EMBED_DEADLINE_MS\`, else ${String(EMBED_DEADLINE_DEFAULT_MS)} ms, and answers \`embed-timeout\` without the arm past it, leaving at most one late embed to finish in the background; and, when \`MEMHTML_EMBED_WARM_IDLE_MS\` is set above 0 (it is off by default), no embed has ended for that long, and none is in flight, it issues one one-token embed, so the first search after a quiet stretch is warm (\`status\` reports both under \`embed\`). An advance that brings records the cache has no vector for embeds them in the background, a bounded batch at a time, and writes them to the cache file as \`head embed\` would (\`status\` reports \`vectors.pending\` and \`vectors.backfill\`). \`head status\`, \`head search\`, \`session put\`, \`session exec\`, \`session commit\`, and \`session rebase\` ask it first, and \`/v1/exec\` runs the script in a pool of worker threads (\`MEMHTML_EXEC_POOL_SIZE\` at once, by default one fewer than the machine's available parallelism, at least 1 and at most ${String(EXEC_POOL_SIZE_DEFAULT_CAP)}; each with a \`MEMHTML_EXEC_WORKER_HEAP_MB\` heap; one per session id at a time) so a runaway script never stalls a lookup. \`/v1/commit\` commits one session at a time over the version at its base, the same commit the CLI runs locally, then holds the new commit and writes its snapshot, so a run-end commit costs no head load; the curate commands always load locally. A live server on the socket refuses a second one (ERR_HEAD_SERVER_RUNNING); a socket left by a killed server is replaced; a store whose socket path is past the platform's limit (107 bytes on Linux, 103 on macOS) is refused before the load with ERR_STORAGE naming the limit, and every client there loads locally. Under win32 the server listens on the named pipe \`\\\\.\\pipe\\memhtml-<the first 16 hex digits of the SHA-256 of the store path>\` instead of a socket file. The socket is removed on exit, and the envelope reports the ref, final sha, advances, requests, and uptime.`,
     args: [],
     flags: [
       {
@@ -1594,6 +1610,12 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         description:
           "Reuse the existing session on the ref instead of refusing with ERR_STORAGE (session.exists). The head is loaded at the session's own base. A missing session is ERR_STORAGE at exit 1.",
         default: false
+      },
+      {
+        name: "charter",
+        type: "string",
+        description:
+          "A file to brief the model with in place of the shipped charter. Its placeholders are filled from the store's `memhtml.config.json` as the shipped one's are: `{{placementQuota}}` (curator.placementQuota), `{{refusedTypesRule}}` (a sentence naming writeBar.refusedTypes, or nothing when the store refuses none), and `{{refusedTypesClause}}` (the same as a clause); any other text is used as written. The write bar still judges every op the run proposes. A file that cannot be read or has no text is ERR_STORAGE at exit 1 before any model call."
       }
     ],
     responseTypes: ["curate.run"],
@@ -1601,7 +1623,8 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       "memhtml curate run --model fake",
       "memhtml curate run --model bedrock:global.anthropic.claude-opus-5 --max-steps 60",
       "memhtml curate run --ref curate/2026-09-23 --model proxy:global.anthropic.claude-opus-5 --resume",
-      "memhtml curate run --model fake --dry-run"
+      "memhtml curate run --model fake --dry-run",
+      "memhtml curate run --model fake --charter charter.md"
     ]
   },
   /**
@@ -1676,6 +1699,12 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         type: "int",
         description: "Wall clock for one fold, model calls and tool executions together.",
         default: 900000
+      },
+      {
+        name: "charter",
+        type: "string",
+        description:
+          "A file to brief every fold with in place of the shipped collapse charter, its placeholders filled from the store's `memhtml.config.json` as `curate run --charter` fills them. Archive clusters use no charter. A file that cannot be read or has no text is ERR_STORAGE at exit 1 before any cluster runs."
       }
     ],
     responseTypes: ["curate.collapse"],
@@ -1765,7 +1794,12 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "is the session one instead: `write`, `apply`, `correct`, and `task add` answer ERR_SESSION_BOUND, " +
       "and a record goes in through `memhtml session exec` (a heredoc that writes the file under " +
       "`/mnt/memhtml`) or `memhtml session put`, both held to the write bar, and the runtime commits the " +
-      "run's session when the run ends."
+      "run's session when the run ends. The store's `memhtml.config.json` chooses that: `v1Doors` is " +
+      "`closed-in-session` (the default, as just described), `open` (the doors stay open even in a run), " +
+      "or `closed` (they answer ERR_V1_DOOR_CLOSED in every process, and records go in through a session " +
+      "you start, write, and commit). The MCP tools `memory_write`, `memory_write_batch`, and " +
+      "`memory_correct` follow the same mode, reading `MEMHTML_SESSION` from the MCP server's own " +
+      "environment. `memhtml config` shows the store's mode."
   },
   {
     topic: "when-to-batch",

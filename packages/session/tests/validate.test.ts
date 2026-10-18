@@ -10,7 +10,7 @@ import {
   validateOps,
   writeBarReasons
 } from "../src/validate.js"
-import { mapHead, memory, recordFrom } from "./helpers.js"
+import { mapHead, memory, recordFrom, STRICT_BAR } from "./helpers.js"
 
 /**
  * The mechanical checks, over a `Map`-backed head. Pure, so no repo.
@@ -36,10 +36,17 @@ import { mapHead, memory, recordFrom } from "./helpers.js"
  * - unlink source: drop the `isActiveIn` clause -> the same case (the archived source passes).
  * - unlink batch view: `edgesOf(op.path).add(...)` after a link removed -> the same case (an unlink
  *   of an edge this batch added is refused).
- * - write bar, type: `REFUSED_TYPES.get(type)` -> `undefined` -> "the write bar refuses a run
+ * - write bar, type: `policy.refusedTypes.get(type)` -> `undefined` -> "the write bar refuses a run
  *   narrative and review output from a session" (both types pass).
- * - write bar, anchor: `anchored` forced to `true` -> "the write bar refuses a record that names
- *   nothing, and takes an entity or a workspace as its anchor" (the bare record passes).
+ * - write bar, anchor: `isAnchored(...)` forced to `true` in `writeBarReasons` -> "the write bar
+ *   refuses a record that names nothing, and takes an entity or a workspace as its anchor" (the bare
+ *   record passes).
+ * - write bar, policy (2026-10-18): `options.writeBar ?? DEFAULT_WRITE_BAR` -> `STRICT`-shaped
+ *   constant -> "the library default bar refuses no type and anchors nothing" (the bare episodic
+ *   put is refused); `policy.requireAnchor &&` dropped from `writeBarReasons` -> the same case and
+ *   "a store's bar refuses only what it names" (the bare record is refused with the anchor off);
+ *   `bar.requireAnchor &&` dropped from the closing unlabel loop -> "the library default bar ..."
+ *   (the last label comes off with a violation).
  * - write bar, every scope (2026-09-26): the `scope === "session"` guard put back around the
  *   `writeBarReasons` call -> "the curate scope is held to the write bar: an unlabeled canonical
  *   and an episodic put are refused" (the curator's puts pass with no violation).
@@ -476,20 +483,21 @@ describe("validateOps", () => {
     const verdict = memory("Review of run 42", "Run 42 was marked unsupported_claim.", {
       memoryType: "verdict"
     })
-    const found = validateOps(view, [
-      put("areas/inbox/run-42.html", narrative),
-      put("areas/inbox/review-42.html", verdict)
-    ])
+    const found = validateOps(
+      view,
+      [put("areas/inbox/run-42.html", narrative), put("areas/inbox/review-42.html", verdict)],
+      { writeBar: STRICT_BAR }
+    )
     expect(
       found.map((violation) => [violation.kind, "path" in violation && violation.path])
     ).toEqual([
       ["write-bar", "areas/inbox/run-42.html"],
       ["write-bar", "areas/inbox/review-42.html"]
     ])
-    expect(writeBarReasons("areas/inbox/run-42.html", narrative)).toEqual([
+    expect(writeBarReasons("areas/inbox/run-42.html", narrative, STRICT_BAR)).toEqual([
       "an episodic record narrates one run; runs belong in the trace index, not the store"
     ])
-    expect(writeBarReasons("areas/inbox/review-42.html", verdict)).toEqual([
+    expect(writeBarReasons("areas/inbox/review-42.html", verdict, STRICT_BAR)).toEqual([
       "a verdict is review output, not a memory"
     ])
   })
@@ -499,7 +507,9 @@ describe("validateOps", () => {
     const bare = memory("Run the formatter", "Run the formatter before committing.", {
       entities: []
     })
-    expect(validateOps(view, [put("areas/inbox/formatter.html", bare)])).toEqual([
+    expect(
+      validateOps(view, [put("areas/inbox/formatter.html", bare)], { writeBar: STRICT_BAR })
+    ).toEqual([
       {
         kind: "write-bar",
         path: "areas/inbox/formatter.html",
@@ -512,8 +522,12 @@ describe("validateOps", () => {
     const named = memory("Run the formatter", "memhtml runs Biome before every commit.", {
       entities: ["system:memhtml"]
     })
-    expect(validateOps(view, [put("areas/inbox/formatter.html", named)])).toEqual([])
-    expect(validateOps(view, [put("projects/memhtml/formatter.html", bare)])).toEqual([])
+    expect(
+      validateOps(view, [put("areas/inbox/formatter.html", named)], { writeBar: STRICT_BAR })
+    ).toEqual([])
+    expect(
+      validateOps(view, [put("projects/memhtml/formatter.html", bare)], { writeBar: STRICT_BAR })
+    ).toEqual([])
   })
 
   it("the curate scope is held to the write bar: an unlabeled canonical and an episodic put are refused", async () => {
@@ -528,7 +542,7 @@ describe("validateOps", () => {
       validateOps(
         view,
         [put("areas/inbox/canonical.html", canonical), put("areas/arcs/run-43.html", narrative)],
-        { scope: "curate" }
+        { scope: "curate", writeBar: STRICT_BAR }
       )
     ).toEqual([
       { kind: "write-bar", path: "areas/inbox/canonical.html", reasons: [UNANCHORED_REASON] },
@@ -545,7 +559,10 @@ describe("validateOps", () => {
       entities: ["system:memhtml"]
     })
     expect(
-      validateOps(view, [put("areas/inbox/canonical.html", labeled)], { scope: "curate" })
+      validateOps(view, [put("areas/inbox/canonical.html", labeled)], {
+        scope: "curate",
+        writeBar: STRICT_BAR
+      })
     ).toEqual([])
   })
 
@@ -555,23 +572,31 @@ describe("validateOps", () => {
       entities: [],
       memoryType: "task"
     })
-    expect(writeBarReasons("areas/inbox/tasks/rotate.html", task)).toEqual([UNANCHORED_REASON])
-    expect(writeBarReasons("projects/memhtml/tasks/rotate.html", task)).toEqual([])
+    expect(writeBarReasons("areas/inbox/tasks/rotate.html", task, STRICT_BAR)).toEqual([
+      UNANCHORED_REASON
+    ])
+    expect(writeBarReasons("projects/memhtml/tasks/rotate.html", task, STRICT_BAR)).toEqual([])
     const named = memory("Rotate the key", "Rotate the signing key.", {
       entities: ["system:memhtml"],
       memoryType: "task"
     })
-    expect(writeBarReasons("areas/inbox/tasks/rotate.html", named)).toEqual([])
+    expect(writeBarReasons("areas/inbox/tasks/rotate.html", named, STRICT_BAR)).toEqual([])
     // Through `validateOps` too, under both scopes: the bar is the only thing that differs.
     for (const scope of ["session", "curate"] as const) {
       expect(
-        validateOps(view, [put("areas/inbox/tasks/rotate.html", task)], { scope }),
+        validateOps(view, [put("areas/inbox/tasks/rotate.html", task)], {
+          scope,
+          writeBar: STRICT_BAR
+        }),
         scope
       ).toEqual([
         { kind: "write-bar", path: "areas/inbox/tasks/rotate.html", reasons: [UNANCHORED_REASON] }
       ])
       expect(
-        validateOps(view, [put("projects/memhtml/tasks/rotate.html", task)], { scope }),
+        validateOps(view, [put("projects/memhtml/tasks/rotate.html", task)], {
+          scope,
+          writeBar: STRICT_BAR
+        }),
         scope
       ).toEqual([])
     }
@@ -586,9 +611,11 @@ describe("validateOps", () => {
       to: "archive/2026/areas/inbox/old-lesson.html",
       html: bare
     }
-    expect(writeBarReasons("archive/2026/areas/inbox/old-lesson.html", bare)).toEqual([])
+    expect(writeBarReasons("archive/2026/areas/inbox/old-lesson.html", bare, STRICT_BAR)).toEqual(
+      []
+    )
     for (const scope of ["session", "curate"] as const) {
-      expect(validateOps(view, [archive], { scope }), scope).toEqual([])
+      expect(validateOps(view, [archive], { scope, writeBar: STRICT_BAR }), scope).toEqual([])
     }
   })
 
@@ -722,29 +749,117 @@ describe("validateOps", () => {
       { kind: "write-bar", path: "areas/inbox/alpha.html", reasons: [UNANCHORED_REASON] }
     ]
     for (const scope of ["session", "curate"] as const) {
-      expect(validateOps(view, [last], { scope }), scope).toEqual(bar)
+      expect(validateOps(view, [last], { scope, writeBar: STRICT_BAR }), scope).toEqual(bar)
     }
     // Judged once the batch is walked, so swapping one label for another passes in either order.
-    expect(validateOps(view, [last, relabel])).toEqual([])
-    expect(validateOps(view, [relabel, last])).toEqual([])
+    expect(validateOps(view, [last, relabel], { writeBar: STRICT_BAR })).toEqual([])
+    expect(validateOps(view, [relabel, last], { writeBar: STRICT_BAR })).toEqual([])
     // A workspace path anchors the record without an entity.
     expect(
-      validateOps(view, [
-        { kind: "unlabel", path: "projects/memhtml/alpha.html", entity: "system:fixture" }
-      ])
+      validateOps(
+        view,
+        [{ kind: "unlabel", path: "projects/memhtml/alpha.html", entity: "system:fixture" }],
+        { writeBar: STRICT_BAR }
+      )
     ).toEqual([])
     // An archive after the unlabel moves the record, and an archive destination is not judged.
     expect(
-      validateOps(view, [
-        last,
-        {
-          kind: "archive",
-          path: "areas/inbox/alpha.html",
-          to: "archive/2026/areas/inbox/alpha.html",
-          html: ALPHA
-        }
-      ])
+      validateOps(
+        view,
+        [
+          last,
+          {
+            kind: "archive",
+            path: "areas/inbox/alpha.html",
+            to: "archive/2026/areas/inbox/alpha.html",
+            html: ALPHA
+          }
+        ],
+        { writeBar: STRICT_BAR }
+      )
     ).toEqual([])
+  })
+
+  it("the library default bar refuses no type and anchors nothing", async () => {
+    const view = mapHead("0".repeat(40), [await recordFrom("areas/inbox/alpha.html", ALPHA)])
+    const narrative = memory("Run 44", "Run 44 read two files.", {
+      memoryType: "episodic",
+      entities: []
+    })
+    const verdict = memory("Review of run 44", "Run 44 was marked supported.", {
+      memoryType: "verdict",
+      entities: []
+    })
+    const task = memory("Rotate the key", "Rotate the signing key.", {
+      memoryType: "task",
+      entities: []
+    })
+    const ops: ReadonlyArray<OverlayOp> = [
+      put("areas/inbox/run-44.html", narrative),
+      put("areas/inbox/review-44.html", verdict),
+      put("areas/inbox/tasks/rotate.html", task),
+      { kind: "unlabel", path: "areas/inbox/alpha.html", entity: "system:fixture" }
+    ]
+    for (const scope of ["session", "curate"] as const) {
+      expect(validateOps(view, ops, { scope }), scope).toEqual([])
+    }
+    expect(writeBarReasons("areas/inbox/run-44.html", narrative)).toEqual([])
+    // The same batch under the strict bar: three refused puts and one unanchored unlabel.
+    expect(
+      validateOps(view, ops, { writeBar: STRICT_BAR }).map((violation) => [
+        violation.kind,
+        "path" in violation ? violation.path : null
+      ])
+    ).toEqual([
+      ["write-bar", "areas/inbox/run-44.html"],
+      ["write-bar", "areas/inbox/review-44.html"],
+      ["write-bar", "areas/inbox/tasks/rotate.html"],
+      ["write-bar", "areas/inbox/alpha.html"]
+    ])
+  })
+
+  it("a store's bar refuses only what it names, with the reason it gives or the default one", async () => {
+    const view = await head()
+    const bare = memory("Bare", "This record names nothing.", { entities: [] })
+    const task = memory("Rotate", "Rotate the key.", { memoryType: "task" })
+    const narrative = memory("Run 45", "Run 45 read a file.", { memoryType: "episodic" })
+    const onlyTasks = {
+      refusedTypes: new Map([["task", "tasks live in the tracker"]]),
+      requireAnchor: false
+    }
+    expect(
+      validateOps(
+        view,
+        [
+          put("areas/inbox/bare.html", bare),
+          put("areas/inbox/tasks/rotate.html", task),
+          put("areas/inbox/run-45.html", narrative)
+        ],
+        { writeBar: onlyTasks }
+      )
+    ).toEqual([
+      {
+        kind: "write-bar",
+        path: "areas/inbox/tasks/rotate.html",
+        reasons: ["tasks live in the tracker"]
+      }
+    ])
+    // The anchor rule alone refuses the bare record and no type.
+    expect(
+      validateOps(
+        view,
+        [put("areas/inbox/bare.html", bare), put("areas/inbox/run-45.html", narrative)],
+        { writeBar: { refusedTypes: new Map(), requireAnchor: true } }
+      )
+    ).toEqual([{ kind: "write-bar", path: "areas/inbox/bare.html", reasons: [UNANCHORED_REASON] }])
+  })
+
+  it("the store's config file is reserved under every scope", () => {
+    for (const scope of ["session", "curate"] as const) {
+      expect(isReservedPath("memhtml.config.json", scope), scope).toBe(true)
+    }
+    // Only at the root: the name says nothing about a file deeper in the tree.
+    expect(isReservedPath("areas/inbox/memhtml.config.json")).toBe(false)
   })
 
   it("touchedPaths names every path an op reads or writes", () => {

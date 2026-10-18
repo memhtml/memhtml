@@ -8,6 +8,7 @@ import {
   duplicateViolation,
   emptyBriefing,
   fakeTools,
+  STRICT_POLICY,
   scriptedModel,
   toolResultTexts,
   USAGE
@@ -373,7 +374,7 @@ describe("tool results are bounded and informative", () => {
       propose: (ops) => {
         const violations = ops.flatMap((op): ReadonlyArray<Violation> => {
           if (op.kind !== "put") return []
-          const reasons = writeBarReasons(op.path, op.html)
+          const reasons = writeBarReasons(op.path, op.html, STRICT_POLICY.writeBar)
           return reasons.length === 0 ? [] : [{ kind: "write-bar", path: op.path, reasons }]
         })
         return { appended: violations.length === 0 ? ops.length : 0, violations }

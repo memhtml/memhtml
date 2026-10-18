@@ -7,7 +7,13 @@ import {
 } from "@memhtml/contracts"
 import { frameValueOf } from "@memhtml/domain"
 
-import { type InboxHome, type InboxRecord, inboxWorkList } from "./inbox.js"
+import {
+  type InboxHome,
+  type InboxPolicy,
+  type InboxRecord,
+  inboxWorkList,
+  PLACEMENT_QUOTA
+} from "./inbox.js"
 
 /**
  * The briefing: a code-computed summary of the version the curator sees, handed to the model as the
@@ -131,7 +137,12 @@ export interface DanglingEdge {
  */
 export type NeighborsOf = (record: MemoryRecord) => ReadonlyArray<BriefedRecord>
 
-export interface BriefingOptions {
+/**
+ * What the caller adds to the view: the neighbors of the recent records, and the store's placement
+ * policy (`curator` in `memhtml.config.json`: its writer buckets and its quota), the library
+ * defaults when omitted.
+ */
+export interface BriefingOptions extends InboxPolicy {
   readonly neighborsOf?: NeighborsOf | undefined
 }
 
@@ -177,8 +188,13 @@ export interface Briefing {
   readonly danglingEdges: ReadonlyArray<DanglingEdge>
   readonly danglingEdgesTotal: number
   /**
+   * Inbox records this run should file: the store's `curator.placementQuota`, the charter's
+   * placement priority and the fake model's cap.
+   */
+  readonly placementQuota: number
+  /**
    * Active inbox records outside `areas/inbox/tasks/`, `task` and `verdict` rows excluded, each with
-   * its code-computed home or `null`, homes first, capped at `BRIEFING_INBOX_CAP`.
+   * its code-computed home or `null`, homes first, capped at `inboxCapFor(placementQuota)`.
    */
   readonly inbox: ReadonlyArray<InboxRecord>
   readonly inboxTotal: number
@@ -351,7 +367,11 @@ export const briefingFromView = (
     })
     .sort((a, b) => byPath(a, b) || (a.href < b.href ? -1 : a.href > b.href ? 1 : 0))
   unlabeled.sort(byPath)
-  const inboxList = inboxWorkList(view, HEADLINE_CLAIM_TYPES)
+  const placementQuota = options.placementQuota ?? PLACEMENT_QUOTA
+  const inboxList = inboxWorkList(view, HEADLINE_CLAIM_TYPES, {
+    writerBuckets: options.writerBuckets,
+    placementQuota
+  })
 
   return {
     active,
@@ -372,6 +392,7 @@ export const briefingFromView = (
     supersededActiveTotal: supersededActive.length,
     danglingEdges: danglingEdges.slice(0, BRIEFING_GROUP_CAP),
     danglingEdgesTotal: danglingEdges.length,
+    placementQuota,
     inbox: inboxList.inbox,
     inboxTotal: inboxList.inboxTotal,
     inboxWithHome: inboxList.inboxWithHome,

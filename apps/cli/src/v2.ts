@@ -1,12 +1,13 @@
 import { access, appendFile } from "node:fs/promises"
 import { join } from "node:path"
 
-import type { HeadView, OverlayOp } from "@memhtml/contracts"
+import type { HeadView, OverlayOp, WriteBarPolicy } from "@memhtml/contracts"
 import {
   DirtyTree,
   InvalidMemory,
   type ModelUnavailable,
-  StorageFailure
+  StorageFailure,
+  type StoreConfigInvalid
 } from "@memhtml/contracts/errors"
 import { isValidMemoryPath, memoryPathFor } from "@memhtml/contracts/paths"
 import { filenameFor, slugify, withCollisionOrdinal } from "@memhtml/contracts/slug"
@@ -107,6 +108,7 @@ import {
   runSessionExec,
   type SessionExecRuntime
 } from "./session-exec.js"
+import { loadStorePolicy } from "./store-config.js"
 
 export type { GateReport } from "./head-gate.js"
 
@@ -518,6 +520,11 @@ export const preparePuts = (input: {
   readonly scope?: CommitScope | undefined
   /** A run-bound session: `duplicate` and `claim-edit` block too ({@link RUN_BOUND_BLOCKING_VIOLATIONS}). */
   readonly runBound?: boolean | undefined
+  /**
+   * The store's write bar (`memhtml.config.json`), read by the caller at the store root: the CLI
+   * for a local put, the head server per request. The library default when omitted.
+   */
+  readonly writeBar?: WriteBarPolicy | undefined
 }): Effect.Effect<PreparedPuts, InvalidMemory | StorageFailure> =>
   Effect.gen(function* () {
     const view = yield* withOverlay(input.base, input.sessionOps)
@@ -544,7 +551,8 @@ export const preparePuts = (input: {
     }
     // Judged the way `commitSession` will judge them: every op of the session against the base.
     const violations = validateOps(input.base, [...input.sessionOps, ...appended], {
-      scope: input.scope ?? "session"
+      scope: input.scope ?? "session",
+      writeBar: input.writeBar
     })
     const kinds = blockingKinds(input.runBound)
     const blocking = violations.filter(
@@ -640,6 +648,7 @@ export const sessionPut = (input: {
       prepared = answered.data
       head = servedStats(answered.data.head, answered.ms)
     } else {
+      const policy = yield* loadStorePolicy(input.root)
       const loaded = yield* loadHeadAt(input.root, session.baseSha)
       prepared = yield* preparePuts({
         base: loaded.view,
@@ -649,7 +658,8 @@ export const sessionPut = (input: {
         cache: loadForSearch(input.root),
         embedder: input.embedder,
         scope,
-        runBound: input.runBound
+        runBound: input.runBound,
+        writeBar: policy.policy.writeBar
       })
       head = headStats(loaded)
     }
@@ -721,6 +731,8 @@ export const execOverHead = (input: {
   readonly runtime?: SessionExecRuntime | undefined
   /** A run-bound session: `duplicate` and `claim-edit` block the harvest too. */
   readonly runBound?: boolean | undefined
+  /** The store's write bar, read by the caller at the store root; the library default when omitted. */
+  readonly writeBar?: WriteBarPolicy | undefined
 }): Effect.Effect<ExecOutcome, InvalidMemory | StorageFailure> =>
   Effect.gen(function* () {
     const { session } = input
@@ -735,7 +747,10 @@ export const execOverHead = (input: {
       ...input.runtime
     })
     const harvested = new Set(report.ops.flatMap(touchedPaths))
-    const violations = validateOps(input.base, [...session.ops, ...report.ops], { scope })
+    const violations = validateOps(input.base, [...session.ops, ...report.ops], {
+      scope,
+      writeBar: input.writeBar
+    })
     const kinds = blockingKinds(input.runBound)
     const blocking = violations.filter(
       (violation) =>
@@ -895,6 +910,7 @@ export const sessionExec = (input: {
           )
       }
     }
+    const policy = yield* loadStorePolicy(input.root)
     const session = yield* resumeSession({ root: input.root, id: input.id })
     const head = yield* loadHeadAt(input.root, session.baseSha)
     const outcome = yield* execOverHead({
@@ -903,7 +919,8 @@ export const sessionExec = (input: {
       script: input.script,
       lang: input.lang,
       timeoutMs: input.timeoutMs,
-      runBound: input.runBound
+      runBound: input.runBound,
+      writeBar: policy.policy.writeBar
     })
     return { ...outcome, started, head: headStats(head), server }
   })
@@ -927,6 +944,8 @@ export const commitOverHead = (input: {
   readonly message: string
   /** `--drop-refused`: take the ops a refusal names out of the log and commit the rest. */
   readonly dropRefused?: boolean | undefined
+  /** The store's write bar (`memhtml.config.json`); the library default when omitted. */
+  readonly writeBar?: WriteBarPolicy | undefined
   readonly afterCommit?: ((sha: string) => Effect.Effect<SnapshotWritten | null>) | undefined
 }): Effect.Effect<CommitResult, GitFailure | StorageFailure> =>
   Effect.gen(function* () {
@@ -937,7 +956,8 @@ export const commitOverHead = (input: {
       session,
       head: input.base,
       message: input.message,
-      scope
+      scope,
+      writeBar: input.writeBar
     })
     // Each round drops what the refusal names and commits again. An op that only failed because
     // an op it depended on was dropped (a link from a dropped put) is named by the next round, so
@@ -949,7 +969,13 @@ export const commitOverHead = (input: {
       session = yield* replaceOps(session, round.keep)
       yield* recordDropped(session.root, session.id, round.drop)
       if (session.ops.length === 0) break
-      outcome = yield* commitSession({ session, head: input.base, message: input.message, scope })
+      outcome = yield* commitSession({
+        session,
+        head: input.base,
+        message: input.message,
+        scope,
+        writeBar: input.writeBar
+      })
     }
     const afterCommit =
       input.afterCommit ?? ((sha: string) => snapshotAfterCommit(session.root, sha, input.base))
@@ -1077,8 +1103,14 @@ export const sessionCommit = (input: {
   readonly server?: boolean | undefined
   /** How long to wait for the server's answer, `0` for no bound ({@link COMMIT_DEADLINE_DEFAULT_MS}). */
   readonly commitDeadlineMs?: number | undefined
-}): Effect.Effect<SessionCommitted, GitFailure | InvalidMemory | StorageFailure> =>
+}): Effect.Effect<
+  SessionCommitted,
+  GitFailure | InvalidMemory | StorageFailure | StoreConfigInvalid
+> =>
   Effect.gen(function* () {
+    // Read before the server is asked, so a store whose `memhtml.config.json` does not decode
+    // refuses here with ERR_STORE_CONFIG rather than as a server error the CLI may not retry.
+    const { writeBar } = (yield* loadStorePolicy(input.root)).policy
     let server = SERVER_DISABLED
     if (input.server !== false) {
       const deadlineMs = commitAnswerTimeoutMs(input.commitDeadlineMs)
@@ -1109,7 +1141,8 @@ export const sessionCommit = (input: {
       session,
       base: head.view,
       message: input.message,
-      dropRefused: input.dropRefused
+      dropRefused: input.dropRefused,
+      writeBar
     })
     return { ...outcome, via: "local" as const, server }
   })
@@ -1553,9 +1586,10 @@ export const curateMerge = (input: {
   readonly gate?: Effect.Effect<GateOutcome, GateFailure> | undefined
 }): Effect.Effect<
   CurateMerged,
-  GitFailure | InvalidMemory | StorageFailure | DirtyTree | GateFailure
+  GitFailure | InvalidMemory | StorageFailure | DirtyTree | GateFailure | StoreConfigInvalid
 > =>
   Effect.gen(function* () {
+    const { writeBar } = (yield* loadStorePolicy(input.root)).policy
     const ref = qualifyRef(input.ref)
     const into = qualifyRef(input.into ?? "main")
     const git = makePlumbing({
@@ -1601,7 +1635,8 @@ export const curateMerge = (input: {
       session = yield* appendOps(session, withRepoints(head.view, replay.reconstruction.ops))
       const violations = validateOps(head.view, session.ops, {
         scope: MERGE_SCOPE,
-        batchCap: MERGE_BATCH_CAP
+        batchCap: MERGE_BATCH_CAP,
+        writeBar
       })
       if (violations.length > 0) {
         return yield* Effect.fail(
@@ -1633,7 +1668,8 @@ export const curateMerge = (input: {
         session,
         head,
         base: replay.base,
-        reconstruction: replay.reconstruction
+        reconstruction: replay.reconstruction,
+        writeBar
       })
     }
 
@@ -1703,6 +1739,8 @@ const landReplay = (input: {
   readonly head: LoadedHead
   readonly base: string
   readonly reconstruction: Reconstruction
+  /** The store's write bar, judged again on every attempt against the tip it lands on. */
+  readonly writeBar: WriteBarPolicy
 }): Effect.Effect<CurateMerged, GitFailure | InvalidMemory | StorageFailure | DirtyTree> =>
   Effect.gen(function* () {
     const subject = yield* commitSubjectOf(input.root, input.to)
@@ -1716,7 +1754,8 @@ const landReplay = (input: {
         message: `${subject} (replayed onto ${shortSha(head.sha)})`,
         archivedAt,
         scope: MERGE_SCOPE,
-        batchCap: MERGE_BATCH_CAP
+        batchCap: MERGE_BATCH_CAP,
+        writeBar: input.writeBar
       })
       switch (outcome.kind) {
         case "committed": {
@@ -1834,7 +1873,13 @@ export const runV2 = (
   input: V2Input
 ): Effect.Effect<
   readonly [ResponseType, unknown],
-  GitFailure | InvalidMemory | StorageFailure | DirtyTree | GateFailure | ModelUnavailable
+  | GitFailure
+  | InvalidMemory
+  | StorageFailure
+  | DirtyTree
+  | GateFailure
+  | ModelUnavailable
+  | StoreConfigInvalid
 > => {
   switch (command) {
     case "session start":

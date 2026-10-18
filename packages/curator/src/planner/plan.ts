@@ -1,3 +1,5 @@
+import { matchesGlob } from "node:path"
+
 import type { HeadView, MemoryRecord } from "@memhtml/contracts"
 import { INBOX_DIR, PEOPLE_DIR, slugify } from "@memhtml/contracts"
 import { frameValueOf as domainFrameValueOf } from "@memhtml/domain"
@@ -69,9 +71,19 @@ export const sourceOf = (record: MemoryRecord): string => {
 /** The depth-2 prefix a path sits under (`areas/inbox`), or its top bucket for a shallower path. */
 export const prefixOf = (path: string): string => path.split("/").slice(0, 2).join("/")
 
-/** True for the buckets a canonical must not stay in: the inbox and any `*-import` landing zone. */
-export const isBucketPrefix = (prefix: string): boolean =>
-  prefix === INBOX_DIR || /-import$/.test(prefix)
+/**
+ * True for the buckets a canonical must not stay in: the inbox, and a prefix whose directory one of
+ * the store's writer-bucket globs matches (`curator.writerBuckets` in `memhtml.config.json`, the
+ * patterns the inbox placement reads, such as an importer's `*-import`; none by default).
+ */
+export const isBucketPrefix = (
+  prefix: string,
+  writerBuckets: ReadonlyArray<string> = []
+): boolean => {
+  if (prefix === INBOX_DIR) return true
+  const name = prefix.slice(prefix.lastIndexOf("/") + 1)
+  return prefix.includes("/") && writerBuckets.some((pattern) => matchesGlob(name, pattern))
+}
 
 const byPath = (a: { readonly path: string }, b: { readonly path: string }): number =>
   a.path < b.path ? -1 : a.path > b.path ? 1 : 0
@@ -86,16 +98,22 @@ const majority = (values: ReadonlyArray<string>): string | undefined => {
 }
 
 /**
- * Types a canonical never takes: an arc is a synthesis and a task is a row, not a fact; an
- * `episodic` or `verdict` canonical is below the write bar under every scope, the curator's
- * included (`@memhtml/session` `writeBarReasons`), so a fold of them is briefed as `semantic`
- * rather than as a type its put could never land under.
+ * Types a canonical never takes whatever the store says: an arc is a synthesis and a task is a row,
+ * not a fact. A type the store's write bar refuses (`writeBar.refusedTypes`) joins them, since a
+ * canonical of it is below the bar under every scope, the curator's included (`@memhtml/session`
+ * `writeBarReasons`), so a fold of such records is briefed as `semantic` rather than as a type its
+ * put could never land under.
  */
-const NOT_CANONICAL_TYPES: ReadonlySet<string> = new Set(["arc", "task", "episodic", "verdict"])
+const NOT_CANONICAL_TYPES: ReadonlySet<string> = new Set(["arc", "task"])
 
-const canonicalType = (records: ReadonlyArray<MemoryRecord>): string =>
+const canonicalType = (
+  records: ReadonlyArray<MemoryRecord>,
+  refusedTypes: ReadonlySet<string>
+): string =>
   majority(
-    records.map((record) => record.memoryType).filter((type) => !NOT_CANONICAL_TYPES.has(type))
+    records
+      .map((record) => record.memoryType)
+      .filter((type) => !NOT_CANONICAL_TYPES.has(type) && !refusedTypes.has(type))
   ) ?? "semantic"
 
 /**
@@ -105,10 +123,15 @@ const canonicalType = (records: ReadonlyArray<MemoryRecord>): string =>
 export const homeFor = (
   records: ReadonlyArray<MemoryRecord>,
   title: string,
-  homeDefault: string
+  homeDefault: string,
+  writerBuckets: ReadonlyArray<string> = []
 ): string => {
   const prefix = majority(records.map((record) => prefixOf(record.path)))
-  if (prefix === undefined || isBucketPrefix(prefix) || prefix.split("/").length < 2) {
+  if (
+    prefix === undefined ||
+    isBucketPrefix(prefix, writerBuckets) ||
+    prefix.split("/").length < 2
+  ) {
     return `${homeDefault}/${slugify(title)}`
   }
   return prefix
@@ -150,9 +173,20 @@ export const frameGroupAgrees = (records: ReadonlyArray<MemoryRecord>): boolean 
 export const isShielded = (record: MemoryRecord): boolean =>
   record.path.startsWith(`${PEOPLE_DIR}/`) || record.memoryType === "task"
 
+/**
+ * The store's policy as the planner reads it, from `memhtml.config.json`: the writer buckets a
+ * canonical is moved out of, and the types the write bar refuses, which no canonical is briefed as.
+ * Both empty by default.
+ */
+export interface PlanPolicy {
+  readonly writerBuckets?: ReadonlyArray<string> | undefined
+  readonly refusedTypes?: ReadonlyArray<string> | undefined
+}
+
 export interface PlanInput {
   readonly rulings?: ReadonlyArray<Ruling> | undefined
   readonly options?: Partial<PlannerOptions> | undefined
+  readonly policy?: PlanPolicy | undefined
   /** The clock the tag and the archive year read. Defaults to now. */
   readonly now?: Date | undefined
 }
@@ -353,7 +387,8 @@ export const planCollapse = (view: HeadView, input: PlanInput = {}): CollapsePla
     singletons += records.filter((record) => !clustered.has(record.path)).length
   }
 
-  const clusters = drafts.map((draft) => toCluster(draft, rulings, pagerank, options))
+  const policy = input.policy ?? {}
+  const clusters = drafts.map((draft) => toCluster(draft, rulings, pagerank, options, policy))
   clusters.sort(
     (a, b) =>
       KIND_ORDER[a.kind] - KIND_ORDER[b.kind] ||
@@ -396,7 +431,8 @@ const toCluster = (
   draft: ClusterDraft,
   rulings: ReadonlyMap<string, Ruling>,
   pagerank: ReadonlyMap<string, number>,
-  options: PlannerOptions
+  options: PlannerOptions,
+  policy: PlanPolicy
 ): CollapseCluster => {
   const records = [...draft.records].sort(byPath)
   const anchor = records.reduce(
@@ -419,8 +455,8 @@ const toCluster = (
     kind: draft.kind,
     cut: draft.cut,
     title,
-    home: homeFor(records, title, options.homeDefault),
-    memoryType: canonicalType(records),
+    home: homeFor(records, title, options.homeDefault, policy.writerBuckets ?? []),
+    memoryType: canonicalType(records, new Set(policy.refusedTypes ?? [])),
     source: majority(records.map(sourceOf)) ?? NO_SOURCE,
     members,
     anchor: anchor.path,

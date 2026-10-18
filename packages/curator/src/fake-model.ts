@@ -301,7 +301,8 @@ const nextCollapseCall = (
 
 /**
  * The moves the fake proposes: every inbox record with an existing home, in the list's order, up to
- * the quota. A new home is left for a model to judge.
+ * the briefing's quota (the store's `curator.placementQuota`). A new home is left for a model to
+ * judge.
  */
 export const fakePlacements = (briefing: Briefing | null): ReadonlyArray<ProposedOp> =>
   (briefing?.inbox ?? [])
@@ -310,7 +311,7 @@ export const fakePlacements = (briefing: Briefing | null): ReadonlyArray<Propose
         ? [{ kind: "move" as const, path: entry.path, to: entry.home.to }]
         : []
     )
-    .slice(0, PLACEMENT_QUOTA)
+    .slice(0, briefing?.placementQuota ?? PLACEMENT_QUOTA)
 
 /** How many ops the `propose` result says landed, `0` when there was no clean one. */
 const proposedFrom = (options: LanguageModelV4CallOptions): number => {

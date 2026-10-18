@@ -17,7 +17,7 @@ import { type GitShape, makeGit } from "@memhtml/store"
 import { Effect } from "effect"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
-import { type Cli, makeCli } from "./harness.js"
+import { type Cli, makeCli, underStrictStore } from "./harness.js"
 
 /**
  * The v2 proof of concept end to end (`docs/v2-poc.md`, "Integration test (integrator)"): a
@@ -531,28 +531,30 @@ describe("the put and exec doors", () => {
 
   it("session put refuses a record below the write bar and appends nothing", async () => {
     await cli.json(["session", "start", "--id", "bar"])
-    const refused = await cli.envelope([
-      "session",
-      "put",
-      "--id",
-      "bar",
-      "--file",
-      await opsFile("bar", [
-        {
-          op: "write",
-          title: "Run the formatter",
-          type: "semantic",
-          entities: [],
-          body: "Run the formatter before committing."
-        },
-        {
-          op: "write",
-          title: "Run 42",
-          type: "episodic",
-          body: "Run 42 read three files and wrote a report."
-        }
+    const refused = await underStrictStore(cli.root, async () =>
+      cli.envelope([
+        "session",
+        "put",
+        "--id",
+        "bar",
+        "--file",
+        await opsFile("bar", [
+          {
+            op: "write",
+            title: "Run the formatter",
+            type: "semantic",
+            entities: [],
+            body: "Run the formatter before committing."
+          },
+          {
+            op: "write",
+            title: "Run 42",
+            type: "episodic",
+            body: "Run 42 read three files and wrote a report."
+          }
+        ])
       ])
-    ])
+    )
     expect(refused.code).toBe("ERR_INVALID_MEMORY")
     expect(String(refused.error)).toContain("below the write bar: names no system")
     expect(String(refused.error)).toContain("runs belong in the trace index")
@@ -616,17 +618,20 @@ describe("the put and exec doors", () => {
 
   it("session put refuses a malformed label and an unlabel that leaves a record unanchored, appending nothing", async () => {
     await cli.json(["session", "start", "--id", "bad-labels"])
-    const refused = await cli.envelope([
-      "session",
-      "put",
-      "--id",
-      "bad-labels",
-      "--file",
-      await opsFile("bad-labels", [
-        { op: "label", path: fixtureMemory(12).path, entity: "Place:Region5" },
-        { op: "unlabel", path: fixtureMemory(11).path, entity: "place:region4" }
+    // The unlabel's refusal is the anchor rule, which is store policy.
+    const refused = await underStrictStore(cli.root, async () =>
+      cli.envelope([
+        "session",
+        "put",
+        "--id",
+        "bad-labels",
+        "--file",
+        await opsFile("bad-labels", [
+          { op: "label", path: fixtureMemory(12).path, entity: "Place:Region5" },
+          { op: "unlabel", path: fixtureMemory(11).path, entity: "place:region4" }
+        ])
       ])
-    ])
+    )
     expect(refused.code).toBe("ERR_INVALID_MEMORY")
     expect(String(refused.error)).toContain("is not a normalized type:name value")
     expect(String(refused.error)).toContain(

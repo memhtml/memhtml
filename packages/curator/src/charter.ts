@@ -15,7 +15,9 @@ import { Effect } from "effect"
  *
  * Two prompts. The charter is `memhtml curate run`'s: the nine ordered priorities of a general
  * curation pass. The collapse charter is `memhtml curate collapse`'s: one fold of one theme into
- * one canonical, ported from the 2026-09-24 collapse run.
+ * one canonical, ported from the 2026-09-24 collapse run. Both are templates whose placeholders
+ * carry the store's policy ({@link renderCharter}), and either command takes `--charter <file>` to
+ * run under an operator's own text instead.
  */
 export const CHARTER_URL = new URL("../prompts/charter.md", import.meta.url)
 
@@ -34,11 +36,77 @@ const readPrompt = (url: URL, name: string): Effect.Effect<string, StorageFailur
     catch: (cause) => StorageFailure.make({ operation: `curator.${name}: ${String(cause)}` })
   })
 
-/** The charter's text, read fresh on every run. */
+/** The charter's text, read fresh on every run. A template: {@link renderCharter} fills it. */
 export const CURATOR_CHARTER: Effect.Effect<string, StorageFailure> = readPrompt(
   CHARTER_URL,
   "charter"
 )
+
+/**
+ * An operator's own charter, from `--charter <file>` on `curate run` or `curate collapse`, read in
+ * place of the shipped one and filled by {@link renderCharter} the same way. A file that cannot be
+ * read, or one with no text, fails the run before any model call: a blank charter would brief the
+ * curator with nothing and still land what it proposed.
+ */
+export const readCharterFile = (path: string): Effect.Effect<string, StorageFailure> =>
+  Effect.tryPromise({
+    try: () => readFile(path, "utf8"),
+    catch: (cause) =>
+      StorageFailure.make({ operation: `curator.charter-file ${path}: ${String(cause)}` })
+  }).pipe(
+    Effect.flatMap((text) =>
+      text.trim() === ""
+        ? Effect.fail(
+            StorageFailure.make({ operation: `curator.charter-file ${path}: the file has no text` })
+          )
+        : Effect.succeed(text)
+    )
+  )
+
+/**
+ * What a charter's placeholders say: the store's policy as the curator should hear it, from
+ * `memhtml.config.json` (`curator.placementQuota`, `writeBar.refusedTypes`).
+ */
+export interface CharterVars {
+  readonly placementQuota: number
+  readonly refusedTypes: ReadonlyArray<string>
+}
+
+/**
+ * The placeholders {@link renderCharter} fills, each with what it becomes:
+ *
+ * - `{{placementQuota}}`: the quota, as a number (`60`).
+ * - `{{refusedTypesRule}}`: a sentence with its leading space, " Never write an `episodic` or
+ *   `verdict` record." for a store refusing those two, or nothing when the store refuses no type.
+ * - `{{refusedTypesClause}}`: ", and no put is `episodic` or `verdict`" for the same store, or
+ *   nothing.
+ *
+ * A charter that carries none of them is used as written; any other `{{...}}` is left alone.
+ */
+export const CHARTER_PLACEHOLDERS = [
+  "{{placementQuota}}",
+  "{{refusedTypesRule}}",
+  "{{refusedTypesClause}}"
+] as const
+
+/** Each type in backticks, two joined with "or", three or more as a comma list ending ", or". */
+const typeList = (types: ReadonlyArray<string>): string => {
+  const quoted = types.map((type) => `\`${type}\``)
+  if (quoted.length <= 2) return quoted.join(" or ")
+  return `${quoted.slice(0, -1).join(", ")}, or ${quoted.at(-1) ?? ""}`
+}
+
+/** The charter with its placeholders filled from the store's policy ({@link CHARTER_PLACEHOLDERS}). */
+export const renderCharter = (template: string, vars: CharterVars): string => {
+  const types = vars.refusedTypes
+  const article = /^[aeiou]/.test(types[0] ?? "") ? "an" : "a"
+  const rule = types.length === 0 ? "" : ` Never write ${article} ${typeList(types)} record.`
+  const clause = types.length === 0 ? "" : `, and no put is ${typeList(types)}`
+  return template
+    .replaceAll("{{placementQuota}}", String(vars.placementQuota))
+    .replaceAll("{{refusedTypesRule}}", rule)
+    .replaceAll("{{refusedTypesClause}}", clause)
+}
 
 export const COLLAPSE_CHARTER_URL = new URL("../prompts/collapse.md", import.meta.url)
 

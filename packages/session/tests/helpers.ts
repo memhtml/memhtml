@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { promisify } from "node:util"
-import type { HeadView, MemoryRecord } from "@memhtml/contracts"
-import { isArchivePath } from "@memhtml/contracts"
+import type { HeadView, MemoryRecord, WriteBarPolicy } from "@memhtml/contracts"
+import { decodeStoreConfig, isArchivePath, storePolicyOf } from "@memhtml/contracts"
 import { frameKeyOf } from "@memhtml/domain"
 import { contentHash, parseMemory, renderTemplate } from "@memhtml/html"
 import { Effect } from "effect"
@@ -65,6 +65,42 @@ export const commitFiles = async (
   await git(root, ["commit", "-q", "-m", message])
   return git(root, ["rev-parse", "HEAD"])
 }
+
+/**
+ * A strict store's `memhtml.config.json`: run narratives and review output refused, every record
+ * anchored, the v1 doors closed inside a run, four writer-bucket patterns, the default quota. The
+ * write-bar tests run under it, because the library's own bar refuses nothing; the same literal is
+ * restated in `@memhtml/curator`'s and the CLI's test helpers, one package each.
+ */
+export const STRICT_STORE_CONFIG = {
+  writeBar: {
+    refusedTypes: [
+      {
+        type: "episodic",
+        reason: "an episodic record narrates one run; runs belong in the trace index, not the store"
+      },
+      { type: "verdict", reason: "a verdict is review output, not a memory" }
+    ],
+    requireAnchor: true
+  },
+  v1Doors: "closed-in-session",
+  curator: {
+    writerBuckets: [
+      "*-import",
+      "working-thread*",
+      "*-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]",
+      "trace-consolidation"
+    ],
+    placementQuota: 60
+  }
+} as const
+
+const strictDecoded = decodeStoreConfig(JSON.stringify(STRICT_STORE_CONFIG))
+if (!strictDecoded.ok)
+  throw new Error(`STRICT_STORE_CONFIG does not decode: ${strictDecoded.reason}`)
+
+/** {@link STRICT_STORE_CONFIG}'s write bar, as `validateOps` takes it. */
+export const STRICT_BAR: WriteBarPolicy = storePolicyOf(strictDecoded.config).policy.writeBar
 
 /**
  * The entity every fixture names unless a test says otherwise, so fixtures clear the write bar's

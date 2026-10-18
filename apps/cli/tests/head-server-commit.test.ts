@@ -13,6 +13,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest"
 import { COMMIT_DEADLINE_VAR, headSocketPath } from "../src/head-protocol.js"
 import { type HeadServer, holdingPermit, startHeadServer } from "../src/head-server.js"
 import { run } from "../src/run.js"
+import { writeStoreConfig } from "./strict-store.js"
 
 /**
  * `session commit` and `session rebase` through the head server (`/v1/commit`, `/v1/rebase`), in
@@ -711,5 +712,31 @@ describe("the CLI's fallback rules for a commit", () => {
       if (saved === undefined) delete process.env[COMMIT_DEADLINE_VAR]
       else process.env[COMMIT_DEADLINE_VAR] = saved
     }
+  })
+})
+
+describe("the store's write bar on the server path", () => {
+  // Mutation: drop `writeBar` from `serveCommit`'s `commitOverHead` call and the served commit
+  // lands the narrative under the library default, so `kind` is `committed` and main moves.
+  it("judges a served commit by memhtml.config.json, as the local path does", async () => {
+    const repo = await corpus()
+    await start(repo.root, "narrative")
+    await put(repo.root, "narrative", [
+      {
+        title: "The run that rebuilt the fixture index",
+        type: "episodic",
+        body: "The run that rebuilt the fixture index finished in four minutes."
+      }
+    ])
+    await writeStoreConfig(repo.root)
+    await serve(repo.root)
+    const before = await mainOf(repo)
+    const served = dataOf((await commitCli(repo.root, "narrative")).body)
+    expect(served).toMatchObject({ kind: "refused", via: "server" })
+    expect((served.violations as ReadonlyArray<Body>).map((v) => v.kind)).toEqual(["write-bar"])
+    expect(await mainOf(repo)).toBe(before)
+    const local = dataOf((await commitCli(repo.root, "narrative", { local: true })).body)
+    expect(local).toMatchObject({ kind: "refused", via: "local" })
+    expect(await mainOf(repo)).toBe(before)
   })
 })

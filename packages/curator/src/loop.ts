@@ -5,7 +5,8 @@ import { z } from "zod"
 
 import { type Briefing, renderBriefing } from "./briefing.js"
 import { budgetWith, type CuratorBudget } from "./budget.js"
-import { CURATOR_CHARTER } from "./charter.js"
+import { CURATOR_CHARTER, renderCharter } from "./charter.js"
+import { PLACEMENT_QUOTA } from "./inbox.js"
 import { type CuratorTools, ProposedOp, toOverlayOps } from "./tools.js"
 
 /**
@@ -72,7 +73,11 @@ export interface CuratorRunInput {
   readonly briefing: Briefing | string
   /** An outer cancellation, joined with the wall clock. */
   readonly signal?: AbortSignal | undefined
-  /** The system prompt; defaults to the charter file. Tests pass a string to skip the read. */
+  /**
+   * The system prompt, already rendered ({@link renderCharter}); defaults to the shipped charter
+   * filled with the library's default policy and the briefing's quota. Tests pass a string to skip
+   * the read.
+   */
   readonly charter?: string | undefined
   /** The clock archive paths and the wall clock read. Defaults to `Date.now`. */
   readonly now?: (() => Date) | undefined
@@ -97,7 +102,13 @@ const describeApiError = (error: APICallError): string => {
 export const runCurator = (input: CuratorRunInput): Effect.Effect<CuratorRun, StorageFailure> =>
   Effect.gen(function* () {
     const budget = budgetWith(input.budget)
-    const charter = input.charter ?? (yield* CURATOR_CHARTER)
+    const charter =
+      input.charter ??
+      renderCharter(yield* CURATOR_CHARTER, {
+        placementQuota:
+          typeof input.briefing === "string" ? PLACEMENT_QUOTA : input.briefing.placementQuota,
+        refusedTypes: []
+      })
     const now = input.now ?? (() => new Date())
     const prompt =
       typeof input.briefing === "string" ? input.briefing : renderBriefing(input.briefing)

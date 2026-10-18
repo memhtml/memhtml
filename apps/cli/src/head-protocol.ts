@@ -130,14 +130,16 @@ export const EMBED_DEADLINE_DEFAULT_MS = 450
 export const EMBED_DEADLINE_VAR = "MEMHTML_EMBED_DEADLINE_MS"
 
 /**
- * How long without an embed before the server warms the embed path, in milliseconds. A judgment,
- * not a measured cliff: probed 2026-09-28 through the bedrock-lanes agentgateway, no idle gap up to
- * 900 s made the next embed slower (`docs/v2-poc.md`, "Keeping the embed path warm"), so 45 s is
- * short enough that a pool with an idle timeout of a minute or more never idles out between warmups.
+ * How long without an embed before the server warms the embed path, in milliseconds: `0`, off, by
+ * default. Probed 2026-09-28 through an LLM proxy, no idle gap up to 900 s made the next embed
+ * slower (`docs/v2-poc.md`, "Keeping the embed path warm"), and a warmup every 45 s costs about
+ * 1,900 billed one-token embeds a day per server, so the warmup is for a deployment whose proxy
+ * drops idle connections: set {@link EMBED_WARM_IDLE_VAR} to an idle bound shorter than the proxy's
+ * idle timeout (45,000 keeps a pool with a timeout of a minute or more warm).
  */
-export const EMBED_WARM_IDLE_DEFAULT_MS = 45_000
+export const EMBED_WARM_IDLE_DEFAULT_MS = 0
 
-/** The variable that overrides {@link EMBED_WARM_IDLE_DEFAULT_MS}; `0` turns the warmup off. */
+/** The variable that overrides {@link EMBED_WARM_IDLE_DEFAULT_MS}; `0` or unset leaves it off. */
 export const EMBED_WARM_IDLE_VAR = "MEMHTML_EMBED_WARM_IDLE_MS"
 
 /**

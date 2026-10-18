@@ -1,5 +1,8 @@
+import { matchesGlob } from "node:path"
+
 import {
   ARCS_DIR,
+  DEFAULT_PLACEMENT_QUOTA,
   type HeadView,
   INBOX_DIR,
   type MemoryRecord,
@@ -27,12 +30,12 @@ import {
  * ## The rule
  *
  * A home is a directory `areas/<slug>/` or `resources/<tag>/` holding at least one active record,
- * except the inbox itself, `areas/arcs/`, `resources/people/`, and the writer buckets
- * ({@link isBucketHome}: an importer's `*-import`, a dated `working-thread-*`, and
- * `trace-consolidation`, which name who wrote a record rather than what it is about). An entity
- * carried by more than {@link GENERIC_ENTITY_SHARE} of the active records (never fewer than
- * {@link GENERIC_ENTITY_FLOOR}) is the store's subject rather than a record's, and places nothing:
- * `person:laith` on 209 of 838 active records on 2026-09-30.
+ * except the inbox itself, `areas/arcs/`, `resources/people/`, and the store's writer buckets
+ * ({@link isBucketHome}: the directory names `curator.writerBuckets` in `memhtml.config.json`
+ * matches, such as an importer's `*-import`, which name who wrote a record rather than what it is
+ * about; none by default). An entity carried by more than {@link GENERIC_ENTITY_SHARE} of the active
+ * records (never fewer than {@link GENERIC_ENTITY_FLOOR}) is the store's subject rather than a
+ * record's, and places nothing: one person entity on 209 of 838 active records on 2026-09-30.
  *
  * Each candidate scores {@link NAMED_WEIGHT} per entity whose name is the home's directory name, 1
  * per tag that is, and 1 per record at the home carrying each of the record's entities. The best
@@ -98,16 +101,23 @@ export interface InboxWorkList {
 }
 
 /**
- * Inbox records one run should file, the charter's placement quota. The fleet filed 9 to 66 records
- * a day into the inbox in the week to 2026-09-30 (84 over the last three days), so a quota below
- * about 30 never drains it; 60 moves plus their repoints (5 live edges named an inbox record that
- * day) take about 60 of the 200-op cap, leaving the rest for the priorities ranked around it, and fit
- * one `propose` call of a few thousand output tokens.
+ * Inbox records one run should file by default, the charter's placement quota; a store sets its own
+ * with `curator.placementQuota` in `memhtml.config.json`. Measured on one live store, whose writers
+ * filed 9 to 66 records a day into the inbox in the week to 2026-09-30 (84 over the last three
+ * days): a quota below about 30 never drains it, and 60 moves plus their repoints (5 live edges
+ * named an inbox record that day) take about 60 of the 200-op cap, leaving the rest for the
+ * priorities ranked around it, and fit one `propose` call of a few thousand output tokens.
  */
-export const PLACEMENT_QUOTA = 60
+export const PLACEMENT_QUOTA = DEFAULT_PLACEMENT_QUOTA
 
-/** Records the inbox list quotes: a run's quota plus room to skip a third of it and still fill it. */
-export const BRIEFING_INBOX_CAP = 80
+/**
+ * Records the inbox list quotes for a quota: the quota plus a third of it, so a run can skip a
+ * third of the list and still fill its quota. 80 at the default 60.
+ */
+export const inboxCapFor = (quota: number): number => quota + Math.ceil(quota / 3)
+
+/** {@link inboxCapFor} at the default quota. */
+export const BRIEFING_INBOX_CAP = inboxCapFor(PLACEMENT_QUOTA)
 export const INBOX_HOMES_CAP = 20
 export const INBOX_CLAIM_CHARS = 200
 /** An entity carried by more than this share of the active records places nothing. */
@@ -135,16 +145,23 @@ const NOT_HOMES: ReadonlySet<string> = new Set([INBOX_DIR, ARCS_DIR, PEOPLE_DIR]
 const HOME_BUCKETS: ReadonlyArray<string> = ["areas", "resources"]
 
 /**
- * True when a directory name is a writer's bucket rather than a subject: an importer's
- * (`wiki-kernel-import`, 70 active records on 2026-09-30), a dated working thread
- * (`working-thread-2026-09-10`), or trace consolidation's, the writer the 2026-09-24 audit found
- * filing a lesson from every run.
+ * True when a directory name is one of the store's writer buckets rather than a subject: a name one
+ * of `buckets` matches, each a glob over one directory name (`node:path` `matchesGlob`: `*` any run
+ * of characters, `?` one, `[0-9]` a class; a leading `*` does not match a name that starts with
+ * `.`). Patterns come from `curator.writerBuckets` in `memhtml.config.json`, and the library sets
+ * none: an importer's landing directory (`*-import`), a dated working thread, or a consolidation
+ * writer's directory says who wrote a record, and only the store knows which writers it has.
  */
-export const isBucketHome = (name: string): boolean =>
-  name.endsWith("-import") ||
-  name.startsWith("working-thread") ||
-  /-\d{4}-\d{2}-\d{2}$/.test(name) ||
-  name === "trace-consolidation"
+export const isBucketHome = (name: string, buckets: ReadonlyArray<string>): boolean =>
+  buckets.some((pattern) => matchesGlob(name, pattern))
+
+/** What a store's policy says about placement: its writer buckets and its quota. */
+export interface InboxPolicy {
+  /** Directory-name globs that are never a home ({@link isBucketHome}). None when omitted. */
+  readonly writerBuckets?: ReadonlyArray<string> | undefined
+  /** Records one run files; sizes the list ({@link inboxCapFor}). {@link PLACEMENT_QUOTA} when omitted. */
+  readonly placementQuota?: number | undefined
+}
 
 /** The `areas/<x>` or `resources/<x>` directory a path sits under, or `null`. */
 const homeDirOf = (path: string): string | null => {
@@ -188,14 +205,17 @@ const destinationIn = (view: HeadView, dir: string, path: string, taken: Set<str
 }
 
 /**
- * The inbox work list over a view. Pure and deterministic: the same view yields the same list.
- * `headlineTypes` are the types whose claim is a headline (`task`, `verdict`), which the list
- * excludes as every other briefing list does.
+ * The inbox work list over a view. Pure and deterministic: the same view and policy yield the same
+ * list. `headlineTypes` are the types whose claim is a headline (`task`, `verdict`), which the list
+ * excludes as every other briefing list does; `policy` is the store's writer buckets and quota.
  */
 export const inboxWorkList = (
   view: HeadView,
-  headlineTypes: ReadonlySet<string>
+  headlineTypes: ReadonlySet<string>,
+  policy: InboxPolicy = {}
 ): InboxWorkList => {
+  const buckets = policy.writerBuckets ?? []
+  const cap = inboxCapFor(policy.placementQuota ?? PLACEMENT_QUOTA)
   const active: Array<MemoryRecord> = []
   for (const record of view.records()) if (!record.archived) active.push(record)
   const genericCap = Math.max(GENERIC_ENTITY_FLOOR, GENERIC_ENTITY_SHARE * active.length)
@@ -215,7 +235,7 @@ export const inboxWorkList = (
     if (dir === null) continue
     everyDir.add(dir)
     const name = dir.slice(dir.indexOf("/") + 1)
-    if (NOT_HOMES.has(dir) || isBucketHome(name)) continue
+    if (NOT_HOMES.has(dir) || isBucketHome(name, buckets)) continue
     const home = homes.get(dir) ?? { records: 0, entities: new Map<string, number>() }
     home.records += 1
     for (const entity of new Set(record.entities)) {
@@ -309,7 +329,9 @@ export const inboxWorkList = (
           entity,
           dir: `resources/${slugify(entitySlugs(entity).at(-1) ?? "")}`
         }))
-        .filter(({ dir }) => !everyDir.has(dir) && !isBucketHome(dir.slice(dir.indexOf("/") + 1)))
+        .filter(
+          ({ dir }) => !everyDir.has(dir) && !isBucketHome(dir.slice(dir.indexOf("/") + 1), buckets)
+        )
         .sort(
           (a, b) =>
             (inboxCarriers.get(b.entity) ?? 0) - (inboxCarriers.get(a.entity) ?? 0) ||
@@ -367,7 +389,7 @@ export const inboxWorkList = (
     return ka - kb || na - nb || byText(da, db) || byText(a.path, b.path)
   })
   return {
-    inbox: entries.slice(0, BRIEFING_INBOX_CAP),
+    inbox: entries.slice(0, cap),
     inboxTotal: entries.length,
     inboxWithHome: entries.filter((entry) => entry.home !== null).length,
     inboxHomes: [...byHome.values()]

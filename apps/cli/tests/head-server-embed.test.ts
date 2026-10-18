@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest"
 
 import type { EmbedderShape } from "../src/api-layer.js"
 import { askHead } from "../src/head-client.js"
-import { HeadServerStatus, SearchAnswer } from "../src/head-protocol.js"
+import { EMBED_WARM_IDLE_DEFAULT_MS, HeadServerStatus, SearchAnswer } from "../src/head-protocol.js"
 import {
   type HeadServer,
   type HeadServerInput,
@@ -56,6 +56,11 @@ import { fakeEmbedder, fakeVector } from "./harness.js"
  *   vector cache" (four warmups).
  * - `head-vectors.ts` `stopLateEmbed`: answer `stopped` without interrupting -> "bounds the local
  *   path too, stopping the embed it leaves" (the embed is never interrupted).
+ * - `head-protocol.ts` `EMBED_WARM_IDLE_DEFAULT_MS` back to 45_000 -> "is off unless an idle bound
+ *   is given" (a warmup runs as soon as the server listens).
+ * - `head-server.ts` poll loop: drop the `startBackfill` retry, or read `backfill.lastError` once
+ *   when the loop is built instead of per tick -> "with the warmup off, retries a failed fill on the
+ *   poll tick instead" (`pending` stays 1).
  */
 
 const run_ = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
@@ -373,6 +378,18 @@ describe("the warmup", () => {
     expect((await status(repo.root)).embed.warmups).toBe(1)
   })
 
+  it("is off unless an idle bound is given: a server with none never warms", async () => {
+    const repo = await embeddedCorpus()
+    const { embedder, state } = slowEmbedder()
+    // `warmIdleMs` absent, as `head serve` passes it with MEMHTML_EMBED_WARM_IDLE_MS unset.
+    await serve(repo.root, embedder, { warmIdleMs: undefined })
+    await sleep(400)
+    expect(state.queries.filter((text) => text === WARMUP_TEXT)).toEqual([])
+    const embed = (await status(repo.root)).embed
+    expect(embed).toMatchObject({ warmIdleMs: null, warmups: 0 })
+    expect(EMBED_WARM_IDLE_DEFAULT_MS).toBe(0)
+  })
+
   it("never warms a store with no vector cache", async () => {
     const repo = await run_(makeFixtureRepo())
     repos.push(repo)
@@ -468,6 +485,35 @@ describe("the background fill", () => {
     })
     // No commit landed after the failure: the retry came from the warmup timer.
     expect(recovered.advances).toBe(1)
+  })
+
+  it("with the warmup off, retries a failed fill on the poll tick instead", async () => {
+    const repo = await embeddedCorpus()
+    const { embedder, state } = slowEmbedder()
+    state.failDocuments = true
+    const { server } = await serve(repo.root, embedder, { warmIdleMs: 0, pollMs: 100 })
+    await commit(repo, [memory("quarry", "Quarry stone is cut in winter.")])
+    const failed = await until(
+      1500,
+      () => server.stats(),
+      (now) => now.vectors.backfill.failures >= 1
+    )
+    expect(failed.vectors).toMatchObject({ pending: 1 })
+    const advances = failed.advances
+
+    state.failDocuments = false
+    const recovered = await until(
+      2000,
+      () => server.stats(),
+      (now) => now.vectors.pending === 0
+    )
+    expect(recovered.vectors).toMatchObject({
+      pending: 0,
+      backfill: { embedded: 1, lastError: null }
+    })
+    // No commit landed after the failure and no warmup ran: the retry came from the poll.
+    expect(recovered.advances).toBe(advances)
+    expect(state.queries.filter((text) => text === WARMUP_TEXT)).toEqual([])
   })
 
   it("never embeds a record twice under concurrent advances", async () => {

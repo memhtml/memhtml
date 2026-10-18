@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { type EmbedderShape, layerAppWith, type RunResult, run } from "@memhtml/cli"
+import { STORE_CONFIG_FILE } from "@memhtml/contracts"
 import { ModelUnavailable } from "@memhtml/contracts/errors"
 import { EMBED_DIM, EMBED_WATERMARK } from "@memhtml/llm"
 import { makeGit } from "@memhtml/store"
@@ -195,3 +196,46 @@ export const writeMemory = (
     ...(input.entities ?? []).flatMap((entity) => ["--entity", entity]),
     ...(input.sessionId === undefined ? [] : ["--session-id", input.sessionId])
   ])
+
+/**
+ * A strict store's `memhtml.config.json`: run narratives and review output refused, every record
+ * anchored, the v1 doors closed inside a run, four writer-bucket patterns, the default quota. The
+ * write-bar cases here run under it, because the library's own policy refuses nothing; the same
+ * literal is restated in the session, curator, and CLI packages' test helpers.
+ */
+export const STRICT_STORE_CONFIG = {
+  writeBar: {
+    refusedTypes: [
+      {
+        type: "episodic",
+        reason: "an episodic record narrates one run; runs belong in the trace index, not the store"
+      },
+      { type: "verdict", reason: "a verdict is review output, not a memory" }
+    ],
+    requireAnchor: true
+  },
+  v1Doors: "closed-in-session",
+  curator: {
+    writerBuckets: [
+      "*-import",
+      "working-thread*",
+      "*-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]",
+      "trace-consolidation"
+    ],
+    placementQuota: 60
+  }
+} as const
+
+/**
+ * Run `body` with {@link STRICT_STORE_CONFIG} in `root`'s working tree, then remove it, so a case in
+ * a suite that shares one repo holds only itself to the strict bar.
+ */
+export const underStrictStore = async <A>(root: string, body: () => Promise<A>): Promise<A> => {
+  const path = join(root, STORE_CONFIG_FILE)
+  await writeFile(path, `${JSON.stringify(STRICT_STORE_CONFIG, null, 2)}\n`, "utf8")
+  try {
+    return await body()
+  } finally {
+    await rm(path, { force: true })
+  }
+}

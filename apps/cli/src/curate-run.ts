@@ -1,15 +1,17 @@
-import type { HeadView, OverlayOp } from "@memhtml/contracts"
+import type { HeadView, OverlayOp, StorePolicy, WriteBarPolicy } from "@memhtml/contracts"
 import type { InvalidMemory as InvalidMemoryType } from "@memhtml/contracts/errors"
 import {
   DirtyTree,
   InvalidMemory,
   ModelUnavailable,
-  type StorageFailure
+  type StorageFailure,
+  type StoreConfigInvalid
 } from "@memhtml/contracts/errors"
 import {
   BRIEFING_NEIGHBOR_CAP,
   type Briefing,
   briefingFromView,
+  CURATOR_CHARTER,
   type CuratorExecResult,
   type CuratorModelSpecInvalid,
   type CuratorProposeResult,
@@ -19,6 +21,8 @@ import {
   type CuratorSessionStatus,
   type CuratorTools,
   curatorModel,
+  readCharterFile,
+  renderCharter,
   runCurator,
   type StoppedBy
 } from "@memhtml/curator"
@@ -42,6 +46,7 @@ import { Effect } from "effect"
 
 import { type SnapshotWritten, snapshotAfterCommit } from "./head-cache.js"
 import { runSessionExec } from "./session-exec.js"
+import { loadStorePolicy } from "./store-config.js"
 import {
   type HeadStats,
   headStats,
@@ -143,9 +148,33 @@ export interface CurateRunInput {
   readonly wallClockMs?: number | undefined
   readonly dryRun: boolean
   readonly resume: boolean
+  /**
+   * `--charter <file>`: an operator's own charter in place of the shipped one, filled from the
+   * store's policy the same way (`renderCharter` in `@memhtml/curator`).
+   */
+  readonly charter?: string | undefined
   /** The clock, injectable for a test that pins the ref's date and the archive year. */
   readonly now?: (() => Date) | undefined
 }
+
+/**
+ * A charter, the shipped one or `--charter <file>`, filled from the store's policy: its placement
+ * quota and the types its write bar refuses. Shared with `curate collapse`, which passes its own
+ * shipped template.
+ */
+export const charterFor = (input: {
+  readonly file: string | undefined
+  readonly shipped: Effect.Effect<string, StorageFailure>
+  readonly policy: StorePolicy
+}): Effect.Effect<string, StorageFailure> =>
+  Effect.gen(function* () {
+    const template =
+      input.file === undefined ? yield* input.shipped : yield* readCharterFile(input.file)
+    return renderCharter(template, {
+      placementQuota: input.policy.curator.placementQuota,
+      refusedTypes: [...input.policy.writeBar.refusedTypes.keys()]
+    })
+  })
 
 export interface OpsByKind {
   readonly put: number
@@ -184,6 +213,8 @@ export interface CurateRunReport {
   readonly snapshot: SnapshotWritten | null
   readonly head: HeadStats
   readonly briefing: Briefing
+  /** The `--charter` file the run was briefed under, or `null` for the shipped charter. */
+  readonly charter: string | null
   /** The command that lands the branch on `main`. */
   readonly next: string
 }
@@ -327,6 +358,8 @@ export const bindTools = (input: {
   readonly head: LoadedHead
   readonly overlay: Overlay
   readonly ref: string
+  /** The store's write bar (`memhtml.config.json`), every proposal and harvest judged against it. */
+  readonly writeBar: WriteBarPolicy
 }): CuratorTools => {
   const base = input.head.view
   const current = (): Effect.Effect<HeadView, InvalidMemoryType> =>
@@ -345,7 +378,10 @@ export const bindTools = (input: {
     ops: ReadonlyArray<OverlayOp>
   ): { violations: ReadonlyArray<Violation>; blocking: ReadonlyArray<Violation> } => {
     const touched = new Set(ops.flatMap(touchedPaths))
-    const violations = validateOps(base, [...input.overlay.ops(), ...ops], { scope: CURATE_SCOPE })
+    const violations = validateOps(base, [...input.overlay.ops(), ...ops], {
+      scope: CURATE_SCOPE,
+      writeBar: input.writeBar
+    })
     return {
       violations,
       blocking: violations.filter(
@@ -436,6 +472,8 @@ export const land = (input: {
   readonly session: Session
   readonly head: LoadedHead
   readonly message: string
+  /** The store's write bar, judged again by every commit attempt. */
+  readonly writeBar: WriteBarPolicy
   readonly reload?:
     | ((sha: string) => Effect.Effect<LoadedHead, GitFailure | InvalidMemory | StorageFailure>)
     | undefined
@@ -452,7 +490,8 @@ export const land = (input: {
         session,
         head: head.view,
         message: input.message,
-        scope: CURATE_SCOPE
+        scope: CURATE_SCOPE,
+        writeBar: input.writeBar
       })
       switch (outcome.kind) {
         case "committed":
@@ -497,6 +536,7 @@ export const curateRun = (
   | DirtyTree
   | ModelUnavailable
   | CuratorModelSpecInvalid
+  | StoreConfigInvalid
 > =>
   Effect.gen(function* () {
     const now = input.now ?? (() => new Date())
@@ -520,6 +560,14 @@ export const curateRun = (
       )
     }
 
+    // The store's policy, read once for the run: the bar every tool judges against and the commit
+    // lands under, the briefing's writer buckets and quota, and what the charter states.
+    const { policy } = yield* loadStorePolicy(input.root)
+    const charter = yield* charterFor({
+      file: input.charter,
+      shipped: CURATOR_CHARTER,
+      policy
+    })
     const model = yield* curatorModel(input.model)
 
     // The base: the session's own on a resume, else main's tip, else HEAD (a repo with no `main`).
@@ -558,14 +606,17 @@ export const curateRun = (
         searchHead(startView, {
           query: record.claim.trim() === "" ? record.title : record.claim,
           limit: BRIEFING_NEIGHBOR_CAP + 1
-        }).map((hit) => ({ path: hit.path, claim: hit.claim }))
+        }).map((hit) => ({ path: hit.path, claim: hit.claim })),
+      writerBuckets: policy.curator.writerBuckets,
+      placementQuota: policy.curator.placementQuota
     })
-    const tools = bindTools({ head, overlay, ref })
+    const tools = bindTools({ head, overlay, ref, writeBar: policy.writeBar })
 
     const run: CuratorRun = yield* runCurator({
       tools,
       model,
       briefing,
+      charter,
       budget: {
         ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
         ...(input.wallClockMs === undefined ? {} : { wallClockMs: input.wallClockMs })
@@ -597,6 +648,7 @@ export const curateRun = (
       toolCalls: run.toolCalls,
       head: headStats(head),
       briefing,
+      charter: input.charter ?? null,
       next: `memhtml curate merge ${ref}`
     }
 
@@ -612,7 +664,8 @@ export const curateRun = (
       root: input.root,
       session,
       head,
-      message: commitSummary(run.report)
+      message: commitSummary(run.report),
+      writeBar: policy.writeBar
     })
     // The curator's ref moved: cache its version so `curate merge` loads both tips from snapshots.
     const snapshot = yield* snapshotAfterCommit(input.root, landed.sha, landed.head.view)

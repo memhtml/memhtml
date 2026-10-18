@@ -467,6 +467,20 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
     ["status", ["status"]],
     ["publish", ["publish"]],
     ["doctor", ["doctor"]],
+    // The corpus carries no policy file, so every store key answers as the library default.
+    [
+      "config",
+      ["config"],
+      undefined,
+      (answer) => ({
+        ok:
+          answer.type === "config.report" &&
+          answer.data?.file?.present === false &&
+          answer.data?.store?.v1Doors?.value === "closed-in-session" &&
+          answer.data?.store?.["writeBar.requireAnchor"]?.value === false,
+        detail: JSON.stringify(answer.data?.store ?? answer.code ?? null).slice(0, 200)
+      })
+    ],
     [
       "eval discriminate",
       ["eval", "discriminate", "--mode", "fake", "--probes", "4", "--size", "12"]
