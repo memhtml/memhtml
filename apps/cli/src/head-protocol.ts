@@ -5,7 +5,7 @@ import { Schema } from "effect"
 
 /**
  * The head server's wire contract (`docs/v2-poc.md`, "Head server"): JSON over HTTP on a Unix domain
- * socket inside the store, five routes under one version prefix.
+ * socket inside the store, seven routes under one version prefix.
  *
  * The server (`head-server.ts`) decodes every request body with the schemas here, excess properties
  * refused, the way the CLI refuses an unknown flag; the client (`head-client.ts`) decodes every
@@ -21,7 +21,9 @@ export const HEAD_ROUTES = {
   search: `/v${HEAD_PROTOCOL}/search`,
   read: `/v${HEAD_PROTOCOL}/read`,
   neighbors: `/v${HEAD_PROTOCOL}/neighbors`,
-  exec: `/v${HEAD_PROTOCOL}/exec`
+  exec: `/v${HEAD_PROTOCOL}/exec`,
+  commit: `/v${HEAD_PROTOCOL}/commit`,
+  rebase: `/v${HEAD_PROTOCOL}/rebase`
 } as const
 
 export type HeadRoute = keyof typeof HEAD_ROUTES
@@ -260,6 +262,53 @@ export const execBodyBytes = (request: ExecRequest): number =>
 /** The usage error a body over {@link EXEC_BODY_MAX_BYTES} earns, on the socket and in the CLI alike. */
 export const execBodyTooLarge = (bytes: number | null): string =>
   `session exec takes a script whose request body is at most ${String(EXEC_BODY_MAX_BYTES)} bytes (1 MiB)${bytes === null ? "" : `; this one is ${String(bytes)}`}. Split it into several execs, or write records with \`session put\``
+
+/**
+ * `POST /v1/commit`: land a session's log on its ref, as `session commit` does. The server reads the
+ * log itself, so a request names the session and the message and nothing about the session's state.
+ * `dropRefused` is `--drop-refused`, sent only when true.
+ */
+export const CommitRequest = Schema.Struct({
+  id: Schema.String,
+  message: Schema.String,
+  dropRefused: Schema.optionalKey(Schema.Boolean)
+})
+export type CommitRequest = typeof CommitRequest.Type
+
+/** The request `session commit` sends. */
+export const commitRequestOf = (input: {
+  readonly id: string
+  readonly message: string
+  readonly dropRefused?: boolean | undefined
+}): CommitRequest => ({
+  id: input.id,
+  message: input.message,
+  ...(input.dropRefused === true ? { dropRefused: true } : {})
+})
+
+/** `POST /v1/rebase`: move a session's base to its ref's tip, as `session rebase` does. */
+export const RebaseRequest = Schema.Struct({ id: Schema.String })
+export type RebaseRequest = typeof RebaseRequest.Type
+
+/**
+ * How long `session commit` and `session rebase` wait for the head server's answer by default, in
+ * milliseconds. A runtime that commits a run's session when the run ends gives each CLI call 90 s, and
+ * the server answers a commit in well under a second once it holds the session's base, so 60 s leaves
+ * the call's start and its exit inside that limit with room to spare. Past it the call fails rather
+ * than commit again here, because the server may have moved the ref.
+ */
+export const COMMIT_DEADLINE_DEFAULT_MS = 60_000
+
+/** The variable that overrides {@link COMMIT_DEADLINE_DEFAULT_MS}: whole milliseconds, `0` for none. */
+export const COMMIT_DEADLINE_VAR = "MEMHTML_COMMIT_DEADLINE_MS"
+
+/**
+ * The longest a `/v1/commit` or `/v1/rebase` waits for the server's commit permit (one commit or
+ * rebase runs at a time). Past it the server declines with `busy` having done nothing, and the client
+ * commits locally. Below {@link COMMIT_DEADLINE_DEFAULT_MS}, so a declined call still has the time a
+ * local commit takes.
+ */
+export const COMMIT_QUEUE_WAIT_MS = 20_000
 
 // ---------------------------------------------------------------------------------------------
 // Answers
@@ -576,6 +625,133 @@ export const ExecAnswer = Schema.Union([
   Schema.Struct({ served: Schema.Literal(false), reason: ExecDeclined, detail: Schema.String })
 ])
 export type ExecAnswer = typeof ExecAnswer.Type
+
+/** What writing a snapshot reports (`SnapshotWritten` in `head-cache.ts`). */
+const SnapshotWrittenSchema = Schema.Struct({
+  sha: Schema.String,
+  path: Schema.String,
+  bytes: Schema.Finite,
+  rows: Schema.Finite,
+  ms: Schema.Finite,
+  pruned: Schema.Array(Schema.String)
+})
+
+/** One op `--drop-refused` took out of the log, and why (`DroppedOp` in `v2.ts`). */
+const DroppedOpSchema = Schema.Struct({
+  kind: Schema.Literals(["put", "archive", "link", "unlink", "label", "unlabel", "move"]),
+  path: Schema.String,
+  reasons: Schema.Array(Schema.String)
+})
+
+/** The fields every commit outcome carries before its kind's own, and after them. */
+const commitHead = { id: Schema.String, ref: Schema.String, baseSha: Schema.String }
+const commitTail = {
+  snapshot: Schema.NullOr(SnapshotWrittenSchema),
+  dropped: Schema.Array(DroppedOpSchema)
+}
+
+/**
+ * What `session commit` reports, whichever process committed (`commitOverHead` in `v2.ts` returns
+ * exactly this type): the session, its ref and base, the commit path's outcome (`committed`,
+ * `rebase-needed`, `refused` with its violations, or `worktree-dirty`), the snapshot a `committed`
+ * outcome wrote, and the ops `--drop-refused` took out. The fields are in the order the local path
+ * builds them, because a decoded answer is in the schema's order and the two envelopes print the same.
+ * The CLI adds `via` and `server` after them.
+ */
+export const CommitResult = Schema.Union([
+  Schema.Struct({
+    ...commitHead,
+    kind: Schema.Literal("committed"),
+    sha: Schema.String,
+    paths: Schema.Array(Schema.String),
+    contradictions: Schema.Array(Schema.Struct({ path: Schema.String, against: Schema.String })),
+    worktreeSynced: Schema.Boolean,
+    recovered: Schema.Boolean,
+    ...commitTail
+  }),
+  Schema.Struct({
+    ...commitHead,
+    kind: Schema.Literal("rebase-needed"),
+    overlapping: Schema.Array(Schema.String),
+    mainSha: Schema.String,
+    ...commitTail
+  }),
+  Schema.Struct({
+    ...commitHead,
+    kind: Schema.Literal("refused"),
+    violations: Schema.Array(ViolationSchema),
+    ...commitTail
+  }),
+  Schema.Struct({
+    ...commitHead,
+    kind: Schema.Literal("worktree-dirty"),
+    paths: Schema.Array(Schema.String),
+    ...commitTail
+  })
+])
+export type CommitResult = typeof CommitResult.Type
+
+/**
+ * How the server came by the version a commit was judged against: the tip it holds, an ancestor of
+ * it built by the tree diff an advance uses, or, for a base off the ref's history, a version loaded
+ * the cheapest way `loadHeadAt` knows (snapshot, snapshot+advance, or git).
+ */
+export const CommitBase = Schema.Literals(["tip", "ancestor", "loaded"])
+export type CommitBase = typeof CommitBase.Type
+
+/**
+ * Why a server that was asked did not commit or rebase, so the client does it locally. Nothing was
+ * written in any case: the session's ref is not the one the server follows (`other-ref`), its log did
+ * not read (`session-unreadable`), the version at its base could not be built or its ref does not
+ * resolve (`base-unservable`), or another commit held the server's permit past
+ * {@link COMMIT_QUEUE_WAIT_MS} (`busy`).
+ */
+export const CommitDeclined = Schema.Literals([
+  "other-ref",
+  "session-unreadable",
+  "base-unservable",
+  "busy"
+])
+export type CommitDeclined = typeof CommitDeclined.Type
+
+const Declined = Schema.Struct({
+  served: Schema.Literal(false),
+  reason: CommitDeclined,
+  detail: Schema.String
+})
+
+/** `POST /v1/commit`: the outcome with the version it was judged against, or why the server declined. */
+export const CommitAnswer = Schema.Union([
+  Schema.Struct({
+    served: Schema.Literal(true),
+    base: CommitBase,
+    outcome: CommitResult,
+    head: ServedHead
+  }),
+  Declined
+])
+export type CommitAnswer = typeof CommitAnswer.Type
+
+/**
+ * What `session rebase` reports before its `head` (`rebaseOver` in `v2.ts` returns exactly this
+ * type): the base it moved from, the base it moved to, whether that moved it, and the ops it kept.
+ */
+export const RebaseResult = Schema.Struct({
+  id: Schema.String,
+  ref: Schema.String,
+  from: Schema.String,
+  baseSha: Schema.String,
+  moved: Schema.Boolean,
+  ops: Schema.Finite
+})
+export type RebaseResult = typeof RebaseResult.Type
+
+/** `POST /v1/rebase`: the rebase with the version it moved the base to, or why the server declined. */
+export const RebaseAnswer = Schema.Union([
+  Schema.Struct({ served: Schema.Literal(true), outcome: RebaseResult, head: ServedHead }),
+  Declined
+])
+export type RebaseAnswer = typeof RebaseAnswer.Type
 
 // ---------------------------------------------------------------------------------------------
 // Refusal

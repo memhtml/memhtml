@@ -7,7 +7,11 @@ import { HOOK_EVENTS, HOSTS } from "@memhtml/integrations"
 import { CONFIG_VARS } from "./config.js"
 import { ERROR_CODES, type ResponseType } from "./envelope.js"
 import { DEFAULT_EXEC_LANG, EXEC_LANGS } from "./exec-lang.js"
-import { EMBED_DEADLINE_DEFAULT_MS } from "./head-protocol.js"
+import {
+  COMMIT_DEADLINE_DEFAULT_MS,
+  COMMIT_QUEUE_WAIT_MS,
+  EMBED_DEADLINE_DEFAULT_MS
+} from "./head-protocol.js"
 import { AUTHORABLE_RELS } from "./operations.js"
 
 export interface FlagSpec {
@@ -1348,13 +1352,20 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         type: "boolean",
         description:
           "On a `refused` outcome, drop every op that touches a path a violation names, record each in `.memhtml/sessions/<id>.dropped.jsonl`, and commit the rest; repeat until the commit is clean or nothing is left. `dropped` lists each removed op with its reasons. A batch-cap refusal names no path, so it is never dropped. Meant for a runtime's end-of-run commit, where there is no agent turn left to fix a line: an agent in a turn should read the refusal and rewrite the line instead."
+      },
+      {
+        name: "server",
+        type: "boolean",
+        description: `Ask the head server on .memhtml/head.sock to commit (\`memhtml head serve\`); \`--no-server\` always commits here. The server reads the session's log, judges it against the version at the session's base from what it holds (its tip, an ancestor built from it, or a load for a base off its ref's history), runs the same commit this process would, one commit at a time, then holds the new commit and writes its snapshot; the payload is the same either way, with \`via\` \`server\` or \`local\` and \`server\` saying why (\`used\`, \`base\`, \`reason\`, \`detail\`). The commit runs here when no server accepts within 100 ms, when the server answers a 4xx (an older server without the route), or when it declines (\`server.reason\` \`other-ref\` for a session on a ref the server does not follow, \`session-unreadable\`, \`base-unservable\`, or \`busy\` after ${String(COMMIT_QUEUE_WAIT_MS)} ms behind another commit). When the server took the commit and answered 5xx, or gave no answer within \`MEMHTML_COMMIT_DEADLINE_MS\` (${String(COMMIT_DEADLINE_DEFAULT_MS)} ms by default), the call fails with ERR_STORAGE naming \`session status\` and does not commit here, because the server may have moved the ref.`,
+        default: true
       }
     ],
     responseTypes: ["session.committed"],
     examples: [
       "memhtml session commit --id s1 --message 'three facts about the checkout api'",
       "memhtml session commit --id curate-2026-09-23 --message 'curated'",
-      "memhtml session commit --id run-42 --message 'run 42' --drop-refused"
+      "memhtml session commit --id run-42 --message 'run 42' --drop-refused",
+      "memhtml session commit --id s1 --message 'three facts' --no-server"
     ]
   },
   {
@@ -1368,10 +1379,17 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         type: "string",
         description:
           "The session to rebase. Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT."
+      },
+      {
+        name: "server",
+        type: "boolean",
+        description:
+          "Ask the head server on .memhtml/head.sock to rebase onto the tip it holds (`memhtml head serve`), so no head is loaded here; `--no-server` always loads the tip here. The rules are `session commit`'s: the payload is the same either way, `head.source` is `server` and `via` names the path, `server` says why, a 4xx or a decline rebases here, and a 5xx or no answer within `MEMHTML_COMMIT_DEADLINE_MS` fails with ERR_STORAGE rather than rebase again.",
+        default: true
       }
     ],
     responseTypes: ["session.rebased"],
-    examples: ["memhtml session rebase --id s1"]
+    examples: ["memhtml session rebase --id s1", "memhtml session rebase --id s1 --no-server"]
   },
   {
     name: "session status",
@@ -1432,7 +1450,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
    */
   {
     name: "head serve",
-    summary: `Hold the head loaded and answer lookups over .memhtml/head.sock (mode 0600, JSON over HTTP, routes /v1/status, /v1/search, /v1/read, /v1/neighbors, /v1/exec) until SIGTERM or SIGINT. The server loads its ref's tip once the cheapest way (snapshot, snapshot+advance, or git), reads the ref before every answer and advances over the changed paths when it moved, so an answer is never older than the ref at the moment of the request, and polls between requests. With an embedder bound (not \`MEMHTML_EMBED=off\`) it also holds the vector cache \`head embed\` writes, reads it again when the file's mtime changes, and runs the vector arm for \`/v1/search\` and \`/v1/neighbors\` the way \`head search\` and \`session put\` do locally, answering with the same \`vector\` field. A \`/v1/search\` waits for its query embed at most the body's \`embedDeadlineMs\`, else \`MEMHTML_EMBED_DEADLINE_MS\`, else ${String(EMBED_DEADLINE_DEFAULT_MS)} ms, and answers \`embed-timeout\` without the arm past it, leaving at most one late embed to finish in the background; and when no embed has ended for \`MEMHTML_EMBED_WARM_IDLE_MS\` and none is in flight it issues one one-token embed, so the first search after a quiet stretch is warm (\`status\` reports both under \`embed\`). An advance that brings records the cache has no vector for embeds them in the background, a bounded batch at a time, and writes them to the cache file as \`head embed\` would (\`status\` reports \`vectors.pending\` and \`vectors.backfill\`). \`head status\`, \`head search\`, \`session put\`, and \`session exec\` ask it first, and \`/v1/exec\` runs the script in a pool of worker threads (four at once, one per session id at a time) so a runaway script never stalls a lookup; \`session commit\` and the curate commands always load locally, because they judge the exact version they commit against. A live server on the socket refuses a second one (ERR_HEAD_SERVER_RUNNING); a socket left by a killed server is replaced. The socket is removed on exit, and the envelope reports the ref, final sha, advances, requests, and uptime.`,
+    summary: `Hold the head loaded and answer lookups over .memhtml/head.sock (mode 0600, JSON over HTTP, routes /v1/status, /v1/search, /v1/read, /v1/neighbors, /v1/exec, /v1/commit, /v1/rebase) until SIGTERM or SIGINT. The server loads its ref's tip once the cheapest way (snapshot, snapshot+advance, or git), reads the ref before every answer and advances over the changed paths when it moved, so an answer is never older than the ref at the moment of the request, and polls between requests. With an embedder bound (not \`MEMHTML_EMBED=off\`) it also holds the vector cache \`head embed\` writes, reads it again when the file's mtime changes, and runs the vector arm for \`/v1/search\` and \`/v1/neighbors\` the way \`head search\` and \`session put\` do locally, answering with the same \`vector\` field. A \`/v1/search\` waits for its query embed at most the body's \`embedDeadlineMs\`, else \`MEMHTML_EMBED_DEADLINE_MS\`, else ${String(EMBED_DEADLINE_DEFAULT_MS)} ms, and answers \`embed-timeout\` without the arm past it, leaving at most one late embed to finish in the background; and when no embed has ended for \`MEMHTML_EMBED_WARM_IDLE_MS\` and none is in flight it issues one one-token embed, so the first search after a quiet stretch is warm (\`status\` reports both under \`embed\`). An advance that brings records the cache has no vector for embeds them in the background, a bounded batch at a time, and writes them to the cache file as \`head embed\` would (\`status\` reports \`vectors.pending\` and \`vectors.backfill\`). \`head status\`, \`head search\`, \`session put\`, \`session exec\`, \`session commit\`, and \`session rebase\` ask it first, and \`/v1/exec\` runs the script in a pool of worker threads (four at once, one per session id at a time) so a runaway script never stalls a lookup. \`/v1/commit\` commits one session at a time over the version at its base, the same commit the CLI runs locally, then holds the new commit and writes its snapshot, so a run-end commit costs no head load; the curate commands always load locally. A live server on the socket refuses a second one (ERR_HEAD_SERVER_RUNNING); a socket left by a killed server is replaced. The socket is removed on exit, and the envelope reports the ref, final sha, advances, requests, and uptime.`,
     args: [],
     flags: [
       {

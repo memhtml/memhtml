@@ -175,6 +175,14 @@ export {
   isHeadGateReport
 } from "./head-gate.js"
 export {
+  COMMIT_DEADLINE_DEFAULT_MS,
+  COMMIT_DEADLINE_VAR,
+  COMMIT_QUEUE_WAIT_MS,
+  CommitAnswer,
+  CommitBase,
+  CommitDeclined,
+  CommitRequest,
+  CommitResult,
   HEAD_PROTOCOL,
   HEAD_ROUTES,
   type HeadRoute,
@@ -186,6 +194,9 @@ export {
   NeighborsAnswer,
   NeighborsRequest,
   ReadRequest,
+  RebaseAnswer,
+  RebaseRequest,
+  RebaseResult,
   ScopeReport,
   SearchAnswer,
   SearchRequest,
@@ -230,7 +241,9 @@ export {
 export { type Parsed, parseArgv, type RunResult, run } from "./run.js"
 export { MCP_BIN_VAR, mcpEntryPoint, type ServeResult, serveMcp } from "./serve.js"
 export {
+  type CommitServerUse,
   type CurateMerged,
+  commitOverHead,
   curateMerge,
   type GateReport,
   type HeadStats,
@@ -246,7 +259,9 @@ export {
   preparePuts,
   qualifyRef,
   type ReplayReport,
+  rebaseOver,
   runV2,
+  type SessionCommitted,
   servedStats,
   sessionCommit,
   sessionExec,

@@ -36,10 +36,15 @@ import { headRefOf, recordView } from "./curate-run.js"
 import { fail } from "./envelope.js"
 import { failureFor } from "./errors.js"
 import { EXEC_BUSY, makeExecPool } from "./exec-pool.js"
-import { type HeadSource, writeHeadSnapshot } from "./head-cache.js"
+import { type HeadSource, type SnapshotWritten, writeHeadSnapshot } from "./head-cache.js"
 import { askHead, CONNECT_TIMEOUT_MS } from "./head-client.js"
 import {
   BACKFILL_BATCH_MAX,
+  COMMIT_QUEUE_WAIT_MS,
+  type CommitAnswer,
+  type CommitBase,
+  type CommitDeclined,
+  CommitRequest,
   EMBED_DEADLINE_DEFAULT_MS,
   EMBED_WARM_IDLE_DEFAULT_MS,
   type EmbedActivityStatus,
@@ -57,6 +62,8 @@ import {
   LATE_EMBEDS_MAX,
   NeighborsRequest,
   ReadRequest,
+  type RebaseAnswer,
+  RebaseRequest,
   SearchRequest,
   type ServedHead,
   SOCKET_PATH_MAX,
@@ -73,7 +80,15 @@ import {
   vectorsForQuery
 } from "./head-vectors.js"
 import { type CachedImage, cacheImage } from "./session-exec.js"
-import { execOverHead, loadHeadAt, preparePuts, qualifyRef, revParse } from "./v2.js"
+import {
+  commitOverHead,
+  execOverHead,
+  loadHeadAt,
+  preparePuts,
+  qualifyRef,
+  rebaseOver,
+  revParse
+} from "./v2.js"
 
 /**
  * `memhtml head serve`: one process that holds the head loaded and answers lookups over the store's
@@ -143,6 +158,23 @@ import { execOverHead, loadHeadAt, preparePuts, qualifyRef, revParse } from "./v
  * the first's harvest; execs of different sessions run at once, up to the pool's size. The UTF-8
  * image of each base version the guest is seeded from is kept for the last {@link IMAGES_KEPT}
  * versions, so a call encodes only the paths its session's overlay rewrote.
+ *
+ * ## Commit and rebase
+ *
+ * `/v1/commit` runs `session commit` here: the session's log is read, and the version at its base is
+ * the held tip, an ancestor of it built by the tree diff (the versions kept for `exec` and
+ * `neighbors`), or, for a base off the ref's history, a version loaded the way `loadHeadAt` loads one;
+ * then `commitOverHead` (the function the CLI's local path runs) validates, commits, and
+ * compare-and-swaps the ref. A committed outcome moves the held version to the new commit, built from
+ * the version the commit was judged against by the commit's own diff, and writes its snapshot before
+ * the answer, so the next request pays no advance and the server is the one snapshot writer in the
+ * common case. `/v1/rebase` moves a session's base to the held tip after the advance check every
+ * answer makes. One commit or rebase runs at a time, the next waiting at most
+ * {@link COMMIT_QUEUE_WAIT_MS} before it is declined `busy`, and a commit that started runs to its
+ * end whatever interrupts its request ({@link holdingPermit}), so the ref, the log, the held version,
+ * and the snapshot never part ways. A session on a ref other than the server's is declined (`other-ref`), and so is one
+ * whose log does not read or whose base cannot be built: in each the client commits locally, having
+ * lost nothing.
  *
  * ## The socket
  *
@@ -239,7 +271,15 @@ export interface HeadServerInput {
   readonly warmIdleMs?: number | undefined
   /** The exec pool's worker entry; the sandbox runner unless a test hands in a stand-in. */
   readonly execWorkerPath?: string | undefined
+  /**
+   * How long a commit or rebase waits for the one running before it is declined `busy`, in
+   * milliseconds. Default {@link COMMIT_QUEUE_WAIT_MS}.
+   */
+  readonly commitQueueWaitMs?: number | undefined
 }
+
+/** Snapshots of versions this server wrote that it remembers, so a commit's answer can name one. */
+const SNAPSHOTS_REMEMBERED = 4
 
 /** A running server, for the command arm and for tests. */
 export interface HeadServer {
@@ -317,6 +357,29 @@ const stampOf = (path: string): Effect.Effect<{ stamp: string; mtime: string } |
       () => null
     )
   )
+
+/**
+ * Run `effect` holding `gate`'s permit, waiting at most `waitMs` for it: `none` when the wait ran
+ * out, and the effect never ran. The wait can be interrupted, so a request abandoned while queued
+ * leaves nothing behind. The effect cannot: a commit that started finishes the ref, the log, the
+ * held version, and the snapshot together whatever interrupts its request. The HTTP platform
+ * interrupts a request whose client closed the connection when it notices; on this build it did not
+ * notice for a request it was still answering, and a stop waited for one, so this holds for the day
+ * it does. A cut commit would be settled by the commit path's crash recovery only on that session's
+ * next call, and the held version would lag the ref until the next request.
+ */
+export const holdingPermit =
+  (gate: Semaphore.Semaphore, waitMs: number) =>
+  <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<Option.Option<A>, E> =>
+    Effect.uninterruptibleMask((restore) =>
+      restore(gate.take(1).pipe(Effect.timeoutOption(waitMs))).pipe(
+        Effect.flatMap((taken) =>
+          Option.isNone(taken)
+            ? Effect.succeedNone
+            : effect.pipe(Effect.map(Option.some), Effect.ensuring(gate.release(1)))
+        )
+      )
+    )
 
 /** A version with its `parent` cut, so the server holds one version rather than a chain. */
 const detached = (version: HeadVersion): HeadVersion =>
@@ -606,6 +669,18 @@ export const startHeadServer = (
     const advanceLock = yield* Semaphore.make(1)
     const snapshotLock = yield* Semaphore.make(1)
     const vectorLock = yield* Semaphore.make(1)
+    const commitGate = yield* Semaphore.make(1)
+    const commitQueueWaitMs = input.commitQueueWaitMs ?? COMMIT_QUEUE_WAIT_MS
+    /** The snapshots this server wrote, by sha, the last {@link SNAPSHOTS_REMEMBERED}. */
+    const snapshots = new Map<string, SnapshotWritten>()
+    const remember = (written: SnapshotWritten): void => {
+      snapshots.delete(written.sha)
+      snapshots.set(written.sha, written)
+      for (const old of snapshots.keys()) {
+        if (snapshots.size <= SNAPSHOTS_REMEMBERED) break
+        snapshots.delete(old)
+      }
+    }
 
     /**
      * The held cache, read again first when the file changed since the last read. Holding the permit
@@ -801,7 +876,7 @@ export const startHeadServer = (
         .withPermits(1)(
           Effect.gen(function* () {
             if (yield* exists(snapshotPathFor(root, version.sha))) return
-            yield* writeHeadSnapshot(root, version)
+            remember(yield* writeHeadSnapshot(root, version))
           })
         )
         .pipe(
@@ -858,22 +933,27 @@ export const startHeadServer = (
      * share one base.
      */
     const others = new Map<string, HeadVersion>()
+    /** A kept version, moved to the newest end so the oldest is the one dropped. */
+    const recall = (sha: string): HeadVersion | undefined => {
+      const kept = others.get(sha)
+      if (kept !== undefined) {
+        others.delete(sha)
+        others.set(sha, kept)
+      }
+      return kept
+    }
+    const keep = (version: HeadVersion): HeadVersion => {
+      others.set(version.sha, version)
+      for (const old of others.keys()) {
+        if (others.size <= VERSIONS_KEPT) break
+        others.delete(old)
+      }
+      return version
+    }
     const versionAt = (sha: string): Effect.Effect<HeadVersion, GitFailure | InvalidMemory> =>
       Effect.gen(function* () {
         if (sha === state.version.sha) return state.version
-        const kept = others.get(sha)
-        if (kept !== undefined) {
-          others.delete(sha)
-          others.set(sha, kept)
-          return kept
-        }
-        const built = detached(yield* advanceHead(git, state.version, sha))
-        others.set(sha, built)
-        for (const old of others.keys()) {
-          if (others.size <= VERSIONS_KEPT) break
-          others.delete(old)
-        }
-        return built
+        return recall(sha) ?? keep(detached(yield* advanceHead(git, state.version, sha)))
       })
 
     /**
@@ -1002,6 +1082,177 @@ export const startHeadServer = (
             : Effect.fail(failure)
         )
       )
+
+    /**
+     * The version a `/v1/commit` judges a session against: the tip, when the base is the ref's tip
+     * as this request reads it; an ancestor of the tip, built from it by the tree diff (and kept, as
+     * `exec` and `neighbors` keep theirs); or, for a base off the ref's history, a version loaded the
+     * cheapest way `loadHeadAt` knows and kept too. That load parses on this thread, so lookups wait
+     * for it; a base off the ref's history means the ref was rewritten, which a store whose writers
+     * only commit forward never sees. A failure to build any of them is a reason to decline, so the
+     * client loads it instead.
+     */
+    const commitBase = (
+      sha: string
+    ): Effect.Effect<
+      { readonly version: HeadVersion; readonly base: CommitBase } | { readonly unservable: string }
+    > =>
+      Effect.gen(function* () {
+        const tip = yield* fresh
+        if (sha === tip.sha) return { version: tip, base: "tip" as const }
+        const ancestor = yield* git.run(["merge-base", "--is-ancestor", sha, tip.sha]).pipe(
+          Effect.as(true),
+          Effect.catchTag("GitFailure", () => Effect.succeed(false))
+        )
+        if (ancestor) return { version: yield* versionAt(sha), base: "ancestor" as const }
+        const kept = recall(sha)
+        if (kept !== undefined) return { version: kept, base: "loaded" as const }
+        const loaded = yield* loadHeadAt(root, sha)
+        yield* Effect.logInfo(
+          `head serve: loaded ${sha}, off ${ref}'s history, for a commit (${loaded.source} in ${String(loaded.loadMs)} ms)`
+        )
+        return { version: keep(detached(loaded.view)), base: "loaded" as const }
+      }).pipe(
+        Effect.catch((failure) =>
+          Effect.succeed({
+            unservable: `building the version at ${sha} failed (${failure._tag})`
+          })
+        )
+      )
+
+    /**
+     * The snapshot of a version this server's commit moved it to, written before the commit's
+     * answer, which carries it. When the background write after an advance already wrote this very
+     * version (a poll that saw the ref move before the commit's own advance), its report is the one
+     * answered. A failed write is a log line and `null`, as `snapshotAfterCommit` reports one.
+     */
+    const commitSnapshot = (version: HeadVersion): Effect.Effect<SnapshotWritten | null> =>
+      snapshotLock
+        .withPermits(1)(
+          Effect.gen(function* () {
+            const already = snapshots.get(version.sha)
+            if (already !== undefined) return already
+            const written = yield* writeHeadSnapshot(root, version)
+            remember(written)
+            return written
+          })
+        )
+        .pipe(
+          Effect.catch((failure) =>
+            Effect.logWarning(
+              `head serve: snapshot for ${version.sha} not written (${failure._tag}); the commit landed and the next cold load reads an older one`
+            ).pipe(Effect.as(null))
+          )
+        )
+
+    /**
+     * After a commit here moved the ref to `sha`: the version at `sha`, built from `base` (the
+     * version the commit was judged against) over the commit's own diff, becomes the held version
+     * when the ref is still there, read again under the advance permit so a waiter never moves it
+     * back; its snapshot is written; and its new records start the vector fill. Never fails: the
+     * commit has landed, and a version this misses is the next request's advance.
+     */
+    const landed = (base: HeadVersion, sha: string): Effect.Effect<SnapshotWritten | null> =>
+      Effect.gen(function* () {
+        const started = Date.now()
+        const next = detached(yield* advanceHead(git, base, sha))
+        yield* advanceLock.withPermits(1)(
+          Effect.gen(function* () {
+            const now = yield* revParse(root, ref)
+            if (now !== sha || state.version.sha === sha) return
+            state.version = next
+            state.advances += 1
+            state.lastAdvanceMs = Date.now() - started
+            yield* Effect.logInfo(
+              `head serve: ${ref} advanced to ${sha} by a commit here in ${String(state.lastAdvanceMs)} ms (${String(next.size)} records)`
+            )
+          })
+        )
+        const snapshot = yield* commitSnapshot(next)
+        yield* startBackfill
+        return snapshot
+      }).pipe(
+        Effect.catch((failure) =>
+          Effect.logWarning(
+            `head serve: the version at ${sha} was not built after its commit (${failure._tag}); the next request advances to it`
+          ).pipe(Effect.as(null))
+        )
+      )
+
+    /** One commit or rebase at a time ({@link holdingPermit}); `none` is the caller's `busy`. */
+    const oneCommitAtATime = holdingPermit(commitGate, commitQueueWaitMs)
+
+    const declined = (reason: CommitDeclined, detail: string) =>
+      ({ served: false, reason, detail }) as const
+    const commitBusy = () =>
+      declined(
+        "busy",
+        `another commit or rebase held this server's commit permit past ${String(commitQueueWaitMs)} ms`
+      )
+
+    /** The session a commit or rebase names, if it is this server's to write: otherwise why not. */
+    const sessionToWrite = (id: string) =>
+      Effect.gen(function* () {
+        const read = yield* Effect.result(resumeSession({ root, id }))
+        if (read._tag === "Failure") {
+          return declined(
+            "session-unreadable",
+            `session ${id}'s log did not read (${read.failure.operation})`
+          )
+        }
+        const session = read.success
+        if (session.ref !== ref) {
+          return declined(
+            "other-ref",
+            `session ${id} lands on ${session.ref}, and this server follows ${ref}`
+          )
+        }
+        return session
+      })
+
+    /** `/v1/commit`: the session's commit, run here over the version at its base, or declined. */
+    const serveCommit = (
+      body: CommitRequest
+    ): Effect.Effect<CommitAnswer, GitFailure | StorageFailure> =>
+      oneCommitAtATime(
+        Effect.gen(function* () {
+          const session = yield* sessionToWrite(body.id)
+          if ("served" in session) return session
+          const base = yield* commitBase(session.baseSha)
+          if ("unservable" in base) return declined("base-unservable", base.unservable)
+          const started = Date.now()
+          const outcome = yield* commitOverHead({
+            session,
+            base: base.version,
+            message: body.message,
+            dropRefused: body.dropRefused === true,
+            afterCommit: (sha) => landed(base.version, sha)
+          })
+          yield* Effect.logInfo(
+            `head serve: session ${body.id} ${outcome.kind}${outcome.kind === "committed" ? ` as ${outcome.sha}` : ""} in ${String(Date.now() - started)} ms (base ${base.base})`
+          )
+          return { served: true, base: base.base, outcome, head: served(base.version) } as const
+        })
+      ).pipe(Effect.map(Option.getOrElse(commitBusy)))
+
+    /** `/v1/rebase`: the session's base moved to the held tip, or declined. */
+    const serveRebase = (body: RebaseRequest): Effect.Effect<RebaseAnswer, StorageFailure> =>
+      oneCommitAtATime(
+        Effect.gen(function* () {
+          const session = yield* sessionToWrite(body.id)
+          if ("served" in session) return session
+          // The local path rebases onto `HEAD` when the ref does not resolve; that is its case.
+          const tip = yield* revParse(root, ref).pipe(
+            Effect.flatMap((sha) => (sha === null ? Effect.succeed(null) : fresh)),
+            Effect.catch(() => Effect.succeed(null))
+          )
+          if (tip === null) {
+            return declined("base-unservable", `${ref} does not resolve here, or reading it failed`)
+          }
+          const outcome = yield* rebaseOver(session, tip)
+          return { served: true, outcome, head: served(tip) } as const
+        })
+      ).pipe(Effect.map(Option.getOrElse(commitBusy)))
 
     /**
      * The exec body, read no further than {@link EXEC_BODY_MAX_BYTES}: a declared length past it is
@@ -1139,6 +1390,18 @@ export const startHeadServer = (
         if ("bad" in body)
           return json(fail("ERR_INVALID_FLAG", `request refused: ${body.bad}`), 400)
         return json(yield* serveExec(body))
+      }
+      if (route === `POST ${HEAD_ROUTES.commit}`) {
+        const body = yield* HttpServerRequest.schemaBodyJson(CommitRequest, {
+          onExcessProperty: "error"
+        })
+        return json(yield* serveCommit(body))
+      }
+      if (route === `POST ${HEAD_ROUTES.rebase}`) {
+        const body = yield* HttpServerRequest.schemaBodyJson(RebaseRequest, {
+          onExcessProperty: "error"
+        })
+        return json(yield* serveRebase(body))
       }
       return json(
         fail(

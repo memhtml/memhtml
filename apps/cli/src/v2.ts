@@ -54,7 +54,7 @@ import {
   snapshotAfterCommit,
   writeHeadSnapshot
 } from "./head-cache.js"
-import { ANSWER_TIMEOUT_MS, askHead, askHeadFor } from "./head-client.js"
+import { ANSWER_TIMEOUT_MS, type Asked, askHead, askHeadFor } from "./head-client.js"
 import {
   type GateFailure,
   type GateOutcome,
@@ -63,6 +63,13 @@ import {
   headGate
 } from "./head-gate.js"
 import {
+  COMMIT_DEADLINE_DEFAULT_MS,
+  COMMIT_DEADLINE_VAR,
+  CommitAnswer,
+  type CommitBase,
+  type CommitDeclined,
+  type CommitResult,
+  commitRequestOf,
   EMBED_DEADLINE_DEFAULT_MS,
   EXEC_QUEUE_WAIT_MS,
   ExecAnswer,
@@ -72,6 +79,8 @@ import {
   type HeadServerStatus,
   HeadServerStatus as HeadServerStatusSchema,
   NeighborsAnswer,
+  RebaseAnswer,
+  type RebaseResult,
   SearchAnswer,
   type SearchRequest,
   type ServedHead
@@ -115,14 +124,16 @@ export type { GateReport } from "./head-gate.js"
  *
  * ## Where the head comes from
  *
- * `head status`, `head search`, and `session put` ask the head server first (`head-server.ts`, over
- * `.memhtml/head.sock`), which holds the version loaded and follows its ref, and load locally when no
- * server answers or `--no-server` is set. Every other arm, and every local fallback, builds the
- * version it needs: from `.memhtml/snapshots/<sha>.arrow` when a snapshot exists for that commit,
- * else from the newest snapshot of an ancestor commit advanced over the changed paths, else from git,
- * and every payload that reports a head says which ({@link HeadStats}, `source: "server"` for the
- * first). `session commit` and the curate arms always load locally: they must judge the exact version
- * they commit against, and a commit's cost is not a lookup's. Every commit that moves a ref writes the
+ * `head status`, `head search`, `session put`, `session exec`, `session commit`, and `session rebase`
+ * ask the head server first (`head-server.ts`, over `.memhtml/head.sock`), which holds the version
+ * loaded and follows its ref, and load locally when no server answers or `--no-server` is set. Every
+ * other arm, and every local fallback, builds the version it needs: from
+ * `.memhtml/snapshots/<sha>.arrow` when a snapshot exists for that commit, else from the newest
+ * snapshot of an ancestor commit advanced over the changed paths, else from git, and every payload
+ * that reports a head says which ({@link HeadStats}, `source: "server"` for the first). A commit
+ * through the server runs the same function a local one runs ({@link commitOverHead}) over the
+ * version the server judged it against, so the commit path's compare-and-swap covers exactly that
+ * version either way. The curate arms always load locally. Every commit that moves a ref writes the
  * snapshot for the new sha (`head-cache.ts`), so the next call hits the cache. A session command loads the
  * head at the SESSION's base sha, not at the ref's tip, because a session sees exactly one version
  * plus its own deltas: `session commit` validates against that base and reports `rebase-needed`
@@ -898,28 +909,33 @@ export const sessionExec = (input: {
   })
 
 /**
- * `session commit`: the commit algorithm against the session's base. `rebase-needed` is returned,
- * not retried: the caller decides whether to `session rebase` and try again, because a rebase can
- * turn the outcome into `refused` and that is a decision, not a retry. When `HEAD` is the session's
- * ref, the shared index and working tree follow the commit (`worktreeSynced`), or the commit is
- * `worktree-dirty` and nothing moves. A `committed` outcome also writes the snapshot for the new
- * commit (`snapshot`, `null` when that best-effort write failed), so the next load hits the cache.
+ * The half of `session commit` that follows the head: the commit algorithm against `base`, the
+ * version at the session's base, with `--drop-refused`'s rounds, and the new commit's snapshot. The
+ * CLI calls it with the version it loaded and the head server with the version it holds
+ * (`head-server.ts`, `/v1/commit`), so the two answer with one function and cannot drift.
+ * `afterCommit` is the only difference: it writes the snapshot of a `committed` outcome, which the CLI
+ * builds from `base` by delta ({@link snapshotAfterCommit}, the default) and the server builds from
+ * the same version while it moves the version it holds to the commit. Neither can fail the call:
+ * `null` is a write that did not happen.
+ *
+ * `rebase-needed` is returned, not retried: the caller decides whether to `session rebase` and try
+ * again, because a rebase can turn the outcome into `refused` and that is a decision, not a retry.
  */
-export const sessionCommit = (input: {
-  readonly root: string
-  readonly id: string
+export const commitOverHead = (input: {
+  readonly session: Session
+  readonly base: HeadVersion
   readonly message: string
   /** `--drop-refused`: take the ops a refusal names out of the log and commit the rest. */
   readonly dropRefused?: boolean | undefined
-}) =>
+  readonly afterCommit?: ((sha: string) => Effect.Effect<SnapshotWritten | null>) | undefined
+}): Effect.Effect<CommitResult, GitFailure | StorageFailure> =>
   Effect.gen(function* () {
-    let session = yield* resumeSession({ root: input.root, id: input.id })
-    const head = yield* loadHeadAt(input.root, session.baseSha)
+    let session = input.session
     const scope = sessionScopeOf(session.ref)
     const dropped: Array<DroppedOp> = []
     let outcome: CommitOutcome = yield* commitSession({
       session,
-      head: head.view,
+      head: input.base,
       message: input.message,
       scope
     })
@@ -931,14 +947,14 @@ export const sessionCommit = (input: {
       if (round.drop.length === 0) break
       dropped.push(...round.drop)
       session = yield* replaceOps(session, round.keep)
-      yield* recordDropped(input.root, session.id, round.drop)
+      yield* recordDropped(session.root, session.id, round.drop)
       if (session.ops.length === 0) break
-      outcome = yield* commitSession({ session, head: head.view, message: input.message, scope })
+      outcome = yield* commitSession({ session, head: input.base, message: input.message, scope })
     }
+    const afterCommit =
+      input.afterCommit ?? ((sha: string) => snapshotAfterCommit(session.root, sha, input.base))
     const snapshot: SnapshotWritten | null =
-      outcome.kind === "committed"
-        ? yield* snapshotAfterCommit(input.root, outcome.sha, head.view)
-        : null
+      outcome.kind === "committed" ? yield* afterCommit(outcome.sha) : null
     return {
       id: session.id,
       ref: session.ref,
@@ -948,6 +964,154 @@ export const sessionCommit = (input: {
       /** The ops `--drop-refused` took out of the log, each with the reasons its violations gave. */
       dropped
     }
+  })
+
+/**
+ * Whether the head server committed or rebased a session: `used` with the version it judged against
+ * (`base`, always `tip` for a rebase), else why this process did: `disabled` (`--no-server`),
+ * `no-server` (no socket, nobody listening, no accept in time), `refused` (the server answered a
+ * 4xx, which it does before anything runs: an older server without the route, or a body it refused),
+ * or the server's own decline (`other-ref`, `session-unreadable`, `base-unservable`, `busy`), with
+ * the detail.
+ */
+export interface CommitServerUse {
+  readonly used: boolean
+  readonly base: CommitBase | null
+  readonly reason: "disabled" | "no-server" | "refused" | CommitDeclined | null
+  readonly detail: string | null
+}
+
+const SERVER_DISABLED: CommitServerUse = {
+  used: false,
+  base: null,
+  reason: "disabled",
+  detail: null
+}
+
+/** How long `session commit` and `session rebase` wait for the server: `0` is no bound. */
+export const commitAnswerTimeoutMs = (deadlineMs: number | undefined): number => {
+  const ms = deadlineMs ?? COMMIT_DEADLINE_DEFAULT_MS
+  return ms === 0 ? Number.POSITIVE_INFINITY : ms
+}
+
+/** The `code` and `error` of a failure envelope the server answered with, as one line. */
+const envelopeLine = (body: string): string => {
+  try {
+    const parsed = JSON.parse(body) as { readonly code?: unknown; readonly error?: unknown }
+    if (typeof parsed.code === "string") {
+      return `${parsed.code}: ${typeof parsed.error === "string" ? parsed.error : ""}`.slice(0, 300)
+    }
+  } catch {
+    // Not an envelope; the body itself says what there is to say.
+  }
+  return body.slice(0, 300)
+}
+
+/**
+ * A commit or rebase the server did not answer with a payload: why this process does it instead, or
+ * the failure when it must not. Nothing ran on the server when the request never reached one
+ * (`no-server`) or when it answered a 4xx, which it does only before it reads the log. But a request
+ * it took and then answered 5xx, or never answered within the deadline (`lost`), may have moved the
+ * ref or the log, so doing it again here could commit the same ops twice or race the server's own
+ * commit: the call fails naming `session status` instead.
+ */
+const unanswered = (
+  verb: "commit" | "rebase",
+  id: string,
+  deadlineMs: number,
+  asked: Exclude<Asked<unknown>, { readonly kind: "answered" }>
+): Effect.Effect<CommitServerUse, StorageFailure> => {
+  switch (asked.kind) {
+    case "no-server":
+      return Effect.succeed({ used: false, base: null, reason: "no-server", detail: asked.detail })
+    case "refused":
+      if (asked.status < 500) {
+        return Effect.succeed({
+          used: false,
+          base: null,
+          reason: "refused",
+          detail: `${String(asked.status)}: ${asked.body.slice(0, 300)}`
+        })
+      }
+      return Effect.fail(
+        StorageFailure.make({
+          operation: `session ${verb}: the head server took the ${verb} and failed (${String(asked.status)} ${envelopeLine(asked.body)}); it may have moved the ref, so the ${verb} was not tried again here; read \`memhtml session status --id ${id}\` before running it again`
+        })
+      )
+    case "lost":
+      return Effect.fail(
+        StorageFailure.make({
+          operation: `session ${verb}: the head server took the ${verb} and gave no usable answer${Number.isFinite(deadlineMs) ? ` within ${String(deadlineMs)} ms (${COMMIT_DEADLINE_VAR})` : ""} (${asked.detail.slice(0, 200)}); it may have moved the ref, so the ${verb} was not tried again here; read \`memhtml session status --id ${id}\` before running it again`
+        })
+      )
+  }
+}
+
+/** What `session commit` prints: the outcome, which path committed, and why when it was this one. */
+export type SessionCommitted = CommitResult & {
+  readonly via: "server" | "local"
+  readonly server: CommitServerUse
+}
+
+/**
+ * `session commit`: the commit algorithm against the session's base ({@link commitOverHead}). When
+ * `HEAD` is the session's ref, the shared index and working tree follow the commit
+ * (`worktreeSynced`), or the commit is `worktree-dirty` and nothing moves. A `committed` outcome also
+ * writes the snapshot for the new commit (`snapshot`, `null` when that best-effort write failed), so
+ * the next load hits the cache.
+ *
+ * The head server commits when one answers (`/v1/commit`: it reads the log, takes the version at the
+ * session's base from what it holds, commits one session at a time, moves its held version to the
+ * commit, and writes the snapshot), and this process commits when the server did not take it:
+ * `--no-server`, no server, a 4xx, or a decline. The payload is the same either way, with `via`
+ * naming the path and `server` saying why ({@link CommitServerUse}). A commit the server took and
+ * did not answer is not committed again here ({@link unanswered}).
+ */
+export const sessionCommit = (input: {
+  readonly root: string
+  readonly id: string
+  readonly message: string
+  /** `--drop-refused`: take the ops a refusal names out of the log and commit the rest. */
+  readonly dropRefused?: boolean | undefined
+  /** False under `--no-server`: commit here without asking. */
+  readonly server?: boolean | undefined
+  /** How long to wait for the server's answer, `0` for no bound ({@link COMMIT_DEADLINE_DEFAULT_MS}). */
+  readonly commitDeadlineMs?: number | undefined
+}): Effect.Effect<SessionCommitted, GitFailure | InvalidMemory | StorageFailure> =>
+  Effect.gen(function* () {
+    let server = SERVER_DISABLED
+    if (input.server !== false) {
+      const deadlineMs = commitAnswerTimeoutMs(input.commitDeadlineMs)
+      const asked = yield* askHeadFor({
+        root: input.root,
+        route: "commit",
+        schema: CommitAnswer,
+        body: commitRequestOf(input),
+        answerTimeoutMs: deadlineMs
+      })
+      if (asked.kind === "answered") {
+        const answer = asked.data
+        if (answer.served) {
+          return {
+            ...answer.outcome,
+            via: "server" as const,
+            server: { used: true, base: answer.base, reason: null, detail: null }
+          }
+        }
+        server = { used: false, base: null, reason: answer.reason, detail: answer.detail }
+      } else {
+        server = yield* unanswered("commit", input.id, deadlineMs, asked)
+      }
+    }
+    const session = yield* resumeSession({ root: input.root, id: input.id })
+    const head = yield* loadHeadAt(input.root, session.baseSha)
+    const outcome = yield* commitOverHead({
+      session,
+      base: head.view,
+      message: input.message,
+      dropRefused: input.dropRefused
+    })
+    return { ...outcome, via: "local" as const, server }
   })
 
 /** One op `session commit --drop-refused` took out of the log, and why. */
@@ -997,13 +1161,17 @@ const recordDropped = (root: string, id: string, drop: ReadonlyArray<DroppedOp>)
     )
   })
 
-/** `session rebase`: move the base to the ref's tip, keeping every op. Validation is the next commit's. */
-export const sessionRebase = (input: { readonly root: string; readonly id: string }) =>
+/**
+ * The half of `session rebase` after the version at the ref's tip is in hand: move the session's base
+ * to `onto`, keeping every op, and save the log. The CLI calls it with the version it loaded and the
+ * head server with the tip it holds (`/v1/rebase`). Validation is the next commit's.
+ */
+export const rebaseOver = (
+  session: Session,
+  onto: HeadView & { readonly sha: string }
+): Effect.Effect<RebaseResult, StorageFailure> =>
   Effect.gen(function* () {
-    const session = yield* resumeSession({ root: input.root, id: input.id })
-    const sha = yield* baseShaFor(input.root, session.ref)
-    const head = yield* loadHeadAt(input.root, sha)
-    const rebased = rebaseSession(session, head.view)
+    const rebased = rebaseSession(session, onto)
     yield* saveSession(rebased)
     return {
       id: session.id,
@@ -1011,9 +1179,57 @@ export const sessionRebase = (input: { readonly root: string; readonly id: strin
       from: session.baseSha,
       baseSha: rebased.baseSha,
       moved: rebased.baseSha !== session.baseSha,
-      ops: rebased.ops.length,
-      head: headStats(head)
+      ops: rebased.ops.length
     }
+  })
+
+/**
+ * `session rebase`: move the base to the ref's tip, keeping every op. The head server rebases when one
+ * answers (`/v1/rebase`, onto the tip it holds after the same advance check every answer makes), and
+ * this process loads the tip and rebases when it did not, by the rules `session commit` follows:
+ * `head.source` is `server` and `via` names the path, `server` says why, and a rebase the server took
+ * and did not answer is not repeated here.
+ */
+export const sessionRebase = (input: {
+  readonly root: string
+  readonly id: string
+  /** False under `--no-server`: rebase here without asking. */
+  readonly server?: boolean | undefined
+  /** How long to wait for the server's answer, `0` for no bound ({@link COMMIT_DEADLINE_DEFAULT_MS}). */
+  readonly commitDeadlineMs?: number | undefined
+}) =>
+  Effect.gen(function* () {
+    let server = SERVER_DISABLED
+    if (input.server !== false) {
+      const deadlineMs = commitAnswerTimeoutMs(input.commitDeadlineMs)
+      const asked = yield* askHeadFor({
+        root: input.root,
+        route: "rebase",
+        schema: RebaseAnswer,
+        body: { id: input.id },
+        answerTimeoutMs: deadlineMs
+      })
+      if (asked.kind === "answered") {
+        const answer = asked.data
+        if (answer.served) {
+          const used: CommitServerUse = { used: true, base: "tip", reason: null, detail: null }
+          return {
+            ...answer.outcome,
+            head: servedStats(answer.head, asked.ms),
+            via: "server" as const,
+            server: used
+          }
+        }
+        server = { used: false, base: null, reason: answer.reason, detail: answer.detail }
+      } else {
+        server = yield* unanswered("rebase", input.id, deadlineMs, asked)
+      }
+    }
+    const session = yield* resumeSession({ root: input.root, id: input.id })
+    const sha = yield* baseShaFor(input.root, session.ref)
+    const head = yield* loadHeadAt(input.root, sha)
+    const rebased = yield* rebaseOver(session, head.view)
+    return { ...rebased, head: headStats(head), via: "local" as const, server }
   })
 
 /** `session status`: the log as persisted, plus where the ref is relative to the base. */
@@ -1581,8 +1797,17 @@ export interface V2Input {
   readonly skipGate: boolean
   /** The embedder `head search`, `head embed`, and `session put` use; both ports absent when off. */
   readonly embedder: EmbedderShape
-  /** False under `--no-server`: `head status`, `head search`, and `session put` load locally. */
+  /**
+   * False under `--no-server`: `head status`, `head search`, and `session put` load locally, and
+   * `session exec`, `session commit`, and `session rebase` run here.
+   */
   readonly server: boolean
+  /**
+   * How long `session commit` and `session rebase` wait for the head server's answer, from
+   * `MEMHTML_COMMIT_DEADLINE_MS`, `0` for none; absent when the variable is unset, which is
+   * {@link COMMIT_DEADLINE_DEFAULT_MS}.
+   */
+  readonly commitDeadlineMs?: number | undefined
   /**
    * The session id came from `MEMHTML_SESSION` rather than `--id`, so `session put` and `session
    * exec` start the session on first use. An id on the line keeps the explicit contract: it must name
