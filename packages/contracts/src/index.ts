@@ -1,3 +1,4 @@
+export * from "./checkout-lock.js"
 export * from "./edges.js"
 export * from "./errors.js"
 export * from "./guidance.js"

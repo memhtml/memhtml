@@ -5,7 +5,7 @@ import { StorageFailure } from "@memhtml/contracts/errors"
 import { ARCS_DIR, INBOX_DIR, PEOPLE_DIR } from "@memhtml/contracts/paths"
 import { PARA_BUCKETS } from "@memhtml/contracts/types"
 import { Effect } from "effect"
-
+import { withCheckoutLock } from "./checkout-lock.js"
 import type { GitFailure, GitShape } from "./git.js"
 import { commitSubject } from "./plumbing.js"
 
@@ -234,8 +234,13 @@ export const initRepo = (git: GitShape): Effect.Effect<InitResult, GitFailure | 
     // Stage the whole scaffold rather than only what this call wrote, and let `commit` decide.
     // It no-ops on an index that matches HEAD, so a fully initialized repo stays untouched
     // while a half-staged one is carried to a commit.
-    yield* git.add(SCAFFOLD_FILES.map(([path]) => path))
-    const commit = yield* git.commit(commitSubject("init", "scaffold the memory repository"))
+    // Under the checkout lock like every other commit from the shared index (`checkout-lock.ts`).
+    const commit = yield* withCheckoutLock(
+      root,
+      git
+        .add(SCAFFOLD_FILES.map(([path]) => path))
+        .pipe(Effect.andThen(git.commit(commitSubject("init", "scaffold the memory repository"))))
+    )
     const headSha = commit.sha ?? (yield* git.revParseHead())
     return { root, created: !alreadyRepo, headSha, wrote }
   }).pipe(Effect.withSpan("store.initRepo"))

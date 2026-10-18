@@ -8,7 +8,13 @@ import {
   renderSidecar,
   STATE_SCHEMA
 } from "@memhtml/index"
-import { attemptIo, commitSubject, readFileOrNull, STATE_SIDECAR_PATH } from "@memhtml/store"
+import {
+  attemptIo,
+  commitSubject,
+  readFileOrNull,
+  STATE_SIDECAR_PATH,
+  withCheckoutLock
+} from "@memhtml/store"
 import { Effect } from "effect"
 
 import { Git } from "./api-layer.js"
@@ -74,13 +80,20 @@ export const stateExport = () =>
       } satisfies StateExportReport
     }
 
-    yield* attemptIo(`state.write:${STATE_SIDECAR_PATH}`, async () => {
-      await mkdir(dirname(absolute), { recursive: true })
-      await writeFile(absolute, contents, "utf8")
-    })
-    yield* git.add([STATE_SIDECAR_PATH])
-    const commit = yield* git.commit(
-      commitSubject("state", `export ${rows.length} access rows to the committed sidecar`)
+    // Written, staged, and committed under the checkout lock: the commit takes the whole shared
+    // index, so it must not run while a session commit has its own file staged there.
+    const commit = yield* withCheckoutLock(
+      git.root,
+      Effect.gen(function* () {
+        yield* attemptIo(`state.write:${STATE_SIDECAR_PATH}`, async () => {
+          await mkdir(dirname(absolute), { recursive: true })
+          await writeFile(absolute, contents, "utf8")
+        })
+        yield* git.add([STATE_SIDECAR_PATH])
+        return yield* git.commit(
+          commitSubject("state", `export ${rows.length} access rows to the committed sidecar`)
+        )
+      })
     )
 
     return {

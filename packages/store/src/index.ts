@@ -14,6 +14,7 @@
  * keep in agreement.
  */
 export { PARA_BUCKETS, type ParaBucket } from "@memhtml/contracts/types"
+export { checkoutLockTarget, withCheckoutLock } from "./checkout-lock.js"
 export {
   Git,
   GitFailure,
