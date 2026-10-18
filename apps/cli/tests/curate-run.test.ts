@@ -704,20 +704,20 @@ describe("the propose tool labels a record", () => {
  */
 describe("the propose and exec tools move a record", () => {
   const FROM = "areas/inbox/agentd-timeout.html"
-  const TO = "resources/microvms-agentd/agentd-timeout.html"
+  const TO = "resources/vm-runner/agentd-timeout.html"
   const ARC = "areas/arcs/agentd.html"
   const placed = renderTemplate({
     title: "agentd timeout",
     claim: "agentd kills an exec after its stated timeout.",
     memoryType: "semantic",
-    entities: ["project:microvms-agentd"],
+    entities: ["project:vm-runner"],
     at: "2026-09-20T00:00:00Z"
   })
   const arc = renderTemplate({
     title: "agentd arc",
     claim: "Four agentd memories together show the runtime bounds every exec.",
     memoryType: "semantic",
-    entities: ["project:microvms-agentd"],
+    entities: ["project:vm-runner"],
     links: [{ rel: "part_of", href: `/${FROM}` }],
     at: "2026-09-20T00:00:00Z"
   })
@@ -760,7 +760,7 @@ describe("the propose and exec tools move a record", () => {
       [
         'import * as fs from "node:fs"',
         'const root = "/mnt/memhtml"',
-        'fs.mkdirSync(root + "/resources/microvms-agentd", { recursive: true })',
+        'fs.mkdirSync(root + "/resources/vm-runner", { recursive: true })',
         `fs.writeFileSync(root + "/${TO}", fs.readFileSync(root + "/${FROM}", "utf8"))`,
         `fs.unlinkSync(root + "/${FROM}")`
       ].join("\n")

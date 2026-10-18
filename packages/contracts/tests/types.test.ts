@@ -210,7 +210,7 @@ describe("entity references", () => {
    */
   it("a label value must be type:name", () => {
     expect(isWellFormedEntity("service:memhtml")).toBe(true)
-    expect(isWellFormedEntity("project:hex-bonk")).toBe(true)
+    expect(isWellFormedEntity("project:agent-runtime")).toBe(true)
     expect(isWellFormedEntity("url:https://example.com/a")).toBe(true)
     expect(isWellFormedEntity("memhtml")).toBe(false)
     expect(isWellFormedEntity(":memhtml")).toBe(false)
@@ -219,11 +219,11 @@ describe("entity references", () => {
   })
 
   it("a label value must already be in the normalized spelling", () => {
-    expect(isWellFormedEntity("person:laith")).toBe(true)
+    expect(isWellFormedEntity("person:laura")).toBe(true)
     expect(isWellFormedEntity("Service:MemHTML")).toBe(false)
-    expect(isWellFormedEntity("person: laith")).toBe(false)
-    expect(isWellFormedEntity(" person:laith")).toBe(false)
-    expect(isWellFormedEntity("person:sanju  kumar")).toBe(false)
+    expect(isWellFormedEntity("person: laura")).toBe(false)
+    expect(isWellFormedEntity(" person:laura")).toBe(false)
+    expect(isWellFormedEntity("person:sasha  kelly")).toBe(false)
     // Every normalized type:name reference passes, so the rule is exactly "parses and is normal".
     fc.assert(
       fc.property(

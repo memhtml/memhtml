@@ -112,7 +112,7 @@ const CONTRADICTION = [
  * Two verdicts on one objective, the shape the 2026-09-23 live run refused eleven times: one
  * headline claim, two rulings in the articles. In neither briefing list, and both stay live.
  */
-const VERDICT_HEADLINE = "Review verdict for objective: clod wants to talk to you"
+const VERDICT_HEADLINE = "Review verdict for objective: sasha wants to talk to you"
 const VERDICTS = ["suppressed-failure", "unsupported-claim"].map((category) => ({
   path: `areas/inbox/verdict-${category}.html`,
   html: renderTemplate({

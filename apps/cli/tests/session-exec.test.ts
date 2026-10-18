@@ -1014,37 +1014,37 @@ describe("harvestOps over plain values", () => {
       renderTemplate({ title: "Stub", claim, memoryType: "semantic", at: "2026-09-26T00:00:00Z" })
     const archivedCopy = (html: string): string =>
       html.replace('content="active"', 'content="archived"')
-    const words = record("Alain Krok appears in this agent's memory.")
-    const other = record("Clare Liguori appears in this agent's memory.")
+    const words = record("Alice Kemp appears in this agent's memory.")
+    const other = record("Carla Lindsey appears in this agent's memory.")
     const files: ReadonlyArray<readonly [string, string]> = [
-      ["resources/people/alain-krok.html", words],
-      ["resources/people/clare-liguori.html", other],
+      ["resources/people/alice-kemp.html", words],
+      ["resources/people/carla-lindsey.html", other],
       // Older words at the first slot, the same article under an archived head at the second.
       [
-        "archive/2026/resources/people/alain-krok.html",
-        archivedCopy(record("alain krok appears in this agent's memory."))
+        "archive/2026/resources/people/alice-kemp.html",
+        archivedCopy(record("alice kemp appears in this agent's memory."))
       ],
-      ["archive/2026/resources/people/clare-liguori.html", archivedCopy(other)]
+      ["archive/2026/resources/people/carla-lindsey.html", archivedCopy(other)]
     ]
     const seeded = new Map(
       files.map(([path, html]) => [path, { html, contentHash: contentHash(html) }] as const)
     )
     const after = [
-      { path: "archive/2026/resources/people/alain-krok.html", html: words },
-      { path: "archive/2026/resources/people/clare-liguori.html", html: other }
+      { path: "archive/2026/resources/people/alice-kemp.html", html: words },
+      { path: "archive/2026/resources/people/carla-lindsey.html", html: other }
     ]
     expect(harvestOps({ seeded, after, skippedGitDir: false, scope: "curate" })).toEqual({
       ops: [
         {
           kind: "archive",
-          path: "resources/people/alain-krok.html",
-          to: "archive/2026/resources/people/alain-krok.html",
+          path: "resources/people/alice-kemp.html",
+          to: "archive/2026/resources/people/alice-kemp.html",
           html: words
         },
         {
           kind: "archive",
-          path: "resources/people/clare-liguori.html",
-          to: "archive/2026/resources/people/clare-liguori.html",
+          path: "resources/people/carla-lindsey.html",
+          to: "archive/2026/resources/people/carla-lindsey.html",
           html: other
         }
       ],

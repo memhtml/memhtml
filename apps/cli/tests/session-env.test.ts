@@ -108,8 +108,8 @@ const hasLog = (root: string, id: string) =>
 /** A heredoc an agent would write: one record at the bar, one that names nothing. */
 const GOOD = record(
   "Run sessions commit at run end",
-  "hex-bonk commits a run's memhtml session after the answer posts.",
-  ["project:hex-bonk"]
+  "agent-runtime commits a run's memhtml session after the answer posts.",
+  ["project:agent-runtime"]
 )
 const BARE = record("A note that names nothing", "This record is about nothing in particular.", [])
 
@@ -224,7 +224,7 @@ describe("with MEMHTML_SESSION set", () => {
     const repo = await corpus()
     process.env[VAR] = "run-put"
     const line = (title: string, body: string) =>
-      `${JSON.stringify({ op: "write", title, type: "semantic", body, entity: "project:hex-bonk" })}\n`
+      `${JSON.stringify({ op: "write", title, type: "semantic", body, entity: "project:agent-runtime" })}\n`
     const first = await cli(
       repo.root,
       ["session", "put", "--file", "-", "--no-server"],
@@ -286,8 +286,8 @@ describe("with MEMHTML_SESSION set", () => {
     await writeStoreConfig(repo.root, { commit: true })
     process.env[VAR] = "run-exec"
     const script = [
-      "mkdir -p /mnt/memhtml/projects/hex-bonk",
-      "cat > /mnt/memhtml/projects/hex-bonk/run-sessions.html <<'HTML'",
+      "mkdir -p /mnt/memhtml/projects/agent-runtime",
+      "cat > /mnt/memhtml/projects/agent-runtime/run-sessions.html <<'HTML'",
       GOOD.trimEnd(),
       "HTML",
       "cat > /mnt/memhtml/areas/inbox/bare-note.html <<'HTML'",
@@ -317,7 +317,7 @@ describe("with MEMHTML_SESSION set", () => {
       ops: ReadonlyArray<Body>
     }
     expect(log.ops.map((op) => [op.kind, op.path])).toEqual([
-      ["put", "projects/hex-bonk/run-sessions.html"]
+      ["put", "projects/agent-runtime/run-sessions.html"]
     ])
   })
 

@@ -24,9 +24,9 @@ import { type Cli, makeCli } from "./harness.js"
 const AT = "2026-09-20T12:00:00Z"
 const REF = "curate/2026-09-30"
 const QUALIFIED = `refs/heads/${REF}`
-const FROM = "areas/inbox/hex-bonk-retries-a-stalled-stream.html"
-const TO = "resources/hex-bonk/hex-bonk-retries-a-stalled-stream.html"
-const ARC = "areas/arcs/hex-bonk-stream-arc.html"
+const FROM = "areas/inbox/agent-runtime-retries-a-stalled-stream.html"
+const TO = "resources/agent-runtime/agent-runtime-retries-a-stalled-stream.html"
+const ARC = "areas/arcs/agent-runtime-stream-arc.html"
 const UNPLACED = "areas/inbox/an-unplaced-fact.html"
 const FLEET = "areas/inbox/a-fleet-record-citing-the-retry.html"
 
@@ -59,23 +59,25 @@ const filler = Array.from({ length: 30 }, (_, index) => ({
 const FIXTURE = [
   ...filler,
   {
-    path: "resources/hex-bonk/schedules-fire-from-the-database.html",
-    html: memory("Schedules fire from the database", "hex-bonk schedules fire from one table.", [
-      "service:hex-bonk"
-    ])
+    path: "resources/agent-runtime/schedules-fire-from-the-database.html",
+    html: memory(
+      "Schedules fire from the database",
+      "agent-runtime schedules fire from one table.",
+      ["service:agent-runtime"]
+    )
   },
   {
-    path: "resources/hex-bonk/a-steer-reaches-a-running-session.html",
-    html: memory("A steer reaches a running session", "A hex-bonk steer lands mid-run.", [
-      "service:hex-bonk"
+    path: "resources/agent-runtime/a-steer-reaches-a-running-session.html",
+    html: memory("A steer reaches a running session", "A agent-runtime steer lands mid-run.", [
+      "service:agent-runtime"
     ])
   },
   {
     path: FROM,
     html: memory(
-      "hex-bonk retries a stalled stream",
-      "hex-bonk retries a model stream that stalls for five minutes.",
-      ["service:hex-bonk"]
+      "agent-runtime retries a stalled stream",
+      "agent-runtime retries a model stream that stalls for five minutes.",
+      ["service:agent-runtime"]
     )
   },
   {
@@ -87,9 +89,9 @@ const FIXTURE = [
   {
     path: ARC,
     html: memory(
-      "hex-bonk stream arc",
-      "Together the stream records show hex-bonk bounds every model call.",
-      ["service:hex-bonk"],
+      "agent-runtime stream arc",
+      "Together the stream records show agent-runtime bounds every model call.",
+      ["service:agent-runtime"],
       [{ rel: "part_of", href: `/${FROM}` }]
     )
   }
@@ -164,12 +166,12 @@ describe("curate run --model fake files an inbox record into its home", () => {
     expect(report.briefing.inbox[0]).toMatchObject({
       path: FROM,
       home: {
-        dir: "resources/hex-bonk",
+        dir: "resources/agent-runtime",
         to: TO,
         kind: "existing",
         records: 2,
-        named: ["service:hex-bonk"],
-        shared: [{ entity: "service:hex-bonk", records: 2 }]
+        named: ["service:agent-runtime"],
+        shared: [{ entity: "service:agent-runtime", records: 2 }]
       }
     })
     expect(report.briefing.inbox[1]).toMatchObject({ path: UNPLACED, home: null })
@@ -198,7 +200,7 @@ describe("curate run --model fake files an inbox record into its home", () => {
       memory(
         "A fleet record citing the retry",
         "A fleet run leaned on the stalled-stream retry to finish its call.",
-        ["service:hex-bonk"],
+        ["service:agent-runtime"],
         [{ rel: "relates_to", href: `/${FROM}` }]
       ),
       "utf8"

@@ -118,7 +118,7 @@ const cli = async (
 const dataOf = (body: Body) => body.data as Body
 
 const writeLine = (fields: Record<string, string>) =>
-  `${JSON.stringify({ op: "write", type: "semantic", entity: "project:hex-bonk", ...fields })}\n`
+  `${JSON.stringify({ op: "write", type: "semantic", entity: "project:agent-runtime", ...fields })}\n`
 
 const FACT = writeLine({ title: "Run sessions commit at run end", body: "The fact holds." })
 
@@ -187,20 +187,20 @@ describe("a run-bound session put", () => {
     const repo = await corpus()
     process.env[VAR] = "run-person"
     const line = writeLine({
-      title: "Laith reviews run sessions",
-      body: "Laith approves fleet write changes.",
-      entity: "person:laith"
+      title: "Laura reviews run sessions",
+      body: "Laura approves fleet write changes.",
+      entity: "person:laura"
     })
     const result = await cli(repo.root, ["session", "put", "--file", "-", "--no-server"], line)
     expect(result.exitCode).toBe(EXIT_OK)
-    expect(dataOf(result.body).paths).toEqual(["areas/inbox/laith-reviews-run-sessions.html"])
+    expect(dataOf(result.body).paths).toEqual(["areas/inbox/laura-reviews-run-sessions.html"])
   })
 })
 
 describe("a run-bound session exec", () => {
   const copy = [
-    "mkdir -p /mnt/memhtml/projects/hex-bonk",
-    "cat > /mnt/memhtml/projects/hex-bonk/harbor-copy.html <<'HTML'",
+    "mkdir -p /mnt/memhtml/projects/agent-runtime",
+    "cat > /mnt/memhtml/projects/agent-runtime/harbor-copy.html <<'HTML'",
     HARBOR.trimEnd(),
     "HTML",
     ""

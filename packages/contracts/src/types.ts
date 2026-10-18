@@ -170,8 +170,8 @@ export const normalizeEntityRef = (entity: string): string => {
 /**
  * True when an entity reference is well formed for a new label: it parses as `type:name`
  * ({@link parseEntity}) and is already in the normalized spelling ({@link normalizeEntityRef}), so
- * `service:memhtml`, `project:hex-bonk`, and `person:laith` pass while `memhtml`, `Service:MemHTML`,
- * and `person: laith` do not.
+ * `service:memhtml`, `project:agent-runtime`, and `person:laura` pass while `memhtml`, `Service:MemHTML`,
+ * and `person: laura` do not.
  *
  * The session's `label` op holds its value to this, because a label writes a `memhtml-entity` meta
  * that every entity index keys on as authored: a second spelling of one entity splits its records

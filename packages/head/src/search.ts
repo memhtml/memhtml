@@ -27,10 +27,10 @@ import { tokenize } from "./lexical.js"
  * Why not a weighted recency arm. Until 2026-09-28 recency was an RRF arm at weight 0.5 that ranked
  * every lexical and vector candidate newest first. That made it a second full ranking rather than a
  * tie-break, and a curation landing that made the surviving records newer made older targets lose to
- * newer, weaker matches. On the 2026-09-28 collapse rehearsal (base `33f182de7`, landed
- * `85eeb5ed`, the head gate's 200 title probes, seed 1, top 10) the weighted arm scored MRR 0.5572
+ * newer, weaker matches. On a 2026-09-28 rehearsal of a large collapse on a copy of a production
+ * store (the head gate's 200 title probes, seed 1, top 10) the weighted arm scored MRR 0.5572
  * at the base and 0.4384 landed, so the gate refused the landing; this rule scores 0.9449 and 0.9485
- * without the vector arm and 0.9492 and 0.9522 with it, and on the 2026-09-23 clone at `a650152e` it
+ * without the vector arm and 0.9492 and 0.9522 with it, and on a 2026-09-23 copy of the same store it
  * raised the gate probes from 0.4557 to 0.9975 without the vector arm and from 0.8321 to 0.9905 with
  * it. Smaller weights land near the same numbers (0.05 scored 0.9374 and 0.9410 without the vector
  * arm), but without shared ranks no weight small enough to be a tie-break lets a newer twin win,

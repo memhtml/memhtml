@@ -113,7 +113,7 @@ const fixture = async (): Promise<ReadonlyArray<MemoryRecord>> =>
           claim,
           body: [`Seen on run ${String(index)}.`],
           tags: ["verification"],
-          entities: index === 0 ? ["person:laith"] : []
+          entities: index === 0 ? ["person:laura"] : []
         })
       ),
       ...PKILL.map((claim, index) =>
@@ -131,7 +131,7 @@ const fixture = async (): Promise<ReadonlyArray<MemoryRecord>> =>
       ),
       // The same restatements from another source: same words, different author, never one cluster.
       ...VERIFY.slice(0, 3).map((claim, index) =>
-        memory(`resources/wiki-kernel-import/verify-sleep-${String(index)}.html`, {
+        memory(`resources/notes-import/verify-sleep-${String(index)}.html`, {
           title: `Verify before asserting, imported ${String(index)}`,
           claim,
           author: "agent:sleep"
@@ -161,9 +161,9 @@ const fixture = async (): Promise<ReadonlyArray<MemoryRecord>> =>
         memoryType: "semantic"
       }),
       // Shielded without a ruling: an identity record and a task row.
-      memory("resources/people/laith.html", {
-        title: "Laith",
-        claim: "Laith verifies every primary source before asserting completion.",
+      memory("resources/people/laura.html", {
+        title: "Laura",
+        claim: "Laura verifies every primary source before asserting completion.",
         memoryType: "semantic"
       }),
       memory("areas/inbox/tasks/verify-task.html", {
@@ -213,13 +213,13 @@ describe("planCollapse without rulings", () => {
 
   it("records from another source never share a cluster", async () => {
     const plan = planCollapse(viewOver(await fixture()), { policy: STRICT_PLAN })
-    const imported = clusterOf(plan, "resources/wiki-kernel-import/verify-sleep-0.html")
+    const imported = clusterOf(plan, "resources/notes-import/verify-sleep-0.html")
     expect(imported?.source).toBe("agent:sleep")
     expect(imported?.members.every((member) => member.path.includes("verify-sleep"))).toBe(true)
     expect(imported?.members).toHaveLength(3)
     // Three members under one real prefix keep that prefix as the home only when it is not a bucket;
     // `*-import` is a bucket, so the canonical moves out of it.
-    expect(imported?.home.startsWith("resources/wiki-kernel-import")).toBe(false)
+    expect(imported?.home.startsWith("resources/notes-import")).toBe(false)
     expect(plan.totals.partitions).toBe(3)
   })
 
@@ -245,7 +245,7 @@ describe("planCollapse without rulings", () => {
   it("people records and task rows are excluded without a ruling", async () => {
     const plan = planCollapse(viewOver(await fixture()))
     expect(plan.totals.excluded).toBe(2)
-    expect(clusterOf(plan, "resources/people/laith.html")).toBeUndefined()
+    expect(clusterOf(plan, "resources/people/laura.html")).toBeUndefined()
     expect(clusterOf(plan, "areas/inbox/tasks/verify-task.html")).toBeUndefined()
     expect(plan.totals.clusters.archive).toBe(0)
   })
@@ -288,7 +288,7 @@ describe("planCollapse with rulings", () => {
     { path: "areas/inbox/pkill-0.html", verdict: "fold", theme: "shell-traps" },
     { path: "areas/inbox/pkill-1.html", verdict: "fold", theme: "shell-traps" },
     { path: "areas/inbox/verify-3.html", verdict: "keep", reason: "the best statement" },
-    { path: "resources/people/laith.html", verdict: "archive", reason: "an empty stub" },
+    { path: "resources/people/laura.html", verdict: "archive", reason: "an empty stub" },
     { path: "areas/inbox/gone.html", verdict: "archive" }
   ]
 
@@ -306,7 +306,7 @@ describe("planCollapse with rulings", () => {
     ])
     expect(inbox?.members[0]?.ruling?.verdict).toBe("archive")
     // A ruling admits a shielded record; without one it stays excluded.
-    expect(clusterOf(plan, "resources/people/laith.html")?.kind).toBe("archive")
+    expect(clusterOf(plan, "resources/people/laura.html")?.kind).toBe("archive")
     expect(plan.totals.excluded).toBe(1)
     expect(plan.totals.rulingsUnmatched).toBe(1)
     expect(plan.totals.members.archive).toBe(3)
@@ -408,8 +408,8 @@ describe("the pieces", () => {
 
   it("with the library's default policy an import directory is a home and a verdict fold stays a verdict", async () => {
     const plan = planCollapse(viewOver(await fixture()))
-    const imported = clusterOf(plan, "resources/wiki-kernel-import/verify-sleep-0.html")
-    expect(imported?.home).toBe("resources/wiki-kernel-import")
+    const imported = clusterOf(plan, "resources/notes-import/verify-sleep-0.html")
+    expect(imported?.home).toBe("resources/notes-import")
     const [a, c] = await Effect.runPromise(
       Effect.all([
         memory("areas/inbox/verdict-a.html", {
@@ -435,7 +435,7 @@ describe("the pieces", () => {
     const inbox = records.filter((r) => r.path.startsWith("areas/inbox/verify"))
     expect(homeFor(inbox, "Verify first", "areas")).toBe("areas/verify-first")
     const people = records.filter((r) => r.path.startsWith("resources/people/"))
-    expect(homeFor(people, "Laith", "areas")).toBe("resources/people")
+    expect(homeFor(people, "Laura", "areas")).toBe("resources/people")
   })
 
   it("kNN edges are undirected, deduplicated, above the floor, and sorted", async () => {

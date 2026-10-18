@@ -205,7 +205,7 @@ describe("the collapse briefing", () => {
   })
 
   it("names the entities the canonical carries, or says the members carry none", async () => {
-    const union = await fixture((index) => (index === 1 ? ["person:sanju"] : ["service:memhtml"]))
+    const union = await fixture((index) => (index === 1 ? ["person:sasha"] : ["service:memhtml"]))
     const named = renderCollapseBriefing({
       plan: PLAN,
       cluster: cluster(union),
@@ -215,7 +215,7 @@ describe("the collapse briefing", () => {
       driverCompletes: false
     })
     expect(named).toContain(
-      "- Entities the canonical carries (the members' union, exact values): person:sanju, service:memhtml"
+      "- Entities the canonical carries (the members' union, exact values): person:sasha, service:memhtml"
     )
     const bare = await fixture(() => [])
     const none = renderCollapseBriefing({
@@ -343,10 +343,10 @@ describe("the fake model's fold", () => {
     }
     const mixed = await canonicalOf(
       await fixture((index) =>
-        index === 0 ? ["system:gates"] : index === 1 ? ["person:sanju", "system:gates"] : []
+        index === 0 ? ["system:gates"] : index === 1 ? ["person:sasha", "system:gates"] : []
       )
     )
-    expect(mixed.doc.entities).toEqual(["person:sanju", "system:gates"])
+    expect(mixed.doc.entities).toEqual(["person:sasha", "system:gates"])
     expect(writeBarReasons(mixed.put.path, mixed.put.html, STRICT_POLICY.writeBar)).toEqual([])
     const bare = await canonicalOf(await fixture(() => []))
     expect(bare.doc.entities).toEqual([FAKE_FALLBACK_ENTITY])

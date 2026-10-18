@@ -2,8 +2,8 @@
  * The LLM-proxy configuration: three environment variables and the two parsers that read them.
  *
  * memhtml calls its models on Bedrock directly by default. Set {@link PROXY_BASE_URL_VAR} and every
- * model call goes to an OpenAI- and Anthropic-compatible LLM proxy instead — an agentgateway
- * listener, or anything else serving the same four routes:
+ * model call goes to an OpenAI- and Anthropic-compatible LLM proxy instead, such as a local LLM
+ * gateway, or anything else serving the same four routes:
  *
  * | Lane                       | Route                  | Wire format                      |
  * | -------------------------- | ---------------------- | -------------------------------- |

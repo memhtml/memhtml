@@ -197,7 +197,7 @@ describe("briefingFromView", () => {
   it("two verdicts on one objective join no group, and neither does a task", () => {
     // The shape measured in the live store on 2026-09-23: the claim is a headline naming the
     // objective, identical across the two rulings, and the ruling itself is in the article.
-    const headline = "Review verdict for objective: clod wants to talk to you"
+    const headline = "Review verdict for objective: sasha wants to talk to you"
     const view = viewOver([
       claiming("areas/inbox/verdict-1.html", headline, {
         memoryType: "verdict",
