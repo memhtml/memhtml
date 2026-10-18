@@ -218,7 +218,7 @@ WantedBy=default.target
 ```bash
 unit="memhtml-head@$(systemd-escape --path "$MEMHTML_ROOT").service"
 systemctl --user daemon-reload && systemctl --user enable --now "$unit"
-memhtml head status                                # head.source reads "server" when it answered
+memhtml head status                                # source reads "server" when it answered
 ```
 
 A second server for the same store exits 1 with `ERR_HEAD_SERVER_RUNNING`. A socket left by a killed server is replaced on the next start. `memhtml head embed` fills the vector cache under `.memhtml/vectors/`, and a running server picks up the new file on its next request.
