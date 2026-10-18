@@ -158,6 +158,14 @@ describe("frameKeyOf — the guards at their thresholds", () => {
       // Three orders of magnitude below a quadratic blow-up at this size, so a loaded machine
       // cannot drift a pass into a fail.
       expect(perCallMs, `frameKeyOf took ${perCallMs.toFixed(1)}ms on ${name}`).toBeLessThan(250)
+
+      // `frameOf` runs the same collapse and the same `FRAME` match (CodeQL flags its call site
+      // separately), so the same bound holds for it.
+      expect(frameOf(gist)?.key ?? null, `${name} frameOf key`).toBe(expected)
+      const startedOf = process.hrtime.bigint()
+      for (let i = 0; i < 5; i++) frameOf(gist)
+      const perCallOfMs = Number(process.hrtime.bigint() - startedOf) / 5e6
+      expect(perCallOfMs, `frameOf took ${perCallOfMs.toFixed(1)}ms on ${name}`).toBeLessThan(250)
     }
   })
 })
