@@ -452,9 +452,9 @@ describe("memhtml apply --detect-conflicts (AC-1-2)", () => {
  */
 describe("memhtml apply --detect-near-duplicates", () => {
   const RUNBOOK =
-    "The deploy runbook owner is Priya Raman and the runbook lives in the operations wiki."
+    "The deploy runbook owner is Paula Reyes and the runbook lives in the operations wiki."
   const RUNBOOK_REWORDED =
-    "Priya Raman is the deploy runbook owner and the runbook lives in the operations wiki."
+    "Paula Reyes is the deploy runbook owner and the runbook lives in the operations wiki."
 
   it("names the ACTIVE memory a line nearly restates, in snake_case, and writes the line anyway", async () => {
     const cli = await withApply()

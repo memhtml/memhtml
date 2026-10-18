@@ -20,18 +20,18 @@ These pages list the calls an agent can make and the shape each one returns.
 
 - [CLI](reference/cli.md): every subcommand of the `memhtml` binary, with flags, error codes, and environment variables. The set is the `COMMANDS` array, which also generates `AGENTS.md`, so read it from `apps/cli/src/commands.ts` rather than counting it here.
 - [RPC tools](reference/rpc-tools.md): the 15 MCP tools and 2 resources of `memhtml-mcp`.
-- [Public API](reference/public-api.md): the 30 most-imported library symbols with verbatim signatures.
+- [Public API](reference/public-api.md): the 34 most-imported library symbols, the top 30 plus every symbol tied at the cutoff, with verbatim declarations.
 
 ## Behavior
 
 These pages trace what runs when a given event arrives.
 
-- [Processes](behavior/processes.md): the eight main flows plus a minor-flow index.
-- [State machines](behavior/state-machines.md): memory status, sleep-run status, and task status.
+- [Processes](behavior/processes.md): the nine main flows plus a minor-flow index.
+- [State machines](behavior/state-machines.md): memory status, sleep-run status, task status, and host-integration install state.
 
 ## Diagrams
 
-- [Components](diagrams/architecture/components.md): the MCP toolkit and the seven Effect services it reaches, with their edges, as a class diagram. `MemhtmlToolkit` is a `Toolkit.make`; the seven services are the `Context.Service` tags.
+- [Components](diagrams/architecture/components.md): the MCP toolkit and the ten Effect services at the center of the app layer, with the edge each takes on another, as a class diagram. `MemhtmlToolkit` is a `Toolkit.make`; each service is a `Context.Service` tag.
 - [Dependency graph](diagrams/structural/dependency-graph.md): internal packages and external dependencies on one page.
 - [Sequences](diagrams/behavioral/sequences.md): call order for write, search, and a sleep run.
 
@@ -47,4 +47,4 @@ These pages cover the assumptions the codebase makes, the ways it fails, and the
 
 ## Omissions
 
-`analysis/risk-hotspots.md`, `analysis/ownership.md`, and `analysis/dead-code.md` are intentionally not generated. The git history carries one human author beside Dependabot, release-please, and the agent that writes under `Bonk`, so per-file activity and ownership signals distinguish nothing an ordinary `git log` does not, and no dead-code analysis tool is configured in the repo. Re-derive the numbers from `git log` rather than reading them here; a count committed to prose is stale by the next commit.
+`analysis/risk-hotspots.md`, `analysis/ownership.md`, and `analysis/dead-code.md` are intentionally not generated. The git history carries one human author beside Dependabot, release-please, and the agent that writes under `memhtml-agent`, so per-file activity and ownership signals distinguish nothing an ordinary `git log` does not, and no dead-code analysis tool is configured in the repo. Re-derive the numbers from `git log` rather than reading them here; a count committed to prose is stale by the next commit.

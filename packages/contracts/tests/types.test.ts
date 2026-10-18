@@ -135,8 +135,8 @@ describe("entity references", () => {
   })
 
   it("refuses a reference with no separator, an empty type, or an empty name", () => {
-    expect(parseEntity("sanju")).toBeUndefined()
-    expect(parseEntity(":sanju")).toBeUndefined()
+    expect(parseEntity("sasha")).toBeUndefined()
+    expect(parseEntity(":sasha")).toBeUndefined()
     expect(parseEntity("person:")).toBeUndefined()
     expect(parseEntity("")).toBeUndefined()
   })
@@ -168,10 +168,10 @@ describe("entity references", () => {
   })
 
   it("strips padding around the separator, so spacing is not part of an entity's identity", () => {
-    // Each half is trimmed independently, so `PERSON : Sanju` and `person:sanju` are one entity.
+    // Each half is trimmed independently, so `PERSON : Sasha` and `person:sasha` are one entity.
     // A hand-authored meta written with spaces around the colon is a spelling, not a new entity.
-    expect(normalizeEntityRef("  PERSON : Sanju   Kumar ")).toBe("person:sanju kumar")
-    expect(normalizeEntityRef("person:sanju kumar")).toBe("person:sanju kumar")
+    expect(normalizeEntityRef("  PERSON : Sasha   Kelly ")).toBe("person:sasha kelly")
+    expect(normalizeEntityRef("person:sasha kelly")).toBe("person:sasha kelly")
   })
 
   it("keeps a separator-less reference separator-less rather than inventing a type", () => {
@@ -238,7 +238,7 @@ describe("entity references", () => {
   })
 
   it("recognizes a person only when the prefix carries a name", () => {
-    expect(isPersonEntity("person:sanju")).toBe(true)
+    expect(isPersonEntity("person:sasha")).toBe(true)
     expect(isPersonEntity("person:")).toBe(false)
     expect(isPersonEntity("service:checkout-api")).toBe(false)
   })
@@ -251,6 +251,6 @@ describe("entity references", () => {
     expect(isPersonEntity("person:\t")).toBe(false)
     expect(isPersonEntity("person:\n")).toBe(false)
     // A name with surrounding whitespace is still a name.
-    expect(isPersonEntity("person: sanju ")).toBe(true)
+    expect(isPersonEntity("person: sasha ")).toBe(true)
   })
 })

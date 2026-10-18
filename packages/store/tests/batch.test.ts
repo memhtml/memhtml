@@ -149,7 +149,7 @@ describe("writeMemories: N writes, one commit", () => {
     const result = await run(
       repo.store.writeMemories([
         writeInput({ title: "Alpha", claim: "A.", tags: ["deploy"] }),
-        writeInput({ title: "Beta", claim: "B.", entities: ["person:sanju"] })
+        writeInput({ title: "Beta", claim: "B.", entities: ["person:sasha"] })
       ])
     )
     const first = await run(repo.store.readMemory(result.results[0]?.path ?? ""))

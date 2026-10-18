@@ -2,7 +2,7 @@ import { readMemory, Store } from "@memhtml/cli"
 import { isValidMemoryPath, normalizePath } from "@memhtml/contracts/paths"
 import { parseMemory } from "@memhtml/html"
 import { Context, Effect, Layer } from "effect"
-import { McpSchema, McpServer } from "effect/unstable/ai"
+import { McpSchema, McpServer } from "effect/ai"
 
 import { resourceFailure, type ToolFailure, toResourceFailure } from "./failure.js"
 
@@ -27,8 +27,9 @@ const SCHEME = "memhtml"
 /**
  * The router pattern that matches one resource's URIs, and why it is spelled this way.
  *
- * `McpServer` matches a `resources/read` URI with find-my-way (`effect/unstable/http/FindMyWay`,
- * effect 4.0.0-rc.109), and two of that router's rules decide this string:
+ * `McpServer` matches a `resources/read` URI with find-my-way (`effect/http/FindMyWay`, read at
+ * effect 4.0.0-rc.109 when the module sat under `effect/unstable/http`), and two of that router's rules
+ * decide this string:
  *
  * - A single `:` opens a NAMED PARAMETER, and `::` is the escape for a literal colon. The scheme's
  *   colon therefore has to be doubled; left single, `memhtml:` registers a parameter named `""`.

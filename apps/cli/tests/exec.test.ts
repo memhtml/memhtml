@@ -736,7 +736,7 @@ describe("usage errors are exit 2, decided before anything is mounted", () => {
    * `validate`'s return becomes exit 2 while a failure raised in `dispatch` becomes exit 1, so this
    * check cannot live in the arm: a mutually-exclusive-parameter refusal raised after dispatch is
    * masked as a runtime error
-   * (`.erpaval/solutions/api-patterns/xor-params-and-mcp-error-masking.md`).
+   * (`.lessons/solutions/api-patterns/xor-params-and-mcp-error-masking.md`).
    *
    * (Mutation: moving the `execFlags` call out of `validate` and into the exec arm as a raised failure
    * turns every case here into exit 1. Observed: `expected 1 to be 2`.)

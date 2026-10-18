@@ -29,7 +29,7 @@ import {
   type Scope,
   Semaphore
 } from "effect"
-import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
+import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http"
 
 import type { EmbedderShape } from "./api-layer.js"
 import { headRefOf, recordView } from "./curate-run.js"

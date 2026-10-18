@@ -3,7 +3,7 @@ import * as Https from "node:https"
 import { createConnection } from "node:net"
 
 import { Cause, Effect, Option, Schema } from "effect"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest } from "effect/http"
 
 import { HEAD_ROUTES, type HeadRoute, headSocketPath } from "./head-protocol.js"
 

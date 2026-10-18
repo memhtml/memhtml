@@ -131,10 +131,10 @@ describe("round trip", () => {
     const html = fileWith(
       MINIMAL_ARTICLE,
       [
-        '<meta name="memhtml-entity" content="person:laith al-saadoon">',
+        '<meta name="memhtml-entity" content="person:laura de-sabelin">',
         '<meta name="memhtml-tag" content="team">',
-        '<meta name="memhtml-alias" content="laith">',
-        '<meta name="memhtml-alias" content="l.alsaadoon">'
+        '<meta name="memhtml-alias" content="laura">',
+        '<meta name="memhtml-alias" content="l.desabelin">'
       ].join("\n")
     )
     const doc = parseOk(html)
@@ -150,7 +150,7 @@ describe("round trip", () => {
       expect(emitted.length, `${name} lost values`).toBeGreaterThan(0)
       expect(emitted, name).toEqual(authored)
     }
-    expect(again.aliases).toEqual(["laith", "l.alsaadoon"])
+    expect(again.aliases).toEqual(["laura", "l.desabelin"])
   })
 
   it("emits a new repeatable AFTER the established ones, so no existing head line moves", () => {
@@ -161,8 +161,8 @@ describe("round trip", () => {
         fileWith(
           MINIMAL_ARTICLE,
           [
-            '<meta name="memhtml-alias" content="laith">',
-            '<meta name="memhtml-entity" content="person:laith al-saadoon">',
+            '<meta name="memhtml-alias" content="laura">',
+            '<meta name="memhtml-entity" content="person:laura de-sabelin">',
             '<meta name="memhtml-tag" content="team">'
           ].join("\n")
         )

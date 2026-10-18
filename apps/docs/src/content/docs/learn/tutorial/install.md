@@ -169,7 +169,7 @@ memhtml status
 Two databases sit under `.memhtml/`, and they differ in what you can recover:
 
 - `index.db` is gitignored and rebuildable from the tree. Losing it costs a rebuild.
-- `state.db` is gitignored and holds the one set of facts the tree cannot reproduce: access counts, reinforcement counts, and the outcome EWMA. Its durability comes from the committed sidecar `.memhtml/state/access.jsonl`.
+- `state.db` is gitignored and holds facts the tree cannot reproduce: access counts, reinforcement counts, and the outcome EWMA. The committed sidecar `.memhtml/state/access.jsonl` keeps a copy of those; the corroboration counts `state.db` also holds have none.
 
 Both are plain SQLite, opened through node's built-in `node:sqlite`. The only database dependency is node itself, with no driver flags to keep in step, so `sqlite3` or any GUI browser opens both files directly and a stuck index stays inspectable without this binary.
 

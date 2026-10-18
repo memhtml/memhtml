@@ -851,7 +851,7 @@ describe("batchWrite: the detect_conflicts assist", () => {
           ops: [
             op({ title: "A", claim: CEILING_128 }),
             op({ title: "B", claim: "The retry budget is per-connection." }),
-            op({ title: "C", claim: "The owner of the deploy runbook is Priya." }),
+            op({ title: "C", claim: "The owner of the deploy runbook is Paula." }),
             op({ title: "D", claim: CEILING_256 }),
             op({ title: "E", claim: "The retry budget is per-request." }),
             op({ title: "F", claim: "Do the thing." })
@@ -1072,9 +1072,9 @@ describe("batchWrite: the detect_conflicts assist", () => {
  */
 describe("the near-duplicate assist", () => {
   const RUNBOOK =
-    "The deploy runbook owner is Priya Raman and the runbook lives in the operations wiki."
+    "The deploy runbook owner is Paula Reyes and the runbook lives in the operations wiki."
   const RUNBOOK_REWORDED =
-    "Priya Raman is the deploy runbook owner and the runbook lives in the operations wiki."
+    "Paula Reyes is the deploy runbook owner and the runbook lives in the operations wiki."
   const UNRELATED = "Grype and trivy disagree about reading VEX statements."
 
   it("names the ACTIVE memory an op nearly restates, with the measured similarity, and writes it anyway", async () => {

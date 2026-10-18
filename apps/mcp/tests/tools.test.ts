@@ -2,7 +2,7 @@ import { claimFromProse, NEIGHBORS_LIMIT, proseTail } from "@memhtml/cli"
 import { MEMORY_RELS } from "@memhtml/contracts/edges"
 import { WRITABLE_MEMORY_TYPES } from "@memhtml/contracts/types"
 import { Effect, Schema } from "effect"
-import { Tool } from "effect/unstable/ai"
+import { Tool } from "effect/ai"
 import { describe, expect, it } from "vitest"
 import { RESOURCE_TEMPLATES } from "../src/resources.js"
 import { SERVER_NAME } from "../src/server.js"
@@ -680,7 +680,7 @@ describe("the derived JSON Schema", () => {
 
   it("spells the entity parameter the same way memory_list does, so the two are one vocabulary", () => {
     /**
-     * Not a style assertion. A caller reads `person:sanju` off a listing or off a hit and hands it to
+     * Not a style assertion. A caller reads `person:sasha` off a listing or off a hit and hands it to
      * the other door; two names for one facet (`entity` here, `entity_ref` there) would make that a
      * lookup rather than a copy, and two SHAPES would make it a conversion.
      */
@@ -759,7 +759,10 @@ describe("the derived JSON Schema", () => {
      * my own" and must be served rather than refused at decode.
      */
     const limit = schemaFor("memory_neighbors").properties?.limit as JsonSchemaObject
-    expect(limit.anyOf).toEqual([{ type: "integer" }, { type: "null" }])
+    expect(limit.anyOf).toEqual([
+      { type: "integer", minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
+      { type: "null" }
+    ])
     expect(schemaFor("memory_neighbors").required ?? []).not.toContain("limit")
 
     const parameters = MemhtmlToolkit.tools.memory_neighbors.parametersSchema

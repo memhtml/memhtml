@@ -77,7 +77,7 @@ export interface SearchHit {
    */
   readonly snippet: string
   /**
-   * Every entity this memory carries, in `type:name` form, so `person:sanju` and never bare `sanju`.
+   * Every entity this memory carries, in `type:name` form, so `person:sasha` and never bare `sasha`.
    *
    * The form is a CONTRACT with the `entity` scope rather than a display choice. A value taken from
    * this array must be usable verbatim as the next search's `entity`, which makes a two-hop chain
@@ -384,8 +384,8 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
    * regardless of result size: fuse, hydrate, and (for `search`) one snippet fetch.
    *
    * **Two projections of `file_entities`, and the duplication is load-bearing.** The fold's cap is
-   * keyed on the entity NAME ALONE (`disclosure.ts:112`) so that one memory claiming `person:sanju`
-   * and `concept:sanju` counts once against the name it shares. A search hit publishes the FULL
+   * keyed on the entity NAME ALONE (`disclosure.ts:112`) so that one memory claiming `person:sasha`
+   * and `concept:sasha` counts once against the name it shares. A search hit publishes the FULL
    * `type:name` reference, because that string is the next hop's `entity` scope and the bare name is
    * ambiguous. Collapsing the two into one column would silently move the cap or break the chain,
    * and the first of those has no test that could see it as anything but a ranking wobble.

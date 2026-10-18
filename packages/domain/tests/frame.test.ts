@@ -6,7 +6,7 @@ import { frameKeyOf, frameOf, frameValueOf } from "../src/frame.js"
 /**
  * `frameKeyOf` as a PORT, which makes this file a fidelity oracle rather than a behavior spec.
  *
- * The first block is `memhtml-evals/src/adapter/consolidate.test.ts` VERBATIM — the same eight cases,
+ * The first block is `external-evals/src/adapter/consolidate.test.ts` VERBATIM — the same eight cases,
  * the same expected strings. That is deliberate and it is the point: the eval measured this rule
  * against all 8 MAB Conflict_Resolution rows, and if the port and the reference ever disagree, the
  * eval's number stops describing what memhtml ships. A divergence here must be resolved by fixing
@@ -48,7 +48,7 @@ describe("frameKeyOf — port fidelity against the eval reference", () => {
   })
 
   it("returns null for prose with no linking token", () => {
-    expect(frameKeyOf("Priya adopted a dog named Waffles")).toBeNull()
+    expect(frameKeyOf("Paula adopted a dog named Waffles")).toBeNull()
   })
 
   it("distinguishes different subjects sharing a frame shape", () => {
@@ -96,7 +96,7 @@ describe("frameKeyOf — the guards at their thresholds", () => {
   it("keys on the LAST linking token even when several are present", () => {
     // Greediness, stated directly rather than inferred from the MAB pair: four linking tokens, and
     // the key runs through the last one.
-    expect(frameKeyOf("The owner of the record in the table is Priya")).toBe(
+    expect(frameKeyOf("The owner of the record in the table is Paula")).toBe(
       "the owner of the record in the table is"
     )
   })

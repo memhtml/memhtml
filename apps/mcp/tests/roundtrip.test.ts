@@ -1608,7 +1608,7 @@ describe("a tool call through the toolkit layer", () => {
             },
             {
               title: "Wire null two, keying prose",
-              body: "The rollout owner is Priya.",
+              body: "The rollout owner is Paula.",
               memory_type: "semantic",
               workspace: "batch-conflict-null"
             },

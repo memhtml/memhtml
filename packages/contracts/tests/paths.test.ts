@@ -192,7 +192,7 @@ const placement = fc.record<PlacementInput>({
   memoryType: fc.constantFrom(...MEMORY_TYPES),
   entities: fc.array(
     fc.oneof(
-      fc.constant("person:sanju"),
+      fc.constant("person:sasha"),
       fc.constant("service:checkout-api"),
       segment.map((s) => `tool:${s}`)
     ),
@@ -238,17 +238,17 @@ describe("placementFor", () => {
   it("never routes into the people directory by entity: a person record is curation's, at an explicit path", () => {
     // A fact that names a person files where its other fields send it (2026-09-28): inside a run
     // resources/people/ is reserved, so routing there refused every fleet fact about a colleague.
-    expect(placementFor({ memoryType: "semantic", entities: ["person:sanju"] })).toBe(INBOX_DIR)
+    expect(placementFor({ memoryType: "semantic", entities: ["person:sasha"] })).toBe(INBOX_DIR)
     expect(
-      placementFor({ memoryType: "semantic", entities: ["person:laith", "project:hex-bonk"] })
+      placementFor({ memoryType: "semantic", entities: ["person:laura", "project:hex-bonk"] })
     ).toBe(INBOX_DIR)
     expect(
-      placementFor({ memoryType: "semantic", entities: ["person:laith"], workspace: "hex-bonk" })
+      placementFor({ memoryType: "semantic", entities: ["person:laura"], workspace: "hex-bonk" })
     ).toBe("projects/hex-bonk")
     expect(
-      placementFor({ memoryType: "semantic", entities: ["person:laith"], tags: ["reviews"] })
+      placementFor({ memoryType: "semantic", entities: ["person:laura"], tags: ["reviews"] })
     ).toBe("resources/reviews")
-    expect(placementFor({ memoryType: "episodic", entities: ["person:sanju"] })).toBe(INBOX_DIR)
+    expect(placementFor({ memoryType: "episodic", entities: ["person:sasha"] })).toBe(INBOX_DIR)
     // Nor by a tag that slugs to the plane's own name.
     expect(placementFor({ memoryType: "semantic", tags: ["People"] })).toBe(INBOX_DIR)
   })
@@ -256,9 +256,9 @@ describe("placementFor", () => {
   it("places a person record only where its explicit path says", () => {
     expect(
       placementFor({
-        path: `${PEOPLE_DIR}/sanju.html`,
+        path: `${PEOPLE_DIR}/sasha.html`,
         memoryType: "semantic",
-        entities: ["person:sanju"]
+        entities: ["person:sasha"]
       })
     ).toBe(PEOPLE_DIR)
   })

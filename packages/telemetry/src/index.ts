@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect"
-import type { HttpClient } from "effect/unstable/http"
+import type { HttpClient } from "effect/http"
 
 /**
  * The opt-in OTLP trace exporter, gated on `OTEL_EXPORTER_OTLP_ENDPOINT`.
@@ -11,7 +11,7 @@ import type { HttpClient } from "effect/unstable/http"
  * overrides the reference. This layer is that override, and the call sites need no changes: providing
  * it is the whole integration.
  *
- * The exporter is effect's own `OtlpTracer` from `effect/unstable/observability` rather than the
+ * The exporter is effect's own `OtlpTracer` from `effect/observability` rather than the
  * OpenTelemetry JS SDK. On the v4 line the OTLP client lives inside `effect` itself (JSON
  * serialization, batching, retry, flush-on-scope-close), so export adds ZERO dependencies —
  * `@effect/opentelemetry` and the `@opentelemetry/*` peer set exist for integrating an already-running
@@ -20,14 +20,14 @@ import type { HttpClient } from "effect/unstable/http"
 
 /** The two module graphs the exporter needs, loaded only when the endpoint is set. */
 export interface TelemetryModules {
-  readonly http: typeof import("effect/unstable/http")
-  readonly observability: typeof import("effect/unstable/observability")
+  readonly http: typeof import("effect/http")
+  readonly observability: typeof import("effect/observability")
 }
 
 const loadModules = async (): Promise<TelemetryModules> => {
   const [http, observability] = await Promise.all([
-    import("effect/unstable/http"),
-    import("effect/unstable/observability")
+    import("effect/http"),
+    import("effect/observability")
   ])
   return { http, observability }
 }

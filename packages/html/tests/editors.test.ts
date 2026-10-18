@@ -126,7 +126,7 @@ describe("addMeta — append a repeatable value", () => {
   })
 
   it("leaves the article bytes identical", () => {
-    const after = addMeta(FORMAT_MD_EXAMPLE, "memhtml-entity", "person:sanju")
+    const after = addMeta(FORMAT_MD_EXAMPLE, "memhtml-entity", "person:sasha")
     expect(articleRegion(after)).toBe(articleRegion(FORMAT_MD_EXAMPLE))
   })
 })

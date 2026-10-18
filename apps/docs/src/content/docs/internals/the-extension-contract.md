@@ -27,7 +27,7 @@ Placement reads the FIRST tag as a directory name and nothing more: a `semantic`
 
 ### The entity type vocabulary: `type:name`
 
-The SHAPE is fixed and the vocabulary is open. A reference is split at the first colon, the half before it is the type, and everything after is the name, which may itself contain colons (`packages/contracts/src/types.ts:117`). `file_entities` is keyed on `(type, name)`, which is why a scope takes the full `type:name` form and never a bare name: the bare name is ambiguous, and `person:sanju` and `concept:sanju` are two entities that share a spelling.
+The SHAPE is fixed and the vocabulary is open. A reference is split at the first colon, the half before it is the type, and everything after is the name, which may itself contain colons (`packages/contracts/src/types.ts:117`). `file_entities` is keyed on `(type, name)`, which is why a scope takes the full `type:name` form and never a bare name: the bare name is ambiguous, and `person:sasha` and `concept:sasha` are two entities that share a spelling.
 
 Nothing closes the type half. The write-time extraction assist offers seven types in its prompt, and downstream the store accepts any of them and anything else (`apps/cli/src/extraction.ts:52`).
 
