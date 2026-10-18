@@ -78,7 +78,10 @@ export const RESPONSE_TYPES = [
   // on one curator branch.
   "curate.collapse",
   // The head's vector cache (`docs/v2-poc.md`, "Vector arm"): `head embed` filling it.
-  "head.embedded"
+  "head.embedded",
+  // `memhtml config`: the store's effective policy (`memhtml.config.json`) and the process tuning
+  // variables, each value with where it came from.
+  "config.report"
 ] as const
 
 export type ResponseType = (typeof RESPONSE_TYPES)[number]
@@ -143,7 +146,15 @@ export const ERROR_CODES = [
   // `MEMHTML_SESSION` set. Those doors commit with no write bar, and the process has a session to
   // write through, so the call is refused before anything opens. A usage code: the fix is on the line
   // (`session exec` or `session put`), not in the store.
-  "ERR_SESSION_BOUND"
+  "ERR_SESSION_BOUND",
+  // A v1 door that creates a record was called with no session set, and the store's
+  // `memhtml.config.json` sets `v1Doors` to `closed`: records go in through sessions only. A usage
+  // code, like ERR_SESSION_BOUND: the fix is on the line (start a session and put through it).
+  "ERR_V1_DOOR_CLOSED",
+  // The store's `memhtml.config.json` exists and cannot be read or does not decode (an unknown key,
+  // a value of the wrong type, JSON that does not parse). Exit 1: the fix is in the store, and every
+  // command that needs the policy refuses rather than running under the library defaults.
+  "ERR_STORE_CONFIG"
 ] as const
 
 export type ErrorCode = (typeof ERROR_CODES)[number]

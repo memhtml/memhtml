@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage } from "node:http"
 import { createConnection } from "node:net"
 import { dirname } from "node:path"
 
-import type { InvalidMemory, ModelUnavailable } from "@memhtml/contracts/errors"
+import type { InvalidMemory, ModelUnavailable, StoreConfigInvalid } from "@memhtml/contracts/errors"
 import { StorageFailure } from "@memhtml/contracts/errors"
 import {
   advanceHead,
@@ -73,6 +73,7 @@ import {
   vectorsForQuery
 } from "./head-vectors.js"
 import { type CachedImage, cacheImage } from "./session-exec.js"
+import { loadStorePolicy } from "./store-config.js"
 import { execOverHead, loadHeadAt, preparePuts, qualifyRef, revParse } from "./v2.js"
 
 /**
@@ -117,19 +118,20 @@ import { execOverHead, loadHeadAt, preparePuts, qualifyRef, revParse } from "./v
  * fewer than {@link LATE_EMBEDS_MAX} are already finishing, or interrupted. The one left to finish
  * is what warms the connection the miss was waiting on.
  *
- * With an embedder and a cache, a timer issues one one-token query embed whenever no embed has
- * ended for `warmIdleMs` ({@link EMBED_WARM_IDLE_DEFAULT_MS}) and none is in flight, so the first
- * search after a quiet stretch finds the path through the LLM proxy to Bedrock warm. Every embed the
- * server makes (search, neighbors, late, warmup, and fill) moves the idle clock, so a busy server
- * never warms. The timer is a fiber in the server's scope, stopped with it.
+ * With an embedder, a cache, and `warmIdleMs` above 0 (`MEMHTML_EMBED_WARM_IDLE_MS`; off by
+ * default, {@link EMBED_WARM_IDLE_DEFAULT_MS}), a timer issues one one-token query embed whenever no
+ * embed has ended for `warmIdleMs` and none is in flight, so the first search after a quiet stretch
+ * finds the path through an LLM proxy whose connections idle out warm. Every embed the server makes
+ * (search, neighbors, late, warmup, and fill) moves the idle clock, so a busy server never warms.
+ * The timer is a fiber in the server's scope, stopped with it.
  *
  * ## The vectors it fills
  *
  * An advance that brings records the held cache has no vector for starts a background fill: the
  * missing records are embedded {@link BACKFILL_BATCH_MAX} at a time, off every request's path, and
  * written to the cache file the way `head embed` writes it, so the file and the held cache agree
- * and a restart keeps them. One fill runs at a time; a failed batch is retried on the next advance
- * or warmup tick.
+ * and a restart keeps them. One fill runs at a time; a failed batch is retried on the next advance,
+ * or the next warmup tick when the warmup runs, else the next poll.
  *
  * ## Exec
  *
@@ -234,11 +236,15 @@ export interface HeadServerInput {
   readonly embedDeadlineMs?: number | undefined
   /**
    * Idle milliseconds after which the server warms the embed path with a one-token embed; `0`
-   * turns the warmup off. Default {@link EMBED_WARM_IDLE_DEFAULT_MS}.
+   * turns the warmup off. Default {@link EMBED_WARM_IDLE_DEFAULT_MS}, which is off.
    */
   readonly warmIdleMs?: number | undefined
   /** The exec pool's worker entry; the sandbox runner unless a test hands in a stand-in. */
   readonly execWorkerPath?: string | undefined
+  /** Exec workers that run at once (`MEMHTML_EXEC_POOL_SIZE`); `defaultExecPoolSize()` when omitted. */
+  readonly execPoolSize?: number | undefined
+  /** Each exec worker's old-generation heap limit in MB (`MEMHTML_EXEC_WORKER_HEAP_MB`). */
+  readonly execWorkerHeapMb?: number | undefined
 }
 
 /** A running server, for the command arm and for tests. */
@@ -602,7 +608,11 @@ export const startHeadServer = (
     })
 
     const scope = yield* Effect.scope
-    const pool = yield* makeExecPool({ workerPath: input.execWorkerPath })
+    const pool = yield* makeExecPool({
+      workerPath: input.execWorkerPath,
+      size: input.execPoolSize,
+      heapMb: input.execWorkerHeapMb
+    })
     const advanceLock = yield* Semaphore.make(1)
     const snapshotLock = yield* Semaphore.make(1)
     const vectorLock = yield* Semaphore.make(1)
@@ -961,10 +971,17 @@ export const startHeadServer = (
     /** `/v1/exec`: the session's exec, run here over the version at its base, or declined. */
     const serveExec = (
       body: ExecRequest
-    ): Effect.Effect<ExecAnswer, GitFailure | InvalidMemory | StorageFailure> =>
+    ): Effect.Effect<
+      ExecAnswer,
+      GitFailure | InvalidMemory | StorageFailure | StoreConfigInvalid
+    > =>
       oneAtATime(
         body.id,
         Effect.gen(function* () {
+          // The store's policy, read per request so an edit of `memhtml.config.json` applies to the
+          // next exec with no restart; a file that does not decode is a 500, and the client's local
+          // fallback then refuses with ERR_STORE_CONFIG.
+          const { writeBar } = (yield* loadStorePolicy(root)).policy
           const session = yield* resumeSession({ root, id: body.id })
           const base = yield* execBase(session.baseSha)
           if ("unservable" in base) {
@@ -977,7 +994,8 @@ export const startHeadServer = (
             lang: body.lang,
             timeoutMs: body.timeoutMs,
             runtime: { runner: pool.runner(EXEC_QUEUE_WAIT_MS), baseImage: imageFor(base.version) },
-            runBound: body.runBound === true
+            runBound: body.runBound === true,
+            writeBar
           })
           return {
             served: true,
@@ -1119,6 +1137,7 @@ export const startHeadServer = (
         const body = yield* HttpServerRequest.schemaBodyJson(NeighborsRequest, {
           onExcessProperty: "error"
         })
+        const { writeBar } = (yield* loadStorePolicy(root)).policy
         const version = yield* versionAt(body.sha)
         const prepared = yield* preparePuts({
           base: version,
@@ -1127,7 +1146,8 @@ export const startHeadServer = (
           at: body.at,
           cache: servedVectors,
           embedder,
-          runBound: body.runBound === true
+          runBound: body.runBound === true,
+          writeBar
         })
         return json({ ...prepared, head: served(version) })
       }
@@ -1208,6 +1228,13 @@ export const startHeadServer = (
     if (pollMs > 0) {
       yield* fresh.pipe(
         Effect.andThen(heldVectors),
+        // With no warmup timer, a fill whose last batch failed is tried again on each poll. Suspended
+        // so each tick reads the fill's state then, not once when the loop was built.
+        Effect.andThen(
+          Effect.suspend(() =>
+            warmIdleMs > 0 || backfill.lastError === null ? Effect.void : startBackfill
+          )
+        ),
         Effect.catch((failure) =>
           Effect.logWarning(`head serve: poll of ${ref} failed (${failure._tag}); retrying`)
         ),

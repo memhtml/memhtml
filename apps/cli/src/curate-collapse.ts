@@ -1,11 +1,12 @@
 import { readFile } from "node:fs/promises"
 
-import type { HeadView, OverlayOp } from "@memhtml/contracts"
+import type { HeadView, OverlayOp, WriteBarPolicy } from "@memhtml/contracts"
 import {
   type DirtyTree,
   InvalidMemory,
   type ModelUnavailable,
-  StorageFailure
+  StorageFailure,
+  type StoreConfigInvalid
 } from "@memhtml/contracts/errors"
 import {
   ARCHIVE_CHUNK,
@@ -38,6 +39,7 @@ import { Effect } from "effect"
 import {
   bindTools,
   CURATE_SCOPE,
+  charterFor,
   curateRefProblem,
   headRefOf,
   land,
@@ -50,6 +52,7 @@ import {
   type SnapshotWritten,
   snapshotAfterCommit
 } from "./head-cache.js"
+import { loadStorePolicy } from "./store-config.js"
 import { type HeadStats, headStats, type LoadedHead, qualifyRef, revParse } from "./v2.js"
 
 /**
@@ -115,6 +118,11 @@ export interface CurateCollapseInput {
   readonly dryRun: boolean
   readonly maxSteps?: number | undefined
   readonly wallClockMs?: number | undefined
+  /**
+   * `--charter <file>`: an operator's own collapse charter in place of the shipped one, filled from
+   * the store's policy the same way (`renderCharter` in `@memhtml/curator`).
+   */
+  readonly charter?: string | undefined
   readonly now?: (() => Date) | undefined
 }
 
@@ -158,6 +166,8 @@ export interface CurateCollapseReport {
   readonly base: string
   readonly model: string
   readonly dryRun: boolean
+  /** The `--charter` file every fold was briefed under, or `null` for the shipped collapse charter. */
+  readonly charter: string | null
   readonly planSource: "computed" | "file"
   readonly planMs: number
   /** True when a loaded plan names another sha than the base; members are re-checked per cluster. */
@@ -355,6 +365,8 @@ interface Driver {
   readonly plan: CollapsePlan
   readonly heads: HeadCache
   readonly now: () => Date
+  /** The store's write bar (`memhtml.config.json`), read once for the collapse. */
+  readonly writeBar: WriteBarPolicy
 }
 
 const emptyOutcome = (
@@ -409,6 +421,7 @@ const landOps = (
       session,
       head: loaded,
       message,
+      writeBar: driver.writeBar,
       reload: driver.heads.at
     })
   })
@@ -444,7 +457,10 @@ const archiveCluster = (driver: Driver, cluster: CollapseCluster): Effect.Effect
             ops.push({ kind: "archive", path, to, html: record.html })
           }
           if (ops.length === 0) return
-          const violations = validateOps(loaded.view, ops, { scope: CURATE_SCOPE })
+          const violations = validateOps(loaded.view, ops, {
+            scope: CURATE_SCOPE,
+            writeBar: driver.writeBar
+          })
           if (violations.length > 0) {
             warnings.push(
               `chunk ${String(chunk)} refused: ${violations.slice(0, 5).map(describeViolation).join(" | ")}`
@@ -550,7 +566,10 @@ const followUp = (
         }
       }
       if (ops.length === 0) continue
-      const violations = validateOps(view, ops, { scope: CURATE_SCOPE })
+      const violations = validateOps(view, ops, {
+        scope: CURATE_SCOPE,
+        writeBar: driver.writeBar
+      })
       if (violations.length > 0) {
         return yield* Effect.fail(
           InvalidMemory.make({
@@ -628,7 +647,12 @@ const foldCluster = (
         force: true
       })
       const overlay = sessionOverlay(session)
-      const tools = bindTools({ head: loaded, overlay, ref: driver.ref })
+      const tools = bindTools({
+        head: loaded,
+        overlay,
+        ref: driver.ref,
+        writeBar: driver.writeBar
+      })
       const run = yield* runCurator({ tools, model, briefing, charter, budget, now: driver.now })
       const spent = {
         steps: run.steps,
@@ -695,7 +719,10 @@ const foldCluster = (
       }
       let extra = [...completion, ...links]
       if (extra.length > 0) {
-        const violations = validateOps(view, [...ops, ...extra], { scope: CURATE_SCOPE })
+        const violations = validateOps(view, [...ops, ...extra], {
+          scope: CURATE_SCOPE,
+          writeBar: driver.writeBar
+        })
         if (violations.length > 0) {
           results.warnings.push(
             `driver completion refused, landing the model's ops alone: ${violations.slice(0, 5).map(describeViolation).join(" | ")}`
@@ -707,7 +734,10 @@ const foldCluster = (
         }
       }
       const finalOps = overlay.ops()
-      const violations = validateOps(view, finalOps, { scope: CURATE_SCOPE })
+      const violations = validateOps(view, finalOps, {
+        scope: CURATE_SCOPE,
+        writeBar: driver.writeBar
+      })
       if (violations.length > 0) {
         return {
           ...base,
@@ -726,6 +756,7 @@ const foldCluster = (
         session: current,
         head: loaded,
         message: `fold ${cluster.id} into ${canonical} (${String(finalOps.filter((op) => op.kind === "archive").length)} archived)`,
+        writeBar: driver.writeBar,
         reload: driver.heads.at
       })
       results.commits.push(landed.sha)
@@ -832,6 +863,7 @@ export const curateCollapse = (
   | DirtyTree
   | ModelUnavailable
   | CuratorModelSpecInvalid
+  | StoreConfigInvalid
 > =>
   Effect.gen(function* () {
     const now = input.now ?? (() => new Date())
@@ -855,14 +887,26 @@ export const curateCollapse = (
         InvalidMemory.make({ reason: "curate collapse --concurrency must be a positive integer" })
       )
     }
+    // The store's policy, read once for the collapse: the bar every fold is judged and lands under,
+    // the planner's writer buckets and refused types, and what the collapse charter states.
+    const { policy } = yield* loadStorePolicy(input.root)
     const model = yield* curatorModel(input.model)
-    const charter = yield* COLLAPSE_CHARTER
+    const charter = yield* charterFor({ file: input.charter, shipped: COLLAPSE_CHARTER, policy })
 
     const heads = makeHeadCache(input.root)
     const base = yield* tipOf(input.root, ref)
     const loaded = yield* heads.at(base)
     const planStarted = Date.now()
-    const plan = input.plan ?? planCollapse(loaded.view, { rulings: input.rulings, now: now() })
+    const plan =
+      input.plan ??
+      planCollapse(loaded.view, {
+        rulings: input.rulings,
+        now: now(),
+        policy: {
+          writerBuckets: policy.curator.writerBuckets,
+          refusedTypes: [...policy.writeBar.refusedTypes.keys()]
+        }
+      })
     const planMs = input.plan === undefined ? Date.now() - planStarted : 0
 
     const executable = plan.clusters.filter((cluster) => cluster.kind !== "keep")
@@ -889,7 +933,7 @@ export const curateCollapse = (
         rationale: cluster.rationale
       }))
 
-    const driver: Driver = { root: input.root, ref, plan, heads, now }
+    const driver: Driver = { root: input.root, ref, plan, heads, now, writeBar: policy.writeBar }
     let clusters: ReadonlyArray<ClusterOutcome>
     if (input.dryRun) {
       clusters = selected.map((cluster) => emptyOutcome(cluster, "dry-run", Date.now()))
@@ -930,6 +974,7 @@ export const curateCollapse = (
       base,
       model: input.model,
       dryRun: input.dryRun,
+      charter: input.charter ?? null,
       planSource: input.plan === undefined ? "computed" : "file",
       planMs,
       planShaMismatch:

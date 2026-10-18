@@ -15,6 +15,15 @@ import {
 import { expandRoot } from "@memhtml/store"
 import { Config } from "effect"
 
+import {
+  EXEC_POOL_SIZE_DEFAULT_CAP,
+  EXEC_POOL_SIZE_MAX,
+  EXEC_POOL_SIZE_VAR,
+  EXEC_WORKER_HEAP_VAR,
+  WORKER_HEAP_MB,
+  WORKER_HEAP_MB_MAX,
+  WORKER_HEAP_MB_MIN
+} from "./exec-pool.js"
 import { EXTRACTION_MODEL_ID } from "./extraction.js"
 import {
   EMBED_DEADLINE_DEFAULT_MS,
@@ -75,9 +84,10 @@ export const refusesEnvRoot = (env: NodeJS.ProcessEnv = process.env): boolean =>
  * agent writes with `memhtml session exec <<'SH'` and never repeats an id, and the runtime commits
  * that one session when the run ends. Set, it does three things (`run.ts`): every `session` command
  * takes it as the default `--id`; `session put` and `session exec` start the session on first use
- * when the id came from here; and the v1 doors that create a record (`write`, `apply`, `correct`,
- * `task add`) refuse with `ERR_SESSION_BOUND`, because they commit straight to the store with no write
- * bar, and a process that has a session has a barred door to use instead.
+ * when the id came from here; and, under the store's `v1Doors` mode (`closed-in-session` by default,
+ * `memhtml.config.json`), the v1 doors that create a record (`write`, `apply`, `correct`, `task add`)
+ * refuse with `ERR_SESSION_BOUND`, because they commit straight to the store with no write bar, and
+ * a process that has a session has a barred door to use instead.
  *
  * Read from `process.env` directly, like {@link REFUSE_ENV_ROOT_VAR}: both refusal and default are
  * decided in `validate`, before any Effect runs. Blank is unset. `env` is a parameter so a test can
@@ -111,7 +121,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
     /** Imported rather than retyped: this row and the read in {@link sessionFromEnv} name one string. */
     name: SESSION_VAR,
     description:
-      "The v2 session this process writes through, for an agent runtime that exports it to every subprocess of a run. Set, every `session` command takes it as the default `--id`; `session put` and `session exec` start that session on refs/heads/main's tip on first use when the id came from here, so a run's first write needs no `session start`; and the v1 doors that create a record (`write`, `apply`, `correct`, `task add`) are refused with ERR_SESSION_BOUND at exit 2, because they commit with no write bar. Write through `memhtml session exec` (a heredoc on stdin) or `memhtml session put` instead, and let the runtime commit the session when the run ends. The other v1 commands, reads and edits of existing records alike, are unaffected. Blank is unset.",
+      "The v2 session this process writes through, for an agent runtime that exports it to every subprocess of a run. Set, every `session` command takes it as the default `--id`; `session put` and `session exec` start that session on refs/heads/main's tip on first use when the id came from here, so a run's first write needs no `session start`; and, unless the store's `memhtml.config.json` sets `v1Doors` to `open`, the v1 doors that create a record (`write`, `apply`, `correct`, `task add`, and the MCP server's `memory_write`, `memory_write_batch`, `memory_correct` when it carries the variable too) are refused with ERR_SESSION_BOUND at exit 2, because they commit with no write bar. Write through `memhtml session exec` (a heredoc on stdin) or `memhtml session put` instead, and let the runtime commit the session when the run ends. The other v1 commands, reads and edits of existing records alike, are unaffected. Blank is unset.",
     fallback: null
   },
   {
@@ -184,8 +194,18 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   },
   {
     name: EMBED_WARM_IDLE_VAR,
-    description: `Read by \`head serve\` only: after this many milliseconds with no embed ended and none in flight, the server issues one one-token query embed, so the first search after a quiet stretch finds the path through the LLM proxy to Bedrock warm. Every embed moves the clock, so a busy server never warms; \`0\` turns the warmup off. It runs only with an embedder bound and a vector cache held, and \`status\` counts it under \`embed.warmups\`. A malformed value is refused at exit 2 naming this variable.`,
+    description: `Read by \`head serve\` only. Off by default (\`0\`). Set to a whole number of milliseconds and, after that long with no embed ended and none in flight, the server issues one one-token query embed, so the first search after a quiet stretch finds a path through an LLM proxy that drops idle connections warm (\`45000\` keeps a pool with an idle timeout of a minute or more warm, at about 1,900 one-token embeds a day). Every embed moves the clock, so a busy server never warms. It runs only with an embedder bound and a vector cache held, and \`status\` counts it under \`embed.warmups\`. A malformed value is refused at exit 2 naming this variable.`,
     fallback: String(EMBED_WARM_IDLE_DEFAULT_MS)
+  },
+  {
+    name: EXEC_POOL_SIZE_VAR,
+    description: `Read by \`head serve\` only: how many \`/v1/exec\` sandbox workers run at once, a whole number from 1 to ${String(EXEC_POOL_SIZE_MAX)}. Unset, one per core the process may use less one for the server's thread, at least 1 and at most ${String(EXEC_POOL_SIZE_DEFAULT_CAP)} (\`os.availableParallelism()\`). Each running worker holds one seeded corpus and may grow to \`${EXEC_WORKER_HEAP_VAR}\`. A malformed value is refused at exit 2 naming this variable.`,
+    fallback: null
+  },
+  {
+    name: EXEC_WORKER_HEAP_VAR,
+    description: `Read by \`head serve\` only: the old-generation heap limit of each \`/v1/exec\` sandbox worker, in whole MB from ${String(WORKER_HEAP_MB_MIN)} to ${String(WORKER_HEAP_MB_MAX)}. A worker that passes it is stopped, its job fails with ERR_STORAGE, and the next job starts a new worker, so an allocation bomb never reaches the server's heap. A malformed value is refused at exit 2 naming this variable.`,
+    fallback: String(WORKER_HEAP_MB)
   },
   {
     name: MCP_HEAD_VAR,

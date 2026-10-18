@@ -14,6 +14,7 @@ import { USAGE_ERROR_CODES } from "../src/help.js"
 import { parseArgv, run, validate } from "../src/run.js"
 import { ensureSession } from "../src/v2.js"
 import { fakeEmbedder } from "./harness.js"
+import { writeStoreConfig } from "./strict-store.js"
 
 /**
  * `MEMHTML_SESSION`: the session an agent runtime hands every subprocess of one run. With it set, a
@@ -33,6 +34,9 @@ import { fakeEmbedder } from "./harness.js"
  *   with session.read).
  * - `v2.ts` `ensureSession`: drop the `catchIf` on `session.exists` / `session.locked` -> "two first
  *   uses at once start one session" (the loser fails with `session.locked`).
+ *
+ * The two write-bar cases run under a strict store's `memhtml.config.json` (`strict-store.ts`),
+ * because the anchor rule is store policy and the library's own bar requires none.
  */
 
 const VAR = "MEMHTML_SESSION"
@@ -245,6 +249,8 @@ describe("with MEMHTML_SESSION set", () => {
 
   it("refuses a put below the write bar in-turn, at exit 1, naming what to add", async () => {
     const repo = await corpus()
+    // The anchor rule is the store's policy; the library's own bar requires none.
+    await writeStoreConfig(repo.root, { commit: true })
     process.env[VAR] = "run-bare"
     const bare = `${JSON.stringify({ op: "write", title: "Bare", type: "semantic", body: "About nothing." })}\n`
     const result = await cli(repo.root, ["session", "put", "--file", "-", "--no-server"], bare)
@@ -276,6 +282,8 @@ describe("with MEMHTML_SESSION set", () => {
         Scope.provide(scope)
       )
     )
+    // Written and committed after the server started: it reads the policy per request, no restart.
+    await writeStoreConfig(repo.root, { commit: true })
     process.env[VAR] = "run-exec"
     const script = [
       "mkdir -p /mnt/memhtml/projects/hex-bonk",

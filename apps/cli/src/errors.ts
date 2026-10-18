@@ -1,3 +1,4 @@
+import { closedDoorRefusal, sessionDoorRefusal } from "./doors.js"
 import { type ErrorCode, type Failure, fail } from "./envelope.js"
 
 /**
@@ -83,6 +84,14 @@ export const codeFor = (error: unknown): ErrorCode => {
       return "ERR_INTEGRATION_MODIFIED"
     case "HeadServerRunning":
       return "ERR_HEAD_SERVER_RUNNING"
+    // The store's `memhtml.config.json` cannot be read or does not decode; every write that needs
+    // the policy refuses rather than running under defaults nobody chose.
+    case "StoreConfigInvalid":
+      return "ERR_STORE_CONFIG"
+    // A v1 record door the store's `v1Doors` closes: the session code when a run session closed it
+    // (the contract a runtime already branches on), the store's own code when `closed` did alone.
+    case "V1DoorClosed":
+      return typeof error.session === "string" ? "ERR_SESSION_BOUND" : "ERR_V1_DOOR_CLOSED"
     default:
       return "ERR_UNKNOWN"
   }
@@ -134,6 +143,15 @@ export const messageFor = (error: unknown): string => {
       return `a head server is already serving this store on ${text(error.socket) ?? "its socket"}${typeof error.pid === "number" ? ` (pid ${String(error.pid)}${text(error.ref) === undefined ? "" : `, following ${text(error.ref)}`}${text(error.sha) === undefined ? "" : ` at ${text(error.sha)}`})` : ""}: stop it with SIGTERM before starting another, or use it, since head status, head search, and session put already ask it first`
     case "IntegrationModified":
       return `${text(error.host) ?? "the host"} integration was modified since install at ${text(error.path) ?? "a managed path"}: ${text(error.detail) ?? "the receipt no longer matches"}`
+    case "StoreConfigInvalid":
+      return `the store's policy file ${text(error.path) ?? "memhtml.config.json"} is not usable, so nothing that needs the policy runs: ${text(error.reason) ?? "no reason given"}`
+    case "V1DoorClosed": {
+      const door = text(error.door) ?? "this command"
+      const session = text(error.session)
+      return session === undefined
+        ? closedDoorRefusal(door).error
+        : sessionDoorRefusal(door, session).error
+    }
     default:
       return `unexpected failure: ${error._tag}`
   }
@@ -223,7 +241,21 @@ export const SUGGESTIONS: Readonly<Record<string, SuggestionsFor>> = {
   IntegrationModified: (error) => [
     `memhtml integrations doctor ${text(error.host) ?? "<host>"}`,
     `memhtml integrations install ${text(error.host) ?? "<host>"} --force`
-  ]
+  ],
+  // `config` first: it names the file and, for a decodable one, every key and its source. The fix
+  // itself is an edit of the file, which no command makes.
+  StoreConfigInvalid: (error) => [
+    "memhtml config",
+    `fix or remove ${text(error.path) ?? "memhtml.config.json"}, then retry`
+  ],
+  // The session door that does the same job, for the door that was closed.
+  V1DoorClosed: (error) => {
+    const door = text(error.door) ?? "write"
+    const session = text(error.session)
+    return session === undefined
+      ? closedDoorRefusal(door).suggestions
+      : sessionDoorRefusal(door, session).suggestions
+  }
 }
 
 export const suggestionsFor = (error: unknown): ReadonlyArray<string> => {

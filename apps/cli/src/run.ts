@@ -1,3 +1,4 @@
+import { DEFAULT_V1_DOORS, type V1DoorMode } from "@memhtml/contracts"
 import { CURATOR_MODEL_VAR, DEFAULT_CURATOR_MODEL_ID, modelSpecOf } from "@memhtml/curator"
 import { DiscriminationFailed, type EvalMode, runDiscrimination } from "@memhtml/eval"
 import { isValidDatetime } from "@memhtml/html"
@@ -33,9 +34,11 @@ import {
   SESSION_VAR,
   sessionFromEnv
 } from "./config.js"
+import { configReport } from "./config-report.js"
 import { curateCollapse, readPlanFile, readRulingsFile } from "./curate-collapse.js"
 import { curateRefProblem, curateRun } from "./curate-run.js"
 import { doctor } from "./doctor.js"
+import { closedDoorRefusal, RECORD_CREATING_V1_COMMANDS, sessionDoorRefusal } from "./doors.js"
 import {
   API_VERSION,
   EXIT_OK,
@@ -51,6 +54,14 @@ import {
 import { failureFor } from "./errors.js"
 import { DEFAULT_TIMEOUT_MS, execCommand, MAX_TIMEOUT_MS, readScript } from "./exec.js"
 import { DEFAULT_EXEC_LANG, EXEC_LANGS, type ExecLang } from "./exec-lang.js"
+import {
+  EXEC_POOL_SIZE_MAX,
+  EXEC_POOL_SIZE_VAR,
+  EXEC_WORKER_HEAP_VAR,
+  parsePoolSetting,
+  WORKER_HEAP_MB_MAX,
+  WORKER_HEAP_MB_MIN
+} from "./exec-pool.js"
 import {
   EMBED_DEADLINE_VAR,
   EMBED_WARM_IDLE_VAR,
@@ -85,6 +96,7 @@ import * as ops from "./operations.js"
 import { publish } from "./publish.js"
 import { serveMcp } from "./serve.js"
 import { stateExport, stateImport } from "./state.js"
+import { guardV1Door, loadStorePolicy, v1DoorState } from "./store-config.js"
 import { qualifyRef, runV2 } from "./v2.js"
 import { indexReport } from "./views.js"
 
@@ -349,6 +361,7 @@ const dispatch = (
 
     case "write":
       return Effect.gen(function* () {
+        yield* guardV1Door("write")
         const result = yield* ops.writeMemory({
           title: str(parsed, "title") ?? "",
           // `claim` is "" exactly when `--article-html` supplied the article instead, which
@@ -378,6 +391,7 @@ const dispatch = (
      */
     case "apply":
       return Effect.gen(function* () {
+        yield* guardV1Door("apply")
         const result = yield* ops.batchWrite({
           ops: applyOps,
           continueOnError: bool(parsed, "continue-on-error", false),
@@ -431,6 +445,7 @@ const dispatch = (
 
     case "correct":
       return Effect.gen(function* () {
+        yield* guardV1Door("correct")
         const result = yield* ops.correctMemory({
           targetPath: parsed.positional[0] ?? "",
           title: str(parsed, "title") ?? "",
@@ -519,6 +534,7 @@ const dispatch = (
 
     case "task add":
       return Effect.gen(function* () {
+        yield* guardV1Door("task add")
         const title = str(parsed, "title") ?? ""
         const result = yield* ops.writeMemory({
           title,
@@ -955,91 +971,31 @@ const sessionIdOf = (
 }
 
 /**
- * The v1 doors that create a record. Each commits straight to the store through `@memhtml/store`,
- * and none runs the write bar `validateOps` holds every session to (`writeBarReasons` in
- * `@memhtml/session`), so a run narrative or a record naming nothing lands through any of them.
- * Edits of existing records (`link`, `archive`, `task status`, `reinforce`) create nothing the bar
- * judges and stay open.
+ * The v1 doors that create a record close by the store's `v1Doors` mode (`memhtml.config.json`;
+ * `doors.ts` holds the list and each refusal's text). Under `closed-in-session`, the library
+ * default, a process that carries a session (an agent runtime exports one to every subprocess of a
+ * run) has a door held to the write bar, and a v1 write beside it would land unjudged and outside
+ * the run's one commit; under `closed` the doors are shut with or without one; under `open` never.
+ * Refused as a usage error before anything opens, with the session command that does the same job
+ * as the suggestion.
+ *
+ * `doors` is the mode `run()` read from the store before validating, or `deferred` when it could
+ * not know the store yet (an injected layer with no `--repo`, or `MEMHTML_REFUSE_ENV_ROOT` with no
+ * `--repo`), in which case the record arm's own guard (`guardV1Door`) answers inside the layer.
  */
-/**
- * A `session put` suggestion that runs as written: `line` is one JSONL write line, piped on stdin.
- * Exported so a test decodes every suggested line with the decoder `session put` uses.
- */
-const putLine = (line: Record<string, string>): string =>
-  `printf '%s\\n' '${JSON.stringify({ op: "write", ...line })}' | memhtml session put --file -`
-
-export const RECORD_CREATING_V1_COMMANDS: ReadonlyMap<
-  string,
-  { readonly how: string; readonly suggestions: ReadonlyArray<string> }
-> = new Map([
-  [
-    "write",
-    {
-      how: "write the record as a session put line, or as a file under /mnt/memhtml from `memhtml session exec <<'SH'`",
-      suggestions: [
-        putLine({
-          title: "<title>",
-          type: "semantic",
-          body: "<the fact>",
-          entity: "project:<slug>"
-        }),
-        "memhtml help session exec"
-      ]
-    }
-  ],
-  [
-    "apply",
-    {
-      how: "`memhtml session put` reads the same write lines `apply` reads",
-      suggestions: [
-        "memhtml session put --file ops.jsonl",
-        putLine({ title: "<title>", type: "semantic", body: "<the fact>", entity: "system:<name>" })
-      ]
-    }
-  ],
-  [
-    "correct",
-    {
-      how: "write the corrected record under its own title with a `memhtml-supersedes` link to the old one, and move the old one under archive/<year>/, in one `memhtml session exec <<'SH'`",
-      suggestions: [
-        "memhtml help session exec",
-        putLine({
-          title: "<corrected title>",
-          type: "semantic",
-          body: "<the corrected fact>",
-          entity: "project:<slug>"
-        })
-      ]
-    }
-  ],
-  [
-    "task add",
-    {
-      how: 'a task is a session put write line with `"type":"task"`, anchored by a workspace or an entity',
-      suggestions: [
-        putLine({ title: "<task>", type: "task", body: "<what to do>", workspace: "<slug>" }),
-        "memhtml help session put"
-      ]
-    }
-  ]
-])
-
-/**
- * `MEMHTML_SESSION` closes the v1 doors that create a record. A process that carries a session (an
- * agent runtime exports one to every subprocess of a run) has a door held to the write bar, and a
- * v1 write beside it would land unjudged and outside the run's one commit. Refused as a usage error
- * before anything opens, with the session command that does the same job as the suggestion.
- */
-const sessionBoundRefusal = (parsed: Parsed): Failure | undefined => {
-  const instead = RECORD_CREATING_V1_COMMANDS.get(parsed.command)
-  if (instead === undefined) return undefined
-  const session = sessionFromEnv()
-  if (session === undefined) return undefined
-  return fail(
-    "ERR_SESSION_BOUND",
-    `${parsed.command} creates a record with no write bar, and ${SESSION_VAR} is set (${JSON.stringify(session)}), so this process writes through that session: ${instead.how}. The write bar judges each record as it is written and the session lands as one commit`,
-    instead.suggestions
-  )
+const sessionBoundRefusal = (
+  parsed: Parsed,
+  doors: V1DoorMode | "deferred"
+): Failure | undefined => {
+  if (doors === "deferred" || !RECORD_CREATING_V1_COMMANDS.has(parsed.command)) return undefined
+  const state = v1DoorState(doors, sessionFromEnv())
+  if (state.open) return undefined
+  if (state.session === null) {
+    const closed = closedDoorRefusal(parsed.command)
+    return fail("ERR_V1_DOOR_CLOSED", closed.error, closed.suggestions)
+  }
+  const bound = sessionDoorRefusal(parsed.command, state.session)
+  return fail("ERR_SESSION_BOUND", bound.error, bound.suggestions)
 }
 
 const headSnapshotFlags = (parsed: Parsed): Failure | undefined => {
@@ -1228,10 +1184,10 @@ const surplusArgs = (parsed: Parsed, spec: CommandSpec): Failure | undefined => 
 
 /**
  * The arms that resolve the repo root themselves, with no layer: `serve mcp` supervises a child over
- * it and `exec` mounts a worktree of it. For them an injected layer is not a door to the root, so
- * under {@link envRootRefusal} only `--repo` counts.
+ * it, `exec` mounts a worktree of it, and `config` reads its policy file. For them an injected layer
+ * is not a door to the root, so under {@link envRootRefusal} only `--repo` counts.
  */
-const ROOT_WITHOUT_LAYER: ReadonlySet<string> = new Set(["serve mcp", "exec"])
+const ROOT_WITHOUT_LAYER: ReadonlySet<string> = new Set(["serve mcp", "exec", "config"])
 
 /**
  * The v2 arms (`v2.ts`) resolve the root themselves too: every `session` and `head` command reads
@@ -1281,6 +1237,30 @@ const resolvesRootItself = (command: string): boolean =>
  * are exit 2 and both are fixed on the line; the repo question comes first because it is the one the
  * flag exists to ask.
  */
+/**
+ * The repo root a call names before any layer is built: `--repo`, else `MEMHTML_ROOT` (or the
+ * `~/memhtml` default) when the caller injected no layer and `MEMHTML_REFUSE_ENV_ROOT` allows the
+ * environment as a door. `undefined` when only a layer could say, which is the injector's statement
+ * of the root.
+ */
+const rootBeforeLayer = (
+  parsed: Parsed,
+  layer: Layer.Layer<DispatchServices> | undefined
+): string | undefined => {
+  const override = str(parsed, "repo")
+  if (override !== undefined && override.trim() !== "") return override.trim()
+  if (layer !== undefined || refusesEnvRoot()) return undefined
+  return Effect.runSync(
+    Effect.gen(function* () {
+      return yield* MemhtmlRoot
+    }).pipe(Effect.orElseSucceed(() => undefined))
+  )
+}
+
+/** True when `error` is a typed failure carrying `tag`. */
+const isTagged = (error: unknown, tag: string): boolean =>
+  typeof error === "object" && error !== null && (error as { _tag?: unknown })._tag === tag
+
 const envRootRefusal = (
   parsed: Parsed,
   layer: Layer.Layer<DispatchServices> | undefined
@@ -1356,7 +1336,7 @@ const vocabularyPositionals = (parsed: Parsed): Failure | undefined => {
  * error is exit 2 and a runtime error is exit 1, and a validator that emitted its own envelope would
  * have to know that too.
  */
-export const validate = (parsed: Parsed): Failure | undefined => {
+export const validate = (parsed: Parsed, options: ValidateOptions = {}): Failure | undefined => {
   const spec = COMMANDS.find((command) => command.name === parsed.command)
   if (spec === undefined) return unknownCommand(parsed)
   /**
@@ -1364,7 +1344,7 @@ export const validate = (parsed: Parsed): Failure | undefined => {
    * a missing `--host` and a misspelled one are both refused by `validateAgainst`, so by the time
    * {@link vocabularyPositionals} names a host in a suggestion, that host is real.
    */
-  const failure = validateAgainst(parsed, spec) ?? vocabularyPositionals(parsed)
+  const failure = validateAgainst(parsed, spec, options) ?? vocabularyPositionals(parsed)
   if (failure === undefined) return undefined
   /**
    * Every refusal of a KNOWN command ends with that command's help, appended here once rather than
@@ -1379,8 +1359,21 @@ export const validate = (parsed: Parsed): Failure | undefined => {
     : { ...failure, suggestions: [...failure.suggestions, pointer] }
 }
 
+/** What {@link validate} needs from outside the argv: the store's `v1Doors` mode, as `run()` read it. */
+export interface ValidateOptions {
+  /**
+   * The mode the record doors are judged under; `deferred` skips the door here (the arm's guard
+   * answers inside the layer). {@link DEFAULT_V1_DOORS} when omitted, the library's default.
+   */
+  readonly doors?: V1DoorMode | "deferred" | undefined
+}
+
 /** The per-command rules, in order. Nothing here touches a service. */
-const validateAgainst = (parsed: Parsed, spec: CommandSpec): Failure | undefined => {
+const validateAgainst = (
+  parsed: Parsed,
+  spec: CommandSpec,
+  options: ValidateOptions
+): Failure | undefined => {
   /**
    * Flags are validated against THIS command's spec plus the true globals, not the union of every
    * command's flags. A flag that is valid somewhere else is still a usage error here: an agent that
@@ -1419,7 +1412,7 @@ const validateAgainst = (parsed: Parsed, spec: CommandSpec): Failure | undefined
   // Before the presence rules: a closed door is the answer whatever else the call is missing, and a
   // session command that names no session (no `--id`, no `MEMHTML_SESSION`) says so before it
   // names any other flag it lacks, as it did when `--id` was a required flag in the table.
-  const bound = sessionBoundRefusal(parsed)
+  const bound = sessionBoundRefusal(parsed, options.doors ?? DEFAULT_V1_DOORS)
   if (bound !== undefined) return bound
   const sessionId = sessionIdFlag(parsed)
   if (sessionId !== undefined) return sessionId
@@ -1677,7 +1670,25 @@ export const run = async (
 
   if (parsed.command === "") return emit(succeed("cli.manifest", buildManifest()), EXIT_OK)
 
-  const invalid = validate(parsed)
+  /**
+   * The store's `v1Doors` mode, read before validating so a closed record door answers before
+   * anything opens and before the call's other usage errors. Read only for the record doors, and
+   * only when the root is known without a layer: `--repo`, or the environment when the caller
+   * injected none and `MEMHTML_REFUSE_ENV_ROOT` allows it. Otherwise it is deferred to the arm's
+   * guard, which reads the root the layer states. A file that does not decode refuses the write here,
+   * at exit 1, naming the file.
+   */
+  let doors: V1DoorMode | "deferred" = "deferred"
+  if (RECORD_CREATING_V1_COMMANDS.has(parsed.command)) {
+    const root = rootBeforeLayer(parsed, layer)
+    if (root !== undefined) {
+      const loaded = await Effect.runPromise(Effect.result(loadStorePolicy(root)))
+      if (loaded._tag === "Failure") return emit(failureFor(loaded.failure), EXIT_RUNTIME)
+      doors = loaded.success.policy.v1Doors
+    }
+  }
+
+  const invalid = validate(parsed, { doors })
   if (invalid !== undefined) return emit(invalid, EXIT_USAGE)
 
   /**
@@ -1951,6 +1962,26 @@ export const run = async (
    * The script is read here rather than in `runExec`, so a missing or empty script is exit 2 like every
    * other input error. `runExec` takes source, never a path.
    */
+  /**
+   * `config` builds no layer either: it reads the store's policy file and the environment, and a
+   * store whose index was never built still has a policy to show. A file that does not decode is
+   * the same `ERR_STORE_CONFIG` every command reading it answers, at exit 1.
+   */
+  if (parsed.command === "config") {
+    const override = str(parsed, "repo")
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const configured = yield* MemhtmlRoot
+        const root = override !== undefined && override.trim() !== "" ? override.trim() : configured
+        return yield* configReport(root)
+      }).pipe(
+        Effect.map((report) => emit(succeed("config.report", report), EXIT_OK)),
+        Effect.catch((error) => Effect.succeed(emit(failureFor(error), EXIT_RUNTIME))),
+        Effect.provideService(Logger.LogToStderr, true)
+      )
+    )
+  }
+
   if (parsed.command === "exec") {
     const inline = str(parsed, "script")
     // `-` names stdin in both spellings: the positional and `--file -`. Neither is a path.
@@ -2098,10 +2129,41 @@ export const run = async (
       if ("refused" in deadline) return deadline.refused
       embedDeadlineMs = deadline.ms
     }
+    /**
+     * `MEMHTML_EXEC_POOL_SIZE` and `MEMHTML_EXEC_WORKER_HEAP_MB` for `head serve`: a whole number in
+     * the variable's range, unset for the default, and a malformed value refused at exit 2 naming
+     * the variable.
+     */
+    const poolSettingFromEnv = (
+      name: string,
+      min: number,
+      max: number
+    ): { readonly value: number | undefined } | { readonly refused: RunResult } => {
+      const raw = process.env[name]
+      if (raw === undefined || raw.trim() === "") return { value: undefined }
+      const setting = parsePoolSetting(raw, min, max)
+      if (setting.ok) return { value: setting.value }
+      return {
+        refused: emit(
+          fail("ERR_INVALID_FLAG", `${name}=${JSON.stringify(raw)}: ${setting.reason}`, [
+            `${name}=${String(min)} memhtml ${parsed.command}`
+          ]),
+          EXIT_USAGE
+        )
+      }
+    }
+    let execPoolSize: number | undefined
+    let execWorkerHeapMb: number | undefined
     if (parsed.command === "head serve") {
       const idle = msFromEnv(EMBED_WARM_IDLE_VAR)
       if ("refused" in idle) return idle.refused
       warmIdleMs = idle.ms
+      const size = poolSettingFromEnv(EXEC_POOL_SIZE_VAR, 1, EXEC_POOL_SIZE_MAX)
+      if ("refused" in size) return size.refused
+      execPoolSize = size.value
+      const heap = poolSettingFromEnv(EXEC_WORKER_HEAP_VAR, WORKER_HEAP_MB_MIN, WORKER_HEAP_MB_MAX)
+      if ("refused" in heap) return heap.refused
+      execWorkerHeapMb = heap.value
     }
 
     /**
@@ -2185,7 +2247,9 @@ export const run = async (
             pollMs: int(parsed, "poll-ms"),
             embedder: yield* resolveEmbedder,
             embedDeadlineMs,
-            warmIdleMs
+            warmIdleMs,
+            execPoolSize,
+            execWorkerHeapMb
           })
           return ["head.served", data] as const
         }
@@ -2197,7 +2261,8 @@ export const run = async (
             maxSteps: int(parsed, "max-steps"),
             wallClockMs: int(parsed, "wall-clock-ms"),
             dryRun: bool(parsed, "dry-run", false),
-            resume: bool(parsed, "resume", false)
+            resume: bool(parsed, "resume", false),
+            charter: str(parsed, "charter")
           })
           return ["curate.run", data] as const
         }
@@ -2222,7 +2287,8 @@ export const run = async (
             limit: int(parsed, "limit"),
             dryRun: bool(parsed, "dry-run", false),
             maxSteps: int(parsed, "max-steps"),
-            wallClockMs: int(parsed, "wall-clock-ms")
+            wallClockMs: int(parsed, "wall-clock-ms"),
+            charter: str(parsed, "charter")
           })
           return ["curate.collapse", data] as const
         }
@@ -2296,7 +2362,13 @@ export const run = async (
 
   const program = dispatch(parsed, applyOps).pipe(
     Effect.map(([type, data, exitCode]) => emit(succeed(type, data), exitCode ?? EXIT_OK)),
-    Effect.catch((error) => Effect.succeed(emit(failureFor(error), EXIT_RUNTIME))),
+    // A closed record door is a usage error wherever it is found: the arm's guard raises it inside
+    // the layer only when `run()` could not read the mode before validating.
+    Effect.catch((error) =>
+      Effect.succeed(
+        emit(failureFor(error), isTagged(error, "V1DoorClosed") ? EXIT_USAGE : EXIT_RUNTIME)
+      )
+    ),
     // A defect is still an answer. An unexpected throw anywhere below would otherwise reach the
     // process as an unhandled rejection and print a stack trace onto stdout. Stdout is a parse
     // target, so it carries the envelope and nothing else.
@@ -2324,4 +2396,5 @@ export const run = async (
 }
 
 /** The envelope's api version, re-exported so a caller can assert on it without a second import. */
-export { API_VERSION }
+/** The record-creating door table, re-exported from `doors.ts` for the tests that read it here. */
+export { API_VERSION, RECORD_CREATING_V1_COMMANDS }

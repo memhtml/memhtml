@@ -70,6 +70,7 @@ export {
   type GuideBlock
 } from "./commands.js"
 export { CONFIG_VARS, type ConfigVar, MemhtmlRoot, TraceRoot } from "./config.js"
+export { configReport, type ProcessSetting, processTuning } from "./config-report.js"
 export {
   type ClusterOutcome,
   type ClusterOutcomeKind,
@@ -105,6 +106,7 @@ export {
   recordView,
   sessionOverlay
 } from "./curate-run.js"
+export { closedDoorRefusal, RECORD_CREATING_V1_COMMANDS, sessionDoorRefusal } from "./doors.js"
 export {
   API_VERSION,
   ERROR_CODES,
@@ -229,6 +231,16 @@ export {
 } from "./replay.js"
 export { type Parsed, parseArgv, type RunResult, run } from "./run.js"
 export { MCP_BIN_VAR, mcpEntryPoint, type ServeResult, serveMcp } from "./serve.js"
+export {
+  type ConfigEntry,
+  type ConfigTracking,
+  guardV1Door,
+  type LoadedStorePolicy,
+  loadStorePolicy,
+  storeConfigPath,
+  storeConfigReport,
+  v1DoorState
+} from "./store-config.js"
 export {
   type CurateMerged,
   curateMerge,
