@@ -949,6 +949,11 @@ export const sessionExec = (input: {
  *
  * `rebase-needed` is returned, not retried: the caller decides whether to `session rebase` and try
  * again, because a rebase can turn the outcome into `refused` and that is a decision, not a retry.
+ *
+ * A log with no ops and no `pending` commit to settle has nothing to land: it is answered `refused`
+ * with no violations and nothing dropped, and nothing is touched (no commit, no log write, no
+ * snapshot). `committed` always names a commit that was made, here or by an earlier call this one
+ * recovered; the `--drop-refused` rounds stop at an empty log the same way.
  */
 export const commitOverHead = (input: {
   readonly session: Session
@@ -964,13 +969,16 @@ export const commitOverHead = (input: {
     let session = input.session
     const scope = sessionScopeOf(session.ref)
     const dropped: Array<DroppedOp> = []
-    let outcome: CommitOutcome = yield* commitSession({
-      session,
-      head: input.base,
-      message: input.message,
-      scope,
-      writeBar: input.writeBar
-    })
+    let outcome: CommitOutcome =
+      session.ops.length === 0 && session.pending === undefined
+        ? { kind: "refused", violations: [] }
+        : yield* commitSession({
+            session,
+            head: input.base,
+            message: input.message,
+            scope,
+            writeBar: input.writeBar
+          })
     // Each round drops what the refusal names and commits again. An op that only failed because
     // an op it depended on was dropped (a link from a dropped put) is named by the next round, so
     // the loop ends at a clean log, an empty one, or a refusal no op carries (the batch cap).

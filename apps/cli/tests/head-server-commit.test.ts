@@ -56,6 +56,8 @@ import { writeStoreConfig } from "./strict-store.js"
  *   and without the flag answers rebase-needed as before" (all six plain commits land).
  * - `head-server.ts` `serveCommit`: answer the last round's `dropped` alone -> "reports the ops an
  *   early round dropped" (`dropped` is empty).
+ * - `v2.ts` `commitOverHead`: commit a log with no ops instead of answering `refused` -> "a commit
+ *   of a log with no ops ... touches nothing" (main gains an empty `memhtml(session)` commit).
  */
 
 const run_ = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
@@ -654,6 +656,41 @@ describe("the head server's rebase rounds under --drop-refused", () => {
       paths: [fresh],
       dropped: [{ kind: "put", path: twin }]
     })
+  }, 60_000)
+})
+
+describe("a commit of a log with no ops", () => {
+  it("is answered refused with no violations and touches nothing, here and through the server, with or without --drop-refused", async () => {
+    const repo = await corpus()
+    const before = await mainOf(repo)
+    await start(repo.root, "empty")
+    const log = await readFile(sessionStateFile(repo.root, "empty"), "utf8")
+    const nothing = {
+      id: "empty",
+      kind: "refused",
+      violations: [],
+      snapshot: null,
+      dropped: [],
+      rebased: 0
+    }
+    const touchedNothing = async () => {
+      expect(await mainOf(repo)).toBe(before)
+      expect(await readFile(sessionStateFile(repo.root, "empty"), "utf8")).toBe(log)
+      expect(await exists(snapshotPathFor(repo.root, before))).toBe(false)
+    }
+    for (const dropRefused of [false, true]) {
+      const local = await commitCli(repo.root, "empty", { local: true, dropRefused })
+      expect(local.exitCode, JSON.stringify(local.body)).toBe(0)
+      expect(dataOf(local.body)).toMatchObject({ ...nothing, via: "local" })
+      await touchedNothing()
+    }
+    await serve(repo.root)
+    for (const dropRefused of [false, true]) {
+      const served = await commitCli(repo.root, "empty", { dropRefused })
+      expect(served.exitCode, JSON.stringify(served.body)).toBe(0)
+      expect(dataOf(served.body)).toMatchObject({ ...nothing, via: "server" })
+      await touchedNothing()
+    }
   }, 60_000)
 })
 
