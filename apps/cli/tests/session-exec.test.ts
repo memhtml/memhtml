@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
-import { readdir } from "node:fs/promises"
+import { mkdtemp, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import type { HeadView, MemoryRecord, OverlayOp } from "@memhtml/contracts"
 import { frameKeyOf } from "@memhtml/domain"
@@ -167,10 +168,23 @@ console.log(JSON.stringify({ seen: memories.size, claim: memories.get("/areas/in
 
   let report: SessionExecReport
   let pinsBefore: ReadonlyArray<string>
+  let pinsAfter: ReadonlyArray<string>
 
   beforeAll(async () => {
-    pinsBefore = await pinDirs()
-    report = await runScript(script)
+    // The run gets a TMPDIR of its own, so the pin listing sees only what this run made: sibling
+    // suites running `memhtml exec` at the same time pin under the same prefix in the shared temp dir.
+    const privateTmp = await mkdtemp(join(tmpdir(), "memhtml-session-exec-tmp-"))
+    const saved = process.env.TMPDIR
+    process.env.TMPDIR = privateTmp
+    try {
+      pinsBefore = await pinDirs()
+      report = await runScript(script)
+      pinsAfter = await pinDirs()
+    } finally {
+      if (saved === undefined) delete process.env.TMPDIR
+      else process.env.TMPDIR = saved
+      await rm(privateTmp, { recursive: true, force: true })
+    }
   }, 120_000)
 
   it("runs the script to completion against a corpus read through the preloaded helper", () => {
@@ -241,12 +255,12 @@ console.log(JSON.stringify({ seen: memories.size, claim: memories.get("/areas/in
   /**
    * No `git worktree add`, no `mkdtemp`: the snapshot-pin prefix `memhtml exec` uses is what a
    * worktree pin would leave under the OS temp dir, and the set of those entries is unchanged.
-   * Filtered to that prefix rather than the whole listing because sibling suites in the same vitest
-   * run create their own temp directories concurrently, and a whole-listing comparison would report
-   * their work as this runtime's.
+   * The run had a TMPDIR of its own (the `beforeAll` above), because sibling suites in the same
+   * vitest run pin under this prefix in the shared temp dir at the same time, and a listing there
+   * would report their work as this runtime's.
    */
-  it("made no snapshot-pin directory under os.tmpdir()", async () => {
-    expect(await pinDirs()).toEqual(pinsBefore)
+  it("made no snapshot-pin directory under os.tmpdir()", () => {
+    expect(pinsAfter).toEqual(pinsBefore)
   })
 })
 
