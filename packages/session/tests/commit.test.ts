@@ -1,16 +1,19 @@
 import { execFileSync } from "node:child_process"
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { checkMemory, contentHash, parseMemory } from "@memhtml/html"
 import { Effect, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { commitMessage, commitSession, commitSubject } from "../src/commit.js"
+import { makePlumbing } from "../src/plumbing.js"
 import {
   appendOps,
   rebaseSession,
   resumeSession,
-  sessionRef,
+  SESSION_REFS_PREFIX,
+  SESSIONS_DIR,
   sessionStateFile,
   startSession
 } from "../src/session.js"
@@ -32,6 +35,8 @@ import {
  *
  * Mutation notes, one per guard, each run once with the change applied and the named test red:
  * - step 0: `isAncestor` result treated as false -> "a commit killed after the swap is recovered".
+ *   (The step-0 rollback, the intent written before the checkout moves, and the checkout lock are
+ *   mutation-noted in `checkout.test.ts`, which drives each at its exact step.)
  * - step 1: `if (violations.length > 0)` -> `if (false)` -> "refuses ... and writes nothing".
  * - step 1 scope: `validateOps(head, session.ops)` with no scope -> "the curate scope lands an
  *   areas/arcs/ file that the session scope refuses" (the curator's commit is `refused`).
@@ -46,11 +51,14 @@ import {
  * - stage label: the `label` case left out of `stage` -> "a label and an unlabel edit the head's
  *   copy, and an archive after them carries both" (alpha on main lacks the new entity); the
  *   `unlabel` case left out -> the same test (the dropped entity is still on the archived copy).
- * - step 5: drop the `dirtyPaths` check -> "refuses to move a checked-out ref over ...".
- * - step 5: drop `readTreeIntoWorktree` -> "a checked-out ref follows ..." and "a v1-style commit
- *   from the shared index keeps ...".
- * - step 6: treat `raced` as `updated` -> "ref race between validation and update".
- * - step 7: drop the `sessionRef` update -> "sets refs/memhtml/sessions/<id>".
+ * - step 6 (`landOnRef`): drop the `dirtyPaths` check -> "refuses to move a checked-out ref over ...".
+ * - step 6 (`landOnRef`): drop `readTreeIntoWorktree` -> "a checked-out ref follows ..." and "a
+ *   v1-style commit from the shared index keeps ...".
+ * - step 6 (`landOnRef`): its first check (`tip !== input.expected`) dropped -> "ref race between
+ *   validation and update" stays green (the swap still loses and rolls back), so that check is
+ *   mutation-noted in `checkout.test.ts`, with the lost swap itself.
+ * - step 4: stage through `make(undefined)` instead of the temporary index -> "keeps no state but
+ *   the log" fails at once (the staging calls refuse with no index file).
  * - lock: `withSessionLock` runs `effect` without taking the lock -> "two commits of one session".
  */
 
@@ -145,12 +153,11 @@ describe("commitSession", () => {
     )
   })
 
-  it("sets refs/memhtml/sessions/<id> to the commit, and moves it on a second commit", async () => {
+  it("keeps no state but the log: no index file, no ref, and the trailer names the session", async () => {
     const { root, head } = await seeded()
     const s1 = await start(root, "prov", head, [putOp("areas/inbox/b.html", memory("B", "B one."))])
     const first = await run(commitSession({ session: s1, head, message: "one" }))
     if (first.kind !== "committed") throw new Error(first.kind)
-    expect(await commitOf(root, sessionRef("prov"))).toBe(first.sha)
     const again = await run(
       appendOps(await run(resumeSession({ root, id: "prov" })), [
         putOp("areas/inbox/c.html", memory("C", "C one."))
@@ -160,7 +167,17 @@ describe("commitSession", () => {
       commitSession({ session: again, head: await loadHead(root), message: "two" })
     )
     if (second.kind !== "committed") throw new Error(second.kind)
-    expect(await commitOf(root, sessionRef("prov"))).toBe(second.sha)
+    // Two commits leave the log and nothing else under the sessions directory: the temporary index
+    // each staged through is gone, and no provenance ref was written.
+    expect((await readdir(join(root, SESSIONS_DIR))).sort()).toEqual(["prov.json"])
+    expect(await git(root, ["for-each-ref", SESSION_REFS_PREFIX])).toBe("")
+    expect(
+      await git(root, ["log", "--format=%(trailers:key=Memhtml-Session,valueonly)", "-2"])
+    ).toBe("prov\n\nprov")
+    // And none was left in the temp dir either.
+    expect(
+      (await readdir(tmpdir())).filter((name) => name.startsWith("memhtml-commit-index-"))
+    ).toEqual([])
   })
 
   it("refuses a batch with a violation and writes nothing", async () => {
@@ -175,7 +192,6 @@ describe("commitSession", () => {
       violations: [{ kind: "reserved-path", path: "areas/arcs/reserved.html" }]
     })
     expect(await commitOf(root, "refs/heads/main")).toBe(base)
-    await expect(commitOf(root, sessionRef("bad"))).rejects.toThrow()
   })
 
   it("the curate scope lands an areas/arcs/ file that the session scope refuses", async () => {
@@ -632,7 +648,7 @@ describe("commitSession", () => {
   it("ref race between validation and update: rebase-needed with the ref's new value", async () => {
     const { root, base, head } = await seeded()
     // The intruder commit shares the base tree, so its diff is empty and step 2 finds no overlap:
-    // only the compare-and-swap can see it.
+    // only step 6, which reads the ref again under the checkout lock, can see it.
     const intruder = execFileSync(
       "git",
       ["-C", root, "commit-tree", `${base}^{tree}`, "-p", base, "-m", "intruder"],
@@ -640,7 +656,7 @@ describe("commitSession", () => {
     ).trim()
     let moved = 0
     head.onByFrameKey = () => {
-      // Step 3 runs after step 2's revParse and before step 5's updateRef.
+      // Step 3 runs after step 2's revParse and before step 6.
       if (moved++ === 0)
         execFileSync("git", ["-C", root, "update-ref", "refs/heads/main", intruder, base])
     }
@@ -654,7 +670,6 @@ describe("commitSession", () => {
     expect(moved).toBe(1)
     expect(outcome).toEqual({ kind: "rebase-needed", overlapping: [], mainSha: intruder })
     expect(await commitOf(root, "refs/heads/main")).toBe(intruder)
-    await expect(commitOf(root, sessionRef("race"))).rejects.toThrow()
     // The session keeps its ops for the retry, carries no pending commit, and the checkout was
     // rolled back to the ref's value: the raced tree is not on disk.
     const resumed = await run(resumeSession({ root, id: "race" }))
@@ -692,7 +707,6 @@ describe("commitSession", () => {
     const resumed = await run(resumeSession({ root, id: "kill" }))
     expect(resumed).toMatchObject({ baseSha: first.sha, ops: [] })
     expect(resumed.pending).toBeUndefined()
-    expect(await commitOf(root, sessionRef("kill"))).toBe(first.sha)
     expect(await git(root, ["rev-list", "--count", "main"])).toBe("2")
   })
 
@@ -704,8 +718,7 @@ describe("commitSession", () => {
     const blob = await git(root, ["hash-object", "-w", "--stdin"], html)
     const orphan = await run(
       Effect.gen(function* () {
-        const { plumbingFor } = yield* Effect.promise(() => import("../src/session.js"))
-        const plumbing = plumbingFor(root, "orphan-tree")
+        const plumbing = makePlumbing({ root, indexFile: join(root, ".git", "orphan-tree.idx") })
         yield* plumbing.readTree(base)
         yield* plumbing.updateIndexAdd([
           { mode: "100644", sha: blob, path: "areas/inbox/orphan.html" }
@@ -812,25 +825,9 @@ describe("commitSession", () => {
     // Nothing moved: not the ref, not the checkout, not the log.
     expect(await commitOf(root, "refs/heads/main")).toBe(base)
     expect(await readFile(join(root, "areas/inbox/new.html"), "utf8")).toBe("<!-- a draft -->\n")
-    await expect(commitOf(root, sessionRef("clash"))).rejects.toThrow()
     const resumed = await run(resumeSession({ root, id: "clash" }))
     expect(resumed.ops).toHaveLength(2)
     expect(resumed.pending).toBeUndefined()
-  })
-
-  it("a blocked provenance ref does not fail a commit that landed", async () => {
-    const { root, head } = await seeded()
-    // A ref UNDER the session's provenance name makes that name unwritable (directory/file clash).
-    await git(root, ["update-ref", `${sessionRef("prov-blocked")}/child`, head.sha])
-    const session = await start(root, "prov-blocked", head, [
-      putOp("areas/inbox/pb.html", memory("PB", "Provenance is a best effort."))
-    ])
-    const outcome = await run(commitSession({ session, head, message: "pb" }))
-    expect(outcome.kind).toBe("committed")
-    if (outcome.kind !== "committed") return
-    expect(await commitOf(root, "refs/heads/main")).toBe(outcome.sha)
-    await expect(commitOf(root, sessionRef("prov-blocked"))).rejects.toThrow()
-    expect((await run(resumeSession({ root, id: "prov-blocked" }))).baseSha).toBe(outcome.sha)
   })
 
   it("creates a curator ref that does not exist yet", async () => {

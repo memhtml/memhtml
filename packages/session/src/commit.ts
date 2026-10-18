@@ -1,25 +1,24 @@
-import type { HeadView, OverlayOp } from "@memhtml/contracts"
-import { isEdgeRel, pathToHref, type StorageFailure } from "@memhtml/contracts"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import type { CheckoutLockOptions, HeadView, OverlayOp } from "@memhtml/contracts"
+import { CHECKOUT_LOCKED, isEdgeRel, pathToHref, StorageFailure } from "@memhtml/contracts"
 import { frameKeyOf } from "@memhtml/domain"
 import { addLink, addMeta, parseMemory, removeLink, removeMeta, setMeta } from "@memhtml/html"
 import { Effect } from "effect"
 
+import { withCheckoutLock } from "./checkout-lock.js"
 import type { GitFailure } from "./errors.js"
-import {
-  plumbingFor,
-  requireLogUnmoved,
-  type Session,
-  saveSessionLocked,
-  sessionRef,
-  withSessionLock
-} from "./session.js"
+import { makePlumbing, type Plumbing } from "./plumbing.js"
+import { requireLogUnmoved, type Session, saveSessionLocked, withSessionLock } from "./session.js"
 import { type CommitScope, touchedPaths, type Violation, validateOps } from "./validate.js"
 
 export type { CommitScope } from "./validate.js"
 
 /**
- * The commit path. Mechanical, no model call: validate, check disjointness against the ref,
- * check frame-key conflicts, write blobs, write a tree, commit, compare-and-swap the ref.
+ * The commit path. Mechanical, no model call: validate, check the ref against the validated version,
+ * check frame-key conflicts, write blobs, write a tree, commit, record the intent, then move the
+ * checkout and compare-and-swap the ref under the checkout lock.
  */
 
 export type CommitOutcome =
@@ -213,56 +212,217 @@ const markContradictions = (
 
 const utf8 = new TextEncoder()
 
-/** Move the provenance ref to `commit`, creating it or advancing it; a failure is logged, not raised. */
-const recordProvenance = (
-  git: ReturnType<typeof plumbingFor>,
-  id: string,
-  commit: string
-): Effect.Effect<void> =>
-  git.updateRef(sessionRef(id), commit, null).pipe(
-    Effect.flatMap((outcome) =>
-      outcome === "raced"
-        ? git
-            .revParse(sessionRef(id))
-            .pipe(Effect.flatMap((old) => git.updateRef(sessionRef(id), commit, old)))
-        : Effect.succeed(outcome)
+/**
+ * How a commit gets its plumbing: called with the index file the staging calls use (a commit's own
+ * temporary file), or `undefined` for the calls that stage nothing. The default is
+ * `makePlumbing({ root, indexFile })`; a test wraps it to act at one exact step of the sequence (a v1
+ * commit landing right after the checkout moved, a process dying right after it).
+ */
+export type PlumbingFactory = (indexFile: string | undefined) => Plumbing
+
+/**
+ * Run `use` with a plumbing that stages into a fresh index file of its own, in a directory under the
+ * OS temp dir that is removed on every exit (success, failure, interruption). A session keeps no
+ * index between calls: step 4 reads the parent's tree into this file, stages, and writes the tree,
+ * so nothing a later call depends on lives in it. Outside the repository, so no cleanup of
+ * `.memhtml/sessions/` can remove it while a commit is staging into it.
+ */
+const withTemporaryIndex = <A, E, R>(
+  make: PlumbingFactory,
+  use: (git: Plumbing) => Effect.Effect<A, E, R>
+): Effect.Effect<A, E | StorageFailure, R> =>
+  Effect.acquireUseRelease(
+    Effect.tryPromise({
+      try: () => mkdtemp(join(tmpdir(), "memhtml-commit-index-")),
+      catch: (cause) => cause
+    }).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError(`session commit: no temporary index directory: ${String(cause)}`)
+      ),
+      Effect.mapError(() => StorageFailure.make({ operation: "session.index" }))
     ),
-    Effect.asVoid,
-    // The commit is on the ref already; a provenance ref that did not move is an operator's note,
-    // not a reason to tell the caller the commit failed.
-    Effect.catch((failure) =>
-      Effect.logWarning(
-        `session ${id}: provenance ref not updated (git ${failure.command} exited ${String(failure.exitCode)})`
-      )
-    )
+    (directory) => use(make(join(directory, "index"))),
+    (directory) =>
+      Effect.promise(() => rm(directory, { recursive: true, force: true }).catch(() => undefined))
+  )
+
+/** What {@link landOnRef} did. */
+export type Landing =
+  | {
+      /** The ref moved to `to`; the checkout moved with it when `worktreeSynced`. */
+      readonly kind: "landed"
+      readonly worktreeSynced: boolean
+    }
+  | {
+      /** The ref no longer named `expected`. Nothing moved; `tip` is what it names now. */
+      readonly kind: "raced"
+      readonly tip: string | null
+    }
+  | {
+      /** `HEAD` is the ref and the checkout holds uncommitted state at these paths. Nothing moved. */
+      readonly kind: "worktree-dirty"
+      readonly paths: ReadonlyArray<string>
+    }
+
+/**
+ * Move `ref` from `expected` to `to` with the checkout following, as one critical section under the
+ * repository's checkout lock (`withCheckoutLock`), so no other writer of the shared index (a v1
+ * store write in any process, another session's commit, a curate merge) runs between the checkout
+ * moving and the ref moving:
+ *
+ * 1. The ref must still name `expected`; otherwise `raced` before anything is touched.
+ * 2. When `HEAD` is the ref, a path in `paths` with uncommitted state is `worktree-dirty`; otherwise
+ *    `read-tree -m -u from to` brings the shared index and working tree to `to` (a two-tree merge,
+ *    so uncommitted edits at other paths survive) while the ref still names `from`.
+ * 3. `update-ref ref to expected`, the compare-and-swap. `raced` (a writer that does not take the
+ *    lock moved it) rolls the checkout back to `from`, and so does a git failure that left the ref
+ *    where it was.
+ *
+ * The three steps are uninterruptible once the lock is held, so an interrupt cannot leave the
+ * checkout one step ahead of a ref that never moved; only waiting for the lock can be interrupted.
+ */
+export const landOnRef = (input: {
+  readonly root: string
+  readonly git: Plumbing
+  readonly ref: string
+  /** What the ref must still name: the compare-and-swap's old value; `null` when it must not exist. */
+  readonly expected: string | null
+  /** The commit the checkout holds now: `expected`, or a new session's base when the ref is unborn. */
+  readonly from: string
+  readonly to: string
+  /** The paths `from..to` changes; uncommitted state at any of them is `worktree-dirty`. */
+  readonly paths: ReadonlyArray<string>
+  readonly lock?: CheckoutLockOptions | undefined
+}): Effect.Effect<Landing, GitFailure | StorageFailure> => {
+  const { git, ref } = input
+  const rollBack = (why: string) =>
+    git
+      .readTreeIntoWorktree(input.to, input.from)
+      .pipe(Effect.catch(() => Effect.logWarning(`${ref}: checkout not rolled back after ${why}`)))
+  return withCheckoutLock(
+    input.root,
+    Effect.uninterruptible(
+      Effect.gen(function* () {
+        const tip = yield* git.revParse(ref)
+        if (tip !== input.expected) return { kind: "raced", tip } as const
+        const checkedOut = (yield* git.headRef()) === ref
+        if (checkedOut) {
+          const dirty = yield* git.dirtyPaths(input.paths)
+          if (dirty.length > 0) return { kind: "worktree-dirty", paths: dirty } as const
+          yield* git.readTreeIntoWorktree(input.from, input.to)
+        }
+        const swapped = yield* git.updateRef(ref, input.to, input.expected).pipe(
+          Effect.tapError(() =>
+            checkedOut
+              ? git.isAncestor(input.to, ref).pipe(
+                  Effect.catch(() => Effect.succeed(false)),
+                  Effect.flatMap((landed) => (landed ? Effect.void : rollBack("a failed swap")))
+                )
+              : Effect.void
+          )
+        )
+        if (swapped === "raced") {
+          if (checkedOut) yield* rollBack("a lost swap")
+          return { kind: "raced", tip: yield* git.revParse(ref) } as const
+        }
+        return { kind: "landed", worktreeSynced: checkedOut } as const
+      })
+    ),
+    input.lock
+  )
+}
+
+/**
+ * Step 0, under the checkout lock: settle a `pending` commit an earlier call wrote to the log before
+ * it touched the checkout, and then may have died at any point.
+ *
+ * - Reachable from the ref: it landed. The caller answers `committed` for it.
+ * - Not reachable: it never landed. When `HEAD` is the ref, `read-tree -m -u pending <tip>` undoes a
+ *   checkout update that ran without its swap. That two-tree merge changes only the paths where the
+ *   shared index still holds `pending`'s version and the tip holds another, so it is a no-op when the
+ *   checkout never followed, and when another writer has since committed the same bytes (a v1 commit
+ *   after the dead holder's lock went stale) it leaves them, where rolling back to `pending^` would
+ *   stage their deletion. With the tip still at `pending^`, it is exactly that rollback.
+ * - A `pending` naming no object (pruned by `git gc`) never landed and has nothing to roll back from.
+ */
+const settlePending = (input: {
+  readonly root: string
+  readonly git: Plumbing
+  readonly ref: string
+  readonly pending: string
+  readonly lock?: CheckoutLockOptions | undefined
+}): Effect.Effect<
+  { readonly landed: false } | { readonly landed: true; readonly worktreeSynced: boolean },
+  GitFailure | StorageFailure
+> => {
+  const { git, ref, pending } = input
+  return withCheckoutLock(
+    input.root,
+    Effect.uninterruptible(
+      Effect.gen(function* () {
+        if ((yield* git.revParse(pending)) === null) return { landed: false } as const
+        const checkedOut = (yield* git.headRef()) === ref
+        if (yield* git.isAncestor(pending, ref)) {
+          return { landed: true, worktreeSynced: checkedOut } as const
+        }
+        const tip = yield* git.revParse(ref)
+        if (checkedOut && tip !== null) {
+          yield* git
+            .readTreeIntoWorktree(pending, tip)
+            .pipe(
+              Effect.catch(() =>
+                Effect.logWarning(`${ref}: checkout not rolled back from pending ${pending}`)
+              )
+            )
+        }
+        return { landed: false } as const
+      })
+    ),
+    input.lock
+  )
+}
+
+/** The paths the ops touch that `from..to` changed: what a `rebase-needed` reports as `overlapping`. */
+const overlappingPaths = (
+  git: Plumbing,
+  ops: ReadonlyArray<OverlayOp>,
+  from: string,
+  to: string
+): Effect.Effect<ReadonlyArray<string>, GitFailure> =>
+  git.diffTreePaths(from, to).pipe(
+    Effect.map((changedPaths) => {
+      const changed = new Set(changedPaths)
+      return [...new Set(ops.flatMap(touchedPaths))].filter((path) => changed.has(path)).sort()
+    })
   )
 
 /**
- * The commit path, in order. The whole call holds the session's lock, so two commits of one id
- * cannot interleave on the shared `.idx`, and a `session put` cannot rewrite the log mid-commit.
+ * The commit path, in order. The whole call holds the session's lock (`withSessionLock`), so two
+ * commits of one id cannot interleave and a `session put` cannot rewrite the log mid-commit. Every
+ * step that touches the shared checkout runs under the repository's checkout lock as well, which
+ * every v1 store write holds from its first stage to its commit.
  *
- * 0. Recovery. A log carrying `pending` names a commit an earlier call built and may have landed
- *    before it was killed. Reachable from the ref: it landed, so answer `committed` for it and clear
- *    the log. Not reachable: roll the checkout back if it had followed, drop `pending`, continue.
+ * 0. Recovery ({@link settlePending}). A log carrying `pending` names a commit an earlier call built
+ *    and may have landed before it was killed. Reachable from the ref: answer `committed` for it with
+ *    `recovered: true` and clear the log. Not reachable: undo whatever checkout update it made, drop
+ *    `pending` from the log, and continue.
  * 1. `validateOps(head, ops, { scope })`; any violation is `refused` and writes nothing.
  * 2. The ref must be at the version that was validated. A ref that moved past `head.sha` is
  *    `rebase-needed` whether or not the changed paths overlap: duplicate hashes and frame keys are
  *    collisions between different paths, so a path-disjoint advance can still carry one, and only
  *    a head rebuilt at the tip can judge it. `overlapping` still names the path collisions.
  * 3. Frame-key contradictions, marked on the new file's head before hashing.
- * 4. Blobs, index, tree, commit object, through the session's own index file.
- * 5. When `HEAD` is the session's ref, the checkout follows FIRST: a session path with uncommitted
- *    state is `worktree-dirty` and nothing moves; otherwise `read-tree -m -u parent commit` brings
- *    the shared index and working tree to the new tree while the ref still names the parent. A
- *    checkout left one step ahead by a failure here shows the session's files as staged additions,
- *    which the next commit of this session reverts (step 0) and no human commit can turn into a loss.
- *    The reverse order (ref first) would leave `HEAD` ahead of the index on any failure, and git
- *    then reports the session's own files as deletions that the next `git commit -a` or v1 write
- *    commits.
- * 6. Write `pending: commit` to the log, then compare-and-swap the ref. `raced` rolls the checkout
- *    back and is `rebase-needed` with the ref's new value.
- * 7. Persist the log (base moved to the commit, ops empty, no pending) right after the swap, then
- *    record provenance under `refs/memhtml/sessions/<id>` as a best effort.
+ * 4. Blobs, index, tree, commit object, through a temporary index file removed on every outcome.
+ * 5. Write `pending: commit` to the log, BEFORE anything shared is touched: from here on a process
+ *    killed at any instant leaves a log the next call settles in step 0.
+ * 6. {@link landOnRef} under the checkout lock: the ref must still be at step 2's value (else
+ *    `rebase-needed`); when `HEAD` is the ref, uncommitted state at a session path is
+ *    `worktree-dirty`, else the checkout follows; then the compare-and-swap, whose loss rolls the
+ *    checkout back and is `rebase-needed`. `worktree-dirty` and `rebase-needed` clear `pending`.
+ *    The checkout follows before the ref moves because the reverse order would leave `HEAD` ahead of
+ *    the index on any failure, and git then reports the session's own files as staged deletions
+ *    that the next `git commit -a` or v1 write commits.
+ * 7. Persist the log (base moved to the commit, ops empty, no pending) right after the swap.
  */
 export const commitSession = (input: {
   readonly session: Session
@@ -277,6 +437,10 @@ export const commitSession = (input: {
   readonly scope?: CommitScope | undefined
   /** The validator's batch cap ({@link ValidateOptions}); `BATCH_CAP` unless a replay lifts it. */
   readonly batchCap?: number | undefined
+  /** The plumbing; {@link PlumbingFactory}. A test seam: the default is the real git plumbing. */
+  readonly plumbing?: PlumbingFactory | undefined
+  /** The checkout lock's wait; 15 s unless a test shortens it. */
+  readonly checkoutLock?: CheckoutLockOptions | undefined
 }): Effect.Effect<CommitOutcome, GitFailure | StorageFailure> =>
   withSessionLock(
     input.session.root,
@@ -287,40 +451,37 @@ export const commitSession = (input: {
       // an op appended meanwhile would be dropped by the empty log step 7 writes. Refused instead.
       yield* requireLogUnmoved(input.session)
       let session = input.session
-      const git = plumbingFor(session.root, session.id)
-      const checkedOut = (yield* git.headRef()) === session.ref
+      const root = session.root
+      const make: PlumbingFactory =
+        input.plumbing ?? ((indexFile) => makePlumbing({ root, indexFile }))
+      const git = make(undefined)
 
-      // 0. Recovery from a call killed between the swap and the log write.
+      // 0. Recovery from a call killed after it wrote `pending`.
       if (session.pending !== undefined) {
         const pending = session.pending
-        if (yield* git.isAncestor(pending, session.ref)) {
+        const settled = yield* settlePending({
+          root,
+          git,
+          ref: session.ref,
+          pending,
+          lock: input.checkoutLock
+        })
+        if (settled.landed) {
           const parent = yield* git.revParse(`${pending}^`)
           const paths =
             parent === null ? [] : [...(yield* git.diffTreePaths(parent, pending))].sort()
           yield* saveSessionLocked({ ...session, baseSha: pending, ops: [], pending: undefined })
-          yield* recordProvenance(git, session.id, pending)
           return {
             kind: "committed",
             sha: pending,
             paths,
             contradictions: [],
-            worktreeSynced: checkedOut,
+            worktreeSynced: settled.worktreeSynced,
             recovered: true
           } as const
         }
-        if (checkedOut) {
-          const parent = yield* git.revParse(`${pending}^`)
-          if (parent !== null) {
-            yield* git
-              .readTreeIntoWorktree(pending, parent)
-              .pipe(
-                Effect.catch(() =>
-                  Effect.logWarning(`session ${session.id}: checkout not rolled back`)
-                )
-              )
-          }
-        }
         session = { ...session, pending: undefined }
+        yield* saveSessionLocked(session)
       }
 
       // 1. Validate under the caller's scope. Any violation refuses the whole batch and writes
@@ -335,9 +496,7 @@ export const commitSession = (input: {
       const mainSha = yield* git.revParse(session.ref)
       const parent = mainSha ?? head.sha
       if (mainSha !== null && mainSha !== head.sha) {
-        const changed = new Set(yield* git.diffTreePaths(head.sha, mainSha))
-        const touched = new Set(session.ops.flatMap(touchedPaths))
-        const overlapping = [...touched].filter((path) => changed.has(path)).sort()
+        const overlapping = yield* overlappingPaths(git, session.ops, head.sha, mainSha)
         return { kind: "rebase-needed", overlapping, mainSha } as const
       }
 
@@ -345,16 +504,21 @@ export const commitSession = (input: {
       const staged = stage(head, session.ops, input.archivedAt ?? nowIso())
       const contradictions = yield* markContradictions(head, session.ops, staged.writes)
 
-      // 4. Blobs, index, tree, commit. One child per step where git allows.
-      yield* git.readTree(parent)
-      const entries: Array<{ mode: "100644"; sha: string; path: string }> = []
-      for (const [path, html] of staged.writes) {
-        const sha = yield* git.hashObjectWrite(utf8.encode(html))
-        entries.push({ mode: "100644", sha, path })
-      }
-      yield* git.updateIndexRemove([...staged.removes])
-      yield* git.updateIndexAdd(entries)
-      const tree = yield* git.writeTree()
+      // 4. Blobs, index, tree, commit, staged through a temporary index file. One child per step
+      //    where git allows.
+      const tree = yield* withTemporaryIndex(make, (index) =>
+        Effect.gen(function* () {
+          yield* index.readTree(parent)
+          const entries: Array<{ mode: "100644"; sha: string; path: string }> = []
+          for (const [path, html] of staged.writes) {
+            const sha = yield* index.hashObjectWrite(utf8.encode(html))
+            entries.push({ mode: "100644", sha, path })
+          }
+          yield* index.updateIndexRemove([...staged.removes])
+          yield* index.updateIndexAdd(entries)
+          return yield* index.writeTree()
+        })
+      )
       const commit = yield* git.commitTree(
         tree,
         [parent],
@@ -362,41 +526,49 @@ export const commitSession = (input: {
       )
       const paths = [...new Set([...staged.writes.keys(), ...staged.removes])].sort()
 
-      // 5. The checkout follows before the ref moves.
-      if (checkedOut) {
-        const dirty = yield* git.dirtyPaths(paths)
-        if (dirty.length > 0) return { kind: "worktree-dirty", paths: dirty } as const
-        yield* git.readTreeIntoWorktree(parent, commit)
-      }
-
-      // 6. Intent, then compare-and-swap. A race means someone advanced between step 2 and now.
+      // 5. Intent, before anything shared is touched.
       yield* saveSessionLocked({ ...session, pending: commit })
-      const swapped = yield* git.updateRef(session.ref, commit, mainSha)
-      if (swapped === "raced") {
-        if (checkedOut) {
-          yield* git
-            .readTreeIntoWorktree(commit, parent)
-            .pipe(
-              Effect.catch(() =>
-                Effect.logWarning(`session ${session.id}: checkout not rolled back`)
-              )
-            )
-        }
+
+      // 6. The checkout follows and the ref moves, as one section under the checkout lock.
+      const landing = yield* landOnRef({
+        root,
+        git,
+        ref: session.ref,
+        expected: mainSha,
+        from: parent,
+        to: commit,
+        paths,
+        lock: input.checkoutLock
+      }).pipe(
+        // A lock that was never taken touched nothing, so the intent goes with it.
+        Effect.tapError((error) =>
+          error._tag === "StorageFailure" && error.operation === CHECKOUT_LOCKED
+            ? saveSessionLocked({ ...session, pending: undefined }).pipe(Effect.ignore)
+            : Effect.void
+        )
+      )
+      if (landing.kind === "worktree-dirty") {
         yield* saveSessionLocked({ ...session, pending: undefined })
-        const moved = yield* git.revParse(session.ref)
-        return { kind: "rebase-needed", overlapping: [], mainSha: moved ?? parent } as const
+        return { kind: "worktree-dirty", paths: landing.paths } as const
+      }
+      if (landing.kind === "raced") {
+        yield* saveSessionLocked({ ...session, pending: undefined })
+        const moved = landing.tip ?? parent
+        const overlapping =
+          landing.tip === null ? [] : yield* overlappingPaths(git, session.ops, parent, moved)
+        return { kind: "rebase-needed", overlapping, mainSha: moved } as const
       }
 
-      // 7. The session now sits on the commit it made, with an empty log; then provenance.
+      // 7. The session now sits on the commit it made, with an empty log. The commit's
+      //    `Memhtml-Session` trailer is its provenance; no ref is kept per session.
       yield* saveSessionLocked({ ...session, baseSha: commit, ops: [], pending: undefined })
-      yield* recordProvenance(git, session.id, commit)
 
       return {
         kind: "committed",
         sha: commit,
         paths,
         contradictions,
-        worktreeSynced: checkedOut,
+        worktreeSynced: landing.worktreeSynced,
         recovered: false
       } as const
     })

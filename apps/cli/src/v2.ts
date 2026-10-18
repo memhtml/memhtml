@@ -26,6 +26,7 @@ import {
   commitSession,
   DEFAULT_REF,
   LOG_MOVED,
+  landOnRef,
   makePlumbing,
   rebaseSession,
   replaceOps,
@@ -1231,14 +1232,6 @@ export interface CurateMerged {
   readonly snapshot: SnapshotWritten | null
 }
 
-/**
- * The index file the merge's plumbing is built with. A fast-forward never reads or writes a session
- * index (it moves a ref between two commits that already exist), so the file is never created; the
- * plumbing wants a path because a session's commit path does. A replay stages through its own
- * session's index, not this one.
- */
-const MERGE_INDEX_FILE = "curate-merge.idx"
-
 /** How many `rebase-needed` answers a replay tolerates before it gives up; `curate-run.ts` uses the same bound. */
 export const MERGE_ATTEMPTS = 8
 
@@ -1312,12 +1305,12 @@ const replayPlan = (input: {
  *    being landed and nothing else, with no network call and no credential. A failing gate fails
  *    this effect with the gate's numbers, and nothing has moved yet. `skipGate` is a logged
  *    override, and the report says the gate did not run.
- * 3. Fast-forward: when HEAD is `into`, the checkout follows BEFORE the ref moves, the way
- *    `commitSession` does it: a dirty path among those the landing changes is `DirtyTree` and
- *    nothing moves; otherwise `read-tree -m -u from to` brings the shared index and working tree to
- *    the new tree. Then `update-ref into to from` as a compare-and-swap; a `raced` answer means
- *    another writer advanced `into` between step 1 and now, the checkout is rolled back, and the
- *    call refuses.
+ * 3. Fast-forward through `landOnRef` (`@memhtml/session`), the section a session commit lands
+ *    with, under the repository's checkout lock: `into` must still be at `from`; when HEAD is
+ *    `into`, the checkout follows BEFORE the ref moves (a dirty path among those the landing changes
+ *    is `DirtyTree` and nothing moves, else `read-tree -m -u from to`); then `update-ref into to
+ *    from` as a compare-and-swap. A ref that moved, before or at the swap, means another writer
+ *    advanced `into` between step 1 and now: the checkout is rolled back and the call refuses.
  * 4. Replay: `commitSession` under the `curate` scope, with the subject
  *    `memhtml(curate): <the ref's tip subject> (replayed onto <short sha>)`, through a
  *    rebase-and-retry loop bounded at {@link MERGE_ATTEMPTS}: `rebase-needed` reloads the head at
@@ -1342,10 +1335,7 @@ export const curateMerge = (input: {
   Effect.gen(function* () {
     const ref = qualifyRef(input.ref)
     const into = qualifyRef(input.into ?? "main")
-    const git = makePlumbing({
-      root: input.root,
-      indexFile: join(input.root, ".memhtml", "sessions", MERGE_INDEX_FILE)
-    })
+    const git = makePlumbing({ root: input.root })
 
     const to = yield* git.revParse(ref)
     if (to === null) {
@@ -1435,25 +1425,24 @@ export const curateMerge = (input: {
       }
     }
 
-    const checkedOut = (yield* git.headRef()) === into
-    if (checkedOut) {
-      const paths = yield* git.diffTreePaths(from, to)
-      const dirty = yield* git.dirtyPaths(paths)
-      if (dirty.length > 0) return yield* Effect.fail(DirtyTree.make({ paths: dirty }))
-      yield* git.readTreeIntoWorktree(from, to)
+    // The checkout follows and the ref moves as one section under the checkout lock, exactly as a
+    // session commit lands (`landOnRef`), so no v1 write commits the shared index in between.
+    const landing = yield* landOnRef({
+      root: input.root,
+      git,
+      ref: into,
+      expected: from,
+      from,
+      to,
+      paths: yield* git.diffTreePaths(from, to)
+    })
+    if (landing.kind === "worktree-dirty") {
+      return yield* Effect.fail(DirtyTree.make({ paths: landing.paths }))
     }
-
-    const swapped = yield* git.updateRef(into, to, from)
-    if (swapped === "raced") {
-      if (checkedOut) {
-        yield* git
-          .readTreeIntoWorktree(to, from)
-          .pipe(Effect.catch(() => Effect.logWarning("curate merge: checkout not rolled back")))
-      }
-      const moved = yield* git.revParse(into)
+    if (landing.kind === "raced") {
       return yield* Effect.fail(
         InvalidMemory.make({
-          reason: `curate merge: ${into} moved from ${from} to ${moved ?? "an unresolved commit"} while the gate ran; nothing was landed, re-run to judge ${ref} against the new tip`
+          reason: `curate merge: ${into} moved from ${from} to ${landing.tip ?? "an unresolved commit"} while the gate ran; nothing was landed, re-run to judge ${ref} against the new tip`
         })
       )
     }
@@ -1467,7 +1456,7 @@ export const curateMerge = (input: {
       to,
       moved: true,
       gate,
-      worktreeSynced: checkedOut,
+      worktreeSynced: landing.worktreeSynced,
       replayed: null,
       snapshot
     }
@@ -1504,10 +1493,7 @@ const landReplay = (input: {
       })
       switch (outcome.kind) {
         case "committed": {
-          const git = makePlumbing({
-            root: input.root,
-            indexFile: join(input.root, ".memhtml", "sessions", MERGE_INDEX_FILE)
-          })
+          const git = makePlumbing({ root: input.root })
           // The curate ref follows the landing so it descends from `into` again. A `raced` answer
           // means the curator committed again meanwhile; the landing stands, and the new tip is a
           // fresh curation to judge on its own.
