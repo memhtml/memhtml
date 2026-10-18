@@ -1085,8 +1085,13 @@ const unanswered = (
   }
 }
 
-/** What `session commit` prints: the outcome, which path committed, and why when it was this one. */
+/**
+ * What `session commit` prints: the outcome, how many rebases the server made before it
+ * (`rebased`, only through the server with `--drop-refused`, `0` otherwise), which path committed,
+ * and why when it was this one.
+ */
 export type SessionCommitted = CommitResult & {
+  readonly rebased: number
   readonly via: "server" | "local"
   readonly server: CommitServerUse
 }
@@ -1138,6 +1143,7 @@ export const sessionCommit = (input: {
         if (answer.served) {
           return {
             ...answer.outcome,
+            rebased: answer.rebased ?? 0,
             via: "server" as const,
             server: { used: true, base: answer.base, reason: null, detail: null }
           }
@@ -1156,7 +1162,7 @@ export const sessionCommit = (input: {
       dropRefused: input.dropRefused,
       writeBar
     })
-    return { ...outcome, via: "local" as const, server }
+    return { ...outcome, rebased: 0, via: "local" as const, server }
   })
 
 /** One op `session commit --drop-refused` took out of the log, and why. */

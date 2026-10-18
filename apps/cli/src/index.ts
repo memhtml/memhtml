@@ -183,6 +183,7 @@ export {
   COMMIT_DEADLINE_DEFAULT_MS,
   COMMIT_DEADLINE_VAR,
   COMMIT_QUEUE_WAIT_MS,
+  COMMIT_REBASE_ROUNDS,
   CommitAnswer,
   CommitBase,
   CommitDeclined,

@@ -383,6 +383,17 @@ export const COMMIT_DEADLINE_VAR = "MEMHTML_COMMIT_DEADLINE_MS"
  */
 export const COMMIT_QUEUE_WAIT_MS = 20_000
 
+/**
+ * The most rebases a `/v1/commit` with `dropRefused` makes inside one permit: a commit answered
+ * `rebase-needed` is rebased onto the server's tip and committed again, up to this many times, and
+ * the last round's outcome is the answer. A caller that asked to drop what a rebase reveals has
+ * already chosen what the rebase decides, so the server spares it the round trip and the race: the
+ * permit is held from the first commit to the last, so no other commit through this server moves the
+ * ref between a rebase and its commit. Only a writer that does not ask the server can, and each
+ * round it does so costs one rebase.
+ */
+export const COMMIT_REBASE_ROUNDS = 3
+
 // ---------------------------------------------------------------------------------------------
 // Answers
 // ---------------------------------------------------------------------------------------------
@@ -793,13 +804,19 @@ const Declined = Schema.Struct({
   detail: Schema.String
 })
 
-/** `POST /v1/commit`: the outcome with the version it was judged against, or why the server declined. */
+/**
+ * `POST /v1/commit`: the outcome with the version it was judged against, or why the server declined.
+ * `rebased` counts the rebases the server made before the outcome ({@link COMMIT_REBASE_ROUNDS}, only
+ * with `dropRefused`); `base` and `head` are the last round's. Absent from an older server, which
+ * makes none. `outcome.dropped` lists every op dropped across the rounds.
+ */
 export const CommitAnswer = Schema.Union([
   Schema.Struct({
     served: Schema.Literal(true),
     base: CommitBase,
     outcome: CommitResult,
-    head: ServedHead
+    head: ServedHead,
+    rebased: Schema.optionalKey(Schema.Finite)
   }),
   Declined
 ])

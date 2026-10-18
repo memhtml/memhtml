@@ -49,6 +49,13 @@ import { writeStoreConfig } from "./strict-store.js"
  *   server took the commit and answered 500" (the commit runs here and moves main).
  * - `v2.ts` `unanswered`: answer `lost` as `no-server` -> "fails rather than commits again when no
  *   answer came within the deadline" (the commit runs here and moves main).
+ * - `head-server.ts` `serveCommit`: `COMMIT_REBASE_ROUNDS` rounds -> none (the loop never runs) ->
+ *   "lands each of six concurrent run-end commits in one call" (five answer `rebase-needed`) and
+ *   "reports the ops an early round dropped" (`rebase-needed`).
+ * - `head-server.ts` `serveCommit`: rebase rounds without `dropRefused` -> "lands each of six ...
+ *   and without the flag answers rebase-needed as before" (all six plain commits land).
+ * - `head-server.ts` `serveCommit`: answer the last round's `dropped` alone -> "reports the ops an
+ *   early round dropped" (`dropped` is empty).
  */
 
 const run_ = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
@@ -581,6 +588,72 @@ describe("the head server's commit route", () => {
     expect(log.pending).toBeUndefined()
     expect(server.held().sha).toBe(tip)
     expect(await exists(snapshotPathFor(repo.root, tip))).toBe(true)
+  }, 60_000)
+})
+
+describe("the head server's rebase rounds under --drop-refused", () => {
+  it("lands each of six concurrent run-end commits in one call, and without the flag answers rebase-needed as before", async () => {
+    const repo = await corpus()
+    const before = await mainOf(repo)
+    await serve(repo.root)
+    // With --drop-refused: the first in line lands at its base, and each one behind it is rebased
+    // onto the tip and committed again while it holds the permit, so every call answers committed.
+    const ids = ["r1", "r2", "r3", "r4", "r5", "r6"]
+    for (const id of ids) await oneWrite(repo.root, id, `Run end note ${id}`)
+    const rounds = await Promise.all(
+      ids.map((id) => commitCli(repo.root, id, { dropRefused: true }))
+    )
+    for (const result of rounds) {
+      expect(result.exitCode, JSON.stringify(result.body)).toBe(0)
+      expect(dataOf(result.body)).toMatchObject({ kind: "committed", via: "server", dropped: [] })
+    }
+    const rebased = rounds.map((result) => dataOf(result.body).rebased).sort()
+    expect(rebased).toEqual([0, 1, 1, 1, 1, 1])
+    for (const result of rounds) {
+      if (dataOf(result.body).rebased === 1) {
+        expect(dataOf(result.body).server).toMatchObject({ used: true, base: "tip" })
+      }
+    }
+    const count = async () =>
+      Number((await run_(repo.git.run(["rev-list", "--count", `${before}..main`]))).trim())
+    expect(await count()).toBe(ids.length)
+    for (const id of ids) expect((await logOf(repo.root, id)).ops).toEqual([])
+
+    // Without it: one lands and the rest are answered rebase-needed, unrebased, for the caller to decide.
+    const plain = ["p1", "p2", "p3", "p4", "p5", "p6"]
+    for (const id of plain) await oneWrite(repo.root, id, `Plain note ${id}`)
+    const answers = (await Promise.all(plain.map((id) => commitCli(repo.root, id)))).map((result) =>
+      dataOf(result.body)
+    )
+    for (const data of answers) expect(data).toMatchObject({ via: "server", rebased: 0 })
+    const kinds = answers.map((data) => data.kind)
+    expect(kinds.filter((kind) => kind === "committed")).toHaveLength(1)
+    expect(kinds.filter((kind) => kind === "rebase-needed")).toHaveLength(plain.length - 1)
+    expect(await count()).toBe(ids.length + 1)
+  }, 60_000)
+
+  it("reports the ops an early round dropped with the outcome the last round reached", async () => {
+    const repo = await corpus()
+    await serve(repo.root)
+    await start(repo.root, "dup")
+    const putted = await put(repo.root, "dup", [
+      // The glacier record's article under another title: a duplicate at the session's base.
+      { title: "Glacier again", type: "semantic", body: "Glacier ice moves about a meter a day." },
+      { title: "Fresh fact", type: "semantic", body: "Fresh facts arrive with the morning tide." }
+    ])
+    const [twin, fresh] = putted.paths as ReadonlyArray<string>
+    // Another session lands first, so the drop round is followed by a rebase-needed round.
+    await oneWrite(repo.root, "ahead", "Ahead of dup")
+    expect(dataOf((await commitCli(repo.root, "ahead")).body).kind).toBe("committed")
+
+    const data = dataOf((await commitCli(repo.root, "dup", { dropRefused: true })).body)
+    expect(data).toMatchObject({
+      kind: "committed",
+      via: "server",
+      rebased: 1,
+      paths: [fresh],
+      dropped: [{ kind: "put", path: twin }]
+    })
   }, 60_000)
 })
 

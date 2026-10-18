@@ -14,7 +14,14 @@ import {
   vectorTextOf
 } from "@memhtml/head"
 import type { EmbedPort, QueryEmbedPort } from "@memhtml/index"
-import { DEFAULT_REF, ensureExcludedQuietly, HEAD_SOCKET, resumeSession } from "@memhtml/session"
+import {
+  DEFAULT_REF,
+  ensureExcludedQuietly,
+  HEAD_SOCKET,
+  rebaseSession,
+  resumeSession,
+  type Session
+} from "@memhtml/session"
 import { snapshotPathFor, VECTORS_DIR, writeVectorCache } from "@memhtml/snapshot"
 import { type GitFailure, makeGit } from "@memhtml/store"
 import {
@@ -41,6 +48,7 @@ import { askHead, CONNECT_TIMEOUT_MS } from "./head-client.js"
 import {
   BACKFILL_BATCH_MAX,
   COMMIT_QUEUE_WAIT_MS,
+  COMMIT_REBASE_ROUNDS,
   type CommitAnswer,
   type CommitBase,
   type CommitDeclined,
@@ -1260,7 +1268,17 @@ export const startHeadServer = (
         return session
       })
 
-    /** `/v1/commit`: the session's commit, run here over the version at its base, or declined. */
+    /**
+     * `/v1/commit`: the session's commit, run here over the version at its base, or declined.
+     *
+     * With `dropRefused`, a round answered `rebase-needed` is rebased onto the tip as this server
+     * reads it and committed again, inside the same permit, up to {@link COMMIT_REBASE_ROUNDS}
+     * times; the answer is the last round's, with `rebased` counting the rebases and `dropped` every
+     * round's drops. A rebase that cannot be made (the tip does not build, the log changed) ends the
+     * rounds with the outcome in hand, which is `rebase-needed` and moved nothing. Without
+     * `dropRefused`, `rebase-needed` is the answer: a rebase can turn the outcome into `refused`, and
+     * that is the caller's decision.
+     */
     const serveCommit = (
       body: CommitRequest
     ): Effect.Effect<CommitAnswer, GitFailure | StorageFailure | StoreConfigInvalid> =>
@@ -1271,21 +1289,56 @@ export const startHeadServer = (
           const { writeBar } = (yield* loadStorePolicy(root)).policy
           const session = yield* sessionToWrite(body.id)
           if ("served" in session) return session
-          const base = yield* commitBase(session.baseSha)
+          let base = yield* commitBase(session.baseSha)
           if ("unservable" in base) return declined("base-unservable", base.unservable)
+          const dropRefused = body.dropRefused === true
           const started = Date.now()
-          const outcome = yield* commitOverHead({
-            session,
-            base: base.version,
-            message: body.message,
-            dropRefused: body.dropRefused === true,
-            writeBar,
-            afterCommit: (sha) => landed(base.version, sha)
-          })
+          const commitOn = (current: Session, version: HeadVersion) =>
+            commitOverHead({
+              session: current,
+              base: version,
+              message: body.message,
+              dropRefused,
+              writeBar,
+              afterCommit: (sha) => landed(version, sha)
+            })
+          let outcome = yield* commitOn(session, base.version)
+          const dropped = [...outcome.dropped]
+          let rebased = 0
+          while (
+            dropRefused &&
+            outcome.kind === "rebase-needed" &&
+            rebased < COMMIT_REBASE_ROUNDS
+          ) {
+            const round = yield* Effect.result(
+              Effect.gen(function* () {
+                const current = yield* resumeSession({ root, id: body.id })
+                const tip = yield* fresh
+                yield* rebaseOver(current, tip)
+                return { session: rebaseSession(current, tip), tip }
+              })
+            )
+            if (round._tag === "Failure") {
+              yield* Effect.logWarning(
+                `head serve: session ${body.id} was not rebased for another round (${round.failure._tag}); answering rebase-needed`
+              )
+              break
+            }
+            rebased += 1
+            base = { version: round.success.tip, base: "tip" }
+            outcome = yield* commitOn(round.success.session, round.success.tip)
+            dropped.push(...outcome.dropped)
+          }
           yield* Effect.logInfo(
-            `head serve: session ${body.id} ${outcome.kind}${outcome.kind === "committed" ? ` as ${outcome.sha}` : ""} in ${String(Date.now() - started)} ms (base ${base.base})`
+            `head serve: session ${body.id} ${outcome.kind}${outcome.kind === "committed" ? ` as ${outcome.sha}` : ""} in ${String(Date.now() - started)} ms (base ${base.base}${rebased > 0 ? `, ${String(rebased)} rebases` : ""})`
           )
-          return { served: true, base: base.base, outcome, head: served(base.version) } as const
+          return {
+            served: true,
+            base: base.base,
+            outcome: { ...outcome, dropped },
+            head: served(base.version),
+            rebased
+          } as const
         })
       ).pipe(Effect.map(Option.getOrElse(commitBusy)))
 

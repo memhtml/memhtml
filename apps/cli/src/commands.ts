@@ -11,6 +11,7 @@ import { EXEC_POOL_SIZE_DEFAULT_CAP } from "./exec-pool.js"
 import {
   COMMIT_DEADLINE_DEFAULT_MS,
   COMMIT_QUEUE_WAIT_MS,
+  COMMIT_REBASE_ROUNDS,
   EMBED_DEADLINE_DEFAULT_MS
 } from "./head-protocol.js"
 import { AUTHORABLE_RELS } from "./operations.js"
@@ -1366,8 +1367,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       {
         name: "drop-refused",
         type: "boolean",
-        description:
-          "On a `refused` outcome, drop every op that touches a path a violation names, record each in `.memhtml/sessions/<id>.dropped.jsonl`, and commit the rest; repeat until the commit is clean or nothing is left. `dropped` lists each removed op with its reasons. A batch-cap refusal names no path, so it is never dropped. Meant for a runtime's end-of-run commit, where there is no agent turn left to fix a line: an agent in a turn should read the refusal and rewrite the line instead."
+        description: `On a \`refused\` outcome, drop every op that touches a path a violation names, record each in \`.memhtml/sessions/<id>.dropped.jsonl\`, and commit the rest; repeat until the commit is clean or nothing is left. \`dropped\` lists each removed op with its reasons. A batch-cap refusal names no path, so it is never dropped. Through the head server it also takes a \`rebase-needed\` round off the caller: the server rebases the session onto its tip and commits again inside the same commit permit, up to ${String(COMMIT_REBASE_ROUNDS)} times, and answers the last round, with \`rebased\` counting the rebases (0 on the local path, which returns \`rebase-needed\` as without the flag) and \`dropped\` every round's drops. Meant for a runtime's end-of-run commit, where there is no agent turn left to fix a line: an agent in a turn should read the refusal and rewrite the line instead.`
       },
       {
         name: "server",
