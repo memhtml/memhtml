@@ -2,7 +2,10 @@ import { execFile } from "node:child_process"
 import { mkdtempSync, statSync } from "node:fs"
 import { rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join, normalize } from "node:path"
+import { join } from "node:path"
+// Guest paths are POSIX on every host: just-bash's filesystem is a POSIX tree, so the host
+// platform's `path` (win32's turns `/mnt/memhtml` into `\mnt\memhtml`) must never judge one.
+import { normalize as normalizeGuest } from "node:path/posix"
 import { promisify } from "node:util"
 import type { IFileSystem } from "just-bash"
 import { InMemoryFs, MountableFs, OverlayFs } from "just-bash"
@@ -67,7 +70,8 @@ export class SandboxMountInvalid extends Error {
  *   `MountableFs.mount` rejects `.`/`..` segments itself, but it silently normalizes a relative path,
  *   a doubled separator, and a trailing slash. The declared path and the effective mount would then
  *   differ, so a typo would mount somewhere other than where it reads. Note `/mnt/memhtml/`
- *   survives `path.normalize` unchanged (probed), so the trailing slash needs its own check.
+ *   survives `path.normalize` unchanged (probed), so the trailing slash needs its own check. The
+ *   normalization is `node:path/posix`'s on every host, since a guest path is POSIX even on win32.
  * - `mountPath` may not be `/` and may not nest inside another root's path. `MountableFs` throws on
  *   both ("Cannot mount at root '/'", "Cannot mount at 'X': inside existing mount 'Y'", probed),
  *   which this restates as one typed reason naming both paths.
@@ -86,7 +90,7 @@ export const readOnlyRootsProblem = (roots: ReadonlyArray<ReadOnlyRoot>): string
     if (
       !mountPath.startsWith("/") ||
       mountPath.endsWith("/") ||
-      normalize(mountPath) !== mountPath
+      normalizeGuest(mountPath) !== mountPath
     ) {
       return `mount path ${JSON.stringify(mountPath)} must be an absolute, normalized guest path`
     }

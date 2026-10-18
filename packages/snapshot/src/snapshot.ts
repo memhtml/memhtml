@@ -4,13 +4,17 @@
  * The file format (not the stream format) is used so a reader can seek to the footer and open
  * the table without scanning, and `tableFromIPC` over a Node `Buffer` keeps every value buffer
  * as a view into that Buffer: no column is copied until a cell is read. The commit sha the rows
- * were built from lives in the schema metadata under `SHA_METADATA_KEY`.
+ * were built from lives in the schema metadata under `SHA_METADATA_KEY`, and the version of this
+ * layout under `FORMAT_METADATA_KEY` ({@link SNAPSHOT_FORMAT}).
  *
  * The schema is declared once in `FIELDS`; the writer and the reader both walk that list, and the
- * reader refuses a file whose schema differs from it, so a stale or foreign `.arrow` file becomes a
- * `StorageFailure` rather than a table of undefined cells.
+ * reader refuses a file whose format version or schema differs from it, so a stale or foreign
+ * `.arrow` file becomes a `StorageFailure` rather than a table of undefined cells. A file with no
+ * format key was written before the key existed, in the layout format "1" names, and reads as
+ * format "1". A caller loading the head treats every refusal as a cache miss
+ * (`apps/cli/src/head-cache.ts`).
  */
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
+import { mkdir, readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 
 import {
@@ -37,9 +41,31 @@ import {
 } from "apache-arrow"
 import { compareSchemas } from "apache-arrow/visitor/typecomparator"
 import { Effect } from "effect"
+import writeFileAtomic from "write-file-atomic"
+
+import { bufferOf } from "./staging.js"
 
 /** Schema metadata key holding the commit sha the snapshot was built from. */
 export const SHA_METADATA_KEY = "sha"
+
+/** Schema metadata key holding the snapshot's format version ({@link SNAPSHOT_FORMAT}). */
+export const FORMAT_METADATA_KEY = "format"
+
+/**
+ * The version of the layout `FIELDS` declares, as the schema metadata stores it. It moves with any
+ * change a reader of the previous layout would misread (a column added, removed, retyped, or
+ * reordered, or a cell's meaning changed). A file naming another format is refused
+ * (`snapshot.read.format`), and the head load reads it as a cache miss; a file naming none reads as
+ * {@link UNVERSIONED_FORMAT}.
+ */
+export const SNAPSHOT_FORMAT = "1"
+
+/**
+ * The format of a snapshot with no format key: the layout written before the key existed, which is
+ * the layout format "1" describes. Fixed at "1" rather than tied to {@link SNAPSHOT_FORMAT}, so a
+ * later format still refuses those files. The next write of that sha carries the key.
+ */
+const UNVERSIONED_FORMAT = "1"
 
 type LinkColumns = { rel: Utf8; href: Utf8 }
 type FacetColumns = { name: Utf8; value: Utf8 }
@@ -246,7 +272,13 @@ const columnsOf = (records: ReadonlyArray<MemoryRecord>): Columns => ({
  * are rebuilt over the declared `Struct` with the builders' data as children.
  */
 const tableOf = (records: ReadonlyArray<MemoryRecord>, sha: string): Table<SnapshotColumns> => {
-  const schema = new Schema<SnapshotColumns>([...FIELDS], new Map([[SHA_METADATA_KEY, sha]]))
+  const schema = new Schema<SnapshotColumns>(
+    [...FIELDS],
+    new Map([
+      [SHA_METADATA_KEY, sha],
+      [FORMAT_METADATA_KEY, SNAPSHOT_FORMAT]
+    ])
+  )
   const columns = columnsOf(records)
   const built = new Table<SnapshotColumns>(columns)
   const batches = built.batches.map(
@@ -287,8 +319,13 @@ const attempt = <A>(operation: string, thunk: () => A): Effect.Effect<A, Storage
 
 /**
  * Write every record as one row of an Arrow IPC file at `path`, creating parent directories.
- * The bytes land in a sibling temp file first and are renamed into place, so a reader never sees
- * a half-written snapshot.
+ * The bytes land in a sibling staging file and are renamed into place by `write-file-atomic`, so a
+ * reader never sees a half-written snapshot. The staging name is unique to the process, thread,
+ * and call (`<path>.<number>`), so writers of one sha in different processes (a `session commit`
+ * beside the head server's background write) never rename each other's file away; the last rename
+ * wins, and either one is a whole snapshot of that sha. A process that exits on a signal removes
+ * its staging file; one killed outright leaves it for {@link pruneSnapshots} to sweep. There is no
+ * `fsync`: the file is a cache, and a load that cannot read one reads git instead.
  */
 export const writeSnapshot = (input: {
   records: Iterable<MemoryRecord>
@@ -301,9 +338,9 @@ export const writeSnapshot = (input: {
       tableToIPC(tableOf(records, input.sha), "file")
     )
     yield* attemptIo("write.mkdir", () => mkdir(dirname(input.path), { recursive: true }))
-    const staging = `${input.path}.tmp`
-    yield* attemptIo("write.file", () => writeFile(staging, bytes))
-    yield* attemptIo("write.rename", () => rename(staging, input.path))
+    yield* attemptIo("write.file", () =>
+      writeFileAtomic(input.path, bufferOf(bytes), { fsync: false })
+    )
     return { bytes: bytes.byteLength, rows: records.length }
   })
 
@@ -397,30 +434,95 @@ const recordAt = (columns: Columns, row: number): MemoryRecord => ({
 })
 
 /**
- * Open the snapshot at `path` and materialize every row. Three refusals, each a `StorageFailure`
- * whose `operation` names the step: `snapshot.read.file` (unreadable path), `snapshot.read.decode`
- * (not an Arrow IPC file, or truncated), `snapshot.read.sha` (no sha in the schema metadata), and
- * `snapshot.read.schema` (columns differ from `FIELDS` by name, type, nullability, or order).
+ * A read-side failure as a typed failure, logged as a warning naming the file: a snapshot is a
+ * cache, so a file it cannot read is a miss for every loader, and the caller says what it does next.
  */
-export const readSnapshot = (
-  path: string
+const refuseRead = <A>(
+  path: string,
+  operation: string,
+  thunk: () => A
+): Effect.Effect<A, StorageFailure> =>
+  Effect.try({ try: thunk, catch: (cause) => cause }).pipe(
+    Effect.tapError((cause) =>
+      Effect.logWarning(
+        `snapshot.${operation} failed for ${path}: ${String((cause as Error)?.message ?? cause)}`
+      )
+    ),
+    Effect.mapError(() => StorageFailure.make({ operation: `snapshot.${operation}` }))
+  )
+
+/** Refuse `path` at `operation` with a warning naming why. */
+const refused = (
+  path: string,
+  operation: string,
+  why: string
+): Effect.Effect<never, StorageFailure> =>
+  Effect.logWarning(`snapshot.${operation}: ${path} ${why}`).pipe(
+    Effect.andThen(Effect.fail(StorageFailure.make({ operation: `snapshot.${operation}` })))
+  )
+
+/** Decode the bytes of the file at `path` (named in logs only) as a snapshot. */
+const decodeSnapshot = (
+  path: string,
+  buffer: Buffer
 ): Effect.Effect<{ sha: string; records: ReadonlyArray<MemoryRecord> }, StorageFailure> =>
   Effect.gen(function* () {
-    const buffer = yield* attemptIo("read.file", () => readFile(path))
-    const table = yield* attempt("read.decode", () => tableFromIPC<SnapshotColumns>(buffer))
+    const table = yield* refuseRead(path, "read.decode", () =>
+      tableFromIPC<SnapshotColumns>(buffer)
+    )
+    // The version first: a file of another layout may hold anything under the other keys.
+    const format = table.schema.metadata.get(FORMAT_METADATA_KEY) ?? UNVERSIONED_FORMAT
+    if (format !== SNAPSHOT_FORMAT) {
+      return yield* refused(path, "read.format", `is format ${format}, not ${SNAPSHOT_FORMAT}`)
+    }
     const sha = table.schema.metadata.get(SHA_METADATA_KEY)
     if (sha === undefined) {
-      return yield* Effect.fail(StorageFailure.make({ operation: "snapshot.read.sha" }))
+      return yield* refused(path, "read.sha", "names no sha in its metadata")
     }
     // Read schema first: the reader rebuilds numeric types as their base class (`Float`, not
     // `Float64`) and the comparator asks `other instanceof type.constructor`, which only holds
     // with the declared subclass on the right.
     if (!compareSchemas(table.schema, SHAPE)) {
-      return yield* Effect.fail(StorageFailure.make({ operation: "snapshot.read.schema" }))
+      return yield* refused(path, "read.schema", "has columns other than the snapshot's")
     }
-    const records = yield* attempt("read.rows", () => {
+    const records = yield* refuseRead(path, "read.rows", () => {
       const columns = columnsOfTable(table)
       return Array.from({ length: table.numRows }, (_, row) => recordAt(columns, row))
     })
     return { sha, records }
   })
+
+/**
+ * Open the snapshot at `path` and materialize every row. Each refusal is a `StorageFailure` whose
+ * `operation` names the step: `snapshot.read.file` (unreadable path), `snapshot.read.decode` (not an
+ * Arrow IPC file, or truncated), `snapshot.read.format` (the schema metadata names a format other
+ * than {@link SNAPSHOT_FORMAT}; one that names none is format "1"), `snapshot.read.sha` (no sha in
+ * the schema metadata),
+ * `snapshot.read.schema` (columns differ from `FIELDS` by name, type, nullability, or order), and
+ * `snapshot.read.rows` (a cell the schema says cannot be null is).
+ */
+export const readSnapshot = (
+  path: string
+): Effect.Effect<{ sha: string; records: ReadonlyArray<MemoryRecord> }, StorageFailure> =>
+  attemptIo("read.file", () => readFile(path)).pipe(
+    Effect.flatMap((buffer) => decodeSnapshot(path, buffer))
+  )
+
+/**
+ * {@link readSnapshot}, with a file that does not exist answered `null` and not logged: the answer
+ * a cache gives for a sha nobody wrote, or for a file pruned between a listing and its read. Every
+ * other refusal is the same `StorageFailure`.
+ */
+export const readSnapshotIfPresent = (
+  path: string
+): Effect.Effect<{ sha: string; records: ReadonlyArray<MemoryRecord> } | null, StorageFailure> =>
+  attemptIo("read.file", () =>
+    readFile(path).catch((cause: NodeJS.ErrnoException) => {
+      if (cause.code === "ENOENT") return null
+      throw cause
+    })
+  ).pipe(
+    Effect.flatMap((buffer) =>
+      buffer === null ? Effect.succeed(null) : decodeSnapshot(path, buffer)
+    )
+  )

@@ -10,6 +10,7 @@ import {
   pruneSnapshots,
   SNAPSHOTS_DIR,
   SNAPSHOTS_KEPT,
+  STAGING_ABANDONED_MS,
   snapshotPathFor
 } from "../src/index.js"
 
@@ -21,6 +22,10 @@ import {
  *   rest, newest first" (five files survive).
  * - `listSnapshots`: drop the `SNAPSHOT_FILE` match (list every name) -> "lists only <sha>.arrow
  *   files, newest first" (the staging file and the stray are listed).
+ * - `pruneSnapshots`: drop the `sweepStaging` call -> "sweeps staging files a killed writer left,
+ *   past an hour old" (the abandoned files stay).
+ * - `prune.ts` `STAGING_FILE`: match any name -> "sweeps staging files a killed writer left, past an
+ *   hour old" (the old stray is removed too).
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
@@ -92,5 +97,26 @@ describe("pruneSnapshots", () => {
 
   it("is a no-op without a snapshot directory", async () => {
     expect(await run(pruneSnapshots(await scratch()))).toEqual([])
+  })
+})
+
+describe("pruneSnapshots' staging sweep", () => {
+  it("sweeps staging files a killed writer left, past an hour old", async () => {
+    const root = await scratch()
+    const shas = await seed(root, 2)
+    const dir = join(root, SNAPSHOTS_DIR)
+    const old = (Date.now() - STAGING_ABANDONED_MS - 60_000) / 1000
+    const abandoned = [`${shaOf(7)}.arrow.1234567890`, `${shaOf(8)}.arrow.tmp`]
+    const kept = [`${shaOf(9)}.arrow.987654321`, "notes.txt"]
+    for (const name of [...abandoned, ...kept]) {
+      await writeFile(join(dir, name), "bytes", "utf8")
+      // Only the fresh staging file is new; the stray is as old as the abandoned ones.
+      if (name !== kept[0]) await utimes(join(dir, name), old, old)
+    }
+    // The answer names snapshots only, and both snapshots are within the bound.
+    expect(await run(pruneSnapshots(root))).toEqual([])
+    expect((await readdir(dir)).sort()).toEqual(
+      [...shas.map((sha) => `${sha}.arrow`), ...kept].sort()
+    )
   })
 })

@@ -12,9 +12,14 @@
  * hands out a `subarray` view per row over the `Buffer` it read, so opening 8,000 vectors copies no
  * float. The writer builds that one array and the column over it with `makeData` rather than a
  * builder, which would box eight million numbers on the way in.
+ *
+ * The layout's version is in the metadata too ({@link VECTOR_CACHE_FORMAT}). A file naming another
+ * is a cache miss: the reader answers `null`, as for no file, and the next `head embed` writes the
+ * file whole in this layout. A file naming none was written before the key existed, in the layout
+ * format "1" describes, and reads as format "1"; the next write of it carries the key.
  */
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { mkdir, readFile } from "node:fs/promises"
+import { basename, dirname, join } from "node:path"
 
 import { StorageFailure } from "@memhtml/contracts"
 import {
@@ -33,6 +38,25 @@ import {
 } from "apache-arrow"
 import { compareSchemas } from "apache-arrow/visitor/typecomparator"
 import { Effect } from "effect"
+import writeFileAtomic from "write-file-atomic"
+
+import { bufferOf, sweepStaging } from "./staging.js"
+
+/** Schema metadata key holding the cache's format version ({@link VECTOR_CACHE_FORMAT}). */
+export const VECTOR_FORMAT_METADATA_KEY = "format"
+
+/**
+ * The version of the cache's layout (the two columns and the metadata keys), as the schema metadata
+ * stores it. It moves with any change a reader of the previous layout would misread.
+ */
+export const VECTOR_CACHE_FORMAT = "1"
+
+/**
+ * The format of a cache with no format key: the layout written before the key existed, which is the
+ * layout format "1" describes. Fixed at "1" rather than tied to {@link VECTOR_CACHE_FORMAT}, so a
+ * later format still reads those files as absent.
+ */
+const UNVERSIONED_FORMAT = "1"
 
 /** Schema metadata key holding the embedder's model id. */
 export const MODEL_ID_METADATA_KEY = "modelId"
@@ -103,6 +127,7 @@ const tableOf = (stored: StoredVectors): Table<VectorColumns> => {
   const schema = new Schema<VectorColumns>(
     fields,
     new Map([
+      [VECTOR_FORMAT_METADATA_KEY, VECTOR_CACHE_FORMAT],
       [MODEL_ID_METADATA_KEY, stored.space.modelId],
       [DIMENSION_METADATA_KEY, String(dimension)]
     ])
@@ -138,9 +163,12 @@ const tableOf = (stored: StoredVectors): Table<VectorColumns> => {
 
 /**
  * Write `stored` as one Arrow IPC file at `path`, creating parent directories. The bytes land in a
- * sibling temp file and are renamed into place, so a reader never sees half a cache. A vector whose
- * width differs from the space's dimension is refused (`vectors.write.encode`), since writing it
- * would store a row the reader's schema cannot describe.
+ * sibling staging file and are renamed into place by `write-file-atomic`, so a reader never sees
+ * half a cache, and the staging name is unique to the process, thread, and call, so a `head embed`
+ * and the head server's background fill writing at once never rename each other's file away (the
+ * last rename wins). Staging files of this cache that a killed writer left are swept after the
+ * write (`staging.ts`). A vector whose width differs from the space's dimension is refused
+ * (`vectors.write.encode`), since writing it would store a row the reader's schema cannot describe.
  */
 export const writeVectorCache = (input: {
   readonly stored: StoredVectors
@@ -149,9 +177,11 @@ export const writeVectorCache = (input: {
   Effect.gen(function* () {
     const bytes = yield* attempt("write.encode", () => tableToIPC(tableOf(input.stored), "file"))
     yield* attemptIo("write.mkdir", () => mkdir(dirname(input.path), { recursive: true }))
-    const staging = `${input.path}.tmp`
-    yield* attemptIo("write.file", () => writeFile(staging, bytes))
-    yield* attemptIo("write.rename", () => rename(staging, input.path))
+    yield* attemptIo("write.file", () =>
+      writeFileAtomic(input.path, bufferOf(bytes), { fsync: false })
+    )
+    const prefix = `${basename(input.path)}.`
+    yield* sweepStaging(dirname(input.path), (name) => name.startsWith(prefix))
     return { bytes: bytes.byteLength, rows: input.stored.vectors.size }
   })
 
@@ -162,11 +192,13 @@ export interface ReadVectors extends StoredVectors {
 
 /**
  * Open the cache at `path` for `space`. A missing file is `null`, the answer for a store nobody has
- * embedded yet. Every other refusal is a `StorageFailure` whose `operation` names the step:
- * `vectors.read.file` (unreadable), `vectors.read.decode` (not an Arrow IPC file, or truncated),
- * `vectors.read.space` (the metadata names another model id or dimension, or none), and
- * `vectors.read.schema` (columns differ from the declared two by name, type, width, nullability,
- * or order).
+ * embedded yet, and so is a file whose metadata names a format other than
+ * {@link VECTOR_CACHE_FORMAT}: a cache of another layout is a miss, with a warning, not a failure.
+ * A file whose metadata names no format is format "1" ({@link UNVERSIONED_FORMAT}).
+ * Every other refusal is a `StorageFailure` whose `operation` names the step: `vectors.read.file`
+ * (unreadable), `vectors.read.decode` (not an Arrow IPC file, or truncated), `vectors.read.space`
+ * (the metadata names another model id or dimension, or none), and `vectors.read.schema` (columns
+ * differ from the declared two by name, type, width, nullability, or order).
  */
 export const readVectorCache = (
   path: string,
@@ -182,6 +214,14 @@ export const readVectorCache = (
     if (buffer === null) return null
     const table = yield* attempt("read.decode", () => tableFromIPC<VectorColumns>(buffer))
     const metadata = table.schema.metadata
+    // The version first: a file of another layout may hold anything under the other keys.
+    const format = metadata.get(VECTOR_FORMAT_METADATA_KEY) ?? UNVERSIONED_FORMAT
+    if (format !== VECTOR_CACHE_FORMAT) {
+      yield* Effect.logWarning(
+        `vector cache ${path} is format ${format}, not ${VECTOR_CACHE_FORMAT}; reading it as absent until head embed rewrites it`
+      )
+      return null
+    }
     if (
       metadata.get(MODEL_ID_METADATA_KEY) !== space.modelId ||
       metadata.get(DIMENSION_METADATA_KEY) !== String(space.dimension)

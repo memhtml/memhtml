@@ -1,7 +1,7 @@
-import { access } from "node:fs/promises"
+import { unlink } from "node:fs/promises"
 
-import type { HeadView } from "@memhtml/contracts"
-import { type InvalidMemory, StorageFailure } from "@memhtml/contracts/errors"
+import type { HeadView, MemoryRecord } from "@memhtml/contracts"
+import type { InvalidMemory, StorageFailure } from "@memhtml/contracts/errors"
 import {
   advanceHead,
   type HeadVersion,
@@ -13,7 +13,7 @@ import { ensureExcludedQuietly } from "@memhtml/session"
 import {
   listSnapshots,
   pruneSnapshots,
-  readSnapshot,
+  readSnapshotIfPresent,
   SNAPSHOTS_DIR,
   snapshotPathFor,
   writeSnapshot
@@ -28,7 +28,9 @@ import { Effect } from "effect"
  * else from the newest snapshot of an ANCESTOR commit advanced through `advanceHead` over the paths
  * the two trees differ on, else from git. A store that lands a commit a day has a snapshot for
  * yesterday's tip and a few dozen changed paths since, so the advance path is the common one after
- * the first load, and the full git read is the exception it was built to be.
+ * the first load, and the full git read is the exception it was built to be. The cache can make a
+ * load faster and never make it fail: a snapshot that cannot be read is a miss, and the load tries
+ * the next source.
  *
  * Write side: {@link writeHeadSnapshot} writes the snapshot for a version and prunes the directory
  * to the newest {@link SNAPSHOTS_KEPT}; {@link snapshotAfterCommit} is the best-effort form every
@@ -50,14 +52,6 @@ export interface LoadedVersion {
    */
   readonly reparsed: number | null
 }
-
-const exists = (path: string): Effect.Effect<boolean> =>
-  Effect.promise(() =>
-    access(path).then(
-      () => true,
-      () => false
-    )
-  )
 
 /** `merge-base --is-ancestor`: exit 1 is "no", an answer rather than a failure. */
 const isAncestor = (
@@ -92,34 +86,93 @@ export interface AncestorSnapshot {
 }
 
 /**
- * The snapshot to advance from when `target` has none of its own: among the snapshots whose sha is
- * an ancestor of `target`, the one with the fewest changed memory paths, ties to the newest file.
- * `null` when no snapshot is an ancestor (a fresh clone, or a target on an unrelated branch).
+ * The snapshots to advance from when `target` has none of its own, best first: those whose sha is
+ * an ancestor of `target`, by fewest changed memory paths, ties to the newer file. Empty when no
+ * snapshot is an ancestor (a fresh clone, or a target on an unrelated branch). A snapshot whose
+ * sha git cannot judge (a commit gc'd with the branch that made it) is passed over with a log line.
+ */
+export const ancestorSnapshots = (
+  root: string,
+  target: string
+): Effect.Effect<ReadonlyArray<AncestorSnapshot>, StorageFailure> =>
+  Effect.gen(function* () {
+    const found: Array<AncestorSnapshot> = []
+    // `listSnapshots` is newest first and the sort is stable, so equal counts keep that order.
+    for (const entry of yield* listSnapshots(root)) {
+      if (entry.sha === target) continue
+      const probed = yield* Effect.result(
+        Effect.gen(function* () {
+          if (!(yield* isAncestor(root, entry.sha, target))) return null
+          return yield* changedCandidates(root, entry.sha, target)
+        })
+      )
+      if (probed._tag === "Failure") {
+        yield* Effect.logWarning(
+          `snapshot ${entry.path} names a commit git could not compare with ${target} (${probed.failure.command}, exit ${String(probed.failure.exitCode)}); passing over it`
+        )
+        continue
+      }
+      if (probed.success === null) continue
+      found.push({ sha: entry.sha, path: entry.path, changed: probed.success })
+    }
+    return found.sort((left, right) => left.changed - right.changed)
+  })
+
+/**
+ * The snapshot to advance from when `target` has none of its own: the first of
+ * {@link ancestorSnapshots}, or `null` when no snapshot is an ancestor.
  */
 export const findAncestorSnapshot = (
   root: string,
   target: string
-): Effect.Effect<AncestorSnapshot | null, GitFailure | StorageFailure> =>
+): Effect.Effect<AncestorSnapshot | null, StorageFailure> =>
+  ancestorSnapshots(root, target).pipe(Effect.map((found) => found[0] ?? null))
+
+/**
+ * The records of the snapshot at `path` as a cache of `sha`, or `null` for a miss. Never fails.
+ *
+ * A file that is not there is a quiet miss. A file that cannot be read (`snapshot.read.file`: a
+ * permission, an I/O error) is a miss with a warning and is left alone. A file that reads but is not
+ * a snapshot of `sha` (garbage, truncated, another format version, another schema, or metadata that
+ * names another sha) is a miss with a warning and is removed, so the next load does not pay to read
+ * it again and the next write of that sha lands in its place.
+ */
+const cachedRecords = (
+  path: string,
+  sha: string
+): Effect.Effect<ReadonlyArray<MemoryRecord> | null> =>
   Effect.gen(function* () {
-    let best: AncestorSnapshot | null = null
-    for (const entry of yield* listSnapshots(root)) {
-      if (entry.sha === target) continue
-      if (!(yield* isAncestor(root, entry.sha, target))) continue
-      const changed = yield* changedCandidates(root, entry.sha, target)
-      if (best === null || changed < best.changed)
-        best = { sha: entry.sha, path: entry.path, changed }
+    const read = yield* Effect.result(readSnapshotIfPresent(path))
+    if (read._tag === "Success") {
+      if (read.success === null) return null
+      if (read.success.sha === sha) return read.success.records
+      yield* Effect.logWarning(
+        `snapshot ${path} names ${read.success.sha} in its metadata, so it is not the cache of ${sha}`
+      )
+    } else if (read.failure.operation === "snapshot.read.file") {
+      yield* Effect.logWarning(`snapshot ${path} could not be read; loading without it`)
+      return null
     }
-    return best
+    yield* Effect.tryPromise(() => unlink(path)).pipe(
+      Effect.andThen(
+        Effect.logWarning(`snapshot ${path} removed: it is not a cache this build reads`)
+      ),
+      Effect.catch(() =>
+        Effect.logWarning(`snapshot ${path} could not be removed; loading without it`)
+      )
+    )
+    return null
   })
 
 /**
  * The version at `sha`. `source: "git"` forces the full tree read (so `head snapshot --write` can
- * never re-cache a stale file); `"auto"` takes the cheapest path that exists.
+ * never re-cache a stale file); `"auto"` takes the cheapest path that exists: the sha's own snapshot,
+ * else each ancestor snapshot in the order {@link ancestorSnapshots} ranks them, else git.
  *
- * A snapshot whose metadata names a different sha than its filename is not the cache it claims to
- * be: as the exact match it is refused, because the caller asked for that sha and the rows describe
- * another; as an ancestor candidate it is skipped with a log line and the load falls through, because
- * an ancestor is a starting point and a wrong one would be advanced into a wrong version.
+ * Every snapshot failure is a cache miss and never this call's failure ({@link cachedRecords}): a
+ * file that does not decode, is of another format version, or whose metadata names a different sha
+ * than its filename is logged, removed, and passed over for the next source. Only git can fail the
+ * load, as it would with no cache at all.
  */
 export const loadVersion = (
   root: string,
@@ -130,39 +183,35 @@ export const loadVersion = (
     const git = makeGit(root)
     if (source === "auto") {
       const own = snapshotPathFor(root, sha)
-      if (yield* exists(own)) {
-        const snapshot = yield* readSnapshot(own)
-        if (snapshot.sha !== sha) {
-          yield* Effect.logError(
-            `snapshot ${own} names ${snapshot.sha} in its metadata, so it is not the cache of ${sha}`
-          )
-          return yield* Effect.fail(StorageFailure.make({ operation: "snapshot.sha-mismatch" }))
-        }
+      const records = yield* cachedRecords(own, sha)
+      if (records !== null) {
         return {
-          version: versionFromRecords(snapshot.records, sha),
+          version: versionFromRecords(records, sha),
           source: "snapshot",
           snapshotPath: own,
           ancestorSha: null,
           reparsed: null
         }
       }
-      const ancestor = yield* findAncestorSnapshot(root, sha)
-      if (ancestor !== null) {
-        const snapshot = yield* readSnapshot(ancestor.path)
-        if (snapshot.sha === ancestor.sha) {
-          const base = versionFromRecords(snapshot.records, ancestor.sha)
-          const version = yield* advanceHead(git, base, sha)
-          return {
-            version,
-            source: "snapshot+advance",
-            snapshotPath: ancestor.path,
-            ancestorSha: ancestor.sha,
-            reparsed: ancestor.changed
-          }
-        }
-        yield* Effect.logError(
-          `snapshot ${ancestor.path} names ${snapshot.sha} in its metadata, so it cannot be advanced to ${sha}; loading from git`
+      // A directory that cannot be listed is one more miss: git still answers.
+      const ancestors = yield* ancestorSnapshots(root, sha).pipe(
+        Effect.catch((failure) =>
+          Effect.logWarning(
+            `listing the snapshots under ${root} failed (${failure.operation}); loading ${sha} without them`
+          ).pipe(Effect.as([] as ReadonlyArray<AncestorSnapshot>))
         )
+      )
+      for (const ancestor of ancestors) {
+        const base = yield* cachedRecords(ancestor.path, ancestor.sha)
+        if (base === null) continue
+        const version = yield* advanceHead(git, versionFromRecords(base, ancestor.sha), sha)
+        return {
+          version,
+          source: "snapshot+advance",
+          snapshotPath: ancestor.path,
+          ancestorSha: ancestor.sha,
+          reparsed: ancestor.changed
+        }
       }
     }
     return {

@@ -674,6 +674,9 @@ importers:
       effect:
         specifier: 'catalog:'
         version: 4.0.3
+      write-file-atomic:
+        specifier: 8.0.0
+        version: 8.0.0
     devDependencies:
       '@biomejs/biome':
         specifier: 2.5.15
@@ -684,6 +687,9 @@ importers:
       '@types/node':
         specifier: 26.6.5
         version: 26.6.5
+      '@types/write-file-atomic':
+        specifier: 4.0.3
+        version: 4.0.3
       fast-check:
         specifier: 'catalog:'
         version: 4.10.2

@@ -5,17 +5,27 @@ import { createConnection } from "node:net"
 import { Cause, Effect, Option, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/http"
 
-import { HEAD_ROUTES, type HeadRoute, headSocketPath } from "./head-protocol.js"
+import { HEAD_ROUTES, type HeadRoute, headEndpoint, socketPathTooLong } from "./head-protocol.js"
 
 /**
  * The client half of the head server (`docs/v2-poc.md`, "Head server"): one request over the
  * store's socket, answered or not.
  *
  * {@link askHead} never fails. `null` means no server answered, for any reason: no socket file, a
- * socket nobody listens on (a server that was killed), a connect that did not complete inside
- * {@link CONNECT_TIMEOUT_MS}, an answer that did not arrive inside {@link ANSWER_TIMEOUT_MS}, a
- * non-200 status, or a body the schema refuses. Every caller then takes the local path it would have
- * taken with no server at all, so a server can only ever make a call faster, never make it fail.
+ * socket nobody listens on (a server that was killed), a connect that failed or did not complete
+ * inside {@link CONNECT_TIMEOUT_MS}, a socket path past the platform's limit (never dialed), an
+ * answer that did not arrive inside {@link ANSWER_TIMEOUT_MS}, a non-200 status, or a body the
+ * schema refuses. Every caller then takes the local path it would have taken with no server at all,
+ * so a server can only ever make a call faster, never make it fail.
+ *
+ * What decides "no server" is the phase an ask ended in, not the errno it ended with: any failure
+ * before the connection completed (`ENOENT`, `ECONNREFUSED`, `EINVAL` for a path the kernel refuses,
+ * `EACCES`, `ENOTDIR`, the connect timeout, or anything else) means no byte of the request reached a
+ * server, so nothing ran. A failure after it completed may follow a request the server read, and
+ * stays `lost` ({@link Asked}).
+ *
+ * The endpoint is the store's Unix socket, or under win32 the named pipe derived from the store path
+ * (`head-protocol.ts` `headEndpoint`); Node's `net` dials both through the same `path` option.
  *
  * The transport is `@effect/platform-node`'s `node:http` client with an `http.Agent` whose
  * `createConnection` dials the socket instead of a host, the extension point Node documents for
@@ -49,8 +59,20 @@ export interface Answered<A> {
 /** The `code` a connect abandoned after {@link CONNECT_TIMEOUT_MS} carries: the server never took the request. */
 const CONNECT_TIMED_OUT = "ECONNECTTIMEDOUT"
 
-/** An agent that dials `socket` and abandons a connect that has not completed in time. */
-const socketAgent = (socket: string): Http.Agent => {
+/**
+ * Whether the one connection an ask makes ever completed. Until it does, no byte of the request has
+ * left this process (a connecting socket buffers its writes), so a failure then means the server
+ * never took the request.
+ */
+interface Dialed {
+  connected: boolean
+}
+
+/**
+ * An agent that dials `socket`, abandons a connect that has not completed in time, and records in
+ * `dialed` whether the connection completed.
+ */
+const socketAgent = (socket: string, dialed: Dialed): Http.Agent => {
   const agent = new Http.Agent({ keepAlive: false })
   agent.createConnection = () => {
     const connection = createConnection({ path: socket })
@@ -62,7 +84,10 @@ const socketAgent = (socket: string): Http.Agent => {
       CONNECT_TIMEOUT_MS
     )
     const clear = () => clearTimeout(timer)
-    connection.once("connect", clear)
+    connection.once("connect", () => {
+      dialed.connected = true
+      clear()
+    })
     connection.once("error", clear)
     connection.once("close", clear)
     return connection
@@ -82,8 +107,8 @@ const errnoOf = (error: unknown): string | undefined => {
   return undefined
 }
 
-/** The two answers that mean "no server here", which are expected and not worth a warning. */
-const NO_SERVER = new Set(["ENOENT", "ECONNREFUSED"])
+/** The two connect failures that are the ordinary "no server here", logged at debug only. */
+const QUIET_NO_SERVER = new Set(["ENOENT", "ECONNREFUSED"])
 
 /** A server answered with a status other than 200; the body is the server's failure envelope. */
 class ServerRefused {
@@ -96,9 +121,11 @@ class ServerRefused {
 
 /**
  * Every way one ask can end, for a caller that must tell them apart. `no-server` means the request
- * never reached a server (no socket file, nobody listening, a connect that did not complete), so
- * nothing ran. `refused` means a server read the request and answered with another status. `lost`
- * means the request was sent and no usable answer came back (the answer timeout, a reset, a 200 the
+ * never reached a server: the connection never completed (no socket file, nobody listening, a path
+ * the platform refuses, any other connect error, the connect timeout) or was never dialed (a socket
+ * path past the platform's limit), so nothing ran; `detail` is the errno, or the reason it was not
+ * dialed. `refused` means a server read the request and answered with another status. `lost` means
+ * the connection completed and no usable answer came back (the answer timeout, a reset, a 200 the
  * schema refuses): the server may have acted on it, so a caller whose request has an effect cannot
  * assume it did not.
  */
@@ -119,7 +146,17 @@ export interface AskInput<A> {
 
 /** Ask the server on `root`'s socket and say how the ask ended ({@link Asked}). Never fails. */
 export const askHeadFor = <A>(input: AskInput<A>): Effect.Effect<Asked<A>> => {
-  const socket = headSocketPath(input.root)
+  const endpoint = headEndpoint(input.root)
+  const socket = endpoint.path
+  const tooLong = socketPathTooLong(endpoint)
+  if (tooLong !== null) {
+    // Not dialed: the connect would fail with a bare EINVAL, and no server can be bound there.
+    const detail = `socket path is ${String(tooLong.bytes)} bytes, past the ${String(tooLong.max)} this platform allows`
+    return Effect.logDebug(`no head server on ${socket}: ${detail}`).pipe(
+      Effect.as({ kind: "no-server", detail } as const)
+    )
+  }
+  const dialed: Dialed = { connected: false }
   const started = performance.now()
   const url = `http://memhtml-head${HEAD_ROUTES[input.route]}`
   const timeoutMs = input.answerTimeoutMs ?? ANSWER_TIMEOUT_MS
@@ -143,7 +180,7 @@ export const askHeadFor = <A>(input: AskInput<A>): Effect.Effect<Asked<A>> => {
     }).pipe(
       Effect.provide(NodeHttpClient.layerNodeHttpNoAgent),
       Effect.provideService(NodeHttpClient.HttpAgent, {
-        http: socketAgent(socket),
+        http: socketAgent(socket, dialed),
         https: new Https.Agent()
       })
     )
@@ -152,15 +189,19 @@ export const askHeadFor = <A>(input: AskInput<A>): Effect.Effect<Asked<A>> => {
     Effect.catchCause((cause): Effect.Effect<Asked<A>> => {
       const route = HEAD_ROUTES[input.route]
       const errno = errnoOf(Cause.squash(cause))
-      if (errno !== undefined && NO_SERVER.has(errno)) {
-        return Effect.logDebug(`no head server on ${socket} (${errno})`).pipe(
-          Effect.as({ kind: "no-server", detail: errno } as const)
-        )
-      }
-      if (errno === CONNECT_TIMED_OUT) {
+      if (!dialed.connected) {
+        // The connect phase: nothing reached a server, whatever the error was.
+        const detail = errno ?? String(cause).slice(0, 200)
+        if (errno !== undefined && QUIET_NO_SERVER.has(errno)) {
+          return Effect.logDebug(`no head server on ${socket} (${errno})`).pipe(
+            Effect.as({ kind: "no-server", detail } as const)
+          )
+        }
         return Effect.logWarning(
-          `head server on ${socket} did not accept within ${String(CONNECT_TIMEOUT_MS)} ms (${route})`
-        ).pipe(Effect.as({ kind: "no-server", detail: errno } as const))
+          errno === CONNECT_TIMED_OUT
+            ? `head server on ${socket} did not accept within ${String(CONNECT_TIMEOUT_MS)} ms (${route})`
+            : `head server on ${socket} could not be reached (${detail}); loading locally (${route})`
+        ).pipe(Effect.as({ kind: "no-server", detail } as const))
       }
       const refused = Cause.findErrorOption(cause)
       if (Option.isSome(refused) && refused.value instanceof ServerRefused) {

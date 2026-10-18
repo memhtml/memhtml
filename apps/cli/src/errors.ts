@@ -83,6 +83,10 @@ export const codeFor = (error: unknown): ErrorCode => {
       return "ERR_INTEGRATION_MODIFIED"
     case "HeadServerRunning":
       return "ERR_HEAD_SERVER_RUNNING"
+    // `head serve` on a store whose socket path the platform cannot bind. A storage condition of
+    // the store's location, so the storage code, with a message naming the length and the limit.
+    case "HeadSocketPathTooLong":
+      return "ERR_STORAGE"
     default:
       return "ERR_UNKNOWN"
   }
@@ -132,6 +136,8 @@ export const messageFor = (error: unknown): string => {
       return text(error.reason) ?? "the head gate refused the landing"
     case "HeadServerRunning":
       return `a head server is already serving this store on ${text(error.socket) ?? "its socket"}${typeof error.pid === "number" ? ` (pid ${String(error.pid)}${text(error.ref) === undefined ? "" : `, following ${text(error.ref)}`}${text(error.sha) === undefined ? "" : ` at ${text(error.sha)}`})` : ""}: stop it with SIGTERM before starting another, or use it, since head status, head search, and session put already ask it first`
+    case "HeadSocketPathTooLong":
+      return `the head server cannot listen on ${text(error.socket) ?? "this store's socket"}: the path is ${String(error.bytes ?? "?")} bytes, past the ${String(error.max ?? "?")} a Unix socket path takes on ${text(error.platform) ?? "this platform"}; serve a store at a shorter path. Every command still works without a server, loading locally`
     case "IntegrationModified":
       return `${text(error.host) ?? "the host"} integration was modified since install at ${text(error.path) ?? "a managed path"}: ${text(error.detail) ?? "the receipt no longer matches"}`
     default:
@@ -218,6 +224,11 @@ export const SUGGESTIONS: Readonly<Record<string, SuggestionsFor>> = {
   ],
   // The running server answers the lookups already; `head status` names it and shows its version.
   HeadServerRunning: () => ["memhtml head status"],
+  // No server can bind there; the lookups load locally, and a shorter store path is the fix.
+  HeadSocketPathTooLong: () => [
+    "memhtml head status --no-server",
+    "move or clone the store to a shorter path, then run head serve there"
+  ],
   // `doctor` first, because it names every managed path and which one moved; `--force` second, for
   // the operator who meant to overwrite and wants the prior bytes kept as a timestamped backup.
   IntegrationModified: (error) => [
