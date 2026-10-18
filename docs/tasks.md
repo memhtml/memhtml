@@ -34,7 +34,7 @@ Every other transition is one head line plus the `memhtml-updated` stamp — `se
 
 ## Edges: `blocks` and `subtask_of`
 
-The task rel vocabulary is exactly two (`packages/contracts/src/edges.ts:54`), forming their own `edge_class` — the fourth (`:9`). The class is a firewall: every memory-graph query filters `edge_class = 'memory'` (`packages/sleep/src/sql.ts:271`, `apps/cli/src/operations.ts:1113`), so task topology cannot enter PageRank, label propagation, MMR's lateral arm, or the retention bridge count.
+The task rel vocabulary is exactly two (`packages/contracts/src/edges.ts:54`), forming their own `edge_class` — the fourth (`:9`). The class is a firewall: every memory-graph query filters `edge_class = 'memory'` (`packages/index/src/retrieval.ts:416`, `apps/cli/src/operations.ts:1223`), so task topology cannot enter PageRank, label propagation, MMR's lateral arm, or the retention bridge count.
 
 ```
 memhtml link <blocker> blocks <blocked>          # blocker must finish first
@@ -63,7 +63,8 @@ Defined at `apps/cli/src/commands.ts:413`, dispatched at `apps/cli/src/run.ts:35
 
 - **Retrieval excludes tasks by default.** An unscoped query gets `memory_type <> 'task'` (`packages/index/src/scope.ts:121`); a caller-named type list is honored verbatim, so this is a default with a reachable opt-in rather than a hidden row (`:109`).
 - **Dedup carves tasks out, both directions.** The partial unique index and the write path's lookup state one predicate (`packages/index/migrations/0008_tasks.sql:126-127`, `packages/index/src/traces-persist.ts:166`), and the store's intra-batch map restates it (`packages/store/src/store.ts:316-323`). Two open tasks with identical bodies are two work items, and a memory is never deduped onto a task's path.
-- **Sleep skips them.** `SLEEP_EXCLUDED_TYPES` is stated once (`packages/sleep/src/sql.ts:36`) and spread into eight phase sites — dedup-merge, relationship-mining, edge-typing, retention-triage, reprieve, compress, confidence-decay, arc-synthesis — plus the two entity queries behind person-links and entity-resolution (`:337`, `:357`). Finished tasks need no exclusion: every phase's corpus is `archived = 0`. `HALF_LIVES_DAYS.task` is `null` (`packages/domain/src/retention.ts:125`).
+- **Curation shields them.** The curator's charter forbids ranking a task row (`packages/curator/prompts/charter.md:28`). The briefing keeps tasks out of the frame-key groups and the inbox list (`HEADLINE_CLAIM_TYPES`, `packages/curator/src/briefing.ts:224`; `packages/curator/src/inbox.ts:187`), and the collapse planner leaves a task out of every cluster unless a ruling names it, and never briefs a canonical as one (`isShielded` and `NOT_CANONICAL_TYPES`, `packages/curator/src/planner/plan.ts:173`, `:107`). `HALF_LIVES_DAYS.task` is `null` (`packages/domain/src/retention.ts:125`).
+- **The write bar judges them like any record.** A session's put of a task meets the store's write bar (`packages/session/src/validate.ts`): under `writeBar.requireAnchor`, a task under `projects/<slug>/tasks/` is anchored by its path, and a task in the inbox needs a `memhtml-entity`.
 
 ## `memhtml doctor`'s task findings
 

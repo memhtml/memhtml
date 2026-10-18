@@ -2,7 +2,7 @@
 
 [![check](https://github.com/memhtml/memhtml/actions/workflows/check.yml/badge.svg)](https://github.com/memhtml/memhtml/actions/workflows/check.yml) [![security](https://github.com/memhtml/memhtml/actions/workflows/security.yml/badge.svg)](https://github.com/memhtml/memhtml/actions/workflows/security.yml) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/memhtml/memhtml/badge)](https://scorecard.dev/viewer/?uri=github.com/memhtml/memhtml) [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-memhtml stores an agent's long-term memory as a git repository of semantic HTML5 files, one fact per file. A rebuildable SQLite index sits over that tree, retrieval fuses four ranking arms, and curation runs as a session on a branch a human reviews before it lands.
+memhtml stores an agent's long-term memory as a git repository of semantic HTML5 files, one fact per file. A rebuildable SQLite index sits over that tree, and retrieval fuses four ranking arms. Writers work in sessions over an immutable in-memory head, each session lands as one commit, and curation runs as a session on a branch a human reviews before it lands.
 
 ## Install
 
@@ -175,7 +175,7 @@ Figure 2 draws the cycle they form. A screen reader reads its box characters as 
 <!-- /figure:three-actors -->
 <!-- dprint-ignore-end -->
 
-**Figure 2: the three actors form a cycle through `main`, and only one of them may settle a contradiction.** Reading top to bottom: the agent writes to `main` at any hour, one fact per file. The curator reads `main` when it runs and puts its commits on a `curate/<date>` branch, leaving `main` untouched. Those commits deduplicate, resolve entities, decay confidence, compress, and synthesize arcs, and they flag a contradiction without choosing a winner. The human reviews that branch and merges, which returns the cycle to `main` and to the agent. The two heavy-bordered boxes are the actors outside the system, and `main` and the branch are double-bordered because they are the system of record.
+**Figure 2: the three actors form a cycle through `main`, and only one of them may settle a contradiction.** Reading top to bottom: the agent writes to `main` at any hour, one fact per file. The curator reads `main` when it runs and puts its commits on a `curate/<date>` branch, leaving `main` untouched. Those commits remove duplicates, resolve entity aliases, file inbox records, fold near-duplicates into canonical records, and write arcs, and they flag a contradiction without choosing a winner. The human reviews that branch and lands it with `memhtml curate merge`, which returns the cycle to `main` and to the agent. The two heavy-bordered boxes are the actors outside the system, and `main` and the branch are double-bordered because they are the system of record.
 
 ## The file format
 
@@ -201,6 +201,8 @@ Three doors, all supported, all landing in the same tree:
 1. The CLI. `memhtml write` takes one memory. Give it `--claim` plus `--body` and the template owns the markup; give it `--article-html` and you own the markup, with the format check refusing violations before anything is written. `memhtml apply` takes many: one JSONL op per line, every op validated for shape before any of them executes, then one commit and one index pass.
 2. The MCP server. `memhtml serve mcp` speaks stdio and exposes 15 tools and 2 resources over the same repo: write, read, search, recall, correct, link, archive, batch writes, and trace search. A CLI command and a running server share one store, because WAL admits one writer and any number of readers, and a contended write retries on `SQLITE_BUSY` (see `RUNBOOK.md`, section 4).
 3. Your file tools. The tree is the system of record, so a hand-written file is as real as one the CLI wrote. You take on what the write path would have done: format validity (`memhtml doctor`), path choice, dedup, and the commit.
+
+These three commit straight to the store with no write bar. A session is the write path that's held to the store's write bar, and the next section describes it. Under the default store policy, the CLI's record-creating doors refuse inside a run session and name the session command that does the same job.
 
 Dedup is enforced by the schema: a partial unique index over active files makes a duplicate write impossible to index, so the write returns the existing path with `deduped: true` and creates nothing.
 
@@ -238,7 +240,36 @@ Figure 3 draws that life. A screen reader sounds out its box characters, so read
 <!-- /figure:memory-lifecycle -->
 <!-- dprint-ignore-end -->
 
-**Figure 3: a memory has one entry and three exits, and every one of them is a commit.** A write enters the corpus as a single dedup-checked commit, and the file is then active. It stays active while curation reinforces or decays its confidence in place. Three things can end that state: `memhtml correct` writes a replacement and archives the original in one commit, which makes it superseded; a curator scores it into the EVICT band and archives it, which makes it archived; or compress folds it into a synthesized canonical memory and archives it with a `supersedes` link, which makes it compressed. Each of the three exits is a `git mv` into `archive/YYYY/` mirroring the original path, so the file survives all of them and `git log --follow` reads straight through the whole life.
+**Figure 3: a memory has one entry and three exits, and every one of them is a commit.** A write enters the corpus as a single dedup-checked commit, and the file is then active. It stays active while agents read and reinforce it. Three things can end that state. `memhtml correct` writes a replacement and archives the original in one commit, which makes it superseded. A curator archives it on a `curate/<date>` branch, which makes it archived once the branch lands. Or `memhtml curate collapse` folds it with its near-duplicates into one canonical memory and archives it with a `supersedes` link, which makes it compressed. Each of the three exits is a `git mv` into `archive/YYYY/` mirroring the original path, so the file survives all of them and `git log --follow` reads straight through the whole life.
+
+## Sessions, the head server, and curation
+
+memhtml 0.16 changes how the corpus is held and written. A memory file is the same file it was, and git is still the system of record. Upgrading from 0.15 takes a few operator steps, which the migration guide at https://memhtml.github.io/learn/operations/migrate-to-0-16/ walks through.
+
+**How a write happens.** A writer opens a session on a ref. The session sees one immutable version of the corpus, the head, plus its own log of operations: `put`, `archive`, `move`, `link`, `unlink`, `label`, and `unlabel`. `memhtml session put` appends JSONL write lines. `memhtml session exec` runs a bash heredoc over the head and the session's own changes, mounted at `/mnt/memhtml`, and turns the files the script wrote into operations. `memhtml session commit` validates the whole log, checks that the ref is still at the version it validated, marks a frame-key contradiction with a `contradicts` edge, and lands the log as one commit with a compare-and-swap on the ref. When another writer landed first, the answer is `rebase-needed`, and `memhtml session rebase` and a retry settle it. An agent runtime can bind every process of one run to one session by exporting `MEMHTML_SESSION`, and commit it once when the run ends.
+
+```sh
+export MEMHTML_SESSION=run-42
+memhtml session exec <<'SH'
+grep -rl 'content="system:memhtml"' /mnt/memhtml/projects | wc -l
+SH
+printf '%s\n' '{"op":"write","title":"session exec runs bash","type":"semantic","body":"memhtml session exec runs its script as bash unless --lang js is passed.","entity":"system:memhtml"}' \
+  | memhtml session put --file -
+memhtml session commit --message "what this run learned" --drop-refused
+```
+
+**The head server.** `memhtml head serve` keeps one store's head loaded and answers over a Unix socket at `.memhtml/head.sock`, or a named pipe on Windows. `head search`, `session put`, `session exec`, `session commit`, and `session rebase` ask it first and take the local path when no server answers, so a server makes a call faster and doesn't make it fail. MCP `memory_search` and `memory_recall` ask it too, so a record a session committed is searchable before the SQLite index catches up. On a 7,437-record copy of a production store (2026-09-27), a search through the server took 0.84 s at p50 from the CLI against 2.6 s locally, and 36 ms over the socket directly.
+
+**Curation.** Judgment runs off the write path. `memhtml curate run` is a bounded, model-driven tool loop that works as a session on a `curate/<date>` branch. It removes duplicates, labels records that name no entity, files inbox records into their homes, and writes arcs, and it never settles a contradiction by deleting a side. `memhtml curate collapse` folds clusters of near-duplicates into canonical records in bulk, from a deterministic plan. Nothing reaches `main` from a curate branch except `memhtml curate merge`, which scores retrieval on both versions with the head gate and refuses a landing that makes it worse. A human runs it, or a gate does.
+
+```sh
+memhtml curate run --model fake    # credential-free; pass bedrock:<model id> for a real run
+memhtml curate merge curate/$(date -u +%F)
+```
+
+**The store policy file.** What every writer to one store must agree on lives in `memhtml.config.json` at the store root, tracked in git. It sets the write bar (the memory types no session may write, and whether every new record must name an entity or sit under a project), the `v1Doors` mode, and the curator's writer buckets and placement quota. With no file, neutral defaults apply. A malformed file fails closed with `ERR_STORE_CONFIG`, and `memhtml config` prints the effective policy and where each value came from. The v1 doors still work. Under the default `closed-in-session` mode they refuse inside a run session and name the session command to use, and under `closed` they refuse everywhere.
+
+**Removed in 0.16.** The sleep pipeline (`memhtml sleep` and its six subcommands), the consolidator agent, `apply --consolidate`, and the MCP fields and resource that reported on them are gone. `curate run`, `curate collapse`, and `curate merge` replace them. `docs/design.md` sections 15 to 24 describe the design and the decisions behind it.
 
 ## Retrieval
 
@@ -265,7 +296,7 @@ One place runs it: `pnpm check`, which CI runs. Fake-embedder mode is determinis
 
 ## Code-mode
 
-The closed vocabulary makes the corpus a queryable API with no new surface: `article mark` is always the claim, `link[rel^="memhtml-"]` is always an authored edge, and `dl` pairs are always facets. Use the descendant selector. The markup is `<article><p><mark>`, so `article > mark` matches nothing and a helper written from that spelling reports zero claims while looking correct. An agent that writes parser code against `$MEMHTML_ROOT` composes multi-hop traversals in one execution and answers corpus-shaped questions no tool enumerates: live contradiction pairs, an orphan census, a walk up a supersedence chain. The contract is read-only, and writes stay behind the three doors above.
+The closed vocabulary makes the corpus a queryable API with no new surface: `article mark` is always the claim, `link[rel^="memhtml-"]` is always an authored edge, and `dl` pairs are always facets. Use the descendant selector. The markup is `<article><p><mark>`, so `article > mark` matches nothing and a helper written from that spelling reports zero claims while looking correct. An agent that writes parser code against `$MEMHTML_ROOT` composes multi-hop traversals in one execution and answers corpus-shaped questions no tool enumerates: live contradiction pairs, an orphan census, a walk up a supersedence chain. The contract is read-only, and writes stay behind the doors above. `memhtml session exec` is the writable twin: it runs a bash heredoc or a JS module over the head plus a session's own changes and turns the files the script wrote into session operations.
 
 `memhtml exec` ships this as a command. It runs your script in a QuickJS sandbox with the corpus mounted read-only at `/mnt/memhtml` and a helper preloaded at `/workspace/lib/corpus.mjs`, and it answers one `exec.report` envelope. Measured on the 305-file fixture corpus: 305/305 claims parsed and 410/410 edges resolved in one execution. The script reads a pinned commit, so an answer is reproducible and an uncommitted edit stays invisible to it. The sandbox reaches the structural and lexical planes and holds no index handle, so a script that wants ranked retrieval shells out to `memhtml search` and consumes its envelope. `docs/code-mode.md` is the cookbook, with a measured helper and five recipes.
 
@@ -279,10 +310,6 @@ The closed vocabulary makes the corpus a queryable API with no new surface: `art
 | LongMemEval-S (full 500, judged 2026-08-07)                          | 67.0%      | ~55% to 65% typical agent baselines |
 
 Read the cross-judge numbers as reference points rather than as a ranking: the judges here are verbatim prompt ports running haiku-4.5, where the papers used gpt-4o and gpt-4.1-mini. `ROADMAP.md` carries these numbers and the horizons they rank.
-
-## v2 proof of concept
-
-The `v2-poc` branch holds a proof of concept that changes how the corpus is held and written without changing what a memory file is. The corpus becomes a value: one head process holds a parsed, immutable version in persistent maps, each session works over that version plus its own overlay of operations, and a mechanical commit path (validate, check disjointness, check frame keys, write objects, compare-and-swap the ref) lands the overlay as one commit. Conflicts sort into three tiers: git settles path collisions with a rebase, a frame-key match keeps both claims live with a `contradicts` edge, and judgment runs as a curator session on a branch behind the existing gate. Three new packages carry it (`@memhtml/head`, `@memhtml/session`, `@memhtml/snapshot`) plus `session` and `head` CLI commands, and `curate merge` is the door back from a curator branch: it runs the discrimination gate, then fast-forwards `main` when the branch descends from it and otherwise replays the branch's operations (puts, archives, links since the merge base) as one fresh commit on `main`'s tip, refusing anything a hand wrote, with the checkout following either way. Nothing in the v1 write path or MCP server changes on the branch, and the live store isn't migrated. The v1 sleep pipeline and its consolidator are removed from this branch, so curation is the curator session described above. `memhtml curate run` is that curator: a bounded model-driven tool loop under an eight-rule charter that commits to `curate/<date>`, with `--model fake` for a credential-free run. The motivation, the contracts, the commit algorithm, and the explicit non-goals are in `docs/v2-poc.md`; `docs/design.md` section 15 records which v1 decisions it keeps.
 
 ## Layout
 
@@ -299,6 +326,11 @@ $MEMHTML_ROOT/                        # its own git repo, one global memory stor
     index.db                      # gitignored, rebuildable from the tree
     state.db                      # gitignored, NOT rebuildable from git
     state/access.jsonl            # committed sidecar: the state plane's only durable copy
+    sessions/<id>.json            # gitignored, one session's log of operations
+    snapshots/<sha>.arrow         # gitignored, the head's cold-start cache
+    vectors/<model>@<dim>.arrow   # gitignored, the head's vector cache
+    head.sock                     # gitignored, the head server's socket
+  memhtml.config.json             # committed store policy, never a record
   sitemap.xml + per-dir index.html  # generated by `memhtml publish`, committed
 ```
 
@@ -308,19 +340,25 @@ The layering is strict and TypeScript project references enforce it. `@memhtml/c
 
 None of them is published. Every workspace package is `private`, and `mise run package:assemble` bundles the libraries and the binary-bearing apps into the single `memhtml` package that carries the two binaries — the docs site and the integration-test harness stay outside the bundle (`tsdown.config.ts` names the exact set). The table below is a map of the source, not a list of things to install. `RELEASING.md` covers how the artifact is built and what must stay outside the bundle.
 
-| Package              | What it owns                                                                    |
-| -------------------- | ------------------------------------------------------------------------------- |
-| `@memhtml/contracts` | Schemas, the closed vocabularies, errors, path algebra. Zero I/O.               |
-| `@memhtml/domain`    | Pure math: retention, decay, RRF, MMR, PageRank, the anti-merge guards.         |
-| `@memhtml/html`      | The memory file format: parse, serialize, hash, surgical head editors.          |
-| `@memhtml/store`     | The git-backed file store. One commit per operation, typed conflicts.           |
-| `@memhtml/index`     | SQLite schema, the git-driven indexer, four-arm RRF retrieval, the state plane. |
-| `@memhtml/traces`    | Streaming JSONL parser over `~/.claude`, with a size+mtime+offset watermark.    |
-| `@memhtml/llm`       | Bedrock: Cohere embeddings and forced-tool structured output.                   |
-| `@memhtml/eval`      | The fixture corpus generator and the refusable discrimination gate.             |
-| `@memhtml/cli`       | The `memhtml` binary, the envelope contract, and the one composition root.      |
-| `@memhtml/mcp`       | The `memhtml-mcp` stdio server: 15 tools, 2 resources.                          |
-| `@memhtml/docs`      | The documentation site.                                                         |
+| Package                 | What it owns                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------- |
+| `@memhtml/contracts`    | Schemas, the closed vocabularies, errors, path algebra. Zero I/O.               |
+| `@memhtml/domain`       | Pure math: retention, decay, RRF, MMR, PageRank, the anti-merge guards.         |
+| `@memhtml/html`         | The memory file format: parse, serialize, hash, surgical head editors.          |
+| `@memhtml/store`        | The git-backed file store. One commit per operation, typed conflicts.           |
+| `@memhtml/index`        | SQLite schema, the git-driven indexer, four-arm RRF retrieval, the state plane. |
+| `@memhtml/traces`       | Streaming JSONL parser over `~/.claude`, with a size+mtime+offset watermark.    |
+| `@memhtml/llm`          | Bedrock: Cohere embeddings and forced-tool structured output.                   |
+| `@memhtml/eval`         | The fixture corpus generator and the refusable discrimination gate.             |
+| `@memhtml/head`         | One corpus version in memory: indexes, overlays, search, and the head gate.     |
+| `@memhtml/session`      | Session logs, validation, the commit path, and the checkout lock.               |
+| `@memhtml/snapshot`     | Arrow snapshots of the head per commit, and the vector cache.                   |
+| `@memhtml/curator`      | The curator's tool loop, its charters and budget, and the collapse planner.     |
+| `@memhtml/integrations` | Wiring a coding agent to a store: MCP entry, hooks, instructions, receipt.      |
+| `@memhtml/telemetry`    | The opt-in OTLP trace exporter.                                                 |
+| `@memhtml/cli`          | The `memhtml` binary, the envelope contract, and the one composition root.      |
+| `@memhtml/mcp`          | The `memhtml-mcp` stdio server: 15 tools, 2 resources.                          |
+| `@memhtml/docs`         | The documentation site.                                                         |
 
 ## Development
 
