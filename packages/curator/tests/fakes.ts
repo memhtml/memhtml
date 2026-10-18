@@ -3,7 +3,8 @@ import type {
   LanguageModelV4CallOptions,
   LanguageModelV4GenerateResult
 } from "@ai-sdk/provider"
-import type { OverlayOp } from "@memhtml/contracts"
+import type { OverlayOp, StorePolicy } from "@memhtml/contracts"
+import { decodeStoreConfig, storePolicyOf } from "@memhtml/contracts"
 import type { Violation } from "@memhtml/session"
 import { MockLanguageModelV4 } from "ai/test"
 
@@ -14,6 +15,47 @@ import type {
   CuratorRecordView,
   CuratorTools
 } from "../src/index.js"
+
+/**
+ * A strict store's `memhtml.config.json`: run narratives and review output refused, every record
+ * anchored, the v1 doors closed inside a run, four writer-bucket patterns, the default quota. The
+ * curator's policy tests run under it, because the library's own policy refuses nothing and names
+ * no bucket; the same literal is restated in `@memhtml/session`'s and the CLI's test helpers.
+ */
+export const STRICT_STORE_CONFIG = {
+  writeBar: {
+    refusedTypes: [
+      {
+        type: "episodic",
+        reason: "an episodic record narrates one run; runs belong in the trace index, not the store"
+      },
+      { type: "verdict", reason: "a verdict is review output, not a memory" }
+    ],
+    requireAnchor: true
+  },
+  v1Doors: "closed-in-session",
+  curator: {
+    writerBuckets: [
+      "*-import",
+      "working-thread*",
+      "*-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]",
+      "trace-consolidation"
+    ],
+    placementQuota: 60
+  }
+} as const
+
+const strictDecoded = decodeStoreConfig(JSON.stringify(STRICT_STORE_CONFIG))
+if (!strictDecoded.ok)
+  throw new Error(`STRICT_STORE_CONFIG does not decode: ${strictDecoded.reason}`)
+
+/** {@link STRICT_STORE_CONFIG} as the effective policy. */
+export const STRICT_POLICY: StorePolicy = storePolicyOf(strictDecoded.config).policy
+
+/** {@link STRICT_POLICY}'s refused types, in the order the file names them. */
+export const STRICT_REFUSED_TYPES: ReadonlyArray<string> = [
+  ...STRICT_POLICY.writeBar.refusedTypes.keys()
+]
 
 /**
  * The two fakes every loop test composes: a scripted model and a recording tool set. Neither knows
@@ -164,6 +206,7 @@ export const emptyBriefing: Briefing = {
   supersededActiveTotal: 0,
   danglingEdges: [],
   danglingEdgesTotal: 0,
+  placementQuota: 60,
   inbox: [],
   inboxTotal: 0,
   inboxWithHome: 0,

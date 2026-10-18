@@ -17,6 +17,13 @@ import {
   type Ruling,
   sourceOf
 } from "../src/index.js"
+import { STRICT_POLICY, STRICT_REFUSED_TYPES } from "./fakes.js"
+
+/** The strict store's policy as the planner reads it. */
+const STRICT_PLAN = {
+  writerBuckets: STRICT_POLICY.curator.writerBuckets,
+  refusedTypes: STRICT_REFUSED_TYPES
+}
 
 /**
  * The planner over a `Map`-backed view of records built through the real parser, so frame keys,
@@ -36,6 +43,10 @@ import {
  * - `plan.ts` `NOT_CANONICAL_TYPES`: drop `"verdict"` (2026-09-26) -> "a fold of verdicts is
  *   briefed as semantic, because the write bar refuses a verdict canonical" (the fold is briefed
  *   as `verdict`).
+ * - `plan.ts` (2026-10-18): `policy.writerBuckets ?? []` -> `["*-import"]` -> "with the library's
+ *   default policy an import directory is a home and a verdict fold stays a verdict" (the canonical
+ *   moves out of the import directory); `!refusedTypes.has(type)` dropped from `canonicalType` -> "a
+ *   fold of verdicts is briefed as semantic ..." (the fold is briefed as `verdict`).
  * - `graph.ts` `detectCommunities`: pass `Math.random` as `rng` -> "the plan is byte-identical across
  *   two runs" is no longer guaranteed; the case was run 20 times under the mutation and the
  *   community numbering moved on 3 of them.
@@ -201,7 +212,7 @@ describe("planCollapse without rulings", () => {
   })
 
   it("records from another source never share a cluster", async () => {
-    const plan = planCollapse(viewOver(await fixture()))
+    const plan = planCollapse(viewOver(await fixture()), { policy: STRICT_PLAN })
     const imported = clusterOf(plan, "resources/wiki-kernel-import/verify-sleep-0.html")
     expect(imported?.source).toBe("agent:sleep")
     expect(imported?.members.every((member) => member.path.includes("verify-sleep"))).toBe(true)
@@ -387,9 +398,36 @@ describe("the pieces", () => {
         })
       ])
     )
-    const fold = clusterOf(planCollapse(viewOver([a, c])), "areas/inbox/verdict-a.html")
+    const fold = clusterOf(
+      planCollapse(viewOver([a, c]), { policy: STRICT_PLAN }),
+      "areas/inbox/verdict-a.html"
+    )
     expect(fold?.kind).toBe("fold")
     expect(fold?.memoryType).toBe("semantic")
+  })
+
+  it("with the library's default policy an import directory is a home and a verdict fold stays a verdict", async () => {
+    const plan = planCollapse(viewOver(await fixture()))
+    const imported = clusterOf(plan, "resources/wiki-kernel-import/verify-sleep-0.html")
+    expect(imported?.home).toBe("resources/wiki-kernel-import")
+    const [a, c] = await Effect.runPromise(
+      Effect.all([
+        memory("areas/inbox/verdict-a.html", {
+          title: "verdict: suppressed_failure",
+          claim: "Review verdict for objective: the deep dive of the cluster is late.",
+          memoryType: "verdict"
+        }),
+        memory("areas/inbox/verdict-c.html", {
+          title: "verdict: suppressed_failure",
+          claim: "Review verdict for objective: the deep dive of the cluster is late.",
+          body: ["A second mint."],
+          memoryType: "verdict"
+        })
+      ])
+    )
+    expect(
+      clusterOf(planCollapse(viewOver([a, c])), "areas/inbox/verdict-a.html")?.memoryType
+    ).toBe("verdict")
   })
 
   it("places a canonical under a real prefix and moves it out of a bucket", async () => {

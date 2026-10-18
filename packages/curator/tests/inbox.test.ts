@@ -6,9 +6,12 @@ import {
   briefingFromView,
   HEADLINE_CLAIM_TYPES,
   INBOX_CLAIM_CHARS,
+  inboxCapFor,
   inboxWorkList,
-  isBucketHome
+  isBucketHome,
+  PLACEMENT_QUOTA
 } from "../src/index.js"
+import { STRICT_POLICY } from "./fakes.js"
 
 /**
  * The inbox work list (`inbox.ts`) over a plain-`Map` view: which home code names for an inbox
@@ -19,6 +22,10 @@ import {
  *   carries places nothing" (`person:owner` names `resources/owner`).
  * - `inboxWorkList`: the `isBucketHome(name)` skip dropped from the homes loop -> "a writer's bucket
  *   is never a home" (the import bucket wins on shared records).
+ * - `inboxWorkList` (2026-10-18): `policy.writerBuckets ?? []` -> the strict patterns -> "with no
+ *   writer buckets, an importer's directory is a home like any other" (the import bucket names
+ *   nothing); `inboxCapFor(policy.placementQuota ?? ...)` -> `BRIEFING_INBOX_CAP` -> "the store's
+ *   quota sizes the list and reaches the briefing" (the list stays at 80).
  * - `inboxWorkList`: `best.score > next.score` -> `>=` -> "a tie between two homes names neither".
  * - `inboxWorkList`: the `NEW_HOME_MIN` filter dropped -> "a new home opens only for an entity three
  *   inbox records share" (the pair opens `resources/pairthing`).
@@ -64,8 +71,9 @@ const viewOver = (records: ReadonlyArray<MemoryRecord>): HeadView => {
   }
 }
 
+/** The list under the strict store's writer buckets, the policy every case here assumes. */
 const list = (records: ReadonlyArray<MemoryRecord>) =>
-  inboxWorkList(viewOver(records), HEADLINE_CLAIM_TYPES)
+  inboxWorkList(viewOver(records), HEADLINE_CLAIM_TYPES, STRICT_POLICY.curator)
 
 const entryFor = (records: ReadonlyArray<MemoryRecord>, path: string) =>
   list(records).inbox.find((entry) => entry.path === path)
@@ -144,10 +152,14 @@ describe("inboxWorkList names a home and its evidence", () => {
   })
 
   it("a writer's bucket is never a home, and a tag alone is evidence rather than a home", () => {
-    expect(isBucketHome("wiki-kernel-import")).toBe(true)
-    expect(isBucketHome("working-thread-2026-09-10")).toBe(true)
-    expect(isBucketHome("trace-consolidation")).toBe(true)
-    expect(isBucketHome("hex-bonk")).toBe(false)
+    const buckets = STRICT_POLICY.curator.writerBuckets
+    expect(isBucketHome("wiki-kernel-import", buckets)).toBe(true)
+    expect(isBucketHome("working-thread-2026-09-10", buckets)).toBe(true)
+    expect(isBucketHome("notes-2026-09-10", buckets)).toBe(true)
+    expect(isBucketHome("trace-consolidation", buckets)).toBe(true)
+    expect(isBucketHome("memhtml", buckets)).toBe(false)
+    expect(isBucketHome("import-tools", buckets)).toBe(false)
+    expect(isBucketHome("wiki-kernel-import", [])).toBe(false)
     const records = [
       record("resources/wiki-kernel-import/a.html", { entities: ["service:x"] }),
       record("resources/wiki-kernel-import/b.html", { entities: ["service:x"] }),
@@ -161,6 +173,20 @@ describe("inboxWorkList names a home and its evidence", () => {
     const tagged = entryFor(records, "areas/inbox/tagged.html")
     expect(tagged?.home).toBeNull()
     expect(tagged?.alternative).toEqual({ dir: "resources/tagged", score: 1 })
+  })
+
+  it("with no writer buckets, an importer's directory is a home like any other", () => {
+    const records = [
+      record("resources/wiki-kernel-import/a.html", { entities: ["service:x"] }),
+      record("resources/wiki-kernel-import/b.html", { entities: ["service:x"] }),
+      record("areas/inbox/imported.html", { entities: ["service:x"] }),
+      ...filler(10)
+    ]
+    const result = inboxWorkList(viewOver(records), HEADLINE_CLAIM_TYPES)
+    expect(
+      result.inbox.find((entry) => entry.path === "areas/inbox/imported.html")?.home
+    ).toMatchObject({ dir: "resources/wiki-kernel-import", kind: "existing" })
+    expect(entryFor(records, "areas/inbox/imported.html")?.home).toBeNull()
   })
 
   it("a new home opens only for an entity three inbox records share, and never for a person", () => {
@@ -256,9 +282,25 @@ describe("inboxWorkList chooses and orders its records", () => {
       { dir: "resources/small", kind: "existing", inbox: 1 }
     ])
     // The briefing carries the list as its fifth work list.
-    const briefing = briefingFromView(viewOver(records))
+    const briefing = briefingFromView(viewOver(records), null, STRICT_POLICY.curator)
     expect(briefing.inbox).toEqual(result.inbox)
     expect(briefing.inboxTotal).toBe(result.inboxTotal)
     expect(briefing.inboxWithHome).toBe(result.inboxWithHome)
+    expect(briefing.placementQuota).toBe(PLACEMENT_QUOTA)
+  })
+
+  it("the store's quota sizes the list and reaches the briefing", () => {
+    const records = Array.from({ length: 50 }, (_, at) =>
+      record(`areas/inbox/r-${String(at).padStart(2, "0")}.html`)
+    )
+    expect(inboxCapFor(PLACEMENT_QUOTA)).toBe(BRIEFING_INBOX_CAP)
+    expect(inboxCapFor(12)).toBe(16)
+    const small = inboxWorkList(viewOver(records), HEADLINE_CLAIM_TYPES, { placementQuota: 12 })
+    expect(small.inbox).toHaveLength(16)
+    expect(small.inboxTotal).toBe(50)
+    const briefing = briefingFromView(viewOver(records), null, { placementQuota: 12 })
+    expect(briefing.placementQuota).toBe(12)
+    expect(briefing.inbox).toHaveLength(16)
+    expect(briefingFromView(viewOver(records)).placementQuota).toBe(PLACEMENT_QUOTA)
   })
 })

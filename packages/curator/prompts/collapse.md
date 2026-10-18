@@ -17,7 +17,7 @@ The briefing names one theme: a canonical title, a home prefix, a memory type, a
 ## Rules
 
 - Use `propose` for the put and the archives. Do not use `exec`. Use `read` only when a member's excerpt is not enough to fold it faithfully; the briefing already holds what you need for most members.
-- Every put carries at least one `memhtml-entity`, and no put is `episodic` or `verdict`.
+- Every put carries at least one `memhtml-entity`{{refusedTypesClause}}.
 - A rejected proposal comes back with violations. Fix the file and propose again; a `format` violation names the exact reason. A `write-bar` violation means the put names nothing it is about: add the `memhtml-entity` its reason asks for and propose again. A `duplicate` violation means an active record already carries the same article text: change the wording. Never propose an archive of a path outside the member list.
 - A member whose ruling reads `keep` is briefed for context only: fold what it says into the canonical if it belongs, but never archive it.
 - Never edit an active file in place and never delete anything. The only operations this job uses are `put`, `archive`, and `link`. The store also has `unlink`, `label`, and `unlabel`, which add or remove one link or one `memhtml-entity` on an existing record's head; a fold needs none of them, because the canonical carries its entities in its own head and every member is archived as it is.
