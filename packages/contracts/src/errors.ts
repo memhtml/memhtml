@@ -79,3 +79,28 @@ export class LlmContractViolation extends Schema.TaggedError<LlmContractViolatio
     reason: Schema.String
   }
 ) {}
+
+/**
+ * The store's policy file (`memhtml.config.json` at the store root) could not be read or does not
+ * decode. Fails closed: every write that needs the policy refuses rather than running under the
+ * library defaults, because a typo in a policy file must not loosen the policy it states. `path` is
+ * the file; `reason` names what is wrong and where.
+ */
+export class StoreConfigInvalid extends Schema.TaggedError<StoreConfigInvalid>()(
+  "StoreConfigInvalid",
+  {
+    path: Schema.String,
+    reason: Schema.String
+  }
+) {}
+
+/**
+ * A v1 door that creates a record was called where the store's `v1Doors` mode closes it. `door` is
+ * the command or tool (`write`, `memory_write`); `session` is the `MEMHTML_SESSION` the process
+ * carries, or `null` when the mode is `closed` and no session is set.
+ */
+export class V1DoorClosed extends Schema.TaggedError<V1DoorClosed>()("V1DoorClosed", {
+  door: Schema.String,
+  mode: Schema.String,
+  session: Schema.NullOr(Schema.String)
+}) {}
