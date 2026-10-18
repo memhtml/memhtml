@@ -1,9 +1,18 @@
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { StorageFailure } from "@memhtml/contracts"
-import { Field, Float32, Schema, Table, tableToIPC, Utf8, vectorFromArray } from "apache-arrow"
+import {
+  Field,
+  Float32,
+  Schema,
+  Table,
+  tableFromIPC,
+  tableToIPC,
+  Utf8,
+  vectorFromArray
+} from "apache-arrow"
 import { Effect, Result } from "effect"
 import fc from "fast-check"
 import { afterAll, describe, expect, it } from "vitest"
@@ -12,7 +21,10 @@ import {
   DIMENSION_METADATA_KEY,
   MODEL_ID_METADATA_KEY,
   readVectorCache,
+  STAGING_ABANDONED_MS,
   type StoredVectorSpace,
+  VECTOR_CACHE_FORMAT,
+  VECTOR_FORMAT_METADATA_KEY,
   VECTORS_DIR,
   vectorCachePathFor,
   writeVectorCache
@@ -34,6 +46,16 @@ import {
  *   `vectors.read.file`.
  * - `tableOf`: drop the width check, and "refuses to write a vector of the wrong width" fails
  *   because the file is written.
+ * - `readVectorCache`: drop the format check, and "reads a cache of no format version, or another,
+ *   as absent" fails because the files read (and the one of another model id fails with
+ *   `vectors.read.space`).
+ * - `writeVectorCache`: drop the `sweepStaging` call, and "sweeps this cache's staging files a
+ *   killed writer left" fails because the abandoned files stay.
+ * - `sweepStaging`: remove every match whatever its age, and "sweeps this cache's staging files a
+ *   killed writer left" fails because the fresh staging file is removed too.
+ * - `writeVectorCache`: stage through the one fixed name `<path>.tmp` and `rename` it, and
+ *   "survives concurrent writers of one cache in one process" fails with `vectors.write.rename`
+ *   (ENOENT), the error the head server logged beside `head embed`.
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
@@ -192,6 +214,7 @@ describe("the vector cache refusals", () => {
     const schema = new Schema(
       [new Field("contentHash", new Utf8(), true), new Field("vector", new Float32(), true)],
       new Map([
+        [VECTOR_FORMAT_METADATA_KEY, VECTOR_CACHE_FORMAT],
         [MODEL_ID_METADATA_KEY, "m"],
         [DIMENSION_METADATA_KEY, "4"]
       ])
@@ -227,5 +250,94 @@ describe("the vector cache refusals", () => {
     )
     expect(failure.operation).toBe("vectors.write.encode")
     expect(await readdir(root)).toEqual([])
+  })
+})
+
+describe("the vector cache format", () => {
+  it(`writes format ${VECTOR_CACHE_FORMAT} into the metadata`, async () => {
+    const table = tableFromIPC(await readFile(measured.path))
+    expect(table.schema.metadata.get(VECTOR_FORMAT_METADATA_KEY)).toBe(VECTOR_CACHE_FORMAT)
+  })
+
+  it("reads a cache of no format version, or another, as absent, and leaves the file", async () => {
+    const root = await scratch()
+    const space = { modelId: "m", dimension: 4 }
+    const path = vectorCachePathFor(root, space)
+    await run(
+      writeVectorCache({ stored: { space, vectors: new Map([["h", vectorFor(0, 4)]]) }, path })
+    )
+    const table = tableFromIPC(await readFile(path))
+    const relabel = async (edit: (metadata: Map<string, string>) => void) => {
+      const metadata = new Map(table.schema.metadata)
+      edit(metadata)
+      await writeFile(
+        path,
+        tableToIPC(new Table(new Schema(table.schema.fields, metadata), table.batches), "file")
+      )
+    }
+    await relabel((metadata) => metadata.delete(VECTOR_FORMAT_METADATA_KEY))
+    expect(await run(readVectorCache(path, space))).toBeNull()
+    await relabel((metadata) => metadata.set(VECTOR_FORMAT_METADATA_KEY, "2"))
+    expect(await run(readVectorCache(path, space))).toBeNull()
+    // The version is judged before the space: a file of another layout says nothing reliable.
+    await relabel((metadata) => {
+      metadata.delete(VECTOR_FORMAT_METADATA_KEY)
+      metadata.set(MODEL_ID_METADATA_KEY, "another")
+    })
+    expect(await run(readVectorCache(path, space))).toBeNull()
+    // The miss leaves the file for the next write, which replaces it whole.
+    expect((await stat(path)).size).toBeGreaterThan(0)
+    await run(
+      writeVectorCache({ stored: { space, vectors: new Map([["h2", vectorFor(1, 4)]]) }, path })
+    )
+    expect([...((await run(readVectorCache(path, space)))?.vectors.keys() ?? [])]).toEqual(["h2"])
+  })
+})
+
+describe("the vector cache's writers", () => {
+  it("survives concurrent writers of one cache in one process", async () => {
+    const root = await scratch()
+    const space = { modelId: "m", dimension: 8 }
+    const path = vectorCachePathFor(root, space)
+    await run(
+      Effect.all(
+        Array.from({ length: 8 }, (_, writer) =>
+          writeVectorCache({
+            stored: { space, vectors: new Map([[`h${String(writer)}`, vectorFor(writer, 8)]]) },
+            path
+          })
+        ),
+        { concurrency: "unbounded" }
+      )
+    )
+    expect(await readdir(join(root, VECTORS_DIR))).toEqual(["m@8.arrow"])
+    expect((await run(readVectorCache(path, space)))?.vectors.size).toBe(1)
+  })
+
+  it("sweeps this cache's staging files a killed writer left, past an hour old", async () => {
+    const root = await scratch()
+    const space = { modelId: "m", dimension: 4 }
+    const path = vectorCachePathFor(root, space)
+    await run(
+      writeVectorCache({ stored: { space, vectors: new Map([["h", vectorFor(0, 4)]]) }, path })
+    )
+    const dir = join(root, VECTORS_DIR)
+    const old = (Date.now() - STAGING_ABANDONED_MS - 60_000) / 1000
+    const seeded = {
+      abandoned: "m@4.arrow.1234567890",
+      oldName: "m@4.arrow.tmp",
+      fresh: "m@4.arrow.987654321",
+      otherCache: "other@4.arrow.1234567890"
+    }
+    for (const [key, name] of Object.entries(seeded)) {
+      await writeFile(join(dir, name), "staging bytes")
+      if (key !== "fresh") await utimes(join(dir, name), old, old)
+    }
+    await run(
+      writeVectorCache({ stored: { space, vectors: new Map([["h", vectorFor(0, 4)]]) }, path })
+    )
+    expect((await readdir(dir)).sort()).toEqual(
+      ["m@4.arrow", seeded.fresh, seeded.otherCache].sort()
+    )
   })
 })

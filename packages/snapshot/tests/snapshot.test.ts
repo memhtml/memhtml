@@ -1,6 +1,9 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { execFile } from "node:child_process"
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
+import { promisify } from "node:util"
 
 import { type MemoryRecord, StorageFailure } from "@memhtml/contracts"
 import {
@@ -18,7 +21,15 @@ import { Effect, Result } from "effect"
 import fc from "fast-check"
 import { afterAll, describe, expect, it } from "vitest"
 
-import { readSnapshot, SHA_METADATA_KEY, snapshotPathFor, writeSnapshot } from "../src/index.js"
+import {
+  FORMAT_METADATA_KEY,
+  readSnapshot,
+  readSnapshotIfPresent,
+  SHA_METADATA_KEY,
+  SNAPSHOT_FORMAT,
+  snapshotPathFor,
+  writeSnapshot
+} from "../src/index.js"
 
 /**
  * The snapshot is a cache of parsed records, so the one property that matters is that what comes
@@ -31,11 +42,17 @@ import { readSnapshot, SHA_METADATA_KEY, snapshotPathFor, writeSnapshot } from "
  *   because the read succeeds with `sha: undefined`.
  * - `readSnapshot`: delete the `compareSchemas` branch; "refuses a foreign schema" fails because
  *   the failure arrives as `snapshot.read.rows` instead of `snapshot.read.schema`.
+ * - `readSnapshot`: delete the format check; "refuses a file of no format version, or another" fails
+ *   because both files read.
+ * - `readSnapshotIfPresent`: drop the `ENOENT` branch; "answers null for a file that is not there"
+ *   fails with `snapshot.read.file`.
  * - `writeSnapshot`: delete the `mkdir` step; the collection-time write of 1,000 records fails with
  *   `snapshot.write.file` (ENOENT) because `snapshotPathFor` names a directory that does not exist
  *   yet under a fresh temp root, so the whole file reports as a failed suite.
- * - `writeSnapshot`: write to `path` directly instead of staging plus rename; "leaves no staging
- *   file behind" still passes, so that step is a design choice, not a guard this suite proves.
+ * - `writeSnapshot`: stage through the one fixed name `<path>.tmp` and `rename` it (the writer before
+ *   `write-file-atomic`); "survives writers of one sha in four processes at once" fails with
+ *   `snapshot.write.rename` (ENOENT) in a child, because one process renamed another's staging file
+ *   away, and "survives concurrent writers of one sha in one process" fails the same way.
  * - The lazy read: decode the one row through the column (`html.toArray()[500]`, an eager read)
  *   instead of through the row proxy; "decodes 1 html cell for one row" fails with 1,000 visits.
  */
@@ -186,7 +203,13 @@ describe("writeSnapshot / readSnapshot", () => {
   })
 
   it("leaves no staging file behind", async () => {
-    await expect(stat(`${thousandPath}.tmp`)).rejects.toMatchObject({ code: "ENOENT" })
+    expect(await readdir(dirname(thousandPath))).toEqual([`${SHA}.arrow`])
+  })
+
+  it(`writes format ${SNAPSHOT_FORMAT} and the sha into the schema metadata`, async () => {
+    const table = tableFromIPC(await readFile(thousandPath))
+    expect(table.schema.metadata.get(FORMAT_METADATA_KEY)).toBe(SNAPSHOT_FORMAT)
+    expect(table.schema.metadata.get(SHA_METADATA_KEY)).toBe(SHA)
   })
 
   it("round-trips the empty set", async () => {
@@ -235,12 +258,37 @@ describe("readSnapshot refusals", () => {
     expect(await failure(path)).toBe("snapshot.read.decode")
   })
 
-  it("refuses a file without a sha (snapshot.read.sha)", async () => {
-    const path = join(root, "no-sha.arrow")
+  /** The 1,000-record snapshot rewritten with `edit` applied to its schema metadata. */
+  const relabeled = async (name: string, edit: (metadata: Map<string, string>) => void) => {
+    const path = join(root, name)
     const table = tableFromIPC(await readFile(thousandPath))
-    const stripped = new Table(new Schema(table.schema.fields), table.batches)
-    expect(stripped.schema.metadata.get(SHA_METADATA_KEY)).toBeUndefined()
-    await writeFile(path, tableToIPC(stripped, "file"))
+    const metadata = new Map(table.schema.metadata)
+    edit(metadata)
+    await writeFile(
+      path,
+      tableToIPC(new Table(new Schema(table.schema.fields, metadata), table.batches), "file")
+    )
+    return path
+  }
+
+  it("refuses a file of no format version, or another (snapshot.read.format)", async () => {
+    const none = await relabeled("no-format.arrow", (metadata) => {
+      metadata.delete(FORMAT_METADATA_KEY)
+    })
+    expect(await failure(none)).toBe("snapshot.read.format")
+    for (const other of ["0", "2", ""]) {
+      const path = await relabeled(`format-${other}.arrow`, (metadata) => {
+        metadata.set(FORMAT_METADATA_KEY, other)
+      })
+      expect(await failure(path), other).toBe("snapshot.read.format")
+    }
+  })
+
+  it("refuses a file without a sha (snapshot.read.sha)", async () => {
+    const path = await relabeled("no-sha.arrow", (metadata) => {
+      metadata.delete(SHA_METADATA_KEY)
+    })
+    expect(tableFromIPC(await readFile(path)).schema.metadata.get(SHA_METADATA_KEY)).toBeUndefined()
     expect(await failure(path)).toBe("snapshot.read.sha")
   })
 
@@ -249,11 +297,98 @@ describe("readSnapshot refusals", () => {
     const foreign = new Table({ path: vectorFromArray(["areas/inbox/a.html"], new Utf8()) })
     const schema = new Schema(
       [new Field("path", new Utf8(), true)],
-      new Map([[SHA_METADATA_KEY, SHA]])
+      new Map([
+        [SHA_METADATA_KEY, SHA],
+        [FORMAT_METADATA_KEY, SNAPSHOT_FORMAT]
+      ])
     )
     await writeFile(path, tableToIPC(new Table(schema, foreign.batches), "file"))
     expect(await failure(path)).toBe("snapshot.read.schema")
   })
+})
+
+describe("readSnapshotIfPresent", () => {
+  it("answers null for a file that is not there", async () => {
+    expect(await run(readSnapshotIfPresent(join(root, "never-written.arrow")))).toBeNull()
+  })
+
+  it("reads a snapshot the way readSnapshot does, and refuses what it refuses", async () => {
+    expect(await run(readSnapshotIfPresent(thousandPath))).toEqual(readBack)
+    const path = join(root, "garbage-if-present.arrow")
+    await writeFile(path, "definitely not an arrow file, but long enough to have a footer")
+    const error = await runErr(readSnapshotIfPresent(path))
+    expect(error.operation).toBe("snapshot.read.decode")
+  })
+})
+
+const execFileP = promisify(execFile)
+const PACKAGE_DIR = fileURLToPath(new URL("..", import.meta.url))
+
+/**
+ * The script a child process runs: write the snapshot of the records in `recordsPath` at `path`,
+ * `rounds` times, from the package's built `dist` (the suite's own build step makes it). Evaluated
+ * with the package as its working directory, so `effect` resolves from the package's dependencies.
+ */
+const WRITER = `
+import { readFile } from "node:fs/promises"
+import { Effect } from "effect"
+import { writeSnapshot } from "./dist/index.js"
+const [path, sha, recordsPath, rounds] = process.argv.slice(1)
+const records = JSON.parse(await readFile(recordsPath, "utf8"))
+for (let round = 0; round < Number(rounds); round += 1) {
+  const result = await Effect.runPromise(Effect.result(writeSnapshot({ records, sha, path })))
+  if (result._tag === "Failure") {
+    process.stderr.write(\`round \${round}: \${result.failure.operation}\n\`)
+    process.exit(1)
+  }
+}
+`
+
+describe("concurrent writers of one sha", () => {
+  const SIBLING = "1111111111111111111111111111111111111111"
+
+  it("survives concurrent writers of one sha in one process", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "memhtml-snapshot-same-"))
+    try {
+      const path = join(dir, `${SIBLING}.arrow`)
+      const records = thousand.slice(0, 200)
+      await run(
+        Effect.all(
+          Array.from({ length: 8 }, () => writeSnapshot({ records, sha: SIBLING, path })),
+          { concurrency: "unbounded" }
+        )
+      )
+      expect(await readdir(dir)).toEqual([`${SIBLING}.arrow`])
+      expect((await run(readSnapshot(path))).records).toEqual(records)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("survives writers of one sha in four processes at once", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "memhtml-snapshot-procs-"))
+    try {
+      const path = join(dir, `${SIBLING}.arrow`)
+      const records = thousand.slice(0, 200)
+      const recordsPath = join(dir, "records.json")
+      await writeFile(recordsPath, JSON.stringify(records))
+      const children = Array.from({ length: 4 }, () =>
+        execFileP(
+          process.execPath,
+          ["--input-type=module", "-e", WRITER, path, SIBLING, recordsPath, "25"],
+          { cwd: PACKAGE_DIR, encoding: "utf8" }
+        ).then(
+          () => "ok",
+          (error: { readonly stderr?: string }) => `failed: ${error.stderr ?? String(error)}`
+        )
+      )
+      expect(await Promise.all(children)).toEqual(["ok", "ok", "ok", "ok"])
+      expect((await readdir(dir)).sort()).toEqual([`${SIBLING}.arrow`, "records.json"])
+      expect((await run(readSnapshot(path))).records).toEqual(records)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
 })
 
 describe("lazy read over a Buffer", () => {

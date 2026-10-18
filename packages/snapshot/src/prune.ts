@@ -5,6 +5,7 @@ import { StorageFailure } from "@memhtml/contracts"
 import { Effect } from "effect"
 
 import { SNAPSHOTS_DIR } from "./snapshot.js"
+import { sweepStaging } from "./staging.js"
 
 /**
  * The snapshot directory as a set: which commits have a snapshot, and which to keep.
@@ -19,6 +20,9 @@ import { SNAPSHOTS_DIR } from "./snapshot.js"
 export const SNAPSHOTS_KEPT = 4
 
 const SNAPSHOT_FILE = /^([0-9a-f]{40})\.arrow$/
+
+/** A snapshot's staging name: `<sha>.arrow.` and a suffix (`write-file-atomic`'s, or `tmp`). */
+const STAGING_FILE = /^[0-9a-f]{40}\.arrow\.[^.]+$/
 
 export interface SnapshotEntry {
   readonly sha: string
@@ -40,8 +44,9 @@ const attemptIo = <A>(
 
 /**
  * Every `<sha>.arrow` under `<root>/.memhtml/snapshots/`, newest first by mtime, then by sha so
- * two files written in the same millisecond order the same way twice. A staging file (`.tmp`) or
- * any other name is not a snapshot and is not listed. A missing directory is the empty list.
+ * two files written in the same millisecond order the same way twice. A staging file
+ * (`<sha>.arrow.<suffix>`) or any other name is not a snapshot and is not listed. A missing
+ * directory is the empty list.
  */
 export const listSnapshots = (
   root: string
@@ -69,7 +74,11 @@ export const listSnapshots = (
     )
   })
 
-/** Remove every snapshot past the newest `keep`; the shas removed, newest first. */
+/**
+ * Remove every snapshot past the newest `keep`; the shas removed, newest first. Staging files a
+ * killed writer left (`<sha>.arrow.<suffix>`, older than `STAGING_ABANDONED_MS`) are removed too,
+ * with a log line, and are not in the answer, which names snapshots only.
+ */
 export const pruneSnapshots = (
   root: string,
   options: { readonly keep?: number | undefined } = {}
@@ -86,5 +95,6 @@ export const pruneSnapshots = (
         })
       )
     }
+    yield* sweepStaging(join(root, SNAPSHOTS_DIR), (name) => STAGING_FILE.test(name))
     return stale.map((entry) => entry.sha)
   })
