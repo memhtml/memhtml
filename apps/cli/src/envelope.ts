@@ -81,7 +81,10 @@ export const RESPONSE_TYPES = [
   "head.embedded",
   // `memhtml config`: the store's effective policy (`memhtml.config.json`) and the process tuning
   // variables, each value with where it came from.
-  "config.report"
+  "config.report",
+  // `session prune`: the session state removed (or, under `--dry-run`, that would be) and the logs
+  // kept because they still hold ops.
+  "session.pruned"
 ] as const
 
 export type ResponseType = (typeof RESPONSE_TYPES)[number]

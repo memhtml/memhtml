@@ -1,7 +1,13 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { DatabaseService, IndexStale, isIndexablePath, TREE_PREFIXES } from "@memhtml/index"
-import { attemptIo, commitSubject, type GitShape, readFileOrNull } from "@memhtml/store"
+import {
+  attemptIo,
+  commitSubject,
+  type GitShape,
+  readFileOrNull,
+  withCheckoutLock
+} from "@memhtml/store"
 import { Effect } from "effect"
 
 import { Git } from "./api-layer.js"
@@ -90,14 +96,20 @@ export const publish = () =>
     yield* refuseEmptyIndex(git, rows)
     const artifacts = generateArtifacts(rows)
 
+    // Written, staged, and committed under the checkout lock: the commit takes the whole shared
+    // index, so it must not run while a session commit has its own file staged there.
     const written: Array<string> = []
-    for (const artifact of artifacts) {
-      if (yield* writeIfChanged(git.root, artifact)) written.push(artifact.path)
-    }
-
-    yield* git.add(artifacts.map((artifact) => artifact.path))
-    const commit = yield* git.commit(
-      commitSubject("publish", `regenerate ${artifacts.length} generated artifacts`)
+    const commit = yield* withCheckoutLock(
+      git.root,
+      Effect.gen(function* () {
+        for (const artifact of artifacts) {
+          if (yield* writeIfChanged(git.root, artifact)) written.push(artifact.path)
+        }
+        yield* git.add(artifacts.map((artifact) => artifact.path))
+        return yield* git.commit(
+          commitSubject("publish", `regenerate ${artifacts.length} generated artifacts`)
+        )
+      })
     )
 
     return {

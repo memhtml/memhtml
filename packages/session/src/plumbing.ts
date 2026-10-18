@@ -151,6 +151,20 @@ export interface Plumbing {
   dirtyPaths(paths: ReadonlyArray<string>): Effect.Effect<ReadonlyArray<string>, GitFailure>
   /** `merge-base --is-ancestor sha ref`: true when `sha` is reachable from `ref`. */
   isAncestor(sha: string, ref: string): Effect.Effect<boolean, GitFailure>
+  /**
+   * `for-each-ref` under `prefix` (`refs/memhtml/sessions/`): each ref, the object it names, and the
+   * committer time of that commit in epoch seconds (`null` when it names no commit).
+   */
+  forEachRef(prefix: string): Effect.Effect<ReadonlyArray<RefEntry>, GitFailure>
+  /** `update-ref --stdin` with one `delete` per ref, as one transaction; nothing when `refs` is empty. */
+  deleteRefs(refs: ReadonlyArray<string>): Effect.Effect<void, GitFailure>
+}
+
+/** One row of {@link Plumbing.forEachRef}. */
+export interface RefEntry {
+  readonly ref: string
+  readonly sha: string
+  readonly committedAt: number | null
 }
 
 /**
@@ -177,13 +191,30 @@ export const gitPathOf = (root: string, relative: string): Effect.Effect<string,
 const INDEX_LOCK_ATTEMPTS = 40
 const INDEX_LOCK_WAIT_MS = 50
 
+/**
+ * The plumbing over `root`. `indexFile` is the index the staging calls (`readTree`, `updateIndexAdd`,
+ * `updateIndexRemove`, `writeTree`) read and write: a commit's own temporary file
+ * (`withTemporaryIndex` in `commit.ts`). Without one those four fail with a `GitFailure` before any
+ * child runs, so a caller that only reads refs, moves a ref, or updates the checkout can never stage
+ * into the shared index by accident.
+ */
 export const makePlumbing = (input: {
   readonly root: string
-  readonly indexFile: string
+  readonly indexFile?: string | undefined
 }): Plumbing => {
   const { root, indexFile } = input
-  const sessionEnv = childEnv({ GIT_INDEX_FILE: indexFile })
   const sharedEnv = childEnv({})
+  const sessionEnv = indexFile === undefined ? sharedEnv : childEnv({ GIT_INDEX_FILE: indexFile })
+  /** A staging call needs the commit's own index; without one it fails instead of using the shared one. */
+  const staging = <A>(
+    command: string,
+    effect: () => Effect.Effect<A, GitFailure>
+  ): Effect.Effect<A, GitFailure> =>
+    indexFile === undefined
+      ? Effect.logError(`git ${command}: no session index file, refusing to stage`).pipe(
+          Effect.andThen(Effect.fail(GitFailure.make({ command, exitCode: null })))
+        )
+      : Effect.suspend(effect)
 
   const run = (
     env: Record<string, string | undefined>,
@@ -212,7 +243,10 @@ export const makePlumbing = (input: {
   }
 
   return {
-    readTree: (sha) => run(sessionEnv, "read-tree", ["read-tree", sha]).pipe(Effect.asVoid),
+    readTree: (sha) =>
+      staging("read-tree", () =>
+        run(sessionEnv, "read-tree", ["read-tree", sha]).pipe(Effect.asVoid)
+      ),
 
     hashObjectWrite: (bytes) =>
       run(sessionEnv, "hash-object", ["hash-object", "-w", "--stdin"], { stdin: bytes }).pipe(
@@ -222,21 +256,27 @@ export const makePlumbing = (input: {
     updateIndexAdd: (entries) =>
       entries.length === 0
         ? Effect.void
-        : run(sessionEnv, "update-index", ["update-index", "--add", "-z", "--index-info"], {
-            // `-z` makes the record NUL-terminated so a path carrying a newline stays one path.
-            stdin: entries.map((entry) => `${entry.mode} ${entry.sha}\t${entry.path}\0`).join("")
-          }).pipe(Effect.asVoid),
+        : staging("update-index", () =>
+            run(sessionEnv, "update-index", ["update-index", "--add", "-z", "--index-info"], {
+              // `-z` makes the record NUL-terminated so a path carrying a newline stays one path.
+              stdin: entries.map((entry) => `${entry.mode} ${entry.sha}\t${entry.path}\0`).join("")
+            }).pipe(Effect.asVoid)
+          ),
 
     updateIndexRemove: (paths) =>
       paths.length === 0
         ? Effect.void
-        : run(sessionEnv, "update-index", ["update-index", "--force-remove", "-z", "--stdin"], {
-            stdin: paths.map((path) => `${path}\0`).join("")
-          }).pipe(Effect.asVoid),
+        : staging("update-index", () =>
+            run(sessionEnv, "update-index", ["update-index", "--force-remove", "-z", "--stdin"], {
+              stdin: paths.map((path) => `${path}\0`).join("")
+            }).pipe(Effect.asVoid)
+          ),
 
     writeTree: () =>
-      run(sessionEnv, "write-tree", ["write-tree"]).pipe(
-        Effect.flatMap((result) => shaOf("write-tree", result))
+      staging("write-tree", () =>
+        run(sessionEnv, "write-tree", ["write-tree"]).pipe(
+          Effect.flatMap((result) => shaOf("write-tree", result))
+        )
       ),
 
     commitTree: (tree, parents, message) =>
@@ -354,6 +394,40 @@ export const makePlumbing = (input: {
       run(sharedEnv, "merge-base", ["merge-base", "--is-ancestor", sha, ref], {
         // Exit 1 is "not an ancestor", an answer rather than a failure.
         okExitCodes: [0, 1]
-      }).pipe(Effect.map((result) => result.exitCode === 0))
+      }).pipe(Effect.map((result) => result.exitCode === 0)),
+
+    forEachRef: (prefix) =>
+      run(sharedEnv, "for-each-ref", [
+        "for-each-ref",
+        // NUL-separated fields, one ref per line: a ref name holds neither (check-ref-format).
+        "--format=%(refname)%00%(objectname)%00%(committerdate:unix)",
+        prefix
+      ]).pipe(
+        Effect.map((result) =>
+          text(result)
+            .split("\n")
+            .filter((line) => line !== "")
+            .flatMap((line) => {
+              const [ref, sha, at] = line.split("\0")
+              if (ref === undefined || sha === undefined) return []
+              const seconds = Number(at)
+              return [
+                {
+                  ref,
+                  sha,
+                  committedAt:
+                    at === undefined || at === "" || !Number.isFinite(seconds) ? null : seconds
+                }
+              ]
+            })
+        )
+      ),
+
+    deleteRefs: (refs) =>
+      refs.length === 0
+        ? Effect.void
+        : run(sharedEnv, "update-ref", ["update-ref", "--stdin"], {
+            stdin: refs.map((ref) => `delete ${ref}\n`).join("")
+          }).pipe(Effect.asVoid)
   }
 }

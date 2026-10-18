@@ -6,21 +6,23 @@ import { Effect, Schema } from "effect"
 import { lock } from "proper-lockfile"
 import writeFileAtomic from "write-file-atomic"
 
-import type { GitFailure } from "./errors.js"
+import { GitFailure } from "./errors.js"
 import { ensureExcludedQuietly } from "./exclude.js"
-import { makePlumbing, type Plumbing } from "./plumbing.js"
+import { makePlumbing } from "./plumbing.js"
 
 /**
  * A session: a pointer to a base version, an overlay log of its own operations, and nothing else.
- * Its durable twin on disk is two files under `<root>/.memhtml/sessions/`: `<id>.idx`, the git index
- * the commit path stages into, and `<id>.json`, the log. Both sit under `.memhtml/`, which the
- * store's scaffold gitignores.
+ * Its durable twin on disk is one file, `<root>/.memhtml/sessions/<id>.json`, the log, under
+ * `.memhtml/`, which the store's scaffold gitignores. A commit stages through a temporary index file
+ * of its own that it removes on every outcome (`commit.ts`), so nothing else is kept between calls.
  *
  * One writer per id at a time. Every write to the log and the whole of a commit run under
  * {@link withSessionLock}, an exclusive lock at `<id>.lock` (proper-lockfile: an atomic `mkdir`,
- * its mtime refreshed while held so a lock left by a killed process goes stale and is reclaimed). A
- * second writer does not wait: it fails with `session.locked`, because a second commit of the same
- * id would stage into the same `.idx` mid-flight and could win the ref with a tree missing its puts.
+ * its mtime refreshed while held so a lock left by a killed process goes stale and is reclaimed by
+ * the next writer of the same id). A second writer does not wait: it fails with `session.locked`,
+ * because a second commit of the same id would race the first for the log's `pending` and its ref.
+ * A lock left by a killed process under an id nobody uses again (a run's) is never reclaimed by a
+ * writer, which is why `pruneSessions` removes stale lock directories.
  *
  * Every write replaces the whole file, and a caller computes what it writes from the log it read
  * earlier, outside the lock (a `session exec` reads the log, runs a script for seconds, then
@@ -62,10 +64,7 @@ export const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 export const isSessionId = (id: string): boolean => SESSION_ID.test(id)
 
 /** How long a lock may go without an mtime refresh before another writer may reclaim it. */
-const LOCK_STALE_MS = 30_000
-
-export const sessionIndexFile = (root: string, id: string): string =>
-  join(root, SESSIONS_DIR, `${id}.idx`)
+export const SESSION_LOCK_STALE_MS = 30_000
 
 export const sessionStateFile = (root: string, id: string): string =>
   join(root, SESSIONS_DIR, `${id}.json`)
@@ -73,8 +72,12 @@ export const sessionStateFile = (root: string, id: string): string =>
 /** The lock proper-lockfile takes is `<this>.lock`, beside the log. */
 const sessionLockTarget = (root: string, id: string): string => join(root, SESSIONS_DIR, id)
 
-/** The provenance ref a committed session leaves behind. */
-export const sessionRef = (id: string): string => `refs/memhtml/sessions/${id}`
+/**
+ * The namespace a session commit once recorded provenance under (`refs/memhtml/sessions/<id>`). No
+ * commit writes it: the `Memhtml-Session` trailer on every session commit names the id, and nothing
+ * read the refs. `pruneSessions` removes the ones a store still carries.
+ */
+export const SESSION_REFS_PREFIX = "refs/memhtml/sessions/"
 
 const OverlayOpSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("put"), path: Schema.String, html: Schema.String }),
@@ -165,7 +168,11 @@ export const withSessionLock = <A, E, R>(
     yield* ensureDir(root)
     const release = yield* Effect.tryPromise({
       try: () =>
-        lock(sessionLockTarget(root, id), { realpath: false, retries: 0, stale: LOCK_STALE_MS }),
+        lock(sessionLockTarget(root, id), {
+          realpath: false,
+          retries: 0,
+          stale: SESSION_LOCK_STALE_MS
+        }),
       catch: (cause) => cause
     }).pipe(
       Effect.tapError((cause) =>
@@ -198,10 +205,6 @@ const writeState = (session: Session): Effect.Effect<void, StorageFailure> =>
     await writeFileAtomic(file, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8" })
   })
 
-/** The plumbing bound to a session's own index file. */
-export const plumbingFor = (root: string, id: string): Plumbing =>
-  makePlumbing({ root, indexFile: sessionIndexFile(root, id) })
-
 const exists = (path: string): Effect.Effect<boolean> =>
   Effect.promise(() =>
     access(path).then(
@@ -211,17 +214,18 @@ const exists = (path: string): Effect.Effect<boolean> =>
   )
 
 /**
- * Start a session on a base version. Creates the state directory, reads the base tree into the
- * session's index file, and writes an empty log. Fails when the id is not a single path segment.
+ * Start a session on a base version. Creates the state directory, checks that the base names a
+ * commit (`rev-parse`; a `GitFailure` when it does not), and writes an empty log. Fails when the id
+ * is not a single path segment.
  *
  * An id that already has a log is refused with `session.exists` unless `force` is set: a retried
  * `session start` or two agents choosing one id would otherwise replace an in-progress overlay with
  * an empty one and report success. `resumeSession` is the way to reopen a log; `force` is the way to
  * discard one on purpose.
  *
- * Only the base's `sha` is read (for `read-tree` and the log), so a caller that has no head loaded
+ * Only the base's `sha` is read (for the check and the log), so a caller that has no head loaded
  * passes `{ sha }`: the implicit start of `session put` and `session exec` under `MEMHTML_SESSION`
- * costs a `rev-parse` and a `read-tree` rather than a head load. A `HeadView` with its sha still fits.
+ * costs a `rev-parse` rather than a head load. A `HeadView` with its sha still fits.
  */
 export const startSession = (input: {
   readonly root: string
@@ -250,11 +254,37 @@ export const startSession = (input: {
       // The first write under `.memhtml/sessions/`: make sure the clone ignores it (an older store's
       // committed `.gitignore` does not), before the log and the index file land there.
       yield* ensureExcludedQuietly(input.root, [`${SESSIONS_DIR}/`])
-      yield* plumbingFor(input.root, input.id).readTree(input.base.sha)
+      if ((yield* makePlumbing({ root: input.root }).revParse(input.base.sha)) === null) {
+        yield* Effect.logError(`session ${input.id}: base ${input.base.sha} names no commit`)
+        return yield* Effect.fail(GitFailure.make({ command: "rev-parse", exitCode: 1 }))
+      }
       yield* writeState(session)
       return session
     })
   )
+
+/**
+ * A log's text as the session state it holds, for the session `id` it must name. Not JSON is
+ * `session.parse`, not a log is `session.decode`, another id's log is `session.id-mismatch`.
+ */
+export const decodeLog = (
+  raw: string,
+  id: string
+): Effect.Effect<Omit<Session, "root">, StorageFailure> =>
+  Effect.gen(function* () {
+    const parsed = yield* Effect.try({
+      try: () => JSON.parse(raw) as unknown,
+      catch: () => StorageFailure.make({ operation: "session.parse" })
+    })
+    const state = yield* decodeState(parsed).pipe(
+      Effect.mapError(() => StorageFailure.make({ operation: "session.decode" }))
+    )
+    if (state.id !== id) {
+      return yield* Effect.fail(StorageFailure.make({ operation: "session.id-mismatch" }))
+    }
+    const { pending, ...rest } = state
+    return { ...rest, ...(pending === undefined ? {} : { pending }) }
+  })
 
 /** Reopen a session from its log. A missing or malformed log is a `StorageFailure`. */
 export const resumeSession = (input: {
@@ -266,18 +296,8 @@ export const resumeSession = (input: {
     const raw = yield* attemptIo("session.read", () =>
       readFile(sessionStateFile(input.root, input.id), "utf8")
     )
-    const parsed = yield* Effect.try({
-      try: () => JSON.parse(raw) as unknown,
-      catch: () => StorageFailure.make({ operation: "session.parse" })
-    })
-    const state = yield* decodeState(parsed).pipe(
-      Effect.mapError(() => StorageFailure.make({ operation: "session.decode" }))
-    )
-    if (state.id !== input.id) {
-      return yield* Effect.fail(StorageFailure.make({ operation: "session.id-mismatch" }))
-    }
-    const { pending, ...rest } = state
-    return { root: input.root, ...rest, ...(pending === undefined ? {} : { pending }) }
+    const state = yield* decodeLog(raw, input.id)
+    return { root: input.root, ...state }
   })
 
 /** The failure a writer gets when the log changed between its read and its write. */

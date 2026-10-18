@@ -2011,15 +2011,22 @@ export const setTaskStatus = (params: TaskStatusParams) =>
       "memhtml-updated",
       at
     )
-    yield* attemptIo(`task.write:${path}`, async () => {
+    const writeStamped = attemptIo(`task.write:${path}`, async () => {
       const { writeFile } = await import("node:fs/promises")
       const { join } = await import("node:path")
       await writeFile(join(store.root, path), stamped, "utf8")
     })
 
     if (status !== "done") {
-      yield* store.git.add([path])
-      const commit = yield* store.git.commit(commitSubject("task", `${status} ${path}`))
+      // The write, the stage, and the commit as the store's one writer (`store.exclusive`): this
+      // commit takes the WHOLE shared index, so it holds the checkout lock a session commit holds
+      // while its own file is staged there for an instant.
+      const commit = yield* store.exclusive(
+        writeStamped.pipe(
+          Effect.andThen(store.git.add([path])),
+          Effect.andThen(store.git.commit(commitSubject("task", `${status} ${path}`)))
+        )
+      )
       yield* reindex()
       return {
         path,
@@ -2038,6 +2045,7 @@ export const setTaskStatus = (params: TaskStatusParams) =>
      * re-writes the stamped bytes at the destination before staging, so the committed file holds
      * both the archive stamps and the done status.
      */
+    yield* writeStamped
     const archived = yield* store.archiveMemory(path, params.reason ?? `task ${status}`)
     yield* reindex()
     return {

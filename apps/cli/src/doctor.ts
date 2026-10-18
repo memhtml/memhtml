@@ -12,7 +12,7 @@ import {
   VECTOR_COVERAGE_REMEDY
 } from "@memhtml/index"
 import { EMBED_WATERMARK } from "@memhtml/llm"
-import { attemptIo, commitSubject, readFileOrNull } from "@memhtml/store"
+import { attemptIo, commitSubject, readFileOrNull, withCheckoutLock } from "@memhtml/store"
 import { Effect } from "effect"
 
 import { Embedder, Git, RetrievalPolicy, Store } from "./api-layer.js"
@@ -538,11 +538,18 @@ const repair = (
 
     let commitSha: string | null = null
     if (touched.length > 0) {
-      yield* git.add(touched)
       // The subject counts only the writes that landed, so the history never claims more repairs
-      // than the tree holds.
-      const commit = yield* git.commit(
-        commitSubject("link", `repair ${rewritten + dropped} dangling links`)
+      // than the tree holds. Staged and committed under the checkout lock, like every commit from
+      // the shared index.
+      const commit = yield* withCheckoutLock(
+        git.root,
+        git
+          .add(touched)
+          .pipe(
+            Effect.andThen(
+              git.commit(commitSubject("link", `repair ${rewritten + dropped} dangling links`))
+            )
+          )
       )
       commitSha = commit.sha
     }

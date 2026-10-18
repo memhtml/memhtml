@@ -3,13 +3,17 @@
  * ref through the session's own git index file. See `docs/v2-poc.md`.
  */
 
+export { checkoutLockTarget, withCheckoutLock } from "./checkout-lock.js"
 export {
   archiveBody,
   type CommitOutcome,
   type CommitScope,
   commitMessage,
   commitSession,
-  commitSubject
+  commitSubject,
+  type Landing,
+  landOnRef,
+  type PlumbingFactory
 } from "./commit.js"
 export { GitFailure } from "./errors.js"
 export {
@@ -19,21 +23,34 @@ export {
   HEAD_SOCKET
 } from "./exclude.js"
 export { withRepoints } from "./moves.js"
-export { GIT_REPO_SELECTION_ENV, gitPathOf, makePlumbing, type Plumbing } from "./plumbing.js"
+export {
+  GIT_REPO_SELECTION_ENV,
+  gitPathOf,
+  makePlumbing,
+  type Plumbing,
+  type RefEntry
+} from "./plumbing.js"
+export {
+  type PruneCount,
+  type PruneReport,
+  pruneSessions,
+  type UnlandedSession
+} from "./prune.js"
 export {
   appendOps,
   DEFAULT_REF,
+  decodeLog,
   isSessionId,
   LOG_MOVED,
   rebaseSession,
   replaceOps,
   resumeSession,
   SESSION_ID,
+  SESSION_LOCK_STALE_MS,
+  SESSION_REFS_PREFIX,
   SESSIONS_DIR,
   type Session,
   saveSession,
-  sessionIndexFile,
-  sessionRef,
   sessionStateFile,
   startSession,
   withSessionLock

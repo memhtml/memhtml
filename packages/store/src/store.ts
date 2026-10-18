@@ -31,6 +31,7 @@ import {
 } from "@memhtml/html"
 import { Context, Effect, Semaphore } from "effect"
 
+import { withCheckoutLock } from "./checkout-lock.js"
 import type { GitFailure, GitShape } from "./git.js"
 import { attemptIo, readFileOrNull } from "./layout.js"
 import { commitSubject, provenanceTrailers } from "./plumbing.js"
@@ -225,6 +226,16 @@ export type StoreError =
 export interface StoreShape {
   readonly root: string
   readonly git: GitShape
+  /**
+   * Run `effect` as this store's one writer: the in-process permit every write below takes, then the
+   * repository's checkout lock (`withCheckoutLock`), which a session commit and every other process's
+   * store take too. For a caller that stages and commits through {@link git} itself (a task status
+   * change), so its `git add` and `git commit` cannot interleave with another writer of the shared
+   * index. Not reentrant on the permit: `effect` must not call a write method of this store.
+   */
+  readonly exclusive: <A, E, R>(
+    effect: Effect.Effect<A, E, R>
+  ) => Effect.Effect<A, E | StorageFailure, R>
   readonly writeMemory: (input: WriteInput) => Effect.Effect<WriteResult, StoreError>
   /**
    * N writes, ONE commit. The batch primitive `memhtml apply` and `memory_write_batch` are doors over.
@@ -1393,25 +1404,33 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
    * Read paths are deliberately outside the lock: git and the filesystem both admit any number of
    * concurrent readers, and serializing reads behind a commit would make a search wait on a write.
    *
-   * In-process only. Two PROCESSES sharing a root (a CLI invocation beside a running MCP server)
-   * still contend, and git's own index lock is what refuses the loser there — which is why a git
-   * failure has to be compensated rather than merely reported.
+   * The permit is in-process only. Two PROCESSES sharing a root (a CLI invocation beside a running
+   * MCP server), and a v2 session commit in any process, are excluded by the checkout lock taken
+   * inside it (`checkout-lock.ts`): a cross-process lock held from the first stage to the commit,
+   * which a session commit holds around its checkout update and ref swap. Without it a session's
+   * file, staged into the shared index for the instant before its ref moves, was swept into the next
+   * v1 commit, and the session's rollback then staged its deletion. The permit comes first, so the
+   * writers of one process queue on it rather than polling the lock.
    */
   const oneWriterAtATime = Semaphore.makeUnsafe(1)
+  const exclusive = <A, E, R>(
+    effect: Effect.Effect<A, E, R>
+  ): Effect.Effect<A, E | StorageFailure, R> =>
+    oneWriterAtATime.withPermit(withCheckoutLock(git.root, effect))
 
   return {
     root: git.root,
     git,
-    writeMemory: (input) => oneWriterAtATime.withPermit(writeMemory(input)),
-    writeMemories: (inputs, options) => oneWriterAtATime.withPermit(writeMemories(inputs, options)),
+    exclusive,
+    writeMemory: (input) => exclusive(writeMemory(input)),
+    writeMemories: (inputs, options) => exclusive(writeMemories(inputs, options)),
     readMemory,
-    correctMemory: (target, input) => oneWriterAtATime.withPermit(correctMemory(target, input)),
-    archiveMemory: (path, reason) => oneWriterAtATime.withPermit(archiveMemory(path, reason)),
-    supersedeMemories: (pairs) => oneWriterAtATime.withPermit(supersedeMemories(pairs)),
-    linkMemories: (srcPath, rel, dstPath) =>
-      oneWriterAtATime.withPermit(linkMemories(srcPath, rel, dstPath)),
+    correctMemory: (target, input) => exclusive(correctMemory(target, input)),
+    archiveMemory: (path, reason) => exclusive(archiveMemory(path, reason)),
+    supersedeMemories: (pairs) => exclusive(supersedeMemories(pairs)),
+    linkMemories: (srcPath, rel, dstPath) => exclusive(linkMemories(srcPath, rel, dstPath)),
     dirtyPaths,
     requireCleanTree,
-    mergeBranch: (commitish) => oneWriterAtATime.withPermit(mergeBranch(commitish))
+    mergeBranch: (commitish) => exclusive(mergeBranch(commitish))
   }
 }

@@ -1234,7 +1234,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "id",
         type: "string",
         description:
-          "The session id: one path segment, letters, digits, `.`, `_`, `-`. State lives at .memhtml/sessions/<id>.idx (the session's git index) and <id>.json (its overlay log). Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT."
+          "The session id: one path segment, letters, digits, `.`, `_`, `-`. State lives at .memhtml/sessions/<id>.json (its overlay log); a commit stages through a temporary index of its own and keeps nothing else. Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT."
       },
       {
         name: "ref",
@@ -1267,7 +1267,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "id",
         type: "string",
         description:
-          "The session to append to. Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT. With the id taken from $MEMHTML_SESSION and no log yet, the session is started on refs/heads/main's tip first (a `rev-parse` and a `read-tree`, no head load), so a run's first write needs no `session start`; a `--id` given on the line must name a started session."
+          "The session to append to. Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT. With the id taken from $MEMHTML_SESSION and no log yet, the session is started on refs/heads/main's tip first (one `rev-parse`, no head load), so a run's first write needs no `session start`; a `--id` given on the line must name a started session."
       },
       {
         name: "file",
@@ -1360,7 +1360,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "message",
         type: "string",
         description:
-          "The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer. When HEAD is the session's ref, the shared index and working tree move to the new commit with it (`worktreeSynced: true`); uncommitted state at a path the commit writes or removes is answered `worktree-dirty` and nothing moves. A ref that moved past the session's base is `rebase-needed`: run `session rebase` and commit again. A `committed` outcome also writes the new commit's snapshot (`snapshot`: path, bytes, ms, pruned; null when that best-effort write failed), so the next load hits the cache.",
+          "The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer. When HEAD is the session's ref, the shared index and working tree move to the new commit with it (`worktreeSynced: true`); uncommitted state at a path the commit writes or removes is answered `worktree-dirty` and nothing moves. A ref that moved past the session's base is `rebase-needed`: run `session rebase` and commit again. The checkout move and the ref swap run under the checkout lock `.memhtml/checkout.lock`, which every v1 write holds from its stage to its commit, so neither commits the other's files; the commit waits up to 15 s for it, then fails with ERR_STORAGE (`checkout.locked`) having moved nothing. The commit it builds is written to the log as `pending` before anything shared moves, so a call killed at any point is settled by the next `session commit`: `committed` with `recovered: true` when it had landed, else the checkout is put back and the commit is made again. A `committed` outcome also writes the new commit's snapshot (`snapshot`: path, bytes, ms, pruned; null when that best-effort write failed), so the next load hits the cache.",
         required: true
       },
       {
@@ -1422,6 +1422,33 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     ],
     responseTypes: ["session.status"],
     examples: ["memhtml session status --id s1"]
+  },
+  {
+    name: "session prune",
+    summary:
+      "Remove session state nothing reads again, older than a cutoff: index files, `refs/memhtml/sessions/` refs, stale lock directories, and logs with zero ops. A log that still holds ops is never removed; it is listed under `unlanded`.",
+    args: [],
+    flags: [
+      {
+        name: "older-than",
+        type: "string",
+        description:
+          "The cutoff, as a duration with a unit: `7d`, `48h`, `90m`, `1.5h`, or `2 weeks`. A file counts by its last write, a ref by its commit's committer time; a lock directory also has to be stale (no refresh for 30 s), so a live writer's is never touched. Session state under `.memhtml/sessions/`: `<id>.idx` index files (a whole git index each, which no commit of this build reads or writes), `<id>.lock` directories a killed writer left (reclaimed otherwise only by the next writer of the same id, and a run's id is never written again), and `<id>.json` logs with zero ops (a session whose commit landed, or that never wrote). Every id is handled under its session lock, so a writer of it is never pruned from under; an id whose lock is held is listed under `busy`. A log that still holds ops is a run whose writes have not landed: it is kept and listed under `unlanded` with its `id`, `ops`, `pending`, `modifiedAt`, and `age`, so it can be landed with `session commit --id <id> --message <summary> --drop-refused`. A log that does not decode is kept and listed under `unreadable`. `<id>.dropped.jsonl` trails are kept.",
+        required: true
+      },
+      {
+        name: "dry-run",
+        type: "boolean",
+        description:
+          "Report what a run would remove, with the same counts and lists, and remove nothing. Takes no lock.",
+        default: false
+      }
+    ],
+    responseTypes: ["session.pruned"],
+    examples: [
+      "memhtml session prune --older-than 7d --dry-run",
+      "memhtml session prune --older-than 48h"
+    ]
   },
   {
     name: "head status",
@@ -1787,7 +1814,13 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "already exists somewhere else, and you own the commit. " +
       "A CLI command and a running `memhtml serve mcp` may share one store: the index is WAL SQLite, " +
       "which admits one writer at a time and any number of concurrent readers, so a second writer " +
-      "waits its turn rather than failing. The one thing to keep clear of is a checked-out " +
+      "waits its turn rather than failing. The git side is the same: every write that commits (any " +
+      "process's `write`, `apply`, `correct`, `link`, `archive`, `task status`, `publish`, `state export`, " +
+      "`doctor --fix`, and every `session commit` and `curate merge`) " +
+      "holds the checkout lock `.memhtml/checkout.lock` from its first stage to its commit, so one " +
+      "writer's commit never takes another's staged file. A writer waits up to 15 s for it and then " +
+      "fails with ERR_STORAGE (`checkout.locked`), having written nothing; run it again. " +
+      "The one thing to keep clear of is a checked-out " +
       "`curate/<date>` branch: a write landing while one is checked out commits onto that branch and " +
       "is merged as if it were curation or lost when the branch is dropped. " +
       "Under `MEMHTML_SESSION` (an agent runtime exports it to every subprocess of a run) the first door " +

@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process"
-import { GitFailure } from "@memhtml/contracts/errors"
+import { GitFailure, type StorageFailure } from "@memhtml/contracts/errors"
 import { Context, Effect, Layer } from "effect"
+
+import { withCheckoutLock } from "./checkout-lock.js"
 
 import {
   type ChangedPath,
@@ -93,10 +95,18 @@ export interface GitShape {
   readonly add: (paths: ReadonlyArray<string>) => Effect.Effect<void, GitFailure>
   /** `git mv`. The destination's parent directory must already exist, since git will not make it. */
   readonly mv: (from: string, to: string) => Effect.Effect<void, GitFailure>
+  /**
+   * `git commit` of the WHOLE shared index, a no-op when nothing is staged. Takes the repository's
+   * checkout lock (`checkout-lock.ts`) for the check and the commit, reentrantly, so a caller that
+   * holds it across its stage-then-commit (every store write, through `makeStore`'s one-writer
+   * gate) pays nothing and a caller that does not is still excluded at the one step that would sweep
+   * a session's staged file into this commit. `StorageFailure` `checkout.locked` when another writer
+   * holds the lock past the wait.
+   */
   readonly commit: (
     message: string,
     options?: { readonly trailers?: Trailers | undefined }
-  ) => Effect.Effect<CommitResult, GitFailure>
+  ) => Effect.Effect<CommitResult, GitFailure | StorageFailure>
   readonly checkoutBranch: (
     branch: string,
     options?: { readonly create?: boolean | undefined }
@@ -391,22 +401,25 @@ export const makeGit = (root: string): GitShape => ({
   mv: (from, to) => git(root, "mv", ["mv", "--", from, to]).pipe(Effect.asVoid),
 
   commit: (message, options = {}) =>
-    Effect.gen(function* () {
-      // `diff --cached --quiet` exits 1 when the index differs from HEAD. Asking first is what
-      // makes a no-op write a no-op instead of an empty commit. `commit` with nothing staged
-      // exits 1, and treating that as a failure would make every deduped write look broken.
-      const staged = yield* git(root, "diff-cached", ["diff", "--cached", "--quiet"], {
-        okExitCodes: [0, 1]
-      })
-      if (staged.exitCode === 0) return { sha: null, empty: true }
+    withCheckoutLock(
+      root,
+      Effect.gen(function* () {
+        // `diff --cached --quiet` exits 1 when the index differs from HEAD. Asking first is what
+        // makes a no-op write a no-op instead of an empty commit. `commit` with nothing staged
+        // exits 1, and treating that as a failure would make every deduped write look broken.
+        const staged = yield* git(root, "diff-cached", ["diff", "--cached", "--quiet"], {
+          okExitCodes: [0, 1]
+        })
+        if (staged.exitCode === 0) return { sha: null, empty: true }
 
-      const trailerArgs = Object.entries(options.trailers ?? {}).flatMap(([key, value]) =>
-        value === "" ? [] : ["--trailer", `${key}: ${value}`]
-      )
-      yield* git(root, "commit", ["commit", "-m", message, ...trailerArgs])
-      const sha = yield* git(root, "rev-parse", ["rev-parse", "HEAD"])
-      return { sha: text(sha).trim(), empty: false }
-    }),
+        const trailerArgs = Object.entries(options.trailers ?? {}).flatMap(([key, value]) =>
+          value === "" ? [] : ["--trailer", `${key}: ${value}`]
+        )
+        yield* git(root, "commit", ["commit", "-m", message, ...trailerArgs])
+        const sha = yield* git(root, "rev-parse", ["rev-parse", "HEAD"])
+        return { sha: text(sha).trim(), empty: false }
+      })
+    ),
 
   checkoutBranch: (branch, options = {}) =>
     git(root, "checkout", ["checkout", ...(options.create === true ? ["-b"] : []), branch]).pipe(

@@ -1,4 +1,4 @@
-import { readFile, stat, writeFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, stat, utimes, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import type { OverlayOp } from "@memhtml/contracts"
 import { Effect, Result } from "effect"
@@ -11,22 +11,24 @@ import {
   LOG_MOVED,
   rebaseSession,
   resumeSession,
+  SESSION_LOCK_STALE_MS,
+  SESSIONS_DIR,
   saveSession,
-  sessionIndexFile,
   sessionStateFile,
   startSession
 } from "../src/session.js"
 import { commitFiles, loadHead, makeRepo, mapHead, memory, type Repo } from "./helpers.js"
 
 /**
- * Session state on disk: `.memhtml/sessions/<id>.idx` and `<id>.json`.
+ * Session state on disk: `.memhtml/sessions/<id>.json` and nothing else between calls.
  *
  * Mutation notes: `checkId` always succeeds -> "refuses an id that is not one path segment";
  * `resumeSession` skips the `state.id !== input.id` check -> "refuses a log whose id disagrees";
  * `startSession` skips the `exists` check -> "refuses to start over an id that already has a log";
  * `requireLogUnmoved` always succeeds -> "refuses an append, a save, and a commit over a log that
  * moved since it was read" (the stale append drops the first writer's op, the stale save drops it
- * too, and the stale commit lands without it and empties the log).
+ * too, and the stale commit lands without it and empties the log); the base check in `startSession`
+ * dropped -> "refuses a base that names no commit" (the log is written over a bogus sha).
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
@@ -46,11 +48,11 @@ const seeded = async () => {
 }
 
 describe("startSession", () => {
-  it("creates the index file and an empty log on the default ref", async () => {
+  it("writes an empty log on the default ref and no index file", async () => {
     const { root, head } = await seeded()
     const session = await run(startSession({ root, id: "s1", base: head }))
     expect(session).toEqual({ root, id: "s1", baseSha: head.sha, ref: DEFAULT_REF, ops: [] })
-    expect((await stat(sessionIndexFile(root, "s1"))).size).toBeGreaterThan(0)
+    expect(await readdir(join(root, SESSIONS_DIR))).toEqual(["s1.json"])
     expect(JSON.parse(await readFile(sessionStateFile(root, "s1"), "utf8"))).toEqual({
       id: "s1",
       baseSha: head.sha,
@@ -81,6 +83,18 @@ describe("startSession", () => {
     const forced = await run(startSession({ root, id: "again", base: head, force: true }))
     expect(forced.ops).toEqual([])
     expect((await run(resumeSession({ root, id: "again" }))).ops).toEqual([])
+  })
+
+  it("refuses a base that names no commit, and writes no log", async () => {
+    const { root } = await seeded()
+    const result = await run(
+      Effect.result(startSession({ root, id: "nobase", base: { sha: "f".repeat(40) } }))
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toMatchObject({ _tag: "GitFailure", command: "rev-parse" })
+    }
+    await expect(stat(sessionStateFile(root, "nobase"))).rejects.toThrow()
   })
 
   it("refuses an id that is not one path segment", async () => {
@@ -219,6 +233,30 @@ describe("appendOps and resumeSession", () => {
       "utf8"
     )
     expect(Result.isFailure(await run(Effect.result(resumeSession({ root, id: "s4" }))))).toBe(true)
+  })
+})
+
+describe("withSessionLock", () => {
+  /**
+   * A lock directory a killed holder left behind. proper-lockfile reclaims it only when the SAME id
+   * is locked again and its mtime is older than the stale window, so for a run's id, which nothing
+   * locks again, it stays until `pruneSessions` removes it.
+   * Mutation: `stale: SESSION_LOCK_STALE_MS` -> `stale: 24 * 3600 * 1000` -> the backdated lock is
+   * refused as held.
+   */
+  it("refuses a fresh lock left by another holder, and reclaims it once it is stale", async () => {
+    const { root, head } = await seeded()
+    const started = await run(startSession({ root, id: "left", base: head }))
+    const lockDir = join(root, SESSIONS_DIR, "left.lock")
+    await mkdir(lockDir)
+    const op: OverlayOp = { kind: "put", path: "areas/inbox/b.html", html: memory("B", "Beta.") }
+    const held = await run(Effect.result(appendOps(started, [op])))
+    expect(Result.isFailure(held) && held.failure).toMatchObject({ operation: "session.locked" })
+    const past = new Date(Date.now() - SESSION_LOCK_STALE_MS - 5_000)
+    await utimes(lockDir, past, past)
+    expect((await run(appendOps(started, [op]))).ops).toHaveLength(1)
+    // The reclaiming writer released its own lock, so the directory is gone.
+    await expect(stat(lockDir)).rejects.toThrow()
   })
 })
 
