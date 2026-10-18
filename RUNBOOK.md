@@ -267,7 +267,7 @@ Every probe must outrank its own wrong-fact twins. The default MRR floor is `0.8
 ## 9. Doctor and publish
 
 ```bash
-memhtml doctor          # eleven checks
+memhtml doctor          # ten checks
 memhtml doctor --fix    # repairs the two that need no judgement call
 memhtml publish         # regenerate index.html listings and sitemap.xml, and commit
 ```
