@@ -165,7 +165,7 @@ memhtml state export      # write .memhtml/state/access.jsonl and commit it
 memhtml state import      # replay the sidecar into state.db
 ```
 
-`state.db` is gitignored and NOT rebuildable from git — access counts, reinforcement counts, and the outcome EWMA are the one set of facts the tree cannot reproduce. The committed sidecar is what survives (`apps/cli/src/state.ts:54`). The export is byte-stable, so an unchanged plane produces an identical file and commits nothing. The import upserts with `max()` on the monotone counters rather than truncating, so importing onto a live plane cannot discard counters the sidecar predates (`apps/cli/src/state.ts:131`); an unparseable sidecar line is counted in `skipped` and never fatal. Nothing exports it for you, so the cron block in section 3 runs `memhtml state export` nightly. Run it by hand before a machine goes away.
+`state.db` is gitignored and NOT rebuildable from git — access counts, reinforcement counts, and the outcome EWMA are the one set of facts the tree cannot reproduce. The committed sidecar is what survives (`apps/cli/src/state.ts:54`). The export is byte-stable, so an unchanged plane produces an identical file and commits nothing. The import upserts with `max()` on the monotone counters rather than truncating, so importing onto a live plane cannot discard counters the sidecar predates (`apps/cli/src/state.ts:131`); an unparseable sidecar line is counted in `skipped` and never fatal. Nothing exports it for you, so the cron block in section 3 runs `memhtml state export` once a day. Run it by hand before a machine goes away.
 
 ### Multi-machine: `access.jsonl` is last-writer-wins
 

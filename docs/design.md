@@ -364,7 +364,7 @@ Three measurements on a production store (2026-09-22, 8,213 files, 2,216 commits
 
 Two thirds of the active memories sat in `areas/inbox/`. Whoever writes a record picks its directory, and retrieval never reads a path, so a wrong placement costs nothing at read time and nothing pushes a writer to get it right.
 
-The curation pipeline that 0.15 shipped (removed in 0.16, see §10) disagreed with itself about the corpus. Its retention triage put 2,851 of 2,955 scored memories in the compress band, while its compress phase processed 7 a night.
+The curation pipeline that 0.15 shipped (removed in 0.16, see §10) disagreed with itself about the corpus. Its retention triage put 2,851 of 2,955 scored memories in the compress band, while its compress phase processed 7 a run.
 
 One 124 s `memory_search` held the single SQLite writer and blocked the index update behind it. Every reader and every writer shared one process and one database, so a slow read stalled a write.
 
