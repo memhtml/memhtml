@@ -6,9 +6,9 @@ import { BATCH_CAP } from "@memhtml/session"
  *
  * `maxOutputTokensPerCall` rides the model itself (`curatorModel` wraps it with
  * `defaultSettingsMiddleware`), because a call that names no limit gets Bedrock's own 4,096-token
- * default and is cut off mid-answer (`.erpaval/solutions/api-patterns/an-unset-per-call-token-limit-
- * truncates-the-answer.md`). `maxOps` matches the session's `BATCH_CAP`: a run that appended more
- * than one commit can carry would be refused at commit time anyway, so the loop stops first.
+ * default and is cut off mid-answer, which a measured curator run's large proposal was. `maxOps`
+ * matches the session's `BATCH_CAP`: a run that appended more than one commit can carry would be
+ * refused at commit time anyway, so the loop stops first.
  */
 export interface CuratorBudget {
   /** Model calls the loop may make before it is stopped. */
