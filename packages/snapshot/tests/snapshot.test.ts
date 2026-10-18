@@ -36,6 +36,8 @@ import { readSnapshot, SHA_METADATA_KEY, snapshotPathFor, writeSnapshot } from "
  *   yet under a fresh temp root, so the whole file reports as a failed suite.
  * - `writeSnapshot`: write to `path` directly instead of staging plus rename; "leaves no staging
  *   file behind" still passes, so that step is a design choice, not a guard this suite proves.
+ * - The lazy read: decode the one row through the column (`html.toArray()[500]`, an eager read)
+ *   instead of through the row proxy; "decodes 1 html cell for one row" fails with 1,000 visits.
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
@@ -125,7 +127,9 @@ const readMs = performance.now() - readStart
  * view into that Buffer, which the identity check below proves. apache-arrow has no public counter
  * on cell reads, but its row proxy resolves every property through the singleton `GetVisitor`
  * (`apache-arrow/visitor/get` `instance`), whose dispatch looks `visitUtf8` up per call, so an
- * instance override counts exactly the Utf8 cells a row read decodes.
+ * instance override records exactly the Utf8 cells a row read decodes, by row. Laziness is asserted
+ * on those counts and nothing else: a wall-clock comparison of one row against all rows depends on
+ * what else the host is running, and failed two full parallel runs in three.
  */
 const lazy = await (async () => {
   const buffer = await readFile(thousandPath)
@@ -137,33 +141,28 @@ const lazy = await (async () => {
   type Utf8Visit = (data: Data<Utf8>, index: number) => string | null
   const visitor = getVisitor as unknown as { visitUtf8: Utf8Visit }
   const original = visitor.visitUtf8
-  let visits = 0
+  // Every Utf8 cell decoded, by row index.
+  const rows: Array<number> = []
   visitor.visitUtf8 = (data, index) => {
-    visits += 1
+    rows.push(index)
     return original.call(getVisitor, data, index)
   }
   try {
-    table.get(0)?.html
-    visits = 0
-    const oneStart = performance.now()
     const one = table.get(500)?.html
-    const oneMs = performance.now() - oneStart
-    const oneVisits = visits
-    visits = 0
-    const allStart = performance.now()
+    const oneRows = rows.splice(0)
     let allLength = 0
     for (let row = 0; row < table.numRows; row += 1) {
       allLength += table.get(row)?.html.length ?? 0
     }
-    const allMs = performance.now() - allStart
+    const allRows = rows.splice(0)
     return {
       batches: table.batches.length,
       zeroCopy,
       one,
-      oneVisits,
-      oneMs,
-      allVisits: visits,
-      allMs,
+      oneVisits: oneRows.length,
+      oneRows,
+      allVisits: allRows.length,
+      allRows,
       allLength
     }
   } finally {
@@ -263,11 +262,12 @@ describe("lazy read over a Buffer", () => {
     expect(lazy.zeroCopy).toBe(true)
   })
 
-  it(`decodes ${lazy.oneVisits} html cell for one row (${lazy.oneMs.toFixed(3)} ms) vs ${lazy.allVisits} for all rows (${lazy.allMs.toFixed(1)} ms)`, () => {
+  it("decodes 1 html cell for one row, that row's, and 1000 for all rows, each once", () => {
     expect(lazy.one).toBe(thousand[500]?.html)
     expect(lazy.oneVisits).toBe(1)
+    expect(lazy.oneRows).toEqual([500])
     expect(lazy.allVisits).toBe(1000)
+    expect(lazy.allRows).toEqual(Array.from({ length: 1000 }, (_, row) => row))
     expect(lazy.allLength).toBe(thousand.reduce((sum, record) => sum + record.html.length, 0))
-    expect(lazy.oneMs).toBeLessThan(lazy.allMs)
   })
 })
