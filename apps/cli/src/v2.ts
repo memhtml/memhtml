@@ -679,7 +679,12 @@ export const sessionPut = (input: {
       id: session.id,
       /** True when this call started the session (the id came from `MEMHTML_SESSION` and had no log). */
       started,
-      baseSha: session.baseSha,
+      /**
+       * The session's base after the append: the base the puts were judged at, unless the log carried
+       * a `pending` commit that had landed, which the append settled first (`appendOps`), moving the
+       * session onto it.
+       */
+      baseSha: next.baseSha,
       /** Every op this call appended: the puts and the entity edits. */
       appended: appended.length,
       ops: next.ops.length,
@@ -783,7 +788,11 @@ export const execOverHead = (input: {
     }
     return {
       id: session.id,
-      baseSha: session.baseSha,
+      /**
+       * The session's base after this call: the base the script ran over, unless the append settled a
+       * `pending` commit that had landed (`appendOps`), which moves the session onto that commit.
+       */
+      baseSha: next.baseSha,
       /** The language the script ran as: `bash` unless `--lang js`. */
       lang: report.lang,
       corpusMount: report.corpusMount,

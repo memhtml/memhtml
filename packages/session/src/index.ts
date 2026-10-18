@@ -47,6 +47,7 @@ export {
   resumeSession,
   SESSION_ID,
   SESSION_LOCK_STALE_MS,
+  SESSION_PENDING,
   SESSION_REFS_PREFIX,
   SESSIONS_DIR,
   type Session,

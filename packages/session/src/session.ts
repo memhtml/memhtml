@@ -9,6 +9,7 @@ import writeFileAtomic from "write-file-atomic"
 import { GitFailure } from "./errors.js"
 import { ensureExcludedQuietly } from "./exclude.js"
 import { makePlumbing } from "./plumbing.js"
+import { settlePending } from "./settle.js"
 
 /**
  * A session: a pointer to a base version, an overlay log of its own operations, and nothing else.
@@ -33,6 +34,10 @@ import { makePlumbing } from "./plumbing.js"
  * nothing is written, so the caller reads it again and decides. The ops are what is compared, not
  * the base: {@link rebaseSession} is pure and a caller may commit or append over a rebased session
  * it has not saved, which moves the base on purpose.
+ *
+ * A log that carries `pending` (a commit killed after it wrote its intent) holds exactly the ops that
+ * commit built, and the next commit clears them when it finds the commit landed. So no write adds
+ * ops beside a `pending`: {@link appendOps} settles it first, and {@link replaceOps} refuses.
  */
 
 export interface Session {
@@ -47,7 +52,8 @@ export interface Session {
    * The commit a `commitSession` built and was about to land when the log was last written, or
    * absent. Written before the ref moves and cleared after, so a process killed between the two
    * leaves a record: the next commit checks whether it reached the ref and answers `committed` for
-   * it instead of refusing the same ops as duplicates of themselves.
+   * it instead of refusing the same ops as duplicates of themselves. An append settles it the same
+   * way before it adds an op ({@link appendOps}).
    */
   readonly pending?: string | undefined
 }
@@ -304,14 +310,20 @@ export const resumeSession = (input: {
 export const LOG_MOVED = "session.moved"
 
 /**
- * Holding the session's lock: fail with {@link LOG_MOVED} unless the log on disk still holds the
- * ops `expected` holds. The caller read `expected` before it took the lock, so ops another writer
- * appended or committed meanwhile are refused here rather than overwritten.
+ * The prefix of the failure {@link replaceOps} gets over a log that carries a `pending` commit: the
+ * whole operation is `session.pending: <what to do>`, naming the `session commit` that settles it.
  */
-export const requireLogUnmoved = (expected: Session): Effect.Effect<void, StorageFailure> =>
+export const SESSION_PENDING = "session.pending"
+
+/**
+ * Holding the session's lock: the log as stored, after failing with {@link LOG_MOVED} unless it still
+ * holds the ops `expected` holds. The caller read `expected` before it took the lock, so ops another
+ * writer appended or committed meanwhile are refused here rather than overwritten.
+ */
+const readUnmoved = (expected: Session): Effect.Effect<Session, StorageFailure> =>
   Effect.gen(function* () {
     const stored = yield* resumeSession({ root: expected.root, id: expected.id })
-    if (JSON.stringify(stored.ops) === JSON.stringify(expected.ops)) return
+    if (JSON.stringify(stored.ops) === JSON.stringify(expected.ops)) return stored
     yield* Effect.logError(
       `session ${expected.id}: the log changed since this call read it (${String(expected.ops.length)} ops then, ${String(stored.ops.length)} now, base ${stored.baseSha}); another put, exec, commit, or rebase wrote it, so nothing was written`
     )
@@ -319,20 +331,75 @@ export const requireLogUnmoved = (expected: Session): Effect.Effect<void, Storag
   })
 
 /**
+ * Holding the session's lock: fail with {@link LOG_MOVED} unless the log on disk still holds the
+ * ops `expected` holds. The caller read `expected` before it took the lock, so ops another writer
+ * appended or committed meanwhile are refused here rather than overwritten.
+ */
+export const requireLogUnmoved = (expected: Session): Effect.Effect<void, StorageFailure> =>
+  Effect.asVoid(readUnmoved(expected))
+
+/**
+ * Holding the session's lock: `session` with the stored log's `pending` commit settled
+ * (`settlePending`, the commit's own step 0, under the checkout lock). A log carries `pending` when a
+ * commit was killed between writing it and clearing it, or failed to write the cleared log after its
+ * ref moved; its ops are the ones that commit built. Landed: the session moves to that commit with
+ * zero ops, since its ops are on the ref. Not landed: any checkout update it made is undone and the
+ * ops stay. Either way `pending` is gone, so an append lands its ops on top of what is settled rather
+ * than beside a `pending` the next commit would clear together with them.
+ *
+ * A git failure while settling is `session.settle`, with nothing written.
+ */
+const settleStored = (session: Session, stored: Session): Effect.Effect<Session, StorageFailure> =>
+  Effect.gen(function* () {
+    const pending = stored.pending
+    if (pending === undefined) return { ...session, pending: undefined }
+    const settled = yield* settlePending({
+      root: session.root,
+      git: makePlumbing({ root: session.root }),
+      ref: stored.ref,
+      pending
+    }).pipe(
+      Effect.catchTag("GitFailure", (failure) =>
+        Effect.logError(
+          `session ${session.id}: settling pending commit ${pending} failed (git ${failure.command}); nothing was written`
+        ).pipe(Effect.andThen(Effect.fail(StorageFailure.make({ operation: "session.settle" }))))
+      )
+    )
+    if (settled.landed) {
+      yield* Effect.logWarning(
+        `session ${session.id}: pending commit ${pending} had landed on ${stored.ref} (an earlier commit stopped before it cleared the log); its ${String(stored.ops.length)} ops are on the ref, and the session now sits on that commit`
+      )
+      return { ...session, baseSha: pending, ops: [], pending: undefined }
+    }
+    yield* Effect.logWarning(
+      `session ${session.id}: pending commit ${pending} never reached ${stored.ref}; its checkout update, if any, was undone and its ${String(stored.ops.length)} ops stay in the log`
+    )
+    return { ...session, pending: undefined }
+  })
+
+/**
  * Append to the overlay log and persist it. The returned session is the one to keep using. Refused
  * with {@link LOG_MOVED} when the log is no longer the one `session` was read from.
+ *
+ * A log that carries a `pending` commit is settled first ({@link settleStored}): when that commit had
+ * landed, the returned session sits on it (its `baseSha` is the landed commit) and holds only `ops`;
+ * otherwise it keeps its ops and gains `ops`. So an op appended after a commit was killed past its
+ * swap is committed by the next `session commit` rather than cleared with the landed ops.
  */
 export const appendOps = (
   session: Session,
   ops: ReadonlyArray<OverlayOp>
-): Effect.Effect<Session, StorageFailure> => {
-  const next: Session = { ...session, ops: [...session.ops, ...ops] }
-  return withSessionLock(
+): Effect.Effect<Session, StorageFailure> =>
+  withSessionLock(
     session.root,
     session.id,
-    requireLogUnmoved(session).pipe(Effect.andThen(writeState(next)))
-  ).pipe(Effect.as(next))
-}
+    Effect.gen(function* () {
+      const settled = yield* settleStored(session, yield* readUnmoved(session))
+      const next: Session = { ...settled, ops: [...settled.ops, ...ops] }
+      yield* writeState(next)
+      return next
+    })
+  )
 
 /**
  * Move the session's base to a newer version, keeping its ops. Pure: the log on disk moves when the
@@ -361,18 +428,35 @@ export const saveSession = (session: Session): Effect.Effect<void, StorageFailur
  * unlandable (a `duplicate` or a `claim-edit` against what `main` gained meanwhile) so the rest can
  * land. Refused with {@link LOG_MOVED}, like every other log write, when the log is no longer the
  * one `session` was read from, so a put or exec that landed meanwhile is never lost.
+ *
+ * Also refused, with `session.pending: ...` ({@link SESSION_PENDING}) and nothing written, when the
+ * stored log carries a `pending` commit. `ops` was computed from ops that commit built, and when it
+ * landed they are on the ref, so writing them back would commit them twice (or record them as
+ * dropped); the commit that settles `pending` decides that, and the failure names it. A commit settles
+ * `pending` before it refuses anything, so this is reached only when another commit of the same
+ * session ran between the refusal and the replacement.
  */
 export const replaceOps = (
   session: Session,
   ops: ReadonlyArray<OverlayOp>
-): Effect.Effect<Session, StorageFailure> => {
-  const next: Session = { ...session, ops: [...ops] }
-  return withSessionLock(
+): Effect.Effect<Session, StorageFailure> =>
+  withSessionLock(
     session.root,
     session.id,
-    requireLogUnmoved(session).pipe(Effect.andThen(writeState(next)))
-  ).pipe(Effect.as(next))
-}
+    Effect.gen(function* () {
+      const stored = yield* readUnmoved(session)
+      if (stored.pending !== undefined) {
+        return yield* Effect.fail(
+          StorageFailure.make({
+            operation: `${SESSION_PENDING}: session ${session.id} carries pending commit ${stored.pending}, which an earlier commit built and may have landed, so its ops were not replaced; run \`memhtml session commit --id ${session.id}\` to settle it`
+          })
+        )
+      }
+      const next: Session = { ...session, ops: [...ops], pending: undefined }
+      yield* writeState(next)
+      return next
+    })
+  )
 
 /** Persist under a lock the caller already holds. For `commitSession`, which holds it throughout. */
 export const saveSessionLocked = (session: Session): Effect.Effect<void, StorageFailure> =>
