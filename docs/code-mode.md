@@ -194,7 +194,7 @@ For agents, `bun -e '…'` is the better door — one shot, one stdout, no TTY. 
 
 ## What this is not
 
-- Not a write path. `memory_correct`'s 1→1 shape and the collapse's gated N→1 fold on a `curate/<date>` branch are the write shapes the design depends on, so code-mode must never grow a serializer. A script that writes runs under `memhtml session exec`, which turns the files it wrote into session operations held to the write bar.
+- Not a write path. `memory_correct`'s 1→1 shape and the collapse's gated N→1 fold on a `curate/` branch are the write shapes the design depends on, so code-mode must never grow a serializer. A script that writes runs under `memhtml session exec`, which turns the files it wrote into session operations held to the write bar.
 - Not retrieval. The discrimination gate's whole point is that lexical/structural reads cannot distinguish a claim from its negation-flip at a distance — ranked search stays with the four-arm RRF stack.
 - Not an index handle. `memhtml exec` (item 7b) ships without one, deliberately: the ranked planes stay behind `memhtml search`, which a script reaches by shelling out. A read-only `index.db` handle here is a scope decision and not a feasibility one — a second process can open a live store and read it, which `node scripts/probe-sqlite-concurrency.mjs` measures. A `memory_eval` MCP tool (item 7c) is still demand-pulled; ROADMAP.md carries the sequencing.
 
