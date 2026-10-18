@@ -1,6 +1,6 @@
 ---
 title: memhtml
-description: An agent's long-term memory as a git repository of semantic HTML files, with a rebuildable SQLite index, retrieval that fuses four ranking arms, and a seventeen-phase curation pass.
+description: An agent's long-term memory as a git repository of semantic HTML files, with a rebuildable SQLite index, retrieval that fuses four ranking arms, sessions that land many writes as one commit, and a curator that works on a branch a person merges.
 ---
 
 {/*
@@ -78,16 +78,18 @@ means by four-arm RRF. When an arm's precondition is missing, memhtml drops that
 `degraded: true` on the response, so the search gets narrower and still answers. A store with no
 embedder bound is the common case, and it still returns ranked hits from the other three arms.
 
-Three doors write into the same tree: `memhtml write` and `memhtml apply` on the command line, the
-write tools on the MCP server, and your own file tools against the checkout. The store owns git
+Four doors write into the same tree: `memhtml write` and `memhtml apply` on the command line, the
+write tools on the MCP server, your own file tools against the checkout, and a session. A session
+collects many writes, judges each against the store's write bar, and lands them all as one commit, and
+it's the door an agent run uses when its runtime exports `MEMHTML_SESSION`. The store owns git
 staging, so one call becomes exactly one commit and a caller cannot bundle two unrelated writes into
 it.
 
-`memhtml sleep run` is the curation pass you schedule overnight. It walks seventeen ordered phases on
-a `sleep/<date>` branch and commits each phase's work on its own, so a reviewer reads the night one
-phase-shaped diff at a time. It detects contradictions and leaves the choice of a winner to a writer
-or a human, because that choice is a one-way door. `memhtml sleep merge` then refuses to move `main`
-when the night made retrieval worse.
+Curation runs as a session on a `curate/<date>` branch, never in the write path. `memhtml curate
+run` lets a model work on that branch within a budget, and `memhtml curate merge` lands the branch on
+`main` only after a gate checks that retrieval didn't get worse. The write path detects a
+contradiction and keeps both claims live with a `contradicts` edge; choosing a winner is a one-way
+door that stays with a writer or a human.
 
 Every command writes one JSON envelope to stdout and nothing else, sends its logs to stderr, and
 exits 0 for success, 2 for a usage error, and 1 for a runtime failure. `memhtml manifest` prints
@@ -110,11 +112,14 @@ correct first call.
   - 1.3. [Retrieve it](/learn/tutorial/first-retrieval/)
   - 1.4. [Wire up the MCP server](/learn/tutorial/mcp-server/)
   - 1.5. [Run the store day to day](/learn/operations/run-the-store-day-to-day/)
+  - 1.6. [Write through a session](/learn/operations/write-through-a-session/)
+  - 1.7. [Curate the corpus](/learn/operations/curate-the-corpus/)
+  - 1.8. [Migrate to 0.16](/learn/operations/migrate-to-0-16/)
 - **2. [Reference](/reference/)**: generated from the registries the binary parses its own arguments with
   - 2.1. [Global flags](/reference/global-flags/) and [configuration](/reference/config/)
   - 2.2. [Response types](/reference/response-types/) and [error codes](/reference/error-codes/)
   - 2.3. [MCP tools](/reference/mcp-tools/) and [resources](/reference/mcp-resources/)
-  - 2.4. [Vocabularies](/reference/vocabulary/), [sleep phases](/reference/sleep-phases/), [RRF arms](/reference/rrf-arms/)
+  - 2.4. [Vocabularies](/reference/vocabulary/), [RRF arms](/reference/rrf-arms/)
   - 2.5. [Index schema](/reference/schema/) and the [requirements ledger](/reference/requirements/)
   - 2.6. [Contracts](/reference/contracts/): every exported symbol of `@memhtml/contracts`, with its doc comment
 - **3. [Internals](/internals/)**: why the system is shaped this way, and what each decision refuses
@@ -122,7 +127,7 @@ correct first call.
   - 3.2. [The memory file format](/internals/the-memory-file-format/)
   - 3.3. [The write path](/internals/the-write-path/)
   - 3.4. [Four-arm retrieval](/internals/four-arm-retrieval/)
-  - 3.5. [The sleep pipeline](/internals/the-sleep-pipeline/)
+  - 3.5. [Sessions and the commit path](/internals/sessions-and-the-commit-path/)
   - 3.6. [Testing posture](/internals/testing-posture/)
 - **Appendix A. [Glossary](/glossary/)**: the domain vocabulary, each term linked to the chapter that develops it
 

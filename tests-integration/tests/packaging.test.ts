@@ -9,14 +9,14 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
 /**
  * What the published artifact carries, which is a different question from what the workspace runs.
  *
- * Every other tier resolves `@memhtml/*` through pnpm's links, where `guest/`, `agent/`, `src/`, and
- * the two migration directories sit on disk whether or not anything declares them. The published
+ * Every other tier resolves `@memhtml/*` through pnpm's links, where `guest/`, `src/`, and the two
+ * migration directories sit on disk whether or not anything declares them. The published
  * package is a bundle: the emitted code lands in `dist/`, so each of those assets has to be COPIED to
  * where the bundled code still resolves it, and nothing about the workspace notices when it is not.
  *
- * Three assets were absent from every tarball under exactly that blindness — `guest/corpus.mjs`, the
- * consolidator's `src/*.ts`, and, once bundling arrived, the migrations, which a glob copied to
- * `migrations/index/migrations/` and left the directory the code reads empty of `.sql`. The symptom was
+ * Two assets were absent from every tarball under exactly that blindness — `guest/corpus.mjs`, and,
+ * once bundling arrived, the migrations, which a glob copied to `migrations/index/migrations/` and
+ * left the directory the code reads empty of `.sql`. The symptom was
  * `no such table: files` on the first write, three steps from the cause.
  *
  * So the claims below are declarative and offline. Each names the asset, the source line that resolves
@@ -70,16 +70,26 @@ const ASSET_CLAIMS: ReadonlyArray<AssetClaim> = [
     resolvedIn: "apps/cli/src/exec.ts",
     needle: '"..", "guest", "corpus.mjs"'
   },
-  /**
-   * The consolidator's system prompt, read as a FILE at run time (`src/instructions.ts`) because the
-   * docs site reproduces it verbatim and one authored Markdown file is what both read. A prompt bundled
-   * into `dist/` as a string would leave the file the docs gate compares against unshipped.
-   */
+  /** `session exec`'s sandbox runner: imported in process, and started as the head server's worker. */
+  {
+    path: "guest",
+    from: "apps/cli/guest",
+    resolvedIn: "apps/cli/src/exec.ts",
+    needle: '"..", "guest", "sandbox-runner.mjs"'
+  },
+  /** The curator's system prompt, read at run time so a prompt edit is a prose diff. */
   {
     path: "prompts",
-    from: "apps/consolidator/prompts",
-    resolvedIn: "apps/consolidator/src/instructions.ts",
-    needle: 'join(packageRoot(), "prompts", "instructions.md")'
+    from: "packages/curator/prompts",
+    resolvedIn: "packages/curator/src/charter.ts",
+    needle: 'new URL("../prompts/charter.md", import.meta.url)'
+  },
+  /** The collapse charter beside it, read by `memhtml curate collapse` for every fold. */
+  {
+    path: "prompts",
+    from: "packages/curator/prompts",
+    resolvedIn: "packages/curator/src/charter.ts",
+    needle: 'new URL("../prompts/collapse.md", import.meta.url)'
   }
 ]
 
@@ -107,15 +117,17 @@ const DEPENDENCY_FILE_CLAIMS: ReadonlyArray<DependencyFileClaim> = [
 const BUNDLED_PACKAGES = [
   "apps/cli",
   "apps/mcp",
-  "apps/consolidator",
   "packages/contracts",
+  "packages/curator",
   "packages/domain",
   "packages/eval",
+  "packages/head",
   "packages/html",
   "packages/index",
   "packages/integrations",
   "packages/llm",
-  "packages/sleep",
+  "packages/session",
+  "packages/snapshot",
   "packages/store",
   "packages/telemetry",
   "packages/traces"

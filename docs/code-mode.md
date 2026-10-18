@@ -142,7 +142,7 @@ for (const m of memhtmls.values()) byType.set(m.type, (byType.get(m.type) ?? 0) 
 //   user_preference, verdict, agent_insight, error_pattern, arc
 ```
 
-**2. Live contradiction pairs** — sleep's `edge-typing` finds these on every run and deliberately never resolves them; nothing lists the open set on demand.
+**2. Live contradiction pairs** — a session commit adds a `contradicts` edge between two live claims that share a frame key, and keeps both live. The curator's briefing groups them, and no command lists the open set on demand.
 
 ```ts
 const live = [...memhtmls.values()]
@@ -194,7 +194,7 @@ For agents, `bun -e '…'` is the better door — one shot, one stdout, no TTY. 
 
 ## What this is not
 
-- Not a write path. `memory_correct`'s 1→1 shape and sleep's gated N→1 composition are load-bearing; code-mode must never grow a serializer.
+- Not a write path. `memory_correct`'s 1→1 shape and the collapse's gated N→1 fold on a `curate/` branch are the write shapes the design depends on, so code-mode must never grow a serializer. A script that writes runs under `memhtml session exec`, which turns the files it wrote into session operations held to the write bar.
 - Not retrieval. The discrimination gate's whole point is that lexical/structural reads cannot distinguish a claim from its negation-flip at a distance — ranked search stays with the four-arm RRF stack.
 - Not an index handle. `memhtml exec` (item 7b) ships without one, deliberately: the ranked planes stay behind `memhtml search`, which a script reaches by shelling out. A read-only `index.db` handle here is a scope decision and not a feasibility one — a second process can open a live store and read it, which `node scripts/probe-sqlite-concurrency.mjs` measures. A `memory_eval` MCP tool (item 7c) is still demand-pulled; ROADMAP.md carries the sequencing.
 

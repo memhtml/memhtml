@@ -22,7 +22,7 @@ const CODE_SPAN = /(`+)(?:(?!\1)[\s\S])*?\1/g
  *
  * Code is stripped first because inside a span or a fence the brace is leaf content `remark-mdx` never
  * parses. That is not a loophole, it is the fix: a braced value belongs in backticks, which is where
- * `internals/the-consolidator.md` already keeps `{"candidates": []}` while the site builds.
+ * `learn/operations/curate-the-corpus.md` keeps `{{placementQuota}}` while the site builds.
  */
 export const mdxExpressions = (markdown: string): ReadonlyArray<string> =>
   [

@@ -13,7 +13,7 @@ export default defineConfig({
     globalSetup: ["./tests/throwaway-root.setup.ts"],
     /**
      * Every test here drives a real git repository and a real database through the whole stack, and
-     * several of them run a fifteen-phase sleep cycle. The default five seconds would time out on the
+     * several of them drive whole CLI flows. The default five seconds would time out on the
      * work rather than on a defect.
      */
     testTimeout: 180_000,

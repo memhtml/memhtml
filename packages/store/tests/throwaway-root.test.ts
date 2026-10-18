@@ -32,7 +32,8 @@ describe("the throwaway test root", () => {
       MEMHTML_ROOT: root,
       MEMHTML_EMBED: "off",
       MEMHTML_LLM: "off",
-      MEMHTML_REFUSE_ENV_ROOT: "1"
+      MEMHTML_REFUSE_ENV_ROOT: "1",
+      MEMHTML_SESSION: ""
     })
   })
 

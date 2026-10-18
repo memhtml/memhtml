@@ -118,7 +118,7 @@ describe("memhtml entity activity", () => {
   /** Carries BOTH entities and states no world time, so its write time is its activity. */
   let shared = ""
   /** Carries `person:sasha` only, with a world time NEWER than anything else. */
-  let sanjuOnly = ""
+  let sashaOnly = ""
   /**
    * Carries `concept:sasha`: the SAME name under a DIFFERENT type.
    *
@@ -127,7 +127,7 @@ describe("memhtml entity activity", () => {
    * where the corpus holds two — and on a fixture whose names are all distinct, that merge is
    * invisible. It is the same ambiguity `SearchScope.entity` refuses a bare name for.
    */
-  let conceptSanju = ""
+  let conceptSasha = ""
   /** Carries `service:checkout-api` and is archived, so it counts only under --include-archived. */
   let archived = ""
 
@@ -154,13 +154,13 @@ describe("memhtml entity activity", () => {
       claim: "Sasha owns the checkout API rollback runbook.",
       entities: ["service:checkout-api", "person:sasha"]
     })
-    sanjuOnly = await seed(cli, {
+    sashaOnly = await seed(cli, {
       title: "Sasha moved to the platform team",
       claim: "Sasha moved to the platform team.",
       entities: ["person:sasha"],
       eventAt: NEW_EVENT
     })
-    conceptSanju = await seed(cli, {
+    conceptSasha = await seed(cli, {
       title: "Sasha is the name of the deploy-gate concept",
       claim: "The deploy-gate concept is called sasha after its first reviewer.",
       entities: ["concept:sasha"]
@@ -173,8 +173,8 @@ describe("memhtml entity activity", () => {
 
     await setWrittenAt(cli, checkoutOnly, OLD_WRITE)
     await setWrittenAt(cli, shared, SHARED_WRITE)
-    await setWrittenAt(cli, sanjuOnly, SASHA_WRITE)
-    await setWrittenAt(cli, conceptSanju, CONCEPT_WRITE)
+    await setWrittenAt(cli, sashaOnly, SASHA_WRITE)
+    await setWrittenAt(cli, conceptSasha, CONCEPT_WRITE)
     await commitAll(cli, "pin every fixture's write time")
     await cli.json(["index", "update"])
 

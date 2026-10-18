@@ -423,15 +423,39 @@ describe("the examples in the table", () => {
     expect(examples.length).toBeGreaterThan(5)
   })
 
+  /**
+   * The invocation line of an example. An example is one line, or one line ending in a quoted
+   * heredoc opener (`<<'SH'`) followed by the heredoc's body and its terminator: the body is the
+   * command's stdin, not its argv, so only the first line is split and checked, and the example
+   * must close the heredoc it opens so a copied example is a complete shell command.
+   */
+  const invocationOf = (example: string): string => {
+    const lines = example.split("\n")
+    const first = lines[0] ?? ""
+    if (lines.length === 1) return first
+    const opener = /\s<<'([A-Z]+)'$/.exec(first)
+    expect(opener, `a multi-line example opens a quoted heredoc: ${example}`).not.toBeNull()
+    expect(lines.at(-1), `the example closes its heredoc: ${example}`).toBe(opener?.[1])
+    return first.slice(0, opener?.index)
+  }
+
+  it("include a heredoc for session exec, the door the operator named as primary", () => {
+    const heredocs = examples.filter(
+      ([name, example]) => name === "session exec" && example.includes("<<'")
+    )
+    expect(heredocs.length).toBeGreaterThan(0)
+  })
+
   /** `help`'s own examples may be the `--help` spelling, which parses to the command being described. */
   const asksHelp = (argv: ReadonlyArray<string>): boolean =>
     parseArgv(argv).flags.get("help")?.at(-1) === true
 
   it("each invoke the command they sit beside and are one invocation, never a pipeline", () => {
     for (const [name, example] of examples) {
-      expect(example.startsWith("memhtml "), example).toBe(true)
-      expect(example, example).not.toContain("|")
-      const argv = shellWords(example).slice(1)
+      const invocation = invocationOf(example)
+      expect(invocation.startsWith("memhtml "), example).toBe(true)
+      expect(invocation, example).not.toContain("|")
+      const argv = shellWords(invocation).slice(1)
       if (name === "help" && asksHelp(argv)) continue
       expect(parseArgv(argv).command, example).toBe(name)
     }
@@ -439,7 +463,7 @@ describe("the examples in the table", () => {
 
   it("each pass the parser and the validator without a usage error", async () => {
     for (const [, example] of examples) {
-      const argv = shellWords(example).slice(1)
+      const argv = shellWords(invocationOf(example)).slice(1)
       if (asksHelp(argv)) {
         // Help answers before `validate`, so the whole call is the check, and it needs no layer.
         expect((await piped(argv)).exitCode, example).toBe(EXIT_OK)

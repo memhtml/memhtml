@@ -26,6 +26,11 @@ unsuffixed
 vectorless
 unitless
 Unitless
+# `unlabel` is a session operation that removes one `memhtml-entity` value, and `base-unservable`
+# is the head server's answer when it can't build the version a session's base names.
+unlabel
+unlabels
+unservable
 Invertibility
 injective
 bitemporal
@@ -53,14 +58,17 @@ upserts
 EWMA
 
 # --- pipeline and operations vocabulary ---------------------------------------------------
-# `Millis` is the tail of effect's `clock.currentTimeMillis`, quoted by `internals/the-sleep-pipeline`
-# where it names sleep's ONE clock read.
+# `Millis` is the tail of effect's `clock.currentTimeMillis`, which the generated `api/eval` page quotes.
 Millis
 oneline
 sandboxed
 unentitled
 oncall
 pgsql
+# Service managers and their log reader, named where the head server's unit file is shown.
+journalctl
+runit
+supervisord
 
 # --- quoted from something outside this repo ----------------------------------------------
 # `smali` is a language id the code-fence detector can return: `internals/the-memory-file-format`
@@ -72,17 +80,19 @@ déployé
 # `serch` is a deliberate misspelling: `learn/operations/diagnose-poor-retrieval` prints the
 # `unknown command: serch x` envelope a mistyped invocation returns.
 serch
-# The test corpus's person names, quoted verbatim by `internals/the-memory-file-format` and
-# `internals/the-sleep-pipeline` where they state the MEASURED character-overlap scores that make
-# entity resolution's alias oracle necessary (`laura` against `laura de-sabelin` at 0.476). The
-# numbers are only checkable against the names they were measured on, so the docs cannot paraphrase
-# them into a generic `alice`/`bob` pair.
+# `startswith` is jq's string test, in the command that lists 0.16's new commands, and `ENOENT` is
+# the errno a session envelope's `server.detail` reports when no head server's socket exists.
+startswith
+ENOENT
+# The test corpus's person names, quoted verbatim by `internals/the-memory-file-format` where it
+# states the MEASURED character-overlap scores that make entity resolution's alias oracle necessary
+# (`laura` against `laura de-sabelin` at 0.476). The numbers are only checkable against the names
+# they were measured on, so the docs cannot paraphrase them into a generic `alice`/`bob` pair.
 laura
 sabelin
 sasha
 llms
 Grayscale
-agentgateway
 litellm
 # `opencode` is one of the four host ids `memhtml integrations install` accepts and the directory the
 # agent of that name keeps its config in (`~/.config/opencode/`). Prose spells the product `OpenCode`,

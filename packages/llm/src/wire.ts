@@ -52,10 +52,10 @@ export interface GenerateOptions {
  *   (https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html, "GPT-5.6 models").
  * - `implicit` sends no caching field at all, leaving the endpoint's default in place.
  *
- * `off` is the default because of what the sleep prompts are. Bedrock's implicit mode for GPT-5.6
+ * `off` is the default because of what the measured prompts were. Bedrock's implicit GPT-5.6 mode
  * places an automatic breakpoint on the LATEST message, so with a 1,024-token minimum every call
  * whose whole prompt clears the minimum writes that whole prompt to the cache at 1.25x the input
- * rate; and the eight sleep system prompts are 189 to 496 tokens, so the only prefix that could be
+ * rate; and the eight system prompts measured were 189 to 496 tokens, so the prefix that could be
  * reused never reaches the minimum and the only prefix that does reach it — system plus a unique
  * batch — is never seen twice. Measured 2026-09-11 on the access log: every OpenAI-lane call reported
  * `cache_write_tokens` about equal to its input and `cached_tokens: 0`, a pure premium with no read

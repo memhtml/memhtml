@@ -10,15 +10,12 @@
 export type { AgentsDocResult } from "./agents-doc.js"
 export { AGENTS_DOC_PATH, renderAgentsDoc, runAgentsDoc } from "./agents-doc.js"
 export type {
-  ConsolidatorPortShape,
   EmbedderShape,
   ExtractorPortShape,
-  ModelPortShape,
   RetrievalPolicyShape,
   RootsShape
 } from "./api-layer.js"
 export {
-  ConsolidatorPortService,
   DatabaseService,
   Embedder,
   Embeddings,
@@ -29,8 +26,6 @@ export {
   IndexRecorder,
   layerApp,
   layerAppWith,
-  layerConsolidatorFrom,
-  layerConsolidatorPort,
   layerCore,
   layerDatabase,
   layerEmbedder,
@@ -40,24 +35,27 @@ export {
   layerGit,
   layerIndexer,
   layerIndexGit,
-  layerModelFrom,
-  layerModelPort,
   layerRecorder,
   layerRetrieval,
   layerRetrievalPolicy,
   layerRetrievalPolicyFrom,
   layerRoots,
-  layerSleep,
   layerStore,
   ModelClient,
-  ModelPort,
   Retrieval,
   RetrievalPolicy,
   Roots,
-  Sleep,
   Store
 } from "./api-layer.js"
-export { applyPayload, applyText, decodeApply, readStdin } from "./apply.js"
+export type { SessionPutDecode, SessionPutOp } from "./apply.js"
+export {
+  applyPayload,
+  applyText,
+  decodeApply,
+  decodeSessionPut,
+  readStdin,
+  SESSION_PUT_OPS
+} from "./apply.js"
 export {
   type ArgSpec,
   buildManifest,
@@ -72,6 +70,43 @@ export {
   type GuideBlock
 } from "./commands.js"
 export { CONFIG_VARS, type ConfigVar, MemhtmlRoot, TraceRoot } from "./config.js"
+export { configReport, type ProcessSetting, processTuning } from "./config-report.js"
+export {
+  type ClusterOutcome,
+  type ClusterOutcomeKind,
+  type CurateCollapseInput,
+  type CurateCollapseReport,
+  collapseSessionId,
+  curateCollapse,
+  DEFAULT_CONCURRENCY,
+  defaultCollapseRef,
+  FOLD_BUDGET,
+  type HeadCache,
+  makeHeadCache,
+  readPlanFile,
+  readRulingsFile
+} from "./curate-collapse.js"
+export {
+  bindTools,
+  COMMIT_ATTEMPTS,
+  CURATE_REF_PREFIX,
+  CURATE_REF_ROOT,
+  type CurateRunInput,
+  type CurateRunReport,
+  commitSummary,
+  curateRefProblem,
+  curateRun,
+  curateSessionId,
+  defaultCurateRef,
+  headRefOf,
+  land,
+  memoryOverlay,
+  type OpsByKind,
+  type Overlay,
+  recordView,
+  sessionOverlay
+} from "./curate-run.js"
+export { closedDoorRefusal, RECORD_CREATING_V1_COMMANDS, sessionDoorRefusal } from "./doors.js"
 export {
   API_VERSION,
   ERROR_CODES,
@@ -106,6 +141,7 @@ export {
   readScript,
   runExec
 } from "./exec.js"
+export { DEFAULT_EXEC_LANG, EXEC_LANGS, type ExecLang } from "./exec-lang.js"
 export type { EntityExtractorShape, ExtractionAnswer, ExtractionItem } from "./extraction.js"
 export {
   EXTRACTION_MODEL,
@@ -116,8 +152,149 @@ export {
   makeEntityExtractor,
   RESPONSE_SCHEMA as EXTRACTION_RESPONSE_SCHEMA
 } from "./extraction.js"
+export {
+  type AncestorSnapshot,
+  ancestorSnapshots,
+  findAncestorSnapshot,
+  type HeadSource,
+  type LoadedVersion,
+  loadVersion,
+  type SnapshotWritten,
+  snapshotAfterCommit,
+  writeHeadSnapshot
+} from "./head-cache.js"
+export {
+  ANSWER_TIMEOUT_MS,
+  type Answered,
+  type Asked,
+  askHead,
+  askHeadFor,
+  CONNECT_TIMEOUT_MS
+} from "./head-client.js"
+export {
+  type GateFailure,
+  type GateOutcome,
+  gateReportOf,
+  type HeadLoader,
+  headGate,
+  isHeadGateReport
+} from "./head-gate.js"
+export {
+  COMMIT_DEADLINE_DEFAULT_MS,
+  COMMIT_DEADLINE_VAR,
+  COMMIT_QUEUE_WAIT_MS,
+  COMMIT_REBASE_ROUNDS,
+  CommitAnswer,
+  CommitBase,
+  CommitDeclined,
+  CommitRequest,
+  CommitResult,
+  HEAD_PROTOCOL,
+  HEAD_ROUTES,
+  type HeadEndpoint,
+  type HeadRoute,
+  HeadScope,
+  HeadServerRunning,
+  HeadServerStatus,
+  HeadSocketPathTooLong,
+  HitDetail,
+  headEndpoint,
+  headPipeName,
+  headSocketPath,
+  NeighborsAnswer,
+  NeighborsRequest,
+  PolicySourceStatus,
+  ReadRequest,
+  RebaseAnswer,
+  RebaseRequest,
+  RebaseResult,
+  ScopeReport,
+  SearchAnswer,
+  SearchRequest,
+  ServedHead,
+  type SocketPathTooLong,
+  socketPathMax,
+  socketPathTooLong,
+  VectorCacheStatus,
+  VectorUseSchema
+} from "./head-protocol.js"
+export {
+  HEAD_RETRIEVAL_TIMEOUT_MS,
+  type IndexReason,
+  MCP_HEAD_VAR,
+  type Routing,
+  recallOnHead,
+  routeFor,
+  searchOnHead
+} from "./head-retrieval.js"
+export { admitFor, hitDetailOf, scopeNarrows, scopeReportOf, supersededByOf } from "./head-scope.js"
+export {
+  DEFAULT_POLL_MS,
+  type HeadServed,
+  type HeadServer,
+  type HeadServerInput,
+  serveHead,
+  startHeadServer,
+  untilSignal
+} from "./head-server.js"
 export * from "./operations.js"
 export { claimFromProse, proseTail } from "./prose.js"
+export {
+  ARTICLE_EDIT_REASON,
+  type CurateDelta,
+  commitSubjectOf,
+  type DiffEntry,
+  mergeBase,
+  parseDiffTreeRaw,
+  type Reconstruction,
+  type ReplayRejection,
+  readCurateDelta,
+  reconstructOps
+} from "./replay.js"
 export { type Parsed, parseArgv, type RunResult, run } from "./run.js"
 export { MCP_BIN_VAR, mcpEntryPoint, type ServeResult, serveMcp } from "./serve.js"
-export { indexReport, sleepPhases, sleepRunReport } from "./views.js"
+export {
+  type ConfigEntry,
+  type ConfigTracking,
+  describePolicySource,
+  guardV1Door,
+  type LoadedStorePolicy,
+  loadStorePolicy,
+  type PolicySource,
+  policySourceOf,
+  storeConfigPath,
+  storeConfigReport,
+  v1DoorState
+} from "./store-config.js"
+export {
+  type CommitServerUse,
+  type CurateMerged,
+  commitOverHead,
+  curateMerge,
+  type GateReport,
+  type HeadStats,
+  type HeadStatsSource,
+  headSearch,
+  headSnapshot,
+  headStats,
+  headStatus,
+  type LoadedHead,
+  loadHeadAt,
+  MERGE_ATTEMPTS,
+  type PreparedPuts,
+  preparePuts,
+  qualifyRef,
+  type ReplayReport,
+  rebaseOver,
+  runV2,
+  type SessionCommitted,
+  servedStats,
+  sessionCommit,
+  sessionExec,
+  sessionPut,
+  sessionRebase,
+  sessionStart,
+  sessionStatus,
+  type V2Input
+} from "./v2.js"
+export { indexReport } from "./views.js"

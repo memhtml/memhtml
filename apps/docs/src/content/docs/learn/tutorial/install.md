@@ -155,8 +155,7 @@ memhtml status
     "indexHeadSha": "4e232759bfad745b0445ecd83cc9883c30a0c426",
     "embedModel": "cohere.embed-v4:0@1024",
     "embedderUp": false,
-    "hasState": true,
-    "lastSleep": null
+    "hasState": true
   }
 }
 ```

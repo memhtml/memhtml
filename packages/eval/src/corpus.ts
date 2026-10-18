@@ -253,7 +253,7 @@ const TOPICS: ReadonlyArray<Topic> = [
   }
 ]
 
-/** The nine storage types. `arc` is here because the fixture writes files directly, as sleep does. */
+/** The nine storage types. `arc` is here because the fixture writes files directly, as a curator does. */
 const TYPES: ReadonlyArray<string> = [
   "episodic",
   "semantic",

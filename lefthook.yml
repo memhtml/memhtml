@@ -84,9 +84,8 @@ pre-push:
             run: mise run typecheck
           - name: smoke-package
             # The published artifact, installed and driven. ~60s credential-free, ~105s with `--live`, which
-            # additionally spends real Bedrock tokens on the three edges nothing else can reach from an
-            # install: embeddings, the sleep phases that call a model, and the consolidator distilling a
-            # transcript through eve.
+            # additionally spends real Bedrock tokens on the one edge nothing else can reach from an
+            # install: embeddings, through `index update` and through `head embed` and `head search`.
             #
             # Live WHEN A CREDENTIAL IS PRESENT, and the fallback says so on stderr rather than quietly
             # proving less — a push from a machine with no Bedrock access should still gate the artifact, and
@@ -98,6 +97,6 @@ pre-push:
               if [ -n "$AWS_BEARER_TOKEN_BEDROCK" ] || { [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ]; }; then
                 mise run package:smoke:live
               else
-                echo "pre-push: no Bedrock credential, running the credential-free smoke — the embedder, the model, and the consolidator go unproven" >&2
+                echo "pre-push: no Bedrock credential, running the credential-free smoke — the embedder goes unproven" >&2
                 mise run package:smoke
               fi

@@ -23,15 +23,17 @@ const STAGING = join(REPO_ROOT, "dist-package")
 const WORKSPACE_PACKAGES = [
   "apps/cli",
   "apps/mcp",
-  "apps/consolidator",
   "packages/contracts",
+  "packages/curator",
   "packages/domain",
   "packages/eval",
+  "packages/head",
   "packages/html",
   "packages/index",
   "packages/integrations",
   "packages/llm",
-  "packages/sleep",
+  "packages/session",
+  "packages/snapshot",
   "packages/store",
   "packages/telemetry",
   "packages/traces"
@@ -77,7 +79,8 @@ for (const required of [
   "dist/memhtml-mcp.mjs",
   "migrations",
   "guest",
-  "prompts"
+  "prompts/charter.md",
+  "prompts/collapse.md"
 ]) {
   if (!existsSync(join(STAGING, required))) {
     throw new Error(`dist-package/${required} is missing; run \`pnpm package:assemble\``)
@@ -93,7 +96,7 @@ await writeFile(
       name: "memhtml",
       version: root.version,
       description:
-        "An agent's long-term memory: one fact per semantic HTML file in git, four-arm retrieval, and a curation sleep cycle.",
+        "An agent's long-term memory: one fact per semantic HTML file in git, four-arm retrieval, and curator sessions on a branch.",
       keywords: ["memory", "agent", "mcp", "retrieval", "sqlite", "git", "semantic-html", "cli"],
       homepage: "https://github.com/memhtml/memhtml",
       bugs: { url: "https://github.com/memhtml/memhtml/issues" },

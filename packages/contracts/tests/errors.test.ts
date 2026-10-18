@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   DirtyTree,
   DuplicateContent,
+  GitFailure,
   InvalidMemory,
   LlmContractViolation,
   ModelUnavailable,
@@ -21,9 +22,18 @@ describe("errors", () => {
       PathNotFound.make({ path: "/nope.html" })._tag,
       DuplicateContent.make({ contentHash: "sha256:ff", existingPath: "/a.html" })._tag,
       DirtyTree.make({ paths: ["/a.html"] })._tag,
-      LlmContractViolation.make({ reason: "stop_reason max_tokens" })._tag
+      LlmContractViolation.make({ reason: "stop_reason max_tokens" })._tag,
+      GitFailure.make({ command: "commit-tree", exitCode: 128 })._tag
     ]
     expect(new Set(tags).size).toBe(tags.length)
+  })
+
+  it("carries the subcommand and exit code on a git failure, and admits a null exit code", () => {
+    // `null` is the exit code of a process that never started, which is a distinct answer from any
+    // number git can return.
+    const failure = GitFailure.make({ command: "hash-object", exitCode: null })
+    expect(Object.keys(failure).sort()).toEqual(["_tag", "command", "exitCode"])
+    expect(failure.exitCode).toBeNull()
   })
 
   it("carries only the operation name on a storage failure", () => {

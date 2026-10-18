@@ -13,8 +13,8 @@ export type EdgeClass = typeof EdgeClass.Type
 
 /**
  * The nine memory rels. `supersedes` and `contradicts` are penalty-bearing: they gate
- * the retention `contested_status` signal, so sleep promotes a corroborated one into
- * both files rather than leaving it in the rebuildable index.
+ * the retention `contested_status` signal, so one counts only when it's authored into
+ * both files rather than left in the rebuildable index.
  */
 export const MEMORY_RELS = [
   "supersedes",
@@ -92,7 +92,7 @@ export const relsForClass = (edgeClass: EdgeClass): ReadonlyArray<EdgeRel> => {
 export const isEdgeRel = (rel: string): rel is EdgeRel =>
   (ALL_RELS as ReadonlyArray<string>).includes(rel)
 
-/** Where an edge came from. `derived` edges are only ever `sleep`-provenanced. */
+/** Where an edge came from. `sleep` marks the mined edges of the pipeline removed in 0.16. */
 export const EDGE_PROVENANCES = ["authored", "sleep", "import"] as const
 
 export const EdgeProvenance = Schema.Literals(EDGE_PROVENANCES)
@@ -120,7 +120,7 @@ export const relForToken = (token: string): EdgeRel | undefined => {
 }
 
 /**
- * One edge. `derived` separates a sleep-mined suspicion from an authored assertion: the
+ * One edge. `derived` separates a machine-mined suspicion from an authored assertion: the
  * retention `contested_status` signal counts only `derived: false` contradictions, so an
  * uncorroborated machine guess can never evict a memory.
  *

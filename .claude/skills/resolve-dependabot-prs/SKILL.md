@@ -41,7 +41,7 @@ For every package in the set, ask what claims name it:
 
 Three kinds of hit matter:
 
-- **A dated probe comment** ("Probed live 2026-08-25 against eve 0.38.3: …") is a measured claim about a system this repo does not control. A bump is exactly the event that falsifies one, and no test can see a comment.
+- **A dated probe comment** ("Probed live 2026-09-27 against just-bash 3.4.2: …") is a measured claim about a system this repo does not control. A bump is exactly the event that falsifies one, and no test can see a comment.
 - **A version citation** outside `package.json` — a `$schema` URL, a comment naming the pinned binary — must move with the bump or the bump re-stales prose that was correct a moment ago.
 - **A `.lessons/solutions/**` lesson** records what was true when written. Read it; do not rewrite it.
 
@@ -64,11 +64,11 @@ Sync any version citations Phase 3 surfaced, in the same commit as the bump.
 ## Phase 5 — Gate, then the tier the gate cannot replace
 
 ```bash
-mise run check                    # 60 tasks; the definition of done
-mise run package:smoke:live       # 69 checks; needs a Bedrock credential
+mise run check                    # 76 tasks; the definition of done
+mise run package:smoke:live       # 91 checks; needs a Bedrock credential
 ```
 
-Run the live tier whenever the set touches `eve`, `@aws-sdk/*`, `ai`, `@ai-sdk/*`, or anything the consolidator spawns. It is the only tier that performs a real `eve build` followed by a real `eve start`, and the only one that reaches Bedrock.
+Run the live tier whenever the set touches `@aws-sdk/*`, `ai`, or `@ai-sdk/*`. It's the only tier that reaches Bedrock.
 
 When the gate goes red, treat the failure as information rather than an obstacle. A red dependency PR is often the regression the pin exists to catch. Before changing a test to pass, establish which of these it is:
 

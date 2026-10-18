@@ -6,8 +6,8 @@ import { EVAL_LOG_ANNOTATIONS, withStack } from "../src/harness.js"
 /**
  * The eval stack's log lines name the throwaway they describe (issue #145).
  *
- * `memhtml sleep merge` runs this stack as its gate, so its migrations and its `indexer.rebuild` land
- * in the operator's sleep log beside the store's own index lines, where "indexer.rebuild: 304 files"
+ * A merge gate runs this stack, so its migrations and its `indexer.rebuild` land in the operator's
+ * log beside the store's own index lines, where "indexer.rebuild: 304 files"
  * reads as the store being rebuilt. Captured through a logger rather than by grepping stderr, and
  * read off the fiber's annotations rather than the rendered text, so the assertion is about the
  * annotation itself and not one formatter's spelling of it.

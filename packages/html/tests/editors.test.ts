@@ -146,6 +146,30 @@ describe("removeMeta", () => {
   it("is a no-op on an absent name", () => {
     expect(removeMeta(FORMAT_MD_EXAMPLE, "memhtml-reprieves")).toBe(FORMAT_MD_EXAMPLE)
   })
+
+  /**
+   * Mutation: the value comparison dropped from the filter (so every meta of the name goes) -> this
+   * case fails on the entity that should stay, and the no-op case below fails too; the
+   * `value === undefined ||` clause dropped (so an unnamed value matches nothing) -> the two cases
+   * above that omit the value fail.
+   */
+  it("removes only the named value of a repeatable key, one line, the article untouched", () => {
+    const two = addMeta(
+      addMeta(fileWith(MINIMAL_ARTICLE), "memhtml-entity", "service:a"),
+      "memhtml-entity",
+      "project:b"
+    )
+    const after = removeMeta(two, "memhtml-entity", "service:a")
+    expect(parseOk(after).entities).toEqual(["project:b"])
+    expect(lineDelta(two, after).added).toBe(-1)
+    expect(articleRegion(after)).toBe(articleRegion(two))
+    expect(contentHash(after)).toBe(contentHash(two))
+  })
+
+  it("is a no-op on a value the key does not carry", () => {
+    const one = addMeta(fileWith(MINIMAL_ARTICLE), "memhtml-entity", "service:a")
+    expect(removeMeta(one, "memhtml-entity", "service:z")).toBe(one)
+  })
 })
 
 describe("addLink", () => {

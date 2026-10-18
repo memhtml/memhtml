@@ -7,7 +7,7 @@
  * is honoured, so a package deliberately exempted reports as exempt rather than as blocked.
  *
  * Usage:
- *   node cooldown-check.mjs eve@0.44.1 @biomejs/biome@2.5.10
+ *   node cooldown-check.mjs just-bash@3.4.2 @biomejs/biome@2.5.10
  *   node cooldown-check.mjs --pr 74            # read the versions out of a dependabot PR body
  *
  * Exit 0 when every version is installable, 1 when any is inside the window. That makes it usable

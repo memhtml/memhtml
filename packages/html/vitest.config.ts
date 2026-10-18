@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config"
 
 /**
- * `testTimeout: 30_000`, matching `@memhtml/index` and `@memhtml/sleep`.
+ * `testTimeout: 30_000`, matching `@memhtml/index`.
  *
  * The reference-fidelity cases in `tests/detect.test.ts` call `detect()`, and the FIRST such call in a
  * worker pays for loading highlight.js's grammar registry — a one-time cost that lands on whichever

@@ -1,0 +1,871 @@
+import { createHash } from "node:crypto"
+import { join, win32 } from "node:path"
+
+import { HEAD_SOCKET, OverlayOpSchema } from "@memhtml/session"
+import { Schema } from "effect"
+
+/**
+ * The head server's wire contract (`docs/design.md` §22): JSON over HTTP on a Unix domain
+ * socket inside the store (a named pipe derived from the store path under win32,
+ * {@link headEndpoint}), seven routes under one version prefix.
+ *
+ * The server (`head-server.ts`) decodes every request body with the schemas here, excess properties
+ * refused, the way the CLI refuses an unknown flag; the client (`head-client.ts`) decodes every
+ * answer with them, so a server of another version reads as no server rather than as a wrong answer.
+ * A new route or a new version is a new prefix: `/v1/` never changes meaning.
+ */
+
+/** The protocol version, the prefix of every route. */
+export const HEAD_PROTOCOL = "1"
+
+export const HEAD_ROUTES = {
+  status: `/v${HEAD_PROTOCOL}/status`,
+  search: `/v${HEAD_PROTOCOL}/search`,
+  read: `/v${HEAD_PROTOCOL}/read`,
+  neighbors: `/v${HEAD_PROTOCOL}/neighbors`,
+  exec: `/v${HEAD_PROTOCOL}/exec`,
+  commit: `/v${HEAD_PROTOCOL}/commit`,
+  rebase: `/v${HEAD_PROTOCOL}/rebase`
+} as const
+
+export type HeadRoute = keyof typeof HEAD_ROUTES
+
+/**
+ * Where a store's head server listens, the same answer on the client and the server because both
+ * derive it from the store path alone. `path` is what `net.Server.listen({ path })` and
+ * `net.connect({ path })` take on the platform.
+ *
+ * - `socket`: a Unix domain socket file, `.memhtml/head.sock` inside the store. It has a mode, a
+ *   gitignore entry, and a byte limit ({@link socketPathMax}).
+ * - `pipe`: a Windows named pipe ({@link headPipeName}). It is no file in the store, so there is
+ *   nothing to stat, chmod, ignore, or remove, and its name is short whatever the store path is.
+ */
+export interface HeadEndpoint {
+  readonly path: string
+  readonly kind: "socket" | "pipe"
+}
+
+/**
+ * The named pipe a store's server listens on under win32:
+ * `\\.\pipe\memhtml-<the first 16 hex digits of the SHA-256 of the resolved store path>`. The
+ * path is resolved with win32 semantics and hashed as UTF-8 exactly as it resolves, so a store
+ * named with another letter case derives another pipe and its calls load locally.
+ */
+export const headPipeName = (root: string): string => {
+  const digest = createHash("sha256").update(win32.resolve(root), "utf8").digest("hex")
+  return `\\\\.\\pipe\\memhtml-${digest.slice(0, 16)}`
+}
+
+/** The store's {@link HeadEndpoint} on `platform` (the running one by default). */
+export const headEndpoint = (
+  root: string,
+  platform: NodeJS.Platform = process.platform
+): HeadEndpoint =>
+  platform === "win32"
+    ? { path: headPipeName(root), kind: "pipe" }
+    : { path: join(root, HEAD_SOCKET), kind: "socket" }
+
+/**
+ * The path the store's server listens on: `.memhtml/head.sock` inside the store, or the named pipe
+ * {@link headPipeName} derives under win32.
+ */
+export const headSocketPath = (
+  root: string,
+  platform: NodeJS.Platform = process.platform
+): string => headEndpoint(root, platform).path
+
+/**
+ * The longest socket path, in UTF-8 bytes, a server binds and a client dials on `platform`, or
+ * `null` under win32, whose named pipe has no such limit. It is the size of `sun_path` less the
+ * terminating NUL: 108 bytes on Linux (107), 104 on macOS and the BSDs (103), and 103 on any other
+ * platform as the smallest common size. Node 24 on Linux also binds a full 108-byte path with no
+ * NUL (probed 2026-10-18), which C clients and other tools cannot dial, so the bound leaves the NUL.
+ */
+export const socketPathMax = (platform: NodeJS.Platform = process.platform): number | null => {
+  if (platform === "win32") return null
+  return platform === "linux" || platform === "android" ? 107 : 103
+}
+
+/** How far a socket path is past the platform's limit. */
+export interface SocketPathTooLong {
+  /** The path's length in UTF-8 bytes, which is what `sun_path` holds. */
+  readonly bytes: number
+  readonly max: number
+}
+
+/**
+ * `null` when `endpoint` can be bound and dialed on `platform`; else its byte length and the limit.
+ * A store nested too deep for its socket cannot host a server: `head serve` refuses at start
+ * ({@link HeadSocketPathTooLong}) and every client loads locally without dialing.
+ */
+export const socketPathTooLong = (
+  endpoint: HeadEndpoint,
+  platform: NodeJS.Platform = process.platform
+): SocketPathTooLong | null => {
+  if (endpoint.kind === "pipe") return null
+  const max = socketPathMax(platform)
+  if (max === null) return null
+  const bytes = Buffer.byteLength(endpoint.path, "utf8")
+  return bytes > max ? { bytes, max } : null
+}
+
+// ---------------------------------------------------------------------------------------------
+// The embed path
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * How long a search waits for its query embed by default, in milliseconds. Sized for the fleet's
+ * pre-turn lookup, which gives the socket 0.8 s of a 1.5 s budget: embeds through the proxy measured
+ * 171 ms at p50 and 458 ms at p95 on 2026-09-28, and the one in the incident this bound answers took
+ * 741 ms, so 450 ms keeps about 19 embeds in 20 and leaves the rest of the 0.8 s for the round trip
+ * and the fold.
+ */
+export const EMBED_DEADLINE_DEFAULT_MS = 450
+
+/**
+ * The variable that overrides {@link EMBED_DEADLINE_DEFAULT_MS}: a whole number of milliseconds, `0`
+ * for no deadline. Read by `head search` and by `head serve`, where a request's `embedDeadlineMs`
+ * wins over it.
+ */
+export const EMBED_DEADLINE_VAR = "MEMHTML_EMBED_DEADLINE_MS"
+
+/**
+ * How long without an embed before the server warms the embed path, in milliseconds: `0`, off, by
+ * default. Probed 2026-09-28 through an LLM proxy, no idle gap up to 900 s made the next embed
+ * slower (`docs/design.md` §22, "Keeping the embed path warm"), and a warmup every 45 s costs about
+ * 1,900 billed one-token embeds a day per server, so the warmup is for a deployment whose proxy
+ * drops idle connections: set {@link EMBED_WARM_IDLE_VAR} to an idle bound shorter than the proxy's
+ * idle timeout (45,000 keeps a pool with a timeout of a minute or more warm).
+ */
+export const EMBED_WARM_IDLE_DEFAULT_MS = 0
+
+/** The variable that overrides {@link EMBED_WARM_IDLE_DEFAULT_MS}; `0` or unset leaves it off. */
+export const EMBED_WARM_IDLE_VAR = "MEMHTML_EMBED_WARM_IDLE_MS"
+
+/**
+ * Set to `off` to send every `memory_search` and `memory_recall` to the index (`head-retrieval.ts`),
+ * as a build without the head route did. Read per call by the MCP server, so it is an operator's
+ * switch that needs no rebuild.
+ */
+export const MCP_HEAD_VAR = "MEMHTML_MCP_HEAD"
+
+// ---------------------------------------------------------------------------------------------
+// Requests
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * `POST /v1/search`: the input object `searchHead` takes, passed through whole, plus
+ * `embedDeadlineMs`, the one field the server reads itself: how long this answer may wait for its
+ * query embed, in milliseconds, `0` for no bound. Absent, the server's own deadline applies
+ * (`MEMHTML_EMBED_DEADLINE_MS` in the server's environment, else {@link EMBED_DEADLINE_DEFAULT_MS}). An option `searchHead` gains later is one more optional
+ * field here and on the client, and the route, the body's shape, and every older field stay as
+ * they are.
+ */
+/**
+ * A search's scope, the v1 `SearchScope` axes the head can answer from what a record carries
+ * (`head-scope.ts`): memory types (every type but `task` when none is named), the workspace a
+ * `projects/<name>/` path implies, tags (any of), one `type:name` entity (ASCII case folded, the
+ * `<dfn>` and `<code data-lang>` entities v1 derives included), and `<dl>` facets (AND across names,
+ * OR within one). `includeArchived` and `asOf` are not here: the head's arms rank active records
+ * only, and a record carries no validity window, so a caller that needs either asks the index.
+ */
+export const HeadScope = Schema.Struct({
+  memoryTypes: Schema.optionalKey(Schema.Array(Schema.String)),
+  workspace: Schema.optionalKey(Schema.String),
+  tags: Schema.optionalKey(Schema.Array(Schema.String)),
+  entity: Schema.optionalKey(Schema.String),
+  facets: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ name: Schema.String, value: Schema.String }))
+  )
+})
+export type HeadScope = typeof HeadScope.Type
+
+export const SearchRequest = Schema.Struct({
+  query: Schema.String,
+  limit: Schema.optionalKey(Schema.Int),
+  now: Schema.optionalKey(Schema.String),
+  embedDeadlineMs: Schema.optionalKey(
+    Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 600_000 }))
+  ),
+  /**
+   * Narrow every arm to the records this scope admits. Absent, the search is over every active
+   * record, tasks included, which is what `head search` and the pre-turn lookup have always asked;
+   * present (even `{}`), v1's default applies and tasks drop out unless named. The server reads it
+   * itself, like `embedDeadlineMs`, and the answer then carries `scope`.
+   */
+  scope: Schema.optionalKey(HeadScope),
+  /**
+   * Carry each hit's `detail`: the fields `memory_search` and `memory_recall` report, computed from
+   * the record the answer ranked. Absent or false, the hits are the four fields they always were.
+   */
+  detail: Schema.optionalKey(Schema.Boolean)
+})
+export type SearchRequest = typeof SearchRequest.Type
+
+/** `POST /v1/read`: one record by repo-relative path. */
+export const ReadRequest = Schema.Struct({ path: Schema.String })
+
+/** One `write` op as `session put` decoded it from its JSONL (`WriteParams`). */
+const WriteParamsSchema = Schema.Struct({
+  title: Schema.String,
+  claim: Schema.String,
+  body: Schema.optionalKey(Schema.Array(Schema.String)),
+  articleHtml: Schema.optionalKey(Schema.String),
+  memoryType: Schema.String,
+  path: Schema.optionalKey(Schema.String),
+  strictPath: Schema.optionalKey(Schema.Boolean),
+  workspace: Schema.optionalKey(Schema.String),
+  tags: Schema.optionalKey(Schema.Array(Schema.String)),
+  entities: Schema.optionalKey(Schema.Array(Schema.String)),
+  importance: Schema.optionalKey(Schema.Finite),
+  confidence: Schema.optionalKey(Schema.Finite),
+  taskStatus: Schema.optionalKey(Schema.String),
+  dueAt: Schema.optionalKey(Schema.String),
+  sessionId: Schema.optionalKey(Schema.String),
+  promptId: Schema.optionalKey(Schema.String),
+  turnUuid: Schema.optionalKey(Schema.String)
+})
+
+/** One `session put` line as `decodeSessionPut` decoded it (`SessionPutOp`). */
+const SessionPutOpSchema = Schema.Union([
+  Schema.Struct({ op: Schema.Literal("write"), params: WriteParamsSchema }),
+  Schema.Struct({
+    op: Schema.Literals(["label", "unlabel"]),
+    path: Schema.String,
+    entity: Schema.String
+  })
+])
+
+/**
+ * `POST /v1/neighbors`: what `session put` computes before it appends, asked of the version at the
+ * session's base. `ops` is the session's log as the client read it, decoded with the log's own
+ * schema (`OverlayOpSchema` from `@memhtml/session`), so every kind a log can hold crosses the wire,
+ * a `move` from `session exec` or the curator included. `lines` is the new ops (`write`, `label`,
+ * and `unlabel` lines in file order), `at` the instant the writes are stamped with, so the server's
+ * answer is a function of the request, the commit `sha` names, and the vector cache it holds, never
+ * of the ref it follows.
+ */
+export const NeighborsRequest = Schema.Struct({
+  sha: Schema.String,
+  ops: Schema.Array(OverlayOpSchema),
+  lines: Schema.Array(SessionPutOpSchema),
+  at: Schema.String,
+  /** The session is run-bound (`MEMHTML_SESSION`): `duplicate` and `claim-edit` block too. Absent is false. */
+  runBound: Schema.optionalKey(Schema.Boolean)
+})
+export type NeighborsRequest = typeof NeighborsRequest.Type
+
+/**
+ * The largest `POST /v1/exec` body the server reads, in bytes: 1 MiB. The body is the script as JSON
+ * text, so this bounds a script at a little under it. Sized from the 2026-09-23 store clone, whose
+ * memory records are 1.3 KB at the median, 23 KB at the 99th percentile, and 62 KB at most: a
+ * heredoc under the cap writes about 800 median records or 16 of the largest, and a batch past that
+ * is several execs. Above it the server answers 413 with `ERR_INVALID_FLAG` without reading the rest,
+ * and the CLI refuses the same script at exit 2 before it asks, with the server or without it, so a
+ * script's fate never depends on whether a server is running.
+ */
+export const EXEC_BODY_MAX_BYTES = 1_048_576
+
+/**
+ * `POST /v1/exec`: run a script over a session's view and append its harvest, as `session exec`
+ * does. The server reads the session's log itself, so a request names the session and nothing
+ * about its state. `timeoutMs` absent is the CLI's default, the cap applied either way.
+ */
+export const ExecRequest = Schema.Struct({
+  id: Schema.String,
+  script: Schema.String,
+  lang: Schema.Literals(["bash", "js"]),
+  timeoutMs: Schema.optionalKey(Schema.Int),
+  /** As on `/v1/neighbors`. Sent only when true, so a call outside a run reads on an older server. */
+  runBound: Schema.optionalKey(Schema.Boolean)
+})
+export type ExecRequest = typeof ExecRequest.Type
+
+/**
+ * The longest a `/v1/exec` waits before its script starts, twice over: once for the same session's
+ * earlier exec (a session runs one exec at a time, so the second sees the first's harvest), and once
+ * for a free worker. Past either the server declines with `busy` and has run nothing, so the client
+ * runs the script itself; the client's answer timeout is built from this (`execAnswerTimeoutMs`).
+ */
+export const EXEC_QUEUE_WAIT_MS = 30_000
+
+/** The request `session exec` sends, and its size on the wire, which the cap is measured against. */
+export const execRequestOf = (input: {
+  readonly id: string
+  readonly script: string
+  readonly lang: "bash" | "js"
+  readonly timeoutMs?: number | undefined
+  readonly runBound?: boolean | undefined
+}): ExecRequest => ({
+  id: input.id,
+  script: input.script,
+  lang: input.lang,
+  ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+  ...(input.runBound === true ? { runBound: true } : {})
+})
+
+export const execBodyBytes = (request: ExecRequest): number =>
+  Buffer.byteLength(JSON.stringify(request), "utf8")
+
+/** The usage error a body over {@link EXEC_BODY_MAX_BYTES} earns, on the socket and in the CLI alike. */
+export const execBodyTooLarge = (bytes: number | null): string =>
+  `session exec takes a script whose request body is at most ${String(EXEC_BODY_MAX_BYTES)} bytes (1 MiB)${bytes === null ? "" : `; this one is ${String(bytes)}`}. Split it into several execs, or write records with \`session put\``
+
+/**
+ * `POST /v1/commit`: land a session's log on its ref, as `session commit` does. The server reads the
+ * log itself, so a request names the session and the message and nothing about the session's state.
+ * `dropRefused` is `--drop-refused`, sent only when true.
+ */
+export const CommitRequest = Schema.Struct({
+  id: Schema.String,
+  message: Schema.String,
+  dropRefused: Schema.optionalKey(Schema.Boolean)
+})
+export type CommitRequest = typeof CommitRequest.Type
+
+/** The request `session commit` sends. */
+export const commitRequestOf = (input: {
+  readonly id: string
+  readonly message: string
+  readonly dropRefused?: boolean | undefined
+}): CommitRequest => ({
+  id: input.id,
+  message: input.message,
+  ...(input.dropRefused === true ? { dropRefused: true } : {})
+})
+
+/** `POST /v1/rebase`: move a session's base to its ref's tip, as `session rebase` does. */
+export const RebaseRequest = Schema.Struct({ id: Schema.String })
+export type RebaseRequest = typeof RebaseRequest.Type
+
+/**
+ * How long `session commit` and `session rebase` wait for the head server's answer by default, in
+ * milliseconds. A runtime that commits a run's session when the run ends gives each CLI call 90 s, and
+ * the server answers a commit in well under a second once it holds the session's base, so 60 s leaves
+ * the call's start and its exit inside that limit with room to spare. Past it the call fails rather
+ * than commit again here, because the server may have moved the ref.
+ */
+export const COMMIT_DEADLINE_DEFAULT_MS = 60_000
+
+/** The variable that overrides {@link COMMIT_DEADLINE_DEFAULT_MS}: whole milliseconds, `0` for none. */
+export const COMMIT_DEADLINE_VAR = "MEMHTML_COMMIT_DEADLINE_MS"
+
+/**
+ * The longest a `/v1/commit` or `/v1/rebase` waits for the server's commit permit (one commit or
+ * rebase runs at a time). Past it the server declines with `busy` having done nothing, and the client
+ * commits locally. Below {@link COMMIT_DEADLINE_DEFAULT_MS}, so a declined call still has the time a
+ * local commit takes.
+ */
+export const COMMIT_QUEUE_WAIT_MS = 20_000
+
+/**
+ * The most rebases a `/v1/commit` with `dropRefused` makes inside one permit: a commit answered
+ * `rebase-needed` is rebased onto the server's tip and committed again, up to this many times, and
+ * the last round's outcome is the answer. A caller that asked to drop what a rebase reveals has
+ * already chosen what the rebase decides, so the server spares it the round trip and the race: the
+ * permit is held from the first commit to the last, so no other commit through this server moves the
+ * ref between a rebase and its commit. Only a writer that does not ask the server can, and each
+ * round it does so costs one rebase.
+ */
+export const COMMIT_REBASE_ROUNDS = 3
+
+// ---------------------------------------------------------------------------------------------
+// Answers
+// ---------------------------------------------------------------------------------------------
+
+const HeadSourceSchema = Schema.Literals(["snapshot", "snapshot+advance", "git"])
+
+const VectorSkipReasonSchema = Schema.Literals([
+  "embedder-off",
+  "no-cache",
+  "cache-unreadable",
+  "embed-failed",
+  "embed-timeout"
+])
+
+/** The vector arm's report on one answer, the `vector` field local `head search` returns (`VectorUse`). */
+export const VectorUseSchema = Schema.Struct({
+  used: Schema.Boolean,
+  reason: Schema.NullOr(VectorSkipReasonSchema),
+  detail: Schema.NullOr(Schema.String),
+  cached: Schema.NullOr(Schema.Finite),
+  coverage: Schema.NullOr(Schema.Finite),
+  loadMs: Schema.NullOr(Schema.Finite),
+  embedMs: Schema.NullOr(Schema.Finite)
+})
+
+/**
+ * What the server's background fill of the vector cache has done: whether one is running, the
+ * records it embedded and the batches it sent, its failures with the latest one's reason, and the
+ * latest batch's time and instant. A failed batch is tried again on the next advance or warmup tick.
+ */
+export const VectorBackfillStatus = Schema.Struct({
+  running: Schema.Boolean,
+  embedded: Schema.Finite,
+  batches: Schema.Finite,
+  failures: Schema.Finite,
+  lastError: Schema.NullOr(Schema.String),
+  lastMs: Schema.NullOr(Schema.Finite),
+  lastAt: Schema.NullOr(Schema.String)
+})
+
+/**
+ * The most records one background fill batch embeds: Cohere's per-request ceiling, so a batch is
+ * one request. A landing that brings more is filled a batch at a time, one after another.
+ */
+export const BACKFILL_BATCH_MAX = 96
+
+/**
+ * The vector cache a server holds, for `status`: its entries, the share of the held version's
+ * active records they cover, what reading it took, and the file's mtime; or, with `held: false`,
+ * why there is none (`embedder-off`, `no-cache`, `cache-unreadable` with the reader's refusal in
+ * `detail`). `loads` counts reads of the file: one at start, one per change of its mtime. `pending`
+ * is the distinct article texts of the held version's active records that have no vector yet
+ * (`null` with no cache held), which the background fill (`backfill`) works down.
+ */
+export const VectorCacheStatus = Schema.Struct({
+  held: Schema.Boolean,
+  reason: Schema.NullOr(VectorSkipReasonSchema),
+  detail: Schema.NullOr(Schema.String),
+  path: Schema.String,
+  entries: Schema.NullOr(Schema.Finite),
+  coverage: Schema.NullOr(Schema.Finite),
+  loadMs: Schema.NullOr(Schema.Finite),
+  mtime: Schema.NullOr(Schema.String),
+  loads: Schema.Finite,
+  pending: Schema.NullOr(Schema.Finite),
+  backfill: VectorBackfillStatus
+})
+export type VectorCacheStatus = typeof VectorCacheStatus.Type
+
+/** The exec pool as `status` reports it. */
+export const ExecPoolStatus = Schema.Struct({
+  size: Schema.Finite,
+  idle: Schema.Finite,
+  busy: Schema.Finite,
+  started: Schema.Finite,
+  killed: Schema.Finite,
+  jobs: Schema.Finite
+})
+
+/**
+ * The embedder's traffic as `status` reports it: the query-embed deadline the server applies to a
+ * request that names none (`null`: no bound), the idle time after which it warms the embed path
+ * (`null`: never), embeds in flight now, when the last one ended, and the counters. `timeouts` is
+ * searches that answered without the arm because the deadline passed; each such embed was either
+ * `lateKept` (left to finish in the background, at most {@link LATE_EMBEDS_MAX} at once, `lateInFlight`
+ * now) or `lateStopped` (interrupted, its request aborted). `warmups` is the one-token embeds the
+ * idle timer issued, `warmupFailures` those that failed, and `lastWarmupMs` the latest one's time.
+ */
+export const EmbedActivityStatus = Schema.Struct({
+  deadlineMs: Schema.NullOr(Schema.Finite),
+  warmIdleMs: Schema.NullOr(Schema.Finite),
+  inFlight: Schema.Finite,
+  lastEmbedAt: Schema.NullOr(Schema.String),
+  timeouts: Schema.Finite,
+  lateKept: Schema.Finite,
+  lateStopped: Schema.Finite,
+  lateInFlight: Schema.Finite,
+  warmups: Schema.Finite,
+  warmupFailures: Schema.Finite,
+  lastWarmupMs: Schema.NullOr(Schema.Finite)
+})
+export type EmbedActivityStatus = typeof EmbedActivityStatus.Type
+
+/**
+ * Query embeds a server lets run past their deadline at once. One is enough to finish the cold
+ * connection the miss was waiting on, which is what makes the next query warm; a second miss while
+ * it runs is interrupted instead, so a slow proxy can never collect a pile of background calls.
+ */
+export const LATE_EMBEDS_MAX = 1
+
+/**
+ * Where the store's policy comes from as of one read of `memhtml.config.json` (`policySourceOf` in
+ * `store-config.ts`): `file` when it is present and decodes, `defaults` when it is absent and the
+ * library defaults apply, `invalid` when it is present and does not read or decode, so every write
+ * that needs the policy refuses with `ERR_STORE_CONFIG` until it is fixed (`reason` says why).
+ */
+export const PolicySourceStatus = Schema.Struct({
+  source: Schema.Literals(["file", "defaults", "invalid"]),
+  /** The file's absolute path, whether or not it exists. */
+  path: Schema.String,
+  reason: Schema.NullOr(Schema.String)
+})
+export type PolicySourceStatus = typeof PolicySourceStatus.Type
+
+/** `GET /v1/status`. */
+export const HeadServerStatus = Schema.Struct({
+  protocol: Schema.Literal(HEAD_PROTOCOL),
+  pid: Schema.Finite,
+  root: Schema.String,
+  socket: Schema.String,
+  /** The ref the server follows. */
+  ref: Schema.String,
+  /** The commit the server's version is at, after the advance this request triggered, if any. */
+  sha: Schema.String,
+  records: Schema.Finite,
+  /** The initial load's skip count from git; `null` when it came from a snapshot. */
+  skipped: Schema.NullOr(Schema.Finite),
+  /** How the server's first version was built: the path `loadHeadAt` took. */
+  loadSource: HeadSourceSchema,
+  loadMs: Schema.Finite,
+  /** How long the last advance took, or `null` when the ref has not moved since the load. */
+  lastAdvanceMs: Schema.NullOr(Schema.Finite),
+  /** Advances since the load: one per observed ref move, however many requests saw it. */
+  advances: Schema.Finite,
+  requests: Schema.Finite,
+  uptimeMs: Schema.Finite,
+  /** The background poll's period; 0 when requests alone advance the version. */
+  pollMs: Schema.Finite,
+  startedAt: Schema.String,
+  vectors: VectorCacheStatus,
+  /** The embedder's deadline, warmups, and traffic; with no embedder, zeros and nulls. */
+  embed: EmbedActivityStatus,
+  /** The workers `/v1/exec` runs scripts in: how many run at once, and what they have done. */
+  exec: ExecPoolStatus,
+  /**
+   * The store's policy source, read from the working tree when the status is asked, the way every
+   * decision reads it. Absent from an older server.
+   */
+  policy: Schema.optionalKey(PolicySourceStatus)
+})
+export type HeadServerStatus = typeof HeadServerStatus.Type
+
+/** The version an answer was computed over. */
+export const ServedHead = Schema.Struct({
+  sha: Schema.String,
+  ref: Schema.String,
+  records: Schema.Finite,
+  skipped: Schema.NullOr(Schema.Finite)
+})
+export type ServedHead = typeof ServedHead.Type
+
+const SearchHitSchema = Schema.Struct({
+  path: Schema.String,
+  score: Schema.Finite,
+  arms: Schema.Array(Schema.Literals(["lexical", "recency", "vector"])),
+  claim: Schema.String
+})
+
+/**
+ * What a hit carries under `detail: true`, each field the value v1's index would hold for the same
+ * file (`projectFile` in `@memhtml/index`): `confidence` 1 when the file states none, `snippet` the
+ * article's opening chunk cut to the snippet size, `entities` the sorted `type:name` references with
+ * the derived `concept:` and `lang:` ones, `entityNames` the names alone (the recall fold's cap key),
+ * `supersededBy` the record whose authored `supersedes` link names this path, and `disclosureText`
+ * what `memory_recall` may quote.
+ */
+export const HitDetail = Schema.Struct({
+  title: Schema.String,
+  memoryType: Schema.String,
+  confidence: Schema.Finite,
+  updatedAt: Schema.String,
+  snippet: Schema.String,
+  entities: Schema.Array(Schema.String),
+  entityNames: Schema.Array(Schema.String),
+  supersededBy: Schema.NullOr(Schema.String),
+  disclosureText: Schema.String
+})
+export type HitDetail = typeof HitDetail.Type
+
+const DetailedHitSchema = Schema.Struct({
+  path: Schema.String,
+  score: Schema.Finite,
+  arms: Schema.Array(Schema.Literals(["lexical", "recency", "vector"])),
+  claim: Schema.String,
+  detail: Schema.optionalKey(HitDetail)
+})
+
+/**
+ * The scope's report on an answer to a scoped search: whether a scope that narrowed anything left
+ * no hit (`empty`), and then how many archived records the same scope matches and up to `limit` of
+ * them by path, with what superseded each, the pointer v1's `archivedInScope` gives.
+ */
+export const ScopeReport = Schema.Struct({
+  empty: Schema.Boolean,
+  archivedMatches: Schema.Finite,
+  archived: Schema.Array(
+    Schema.Struct({ path: Schema.String, supersededBy: Schema.NullOr(Schema.String) })
+  )
+})
+export type ScopeReport = typeof ScopeReport.Type
+
+/**
+ * `POST /v1/search`: the fields local `head search` returns, with the version it answered over, and
+ * `scope` when the request named one.
+ */
+export const SearchAnswer = Schema.Struct({
+  query: Schema.String,
+  hits: Schema.Array(DetailedHitSchema),
+  vector: VectorUseSchema,
+  searchMs: Schema.Finite,
+  head: ServedHead,
+  scope: Schema.optionalKey(ScopeReport)
+})
+export type SearchAnswer = typeof SearchAnswer.Type
+
+const ViolationSchema = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("format"),
+    path: Schema.String,
+    reasons: Schema.Array(Schema.String)
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("duplicate"),
+    path: Schema.String,
+    existing: Schema.String
+  }),
+  Schema.Struct({ kind: Schema.Literal("claim-edit"), path: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("reserved-path"), path: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("batch-cap"), count: Schema.Finite, cap: Schema.Finite }),
+  Schema.Struct({
+    kind: Schema.Literal("write-bar"),
+    path: Schema.String,
+    reasons: Schema.Array(Schema.String)
+  })
+])
+
+/**
+ * `POST /v1/neighbors`: `preparePuts`'s answer, the ops to append, the puts as rendered and placed,
+ * their neighbors, every violation, the blocking ones, and the vector arm's report, with the version
+ * it was computed over.
+ */
+export const NeighborsAnswer = Schema.Struct({
+  appended: Schema.Array(OverlayOpSchema),
+  puts: Schema.Array(
+    Schema.Struct({ kind: Schema.Literal("put"), path: Schema.String, html: Schema.String })
+  ),
+  neighbors: Schema.Array(
+    Schema.Struct({ path: Schema.String, hits: Schema.Array(SearchHitSchema) })
+  ),
+  violations: Schema.Array(ViolationSchema),
+  blocking: Schema.Array(ViolationSchema),
+  vector: Schema.NullOr(VectorUseSchema),
+  head: ServedHead
+})
+
+/**
+ * What `session exec` reports, whichever process ran it (`execOverHead` in `v2.ts` returns exactly
+ * this type): the script's result, the harvest, what was appended, and why anything was not. The
+ * CLI adds `head` (where the version came from) and `server` (whether the server ran it) around it.
+ */
+export const ExecOutcome = Schema.Struct({
+  id: Schema.String,
+  baseSha: Schema.String,
+  lang: Schema.Literals(["bash", "js"]),
+  corpusMount: Schema.String,
+  sha: Schema.NullOr(Schema.String),
+  exitCode: Schema.Finite,
+  stdout: Schema.String,
+  stderr: Schema.String,
+  durationMs: Schema.Finite,
+  timeoutMs: Schema.Finite,
+  timedOut: Schema.Boolean,
+  ops: Schema.Finite,
+  appended: Schema.Finite,
+  opsTotal: Schema.Finite,
+  harvested: Schema.Array(
+    Schema.Struct({
+      kind: Schema.String,
+      path: Schema.String,
+      to: Schema.optionalKey(Schema.String)
+    })
+  ),
+  rejected: Schema.Array(Schema.Struct({ path: Schema.String, reason: Schema.String })),
+  violations: Schema.Array(ViolationSchema),
+  blocking: Schema.Array(Schema.String)
+})
+export type ExecOutcome = typeof ExecOutcome.Type
+
+/**
+ * How the server came by the version at the session's base: the tip it holds, or an ancestor of it
+ * built from the tip by the tree diff an advance uses.
+ */
+export const ExecBase = Schema.Literals(["tip", "ancestor"])
+export type ExecBase = typeof ExecBase.Type
+
+/**
+ * Why a server that was asked did not run the exec, so the client runs it locally: the session's
+ * base is neither the tip nor an ancestor the server can build (`base-unservable`), or the
+ * session's earlier exec or every worker stayed busy past the wait (`busy`). Nothing was run and
+ * nothing appended in either case.
+ */
+export const ExecDeclined = Schema.Literals(["base-unservable", "busy"])
+
+/** `POST /v1/exec`: the outcome with the version it ran over, or why the server declined. */
+export const ExecAnswer = Schema.Union([
+  Schema.Struct({
+    served: Schema.Literal(true),
+    base: ExecBase,
+    outcome: ExecOutcome,
+    head: ServedHead
+  }),
+  Schema.Struct({ served: Schema.Literal(false), reason: ExecDeclined, detail: Schema.String })
+])
+export type ExecAnswer = typeof ExecAnswer.Type
+
+/** What writing a snapshot reports (`SnapshotWritten` in `head-cache.ts`). */
+const SnapshotWrittenSchema = Schema.Struct({
+  sha: Schema.String,
+  path: Schema.String,
+  bytes: Schema.Finite,
+  rows: Schema.Finite,
+  ms: Schema.Finite,
+  pruned: Schema.Array(Schema.String)
+})
+
+/** One op `--drop-refused` took out of the log, and why (`DroppedOp` in `v2.ts`). */
+const DroppedOpSchema = Schema.Struct({
+  kind: Schema.Literals(["put", "archive", "link", "unlink", "label", "unlabel", "move"]),
+  path: Schema.String,
+  reasons: Schema.Array(Schema.String)
+})
+
+/** The fields every commit outcome carries before its kind's own, and after them. */
+const commitHead = { id: Schema.String, ref: Schema.String, baseSha: Schema.String }
+const commitTail = {
+  snapshot: Schema.NullOr(SnapshotWrittenSchema),
+  dropped: Schema.Array(DroppedOpSchema)
+}
+
+/**
+ * What `session commit` reports, whichever process committed (`commitOverHead` in `v2.ts` returns
+ * exactly this type): the session, its ref and base, the commit path's outcome (`committed`,
+ * `rebase-needed`, `refused` with its violations, or `worktree-dirty`), the snapshot a `committed`
+ * outcome wrote, and the ops `--drop-refused` took out. The fields are in the order the local path
+ * builds them, because a decoded answer is in the schema's order and the two envelopes print the same.
+ * The CLI adds `via` and `server` after them.
+ */
+export const CommitResult = Schema.Union([
+  Schema.Struct({
+    ...commitHead,
+    kind: Schema.Literal("committed"),
+    sha: Schema.String,
+    paths: Schema.Array(Schema.String),
+    contradictions: Schema.Array(Schema.Struct({ path: Schema.String, against: Schema.String })),
+    worktreeSynced: Schema.Boolean,
+    recovered: Schema.Boolean,
+    ...commitTail
+  }),
+  Schema.Struct({
+    ...commitHead,
+    kind: Schema.Literal("rebase-needed"),
+    overlapping: Schema.Array(Schema.String),
+    mainSha: Schema.String,
+    ...commitTail
+  }),
+  Schema.Struct({
+    ...commitHead,
+    kind: Schema.Literal("refused"),
+    violations: Schema.Array(ViolationSchema),
+    ...commitTail
+  }),
+  Schema.Struct({
+    ...commitHead,
+    kind: Schema.Literal("worktree-dirty"),
+    paths: Schema.Array(Schema.String),
+    ...commitTail
+  })
+])
+export type CommitResult = typeof CommitResult.Type
+
+/**
+ * How the server came by the version a commit was judged against: the tip it holds, an ancestor of
+ * it built by the tree diff an advance uses, or, for a base off the ref's history, a version loaded
+ * the cheapest way `loadHeadAt` knows (snapshot, snapshot+advance, or git).
+ */
+export const CommitBase = Schema.Literals(["tip", "ancestor", "loaded"])
+export type CommitBase = typeof CommitBase.Type
+
+/**
+ * Why a server that was asked did not commit or rebase, so the client does it locally. Nothing was
+ * written in any case: the session's ref is not the one the server follows (`other-ref`), its log did
+ * not read (`session-unreadable`), the version at its base could not be built or its ref does not
+ * resolve (`base-unservable`), or another commit held the server's permit past
+ * {@link COMMIT_QUEUE_WAIT_MS} (`busy`).
+ */
+export const CommitDeclined = Schema.Literals([
+  "other-ref",
+  "session-unreadable",
+  "base-unservable",
+  "busy"
+])
+export type CommitDeclined = typeof CommitDeclined.Type
+
+const Declined = Schema.Struct({
+  served: Schema.Literal(false),
+  reason: CommitDeclined,
+  detail: Schema.String
+})
+
+/**
+ * `POST /v1/commit`: the outcome with the version it was judged against, or why the server declined.
+ * `rebased` counts the rebases the server made before the outcome ({@link COMMIT_REBASE_ROUNDS}, only
+ * with `dropRefused`); `base` and `head` are the last round's. Absent from an older server, which
+ * makes none. `outcome.dropped` lists every op dropped across the rounds.
+ */
+export const CommitAnswer = Schema.Union([
+  Schema.Struct({
+    served: Schema.Literal(true),
+    base: CommitBase,
+    outcome: CommitResult,
+    head: ServedHead,
+    rebased: Schema.optionalKey(Schema.Finite)
+  }),
+  Declined
+])
+export type CommitAnswer = typeof CommitAnswer.Type
+
+/**
+ * What `session rebase` reports before its `head` (`rebaseOver` in `v2.ts` returns exactly this
+ * type): the base it moved from, the base it moved to, whether that moved it, and the ops it kept.
+ */
+export const RebaseResult = Schema.Struct({
+  id: Schema.String,
+  ref: Schema.String,
+  from: Schema.String,
+  baseSha: Schema.String,
+  moved: Schema.Boolean,
+  ops: Schema.Finite
+})
+export type RebaseResult = typeof RebaseResult.Type
+
+/** `POST /v1/rebase`: the rebase with the version it moved the base to, or why the server declined. */
+export const RebaseAnswer = Schema.Union([
+  Schema.Struct({ served: Schema.Literal(true), outcome: RebaseResult, head: ServedHead }),
+  Declined
+])
+export type RebaseAnswer = typeof RebaseAnswer.Type
+
+// ---------------------------------------------------------------------------------------------
+// Refusal
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A second `head serve` found a live server on the store's socket. It names what it found, read
+ * from that server's own status when it answered, so the operator can stop the right process.
+ */
+export class HeadServerRunning extends Schema.TaggedError<HeadServerRunning>()(
+  "HeadServerRunning",
+  {
+    socket: Schema.String,
+    pid: Schema.NullOr(Schema.Finite),
+    ref: Schema.NullOr(Schema.String),
+    sha: Schema.NullOr(Schema.String)
+  }
+) {}
+
+/**
+ * `head serve` on a store whose socket path is past the platform's limit ({@link socketPathMax}).
+ * Refused before the bind, naming the path, its byte length, and the limit, because a listen past
+ * it fails with a bare `EINVAL`. Clients on such a store never dial and load locally.
+ */
+export class HeadSocketPathTooLong extends Schema.TaggedError<HeadSocketPathTooLong>()(
+  "HeadSocketPathTooLong",
+  {
+    socket: Schema.String,
+    bytes: Schema.Finite,
+    max: Schema.Finite,
+    platform: Schema.String
+  }
+) {}

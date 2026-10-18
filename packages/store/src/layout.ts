@@ -5,7 +5,7 @@ import { StorageFailure } from "@memhtml/contracts/errors"
 import { ARCS_DIR, INBOX_DIR, PEOPLE_DIR } from "@memhtml/contracts/paths"
 import { PARA_BUCKETS } from "@memhtml/contracts/types"
 import { Effect } from "effect"
-
+import { withCheckoutLock } from "./checkout-lock.js"
 import type { GitFailure, GitShape } from "./git.js"
 import { commitSubject } from "./plumbing.js"
 
@@ -30,7 +30,7 @@ export const STATE_DB_PATH = `${MEMHTML_DIR}/state.db`
 /** The committed append-only sidecar the state plane exports to. */
 export const STATE_SIDECAR_PATH = `${MEMHTML_DIR}/state/access.jsonl`
 
-/** Where a sleep run's committed report lands, one file per run id. */
+/** Where v1 sleep runs committed their reports. Kept so an existing store's layout and `init` stay stable. */
 export const SLEEP_REPORTS_DIR = `${MEMHTML_DIR}/sleep`
 
 /**
@@ -47,15 +47,45 @@ export const SCAFFOLD_DIRS: ReadonlyArray<string> = [
   SLEEP_REPORTS_DIR
 ]
 
+/** The v2 session logs and index files (`@memhtml/session`), per-process state, never committed. */
+export const SESSIONS_DIR_PATH = `${MEMHTML_DIR}/sessions`
+
+/** The v2 Arrow snapshots (`@memhtml/snapshot`), a rebuildable cache of one commit each. */
+export const SNAPSHOTS_DIR_PATH = `${MEMHTML_DIR}/snapshots`
+
+/** The v2 vector caches (`@memhtml/snapshot`), rebuildable by embedding the tree's articles again. */
+export const VECTORS_DIR_PATH = `${MEMHTML_DIR}/vectors`
+
+/** The head server's Unix domain socket (`memhtml head serve`), present only while one runs. */
+export const HEAD_SOCKET_PATH = `${MEMHTML_DIR}/head.sock`
+
 /**
- * `.gitignore`. Both databases are excluded and nothing else is. `index.db` is rebuildable
- * from the tree, and `state.db` is reproduced from its committed JSONL sidecar, so a fresh
- * clone plus `memhtml state import` plus `memhtml index rebuild` yields the whole system.
+ * The three v2 state directories and the head server's socket as ignore patterns. Also what
+ * `ensureExcluded` in `@memhtml/session` appends to an existing store's `.git/info/exclude`, since a
+ * store scaffolded before v2 carries a `.gitignore` without them and the ignore file is committed
+ * content this package must not rewrite.
+ */
+export const V2_IGNORE_PATTERNS: ReadonlyArray<string> = [
+  `${SESSIONS_DIR_PATH}/`,
+  `${SNAPSHOTS_DIR_PATH}/`,
+  `${VECTORS_DIR_PATH}/`,
+  HEAD_SOCKET_PATH
+]
+
+/**
+ * `.gitignore`. The two databases, the three v2 state directories, and the head server's socket are
+ * excluded and nothing else is. `index.db` is rebuildable from the tree, and `state.db` is
+ * reproduced from its committed JSONL sidecar, so a fresh clone plus `memhtml state import` plus
+ * `memhtml index rebuild` yields the whole system. `.memhtml/sessions/` holds a session's log and
+ * git index file, which belong to one process on one machine; `.memhtml/snapshots/` is a cache of
+ * the tree itself, `.memhtml/vectors/` a cache of its articles' embeddings, and `.memhtml/head.sock`
+ * exists only while a head server runs.
  */
 export const GITIGNORE = `${INDEX_DB_PATH}
 ${STATE_DB_PATH}
 ${INDEX_DB_PATH}-*
 ${STATE_DB_PATH}-*
+${V2_IGNORE_PATTERNS.join("\n")}
 `
 
 /**
@@ -187,7 +217,7 @@ export const initRepo = (git: GitShape): Effect.Effect<InitResult, GitFailure | 
     if (!alreadyRepo) {
       yield* attemptIo("init.mkdir", () => mkdir(root, { recursive: true }))
       // `-b main` rather than relying on `init.defaultBranch`. A repo whose branch name
-      // depends on the operator's global config would make every branch reference in sleep
+      // depends on the operator's global config would make every branch reference in curation
       // and in the runbook conditional on whose machine ran `memhtml init`.
       yield* git.run(["init", "-b", "main", "."])
     }
@@ -204,8 +234,13 @@ export const initRepo = (git: GitShape): Effect.Effect<InitResult, GitFailure | 
     // Stage the whole scaffold rather than only what this call wrote, and let `commit` decide.
     // It no-ops on an index that matches HEAD, so a fully initialized repo stays untouched
     // while a half-staged one is carried to a commit.
-    yield* git.add(SCAFFOLD_FILES.map(([path]) => path))
-    const commit = yield* git.commit(commitSubject("init", "scaffold the memory repository"))
+    // Under the checkout lock like every other commit from the shared index (`checkout-lock.ts`).
+    const commit = yield* withCheckoutLock(
+      root,
+      git
+        .add(SCAFFOLD_FILES.map(([path]) => path))
+        .pipe(Effect.andThen(git.commit(commitSubject("init", "scaffold the memory repository"))))
+    )
     const headSha = commit.sha ?? (yield* git.revParseHead())
     return { root, created: !alreadyRepo, headSha, wrote }
   }).pipe(Effect.withSpan("store.initRepo"))

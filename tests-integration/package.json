@@ -12,13 +12,16 @@
   "dependencies": {
     "@memhtml/cli": "workspace:*",
     "@memhtml/contracts": "workspace:*",
+    "@memhtml/curator": "workspace:*",
     "@memhtml/domain": "workspace:*",
     "@memhtml/eval": "workspace:*",
+    "@memhtml/head": "workspace:*",
     "@memhtml/html": "workspace:*",
     "@memhtml/index": "workspace:*",
     "@memhtml/llm": "workspace:*",
     "@memhtml/mcp": "workspace:*",
-    "@memhtml/sleep": "workspace:*",
+    "@memhtml/session": "workspace:*",
+    "@memhtml/snapshot": "workspace:*",
     "@memhtml/store": "workspace:*",
     "@memhtml/traces": "workspace:*",
     "effect": "catalog:"

@@ -5,15 +5,15 @@ import { Schema } from "effect"
  * CHECK constraint in SQL.
  *
  * `arc` is in the vocabulary but absent from {@link WRITABLE_MEMORY_TYPES}: an arc is
- * synthesized by the sleep cycle from many memories, so an agent naming one directly
+ * synthesized by curation from many memories, so an agent naming one directly
  * would be asserting a conclusion the corpus has not yet earned.
  *
  * `task` is ONE axis with the other nine rather than a parallel `kind` column, because
  * three overlapping type vocabularies is what made
  * the predecessor memory system's classification unanswerable. A task is a memory type whose
  * retrieval, dedup, and curation treatment a filter states, not a second axis. Tasks are
- * default-excluded from search and skipped by sleep. See `@memhtml/index`'s `assembleScope`
- * and the sleep phases' `excludeTypes`.
+ * default-excluded from search and shielded from curation. See `@memhtml/index`'s
+ * `assembleScope` and `@memhtml/curator`'s `isShielded`.
  */
 export const MEMORY_TYPES = [
   "episodic",
@@ -167,6 +167,20 @@ export const normalizeEntityRef = (entity: string): string => {
     : `${normalizeEntityName(parsed.entityType)}${ENTITY_SEPARATOR}${normalizeEntityName(parsed.entityName)}`
 }
 
+/**
+ * True when an entity reference is well formed for a new label: it parses as `type:name`
+ * ({@link parseEntity}) and is already in the normalized spelling ({@link normalizeEntityRef}), so
+ * `service:memhtml`, `project:agent-runtime`, and `person:laura` pass while `memhtml`, `Service:MemHTML`,
+ * and `person: laura` do not.
+ *
+ * The session's `label` op holds its value to this, because a label writes a `memhtml-entity` meta
+ * that every entity index keys on as authored: a second spelling of one entity splits its records
+ * across two keys until the entity-resolution phase rewrites them, so the cheap place to refuse it is
+ * before the file is written.
+ */
+export const isWellFormedEntity = (entity: string): boolean =>
+  parseEntity(entity) !== undefined && normalizeEntityRef(entity) === entity
+
 /** The `person:` entity prefix, which routes a semantic memory to `resources/people/`. */
 export const PERSON_ENTITY_PREFIX = `person${ENTITY_SEPARATOR}`
 
@@ -174,11 +188,9 @@ export const PERSON_ENTITY_PREFIX = `person${ENTITY_SEPARATOR}`
  * True when an entity reference names a person: the `person:` prefix plus a name that survives
  * `trim()`.
  *
- * The trim is what makes this predicate agree with the rest of the person plane. `placementFor`
- * routes on it, and the sleep phase that mints the person file and its `memhtml-about-person`
- * links keys on `entity_name.trim() !== ""`. A whitespace-only name accepted here would land a
- * memory in `resources/people/` that no phase will ever give a person file to link at — and
- * `slugify` maps that name to `untitled`, which names nobody.
+ * The trim keeps a whitespace-only name from counting as a person anywhere the predicate is asked:
+ * `slugify` maps such a name to `untitled`, which names nobody. Placement does not ask it; a person
+ * entity no longer moves a record into `resources/people/` (see `placementFor`).
  */
 export const isPersonEntity = (entity: string): boolean =>
   entity.startsWith(PERSON_ENTITY_PREFIX) && entity.slice(PERSON_ENTITY_PREFIX.length).trim() !== ""

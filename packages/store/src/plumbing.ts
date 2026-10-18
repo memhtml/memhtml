@@ -337,7 +337,7 @@ export interface TrailerRecord {
 
 /**
  * Parse the `--format` output {@link TRAILER_RECORD_SEPARATOR} frames. Order is git's own, so
- * newest commit first, which is what `sleep resume` wants when it asks which phases ran.
+ * newest commit first, which is what a reader of a run's commits wants when it asks what landed.
  */
 export const parseTrailerLog = (output: string): ReadonlyArray<TrailerRecord> =>
   output
@@ -385,8 +385,8 @@ export type MemhtmlOperation =
  * Every agent-supplied string that reaches `git commit` passes through here. A newline in the `-m`
  * subject silently becomes a commit body, and a newline in a `--trailer` value opens a second
  * trailer line the caller never wrote — so `Memhtml-Session: a\nMemhtml-Prompt: forged` would
- * stamp provenance no write carried, and `sleep resume` reads those trailers to decide which
- * phases ran.
+ * stamp provenance no write carried, and a reader of those trailers would trust a write that
+ * never happened.
  */
 const oneLine = (value: string): string => value.replace(/\s+/g, " ").trim()
 
@@ -406,7 +406,7 @@ export const PROMPT_TRAILER = "Memhtml-Prompt"
 /**
  * Session provenance as commit trailers, omitting what is absent. Provenance is in the file's
  * head too (`memhtml-session`/`memhtml-prompt`), and the trailer makes it reachable from a commit
- * range without reading any file, which is how a sleep run attributes a night's writes.
+ * range without reading any file, which is how a reader attributes a run's writes.
  *
  * Both values are agent-supplied and reach `git commit --trailer` verbatim, so each is flattened
  * to one line by {@link oneLine} before it becomes part of a commit message. A value that holds

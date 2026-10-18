@@ -23,7 +23,7 @@ memhtml eval discriminate         # expect passed true
 
 Run `memhtml init` first, because the merge driver it configures lives in this clone and nowhere else. `.gitattributes` travels with the clone and the `merge.ours.driver` config does not, so until you run it, the first merge that touches a generated file writes conflict markers into that file.
 
-Run `memhtml state import` right after `memhtml init`, before any export or sleep run. Either of those can replace the sidecar with this clone's own rows, or with an empty file. The rebuild does not touch `state.db`, so the import can come before or after it. Retrieval ranks a query with four arms: full-text search, vector similarity, recency, and salience, which favors memories you have opened and reinforced before. The import gives the salience arm its signal on your first query.
+Run `memhtml state import` right after `memhtml init`, before any export. An export can replace the sidecar with this clone's own rows, or with an empty file. The rebuild does not touch `state.db`, so the import can come before or after it. Retrieval ranks a query with four arms: full-text search, vector similarity, recency, and salience, which favors memories you have opened and reinforced before. The import gives the salience arm its signal on your first query.
 
 Run the rebuild last, because it is the only step that spends Bedrock calls and the one you re-run if it gets interrupted.
 
@@ -31,14 +31,16 @@ None of the three destroys anything on a fresh clone, so a recovery interrupted 
 
 ## What survives, and what it survives as
 
-The git tree is the system of record. It holds every memory, every authored `<link>`, every `<meta>`, and, through `git log --follow`, the history of every eviction. `.memhtml/state/access.jsonl` and `.memhtml/sleep/<run-id>.html` are committed too.
+The git tree is the system of record. It holds every memory, every authored `<link>`, every `<meta>`, and, through `git log --follow`, the history of every eviction. `.memhtml/state/access.jsonl` is committed too.
 
-| Artifact                                                                                                                  | Rebuilds from                 | Cost                                                                          |
-| ------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------- |
-| `index.db`: embeddings, mined edges, chunks, full-text search                                                             | The tree                      | `memhtml index rebuild --embed`. The Bedrock calls are the only real expense. |
-| `state.db`: access counts, reinforcement counts, and the outcome EWMA, a running average of positive and negative signals | The sidecar only              | `memhtml state import`. Anything since the last export is gone.               |
-| The trace tables                                                                                                          | `$MEMHTML_TRACE_ROOT`         | `memhtml trace index` from a zero watermark: slow, and it loses nothing.      |
-| An unmerged `sleep/<date>` branch                                                                                         | Nothing, unless it was pushed | Re-run the sleep cycle from `main`, which the lost run never moved.           |
+| Artifact                                                                                                                  | Rebuilds from                 | Cost                                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `index.db`: embeddings, mined edges, chunks, full-text search                                                             | The tree                      | `memhtml index rebuild --embed`. The Bedrock calls are the only real expense.                                     |
+| `state.db`: access counts, reinforcement counts, and the outcome EWMA, a running average of positive and negative signals | The sidecar only              | `memhtml state import`. Anything since the last export is gone.                                                   |
+| The trace tables                                                                                                          | `$MEMHTML_TRACE_ROOT`         | `memhtml trace index` from a zero watermark: slow, and it loses nothing.                                          |
+| An unmerged `curate/<date>` branch                                                                                        | Nothing, unless it was pushed | Run `memhtml curate run` again. A run never moved `main`, so it's safe to repeat.                                 |
+| A session's operations that never landed, in `.memhtml/sessions/`                                                         | Nothing                       | The writes are gone. The agent that made them has to write them again.                                            |
+| The snapshots in `.memhtml/snapshots/` and the vector cache in `.memhtml/vectors/`                                        | The tree                      | The first head load reads git and writes a snapshot. `memhtml head embed` refills the vectors, at Bedrock prices. |
 
 :::agent
 
@@ -46,7 +48,7 @@ The git tree is the system of record. It holds every memory, every authored `<li
 
 :::
 
-The one lossy row in that table is `state.db`, and the loss is whatever the sidecar you import does not hold. The sleep cycle runs `state-export` as its second-to-last phase. That phase commits the sidecar on the run's branch when its bytes change, and the commit reaches `main` when the run is merged. Run `memhtml state export` by hand as well before a machine goes away, and push. See [preserve the state plane](/learn/operations/preserve-the-state-plane/).
+The one lossy row in that table is `state.db`, and the size of the loss is bounded by how recently `state export` ran. Nothing runs it for you, so put it on the cron and run it by hand as well before a machine goes away. See [preserve the state plane](/learn/operations/preserve-the-state-plane/).
 
 ## Confirming the recovery
 

@@ -215,21 +215,39 @@ describe("manifest", () => {
       "trace index",
       "trace search",
       "trace links",
-      "sleep run",
-      "sleep resume",
-      "sleep review",
-      "sleep merge",
-      "sleep status",
       "serve mcp",
       /**
        * The task family, past design §8's tree: `task` is the 10th memory type and it is
-       * default-excluded from search, dedup, and every sleep phase, so these three commands are the
+       * default-excluded from search and dedup, so these three commands are the
        * only surface the working set has. Pinned as names for the same reason the rest are — a
        * dropped one becomes a surface an agent discovers is missing.
        */
       "task add",
       "task status",
-      "task list"
+      "task list",
+      /**
+       * The v2 commands (`docs/design.md` §15, "The command families"): the session family and the
+       * head family, plus `session rebase`, the step the commit path hands back to the caller.
+       */
+      "session start",
+      "session put",
+      "session exec",
+      "session commit",
+      "session rebase",
+      "session status",
+      "head status",
+      "head search",
+      "head snapshot",
+      "head embed",
+      // The head server (`docs/design.md` §22): the process the three lookups ask first.
+      "head serve",
+      /**
+       * The curation door and the curator itself (`docs/design.md` §23, "The curation door" and
+       * "The curator"): a curation pass is `curate run` then `curate merge`, so both are pinned as
+       * the surface a caller depends on.
+       */
+      "curate merge",
+      "curate run"
     ]
     const names = new Set(COMMANDS.map((command) => command.name))
     for (const name of required) expect(names.has(name)).toBe(true)
@@ -417,9 +435,8 @@ describe("error envelopes", () => {
       ["task list", ["task", "list", "--detected", "false"], "detected"],
       ["doctor", ["doctor", "--fix", "no"], "fix"],
       ["agents-doc", ["agents-doc", "--check", "0"], "check"],
-      ["sleep run", ["sleep", "run", "--deep", "false"], "deep"],
-      ["sleep run", ["sleep", "run", "--dry-run", "true"], "dry-run"],
-      ["sleep review", ["sleep", "review", "sleep/2026-08-24", "--diff", "1"], "diff"]
+      ["apply", ["apply", "--detect-conflicts", "false"], "detect-conflicts"],
+      ["index rebuild", ["index", "rebuild", "--force", "true"], "force"]
     ] as const
 
     it.each(cases)("refuses it on %s", async (_name, argv, flag) => {

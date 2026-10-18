@@ -42,6 +42,82 @@ export const DENYLIST: ReadonlyArray<{ readonly pattern: RegExp; readonly why: s
 ]
 
 /**
+ * Terms that must never reach a public page and must not be written into this repository either:
+ * people's names, and the names of private systems, repositories, and directories.
+ *
+ * {@link DENYLIST} names what it guards, which is fine for a scanner's file suffix and wrong for a
+ * person's name, because the gate's own source is public. So each term here is held as the SHA-256 of
+ * its normalized form: lowercased, with everything but ASCII letters and digits removed. A digest
+ * keeps the term out of the tree's text and out of a search over it. It doesn't make the term secret,
+ * since a short name is easy to guess and check, and it isn't meant to.
+ *
+ * `tests/built-site.test.ts` splits every built surface into lowercase runs of letters and digits and
+ * hashes each run, and each pair of runs joined by one `-`, `_`, or space with that separator
+ * removed. A term therefore matches as a whole word in any case and in `kebab-case`, `snake_case`, or
+ * as two words, and never as part of a longer word. A failure prints the file and line, never the
+ * term.
+ *
+ * To add a term, append its digest with a `why` that says what kind of thing it is without naming it:
+ *
+ * ```sh
+ * printf %s 'The Term' | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]' | sha256sum
+ * ```
+ *
+ * `tests/denied-terms.test.ts` checks the matcher against a placeholder term, and that every entry
+ * here is a well-formed digest listed once.
+ */
+export const DENIED_TERMS: ReadonlyArray<{ readonly digest: string; readonly why: string }> = [
+  {
+    digest: "06c20e3fb0d261208540c9ded490d91c9e8e070e701f0f706dd70e94bad55cda",
+    why: "a person's name"
+  },
+  {
+    digest: "271e94cfcd262c77c7a40c49e0ff132acfa7d8de088ac0077fcdac5d60ada9c2",
+    why: "a person's login, which also names their home directory"
+  },
+  {
+    digest: "3431f67b1c3a2caa558fd24fc37b02659abcccb614370bbb0cd9e93a64e4c0f1",
+    why: "a person's name"
+  },
+  {
+    digest: "21749f1628aa21d31e1b225048909f410a3335192abf7c1558836fbbb6310328",
+    why: "a private agent fleet, and the directories named after it"
+  },
+  {
+    digest: "9ac4bde162a7672fd4ab2d0065287baa69607c782892a53d8e6bd2328da3e5da",
+    why: "a private agent runtime"
+  },
+  {
+    digest: "c2fe160fcb644b2f7f3dd68522a5a2516e2356143ea77f0a45617791f3ac10fb",
+    why: "a private project"
+  },
+  {
+    digest: "155fc49c04765c9f2b82f27d20c343d2e1bc615b04df50bc17e5d2e64176b57b",
+    why: "a private model-routing service"
+  },
+  {
+    digest: "56e57ada05a8887e0a051408ae8950a8e1c9b1674dee493591de94bf4d3e2dde",
+    why: "a private gateway a reader can't reach"
+  },
+  {
+    digest: "8758607d0bcaa8a6efc8f92aa63bf367a6f088001d8fd2f16d1583c356a1a23f",
+    why: "an internal account system"
+  },
+  {
+    digest: "2a0abe451aede7f7139e3b7be00c2adff97b5ef4a50c6b5f4a2165125b55cc15",
+    why: "an internal sign-on system"
+  },
+  {
+    digest: "9344cf2501b9a9bc0bb18ad4d09afd7873b2eea038f691e9a4669c54f2f37325",
+    why: "the private sibling repository whose placeholder DENYLIST guards"
+  },
+  {
+    digest: "ea7f0f5d622fee8408f61974dc51225c40ab9830eafff1e2acf86d48b519b2a3",
+    why: "the prior-session lessons directory whose placeholder DENYLIST guards"
+  }
+]
+
+/**
  * `BASE` with a guaranteed trailing slash.
  *
  * Exported because every consumer that treats the base as a prefix needs it. Joining or slicing with

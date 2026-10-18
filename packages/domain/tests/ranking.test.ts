@@ -2,14 +2,21 @@ import { Option } from "effect"
 import fc from "fast-check"
 import { describe, expect, it } from "vitest"
 
-import { MMR_LAMBDA, REINFORCE_COOLDOWN_S, RRF_K, rrfContribution } from "../src/ranking.js"
+import {
+  DEFAULT_ARM_LIMIT,
+  MMR_LAMBDA,
+  REINFORCE_COOLDOWN_S,
+  RRF_K,
+  rrfContribution
+} from "../src/ranking.js"
 
 const contribution = (rank: number, weight: number): number =>
   Option.getOrElse(rrfContribution(rank, weight), () => 0)
 
 describe("rrf constants", () => {
-  it("pins the published fusion offset and the MMR split", () => {
+  it("pins the published fusion offset, the per-arm limit, and the MMR split", () => {
     expect(RRF_K).toBe(60)
+    expect(DEFAULT_ARM_LIMIT).toBe(40)
     expect(MMR_LAMBDA).toBe(0.5)
     expect(REINFORCE_COOLDOWN_S).toBe(900)
   })

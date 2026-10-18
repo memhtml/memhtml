@@ -87,7 +87,7 @@ export const invokeJson = (
  *
  * The SDK's default request timeout is 0 — no bound at all — so a socket that hangs after
  * the request is written never errors, and the call holding it stalls its caller forever.
- * A sleep phase runs its calls sequentially, so one hung socket stalls the whole night.
+ * A caller that runs its calls in sequence stalls with them, so one hung socket stalls the run.
  *
  * This client's default handler is `NodeHttp2Handler` (pinned SDK 3.1111.0, resolved at
  * `dist-es/runtimeConfig.js`), and a plain options object here is passed to that handler's
@@ -175,7 +175,7 @@ export const LlmConfig = Config.all({
     baseUrl: Config.String(PROXY_BASE_URL_VAR).pipe(Config.withDefault("")),
     apiKey: Config.String(PROXY_API_KEY_VAR).pipe(Config.withDefault("")),
     // `Config` reads an empty value as absent, so the default lands here as "" and
-    // `proxyModelPrefix` resolves it — the same function the consolidator applies to `process.env`.
+    // `proxyModelPrefix` resolves it, the function every proxy caller applies to `process.env`.
     modelPrefix: Config.String(PROXY_MODEL_PREFIX_VAR).pipe(Config.withDefault("")),
     modelMap: Config.String(PROXY_MODEL_MAP_VAR).pipe(Config.withDefault(""))
   }).pipe(

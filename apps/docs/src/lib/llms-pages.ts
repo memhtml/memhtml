@@ -3,6 +3,7 @@ import { join } from "node:path"
 import type { AstroIntegration } from "astro"
 
 import { rawMarkdownUrl, type SiteContext } from "./agent-surface.js"
+import { isRemovedPage } from "./removed-pages.js"
 
 /**
  * Appends a `## Pages` section to `llms.txt`: every page of the site, as an absolute link to its raw
@@ -83,6 +84,8 @@ export const llmsPages = (context: SiteContext): AstroIntegration => ({
         const id = entryIdOf(`/${page.pathname}`, context.base)
         // The 404 page is not a page of the corpus, and an agent that fetched it followed a broken link.
         if (id === "404") continue
+        // A removed page's redirect stub is an old address, not a page an agent should be sent to.
+        if (isRemovedPage(id, context.base)) continue
         const twinPath = join(root, id === "index" ? ".md" : `${id}.md`)
         const twin = await readFile(twinPath, "utf8").catch(() => undefined)
         if (twin === undefined) throw new Error(`${id} has no raw Markdown twin at ${twinPath}`)

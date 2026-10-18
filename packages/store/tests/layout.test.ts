@@ -1,4 +1,4 @@
-import { readFile, stat, writeFile } from "node:fs/promises"
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { parseMemory } from "@memhtml/html"
@@ -109,6 +109,26 @@ describe("initRepo on an empty directory", () => {
     await writeFile(join(repo.root, INDEX_DB_PATH), "bytes", "utf8")
     await writeFile(join(repo.root, STATE_DB_PATH), "bytes", "utf8")
     await writeFile(join(repo.root, `${INDEX_DB_PATH}-wal`), "bytes", "utf8")
+    const entries = await run(repo.git.statusPorcelainV2())
+    expect(entries.filter((entry) => entry.kind !== "ignored")).toEqual([])
+  })
+
+  it("gitignores the v2 session, snapshot, and vector directories and the head socket, so per-process state never makes the tree dirty", async () => {
+    // Mutation: drop `V2_IGNORE_PATTERNS` from `GITIGNORE` -> the three state files are untracked.
+    // Mutation: drop `${VECTORS_DIR_PATH}/` from `V2_IGNORE_PATTERNS` -> the vector cache is untracked.
+    // Mutation: drop `HEAD_SOCKET_PATH` from `V2_IGNORE_PATTERNS` -> the socket assertion fails.
+    const repo = await bareDirectory()
+    await run(initRepo(repo.git))
+    expect(GITIGNORE).toContain("\n.memhtml/sessions/\n")
+    expect(GITIGNORE).toContain("\n.memhtml/snapshots/\n")
+    expect(GITIGNORE).toContain("\n.memhtml/vectors/\n")
+    expect(GITIGNORE).toContain("\n.memhtml/head.sock\n")
+    await mkdir(join(repo.root, ".memhtml/sessions"), { recursive: true })
+    await mkdir(join(repo.root, ".memhtml/snapshots"), { recursive: true })
+    await mkdir(join(repo.root, ".memhtml/vectors"), { recursive: true })
+    await writeFile(join(repo.root, ".memhtml/sessions/s1.json"), "{}", "utf8")
+    await writeFile(join(repo.root, ".memhtml/snapshots/abc.arrow"), "bytes", "utf8")
+    await writeFile(join(repo.root, ".memhtml/vectors/model@4.arrow"), "bytes", "utf8")
     const entries = await run(repo.git.statusPorcelainV2())
     expect(entries.filter((entry) => entry.kind !== "ignored")).toEqual([])
   })

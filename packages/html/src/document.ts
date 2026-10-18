@@ -53,7 +53,7 @@ export const MemoryMetas = Schema.Struct({
   validFrom: Schema.optional(Schema.String),
   validUntil: Schema.optional(Schema.String),
   /**
-   * How many times sleep spared this memory from eviction. A count, monotonically
+   * How many times a retention pass spared this memory from eviction. A count, monotonically
    * non-decreasing, `>= 0`.
    */
   reprieves: Schema.optional(Schema.Number),
@@ -64,7 +64,7 @@ export const MemoryMetas = Schema.Struct({
    * form). The inverse of a `memhtml-supersedes` link on the newer file.
    */
   supersededBy: Schema.optional(Schema.String),
-  /** Sleep flagged the claim as stale or contested and wants an agent to revisit it. */
+  /** A curation pass flagged the claim as stale or contested and wants an agent to revisit it. */
   needsRevision: Schema.optional(Schema.Boolean),
   /**
    * A task's own lifecycle position, present iff `memoryType` is `task`. The parser reports a
@@ -202,7 +202,7 @@ export const MemoryDoc = Schema.Struct({
    * recorded under — a person file's declaration that `laura` and `l.desabelin` are the same person
    * as its own `person:` entity.
    *
-   * Read as EVIDENCE by sleep's entity resolution, which auto-merges an alias-backed pair whatever
+   * Meant as EVIDENCE for entity resolution, which can merge an alias-backed pair whatever
    * the name similarity says. That is why the field is a bare string list rather than a parsed
    * `type:name`: the declaring file's own `memhtml-entity` already carries the type, and an alias
    * that restated it could disagree with it.
