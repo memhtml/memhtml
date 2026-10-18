@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.16.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.15.2...memhtml-v0.16.0) (2026-10-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* The six `memhtml sleep` commands (`sleep run`, `sleep resume`, `sleep review`, `sleep merge`, `sleep status`, `sleep plan`) and `memhtml apply --consolidate` are removed, and `memhtml curate run`, `memhtml curate collapse`, and `memhtml curate merge` replace them. MCP `memory_write_batch` no longer takes `consolidate`, `memory_status` no longer reports `last_sleep`, and the resource template `memhtml://sleep/{run-id}` is removed. The output fields `consolidated_into` and `superseded_path` on batch ops, the batch summary's `consolidated`, `lastSleep` on `memhtml status`, and `stuckSleepRuns` on `memhtml doctor` are removed. In a process whose environment sets `MEMHTML_SESSION`, the record-creating v1 doors (`write`, `apply`, `correct`, `task add`, and the MCP tools `memory_write`, `memory_write_batch`, and `memory_correct` when the MCP server carries the variable) refuse with `ERR_SESSION_BOUND` unless the store's `memhtml.config.json` sets `v1Doors` to `open`. When a head server runs for the store, MCP `memory_search` and `memory_recall` rank through it by default, with lexical and vector arms fused by RRF and recency as an exact-tie break, and no salience arm and no MMR diversification; `MEMHTML_MCP_HEAD=off` keeps them on the index.
+
+### Features
+
+* hold the corpus as an immutable head, write through sessions, and curate on a branch ([#287](https://github.com/memhtml/memhtml/issues/287)) ([946eed5](https://github.com/memhtml/memhtml/commit/946eed5f4339f1c474dc8322fbc10a5e638f98df))
+
 ## [0.15.2](https://github.com/memhtml/memhtml/compare/memhtml-v0.15.1...memhtml-v0.15.2) (2026-10-18)
 
 
