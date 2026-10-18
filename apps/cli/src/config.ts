@@ -17,6 +17,9 @@ import { Config } from "effect"
 
 import { EXTRACTION_MODEL_ID } from "./extraction.js"
 import {
+  COMMIT_DEADLINE_DEFAULT_MS,
+  COMMIT_DEADLINE_VAR,
+  COMMIT_QUEUE_WAIT_MS,
   EMBED_DEADLINE_DEFAULT_MS,
   EMBED_DEADLINE_VAR,
   EMBED_WARM_IDLE_DEFAULT_MS,
@@ -186,6 +189,11 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
     name: EMBED_WARM_IDLE_VAR,
     description: `Read by \`head serve\` only: after this many milliseconds with no embed ended and none in flight, the server issues one one-token query embed, so the first search after a quiet stretch finds the path through the LLM proxy to Bedrock warm. Every embed moves the clock, so a busy server never warms; \`0\` turns the warmup off. It runs only with an embedder bound and a vector cache held, and \`status\` counts it under \`embed.warmups\`. A malformed value is refused at exit 2 naming this variable.`,
     fallback: String(EMBED_WARM_IDLE_DEFAULT_MS)
+  },
+  {
+    name: COMMIT_DEADLINE_VAR,
+    description: `How long \`session commit\` and \`session rebase\` wait for the head server's answer, in whole milliseconds; \`0\` waits as long as the server takes. The server answers a commit in well under a second once it holds the session's base, and declines (\`busy\`) a commit that waited ${String(COMMIT_QUEUE_WAIT_MS)} ms behind another, which the CLI then commits here; the default leaves a runtime's 90 s per-call limit room for that. Past the deadline the call fails with ERR_STORAGE naming \`session status\` and is NOT committed here, because the server took it and may have moved the ref. A store with no server, \`--no-server\`, and a server that declines never wait for it. A malformed value is refused at exit 2 naming this variable.`,
+    fallback: String(COMMIT_DEADLINE_DEFAULT_MS)
   },
   {
     name: MCP_HEAD_VAR,

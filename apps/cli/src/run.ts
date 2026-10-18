@@ -52,6 +52,8 @@ import { failureFor } from "./errors.js"
 import { DEFAULT_TIMEOUT_MS, execCommand, MAX_TIMEOUT_MS, readScript } from "./exec.js"
 import { DEFAULT_EXEC_LANG, EXEC_LANGS, type ExecLang } from "./exec-lang.js"
 import {
+  COMMIT_DEADLINE_DEFAULT_MS,
+  COMMIT_DEADLINE_VAR,
   EMBED_DEADLINE_VAR,
   EMBED_WARM_IDLE_VAR,
   EXEC_BODY_MAX_BYTES,
@@ -2070,13 +2072,15 @@ export const run = async (
     }
 
     /**
-     * `MEMHTML_EMBED_DEADLINE_MS` for `head search` and `head serve`, and `MEMHTML_EMBED_WARM_IDLE_MS`
-     * for `head serve`: whole milliseconds, `0` for none. Unset is `undefined`, which leaves the
-     * default to the code that applies it (and, for `head search` through a server, leaves the
-     * server's own deadline in charge). A malformed value is refused at exit 2 naming the variable.
+     * `MEMHTML_EMBED_DEADLINE_MS` for `head search` and `head serve`, `MEMHTML_EMBED_WARM_IDLE_MS`
+     * for `head serve`, and `MEMHTML_COMMIT_DEADLINE_MS` for `session commit` and `session rebase`:
+     * whole milliseconds, `0` for none. Unset is `undefined`, which leaves the default to the code
+     * that applies it (and, for `head search` through a server, leaves the server's own deadline in
+     * charge). A malformed value is refused at exit 2 naming the variable.
      */
     const msFromEnv = (
-      name: string
+      name: string,
+      example = 450
     ): { readonly ms: number | undefined } | { readonly refused: RunResult } => {
       const raw = process.env[name]
       if (raw === undefined || raw.trim() === "") return { ms: undefined }
@@ -2085,7 +2089,7 @@ export const run = async (
       return {
         refused: emit(
           fail("ERR_INVALID_FLAG", `${name}=${JSON.stringify(raw)}: ${parsedMs.reason}`, [
-            `${name}=450 memhtml ${parsed.command}`
+            `${name}=${String(example)} memhtml ${parsed.command}`
           ]),
           EXIT_USAGE
         )
@@ -2102,6 +2106,12 @@ export const run = async (
       const idle = msFromEnv(EMBED_WARM_IDLE_VAR)
       if ("refused" in idle) return idle.refused
       warmIdleMs = idle.ms
+    }
+    let commitDeadlineMs: number | undefined
+    if (parsed.command === "session commit" || parsed.command === "session rebase") {
+      const deadline = msFromEnv(COMMIT_DEADLINE_VAR, COMMIT_DEADLINE_DEFAULT_MS)
+      if ("refused" in deadline) return deadline.refused
+      commitDeadlineMs = deadline.ms
     }
 
     /**
@@ -2252,7 +2262,8 @@ export const run = async (
           skipGate: bool(parsed, "skip-gate", false),
           embedder: yield* resolveEmbedder,
           server: bool(parsed, "server", true),
-          embedDeadlineMs
+          embedDeadlineMs,
+          commitDeadlineMs
         })
       }).pipe(
         Effect.map(([type, data]) => emit(succeed(type, data), EXIT_OK)),
