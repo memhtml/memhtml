@@ -1,6 +1,7 @@
-import type { HeadView, OverlayOp } from "@memhtml/contracts"
+import type { HeadView, OverlayOp, WriteBarPolicy } from "@memhtml/contracts"
 import {
   ARCS_DIR,
+  DEFAULT_WRITE_BAR,
   hrefToPath,
   isArchivePath,
   isEdgeRel,
@@ -9,7 +10,8 @@ import {
   normalizePath,
   originalPathFor,
   PEOPLE_DIR,
-  pathToHref
+  pathToHref,
+  STORE_CONFIG_FILE
 } from "@memhtml/contracts"
 import { checkMemory, contentHash, isRootRelativeHref, parseMemory, readLinks } from "@memhtml/html"
 import { Effect, Exit } from "effect"
@@ -31,10 +33,11 @@ export type Violation =
   | { readonly kind: "reserved-path"; readonly path: string }
   | { readonly kind: "batch-cap"; readonly count: number; readonly cap: number }
   /**
-   * A new record that fails the write bar ({@link writeBarReasons}): a run narrative, review output,
-   * or a record that names nothing it is about. Every scope and every type is judged; only an
-   * archive destination is not, because it is an existing record moving. An `unlabel` that leaves
-   * its record with no entity and no workspace path fails the same anchor rule.
+   * A new record that fails the store's write bar ({@link writeBarReasons}): a type the store
+   * refuses, or, under the anchor rule, a record that names nothing it is about. Every scope and
+   * every type is judged; only an archive destination is not, because it is an existing record
+   * moving. Under the anchor rule an `unlabel` that leaves its record with no entity and no
+   * workspace path fails too, and so does a `move` destination that names nothing.
    */
   | { readonly kind: "write-bar"; readonly path: string; readonly reasons: ReadonlyArray<string> }
 
@@ -53,6 +56,14 @@ export type CommitScope = "session" | "curate"
 export interface ValidateOptions {
   readonly scope?: CommitScope | undefined
   /**
+   * The store's write bar (`writeBar` in `memhtml.config.json`, read by the CLI's
+   * `loadStorePolicy`): the types it refuses and whether every new record must be anchored.
+   * {@link DEFAULT_WRITE_BAR} when omitted, which refuses no type and anchors nothing, so a caller
+   * judging a real store passes the store's policy. Format, integrity, reserved paths, and the
+   * batch cap hold whatever it says.
+   */
+  readonly writeBar?: WriteBarPolicy | undefined
+  /**
    * The most ops the batch may carry; {@link BATCH_CAP} when omitted. `curate merge` passes
    * `Infinity` for a replay, whose ops are the union of commits that each passed the cap on the
    * curate branch: the 2026-09-24 collapse shape lands 2,747 ops, which one capped batch cannot.
@@ -66,6 +77,9 @@ const CURATION_PREFIXES: ReadonlyArray<string> = [`${ARCS_DIR}/`, `${PEOPLE_DIR}
 /** The store's own state, which no scope writes through a session. */
 const STORE_PREFIXES: ReadonlyArray<string> = [".memhtml/"]
 
+/** Files at the store root that hold the store's own configuration, which no scope writes. */
+const STORE_FILES: ReadonlyArray<string> = [STORE_CONFIG_FILE]
+
 /** Filenames the site generator owns at any depth; no scope writes them. */
 const RESERVED_FILENAMES: ReadonlyArray<string> = ["index.html", "sitemap.xml"]
 
@@ -73,6 +87,7 @@ const RESERVED_FILENAMES: ReadonlyArray<string> = ["index.html", "sitemap.xml"]
 export const isReservedPath = (path: string, scope: CommitScope = "session"): boolean => {
   const normalized = normalizePath(path)
   if (STORE_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return true
+  if (STORE_FILES.includes(normalized)) return true
   if (scope !== "curate" && CURATION_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
     return true
   }
@@ -83,20 +98,6 @@ export const isReservedPath = (path: string, scope: CommitScope = "session"): bo
 
 /** The prefix a workspace's records sit under (`projects/<slug>/`), which anchors a record by itself. */
 const WORKSPACE_PREFIX = "projects/"
-
-/**
- * Types no session may write, the curator's included, each with the reason it gives. A run
- * narrative belongs in the trace index, which already holds every run; review output was never
- * memory. On 2026-09-24 the audit of the live store found these two classes, with unanchored
- * lessons, made up most of the noise that three writers with no bar had left.
- */
-const REFUSED_TYPES: ReadonlyMap<string, string> = new Map([
-  [
-    "episodic",
-    "an episodic record narrates one run; runs belong in the trace index, not the store"
-  ],
-  ["verdict", "a verdict is review output, not a memory"]
-])
 
 /**
  * The reason a record that names nothing gives, worded so the writer (a person, an agent, or the
@@ -111,31 +112,35 @@ const isAnchored = (path: string, entities: Iterable<string>): boolean =>
   normalizePath(path).startsWith(WORKSPACE_PREFIX)
 
 /**
- * Why a new record falls below the write bar, or nothing when it clears it.
+ * Why a new record falls below the store's write bar, or nothing when it clears it.
  *
- * The bar has two halves. This is the mechanical one: the record is not a run narrative or review
- * output, and it names what it is about, through at least one `memhtml-entity` or by sitting in a
- * workspace under `projects/<slug>/`. The other half (a mechanism or a decision, something a future
- * run would look up) needs a model's judgment and is the writing agent's, stated in the `session put`
- * and `session exec` help and, for the curator, in its two charters.
+ * The bar has two halves. This is the mechanical one, and its rules are the store's
+ * (`writeBar` in `memhtml.config.json`): a type the store refuses (`refusedTypes`, each with the
+ * reason its refusal gives), and, under `requireAnchor`, a record that does not name what it is
+ * about through at least one `memhtml-entity` or by sitting in a workspace under
+ * `projects/<slug>/`. The other half (a mechanism or a decision, something a future run would look
+ * up) needs a model's judgment and is the writing agent's, stated in the `session put` and
+ * `session exec` help and, for the curator, in its two charters.
  *
- * The bar holds under every scope and for every type. The curator was exempt until 2026-09-26, and
- * the one-time collapse it ran left 491 of 706 active non-task records with no label, so its
- * canonicals and arcs now clear the same anchor rule. A task is still a type any session may write,
- * and it too must be anchored: a task under `projects/<slug>/tasks/` is anchored by its path, one in
- * the inbox needs an entity. An archive destination is an existing record moving, never a new one,
- * and is not judged. A file that does not parse answers nothing here, because the format check has
- * already refused it.
+ * The bar holds under every scope and for every type, the curator's writes and tasks included: a
+ * task under `projects/<slug>/tasks/` is anchored by its path, one in the inbox by an entity. An
+ * archive destination is an existing record moving, never a new one, and is not judged. A file that
+ * does not parse answers nothing here, because the format check has already refused it. With the
+ * library default ({@link DEFAULT_WRITE_BAR}) nothing is refused.
  */
-export const writeBarReasons = (path: string, html: string): ReadonlyArray<string> => {
+export const writeBarReasons = (
+  path: string,
+  html: string,
+  policy: WriteBarPolicy = DEFAULT_WRITE_BAR
+): ReadonlyArray<string> => {
   if (isArchivePath(path)) return []
   const parsed = Effect.runSyncExit(parseMemory(html))
   if (!Exit.isSuccess(parsed)) return []
   const doc = parsed.value
   const reasons: Array<string> = []
-  const refused = REFUSED_TYPES.get(doc.metas.memoryType)
+  const refused = policy.refusedTypes.get(doc.metas.memoryType)
   if (refused !== undefined) reasons.push(refused)
-  if (!isAnchored(path, doc.entities)) reasons.push(UNANCHORED_REASON)
+  if (policy.requireAnchor && !isAnchored(path, doc.entities)) reasons.push(UNANCHORED_REASON)
   return reasons
 }
 
@@ -180,6 +185,7 @@ export const validateOps = (
 ): ReadonlyArray<Violation> => {
   const scope = options.scope ?? "session"
   const cap = options.batchCap ?? BATCH_CAP
+  const bar = options.writeBar ?? DEFAULT_WRITE_BAR
   if (ops.length > cap) return [{ kind: "batch-cap", count: ops.length, cap }]
 
   const violations: Array<Violation> = []
@@ -271,8 +277,8 @@ export const validateOps = (
         } else if (isActiveIn(view, op.path) || movedInto.has(normalizePath(op.path))) {
           violations.push({ kind: "claim-edit", path: op.path })
         }
-        const bar = writeBarReasons(op.path, op.html)
-        if (bar.length > 0) violations.push({ kind: "write-bar", path: op.path, reasons: bar })
+        const below = writeBarReasons(op.path, op.html, bar)
+        if (below.length > 0) violations.push({ kind: "write-bar", path: op.path, reasons: below })
         batchHashes.set(hash, op.path)
         batchPuts.set(op.path, hash)
         batchEdges.set(
@@ -444,11 +450,12 @@ export const validateOps = (
     }
   }
   // Every move, judged once the whole batch is walked, so the repointing edges may come before or
-  // after the move in the order. The destination is held to the anchor rule (a record moved out of
-  // `projects/<slug>/` with no entity would name nothing), and no live record may still carry an edge
-  // to the path the record left, unless the batch puts a new record there: that edge would dangle.
+  // after the move in the order. Under the anchor rule the destination is held to it (a record moved
+  // out of `projects/<slug>/` with no entity would name nothing), and no live record may still carry
+  // an edge to the path the record left, unless the batch puts a new record there: that edge would
+  // dangle.
   for (const move of moves) {
-    if (!isAnchored(move.to, entitiesOf(move.to))) {
+    if (bar.requireAnchor && !isAnchored(move.to, entitiesOf(move.to))) {
       violations.push({ kind: "write-bar", path: move.to, reasons: [UNANCHORED_REASON] })
     }
     if (batchPuts.has(move.path) || movedInto.has(move.path)) continue
@@ -479,10 +486,11 @@ export const validateOps = (
       }
     }
   }
-  // The anchor rule over every record an `unlabel` edited, as the whole batch left it, so a batch
-  // that swaps one label for another passes in either order and one that drops the last fails. A
-  // record the batch archives is exempt: the archived copy is a destination, never judged.
-  for (const path of unlabeled) {
+  // The anchor rule, when the store holds it, over every record an `unlabel` edited, as the whole
+  // batch left it, so a batch that swaps one label for another passes in either order and one that
+  // drops the last fails. A record the batch archives is exempt: the archived copy is a destination,
+  // never judged.
+  for (const path of bar.requireAnchor ? unlabeled : []) {
     if (archived.has(normalizePath(path))) continue
     if (!isAnchored(path, entitiesOf(path))) {
       violations.push({ kind: "write-bar", path, reasons: [UNANCHORED_REASON] })

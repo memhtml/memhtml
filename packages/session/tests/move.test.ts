@@ -18,6 +18,7 @@ import {
   memory,
   type Repo,
   recordFrom,
+  STRICT_BAR,
   treePaths
 } from "./helpers.js"
 
@@ -41,6 +42,9 @@ import {
  * - withRepoints: the `leaving.has(...)` skip dropped -> "withRepoints repoints every live holder
  *   before the first move and leaves archived holders and settled edges alone" (an unlink lands on
  *   a holder the batch archives).
+ * - validate, destination anchor (2026-10-18): `bar.requireAnchor &&` dropped from the move loop ->
+ *   "a moved record keeps to the write bar's anchor rule at its destination" (the library default
+ *   bar refuses the bare move).
  * - stage: the `move` case left out of `stage` -> "commits a move as the same blob at the new path,
  *   with the holder's edge repointed" (the old path is still in the tree).
  */
@@ -241,15 +245,8 @@ describe("validateOps judges a move", () => {
       entities: []
     })
     const head = mapHead(SHA, [await recordFrom("projects/atelier/build.html", bare)])
-    expect(
-      validateOps(
-        head,
-        [move("projects/atelier/build.html", "resources/atelier/build.html", bare)],
-        {
-          scope: "curate"
-        }
-      )
-    ).toEqual([
+    const bareMove = [move("projects/atelier/build.html", "resources/atelier/build.html", bare)]
+    expect(validateOps(head, bareMove, { scope: "curate", writeBar: STRICT_BAR })).toEqual([
       { kind: "write-bar", path: "resources/atelier/build.html", reasons: [UNANCHORED_REASON] }
     ])
     expect(
@@ -259,9 +256,11 @@ describe("validateOps judges a move", () => {
           { kind: "label", path: "projects/atelier/build.html", entity: "project:atelier" },
           move("projects/atelier/build.html", "resources/atelier/build.html", bare)
         ],
-        { scope: "curate" }
+        { scope: "curate", writeBar: STRICT_BAR }
       )
     ).toEqual([])
+    // The library default bar holds no anchor rule, so the bare move lands.
+    expect(validateOps(head, bareMove, { scope: "curate" })).toEqual([])
   })
 
   it("a reserved destination is refused under the session scope and open to the curator", async () => {
