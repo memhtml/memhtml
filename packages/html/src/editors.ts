@@ -11,7 +11,7 @@ import { isMemoryMetaName, META_ORDER, META_PREFIX, type MemoryMetaName } from "
  * Surgical head editors: byte-level splices that change exactly one line and provably do not
  * touch the article.
  *
- * The sleep phases stamp `memhtml-updated`, decay `memhtml-confidence`, bump `memhtml-reprieves`, and set
+ * Bookkeeping passes stamp `memhtml-updated`, decay `memhtml-confidence`, bump `memhtml-reprieves`, and set
  * `memhtml-needs-revision` on files they otherwise leave alone. Round-tripping the whole document
  * for that would re-serialize the article and make a bookkeeping pass look like a content
  * change in `git diff`. The article is the hash scope, so that would also risk moving the
@@ -172,7 +172,7 @@ export const setMeta = (html: string, name: string, value: string): string => {
 /**
  * Append another `<meta>` of a repeatable name, a new `memhtml-entity` or `memhtml-tag`, after the
  * last one already present. Adding a value that is already there is a no-op, so the operation
- * is idempotent and a re-run of a sleep phase cannot grow the head.
+ * is idempotent and a re-run of a bookkeeping pass cannot grow the head.
  */
 export const addMeta = (html: string, name: string, value: string): string => {
   if (!isMemoryMetaName(name)) return html
@@ -219,8 +219,8 @@ export const removeMeta = (html: string, name: string, value?: string): string =
 }
 
 /**
- * Append a `<link rel="memhtml-…">` edge. Idempotent on the `(rel, href)` pair, because the sleep
- * conflict phase promotes the same corroborated edge on every run and a duplicated `<link>`
+ * Append a `<link rel="memhtml-…">` edge. Idempotent on the `(rel, href)` pair, because a caller
+ * can add the same edge on every run, as a session's `link` op can, and a duplicated `<link>`
  * would become a duplicated `edges` row.
  */
 export const addLink = (html: string, rel: EdgeRel, href: string): string => {

@@ -1502,7 +1502,7 @@ export const resolveQueries = {
  * The live path a possibly-moved path names now, by walking `supersedes` forward.
  *
  * **A path IS the id of a memory** (`packages/contracts/src/types.ts`, `MemoryPath`), and it is
- * derived from the title through `slugify`, so a re-consolidation that rewords a title lands the
+ * derived from the title through `slugify`, so a correction that rewords a title lands the
  * corrected fact at a DIFFERENT path while `correctMemory` `git mv`s the original into
  * `archive/<YYYY>/`. An external receipt holding the old path therefore dead-ends at a path the tree
  * no longer holds — through no fault of the receipt. This read is how such a receipt is repaired
