@@ -40,7 +40,7 @@ import { commitSubject, provenanceTrailers } from "./plumbing.js"
  * The memory store. Every operation that changes the corpus is expressed as one git commit.
  *
  * One commit per operation is the whole contract. It makes `git log` a readable history of
- * what the agent learned, makes `diff base..HEAD` a reviewable sleep run, and makes rollback
+ * what the agent learned, makes `diff base..HEAD` a reviewable curation run, and makes rollback
  * mean something. It also means the store owns staging rather than its caller. A caller that
  * staged its own files could bundle two unrelated writes into one commit and destroy that.
  */
@@ -523,9 +523,9 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
    *
    * The worktree pass is second and covers every path the operation touched, because a file that was
    * written but never staged is invisible to git and would otherwise survive as an untracked file,
-   * which is not a byte-identical tree. Its absence is what wedges every later sleep run:
-   * `requireCleanTree` is sleep's preflight, so one uncompensated failure blocks curation until a
-   * human intervenes.
+   * which is not a byte-identical tree. Its absence leaves the tree dirty, so every later
+   * session commit that touches the path answers `worktree-dirty`, and one uncompensated failure
+   * blocks that path until a human intervenes.
    */
   const restore = (touched: ReadonlyMap<string, string | null>): Effect.Effect<void, StoreError> =>
     Effect.gen(function* () {
@@ -1096,7 +1096,7 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       /**
        * A failure between the `git mv` and the commit would otherwise leave the worst state this
        * package can produce: the target archived and staged, the corrected file half-written, and
-       * `requireCleanTree` refusing every sleep run from then on. The journal holds the target's
+       * a session commit on either path answering `worktree-dirty`. The journal holds the target's
        * original bytes, so the compensation puts the memory back where it was.
        */
       const journal = makeJournal()
@@ -1334,8 +1334,8 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       const html = yield* readRaw(src)
       const linked = addLink(html, rel, hrefFor(dst))
       // `addLink` is idempotent on the `(rel, href)` pair, so a re-run writes nothing and
-      // commits nothing. That is what makes the sleep conflict phase's repeated promotion of
-      // one corroborated edge cost one commit in total rather than one per night.
+      // commits nothing. That is what makes a caller's repeated link of one edge cost one
+      // commit in total rather than one per call.
       if (linked === html) return { commitSha: null }
 
       // A link is a head-plane edit to a file that already exists, so the compensation rewrites the

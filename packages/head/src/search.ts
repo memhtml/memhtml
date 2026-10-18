@@ -27,15 +27,15 @@ import { tokenize } from "./lexical.js"
  * Why not a weighted recency arm. Until 2026-09-28 recency was an RRF arm at weight 0.5 that ranked
  * every lexical and vector candidate newest first. That made it a second full ranking rather than a
  * tie-break, and a curation landing that made the surviving records newer made older targets lose to
- * newer, weaker matches. On the 2026-09-28 collapse rehearsal (base `33f182de7`, landed
- * `85eeb5ed`, the head gate's 200 title probes, seed 1, top 10) the weighted arm scored MRR 0.5572
+ * newer, weaker matches. On a 2026-09-28 rehearsal of a large collapse on a copy of a production
+ * store (the head gate's 200 title probes, seed 1, top 10) the weighted arm scored MRR 0.5572
  * at the base and 0.4384 landed, so the gate refused the landing; this rule scores 0.9449 and 0.9485
- * without the vector arm and 0.9492 and 0.9522 with it, and on the 2026-09-23 clone at `a650152e` it
+ * without the vector arm and 0.9492 and 0.9522 with it, and on a 2026-09-23 copy of the same store it
  * raised the gate probes from 0.4557 to 0.9975 without the vector arm and from 0.8321 to 0.9905 with
  * it. Smaller weights land near the same numbers (0.05 scored 0.9374 and 0.9410 without the vector
  * arm), but without shared ranks no weight small enough to be a tie-break lets a newer twin win,
  * and letting recency reorder hits within 0.0003 of each other dropped two-arm MRR at the base to
- * 0.6769 (docs/v2-poc.md, "Recency as the tie-break").
+ * 0.6769 (`docs/design.md` §16, "Recency as the tie-break").
  *
  * The function stays pure: it never embeds. The caller owns the vectors (keyed by content hash, see
  * `vectors.ts`) and the query vector, so a search with neither is the lexical search exactly.
@@ -74,7 +74,7 @@ export const VECTOR_ARM_LIMIT = DEFAULT_ARM_LIMIT
  * BM25 scores every record that shares one token with the query, so uncapped the arm voted for
  * hundreds of records on the live clone, and each weak match collected RRF mass that a record
  * found by meaning alone could not: a paraphrase whose target was second in the vector arm ranked
- * it 31st overall (docs/v2-poc.md, "Vector arm").
+ * it 31st overall (`docs/design.md` §16, "The vector arm").
  */
 export const LEXICAL_ARM_LIMIT = DEFAULT_ARM_LIMIT
 export const DEFAULT_LIMIT = 10

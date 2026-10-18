@@ -217,7 +217,7 @@ export const initRepo = (git: GitShape): Effect.Effect<InitResult, GitFailure | 
     if (!alreadyRepo) {
       yield* attemptIo("init.mkdir", () => mkdir(root, { recursive: true }))
       // `-b main` rather than relying on `init.defaultBranch`. A repo whose branch name
-      // depends on the operator's global config would make every branch reference in sleep
+      // depends on the operator's global config would make every branch reference in curation
       // and in the runbook conditional on whose machine ran `memhtml init`.
       yield* git.run(["init", "-b", "main", "."])
     }

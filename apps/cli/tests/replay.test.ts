@@ -19,8 +19,8 @@ import {
 } from "../src/replay.js"
 
 /**
- * The replay's reconstruction (`docs/v2-poc.md`, "Curation door"): two trees in, the curator's
- * operation log out, or a rejection naming the path that was written by hand.
+ * The replay's reconstruction (`docs/design.md` §23, "The curation door"): two trees in, the
+ * curator's operation log out, or a rejection naming the path that was written by hand.
  *
  * The bytes are built the way the commit path builds them: `renderTemplate` for a record,
  * `archiveBody` for an archive twin (the same stamps `commitSession` writes), `addLink` for an edge.

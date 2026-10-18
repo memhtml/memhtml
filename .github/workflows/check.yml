@@ -63,9 +63,9 @@ jobs:
   # where every run-time asset is on disk whether or not a manifest names it — three of them
   # shipped broken under exactly that blindness. This job assembles the one published package,
   # installs it into a throwaway directory, and drives every subsystem through the installed
-  # binary, including the consolidator agent's out-of-node_modules build.
+  # binary, including the sandbox worker and the curator prompts it reads at run time.
   #
-  # A separate job because it needs the npm registry to resolve the twelve external
+  # A separate job because it needs the npm registry to resolve the external
   # dependencies, and `mise run check` is offline and credential-free by construction. It stays
   # credential-free itself: MEMHTML_EMBED=off and MEMHTML_LLM=off throughout.
   package:

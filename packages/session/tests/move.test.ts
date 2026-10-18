@@ -23,7 +23,7 @@ import {
 } from "./helpers.js"
 
 /**
- * The `move` op (`docs/v2-poc.md`, "Curator", placement): the one way a record changes path while
+ * The `move` op (`docs/design.md` §17, "Move"): the one way a record changes path while
  * staying the same record.
  *
  * Before it, placement had no correct shape. A `put` of an inbox record's bytes at its new home is a
@@ -58,14 +58,14 @@ afterEach(async () => {
 
 const SHA = "0".repeat(40)
 const FROM = "areas/inbox/agentd-timeout.html"
-const TO = "resources/microvms-agentd/agentd-timeout.html"
+const TO = "resources/vm-runner/agentd-timeout.html"
 const HOLDER = "areas/arcs/agentd-arc.html"
 const PLACED = memory("agentd timeout", "agentd kills an exec after its stated timeout.", {
-  entities: ["project:microvms-agentd"]
+  entities: ["project:vm-runner"]
 })
 const ARC = addLink(
   memory("agentd arc", "Four agentd memories together show the runtime bounds every exec.", {
-    entities: ["project:microvms-agentd"]
+    entities: ["project:vm-runner"]
   }),
   "part_of",
   `/${FROM}`
@@ -98,7 +98,7 @@ const view = async () =>
       "archive/2026/areas/inbox/gone.html",
       addLink(memory("Gone", "A retired fact."), "relates_to", `/${FROM}`)
     ),
-    await recordFrom("resources/microvms-agentd/other.html", memory("Other", "Another fact."))
+    await recordFrom("resources/vm-runner/other.html", memory("Other", "Another fact."))
   ])
 
 describe("placement before move", () => {
@@ -140,7 +140,7 @@ describe("validateOps judges a move", () => {
       [
         ...repoint,
         move(FROM, TO, PLACED),
-        link("resources/microvms-agentd/other.html", "relates_to", `/${FROM}`)
+        link("resources/vm-runner/other.html", "relates_to", `/${FROM}`)
       ],
       { scope: "curate" }
     )
@@ -156,7 +156,7 @@ describe("validateOps judges a move", () => {
       )
     const repoint = [unlink(HOLDER, "part_of", `/${FROM}`), link(HOLDER, "part_of", `/${TO}`)]
     expect(
-      reasonsFor([...repoint, move(FROM, "resources/microvms-agentd/other.html", PLACED)])
+      reasonsFor([...repoint, move(FROM, "resources/vm-runner/other.html", PLACED)])
     ).toContain("move destination already holds a record")
     expect(reasonsFor([...repoint, move(FROM, `archive/2026/${FROM}`, PLACED)])).toContain(
       "move destination is under archive/; retiring a record is the archive op"
@@ -200,7 +200,7 @@ describe("validateOps judges a move", () => {
           ...repoint,
           move(FROM, TO, PLACED),
           { kind: "label", path: TO, entity: "system:agentd" },
-          { kind: "unlabel", path: TO, entity: "project:microvms-agentd" }
+          { kind: "unlabel", path: TO, entity: "project:vm-runner" }
         ],
         { scope: "curate" }
       )
@@ -244,17 +244,17 @@ describe("validateOps judges a move", () => {
     const bare = memory("Workspace fact", "The workspace builds with one command.", {
       entities: []
     })
-    const head = mapHead(SHA, [await recordFrom("projects/atelier/build.html", bare)])
-    const bareMove = [move("projects/atelier/build.html", "resources/atelier/build.html", bare)]
+    const head = mapHead(SHA, [await recordFrom("projects/workshop/build.html", bare)])
+    const bareMove = [move("projects/workshop/build.html", "resources/workshop/build.html", bare)]
     expect(validateOps(head, bareMove, { scope: "curate", writeBar: STRICT_BAR })).toEqual([
-      { kind: "write-bar", path: "resources/atelier/build.html", reasons: [UNANCHORED_REASON] }
+      { kind: "write-bar", path: "resources/workshop/build.html", reasons: [UNANCHORED_REASON] }
     ])
     expect(
       validateOps(
         head,
         [
-          { kind: "label", path: "projects/atelier/build.html", entity: "project:atelier" },
-          move("projects/atelier/build.html", "resources/atelier/build.html", bare)
+          { kind: "label", path: "projects/workshop/build.html", entity: "project:workshop" },
+          move("projects/workshop/build.html", "resources/workshop/build.html", bare)
         ],
         { scope: "curate", writeBar: STRICT_BAR }
       )
@@ -308,13 +308,13 @@ describe("withRepoints", () => {
     const second = "areas/inbox/agentd-arc-note.html"
     const note = addLink(
       memory("agentd note", "The agentd timeout is stated per exec.", {
-        entities: ["project:microvms-agentd"]
+        entities: ["project:vm-runner"]
       }),
       "relates_to",
       `/${FROM}`
     )
     const head = mapHead(SHA, [await recordFrom(FROM, PLACED), await recordFrom(second, note)])
-    const secondTo = "resources/microvms-agentd/agentd-arc-note.html"
+    const secondTo = "resources/vm-runner/agentd-arc-note.html"
     const completed = withRepoints(head, [move(FROM, TO, PLACED), move(second, secondTo, note)])
     expect(completed.slice(0, 2)).toEqual([
       unlink(second, "relates_to", `/${FROM}`),

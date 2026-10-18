@@ -15,7 +15,7 @@ import {
 /**
  * The inbox work list: every active record under `areas/inbox/`, each with the home code would file
  * it under and the evidence for that home, so the curator's placement priority is a list of
- * judgments rather than a search (`docs/v2-poc.md`, "Curator").
+ * judgments rather than a search (`docs/design.md` §23, "The curator").
  *
  * ## Why code computes the home
  *

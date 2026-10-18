@@ -142,8 +142,8 @@ const RESOURCE_TYPES: ReadonlyArray<string> = ["semantic", "procedural", "preced
  * Totality is why the refusal cannot live here. A caller that wants an unusable path refused
  * rather than re-derived asks the store for it (`strictPath` on a `WriteInput`), which gates on
  * {@link memoryPathViolation} before any of this runs and quotes its reason. Refusing here instead
- * would make placement fallible for every caller, including the sleep phases that place a synthesized
- * arc and have no caller path to be wrong about.
+ * would make placement fallible for every caller, including a curator that places a synthesized
+ * arc and has no caller path to be wrong about.
  */
 export const placementFor = (input: PlacementInput): string => {
   if (input.path !== undefined && isValidMemoryPath(input.path)) {

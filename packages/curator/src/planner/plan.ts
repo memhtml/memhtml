@@ -39,7 +39,7 @@ import {
  *    them as a `keep` cluster with the reason. The 2026-09-23 live run refused eleven such groups
  *    correctly; this makes that refusal a rule the plan states rather than a judgment the model
  *    repeats. Entities join here as a graph layer rather than as hard groups: a shared entity
- *    (`person:laith` on 81 records) names a subject, not a duplicate, so it strengthens cut 3's
+ *    (one person on 81 records) names a subject, not a duplicate, so it strengthens cut 3's
  *    edges instead of forming clusters of its own.
  * 3. A kNN similarity graph over what remains in each partition (`similarity.ts`) plus the entity
  *    layer, cut by Louvain (`graph.ts`). A community of two or more is a fold; one larger than

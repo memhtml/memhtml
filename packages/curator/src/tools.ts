@@ -137,7 +137,7 @@ export const ProposedOp = z.discriminatedUnion("kind", [
       .string()
       .min(1)
       .describe(
-        "A lowercase type:name value the record does not carry yet, e.g. system:memhtml, project:hex-bonk, person:laith."
+        "A lowercase type:name value the record does not carry yet, e.g. system:memhtml, project:agent-runtime, person:laura."
       )
   }),
   z.object({
@@ -155,7 +155,7 @@ export const ProposedOp = z.discriminatedUnion("kind", [
       .string()
       .min(1)
       .describe(
-        "Its new live path, e.g. resources/hex-bonk/x.html (the briefing's inbox entry names one). Edges to the old path are repointed for you."
+        "Its new live path, e.g. resources/agent-runtime/x.html (the briefing's inbox entry names one). Edges to the old path are repointed for you."
       )
   })
 ])

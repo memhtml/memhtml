@@ -1,6 +1,6 @@
 /**
  * The collapse planner: cuts one head view into archive, fold, and keep clusters with no model call.
- * See `plan.ts` for the four cuts and `docs/v2-poc.md`, "Collapse".
+ * See `plan.ts` for the four cuts and `docs/design.md` §23, "The collapse".
  */
 
 export { type Communities, detectCommunities, seededRandom, type WeightedEdge } from "./graph.js"

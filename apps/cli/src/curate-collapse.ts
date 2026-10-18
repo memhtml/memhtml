@@ -56,7 +56,8 @@ import { loadStorePolicy } from "./store-config.js"
 import { type HeadStats, headStats, type LoadedHead, qualifyRef, revParse } from "./v2.js"
 
 /**
- * `memhtml curate collapse`: the 2026-09-24 collapse as a command (`docs/v2-poc.md`, "Collapse").
+ * `memhtml curate collapse`: the 2026-09-24 collapse as a command (`docs/design.md` §23, "The
+ * collapse").
  *
  * The planner (`@memhtml/curator` `planCollapse`) cuts the head at the curator ref's tip into
  * archive, fold, and keep clusters with no model call; this module executes the first two kinds on

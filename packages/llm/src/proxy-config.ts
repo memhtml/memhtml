@@ -2,8 +2,8 @@
  * The LLM-proxy configuration: three environment variables and the two parsers that read them.
  *
  * memhtml calls its models on Bedrock directly by default. Set {@link PROXY_BASE_URL_VAR} and every
- * model call goes to an OpenAI- and Anthropic-compatible LLM proxy instead — an agentgateway
- * listener, or anything else serving the same four routes:
+ * model call goes to an OpenAI- and Anthropic-compatible LLM proxy instead, such as a local LLM
+ * gateway, or anything else serving the same four routes:
  *
  * | Lane                       | Route                  | Wire format                      |
  * | -------------------------- | ---------------------- | -------------------------------- |
@@ -75,7 +75,7 @@ export interface ProxyConfig {
  * scheme is required because a bare `host:4000` is what a shell profile most easily gets wrong and
  * `fetch` would reject it with a message that does not name the variable. Throwing rather than
  * returning `null` is deliberate: a set-but-unusable value dying at construction, with the variable
- * named, is the outcome `MEMHTML_CONSOLIDATOR_TURN_TIMEOUT_MS` chose for the same reason — a typo
+ * named, is the outcome the other `MEMHTML_*` duration variables chose for the same reason: a typo
  * that silently fell back to Bedrock direct would route production traffic somewhere the operator
  * did not point it.
  */

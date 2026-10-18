@@ -133,7 +133,7 @@ describe("validateOps", () => {
     const view = await head()
     const reserved = [
       "areas/arcs/reversibility.html",
-      "resources/people/laith.html",
+      "resources/people/laura.html",
       ".memhtml/sessions/x.html",
       "areas/inbox/index.html",
       "projects/x/sitemap.xml"
@@ -150,7 +150,7 @@ describe("validateOps", () => {
 
   it("the curate scope opens areas/arcs/ and resources/people/ and nothing else", async () => {
     const view = await head()
-    const curation = ["areas/arcs/reversibility.html", "resources/people/laith.html"]
+    const curation = ["areas/arcs/reversibility.html", "resources/people/laura.html"]
     const everyone = [".memhtml/sessions/x.html", "areas/index.html", "projects/x/sitemap.xml"]
     for (const path of curation) {
       // The default scope is `session`, stated or not.
@@ -180,16 +180,16 @@ describe("validateOps", () => {
     // A link op on a people record is judged under the same scope as a put.
     const link = {
       kind: "link" as const,
-      path: "resources/people/laith.html",
+      path: "resources/people/laura.html",
       rel: "relates_to",
       href: "/areas/inbox/alpha.html"
     }
-    expect(validateOps(view, [put(link.path, memory("L", "Laith.")), link])).toEqual([
+    expect(validateOps(view, [put(link.path, memory("L", "Laura.")), link])).toEqual([
       { kind: "reserved-path", path: link.path },
       { kind: "reserved-path", path: link.path }
     ])
     expect(
-      validateOps(view, [put(link.path, memory("L", "Laith.")), link], { scope: "curate" })
+      validateOps(view, [put(link.path, memory("L", "Laura.")), link], { scope: "curate" })
     ).toEqual([])
   })
 

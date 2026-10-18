@@ -130,7 +130,7 @@ describe("a proposed move", () => {
         confidence: null,
         importance: null,
         tags: [],
-        entities: ["project:microvms-agentd"],
+        entities: ["project:vm-runner"],
         links: [],
         archived: false,
         html: "<!doctype html><html>agentd</html>"
@@ -144,7 +144,7 @@ describe("a proposed move", () => {
             {
               kind: "move",
               path: "areas/inbox/agentd.html",
-              to: "resources/microvms-agentd/agentd.html"
+              to: "resources/vm-runner/agentd.html"
             }
           ]
         }
@@ -158,7 +158,7 @@ describe("a proposed move", () => {
         {
           kind: "move",
           path: "areas/inbox/agentd.html",
-          to: "resources/microvms-agentd/agentd.html",
+          to: "resources/vm-runner/agentd.html",
           html: "<!doctype html><html>agentd</html>"
         }
       ]

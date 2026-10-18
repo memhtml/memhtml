@@ -1,4 +1,4 @@
-/** @memhtml/snapshot: the columnar cold-start cache. See docs/v2-poc.md. */
+/** @memhtml/snapshot: the columnar cold-start cache. See `docs/design.md` §20. */
 export {
   listSnapshots,
   pruneSnapshots,

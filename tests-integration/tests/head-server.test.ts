@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest"
 import { cliEntryPoint, runBuilt } from "./spawned.js"
 
 /**
- * `memhtml head serve` as a real process (`docs/v2-poc.md`, "Head server"): the built binary serving
+ * `memhtml head serve` as a real process (`docs/design.md` §22): the built binary serving
  * a temp repo over its socket, a second built binary asking it, a commit landed through `session
  * commit` while it serves, and SIGTERM and SIGINT ending it with its envelope written and its socket
  * gone.

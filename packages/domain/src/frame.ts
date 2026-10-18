@@ -8,7 +8,7 @@
  *
  * ── A PORT, not a design ─────────────────────────────────────────────────────────────────────────
  *
- * Ported verbatim from the eval harness's `src/adapter/consolidate.ts` (external-evals), where the
+ * Ported verbatim from an external eval harness's conflict-resolution adapter, where the
  * rule was measured against all 8 MAB Conflict_Resolution rows before it was believed: keying on it
  * removes 143→5774 stale facts per row, loses 0 single-hop golds on three of four rows (1 on cr-07),
  * and loses 2-11 multi-hop golds. Those last are questions whose published gold disagrees with

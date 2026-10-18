@@ -14,12 +14,13 @@ import { EXIT_OK, EXIT_RUNTIME, EXIT_USAGE } from "../src/envelope.js"
 import { run } from "../src/run.js"
 
 /**
- * `memhtml curate collapse --model fake` end to end over a real temp repo (`docs/v2-poc.md`,
- * "Collapse"): a dry run prints the plan and writes nothing; a run with rulings lands the archive
- * cluster with no model and every fold through the fake, with each member archived and reached from
- * its canonical by a `supersedes` link; a keep cluster and a keep-ruled record are untouched; a saved
- * plan replays with `--only`, and a plan whose `largeGroup` is lowered drives the driver-completes
- * path where the fake writes the put alone and the driver adds every archive and link.
+ * `memhtml curate collapse --model fake` end to end over a real temp repo (`docs/design.md` §23,
+ * "The collapse"): a dry run prints the plan and writes nothing; a run with rulings lands the
+ * archive cluster with no model and every fold through the fake, with each member archived and
+ * reached from its canonical by a `supersedes` link; a keep cluster and a keep-ruled record are
+ * untouched; a saved plan replays with `--only`, and a plan whose `largeGroup` is lowered drives
+ * the driver-completes path where the fake writes the put alone and the driver adds every archive
+ * and link.
  *
  * Every claim about the tree is read back with `git show`, `git ls-tree`, or `access`, independently
  * of the payload. The fixture is committed with porcelain because nothing here reads the SQLite index.

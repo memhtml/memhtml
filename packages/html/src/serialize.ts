@@ -94,7 +94,7 @@ export const metaPairs = (doc: MemoryDoc): ReadonlyArray<readonly [MemoryMetaNam
 
 /**
  * Serialize a doc to a whole file. Inverse of `parseMemory` on the fields the format carries:
- * `parseMemory(serializeMemory(doc))` yields `doc` again, which is the property that lets sleep
+ * `parseMemory(serializeMemory(doc))` yields `doc` again, which is the property that lets a caller
  * read, adjust, and write a file back without touching content it did not mean to touch.
  *
  * `article.html` is re-parsed and re-serialized rather than interpolated, so a caller that

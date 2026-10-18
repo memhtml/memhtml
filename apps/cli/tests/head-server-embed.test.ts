@@ -23,7 +23,7 @@ import { headSearch, loadHeadAt } from "../src/v2.js"
 import { fakeEmbedder, fakeVector } from "./harness.js"
 
 /**
- * The head server's embed path (`docs/v2-poc.md`, "Head server"): the query embed's deadline, the
+ * The head server's embed path (`docs/design.md` §22): the query embed's deadline, the
  * one late embed it lets finish, the warmup that keeps the path to the proxy warm, and the
  * background fill that embeds what a commit brought. Every embedder here is a fake that sleeps, so
  * a deadline is checked against the wall clock of a real socket round trip and nothing reaches a

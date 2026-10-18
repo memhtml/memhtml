@@ -383,7 +383,7 @@ const axis = (index: number, dimension = 4): Float32Array => {
 /**
  * The answer without vectors over 120 generated records: seven queries at limit 25 with `now`
  * pinned, plus one at the default limit with no `now`. Compared as JSON text, so a score that moved
- * by one ulp fails. First captured at v2-poc 8192508 (2026-09-27); recaptured when the lexical arm
+ * by one ulp fails. First captured on 2026-09-27 at 8192508; recaptured when the lexical arm
  * was capped at 40 and recency narrowed to the records another arm matched, which emptied the three
  * queries no record matches and cut "Country11" to its one match; recaptured on 2026-09-28 when
  * recency became the tie-break between equal fused scores, which put the record each query names

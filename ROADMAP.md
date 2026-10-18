@@ -6,6 +6,14 @@ Written 2026-08-06, at the close of the first benchmark campaign (external-evals
 
 **How to read a `SHIPPED` commit reference here.** Every SHA in this file that predates publication — `5decd60`, `6d8b7bb`, `07f4c6e`, `1ca44f4`, `a05723e`, `82c2600`..`133408a`, `623d7d3`, `009430e`, `d216015`, `bdc468a` — is a pre-publication-history SHA and does not resolve in this repository (checked 2026-08-25: `git cat-file -t` fails on all eleven). They are a record of the order work landed in, not a reference you can `git show`. The evidence that a `SHIPPED` line is true is the code and the tests it names, which do resolve; the same annotation and the same reason apply to `docs/backlog.md`'s pre-publication SHAs and to the `7c22c69` in the `spec/ops-*.jsonl` headers.
 
+## v2 shipped in 0.16 (2026-10-18)
+
+memhtml 0.16.0 ships v2. Writers work in sessions over an immutable in-memory head, and each session lands as one commit through a compare-and-swap on its ref (`docs/design.md` §15 to §18). `memhtml head serve` keeps the head loaded for search, exec, and commits (§22). The store's policy lives in `memhtml.config.json` (§19). Curation runs as `curate run` and `curate collapse` on a `curate/<date>` branch that only `curate merge` lands, behind the head gate (§23). Operators upgrade with https://memhtml.github.io/learn/operations/migrate-to-0-16/.
+
+v2 answers three problems measured on a production store on 2026-09-22 (8,213 files, 2,216 commits). Two thirds of active memories sat in the inbox, and `curate run` now files them with `move`. The 0.15 curation pipeline put 2,851 of 2,955 scored memories in its compress band while compressing 7 a run, and `curate collapse` now folds clusters in bulk from a deterministic plan. One 124 s search held the single SQLite writer, and sessions now commit without opening `index.db`.
+
+The sleep pipeline and the consolidator agent are removed in 0.16. Horizon 2's item 11 and the sleep mentions in the dated sections below describe the system before 0.16 and stay as the record. Horizon 3's sleep backfill item is closed with them.
+
 ## Where the system stands (measured, 2026-08-06)
 
 | benchmark                                             | memhtml    | published reference                     |
@@ -185,6 +193,8 @@ The follow-on this exposes: that fixture is now **saturated**. Every target outr
 
 **SHIPPED** (2026-08-08; redesigned 2026-08-09 — `623d7d3`, `009430e`, `d216015`)
 
+**Removed in 0.16 (2026-10-18).** `apps/consolidator` and the sleep phase that hosted it are gone. The text below is the record of what shipped then.
+
 The agent is `apps/consolidator` — eve over the AI SDK Bedrock provider, `just-bash` sandbox, `jwtHmac` over a per-run secret, pinned to loopback. The phase hands it up to 10 unread sessions per night (newest first, over 8 KiB, settled for an hour) and lands each candidate that clears the bar as its own commit on the sleep branch, which is what puts a distilled memory behind the discrimination gate. Sleep depends on a structural port, never on eve; `apps/cli` is the one module that knows both halves exist.
 
 Every recorded decision held: Opus 5 on the Bedrock global endpoint with high reasoning effort, the very-high bar for writing (stated in the agent's instructions AND enforced as a two-evidence-quote minimum in both the schema and the phase's own gate), and the reviewable-commit discipline. One thing was added rather than decided in advance: the evidence quotes go in the COMMIT BODY and never into a memory, so `.memhtml` still holds no session content, and the commit body is indented two spaces because git otherwise folds a quote shaped like `Memhtml-Phase: integrity` into the trailer block a resume reads.
@@ -217,7 +227,7 @@ Decisions recorded 2026-08-07 (agent stack revised same day from Strands to eve)
 ## Horizon 3 — standing backlog, unchanged priority
 
 - **Task family over MCP** (backlog 4): CLI-only today; MCP agents cannot open/move tasks. Shape settled (task_add/task_status/task_list, `failure: ToolFailure` discipline).
-- **Sleep backfill for unlabeled fences** (backlog 7 decision 5): now that the detector has a measured threshold, this is mechanical — but wait for a corpus with enough unlabeled code to matter.
+- ~~**Sleep backfill for unlabeled fences** (backlog 7 decision 5): now that the detector has a measured threshold, this is mechanical — but wait for a corpus with enough unlabeled code to matter.~~ CLOSED (2026-10-18). The sleep pipeline is removed in 0.16. A curator session on a `curate/<date>` branch can run the same backfill when a corpus needs it.
 - ~~**Doc-sync sweep** (backlog 6): design.md's ResponseType line names 16 of 31 members; derive it from the enum.~~ — RESOLVED (2026-08-18): design.md now cites the constant (`apps/cli/src/envelope.ts:12`) without enumerating, so the enum (32 members today) can grow without the doc drifting.
 - **Batch op vocabulary v2** (backlog 5): defer until a consumer pulls it.
 - **Upstream watch** (backlog): effect McpServer still drops the MCP `instructions` initialize field; new tools must declare `failure: ToolFailure` or errors mask.

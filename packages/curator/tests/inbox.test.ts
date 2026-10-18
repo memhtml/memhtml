@@ -153,17 +153,17 @@ describe("inboxWorkList names a home and its evidence", () => {
 
   it("a writer's bucket is never a home, and a tag alone is evidence rather than a home", () => {
     const buckets = STRICT_POLICY.curator.writerBuckets
-    expect(isBucketHome("wiki-kernel-import", buckets)).toBe(true)
+    expect(isBucketHome("notes-import", buckets)).toBe(true)
     expect(isBucketHome("working-thread-2026-09-10", buckets)).toBe(true)
     expect(isBucketHome("notes-2026-09-10", buckets)).toBe(true)
     expect(isBucketHome("trace-consolidation", buckets)).toBe(true)
     expect(isBucketHome("memhtml", buckets)).toBe(false)
     expect(isBucketHome("import-tools", buckets)).toBe(false)
-    expect(isBucketHome("wiki-kernel-import", [])).toBe(false)
+    expect(isBucketHome("notes-import", [])).toBe(false)
     const records = [
-      record("resources/wiki-kernel-import/a.html", { entities: ["service:x"] }),
-      record("resources/wiki-kernel-import/b.html", { entities: ["service:x"] }),
-      record("resources/wiki-kernel-import/c.html", { entities: ["service:x"] }),
+      record("resources/notes-import/a.html", { entities: ["service:x"] }),
+      record("resources/notes-import/b.html", { entities: ["service:x"] }),
+      record("resources/notes-import/c.html", { entities: ["service:x"] }),
       record("resources/tagged/a.html"),
       record("areas/inbox/imported.html", { entities: ["service:x"] }),
       record("areas/inbox/tagged.html", { entities: ["system:none"], tags: ["Tagged"] }),
@@ -177,15 +177,15 @@ describe("inboxWorkList names a home and its evidence", () => {
 
   it("with no writer buckets, an importer's directory is a home like any other", () => {
     const records = [
-      record("resources/wiki-kernel-import/a.html", { entities: ["service:x"] }),
-      record("resources/wiki-kernel-import/b.html", { entities: ["service:x"] }),
+      record("resources/notes-import/a.html", { entities: ["service:x"] }),
+      record("resources/notes-import/b.html", { entities: ["service:x"] }),
       record("areas/inbox/imported.html", { entities: ["service:x"] }),
       ...filler(10)
     ]
     const result = inboxWorkList(viewOver(records), HEADLINE_CLAIM_TYPES)
     expect(
       result.inbox.find((entry) => entry.path === "areas/inbox/imported.html")?.home
-    ).toMatchObject({ dir: "resources/wiki-kernel-import", kind: "existing" })
+    ).toMatchObject({ dir: "resources/notes-import", kind: "existing" })
     expect(entryFor(records, "areas/inbox/imported.html")?.home).toBeNull()
   })
 

@@ -21,9 +21,9 @@ import { Duration, Effect, Fiber, Option, type Result } from "effect"
 import type { EmbedderShape } from "./api-layer.js"
 
 /**
- * The vector arm's disk half (`docs/v2-poc.md`, "Vector arm"): the one cache file the CLI reads and
- * writes, `head embed` filling it, and the degraded answer every searching arm gives when the arm
- * cannot run.
+ * The vector arm's disk half (`docs/design.md` §20, "The vector cache"): the one cache file the CLI
+ * reads and writes, `head embed` filling it, and the degraded answer every searching arm gives when
+ * the arm cannot run.
  *
  * The space is the configured embedder's, `@memhtml/llm`'s model id at its dimension, the same pair
  * v1's `EMBED_WATERMARK` names, so the file for Cohere Embed v4 at 1024 floats is

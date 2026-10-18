@@ -83,7 +83,7 @@ export const refusesEnvRoot = (env: NodeJS.ProcessEnv = process.env): boolean =>
 /**
  * `MEMHTML_SESSION`: the v2 session this process writes through.
  *
- * An agent runtime exports it to every subprocess of one run (hex-bonk sets `run-<run id>`), so an
+ * An agent runtime exports it to every subprocess of one run (for example `run-<run id>`), so an
  * agent writes with `memhtml session exec <<'SH'` and never repeats an id, and the runtime commits
  * that one session when the run ends. Set, it does three things (`run.ts`): every `session` command
  * takes it as the default `--id`; `session put` and `session exec` start the session on first use
@@ -151,7 +151,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
      */
     name: PROXY_BASE_URL_VAR,
     description:
-      "An OpenAI- and Anthropic-compatible LLM proxy's origin, e.g. `http://127.0.0.1:4000` for an agentgateway listener. Set, every model call leaves through it instead of going to Bedrock directly: Anthropic models on `/v1/messages`, the OpenAI entity extractor on `/v1/chat/completions`, embeddings on `/v1/embeddings`. Absent means Bedrock directly, under `MEMHTML_AWS_REGION` and the Bedrock credential. A set-but-malformed value fails at startup naming this variable rather than falling back to the direct path.",
+      "An OpenAI- and Anthropic-compatible LLM proxy's origin, e.g. `http://127.0.0.1:4000` for a local LLM gateway. Set, every model call leaves through it instead of going to Bedrock directly: Anthropic models on `/v1/messages`, the OpenAI entity extractor on `/v1/chat/completions`, embeddings on `/v1/embeddings`. Absent means Bedrock directly, under `MEMHTML_AWS_REGION` and the Bedrock credential. A set-but-malformed value fails at startup naming this variable rather than falling back to the direct path.",
     fallback: null
   },
   {

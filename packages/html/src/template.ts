@@ -52,7 +52,7 @@ export interface NewMemoryInput {
   readonly tags?: ReadonlyArray<string> | undefined
   /**
    * Other names this file's subject is recorded under, as `memhtml-alias` metas. A person file's
-   * identity declaration, which sleep's entity resolution reads as merge evidence.
+   * identity declaration, meant as merge evidence for entity resolution.
    */
   readonly aliases?: ReadonlyArray<string> | undefined
   readonly links?: ReadonlyArray<{ readonly rel: EdgeRel; readonly href: string }> | undefined

@@ -240,11 +240,15 @@ describe("placementFor", () => {
     // resources/people/ is reserved, so routing there refused every fleet fact about a colleague.
     expect(placementFor({ memoryType: "semantic", entities: ["person:sasha"] })).toBe(INBOX_DIR)
     expect(
-      placementFor({ memoryType: "semantic", entities: ["person:laura", "project:hex-bonk"] })
+      placementFor({ memoryType: "semantic", entities: ["person:laura", "project:agent-runtime"] })
     ).toBe(INBOX_DIR)
     expect(
-      placementFor({ memoryType: "semantic", entities: ["person:laura"], workspace: "hex-bonk" })
-    ).toBe("projects/hex-bonk")
+      placementFor({
+        memoryType: "semantic",
+        entities: ["person:laura"],
+        workspace: "agent-runtime"
+      })
+    ).toBe("projects/agent-runtime")
     expect(
       placementFor({ memoryType: "semantic", entities: ["person:laura"], tags: ["reviews"] })
     ).toBe("resources/reviews")

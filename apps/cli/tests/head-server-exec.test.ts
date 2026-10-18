@@ -22,7 +22,7 @@ import { loadHeadAt } from "../src/v2.js"
 import { fakeEmbedder } from "./harness.js"
 
 /**
- * `session exec` through the head server (`/v1/exec`, `docs/v2-poc.md`, "Head server", "Exec"), in
+ * `session exec` through the head server (`/v1/exec`, `docs/design.md` §22, "Exec"), in
  * process over real temp git repos and a real Unix socket, with the deterministic embedder bound
  * to the server.
  *

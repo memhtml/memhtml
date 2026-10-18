@@ -9,7 +9,7 @@ import type { GuestJob, GuestRun, SandboxRunner } from "./session-exec.js"
 
 /**
  * The head server's sandbox runner: a small pool of warm `worker_threads` workers, each running
- * `guest/sandbox-runner.mjs` (`docs/v2-poc.md`, "Head server", "Exec").
+ * `guest/sandbox-runner.mjs` (`docs/design.md` §22, "Exec").
  *
  * ## Why a worker
  *

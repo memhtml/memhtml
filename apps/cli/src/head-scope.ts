@@ -15,9 +15,9 @@ import { Effect, Exit } from "effect"
 import type { HeadScope, HitDetail, ScopeReport } from "./head-protocol.js"
 
 /**
- * The server half of `memory_search` and `memory_recall` over the head (`docs/v2-poc.md`, "Search
- * and recall on the head"): v1's scope rules as a predicate over records, and the per-hit fields v1's
- * index holds, computed from the record the answer ranked.
+ * The server half of `memory_search` and `memory_recall` over the head (`docs/design.md` §22,
+ * "Search and recall on the head"): v1's scope rules as a predicate over records, and the per-hit
+ * fields v1's index holds, computed from the record the answer ranked.
  *
  * Every rule here is v1's, read off the code that implements it there, so one scope admits one set
  * of files through either door: `assembleScope` (`@memhtml/index` `scope.ts`) for the predicate,

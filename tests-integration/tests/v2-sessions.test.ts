@@ -20,7 +20,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { type Cli, makeCli, underStrictStore } from "./harness.js"
 
 /**
- * The v2 proof of concept end to end (`docs/v2-poc.md`, "Integration test (integrator)"): a
+ * v2 sessions end to end (`docs/design.md` §17, "Three conflict tiers"): a
  * 300-memory fixture, eight sessions started concurrently on one version, each committing three
  * disjoint files through the rebase-and-retry loop, and the head advanced through every resulting
  * commit with structural sharing. Then the four conflict cases from the session suite, driven through

@@ -17,7 +17,7 @@ import {
 } from "./wire.js"
 
 /**
- * The two ways a sleep phase reaches a model: prose, and one forced-tool object.
+ * The two ways a caller reaches a model: prose, and one forced-tool object.
  *
  * Per-item failure isolation is NOT here. A phase that iterates candidates decides for
  * itself whether one bad response skips an item or fails the phase, and it does that with
@@ -50,8 +50,8 @@ export interface StructuredRequest<A, I> {
   /**
    * Cache the system prompt as a prefix across calls. See {@link GenerateOptions.cacheSystem}.
    *
-   * Set by callers that repeat one system prompt over many calls, which is every batched sleep
-   * phase. The value only reshapes the request body; the response and the decode are unchanged, so
+   * Set by callers that repeat one system prompt over many calls, such as a batched extraction
+   * pass. The value only reshapes the request body; the response and the decode are unchanged, so
    * setting it can change what a call costs and cannot change what it returns.
    */
   readonly cacheSystem?: boolean | undefined
@@ -71,7 +71,7 @@ export interface ModelClientShape {
 export const ModelClient = Context.Service<ModelClientShape>("memhtml/ModelClient")
 
 /**
- * Per-deployment wire defaults a caller's `GenerateOptions` does not name. The sleep phases say
+ * Per-deployment wire defaults a caller's `GenerateOptions` does not name. The callers say
  * what a call IS (system, effort, budget); the environment says how the transport should carry
  * it, and this is where the two meet. A field set on the call wins over the default.
  */
@@ -249,9 +249,9 @@ export const makeModelClient = (
 /**
  * The transport is whichever `invokeClientFor` selects from the configuration: Bedrock directly,
  * or the LLM proxy `MEMHTML_LLM_BASE_URL` names. Both bound a hung socket
- * (`REQUEST_HANDLER_OPTIONS`) as well as retrying throttles. The sleep phases run their model
- * calls sequentially, so without the bound one dead connection would stall a whole night's phase
- * rather than failing it.
+ * (`REQUEST_HANDLER_OPTIONS`) as well as retrying throttles. A caller that runs its model calls
+ * in sequence would otherwise stall on one dead connection for the rest of its run rather than
+ * failing.
  */
 export const ModelClientLive = Layer.effect(
   ModelClient,

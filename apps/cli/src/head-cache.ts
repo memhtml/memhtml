@@ -22,7 +22,7 @@ import { type GitFailure, makeGit, parseNulPathList } from "@memhtml/store"
 import { Effect } from "effect"
 
 /**
- * The head's cold-start cache, on both sides (`docs/v2-poc.md`, "Loading from snapshots").
+ * The head's cold-start cache, on both sides (`docs/design.md` §20, "Loading from snapshots").
  *
  * Read side: {@link loadVersion} builds the version at a sha from its own snapshot when one exists,
  * else from the newest snapshot of an ANCESTOR commit advanced through `advanceHead` over the paths

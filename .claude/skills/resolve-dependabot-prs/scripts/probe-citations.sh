@@ -10,7 +10,7 @@
 #      or the bump re-stales prose that was correct a moment ago.
 #
 # Usage:
-#   probe-citations.sh eve 0.38.3
+#   probe-citations.sh just-bash 3.4.2
 #   probe-citations.sh @aws-sdk/client-bedrock-runtime 3.1111.0
 #   probe-citations.sh @biomejs/biome 2.5.8
 
@@ -26,7 +26,7 @@ VERSION="${2:-}"
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-# The bare name without a scope, because a comment usually writes `eve 0.38.3`, not the scoped spec.
+# The bare name without a scope, because a comment usually writes `just-bash 3.4.2`, not the scoped spec.
 BARE="${PKG##*/}"
 
 echo "=== dated probes naming '${BARE}' ==="

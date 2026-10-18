@@ -57,8 +57,8 @@ export const RESPONSE_TYPES = [
   "integrations.doctor",
   "integrations.shell",
   "hook.output",
-  // The v2 proof of concept (`docs/v2-poc.md`): the session family and the head family, appended in
-  // the order the spec's command table lists them, plus `session.rebased` for the rebase step the
+  // The session family and the head family (`docs/design.md` §17 and §22), appended in the order
+  // the v2 command table lists them, plus `session.rebased` for the rebase step the
   // commit path hands back to the caller rather than retrying itself.
   "session.started",
   "session.appended",
@@ -70,14 +70,14 @@ export const RESPONSE_TYPES = [
   "head.search",
   "head.snapshot",
   "head.served",
-  // The curation door (`docs/v2-poc.md`, "Curation door"): a curator branch landed on its target.
+  // The curation door (`docs/design.md` §23): a curator branch landed on its target.
   "curate.merged",
-  // The curator itself (`docs/v2-poc.md`, "Curator"): one model-driven run over a curator session.
+  // The curator itself (`docs/design.md` §23): one model-driven run over a curator session.
   "curate.run",
-  // The collapse (`docs/v2-poc.md`, "Collapse"): a planned set of archive and fold clusters landed
+  // The collapse (`docs/design.md` §23): a planned set of archive and fold clusters landed
   // on one curator branch.
   "curate.collapse",
-  // The head's vector cache (`docs/v2-poc.md`, "Vector arm"): `head embed` filling it.
+  // The head's vector cache (`docs/design.md` §20, "The vector cache"): `head embed` filling it.
   "head.embedded",
   // `memhtml config`: the store's effective policy (`memhtml.config.json`) and the process tuning
   // variables, each value with where it came from.

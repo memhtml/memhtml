@@ -2,7 +2,7 @@
  * `@memhtml/head`: the corpus as a value. One immutable version per commit, held as persistent
  * `effect` structures, advanced by delta, read through `HeadView`, searched by RRF over a lexical
  * and (given vectors) a vector arm, with recency breaking exact ties.
- * See `docs/v2-poc.md`.
+ * See `docs/design.md` §16.
  */
 
 export type {
