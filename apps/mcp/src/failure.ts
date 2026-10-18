@@ -125,9 +125,43 @@ export const mcpSuggestionsFor = (error: unknown): ReadonlyArray<string> => {
       ]
     case "DiscriminationFailed":
       return ["call memory_status to see repo health", "report this to the operator"]
+    /*
+     * A record-creating tool the store's `v1Doors` policy closed. Inside a run session (the server
+     * carries `MEMHTML_SESSION`) the run has a barred door and a shell to reach it with; under the
+     * store's `closed` mode alone there may be neither, so the record is the operator's call. Either
+     * way the edits of existing records stay open, which is the recovery this toolkit does carry.
+     */
+    case "V1DoorClosed":
+      return [
+        text(error.session) === undefined
+          ? "report this to the operator if the record has to land: this store takes records only through sessions"
+          : "keep the record for the run's session: with a shell, write it with the session put or session exec command, and the run commits the session when it ends",
+        "call memory_link or memory_archive to edit records that already exist; the policy leaves those tools open"
+      ]
+    case "StoreConfigInvalid":
+      return [
+        "report this to the operator: the store's memhtml.config.json has to be fixed before a record-creating tool runs",
+        "keep working with memory_search, memory_read, and memory_link; only the record-creating tools read the policy"
+      ]
     default:
       return []
   }
+}
+
+/**
+ * The reason for the one failure whose CLI wording is a CLI recipe: a v1 record door the store's
+ * `v1Doors` policy closed. `messageFor` names the `memhtml session` commands that replace the door,
+ * which an MCP agent cannot run, so the reason here says what closed the tool and where records go
+ * instead in words that hold for a tool caller. `undefined` for every other failure, whose
+ * `messageFor` reason is used as it is.
+ */
+const mcpReasonFor = (error: unknown): string | undefined => {
+  if (!isTagged(error) || error._tag !== "V1DoorClosed") return undefined
+  const door = text(error.door) ?? "this tool"
+  const session = text(error.session)
+  return session === undefined
+    ? `${door} creates a record with no write bar, and this store's memhtml.config.json sets v1Doors to "closed", so records go in only through a session held to the bar, which this toolkit does not carry; nothing was written`
+    : `${door} creates a record with no write bar, and this server runs inside the session ${JSON.stringify(session)} (MEMHTML_SESSION), so the store's v1Doors policy routes the run's records through that session, held to the bar; nothing was written`
 }
 
 /**
@@ -186,7 +220,7 @@ export const toToolFailure = (error: unknown): ToolFailure => {
    */
   if (error instanceof ToolFailure) return error
 
-  return compose(codeFor(error), messageFor(error), mcpSuggestionsFor(error))
+  return compose(codeFor(error), mcpReasonFor(error) ?? messageFor(error), mcpSuggestionsFor(error))
 }
 
 /**

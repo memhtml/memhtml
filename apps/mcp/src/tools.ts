@@ -126,7 +126,9 @@ const READS = () => [DatabaseService]
 // the port resolves to `{ extractor: undefined }` under MEMHTML_EXTRACT_ENTITIES=off or MEMHTML_LLM=off. Embedder is
 // there for the near-duplicate assist, and it resolves to `{ document: undefined }` under
 // MEMHTML_EMBED=off, which the assist reports as `near_duplicates_degraded` rather than failing.
-const WRITES = () => [Store, Indexer, IndexRecorder, ExtractorPort, Embedder]
+// Roots is there for the store's policy file (`<root>/memhtml.config.json`), which the three
+// record-creating tools read before they write (`guardV1Door`).
+const WRITES = () => [Store, Indexer, IndexRecorder, ExtractorPort, Embedder, Roots]
 // Roots is there for the head server's socket (`<root>/.memhtml/head.sock`), which `memory_search`
 // and `memory_recall` ask before the index; a path, so the read-only claim above still holds.
 const RETRIEVES = () => [Retrieval, DatabaseService, Roots]

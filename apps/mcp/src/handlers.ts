@@ -7,6 +7,7 @@ import {
   codeFor,
   correctMemory,
   type EmbedderShape,
+  guardV1Door,
   type layerApp,
   linkMemories,
   listMemories,
@@ -317,6 +318,14 @@ const summarize = (
  *
  * `kit.toLayer({ … })` is checked against the toolkit's own parameter and success schemas, so a
  * handler returning the wrong shape is a compile error rather than a decode failure on a live call.
+ *
+ * The three tools that create a record (`memory_write`, `memory_write_batch`, `memory_correct`) run
+ * `guardV1Door` before anything else, as the CLI's `write`, `apply`, and `correct` do: it reads the
+ * store's `memhtml.config.json` on every call and refuses under its `v1Doors` mode, with
+ * `MEMHTML_SESSION` read from this server's own environment. `open` never refuses;
+ * `closed-in-session` (the default) refuses in a server started inside a run session and not in a
+ * shared one; `closed` always refuses. The edits of existing records (`memory_link`,
+ * `memory_archive`, `memory_reinforce`) are not doors and no mode closes them.
  */
 export const ToolHandlers: Layer.Layer<
   Layer.Success<ReturnType<typeof MemhtmlToolkit.toLayer>>,
@@ -326,6 +335,7 @@ export const ToolHandlers: Layer.Layer<
   memory_write: (params) =>
     handled(
       Effect.gen(function* () {
+        yield* guardV1Door("memory_write")
         const article = yield* authored(params.body, params.article_html)
         const result = yield* writeMemory({
           title: params.title,
@@ -392,6 +402,8 @@ export const ToolHandlers: Layer.Layer<
   memory_write_batch: (params) =>
     handled(
       Effect.gen(function* () {
+        // Before any op is looked at, in both modes: a closed door refuses the call, not each op.
+        yield* guardV1Door("memory_write_batch")
         const continueOnError = params.continue_on_error === true
         const reports: Array<BatchOpReport | undefined> = params.ops.map(() => undefined)
         const survivors: Array<WriteParams> = []
@@ -643,6 +655,7 @@ export const ToolHandlers: Layer.Layer<
   memory_correct: (params) =>
     handled(
       Effect.gen(function* () {
+        yield* guardV1Door("memory_correct")
         const article = yield* authored(params.body, params.article_html)
         const result = yield* correctMemory({
           targetPath: params.target_path,
