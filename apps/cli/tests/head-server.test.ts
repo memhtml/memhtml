@@ -12,6 +12,7 @@ import { Effect, Exit, Logger, Schema, Scope } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
 import type { EmbedderShape } from "../src/api-layer.js"
+import { COMMANDS } from "../src/commands.js"
 import { recordView } from "../src/curate-run.js"
 import { askHead } from "../src/head-client.js"
 import {
@@ -68,6 +69,9 @@ import { writeStoreConfig } from "./strict-store.js"
  *   `OverlayOpSchema.members.slice(0, 6)`, a union lacking `move` as the wire's own copy did ->
  *   "serves session put for a session whose log holds a move" (the server answers 400 and the put
  *   loads from git) and "decodes every op kind a log holds, unchanged" (2026-10-18).
+ * - `commands.ts` `head status`: the `--server` help naming `head.source` again, as it did before
+ *   0.16 -> "answers at the payload path each --server flag's help names" (`data.head.source` is
+ *   undefined: `head status` reports `source` at the top level) (2026-10-18).
  * - `head-server.ts` `heldVectors`: drop the stamp re-check inside `vectorLock` -> "reads a changed
  *   cache once for every request that saw the change" (`loads` is 8).
  * - `head-server.ts` `heldVectors`: drop the `!embedderOn` early return -> "with no embedder never
@@ -525,6 +529,48 @@ describe("the head server", () => {
     expect(landed.exitCode).toBe(0)
     expect(dataOf(landed.body)).toMatchObject({ kind: "committed", via: "server" })
     expect(dataOf(landed.body).paths).toEqual(expect.arrayContaining([from, to]))
+  })
+
+  it("answers at the payload path each --server flag's help names", async () => {
+    const { repo } = await corpus()
+    expect((await cli(repo.root, ["session", "start", "--id", "s1"])).exitCode).toBe(0)
+    await serve(repo.root)
+    const ops = join(repo.root, "ops.jsonl")
+    await writeFile(
+      ops,
+      `${JSON.stringify({
+        op: "write",
+        title: "Glacier melt",
+        type: "semantic",
+        body: "Glacier melt peaks in late summer.",
+        entity: "system:fixture"
+      })}\n`
+    )
+    const calls: Readonly<Record<string, ReadonlyArray<string>>> = {
+      "head status": ["head", "status"],
+      "head search": ["head", "search", "orchard facts"],
+      "session put": ["session", "put", "--id", "s1", "--file", ops],
+      "session exec": ["session", "exec", "--id", "s1", "--lang", "bash", "--script", "true"],
+      "session rebase": ["session", "rebase", "--id", "s1"]
+    }
+    // Every command whose --server help says "`<field>` is `server`", with the field it names.
+    const claims = COMMANDS.flatMap((command) => {
+      const help = command.flags.find((flag) => flag.name === "server")?.description ?? ""
+      const field = /`([\w.]+)` is `server`/.exec(help)?.[1]
+      return field === undefined ? [] : [{ name: command.name, field }]
+    })
+    expect(claims.map((claim) => claim.name).sort()).toEqual(Object.keys(calls).sort())
+    for (const { name, field } of claims) {
+      const result = await cli(repo.root, calls[name] ?? [])
+      expect(result.exitCode, name).toBe(0)
+      const value = field
+        .split(".")
+        .reduce<unknown>(
+          (node, key) => (node as Record<string, unknown> | undefined)?.[key],
+          dataOf(result.body)
+        )
+      expect(value, `${name}: data.${field}`).toBe("server")
+    }
   })
 
   it("searches with the vector arm over the cache it holds, the same hits as the local path", async () => {
