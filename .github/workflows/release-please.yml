@@ -97,12 +97,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Chrome's zygote sandbox needs unprivileged user namespaces, which the Ubuntu
-      # 24.04 runner image restricts through AppArmor — same step as check.yml, same
-      # reason: the a11y and budget gates drive a sandboxed headless Chrome.
-      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
-      # The Playwright Chromium those gates drive; a no-op when the version is cached.
+      # The Playwright Chromium the accessibility gate drives; a no-op when the version is cached.
       - run: pnpm exec playwright install chromium --with-deps
         working-directory: apps/docs
 
