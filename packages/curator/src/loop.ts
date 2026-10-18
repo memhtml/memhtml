@@ -87,9 +87,18 @@ export interface CuratorRunInput {
 const asToolResult = (value: unknown): string =>
   truncateToolResult(typeof value === "string" ? value : JSON.stringify(value))
 
-/** A thrown tool failure as a value the model can read and act on. */
-const describeFailure = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause)
+/**
+ * A thrown tool failure as a value the model can read and act on. A tagged error's `message` is
+ * empty, so its tag and payload fields carry the cause. Each typed error class already keeps
+ * stderr and argv out of its payload, so nothing here reaches past what a tool result may hold.
+ */
+const describeFailure = (cause: unknown): string => {
+  if (typeof cause === "object" && cause !== null && "_tag" in cause) {
+    const { _tag, ...fields } = cause as Record<string, unknown>
+    return `${String(_tag)} ${JSON.stringify(fields)}`
+  }
+  return cause instanceof Error ? cause.message : String(cause)
+}
 
 const describeApiError = (error: APICallError): string => {
   const body = typeof error.responseBody === "string" ? error.responseBody.slice(0, 300) : ""

@@ -1,3 +1,4 @@
+import { InvalidMemory } from "@memhtml/contracts/errors"
 import { renderTemplate } from "@memhtml/html"
 import { type Violation, writeBarReasons } from "@memhtml/session"
 import { Effect } from "effect"
@@ -416,6 +417,24 @@ describe("tool results are bounded and informative", () => {
     expect(result.stoppedBy).toBe("finish")
     const [text] = toolResultTexts(model, 1)
     expect(text).toContain("exec failed: sandbox unavailable")
+  })
+
+  it("a tool failing with a tagged error answers the model with its tag and payload", async () => {
+    // A tagged error's `message` is empty, so the model would otherwise read "read failed: ".
+    const tools = fakeTools()
+    tools.read = () =>
+      Effect.runPromise(
+        Effect.fail(InvalidMemory.make({ reason: "the overlay names a record the head lacks" }))
+      )
+    const model = scriptedModel([
+      { tool: "read", args: { path: "areas/inbox/a.html" } },
+      { tool: "finish", args: { report: "done" } }
+    ])
+    const result = await run({ tools, model, briefing: emptyBriefing, charter: CHARTER })
+    expect(result.stoppedBy).toBe("finish")
+    const [text] = toolResultTexts(model, 1)
+    expect(text).toContain("read failed: InvalidMemory")
+    expect(text).toContain("the overlay names a record the head lacks")
   })
 
   it("status carries the run's own spend beside the session's numbers", async () => {
