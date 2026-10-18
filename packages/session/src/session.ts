@@ -85,7 +85,12 @@ const sessionLockTarget = (root: string, id: string): string => join(root, SESSI
  */
 export const SESSION_REFS_PREFIX = "refs/memhtml/sessions/"
 
-const OverlayOpSchema = Schema.Union([
+/**
+ * One `OverlayOp` as JSON: the log's schema, and the head server's for every route that carries a
+ * session's ops (`/v1/neighbors` in `apps/cli/src/head-protocol.ts`), so the log and the wire decode
+ * the same kinds and a kind the log gains is one the wire reads.
+ */
+export const OverlayOpSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("put"), path: Schema.String, html: Schema.String }),
   Schema.Struct({
     kind: Schema.Literal("archive"),

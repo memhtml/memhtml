@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { join, win32 } from "node:path"
 
-import { HEAD_SOCKET } from "@memhtml/session"
+import { HEAD_SOCKET, OverlayOpSchema } from "@memhtml/session"
 import { Schema } from "effect"
 
 /**
@@ -205,33 +205,6 @@ export type SearchRequest = typeof SearchRequest.Type
 /** `POST /v1/read`: one record by repo-relative path. */
 export const ReadRequest = Schema.Struct({ path: Schema.String })
 
-const OverlayOpSchema = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("put"), path: Schema.String, html: Schema.String }),
-  Schema.Struct({
-    kind: Schema.Literal("archive"),
-    path: Schema.String,
-    to: Schema.String,
-    html: Schema.String
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("link"),
-    path: Schema.String,
-    rel: Schema.String,
-    href: Schema.String
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("unlink"),
-    path: Schema.String,
-    rel: Schema.String,
-    href: Schema.String
-  }),
-  Schema.Struct({
-    kind: Schema.Literals(["label", "unlabel"]),
-    path: Schema.String,
-    entity: Schema.String
-  })
-])
-
 /** One `write` op as `session put` decoded it from its JSONL (`WriteParams`). */
 const WriteParamsSchema = Schema.Struct({
   title: Schema.String,
@@ -265,10 +238,12 @@ const SessionPutOpSchema = Schema.Union([
 
 /**
  * `POST /v1/neighbors`: what `session put` computes before it appends, asked of the version at the
- * session's base. `ops` is the session's log as the client read it, `lines` the new ops (`write`,
- * `label`, and `unlabel` lines in file order), `at` the instant the writes are stamped with, so the
- * server's answer is a function of the request, the commit `sha` names, and the vector cache it
- * holds, never of the ref it follows.
+ * session's base. `ops` is the session's log as the client read it, decoded with the log's own
+ * schema (`OverlayOpSchema` from `@memhtml/session`), so every kind a log can hold crosses the wire,
+ * a `move` from `session exec` or the curator included. `lines` is the new ops (`write`, `label`,
+ * and `unlabel` lines in file order), `at` the instant the writes are stamped with, so the server's
+ * answer is a function of the request, the commit `sha` names, and the vector cache it holds, never
+ * of the ref it follows.
  */
 export const NeighborsRequest = Schema.Struct({
   sha: Schema.String,

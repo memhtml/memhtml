@@ -4,10 +4,11 @@ import { request } from "node:http"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 
+import type { OverlayOp } from "@memhtml/contracts"
 import { renderTemplate } from "@memhtml/html"
 import { snapshotPathFor } from "@memhtml/snapshot"
 import { type FixtureRepo, makeFixtureRepo } from "@memhtml/store/testing"
-import { Effect, Exit, Logger, Scope } from "effect"
+import { Effect, Exit, Logger, Schema, Scope } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
 import type { EmbedderShape } from "../src/api-layer.js"
@@ -19,6 +20,7 @@ import {
   HeadSocketPathTooLong,
   headSocketPath,
   NeighborsAnswer,
+  NeighborsRequest,
   SearchAnswer,
   socketPathMax
 } from "../src/head-protocol.js"
@@ -58,9 +60,14 @@ import { writeStoreConfig } from "./strict-store.js"
  * - `head-server.ts` `heldVectors`: return `vectors.read` without the `stat` -> "picks up a cache
  *   written while it runs, with no restart" (the search still reports `no-cache`), and every case
  *   that embeds before it serves.
- * - `head-protocol.ts` `OverlayOpSchema`: drop the `label`/`unlabel` member -> "computes session
- *   put's neighbors at the session's base" (the answer carrying the label fails to decode, so the
- *   client reads it as no server).
+ * - `head-protocol.ts` `NeighborsAnswer`: decode `appended` with a union lacking the
+ *   `label`/`unlabel` members -> "computes session put's neighbors at the session's base" (the
+ *   answer carrying the label fails to decode, so the client reads it as no server) and "decodes
+ *   every op kind a log holds, unchanged" (2026-10-18).
+ * - `head-protocol.ts` `NeighborsRequest` and `NeighborsAnswer`: decode the ops with
+ *   `OverlayOpSchema.members.slice(0, 6)`, a union lacking `move` as the wire's own copy did ->
+ *   "serves session put for a session whose log holds a move" (the server answers 400 and the put
+ *   loads from git) and "decodes every op kind a log holds, unchanged" (2026-10-18).
  * - `head-server.ts` `heldVectors`: drop the stamp re-check inside `vectorLock` -> "reads a changed
  *   cache once for every request that saw the change" (`loads` is 8).
  * - `head-server.ts` `heldVectors`: drop the `!embedderOn` early return -> "with no embedder never
@@ -471,6 +478,55 @@ describe("the head server", () => {
     expect(dataOf(status.body)).toMatchObject({ puts: 1, labels: 1 })
   })
 
+  it("serves session put for a session whose log holds a move", async () => {
+    const { repo, sha: base } = await corpus()
+    expect((await cli(repo.root, ["session", "start", "--id", "s1"])).exitCode).toBe(0)
+    await serve(repo.root)
+    const from = "areas/inbox/orchard.html"
+    const to = "resources/orchards/orchard.html"
+    const moved = await cli(repo.root, [
+      "session",
+      "exec",
+      "--id",
+      "s1",
+      "--lang",
+      "bash",
+      "--script",
+      `mkdir -p /mnt/memhtml/resources/orchards && mv /mnt/memhtml/${from} /mnt/memhtml/${to}`
+    ])
+    expect(moved.exitCode).toBe(0)
+    expect(dataOf(moved.body).server).toMatchObject({ used: true })
+    expect(dataOf(moved.body)).toMatchObject({
+      appended: 1,
+      harvested: [{ kind: "move", path: from }]
+    })
+    const logged = await cli(repo.root, ["session", "status", "--id", "s1"])
+    expect(dataOf(logged.body)).toMatchObject({ ops: 1, moves: 1, paths: [from, to] })
+
+    // The log now carries the move, and every later put sends it to the neighbors route.
+    const ops = join(repo.root, "ops.jsonl")
+    await writeFile(
+      ops,
+      `${JSON.stringify({
+        op: "write",
+        title: "Glacier melt",
+        type: "semantic",
+        body: "Glacier melt peaks in late summer.",
+        entity: "system:fixture"
+      })}\n`
+    )
+    const put = await cli(repo.root, ["session", "put", "--id", "s1", "--file", ops])
+    expect(put.exitCode).toBe(0)
+    expect(headOf(put.body)).toMatchObject({ sha: base, source: "server" })
+    expect(dataOf(put.body)).toMatchObject({ appended: 1, ops: 2 })
+
+    // The commit route reads the log itself, the move included, and lands it.
+    const landed = await cli(repo.root, ["session", "commit", "--id", "s1", "--message", "file"])
+    expect(landed.exitCode).toBe(0)
+    expect(dataOf(landed.body)).toMatchObject({ kind: "committed", via: "server" })
+    expect(dataOf(landed.body).paths).toEqual(expect.arrayContaining([from, to]))
+  })
+
   it("searches with the vector arm over the cache it holds, the same hits as the local path", async () => {
     const { repo, sha } = await corpus()
     const embedder = fakeEmbedder()
@@ -744,6 +800,67 @@ describe("the clients", () => {
     expect(dataOf(local.body)).toMatchObject({ sha, source: "git", server: null })
     const search = await cli(repo.root, ["head", "search", "orchard", "--no-server"])
     expect(headOf(search.body).source).toBe("git")
+  })
+})
+
+describe("the wire's op schema", () => {
+  const html = memory("orchard").html
+  /** One op of every kind; a kind the contract gains and this lacks is a type error here. */
+  const everyKind: { readonly [K in OverlayOp["kind"]]: Extract<OverlayOp, { kind: K }> } = {
+    put: { kind: "put", path: "areas/inbox/new.html", html },
+    archive: {
+      kind: "archive",
+      path: "areas/inbox/orchard.html",
+      to: "archive/2026/areas/inbox/orchard.html",
+      html
+    },
+    link: {
+      kind: "link",
+      path: "areas/inbox/a.html",
+      rel: "supports",
+      href: "/areas/inbox/b.html"
+    },
+    unlink: {
+      kind: "unlink",
+      path: "areas/inbox/a.html",
+      rel: "supports",
+      href: "/areas/inbox/b.html"
+    },
+    label: { kind: "label", path: "areas/inbox/a.html", entity: "system:orchard" },
+    unlabel: { kind: "unlabel", path: "areas/inbox/a.html", entity: "system:fixture" },
+    move: {
+      kind: "move",
+      path: "areas/inbox/orchard.html",
+      to: "resources/orchards/orchard.html",
+      html
+    }
+  }
+  const ops = Object.values(everyKind)
+
+  it("decodes every op kind a log holds, unchanged, in a neighbors request and its answer", () => {
+    for (const op of ops) {
+      const request = { sha: "0".repeat(40), ops: [op], lines: [], at: "2026-10-18T12:00:00Z" }
+      const decoded = Schema.decodeUnknownSync(NeighborsRequest, { onExcessProperty: "error" })(
+        request
+      )
+      expect(decoded).toEqual(request)
+      expect(Schema.encodeSync(NeighborsRequest)(decoded)).toEqual(request)
+      const answer = {
+        appended: [op],
+        puts: [],
+        neighbors: [],
+        violations: [],
+        blocking: [],
+        vector: null,
+        head: { sha: request.sha, ref: "refs/heads/main", records: 0, skipped: null }
+      }
+      expect(
+        Schema.decodeUnknownSync(NeighborsAnswer, { onExcessProperty: "error" })(answer)
+      ).toEqual(answer)
+    }
+    expect(ops.map((op) => op.kind).sort()).toEqual(
+      ["archive", "label", "link", "move", "put", "unlabel", "unlink"].sort()
+    )
   })
 })
 
