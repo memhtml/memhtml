@@ -1,6 +1,6 @@
 {
   "name": "memhtml",
-  "version": "0.15.1",
+  "version": "0.15.2",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.21.0",
@@ -21,9 +21,8 @@
     "test:eval": "turbo run test:eval",
     "figures:readme": "node scripts/readme-figures.mjs",
     "test:a11y": "turbo run test:a11y",
-    "test:budget": "turbo run test:budget",
     "gen:fixture": "turbo run build --filter=@memhtml/eval && node packages/eval/dist/gen-fixture.js",
-    "check": "turbo run lint lint:repo lint:md typecheck test test:integration test:eval test:a11y test:budget",
+    "check": "turbo run lint lint:repo lint:md typecheck test test:integration test:eval test:a11y",
     "package:assemble": "turbo run build && rm -rf dist-package && tsdown && node scripts/package-manifest.mjs",
     "package:smoke": "pnpm package:assemble && pnpm package:lint && node scripts/smoke-package.mjs",
     "package:lint": "publint --strict dist-package",

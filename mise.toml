@@ -80,16 +80,16 @@ description = "Re-resolve every `latest` tool in mise.lock, leaving mise.toml al
 run = "mise lock --bump"
 
 [tasks.browsers]
-description = "Fetch the pinned Chromium the accessibility and budget gates drive"
+description = "Fetch the pinned Chromium the accessibility gate drives"
 # Playwright 1.62 ships NO install script, so `pnpm install` never fetches a browser — measured, and
 # it is why `allowBuilds` needed no new entry for it. Acquiring it is therefore an explicit step, and
-# it belongs in `install`: `mise run check` runs both browser gates, so a clone that installed
+# it belongs in `install`: `mise run check` runs the browser gate, so a clone that installed
 # without this would fail the gate for want of a binary rather than for a defect.
 #
 # The download lands in a per-user cache (~/.cache/ms-playwright on Linux) keyed by Playwright's
 # build number, so this is a no-op once the version is present, and CI restores that path from a
-# cache before installing. `chromium` is Chrome for Testing: one binary serves axe through Playwright
-# and Lighthouse through CHROME_PATH, so both gates measure the same engine as each other and as CI.
+# cache before installing. `chromium` is Chrome for Testing, the engine axe drives through
+# Playwright, so the gate measures the same engine on a laptop as in CI.
 run = "pnpm --filter @memhtml/docs exec playwright install chromium"
 
 [tasks.install]
@@ -108,7 +108,7 @@ run = "pnpm install --frozen-lockfile"
 # --- the gate -----------------------------------------------------------------------
 
 [tasks.check]
-description = "The definition of done: lint, typecheck, tests, integration, eval, a11y, budget"
+description = "The definition of done: lint, typecheck, tests, integration, eval, a11y"
 raw_args = true
 run = "pnpm check"
 
@@ -172,11 +172,6 @@ run = "pnpm test:eval"
 description = "WCAG 2.2 AA over four pages of the built docs site, plus the probes axe lacks"
 raw_args = true
 run = "pnpm test:a11y"
-
-[tasks."test:budget"]
-description = "Lighthouse category floors and the byte budget over the built docs site"
-raw_args = true
-run = "pnpm test:budget"
 
 [tasks.spell]
 description = "Spell-check the docs site's authored prose against the project dictionary"

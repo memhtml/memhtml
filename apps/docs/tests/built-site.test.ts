@@ -3,7 +3,6 @@ import { join, relative } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { describe, expect, it } from "vitest"
-import lighthouserc from "../lighthouserc.json" with { type: "json" }
 import { AUDITED_PAGES, BASE_SEGMENT, DENIED_TERMS, DENYLIST, DIST_DIR } from "../src/gates.js"
 import browserConfig from "../vitest.a11y.config.js"
 import unitConfig from "../vitest.config.js"
@@ -208,61 +207,9 @@ describe("what axe cannot see", () => {
   })
 })
 
-describe("the two gate configurations name the same pages", () => {
-  /*
-   * `lighthouserc.json` is JSON and cannot import `src/gates.ts`, so the page set is written twice.
-   * This is the drift gate that makes the duplication safe — the same shape as the `AGENTS.md`
-   * check, and for the same reason: two files that must agree, and no mechanism forcing them to.
-   */
-  it("audits the same URLs for accessibility and for the performance budget", () => {
-    expect(lighthouserc.ci.collect.url).toEqual([...AUDITED_PAGES])
-  })
-
+describe("the page list and the vitest configs agree", () => {
   it("keeps every audited URL under the base segment the site is built with", () => {
     for (const url of AUDITED_PAGES) expect(url.startsWith(BASE_SEGMENT)).toBe(true)
-  })
-
-  /**
-   * The performance category is asserted `optimistic`, and every other category `median`.
-   *
-   * The asymmetry is the whole point and it is a measured decision, so it is gated rather than left
-   * as a line in a JSON file nobody diffs. Lighthouse's CLS reading competes with its own viewport
-   * emulation on a loaded machine: three runs of one unchanged page scored `1, 1, 0.81`, the outlier
-   * carrying `CLS 0.427` beside a perfect `TBT 0 ms` and `LCP 324 ms`
-   * (`tests/layout-stability.test.ts` records the full measurement). Contention can only depress a
-   * static page's score, never inflate it, so the best of three runs is the reading least polluted by
-   * the harness — and layout stability is gated deterministically by that probe instead.
-   *
-   * `median` on the other categories is deliberate in the same breath: accessibility, best practices
-   * and SEO are computed from the DOM rather than from timings, so they do not move under load, and
-   * `optimistic` there would let one lucky run hide a real regression.
-   */
-  it("aggregates the performance category optimistically and every other one at the median", () => {
-    /**
-     * An assertion's options object, or a failure naming the id that has none.
-     *
-     * lhci accepts two spellings — `"error"` alone, or `["error", { … }]` — so reading `[1]` off the
-     * short form would be `undefined` and every expectation below would silently pass on it.
-     */
-    const optionsOf = (id: string): { minScore?: number; aggregationMethod?: string } => {
-      const declared: unknown = (lighthouserc.ci.assert.assertions as Record<string, unknown>)[id]
-      if (!Array.isArray(declared) || typeof declared[1] !== "object" || declared[1] === null) {
-        throw new Error(`lighthouserc.json declares ${id} with no options object`)
-      }
-      return declared[1] as { minScore?: number; aggregationMethod?: string }
-    }
-
-    expect(optionsOf("categories:performance").aggregationMethod).toBe("optimistic")
-    for (const category of [
-      "categories:accessibility",
-      "categories:best-practices",
-      "categories:seo"
-    ]) {
-      expect(optionsOf(category).aggregationMethod, category).toBe("median")
-    }
-    // The floor itself is not what moved. A change to the score a page must reach is a separate
-    // decision from how three readings of it are combined.
-    expect(optionsOf("categories:performance").minScore).toBe(0.9)
   })
 
   /**

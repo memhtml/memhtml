@@ -384,7 +384,6 @@ CI runs that same `mise run check`, so the gate cannot drift from the one you ru
 | `mise run test:integration` | `pnpm test:integration` | the cross-package contracts over a real repo and a real database               |
 | `mise run test:eval`        | `pnpm test:eval`        | the discrimination gate (fake mode)                                            |
 | `mise run test:a11y`        | `pnpm test:a11y`        | WCAG 2.2 AA over the built docs site, in a real browser                        |
-| `mise run test:budget`      | `pnpm test:budget`      | Lighthouse category floors and the byte budget for that site                   |
 | `mise run gen:fixture`      | `pnpm gen:fixture`      | write a browsable fixture corpus (pure function of a seed)                     |
 | `mise run agents-doc`       | none                    | regenerate `AGENTS.md` from the built CLI's own table                          |
 | `mise run security`         | none                    | osv-scanner + semgrep + betterleaks + syft/grype + trivy, SARIF into `.sarif/` |
