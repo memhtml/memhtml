@@ -5,7 +5,7 @@ description: What git cannot reproduce, why it is gitignored anyway, and the byt
 
 ## 1. What git cannot reproduce
 
-The system keeps two databases, and this page calls them planes. The index plane, `.memhtml/index.db`, is computed from the git tree. The state plane, `.memhtml/state.db`, holds the usage statistics no file in the tree records: access counts, reinforcement counts, the outcome average, the bookkeeping behind reprieves, and edge corroboration counts. A reprieve is an extension of a memory's validity window granted instead of evicting it, and the count of how many a memory has already had lives here.
+The system keeps two databases, and this page calls them planes. The index plane, `.memhtml/index.db`, is computed from the git tree. The state plane, `.memhtml/state.db`, holds the usage statistics no file in the tree records: access counts, reinforcement counts, the outcome average, and the corroboration counts for edges and entity merges.
 
 Those numbers change on every read. A commit per access bump would be a commit per memory an agent opens.
 
@@ -18,10 +18,10 @@ So `state.db` is gitignored like the index, and unlike the index it cannot be re
 
 Figure 1 redraws that table as a circuit, which puts the two recovery paths side by side and shows how narrow the state plane's is.
 
-```d2 pad=20 src="_figures/two-planes.d2" title="The git tree and the committed sidecar state/access.jsonl are the two things that arrive with a fresh clone. From the clone, index rebuild reconstructs index.db from ls-tree, and state import reconstructs state.db from the sidecar only. state.db is exported back to the sidecar on every run by phase fourteen, byte-stable or committing nothing. Nothing else reaches state.db, so the sidecar is the only path by which the plane survives."
+```d2 pad=20 src="_figures/two-planes.d2" title="The git tree and the committed sidecar state/access.jsonl are the two things that arrive with a fresh clone. From the clone, index rebuild reconstructs index.db from ls-tree, and state import reconstructs state.db from the sidecar only. memhtml state export writes state.db back to the sidecar, byte-stable or committing nothing. Nothing else reaches state.db, so the sidecar is the only path by which the plane survives."
 ```
 
-**Figure 1: two planes, two recovery paths, and only one of them is free.** `index.db` comes back from the tree, which every clone carries. `state.db` has exactly one inbound arrow, from the sidecar, so if that export has not run then the plane's history ends at the last export that did. That is why the export is byte-stable: an unchanged plane has to produce an identical file whose commit is empty, or the sidecar churns a commit every night and nobody reviews it.
+**Figure 1: two planes, two recovery paths, and only one of them is free.** `index.db` comes back from the tree, which every clone carries. `state.db` has exactly one inbound arrow, from the sidecar, so if that export has not run then the plane's history ends at the last export that did. That is why the export is byte-stable: an unchanged plane has to produce an identical file whose commit is empty, or a scheduled export churns a commit on every run and nobody reviews it.
 
 ## 2. The sidecar is byte-stable or it commits nothing
 

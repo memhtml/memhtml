@@ -33,12 +33,14 @@ None of the three destroys anything on a fresh clone, so a recovery interrupted 
 
 The git tree is the system of record. It holds every memory, every authored `<link>`, every `<meta>`, and, through `git log --follow`, the history of every eviction. `.memhtml/state/access.jsonl` is committed too.
 
-| Artifact                                                                                                                  | Rebuilds from                 | Cost                                                                          |
-| ------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------- |
-| `index.db`: embeddings, mined edges, chunks, full-text search                                                             | The tree                      | `memhtml index rebuild --embed`. The Bedrock calls are the only real expense. |
-| `state.db`: access counts, reinforcement counts, and the outcome EWMA, a running average of positive and negative signals | The sidecar only              | `memhtml state import`. Anything since the last export is gone.               |
-| The trace tables                                                                                                          | `$MEMHTML_TRACE_ROOT`         | `memhtml trace index` from a zero watermark: slow, and it loses nothing.      |
-| An unmerged `curate/<date>` branch                                                                                        | Nothing, unless it was pushed | Run the curation session again. Every pass is safe to repeat.                 |
+| Artifact                                                                                                                  | Rebuilds from                 | Cost                                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `index.db`: embeddings, mined edges, chunks, full-text search                                                             | The tree                      | `memhtml index rebuild --embed`. The Bedrock calls are the only real expense.                                     |
+| `state.db`: access counts, reinforcement counts, and the outcome EWMA, a running average of positive and negative signals | The sidecar only              | `memhtml state import`. Anything since the last export is gone.                                                   |
+| The trace tables                                                                                                          | `$MEMHTML_TRACE_ROOT`         | `memhtml trace index` from a zero watermark: slow, and it loses nothing.                                          |
+| An unmerged `curate/<date>` branch                                                                                        | Nothing, unless it was pushed | Run `memhtml curate run` again. A run never moved `main`, so it's safe to repeat.                                 |
+| A session's operations that never landed, in `.memhtml/sessions/`                                                         | Nothing                       | The writes are gone. The agent that made them has to write them again.                                            |
+| The snapshots in `.memhtml/snapshots/` and the vector cache in `.memhtml/vectors/`                                        | The tree                      | The first head load reads git and writes a snapshot. `memhtml head embed` refills the vectors, at Bedrock prices. |
 
 :::agent
 

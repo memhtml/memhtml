@@ -32,13 +32,17 @@ The error being retried is `SQLITE_BUSY` specifically. The lock was never taken,
 
 The retry layer therefore matches `SQLITE_BUSY` alone, where a blanket retry on any SQLite error would repeat a statement that had already taken effect.
 
-## The one operation that needs exclusivity
+## Git writers wait for each other
 
-A curation session that checks out its branch needs it, for a git reason rather than a database one.
+The git side has its own rule. Every write that commits holds the checkout lock, `.memhtml/checkout.lock`, from its first stage to its commit. That covers `memhtml write`, `apply`, `correct`, `link`, `archive`, `task status`, `publish`, `state export`, `doctor --fix`, every session commit, and the `curate merge` fast-forward, in any process. So a CLI write and an MCP server write never commit each other's staged files. A writer waits up to 15 seconds for the lock and then fails with `ERR_STORAGE` (`checkout.locked`), having written nothing, and running it again is safe.
 
-With a `curate/<date>` branch checked out, a concurrent write commits onto that branch, where it either gets merged into `main` as if it were curation or disappears with `git branch -D`. Neither outcome is one you want to discover later.
+A running [head server](/learn/operations/run-a-head-server/) shares the store the same way. It holds the head in memory and opens no database, and when it commits a session it takes the same lock.
 
-Stop other writes for the length of a curation session, and start an interactive one with the agent idle.
+## Don't check out a curate branch
+
+`memhtml curate run` commits to its `curate/<date>` branch without checking it out, and it refuses to run on the branch your checkout has open, so a curation pass never needs other writes to stop. The one hazard left is a person checking out a `curate/<date>` branch to look at it. While it's checked out, a write from any process commits onto that branch, where it either gets landed on `main` as if it were curation or disappears with `git branch -D`.
+
+Review a curator branch with `git log` and `git diff` against `main` instead, as [curate the corpus](/learn/operations/curate-the-corpus/#review-the-branch) shows.
 
 ## The supervisor holds nothing
 

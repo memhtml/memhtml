@@ -33,7 +33,7 @@ Each child table (`packages/index/migrations/0001_files.sql:73-110`) declares `O
 
 `chunks` and `embeddings` key on `content_hash` rather than on `path`, with `chunk_id = sha256(content_hash + ":" + ordinal)` (`packages/index/src/chunking.ts:27`). An identical body anywhere in the tree therefore shares one chunk row and one vector, and a `git mv` costs zero embedding calls.
 
-`edges` (`packages/index/migrations/0008_tasks.sql:147`) carries the four relationship classes, the `derived` flag, a strength, a provenance, and CHECK constraints that refuse a cross-class rel, a self-loop, and `derived = 1` outside `provenance = 'sleep'`.
+`edges` (`packages/index/migrations/0008_tasks.sql:173`) carries the four relationship classes, the `derived` flag, a strength, a provenance, and CHECK constraints that refuse a cross-class rel, a self-loop, and `derived = 1` outside `provenance = 'sleep'`. That value is the one the sleep pipeline stamped on the edges it mined before 0.16 removed it, and no command writes a derived edge now.
 
 `index_state` (`packages/index/migrations/0007_watermark.sql:5`) is a single-row table, enforced by CHECK, holding the watermark and the identity of the vector space. The watermark is the commit sha the index has caught up to.
 

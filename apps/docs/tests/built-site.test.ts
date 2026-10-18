@@ -4,9 +4,10 @@ import { fileURLToPath } from "node:url"
 
 import { describe, expect, it } from "vitest"
 import lighthouserc from "../lighthouserc.json" with { type: "json" }
-import { AUDITED_PAGES, BASE_SEGMENT, DENYLIST, DIST_DIR } from "../src/gates.js"
+import { AUDITED_PAGES, BASE_SEGMENT, DENIED_TERMS, DENYLIST, DIST_DIR } from "../src/gates.js"
 import browserConfig from "../vitest.a11y.config.js"
 import unitConfig from "../vitest.config.js"
+import { deniedTermHits } from "./denied-terms.js"
 
 /**
  * Gates over the BUILT site. Every case here reads `dist/`, which turbo guarantees is current:
@@ -80,6 +81,41 @@ describe("no denylisted token reaches a public page", () => {
       expect(hits, `${pattern.source} must not reach a public page — ${why}`).toEqual([])
     })
   }
+
+  /*
+   * The terms that can't be named in this file either, matched by digest (see `DENIED_TERMS`). One
+   * scan of the whole output feeds every case, and each case still reports only its own term, by
+   * entry number and kind, with the file and line where it appeared.
+   */
+  const termHits = (() => {
+    let found: ReadonlyArray<{ readonly at: string; readonly digest: string }> | undefined
+    return () => {
+      found ??= surfaces.flatMap((one) =>
+        deniedTermHits(one.text, new Set(DENIED_TERMS.map((entry) => entry.digest))).map((hit) => ({
+          at: `${one.path}:${hit.line}`,
+          digest: hit.digest
+        }))
+      )
+      return found
+    }
+  })()
+
+  DENIED_TERMS.forEach(({ digest, why }, index) => {
+    it(`refuses denied term ${index + 1}, ${why}`, () => {
+      const hits = [
+        ...new Set(
+          termHits()
+            .filter((hit) => hit.digest === digest)
+            .map((hit) => hit.at)
+        )
+      ]
+      expect(
+        hits,
+        `denied term ${index + 1} (${why}) must not reach a public page. Open each file at the line ` +
+          "shown to find it; the term itself is never printed"
+      ).toEqual([])
+    })
+  })
 
   it("scans every page of the site, on all three surfaces", () => {
     // Independently derived: Starlight writes one `index.html` per route plus `404.html`, and

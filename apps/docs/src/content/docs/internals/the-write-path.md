@@ -3,6 +3,8 @@ title: The write path
 description: How ordering does the duplicate detection, why a batch is one commit and one index pass, and why the conflict assist only reports.
 ---
 
+This chapter covers the v1 doors: `memhtml write`, `apply`, `correct`, and the MCP write tools, which commit straight to the store and reindex in the same call. A session takes a different path, with its own validation, a write bar, and a compare-and-swap on the ref, which [Sessions and the commit path](/internals/sessions-and-the-commit-path/) covers.
+
 ## 1. Singular write
 
 `writeMemory` (`packages/store/src/store.ts:530`) does six things in order. It renders the memory and checks the result, hashes the article text, asks whether that content already exists, claims a free path, writes the file, then stages and commits it.

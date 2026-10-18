@@ -19,6 +19,7 @@ import { siteUrl } from "./src/lib/agent-surface.js"
 import { baseRawLinks } from "./src/lib/base-raw-links.js"
 import { focusableScrollers } from "./src/lib/focusable-scrollers.js"
 import { llmsPages } from "./src/lib/llms-pages.js"
+import { removedPageRedirects, removedPageTwins } from "./src/lib/removed-pages.js"
 import { REPO_ROOT } from "./src/loaders/repo-sources.js"
 
 /**
@@ -70,6 +71,13 @@ export default defineConfig({
   site: origin,
   base,
   trailingSlash: "always",
+  /*
+   * A page this site published and then removed keeps its URL as a redirect to the page that
+   * replaced it, and its raw `.md` route keeps a note naming the replacement. Both come from one list,
+   * `REMOVED_PAGES` in `src/lib/removed-pages.ts`, which is also where the tests learn which built
+   * routes are stubs rather than pages.
+   */
+  redirects: removedPageRedirects(base),
   /*
    * Astro 7's default Markdown engine is Sätteri, and Starlight additively mutates whatever
    * processor is supplied here — it sets `features.directive` itself for its asides and PUSHES its
@@ -136,6 +144,7 @@ export default defineConfig({
      * documentation sets, so this is a post-build step rather than a configuration.
      */
     llmsPages({ site: new URL(origin), base }),
+    removedPageTwins(base),
     starlight({
       title: "memhtml",
       description: "Memory for agents, in HTML.",
