@@ -92,6 +92,50 @@ export const loadStorePolicy = (
     return { path, present: true, ...storePolicyOf(decoded.config) }
   })
 
+/**
+ * Where the store's policy comes from right now, for a status to report: `file` (present and
+ * decodes), `defaults` (absent: the library defaults apply, which refuse no type and anchor
+ * nothing), or `invalid` (present and unreadable or malformed: every write that needs the policy
+ * refuses with `ERR_STORE_CONFIG`, and `reason` says why). Never fails, so a status still answers
+ * over a broken file.
+ */
+export interface PolicySource {
+  readonly source: "file" | "defaults" | "invalid"
+  readonly path: string
+  readonly reason: string | null
+}
+
+/** {@link PolicySource} from one read of the store's policy file. */
+export const policySourceOf = (root: string): Effect.Effect<PolicySource> =>
+  loadStorePolicy(root).pipe(
+    Effect.map(
+      (loaded): PolicySource => ({
+        source: loaded.present ? "file" : "defaults",
+        path: loaded.path,
+        reason: null
+      })
+    ),
+    Effect.catchTag("StoreConfigInvalid", (invalid) =>
+      Effect.succeed<PolicySource>({
+        source: "invalid",
+        path: invalid.path,
+        reason: invalid.reason
+      })
+    )
+  )
+
+/** One line naming a {@link PolicySource}, as `head serve` logs it at startup. */
+export const describePolicySource = (policy: PolicySource): string => {
+  switch (policy.source) {
+    case "file":
+      return `policy from ${policy.path}`
+    case "defaults":
+      return `${STORE_CONFIG_FILE} absent: library defaults`
+    case "invalid":
+      return `${policy.path} does not decode (${policy.reason ?? "unknown"}): every write that needs the policy refuses with ERR_STORE_CONFIG until it is fixed`
+  }
+}
+
 /** {@link loadStorePolicy} at the root the app layer resolved (`--repo`, else `MEMHTML_ROOT`). */
 export const loadStorePolicyHere = Effect.gen(function* () {
   const roots = yield* Roots

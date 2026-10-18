@@ -7,7 +7,7 @@ import { dirname, join } from "node:path"
 import { renderTemplate } from "@memhtml/html"
 import { snapshotPathFor } from "@memhtml/snapshot"
 import { type FixtureRepo, makeFixtureRepo } from "@memhtml/store/testing"
-import { Effect, Exit, Scope } from "effect"
+import { Effect, Exit, Logger, Scope } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
 import type { EmbedderShape } from "../src/api-layer.js"
@@ -27,6 +27,7 @@ import { headVectorsPath, loadForSearch } from "../src/head-vectors.js"
 import { parseArgv, run, validate } from "../src/run.js"
 import { loadHeadAt, preparePuts } from "../src/v2.js"
 import { fakeEmbedder, noEmbedder } from "./harness.js"
+import { writeStoreConfig } from "./strict-store.js"
 
 /**
  * The head server (`head-server.ts`), its client (`head-client.ts`), and the three commands that
@@ -70,6 +71,10 @@ import { fakeEmbedder, noEmbedder } from "./harness.js"
  * - `head-client.ts` `askHeadFor`: read the connect phase by errno again -> "fall back to the local
  *   load on a store whose socket path is past the limit" (`session exec` fails with ERR_STORAGE,
  *   "it may have appended the harvest", once the length check is also dropped).
+ * - `head-server.ts` `startHeadServer`: drop the policy-source log line -> "logs where the store's
+ *   policy comes from at startup" (no line names the defaults or the file).
+ * - `head-server.ts` `app`: answer the status route without `policy` -> "logs where the store's
+ *   policy comes from at startup, and status reports it as of each request" (`policy` is absent).
  */
 
 const run_ = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
@@ -747,5 +752,69 @@ describe("head serve's usage guards", () => {
     expect(validate(parseArgv(["head", "serve", "--poll-ms", "-1"]))?.code).toBe("ERR_INVALID_FLAG")
     expect(validate(parseArgv(["head", "serve", "--ref", " "]))?.code).toBe("ERR_INVALID_FLAG")
     expect(validate(parseArgv(["head", "serve", "--poll-ms", "0"]))).toBeUndefined()
+  })
+})
+
+describe("the store's policy source", () => {
+  /** A server in its own scope, with every log line it writes kept in `logs`. */
+  const serveLogged = async (root: string, logs: Array<string>): Promise<HeadServer> => {
+    const scope = Scope.makeUnsafe()
+    scopes.push(scope)
+    const capture = Logger.layer([Logger.make((options) => logs.push(String(options.message)))])
+    return run_(
+      startHeadServer({ root, pollMs: 0, embedder: noEmbedder() }).pipe(
+        Scope.provide(scope),
+        Effect.provide(capture)
+      )
+    )
+  }
+
+  it("logs where the store's policy comes from at startup, and status reports it as of each request", async () => {
+    const { repo } = await corpus()
+    const logs: Array<string> = []
+    const server = await serveLogged(repo.root, logs)
+    expect(logs.filter((line) => line.includes("policy") || line.includes("config.json"))).toEqual([
+      "head serve: memhtml.config.json absent: library defaults"
+    ])
+    const path = join(repo.root, "memhtml.config.json")
+    const status = async () => (await raw(server.socket, "GET", "/v1/status")).json.policy
+    expect(await status()).toEqual({ source: "defaults", path, reason: null })
+    const headStatus = dataOf((await cli(repo.root, ["head", "status"])).body)
+    expect(headStatus.policy).toEqual({ source: "defaults", path, reason: null })
+    expect((headStatus.server as Record<string, unknown>).policy).toEqual(headStatus.policy)
+
+    // The file appears, then breaks: the next status says so, with no restart, and still answers.
+    await writeStoreConfig(repo.root)
+    expect(await status()).toEqual({ source: "file", path, reason: null })
+    await writeStoreConfig(repo.root, { config: "{not json" })
+    const broken = await raw(server.socket, "GET", "/v1/status")
+    expect(broken.status).toBe(200)
+    expect(broken.json.policy).toMatchObject({
+      source: "invalid",
+      path,
+      reason: expect.any(String)
+    })
+    const local = dataOf((await cli(repo.root, ["head", "status", "--no-server"])).body)
+    expect(local).toMatchObject({ server: null, policy: { source: "invalid", path } })
+  })
+
+  it("names the policy file a server starts over, and warns when it does not decode", async () => {
+    const { repo } = await corpus()
+    const path = await writeStoreConfig(repo.root, { commit: true })
+    const logs: Array<string> = []
+    await serveLogged(repo.root, logs)
+    expect(logs).toContain(`head serve: policy from ${path}`)
+
+    const other = await corpus()
+    await writeStoreConfig(other.repo.root, { config: "{not json" })
+    const warned: Array<string> = []
+    await serveLogged(other.repo.root, warned)
+    expect(
+      warned.filter((line) =>
+        line.startsWith(
+          `head serve: ${join(other.repo.root, "memhtml.config.json")} does not decode`
+        )
+      )
+    ).toHaveLength(1)
   })
 })

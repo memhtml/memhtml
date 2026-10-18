@@ -11,6 +11,7 @@ import { withCheckoutLock } from "./checkout-lock.js"
 import type { GitFailure } from "./errors.js"
 import { makePlumbing, type Plumbing } from "./plumbing.js"
 import { requireLogUnmoved, type Session, saveSessionLocked, withSessionLock } from "./session.js"
+import { settlePending } from "./settle.js"
 import { type CommitScope, touchedPaths, type Violation, validateOps } from "./validate.js"
 
 export type { CommitScope } from "./validate.js"
@@ -332,56 +333,6 @@ export const landOnRef = (input: {
   )
 }
 
-/**
- * Step 0, under the checkout lock: settle a `pending` commit an earlier call wrote to the log before
- * it touched the checkout, and then may have died at any point.
- *
- * - Reachable from the ref: it landed. The caller answers `committed` for it.
- * - Not reachable: it never landed. When `HEAD` is the ref, `read-tree -m -u pending <tip>` undoes a
- *   checkout update that ran without its swap. That two-tree merge changes only the paths where the
- *   shared index still holds `pending`'s version and the tip holds another, so it is a no-op when the
- *   checkout never followed, and when another writer has since committed the same bytes (a v1 commit
- *   after the dead holder's lock went stale) it leaves them, where rolling back to `pending^` would
- *   stage their deletion. With the tip still at `pending^`, it is exactly that rollback.
- * - A `pending` naming no object (pruned by `git gc`) never landed and has nothing to roll back from.
- */
-const settlePending = (input: {
-  readonly root: string
-  readonly git: Plumbing
-  readonly ref: string
-  readonly pending: string
-  readonly lock?: CheckoutLockOptions | undefined
-}): Effect.Effect<
-  { readonly landed: false } | { readonly landed: true; readonly worktreeSynced: boolean },
-  GitFailure | StorageFailure
-> => {
-  const { git, ref, pending } = input
-  return withCheckoutLock(
-    input.root,
-    Effect.uninterruptible(
-      Effect.gen(function* () {
-        if ((yield* git.revParse(pending)) === null) return { landed: false } as const
-        const checkedOut = (yield* git.headRef()) === ref
-        if (yield* git.isAncestor(pending, ref)) {
-          return { landed: true, worktreeSynced: checkedOut } as const
-        }
-        const tip = yield* git.revParse(ref)
-        if (checkedOut && tip !== null) {
-          yield* git
-            .readTreeIntoWorktree(pending, tip)
-            .pipe(
-              Effect.catch(() =>
-                Effect.logWarning(`${ref}: checkout not rolled back from pending ${pending}`)
-              )
-            )
-        }
-        return { landed: false } as const
-      })
-    ),
-    input.lock
-  )
-}
-
 /** The paths the ops touch that `from..to` changed: what a `rebase-needed` reports as `overlapping`. */
 const overlappingPaths = (
   git: Plumbing,
@@ -402,10 +353,12 @@ const overlappingPaths = (
  * step that touches the shared checkout runs under the repository's checkout lock as well, which
  * every v1 store write holds from its first stage to its commit.
  *
- * 0. Recovery ({@link settlePending}). A log carrying `pending` names a commit an earlier call built
- *    and may have landed before it was killed. Reachable from the ref: answer `committed` for it with
- *    `recovered: true` and clear the log. Not reachable: undo whatever checkout update it made, drop
- *    `pending` from the log, and continue.
+ * 0. Recovery (`settlePending`, `settle.ts`). A log carrying `pending` names a commit an earlier
+ *    call built and may have landed before it was killed. Reachable from the ref: answer `committed`
+ *    for it with `recovered: true` and clear the log. Not reachable: undo whatever checkout update it
+ *    made, drop `pending` from the log, and continue. Every append settles `pending` the same way
+ *    before it writes (`appendOps`), so the ops a landed `pending` leaves are exactly the ones it
+ *    committed, and clearing them loses nothing.
  * 1. `validateOps(head, ops, { scope })`; any violation is `refused` and writes nothing.
  * 2. The ref must be at the version that was validated. A ref that moved past `head.sha` is
  *    `rebase-needed` whether or not the changed paths overlap: duplicate hashes and frame keys are

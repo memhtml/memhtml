@@ -183,6 +183,7 @@ export {
   COMMIT_DEADLINE_DEFAULT_MS,
   COMMIT_DEADLINE_VAR,
   COMMIT_QUEUE_WAIT_MS,
+  COMMIT_REBASE_ROUNDS,
   CommitAnswer,
   CommitBase,
   CommitDeclined,
@@ -202,6 +203,7 @@ export {
   headSocketPath,
   NeighborsAnswer,
   NeighborsRequest,
+  PolicySourceStatus,
   ReadRequest,
   RebaseAnswer,
   RebaseRequest,
@@ -254,9 +256,12 @@ export { MCP_BIN_VAR, mcpEntryPoint, type ServeResult, serveMcp } from "./serve.
 export {
   type ConfigEntry,
   type ConfigTracking,
+  describePolicySource,
   guardV1Door,
   type LoadedStorePolicy,
   loadStorePolicy,
+  type PolicySource,
+  policySourceOf,
   storeConfigPath,
   storeConfigReport,
   v1DoorState

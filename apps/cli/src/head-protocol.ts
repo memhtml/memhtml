@@ -383,6 +383,17 @@ export const COMMIT_DEADLINE_VAR = "MEMHTML_COMMIT_DEADLINE_MS"
  */
 export const COMMIT_QUEUE_WAIT_MS = 20_000
 
+/**
+ * The most rebases a `/v1/commit` with `dropRefused` makes inside one permit: a commit answered
+ * `rebase-needed` is rebased onto the server's tip and committed again, up to this many times, and
+ * the last round's outcome is the answer. A caller that asked to drop what a rebase reveals has
+ * already chosen what the rebase decides, so the server spares it the round trip and the race: the
+ * permit is held from the first commit to the last, so no other commit through this server moves the
+ * ref between a rebase and its commit. Only a writer that does not ask the server can, and each
+ * round it does so costs one rebase.
+ */
+export const COMMIT_REBASE_ROUNDS = 3
+
 // ---------------------------------------------------------------------------------------------
 // Answers
 // ---------------------------------------------------------------------------------------------
@@ -493,6 +504,20 @@ export type EmbedActivityStatus = typeof EmbedActivityStatus.Type
  */
 export const LATE_EMBEDS_MAX = 1
 
+/**
+ * Where the store's policy comes from as of one read of `memhtml.config.json` (`policySourceOf` in
+ * `store-config.ts`): `file` when it is present and decodes, `defaults` when it is absent and the
+ * library defaults apply, `invalid` when it is present and does not read or decode, so every write
+ * that needs the policy refuses with `ERR_STORE_CONFIG` until it is fixed (`reason` says why).
+ */
+export const PolicySourceStatus = Schema.Struct({
+  source: Schema.Literals(["file", "defaults", "invalid"]),
+  /** The file's absolute path, whether or not it exists. */
+  path: Schema.String,
+  reason: Schema.NullOr(Schema.String)
+})
+export type PolicySourceStatus = typeof PolicySourceStatus.Type
+
 /** `GET /v1/status`. */
 export const HeadServerStatus = Schema.Struct({
   protocol: Schema.Literal(HEAD_PROTOCOL),
@@ -522,7 +547,12 @@ export const HeadServerStatus = Schema.Struct({
   /** The embedder's deadline, warmups, and traffic; with no embedder, zeros and nulls. */
   embed: EmbedActivityStatus,
   /** The workers `/v1/exec` runs scripts in: how many run at once, and what they have done. */
-  exec: ExecPoolStatus
+  exec: ExecPoolStatus,
+  /**
+   * The store's policy source, read from the working tree when the status is asked, the way every
+   * decision reads it. Absent from an older server.
+   */
+  policy: Schema.optionalKey(PolicySourceStatus)
 })
 export type HeadServerStatus = typeof HeadServerStatus.Type
 
@@ -793,13 +823,19 @@ const Declined = Schema.Struct({
   detail: Schema.String
 })
 
-/** `POST /v1/commit`: the outcome with the version it was judged against, or why the server declined. */
+/**
+ * `POST /v1/commit`: the outcome with the version it was judged against, or why the server declined.
+ * `rebased` counts the rebases the server made before the outcome ({@link COMMIT_REBASE_ROUNDS}, only
+ * with `dropRefused`); `base` and `head` are the last round's. Absent from an older server, which
+ * makes none. `outcome.dropped` lists every op dropped across the rounds.
+ */
 export const CommitAnswer = Schema.Union([
   Schema.Struct({
     served: Schema.Literal(true),
     base: CommitBase,
     outcome: CommitResult,
-    head: ServedHead
+    head: ServedHead,
+    rebased: Schema.optionalKey(Schema.Finite)
   }),
   Declined
 ])

@@ -1,12 +1,12 @@
 import { execFileSync } from "node:child_process"
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { checkMemory, contentHash, parseMemory } from "@memhtml/html"
 import { Effect, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { commitMessage, commitSession, commitSubject } from "../src/commit.js"
+import { commitMessage, commitSession, commitSubject, type PlumbingFactory } from "../src/commit.js"
 import { makePlumbing } from "../src/plumbing.js"
 import {
   appendOps,
@@ -59,6 +59,8 @@ import {
  *   mutation-noted in `checkout.test.ts`, with the lost swap itself.
  * - step 4: stage through `make(undefined)` instead of the temporary index -> "keeps no state but
  *   the log" fails at once (the staging calls refuse with no index file).
+ * - step 4: drop the `rm` that releases the temporary index directory -> "keeps no state but the
+ *   log" (each directory the recording plumbing saw is still there).
  * - lock: `withSessionLock` runs `effect` without taking the lock -> "two commits of one session".
  */
 
@@ -155,8 +157,15 @@ describe("commitSession", () => {
 
   it("keeps no state but the log: no index file, no ref, and the trailer names the session", async () => {
     const { root, head } = await seeded()
+    // The real plumbing, recording the temporary index file each commit stages through, so the
+    // check below looks at this test's own directories and not at a temp dir other suites share.
+    const indexFiles: Array<string> = []
+    const plumbing: PlumbingFactory = (indexFile) => {
+      if (indexFile !== undefined) indexFiles.push(indexFile)
+      return makePlumbing({ root, indexFile })
+    }
     const s1 = await start(root, "prov", head, [putOp("areas/inbox/b.html", memory("B", "B one."))])
-    const first = await run(commitSession({ session: s1, head, message: "one" }))
+    const first = await run(commitSession({ session: s1, head, message: "one", plumbing }))
     if (first.kind !== "committed") throw new Error(first.kind)
     const again = await run(
       appendOps(await run(resumeSession({ root, id: "prov" })), [
@@ -164,7 +173,7 @@ describe("commitSession", () => {
       ])
     )
     const second = await run(
-      commitSession({ session: again, head: await loadHead(root), message: "two" })
+      commitSession({ session: again, head: await loadHead(root), message: "two", plumbing })
     )
     if (second.kind !== "committed") throw new Error(second.kind)
     // Two commits leave the log and nothing else under the sessions directory: the temporary index
@@ -174,10 +183,12 @@ describe("commitSession", () => {
     expect(
       await git(root, ["log", "--format=%(trailers:key=Memhtml-Session,valueonly)", "-2"])
     ).toBe("prov\n\nprov")
-    // And none was left in the temp dir either.
-    expect(
-      (await readdir(tmpdir())).filter((name) => name.startsWith("memhtml-commit-index-"))
-    ).toEqual([])
+    // Each staged through its own directory under the OS temp dir, and both are gone.
+    expect(indexFiles).toHaveLength(2)
+    for (const file of indexFiles) {
+      expect(dirname(file).startsWith(join(tmpdir(), "memhtml-commit-index-"))).toBe(true)
+      await expect(stat(dirname(file))).rejects.toMatchObject({ code: "ENOENT" })
+    }
   })
 
   it("refuses a batch with a violation and writes nothing", async () => {

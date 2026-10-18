@@ -111,7 +111,7 @@ import {
   runSessionExec,
   type SessionExecRuntime
 } from "./session-exec.js"
-import { loadStorePolicy } from "./store-config.js"
+import { loadStorePolicy, type PolicySource, policySourceOf } from "./store-config.js"
 
 export type { GateReport } from "./head-gate.js"
 
@@ -679,7 +679,12 @@ export const sessionPut = (input: {
       id: session.id,
       /** True when this call started the session (the id came from `MEMHTML_SESSION` and had no log). */
       started,
-      baseSha: session.baseSha,
+      /**
+       * The session's base after the append: the base the puts were judged at, unless the log carried
+       * a `pending` commit that had landed, which the append settled first (`appendOps`), moving the
+       * session onto it.
+       */
+      baseSha: next.baseSha,
       /** Every op this call appended: the puts and the entity edits. */
       appended: appended.length,
       ops: next.ops.length,
@@ -783,7 +788,11 @@ export const execOverHead = (input: {
     }
     return {
       id: session.id,
-      baseSha: session.baseSha,
+      /**
+       * The session's base after this call: the base the script ran over, unless the append settled a
+       * `pending` commit that had landed (`appendOps`), which moves the session onto that commit.
+       */
+      baseSha: next.baseSha,
       /** The language the script ran as: `bash` unless `--lang js`. */
       lang: report.lang,
       corpusMount: report.corpusMount,
@@ -940,6 +949,11 @@ export const sessionExec = (input: {
  *
  * `rebase-needed` is returned, not retried: the caller decides whether to `session rebase` and try
  * again, because a rebase can turn the outcome into `refused` and that is a decision, not a retry.
+ *
+ * A log with no ops and no `pending` commit to settle has nothing to land: it is answered `refused`
+ * with no violations and nothing dropped, and nothing is touched (no commit, no log write, no
+ * snapshot). `committed` always names a commit that was made, here or by an earlier call this one
+ * recovered; the `--drop-refused` rounds stop at an empty log the same way.
  */
 export const commitOverHead = (input: {
   readonly session: Session
@@ -955,13 +969,16 @@ export const commitOverHead = (input: {
     let session = input.session
     const scope = sessionScopeOf(session.ref)
     const dropped: Array<DroppedOp> = []
-    let outcome: CommitOutcome = yield* commitSession({
-      session,
-      head: input.base,
-      message: input.message,
-      scope,
-      writeBar: input.writeBar
-    })
+    let outcome: CommitOutcome =
+      session.ops.length === 0 && session.pending === undefined
+        ? { kind: "refused", violations: [] }
+        : yield* commitSession({
+            session,
+            head: input.base,
+            message: input.message,
+            scope,
+            writeBar: input.writeBar
+          })
     // Each round drops what the refusal names and commits again. An op that only failed because
     // an op it depended on was dropped (a link from a dropped put) is named by the next round, so
     // the loop ends at a clean log, an empty one, or a refusal no op carries (the batch cap).
@@ -1076,8 +1093,13 @@ const unanswered = (
   }
 }
 
-/** What `session commit` prints: the outcome, which path committed, and why when it was this one. */
+/**
+ * What `session commit` prints: the outcome, how many rebases the server made before it
+ * (`rebased`, only through the server with `--drop-refused`, `0` otherwise), which path committed,
+ * and why when it was this one.
+ */
 export type SessionCommitted = CommitResult & {
+  readonly rebased: number
   readonly via: "server" | "local"
   readonly server: CommitServerUse
 }
@@ -1129,6 +1151,7 @@ export const sessionCommit = (input: {
         if (answer.served) {
           return {
             ...answer.outcome,
+            rebased: answer.rebased ?? 0,
             via: "server" as const,
             server: { used: true, base: answer.base, reason: null, detail: null }
           }
@@ -1147,7 +1170,7 @@ export const sessionCommit = (input: {
       dropRefused: input.dropRefused,
       writeBar
     })
-    return { ...outcome, via: "local" as const, server }
+    return { ...outcome, rebased: 0, via: "local" as const, server }
   })
 
 /** One op `session commit --drop-refused` took out of the log, and why. */
@@ -1348,13 +1371,15 @@ export const sessionPrune = (input: {
 /**
  * `head status`: the head server's status when one answers (its version, ref, load, advances, and
  * vector cache under `server`), else build the version at `HEAD` here and report what that cost and
- * where it came from, with `server: null`.
+ * where it came from, with `server: null`. Either way `policy` says where the store's policy comes
+ * from ({@link PolicySource}: `file`, `defaults` when `memhtml.config.json` is absent, or
+ * `invalid`), as the server read it when it answered with one, else as this process reads it.
  */
 export const headStatus = (input: {
   readonly root: string
   readonly server?: boolean | undefined
 }): Effect.Effect<
-  HeadStats & { readonly server: HeadServerStatus | null },
+  HeadStats & { readonly server: HeadServerStatus | null; readonly policy: PolicySource },
   GitFailure | InvalidMemory | StorageFailure
 > =>
   Effect.gen(function* () {
@@ -1371,12 +1396,17 @@ export const headStatus = (input: {
             { sha: status.sha, ref: status.ref, records: status.records, skipped: status.skipped },
             answered.ms
           ),
-          server: status
+          server: status,
+          policy: status.policy ?? (yield* policySourceOf(input.root))
         }
       }
     }
     const sha = yield* headSha(input.root)
-    return { ...headStats(yield* loadHeadAt(input.root, sha)), server: null }
+    return {
+      ...headStats(yield* loadHeadAt(input.root, sha)),
+      server: null,
+      policy: yield* policySourceOf(input.root)
+    }
   })
 
 /**

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process"
 import { mkdir, readFile, stat, utimes, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { CHECKOUT_LOCK_STALE_MS, CHECKOUT_LOCKED } from "@memhtml/contracts"
+import { CHECKOUT_LOCK_STALE_MS, CHECKOUT_LOCKED, type OverlayOp } from "@memhtml/contracts"
 import { Effect, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
@@ -12,10 +12,13 @@ import { makePlumbing } from "../src/plumbing.js"
 import {
   appendOps,
   rebaseSession,
+  replaceOps,
   resumeSession,
   SESSION_LOCK_STALE_MS,
+  SESSION_PENDING,
   SESSIONS_DIR,
   saveSession,
+  sessionStateFile,
   startSession
 } from "../src/session.js"
 import {
@@ -62,6 +65,12 @@ import {
  *   session path" (the log still names the commit).
  * - the `checkout.locked` branch in `commitSession` keeps `pending` -> "a commit whose checkout lock
  *   never frees" (the log names a commit nothing will land).
+ * - `appendOps` appends without settling (`settleStored` returns the session as read) -> "an append
+ *   after a commit killed past its swap" (the log keeps `pending`, the next commit answers
+ *   `recovered` for the old path, and the appended record never reaches main) and "an append after a
+ *   commit killed before its swap" (the checkout stays one step ahead).
+ * - `replaceOps` drops its `pending` check -> "a replacement over a log that carries pending" (the
+ *   ops are replaced and the log keeps the commit).
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
@@ -426,5 +435,86 @@ describe("a session commit killed mid-sequence", () => {
     expect(await readFile(join(root, SESSION_PATH), "utf8")).toBe(SESSION_FACT)
     await v1Commit(root, "areas/inbox/v1-two.html", V1_TWO, "memhtml(write): v1 two")
     expect(await fileAt(root, "main", SESSION_PATH)).toBe(SESSION_FACT)
+  })
+})
+
+const LATER_PATH = "areas/inbox/later-fact.html"
+const LATER_FACT = memory("Later fact", "A fact the same run wrote after its commit was killed.")
+const LATER: OverlayOp = { kind: "put", path: LATER_PATH, html: LATER_FACT }
+
+describe("a log write after a commit killed mid-sequence", () => {
+  it("an append after a commit killed past its swap settles the landed commit first, and the next commit lands the new op", async () => {
+    const { root, head } = await seeded()
+    await start(root, "landed", head, SESSION_PATH, SESSION_FACT)
+    expect(await killedCommit(root, "landed", "after-swap")).toBe("SIGKILL")
+    const dead = await run(resumeSession({ root, id: "landed" }))
+    const tip = await git(root, ["rev-parse", "main"])
+    expect(dead.pending).toBe(tip)
+    expect(dead.ops).toHaveLength(1)
+    await ageLocks(root, "landed")
+
+    // The append finds the landed commit: the session moves onto it, and its one op is the new one.
+    const appended = await run(appendOps(dead, [LATER]))
+    expect(appended).toMatchObject({ baseSha: tip, ops: [LATER] })
+    expect(appended.pending).toBeUndefined()
+    const stored = await run(resumeSession({ root, id: "landed" }))
+    expect(stored).toEqual(appended)
+
+    const outcome = await run(
+      commitSession({ session: stored, head: await loadHead(root), message: "later" })
+    )
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(outcome).toMatchObject({ paths: [LATER_PATH], recovered: false })
+    expect(await git(root, ["rev-parse", `${outcome.sha}^`])).toBe(tip)
+    expect(await fileAt(root, "main", LATER_PATH)).toBe(LATER_FACT)
+    expect(await fileAt(root, "main", SESSION_PATH)).toBe(SESSION_FACT)
+    expect(await git(root, ["status", "--porcelain"])).toBe("")
+  })
+
+  it("an append after a commit killed before its swap undoes the checkout, keeps both ops, and the next commit lands them", async () => {
+    const { root, base, head } = await seeded()
+    await start(root, "unlanded", head, SESSION_PATH, SESSION_FACT)
+    expect(await killedCommit(root, "unlanded", "after-checkout")).toBe("SIGKILL")
+    expect(await git(root, ["status", "--porcelain"])).toBe(`A  ${SESSION_PATH}`)
+    const dead = await run(resumeSession({ root, id: "unlanded" }))
+    expect(dead.pending).toMatch(/^[0-9a-f]{40}$/)
+    await ageLocks(root, "unlanded")
+
+    const appended = await run(appendOps(dead, [LATER]))
+    expect(appended.baseSha).toBe(base)
+    expect(appended.ops.map((op) => op.path)).toEqual([SESSION_PATH, LATER_PATH])
+    expect(appended.pending).toBeUndefined()
+    // The dead commit's checkout update is undone before anything else moves.
+    expect(await git(root, ["status", "--porcelain"])).toBe("")
+    expect(await git(root, ["rev-parse", "main"])).toBe(base)
+
+    const outcome = await run(commitSession({ session: appended, head, message: "both" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(outcome).toMatchObject({ paths: [LATER_PATH, SESSION_PATH], recovered: false })
+    expect(await fileAt(root, "main", LATER_PATH)).toBe(LATER_FACT)
+    expect(await fileAt(root, "main", SESSION_PATH)).toBe(SESSION_FACT)
+    expect(await git(root, ["status", "--porcelain"])).toBe("")
+  })
+
+  it("a replacement over a log that carries pending is refused naming session commit, writes nothing, and the commit settles it", async () => {
+    const { root, head } = await seeded()
+    await start(root, "replaced", head, SESSION_PATH, SESSION_FACT)
+    expect(await killedCommit(root, "replaced", "after-swap")).toBe("SIGKILL")
+    const tip = await git(root, ["rev-parse", "main"])
+    await ageLocks(root, "replaced")
+    const dead = await run(resumeSession({ root, id: "replaced" }))
+    const before = await readFile(sessionStateFile(root, "replaced"), "utf8")
+
+    const refused = await run(Effect.result(replaceOps(dead, [])))
+    if (!Result.isFailure(refused)) throw new Error("the replacement was not refused")
+    expect(refused.failure.operation.startsWith(`${SESSION_PENDING}: `)).toBe(true)
+    expect(refused.failure.operation).toContain("`memhtml session commit --id replaced`")
+    expect(await readFile(sessionStateFile(root, "replaced"), "utf8")).toBe(before)
+
+    expect(await run(commitSession({ session: dead, head, message: "settle" }))).toMatchObject({
+      kind: "committed",
+      sha: tip,
+      recovered: true
+    })
   })
 })
