@@ -415,6 +415,28 @@ export default defineConfig({
           }
         }),
         /*
+         * `@memhtml/head`: one import path, one entry point and one page, with the settled options
+         * and no source change. TypeDoc warns five times and the build carries on: `Scored` and
+         * `IndexedView` appear in exported signatures without being exported, and three doc comments
+         * link to module-private helpers (`addToLexical`, `removeFromLexical`, `armRanks`). Each such
+         * name renders as plain text rather than a link, and the package README says why.
+         */
+        starlightTypeDoc({
+          entryPoints: [join(REPO_ROOT, "packages", "head", "src", "index.ts")],
+          tsconfig: join(REPO_ROOT, "packages", "head", "tsconfig.json"),
+          output: "api/head",
+          typeDoc: {
+            outputFileStrategy: "modules",
+            useCodeBlocks: true,
+            parametersFormat: "list",
+            excludeExternals: true,
+            readme: join(REPO_ROOT, "packages", "head", "README.md"),
+            mergeReadme: true,
+            entryFileName: "index",
+            disableSources: true
+          }
+        }),
+        /*
          * `@memhtml/html`: one import path, one entry point and one page. Its six document shapes
          * (`MemoryDoc`, `MemoryMetas`, `ArticleExtractions`, `MemoryLink`, `Facet`, `Citation`) are
          * interfaces that extend the `Schema.Struct` type, so a signature that takes or returns one
@@ -494,6 +516,11 @@ export default defineConfig({
               label: "@memhtml/llm",
               collapsed: true,
               items: [{ autogenerate: { directory: "api/llm" } }]
+            },
+            {
+              label: "@memhtml/head",
+              collapsed: true,
+              items: [{ autogenerate: { directory: "api/head" } }]
             },
             {
               label: "@memhtml/html",
