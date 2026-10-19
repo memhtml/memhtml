@@ -15,13 +15,13 @@
     "lint": "biome check src tests astro.config.ts vitest.config.ts vitest.a11y.config.ts cspell.json --no-errors-on-unmatched && pnpm run spellcheck"
   },
   "dependencies": {
-    "@astrojs/markdown-satteri": "^0.4.3",
+    "@astrojs/markdown-satteri": "^0.4.4",
     "@astrojs/starlight": "^0.42.6",
     "@expressive-code/plugin-collapsible-sections": "^0.44.2",
     "@expressive-code/plugin-line-numbers": "^0.44.2",
     "@memhtml/cli": "workspace:*",
     "@tabler/icons-astro": "^3.49.0",
-    "astro": "^7.3.8",
+    "astro": "^7.4.0",
     "astro-d2": "^0.14.0",
     "astro-og-canvas": "^0.13.2",
     "canvaskit-wasm": "^0.42.0",
@@ -35,18 +35,18 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
-    "@axe-core/playwright": "^4.13.0",
+    "@axe-core/playwright": "^4.14.0",
     "@biomejs/biome": "2.5.15",
     "@expo-google-fonts/tinos": "^0.4.2",
     "@types/hast": "^3.0.5",
     "@types/node": "26.6.5",
-    "cspell": "^10.3.6",
+    "cspell": "^10.4.0",
     "mdast-util-to-hast": "^13.2.1",
-    "playwright": "^1.64.0",
+    "playwright": "^1.64.1",
     "starlight-typedoc": "^0.23.1",
     "typedoc": "^0.28.20",
-    "typedoc-plugin-markdown": "^4.13.1",
+    "typedoc-plugin-markdown": "^4.14.0",
     "typescript": "6.0.3",
-    "vitest": "5.0.4"
+    "vitest": "5.0.5"
   }
 }
