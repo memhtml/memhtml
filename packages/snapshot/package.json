@@ -35,6 +35,6 @@
     "@types/write-file-atomic": "4.0.3",
     "fast-check": "catalog:",
     "typescript": "7.0.2",
-    "vitest": "5.0.4"
+    "vitest": "5.0.5"
   }
 }
