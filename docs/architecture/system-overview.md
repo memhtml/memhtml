@@ -112,9 +112,9 @@ flowchart LR
 | Sandbox       | just-bash 3.4.2 for `exec` and `session exec`                                                    | `apps/cli/package.json:56`                                                    |
 | Head server   | `@effect/platform-node` 4.0.3, HTTP over the store's Unix socket                                 | `pnpm-workspace.yaml:94`, `apps/cli/src/head-client.ts:30-33`                 |
 | Tracing       | Effect's own `OtlpTracer`, opt-in                                                                | `packages/telemetry/src/index.ts:14-18`                                       |
-| Build tooling | turbo 2.11.7, pnpm 11.21.0, biome 2.5.15, tsdown 0.23.1                                          | `package.json:6`, `package.json:33-38`                                        |
-| Test tooling  | vitest 5.0.4, `@effect/vitest`, fast-check 4.10.2                                                | `apps/cli/package.json:60-67`, `pnpm-workspace.yaml:96-97`                    |
-| Docs site     | astro ^7.3.8, `@astrojs/starlight` ^0.42.6                                                       | `apps/docs/package.json:20`, `apps/docs/package.json:25`                      |
+| Build tooling | turbo 2.11.8, pnpm 11.21.0, biome 2.5.15, tsdown 0.23.1                                          | `package.json:6`, `package.json:32-36`                                        |
+| Test tooling  | vitest 5.0.5, `@effect/vitest`, fast-check 4.10.2                                                | `apps/cli/package.json:60-67`, `pnpm-workspace.yaml:64-65`                    |
+| Docs site     | astro ^7.4.0, `@astrojs/starlight` ^0.42.6                                                       | `apps/docs/package.json:19`, `apps/docs/package.json:24`                      |
 
 ## See also
 
