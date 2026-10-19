@@ -1,5 +1,6 @@
 {
   "$schema": "https://turborepo.com/schema.json",
+  "agentGuidance": false,
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -60,10 +61,6 @@
       "outputs": []
     },
     "test:a11y": {
-      "dependsOn": ["build"],
-      "outputs": []
-    },
-    "test:budget": {
       "dependsOn": ["build"],
       "outputs": []
     },

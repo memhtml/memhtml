@@ -255,18 +255,18 @@ export const makeIndexRecorder = (db: DatabaseShape): IndexRecorderShape => ({
     }),
   /**
    * ONE corpus read for the whole query set, decoded once, ranked in TypeScript. The shape follows
-   * `neighborPairs` (`@memhtml/sleep`) deliberately: `ordinal = 0` collapses a file to its FIRST
+   * the pairwise neighbor scan deliberately: `ordinal = 0` collapses a file to its FIRST
    * chunk, because the format is one fact per file and almost every file is a single chunk, and the
    * similarity runs over vectors decoded once rather than through the `vector_distance_cos` UDF,
    * which pays a fresh decode of both blobs per call (issue #40's OOM). At m queries × n rows this
    * loop is m·n dot products over ~12 MB decoded once at a ~3k corpus.
    *
-   * The predicate is the dedup phase's reading of the corpus, not retrieval's: `archived = 0` plus
+   * The predicate is a dedup pass's reading of the corpus, not retrieval's: `archived = 0` plus
    * the caller's `excludeTypes`. A row whose blob does not decode (empty or ragged) is dropped, the
    * same exclusion the SQL UDF's NULL produces for it in the retrieval arm. A row whose file has no
    * embedding yet — written since the last embed pass, or indexed under `--no-embed` — is simply not
-   * in the join, so the assist under-reports rather than fails, which is the same blindness the
-   * sleep `dedup-merge` has until the embed pass catches up.
+   * in the join, so the assist under-reports rather than fails, which is the same blindness any
+   * dedup pass has until the embed pass catches up.
    *
    * An empty query set short-circuits without touching the database, for `activeFramesFor`'s
    * reason: a query with nothing to ask is not a query.

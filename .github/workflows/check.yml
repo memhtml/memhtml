@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
       # Ask pnpm where its store is rather than hardcoding a path — a path that is wrong
       # caches nothing and says nothing about it. Runs after mise-action because that is
       # what puts pnpm on PATH.
@@ -35,7 +35,7 @@ jobs:
           path: ${{ env.PNPM_STORE }}
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: pnpm-store-${{ runner.os }}-
-      # The Chromium the accessibility and performance gates drive. It lives in a per-user cache rather
+      # The Chromium the accessibility gate drives. It lives in a per-user cache rather
       # than in node_modules, so the pnpm store cache above cannot hold it, and Playwright 1.62 ships
       # no install script, so nothing fetches it implicitly. Restored before `mise run browsers` so
       # that step is a no-op on a hit rather than a ~130 MB download per run.
@@ -51,28 +51,22 @@ jobs:
       # Only this workflow needs it, which is why it is a step here rather than part of `install:ci` —
       # the pages and links jobs install the same dependencies and drive no browser.
       - run: mise run browsers
-      # Ubuntu 24.04 runners restrict unprivileged user namespaces through AppArmor, and
-      # Chrome's sandbox needs them: the budget gate's headless Chrome aborts at launch with
-      # "No usable sandbox!" (zygote_host_impl_linux.cc:128). Lifting the restriction for this
-      # job lets the gates drive the same sandboxed Chrome a laptop does; the alternative,
-      # --no-sandbox in lighthouserc.json, would also change what developers run locally.
-      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: mise run check
 
   # The artifact, not the workspace. `check` above resolves `@memhtml/*` through pnpm's links,
   # where every run-time asset is on disk whether or not a manifest names it — three of them
   # shipped broken under exactly that blindness. This job assembles the one published package,
   # installs it into a throwaway directory, and drives every subsystem through the installed
-  # binary, including the consolidator agent's out-of-node_modules build.
+  # binary, including the sandbox worker and the curator prompts it reads at run time.
   #
-  # A separate job because it needs the npm registry to resolve the twelve external
+  # A separate job because it needs the npm registry to resolve the external
   # dependencies, and `mise run check` is offline and credential-free by construction. It stays
   # credential-free itself: MEMHTML_EMBED=off and MEMHTML_LLM=off throughout.
   package:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
       - run: echo "PNPM_STORE=$(pnpm store path --silent)" >> "$GITHUB_ENV"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

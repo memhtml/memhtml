@@ -1,3 +1,4 @@
+import { closedDoorRefusal, sessionDoorRefusal } from "./doors.js"
 import { type ErrorCode, type Failure, fail } from "./envelope.js"
 
 /**
@@ -57,6 +58,10 @@ export const codeFor = (error: unknown): ErrorCode => {
       return "ERR_DUPLICATE_CONTENT"
     case "ModelUnavailable":
       return "ERR_MODEL_UNAVAILABLE"
+    // A `--model` spec the curator's factory could not build at run time (a proxy spec with no
+    // proxy configured). The shape of the spec itself is judged at exit 2 in `run.ts`.
+    case "CuratorModelSpecInvalid":
+      return "ERR_MODEL_UNAVAILABLE"
     case "EmbedModelMismatch":
       return "ERR_EMBED_MODEL_MISMATCH"
     // The index describes a commit it is not on, or a rebuild that did not finish. The published
@@ -69,10 +74,28 @@ export const codeFor = (error: unknown): ErrorCode => {
       return "ERR_REBUILD_NO_EMBED_REFUSED"
     case "DiscriminationFailed":
       return "ERR_DISCRIMINATION_FAILED"
+    // The head gate at `curate merge` (`head-gate.ts`): the landed version finds the base's records
+    // worse than the base did. The same code, because a caller branches on "the gate refused".
+    case "HeadGateFailed":
+      return "ERR_DISCRIMINATION_FAILED"
     // A receipt-owned file or config entry that a human changed since install. Exit 1: the call
     // parsed, and the work was declined so the change survives. `--force` on install is the override.
     case "IntegrationModified":
       return "ERR_INTEGRATION_MODIFIED"
+    case "HeadServerRunning":
+      return "ERR_HEAD_SERVER_RUNNING"
+    // `head serve` on a store whose socket path the platform cannot bind. A storage condition of
+    // the store's location, so the storage code, with a message naming the length and the limit.
+    case "HeadSocketPathTooLong":
+      return "ERR_STORAGE"
+    // The store's `memhtml.config.json` cannot be read or does not decode; every write that needs
+    // the policy refuses rather than running under defaults nobody chose.
+    case "StoreConfigInvalid":
+      return "ERR_STORE_CONFIG"
+    // A v1 record door the store's `v1Doors` closes: the session code when a run session closed it
+    // (the contract a runtime already branches on), the store's own code when `closed` did alone.
+    case "V1DoorClosed":
+      return typeof error.session === "string" ? "ERR_SESSION_BOUND" : "ERR_V1_DOOR_CLOSED"
     default:
       return "ERR_UNKNOWN"
   }
@@ -106,6 +129,8 @@ export const messageFor = (error: unknown): string => {
       return `this content already lives at ${text(error.existingPath) ?? "another path"}`
     case "ModelUnavailable":
       return `bedrock refused ${text(error.modelId) ?? "the model"}: ${text(error.reason) ?? "no reason given"}`
+    case "CuratorModelSpecInvalid":
+      return `--model ${text(error.spec) ?? ""} cannot be built: ${text(error.reason) ?? "no reason given"}`
     case "EmbedModelMismatch":
       return `the index was built in vector space ${text(error.stored) ?? "?"}, configured is ${text(error.configured) ?? "?"}`
     case "IndexStale":
@@ -116,8 +141,23 @@ export const messageFor = (error: unknown): string => {
       return `the model broke its structured-output contract: ${text(error.reason) ?? "no reason given"}`
     case "DiscriminationFailed":
       return text(error.reason) ?? "the discrimination gate refused"
+    case "HeadGateFailed":
+      return text(error.reason) ?? "the head gate refused the landing"
+    case "HeadServerRunning":
+      return `a head server is already serving this store on ${text(error.socket) ?? "its socket"}${typeof error.pid === "number" ? ` (pid ${String(error.pid)}${text(error.ref) === undefined ? "" : `, following ${text(error.ref)}`}${text(error.sha) === undefined ? "" : ` at ${text(error.sha)}`})` : ""}: stop it with SIGTERM before starting another, or use it, since head status, head search, and session put already ask it first`
+    case "HeadSocketPathTooLong":
+      return `the head server cannot listen on ${text(error.socket) ?? "this store's socket"}: the path is ${String(error.bytes ?? "?")} bytes, past the ${String(error.max ?? "?")} a Unix socket path takes on ${text(error.platform) ?? "this platform"}; serve a store at a shorter path. Every command still works without a server, loading locally`
     case "IntegrationModified":
       return `${text(error.host) ?? "the host"} integration was modified since install at ${text(error.path) ?? "a managed path"}: ${text(error.detail) ?? "the receipt no longer matches"}`
+    case "StoreConfigInvalid":
+      return `the store's policy file ${text(error.path) ?? "memhtml.config.json"} is not usable, so nothing that needs the policy runs: ${text(error.reason) ?? "no reason given"}`
+    case "V1DoorClosed": {
+      const door = text(error.door) ?? "this command"
+      const session = text(error.session)
+      return session === undefined
+        ? closedDoorRefusal(door).error
+        : sessionDoorRefusal(door, session).error
+    }
     default:
       return `unexpected failure: ${error._tag}`
   }
@@ -162,7 +202,7 @@ export const SUGGESTIONS: Readonly<Record<string, SuggestionsFor>> = {
    *
    * An occupied EXPLICIT `--path` is refused rather than overwritten — nothing in this corpus is
    * deleted — and the recovery is `memhtml correct <path>`, which writes the superseding memory and
-   * archives what it replaces in one commit. A merge conflict on a sleep branch carries two blob
+   * archives what it replaces in one commit. A merge conflict on a curation branch carries two blob
    * shas instead, and there the recovery is to read the current content and re-apply. The read is
    * first because it is the step both branches start with.
    */
@@ -187,20 +227,46 @@ export const SUGGESTIONS: Readonly<Record<string, SuggestionsFor>> = {
     "memhtml index embed"
   ],
   ModelUnavailable: () => ["retry: search still works on the lexical floor", "memhtml status"],
+  CuratorModelSpecInvalid: () => [
+    "memhtml curate run --model fake",
+    "memhtml curate run --model bedrock:global.anthropic.claude-opus-5"
+  ],
   InvalidMemory: () => ["memhtml manifest"],
   // No `--json`: there is no such flag — the JSON envelope is the binary's only output — so naming
   // it here would make the suggestion itself a usage error.
-  DiscriminationFailed: () => [
-    "memhtml eval discriminate",
-    "memhtml sleep review",
-    "git branch -D <run-id>"
+  DiscriminationFailed: () => ["memhtml eval discriminate"],
+  // The report in the payload names the probes that fell; `--skip-gate` is the logged override.
+  HeadGateFailed: () => [
+    "memhtml head search '<a probe that fell out>'",
+    "memhtml curate merge <ref> --skip-gate"
+  ],
+  // The running server answers the lookups already; `head status` names it and shows its version.
+  HeadServerRunning: () => ["memhtml head status"],
+  // No server can bind there; the lookups load locally, and a shorter store path is the fix.
+  HeadSocketPathTooLong: () => [
+    "memhtml head status --no-server",
+    "move or clone the store to a shorter path, then run head serve there"
   ],
   // `doctor` first, because it names every managed path and which one moved; `--force` second, for
   // the operator who meant to overwrite and wants the prior bytes kept as a timestamped backup.
   IntegrationModified: (error) => [
     `memhtml integrations doctor ${text(error.host) ?? "<host>"}`,
     `memhtml integrations install ${text(error.host) ?? "<host>"} --force`
-  ]
+  ],
+  // `config` first: it names the file and, for a decodable one, every key and its source. The fix
+  // itself is an edit of the file, which no command makes.
+  StoreConfigInvalid: (error) => [
+    "memhtml config",
+    `fix or remove ${text(error.path) ?? "memhtml.config.json"}, then retry`
+  ],
+  // The session door that does the same job, for the door that was closed.
+  V1DoorClosed: (error) => {
+    const door = text(error.door) ?? "write"
+    const session = text(error.session)
+    return session === undefined
+      ? closedDoorRefusal(door).suggestions
+      : sessionDoorRefusal(door, session).suggestions
+  }
 }
 
 export const suggestionsFor = (error: unknown): ReadonlyArray<string> => {

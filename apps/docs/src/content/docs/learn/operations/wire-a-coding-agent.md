@@ -20,7 +20,7 @@ Four components per host, plus the receipt that owns them:
 
 | Component         | What it does                                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------- |
-| MCP entry         | Registers `memhtml-mcp` over stdio, so the host gets the fifteen tools and three resources                            |
+| MCP entry         | Registers `memhtml-mcp` over stdio, so the host gets the fifteen tools and two resources                              |
 | Hooks             | Session-start recall, per-prompt recall where the host can inject it, transcript indexing where a trace root is known |
 | Instruction block | A fenced block in the host's instruction file carrying the recall discipline                                          |
 | Skill             | A `SKILL.md` the host loads on demand, carrying the same discipline                                                   |

@@ -1,17 +1,17 @@
 import { Effect, Layer } from "effect"
-import type { HttpClient } from "effect/unstable/http"
+import type { HttpClient } from "effect/http"
 
 /**
  * The opt-in OTLP trace exporter, gated on `OTEL_EXPORTER_OTLP_ENDPOINT`.
  *
  * Every interesting phase of this system already carries an `Effect.withSpan` annotation —
- * retrieval, embeddings, model calls, indexing, the sleep cycle, store writes, trace scanning, plus
+ * retrieval, embeddings, model calls, indexing, store writes, trace scanning, plus
  * the dynamic `db.<operation>` and `git.<command>` families. Effect's tracer is a `Context.Reference`
  * with an in-process default, so those spans are constructed and discarded unless a runtime assembly
  * overrides the reference. This layer is that override, and the call sites need no changes: providing
  * it is the whole integration.
  *
- * The exporter is effect's own `OtlpTracer` from `effect/unstable/observability` rather than the
+ * The exporter is effect's own `OtlpTracer` from `effect/observability` rather than the
  * OpenTelemetry JS SDK. On the v4 line the OTLP client lives inside `effect` itself (JSON
  * serialization, batching, retry, flush-on-scope-close), so export adds ZERO dependencies —
  * `@effect/opentelemetry` and the `@opentelemetry/*` peer set exist for integrating an already-running
@@ -20,14 +20,14 @@ import type { HttpClient } from "effect/unstable/http"
 
 /** The two module graphs the exporter needs, loaded only when the endpoint is set. */
 export interface TelemetryModules {
-  readonly http: typeof import("effect/unstable/http")
-  readonly observability: typeof import("effect/unstable/observability")
+  readonly http: typeof import("effect/http")
+  readonly observability: typeof import("effect/observability")
 }
 
 const loadModules = async (): Promise<TelemetryModules> => {
   const [http, observability] = await Promise.all([
-    import("effect/unstable/http"),
-    import("effect/unstable/observability")
+    import("effect/http"),
+    import("effect/observability")
   ])
   return { http, observability }
 }
@@ -62,7 +62,7 @@ export interface TelemetryOptions {
  * disables itself for sixty seconds, and emits only a DEBUG log — invisible at the default level. A
  * command pointed at a down collector would silently export nothing, and "opt-in that silently does
  * nothing" is indistinguishable from "opt-in that was never read". One warning names the failure;
- * one rather than one-per-batch because a long `sleep run` against a dead collector would
+ * one rather than one-per-batch because a long batched command against a dead collector would
  * otherwise write hundreds of identical lines into a log someone has to read. It goes through
  * `Effect.logWarning`, so it lands wherever the assembly's logger writes — stderr in both, because
  * both set `Logger.LogToStderr` (stdout is the envelope / the RPC stream).

@@ -14,6 +14,9 @@ export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
     env: throwawayTestEnv(),
-    globalSetup: ["./tests/throwaway-root.setup.ts"]
+    globalSetup: ["./tests/throwaway-root.setup.ts"],
+    // Most cases spawn git or run the CLI over a temporary store, so the 30 s the other heavy suites
+    // use (`@memhtml/index`, `@memhtml/html`): 5 s was passed only on a loaded host, never by a defect.
+    testTimeout: 30_000
   }
 })

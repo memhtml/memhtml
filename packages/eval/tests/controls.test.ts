@@ -130,7 +130,7 @@ describe("the variant family", () => {
     /**
      * `VARIANT_QUALIFIERS` is a closed set in `@memhtml/domain`. A word outside it produces a pair the
      * predicate cannot see, so the control is refused — which is what keeps this family bound to the
-     * SAME vocabulary the sleep cycle's merge veto uses rather than to a list that drifted.
+     * SAME vocabulary the merge veto uses rather than to a list that drifted.
      */
     const target = { claim: "The settlement lane is drained before cutover.", body: [] }
     expect(

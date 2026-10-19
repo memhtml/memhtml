@@ -1,7 +1,7 @@
 import { Schema } from "effect"
 
 /**
- * The models the sleep phases run on, and the wire rules that differ between them.
+ * The models this package's callers run on, and the wire rules that differ between them.
  *
  * Two providers, two call shapes, one decode. The Anthropic lane speaks the native
  * Messages body with a forced `emit` tool; the OpenAI lane speaks the chat-completions

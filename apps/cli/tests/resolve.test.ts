@@ -204,7 +204,7 @@ describe("memhtml resolve", () => {
     expect(answer.stopReason).toBe("live")
   })
 
-  it("enters the chain mid-way from an archive path", async () => {
+  it("enters the chain partway along from an archive path", async () => {
     const answer = await resolve(cli, chain.firstArchive)
     expect(answer.path).toBe(chain.live)
     expect(answer.hops).toBe(2)

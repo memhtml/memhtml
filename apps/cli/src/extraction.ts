@@ -18,7 +18,7 @@ import { Effect, Schema } from "effect"
  * down costs this batch its extracted entities and nothing else. The write proceeds, the warning is
  * logged, and `entities: []` is what an entity-free write always produced.
  *
- * The call goes through `@memhtml/llm`'s `ModelClient`, the same lane the sleep phases use: the
+ * The call goes through `@memhtml/llm`'s `ModelClient`: the
  * OpenAI chat-completions dialect on bedrock-runtime `InvokeModel`, with `response_format:
  * json_schema, strict: true` so the answer cannot leave the schema, and through an LLM proxy's
  * `/v1/chat/completions` when `MEMHTML_LLM_BASE_URL` names one. An earlier version carried its own

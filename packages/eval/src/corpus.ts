@@ -253,7 +253,7 @@ const TOPICS: ReadonlyArray<Topic> = [
   }
 ]
 
-/** The nine storage types. `arc` is here because the fixture writes files directly, as sleep does. */
+/** The nine storage types. `arc` is here because the fixture writes files directly, as a curator does. */
 const TYPES: ReadonlyArray<string> = [
   "episodic",
   "semantic",
@@ -272,10 +272,10 @@ const PEOPLE: ReadonlyArray<{
   readonly name: string
   readonly role: string
 }> = [
-  { slug: "sanju", name: "Sanju", role: "runs the payments on-call rotation" },
-  { slug: "imani", name: "Imani", role: "owns the search relevance surface" },
-  { slug: "dara", name: "Dara", role: "keeps the migration ledger honest" },
-  { slug: "wren", name: "Wren", role: "reviews every incident timeline" }
+  { slug: "sasha", name: "Sasha", role: "runs the payments on-call rotation" },
+  { slug: "irene", name: "Irene", role: "owns the search relevance surface" },
+  { slug: "darcy", name: "Darcy", role: "keeps the migration ledger honest" },
+  { slug: "wade", name: "Wade", role: "reviews every incident timeline" }
 ]
 
 /** Words a probe query drops. A query is what an agent types rather than the claim pasted back. */

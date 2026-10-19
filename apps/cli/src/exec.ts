@@ -32,9 +32,13 @@ import { type Failure, fail } from "./envelope.js"
 /** Where the corpus appears in the guest. Matches `ROOT` in `apps/cli/guest/corpus.mjs`. */
 export const CORPUS_MOUNT = "/mnt/memhtml"
 
-/** Where the seeded modules live. `/workspace` is writable; the corpus mount is not. */
-const GUEST_LIB = "/workspace/lib"
-const GUEST_SCRIPT = "/workspace/script.mjs"
+/**
+ * Where the seeded modules live. `/workspace` is writable; the corpus mount is not. Exported so
+ * `session-exec.ts` seeds the same paths and the preloaded helper resolves its import in both
+ * runtimes.
+ */
+export const GUEST_LIB = "/workspace/lib"
+export const GUEST_SCRIPT = "/workspace/script.mjs"
 
 /**
  * The default wall-clock bound on the script, in milliseconds.
@@ -63,7 +67,7 @@ export const MAX_TIMEOUT_MS = 600_000
  * value. It is the margin that decides which of the two bounds reports, and therefore whether `stderr`
  * carries the message naming the limit. See {@link runExec} for the measured table.
  */
-const SHELL_TIMEOUT_GRACE_MS = 2_000
+export const SHELL_TIMEOUT_GRACE_MS = 2_000
 
 /**
  * The `atob` shim, installed through just-bash's `javascript.bootstrap` before any guest module loads.
@@ -78,7 +82,7 @@ const SHELL_TIMEOUT_GRACE_MS = 2_000
  * Base64 only, no `btoa`. The parser decodes and never encodes, and a shim for a capability nothing
  * uses is a capability added to the guest for free.
  */
-const ATOB_BOOTSTRAP = `globalThis.atob = globalThis.atob || function (encoded) {
+export const ATOB_BOOTSTRAP = `globalThis.atob = globalThis.atob || function (encoded) {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
   let decoded = "", bits = 0, accumulator = 0
   for (const character of String(encoded).replace(/=+$/, "")) {
@@ -103,8 +107,18 @@ const ATOB_BOOTSTRAP = `globalThis.atob = globalThis.atob || function (encoded) 
  * Resolved from `import.meta.url` rather than from `process.cwd()`, so `memhtml exec` works from any
  * directory. `dist/exec.js` sits one level under the package root, which is where `guest/` is.
  */
-const guestHelperPath = (): string =>
+export const guestHelperPath = (): string =>
   resolve(dirname(fileURLToPath(import.meta.url)), "..", "guest", "corpus.mjs")
+
+/**
+ * Where `session exec`'s sandbox runner lives on the host: `apps/cli/guest/sandbox-runner.mjs`,
+ * beside the helper and resolved the same way, so `src/`, `dist/`, and the published bundle all
+ * find it one level up. Unlike the helper it runs on the host: `session-exec.ts` imports it in
+ * process, and the head server starts it as a worker (`exec-pool.ts`), which needs a JavaScript
+ * file on disk rather than a module in the bundle.
+ */
+export const sandboxRunnerPath = (): string =>
+  resolve(dirname(fileURLToPath(import.meta.url)), "..", "guest", "sandbox-runner.mjs")
 
 /**
  * The HTML parser's bytes, as published.
@@ -131,7 +145,7 @@ const guestHelperPath = (): string =>
  * host at all, only read as text, and a static `import` would put a 200 KB module on the graph of
  * every `memhtml` command to obtain a path.
  */
-const parserSourcePath = (): string =>
+export const parserSourcePath = (): string =>
   createRequire(import.meta.url)
     .resolve("node-html-parser")
     .replace(/index\.cjs$/, "index.mjs")
@@ -150,6 +164,19 @@ const parserSourcePath = (): string =>
  *
  * - `maxJsTimeoutMs` fires: `js-exec: Execution timeout: exceeded 400ms limit`
  * - `maxExecutionTimeMs` fires: `bash: js-exec exceeded its execution deadline`, with no "timeout" in it
+ *
+ * `session exec --lang bash` runs the script as the shell program with the shell's bound equal to the
+ * script's, so the shell speaks for it. Measured on just-bash 3.4.2 at a 1,500 ms bound:
+ *
+ * - a busy loop (`while true; do :; done`, `for ((;;))`, `until false`):
+ *   `bash: execution exceeded execution deadline (1500ms)`
+ * - a command still running at the bound (`sleep 10`): `bash: sleep exceeded its execution deadline`
+ * - a `js-exec` inside the script, its bound equal to the shell's:
+ *   `bash: js-exec exceeded its execution deadline`
+ *
+ * All three say "deadline", so the one pattern serves both languages. The shell's `timeout` builtin
+ * exits 124 with an empty stderr (`timeout 1 sleep 5`), which this correctly reports as the script's
+ * own 124 rather than the runtime's cut-off.
  *
  * A pattern matching only `/timeout/` therefore reports `timedOut: false` on a script that was cut off,
  * which is what the first version of this did. `aborted` covers `bash: execution aborted`, which is what
@@ -293,9 +320,8 @@ export interface ExecInput {
  * network commands at all. Per `Bash.d.ts:80`: "Network commands (curl, wget) are registered when either
  * `fetch` or `network` is provided." `scripts/probe-sandbox-egress.mjs` demonstrates it: `curl` is
  * exit 127 "command not found", and the guest's `fetch` refuses on call with "Network access not
- * configured." `fetch` is a function there, so a `typeof` check on the global proves nothing. Eve
- * passes `dangerouslyAllowFullInternetAccess`, so the consolidator's sandbox does reach the network.
- * Whoever calls `new Bash()` decides egress, so it is decided here, for this runtime, by omission.
+ * configured." `fetch` is a function there, so a `typeof` check on the global proves nothing. Whoever
+ * calls `new Bash()` decides egress, so it is decided here, for this runtime, by omission.
  *
  * ## Two opt-ins, one taken
  *
@@ -313,20 +339,16 @@ export const runExec = (
     /**
      * `just-bash` and the mount helper arrive by dynamic import, and the reason is measured.
      *
-     * `just-bash`'s bundle is ~6 MB across 20 chunks and costs ~160ms to load. `@memhtml/consolidator`'s
-     * barrel re-exports `mount.js`, which imports it statically, and `apps/cli/src/api-layer.ts`
-     * imports that barrel, so today `just-bash` is already on the graph of every `memhtml read`
-     * (20 chunks loaded, traced with `module.registerHooks`). Importing it here as well would add a
-     * second static edge that survives any future fix to that one. This form keeps the exec path's own
-     * cost on the exec path, which is the standing rule for the eve closure (`api-layer.ts`, where
-     * `eve/client` is dynamic for the same reason).
+     * `just-bash`'s bundle is ~6 MB across 20 chunks and costs ~160ms to load. `./mount.js` imports it
+     * statically, so a static import here would put it on the graph of every `memhtml read`. This form
+     * keeps the exec path's own cost on the exec path.
      */
     const { Bash } = yield* Effect.tryPromise({
       try: () => import("just-bash"),
       catch: (cause) => StorageFailure.make({ operation: `exec.sandbox-load: ${String(cause)}` })
     })
     const { mountReadOnlyRoots } = yield* Effect.tryPromise({
-      try: () => import("@memhtml/consolidator"),
+      try: () => import("./mount.js"),
       catch: (cause) => StorageFailure.make({ operation: `exec.mount-load: ${String(cause)}` })
     })
 
@@ -350,7 +372,7 @@ export const runExec = (
     const attempt = (): Effect.Effect<ExecReport, InvalidMemory | StorageFailure> =>
       Effect.gen(function* () {
         /**
-         * The one composition, from `apps/consolidator/src/mount.ts`.
+         * The one composition, from `./mount.ts`.
          *
          * Not re-derived here. That module encodes the `mountPoint: "/"` requirement on the nested
          * `OverlayFs`, which a file count cannot catch, because all three spellings expose the same
@@ -509,7 +531,7 @@ export const execCommand = (input: {
      * would not cover.
      */
     const { pinCorpusSnapshot } = yield* Effect.tryPromise({
-      try: () => import("@memhtml/consolidator"),
+      try: () => import("./mount.js"),
       catch: (cause) => StorageFailure.make({ operation: `exec.mount-load: ${String(cause)}` })
     })
 

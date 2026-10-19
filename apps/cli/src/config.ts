@@ -1,5 +1,7 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
+
+import { CURATOR_MODEL_VAR } from "@memhtml/curator"
 import { VECTOR_COVERAGE_FLOOR } from "@memhtml/index"
 import {
   DEFAULT_OPENAI_PROMPT_CACHE,
@@ -13,7 +15,26 @@ import {
 import { expandRoot } from "@memhtml/store"
 import { Config } from "effect"
 
+import {
+  EXEC_POOL_SIZE_DEFAULT_CAP,
+  EXEC_POOL_SIZE_MAX,
+  EXEC_POOL_SIZE_VAR,
+  EXEC_WORKER_HEAP_VAR,
+  WORKER_HEAP_MB,
+  WORKER_HEAP_MB_MAX,
+  WORKER_HEAP_MB_MIN
+} from "./exec-pool.js"
 import { EXTRACTION_MODEL_ID } from "./extraction.js"
+import {
+  COMMIT_DEADLINE_DEFAULT_MS,
+  COMMIT_DEADLINE_VAR,
+  COMMIT_QUEUE_WAIT_MS,
+  EMBED_DEADLINE_DEFAULT_MS,
+  EMBED_DEADLINE_VAR,
+  EMBED_WARM_IDLE_DEFAULT_MS,
+  EMBED_WARM_IDLE_VAR,
+  MCP_HEAD_VAR
+} from "./head-protocol.js"
 import { MCP_BIN_VAR } from "./serve.js"
 
 /**
@@ -59,6 +80,30 @@ const REFUSE_ENV_ROOT_OFF: ReadonlySet<string> = new Set(["", "0", "false", "no"
 export const refusesEnvRoot = (env: NodeJS.ProcessEnv = process.env): boolean =>
   !REFUSE_ENV_ROOT_OFF.has((env[REFUSE_ENV_ROOT_VAR] ?? "").trim().toLowerCase())
 
+/**
+ * `MEMHTML_SESSION`: the v2 session this process writes through.
+ *
+ * An agent runtime exports it to every subprocess of one run (for example `run-<run id>`), so an
+ * agent writes with `memhtml session exec <<'SH'` and never repeats an id, and the runtime commits
+ * that one session when the run ends. Set, it does three things (`run.ts`): every `session` command
+ * takes it as the default `--id`; `session put` and `session exec` start the session on first use
+ * when the id came from here; and, under the store's `v1Doors` mode (`closed-in-session` by default,
+ * `memhtml.config.json`), the v1 doors that create a record (`write`, `apply`, `correct`, `task add`)
+ * refuse with `ERR_SESSION_BOUND`, because they commit straight to the store with no write bar, and
+ * a process that has a session has a barred door to use instead.
+ *
+ * Read from `process.env` directly, like {@link REFUSE_ENV_ROOT_VAR}: both refusal and default are
+ * decided in `validate`, before any Effect runs. Blank is unset. `env` is a parameter so a test can
+ * hand in a map.
+ */
+export const SESSION_VAR = "MEMHTML_SESSION"
+
+/** The session `MEMHTML_SESSION` names, trimmed, or `undefined` when it is absent or blank. */
+export const sessionFromEnv = (env: NodeJS.ProcessEnv = process.env): string | undefined => {
+  const value = (env[SESSION_VAR] ?? "").trim()
+  return value === "" ? undefined : value
+}
+
 export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   {
     name: "MEMHTML_ROOT",
@@ -76,6 +121,13 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
     fallback: null
   },
   {
+    /** Imported rather than retyped: this row and the read in {@link sessionFromEnv} name one string. */
+    name: SESSION_VAR,
+    description:
+      "The v2 session this process writes through, for an agent runtime that exports it to every subprocess of a run. Set, every `session` command takes it as the default `--id`; `session put` and `session exec` start that session on refs/heads/main's tip on first use when the id came from here, so a run's first write needs no `session start`; and, unless the store's `memhtml.config.json` sets `v1Doors` to `open`, the v1 doors that create a record (`write`, `apply`, `correct`, `task add`, and the MCP server's `memory_write`, `memory_write_batch`, `memory_correct` when it carries the variable too) are refused with ERR_SESSION_BOUND at exit 2, because they commit with no write bar. Write through `memhtml session exec` (a heredoc on stdin) or `memhtml session put` instead, and let the runtime commit the session when the run ends. The other v1 commands, reads and edits of existing records alike, are unaffected. Blank is unset.",
+    fallback: null
+  },
+  {
     name: "MEMHTML_TRACE_ROOT",
     description:
       "Where `memhtml trace index` reads Claude Code transcripts from. Read-only; never written.",
@@ -83,7 +135,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   },
   {
     name: "MEMHTML_AWS_REGION",
-    description: "The Bedrock region for embeddings and the sleep cycle's model-calling phases.",
+    description: "The Bedrock region for embeddings and the entity extractor's model calls.",
     fallback: "us-east-1"
   },
   {
@@ -99,7 +151,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
      */
     name: PROXY_BASE_URL_VAR,
     description:
-      "An OpenAI- and Anthropic-compatible LLM proxy's origin, e.g. `http://127.0.0.1:4000` for an agentgateway listener. Set, every model call leaves through it instead of going to Bedrock directly: the Anthropic sleep models and the consolidator agent on `/v1/messages`, the OpenAI sleep model and the entity extractor on `/v1/chat/completions`, embeddings on `/v1/embeddings`. Absent means Bedrock directly, under `MEMHTML_AWS_REGION` and the Bedrock credential. A set-but-malformed value fails at startup naming this variable rather than falling back to the direct path.",
+      "An OpenAI- and Anthropic-compatible LLM proxy's origin, e.g. `http://127.0.0.1:4000` for a local LLM gateway. Set, every model call leaves through it instead of going to Bedrock directly: Anthropic models on `/v1/messages`, the OpenAI entity extractor on `/v1/chat/completions`, embeddings on `/v1/embeddings`. Absent means Bedrock directly, under `MEMHTML_AWS_REGION` and the Bedrock credential. A set-but-malformed value fails at startup naming this variable rather than falling back to the direct path.",
     fallback: null
   },
   {
@@ -121,9 +173,15 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
     fallback: null
   },
   {
+    name: CURATOR_MODEL_VAR,
+    description:
+      "The default `--model` for `memhtml curate run`: `fake`, `bedrock:<modelId>`, or `proxy:<model>`. When unset, the command uses `proxy:<default model>` if `MEMHTML_LLM_BASE_URL` is set and otherwise refuses without an explicit `--model`.",
+    fallback: null
+  },
+  {
     name: OPENAI_PROMPT_CACHE_VAR,
     description:
-      "How the OpenAI sleep model's chat-completions requests ask Bedrock to treat prompt caching. `off` sends `prompt_cache_options: {mode: \"explicit\"}` with no breakpoints, which Bedrock documents as no prompt caching and no cache-write charge; `implicit` sends no caching field and leaves the endpoint's default in place. Off by default because Bedrock's implicit mode for GPT-5.6 writes the whole prompt to the cache at 1.25x the input rate on every call that clears the 1,024-token minimum, and the sleep prompts share no prefix long enough to ever be read back. Set `implicit` for an OpenAI-compatible endpoint that rejects the Bedrock-only field. Read on the direct path and the proxy path alike. Any other value fails at startup naming this variable.",
+      "How the OpenAI extractor model's chat-completions requests ask Bedrock to treat prompt caching. `off` sends `prompt_cache_options: {mode: \"explicit\"}` with no breakpoints, which Bedrock documents as no prompt caching and no cache-write charge; `implicit` sends no caching field and leaves the endpoint's default in place. Off by default because Bedrock's implicit mode for GPT-5.6 writes the whole prompt to the cache at 1.25x the input rate on every call that clears the 1,024-token minimum, and the extraction prompts share no prefix long enough to ever be read back. Set `implicit` for an OpenAI-compatible endpoint that rejects the Bedrock-only field. Read on the direct path and the proxy path alike. Any other value fails at startup naming this variable.",
     fallback: DEFAULT_OPENAI_PROMPT_CACHE
   },
   {
@@ -133,15 +191,46 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
     fallback: "on"
   },
   {
+    name: EMBED_DEADLINE_VAR,
+    description: `How long \`head search\` waits for its query embed, in whole milliseconds; \`0\` waits as long as the embed takes. Past it the search answers from BM25 with the recency tie-break and \`vector\` reports \`used: false, reason: "embed-timeout"\`, so a slow or cold embed costs the vector arm for one answer and never the answer's time. Read by \`head search\` (locally, and sent to the server as the request's \`embedDeadlineMs\` when set) and by \`head serve\`, whose value is the deadline for a request that names none. A malformed value is refused at exit 2 naming this variable.`,
+    fallback: String(EMBED_DEADLINE_DEFAULT_MS)
+  },
+  {
+    name: EMBED_WARM_IDLE_VAR,
+    description: `Read by \`head serve\` only. Off by default (\`0\`). Set to a whole number of milliseconds and, after that long with no embed ended and none in flight, the server issues one one-token query embed, so the first search after a quiet stretch finds a path through an LLM proxy that drops idle connections warm (\`45000\` keeps a pool with an idle timeout of a minute or more warm, at about 1,900 one-token embeds a day). Every embed moves the clock, so a busy server never warms. It runs only with an embedder bound and a vector cache held, and \`status\` counts it under \`embed.warmups\`. A malformed value is refused at exit 2 naming this variable.`,
+    fallback: String(EMBED_WARM_IDLE_DEFAULT_MS)
+  },
+  {
+    name: COMMIT_DEADLINE_VAR,
+    description: `How long \`session commit\` and \`session rebase\` wait for the head server's answer, in whole milliseconds; \`0\` waits as long as the server takes. The server answers a commit in well under a second once it holds the session's base, and declines (\`busy\`) a commit that waited ${String(COMMIT_QUEUE_WAIT_MS)} ms behind another, which the CLI then commits here; the default leaves a runtime's 90 s per-call limit room for that. Past the deadline the call fails with ERR_STORAGE naming \`session status\` and is NOT committed here, because the server took it and may have moved the ref. A store with no server, \`--no-server\`, and a server that declines never wait for it. A malformed value is refused at exit 2 naming this variable.`,
+    fallback: String(COMMIT_DEADLINE_DEFAULT_MS)
+  },
+  {
+    name: EXEC_POOL_SIZE_VAR,
+    description: `Read by \`head serve\` only: how many \`/v1/exec\` sandbox workers run at once, a whole number from 1 to ${String(EXEC_POOL_SIZE_MAX)}. Unset, one per core the process may use less one for the server's thread, at least 1 and at most ${String(EXEC_POOL_SIZE_DEFAULT_CAP)} (\`os.availableParallelism()\`). Each running worker holds one seeded corpus and may grow to \`${EXEC_WORKER_HEAP_VAR}\`. A malformed value is refused at exit 2 naming this variable.`,
+    fallback: null
+  },
+  {
+    name: EXEC_WORKER_HEAP_VAR,
+    description: `Read by \`head serve\` only: the old-generation heap limit of each \`/v1/exec\` sandbox worker, in whole MB from ${String(WORKER_HEAP_MB_MIN)} to ${String(WORKER_HEAP_MB_MAX)}. A worker that passes it is stopped, its job fails with ERR_STORAGE, and the next job starts a new worker, so an allocation bomb never reaches the server's heap. A malformed value is refused at exit 2 naming this variable.`,
+    fallback: String(WORKER_HEAP_MB)
+  },
+  {
+    name: MCP_HEAD_VAR,
+    description:
+      "Read by the MCP server (`memhtml serve mcp`) on every `memory_search` and `memory_recall`. By default both ask the head server on `.memhtml/head.sock` first, so a record committed a moment ago is searchable before the index is updated, and answer from the index when no server answers within 2 s or the call names `include_archived`, `as_of`, a double-quoted phrase, or a query with no term the head indexes. `off` sends every call to the index.",
+    fallback: "on"
+  },
+  {
     name: "MEMHTML_VECTOR_COVERAGE_FLOOR",
     description:
-      "The share of indexed chunks that must carry a vector in the configured space, `0` to `1`, before the vector arm is trusted. Below it `search` and `recall` drop the vector arm and report `degraded: true` with `vectorCoverage`, `doctor` reports `vectorCoverageLow` and `healthy: false`, and a sleep run warns. A sparse plane ranks the few embedded files above every exact match, so it is treated as absent rather than run. Sleep also refuses below a fixed hard floor of `0.5`, which this variable does not move: a value under `0.5` keeps search and doctor accepting a plane sleep still refuses. Remedy: `memhtml index embed`, or `memhtml index rebuild --embed`.",
+      "The share of indexed chunks that must carry a vector in the configured space, `0` to `1`, before the vector arm is trusted. Below it `search` and `recall` drop the vector arm and report `degraded: true` with `vectorCoverage`, and `doctor` reports `vectorCoverageLow` and `healthy: false`. A sparse plane ranks the few embedded files above every exact match, so it is treated as absent rather than run. Remedy: `memhtml index embed`, or `memhtml index rebuild --embed`.",
     fallback: "0.95"
   },
   {
     name: "MEMHTML_LLM",
     description:
-      "`off` makes every model-calling sleep phase report `no model bound` and stay `ok`, so a credential-free run is honest rather than red. `entity-resolution` still runs its deterministic normalization and character-overlap passes; the others do nothing.",
+      "`off` removes every model call: the write-time entity extractor is unbound and a batch writes exactly what it was given, so a credential-free run is honest rather than red.",
     fallback: "on"
   },
   {
@@ -158,7 +247,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   {
     name: "OTEL_EXPORTER_OTLP_ENDPOINT",
     description:
-      "An OTLP collector's base URL, e.g. `http://localhost:4318`. Set, the ~30 `Effect.withSpan` annotations already in the code (retrieval, embeddings, model calls, indexing, the sleep cycle, store writes, `db.*`, `git.*`) export as traces to `<endpoint>/v1/traces`, batched, flushed on exit. Unset, nothing is loaded and behavior is byte-identical. Export can never fail a command: a down collector is one stderr warning and a command that proceeds untraced.",
+      "An OTLP collector's base URL, e.g. `http://localhost:4318`. Set, the ~30 `Effect.withSpan` annotations already in the code (retrieval, embeddings, model calls, indexing, store writes, `db.*`, `git.*`) export as traces to `<endpoint>/v1/traces`, batched, flushed on exit. Unset, nothing is loaded and behavior is byte-identical. Export can never fail a command: a down collector is one stderr warning and a command that proceeds untraced.",
     fallback: null
   },
   {
@@ -207,8 +296,7 @@ export const TraceRoot = Config.String("MEMHTML_TRACE_ROOT").pipe(
  * Read as a NUMBER here, so a value that does not parse fails at startup naming the variable rather
  * than becoming a floor of `NaN` that no comparison ever crosses (`NaN < floor` is false, which would
  * silently switch the gate OFF). The range check, `(0, 1]`, lives in the composition root beside the
- * other set-but-unusable refusals (`layerRetrievalPolicy` in `api-layer.ts`). The hard floor sleep
- * refuses below is `VECTOR_COVERAGE_HARD_FLOOR` and is not configurable.
+ * other set-but-unusable refusals (`layerRetrievalPolicy` in `api-layer.ts`).
  */
 export const VectorCoverageFloor = Config.Number("MEMHTML_VECTOR_COVERAGE_FLOOR").pipe(
   Config.withDefault(VECTOR_COVERAGE_FLOOR)

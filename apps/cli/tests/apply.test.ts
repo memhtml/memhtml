@@ -6,7 +6,7 @@ import { Git } from "@memhtml/cli"
 import { Effect } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { decodeApply } from "../src/apply.js"
+import { decodeApply, decodeSessionPut } from "../src/apply.js"
 import { GUIDE, GUIDE_OP_EXAMPLE, GUIDE_TOPICS } from "../src/commands.js"
 import { EXIT_OK, EXIT_USAGE } from "../src/envelope.js"
 import { claimFromProse, proseTail } from "../src/prose.js"
@@ -95,7 +95,6 @@ interface Applied {
     readonly deduped: number
     readonly failed: number
     readonly skipped: number
-    readonly consolidated: number
   }
   readonly commit_sha: string | null
   readonly near_duplicates_degraded: boolean
@@ -147,8 +146,7 @@ describe("memhtml apply: the JSONL door", () => {
       written: 3,
       deduped: 0,
       failed: 0,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
     expect(data.commit_sha).not.toBeNull()
     // The whole point of the door: three memories, ONE commit. Three `memhtml write` calls make three.
@@ -224,7 +222,6 @@ describe("memhtml apply: the JSONL door", () => {
     expect(Object.keys(op as object).sort()).toEqual([
       "code",
       "conflict",
-      "consolidated_into",
       "deduped",
       "error",
       "existing_path",
@@ -232,8 +229,7 @@ describe("memhtml apply: the JSONL door", () => {
       "near_duplicates",
       "ok",
       "path",
-      "skipped",
-      "superseded_path"
+      "skipped"
     ])
     expect(op?.code).toBeNull()
     expect(op?.error).toBeNull()
@@ -304,8 +300,7 @@ describe("memhtml apply: the JSONL door", () => {
       written: 1,
       deduped: 0,
       failed: 1,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
   })
 
@@ -323,8 +318,7 @@ describe("memhtml apply: the JSONL door", () => {
       written: 0,
       deduped: 0,
       failed: 1,
-      skipped: 1,
-      consolidated: 0
+      skipped: 1
     })
     expect(data.commit_sha).toBeNull()
     expect(await htmlOnDisk(cli.root)).toEqual([])
@@ -384,8 +378,7 @@ describe("memhtml apply --detect-conflicts (AC-1-2)", () => {
       written: 1,
       deduped: 0,
       failed: 0,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
     expect(data.commit_sha).not.toBeNull()
     expect((await htmlOnDisk(cli.root)).length).toBe(2)
@@ -459,9 +452,9 @@ describe("memhtml apply --detect-conflicts (AC-1-2)", () => {
  */
 describe("memhtml apply --detect-near-duplicates", () => {
   const RUNBOOK =
-    "The deploy runbook owner is Priya Raman and the runbook lives in the operations wiki."
+    "The deploy runbook owner is Paula Reyes and the runbook lives in the operations wiki."
   const RUNBOOK_REWORDED =
-    "Priya Raman is the deploy runbook owner and the runbook lives in the operations wiki."
+    "Paula Reyes is the deploy runbook owner and the runbook lives in the operations wiki."
 
   it("names the ACTIVE memory a line nearly restates, in snake_case, and writes the line anyway", async () => {
     const cli = await withApply()
@@ -728,6 +721,89 @@ describe("the line decoder, as a pure function", () => {
   })
 })
 
+/**
+ * `memhtml session put` reads apply's write lines plus `label` and `unlabel` lines.
+ *
+ * Mutations, each run once with the change applied and the named case red:
+ * - `labelAt`: drop the unknown-field loop -> "refuses a label line with a missing, empty, or extra
+ *   field, naming the line and the door" (the extra field decodes).
+ * - `labelAt`: drop the `requiredString(record, "entity", at)` check -> the same case (a label with
+ *   no entity decodes).
+ * - `decodeSessionPut`: route every non-write op through `labelAt` with no vocabulary check -> "names
+ *   the three ops on an unknown one" (a `link` line decodes as an entity edit).
+ */
+describe("the session put decoder, as a pure function", () => {
+  const labelLine = (fields: Record<string, unknown>): string => `${JSON.stringify(fields)}\n`
+
+  it("decodes write, label, and unlabel lines in file order, writes exactly as apply does", () => {
+    const write = `${line({ title: "A fact", body: "The thing that happened.", entity: "system:x" })}\n`
+    const decoded = decodeSessionPut(
+      `${write}${labelLine({ op: "label", path: "areas/inbox/a.html", entity: "system:memhtml" })}\n${labelLine({ op: "unlabel", path: "areas/inbox/a.html", entity: "system:x" })}`
+    )
+    expect(decoded.ok).toBe(true)
+    if (!decoded.ok) return
+    const applied = decodeApply(write)
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) return
+    expect(decoded.ops).toEqual([
+      { op: "write", params: applied.ops[0] },
+      { op: "label", path: "areas/inbox/a.html", entity: "system:memhtml" },
+      { op: "unlabel", path: "areas/inbox/a.html", entity: "system:x" }
+    ])
+  })
+
+  it("leaves apply writes-only: a label line is refused there", () => {
+    const refused = decodeApply(
+      labelLine({ op: "label", path: "areas/inbox/a.html", entity: "system:memhtml" })
+    )
+    expect(refused.ok).toBe(false)
+    if (refused.ok) return
+    expect(refused.failure.code).toBe("ERR_INVALID_FLAG")
+    expect(refused.failure.error).toContain("memhtml apply: line 1")
+  })
+
+  it("refuses a label line with a missing, empty, or extra field, naming the line and the door", () => {
+    const cases: ReadonlyArray<readonly [Record<string, unknown>, string, string]> = [
+      [{ op: "label", path: "areas/inbox/a.html" }, "ERR_MISSING_ARGUMENT", "`entity`"],
+      [{ op: "unlabel", entity: "system:x" }, "ERR_MISSING_ARGUMENT", "`path`"],
+      [{ op: "label", path: "areas/inbox/a.html", entity: " " }, "ERR_INVALID_FLAG", "`entity`"],
+      [{ op: "label", path: 7, entity: "system:x" }, "ERR_INVALID_FLAG", "`path`"],
+      [
+        { op: "label", path: "areas/inbox/a.html", entity: "system:x", title: "t" },
+        "ERR_INVALID_FLAG",
+        "unknown field `title` on a label line"
+      ]
+    ]
+    for (const [fields, code, mention] of cases) {
+      const decoded = decodeSessionPut(
+        `${line({ title: "ok", body: "Fine." })}\n${labelLine(fields)}`
+      )
+      expect(decoded.ok, JSON.stringify(fields)).toBe(false)
+      if (decoded.ok) continue
+      expect(decoded.failure.code, JSON.stringify(fields)).toBe(code)
+      expect(decoded.failure.error).toContain("memhtml session put: line 2")
+      expect(decoded.failure.error).toContain(mention)
+    }
+  })
+
+  it("names the three ops on an unknown one, and refuses a stream with none", () => {
+    const unknown = decodeSessionPut(
+      labelLine({ op: "link", path: "areas/inbox/a.html", entity: "x:y" })
+    )
+    expect(unknown.ok).toBe(false)
+    if (unknown.ok) return
+    expect(unknown.failure.code).toBe("ERR_INVALID_FLAG")
+    expect(unknown.failure.error).toContain("write, label, unlabel")
+    const missing = decodeSessionPut(labelLine({ path: "areas/inbox/a.html", entity: "x:y" }))
+    expect(missing.ok || missing.failure.code).toBe("ERR_MISSING_ARGUMENT")
+    const empty = decodeSessionPut("\n\n")
+    expect(empty.ok || empty.failure.code).toBe("ERR_MISSING_ARGUMENT")
+    // A malformed write line is refused under this door's name, by apply's own decoder.
+    const badWrite = decodeSessionPut(`${labelLine({ op: "write", type: "semantic" })}`)
+    expect(badWrite.ok || badWrite.failure.error).toContain("memhtml session put: line 1")
+  })
+})
+
 describe("claim derivation: prose becomes a claim and a tail", () => {
   it("takes the first sentence as the claim and the rest as paragraphs", () => {
     expect(claimFromProse("The first thing. The second thing.")).toBe("The first thing.")
@@ -822,8 +898,7 @@ describe("claim derivation: prose becomes a claim and a tail", () => {
       written: 1,
       deduped: 0,
       failed: 0,
-      skipped: 0,
-      consolidated: 0
+      skipped: 0
     })
     const { readMemory } = await import("../src/operations.js")
     const read = await Effect.runPromise(
@@ -894,12 +969,12 @@ describe("the manifest guide (AC-6-6)", () => {
     /**
      * And the concurrency rule, which is the one an agent most needs to have right: it decides
      * whether writing while a server runs is safe. Both halves are asserted because each is
-     * separately load-bearing — that concurrent use IS allowed, and that `sleep run` is the
-     * exception. A guide carrying only the permission would have an agent write onto a sleep
-     * branch; a guide carrying only the exception would have it refuse ordinary concurrent work.
+     * separately load-bearing — that concurrent use IS allowed, and that a checked-out curation
+     * branch is the exception. A guide carrying only the permission would have an agent write onto a
+     * curation branch; a guide carrying only the exception would have it refuse ordinary concurrent work.
      */
     expect(body).toContain("may share one store")
-    expect(body).toContain("`sleep/<date>` branch")
+    expect(body).toContain("`curate/<date>` branch")
   })
 
   it("teaches when to batch, with an example line the test PARSES", async () => {
@@ -980,7 +1055,6 @@ describe("the manifest guide (AC-6-6)", () => {
       "continue-on-error",
       "detect-conflicts",
       "detect-near-duplicates",
-      "consolidate",
       "session-id",
       "prompt-id",
       "turn-uuid"

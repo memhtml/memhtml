@@ -52,16 +52,22 @@ sitemap.xml merge=ours
 
 ## What a clone gives you
 
-`.memhtml/index.db` and `.memhtml/state.db` are both gitignored (`packages/store/src/layout.ts:55`), along with the write-ahead log and shared-memory files SQLite keeps beside them:
+`.memhtml/index.db` and `.memhtml/state.db` are both gitignored (`packages/store/src/layout.ts:55`), along with the write-ahead log and shared-memory files SQLite keeps beside them, the session logs, the head's snapshots and vector cache, and a head server's socket:
 
 ```
 .memhtml/index.db
 .memhtml/state.db
 .memhtml/index.db-*
 .memhtml/state.db-*
+.memhtml/sessions/
+.memhtml/snapshots/
+.memhtml/vectors/
+.memhtml/head.sock
 ```
 
-A clone therefore hands you the tree and the committed sidecar `.memhtml/state/access.jsonl`, and no databases at all. That sidecar is why `memhtml state import` is a step in [recovery](/learn/operations/recover-from-a-lost-index/). Retrieval ranks a query with four arms: full-text search, vector similarity, recency, and salience. Salience favors the memories you have opened and reinforced before, so skipping the import leaves that arm with no signal and ranking gets quietly worse instead of failing.
+A store scaffolded before 0.16 has only the first four lines. The commands that write the other four add each missing pattern to `.git/info/exclude` the first time they run, so `git status` stays clean without an edit to the committed `.gitignore`.
+
+A clone therefore hands you the tree, the committed sidecar `.memhtml/state/access.jsonl`, and the store policy `memhtml.config.json` when the store has one, and no databases at all. That sidecar is why `memhtml state import` is a step in [recovery](/learn/operations/recover-from-a-lost-index/). Retrieval ranks a query with four arms: full-text search, vector similarity, recency, and salience. Salience favors the memories you have opened and reinforced before, so skipping the import leaves that arm without the sidecar's history, and ranking gets quietly worse instead of failing. The clone's first `memhtml state export` can then replace the committed sidecar with this clone's own rows, or with an empty file.
 
 ## What the scaffold contains
 
@@ -70,15 +76,17 @@ A clone therefore hands you the tree and the committed sidecar `.memhtml/state/a
 ```
 projects/       areas/          resources/      archive/
 areas/arcs/     areas/inbox/    resources/people/
-.memhtml/state/   .memhtml/sleep/
+.memhtml/state/   .memhtml/sleep/   (the second held the sleep pipeline's reports, removed in 0.16; init still creates it empty)
 .gitignore      .gitattributes  README.html
 ```
 
-Only the sleep cycle writes into `areas/arcs/`, which holds behavioral arcs: memories that summarize a pattern running across many other memories. `resources/people/` is the person plane. A memory the placement rules cannot place lands in `areas/inbox/`, and [`memhtml doctor`](/learn/operations/audit-and-publish-the-corpus/) warns you when that directory gets crowded, because a full inbox means the placement rules stopped matching what agents write.
+`areas/arcs/` holds behavioral arcs: memories that summarize a pattern running across many other memories, written by curation rather than by an agent's `memory_write`. `resources/people/` is the person plane. A memory the placement rules cannot place lands in `areas/inbox/`, and [`memhtml doctor`](/learn/operations/audit-and-publish-the-corpus/) warns you when that directory gets crowded, because a full inbox means the placement rules stopped matching what agents write.
 
 `memhtml init` also applies the database migrations, so `.memhtml/index.db` exists from the start and holds nothing until `memhtml index rebuild` projects the tree into it.
 
 Every scaffold file is written only when it is absent, so a re-run leaves an edited one alone. The `README.html` you rewrote stays rewritten.
+
+`memhtml init` writes no `memhtml.config.json`, so a new store runs under the library's lenient defaults. Write and commit the file when the store needs a stricter write bar, as [set the store policy](/learn/operations/set-the-store-policy/) describes.
 
 ## Then build the index
 

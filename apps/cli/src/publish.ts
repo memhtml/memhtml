@@ -1,23 +1,28 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
-import { DatabaseService } from "@memhtml/index"
-import { type GeneratedFile, generateArtifacts, publishRows } from "@memhtml/sleep"
-import { attemptIo, commitSubject, readFileOrNull } from "@memhtml/store"
+import { DatabaseService, IndexStale, isIndexablePath, TREE_PREFIXES } from "@memhtml/index"
+import {
+  attemptIo,
+  commitSubject,
+  type GitShape,
+  readFileOrNull,
+  withCheckoutLock
+} from "@memhtml/store"
 import { Effect } from "effect"
 
 import { Git } from "./api-layer.js"
+import { type GeneratedFile, generateArtifacts, type PublishRow, publishRows } from "./artifacts.js"
 
 /**
  * `memhtml publish`: regenerate the per-directory `index.html` listings and the root `sitemap.xml`, and
  * commit whatever changed.
  *
- * **The generator is imported from `@memhtml/sleep` and never re-derived.** `generateArtifacts` lives
- * there because a listing needs `files.title`/`gist`/`updated_at`, all of them index projections, and
+ * **The generator is `./artifacts.ts` and is never re-derived.** `generateArtifacts` lives there because
+ * a listing needs `files.title`/`gist`/`updated_at`, all of them index projections, and
  * `@memhtml/store` is SQL-free by design. Two generators would produce two byte sequences for one tree,
  * and these files are the design's one merge-conflict source. `.gitattributes` marks them
  * `merge=ours` and a conflict is resolved by regenerating, which only works if regeneration is
- * unambiguous. The sleep integrity phase and this command therefore call the same function, and the
- * only difference between them is which commit the result lands in.
+ * unambiguous. This command is the one regenerator.
  *
  * The output is deterministic to the byte: the rows arrive path-ordered from SQL, every string is
  * escaped, and no timestamp of generation appears anywhere. Two runs over an unchanged corpus write
@@ -50,6 +55,33 @@ const writeIfChanged = (root: string, artifact: GeneratedFile) =>
   })
 
 /**
+ * Refuse to regenerate from an index that holds no file rows while HEAD carries memory files.
+ *
+ * The listings and the sitemap are projections of the `files` table, so an index with no rows
+ * regenerates every one of them empty, and the commit that follows reads as an ordinary
+ * regeneration. A fresh clone, where `index.db` is gitignored and absent, and a rebuild that
+ * emptied the table are both that state. The tree is the system of record, so the question is
+ * asked of HEAD with the indexer's own path rule: when HEAD holds no memory file either, the store
+ * is genuinely empty and an empty listing is the correct output. The check runs before any byte is
+ * written, so a refusal leaves the tree and the history untouched.
+ */
+const refuseEmptyIndex = (git: GitShape, rows: ReadonlyArray<PublishRow>) =>
+  Effect.gen(function* () {
+    if (rows.length > 0) return
+    const head = yield* git.revParseHead()
+    if (head === null) return
+    const memories = (yield* git.lsTreeR(head, TREE_PREFIXES)).filter((entry) =>
+      isIndexablePath(entry.path)
+    ).length
+    if (memories === 0) return
+    return yield* Effect.fail(
+      new IndexStale(
+        `the index holds no memory rows while HEAD carries ${memories} memory ${memories === 1 ? "file" : "files"}, so publish would regenerate every listing and sitemap.xml empty; build the index with \`memhtml index rebuild\` and publish again`
+      )
+    )
+  })
+
+/**
  * Regenerate and commit.
  *
  * The whole artifact set is staged rather than only the rewritten files, because a listing that was
@@ -61,16 +93,23 @@ export const publish = () =>
     const git = yield* Git
     const db = yield* DatabaseService
     const rows = yield* publishRows(db)
+    yield* refuseEmptyIndex(git, rows)
     const artifacts = generateArtifacts(rows)
 
+    // Written, staged, and committed under the checkout lock: the commit takes the whole shared
+    // index, so it must not run while a session commit has its own file staged there.
     const written: Array<string> = []
-    for (const artifact of artifacts) {
-      if (yield* writeIfChanged(git.root, artifact)) written.push(artifact.path)
-    }
-
-    yield* git.add(artifacts.map((artifact) => artifact.path))
-    const commit = yield* git.commit(
-      commitSubject("publish", `regenerate ${artifacts.length} generated artifacts`)
+    const commit = yield* withCheckoutLock(
+      git.root,
+      Effect.gen(function* () {
+        for (const artifact of artifacts) {
+          if (yield* writeIfChanged(git.root, artifact)) written.push(artifact.path)
+        }
+        yield* git.add(artifacts.map((artifact) => artifact.path))
+        return yield* git.commit(
+          commitSubject("publish", `regenerate ${artifacts.length} generated artifacts`)
+        )
+      })
     )
 
     return {

@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/html",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "private": true,
   "description": "Parse and serialize the memory file format.",
   "type": "module",
@@ -36,11 +36,11 @@
     "parse5": "8.0.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.14",
+    "@biomejs/biome": "2.5.15",
     "@effect/vitest": "catalog:",
-    "@types/node": "26.6.2",
+    "@types/node": "26.6.5",
     "fast-check": "catalog:",
     "typescript": "7.0.2",
-    "vitest": "5.0.1"
+    "vitest": "5.0.4"
   }
 }

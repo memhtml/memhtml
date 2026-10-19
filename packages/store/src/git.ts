@@ -1,5 +1,8 @@
 import { type ChildProcess, execFile } from "node:child_process"
-import { Context, Effect, Layer, Schema } from "effect"
+import { GitFailure, type StorageFailure } from "@memhtml/contracts/errors"
+import { Context, Effect, Layer } from "effect"
+
+import { withCheckoutLock } from "./checkout-lock.js"
 
 import {
   type ChangedPath,
@@ -27,16 +30,12 @@ import {
  */
 
 /**
- * A git subprocess exited non-zero, or could not be spawned. `command` is the subcommand
- * name only, and never the full argv, because arguments carry memory paths and commit subjects
- * carry memory titles, and a `GitFailure` is returned to an agent through a tool response.
- * The stderr text goes to `Effect.logError` at the boundary below instead of into the payload.
+ * The typed failure every method below raises. Declared in `@memhtml/contracts` (`errors.ts`) so the
+ * session package, which spawns git itself, raises the same class; re-exported here so every
+ * `import { GitFailure } from "@memhtml/store"` keeps resolving. The stderr text goes to
+ * `Effect.logError` at the boundary below instead of into the payload.
  */
-export class GitFailure extends Schema.TaggedError<GitFailure>()("GitFailure", {
-  command: Schema.String,
-  /** The process exit code, or `null` when the process never started. */
-  exitCode: Schema.NullOr(Schema.Int)
-}) {}
+export { GitFailure }
 
 /** What {@link GitShape.commit} stamps below the subject line. */
 export interface Trailers {
@@ -80,8 +79,7 @@ export interface GitShape {
    * Every path the given commits changed, unioned, in ONE subprocess. FULL object names only.
    *
    * The shas go in on stdin, exactly as {@link catFileBatch} does, because the caller's set is one
-   * per commit in a range and a range can hold hundreds — `sleep`'s compress phase commits inside
-   * its fold loop. One process either way.
+   * per commit in a range and a range can hold hundreds. One process either way.
    *
    * A rename contributes BOTH of its paths. The union answers "which paths did these commits
    * write", and a caller asking that about a `git mv` needs the path that went away as much as the
@@ -97,10 +95,18 @@ export interface GitShape {
   readonly add: (paths: ReadonlyArray<string>) => Effect.Effect<void, GitFailure>
   /** `git mv`. The destination's parent directory must already exist, since git will not make it. */
   readonly mv: (from: string, to: string) => Effect.Effect<void, GitFailure>
+  /**
+   * `git commit` of the WHOLE shared index, a no-op when nothing is staged. Takes the repository's
+   * checkout lock (`checkout-lock.ts`) for the check and the commit, reentrantly, so a caller that
+   * holds it across its stage-then-commit (every store write, through `makeStore`'s one-writer
+   * gate) pays nothing and a caller that does not is still excluded at the one step that would sweep
+   * a session's staged file into this commit. `StorageFailure` `checkout.locked` when another writer
+   * holds the lock past the wait.
+   */
   readonly commit: (
     message: string,
     options?: { readonly trailers?: Trailers | undefined }
-  ) => Effect.Effect<CommitResult, GitFailure>
+  ) => Effect.Effect<CommitResult, GitFailure | StorageFailure>
   readonly checkoutBranch: (
     branch: string,
     options?: { readonly create?: boolean | undefined }
@@ -121,7 +127,7 @@ export interface GitShape {
    * This is where `WriteConflict.ourSha`/`theirSha` come from.
    */
   readonly unmergedStages: () => Effect.Effect<ReadonlyArray<UnmergedStage>, GitFailure>
-  /** One trailer key's values per commit in a range, newest first. Drives `sleep resume`. */
+  /** One trailer key's values per commit in a range, newest first. */
   readonly logTrailers: (
     range: string,
     key: string
@@ -176,10 +182,10 @@ const GIT_ENV: Readonly<Record<string, string>> = {
  * Every spawn removes them, because git exports them into hook processes: a `pre-push` hook in a
  * linked worktree receives an ABSOLUTE `GIT_DIR`, every descendant inherits it, and a store call
  * that meant "the corpus at `-C <root>`" silently reads and writes the repository the hook ran in.
- * Measured here: `memhtml sleep run` under such a hook refused with DirtyTree naming the CALLING
+ * Measured here: a v1 curation run under such a hook refused with DirtyTree naming the CALLING
  * repo's tree, with the corpus clean. (A primary checkout exports the relative `.git`, which a child
  * running elsewhere fails to resolve and falls back from — which is why hooks from a primary
- * checkout never surfaced this.) `apps/consolidator/src/mount.ts` scrubs the same set for its
+ * checkout never surfaced this.) `apps/cli/src/mount.ts` scrubs the same set for its
  * `git worktree` calls; the two lists are pinned to each other by tests on both sides.
  */
 export const GIT_REPO_SELECTION_ENV: ReadonlyArray<string> = [
@@ -430,22 +436,25 @@ export const makeGit = (root: string): GitShape => ({
   mv: (from, to) => git(root, "mv", ["mv", "--", from, to]).pipe(Effect.asVoid),
 
   commit: (message, options = {}) =>
-    Effect.gen(function* () {
-      // `diff --cached --quiet` exits 1 when the index differs from HEAD. Asking first is what
-      // makes a no-op write a no-op instead of an empty commit. `commit` with nothing staged
-      // exits 1, and treating that as a failure would make every deduped write look broken.
-      const staged = yield* git(root, "diff-cached", ["diff", "--cached", "--quiet"], {
-        okExitCodes: [0, 1]
-      })
-      if (staged.exitCode === 0) return { sha: null, empty: true }
+    withCheckoutLock(
+      root,
+      Effect.gen(function* () {
+        // `diff --cached --quiet` exits 1 when the index differs from HEAD. Asking first is what
+        // makes a no-op write a no-op instead of an empty commit. `commit` with nothing staged
+        // exits 1, and treating that as a failure would make every deduped write look broken.
+        const staged = yield* git(root, "diff-cached", ["diff", "--cached", "--quiet"], {
+          okExitCodes: [0, 1]
+        })
+        if (staged.exitCode === 0) return { sha: null, empty: true }
 
-      const trailerArgs = Object.entries(options.trailers ?? {}).flatMap(([key, value]) =>
-        value === "" ? [] : ["--trailer", `${key}: ${value}`]
-      )
-      yield* git(root, "commit", ["commit", "-m", message, ...trailerArgs])
-      const sha = yield* git(root, "rev-parse", ["rev-parse", "HEAD"])
-      return { sha: text(sha).trim(), empty: false }
-    }),
+        const trailerArgs = Object.entries(options.trailers ?? {}).flatMap(([key, value]) =>
+          value === "" ? [] : ["--trailer", `${key}: ${value}`]
+        )
+        yield* git(root, "commit", ["commit", "-m", message, ...trailerArgs])
+        const sha = yield* git(root, "rev-parse", ["rev-parse", "HEAD"])
+        return { sha: text(sha).trim(), empty: false }
+      })
+    ),
 
   checkoutBranch: (branch, options = {}) =>
     git(root, "checkout", ["checkout", ...(options.create === true ? ["-b"] : []), branch]).pipe(
@@ -514,6 +523,6 @@ const parseUnmergedStages = (output: string): ReadonlyArray<UnmergedStage> =>
 /**
  * The live layer, rooted at a caller-supplied path. There is no `MEMHTML_ROOT` read here. The
  * root is config the store owns (`store.ts`), and a git service that resolved its own root
- * could not be pointed at a fixture repo or at a sleep worktree.
+ * could not be pointed at a fixture repo or at a detached worktree.
  */
 export const layerGit = (root: string): Layer.Layer<GitShape> => Layer.succeed(Git)(makeGit(root))

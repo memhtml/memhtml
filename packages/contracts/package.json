@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/contracts",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "private": true,
   "description": "Schemas, enums, errors, and path algebra. Zero I/O.",
   "type": "module",
@@ -42,6 +42,10 @@
       "types": "./dist/slug.d.ts",
       "default": "./dist/slug.js"
     },
+    "./store-config": {
+      "types": "./dist/store-config.d.ts",
+      "default": "./dist/store-config.js"
+    },
     "./types": {
       "types": "./dist/types.d.ts",
       "default": "./dist/types.js"
@@ -57,11 +61,11 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.14",
+    "@biomejs/biome": "2.5.15",
     "@effect/vitest": "catalog:",
-    "@types/node": "26.6.2",
+    "@types/node": "26.6.5",
     "fast-check": "catalog:",
     "typescript": "7.0.2",
-    "vitest": "5.0.1"
+    "vitest": "5.0.4"
   }
 }

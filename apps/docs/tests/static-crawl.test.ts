@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { BASE, BASE_SEGMENT, DIST_DIR } from "../src/gates.js"
+import { isRemovedPage } from "../src/lib/removed-pages.js"
 import { type StaticSite, serveStatic } from "./static-server.js"
 
 /**
@@ -29,7 +30,11 @@ const dist = join(fileURLToPath(new URL("..", import.meta.url)), DIST_DIR)
 /** Directories under the output that hold no page: bundles, the search index, the cards, the figures. */
 const NOT_PAGES: ReadonlySet<string> = new Set(["_astro", "pagefind", "og", "d2"])
 
-/** Every page route, derived from the `index.html` files the build wrote. */
+/**
+ * Every page route, derived from the `index.html` files the build wrote, less the redirect stubs
+ * that keep a removed page's URL alive. A stub is a meta refresh with no landmark by design, and
+ * `tests/removed-pages.test.ts` checks it.
+ */
 const routes = (): ReadonlyArray<string> => {
   const walk = (directory: string, prefix: string): ReadonlyArray<string> =>
     readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -37,7 +42,7 @@ const routes = (): ReadonlyArray<string> => {
       if (entry.isDirectory()) return walk(join(directory, entry.name), `${prefix}${entry.name}/`)
       return entry.name === "index.html" ? [prefix] : []
     })
-  return walk(dist, BASE_SEGMENT)
+  return walk(dist, BASE_SEGMENT).filter((route) => !isRemovedPage(route, BASE))
 }
 
 /**

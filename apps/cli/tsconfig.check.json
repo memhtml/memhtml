@@ -36,16 +36,22 @@
       "path": "../../packages/integrations"
     },
     {
-      "path": "../../packages/sleep"
-    },
-    {
       "path": "../../packages/llm"
     },
     {
       "path": "../../packages/eval"
     },
     {
-      "path": "../consolidator"
+      "path": "../../packages/head"
+    },
+    {
+      "path": "../../packages/session"
+    },
+    {
+      "path": "../../packages/snapshot"
+    },
+    {
+      "path": "../../packages/curator"
     }
   ]
 }

@@ -111,7 +111,7 @@ export const foldDisclosure = (
     /**
      * Deduplicated per candidate. One memory counts ONCE against a name however many times it claims
      * it, and it can claim one twice. The cap is keyed on the entity NAME while
-     * `file_entities` is keyed on `(type, name)`. `person:sanju` and `concept:sanju` are two rows
+     * `file_entities` is keyed on `(type, name)`. `person:sasha` and `concept:sasha` are two rows
      * with one name. Counting both would let a single memory exhaust the cap by itself, pushing
      * every other memory about that entity into an index line.
      */

@@ -7,17 +7,21 @@ import {
   codeFor,
   correctMemory,
   type EmbedderShape,
+  guardV1Door,
   type layerApp,
   linkMemories,
   listMemories,
   messageFor,
   neighborsOf,
   proseTail,
+  Roots,
   readMemory,
   recallMemories,
+  recallOnHead,
   reinforceMemories,
   resolveMemory,
   searchMemories,
+  searchOnHead,
   searchTraces,
   statusReport,
   traceLinks,
@@ -281,9 +285,7 @@ const wireReport = (report: BatchOpReport) => ({
           batch_index: hit.batchIndex,
           similarity: hit.similarity,
           claim: hit.claim
-        })),
-  consolidated_into: report.consolidatedInto ?? null,
-  superseded_path: report.supersededPath ?? null
+        }))
 })
 
 /**
@@ -302,17 +304,13 @@ const summarize = (
   let deduped = 0
   let failed = 0
   let skipped = 0
-  let consolidated = 0
   for (const result of results) {
-    // The same partition `operations.ts` makes: a batch-internal loser's value survived at
-    // another slot and no file of its own was attempted, so it is neither written nor failed.
-    if (result.consolidatedInto !== undefined) consolidated += 1
-    else if (result.skipped === true) skipped += 1
+    if (result.skipped === true) skipped += 1
     else if (!result.ok) failed += 1
     else if (result.deduped === true) deduped += 1
     else written += 1
   }
-  return { total: results.length, written, deduped, failed, skipped, consolidated }
+  return { total: results.length, written, deduped, failed, skipped }
 }
 
 /**
@@ -320,6 +318,14 @@ const summarize = (
  *
  * `kit.toLayer({ … })` is checked against the toolkit's own parameter and success schemas, so a
  * handler returning the wrong shape is a compile error rather than a decode failure on a live call.
+ *
+ * The three tools that create a record (`memory_write`, `memory_write_batch`, `memory_correct`) run
+ * `guardV1Door` before anything else, as the CLI's `write`, `apply`, and `correct` do: it reads the
+ * store's `memhtml.config.json` on every call and refuses under its `v1Doors` mode, with
+ * `MEMHTML_SESSION` read from this server's own environment. `open` never refuses;
+ * `closed-in-session` (the default) refuses in a server started inside a run session and not in a
+ * shared one; `closed` always refuses. The edits of existing records (`memory_link`,
+ * `memory_archive`, `memory_reinforce`) are not doors and no mode closes them.
  */
 export const ToolHandlers: Layer.Layer<
   Layer.Success<ReturnType<typeof MemhtmlToolkit.toLayer>>,
@@ -329,6 +335,7 @@ export const ToolHandlers: Layer.Layer<
   memory_write: (params) =>
     handled(
       Effect.gen(function* () {
+        yield* guardV1Door("memory_write")
         const article = yield* authored(params.body, params.article_html)
         const result = yield* writeMemory({
           title: params.title,
@@ -395,6 +402,8 @@ export const ToolHandlers: Layer.Layer<
   memory_write_batch: (params) =>
     handled(
       Effect.gen(function* () {
+        // Before any op is looked at, in both modes: a closed door refuses the call, not each op.
+        yield* guardV1Door("memory_write_batch")
         const continueOnError = params.continue_on_error === true
         const reports: Array<BatchOpReport | undefined> = params.ops.map(() => undefined)
         const survivors: Array<WriteParams> = []
@@ -441,12 +450,6 @@ export const ToolHandlers: Layer.Layer<
           // the same findings from the same code, and the survivors-only consequence above holds
           // here too — an XOR-refused op has no resolved text to embed.
           detectNearDuplicates: params.detect_near_duplicates === true,
-          // Threaded unchanged for the same reason the flag above is: `memhtml apply --consolidate`
-          // resolves the same slots from the same code, so the two doors cannot disagree about
-          // which value won.
-          ...(params.consolidate !== undefined && params.consolidate !== null
-            ? { consolidate: params.consolidate }
-            : {}),
           sessionId: opt(params.session_id),
           promptId: opt(params.prompt_id),
           turnUuid: opt(params.turn_uuid)
@@ -513,16 +516,7 @@ export const ToolHandlers: Layer.Layer<
                       : { ...hit, batchIndex: originOf[hit.batchIndex] ?? hit.batchIndex }
                   )
                 }
-          // `consolidatedInto` is a second index in `batchWrite`'s survivor space and takes the
-          // same translation the conflict's `batchIndex` does, for the same reason: an XOR-refused
-          // op before the consolidated pair would otherwise make the pointer name the wrong op.
-          reports[index] =
-            withNear.consolidatedInto === undefined
-              ? withNear
-              : {
-                  ...withNear,
-                  consolidatedInto: originOf[withNear.consolidatedInto] ?? withNear.consolidatedInto
-                }
+          reports[index] = withNear
         }
 
         /**
@@ -563,7 +557,7 @@ export const ToolHandlers: Layer.Layer<
   memory_search: (params) =>
     handled(
       Effect.gen(function* () {
-        const result = yield* searchMemories({
+        const search = {
           query: params.query,
           limit: opt(params.limit),
           memoryTypes: opt(params.memory_types),
@@ -575,7 +569,16 @@ export const ToolHandlers: Layer.Layer<
           facets: parseFacetFilters(arr(params.facets)),
           includeArchived: opt(params.include_archived),
           asOf: opt(params.as_of)
-        })
+        }
+        /**
+         * The head server first, then the index. The head follows the ref, so a record a run
+         * session committed a moment ago is in its answer, while the index has it only after the
+         * next `memhtml index update`. `searchOnHead` answers `null` for a call the head cannot
+         * answer the way the index would (`include_archived`, `as_of`, a quoted phrase, a query
+         * with no term) and whenever the socket gives no answer, and both answers are one type.
+         */
+        const { memhtmlRoot } = yield* Roots
+        const result = (yield* searchOnHead(memhtmlRoot, search)) ?? (yield* searchMemories(search))
         return {
           hits: result.hits.map((hit) => ({
             path: hit.path,
@@ -606,11 +609,14 @@ export const ToolHandlers: Layer.Layer<
   memory_recall: (params) =>
     handled(
       Effect.gen(function* () {
-        const pack = yield* recallMemories({
+        const recall = {
           query: params.query,
           budgetChars: opt(params.budget_chars),
           workspace: opt(params.workspace)
-        })
+        }
+        // The head first, then the index, for `memory_search`'s reason.
+        const { memhtmlRoot } = yield* Roots
+        const pack = (yield* recallOnHead(memhtmlRoot, recall)) ?? (yield* recallMemories(recall))
         /**
          * `lateral` is the union of both folds' index lines.
          *
@@ -649,6 +655,7 @@ export const ToolHandlers: Layer.Layer<
   memory_correct: (params) =>
     handled(
       Effect.gen(function* () {
+        yield* guardV1Door("memory_correct")
         const article = yield* authored(params.body, params.article_html)
         const result = yield* correctMemory({
           targetPath: params.target_path,
@@ -854,15 +861,7 @@ export const ToolHandlers: Layer.Layer<
           index_fresh: report.indexFresh,
           embedder_up: report.embedderUp,
           vector_coverage: report.vectorCoverage,
-          vector_coverage_floor: report.vectorCoverageFloor,
-          last_sleep:
-            report.lastSleep === null
-              ? null
-              : {
-                  run_id: report.lastSleep.runId,
-                  status: report.lastSleep.status,
-                  started_at: report.lastSleep.startedAt
-                }
+          vector_coverage_floor: report.vectorCoverageFloor
         }
       })
     )

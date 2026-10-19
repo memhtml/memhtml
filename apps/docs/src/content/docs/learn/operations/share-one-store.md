@@ -8,7 +8,7 @@ memhtml serve mcp
 MEMHTML_MCP_BIN=/path/to/bin.js memhtml serve mcp   # explicit path, for a split deployment
 ```
 
-The server publishes fifteen tools and three resources over this same repo (`apps/mcp/src/tools.ts`). Sleep stays off that tool surface deliberately: a curation run is a cron and operator action that produces a reviewable branch, and an agent should not start one mid-conversation.
+The server publishes fifteen tools and two resources over this same repo (`apps/mcp/src/tools.ts`). Curation stays off that tool surface deliberately: it is an operator action that produces a reviewable branch, and an agent should not start one mid-conversation.
 
 ## Yes, they can share it
 
@@ -32,15 +32,17 @@ The error being retried is `SQLITE_BUSY` specifically. The lock was never taken,
 
 The retry layer therefore matches `SQLITE_BUSY` alone, where a blanket retry on any SQLite error would repeat a statement that had already taken effect.
 
-## The one operation that needs exclusivity
+## Git writers wait for each other
 
-`memhtml sleep run` needs it, for a git reason rather than a database one.
+The git side has its own rule. Every write that commits holds the checkout lock, `.memhtml/checkout.lock`, from its first stage to its commit. That covers `memhtml write`, `apply`, `correct`, `link`, `archive`, `task status`, `publish`, `state export`, `doctor --fix`, every session commit, and the `curate merge` fast-forward, in any process. So a CLI write and an MCP server write never commit each other's staged files. A writer waits up to 15 seconds for the lock and then fails with `ERR_STORAGE` (`checkout.locked`), having written nothing, and running it again is safe.
 
-A run holds a checked-out `sleep/<date>` branch. A concurrent write therefore commits onto that branch, where it either gets merged into `main` as if it were curation or disappears with `git branch -D`. Neither outcome is one you want to discover later.
+A running [head server](/learn/operations/run-a-head-server/) shares the store the same way. It holds the head in memory and opens no database, and when it commits a session it takes the same lock.
 
-`git branch -D` discards more than the commits. A run records the state-plane writes it earns — a `trace-consolidation` watermark, an edge promotion, an entity promotion — as lines in `.memhtml/sleep/<run-id>.pending.jsonl`, a committed file on the run's own branch, and `memhtml sleep merge` applies them only after the fast-forward succeeds (`packages/sleep/src/contract.ts:306`). Dropping the branch drops that ledger with it, so those writes are never made and the sessions in it are simply re-read on the next cycle. That is the design working: `.memhtml/state.db` is not rebuildable from the tree, so a watermark written during a phase would outlive the branch that earned it, and because the watermark is an anti-join the transcript would go unread behind a row asserting it was handled. A write of your own that landed on the branch has no such ledger, which is the asymmetry this section exists to warn about.
+## Don't check out a curate branch
 
-Stop other writes for the length of a run. In practice that means `sleep run` fires when nothing else is writing, and you start an interactive run with the agent idle.
+`memhtml curate run` commits to its `curate/<date>` branch without checking it out, and it refuses to run on the branch your checkout has open, so a curation pass never needs other writes to stop. The one hazard left is a person checking out a `curate/<date>` branch to look at it. While it's checked out, a write from any process commits onto that branch, where it either gets landed on `main` as if it were curation or disappears with `git branch -D`.
+
+Review a curator branch with `git log` and `git diff` against `main` instead, as [curate the corpus](/learn/operations/curate-the-corpus/#review-the-branch) shows.
 
 ## The supervisor holds nothing
 
@@ -62,6 +64,6 @@ See [check the discrimination gate](/learn/operations/check-the-discrimination-g
 
 ## Two machines is a different question
 
-Sharing one store between processes on one machine is solved. Sharing it between machines is solved for the git tree and open for the state plane: `.memhtml/state/access.jsonl` merges as a whole file, which makes it last-writer-wins. [Preserve the state plane](/learn/operations/preserve-the-state-plane/) covers the mitigation and how to detect a loss.
+Sharing one store between processes on one machine is solved. Sharing it between machines is solved for the git tree and open for the state plane. Git merges `.memhtml/state/access.jsonl` line by line, with no merge driver. Two machines' counts for one memory therefore never add up: changes to lines that are not adjacent merge cleanly, and changes to the same or adjacent lines conflict. A clone that exports before it imports also overwrites the committed rows. [Preserve the state plane](/learn/operations/preserve-the-state-plane/) covers the mitigation and how to detect a loss.
 
 [Concurrency and conflict surfacing](/internals/concurrency-and-conflicts/) covers the mechanism.

@@ -36,7 +36,6 @@ import {
   sourceNames,
   sourceText,
   stringArrayConst,
-  stringPairArrayConst,
   stringProperty,
   switchReturnsOf,
   tsFilesUnder
@@ -62,7 +61,6 @@ export const SOURCES = {
   mcpResources: "apps/mcp/src/resources.ts",
   types: "packages/contracts/src/types.ts",
   edges: "packages/contracts/src/edges.ts",
-  sleep: "packages/sleep/src/contract.ts",
   retrieval: "packages/index/src/retrieval-sql.ts",
   migrations: "packages/index/migrations",
   stateMigrations: "packages/index/state-migrations",
@@ -92,17 +90,6 @@ export interface Vocabulary {
   readonly source: string
   readonly values: ReadonlyArray<string>
   readonly doc: string | undefined
-}
-
-/** One sleep phase, with the properties the phase registry states about it. */
-export interface SleepPhaseRow {
-  readonly name: string
-  /** 1-based ordinal within the execution order. A label, never arithmetic input. */
-  readonly index: number
-  readonly commits: boolean
-  readonly callsModel: boolean
-  /** Phases this one must succeed for. */
-  readonly blocks: ReadonlyArray<string>
 }
 
 /** One RRF arm. `weight` stays the authored text so `1.0` does not print as `1`. */
@@ -182,7 +169,6 @@ export interface Registry {
   readonly mcpTools: ReadonlyArray<McpTool>
   readonly mcpResources: ReadonlyArray<McpResource>
   readonly vocabularies: ReadonlyArray<Vocabulary>
-  readonly sleepPhases: ReadonlyArray<SleepPhaseRow>
   readonly rankArms: ReadonlyArray<RankArmRow>
   readonly migrations: ReadonlyArray<MigrationRow>
   readonly requirements: ReadonlyArray<Requirement>
@@ -291,21 +277,6 @@ const vocabularyOf = (source: string, name: string): Vocabulary => ({
   values: stringArrayConst(source, name),
   doc: docCommentFor(source, name)
 })
-
-const sleepPhaseRegistry = (): ReadonlyArray<SleepPhaseRow> => {
-  const path = SOURCES.sleep
-  const phases = stringArrayConst(path, "SLEEP_PHASES")
-  const nonCommitting = new Set(stringArrayConst(path, "NON_COMMITTING_PHASES"))
-  const llm = new Set(stringArrayConst(path, "LLM_PHASES"))
-  const prerequisites = stringPairArrayConst(path, "HARD_PREREQUISITES")
-  return phases.map((name, offset) => ({
-    name,
-    index: offset + 1,
-    commits: !nonCommitting.has(name),
-    callsModel: llm.has(name),
-    blocks: prerequisites.filter(([before]) => before === name).map(([, after]) => after)
-  }))
-}
 
 const rankArmRegistry = (): ReadonlyArray<RankArmRow> => {
   const path = SOURCES.retrieval
@@ -483,7 +454,6 @@ export const collectRegistry = (): Registry => {
       vocabularyOf(SOURCES.edges, "TASK_RELS"),
       vocabularyOf(SOURCES.edges, "EDGE_PROVENANCES")
     ],
-    sleepPhases: sleepPhaseRegistry(),
     rankArms: rankArmRegistry(),
     migrations,
     requirements: requirementRegistry(),
@@ -500,7 +470,6 @@ export const collectRegistry = (): Registry => {
       config: moduleDocOf(SOURCES.config),
       indexPlane: docCommentFor(SCHEMA_CONST, "MIGRATIONS_DIR"),
       statePlane: docCommentFor(SCHEMA_CONST, "STATE_MIGRATIONS_DIR"),
-      sleepPhases: docCommentFor(SOURCES.sleep, "SLEEP_PHASES"),
       mcpTools: moduleDocOf(SOURCES.mcpTools),
       mcpResources: moduleDocOf(SOURCES.mcpResources),
       rankArms: moduleDocOf(SOURCES.retrieval)

@@ -129,8 +129,7 @@ const SUMMARY = {
   written: 18,
   deduped: 2,
   failed: 0,
-  skipped: 0,
-  consolidated: 0
+  skipped: 0
 } as const
 
 /** The fixture as the CLI door's JSONL: snake_case, one complete object per line. */
@@ -183,9 +182,6 @@ interface OpResult {
   readonly skipped: boolean
   /** Always PRESENT on both doors, null when nothing matched or the assist was not asked for. */
   readonly conflict: ConflictWire | null
-  /** The two `consolidate: "last-wins"` outcomes: present-and-null on both doors, like `conflict`. */
-  readonly consolidated_into: number | null
-  readonly superseded_path: string | null
 }
 
 /** The batch payload, in the shape BOTH doors publish. */
@@ -668,7 +664,6 @@ describe("`memhtml apply` and `memory_write_batch` publish ONE per-op wire shape
   const OP_KEYS = [
     "code",
     "conflict",
-    "consolidated_into",
     "deduped",
     "error",
     "existing_path",
@@ -678,8 +673,7 @@ describe("`memhtml apply` and `memory_write_batch` publish ONE per-op wire shape
     "near_duplicates",
     "ok",
     "path",
-    "skipped",
-    "superseded_path"
+    "skipped"
   ] as const
 
   /** The conflict struct's three keys, sorted. `batch_index` is the renamed `batchIndex`. */
@@ -799,8 +793,7 @@ describe("`memhtml apply` and `memory_write_batch` publish ONE per-op wire shape
         written: 4,
         deduped: 0,
         failed: 0,
-        skipped: 0,
-        consolidated: 0
+        skipped: 0
       })
       // Op 0 matched the SEEDED memory: a path, and no batch index because that memory predates the call.
       expect(payload.results[0]?.conflict?.path, label).toMatch(/\.html$/)

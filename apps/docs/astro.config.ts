@@ -19,6 +19,7 @@ import { siteUrl } from "./src/lib/agent-surface.js"
 import { baseRawLinks } from "./src/lib/base-raw-links.js"
 import { focusableScrollers } from "./src/lib/focusable-scrollers.js"
 import { llmsPages } from "./src/lib/llms-pages.js"
+import { removedPageRedirects, removedPageTwins } from "./src/lib/removed-pages.js"
 import { REPO_ROOT } from "./src/loaders/repo-sources.js"
 
 /**
@@ -70,6 +71,13 @@ export default defineConfig({
   site: origin,
   base,
   trailingSlash: "always",
+  /*
+   * A page this site published and then removed keeps its URL as a redirect to the page that
+   * replaced it, and its raw `.md` route keeps a note naming the replacement. Both come from one list,
+   * `REMOVED_PAGES` in `src/lib/removed-pages.ts`, which is also where the tests learn which built
+   * routes are stubs rather than pages.
+   */
+  redirects: removedPageRedirects(base),
   /*
    * Astro 7's default Markdown engine is Sätteri, and Starlight additively mutates whatever
    * processor is supplied here — it sets `features.directive` itself for its asides and PUSHES its
@@ -136,6 +144,7 @@ export default defineConfig({
      * documentation sets, so this is a post-build step rather than a configuration.
      */
     llmsPages({ site: new URL(origin), base }),
+    removedPageTwins(base),
     starlight({
       title: "memhtml",
       description: "Memory for agents, in HTML.",
@@ -245,9 +254,9 @@ export default defineConfig({
          */
         starlightBasePath(),
         /*
-         * Fails the build on a broken internal link. Pinned ^0.25.2 deliberately: 0.25.3 shipped
-         * 2026-08-12, and under `minimumReleaseAge` + `minimumReleaseAgeStrict` a ^0.25.3 range has
-         * no satisfying version and the install fails outright rather than falling back.
+         * Fails the build on a broken internal link. Keep the caret on a release that has already
+         * cleared `minimumReleaseAge`: a range with no version past the soak has no satisfying version,
+         * and the install fails outright rather than falling back.
          *
          * The Reference tier is excluded, and only it. Measured in the plugin's `validation.ts`: a
          * link is valid when the target is in Astro's built page list AND the validator recorded that

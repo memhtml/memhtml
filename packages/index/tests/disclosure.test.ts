@@ -119,11 +119,11 @@ describe("foldDisclosure", () => {
 
   it("counts a memory once per entity name even when it claims that name twice", () => {
     // Reachable, not hypothetical: `file_entities` is keyed on `(type, name)` while the cap is keyed
-    // on the name alone, so `person:sanju` plus `concept:sanju` reach the fold as ["sanju", "sanju"].
+    // on the name alone, so `person:sasha` plus `concept:sasha` reach the fold as ["sasha", "sasha"].
     // Counting both would let ONE memory exhaust a cap of two by itself and push every other memory
     // about that person into an index line.
     const fold = foldDisclosure(
-      [candidate("a", 10, ["sanju", "sanju"]), candidate("b", 10, ["sanju"])],
+      [candidate("a", 10, ["sasha", "sasha"]), candidate("b", 10, ["sasha"])],
       10_000
     )
     expect(fold.disclosed.map((entry) => entry.path)).toEqual(["a", "b"])
@@ -133,9 +133,9 @@ describe("foldDisclosure", () => {
   it("still caps at two distinct memories naming that same doubled name", () => {
     const fold = foldDisclosure(
       [
-        candidate("a", 10, ["sanju", "sanju"]),
-        candidate("b", 10, ["sanju"]),
-        candidate("c", 10, ["sanju"])
+        candidate("a", 10, ["sasha", "sasha"]),
+        candidate("b", 10, ["sasha"]),
+        candidate("c", 10, ["sasha"])
       ],
       10_000
     )
@@ -269,7 +269,7 @@ describe("foldDisclosure properties", () => {
           const source = candidates.find((one) => one.path === entry.path)
           // Deduplicated per memory, matching the fold: the cap counts MEMORIES per name, so one
           // memory claiming a name twice is one memory. `file_entities` is keyed on `(type, name)`
-          // while the cap is keyed on the name alone, so `person:sanju` plus `concept:sanju` is a
+          // while the cap is keyed on the name alone, so `person:sasha` plus `concept:sasha` is a
           // real input.
           for (const name of new Set(source?.entityNames ?? [])) {
             counts.set(name, (counts.get(name) ?? 0) + 1)

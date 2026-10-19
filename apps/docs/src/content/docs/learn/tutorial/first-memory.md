@@ -133,8 +133,7 @@ memhtml apply --file ops.jsonl --detect-conflicts
         "error": null,
         "skipped": false,
         "conflict": null,
-        "consolidated_into": null,
-        "superseded_path": null
+        "near_duplicates": null
       },
       {
         "index": 1,
@@ -146,8 +145,7 @@ memhtml apply --file ops.jsonl --detect-conflicts
         "error": null,
         "skipped": false,
         "conflict": null,
-        "consolidated_into": null,
-        "superseded_path": null
+        "near_duplicates": null
       }
     ],
     "summary": {
@@ -155,10 +153,10 @@ memhtml apply --file ops.jsonl --detect-conflicts
       "written": 2,
       "deduped": 0,
       "failed": 0,
-      "skipped": 0,
-      "consolidated": 0
+      "skipped": 0
     },
-    "commit_sha": "bd4d32c1dede8fc1e2aaf993ddedcda827c12261"
+    "commit_sha": "bd4d32c1dede8fc1e2aaf993ddedcda827c12261",
+    "near_duplicates_degraded": false
   }
 }
 ```
@@ -169,14 +167,18 @@ A batch is atomic by default: the first refused op aborts it, nothing is written
 
 The batch payload is snake_case (`commit_sha`, `existing_path`) where the single-write payload is camelCase (`commitSha`). Read the key from the envelope you received. Each surface spells its own field names, so a translation layer between the two spellings would hide which surface answered.
 
-Pass `--detect-conflicts` on any real batch. It reports what each op's claim contradicts: an active memory, or an earlier op in the same call, which nothing else can see because neither op is stored yet. It is propose-only, and every op still writes exactly as it would have, because sometimes the contradiction is the answer. A memory recording that a runbook step changed necessarily contradicts the memory stating the old step.
+Pass `--detect-conflicts` on any real batch. It reports what each op's claim contradicts: an active memory, or an earlier op in the same call, which nothing else can see because neither op is stored yet. It is propose-only, and every op still writes exactly as it would have, because sometimes the contradiction is the answer. A memory recording that a runbook step changed necessarily contradicts the memory stating the old step. `near_duplicates` is the same kind of report for a reworded restatement, and it stays `null` unless you pass `--detect-near-duplicates`.
 
 ## The third door
 
 Editing a file under `$MEMHTML_ROOT` with your normal file tools is equally legitimate. The tree is the system of record, so a hand-written memory is as real as one the CLI wrote. `memhtml index update` projects uncommitted working-tree changes as well as committed ones, so a dirty edit is searchable before you commit it.
 
-What you take on is everything the write path would have done: format validity (`memhtml doctor` reports it, and `memhtml read <path>` reports per-file warnings), a path that does not collide, noticing that the content already exists, and the commit. `memhtml sleep run` refuses to start on a dirty tree, so an uncommitted edit blocks curation until you commit or stash it.
+What you take on is everything the write path would have done: format validity (`memhtml doctor` reports it, and `memhtml read <path>` reports per-file warnings), a path that does not collide, noticing that the content already exists, and the commit. An uncommitted edit also blocks a session commit or a `memhtml curate merge` that would change the same file on the branch your checkout has open, until you commit or stash it.
 
 For an AI agent, prefer `memhtml apply` over your file tools for writes, because the batch owns dedup, conflict detection, and the single commit. Reach for file tools when you are repairing a file the parser refuses, which is the one case the write path cannot express.
+
+## The session door
+
+A session collects many writes, judges each one against the store's write bar, and lands them all as one commit when you say so. Inside an agent run that exports `MEMHTML_SESSION`, it's the door the store expects. There, `memhtml write` and `memhtml apply` answer `ERR_SESSION_BOUND`, and `memhtml session put` takes the same JSONL lines `apply` does. [Write through a session](/learn/operations/write-through-a-session/) is the how-to.
 
 Next: [retrieve what you just wrote](/learn/tutorial/first-retrieval/).

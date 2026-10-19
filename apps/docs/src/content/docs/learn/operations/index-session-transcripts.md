@@ -97,8 +97,8 @@ Recovering the trace tables therefore means re-running `memhtml trace index` fro
 
 ## How transcripts become memories
 
-The scan indexes transcripts and leaves them as transcripts. Turning a session into a memory is the `trace-consolidation` phase of the sleep cycle, which hands unread transcripts to an agent and commits one memory per candidate that clears the bar. Its batch is at most ten sessions per run, so the two commands pair naturally: index often, consolidate when enough sessions have accumulated to be worth a run.
+The scan indexes transcripts and leaves them as transcripts, and no command turns one into a memory. The sleep pipeline's consolidator did that until 0.16 removed it. An agent that wants a session's lessons kept reads `memhtml trace search` and `memhtml trace links` over what the scan indexed, and writes the records through a [session](/learn/operations/write-through-a-session/), where the write bar judges them.
 
-`memhtml trace index` on the cron is therefore the prerequisite for that phase having anything to read. See [run and review a sleep cycle](/learn/operations/run-and-review-a-sleep-cycle/) for what the phase reports when it distills nothing.
+`memhtml trace index` on the cron is therefore the prerequisite for that agent having anything to read.
 
 [The trace indexer and its firewall](/internals/the-trace-indexer/) covers the streaming parser and the watermark.

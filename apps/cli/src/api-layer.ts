@@ -1,10 +1,5 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
-import {
-  type ConsolidatorShape,
-  hasConsolidatorCredentials,
-  makeConsolidator
-} from "@memhtml/consolidator"
 import { StorageFailure } from "@memhtml/contracts/errors"
 import {
   DatabaseService,
@@ -36,7 +31,6 @@ import {
   ModelClientLive,
   type ModelClientShape
 } from "@memhtml/llm"
-import { makeSleep, Sleep, type SleepShape } from "@memhtml/sleep"
 import {
   Git,
   type GitShape,
@@ -62,7 +56,6 @@ import { type EntityExtractorShape, makeEntityExtractor } from "./extraction.js"
  */
 export { DatabaseService, Indexer, IndexGit, IndexRecorder, Retrieval } from "@memhtml/index"
 export { Embeddings, ModelClient } from "@memhtml/llm"
-export { Sleep } from "@memhtml/sleep"
 export { Git, Store } from "@memhtml/store"
 
 /**
@@ -280,11 +273,10 @@ export const layerIndexer: Layer.Layer<
 /**
  * The retrieval policy: the one retrieval tunable the environment sets.
  *
- * A service rather than a constant read at each site, because THREE surfaces judge the same ratio
- * against it: `search`/`recall` drop the vector arm below it, `doctor` reports `vectorCoverageLow`
- * below it, and a sleep run warns below it. One resolution of `MEMHTML_VECTOR_COVERAGE_FLOOR` is what
- * keeps a search that degraded and a doctor that says healthy from being the same store read through
- * two floors. The hard floor sleep refuses below is a constant and is not here.
+ * A service rather than a constant read at each site, because two surfaces judge the same ratio
+ * against it: `search`/`recall` drop the vector arm below it and `doctor` reports `vectorCoverageLow`
+ * below it. One resolution of `MEMHTML_VECTOR_COVERAGE_FLOOR` is what keeps a search that degraded and
+ * a doctor that says healthy from being the same store read through two floors.
  */
 export interface RetrievalPolicyShape {
   /** `MEMHTML_VECTOR_COVERAGE_FLOOR`, in `(0, 1]`. */
@@ -294,15 +286,10 @@ export interface RetrievalPolicyShape {
 export const RetrievalPolicy = Context.Service<RetrievalPolicyShape>("memhtml/RetrievalPolicy")
 
 /**
- * The policy from config. A set-but-unusable value DIES naming the variable, following the consolidator
- * turn-timeout precedent: `0` or a negative would switch the gate off silently (nothing is below zero),
- * a value above `1` would drop the vector arm on a fully covered index, and neither is a floor anyone
- * meant. A value that does not parse as a number already fails inside `Config.Number`.
- *
- * A floor UNDER `VECTOR_COVERAGE_HARD_FLOOR` (0.5) is accepted: it keeps search and doctor accepting a
- * plane that sleep still refuses, because the hard floor is sleep's alone and this knob does not move
- * it. That split is deliberate. Search on a half-embedded index is a quality trade an operator may
- * take for a day; a night of cosine passes over half the corpus is not.
+ * The policy from config. A set-but-unusable value DIES naming the variable: `0` or a negative would
+ * switch the gate off silently (nothing is below zero), a value above `1` would drop the vector arm on
+ * a fully covered index, and neither is a floor anyone meant. A value that does not parse as a number
+ * already fails inside `Config.Number`.
  */
 export const layerRetrievalPolicy: Layer.Layer<RetrievalPolicyShape> = Layer.effect(
   RetrievalPolicy
@@ -349,35 +336,6 @@ export const layerRetrieval: Layer.Layer<
 )
 
 /**
- * The model behind the four LLM sleep phases, or absent.
- *
- * Absent is a run whose LLM phases report `skipped`, which `@memhtml/sleep` distinguishes from
- * `failed`, because a deterministic run on a fixture without credentials is not a broken run.
- */
-export interface ModelPortShape {
-  readonly model: ModelClientShape | undefined
-}
-
-export const ModelPort = Context.Service<ModelPortShape>("memhtml/ModelPort")
-
-export const layerModelPort: Layer.Layer<ModelPortShape, never, ModelClientShape> = Layer.effect(
-  ModelPort
-)(
-  Effect.gen(function* () {
-    const enabled = yield* Config.String("MEMHTML_LLM").pipe(
-      Config.withDefault("on"),
-      Config.map((value) => value.trim().toLowerCase() !== "off")
-    )
-    if (!enabled) return { model: undefined }
-    return { model: yield* ModelClient }
-  })
-).pipe(Layer.orDie)
-
-/** A layer supplying the model port directly, for a test that scripts the model's answers. */
-export const layerModelFrom = (model: ModelClientShape | undefined): Layer.Layer<ModelPortShape> =>
-  Layer.succeed(ModelPort)({ model })
-
-/**
  * Write-time entity extraction, or absent.
  *
  * On by default since 2026-09-02, like the embedder: `MEMHTML_EXTRACT_ENTITIES=off` removes it, and so
@@ -389,9 +347,9 @@ export const layerModelFrom = (model: ModelClientShape | undefined): Layer.Layer
  * follows the embedder precedent: a bound extractor that fails costs this batch its extracted
  * entities and never the write (`batchWrite` logs and proceeds).
  *
- * The extractor is a consumer of the same `ModelClient` the sleep phases use — InvokeModel on
- * bedrock-runtime, or the LLM proxy `MEMHTML_LLM_BASE_URL` names — so there is one answer to where
- * every model call goes and one credential story: the SDK's default chain, or the proxy's key. A
+ * The extractor is a consumer of `ModelClient`, InvokeModel on bedrock-runtime or the LLM proxy
+ * `MEMHTML_LLM_BASE_URL` names, so there is one answer to where every model call goes and one
+ * credential story: the SDK's default chain, or the proxy's key. A
  * missing credential is discovered at the first write batch and degrades that batch, as a missing
  * embedder credential degrades a search; nothing is checked at layer build.
  */
@@ -423,164 +381,7 @@ export const layerExtractorFrom = (
 ): Layer.Layer<ExtractorPortShape> => Layer.succeed(ExtractorPort)({ extractor })
 
 /**
- * The consolidator behind trace consolidation, or absent.
- *
- * **This file is the only place that knows both halves exist**, which is why it is
- * here rather than in `@memhtml/sleep`. `apps/consolidator` is an eve agent over the AI SDK Bedrock
- * provider with a `just-bash` sandbox. Sleep declares the shape it consumes
- * (`packages/sleep/src/consolidator.ts`) and never imports any of that. The assignment below needs no
- * adapter and no cast, because TypeScript is structural and `ConsolidatorShape` satisfies
- * `ConsolidatorPort` field for field.
- *
- * **There is no host option, by construction.** The consolidator's eve channel demands a bearer
- * JWT signed with a per-run secret (`apps/consolidator/agent/channels/eve.ts` via `jwtHmac`), and
- * the loopback bind is the second layer keeping the agent off the network. Neither is optional,
- * because two layers are only depth while both are in place. `makeConsolidator` exposes no `host`
- * option at all and pins loopback itself (`apps/consolidator/src/client.ts`, `LOOPBACK_HOST`). Nothing
- * here may reintroduce one, and the absence of an option is the mechanism.
- */
-export interface ConsolidatorPortShape {
-  readonly consolidator: ConsolidatorShape | undefined
-}
-
-export const ConsolidatorPortService = Context.Service<ConsolidatorPortShape>(
-  "memhtml/ConsolidatorPort"
-)
-
-/**
- * Two gates, both cheap, both before anything is spawned.
- *
- * `MEMHTML_LLM=off` is the same explicit opt-out `layerModelPort` reads, and it covers the consolidator
- * too, because an operator who turned the models off did not mean "except the expensive agent".
- *
- * `hasConsolidatorCredentials` is the route preflight — a Bedrock credential, or an LLM proxy named by
- * `MEMHTML_LLM_BASE_URL` — read here as well as inside the client.
- * The redundancy is deliberate and the two reads do different jobs. This one decides whether the phase
- * sees a consolidator at all, so a credential-free environment gets `detail: "no consolidator bound"`,
- * the same shape the other three LLM phases report with no model, rather than a bound port that
- * fails on every call and reports a degradation. CI has no credentials and must read as skipped rather
- * than degraded.
- *
- * The check cannot be skipped in favor of the client's own, because the provider is lazy.
- * `createAmazonBedrock` and `provider(modelId)` both succeed with zero credentials and nothing fails
- * until the first request (the contract suite in `apps/consolidator/src/contract.ts` pins this).
- *
- * **`env` is a parameter, and it has to be.** `Config` reads its values through a `ConfigProvider`,
- * which a test substitutes, while `hasConsolidatorCredentials` reads `process.env` directly, and
- * effect's default provider snapshots `process.env` at module load, so mutating
- * `process.env.MEMHTML_LLM` after importing `effect` changes nothing `Config.String` returns. A test
- * that set both by mutation would read a stale snapshot for one gate and a live object for the other,
- * and the two gates would disagree about which environment they are in. Threading the credential
- * environment through as an argument makes both injectable from one call. See
- * `apps/cli/tests/consolidator-wiring.test.ts`, where that disagreement produced a false defect
- * before this parameter existed.
- *
- * **It requires `RootsShape`, for `traceRoot`.** That is how transcripts reach the agent. The
- * consolidator mounts the trace root read-only rather than sending transcripts as a model message
- * (`apps/consolidator/src/client.ts`, `manifestFor`).
- * The root is `MEMHTML_TRACE_ROOT` and this file is where config becomes services, so it is read from the
- * same `Roots` service `memhtml trace index` scans with. One resolution of one variable is what
- * keeps the mounted tree and the indexed `traces` rows describing the same directory. A second
- * `Config.String("MEMHTML_TRACE_ROOT")` here would be a second place the `~/.claude` default lives.
- */
-export const layerConsolidatorPort = (
-  env: Record<string, string | undefined> = process.env
-): Layer.Layer<ConsolidatorPortShape, never, RootsShape> =>
-  Layer.effect(ConsolidatorPortService)(
-    Effect.gen(function* () {
-      const roots = yield* Roots
-      const enabled = yield* Config.String("MEMHTML_LLM").pipe(
-        Config.withDefault("on"),
-        Config.map((value) => value.trim().toLowerCase() !== "off")
-      )
-      if (!enabled) return { consolidator: undefined }
-      if (!hasConsolidatorCredentials(env)) {
-        yield* Effect.logDebug(
-          "trace consolidation unbound: neither Bedrock credentials nor an LLM proxy in the environment"
-        )
-        return { consolidator: undefined }
-      }
-      /**
-       * The turn-budget override, read from the SAME injected environment as the credential gate
-       * above and for the same reason (the note on this layer: `Config` snapshots `process.env`, so
-       * an injected env and a `Config` read can disagree). Absent, the budget scales with the batch
-       * (`turnBudgetMsFor` in `apps/consolidator/src/client.ts`). A set-but-unparseable value DIES
-       * rather than falling back: a typo'd ceiling silently becoming the default is the
-       * degradation-instead-of-skip outcome the gate above exists to prevent, one knob over.
-       */
-      const turnTimeoutRaw = env.MEMHTML_CONSOLIDATOR_TURN_TIMEOUT_MS?.trim() ?? ""
-      const turnTimeoutMs = turnTimeoutRaw === "" ? undefined : Number(turnTimeoutRaw)
-      if (
-        turnTimeoutMs !== undefined &&
-        (!Number.isSafeInteger(turnTimeoutMs) || turnTimeoutMs <= 0)
-      ) {
-        return yield* Effect.die(
-          new Error(
-            `MEMHTML_CONSOLIDATOR_TURN_TIMEOUT_MS must be a positive integer of milliseconds; got ${JSON.stringify(turnTimeoutRaw)}`
-          )
-        )
-      }
-      /**
-       * The client is built over the same environment the gate just read. A client over ambient
-       * `process.env` while the gate read an injected one would pass the gate and fail at the call,
-       * which is the degradation-instead-of-skip outcome this gate exists to prevent.
-       */
-      return {
-        consolidator: makeConsolidator({
-          env,
-          traceRoot: roots.traceRoot,
-          ...(turnTimeoutMs === undefined ? {} : { turnTimeoutMs })
-        })
-      }
-    })
-  ).pipe(Layer.orDie)
-
-/** A layer supplying the consolidator directly, for a test that scripts its candidates. */
-export const layerConsolidatorFrom = (
-  consolidator: ConsolidatorShape | undefined
-): Layer.Layer<ConsolidatorPortShape> => Layer.succeed(ConsolidatorPortService)({ consolidator })
-
-/**
- * The sleep runner over the same services every other command uses.
- *
- * `@memhtml/sleep` deliberately ships no `SleepLive` that resolves its own git, database, and model.
- * A layer that built its own would open a second connection to one database file and a second git
- * wrapper on one root, and the run would then curate a corpus the indexer is not describing.
- */
-export const layerSleep: Layer.Layer<
-  SleepShape,
-  never,
-  | GitShape
-  | StoreShape
-  | DatabaseShape
-  | IndexerShape
-  | ModelPortShape
-  | ConsolidatorPortShape
-  | RetrievalPolicyShape
-> = Layer.effect(Sleep)(
-  Effect.gen(function* () {
-    const git = yield* Git
-    const store = yield* Store
-    const db = yield* DatabaseService
-    const indexer = yield* Indexer
-    const modelPort = yield* ModelPort
-    const consolidatorPort = yield* ConsolidatorPortService
-    const policy = yield* RetrievalPolicy
-    return makeSleep({
-      git,
-      store,
-      db,
-      indexer,
-      model: modelPort.model,
-      consolidator: consolidatorPort.consolidator,
-      // The same floor a search degrades at, so a night's warning and a search's `degraded` agree.
-      vectorCoverageFloor: policy.vectorCoverageFloor
-    })
-  })
-)
-
-/**
- * Everything above the embedder and the model, as one layer requiring only the roots and those two.
+ * Everything above the embedder, as one layer requiring only the roots and it.
  *
  * Written top-down because that is what `Layer.provideMerge(that)` means. It feeds `that`'s output
  * into `self`'s requirements, so the consumer is `self` and each `.pipe` step below adds the level
@@ -592,15 +393,15 @@ export const layerSleep: Layer.Layer<
  * no Bedrock anywhere in the graph. The composition under test is then the same composition
  * production runs, which a hand-assembled test wiring would not be.
  */
-export const layerCore = Layer.mergeAll(layerSleep, layerRetrieval).pipe(
+export const layerCore = layerRetrieval.pipe(
   Layer.provideMerge(Layer.mergeAll(layerIndexer, layerStore)),
   Layer.provideMerge(Layer.mergeAll(layerIndexGit, layerRecorder)),
   Layer.provideMerge(Layer.mergeAll(layerDatabase, layerGit))
 )
 
 /**
- * The production graph: roots from config, Bedrock (or the LLM proxy) behind the embedder, the model
- * port, and the extractor, everything else over them. `repoOverride` is `--repo`.
+ * The production graph: roots from config, Bedrock (or the LLM proxy) behind the embedder and the
+ * extractor, everything else over them. `repoOverride` is `--repo`.
  *
  * This is the one composition production runs. `memhtml serve mcp` runs the same one in a child
  * process, so an MCP tool and its CLI twin cannot be looking at different databases.
@@ -611,42 +412,21 @@ export const layerApp = (repoOverride?: string | undefined) =>
       Layer.mergeAll(
         layerRoots(repoOverride),
         layerEmbedder.pipe(Layer.provide(EmbeddingsLive), Layer.orDie),
-        /**
-         * One `ModelClient` behind both the sleep phases' port and the write-time extractor, so the
-         * two cannot resolve different transports from the same environment.
-         */
-        Layer.mergeAll(layerModelPort, layerExtractorPort).pipe(
-          Layer.provide(ModelClientLive),
-          Layer.orDie
-        ),
-        /**
-         * `layerRoots` is provided to the consolidator port explicitly rather than merged beside it.
-         * The consolidator needs `traceRoot` to mount, and a sibling in one `mergeAll` is not a
-         * dependency. The roots layer is built once with `repoOverride` and fed in, so a `--repo`
-         * run and the mounted trace root cannot come from two different resolutions.
-         */
-        layerConsolidatorPort().pipe(Layer.provide(layerRoots(repoOverride))),
+        layerExtractorPort.pipe(Layer.provide(ModelClientLive), Layer.orDie),
         layerRetrievalPolicy
       )
     )
   )
 
 /**
- * The graph a test provides: the real composition, with the embedder and the model injected.
+ * The graph a test provides: the real composition, with the embedder and the extractor injected.
  *
  * Same `layerCore`, so a test exercises the wiring production uses rather than a parallel one. The
- * only substituted edges are the two that reach the network.
+ * only substituted edges are the ones that reach the network.
  */
 export const layerAppWith = (options: {
   readonly repo: string
   readonly embedder: EmbedderShape
-  readonly model?: ModelClientShape | undefined
-  /**
-   * Absent leaves trace consolidation skipped, which is the right default for every test that is not
-   * about that phase. It is what a credential-free environment produces, and binding a live agent
-   * from a test harness would spawn an eve server per case.
-   */
-  readonly consolidator?: ConsolidatorShape | undefined
   /** Absent leaves writes unextracted, the production default. Only extraction tests bind one. */
   readonly extractor?: EntityExtractorShape | undefined
   /**
@@ -660,8 +440,6 @@ export const layerAppWith = (options: {
       Layer.mergeAll(
         layerRoots(options.repo),
         layerEmbedderFrom(options.embedder),
-        layerModelFrom(options.model),
-        layerConsolidatorFrom(options.consolidator),
         layerExtractorFrom(options.extractor),
         options.vectorCoverageFloor === undefined
           ? layerRetrievalPolicy

@@ -3,7 +3,7 @@ title: Internals
 description: Why the system is built the way it is, with the implementing code cited for every decision.
 ---
 
-These pages explain why the system is shaped the way it is. Each chapter takes one mechanism and says what it is, how it works, which failure it prevents, and where in the source that lives. Someone who wants to install the store, write a memory, or operate a curation run is served by [Learn](/learn/). Someone who wants the exact spelling of a flag or an error code is served by [Reference](/reference/).
+These pages explain why the system is shaped the way it is. Each chapter takes one mechanism and says what it is, how it works, which failure it prevents, and where in the source that lives. Someone who wants to install the store, write a memory, or run a curation pass is served by [Learn](/learn/). Someone who wants the exact spelling of a flag or an error code is served by [Reference](/reference/).
 
 ## 1. Two invariants
 
@@ -16,7 +16,7 @@ Figure 1 draws that rule. Three ways of writing reach one tree, and two database
 ```d2 pad=20 src="_figures/system-topology.d2" title="Three write doors - the CLI, the MCP server, and your own file tools - each commit into a single git tree. The tree moves evicted files to archive/YYYY/ and a git-driven indexer derives index.db from it. index.db supplies three ranking arms and state.db supplies the fourth, salience; both feed one RRF-then-MMR step that produces ranked hits."
 ```
 
-**Figure 1: every write door lands in the git tree, and every read is served from a database derived from it.** The three doors differ in who owns the commit and never in where the fact lands. `index.db` is drawn with a dashed border because deleting it loses nothing. `state.db` is drawn as a database on disk because a rebuild cannot reproduce it.
+**Figure 1: every write door lands in the git tree, and every read is served from a database derived from it.** The three doors differ in who owns the commit and never in where the fact lands. The CLI's `session` commands are a fourth way in, drawn here under the CLI: a session lands its whole log as one commit through the [commit path](/internals/sessions-and-the-commit-path/), and its reads come from the head held in memory rather than from `index.db`. `index.db` is drawn with a dashed border because deleting it loses nothing. `state.db` is drawn as a database on disk because a rebuild cannot reproduce it.
 
 The second rule is that each change to the corpus is exactly one git commit. `git log` is then the history of what the agent learned, and `diff base..HEAD` is a curation run a human can review (`packages/store/src/store.ts:37-44`). The store stages files itself, because a caller that staged its own could put two unrelated writes into one commit. Eviction is a `git mv` into `archive/<YYYY>/` that mirrors the original path underneath, so `git log --follow` reads through a memory's whole life. No path in the system removes a file from the repository.
 
@@ -25,7 +25,7 @@ Figure 2 follows one memory through that rule. One commit brings it in, and each
 ```d2 pad=20 src="_figures/memory-lifecycle.d2" title="A write enters as one commit and the memory becomes active. Three arrows leave the active state: correct makes it superseded, evict makes it archived, and compress makes it compressed. No arrow leaves the corpus, because each of the three is a git mv into the archive rather than a deletion."
 ```
 
-**Figure 2: a memory has one entry and three exits, and each exit keeps the file.** `memhtml correct` writes the replacement and archives the original in one commit. Retention triage archives a file whose score fell into the evict band. Compression archives a member underneath a newly written canonical memory. All three land under `archive/<YYYY>/` with the original path mirrored beneath, which is what lets `git log --follow` read straight through.
+**Figure 2: a memory has one entry and three exits, and each exit keeps the file.** `memhtml correct` writes the replacement and archives the original in one commit. Eviction is `memhtml archive`, or an `archive` operation a session or the curator commits. Compression is a fold, where `curate collapse` writes one canonical memory and archives each member underneath it with a `supersedes` link. All three land under `archive/<YYYY>/` with the original path mirrored beneath, which is what lets `git log --follow` read straight through.
 
 ## 2. The chapters
 
@@ -38,17 +38,17 @@ The chapters run in dependency order: the layers first, then the paths through t
 | [The memory file format](/internals/the-memory-file-format/)                       | The closed vocabulary, the two hashes, byte-splice head edits, the render gate                 |
 | [Edge encoding](/internals/edge-encoding/)                                         | Authored versus derived edges, the four non-mixing classes, the `derived` firewall             |
 | [The write path](/internals/the-write-path/)                                       | Ordering as the dedup mechanism, batch atomicity, the propose-only conflict assist             |
+| [Sessions and the commit path](/internals/sessions-and-the-commit-path/)           | The head as a value, the session log, validation, the commit steps, and the checkout lock      |
 | [The index](/internals/the-index/)                                                 | Two databases on one connection, the schema, projection, rebuild and incremental update        |
 | [Four-arm retrieval](/internals/four-arm-retrieval/)                               | The arm registry, rank fusion, degraded mode, diversification, the disclosure fold             |
-| [The index plane and the state plane](/internals/index-plane-and-state-plane/)     | What git cannot reproduce, and the byte-stable committed sidecar that saves it                 |
+| [The index plane and the state plane](/internals/index-plane-and-state-plane/)     | What git cannot reproduce, and the byte-stable sidecar that saves its access table             |
 | [The trace indexer](/internals/the-trace-indexer/)                                 | A read-only index over session transcripts, and the table-name firewall around it              |
-| [The sleep pipeline](/internals/the-sleep-pipeline/)                               | Seventeen phases, per-phase isolation, commit trailers as the resume mechanism                 |
-| [Concurrency and conflicts](/internals/concurrency-and-conflicts/)                 | Git as the concurrency mechanism, and typed conflict surfacing                                 |
+| [Concurrency and conflicts](/internals/concurrency-and-conflicts/)                 | Git as the concurrency mechanism, the checkout lock, and `rebase-needed`                       |
 | [The envelope contract](/internals/the-envelope-contract/)                         | One JSON envelope, append-only codes, the tool surface and its forced choices                  |
 | [The extension contract](/internals/the-extension-contract/)                       | The five open axes a consumer models its domain on, and the four closed vocabularies           |
 | [Testing posture](/internals/testing-posture/)                                     | Real driver, real git, two fakes, and the quality gate that can refuse a merge                 |
 
-Three pages sit beside the chapters. [The consolidator](/internals/the-consolidator/) reproduces the live system prompt of the agent that distills memories out of transcripts. [Measured standing](/internals/measured-standing/) carries the benchmark numbers together with the caveat that governs how to read them. The [glossary](/glossary/) defines the domain vocabulary these pages use and links each term to the chapter that develops it.
+Two pages sit beside the chapters. [Measured standing](/internals/measured-standing/) carries the benchmark numbers together with the caveat that governs how to read them. The [glossary](/glossary/) defines the domain vocabulary these pages use and links each term to the chapter that develops it.
 
 ## 3. How to read a citation
 

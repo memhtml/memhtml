@@ -14,6 +14,7 @@
  * keep in agreement.
  */
 export { PARA_BUCKETS, type ParaBucket } from "@memhtml/contracts/types"
+export { checkoutLockTarget, withCheckoutLock } from "./checkout-lock.js"
 export {
   Git,
   GitFailure,
@@ -29,6 +30,7 @@ export {
   attemptIo,
   GITATTRIBUTES,
   GITIGNORE,
+  HEAD_SOCKET_PATH,
   INDEX_DB_PATH,
   initRepo,
   MEMHTML_DIR,
@@ -36,9 +38,13 @@ export {
   README,
   readFileOrNull,
   SCAFFOLD_DIRS,
+  SESSIONS_DIR_PATH,
   SLEEP_REPORTS_DIR,
+  SNAPSHOTS_DIR_PATH,
   STATE_DB_PATH,
-  STATE_SIDECAR_PATH
+  STATE_SIDECAR_PATH,
+  V2_IGNORE_PATTERNS,
+  VECTORS_DIR_PATH
 } from "./layout.js"
 export type {
   ChangedPath,

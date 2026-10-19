@@ -1,17 +1,17 @@
 import { layerApp } from "@memhtml/cli"
 import { layerTelemetry } from "@memhtml/telemetry"
 import { Layer, Logger } from "effect"
-import { McpProtocol, McpServer } from "effect/unstable/ai"
+import { McpProtocol, McpServer } from "effect/ai"
 
 import { ToolHandlers } from "./handlers.js"
 import { Resources } from "./resources.js"
 import { MemhtmlToolkit } from "./tools.js"
 
 export const SERVER_NAME = "memhtml"
-export const SERVER_VERSION = "0.15.1" // x-release-please-version
+export const SERVER_VERSION = "0.16.0" // x-release-please-version
 
 /**
- * The server as one layer: fifteen tools, three resources, over the CLI's own `AppLive`.
+ * The server as one layer: fifteen tools, two resources, over the CLI's own `AppLive`.
  *
  * The same composition the CLI builds, deliberately. An MCP server with its own layer graph would be
  * a second set of answers to which database file, which git root, and which vector space. An agent

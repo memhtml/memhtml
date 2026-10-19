@@ -30,13 +30,22 @@
       "path": "../packages/traces"
     },
     {
-      "path": "../packages/sleep"
-    },
-    {
       "path": "../packages/llm"
     },
     {
       "path": "../packages/eval"
+    },
+    {
+      "path": "../packages/head"
+    },
+    {
+      "path": "../packages/session"
+    },
+    {
+      "path": "../packages/snapshot"
+    },
+    {
+      "path": "../packages/curator"
     },
     {
       "path": "../apps/cli"

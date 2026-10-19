@@ -162,7 +162,7 @@ describe("verification item 5 — the trace plane, and trace_links from a --sess
      * `persistScanned` writes the merged prompt list with a delete-and-insert — the merged list is
      * authoritative and complete for the session, and an upsert would leave a stale row whose ordinal
      * the merge renumbered — so the number reports rows WRITTEN, which after a tail is all three. The
-     * distinction is exactly the coordinate-space confusion the metarepo's semantic-contracts rule
+     * distinction is exactly the coordinate-space confusion the workspace's semantic-contracts rule
      * warns about: `_count` of what, over which scope.
      */
     expect(tailed.promptsWritten).toBe(3)
